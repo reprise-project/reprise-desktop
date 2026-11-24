@@ -11,7 +11,7 @@ pub use channels::{Channels, Side, side};
 pub use recent::{Recent, SETTLE};
 pub use scale::{BOOST_TOP, Scale, stepped, top};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -143,6 +143,10 @@ pub struct Store {
     objects: BTreeMap<u32, Value>,
     /// Each node's channel shares the last time it was not silent, by id: a node turned down to nothing hands them on.
     heard: BTreeMap<u32, Vec<f64>>,
+    /// The default metadata, once a change to it arrived: `pw-dump -m` lists a metadata object's
+    /// changed entries but never a deleted one (a deletion arrives as `"metadata": []`), so only
+    /// a fresh read of the object ([`Store::reread`]) says which entries are left.
+    stale: BTreeSet<u32>,
 }
 
 impl Store {
@@ -169,7 +173,10 @@ impl Store {
             }
             match self.objects.get_mut(&id) {
                 Some(stored) if stored.get("type").and_then(Value::as_str) == Some(METADATA) => {
-                    merge_metadata(stored, item)
+                    merge_metadata(stored, item);
+                    if stored["props"]["metadata.name"] == "default" {
+                        self.stale.insert(id);
+                    }
                 }
                 Some(stored) => merge(stored, item),
                 None => {
@@ -180,6 +187,23 @@ impl Store {
                 }
             }
             self.note_heard(id);
+        }
+    }
+
+    /// The metadata objects to read again since the last call.
+    fn take_stale(&mut self) -> BTreeSet<u32> {
+        std::mem::take(&mut self.stale)
+    }
+
+    /// Replaces each metadata object in `fresh`, a one-shot `pw-dump ID`'s array, with what it
+    /// lists.
+    fn reread(&mut self, fresh: &Value) {
+        for item in fresh.as_array().into_iter().flatten() {
+            if let Some(id) = item.get("id").and_then(Value::as_u64)
+                && item.get("type").and_then(Value::as_str) == Some(METADATA)
+            {
+                self.objects.insert(id as u32, item.clone());
+            }
         }
     }
 
@@ -759,6 +783,11 @@ fn pump(program: &str, feed: &mut Feed<Snapshot>, shared: &Pump) -> Run {
         match array {
             Ok(array) => {
                 store.apply(&array);
+                for id in store.take_stale() {
+                    if let Some(fresh) = read_object(program, id) {
+                        store.reread(&fresh);
+                    }
+                }
                 run = Run::Ended { delivered: true };
                 // Most changes touch objects the snapshot never shows; the feed wakes the window
                 // only when what it shows moved.
@@ -779,6 +808,21 @@ fn pump(program: &str, feed: &mut Feed<Snapshot>, shared: &Pump) -> Run {
         let _ = child.wait();
     }
     run
+}
+
+/// Object `id` as a one-shot `program ID` dumps it; `None` when the run fails.
+fn read_object(program: &str, id: u32) -> Option<Value> {
+    let mut cmd = Command::new(program);
+    cmd.arg(id.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    match subprocess::run(&mut cmd, CHILD_DEADLINE) {
+        Ok(ran) => serde_json::from_str(&ran.stdout).ok(),
+        Err(e) => {
+            warn!("{program} {id}: {e}");
+            None
+        }
+    }
 }
 
 pub const WPCTL: &str = "wpctl";
@@ -1218,6 +1262,39 @@ mod tests {
             .collect();
         assert_eq!(heard, [(1, false), (2, false)], "each write was cut off");
         let _ = std::fs::remove_file(&script);
+    }
+
+    /// Recorded from PipeWire 1.6: `pw-metadata -d 0 default.configured.audio.sink` reaches
+    /// `pw-dump -m` as `"metadata": []`, and a one-shot `pw-dump 39` lists what is left.
+    #[test]
+    fn a_deleted_metadata_key_goes_once_the_object_is_read_again() {
+        let monitor = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/pw-dump-m-deleted-key.json"
+        );
+        let fresh = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/pw-dump-39-after-deletion.json"
+        );
+        let script = script(
+            "deleted",
+            &format!(
+                r#"if [ "$1" = -m ]; then cat {monitor}; exec sleep 30; fi; [ "$1" = 39 ] && cat {fresh}"#
+            ),
+        );
+        let path: &'static str = Box::leak(script.to_string_lossy().into_owned().into_boxed_str());
+        let w = watch_program(path, || {});
+        let mut seen = Vec::new();
+        while let Ok(snap) = w.rx.recv_timeout(Duration::from_secs(2)) {
+            seen.push((snap.configured_sink.clone(), snap.configured_source.clone()));
+        }
+        let _ = std::fs::remove_file(&script);
+        let source = Some("alsa_input.platform-snd_aloop.0.analog-stereo".to_string());
+        assert_eq!(
+            seen.last(),
+            Some(&(None, source)),
+            "(configured sink, configured source) after the deletion, of {seen:?}"
+        );
     }
 
     #[test]

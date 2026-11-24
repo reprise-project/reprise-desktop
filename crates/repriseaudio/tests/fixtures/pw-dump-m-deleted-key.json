@@ -1,0 +1,57 @@
+[
+  {
+    "id": 39,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x"
+    ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 7,
+      "metadata.name": "default",
+      "module.id": 6,
+      "object.serial": 39
+    },
+    "metadata": [
+      {
+        "subject": 0,
+        "key": "default.configured.audio.sink",
+        "type": "Spa:String:JSON",
+        "value": {
+          "name": "reprise-remote-client"
+        }
+      },
+      {
+        "subject": 0,
+        "key": "default.configured.audio.source",
+        "type": "Spa:String:JSON",
+        "value": {
+          "name": "alsa_input.platform-snd_aloop.0.analog-stereo"
+        }
+      }
+    ]
+  }
+]
+[
+  {
+    "id": 39,
+    "type": "PipeWire:Interface:Metadata",
+    "version": 3,
+    "permissions": [
+      "r",
+      "w",
+      "x"
+    ],
+    "props": {
+      "client.id": 33,
+      "factory.id": 7,
+      "metadata.name": "default",
+      "module.id": 6,
+      "object.serial": 39
+    },
+    "metadata": []
+  }
+]
