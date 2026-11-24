@@ -100,7 +100,8 @@ pub(crate) fn configured_size(
 }
 
 /// What a window's configures leave it at: its size, the program's pick, the compositor's
-/// last bounds and asked size, and whether the size is the program's (`own`).
+/// last bounds and asked size, whether the size is the program's (`own`), and the size the
+/// program last sized the window away from (`left`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Fit {
     pub size: (i32, i32),
@@ -108,18 +109,23 @@ pub(crate) struct Fit {
     pub bounds: Option<(i32, i32)>,
     pub asked: (Option<i32>, Option<i32>),
     pub own: bool,
+    pub left: Option<(i32, i32)>,
 }
 
 impl Fit {
     /// The fit after a configure asking `asked` with `bounds`. A size new bounds alone give
-    /// ([`rebounded`]) is the window's own, so configures that repeat the old ask leave it.
+    /// ([`rebounded`]) is the window's own, so configures that repeat the old ask leave it. A
+    /// configure the compositor sent before it saw the program's own size asks for `left`,
+    /// which leaves the window's own size too.
     pub(crate) fn configured(
         self,
         asked: (Option<i32>, Option<i32>),
         bounds: Option<(i32, i32)>,
         resizing: bool,
     ) -> Fit {
-        let (size, mut own) = configured_size(self.size, asked, self.asked, self.own, resizing);
+        let stale = self.left.map(|(w, h)| (Some(w), Some(h))) == Some(asked);
+        let last = if stale { asked } else { self.asked };
+        let (size, mut own) = configured_size(self.size, asked, last, self.own, resizing);
         let moved_bounds = bounds.is_some() && bounds != self.bounds;
         let size = match moved_bounds && size == self.size {
             true => {
@@ -135,6 +141,7 @@ impl Fit {
             bounds,
             asked,
             own,
+            left: self.left.filter(|_| own),
             ..self
         }
     }

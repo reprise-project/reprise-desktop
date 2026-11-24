@@ -201,6 +201,7 @@ impl Host {
             maximized: false,
             asked: (None, None),
             own: false,
+            left: None,
             bounds: None,
             wanted: size,
             picked: size,
@@ -345,6 +346,7 @@ impl Host {
         if size == s.size {
             return;
         }
+        s.left = Some(s.size);
         s.size = size;
         s.buffers = [None, None];
         s.pool = None;
@@ -821,12 +823,14 @@ impl WindowHandler for Host {
             bounds: s.bounds,
             asked: s.asked,
             own: s.own,
+            left: s.left,
         }
         .configured(asked, bounds, configure.is_resizing());
         let size = fit.size;
         s.bounds = fit.bounds;
         s.asked = fit.asked;
         s.own = fit.own;
+        s.left = fit.left;
         if s.mapped {
             s.activated = configure.is_activated();
         }
