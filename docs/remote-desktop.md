@@ -246,7 +246,8 @@ the journal logs each change ([Troubleshooting](#troubleshooting)).
   it held comes back to it. One open on the client's screens is closed
   when lock mode ends and its screens go; the program may exit then.
   The screen pickers of Screenshot, Screen Cast and Remote Desktop offer
-  only the client's screens.
+  only the client's screens, and a screenshot of the whole desktop holds
+  only them.
   Resizing a client's window (`xfreerdp3 /dynamic-resolution`) resizes its
   screen without a reconnect, and the windows keep their place on it. A
   change in the client's number of monitors ends the connection; a client

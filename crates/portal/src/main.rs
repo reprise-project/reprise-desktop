@@ -1155,9 +1155,9 @@ fn choose_from(
     }))
 }
 
-/// The outputs a picker offers: every one, or in lock mode only `lock_screens`, those the
-/// compositor made for the remote client ([`inputlink::Link::lock_mode_screens`]). This
-/// computer's own screens show only its lock then.
+/// The outputs a picker offers and a screenshot takes: every one, or in lock mode only
+/// `lock_screens`, those the compositor made for the remote client
+/// ([`inputlink::Link::lock_mode_screens`]). This computer's own screens show only its lock then.
 pub(crate) fn on_desk(
     outputs: Vec<wayland::OutputInfo>,
     lock_screens: Option<&[String]>,
