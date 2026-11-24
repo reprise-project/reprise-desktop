@@ -86,6 +86,8 @@ struct Marks {
     gone: Flag,
     /// Set once [`run`] leaves the end to the display, whose updates then end.
     released: Flag,
+    /// Set once the display's updates ended after [`Marks::released`].
+    display_ended: Flag,
     clipboard: Cut,
     /// The place in the console's run this connection took over as it logged in.
     taken_over: Mutex<Option<Joined>>,
@@ -156,6 +158,14 @@ impl Ending {
 
     pub(crate) fn release(&self) {
         self.0.released.set();
+    }
+
+    pub(crate) fn display_ended(&self) {
+        self.0.display_ended.set();
+    }
+
+    pub(crate) fn has_display_ended(&self) -> bool {
+        self.0.display_ended.is_set()
     }
 
     pub(crate) fn took_over(&self, place: Option<Joined>) {
@@ -549,9 +559,11 @@ async fn run<L: Leave + 'static, C: Login, S>(
         peer,
     };
     let seen = Arc::new(Mutex::new(Seen::default()));
+    let closing = Arc::new(Flag::default());
     let stream = Recorded {
         inner: stream,
         seen: seen.clone(),
+        closing: closing.clone(),
     };
     let arrive = || {
         shared.viewers.borrow_mut().shown(id);
@@ -607,7 +619,8 @@ async fn run<L: Leave + 'static, C: Login, S>(
                 Kick::LoggedOff => log::info!("{peer}: disconnected; the session logged off"),
             }
             shared.forget(id, peer);
-            tell_and_end(connection.as_mut(), told_for(kick), |why| drop(told.disconnect(why))).await;
+            let why = told_for(kick);
+            tell_and_end(connection.as_mut(), &closing, why, |why| drop(told.disconnect(why))).await;
             stopped = kick == Kick::Stopped;
             None
         }
@@ -617,15 +630,21 @@ async fn run<L: Leave + 'static, C: Login, S>(
         }
         () = ending.0.gone.wait() => {
             let tell = |why| drop(told.disconnect(why));
-            let ended = lock_mode_gone(connection.as_mut(), &ending, &shared.leave, tell).await;
-            match ended {
-                Some(_) => {}
-                None if ending.0.released.is_set() => {
-                    log::info!("{peer}: dropped; lock mode's display did not end it in time");
+            match lock_mode_gone(connection.as_mut(), &closing, &ending, &shared.leave, tell).await {
+                LockModeEnd::Ended(ended) => Some(ended),
+                LockModeEnd::TookOver => {
+                    log::info!("{peer}: disconnected; the console was unlocked");
+                    None
                 }
-                None => log::info!("{peer}: disconnected; the console was unlocked"),
+                LockModeEnd::NotClosed => {
+                    log::info!("{peer}: dropped; the client did not close in time");
+                    None
+                }
+                LockModeEnd::NotEnded => {
+                    log::info!("{peer}: dropped; lock mode's display did not end it in time");
+                    None
+                }
             }
-            ended
         }
         never = present => match never {},
         }
@@ -701,21 +720,39 @@ fn told_for(kick: Kick) -> ErrorInfo {
     ErrorInfo::ProtocolIndependentCode(code)
 }
 
+/// How [`lock_mode_gone`] ended a connection.
+enum LockModeEnd<T> {
+    /// Its display ended the updates and the connection closed.
+    Ended(T),
+    /// The console was unlocked; the client was told [`TOOK_OVER`].
+    TookOver,
+    /// Its display ended the updates; the connection had not closed by [`run_told`]'s end.
+    NotClosed,
+    /// Its display had not ended the updates within [`TOLD`].
+    NotEnded,
+}
+
 /// Ends a connection whose lock-mode grant's screens all went, its clipboard cut first: told
-/// [`TOOK_OVER`] if `leave` finds the console unlocked, else ended by its display within [`TOLD`].
+/// [`TOOK_OVER`] if `leave` finds the console unlocked, else ended by its display, as
+/// [`run_told`] runs it.
 async fn lock_mode_gone<F: Future>(
     connection: Pin<&mut F>,
+    closing: &Flag,
     ending: &Ending,
     leave: &impl Leave,
     tell: impl FnOnce(ErrorInfo),
-) -> Option<F::Output> {
+) -> LockModeEnd<F::Output> {
     ending.0.clipboard.cut();
     if leave.console_unlocked().await {
-        tell_and_end(connection, TOOK_OVER, tell).await;
-        return None;
+        tell_and_end(connection, closing, TOOK_OVER, tell).await;
+        return LockModeEnd::TookOver;
     }
     ending.release();
-    tokio::time::timeout(TOLD, connection).await.ok()
+    match run_told(connection, closing).await {
+        Some(ended) => LockModeEnd::Ended(ended),
+        None if ending.has_display_ended() => LockModeEnd::NotClosed,
+        None => LockModeEnd::NotEnded,
+    }
 }
 
 /// What a client is told when this computer's own screen was unlocked, so it does not
@@ -723,19 +760,40 @@ async fn lock_mode_gone<F: Future>(
 const TOOK_OVER: ErrorInfo =
     ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::DisconnectedByOtherconnection);
 
-/// How long a kicked connection may take to send its [`told_for`] and close. One still logging
-/// in is not told; it is closed when this runs out.
+/// How long a kicked connection may take to send its [`told_for`] and close, or start closing.
+/// One still logging in is not told; it is closed when this runs out.
 const TOLD: Duration = Duration::from_secs(2);
 
-/// Passes `why` to `tell` for the server to send, then runs `connection` until the server has
-/// sent it and closed, or for [`TOLD`].
+/// How long a connection whose server shut its side of the stream runs on: IronRDP then waits 5 s
+/// for the client to close.
+const CLOSE_WAIT: Duration = Duration::from_secs(6);
+
+/// Passes `why` to `tell` for the server to send, then runs `connection` as [`run_told`] does.
 async fn tell_and_end(
     connection: Pin<&mut impl Future>,
+    closing: &Flag,
     why: ErrorInfo,
     tell: impl FnOnce(ErrorInfo),
 ) {
     tell(why);
-    let _ = tokio::time::timeout(TOLD, connection).await;
+    run_told(connection, closing).await;
+}
+
+/// Runs `connection` for [`TOLD`], and for [`CLOSE_WAIT`] from when `closing` is set within it;
+/// None if it has not ended by then.
+async fn run_told<F: Future>(mut connection: Pin<&mut F>, closing: &Flag) -> Option<F::Output> {
+    let told = tokio::time::timeout(TOLD, async {
+        tokio::select! {
+            biased;
+            ended = &mut connection => Some(ended),
+            () = closing.wait() => None,
+        }
+    });
+    match told.await {
+        Ok(Some(ended)) => Some(ended),
+        Ok(None) => tokio::time::timeout(CLOSE_WAIT, connection).await.ok(),
+        Err(_) => None,
+    }
 }
 
 /// Ends once [`RDP_HELLO`] has passed with no TLS ClientHello seen, or [`RDP_HANDSHAKE`] since
@@ -840,6 +898,8 @@ impl Seen {
 struct Recorded<S> {
     inner: S,
     seen: Arc<Mutex<Seen>>,
+    /// Set once the server shuts its side of the stream.
+    closing: Arc<Flag>,
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for Recorded<S> {
@@ -871,6 +931,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Recorded<S> {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.closing.set();
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 
