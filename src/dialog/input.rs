@@ -754,8 +754,16 @@ impl Dialog {
     /// held: the classic button, the closed tab or the page's control
     /// under it lights, and the one it left goes cold. True when a look
     /// that is `styled` has something to redraw; Classic draws no hot
-    /// state, except a Welcome panel's hot icon.
+    /// state, except a Welcome panel's hot icon. While the field's list is open only it lights.
     pub fn hover(&mut self, over: Option<DialogHit>, (x, y): (i32, i32), styled: bool) -> bool {
+        let listed = |h: &DialogHit| {
+            matches!(
+                h,
+                DialogHit::Row(_) | DialogHit::ListBar(_) | DialogHit::Drop
+            )
+        };
+        let open = self.field.as_ref().is_some_and(|f| f.combo.open.is_some());
+        let over = over.filter(|h| !open || listed(h));
         let button = self.live_button(over);
         let mut redraw = self.pointer.motion(button) && (styled || self.lights_icons());
         let help = matches!(over, Some(DialogHit::Help)).then_some(());

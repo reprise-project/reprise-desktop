@@ -114,3 +114,47 @@ fn a_press_beside_an_open_extra_list_only_closes_it() {
 fn names_of(d: &FileDlg) -> Vec<&str> {
     d.selected().iter().map(|e| e.name.as_str()).collect()
 }
+
+#[test]
+fn a_place_beside_an_open_list_stays_cold() {
+    let mut d = with_place();
+    for open in [
+        Hit::FileType(combo::Hit::Drop),
+        Hit::LookIn(combo::Hit::Drop),
+    ] {
+        d.click(R, Some(open), Mods::default());
+        d.hover(Some(Hit::Places(0)));
+        assert_eq!(d.places.hot, None, "{open:?}'s list is open");
+        d.click(R, None, Mods::default());
+        d.hover(Some(Hit::Places(0)));
+        assert_eq!(d.places.hot, Some(0), "with {open:?}'s list closed");
+        d.leave();
+    }
+}
+
+#[test]
+fn a_cut_extra_label_under_the_open_files_of_type_list_tips_nothing() {
+    const LONG: &str = "Character encoding used when the document is written back to disk";
+    let mut d = multi(DlgMode::Open, false);
+    let form = form::Form::new(vec![form::Item::label_at(
+        "long", FIELD_X, EXTRA_Y, 60, LONG,
+    )]);
+    d.set_extra(form, EXTRA_H, &ControlMetrics::CLASSIC);
+    let big = Rect::new(0, 0, CLIENT.0, CLIENT.1 + EXTRA_H);
+    let t = text();
+    let mut c = Canvas::new(big.width as u32, big.height as u32);
+    d.draw(&mut c, &t, &Theme::default().paint(), big, 11);
+    let (x, y) = (FIELD_X + 20, EXTRA_Y + 5);
+    d.filetype.open = Some(0);
+    d.motion(&t, 11, big, x, y);
+    d.blink();
+    assert_eq!(d.extra().unwrap().label_tip(), None);
+    d.filetype.open = None;
+    d.motion(&t, 11, big, x, y);
+    d.blink();
+    assert_eq!(
+        d.extra().unwrap().label_tip().as_deref(),
+        Some(LONG),
+        "with the list closed"
+    );
+}

@@ -309,8 +309,8 @@ impl FileDlg {
     }
 
     /// Whether Look in's or Files of type's list, or an extra row's list or colour popup, is
-    /// open and `hit` is off its control. A press there only closes it; an extra row's form
-    /// judges a press on its own rows ([`form::Form::click`]).
+    /// open and `hit` is off its control. A press there only closes it and the pointer there
+    /// lights nothing; an extra row's form judges its own rows ([`form::Form::click`]).
     fn off_list(&self, hit: Option<Hit>) -> bool {
         let extra = self.extra.as_ref().is_some_and(|(f, _)| f.popup_open());
         let open = self.lookin.open.is_some() || self.filetype.open.is_some() || extra;
@@ -600,13 +600,15 @@ impl FileDlg {
     /// under it lights, or the held title follows it. A redraw only when
     /// that changed and the look draws it lit.
     /// The pointer resting on a cut label of the extra rows times its tip ([`FileDlg::blink`]).
+    /// While a list is open only that list lights, and no label tips.
     pub fn motion(&mut self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> Event {
         if self.marquee.is_some() {
             return self.marquee_motion(r, (x, y));
         }
         let hit = self.hit(text, px, r, x, y);
-        let at = self.extra_point(r, x, y);
-        let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.rest_pointer(Some(at)));
+        let listed = self.lookin.open.is_some() || self.filetype.open.is_some();
+        let at = (!listed).then_some(self.extra_point(r, x, y));
+        let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.rest_pointer(at));
         match self.hover(hit) {
             Event::None if hid => Event::Redraw,
             e => e,
@@ -700,6 +702,7 @@ impl FileDlg {
         if followed {
             return Event::Redraw;
         }
+        let hit = if self.off_list(hit) { None } else { hit };
         let column = match hit {
             Some(Hit::Shell(shellview::Hit::Header(i))) => Some(i),
             _ => None,

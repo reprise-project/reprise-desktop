@@ -1188,3 +1188,20 @@ fn a_press_on_a_button_beside_the_open_list_only_closes_it() {
         "with the list closed OK runs"
     );
 }
+
+#[test]
+fn a_button_beside_runs_open_list_stays_cold() {
+    let mut d = Dialog::run(&history());
+    let ok = d.buttons.iter().position(|b| b.default).expect("OK");
+    d.click(Some(DialogHit::Drop));
+    d.release(None);
+    d.hover(Some(DialogHit::Button(ok)), (0, 0), true);
+    assert_eq!(d.lit(), None, "OK stays cold");
+    d.click(None);
+    d.hover(Some(DialogHit::Button(ok)), (0, 0), true);
+    assert_eq!(
+        d.lit(),
+        Some((ok, Interaction::Hot)),
+        "with the list closed"
+    );
+}

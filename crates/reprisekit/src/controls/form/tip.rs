@@ -43,9 +43,10 @@ impl Form {
         })
     }
 
-    /// The pointer now rests on label `on` (or none): a new rest starts its count again.
-    /// Whether a shown tip went away.
+    /// The pointer now rests on label `on` (or none): a new rest starts its count again. While a
+    /// list or colour popup is open it rests on none. Whether a shown tip went away.
     pub(super) fn rest_tip(&mut self, on: Option<usize>) -> bool {
+        let on = on.filter(|_| !self.popup_open());
         if self.tip.item == on {
             return false;
         }

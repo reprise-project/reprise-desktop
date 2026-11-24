@@ -466,14 +466,20 @@ impl PropSheet {
         self.event(i, ev)
     }
 
-    /// A left press on `hit`. A press off the open page's dropped list or colour popup only
-    /// closes it ([`Form::click`](form::Form::click)), on the page or on the sheet's own parts.
-    pub fn click(&mut self, hit: Option<Hit>) -> Event {
-        let hit = match hit {
+    /// `hit`, or none on the sheet's own parts while the open page's dropped list or colour
+    /// popup is open: the page alone takes the pointer then.
+    fn past_popup(&self, hit: Option<Hit>) -> Option<Hit> {
+        match hit {
             Some(Hit::Control(_)) => hit,
             _ if self.open().popup_open() => None,
             _ => hit,
-        };
+        }
+    }
+
+    /// A left press on `hit`. A press off the open page's dropped list or colour popup only
+    /// closes it ([`Form::click`](form::Form::click)), on the page or on the sheet's own parts.
+    pub fn click(&mut self, hit: Option<Hit>) -> Event {
+        let hit = self.past_popup(hit);
         match hit {
             Some(Hit::Tab(i)) => {
                 let dropped = self.drop_cursor();
@@ -523,8 +529,10 @@ impl PropSheet {
     }
 
     /// The pointer moved to (`x`, `y`) over `hit`: the closed tab under it lights,
-    /// unless a part of the page is held; the page tracks the rest.
+    /// unless a part of the page is held; the page tracks the rest. While the page's list or
+    /// colour popup is open only that lights.
     pub fn motion(&mut self, x: i32, y: i32, hit: Option<Hit>) -> Event {
+        let hit = self.past_popup(hit);
         let bar = match hit {
             Some(Hit::ListBar(b)) => Some(b),
             _ => None,

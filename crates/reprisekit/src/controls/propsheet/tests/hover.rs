@@ -104,3 +104,27 @@ fn a_classic_sheet_asks_no_redraw_for_a_tab_under_the_pointer() {
     assert_eq!(s.motion(x, y, s.hit(x, y, &text, px)), Event::None);
     assert!(drawn(&s, &theme) == rest, "a Classic tab draws the same");
 }
+
+#[test]
+fn a_closed_tab_stays_cold_while_the_pages_list_is_open() {
+    use crate::controls::hosted::Hosted;
+    let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
+    let (text, px) = (TextRenderer::load(&theme.fonts), theme.fonts.size_px);
+    let mut s = sheet(&["General", "Advanced"], (398, 424));
+    s.pages[0].items.push(Item::new(
+        "combo",
+        Rect::new(20, 80, 150, 21),
+        Control::Combo(crate::controls::combo::Combo::new(&["A", "B"], 0, 2)),
+    ));
+    drawn(&s, &theme);
+    let t = s.layout(&text, px).tabs[1];
+    let (x, y) = (t.x + 5, t.y + 5);
+    if let Some(Control::Combo(c)) = s.open_mut().item_mut("combo").map(|i| &mut i.control) {
+        c.open = Some(0);
+    }
+    s.motion(x, y, s.hit(x, y, &text, px));
+    assert_eq!(s.tabs.hot, None, "the tab beside the open list stays cold");
+    s.open_mut().dismiss();
+    s.motion(x, y, s.hit(x, y, &text, px));
+    assert_eq!(s.tabs.hot, Some(1), "with the list closed it lights");
+}
