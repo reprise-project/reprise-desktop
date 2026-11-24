@@ -746,18 +746,21 @@ fn behind_the_desktop(
 }
 
 #[test]
-fn a_closing_override_redirect_window_leaves_the_focus_where_it_is() {
-    let (mut h, mut c, a, b) = behind_the_desktop(true);
-    c.destroy(b);
-    h.roundtrip(&mut c);
-    assert!(h.state.win(b.id).is_none(), "the window went");
-    assert_eq!(h.state.focused, None, "the desktop keeps the keyboard");
-    assert!(h.state.win(a.id).is_some());
+fn a_window_closing_without_the_keyboard_leaves_it_where_it_is() {
+    for menu in [true, false] {
+        let (mut h, mut c, a, b) = behind_the_desktop(menu);
+        c.destroy(b);
+        h.roundtrip(&mut c);
+        assert!(h.state.win(b.id).is_none(), "the window went");
+        assert_eq!(h.state.focused, None, "menu {menu}: the desktop keeps it");
+        assert!(h.state.win(a.id).is_some());
+    }
 }
 
 #[test]
-fn a_closing_window_hands_the_focus_to_the_top_one() {
+fn a_closing_window_with_the_keyboard_hands_it_to_the_top_one() {
     let (mut h, mut c, a, b) = behind_the_desktop(false);
+    h.state.focus_window(b.id);
     c.destroy(b);
     h.roundtrip(&mut c);
     assert!(h.state.win(b.id).is_none());

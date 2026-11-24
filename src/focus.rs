@@ -472,6 +472,32 @@ mod tests {
         assert_eq!(h.state.focused, Some(explorer.id), "the token raises");
     }
 
+    #[test]
+    fn a_window_closing_under_start_leaves_the_desktop_the_keyboard() {
+        const KEY_ESC: u32 = 1;
+        for style in ["classic", "glass"] {
+            let toml = format!("startmenu_style = \"{style}\"\n");
+            let config = crate::config::Config::parse(&toml).unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            h.map_toplevel(&mut c, "test.a", 300, 200);
+            let b = h.map_toplevel(&mut c, "test.b", 300, 200);
+            h.click(900.0, 600.0);
+            assert_eq!(h.state.focused, None, "{style:?}: the desktop has it");
+            h.state.toggle_start_from_keys();
+            let open = |s: &State| !s.menus.is_empty() || s.start_panel.is_some();
+            assert!(open(&h.state), "{style:?}: Start is open");
+            c.destroy(b);
+            h.roundtrip(&mut c);
+            assert!(open(&h.state), "{style:?}: Start stays open");
+            h.key(KEY_ESC, true);
+            h.key(KEY_ESC, false);
+            assert!(!open(&h.state), "{style:?}: Escape closes Start");
+            assert_eq!(h.state.focused, None, "{style:?}: the desktop keeps it");
+        }
+    }
+
     /// A focused fullscreen window on TEST-1 of two outputs, and its tree's layer.
     fn fullscreen_on_two_outputs() -> (
         crate::harness::Harness,

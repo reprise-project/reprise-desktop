@@ -163,6 +163,23 @@ impl State {
         self.redraw_taskbars();
     }
 
+    /// Whether `w` is the window the taskbar with the keyboard hands it back to.
+    pub(crate) fn bar_returns_to(&self, w: WindowId) -> bool {
+        self.bar_shared
+            .keys
+            .is_some_and(|k| k.back == Back::Window(w))
+    }
+
+    /// The window the bar hands the keyboard back to left, `over` the Reprise dialog it stood
+    /// over (`Window::over_dialog`): that dialog takes its place, else Escape focuses the top window.
+    pub(crate) fn bar_back_left(&mut self, over: Option<u64>) {
+        if let Some(id) = over.filter(|&id| self.dialog_index(id).is_some())
+            && let Some(k) = self.bar_shared.keys.as_mut()
+        {
+            k.back = Back::Dialog(id);
+        }
+    }
+
     pub fn end_bar_keys(&mut self) {
         if let Some(k) = self.bar_shared.keys.take() {
             self.redraw_taskbar(k.bar);
