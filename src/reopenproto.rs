@@ -62,9 +62,13 @@ impl GlobalDispatch2<RepriseReopenV1, State> for ReopenGlobal {
     }
 }
 
-/// The argument a `set` names: none for null, empty or one holding a control character.
+/// The longest argument a window may name, in bytes.
+const ARGUMENT_MAX: usize = 1024;
+
+/// The argument a `set` names: none for null, empty, over [`ARGUMENT_MAX`] or one holding a
+/// control character.
 fn argument(a: Option<String>) -> Option<String> {
-    a.filter(|a| !a.is_empty() && !a.contains(char::is_control))
+    a.filter(|a| !a.is_empty() && a.len() <= ARGUMENT_MAX && !a.contains(char::is_control))
 }
 
 impl Dispatch2<RepriseReopenV1, State> for ReopenData {
@@ -124,6 +128,13 @@ mod tests {
             h.roundtrip(&mut c);
             assert_eq!(arg(&h), None, "{bad:?} names none");
         }
+    }
+
+    #[test]
+    fn an_argument_over_1024_bytes_names_none() {
+        let longest = "/".repeat(super::ARGUMENT_MAX);
+        assert_eq!(super::argument(Some(longest.clone())), Some(longest));
+        assert_eq!(super::argument(Some("/".repeat(1025))), None);
     }
 
     #[test]
