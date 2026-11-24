@@ -358,3 +358,35 @@ fn the_file_jobs_read_their_arguments_or_fall_back_to_a_folder_window() {
     let start = parse_args(["--put", "copy", "/t", "--", "/a"].map(std::ffi::OsString::from));
     assert_eq!(start.place, Place::Folder(PathBuf::from("/t")));
 }
+
+#[test]
+fn a_folder_window_reopens_at_its_place() {
+    use repriseapp::Extended;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let server = Place::Network("smb://nas".into());
+    for (place, back) in [
+        (Place::Folder(dir.path().to_path_buf()), None),
+        (Place::Computer, None),
+        (Place::RecycleBin, None),
+        (Place::network(), None),
+        (server, Some(Place::network())),
+    ] {
+        let arg = reopen_arg(&place).expect("an argument");
+        let reopened = parse_args([arg.into()]).place;
+        assert_eq!(reopened, back.unwrap_or(place));
+    }
+    let lazy = |args: &[&str]| Lazy {
+        start: parse_args(args.iter().map(std::ffi::OsString::from)),
+        inner: None,
+        units: TextUnits::ONE,
+    };
+    assert_eq!(
+        lazy(&["Computer"]).reopen(MAIN).as_deref(),
+        Some("Computer")
+    );
+    assert_eq!(
+        lazy(&["--bin-properties"]).reopen(MAIN),
+        None,
+        "a sheet alone"
+    );
+}

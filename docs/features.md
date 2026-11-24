@@ -282,9 +282,13 @@ are.
   keeps its windows until it lets go.
 - **Session restore.** The programs you left open start again at the next
   login, on their desktops, with their tab and snap groups (`[session] restore`).
-  Each starts as its Start menu entry starts it, without the files or
-  arguments it was opened with: Settings opens on the page it was last left
-  on, Notepad on an empty document.
+  Notepad comes back with each file it had open, Explorer with each window at
+  its folder (a network server's at the Network list) and Settings on its
+  page. An Untitled Notepad comes back empty, as unsaved text is not kept; a
+  file gone by then comes back as an empty document under its name, written
+  only if you save it, and a folder gone by then opens Home. Other programs
+  start once each, as their Start menu entry starts them, without the files
+  they had open.
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries
   on and off.
 - **Language and formats per account.** Settings > Region & Language sets

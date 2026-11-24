@@ -226,6 +226,8 @@ pub struct Window {
     /// stands over a dialog (`over_dialog`).
     pub owned: bool,
     pub on_top: bool,
+    /// The argument its program starts again with at session restore (`reopenproto`).
+    pub reopen: Option<String>,
     /// A consent prompt ([`crate::mapfocus::is_consent`]), set at map: stacked in
     /// `layers.prompts`, and input from an app's RemoteDesktop session never reaches it.
     pub consent: bool,

@@ -48,6 +48,13 @@ pub trait Extended {
     fn on_top(&self) -> Option<bool> {
         None
     }
+    /// The one command-line argument that opens toplevel `win` again as it is now (a file, a
+    /// folder, `--page=...`), which session restore starts the program's desktop entry with at
+    /// the next login; `None` starts it as the entry does. Read when its window is made and after
+    /// every event.
+    fn reopen(&self, _win: WinId) -> Option<String> {
+        None
+    }
     /// The smallest client size resizable window `win` can be dragged
     /// to, read when its window is made; `None` keeps a child's wanted
     /// size, or `MIN_SIZE` for the main window, as the floor.

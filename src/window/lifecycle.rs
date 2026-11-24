@@ -115,6 +115,7 @@ impl State {
             modal: false,
             owned: false,
             on_top: false,
+            reopen: None,
             consent: false,
             over_dialog: None,
             frame_scale: 1,
@@ -284,7 +285,7 @@ impl State {
         // A client can gain an owner between first configure and map.
         let placeable = win.placeable();
         let mut want = (win.placement.take()).filter(|_| placeable && flicker.is_none());
-        let (app, title) = (win.app(), win.title());
+        let (app, title, reopen) = (win.app(), win.title(), win.reopen.clone());
         // Windows of one app planned together can each plan the same saved
         // tab group; the one that maps as another group's takes its frame.
         let mut resized = false;
@@ -304,7 +305,7 @@ impl State {
             }
         }
         if placeable {
-            self.session.restoring.mapped(&app);
+            self.session.restoring.mapped(&app, reopen.as_deref());
         }
         let out = self.opening_output(w, want.as_ref());
         let area = self.usable_area(out.as_ref());

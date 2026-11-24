@@ -200,11 +200,10 @@ impl State {
         {
             base = self.regroup_want(f);
         }
-        if first
-            && let Some(d) = self
-                .session
-                .restoring
-                .desktop(app_id, std::time::Instant::now())
+        let reopen = w
+            .and_then(|w| self.win(w))
+            .and_then(|x| x.reopen.as_deref());
+        if let Some(d) = (self.session.restoring).desktop(app_id, reopen, first, now)
             && d < self.desktops.count
         {
             base.desktop = Some(d);

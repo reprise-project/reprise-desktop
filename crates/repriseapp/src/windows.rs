@@ -222,6 +222,7 @@ impl Host {
             spot: None,
             tip: None,
             tip_waits: false,
+            reopen: None,
         }
     }
 
@@ -244,8 +245,12 @@ impl Host {
             self.foreign = self.import_parent(&handle, &window);
         }
         self.send_tag(&window, MAIN, caption);
+        let reopen = self.app.reopen(MAIN);
+        if reopen.is_some() {
+            send_reopen(self.reopen_manager.as_ref(), &window, reopen.as_deref());
+        }
         window.commit();
-        let slot = self.new_slot(
+        let mut slot = self.new_slot(
             MAIN,
             Shell::Toplevel(window),
             scaling,
@@ -253,6 +258,7 @@ impl Host {
             (w, h),
             caption,
         );
+        slot.reopen = reopen;
         self.slots.insert(0, slot);
     }
 
@@ -462,6 +468,10 @@ impl Host {
                 self.join_tabs(&window, c.id);
             }
             self.send_tag(&window, c.id, caption);
+            let reopen = self.app.reopen(c.id);
+            if reopen.is_some() {
+                send_reopen(self.reopen_manager.as_ref(), &window, reopen.as_deref());
+            }
             window.commit();
             let mut slot = self.new_slot(
                 c.id,
@@ -474,6 +484,7 @@ impl Host {
             slot.modal = c.modal;
             slot.dialog = dialog;
             slot.parent = parent_id;
+            slot.reopen = reopen;
             self.slots.push(slot);
         }
         let mut resized = Vec::new();
@@ -573,6 +584,21 @@ impl Host {
         if let (Some(m), Some(w)) = (&self.on_top_manager, main.and_then(|s| s.window.toplevel())) {
             m.set(w.xdg_toplevel(), u32::from(want));
             self.on_top = want;
+        }
+    }
+
+    /// Names each toplevel's [`Extended::reopen`](crate::Extended::reopen) argument where it
+    /// differs from the one last sent.
+    pub(crate) fn sync_reopen(&mut self) {
+        for i in 0..self.slots.len() {
+            let want = self.app.reopen(self.slots[i].id);
+            let s = &self.slots[i];
+            if want != s.reopen
+                && let Some(w) = s.window.toplevel()
+            {
+                send_reopen(self.reopen_manager.as_ref(), w, want.as_deref());
+                self.slots[i].reopen = want;
+            }
         }
     }
 
@@ -882,6 +908,19 @@ pub(crate) fn decoration_mode(caption: Caption) -> DecorationMode {
     match caption {
         Caption::None => DecorationMode::Client,
         _ => DecorationMode::Server,
+    }
+}
+
+/// Name `window`'s session-restore argument, or none; one over [`wire::TEXT_MAX`] names none,
+/// as a cut one would open something else.
+fn send_reopen(
+    manager: Option<&crate::reopen::reprise_reopen_v1::RepriseReopenV1>,
+    window: &Window,
+    arg: Option<&str>,
+) {
+    if let Some(m) = manager {
+        let arg = arg.filter(|a| a.len() <= wire::TEXT_MAX);
+        m.set(window.xdg_toplevel(), arg.map(String::from));
     }
 }
 

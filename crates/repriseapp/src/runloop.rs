@@ -2,6 +2,7 @@
 
 use crate::deliver::blink_target;
 use crate::look::{Look, publish_theme, sized, text_for};
+use crate::reopen::reprise_reopen_v1;
 use crate::sizing::opening_size;
 use crate::tabgroup::reprise_tabs_v1;
 use crate::windows::TAB_GROUPS;
@@ -203,6 +204,9 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
     let on_top_manager = globals
         .bind::<crate::ontop::reprise_on_top_v1::RepriseOnTopV1, _, _>(&qh, 1..=1, OnTopOf)
         .ok();
+    let reopen_manager = globals
+        .bind::<reprise_reopen_v1::RepriseReopenV1, _, _>(&qh, 1..=1, NoEvents)
+        .ok();
     // The main window itself is `sync_main`'s, so a program that starts
     // hidden never gets a surface for it.
     let ((w, h), _) = opening_size(&*app);
@@ -266,6 +270,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         effects,
         tab_groups,
         on_top_manager,
+        reopen_manager,
         on_top: false,
         outputs: None,
         inhibit_manager,
@@ -530,6 +535,7 @@ no_events!(
     xdg_system_bell_v1::XdgSystemBellV1,
     zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
     reprise_tabs_v1::RepriseTabsV1,
+    reprise_reopen_v1::RepriseReopenV1,
     wp_viewporter::WpViewporter,
     wp_viewport::WpViewport,
     wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,

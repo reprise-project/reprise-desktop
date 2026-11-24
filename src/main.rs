@@ -115,6 +115,7 @@ mod recentwatch;
 mod regionview;
 mod remotekeys;
 mod render;
+mod reopenproto;
 mod samepixels;
 mod sandbox;
 mod screencopy;

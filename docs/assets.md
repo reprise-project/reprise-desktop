@@ -35,8 +35,8 @@ These share the project's license, GPL-3.0-or-later:
   Adwaita Sans glyphs as outlines, under the SIL Open Font License.
 - **Screenshots** in `docs/screenshots/`.
 - **`protocols/reprise-input-v1.xml`**, **`protocols/reprise-tabs-v1.xml`**,
-  **`protocols/reprise-on-top-v1.xml`** and
-  **`protocols/reprise-output-trial-v1.xml`**, Reprise's own Wayland
+  **`protocols/reprise-on-top-v1.xml`**, **`protocols/reprise-reopen-v1.xml`**
+  and **`protocols/reprise-output-trial-v1.xml`**, Reprise's own Wayland
   protocols.
 
 ## Fonts

@@ -582,6 +582,16 @@ mod tests {
             entry: "foot.desktop".into(),
             desktop: 1,
             loose: vec!["~/notes".into()],
+            windows: vec![
+                crate::session::SavedWindow {
+                    reopen: Some("/d/a b.txt".into()),
+                    desktop: 2,
+                },
+                crate::session::SavedWindow {
+                    reopen: None,
+                    desktop: 1,
+                },
+            ],
         }];
         let tabs = vec![crate::session::SavedTabs {
             apps: vec!["foot".into(), "foot".into()],

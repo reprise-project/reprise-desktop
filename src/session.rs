@@ -63,6 +63,31 @@ pub struct SavedApp {
     /// The titles of its windows in no saved tab group, when it has one in a group.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loose: Vec<String>,
+    /// When a window of it named its restore argument: one per argument its windows named, and
+    /// one for those that named none. Each starts the app once; empty starts it once plainly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<SavedWindow>,
+}
+
+/// The windows of a saved app that start it again with one argument, or with none.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedWindow {
+    /// What it named through `reprise_reopen_v1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reopen: Option<String>,
+    /// The virtual desktop the newest of them was on, from 0.
+    #[serde(default)]
+    pub desktop: usize,
+}
+
+impl SavedApp {
+    /// The argument of each start that brings it back.
+    pub fn starts(&self) -> Vec<Option<&str>> {
+        if self.windows.is_empty() {
+            return vec![None];
+        }
+        self.windows.iter().map(|w| w.reopen.as_deref()).collect()
+    }
 }
 
 fn excluded(exclude: &[String], app_id: &str) -> bool {
@@ -92,9 +117,32 @@ pub fn pick(open: &[(String, usize)], apps: &[AppEntry], exclude: &[String]) -> 
             entry: e.id.to_string(),
             desktop: *desktop,
             loose: Vec::new(),
+            windows: Vec::new(),
         });
     }
     saved
+}
+
+/// Give each app in `saved` that one of its `open` windows (app id, desktop, argument) named an
+/// argument for its [`SavedApp::windows`], in the order they came.
+pub fn note_reopen(saved: &mut [SavedApp], open: &[(String, usize, Option<String>)]) {
+    for s in saved {
+        let mine = || open.iter().filter(|(a, ..)| *a == s.app_id);
+        if !mine().any(|(.., r)| r.is_some()) {
+            continue;
+        }
+        let mut windows: Vec<SavedWindow> = Vec::new();
+        for (_, desktop, reopen) in mine() {
+            match windows.iter_mut().find(|w| w.reopen == *reopen) {
+                Some(w) => w.desktop = *desktop,
+                None => windows.push(SavedWindow {
+                    reopen: reopen.clone(),
+                    desktop: *desktop,
+                }),
+            }
+        }
+        s.windows = windows;
+    }
 }
 
 /// A tab group the session ended with.
@@ -190,36 +238,61 @@ pub fn to_start<'a>(
         .collect()
 }
 
-/// The desktops the restored apps' first windows go back to, while the login is recent.
+/// The desktops the restored apps' windows go back to, while the login is recent: one per start.
 #[derive(Debug, Default)]
 pub struct Pending {
-    desktops: Vec<(String, usize)>,
+    /// (app id, the start's argument, desktop).
+    desktops: Vec<(String, Option<String>, usize)>,
     until: Option<Instant>,
 }
 
 impl Pending {
     pub fn new(apps: &[&SavedApp], now: Instant) -> Pending {
+        let desktops = apps.iter().flat_map(|a| {
+            let plain = (a.windows.is_empty()).then(|| (a.app_id.clone(), None, a.desktop));
+            let named = (a.windows.iter()).map(|w| (a.app_id.clone(), w.reopen.clone(), w.desktop));
+            plain.into_iter().chain(named)
+        });
         Pending {
-            desktops: apps.iter().map(|a| (a.app_id.clone(), a.desktop)).collect(),
+            desktops: desktops.collect(),
             until: Some(now + DESKTOP_WINDOW),
         }
     }
 
-    /// The desktop the next window of `app_id` goes to, if it is a
-    /// restored app's first and the login is recent.
-    pub fn desktop(&self, app_id: &str, now: Instant) -> Option<usize> {
+    /// The start a window of `app_id` naming `reopen` came from: the one with that argument,
+    /// else, for the app's `first` window, its first still awaited.
+    fn start_of(&self, app_id: &str, reopen: Option<&str>, first: bool) -> Option<usize> {
+        let named = reopen.and_then(|r| {
+            (self.desktops.iter()).position(|(a, s, _)| a == app_id && s.as_deref() == Some(r))
+        });
+        named.or_else(|| {
+            first
+                .then(|| self.desktops.iter().position(|(a, ..)| a == app_id))
+                .flatten()
+        })
+    }
+
+    /// The desktop the next window of `app_id` naming `reopen` goes to, if it is a restored
+    /// start's ([`Pending::start_of`]) and the login is recent.
+    pub fn desktop(
+        &self,
+        app_id: &str,
+        reopen: Option<&str>,
+        first: bool,
+        now: Instant,
+    ) -> Option<usize> {
         if self.until.is_none_or(|u| now > u) {
             return None;
         }
-        self.desktops
-            .iter()
-            .find(|(a, _)| a == app_id)
-            .map(|&(_, d)| d)
+        let i = self.start_of(app_id, reopen, first)?;
+        Some(self.desktops[i].2)
     }
 
-    /// `app_id`'s first window has mapped: its next ones open as usual.
-    pub fn mapped(&mut self, app_id: &str) {
-        self.desktops.retain(|(a, _)| a != app_id);
+    /// A window of `app_id` naming `reopen` has mapped: the start it came from is back.
+    pub fn mapped(&mut self, app_id: &str, reopen: Option<&str>) {
+        if let Some(i) = self.start_of(app_id, reopen, true) {
+            self.desktops.remove(i);
+        }
     }
 
     /// Whether a restored app's first window is still awaited at `now`.
@@ -328,18 +401,18 @@ impl<T: Copy + Eq> PendingTabs<T> {
         }
     }
 
-    /// Restore has started `app_id` once: it may start again for empty
-    /// slots and missing loose windows, at most once per window it had, that
-    /// first start included.
-    pub fn started(&mut self, app_id: &str) {
+    /// Restore has started `app_id` `starts` times: it may start again for empty
+    /// slots and missing loose windows, at most once per window it had, those
+    /// first starts included.
+    pub fn started(&mut self, app_id: &str, starts: usize) {
         let loose = self.loose.iter().filter(|(a, _)| a == app_id).count();
         let windows = self.free_slots(app_id) + loose;
-        if windows > 1 {
+        if windows > starts {
             self.restarts.push(Restart {
                 app: app_id.to_string(),
-                left: windows - 1,
+                left: windows - starts,
                 loose,
-                in_flight: 1,
+                in_flight: starts,
                 armed: false,
             });
         }
@@ -678,13 +751,14 @@ pub fn save(state: &mut State) {
     }
     let (saved, tabs, snaps) = if state.config.session.restore {
         let saving = |w: &crate::window::Window| w.mapped && w.placeable();
-        let open: Vec<(String, usize)> = state
-            .windows
-            .iter()
+        let open: Vec<(String, usize, Option<String>)> = (state.windows.iter())
             .filter(|w| saving(w))
-            .map(|w| (w.app(), w.desktop))
+            .map(|w| (w.app(), w.desktop, w.reopen.clone()))
             .collect();
-        let saved = pick(&open, &state.app_index, &state.config.session.exclude);
+        let desktops: Vec<(String, usize)> =
+            (open.iter()).map(|(a, d, _)| (a.clone(), *d)).collect();
+        let mut saved = pick(&desktops, &state.app_index, &state.config.session.exclude);
+        note_reopen(&mut saved, &open);
         let groups: Vec<SavedTabs> = state
             .tabs
             .groups
@@ -714,7 +788,6 @@ pub fn save(state: &mut State) {
             .filter(|w| saving(w) && state.tabs.groups.group_of(w.id).is_none())
             .map(|w| (w.app(), w.title()))
             .collect();
-        let mut saved = saved;
         let grouped = |a: &str| {
             tabs.iter().any(|t| t.apps.iter().any(|x| x == a))
                 || (snaps.iter().flat_map(|g| &g.members)).any(|m| m.app == a)
@@ -845,21 +918,31 @@ fn restore_now(state: &mut State, autostarted: &[Entry]) {
     let now = Instant::now();
     let started: Vec<SavedApp> = start.iter().map(|(s, _)| (*s).clone()).collect();
     let argvs: Vec<_> = (start.iter())
-        .map(|(_, e)| {
-            (
-                reprisefs::apps::launch_argv(e, &state.config.terminal),
-                e.id.clone(),
-                e.path.clone(),
-            )
+        .map(|(s, e)| {
+            let argvs = start_argvs(s, e, &state.config.terminal);
+            (argvs, e.id.clone(), e.path.clone())
         })
         .collect();
-    for (s, (argv, id, dir)) in started.iter().zip(&argvs) {
+    for (s, (argvs, id, dir)) in started.iter().zip(&argvs) {
         log::info!("session: restoring {} ({id})", s.app_id);
-        if let Ok(argv) = argv {
+        for argv in argvs {
             crate::spawn::spawn_argv_in(argv, Some(&id.app_id()), dir.as_deref(), &state.env, None);
         }
     }
     await_windows(state, &started, now);
+}
+
+/// The command lines that start `s` again from its entry `e`, one per [`SavedApp::starts`]; a
+/// refused entry gives none.
+fn start_argvs(s: &SavedApp, e: &AppEntry, terminal: &str) -> Vec<Vec<std::ffi::OsString>> {
+    let argv = |reopen: Option<&str>| match reopen {
+        Some(a) => reprisefs::apps::reopen_argv(e, terminal, a),
+        None => reprisefs::apps::launch_argv(e, terminal),
+    };
+    s.starts()
+        .into_iter()
+        .filter_map(|r| argv(r).ok())
+        .collect()
 }
 
 /// Wait for the windows of `started`, the saved apps restore has just started: their desktops,
@@ -868,7 +951,7 @@ pub(crate) fn await_windows(state: &mut State, started: &[SavedApp], now: Instan
     let s = &mut state.session;
     let mut regrouping = PendingTabs::new(&s.tabs, &s.apps, now);
     for a in started {
-        regrouping.started(&a.app_id);
+        regrouping.started(&a.app_id, a.starts().len());
     }
     let started: Vec<&SavedApp> = started.iter().collect();
     s.restoring = Pending::new(&started, now);
@@ -935,6 +1018,14 @@ mod tests {
             entry: entry.into(),
             desktop,
             loose: Vec::new(),
+            windows: Vec::new(),
+        }
+    }
+
+    fn window(reopen: Option<&str>, desktop: usize) -> SavedWindow {
+        SavedWindow {
+            reopen: reopen.map(String::from),
+            desktop,
         }
     }
 
@@ -1024,16 +1115,107 @@ mod tests {
         let b = saved("gimp", "gimp.desktop", 0);
         let t = Instant::now();
         let mut p = Pending::new(&[&a, &b], t);
-        assert_eq!(p.desktop("foot", t), Some(2));
-        assert_eq!(p.desktop("gimp", t), Some(0));
-        assert_eq!(p.desktop("other", t), None);
-        p.mapped("foot");
-        assert_eq!(p.desktop("foot", t), None);
+        assert_eq!(p.desktop("foot", None, true, t), Some(2));
+        assert_eq!(p.desktop("foot", None, false, t), None, "not foot's first");
+        assert_eq!(p.desktop("gimp", None, true, t), Some(0));
+        assert_eq!(p.desktop("other", None, true, t), None);
+        p.mapped("foot", None);
+        assert_eq!(p.desktop("foot", None, true, t), None);
         assert_eq!(
-            p.desktop("gimp", t + DESKTOP_WINDOW + Duration::from_secs(1)),
+            p.desktop(
+                "gimp",
+                None,
+                true,
+                t + DESKTOP_WINDOW + Duration::from_secs(1)
+            ),
             None
         );
-        assert_eq!(Pending::default().desktop("gimp", t), None);
+        assert_eq!(Pending::default().desktop("gimp", None, true, t), None);
+    }
+
+    #[test]
+    fn note_reopen_keeps_each_argument_once_with_its_newest_desktop() {
+        let mut apps = [
+            saved("ed", "ed.desktop", 0),
+            saved("foot", "foot.desktop", 0),
+        ];
+        let open = |a: &str, d, r: Option<&str>| (a.to_string(), d, r.map(String::from));
+        let open = [
+            open("ed", 0, Some("/a")),
+            open("foot", 1, None),
+            open("ed", 1, None),
+            open("ed", 3, Some("/b")),
+            open("ed", 2, Some("/a")),
+            open("ed", 4, None),
+        ];
+        note_reopen(&mut apps, &open);
+        assert_eq!(
+            apps[0].windows,
+            [
+                window(Some("/a"), 2),
+                window(None, 4),
+                window(Some("/b"), 3)
+            ]
+        );
+        assert_eq!(apps[0].starts(), [Some("/a"), None, Some("/b")]);
+        assert!(apps[1].windows.is_empty(), "foot named nothing");
+        assert_eq!(apps[1].starts(), [None], "one plain start");
+    }
+
+    #[test]
+    fn each_restored_window_goes_back_to_the_desktop_saved_with_its_argument() {
+        let ed = SavedApp {
+            windows: vec![
+                window(Some("/a"), 1),
+                window(None, 2),
+                window(Some("/b"), 3),
+            ],
+            ..saved("ed", "ed.desktop", 3)
+        };
+        let t = Instant::now();
+        let mut p = Pending::new(&[&ed], t);
+        assert_eq!(
+            p.desktop("ed", Some("/b"), false, t),
+            Some(3),
+            "by its argument"
+        );
+        assert_eq!(
+            p.desktop("ed", None, false, t),
+            None,
+            "a second window naming none"
+        );
+        p.mapped("ed", Some("/b"));
+        p.mapped("ed", Some("/a"));
+        assert_eq!(
+            p.desktop("ed", Some("/new"), true, t),
+            Some(2),
+            "the first left"
+        );
+        assert!(p.waiting(t));
+        p.mapped("ed", None);
+        assert!(!p.waiting(t), "every start is back");
+    }
+
+    #[test]
+    fn several_starts_of_one_app_leave_restarts_only_for_windows_beyond_them() {
+        let t = Instant::now();
+        let group = [tabs(&["ed", "ed", "ed"], 0, 0)];
+        let mut p = PendingTabs::<u32>::new(&group, &[], t);
+        p.started("ed", 3);
+        p.claim("ed", "", 1, t);
+        assert!(
+            !p.settle("ed", t),
+            "no restart: three starts for three slots"
+        );
+        let mut p = PendingTabs::<u32>::new(&group, &[], t);
+        p.started("ed", 2);
+        p.claim("ed", "", 1, t);
+        assert!(p.settle("ed", t));
+        assert_eq!(
+            p.restart("ed", t + RESTART_SETTLE),
+            1,
+            "one more for the slot the start in flight leaves"
+        );
     }
 
     fn tabs(apps: &[&str], shown: usize, desktop: usize) -> SavedTabs {
@@ -1093,10 +1275,10 @@ mod tests {
     fn an_app_whose_windows_all_come_back_gets_no_second_start() {
         let t = Instant::now();
         let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], &[], t);
-        p.started("firefox");
+        p.started("firefox", 1);
         assert_eq!(p.restart("firefox", t), 0, "no window yet: no settle armed");
         let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], &[], t);
-        p.started("firefox");
+        p.started("firefox", 1);
         p.claim("firefox", "", 1, t);
         assert!(p.settle("firefox", t));
         p.claim("firefox", "", 2, t);
@@ -1113,8 +1295,8 @@ mod tests {
             tabs(&["foot", "x"], 0, 0),
         ];
         let mut p = PendingTabs::new(&saved, &[], t);
-        p.started("foot");
-        p.started("gimp");
+        p.started("foot", 1);
+        p.started("gimp", 1);
         p.claim("foot", "", 1, t);
         assert!(p.settle("foot", t));
         assert!(!p.settle("foot", t), "one settle at a time");
@@ -1127,7 +1309,7 @@ mod tests {
         assert!(!p.settle("gimp", t), "gimp's one slot is full");
         let late = t + DESKTOP_WINDOW + Duration::from_secs(1);
         let mut p = PendingTabs::new(&saved, &[], t);
-        p.started("foot");
+        p.started("foot", 1);
         p.claim("foot", "", 1, t);
         assert!(p.settle("foot", t));
         assert_eq!(p.restart("foot", late), 0, "the restore window has ended");
@@ -1143,12 +1325,12 @@ mod tests {
         };
         let group = [titled(&["a.txt", "b.txt"])];
         let mut p = PendingTabs::new(&group, std::slice::from_ref(&ed), t);
-        p.started("ed");
+        p.started("ed", 1);
         assert_eq!(p.claim("ed", "notes.txt", 1, t), Claim::None);
         assert!(p.settle("ed", t));
         assert_eq!(p.restart("ed", later), 2, "both slots are empty");
         let mut p = PendingTabs::new(&[titled(&["a.txt"])], &[ed], t);
-        p.started("ed");
+        p.started("ed", 1);
         p.claim("ed", "notes.txt", 1, t);
         assert!(p.settle("ed", t));
         assert_eq!(p.restart("ed", later), 1, "a one-tab group's slot is empty");
@@ -1168,7 +1350,7 @@ mod tests {
         let later = t + RESTART_SETTLE;
         let (tt, group) = tt();
         let mut p = PendingTabs::new(&group, std::slice::from_ref(&tt), t);
-        p.started("ed");
+        p.started("ed", 1);
         p.claim("ed", "Alpha", 1, t);
         assert!(p.settle("ed", t));
         p.claim("ed", "Bravo", 2, t);
@@ -1184,7 +1366,7 @@ mod tests {
         let t = Instant::now();
         let (tt, group) = tt();
         let mut p = PendingTabs::new(&group, std::slice::from_ref(&tt), t);
-        p.started("ed");
+        p.started("ed", 1);
         p.claim("ed", "Alpha", 1, t);
         assert!(p.settle("ed", t));
         p.claim("ed", "Bravo", 2, t);
@@ -1193,7 +1375,7 @@ mod tests {
         p.settle("ed", t);
         assert_eq!(p.restart("ed", t + RESTART_SETTLE), 0);
         let mut p = PendingTabs::new(&group, &[tt], t);
-        p.started("ed");
+        p.started("ed", 1);
         p.claim("ed", "Editor", 1, t);
         assert!(p.settle("ed", t));
         p.claim("ed", "Bravo", 2, t);
@@ -1211,7 +1393,7 @@ mod tests {
         let t = Instant::now();
         let (tt, group) = tt();
         let mut p = PendingTabs::new(&group, &[tt], t);
-        p.started("ed");
+        p.started("ed", 1);
         p.claim("ed", "Alpha", 1, t);
         assert!(p.settle("ed", t));
         p.claim("ed", "Bravo", 2, t);
@@ -1231,7 +1413,7 @@ mod tests {
     fn a_start_whose_window_has_not_mapped_is_not_started_again() {
         let t = Instant::now();
         let mut p = PendingTabs::new(&[tabs(&["lo", "lo", "lo", "lo"], 0, 0)], &[], t);
-        p.started("lo");
+        p.started("lo", 1);
         p.claim("lo", "", 1, t);
         assert!(p.settle("lo", t));
         p.claim("lo", "", 2, t);
@@ -1588,7 +1770,7 @@ mod tests {
             "nothing is saved while foot is awaited"
         );
 
-        h.state.session.restoring.mapped("foot");
+        h.state.session.restoring.mapped("foot", None);
         let queued = crate::state::QUEUED.with(|n| n.get());
         h.run_for(100);
         assert_eq!(h.state.session.apps, vec![foot]);
@@ -1675,7 +1857,7 @@ mod tests {
         h.state.session.owe();
         h.run_for(60);
         assert!(h.state.session.restore_marked, "kept while foot is awaited");
-        h.state.session.restoring.mapped("foot");
+        h.state.session.restoring.mapped("foot", None);
         h.run_for(60);
         assert!(!h.state.session.restore_marked);
     }

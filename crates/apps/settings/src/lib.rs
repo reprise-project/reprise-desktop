@@ -1213,6 +1213,14 @@ impl App for SettingsApp {
 }
 
 impl repriseapp::Extended for SettingsApp {
+    /// The page the sheet shows.
+    fn reopen(&self, win: WinId) -> Option<String> {
+        let page = Page::all()
+            .nth(self.sheet.tabs.open)
+            .filter(|_| win == repriseapp::MAIN)?;
+        Some(format!("--page={}", page.slug()))
+    }
+
     /// The pages are laid out at 100% and grow by their sheet's own units over a 100% theme
     /// (`units().px(theme px)`); a theme already at the text size would grow them twice.
     fn text_sized(&self) -> bool {

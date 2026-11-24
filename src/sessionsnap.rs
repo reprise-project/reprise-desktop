@@ -239,6 +239,7 @@ mod tests {
             entry: format!("{id}.desktop"),
             desktop: 0,
             loose: loose.iter().map(|t| t.to_string()).collect(),
+            windows: Vec::new(),
         }
     }
 
