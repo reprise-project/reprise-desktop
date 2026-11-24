@@ -883,6 +883,101 @@ fn the_wheel_moves_the_scrollback() {
 }
 
 #[test]
+fn the_grid_leaves_the_scrollback_bar_its_columns() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["cat"]);
+    t.follow_scale(MAIN, 1, &mut ctx);
+    let (grid, bar) = (
+        chrome::grid_rect(&ctx, false),
+        chrome::bar_rect(&ctx, false),
+    );
+    let w = ctx.theme.controls().scroll;
+    assert_eq!((bar.x, bar.right()), (800 - w, 800));
+    assert_eq!(grid.right(), bar.x);
+    assert_eq!(
+        (bar.y, bar.bottom()),
+        (chrome::band_height(&ctx.theme, false), 600),
+        "the bar runs from the chrome to the bottom"
+    );
+    let m = termgrid::metrics(&t.font, t.px, 1);
+    assert_eq!(t.w.tabs.list[0].size().0, ((800 - w) / m.cell_w) as usize);
+    let mut c = Canvas::new(800, 600);
+    t.draw(MAIN, &mut c, &ctx);
+    let face = ctx.theme.colors.button_face.argb();
+    let (x, y) = centre(bar);
+    assert_eq!(
+        c.pixels[(y * 800 + x) as usize],
+        face,
+        "the up arrow's face"
+    );
+}
+
+/// A terminal at scale 1 that printed 100 lines, most of them scrolled off.
+fn scrolled_off(ctx: &mut Ctx) -> Terminal {
+    let mut t = terminal(&["sh", "-c", "seq 100; sleep 5"]);
+    t.follow_scale(MAIN, 1, ctx);
+    until("the lines scroll off", || {
+        let sb = t.w.tabs.current().unwrap().scrollback();
+        sb.history + sb.rows > 100
+    });
+    t
+}
+
+#[test]
+fn the_bars_track_pages_its_arrow_steps_and_its_thumb_drags_through_the_scrollback() {
+    let mut ctx = test_ctx();
+    let mut t = scrolled_off(&mut ctx);
+    let at = |t: &Terminal| t.w.tabs.current().unwrap().scrollback();
+    let bar = chrome::bar_rect(&ctx, false);
+    let thumb_min = ctx.theme.controls().thumb_min;
+    let thumb = |t: &Terminal| at(t).at().parts(bar, thumb_min).thumb.unwrap();
+    let (x, sb) = (bar.x + bar.width / 2, at(&t));
+    assert_eq!(sb.offset, 0);
+    assert_eq!(
+        thumb(&t).bottom(),
+        bar.bottom() - bar.width,
+        "at the newest rows"
+    );
+
+    let above = thumb(&t).y - 2;
+    t.event(MAIN, press(x, above, BTN_LEFT), &mut ctx);
+    t.event(MAIN, release(x, above), &mut ctx);
+    assert_eq!(at(&t).offset, sb.rows, "the track pages a screen back");
+
+    let reply = t.event(MAIN, press(x, bar.y + 2, BTN_LEFT), &mut ctx);
+    assert!(reply.tick, "a held arrow asks for ticks to repeat on");
+    assert_eq!(at(&t).offset, sb.rows + 1, "the up arrow steps a row");
+    t.event(MAIN, release(x, bar.y + 2), &mut ctx);
+    assert!(!t.w.bar.holding());
+
+    let grab = thumb(&t).y + 2;
+    t.event(MAIN, press(x, grab, BTN_LEFT), &mut ctx);
+    let far = PointerInput::Motion {
+        x: x - 300,
+        y: -500,
+    };
+    assert!(pointer(&mut t, &mut ctx, far).redraw);
+    assert_eq!(
+        at(&t).offset,
+        sb.history,
+        "dragged off the bar past its top: the oldest rows"
+    );
+    t.event(MAIN, release(x - 300, -500), &mut ctx);
+    pointer(&mut t, &mut ctx, PointerInput::Motion { x, y: 590 });
+    assert_eq!(at(&t).offset, sb.history, "released, the thumb stays");
+
+    let wheel = PointerInput::Scroll {
+        x,
+        y: bar.y + 40,
+        rows: 3,
+    };
+    pointer(&mut t, &mut ctx, wheel);
+    assert_eq!(at(&t).offset, sb.history - 3, "the wheel over the bar");
+    t.event(MAIN, key(keysym::DOWN, false, false), &mut ctx);
+    assert_eq!(at(&t).offset, 0, "a key goes back to the newest rows");
+}
+
+#[test]
 fn a_toolbar_press_survives_a_closed_tab() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
@@ -1666,7 +1761,7 @@ fn the_grid_sits_a_gap_of_terminal_background_under_the_chrome_in_both_tab_modes
         let mut c = Canvas::new(w as u32, h as u32);
         t.draw(MAIN, &mut c, &ctx);
         let lay = t.chrome_layout(&ctx);
-        assert_eq!(lay.gap, Rect::new(0, lay.band, w, chrome::GRID_GAP));
+        assert_eq!(lay.gap, Rect::new(0, lay.band, lay.bar.x, chrome::GRID_GAP));
         assert_eq!(lay.grid.y, lay.gap.bottom(), "caption {caption}");
         let bg = t.w.snap.bg;
         let want = 0xFF00_0000 | u32::from(bg.r) << 16 | u32::from(bg.g) << 8 | u32::from(bg.b);

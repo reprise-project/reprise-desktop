@@ -6,6 +6,7 @@ use repriseapp::ctxmenu::{Popup, Step};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput, PointerInput, Reply};
 use reprisekit::controls::rebar;
 use reprisekit::controls::tabstrip::{self, AdderPart, DocHit, DocLayout, Drag, TabStrip};
+use reprisekit::controls::termgrid;
 use reprisekit::controls::toolbar::{self, Item, Part, ToolBar};
 use reprisekit::look::{self, Paint};
 use reprisekit::raster::{Canvas, Rect};
@@ -76,6 +77,8 @@ pub struct Layout {
     pub strip: DocLayout,
     /// The cells, [`GRID_GAP`] under the band.
     pub grid: Rect,
+    /// The scrollback bar, from the band down the right edge.
+    pub bar: Rect,
     /// The terminal background between the band and the grid.
     pub gap: Rect,
     /// The chrome's height: the toolbar and the strip.
@@ -147,11 +150,24 @@ pub fn grid_top(theme: &Theme, caption: bool) -> i32 {
     band_height(theme, caption) + GRID_GAP
 }
 
-/// Where the cells go: the client under the chrome and the gap.
-pub fn grid_rect(ctx: &Ctx, caption: bool) -> Rect {
-    let top = grid_top(&ctx.theme, caption);
+/// The client under the chrome: the cells under the gap, and the scrollback bar beside them.
+fn below(ctx: &Ctx, caption: bool) -> (Rect, Rect) {
+    let band = band_height(&ctx.theme, caption);
     let (w, h) = ctx.size;
-    Rect::new(0, top, w, (h - top).max(0))
+    let area = Rect::new(0, band, w, (h - band).max(0));
+    let (cells, bar) = termgrid::split(area, ctx.theme.controls().scroll);
+    let gap = GRID_GAP.min(cells.height);
+    let grid = Rect::new(cells.x, cells.y + gap, cells.width, cells.height - gap);
+    (grid, bar)
+}
+
+/// Where the cells go: the client under the chrome and the gap, left of the scrollback bar.
+pub fn grid_rect(ctx: &Ctx, caption: bool) -> Rect {
+    below(ctx, caption).0
+}
+
+pub fn bar_rect(ctx: &Ctx, caption: bool) -> Rect {
+    below(ctx, caption).1
 }
 
 pub fn layout(bar: &ToolBar, strip: &TabStrip, caption: bool, ctx: &Ctx) -> Layout {
@@ -165,12 +181,14 @@ pub fn layout(bar: &ToolBar, strip: &TabStrip, caption: bool, ctx: &Ctx) -> Layo
         last.x = (toolbar.right() - lead - last.width).max(last.x);
     }
     let area = Rect::new(0, tb, w, st);
+    let (grid, bar) = below(ctx, caption);
     Layout {
         toolbar,
         buttons,
         strip: tabstrip::doc_layout(&ctx.text, px, strip, area, ctx.theme.text),
-        grid: grid_rect(ctx, caption),
-        gap: Rect::new(0, tb + st, w, GRID_GAP.min((ctx.size.1 - tb - st).max(0))),
+        grid,
+        bar,
+        gap: Rect::new(0, tb + st, grid.width, grid.y - tb - st),
         band: tb + st,
     }
 }

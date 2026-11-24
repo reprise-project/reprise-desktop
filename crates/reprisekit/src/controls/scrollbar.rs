@@ -183,18 +183,21 @@ impl ThumbDrag {
 }
 
 /// The pointer's hold on the vertical bar of a list scrolled by whole rows: a grabbed thumb
-/// follows the pointer, a held arrow repeats on the host's ticks while the pointer is on it.
+/// follows the pointer, a held arrow repeats on the host's ticks while the pointer is on it, and
+/// the part under the pointer or held lights.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RowBar {
     drag: ThumbDrag,
     repeat: ArrowRepeat,
     /// The held arrow's step in rows, and whether the pointer is on it.
     arrow: Option<(i64, bool)>,
+    bars: Pointer<ScrollHit>,
 }
 
 impl RowBar {
     /// A press on part `hit` of a bar that pages `page` rows: the rows the view scrolls now.
     pub fn press(&mut self, hit: BarHit, page: i64) -> i64 {
+        self.bars.press(hit.part(), matches!(hit, BarHit::Thumb(_)));
         self.repeat.press(hit);
         self.arrow = match hit {
             BarHit::Back => Some((-1, true)),
@@ -204,8 +207,8 @@ impl RowBar {
         self.drag.press(Axis::Vertical, hit).by(1, page)
     }
 
-    /// The pointer moved onto `hit` of the bar, `None` off it.
-    pub fn hover(&mut self, hit: Option<BarHit>) {
+    /// The pointer moved onto `hit` of the bar, `None` off it. True when the lit part changed.
+    pub fn hover(&mut self, hit: Option<BarHit>) -> bool {
         if let Some((step, on)) = &mut self.arrow {
             *on = match hit {
                 Some(BarHit::Back) => *step < 0,
@@ -213,6 +216,16 @@ impl RowBar {
                 _ => false,
             };
         }
+        self.bars.motion(hit.and_then(BarHit::part))
+    }
+
+    /// The pointer left the bar's surface. True when the lit part changed.
+    pub fn leave(&mut self) -> bool {
+        self.bars.leave()
+    }
+
+    pub fn lit(&self) -> Lit<ScrollHit> {
+        self.bars.lit()
     }
 
     /// The top row the held thumb asks for with the pointer at `y` on a bar laid out as `parts`
@@ -230,12 +243,18 @@ impl RowBar {
         self.drag.holding() || self.repeat.held()
     }
 
+    /// Whether an arrow is held: the host ticks [`RowBar::tick`] until the release.
+    pub fn ticking(&self) -> bool {
+        self.repeat.held()
+    }
+
     /// The pointer let go. True when the thumb or an arrow was held.
     pub fn release(&mut self) -> bool {
         let held = self.holding();
         self.drag.release();
         self.repeat.release();
         self.arrow = None;
+        self.bars.release();
         held
     }
 
@@ -440,6 +459,31 @@ mod tests {
         assert_eq!(b.tick(t0 + REPEAT_AFTER + 3 * REPEAT_EVERY), 0);
         assert_eq!(b.press(BarHit::PageBack, 6), -6, "the track pages");
         assert!(!b.holding(), "the track holds nothing");
+    }
+
+    #[test]
+    fn a_row_bar_lights_the_part_under_the_pointer_and_the_held_thumb_off_it() {
+        let mut b = RowBar::default();
+        assert!(b.hover(Some(BarHit::Forward)));
+        assert_eq!(b.lit(), Some((ScrollHit::Forward, Interaction::Hot)));
+        assert!(!b.hover(Some(BarHit::Forward)), "unchanged");
+        assert!(b.leave());
+        assert_eq!(b.lit(), None);
+        b.press(BarHit::Thumb(4), 6);
+        b.hover(None);
+        assert_eq!(
+            b.lit(),
+            Some((ScrollHit::Thumb, Interaction::Pressed)),
+            "a held thumb stays pressed off the bar"
+        );
+        b.release();
+        assert_eq!(b.lit(), None);
+        b.press(BarHit::Back, 6);
+        assert!(b.ticking());
+        b.hover(Some(BarHit::PageForward));
+        assert_eq!(b.lit(), None, "a held arrow with the pointer off it");
+        b.release();
+        assert!(!b.ticking());
     }
 
     #[test]

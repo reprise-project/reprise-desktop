@@ -179,6 +179,9 @@ program exits. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 - **Tabs in the title bar:** Options > General > Tabs (new windows) set to
   In the title bar makes each tab a window of its own in one caption tab
   group. Without Reprise's tab groups the tabs stay below the toolbar.
+- **Scrollback:** the bar down the right edge, the wheel and Shift+Page Up
+  and Shift+Page Down scroll back through it; a key goes back to the newest
+  output. The bar greys while there is nothing to scroll back to.
 - **Find** on the toolbar searches the scrollback, with Match case.
 - **Mouse:** a selection goes to the primary selection and a middle click
   pastes it. Hold Shift to select in a program that takes the mouse.

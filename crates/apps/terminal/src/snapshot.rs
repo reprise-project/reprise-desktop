@@ -6,7 +6,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as TermFlags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape as TermCursor, NamedColor};
-use reprisekit::controls::termgrid::{Cell, CursorShape, Flags, Rgb, Snapshot};
+use reprisekit::controls::termgrid::{Cell, CursorShape, Flags, Rgb, Scrollback, Snapshot};
 use reprisekit::theme::Color;
 use unicode_width::UnicodeWidthChar;
 
@@ -68,6 +68,7 @@ pub fn fill_marked<T: EventListener>(
             out.dirty[row] = true;
         }
     }
+    out.scrollback = scrollback(term);
     let cursor = content.cursor;
     let row = usize::try_from(cursor.point.line.0 + offset)
         .ok()
@@ -76,6 +77,15 @@ pub fn fill_marked<T: EventListener>(
         Some(row) => (row, cursor.point.column.0, shape(cursor.shape)),
         None => (0, 0, CursorShape::Hidden),
     };
+}
+
+/// Where `term`'s view stands in its scrollback; the alternate screen keeps none.
+pub fn scrollback<T>(term: &Term<T>) -> Scrollback {
+    Scrollback {
+        history: term.history_size(),
+        offset: term.grid().display_offset(),
+        rows: term.screen_lines(),
+    }
 }
 
 /// Show `to` as `out`'s cursor where `from` was drawn, dirtying the rows of both when they differ.
