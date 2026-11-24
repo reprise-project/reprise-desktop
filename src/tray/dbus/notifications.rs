@@ -205,7 +205,8 @@ impl Notifications {
                 summary: shown_line(&shorten(summary, SUMMARY_CHARS), SUMMARY_CHARS),
                 body: shorten(notify::plain_text(&body), BODY_CHARS),
                 app_icon,
-                image,
+                image: image.sources,
+                picture: image.whole.map(Arc::new),
                 expire_timeout,
                 actions,
                 action_icons,
@@ -328,18 +329,18 @@ pub(super) async fn picture_file(
     sender: &str,
     path: PathBuf,
     until: Instant,
-) -> Vec<IconSource> {
+) -> notify::Picture {
     let decode = move || notify::picture_file_sources(&path);
     let decoded = async { decoders.run(sender, decode).await.unwrap_or_default() };
     let late = async {
         async_io::Timer::at(until).await;
-        Vec::new()
+        notify::Picture::default()
     };
     futures_lite::future::or(decoded, late).await
 }
 
 /// `(app_icon, image)`: the app icon, else the desktop entry's icon; the `image-data` hint, else
-/// `image-path`. Each is the first that resolves. An `image-path` naming a theme icon is an icon,
+/// `image-path`, its `whole` only for a picture. Each is the first that resolves. An `image-path` naming a theme icon is an icon,
 /// so with no app icon it is the app icon and there is no picture. A theme name is looked up
 /// here; a file is read on `decoders` as `sender`'s, all of them within [`PICTURE_WITHIN`].
 pub(super) async fn notification_icons(
@@ -349,7 +350,7 @@ pub(super) async fn notification_icons(
     hints: &notify::Hints<'_>,
     app_icon: String,
     entry: Option<&reprisefs::apps::AppEntry>,
-) -> (Vec<IconSource>, Vec<IconSource>) {
+) -> (Vec<IconSource>, notify::Picture) {
     let until = Instant::now() + PICTURE_WITHIN;
     let source = async |name: Option<String>| match icon_ref(name) {
         Some(name) if name.starts_with('/') => {
@@ -357,13 +358,13 @@ pub(super) async fn notification_icons(
         }
         Some(name) => {
             let mut icons = lock(icons);
-            decode_named_at(&mut icons, &name, &[], &NOTIFY_SIZES)
+            decode_named_at(&mut icons, &name, &[], &NOTIFY_SIZES).into()
         }
-        None => Vec::new(),
+        None => notify::Picture::default(),
     };
     let image = async {
         let data = (hints.image.as_ref()).map(notify::image_sources);
-        if let Some(data) = data.filter(|d| !d.is_empty()) {
+        if let Some(data) = data.filter(|d| !d.sources.is_empty()) {
             return (data, false);
         }
         let path = (hints.image_path.as_deref()).map(|p| match p.strip_prefix("file://") {
@@ -375,7 +376,7 @@ pub(super) async fn notification_icons(
     };
     let app = async {
         for name in [Some(app_icon), entry.and_then(|e| e.icon.clone())] {
-            let sources = source(name).await;
+            let sources = source(name).await.sources;
             if !sources.is_empty() {
                 return sources;
             }
@@ -383,7 +384,7 @@ pub(super) async fn notification_icons(
         Vec::new()
     };
     match futures_lite::future::zip(app, image).await {
-        (app, (named, true)) if app.is_empty() => (named, Vec::new()),
+        (app, (named, true)) if app.is_empty() => (named.sources, notify::Picture::default()),
         (app, (image, _)) => (app, image),
     }
 }

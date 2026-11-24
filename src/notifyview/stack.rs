@@ -118,6 +118,14 @@ impl Item {
         }
     }
 
+    /// The picture a balloon shows under its text.
+    pub(super) fn picture(&self) -> Option<&IconSource> {
+        match self {
+            Item::Note(n) => n.picture.as_deref(),
+            Item::Burst(_) => None,
+        }
+    }
+
     /// Which buttons show their action's icon in place of the label.
     pub(super) fn button_icons(&self) -> Vec<bool> {
         match self {

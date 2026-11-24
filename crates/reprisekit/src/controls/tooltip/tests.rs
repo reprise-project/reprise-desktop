@@ -1411,3 +1411,124 @@ fn long_title_pins() {
     }
     crate::pins::check("controls/balloon_long_titles", &got);
 }
+
+/// A picture with a red left half and a blue right half, so a stretch or a crop shows.
+fn photo((w, h): (u32, u32)) -> Canvas {
+    let mut c = Canvas::new(w, h);
+    let half = (w / 2) as i32;
+    c.fill_rect(Rect::new(0, 0, half, h as i32), Color::rgb(200, 40, 40));
+    c.fill_rect(
+        Rect::new(half, 0, w as i32 - half, h as i32),
+        Color::rgb(40, 40, 200),
+    );
+    c
+}
+
+const WIDE: (u32, u32) = (640, 205);
+const TALL: (u32, u32) = (240, 320);
+const SHOT_ACTS: [&str; 2] = ["Edit", "Show in Folder"];
+
+#[test]
+fn a_picture_keeps_its_shape_in_the_text_column_under_the_body() {
+    use crate::interface::Interface;
+    for i in [Interface::Classic, Interface::Blue] {
+        for pct in [100, 200] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(i)
+                    .with_text_size(pct)
+                    .scaled(s);
+                let t = TextRenderer::load(&theme.fonts);
+                let plain = notify_layout(&theme, &t, "Saved", SAVED_BODY, &SHOT_ACTS, &[], None);
+                let body = plain.parts().body;
+                let cap = theme.text.len(NOTIFY_PICTURE_H) * s;
+                for size in [WIDE, TALL, (48, 48)] {
+                    let at = format!("{i:?} {pct}% x{s} {size:?}");
+                    let lay = plain.clone().with_picture(&theme, size);
+                    let r = lay.picture.expect("a picture area");
+                    assert_eq!(r.x, body.x, "{at}: on the text's left edge");
+                    assert!(r.right() <= body.right(), "{at}: inside the column");
+                    let gap = NOTIFY_PICTURE_GAP * s;
+                    assert_eq!(r.y, body.bottom() + gap, "{at}: under the body");
+                    assert!(r.height <= cap, "{at}: {r:?} capped at {cap}");
+                    let (w, h) = (size.0 as i32 * s, size.1 as i32 * s);
+                    assert!(r.width <= w && r.height <= h, "{at}: never enlarged");
+                    let skew = i64::from(r.width) * i64::from(size.1)
+                        - i64::from(r.height) * i64::from(size.0);
+                    assert!(
+                        skew.abs() <= i64::from(size.0.max(size.1)),
+                        "{at}: {r:?} keeps its shape"
+                    );
+                    let dy = gap + r.height;
+                    assert_eq!(lay.bubble_h, plain.bubble_h + dy, "{at}");
+                    for (moved, was) in lay.buttons.iter().zip(&plain.buttons) {
+                        assert_eq!(moved.y, was.y + dy, "{at}: buttons move down");
+                    }
+                    assert!(lay.buttons[0].y > r.bottom() + s, "{at}: under the frame");
+                }
+                let wide = plain.clone().with_picture(&theme, WIDE).picture.unwrap();
+                let tall = plain.clone().with_picture(&theme, TALL).picture.unwrap();
+                assert!(
+                    wide.width == body.width || wide.height == cap,
+                    "{i:?} {pct}% x{s}: a wide picture fills the column or the cap"
+                );
+                assert_eq!(tall.height, cap, "{i:?} {pct}% x{s}: a tall one the cap");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_picture_rides_with_the_bubble_under_a_top_bar() {
+    let t = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let lay = notify_layout(&theme, &t, "Saved", SAVED_BODY, &SHOT_ACTS, &[], None);
+    let down = lay.clone().with_picture(&theme, WIDE);
+    let up = lay.on_edge(Edge::Top).with_picture(&theme, WIDE);
+    let tail = up.bubble_y;
+    let (a, b) = (down.picture.unwrap(), up.picture.unwrap());
+    assert_eq!(b, Rect::new(a.x, a.y + tail, a.width, a.height));
+    assert_eq!(
+        down.on_edge(Edge::Top).picture,
+        up.picture,
+        "in either order"
+    );
+}
+
+/// A Classic and a Blue balloon with no picture, a wide one and a tall one, at scale 1 and 2.
+#[test]
+fn balloon_picture_pins() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue] {
+        for s in [1, 2] {
+            let theme = crate::interfaces::theme_for(i).scaled(s);
+            let t = TextRenderer::load(&theme.fonts);
+            let title = "Screenshot saved";
+            let plain = notify_layout(&theme, &t, title, SAVED_BODY, &SHOT_ACTS, &[], None);
+            let c = draw_notify_balloon(&theme, &t, &plain, None, &[], None, None, None);
+            got.push((format!("{i:?} x{s} none"), fnv(&c)));
+            for (name, size) in [("wide", WIDE), ("tall", TALL)] {
+                let lay = plain.clone().with_picture(&theme, size);
+                let mut c = draw_notify_balloon(&theme, &t, &lay, None, &[], None, None, None);
+                draw_notify_picture(&theme, &lay, &mut c, &photo(size));
+                let r = lay.picture.unwrap();
+                let at = format!("{i:?} x{s} {name}");
+                let frame = theme.paint().cs.button_shadow.argb();
+                assert_eq!(c.get(r.x - s, r.y - s), frame, "{at}: framed");
+                assert_eq!(c.get(r.right(), r.bottom()), frame, "{at}: framed");
+                let mid = r.y + r.height / 2;
+                let red = Color::rgb(200, 40, 40).argb();
+                let blue = Color::rgb(40, 40, 200).argb();
+                assert_eq!(c.get(r.x + r.width / 4, mid), red, "{at}: left half");
+                assert_eq!(
+                    c.get(r.right() - r.width / 4, mid),
+                    blue,
+                    "{at}: right half"
+                );
+                got.push((at, fnv(&c)));
+            }
+        }
+    }
+    crate::pins::check("controls/balloon_pictures", &got);
+}
