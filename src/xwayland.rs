@@ -45,6 +45,8 @@ use smithay::{
     },
 };
 
+use x11rb::properties::{WmSizeHints, WmSizeHintsSpecification};
+
 use crate::clipboard::{Owner, answer};
 use crate::compositor::State;
 use crate::placement::Subject;
@@ -417,18 +419,34 @@ fn start_helper(state: &mut State, display: u32) -> Option<helper::Helper> {
     }
 }
 
-/// Whether an X11 window's Motif hints leave the frame to us: a window
-/// that drops the border or the title draws its own chrome.
 /// Whether `x`'s client marks it urgent: WM_HINTS' UrgencyHint or `_NET_WM_STATE_DEMANDS_ATTENTION`.
 fn urgent(x: &X11Surface) -> bool {
     x.hints().is_some_and(|h| h.urgent) || x.demands_attention()
 }
 
+/// Whether an X11 window's Motif hints leave the frame to us: a window
+/// that drops the border or the title draws its own chrome.
 pub fn decorated(hints: &MwmHints) -> bool {
     hints.decorations.is_none_or(|d| {
         d.contains(MwmDecorationsHint::ALL)
             || d.contains(MwmDecorationsHint::BORDER | MwmDecorationsHint::TITLE)
     })
+}
+
+/// Whether X11 window `x` drops our frame and gives a position of its own (WM_NORMAL_HINTS'
+/// USPosition), as a splash screen does; window memory leaves it where it asks.
+pub fn own_place(x: &X11Surface) -> bool {
+    frameless_at_own_place(&x.motif_hints(), x.size_hints().as_ref())
+}
+
+fn frameless_at_own_place(motif: &MwmHints, size: Option<&WmSizeHints>) -> bool {
+    let user = |h: &WmSizeHints| {
+        matches!(
+            h.position,
+            Some((WmSizeHintsSpecification::UserSpecified, _, _))
+        )
+    };
+    !decorated(motif) && size.is_some_and(user)
 }
 
 /// Whether an override-redirect window takes the focus when it maps or
@@ -732,6 +750,7 @@ struct Premap {
     limits: SizeLimits,
     decorated: bool,
     size: (i32, i32),
+    own_place: bool,
 }
 
 impl Premap {
@@ -753,6 +772,7 @@ impl Premap {
             limits: client_limits((min.w, min.h, max.w, max.h)),
             decorated: decorated(&x.motif_hints()),
             size: (x.geometry().size.w, x.geometry().size.h),
+            own_place: own_place(x),
         }
     }
 
@@ -769,6 +789,7 @@ impl Premap {
             fixed: !self.limits.resizable(),
             chrome: self.chrome(),
             size: Some(self.size),
+            own_place: self.own_place,
         }
     }
 
@@ -1214,6 +1235,7 @@ mod tests {
             },
             decorated: true,
             size: (484, 316),
+            own_place: false,
         }
     }
 
@@ -1368,6 +1390,39 @@ mod tests {
         assert!(!decorated(&hints(Some(MwmDecorationsHint::TITLE))));
         assert!(!decorated(&hints(Some(MwmDecorationsHint::BORDER))));
         assert!(!decorated(&hints(Some(MwmDecorationsHint::empty()))));
+    }
+
+    #[test]
+    fn only_a_frameless_window_at_a_user_given_place_places_itself() {
+        let motif = |d| MwmHints {
+            decorations: Some(d),
+            ..Default::default()
+        };
+        let at = |spec| WmSizeHints {
+            position: Some((spec, 857, 368)),
+            ..Default::default()
+        };
+        let none = MwmDecorationsHint::empty();
+        let user = at(WmSizeHintsSpecification::UserSpecified);
+        assert!(frameless_at_own_place(&motif(none), Some(&user)));
+        assert!(
+            !frameless_at_own_place(&motif(MwmDecorationsHint::ALL), Some(&user)),
+            "framed"
+        );
+        assert!(
+            !frameless_at_own_place(&MwmHints::default(), Some(&user)),
+            "no Motif hints"
+        );
+        let program = at(WmSizeHintsSpecification::ProgramSpecified);
+        assert!(
+            !frameless_at_own_place(&motif(none), Some(&program)),
+            "a toolkit's own default"
+        );
+        assert!(!frameless_at_own_place(
+            &motif(none),
+            Some(&WmSizeHints::default())
+        ));
+        assert!(!frameless_at_own_place(&motif(none), None));
     }
 
     #[test]
