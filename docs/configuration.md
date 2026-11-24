@@ -58,7 +58,7 @@ while an editor saves it doesn't.
 | `[night_light]` | schedule and warmth |
 | `[launcher]`, `[clipboard]`, `[screenshot]`, `[previews]` | the launcher's file, window and content search (contents off by default) and the programs it asks, clipboard history (in memory only, password managers' copies left out; see [security.md](security.md#the-clipboard-history)), where screenshots go, the saved file's format (`format`: `png`, `jpg` or `jxl`, with `png_compression`, `jpg_quality`, `jxl_lossless`, `jxl_quality` and `jxl_effort`; the clipboard always takes a PNG), how many seconds a screenshot key waits before the picture (`delay`, 0 to 10, a longer one cut to 10) and whether screen recordings carry sound (`record_sound`, off) with the microphone mixed in (`record_microphone`, off), live previews |
 | `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing, programs whose balloons or sounds are off |
-| `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, and `allow_boost`: playback volumes past 100 % up to 150 % |
+| `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, `allow_boost`: playback volumes past 100 % up to 150 %, and `on_connect`: which defaults an audio device takes when it connects (`playback`, the default; `playback_and_recording`; `keep`) |
 | `[privacy]` | recent files, location and the red border around a shared or recorded screen |
 | `[time_zone]` | `automatic`: the time zone follows the location, off by default (Date and Time > Time Zone) |
 | `[recycle_bin]` | what Delete does, each drive's bin size, `older_than_days` to empty old items (Recycle Bin Properties) |

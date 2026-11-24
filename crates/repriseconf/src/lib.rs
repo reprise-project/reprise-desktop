@@ -200,7 +200,8 @@ pub const BT_BATTERY_REARM: u8 = 5;
 /// Write `[bluetooth] battery_warning = percent` into the config file, the default as no key (and
 /// no table once it is empty).
 pub fn save_bt_battery_warning(percent: u8) -> Result<(), String> {
-    save_bt_key(
+    save_key(
+        "bluetooth",
         "battery_warning",
         (percent != BT_BATTERY_WARNING).then(|| Value::from(i64::from(percent))),
     )
@@ -209,20 +210,39 @@ pub fn save_bt_battery_warning(percent: u8) -> Result<(), String> {
 /// Write `[bluetooth] receive_files = on` into the config file, off as no key (and no table once
 /// it is empty).
 pub fn save_bt_receive_files(on: bool) -> Result<(), String> {
-    save_bt_key("receive_files", on.then(|| Value::from(true)))
+    save_key("bluetooth", "receive_files", on.then(|| Value::from(true)))
 }
 
-fn save_bt_key(name: &'static str, value: Option<Value>) -> Result<(), String> {
-    match edit(&config_path(), |text| with_bt_key(text, name, value)) {
+/// Write `[sounds] on_connect`, the default as no key (and no table once it is empty).
+pub fn save_sounds_on_connect(c: config::OnConnect) -> Result<(), String> {
+    match edit(&config_path(), |text| with_on_connect(text, c)) {
         Ok(r) => r.map(|_| ()),
         Err(e) => Err(e.to_string()),
     }
 }
 
-/// `text` with `[bluetooth] name` set to `value`, or removed for None along with a table left empty.
-fn with_bt_key(text: &str, name: &'static str, value: Option<Value>) -> Result<String, String> {
+fn with_on_connect(text: &str, c: config::OnConnect) -> Result<String, String> {
+    let default = config::SoundsConfig::default().on_connect;
+    let value = (c != default).then(|| Value::from(c.key()));
+    with_key(text, "sounds", "on_connect", value)
+}
+
+fn save_key(table: &'static str, name: &'static str, value: Option<Value>) -> Result<(), String> {
+    match edit(&config_path(), |text| with_key(text, table, name, value)) {
+        Ok(r) => r.map(|_| ()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `text` with `[table] name` set to `value`, or removed for None along with a table left empty.
+fn with_key(
+    text: &str,
+    table: &'static str,
+    name: &'static str,
+    value: Option<Value>,
+) -> Result<String, String> {
     let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
-    let k = key("bluetooth", name);
+    let k = key(table, name);
     match value {
         Some(v) => set(&mut doc, &k, v).map_err(|e| e.to_string())?,
         None => {
@@ -818,8 +838,9 @@ external_thumbnailers = false
     #[test]
     fn saving_the_bt_battery_warning_drops_the_default() {
         let warn = |text: &str, pct: u8| {
-            with_bt_key(
+            with_key(
                 text,
+                "bluetooth",
                 "battery_warning",
                 (pct != BT_BATTERY_WARNING).then(|| Value::from(i64::from(pct))),
             )
@@ -837,11 +858,22 @@ external_thumbnailers = false
 
     #[test]
     fn saving_bt_receive_files_writes_only_on() {
-        let on = with_bt_key("", "receive_files", Some(Value::from(true))).unwrap();
+        let on = with_key("", "bluetooth", "receive_files", Some(Value::from(true))).unwrap();
         assert!(read(&on).bluetooth.receive_files);
-        let back = with_bt_key(&on, "receive_files", None).unwrap();
+        let back = with_key(&on, "bluetooth", "receive_files", None).unwrap();
         assert!(!read(&back).bluetooth.receive_files);
         assert!(!back.contains("bluetooth"), "off is no key: {back}");
+    }
+
+    #[test]
+    fn saving_on_connect_drops_the_default() {
+        use config::OnConnect;
+        let keep = with_on_connect("[sounds]\nbell = false\n", OnConnect::Keep).unwrap();
+        assert_eq!(keep, "[sounds]\nbell = false\non_connect = \"keep\"\n");
+        assert_eq!(read(&keep).sounds.on_connect, OnConnect::Keep);
+        let back = with_on_connect(&keep, OnConnect::Playback).unwrap();
+        assert_eq!(back, "[sounds]\nbell = false\n");
+        assert_eq!(with_on_connect(&back, OnConnect::Playback).unwrap(), back);
     }
 
     #[test]

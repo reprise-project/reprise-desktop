@@ -880,6 +880,7 @@ mod tests {
             sinks: vec![sink(40, "speakers"), sink(41, "hdmi")],
             default_sink: Some("hdmi".into()),
             configured_sink: name.map(Into::into),
+            configured_source: None,
             ..Snapshot::default()
         }
     }

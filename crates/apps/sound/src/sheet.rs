@@ -10,10 +10,12 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::DialogFont;
 use reprisekit::trackbar::{self, TrackBar};
 
+use repriseconf::config::OnConnect;
+
 use crate::appicons::AppIcon;
 use crate::pipewire::{App, Device, Snapshot};
 
-pub const CLIENT: (i32, i32) = (361, 440);
+pub const CLIENT: (i32, i32) = (361, 482);
 
 const TABS: [&str; 2] = ["Audio", "Applications"];
 pub const AUDIO: usize = 0;
@@ -75,6 +77,16 @@ const SOURCE: Row = Row {
 const SINK_Y: i32 = 47;
 const SOURCE_Y: i32 = 225;
 const GROUP_H: i32 = 166;
+
+/// `[sounds] on_connect`'s combo under the two groups, its rows in [`OnConnect::ALL`]'s order.
+const CONNECT_LABEL: &str = "connect_label";
+const CONNECT: &str = "connect";
+const CONNECT_Y: i32 = SOURCE_Y + GROUP_H + 24;
+const CONNECT_ROWS: [&str; 3] = [
+    "Use it for playback",
+    "Use it for playback and recording",
+    "Keep my defaults",
+];
 
 /// The Applications page's controls: one group box as tall as the Audio
 /// page's two, the program list filling it down to the volume row.
@@ -142,6 +154,8 @@ pub enum Change {
     Mute(u32, bool),
     /// Move a stream to the output with this serial, or back to the default.
     Target(u32, Option<u64>),
+    /// Save `[sounds] on_connect`.
+    OnConnect(OnConnect),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -189,12 +203,23 @@ pub struct Sheet {
     small_px: i32,
     app_icons: BTreeMap<String, AppIcon>,
     shown_apps: Vec<String>,
+    /// `[sounds] on_connect` as the config file has it, and as picked.
+    connect: OnConnect,
+    connect_pick: OnConnect,
 }
 
 impl Sheet {
-    pub fn new(snap: &Snapshot, icons: Icons) -> Sheet {
+    pub fn new(snap: &Snapshot, icons: Icons, connect: OnConnect) -> Sheet {
         let mut items = row_items(&SINK, SINK_Y, "Sound playback", icons.speaker);
         items.extend(row_items(&SOURCE, SOURCE_Y, "Sound recording", icons.mic));
+        items.push(Item::label_at(
+            CONNECT_LABEL,
+            21,
+            CONNECT_Y - 16,
+            220,
+            "When an audio device &connects:",
+        ));
+        items.push(Item::combo(CONNECT, 21, CONNECT_Y, 220, &CONNECT_ROWS, 3));
         let pages = vec![
             Form::new(items).set_in(DialogFont::ShellDlg),
             Form::new(app_items()),
@@ -209,9 +234,20 @@ impl Sheet {
             small_px: icons.small_px,
             app_icons: BTreeMap::new(),
             shown_apps: Vec::new(),
+            connect,
+            connect_pick: connect,
         };
         sheet.write();
         sheet
+    }
+
+    /// `[sounds] on_connect` as saved now; a pick not yet applied stays.
+    pub fn saved_connect(&mut self, connect: OnConnect) {
+        if self.connect_pick == self.connect {
+            self.connect_pick = connect;
+        }
+        self.connect = connect;
+        self.write();
     }
 
     /// Take a snapshot from outside: the lists always follow, the values
@@ -283,6 +319,7 @@ impl Sheet {
             propsheet::Event::Cancel => {
                 self.pending = Pending::from_snapshot(&self.applied);
                 self.displaced = [None, None];
+                self.connect_pick = self.connect;
                 self.write();
                 Outcome::Close
             }
@@ -549,6 +586,9 @@ impl Sheet {
             };
             out.extend(moving.into_iter().map(|id| Change::Target(id, serial)));
         }
+        if self.connect_pick != self.connect {
+            out.push(Change::OnConnect(self.connect_pick));
+        }
         out
     }
 
@@ -691,6 +731,11 @@ impl Sheet {
         let apps = &self.sheet.pages[APPS];
         let key = self.selected_app().map(|a| a.key.clone());
         match id {
+            _ if id == CONNECT => {
+                if let Some(&c) = page.combo_selected(id).and_then(|i| OnConnect::ALL.get(i)) {
+                    self.connect_pick = c;
+                }
+            }
             _ if id == APP_TRACK => {
                 if let (Some(p), Some(k)) = (apps.track_pos(id), key) {
                     self.pending.app_volume.insert(k, volume_of(p));
@@ -752,6 +797,8 @@ impl Sheet {
         for ids in [&SINK, &SOURCE] {
             self.write_row(ids);
         }
+        let pick = OnConnect::ALL.iter().position(|&c| c == self.connect_pick);
+        self.sheet.pages[AUDIO].set_combo(CONNECT, pick.unwrap_or(0));
         self.write_apps();
         let dirty = self.dirty();
         self.sheet.set_apply_enabled(dirty);
@@ -1201,6 +1248,7 @@ mod tests {
     fn card(id: u32, label: &str, off: bool) -> Card {
         Card {
             id,
+            serial: Some(id.into()),
             label: label.into(),
             off,
             sinks: true,
@@ -1222,6 +1270,7 @@ mod tests {
             default_sink: Some("speaker".into()),
             default_source: Some("mic".into()),
             configured_sink: None,
+            configured_source: None,
             cards: vec![
                 card(40, "Built-in Audio", false),
                 card(41, "USB Headset", true),
@@ -1231,7 +1280,7 @@ mod tests {
     }
 
     fn sheet(snap: &Snapshot) -> Sheet {
-        Sheet::new(snap, Icons::default())
+        Sheet::new(snap, Icons::default(), OnConnect::Playback)
     }
 
     /// Both pages fit their text under every interface and text size.
@@ -1610,6 +1659,77 @@ mod tests {
         assert_eq!(rect(SINK.mute), Rect::new(290, 183, 13, 13));
         assert_eq!(rect(SOURCE.list), Rect::new(70, 243, 261, 72));
         assert_eq!(s.sheet.tabs.labels, vec!["Audio", "Applications"]);
+    }
+
+    #[test]
+    fn the_connect_combo_sits_under_the_groups() {
+        let s = sheet(&fixture());
+        assert_eq!(rect_of(&s, CONNECT_LABEL), Rect::new(21, 399, 220, 13));
+        assert_eq!(rect_of(&s, CONNECT), Rect::new(21, 415, 220, 21));
+        let rows: Vec<String> = CONNECT_ROWS.map(String::from).into();
+        assert_eq!(combo(&s, CONNECT), (rows, 0, true));
+    }
+
+    #[test]
+    fn the_connect_pick_saves_on_apply_and_cancel_drops_it() {
+        let mut s = sheet(&fixture());
+        select(&mut s, CONNECT, 2);
+        assert!(s.dirty());
+        assert_eq!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(vec![Change::OnConnect(OnConnect::Keep)])
+        );
+        s.saved_connect(OnConnect::Keep);
+        assert!(!s.dirty());
+        assert_eq!(combo(&s, CONNECT).1, 2);
+
+        select(&mut s, CONNECT, 1);
+        assert_eq!(s.event(propsheet::Event::Cancel), Outcome::Close);
+        assert_eq!(combo(&s, CONNECT).1, 2, "back on the saved choice");
+        assert!(!s.dirty());
+    }
+
+    #[test]
+    fn an_outside_save_moves_the_combo_unless_a_pick_is_pending() {
+        let mut s = sheet(&fixture());
+        s.saved_connect(OnConnect::PlaybackAndRecording);
+        assert_eq!(combo(&s, CONNECT).1, 1);
+        assert!(!s.dirty());
+        select(&mut s, CONNECT, 2);
+        s.saved_connect(OnConnect::Playback);
+        assert_eq!(combo(&s, CONNECT).1, 2, "the pick stays");
+        assert_eq!(
+            s.event(propsheet::Event::Apply),
+            Outcome::Apply(vec![Change::OnConnect(OnConnect::Keep)])
+        );
+    }
+
+    /// The Audio page under each interface, the connect combo under the two groups.
+    #[test]
+    fn the_audio_page_pins() {
+        use reprisekit::interface::Interface;
+        use reprisekit::interfaces::theme_for;
+        reprisekit::pins::fonts();
+        let mut got = Vec::new();
+        for (name, theme) in [
+            ("classic", theme_for(Interface::Classic)),
+            ("blue", theme_for(Interface::Blue)),
+            ("glass", theme_for(Interface::Glass)),
+        ] {
+            let text = TextRenderer::load(&theme.fonts);
+            let s = sheet(&fixture());
+            let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, true, 11);
+            let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
+                (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
+            });
+            got.push((name.to_string(), hash));
+        }
+        reprisekit::pins::check_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins/audio_page.txt"),
+            &got,
+        );
     }
 
     fn app(key: &str, label: &str, streams: &[u32], volume: f64, mute: bool) -> App {

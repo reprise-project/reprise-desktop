@@ -432,6 +432,12 @@ suspend_after = 0            # run [power] standby
 # allow_boost = false        # true lets the volume sliders, the tray wheel and the volume
 #                            # keys go past 100 % up to 150 %; turned off, louder outputs
 #                            # and programs come back to 100 %
+# on_connect = "playback"    # an audio device that connects (Bluetooth, USB, a monitor's
+#                            # HDMI) becomes the default output; "playback_and_recording"
+#                            # also makes its microphone the default input, which moves
+#                            # a Bluetooth headset to its lower-quality headset profile
+#                            # while something records; "keep" leaves the defaults alone.
+#                            # Sounds and Audio Devices sets it
 
 # [privacy]
 # recent_files = true        # false hides the recently used files GTK and KDE apps record

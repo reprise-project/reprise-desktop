@@ -310,6 +310,16 @@ fn sounds_play_from_the_freedesktop_theme_and_the_bell_rings_by_default() {
 }
 
 #[test]
+fn a_connecting_audio_device_takes_playback_by_default() {
+    assert_eq!(Config::default().sounds.on_connect, OnConnect::Playback);
+    for c in OnConnect::ALL {
+        let text = format!("[sounds]\non_connect = \"{}\"\n", c.key());
+        assert_eq!(Config::parse(&text).unwrap().sounds.on_connect, c);
+    }
+    assert!(Config::parse("[sounds]\non_connect = \"always\"\n").is_err());
+}
+
+#[test]
 fn auto_dnd_is_on_by_default_and_turns_off() {
     assert!(Config::default().notifications.auto_dnd);
     let c = Config::parse("[notifications]\nauto_dnd = false\n").unwrap();

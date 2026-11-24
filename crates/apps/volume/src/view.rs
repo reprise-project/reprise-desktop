@@ -244,6 +244,7 @@ mod tests {
             default_sink: Some("speakers".into()),
             default_source: Some("line".into()),
             configured_sink: None,
+            configured_source: None,
             cards: Vec::new(),
             apps: vec![App {
                 key: "firefox".into(),

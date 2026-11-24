@@ -259,7 +259,13 @@ Backup page's work without a window.
   playing. With two outputs or more, a combo moves a program to another one.
   With no device, the device combos read "No audio device".
 - **Sounds and Audio Devices.** Set the default devices, disable one you
-  never use, and give each program its own volume and output.
+  never use, and give each program its own volume and output. "When an audio
+  device connects" picks what a headset, USB device or monitor plugged in
+  later does: it becomes the default output (the default), the default output
+  and input, or the defaults stay as they are (`[sounds] on_connect`). A
+  Bluetooth headset that takes the input too switches to its headset profile,
+  with lower sound quality, whenever a program records. One that only plays
+  stays on its playback profile.
 - **Volume Control.** A mixer with balance, volume and Mute for the speakers
   and each program, a Recording view, and Advanced Controls for bass, treble
   and whatever else the card offers.

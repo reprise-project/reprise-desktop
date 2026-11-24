@@ -451,6 +451,7 @@ pub struct SoundsConfig {
     pub theme: String,
     pub bell: bool,
     pub allow_boost: bool,
+    pub on_connect: OnConnect,
 }
 
 impl Default for SoundsConfig {
@@ -459,7 +460,39 @@ impl Default for SoundsConfig {
             theme: "freedesktop".into(),
             bell: true,
             allow_boost: false,
+            on_connect: OnConnect::default(),
         }
+    }
+}
+
+/// `[sounds] on_connect`: which defaults an audio device takes when it connects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnConnect {
+    #[default]
+    Playback,
+    PlaybackAndRecording,
+    /// WirePlumber's own choice stands.
+    Keep,
+}
+
+impl OnConnect {
+    pub const ALL: [OnConnect; 3] = [
+        OnConnect::Playback,
+        OnConnect::PlaybackAndRecording,
+        OnConnect::Keep,
+    ];
+
+    /// The value the config file spells it as.
+    pub fn key(self) -> &'static str {
+        match self {
+            OnConnect::Playback => "playback",
+            OnConnect::PlaybackAndRecording => "playback_and_recording",
+            OnConnect::Keep => "keep",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<OnConnect> {
+        OnConnect::ALL.into_iter().find(|c| c.key() == s)
     }
 }
 

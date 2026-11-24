@@ -14,7 +14,7 @@ pub use scale::{BOOST_TOP, Scale, stepped, top};
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
@@ -76,6 +76,8 @@ pub struct Stream {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Card {
     pub id: u32,
+    /// `object.serial`: unlike `id`, a card that goes and comes back gets a new one.
+    pub serial: Option<u64>,
     pub label: String,
     pub off: bool,
     pub sinks: bool,
@@ -128,6 +130,8 @@ pub struct Snapshot {
     pub default_source: Option<String>,
     /// The sink picked with `wpctl set-default`, which WirePlumber keeps even while it is gone.
     pub configured_sink: Option<String>,
+    /// The source picked with `wpctl set-default`; WirePlumber picks `default_source` itself without one.
+    pub configured_source: Option<String>,
     pub cards: Vec<Card>,
     pub apps: Vec<App>,
 }
@@ -240,6 +244,8 @@ impl Store {
                     snap.default_sink = default_name(object, "default.audio.sink");
                     snap.default_source = default_name(object, "default.audio.source");
                     snap.configured_sink = default_name(object, "default.configured.audio.sink");
+                    snap.configured_source =
+                        default_name(object, "default.configured.audio.source");
                     targets = stream_targets(object);
                 }
                 _ => {}
@@ -584,6 +590,7 @@ fn card(id: u32, object: &Value) -> Card {
     };
     Card {
         id,
+        serial: serial(&props["object.serial"]),
         label,
         off: params["Profile"][0]["name"] == "off",
         sinks: carries("Audio/Sink"),
@@ -609,6 +616,7 @@ fn default_name(object: &Value, key: &str) -> Option<String> {
 struct Pump {
     child: Mutex<Option<Child>>,
     stopped: AtomicBool,
+    runs: AtomicU32,
 }
 
 pub struct Watch {
@@ -619,6 +627,12 @@ pub struct Watch {
 impl Watch {
     pub fn try_recv(&self) -> Result<Snapshot, TryRecvError> {
         self.rx.try_recv()
+    }
+
+    /// How many `pw-dump` runs have started: it moves when PipeWire restarts and every object
+    /// is reported again.
+    pub fn run(&self) -> u32 {
+        self.pump.runs.load(Ordering::SeqCst)
     }
 
     /// Kill the running `pw-dump` and keep the thread from starting another; the thread reaps it and ends.
@@ -729,6 +743,7 @@ fn pump(program: &str, feed: &mut Feed<Snapshot>, shared: &Pump) -> Run {
     let Some(stdout) = child.stdout.take() else {
         return Run::Ended { delivered: false };
     };
+    shared.runs.fetch_add(1, Ordering::SeqCst);
     *shared.child.lock().unwrap() = Some(child);
     if shared.stopped.load(Ordering::SeqCst)
         && let Some(c) = shared.child.lock().unwrap().as_mut()
@@ -1359,7 +1374,8 @@ mod tests {
                 "metadata": [
                     { "subject": 0, "key": "default.audio.sink", "value": { "name": "other_sink" } },
                     { "subject": 0, "key": "default.audio.source", "value": { "name": "some_mic" } },
-                    { "subject": 0, "key": "default.configured.audio.sink", "value": { "name": "gone_sink" } }
+                    { "subject": 0, "key": "default.configured.audio.sink", "value": { "name": "gone_sink" } },
+                    { "subject": 0, "key": "default.configured.audio.source", "value": { "name": "some_mic" } }
                 ]
             }]"#,
         ));
@@ -1368,6 +1384,7 @@ mod tests {
         assert_eq!(snap.default_sink.as_deref(), Some("other_sink"));
         assert_eq!(snap.default_source.as_deref(), Some("some_mic"));
         assert_eq!(snap.configured_sink.as_deref(), Some("gone_sink"));
+        assert_eq!(snap.configured_source.as_deref(), Some("some_mic"));
     }
 
     /// `pw-dump -m` reports a metadata change with only the changed keys: the rest stands, a null value removes one.
@@ -1582,7 +1599,7 @@ mod tests {
         "info": {
             "props": { "device.name": "alsa_card.pci-0000_07_00.6",
                        "device.description": "Built-in Audio",
-                       "media.class": "Audio/Device" },
+                       "media.class": "Audio/Device", "object.serial": 71 },
             "params": {
                 "EnumProfile": [
                     { "index": 0, "name": "off", "priority": 0, "available": "yes", "classes": [0] },
@@ -1616,6 +1633,7 @@ mod tests {
         assert_eq!(snap.cards.len(), 1);
         let c = &snap.cards[0];
         assert_eq!(c.id, 54);
+        assert_eq!(c.serial, Some(71));
         assert_eq!(c.label, "Built-in Audio");
         assert!(!c.off);
         assert!(c.sinks && c.sources);
