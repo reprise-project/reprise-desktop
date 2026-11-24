@@ -1137,9 +1137,10 @@ action = "terminal"
 #
 # A [[startmenu]] block lists the whole menu instead and wins over
 # [[startmenu_changes]]: the default rows of a later Reprise never reach it,
-# and the Start Menu page keeps it whole. Restore Defaults on that page takes
-# either out, so the page saves changes from then on, and the whole list's
-# edits are lost. Leaving both out gives this menu:
+# and the Start Menu page keeps it whole, as `startmenu = []` once emptied.
+# Restore Defaults on that page takes either out, so the page saves changes
+# from then on, and the whole list's edits are lost. Leaving both out gives
+# this menu:
 #[[startmenu]]                 # programs
 #label = "&Programs"
 #icon = "applications-other"
