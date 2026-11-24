@@ -286,7 +286,7 @@ pub struct Explorer {
     pub popup: Option<Popup>,
     pub focus: Focus,
     pub undo: Option<&'static str>,
-    pub undos: reprisefs::undo::UndoStack,
+    pub undos: reprisefs::undo::SharedUndo,
     /// New's template rows, as the last folder listing read them.
     templates: Vec<reprisefs::templates::Template>,
     /// Where an asked-for paste goes, captured then: the answer arrives an
@@ -614,7 +614,10 @@ impl Explorer {
             popup: None,
             focus: Focus::View,
             undo: None,
-            undos: reprisefs::undo::UndoStack::default(),
+            undos: match cfg!(test) {
+                true => reprisefs::undo::SharedUndo::default(),
+                false => reprisefs::undo::SharedUndo::session(),
+            },
             templates: Vec::new(),
             paste: None,
             menu_paste: None,
@@ -887,6 +890,7 @@ impl Explorer {
         if self.bar.open.is_some() {
             return;
         }
+        self.sync_undo();
         let fresh = menus::menu_bar(&self.menu_state());
         self.bar.titles = fresh.titles;
         self.bar.menus = fresh.menus;

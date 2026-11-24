@@ -541,8 +541,8 @@ impl State {
         }
     }
 
-    /// Ctrl+Z on the desktop: the top undo entry is reversed on a file job, one at a time and
-    /// only while the desktop shows its files. What a failure leaves undone goes back on the
+    /// Ctrl+Z on the desktop: the top entry of the session's undo history is reversed on a file
+    /// job, one at a time in the whole session and only while the desktop shows its files. What a failure leaves undone goes back on the
     /// stack and an error box says why; an item its Recycle Bin refuses asks to be deleted for
     /// good instead ([`Dialog::ask_undo_erase`]).
     pub fn undo_icons(&mut self) {
@@ -562,17 +562,17 @@ impl State {
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
-        if view.undoing {
+        if view.undoing.is_some() {
             return;
         }
         let taken = match erasing {
             Some(entry) => view.undos.take_entry(entry),
             None => view.undos.take(),
         };
-        let Some(undo) = taken else {
+        let Some((undo, running)) = taken else {
             return;
         };
-        view.undoing = true;
+        view.undoing = Some(running);
         let dir = view.dir.clone();
         let action = Action::changes("Undo", State::rescan_desktop).on_give_up(State::undo_ended);
         let spawned = self.spawn_fs_action(action, move |gate| {
@@ -618,7 +618,7 @@ impl State {
     /// The desktop's Undo landed or gave up: Ctrl+Z works again.
     fn undo_ended(&mut self) {
         if let Some(view) = self.desktop.as_mut() {
-            view.undoing = false;
+            view.undoing = None;
         }
     }
 }
