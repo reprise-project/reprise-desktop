@@ -233,7 +233,8 @@ shake, the dim, the hidden frame rate and window memory.
 ## Notifications
 
 - **Balloons** in the corner by the tray, with the program's buttons. A chat
-  program's Reply opens a text field in the balloon.
+  program's Reply opens a text field in the balloon. A notification's picture
+  (a photo, a screenshot) shows under its text, its shape kept.
 - **History.** A bell in the tray keeps the session's notifications, grouped
   per program, each with its body in grey; a click on one runs its default
   action and closes the history. Super+Shift+N opens it from the keyboard, on the monitor with the

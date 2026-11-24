@@ -101,9 +101,10 @@ use glass::{render_glass, render_glass_dark, render_glass_scale2};
 use glass_shell::{render_glass_preview, render_glass_switcher};
 use page::render;
 use popups::{
-    render_calendar_events, render_desktop_labels, render_glass_clock_popup, render_glass_launcher,
-    render_glass_launcher_dark, render_glass_notify_sheets, render_glass_popups, render_launchers,
-    render_now_playing, render_popups_text_size, write_volume_popups,
+    render_balloon_pictures, render_calendar_events, render_desktop_labels,
+    render_glass_clock_popup, render_glass_launcher, render_glass_launcher_dark,
+    render_glass_notify_sheets, render_glass_popups, render_launchers, render_now_playing,
+    render_popups_text_size, write_volume_popups,
 };
 use sheets::{
     render_list_sheet_links, render_list_sheet_search, render_list_sheets, render_long_list_sheets,
@@ -327,6 +328,10 @@ fn write_scale(n: i32) {
     write_preview(
         &render_glass_launcher_dark(n.max(1)),
         &format!("reprisekit-gallery-glass-launcher-dark@{}.png", n.max(1)),
+    );
+    write_preview(
+        &render_balloon_pictures(n.max(1)),
+        &format!("reprisekit-gallery-balloon-pictures@{}.png", n.max(1)),
     );
     for mode in [
         reprisekit::glass::Mode::Light,
@@ -665,6 +670,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         write_preview(
             &render_calendar_events(1),
             "reprisekit-gallery-calendar-events.png",
+        );
+        write_preview(
+            &render_balloon_pictures(1),
+            "reprisekit-gallery-balloon-pictures.png",
         );
         write_preview(
             &render_tray_customize(),

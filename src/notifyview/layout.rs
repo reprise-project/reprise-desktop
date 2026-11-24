@@ -132,6 +132,10 @@ pub(super) fn lay_out(
         Some(lay) => Drawn::Sheet(lay),
         None => {
             let lay = notify_layout(theme, text, title, body, actions, &icons, reply);
+            let lay = match item.picture() {
+                Some(p) => lay.with_picture(theme, (p.width, p.height)),
+                None => lay,
+            };
             Drawn::Balloon(lay.on_edge(edge))
         }
     }

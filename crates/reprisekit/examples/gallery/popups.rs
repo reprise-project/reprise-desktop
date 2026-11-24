@@ -1138,3 +1138,59 @@ pub fn render_launchers(pct: u32) -> Canvas {
     }
     c
 }
+
+/// Classic and Blue notification balloons with no picture, a wide screenshot and a tall photo.
+pub fn render_balloon_pictures(scale: i32) -> Canvas {
+    use reprisekit::controls::tooltip;
+    let photo = |w: u32, h: u32| {
+        let mut c = Canvas::new(w, h);
+        for y in 0..h {
+            let sky = Color::rgb(90 + (y * 120 / h) as u8, 150, 220);
+            c.fill_rect(Rect::new(0, y as i32, w as i32, 1), sky);
+        }
+        let ground = h as i32 * 2 / 3;
+        c.fill_rect(
+            Rect::new(0, ground, w as i32, h as i32 - ground),
+            Color::rgb(70, 140, 60),
+        );
+        c.fill_rect(
+            Rect::new(w as i32 / 8, h as i32 / 8, w as i32 / 6, w as i32 / 6),
+            Color::rgb(250, 220, 80),
+        );
+        c
+    };
+    let pictures = [None, Some(photo(640, 205)), Some(photo(240, 320))];
+    let text = TextRenderer::load(&FontConfig::default());
+    let (cw, ch) = (330 * scale, 300 * scale);
+    let mut c = Canvas::new((3 * cw) as u32, (2 * ch) as u32);
+    for (row, look) in [Interface::Classic, Interface::Blue]
+        .into_iter()
+        .enumerate()
+    {
+        let theme = interfaces::theme_for(look).scaled(scale);
+        let cell = Rect::new(0, row as i32 * ch, 3 * cw, ch);
+        c.fill_rect(cell, theme.colors.background);
+        for (col, picture) in pictures.iter().enumerate() {
+            let lay = tooltip::notify_layout(
+                &theme,
+                &text,
+                "Screenshot saved",
+                "Screenshot 2026-11-24 10-02-11.png",
+                &["Edit", "Show in Folder"],
+                &[],
+                None,
+            );
+            let lay = match picture {
+                Some(p) => lay.with_picture(&theme, (p.width, p.height)),
+                None => lay,
+            };
+            let mut b =
+                tooltip::draw_notify_balloon(&theme, &text, &lay, None, &[], None, None, None);
+            if let Some(p) = picture {
+                tooltip::draw_notify_picture(&theme, &lay, &mut b, p);
+            }
+            c.blit_over(col as i32 * cw + 10 * scale, cell.y + 10 * scale, &b);
+        }
+    }
+    c
+}

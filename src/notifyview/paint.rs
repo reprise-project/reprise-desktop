@@ -4,7 +4,10 @@ use reprisekit::controls::notifysheet::{
     SheetIcons, SheetLayout, chip_layout, draw_chip, drip_bead, drip_bead_share, notify_look,
     place_stack, sheet_hit,
 };
-use reprisekit::controls::tooltip::{draw_notify_balloon, place_notify};
+use reprisekit::controls::tooltip::{
+    NotifyLayout, draw_notify_balloon, draw_notify_picture, place_notify,
+};
+use reprisekit::icon::IconSource;
 use reprisekit::look::widgets::BUTTON_ICON;
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::Caret;
@@ -232,13 +235,31 @@ pub(super) fn sheet_icons(
     (app, picture)
 }
 
-/// The icon a balloon shows at `px`: its own, else the first of [`INFO_ICONS`] that draws.
+/// The icon a balloon shows at `px`: its own, else the first of [`INFO_ICONS`] that draws. One
+/// with a picture under its text shows its app icon.
 pub(super) fn balloon_icon(
     icons: &mut crate::icontheme::IconCache,
     b: &Balloon,
     px: i32,
 ) -> Option<Canvas> {
-    crate::tray::closest(b.item.icon(), px).or_else(|| info_icon(icons, px))
+    let own = match b.item.picture() {
+        Some(_) => b.item.app_icon(),
+        None => b.item.icon(),
+    };
+    crate::tray::closest(own, px).or_else(|| info_icon(icons, px))
+}
+
+/// `picture` resampled to the area `lay` keeps for it, device px.
+fn balloon_picture(lay: &NotifyLayout, picture: Option<&IconSource>) -> Option<Canvas> {
+    let (r, p) = lay.picture.zip(picture)?;
+    let at = |x: u32, y: u32| p.pixels[(y * p.width + x) as usize];
+    Some(Canvas::resample_box_from(
+        p.width,
+        p.height,
+        r.width as u32,
+        r.height as u32,
+        at,
+    ))
 }
 
 fn info_icon(icons: &mut crate::icontheme::IconCache, px: i32) -> Option<Canvas> {
@@ -288,7 +309,7 @@ fn paint_one(
             let canvas = fresh.then(|| {
                 let icon = balloon_icon(&mut state.icons, b, theme.icon_size());
                 let actions = b.item.button_icon_canvases(BUTTON_ICON * scale);
-                draw_notify_balloon(
+                let mut c = draw_notify_balloon(
                     &theme,
                     state.text.for_output(theme.scale),
                     lay,
@@ -297,7 +318,11 @@ fn paint_one(
                     pushed,
                     b.hot,
                     reply,
-                )
+                );
+                if let Some(p) = balloon_picture(lay, b.item.picture()) {
+                    draw_notify_picture(&theme, lay, &mut c, &p);
+                }
+                c
             });
             (canvas, None)
         }

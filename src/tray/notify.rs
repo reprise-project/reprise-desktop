@@ -281,24 +281,47 @@ const MAX_PICTURE_SIDE: u32 = 4096;
 /// Bytes a picture file's decoder may allocate: 8-bit RGBA at [`MAX_PICTURE_SIDE`] square.
 const MAX_PICTURE_ALLOC: u64 = MAX_PICTURE_SIDE as u64 * MAX_PICTURE_SIDE as u64 * 4;
 
-/// `image-data` decoded at each of [`super::NOTIFY_SIZES`], fitted inside
-/// a square canvas with its aspect kept and the rest clear.
-pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
+/// The box a picture's `whole` is shrunk into: enough for a balloon's picture area at scale 2.
+const WHOLE_W: u32 = 640;
+const WHOLE_H: u32 = 320;
+/// A picture no larger than this a side is an app's icon sent as a picture (a 48 px PNG from
+/// /usr/share/pixmaps, say), so it gets no `whole` and stays the header icon.
+const ICON_SIDE: u32 = 64;
+
+/// A notification's picture: `sources` fitted into squares at each of [`super::NOTIFY_SIZES`]
+/// for an icon slot, and `whole` with its own shape for a balloon's picture area.
+#[derive(Debug, Default)]
+pub struct Picture {
+    pub sources: Vec<IconSource>,
+    pub whole: Option<IconSource>,
+}
+
+impl From<Vec<IconSource>> for Picture {
+    fn from(sources: Vec<IconSource>) -> Picture {
+        Picture {
+            sources,
+            whole: None,
+        }
+    }
+}
+
+/// `image-data` decoded as a [`Picture`].
+pub fn image_sources(img: &ImageData) -> Picture {
     if img.width > MAX_IMAGE_SIDE || img.height > MAX_IMAGE_SIDE {
-        return Vec::new();
+        return Picture::default();
     }
     fitted(img)
 }
 
 /// [`image_sources`] for pixels of any side.
-fn fitted(img: &ImageData) -> Vec<IconSource> {
+fn fitted(img: &ImageData) -> Picture {
     let ok = img.width >= 1
         && img.height >= 1
         && img.bits == 8
         && (img.channels == 3 || img.channels == 4)
         && (img.channels == 4) == img.alpha;
     if !ok {
-        return Vec::new();
+        return Picture::default();
     }
     let (w, h, ch) = (
         img.width as usize,
@@ -307,7 +330,7 @@ fn fitted(img: &ImageData) -> Vec<IconSource> {
     );
     let stride = img.stride.max(0) as usize;
     if stride < w * ch || img.data.len() < stride * (h - 1) + w * ch {
-        return Vec::new();
+        return Picture::default();
     }
     let pixel = |x: u32, y: u32| {
         let o = y as usize * stride + x as usize * ch;
@@ -315,16 +338,40 @@ fn fitted(img: &ImageData) -> Vec<IconSource> {
         let a = if ch == 4 { p[3] } else { 0xFF };
         reprisekit::icon::premultiply(u32::from_be_bytes([a, p[0], p[1], p[2]]))
     };
-    fitted_from(w as u32, h as u32, pixel)
+    picture_from(w as u32, h as u32, pixel)
 }
 
 /// A picture already drawn, `canvas`, as [`image_sources`] gives one.
-pub fn canvas_sources(canvas: &Canvas) -> Vec<IconSource> {
+pub fn canvas_sources(canvas: &Canvas) -> Picture {
     let (w, h) = (canvas.width, canvas.height);
     if w == 0 || h == 0 {
-        return Vec::new();
+        return Picture::default();
     }
-    fitted_from(w, h, |x, y| canvas.pixels[(y * w + x) as usize])
+    picture_from(w, h, |x, y| canvas.pixels[(y * w + x) as usize])
+}
+
+/// The `w` x `h` premultiplied picture `pixel` reads as a [`Picture`], its `whole` only past
+/// [`ICON_SIDE`] on a side.
+fn picture_from(w: u32, h: u32, pixel: impl Fn(u32, u32) -> u32) -> Picture {
+    Picture {
+        sources: fitted_from(w, h, &pixel),
+        whole: (w > ICON_SIDE || h > ICON_SIDE).then(|| whole_from(w, h, &pixel)),
+    }
+}
+
+/// The picture `pixel` reads shrunk to fit inside [`WHOLE_W`] x [`WHOLE_H`] with its shape kept,
+/// never enlarged.
+fn whole_from(w: u32, h: u32, pixel: impl Fn(u32, u32) -> u32) -> IconSource {
+    let (bw, bh) = (u64::from(WHOLE_W), u64::from(WHOLE_H));
+    let (w64, h64) = (u64::from(w), u64::from(h));
+    let (fw, fh) = if w <= WHOLE_W && h <= WHOLE_H {
+        (w64, h64)
+    } else if w64 * bh >= h64 * bw {
+        (bw, (h64 * bw / w64).max(1))
+    } else {
+        ((w64 * bh / h64).max(1), bh)
+    };
+    Canvas::resample_box_from(w, h, fw as u32, fh as u32, pixel).into()
 }
 
 /// The `w` x `h` premultiplied picture `pixel` reads, at each of [`super::NOTIFY_SIZES`].
@@ -352,30 +399,28 @@ fn fitted_from(w: u32, h: u32, pixel: impl Fn(u32, u32) -> u32) -> Vec<IconSourc
 /// Bytes read of a picture file.
 const MAX_PICTURE_BYTES: u64 = 32 << 20;
 
-/// A picture or icon file a notification names by path, read once: a PNG, JPEG or SVG as the icon
-/// loader draws it at each of [`super::NOTIFY_SIZES`], any other picture (a WebP cover say) as
-/// [`image_sources`] gives. Only a regular file is read, so a FIFO or device a sender names can't
-/// hold the caller.
-pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
+/// A picture or icon file a notification names by path, read once: a PNG, JPEG or SVG's sources
+/// as the icon loader draws it at each of [`super::NOTIFY_SIZES`], any other picture's (a WebP
+/// cover say) as [`image_sources`] gives; a raster past [`ICON_SIDE`] has its `whole`. Only a regular file is
+/// read, so a FIFO or device a sender names can't hold the caller.
+pub fn picture_file_sources(path: &Path) -> Picture {
     let Ok(bytes) = reprisefs::ops::read_regular(path, MAX_PICTURE_BYTES) else {
-        return Vec::new();
+        return Picture::default();
     };
     use reprisekit::icontheme::{MAX_ICON_BYTES, decode_bytes, is_icon_file};
+    let mut icon: Vec<IconSource> = Vec::new();
     if is_icon_file(path) && bytes.len() as u64 <= MAX_ICON_BYTES {
-        let icon: Vec<IconSource> = (super::NOTIFY_SIZES.iter())
+        icon = (super::NOTIFY_SIZES.iter())
             .filter_map(|&px| decode_bytes(path, &bytes, px as u32, true))
             .map(IconSource::from)
             .collect();
-        if !icon.is_empty() {
-            return icon;
-        }
     }
     let Ok(img) = decode_picture(bytes) else {
-        return Vec::new();
+        return icon.into();
     };
     let rgba = img.into_rgba8();
     let (w, h) = (rgba.width() as i32, rgba.height() as i32);
-    fitted(&ImageData {
+    let picture = fitted(&ImageData {
         width: w,
         height: h,
         stride: w * 4,
@@ -383,7 +428,15 @@ pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
         bits: 8,
         channels: 4,
         data: rgba.as_raw(),
-    })
+    });
+    if icon.is_empty() {
+        picture
+    } else {
+        Picture {
+            sources: icon,
+            whole: picture.whole,
+        }
+    }
 }
 
 fn decode_picture(bytes: Vec<u8>) -> image::ImageResult<image::DynamicImage> {
@@ -551,10 +604,10 @@ mod tests {
             data: &[0; 4 * 1025],
         };
         assert_eq!(
-            image_sources(&img(1024)).len(),
+            image_sources(&img(1024)).sources.len(),
             crate::tray::NOTIFY_SIZES.len()
         );
-        assert!(image_sources(&img(1025)).is_empty());
+        assert!(image_sources(&img(1025)).sources.is_empty());
     }
 
     #[test]
@@ -630,7 +683,7 @@ mod tests {
 
     #[test]
     fn image_data_decodes_at_every_notification_size() {
-        let srcs = image_sources(&rgba(40, 40));
+        let srcs = image_sources(&rgba(40, 40)).sources;
         assert_eq!(
             srcs.iter().map(|s| s.width).collect::<Vec<_>>(),
             [16, 32, 48, 96]
@@ -639,13 +692,48 @@ mod tests {
 
     #[test]
     fn a_wide_image_keeps_its_aspect() {
-        let s = &image_sources(&rgba(160, 90))[3];
+        let s = &image_sources(&rgba(160, 90)).sources[3];
         assert_eq!((s.width, s.height), (96, 96), "square canvas");
         assert_eq!(s.pixels[0] >> 24, 0, "letterbox rows are clear");
         assert_eq!(
             s.pixels[48 * 96 + 48] >> 24,
             0xFF,
             "the picture fills the middle"
+        );
+    }
+
+    #[test]
+    fn a_picture_keeps_its_shape_whole_within_its_bound_and_is_never_enlarged() {
+        let side = |img: &ImageData| {
+            let w = image_sources(img).whole.expect("a whole picture");
+            (w.width, w.height)
+        };
+        assert_eq!(
+            side(&rgba(1024, 330)),
+            (640, 206),
+            "a wide shot fills the width"
+        );
+        assert_eq!(side(&rgba(300, 1000)), (96, 320), "a tall one the height");
+        assert_eq!(
+            side(&rgba(200, 120)),
+            (200, 120),
+            "a small one stays its size"
+        );
+        let canvas = Canvas::new(3360, 1080);
+        let whole = canvas_sources(&canvas).whole.expect("a whole picture");
+        assert_eq!((whole.width, whole.height), (640, 205));
+        assert!(canvas_sources(&Canvas::new(0, 4)).whole.is_none());
+    }
+
+    #[test]
+    fn an_icon_sized_image_has_no_whole_picture() {
+        let small = image_sources(&rgba(48, 48));
+        assert_eq!(small.sources.len(), crate::tray::NOTIFY_SIZES.len());
+        assert!(small.whole.is_none(), "48x48 is an icon");
+        assert!(image_sources(&rgba(64, 64)).whole.is_none(), "64x64 too");
+        assert!(
+            image_sources(&rgba(65, 20)).whole.is_some(),
+            "65 wide is a picture"
         );
     }
 
@@ -677,7 +765,7 @@ mod tests {
         let img = h.image.expect("image-data");
         assert_eq!((img.width, img.height, img.channels), (2, 1, 4));
         assert_eq!(img.data, &pixels[..]);
-        let src = image_sources(&img);
+        let src = image_sources(&img).sources;
         assert_eq!(
             src.iter().map(|s| s.width).collect::<Vec<_>>(),
             [16, 32, 48, 96]
@@ -763,18 +851,21 @@ mod tests {
             data: &data,
         };
         assert_eq!(
-            image_sources(&img(2, 1, 8, 4)).len(),
+            image_sources(&img(2, 1, 8, 4)).sources.len(),
             crate::tray::NOTIFY_SIZES.len()
         );
-        assert!(image_sources(&img(2, 2, 8, 4)).is_empty(), "short by a row");
         assert!(
-            image_sources(&img(2, 1, 4, 4)).is_empty(),
+            image_sources(&img(2, 2, 8, 4)).sources.is_empty(),
+            "short by a row"
+        );
+        assert!(
+            image_sources(&img(2, 1, 4, 4)).sources.is_empty(),
             "stride under a row"
         );
-        assert!(image_sources(&img(0, 1, 8, 4)).is_empty());
-        assert!(image_sources(&img(1_000_000, 1, 8, 4)).is_empty());
+        assert!(image_sources(&img(0, 1, 8, 4)).sources.is_empty());
+        assert!(image_sources(&img(1_000_000, 1, 8, 4)).sources.is_empty());
         assert_eq!(
-            image_sources(&img(2, 2, 6, 3)).len(),
+            image_sources(&img(2, 2, 6, 3)).sources.len(),
             crate::tray::NOTIFY_SIZES.len(),
             "RGB rows of 6"
         );
@@ -788,16 +879,20 @@ mod tests {
         image::RgbaImage::from_pixel(3840, 2160, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
             .save(&path)
             .unwrap();
-        let sources = picture_file_sources(&path);
+        let sources = picture_file_sources(&path).sources;
         assert_eq!(sources.len(), crate::tray::NOTIFY_SIZES.len());
         let large = sources.last().unwrap();
         assert_eq!((large.width, large.height), (96, 96));
         assert_ne!(large.pixels[48 * 96 + 48], 0, "the picture is drawn");
+        let whole = picture_file_sources(&path)
+            .whole
+            .expect("a raster has its whole");
+        assert_eq!((whole.width, whole.height), (568, 320));
         let big = image::RgbaImage::new(1, 5000);
         let tall = dir.join("notify-picture-tall.png");
         big.save(&tall).unwrap();
         assert!(
-            picture_file_sources(&tall).is_empty(),
+            picture_file_sources(&tall).sources.is_empty(),
             "a side past 4096 is refused"
         );
     }
@@ -814,7 +909,7 @@ mod tests {
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(picture_file_sources(&fifo));
+            let _ = tx.send(picture_file_sources(&fifo).sources);
         });
         let sources = rx
             .recv_timeout(std::time::Duration::from_secs(5))
