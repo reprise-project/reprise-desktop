@@ -42,14 +42,17 @@ impl Drop for WalkStop {
 impl Explorer {
     /// File > Properties, Alt+Enter and the menus' Properties row: the sheet for the single
     /// selected entry, the combined sheet for several, or for the place itself with nothing
-    /// selected (the Recycle Bin's is Recycle Bin Properties).
+    /// selected (the Recycle Bin's is Recycle Bin Properties). A Desktop row alone opens its
+    /// place's sheet; among other entries it is left out.
     pub fn properties(&mut self, ctx: &mut Ctx) -> Reply {
+        use crate::place::Place;
         self.note_sheet_error_read();
-        if self.sv.selection.len() > 1 {
+        let picked: Vec<usize> = self.picked().map(|(i, _)| i).collect();
+        if picked.len() > 1 {
             return self.open_set_properties(ctx);
         }
-        let chosen = self.sv.selection.single().and_then(|i| self.items.get(i));
-        if self.place == crate::place::Place::RecycleBin {
+        let chosen = picked.first().and_then(|&i| self.items.get(i));
+        if self.place == Place::RecycleBin {
             return match chosen.cloned() {
                 Some(it) => self.open_bin_item_properties(it, ctx),
                 None => self.open_bin_props(ctx),
@@ -59,7 +62,13 @@ impl Explorer {
             let (path, name) = (it.path.clone(), it.label().to_string());
             return self.open_properties(&path, &name, &name, ctx);
         }
-        let (place, shares) = (self.place.clone(), self.shares.shares.clone());
+        let place = match self.sv.selection.single().and_then(|i| self.shell_row(i)) {
+            Some(Place::RecycleBin) => return self.open_bin_props(ctx),
+            Some(row) => row,
+            None if self.sv.selection.is_empty() => self.place.clone(),
+            None => return Reply::none(),
+        };
+        let shares = self.shares.shares.clone();
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let scale = ctx.icons.scale();
         let work = move |_: &Gate| {
@@ -478,6 +487,7 @@ impl Explorer {
             .into_iter()
             .chain(sel.set.iter().copied().filter(|&i| Some(i) != first));
         let chosen: Vec<(PathBuf, String)> = order
+            .filter(|&i| self.shell_row(i).is_none())
             .filter_map(|i| self.items.get(i))
             .map(|it| (it.path.clone(), it.label().to_string()))
             .collect();

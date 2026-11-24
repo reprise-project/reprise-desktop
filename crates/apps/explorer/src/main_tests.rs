@@ -11,6 +11,8 @@ mod actions;
 mod address;
 #[path = "main_tests/computer.rs"]
 mod computer;
+#[path = "main_tests/desktop.rs"]
+mod desktop;
 #[path = "main_tests/items.rs"]
 mod items;
 #[path = "main_tests/listing.rs"]
@@ -116,6 +118,27 @@ pub(crate) fn hand(ex: &mut Explorer, token: Option<&str>, ctx: &mut Ctx) -> Rep
 /// An Explorer on default settings and no `.desktop` index.
 pub(crate) fn test_explorer(start: Place, ctx: &mut Ctx) -> Explorer {
     Explorer::with_settings(start, Settings::default(), Vec::new().into(), None, ctx)
+}
+
+/// The Desktop's listing over `dir`, shown as the place `dir`: the Desktop folder is read once
+/// per process from the environment, so a test that acts on files lists the rows over its own.
+pub(crate) fn rows_over(dir: &Path, ctx: &mut Ctx) -> Explorer {
+    let place = Place::Folder(dir.to_path_buf());
+    let mut ex = test_explorer(place.clone(), ctx);
+    let listed = place::desktop_listing(Some(dir), &reprisefs::apps::MimeDb::empty(), true);
+    let list = shellview::list_icon_px(ctx.theme.text);
+    let sizes = reprisekit::icontheme::listing_px(list);
+    let icons = ReadIcons::read(&listed.items, sizes, ctx.icons.scale());
+    let read = Read {
+        place,
+        listed,
+        icons,
+        list,
+        tree: Vec::new(),
+        templates: None,
+    };
+    ex.show_read(read, ctx);
+    ex
 }
 
 /// One program that opens text, pictures and `.exe` files, for tests that open a file.

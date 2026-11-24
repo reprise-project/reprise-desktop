@@ -795,6 +795,10 @@ impl Explorer {
             mode: self.sv.mode,
             sort: self.sv.sort.unwrap_or(self.settings.sort),
             selection: self.sv.selection.len(),
+            shell_rows: (self.sv.selection.set.iter())
+                .filter(|&&i| self.shell_row(i).is_some())
+                .count(),
+            sheetless: self.sheetless(),
             can_paste: repriseapp::clipboard_has_files(),
             can_undo: self.undo,
             folders: self.settings.folders,
@@ -814,6 +818,15 @@ impl Explorer {
             can_connect: self.shares.gio,
             templates: self.templates.clone(),
         }
+    }
+
+    /// Whether the selection is only Desktop rows that [`Explorer::properties`] opens no sheet for:
+    /// several rows, or one whose place has none.
+    fn sheetless(&self) -> bool {
+        let row = self.sv.selection.single().and_then(|i| self.shell_row(i));
+        !self.sv.selection.is_empty()
+            && self.picked().next().is_none()
+            && !row.is_some_and(|p| menus::row_has_sheet(&p))
     }
 
     /// The pinned folders as last read.
@@ -971,7 +984,10 @@ impl Explorer {
         ctx: &mut Ctx,
         show: impl FnOnce(&mut Self, Place, &mut Ctx) -> Reply,
     ) -> Reply {
-        let left = self.place.path();
+        let left = match place {
+            Place::Desktop => self.place.row_path().or_else(|| self.place.path()),
+            _ => self.place.path(),
+        };
         let reply = show(self, place.clone(), ctx);
         if let Some(left) = left {
             self.select_once_listed(place, vec![left], ctx);
@@ -1023,7 +1039,7 @@ impl Explorer {
         ctx: &mut Ctx,
         list: impl FnOnce(&mut Self, &mut Ctx) -> Reply,
     ) -> Reply {
-        let chosen = self.selected_paths();
+        let chosen = self.selection_paths();
         // The folder watch fires refreshes unasked; they keep the scroll position.
         let (top, left) = (self.sv.top, self.sv.left);
         // A rename in progress survives the re-listing, by path: the folder watch
@@ -1195,10 +1211,13 @@ impl Explorer {
         let names: Vec<String> = items
             .iter()
             .zip(&read_icons.own)
-            .map(|(it, own)| {
-                reprisefs::icons::item_icon_with(it, own.as_deref(), &self.specials, &|n| {
-                    ctx.icons.has_unread(n)
-                })
+            .map(|(it, own)| match Place::of_row(&it.path) {
+                Some(p) => p.icon_name().to_string(),
+                None => {
+                    reprisefs::icons::item_icon_with(it, own.as_deref(), &self.specials, &|n| {
+                        ctx.icons.has_unread(n)
+                    })
+                }
             })
             .collect();
         // A re-listing of the same place keeps the thumbnails of unchanged images,
@@ -1689,7 +1708,7 @@ impl Explorer {
             self.index_items();
             return;
         };
-        let chosen = self.selected_paths();
+        let chosen = self.selection_paths();
         let firsts: Vec<usize> = self.sv.groups.iter().map(|g| g.first).collect();
         let field = self.sv.fields.get(col).copied().unwrap_or(Field::Name);
         let order = sort_order_grouped(&self.items, &firsts, field, asc);

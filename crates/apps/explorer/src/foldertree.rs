@@ -90,17 +90,6 @@ impl World {
     }
 }
 
-/// The shell places under the Desktop, in the tree's order (the address drop's too), ahead of the Desktop folder's own subfolders.
-pub fn desktop_places() -> [Place; 5] {
-    [
-        Place::Documents,
-        Place::Home,
-        Place::Computer,
-        Place::network(),
-        Place::RecycleBin,
-    ]
-}
-
 fn tree_node(
     places: &mut Places,
     label: &str,
@@ -298,8 +287,8 @@ pub fn build(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) {
     tree.selected = Some(vec![0]);
 }
 
-/// Read a tree node's children. The Desktop holds Documents, Home, Computer and the Recycle Bin, then
-/// its own subfolders; Computer holds its drives. A child that was there before
+/// Read a tree node's children. The Desktop holds the rows its view lists for the shell places
+/// ([`place::desktop_places`]), then its own subfolders; Computer holds its drives. A child that was there before
 /// keeps its node (open or not, with what it holds), and a selection below the node follows its child
 /// to the new row, or lands on the node when that child is gone.
 pub fn fill(
@@ -348,12 +337,6 @@ pub fn read_kids(
 ) -> Kids {
     let mut kids: Vec<(String, Place)> = Vec::new();
     match place {
-        Place::Desktop => {
-            for p in desktop_places() {
-                kids.push((p.title(), p));
-            }
-            kids.extend(subfolders(place, inp));
-        }
         Place::Computer => {
             kids.extend(place::computer_tree_children(&list(
                 &Place::Computer,

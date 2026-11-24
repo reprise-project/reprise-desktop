@@ -36,8 +36,7 @@ impl Explorer {
     /// The selected items, when every one is an archive bsdtar extracts.
     fn selected_archives(&self) -> Option<Vec<&Item>> {
         let mut all = Vec::new();
-        for &i in &self.sv.selection.set {
-            let it = self.items.get(i)?;
+        for (_, it) in self.picked() {
             let archive = !it.is_folder() && it.mime.as_deref().is_some_and(extract::is_archive);
             if !archive {
                 return None;
@@ -84,9 +83,7 @@ impl Explorer {
         if self.place.read_only() {
             return None;
         }
-        let picked: Vec<&Item> = (self.sv.selection.set.iter())
-            .filter_map(|&i| self.items.get(i))
-            .collect();
+        let picked: Vec<&Item> = self.picked().map(|(_, it)| it).collect();
         let dir = picked.first()?.path.parent()?;
         let paths: Vec<PathBuf> = picked.iter().map(|it| it.path.clone()).collect();
         let one_folder = matches!(picked.as_slice(), [it] if it.is_folder());

@@ -113,7 +113,7 @@ impl Explorer {
         let Some(i) = self.sv.selection.single() else {
             return Reply::none();
         };
-        let Some(it) = self.items.get(i) else {
+        let Some(it) = self.items.get(i).filter(|_| self.shell_row(i).is_none()) else {
             return Reply::none();
         };
         self.focus = Focus::View;
@@ -306,11 +306,8 @@ impl Explorer {
     /// one inside them, not the file's.
     pub(crate) fn begin_batch_rename(&mut self) -> Reply {
         let picked: Vec<&Item> = self
-            .sv
-            .selection
-            .set
-            .iter()
-            .filter_map(|&i| self.items.get(i))
+            .picked()
+            .map(|(_, it)| it)
             .filter(|it| it.shortcut.is_none())
             .collect();
         let Some(first) = picked.first() else {

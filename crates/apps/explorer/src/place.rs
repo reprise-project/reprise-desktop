@@ -87,14 +87,16 @@ impl Place {
                     trash: reprisefs::places::trash_dir().as_deref(),
                 },
             ),
-            None => Place::Folder(p.to_path_buf()),
+            None => Place::of_row(p).unwrap_or_else(|| Place::Folder(p.to_path_buf())),
         }
     }
 
     /// `from_path` against explicit folders, so a test need not touch `$HOME`. A
-    /// Documents folder set to `$HOME` itself is Home.
+    /// Documents folder set to `$HOME` itself is Home; a Desktop row's path is its place.
     pub fn from_path_in(p: &Path, at: &Specials) -> Place {
-        if p == at.home {
+        if let Some(place) = Place::of_row(p) {
+            place
+        } else if p == at.home {
             Place::Home
         } else if at.documents == Some(p) {
             Place::Documents
@@ -156,6 +158,28 @@ impl Place {
     /// The Network place itself.
     pub fn network() -> Place {
         Place::Network(ROOT.to_string())
+    }
+
+    /// The path of the Desktop view's row for one of [`desktop_places`]. Every system call refuses
+    /// its leading NUL byte, so a file operation a row's guard misses touches nothing.
+    pub fn row_path(&self) -> Option<PathBuf> {
+        let name = match self {
+            Place::Documents => "documents",
+            Place::Home => "home",
+            Place::Computer => "computer",
+            Place::Network(uri) if uri == ROOT => "network",
+            Place::RecycleBin => "recycle-bin",
+            _ => return None,
+        };
+        Some(PathBuf::from(format!("\0{name}")))
+    }
+
+    /// The shell place a Desktop view row's `path` ([`Place::row_path`]) stands for.
+    pub fn of_row(path: &Path) -> Option<Place> {
+        if !path.as_os_str().as_encoded_bytes().starts_with(b"\0") {
+            return None;
+        }
+        (desktop_places().into_iter()).find(|p| p.row_path().as_deref() == Some(path))
     }
 
     pub fn icon_name(&self) -> &'static str {
@@ -286,6 +310,18 @@ impl Place {
     }
 }
 
+/// The shell places under the Desktop, in the tree's order (the address drop's and the Desktop
+/// view's too), ahead of the Desktop folder's own items.
+pub fn desktop_places() -> [Place; 5] {
+    [
+        Place::Documents,
+        Place::Home,
+        Place::Computer,
+        Place::network(),
+        Place::RecycleBin,
+    ]
+}
+
 pub fn not_found_text(typed: &str) -> String {
     format!("Cannot find '{typed}'. Check the spelling and try again.")
 }
@@ -307,8 +343,8 @@ pub fn drive_mounts(drives: &[Drive], shares: &[Share]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// A tree node's child folders: `listed`'s directories minus any that is a
-/// drive's mount point; a drive shows once, under Computer.
+/// A tree node's child folders: `listed`'s directories (a Desktop row as its place) minus any
+/// that is a drive's mount point; a drive shows once, under Computer.
 pub fn tree_subfolders(listed: &Listed, mounts: &[PathBuf]) -> Vec<(String, Place)> {
     listed
         .items
@@ -410,7 +446,8 @@ pub fn folder_of(it: &Item) -> Option<&Path> {
 /// `items`' indices in the order a column showing `field` puts them. Ascending
 /// lists folders ([`Item::is_folder`]) first, each part by the column's key (name
 /// and kind case-insensitively, size and dates numerically, folder by path), then
-/// by name; descending reverses that. Keys are built once per item.
+/// by name; descending reverses that. The Desktop's rows ([`Place::of_row`]) lead either way, in
+/// the tree's order. Keys are built once per item.
 pub fn sort_order(items: &[Item], field: Field, asc: bool) -> Vec<usize> {
     let key = |i: usize| {
         let it = &items[i];
@@ -431,7 +468,15 @@ pub fn sort_order(items: &[Item], field: Field, asc: bool) -> Vec<usize> {
     if !asc {
         order.reverse();
     }
+    order.sort_by_key(|&i| row_rank(&items[i]));
     order
+}
+
+/// `it`'s place among [`desktop_places`] when it is a Desktop row, else past them all.
+fn row_rank(it: &Item) -> usize {
+    (Place::of_row(&it.path))
+        .and_then(|p| desktop_places().iter().position(|d| *d == p))
+        .unwrap_or(usize::MAX)
 }
 
 /// [`sort_order`] run on each group's span, `firsts` being the groups' first
@@ -525,21 +570,63 @@ pub fn list(
                 drives: Vec::new(),
             }
         }
+        Place::Desktop => desktop_listing(place.path().as_deref(), globs, show_hidden),
         _ => {
             let Some(dir) = place.path() else {
                 return empty_listed();
             };
-            let mut items = reprisefs::listing::read_dir(&dir, globs);
-            if !show_hidden {
-                items.retain(|i| !i.hidden);
-            }
             Listed {
-                items,
+                items: read_folder(&dir, globs, show_hidden),
                 groups: Vec::new(),
                 drives: Vec::new(),
             }
         }
     }
+}
+
+fn read_folder(dir: &Path, globs: &reprisefs::apps::MimeDb, show_hidden: bool) -> Vec<Item> {
+    let mut items = reprisefs::listing::read_dir(dir, globs);
+    if !show_hidden {
+        items.retain(|i| !i.hidden);
+    }
+    items
+}
+
+/// The Desktop: a row for each of [`desktop_places`], then the Desktop folder `dir`'s items.
+pub(crate) fn desktop_listing(
+    dir: Option<&Path>,
+    globs: &reprisefs::apps::MimeDb,
+    show_hidden: bool,
+) -> Listed {
+    let mut items: Vec<Item> = desktop_places().iter().filter_map(row_item).collect();
+    if let Some(dir) = dir {
+        items.extend(read_folder(dir, globs, show_hidden));
+    }
+    Listed {
+        items,
+        groups: Vec::new(),
+        drives: Vec::new(),
+    }
+}
+
+fn row_item(place: &Place) -> Option<Item> {
+    Some(Item {
+        name: place.title(),
+        path: place.row_path()?,
+        is_dir: true,
+        is_link: false,
+        exec: false,
+        program: None,
+        hidden: false,
+        size: 0,
+        modified: None,
+        mime: None,
+        kind: "System Folder".to_string(),
+        drive: None,
+        mount_root: false,
+        trashed: None,
+        shortcut: None,
+    })
 }
 
 fn drive_item(d: &Drive) -> Item {
@@ -1266,5 +1353,111 @@ mod tests {
         let listed = build_computer(Vec::new(), &Snapshot::default(), &[], &[], None);
         assert!(listed.groups.is_empty());
         assert!(listed.items.is_empty());
+    }
+
+    /// The Desktop folder holding the folder `Projects` and the file `notes.txt`.
+    fn desktop_folder() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::create_dir(dir.path().join("Projects")).expect("mkdir");
+        std::fs::write(dir.path().join("notes.txt"), "x").expect("write");
+        dir
+    }
+
+    #[test]
+    fn the_desktop_lists_a_row_per_shell_place_then_its_folder() {
+        let dir = desktop_folder();
+        let listed = desktop_listing(Some(dir.path()), &reprisefs::apps::MimeDb::empty(), true);
+        let rows: Vec<Place> = (listed.items.iter())
+            .map_while(|it| Place::of_row(&it.path))
+            .collect();
+        assert_eq!(rows, desktop_places(), "the rows lead, in the tree's order");
+        let names: Vec<&str> = listed.items.iter().map(|it| it.label()).collect();
+        let home = home_label();
+        assert_eq!(
+            names[..5],
+            [
+                "Documents",
+                home.as_str(),
+                "Computer",
+                "Network",
+                "Recycle Bin"
+            ]
+        );
+        let mut files = names[5..].to_vec();
+        files.sort();
+        assert_eq!(files, ["Projects", "notes.txt"]);
+        for it in &listed.items[..5] {
+            assert!(
+                it.is_folder() && !it.hidden,
+                "{} lists as a folder",
+                it.name
+            );
+            assert_eq!(it.kind, "System Folder");
+            assert_eq!(Some(Place::from_path(&it.path)), Place::of_row(&it.path));
+        }
+        let places: Vec<Place> = (tree_subfolders(&listed, &[]).into_iter())
+            .map(|(_, p)| p)
+            .collect();
+        let mut tree = desktop_places().to_vec();
+        tree.push(Place::from_path(&dir.path().join("Projects")));
+        assert_eq!(
+            places, tree,
+            "the tree's Desktop node holds the view's folders"
+        );
+    }
+
+    #[test]
+    fn a_desktop_rows_path_is_refused_by_the_file_system() {
+        for place in desktop_places() {
+            let path = place.row_path().expect("a row");
+            let refused = |e: std::io::Error| e.kind() == std::io::ErrorKind::InvalidInput;
+            assert!(
+                std::fs::metadata(&path).is_err_and(refused),
+                "{path:?} is stat'ed"
+            );
+            assert!(
+                std::fs::create_dir_all(&path).is_err_and(refused),
+                "{path:?} is made"
+            );
+            assert!(
+                std::fs::remove_file(&path).is_err_and(refused),
+                "{path:?} is removed"
+            );
+        }
+        assert_eq!(Place::Desktop.row_path(), None);
+        assert_eq!(Place::Folder(PathBuf::from("/tmp")).row_path(), None);
+        assert_eq!(Place::of_row(Path::new("/tmp/computer")), None);
+    }
+
+    #[test]
+    fn the_desktop_rows_lead_whichever_way_it_sorts() {
+        let dir = desktop_folder();
+        let listed = desktop_listing(Some(dir.path()), &reprisefs::apps::MimeDb::empty(), true);
+        let mut items = listed.items;
+        items.reverse();
+        for (field, asc) in [
+            (Field::Name, true),
+            (Field::Name, false),
+            (Field::Size, false),
+        ] {
+            let order = sort_order(&items, field, asc);
+            let rows: Vec<Option<Place>> = (order[..5].iter())
+                .map(|&i| Place::of_row(&items[i].path))
+                .collect();
+            assert_eq!(
+                rows,
+                desktop_places().map(Some),
+                "{field:?} {asc}: the rows first, in the tree's order"
+            );
+        }
+        let by_name = |asc| {
+            let order = sort_order(&items, Field::Name, asc);
+            order[5..]
+                .iter()
+                .map(|&i| items[i].name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(by_name(true), ["Projects", "notes.txt"]);
+        assert_eq!(by_name(false), ["notes.txt", "Projects"]);
     }
 }

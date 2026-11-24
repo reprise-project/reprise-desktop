@@ -22,6 +22,11 @@ pub struct MenuState {
     /// The Details sort column and direction; Arrange Icons by bullets the column.
     pub sort: (usize, bool),
     pub selection: usize,
+    /// How many of the selected are the Desktop's rows for the shell places, which the file rows
+    /// leave out.
+    pub shell_rows: usize,
+    /// The selection is only Desktop rows and Properties has no sheet for it.
+    pub sheetless: bool,
     pub can_paste: bool,
     /// The verb of the undoable action ("Delete", "Move"), for Edit's first row;
     /// `None` greys it.
@@ -62,6 +67,8 @@ impl Default for MenuState {
             mode: Mode::Tiles,
             sort: (0, true),
             selection: 0,
+            shell_rows: 0,
+            sheetless: false,
             can_paste: false,
             can_undo: None,
             folders: true,
@@ -303,7 +310,8 @@ fn send_to_menu(send_to: &[(String, bool, Option<Canvas>)]) -> Menu {
 /// `state`. [`menu_bar`] draws them and [`command_for`] resolves a row.
 fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     let sel = state.selection > 0;
-    let writable = sel && !state.read_only;
+    let files = state.selection > state.shell_rows;
+    let writable = files && !state.read_only;
 
     let mut file = Menu::default();
     match state.bin {
@@ -329,7 +337,7 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     file.row(
         row(
             "P&roperties",
-            sel || !state.read_only || state.bin.is_some(),
+            !state.sheetless && (sel || !state.read_only || state.bin.is_some()),
         ),
         Command::Properties,
     );
@@ -348,7 +356,7 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     // An item in the Recycle Bin is not copied out; Restore brings it
     // back.
     edit.row(
-        keyed("&Copy", sel && state.bin.is_none(), "Ctrl+C"),
+        keyed("&Copy", files && state.bin.is_none(), "Ctrl+C"),
         Command::Copy,
     );
     let pasteable = state.can_paste && !state.read_only;
@@ -546,6 +554,24 @@ pub fn item_menu(
     m
 }
 
+/// Whether Properties on a Desktop row for `place` shows a sheet: Computer and Network have none.
+pub fn row_has_sheet(place: &Place) -> bool {
+    matches!(place, Place::Documents | Place::Home | Place::RecycleBin)
+}
+
+/// The right-click menu of a Desktop row standing for `place`: it opens, and Properties shows the
+/// place's own sheet where it has one, as the Folders tree's menu does.
+pub fn shell_row_menu(place: &Place) -> Menu {
+    let sheet = row_has_sheet(place);
+    let mut m = Menu::default();
+    m.row(bold("&Open", true), Command::Open);
+    m.row(row("Open in New &Tab", true), Command::OpenInNewTab);
+    m.row(row("E&xplore", true), Command::Explore);
+    m.sep();
+    m.row(row("P&roperties", sheet), Command::Properties);
+    m
+}
+
 /// The right-click menu of an item in the Recycle Bin: Restore, Cut and Copy as Path (greyed),
 /// Delete for good, then Properties as the default row.
 fn bin_item_menu() -> Menu {
@@ -584,7 +610,10 @@ pub fn background_menu(state: &MenuState) -> Menu {
     // The background's Properties is the place's own sheet; the places with
     // no folder behind them have none, but for the Recycle Bin's.
     m.row(
-        row("P&roperties", writable || state.bin.is_some()),
+        row(
+            "P&roperties",
+            !state.sheetless && (writable || state.bin.is_some()),
+        ),
         Command::Properties,
     );
     m

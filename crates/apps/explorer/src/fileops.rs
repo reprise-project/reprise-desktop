@@ -175,8 +175,9 @@ impl Explorer {
         if paths.is_empty() || self.place == Place::RecycleBin {
             return Reply::none();
         }
+        let picked: Vec<usize> = self.picked().map(|(i, _)| i).collect();
         for (i, e) in self.sv.entries.iter_mut().enumerate() {
-            e.cut = cut && self.sv.selection.set.contains(&i);
+            e.cut = cut && picked.contains(&i);
         }
         self.clipboard_paths(cut, paths, ctx)
     }
@@ -197,9 +198,7 @@ impl Explorer {
     /// The selected items, when there are some and each stands at a path of its own: an item in
     /// the Recycle Bin or an unmounted volume (listed by its device) has none to copy.
     pub(crate) fn selected_local(&self) -> Option<Vec<&reprisefs::listing::Item>> {
-        let items: Vec<_> = (self.sv.selection.set.iter())
-            .filter_map(|&i| self.items.get(i))
-            .collect();
+        let items: Vec<_> = self.picked().map(|(_, it)| it).collect();
         let local = |it: &&reprisefs::listing::Item| {
             it.trashed.is_none()
                 && it.path.is_absolute()
@@ -860,15 +859,15 @@ impl Explorer {
         if paths.is_empty() {
             return Reply::none();
         }
-        let only = self.sv.selection.single().and_then(|i| self.items.get(i));
+        let single = match self.picked().collect::<Vec<_>>()[..] {
+            [(i, _)] => Some(i),
+            _ => None,
+        };
+        let only = single.and_then(|i| self.items.get(i));
         let is_dir = only.is_some_and(|it| it.is_dir && !it.is_link);
         let name = only.map(|it| it.label().to_string()).unwrap_or_default();
         let kind = ConfirmKind::of(paths.len(), is_dir);
-        let selected = self
-            .sv
-            .selection
-            .single()
-            .and_then(|i| self.sv.entries.get(i));
+        let selected = single.and_then(|i| self.sv.entries.get(i));
         let own_icon = selected
             .and_then(|e| e.icon32.as_ref().or(e.icon.as_ref()).or(e.icon48.as_ref()))
             .and_then(|worn| self.list_icons.name_of(worn))
@@ -1616,13 +1615,29 @@ impl Explorer {
             .collect()
     }
 
+    /// The paths a file operation on the selection acts on: [`Explorer::picked`]'s.
     pub fn selected_paths(&self) -> Vec<PathBuf> {
-        self.sv
-            .selection
-            .set
-            .iter()
+        self.picked().map(|(_, it)| it.path.clone()).collect()
+    }
+
+    /// Every selected entry's path, a Desktop row's included, for selecting them again.
+    pub(crate) fn selection_paths(&self) -> Vec<PathBuf> {
+        (self.sv.selection.set.iter())
             .filter_map(|&i| self.items.get(i).map(|it| it.path.clone()))
             .collect()
+    }
+
+    /// The selected files and folders with their indices: the selection without the Desktop's
+    /// rows for the shell places, which are not files to cut, delete or rename.
+    pub(crate) fn picked(&self) -> impl Iterator<Item = (usize, &reprisefs::listing::Item)> {
+        (self.sv.selection.set.iter())
+            .filter_map(|&i| Some((i, self.items.get(i)?)))
+            .filter(|(_, it)| Place::of_row(&it.path).is_none())
+    }
+
+    /// The shell place entry `i` stands for, when it is one of the Desktop's rows.
+    pub(crate) fn shell_row(&self, i: usize) -> Option<Place> {
+        Place::of_row(&self.items.get(i)?.path)
     }
 
     /// The icon of a file or folder already known to be one or the other; it reads nothing on disk.

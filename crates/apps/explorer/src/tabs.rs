@@ -97,7 +97,7 @@ impl Explorer {
             history,
             mode: self.sv.mode,
             sort: self.sv.sort,
-            selected: self.selected_paths(),
+            selected: self.selection_paths(),
             scroll: (self.sv.top, self.sv.left),
         }
     }

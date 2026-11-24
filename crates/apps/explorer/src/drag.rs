@@ -246,13 +246,17 @@ impl Explorer {
 
     /// A read-only place arms nothing: the drives under Computer and the
     /// bin's contents are not files to move, and every operation behind
-    /// a drop ([`Explorer::put_all`]) refuses them anyway.
+    /// a drop ([`Explorer::put_all`]) refuses them anyway. The Desktop's
+    /// rows stay behind for the same reason.
     pub(crate) fn arm_drag(&mut self, i: usize, button: u32, x: i32, y: i32) {
         if self.place.read_only() {
             return;
         }
         let items: Vec<usize> = self.sv.selection.set.iter().copied().collect();
         let items = if items.contains(&i) { items } else { vec![i] };
+        let items: Vec<usize> = (items.into_iter())
+            .filter(|&i| self.shell_row(i).is_none())
+            .collect();
         let paths: Vec<PathBuf> = items
             .iter()
             .filter_map(|&i| self.items.get(i).map(|it| it.path.clone()))
@@ -426,6 +430,13 @@ impl Explorer {
         ctx: &mut Ctx,
         by_keyboard: bool,
     ) -> Reply {
+        if let Some(place) = self.shell_row(i) {
+            self.sv.selection.set_only(Some(i));
+            self.menu_paste = None;
+            let menu = crate::menus::shell_row_menu(&place);
+            self.popup = Some(Popup::new(at, menu, ctx, by_keyboard));
+            return Reply::redraw();
+        }
         if !self.sv.selection.set.contains(&i) {
             self.sv.selection.set_only(Some(i));
         }
@@ -892,9 +903,8 @@ impl Explorer {
             let shellview::Hit::Entry(i) = shellview::hit(&self.sv, &sl, x, y) else {
                 return (!covers(paths, &here)).then_some(Target::Background);
             };
-            let it = self.items.get(i)?;
-            let ok = it.is_dir && !it.is_link && !covers(paths, &it.path);
-            return ok.then_some(Target::ViewEntry(i));
+            let dir = self.entry_dir(i)?;
+            return (!covers(paths, &dir)).then_some(Target::ViewEntry(i));
         }
         let (Some(bl), Some(frame)) = (&lay.bar, lay.tree) else {
             return None;
@@ -916,9 +926,19 @@ impl Explorer {
         (!covers(paths, &dir)).then_some(Target::TreeRow(i))
     }
 
+    /// The folder a drop on entry `i` lands in: a folder's own, or a Desktop row's place's where
+    /// it takes writes, as its tree node does.
+    pub(crate) fn entry_dir(&self, i: usize) -> Option<PathBuf> {
+        if let Some(place) = self.shell_row(i) {
+            return writable_dir(&place);
+        }
+        let it = self.items.get(i)?;
+        (it.is_dir && !it.is_link).then(|| it.path.clone())
+    }
+
     fn target_dir(&self, t: &Target) -> Option<PathBuf> {
         match *t {
-            Target::ViewEntry(i) => self.items.get(i).map(|it| it.path.clone()),
+            Target::ViewEntry(i) => self.entry_dir(i),
             Target::TreeRow(i) => self
                 .tree
                 .visible()
