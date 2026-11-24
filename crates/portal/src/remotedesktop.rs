@@ -471,7 +471,6 @@ impl RemoteDesktop {
                 } else {
                     crate::Pick::Ask
                 };
-                let desk = live(&self.link).and_then(Link::lock_mode_screens);
                 match crate::pick_and_cast(
                     &self.sessions,
                     request,
@@ -480,7 +479,7 @@ impl RemoteDesktop {
                     &app_id,
                     parent,
                     pick,
-                    desk,
+                    live(&self.link),
                 )
                 .await
                 {
