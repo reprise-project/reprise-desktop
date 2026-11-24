@@ -240,6 +240,7 @@ impl State {
             let sizing = self.interaction.is_resize_of(w) || self.wm.snap.follows_drag(w);
             self.follow_tabs(w, !sizing);
             self.keep_own_size(w);
+            self.follow_task_screen(w);
         }
         // The commit for the last requested size usually lands after release, so the anchor
         // outlives the drag until `anchor_done`.

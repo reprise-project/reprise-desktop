@@ -15,6 +15,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   full, never grouped, or kept side by side per program.
 - **Pinned programs.** Quick Launch can lead the task row: a pin starts its
   program and becomes its button once it runs. Drop a program on the row to pin it.
+- **A bar per monitor.** Every monitor has its own taskbar. With
+  `[taskbar] per_monitor_buttons` (a check box on Settings > Taskbar), each
+  bar lists only the windows on its monitor (the one holding a window's
+  centre), and a button follows its window across. Pins and the tray stay on every bar, and Alt+Tab lists
+  every window.
 - **Quick Launch overflow.** A Quick Launch band dragged shorter than its
   buttons puts the rest behind a » at its end.
 - **Jump lists.** Right-click a task button for the program's recent files,

@@ -129,6 +129,10 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("taskbar", "peek"), lens!(taskbar_peek)),
         Field::Flag(k("taskbar", "tray_overflow"), lens!(taskbar_tray_overflow)),
         Field::Flag(k("taskbar", "badges"), lens!(taskbar_badges)),
+        Field::Flag(
+            k("taskbar", "per_monitor_buttons"),
+            lens!(taskbar_per_monitor),
+        ),
         Field::Flag(k("taskbar", "network_meter"), lens!(taskbar_network_meter)),
         Field::Flag(
             k("taskbar", "calendar_events"),

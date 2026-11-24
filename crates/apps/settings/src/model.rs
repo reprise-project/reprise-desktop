@@ -197,6 +197,8 @@ pub struct Settings {
     pub taskbar_tray_overflow: bool,
     /// `[taskbar] badges`.
     pub taskbar_badges: bool,
+    /// `[taskbar] per_monitor_buttons`.
+    pub taskbar_per_monitor: bool,
     /// `[taskbar] network_meter`.
     pub taskbar_network_meter: bool,
     /// `[taskbar] calendar_events`.
@@ -621,6 +623,7 @@ impl Settings {
             taskbar_peek: c.taskbar.peek,
             taskbar_tray_overflow: c.taskbar.tray_overflow,
             taskbar_badges: c.taskbar.badges,
+            taskbar_per_monitor: c.taskbar.per_monitor_buttons,
             taskbar_network_meter: c.taskbar.network_meter,
             taskbar_calendar_events: c.taskbar.calendar_events,
             notification_sound: c.notifications.sound,

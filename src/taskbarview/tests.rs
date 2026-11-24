@@ -353,6 +353,54 @@ mod per_bar {
     }
 
     #[test]
+    fn per_monitor_buttons_follow_each_window_to_its_screens_bar() {
+        let (mut h, mut c, one) = two_outputs("[taskbar]\nper_monitor_buttons = true");
+        let two = h.map_titled(&mut c, "other", "two", (300, 200));
+        h.dispatch();
+        let at = |h: &Harness| (titles(h, "TEST-1"), titles(h, "TEST-2"));
+        h.state.move_to(one.id, 100, 100);
+        h.state.move_to(two.id, 1124, 100);
+        h.dispatch();
+        assert_eq!(at(&h), (vec!["one".into()], vec!["two".into()]));
+        let w = h.state.win(one.id).unwrap().frame_rect().width;
+        h.state.move_to(one.id, 1024 - w / 2 - 1, 100);
+        h.dispatch();
+        assert_eq!(
+            at(&h).0,
+            ["one"],
+            "a window across the seam stays with the screen holding its centre"
+        );
+        h.state.drag_to(one.id, 1024 - w / 2 + 1, 100);
+        h.state.settle_moves();
+        h.dispatch();
+        assert_eq!(
+            at(&h),
+            (vec![], vec!["one".into(), "two".into()]),
+            "its centre crossed the seam; the row keeps opening order"
+        );
+        h.state.set_minimized(one.id, true);
+        h.dispatch();
+        assert_eq!(
+            at(&h).1,
+            ["one", "two"],
+            "a minimized window keeps its screen"
+        );
+    }
+
+    #[test]
+    fn without_per_monitor_buttons_every_bar_lists_every_window() {
+        let (mut h, mut c, one) = two_outputs("");
+        let two = h.map_titled(&mut c, "other", "two", (300, 200));
+        h.dispatch();
+        h.state.move_to(one.id, 100, 100);
+        h.state.move_to(two.id, 1124, 100);
+        h.dispatch();
+        for o in ["TEST-1", "TEST-2"] {
+            assert_eq!(titles(&h, o), ["one", "two"], "{o}");
+        }
+    }
+
+    #[test]
     fn retitling_a_window_on_another_desktop_asks_no_frame() {
         let (mut h, mut c, t) = two_outputs("[workspaces]\ncount = 2");
         h.state.move_to_desktop(&[t.id], 1);

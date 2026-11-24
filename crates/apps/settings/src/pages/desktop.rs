@@ -278,7 +278,7 @@ pub fn taskbar(a: Area) -> Form {
     let checks = [
         (
             "taskbar_small_icons",
-            "Use &small icons on a shorter taskbar",
+            "Use &small icons on a shorter Glass taskbar",
         ),
         (
             "taskbar_show_desktop",
@@ -289,6 +289,10 @@ pub fn taskbar(a: Area) -> Form {
             "Pee&k at the desktop or a window from the taskbar",
         ),
         ("taskbar_badges", "Show unread &counts on task buttons"),
+        (
+            "taskbar_per_monitor",
+            "Show each window's button onl&y on its monitor",
+        ),
         ("taskbar_tray_overflow", "Hide &idle notification icons"),
         (
             "taskbar_network_meter",
@@ -325,24 +329,20 @@ pub fn taskbar(a: Area) -> Form {
     ));
     items.push(Item::button(
         TRAY_CUSTOMIZE,
-        Rect::new(a.right() - CUSTOMIZE_W, 167, CUSTOMIZE_W, BUTTON_H),
+        Rect::new(a.right() - CUSTOMIZE_W, 185, CUSTOMIZE_W, BUTTON_H),
         "C&ustomize...",
         true,
         false,
     ));
     items.push(Item::new(
         "taskbar_note",
-        Rect::new(X, 244, a.w, 3 * LINE_H),
-        Control::Lines(vec![
-            "Left unchanged, these follow the interface: Glass combines".into(),
-            "buttons and turns on the desktop button and Peek. Small".into(),
-            "icons shorten the Glass taskbar only.".into(),
-        ]),
+        Rect::new(X, 262, a.w, LINE_H),
+        Control::Lines(vec!["Left unchanged, these follow the interface.".into()]),
     ));
     items.push(Item::check(
         "taskbar_auto_hide",
         X,
-        288,
+        280,
         "Auto-&hide the taskbar",
     ));
     let reveals = [
@@ -351,19 +351,19 @@ pub fn taskbar(a: Area) -> Form {
         "Show when a window needs &attention",
     ];
     for (i, (id, text)) in REVEAL_CONTROLS.into_iter().zip(reveals).enumerate() {
-        items.push(Item::check(id, X, 306 + 18 * i as i32, text).under_check());
+        items.push(Item::check(id, X, 298 + 18 * i as i32, text).under_check());
     }
     items.push(Item::check(
         "preview_taskbar",
         X,
-        360,
+        352,
         "Show live window &pictures over taskbar buttons",
     ));
     let [fps_label, fps] = spin(
         "fps_label",
         "previews_fps",
         X,
-        380,
+        372,
         110,
         "Re&fresh rate:",
         (1, PREVIEW_FPS_MAX as i32),
@@ -372,7 +372,7 @@ pub fn taskbar(a: Area) -> Form {
     let fps_units = Item::label_at(
         "fps_units",
         X + 170,
-        380,
+        372,
         a.w - 188,
         "times a second, Alt+Tab too",
     );
@@ -382,19 +382,19 @@ pub fn taskbar(a: Area) -> Form {
         Item::check(
             "start_icon",
             X,
-            402,
+            394,
             "Show the icon theme's &logo on the Start button",
         ),
-        Item::label_at("orb_glow_label", X, 426, 110, "Start butto&n glow:"),
+        Item::label_at("orb_glow_label", X, 418, 110, "Start butto&n glow:"),
         Item::new(
             "glass_orb_glow",
-            Rect::new(X + 114, 420, glow_w, trackbar::HEIGHT),
+            Rect::new(X + 114, 412, glow_w, trackbar::HEIGHT),
             Control::TrackBar(TrackBar::new(100, 101).paged(10, 5)),
         ),
         Item::label_at(
             "orb_glow_note",
             X + GLOW_NOTE_X + glow_w,
-            426,
+            418,
             a.w - GLOW_NOTE_X - glow_w,
             "(Glass only)",
         ),

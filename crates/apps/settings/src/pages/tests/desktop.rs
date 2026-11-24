@@ -569,6 +569,7 @@ fn the_taskbar_page_geometry() {
         "taskbar_show_desktop",
         "taskbar_peek",
         "taskbar_badges",
+        "taskbar_per_monitor",
         "taskbar_tray_overflow",
         "taskbar_network_meter",
         "taskbar_slide",
@@ -583,32 +584,32 @@ fn the_taskbar_page_geometry() {
             "{id} is row {i}"
         );
     }
-    assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(294, 167, 84, 23));
+    assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(294, 185, 84, 23));
     assert_eq!(
         rect(&s, p, "taskbar_slide_note"),
-        Rect::new(282, 208, 96, 13)
+        Rect::new(282, 226, 96, 13)
     );
     assert_eq!(
         rect(&s, p, "taskbar_events_note"),
-        Rect::new(180, 226, 198, 13)
+        Rect::new(180, 244, 198, 13)
     );
-    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 244, 358, 39));
-    assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 288);
+    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 262, 358, 13));
+    assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 280);
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
         assert_eq!(
             rect(&s, p, id),
-            Rect::new(38, 306 + 18 * i as i32, 13, 13),
+            Rect::new(38, 298 + 18 * i as i32, 13, 13),
             "{id} sits under the auto-hide label"
         );
     }
-    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(20, 360, 13, 13));
-    assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 380, 110, 13));
-    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 376, 50, 20));
-    assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 380, 170, 13));
-    assert_eq!(rect(&s, p, "start_icon"), Rect::new(20, 402, 13, 13));
-    assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(20, 426, 110, 13));
-    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(134, 420, 150, 26));
-    assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(292, 426, 86, 13));
+    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(20, 352, 13, 13));
+    assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 372, 110, 13));
+    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 368, 50, 20));
+    assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 372, 170, 13));
+    assert_eq!(rect(&s, p, "start_icon"), Rect::new(20, 394, 13, 13));
+    assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(20, 418, 110, 13));
+    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(134, 412, 150, 26));
+    assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(292, 418, 86, 13));
     inside_page(&s, p);
 }
 
@@ -650,11 +651,7 @@ fn glass_only_taskbar_controls_grey_with_a_note_elsewhere() {
     assert!(!enabled_on(&classic, Page::Taskbar, "taskbar_small_icons"));
     assert_eq!(
         lines(&classic, Page::Taskbar, "taskbar_note"),
-        [
-            "Left unchanged, these follow the interface: Glass combines",
-            "buttons and turns on the desktop button and Peek. Small",
-            "icons shorten the Glass taskbar only.",
-        ]
+        ["Left unchanged, these follow the interface."]
     );
     let glass = under("glass");
     assert!(enabled_on(&glass, Page::Taskbar, "glass_orb_glow"));
@@ -674,6 +671,7 @@ fn taskbar_values_go_in_and_come_back_out() {
         taskbar_peek: true,
         taskbar_tray_overflow: true,
         taskbar_badges: false,
+        taskbar_per_monitor: true,
         taskbar_network_meter: true,
         taskbar_calendar_events: false,
         recent_files: false,
@@ -706,6 +704,7 @@ fn taskbar_values_go_in_and_come_back_out() {
     assert_eq!(tb.checked("taskbar_reveal_on_edge"), Some(false));
     assert_eq!(tb.checked("taskbar_reveal_on_keys"), Some(true));
     assert_eq!(tb.checked("taskbar_badges"), Some(false));
+    assert_eq!(tb.checked("taskbar_per_monitor"), Some(true));
     assert_eq!(tb.checked("taskbar_network_meter"), Some(true));
     assert_eq!(tb.checked("taskbar_calendar_events"), Some(false));
     let mut got = Settings::default();

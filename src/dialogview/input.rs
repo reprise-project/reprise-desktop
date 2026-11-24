@@ -173,6 +173,9 @@ impl State {
             self.redraw_dialog(index);
         }
         self.redraw_nodes(outputs, &[]);
+        if let Some(id) = self.dialogs.views.get(index).map(|v| v.id) {
+            self.follow_dialog_screen(id);
+        }
     }
 
     /// A left press on dialog `index` at `hit` (`None` for the bare body). A dialog under the top one is

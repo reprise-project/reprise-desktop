@@ -319,6 +319,7 @@ impl Page {
                 "autohide",
                 "peek",
                 "previews",
+                "multiple monitors",
             ],
             Page::StartMenu => &["pinned", "quick launch", "banner"],
             Page::Search => &[

@@ -275,6 +275,18 @@ pub fn pin_for(pins: &[QuickItem], app_id: &str, desktop_id: Option<&str>) -> Op
     by_file().or_else(by_class).or_else(by_stem)
 }
 
+/// Which of `screens` shows the task button of a window framed `r` under per-monitor buttons: the
+/// one holding its centre, else the nearest. None without a screen.
+pub fn screen_of(screens: &[Rect], r: Rect) -> Option<usize> {
+    let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+    let off =
+        |at: i32, from: i32, len: i32| i64::from((from - at).max(at - (from + len - 1)).max(0));
+    (screens.iter().enumerate())
+        .filter(|(_, s)| s.width > 0 && s.height > 0)
+        .min_by_key(|(_, s)| off(cx, s.x, s.width).pow(2) + off(cy, s.y, s.height).pow(2))
+        .map(|(i, _)| i)
+}
+
 /// The places `group` mode orders the windows keyed `apps` by: each takes its app's earliest place, so
 /// an app's buttons sit together. A window with no app id keeps its own.
 pub fn app_places(apps: &[String], places: &[Place]) -> Vec<Place> {
