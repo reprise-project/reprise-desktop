@@ -239,6 +239,9 @@ the journal logs each change ([Troubleshooting](#troubleshooting)).
   client is shown it, and the client works on screens of its own: one per
   client monitor at its size and scale, or one at the size of its window, to
   the right of this computer's screens. The windows move over to them.
+  A panel, launcher or notification program (layer shell) that opens on
+  one of this computer's screens opens on the client's screen under its
+  pointer instead.
   Resizing a client's window (`xfreerdp3 /dynamic-resolution`) resizes its
   screen without a reconnect, and the windows keep their place on it. A
   change in the client's number of monitors ends the connection; a client
