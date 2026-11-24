@@ -83,21 +83,21 @@ rav1d = { version = "1.1.0", default-features = false, features = ["asm", "bitde
 jiff = { version = "1", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Our fork's `patches` branch: upstream master plus the server, acceptor and
 # input fixes listed in `git log upstream/master..patches` there.
-ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293", features = ["egfx"] }
-ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
-ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "95d9b6f0de8866cd47a502d4a09e20bedf412293" }
+ironrdp-acceptor = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-async = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-connector = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302", features = ["egfx"] }
+ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
+ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = "e1085bb8b9464f4dd31aaa16d590c1a4acd62302" }
 libc = "0.2.191"
 log = "0.4"
 md4 = { version = "0.11", default-features = false }
