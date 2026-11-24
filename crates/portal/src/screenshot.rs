@@ -157,8 +157,15 @@ impl Screenshot {
             log::info!("Screenshot for {app_id:?} closed");
             return (crate::RESPONSE_CANCELLED, HashMap::new());
         }
+        // Lock mode may have begun since the pick.
         let desk =
             crate::inputlink::live(&self.link).and_then(crate::inputlink::Link::lock_mode_screens);
+        if let Shot::Of(t) = &shot
+            && let Some(t) = crate::off_desk([t], desk.as_deref())
+        {
+            log::info!("Screenshot for {app_id:?}: {t:?} shows only this computer's lock now");
+            return (crate::RESPONSE_OTHER, HashMap::new());
+        }
         match blocking::unblock(move || take(shot, desk.as_deref())).await {
             Ok(path) => {
                 let mut r = HashMap::new();

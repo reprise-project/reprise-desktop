@@ -713,7 +713,6 @@ impl ScreenCast {
             }
             _ => Pick::Ask,
         };
-        let desk = inputlink::live(&self.link).and_then(inputlink::Link::lock_mode_screens);
         let started = pick_and_cast(
             &self.sessions,
             &request,
@@ -722,7 +721,7 @@ impl ScreenCast {
             &app_id,
             parent,
             pick,
-            desk,
+            inputlink::live(&self.link),
         );
         let started = started.await;
         request.end().await;
@@ -779,7 +778,7 @@ pub(crate) async fn pick_and_cast(
     app_id: &str,
     parent: Option<String>,
     pick: Pick,
-    desk: Option<Vec<String>>,
+    link: Option<&inputlink::Link>,
 ) -> Result<Started, u32> {
     let (types, cursor_mode, persist_mode, restore) = {
         let sessions = sessions.lock().unwrap();
@@ -795,6 +794,7 @@ pub(crate) async fn pick_and_cast(
         Pick::Recorder => cast::Capturer::Recorder,
     };
     let session = Some((sessions, key));
+    let desk = link.and_then(inputlink::Link::lock_mode_screens);
     let chosen = request.ask(session, move |cancel| {
         choose(
             types,
@@ -815,6 +815,12 @@ pub(crate) async fn pick_and_cast(
             return Err(RESPONSE_OTHER);
         }
     };
+    // Lock mode may have begun while the dialog was up.
+    let desk = link.and_then(inputlink::Link::lock_mode_screens);
+    if let Some(t) = off_desk(chosen.targets.iter().map(|(t, _)| t), desk.as_deref()) {
+        log::info!("Start: {t:?} shows only this computer's lock now");
+        return Err(RESPONSE_OTHER);
+    }
     let targets: Vec<_> = chosen.targets.iter().map(|(t, _)| t.clone()).collect();
     let id = app_id.to_string();
     let mut casts = match blocking::unblock(move || {
@@ -1168,6 +1174,15 @@ pub(crate) fn on_desk(
             .collect(),
         None => outputs,
     }
+}
+
+/// The first of `targets` that is an output [`on_desk`] leaves out for `lock_screens`.
+pub(crate) fn off_desk<'a>(
+    targets: impl IntoIterator<Item = &'a Target>,
+    lock_screens: Option<&[String]>,
+) -> Option<&'a Target> {
+    let names = lock_screens?;
+    (targets.into_iter()).find(|t| matches!(t, Target::Output(n) if !names.contains(n)))
 }
 
 /// The outputs called `names`, in that order; Err when one is not there.
@@ -1667,6 +1682,17 @@ mod tests {
             names(on_desk(outputs, Some(&lock))),
             ["REMOTE-1", "REMOTE-2"]
         );
+    }
+
+    #[test]
+    fn a_pick_is_off_the_desk_when_lock_mode_leaves_out_one_of_its_screens() {
+        let edp = Target::Output("eDP-1".into());
+        let remote = Target::Output("REMOTE-1".into());
+        let window = Target::Toplevel("w1".into());
+        let lock = ["REMOTE-1".to_string()];
+        assert_eq!(off_desk([&edp, &remote], None), None, "outside lock mode");
+        assert_eq!(off_desk([&remote, &window], Some(&lock)), None);
+        assert_eq!(off_desk([&remote, &edp], Some(&lock)), Some(&edp));
     }
 
     fn shared(outputs: &[wayland::OutputInfo]) -> Vec<String> {
