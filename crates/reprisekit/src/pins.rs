@@ -1,12 +1,69 @@
 //! Pinned image hashes in `tests/pins/<name>.txt`, drawn with [`fonts`]. CONTRIBUTING.md covers
 //! blessing them, `scripts/pin-env` and `REPRISE_TEST_STRICT`.
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 thread_local! {
     static ARMED: Cell<bool> = const { Cell::new(false) };
     static STRAYS: RefCell<Vec<Box<str>>> = const { RefCell::new(Vec::new()) };
     static CUTS: RefCell<Option<Vec<Cut>>> = const { RefCell::new(None) };
+    static SHORTENED: RefCell<Option<Vec<Shortened>>> = const { RefCell::new(None) };
+    static UNFIT: RefCell<Option<Unfit>> = const { RefCell::new(None) };
+}
+
+/// Per surface, how and text, each line cut short: how many times, and where the first was.
+type Unfit = BTreeMap<String, (u32, String)>;
+
+/// Text cut to end in an ellipsis, as [`shortened_text`] lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Shortened {
+    /// The whole text, before the cut.
+    pub text: String,
+    /// The width it was cut to, px at the canvas's scale 1.
+    pub width: i32,
+    pub px: u32,
+}
+
+/// Runs `f`, returning with its result every text this thread cut to end in an ellipsis in it
+/// ([`crate::text::TextRenderer::ellipsize`]), whether drawn or only measured.
+pub fn shortened_text<T>(f: impl FnOnce() -> T) -> (T, Vec<Shortened>) {
+    let outer = SHORTENED.replace(Some(Vec::new()));
+    let r = f();
+    let cut = SHORTENED.replace(outer).unwrap_or_default();
+    (r, cut)
+}
+
+/// The texts [`shortened_text`] has noted so far in the `f` it is running, handed over and
+/// forgotten.
+pub fn take_shortened() -> Vec<Shortened> {
+    SHORTENED.with_borrow_mut(|c| c.as_mut().map(std::mem::take).unwrap_or_default())
+}
+
+pub(crate) fn shortened(text: &str, width: i32, px: u32) {
+    SHORTENED.with_borrow_mut(|c| {
+        if let Some(c) = c {
+            c.push(Shortened {
+                text: text.into(),
+                width,
+                px,
+            });
+        }
+    });
+}
+
+/// Runs `f` on a thread of its own whose fonts are those of a machine with no Tahoma and only
+/// DejaVu's regular widths, as Debian and Ubuntu install it: the UI text falls back to DejaVu
+/// Sans Book, the widest face CI has. A check of what that wider text cuts compares the two.
+pub fn without_tahoma<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            crate::text::hide_tahoma();
+            f()
+        })
+        .join()
+        .unwrap_or_else(|e| std::panic::resume_unwind(e))
+    })
 }
 
 /// Text drawn with ink cut off by the rect it was laid in, as [`clipped_ink`] lists it.
@@ -49,6 +106,102 @@ pub(crate) fn clipped(cut: Cut) {
             c.push(cut);
         }
     });
+}
+
+/// Hands the lines [`unfit_without_tahoma`]'s `draw` cut or ellipsized since the last call to
+/// the surface `name`. Does nothing outside it.
+pub fn surface_drawn(name: &str) {
+    let cuts = take_clipped();
+    let short = take_shortened();
+    UNFIT.with_borrow_mut(|found| {
+        let Some(found) = found else { return };
+        for c in cuts {
+            let r = c.rect;
+            let at = format!(
+                "{} px in {}x{} at ({}, {}): {} px cut above or below, {} beside",
+                c.px, r.width, r.height, r.x, r.y, c.rows, c.cols
+            );
+            let key = format!("{name} cut {:?}", c.text);
+            found.entry(key).or_insert((0, at)).0 += 1;
+        }
+        for s in short {
+            let at = format!("{} px into {} px", s.px, s.width);
+            let key = format!("{name} ellipsized {:?}", s.text);
+            found.entry(key).or_insert((0, at)).0 += 1;
+        }
+    });
+}
+
+fn unfit(draw: &(impl Fn() + Sync)) -> Unfit {
+    fonts();
+    let outer = UNFIT.replace(Some(Unfit::new()));
+    clipped_ink(|| shortened_text(draw));
+    UNFIT.replace(outer).unwrap_or_default()
+}
+
+/// Calls `draw` with the test fonts' Tahoma, then [`without_tahoma`], and lists each line
+/// DejaVu Sans cuts by its rect or to an ellipsis more often than Tahoma: `(key, where)`, the key
+/// naming the surface (as `draw` hands them to [`surface_drawn`]), how, the text and the extra
+/// count. For [`check_list`].
+pub fn unfit_without_tahoma(draw: impl Fn() + Sync) -> Vec<(String, String)> {
+    let tahoma = unfit(&draw);
+    let dejavu = without_tahoma(|| unfit(&draw));
+    dejavu
+        .into_iter()
+        .filter_map(|(key, (n, at))| {
+            let had = tahoma.get(&key).map_or(0, |t| t.0);
+            (n > had).then(|| (format!("{key} x{}", n - had), at))
+        })
+        .collect()
+}
+
+/// Fails listing each of `found`'s keys missing from the list at `path`, and each listed key no
+/// longer found, or rewrites the list when `REPRISE_BLESS` is set. A listed line may end in
+/// `  # why`, which a rewrite keeps.
+#[track_caller]
+pub fn check_list(path: &Path, found: &[(String, String)], what: &str) {
+    use std::fmt::Write as _;
+    let listed = std::fs::read_to_string(path).unwrap_or_default();
+    let key_of = |l: &str| {
+        l.split_once("  #")
+            .map_or(l, |(k, _)| k)
+            .trim_end()
+            .to_string()
+    };
+    let listed: Vec<(String, &str)> = listed
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| (key_of(l), l))
+        .collect();
+    if std::env::var_os("REPRISE_BLESS").is_some_and(|v| v != "0") {
+        let mut text = String::new();
+        for (key, _) in found {
+            let kept = listed.iter().find(|(k, _)| k == key).map(|(_, l)| *l);
+            writeln!(text, "{}", kept.unwrap_or(key)).unwrap();
+        }
+        let had = std::fs::read_to_string(path).ok();
+        if had.as_deref() != Some(text.as_str()) && (had.is_some() || !text.is_empty()) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        return;
+    }
+    let mut msg = String::new();
+    for (key, at) in found {
+        if !listed.iter().any(|(k, _)| k == key) {
+            writeln!(msg, "  not listed: {key}, {at}").unwrap();
+        }
+    }
+    for (key, _) in &listed {
+        if !found.iter().any(|(k, _)| k == key) {
+            writeln!(msg, "  listed, no longer found: {key}").unwrap();
+        }
+    }
+    assert!(
+        msg.is_empty(),
+        "{what} differ from {}:\n{msg}REPRISE_BLESS=1 under `scripts/pin-env` rewrites it",
+        path.display()
+    );
 }
 
 const STRAYS_KEPT: usize = 16;

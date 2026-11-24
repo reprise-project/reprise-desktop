@@ -128,7 +128,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
     let Paint { cs, s, .. } = *p;
     form.drawn_with(p);
     form.rendered.px.set(px);
-    form.fit_text(text, px);
+    // The fit lays out 1x rects, so it measures at 1x: a canvas at 1x drawn at scale `s` passes
+    // `s` times the px.
+    form.fit_text(text, px / s.max(1) as u32);
     form.lay_out_notes(text, s, px);
     form.rendered.ellipsized.borrow_mut().clear();
     let cm = form.controls();

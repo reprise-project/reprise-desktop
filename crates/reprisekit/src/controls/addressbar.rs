@@ -20,10 +20,12 @@ pub const LABEL_X: i32 = 6;
 
 pub const ADDRESS: &str = "Address";
 
-/// Where the field's sunken frame starts, from the band's left edge. The
-/// label gets the room before it whatever its width, so the field's x is
-/// pinned.
+/// Where the field's sunken frame starts, from the band's left edge, unless the label's text
+/// and [`LABEL_GAP`] need more room: then the field starts after them.
 pub const FIELD_X: i32 = 49;
+
+/// The px kept between the label's text and the field, at every text size.
+const LABEL_GAP: i32 = 4;
 
 /// Classic's Go button width: the gap between the field's outer frame
 /// and the rebar's right stripe. A look sets its own in
@@ -248,16 +250,13 @@ pub fn layout(
     r: Rect,
     cm: &ControlMetrics,
 ) -> Layout {
-    let label = Rect::new(
-        r.x + LABEL_X,
-        r.y,
-        text.measure(ADDRESS, false, px),
-        r.height,
-    );
     // The label's and Go's room grows with the text; the band's height is the caller's.
+    let label_x = r.x + LABEL_X;
+    let field_x =
+        (r.x + cm.text.len(FIELD_X)).max(label_x + text.measure(ADDRESS, false, px) + LABEL_GAP);
+    let label = Rect::new(label_x, r.y, field_x - LABEL_GAP - label_x, r.height);
     let go_w = cm.text.len(cm.address.go_w);
     let go = Rect::new(r.right() - RIGHT_PAD - go_w, r.y, go_w, r.height);
-    let field_x = r.x + cm.text.len(FIELD_X);
     let field = Rect::new(field_x, r.y, (go.x - field_x).max(0), r.height);
     Layout {
         label,

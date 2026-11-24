@@ -29,6 +29,8 @@ mod renaming;
 mod sizes;
 #[path = "main_tests/startup.rs"]
 mod startup;
+#[path = "main_tests/text_fit.rs"]
+mod text_fit;
 
 /// The process's scratch home for tests: state, cache, data (the Recycle Bin) and config.
 fn scratch() -> PathBuf {

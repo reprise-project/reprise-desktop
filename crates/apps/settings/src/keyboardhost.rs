@@ -143,7 +143,7 @@ impl SettingsApp {
         }
     }
 
-    fn layouts_changed(&mut self, select: Option<usize>) -> Reply {
+    pub(crate) fn layouts_changed(&mut self, select: Option<usize>) -> Reply {
         pages::fill_layouts(
             &mut self.sheet,
             &self.want,
