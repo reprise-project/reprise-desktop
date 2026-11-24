@@ -264,18 +264,18 @@ fn save(file: &Path, stack: &UndoStack) -> io::Result<Stamp> {
     Ok(stamp(&f.metadata()?))
 }
 
-/// The history as NUL-terminated fields: [`MAGIC`], the clear count, the push count, the count
-/// the cap dropped, the entry count, then each entry's id and item. A trashed item's record is
+/// The history as NUL-terminated fields: [`MAGIC`], its nonce, the clear count, the push count,
+/// the entry count, then each entry's number and item. A trashed item's record is
 /// not stored: it is always the one beside its `files/` entry.
 fn encode(stack: &UndoStack) -> Vec<u8> {
     let mut out = Out(Vec::new());
     out.field(MAGIC);
+    out.num(stack.nonce);
     out.num(stack.epoch);
     out.num(stack.pushed);
-    out.num(stack.dropped);
     out.num(stack.entries.len());
     for (id, u) in &stack.entries {
-        out.num(id.0);
+        out.num(id.n);
         out.item(u);
     }
     out.0
@@ -290,15 +290,24 @@ fn decode(data: &[u8]) -> Option<UndoStack> {
     if i.field()? != MAGIC {
         return None;
     }
-    let (epoch, pushed, dropped) = (i.num()?, i.num()?, i.num()?);
+    let (nonce, epoch, pushed) = (i.num()?, i.num()?, i.num()?);
     let entries = (0..i.num::<usize>()?)
-        .map(|_| Some((EntryId(i.num()?), i.item(0)?)))
+        .map(|_| {
+            let history = nonce;
+            Some((
+                EntryId {
+                    history,
+                    n: i.num()?,
+                },
+                i.item(0)?,
+            ))
+        })
         .collect::<Option<_>>()?;
     fields.next().is_none().then_some(UndoStack {
         entries,
+        nonce,
         epoch,
         pushed,
-        dropped,
     })
 }
 
@@ -454,6 +463,7 @@ impl<'b> In<'_, 'b> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::CAP;
     use super::*;
     use std::ffi::OsStr;
 
@@ -575,7 +585,7 @@ mod tests {
             format!("{:?}", read.entries),
             format!("{:?}", written.entries)
         );
-        assert_eq!((read.epoch, read.pushed, read.dropped), (1, 8, 0));
+        assert_eq!((read.nonce, read.epoch, read.pushed), (written.nonce, 1, 8));
     }
 
     #[test]
@@ -625,6 +635,28 @@ mod tests {
         big.resize(MAX_SIZE as usize + 1, b'\0');
         std::fs::write(&file, big).unwrap();
         assert_eq!(a.label(), None);
+    }
+
+    #[test]
+    fn an_undo_from_before_the_history_started_over_reaches_nothing_in_it() {
+        let (t, mut a, mut b) = two_windows();
+        a.push(Undoable::Copied("/old".into(), None));
+        let (undo, running) = a.take().unwrap();
+        let asked = a.put_back(undo, 0, None).expect("a cancel keeps it");
+        drop(running);
+        for n in 0..=CAP {
+            a.push(Undoable::Copied(format!("/c{n}").into(), None));
+        }
+        let (under_way, _running) = a.take().unwrap();
+
+        std::fs::write(t.path().join("reprise-undo"), b"garbage").unwrap();
+        b.push(Undoable::Copied("/new".into(), None));
+        assert_eq!(a.put_back(under_way, 0, None), None);
+        assert!(
+            b.take_entry(asked).is_none(),
+            "the old id names no new entry"
+        );
+        assert_eq!(b.label(), Some("Undo Copy"));
     }
 
     #[test]
