@@ -1019,6 +1019,63 @@ fn forgetful() -> crate::harness::Harness {
     h
 }
 
+/// A toplevel from a new client of `h` that runs `ask` before its initial commit, then maps at
+/// the size its first configure asked for; that size and the frame it maps with.
+fn opened_asking(
+    h: &mut crate::harness::Harness,
+    ask: impl FnOnce(&wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel),
+) -> ((i32, i32), crate::raster::Rect) {
+    let mut c = h.connect();
+    let t = h.open_toplevel(&mut c, "asker", ask);
+    let asked = c.side.shells[t.shell].asked();
+    assert!(asked.0 > 0 && asked.1 > 0, "the first configure sizes it");
+    h.resize_self(&mut c, t, asked.0, asked.1);
+    let frame = h.state.win(t.id).expect("the window").frame_rect();
+    (asked, frame)
+}
+
+#[test]
+fn a_toplevel_asking_to_open_maximized_is_sized_to_the_work_area_with_nothing_remembered() {
+    let mut h = forgetful();
+    let (_, frame) = opened_asking(&mut h, |t| t.set_maximized());
+    let out = h.state.first_output().expect("an output");
+    assert_eq!(frame, h.state.usable_area(Some(&out)));
+}
+
+#[test]
+fn a_toplevel_asking_to_open_fullscreen_is_sized_to_the_screen_with_nothing_remembered() {
+    let mut h = forgetful();
+    let (asked, frame) = opened_asking(&mut h, |t| t.set_fullscreen(None));
+    assert_eq!(asked, (1024, 768));
+    assert_eq!(frame, crate::raster::Rect::new(0, 0, 1024, 768));
+}
+
+#[test]
+fn a_toplevel_asking_to_maximize_after_its_initial_commit_is_sized_to_the_work_area() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let t = h.open_toplevel(&mut c, "asker", |_| {});
+    c.side.shells[t.shell].toplevel.set_maximized();
+    h.roundtrip(&mut c);
+    let asked = c.side.shells[t.shell].asked();
+    h.resize_self(&mut c, t, asked.0, asked.1);
+    let out = h.state.first_output().expect("an output");
+    assert_eq!(
+        h.state.win(t.id).expect("the window").frame_rect(),
+        h.state.usable_area(Some(&out))
+    );
+}
+
+#[test]
+fn a_toplevel_that_takes_back_its_maximize_before_mapping_is_left_its_own_size() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let t = h.open_toplevel(&mut c, "asker", |t| t.set_maximized());
+    c.side.shells[t.shell].toplevel.unset_maximized();
+    h.roundtrip(&mut c);
+    assert_eq!(c.side.shells[t.shell].asked(), (0, 0));
+}
+
 fn unmap_self(
     h: &mut crate::harness::Harness,
     c: &mut crate::harness::TestClient,

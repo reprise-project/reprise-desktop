@@ -532,6 +532,24 @@ impl Harness {
         self.map_toplevel_after(c, app_id, w, h, |_, _, _| {})
     }
 
+    /// An xdg toplevel from `c` that runs `ask` before its initial commit, configured and not
+    /// yet mapped; [`Harness::resize_self`] maps it.
+    pub fn open_toplevel(
+        &mut self,
+        c: &mut TestClient,
+        app_id: &str,
+        ask: impl FnOnce(&xdg_toplevel::XdgToplevel),
+    ) -> Toplevel {
+        let before: Vec<WindowId> = self.state.windows.iter().map(|w| w.id).collect();
+        let shell = c.toplevel_asking(app_id, ask);
+        self.roundtrip(c);
+        let id = (self.state.windows.iter())
+            .map(|w| w.id)
+            .find(|id| !before.contains(id))
+            .expect("the toplevel's window");
+        Toplevel { id, shell }
+    }
+
     /// [`Harness::map_toplevel`] titled `title` before it maps.
     pub fn map_titled(
         &mut self,
@@ -1184,6 +1202,15 @@ impl TestClient {
 
     /// A toplevel's surfaces with the initial commit, no buffer yet; its index in `shells`.
     fn toplevel(&mut self, app_id: &str) -> usize {
+        self.toplevel_asking(app_id, |_| {})
+    }
+
+    /// [`TestClient::toplevel`] running `ask` on it before the initial commit.
+    fn toplevel_asking(
+        &mut self,
+        app_id: &str,
+        ask: impl FnOnce(&xdg_toplevel::XdgToplevel),
+    ) -> usize {
         let qh = self.qh();
         let surface = (self.side.compositor.as_ref())
             .expect("wl_compositor")
@@ -1194,6 +1221,7 @@ impl TestClient {
         let i = self.side.shells.len();
         let toplevel = xdg.get_toplevel(&qh, i);
         toplevel.set_app_id(app_id.into());
+        ask(&toplevel);
         surface.commit();
         self.side.shells.push(Shell {
             surface,
@@ -1515,6 +1543,13 @@ pub struct Shell {
     pub configures: usize,
     /// Whether each toplevel configure carried the suspended state, oldest first.
     pub suspended: Vec<bool>,
+}
+
+impl Shell {
+    /// The size the last toplevel configure asked for.
+    pub fn asked(&self) -> (i32, i32) {
+        self.pending
+    }
 }
 
 /// A `wl_keyboard` event: a key's evdev code and whether it went down, or the depressed

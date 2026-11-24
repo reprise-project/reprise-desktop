@@ -438,7 +438,11 @@ impl State {
                 } else {
                     s.states.unset(state);
                 }
+                s.size = None;
             });
+            // The first configure's size follows the state asked for (`configure_initial`).
+            self.replan_unmapped(w);
+            return;
         }
         if surface.is_initial_configure_sent() {
             surface.send_pending_configure();
