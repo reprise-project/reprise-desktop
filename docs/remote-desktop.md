@@ -244,6 +244,8 @@ the journal logs each change ([Troubleshooting](#troubleshooting)).
   pointer instead; one already open there stays under the lock and takes
   no keys or clicks from the client until lock mode ends, when the keyboard
   it held comes back to it.
+  The screen pickers of Screenshot, Screen Cast and Remote Desktop offer
+  only the client's screens.
   Resizing a client's window (`xfreerdp3 /dynamic-resolution`) resizes its
   screen without a reconnect, and the windows keep their place on it. A
   change in the client's number of monitors ends the connection; a client

@@ -190,7 +190,8 @@ impl Screenshot {
         let shot = match plan {
             Plan::Pick(types) => {
                 let id = app_id.to_string();
-                let picked = request.ask(None, move |c| pick(&id, parent, c, types, delay));
+                let desk = link.and_then(crate::inputlink::Link::lock_mode_screens);
+                let picked = request.ask(None, move |c| pick(&id, parent, c, types, delay, desk));
                 let picked = picked.await.unwrap_or(Ok(None));
                 return picked.map(|p| p.map(|(t, wait)| (Shot::Of(t), wait)));
             }
@@ -327,7 +328,8 @@ fn needs_consent(options: &HashMap<String, Variant<'_>>) -> bool {
     flag("interactive") || !flag("permission_store_checked")
 }
 
-/// The screen or window, of the `types` kinds, the user picks for `app_id`, and the seconds set
+/// The screen ([`crate::on_desk`] for `desk`) or window, of the `types` kinds, the user picks for
+/// `app_id`, and the seconds set
 /// in the Delay box offered from `delay`; None on Cancel or a frontend Close, Err when no picker
 /// could be shown. Blocking.
 fn pick(
@@ -336,6 +338,7 @@ fn pick(
     cancel: Arc<AtomicBool>,
     types: u32,
     delay: Option<u8>,
+    desk: Option<Vec<String>>,
 ) -> Result<Option<(Target, u8)>, String> {
     let wl = Wayland::connect()?;
     let types = match wl.can_capture_toplevels() {
@@ -345,7 +348,8 @@ fn pick(
     if types == 0 {
         return Err("the compositor captures no windows".into());
     }
-    let entries = crate::share_entries(types, &wl.outputs(), &wl.toplevels());
+    let outputs = crate::on_desk(wl.outputs(), desk.as_deref());
+    let entries = crate::share_entries(types, &outputs, &wl.toplevels());
     drop(wl);
     if entries.is_empty() {
         return Err("nothing to pick from".into());

@@ -631,4 +631,34 @@ pub(crate) mod tests {
         let _marker = link.create_keys(crate::inputlink::Owner::Server);
         fake.join().unwrap();
     }
+
+    #[test]
+    fn the_link_names_lock_modes_screens_until_its_object_ends_or_goes() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let fake = compositor(theirs, |sock, lock, n| {
+            match n {
+                1 => screens(sock, lock, &["REMOTE-1", "REMOTE-2"]),
+                _ => ended(sock, lock, REPLACED),
+            }
+            true
+        });
+        let link = link_on(ours);
+        assert_eq!(link.lock_mode_screens(), None, "outside lock mode");
+        let first = link.lock_screen(&FIRST).unwrap();
+        let heard = first.events().recv_blocking();
+        assert!(matches!(heard, Ok(LockEvent::Screens(_))), "{heard:?}");
+        let names = ["REMOTE-1", "REMOTE-2"].map(String::from).to_vec();
+        assert_eq!(link.lock_mode_screens(), Some(names));
+        drop(first);
+        let second = link.lock_screen(&SECOND).unwrap();
+        let heard = second.events().recv_blocking();
+        assert!(matches!(heard, Ok(LockEvent::Ended(_))), "{heard:?}");
+        assert_eq!(
+            link.lock_mode_screens(),
+            None,
+            "the first object went and the second ended"
+        );
+        let _marker = link.create_keys(crate::inputlink::Owner::Server);
+        fake.join().unwrap();
+    }
 }
