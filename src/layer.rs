@@ -356,7 +356,7 @@ impl State {
             .layers_shell
             .surfaces
             .iter()
-            .find(|l| l.mapped && l.exclusive())
+            .find(|l| l.mapped && l.exclusive() && on_desk(self, l))
             .map(|l| l.wl().clone());
         match next {
             Some(s) => focus_layer(self, &s),
@@ -597,10 +597,19 @@ pub fn holds_keyboard(state: &State) -> bool {
         .focused
         .as_ref()
         .and_then(|f| state.layer_of(f))
-        .is_some_and(|l| l.mapped && l.exclusive())
+        .is_some_and(|l| l.mapped && l.exclusive() && on_desk(state, l))
+}
+
+/// Whether `l` is on one of the desktop's outputs (`console::on_desk`). In lock mode a Console
+/// output's surfaces stay there under its lock, apart from the remote side's keyboard.
+fn on_desk(state: &State, l: &LayerSurface) -> bool {
+    crate::console::on_desk(state, &l.output)
 }
 
 pub fn focus_layer(state: &mut State, wl: &WlSurface) {
+    if !state.layer_of(wl).is_some_and(|l| on_desk(state, l)) {
+        return;
+    }
     if state.layers_shell.focused.is_none() {
         state.layers_shell.over_desktop = state.focused.is_none();
     }
