@@ -476,9 +476,8 @@ impl State {
             v.model.jump = jump_sections(icons, a, files, px);
         }
         let px = PICTURE * scale;
-        if start_pictures.shown(px).is_none() {
-            v.model.user_picture = unread(icons, "avatar-default", px);
-        }
+        v.model.user_picture =
+            (start_pictures.shown(px)).or_else(|| unread(icons, "avatar-default", px));
         let mut results = (v.model.results.iter()).flat_map(|g| &g.rows);
         if v.model.mode() == Mode::Search && (file || results.any(|r| blank(&r.icon))) {
             self.start_panel_show_results();
