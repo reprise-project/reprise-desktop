@@ -336,21 +336,17 @@ mod tests {
 
     #[test]
     fn the_extensions_box_writes_hide_or_show_and_leaves_a_setting_it_agrees_with() {
-        let on = Settings::default();
-        let off = Settings {
-            hide_extensions: false,
-            ..on
+        let off = Settings::default();
+        let on = Settings {
+            hide_extensions: true,
+            ..off
         };
         let launchers = "desktop_extensions = \"hide_launchers\"\n";
         assert_eq!(write(launchers, &on, &on).unwrap(), launchers);
-        assert_eq!(
-            write(launchers, &off, &on).unwrap(),
-            "desktop_extensions = \"show\"\n"
-        );
-        assert_eq!(
-            write("desktop_extensions = \"show\"\n", &on, &off).unwrap(),
-            ""
-        );
+        assert_eq!(write(launchers, &off, &on).unwrap(), "");
+        let hide = "desktop_extensions = \"hide\"\n";
+        assert_eq!(write("", &on, &off).unwrap(), hide);
+        assert_eq!(write(hide, &on, &on).unwrap(), hide);
         let f = Folders {
             extensions: Extensions::HideLaunchers,
             ..Folders::of(&repriseconf::config::Config::default())

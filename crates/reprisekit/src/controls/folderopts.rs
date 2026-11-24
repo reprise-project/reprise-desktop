@@ -26,7 +26,7 @@ impl Default for Settings {
             new_window: false,
             single_click: false,
             show_hidden: false,
-            hide_extensions: true,
+            hide_extensions: false,
             tips: true,
             cache_thumbnails: true,
         }

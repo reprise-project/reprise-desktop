@@ -1289,22 +1289,22 @@ fn workspaces_and_previews_round_trip_and_drop_the_defaults() {
 
 #[test]
 fn the_desktop_extensions_round_trip_and_the_default_leaves_the_file() {
-    assert_eq!(load("").desktop_extensions, "hide");
+    assert_eq!(load("").desktop_extensions, "show");
     let base = load("");
-    let mut show = base.clone();
-    show.desktop_extensions = "show".into();
-    let text = saved("", &show);
-    assert_eq!(text, "desktop_extensions = \"show\"\n");
-    assert_eq!(load(&text).desktop_extensions, "show");
+    let mut hide = base.clone();
+    hide.desktop_extensions = "hide".into();
+    let text = saved("", &hide);
+    assert_eq!(text, "desktop_extensions = \"hide\"\n");
+    assert_eq!(load(&text).desktop_extensions, "hide");
     let mut launchers = load(&text);
     launchers.desktop_extensions = "hide_launchers".into();
     assert_eq!(
         saved(&text, &launchers),
         "desktop_extensions = \"hide_launchers\"\n"
     );
-    let mut hide = load(&text);
-    hide.desktop_extensions = "hide".into();
-    assert_eq!(saved(&text, &hide), "", "the default removes the key");
+    let mut show = load(&text);
+    show.desktop_extensions = "show".into();
+    assert_eq!(saved(&text, &show), "", "the default removes the key");
 }
 
 #[test]

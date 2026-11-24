@@ -1055,7 +1055,7 @@ mod tests {
         assert!(!d.workspaces);
         assert!(diff(&new, &old).desktop);
         let mut new = old.clone();
-        new.desktop_extensions = reprisefs::names::Extensions::Show;
+        new.desktop_extensions = reprisefs::names::Extensions::Hide;
         assert!(diff(&old, &new).desktop);
         let mut new = old.clone();
         new.folders.show_hidden = true;

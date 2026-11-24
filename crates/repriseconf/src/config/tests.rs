@@ -908,9 +908,9 @@ fn confirm_scripts_defaults_to_true() {
 }
 
 #[test]
-fn desktop_extensions_default_to_hide_and_read_each_mode() {
+fn desktop_extensions_default_to_show_and_read_each_mode() {
     use reprisefs::names::Extensions;
-    assert_eq!(Config::default().desktop_extensions, Extensions::Hide);
+    assert_eq!(Config::default().desktop_extensions, Extensions::Show);
     for (text, want) in [
         ("hide", Extensions::Hide),
         ("hide_launchers", Extensions::HideLaunchers),

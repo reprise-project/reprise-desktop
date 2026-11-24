@@ -613,7 +613,7 @@ fn enabled(f: &Form, id: &str) -> bool {
 fn values_go_in_and_come_back_out() {
     let want = Settings {
         desktop_icons: false,
-        desktop_extensions: "show".into(),
+        desktop_extensions: "hide".into(),
         wallpaper_position: "tile".into(),
         background: "#336699".into(),
         system_icons: vec!["computer".into(), "recycle-bin".into()],

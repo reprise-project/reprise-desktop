@@ -1699,7 +1699,7 @@ fn ctrl_z_leaves_a_different_file_that_took_the_renamed_ones_name() {
     let (mut h, desk) = desktop_in("desktop-undo-rename-identity", &["a.txt"]);
     h.state.begin_rename(icon(&h, "a.txt"));
     let view = h.state.desktop.as_mut().unwrap();
-    view.rename.as_mut().unwrap().1.text = "b".into();
+    view.rename.as_mut().unwrap().1.text = "b.txt".into();
     h.state.commit_rename();
     let b = desk.join("b.txt");
     assert!(b.exists(), "renamed");

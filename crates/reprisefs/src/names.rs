@@ -64,10 +64,10 @@ pub fn shortcut_name(name: &str, existing: &[String]) -> String {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Extensions {
     /// Every registered file type's ([`label_for`]).
-    #[default]
     Hide,
     /// Only `.desktop`.
     HideLaunchers,
+    #[default]
     Show,
 }
 
@@ -309,7 +309,7 @@ mod tests {
         );
         assert_eq!(Extensions::parse("show"), Some(Extensions::Show));
         assert_eq!(Extensions::parse("Show"), None);
-        assert_eq!(Extensions::default(), Extensions::Hide);
+        assert_eq!(Extensions::default(), Extensions::Show);
     }
 
     #[test]

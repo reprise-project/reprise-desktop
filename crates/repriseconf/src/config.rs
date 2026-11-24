@@ -166,7 +166,7 @@ impl Default for Config {
             idle_battery: IdleOverrides::default(),
             power: PowerConfig::default(),
             desktop_icons: true,
-            desktop_extensions: reprisefs::names::Extensions::Hide,
+            desktop_extensions: reprisefs::names::Extensions::Show,
             folders: FoldersConfig::default(),
             start_icon: false,
             system_icons: ["documents", "computer", "home", "recycle-bin"]
