@@ -46,6 +46,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
         (Dir::Input, INPUT, lay.input_label),
     ] {
         let combo = vp.combo(dir);
+        let r = text.line_box(r, false, px);
         if combo.enabled {
             draw_label(c, text, p, r, label, cs.button_text, Align::Right, px);
         } else {
@@ -143,14 +144,19 @@ pub(super) fn draw_column(
     if let (Some(icon), Some(r)) = (&col.icon, cl.icon) {
         c.blit_over(r.x, r.y, icon);
     }
+    // A row is 13 px at 100%; a face whose line is taller draws in its line, baseline kept.
+    let (label, level_row) = (
+        text.line_box(cl.label, false, px),
+        text.line_box(cl.level, false, px),
+    );
     if !live {
-        draw_disabled_label(c, text, p, cl.label, &col.label, Align::Center, px, None);
+        draw_disabled_label(c, text, p, label, &col.label, Align::Center, px, None);
     } else if col.key.is_none() {
         draw_label(
             c,
             text,
             p,
-            cl.label,
+            label,
             &col.label,
             cs.button_text,
             Align::Center,
@@ -158,14 +164,14 @@ pub(super) fn draw_column(
         );
     } else {
         // A program's name is plain text: an `&` in it is no access key.
-        let name = text.ellipsize(&col.label, cl.label.width - 2 * NAME_PAD, false, px);
-        text.draw(c, cl.label, &name, false, cs.button_text, Align::Center, px);
+        let name = text.ellipsize(&col.label, label.width - 2 * NAME_PAD, false, px);
+        text.draw(c, label, &name, false, cs.button_text, Align::Center, px);
     }
     let level = level_text(col);
     if live && !col.mute {
         text.draw(
             c,
-            cl.level,
+            level_row,
             &level,
             false,
             cs.button_text,
@@ -173,7 +179,7 @@ pub(super) fn draw_column(
             px,
         );
     } else {
-        draw_disabled_label(c, text, p, cl.level, &level, Align::Center, px, None);
+        draw_disabled_label(c, text, p, level_row, &level, Align::Center, px, None);
     }
     draw_vertical_trackbar(
         c,
@@ -223,6 +229,7 @@ pub(super) fn draw_strip(
         .into_iter()
         .chain(st.artist.map(|r| (r, &np.artist)));
     for (r, line) in lines {
+        let r = text.line_box(r, false, px);
         let cut = text.ellipsize(line, r.width, false, px);
         text.draw(c, r, &cut, false, cs.button_text, Align::Left, px);
     }
