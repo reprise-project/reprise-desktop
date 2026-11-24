@@ -231,6 +231,7 @@ fn a_small_window_with_no_title_of_its_own_opens_without_the_kept_frame() {
             fixed: false,
             chrome: reprisekit::frame::Chrome::WINDOW,
             size,
+            own_place: false,
         };
         h.state.plan_for(&s, None).and_then(|w| w.state)
     };
@@ -265,6 +266,33 @@ fn a_small_window_with_no_title_of_its_own_opens_without_the_kept_frame() {
         max,
         "a size not known yet is no placeholder"
     );
+}
+
+#[test]
+fn a_frameless_window_at_a_place_of_its_own_opens_without_the_kept_frame() {
+    use crate::placement::Subject;
+    use crate::windowrules::WindowState;
+    let mut h = one_screen();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    close(&mut h, &mut c, t);
+    let plan = |own_place| {
+        let s = Subject {
+            app: APP.into(),
+            key: APP.into(),
+            title: "Notes".into(),
+            placeable: true,
+            fixed: false,
+            chrome: reprisekit::frame::Chrome::WINDOW,
+            size: Some((206, 344)),
+            own_place,
+        };
+        h.state.plan_for(&s, None).and_then(|w| w.state)
+    };
+    assert_eq!(plan(true), None, "a splash screen opens where it asks");
+    assert_eq!(plan(false), Some(WindowState::Maximized));
 }
 
 #[test]

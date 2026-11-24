@@ -66,6 +66,9 @@ pub(crate) struct Subject {
     pub chrome: Chrome,
     /// Its client size where known before it is placed: an X11 window's own.
     pub size: Option<(i32, i32)>,
+    /// An X11 window that drops its frame and gives its own position, as a splash screen does:
+    /// [`crate::xwayland::own_place`].
+    pub own_place: bool,
 }
 
 /// What a frame of `chrome` adds to its client's width and height when not maximized.
@@ -163,6 +166,7 @@ impl State {
             size: win
                 .x11()
                 .map(|x| (x.geometry().size.w, x.geometry().size.h)),
+            own_place: win.x11().is_some_and(crate::xwayland::own_place),
         };
         self.plan_for(&subject, Some(w))
     }
@@ -180,6 +184,7 @@ impl State {
         if self.config.remember_windows
             && !fixed
             && !crate::keptframes::is_placeholder(app_id, title, s.size)
+            && !s.own_place
             && let Some(m) = self.wm.kept.get(&self.output_set(), &s.key)
         {
             let m = &m.with_frame(frame_added(&self.config.theme.metrics, s.chrome));
