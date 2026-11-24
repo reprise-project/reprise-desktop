@@ -96,7 +96,7 @@ impl Removal {
                         (to, from.parent())
                     }
                     Undoable::Trash(t) => (&t.files, t.original.parent()),
-                    Undoable::Copied(p) | Undoable::New(p, _) => (p, None),
+                    Undoable::Copied(p, _) | Undoable::New(p, _) => (p, None),
                     Undoable::Batch(_) => return Some(Totals::default()),
                 };
                 if back.is_some_and(|dir| crate::ops::same_device(path, dir)) {
@@ -124,7 +124,7 @@ impl Removal {
             Removal::Undo { step, .. } => match step {
                 Undoable::Move { to, .. } | Undoable::Rename { to, .. } => to,
                 Undoable::Trash(t) => &t.original,
-                Undoable::Copied(p) | Undoable::New(p, _) => p,
+                Undoable::Copied(p, _) | Undoable::New(p, _) => p,
                 Undoable::Batch(_) => return std::ffi::OsStr::new(""),
             },
         };
@@ -485,6 +485,7 @@ mod tests {
             from: from.join(n),
             to: to.join(n),
             listed: false,
+            id: None,
         };
         for n in ["a.txt", "b.txt", "c.txt"] {
             std::fs::write(to.join(n), n).unwrap();
@@ -513,8 +514,8 @@ mod tests {
         assert!(from.join("c.txt").exists() && !to.join("c.txt").exists());
 
         u.push(undo.left(1, Some(error)).expect("the rest stays"));
-        assert_eq!(u.undo_dirs(), [from.clone(), to.clone()]);
         let left = u.take().expect("the rest");
+        assert_eq!(left.dirs(), [from.clone(), to.clone()]);
         let names: Vec<_> = (left.steps().iter())
             .map(|s| match s {
                 Undoable::Move { to, .. } => to.file_name().unwrap().to_owned(),

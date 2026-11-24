@@ -26,9 +26,11 @@ pub struct PutItem {
 
 #[derive(Debug)]
 pub enum PutEvent {
+    /// `id` is the landed item's [`crate::undo::file_id`].
     Landed {
         index: usize,
         landed: OsString,
+        id: Option<crate::undo::FileId>,
         replaced: bool,
         unlisted: bool,
     },
@@ -189,6 +191,7 @@ impl PutJob {
                             ours.insert(Some(landed.clone()));
                             PutEvent::Landed {
                                 index,
+                                id: crate::undo::file_id(&dir.join(&landed)),
                                 landed,
                                 replaced,
                                 unlisted,
