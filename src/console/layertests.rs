@@ -4,7 +4,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use super::inputtests::keys_heard;
-use super::locktests::hunter2;
+use super::locktests::{ENTER, HUNTER2, hunter2, settle, tap};
 use super::remote_side;
 use super::tests::under_lock_layer;
 use crate::harness::{Harness, LockScreen, TestClient, Toplevel};
@@ -179,6 +179,38 @@ fn a_console_layer_surface_mapped_under_the_console_lock_leaves_the_remote_side_
     let (_portal, _lock) = begin(&mut h);
     let mut c = h.connect();
     remote_window(&mut h, &mut c);
+}
+
+#[test]
+fn a_console_layer_surface_from_before_lock_mode_gets_the_keyboard_back_when_it_ends() {
+    let mut h = computer();
+    let mut console = h.connect();
+    h.map_exclusive_layer(&mut console, Layer::Overlay);
+    let held = last_layer_wl(&h);
+    let (_portal, _lock) = begin(&mut h);
+    tap(&mut h, &HUNTER2);
+    tap(&mut h, &[ENTER]);
+    settle(&mut h);
+    assert!(!remote_side(&h.state), "the console unlock ends lock mode");
+    assert!(console.side.layers_closed.is_empty(), "it stays open");
+    assert_eq!(last_layer(&h).0, "eDP-1");
+    assert_eq!(keyboard(&h), Some(held));
+}
+
+#[test]
+fn a_console_layer_surface_gets_the_keyboard_back_over_the_window_the_remote_side_used() {
+    let mut h = computer();
+    let mut console = h.connect();
+    h.map_exclusive_layer(&mut console, Layer::Overlay);
+    let held = last_layer_wl(&h);
+    let (_portal, _lock) = begin(&mut h);
+    let mut c = h.connect();
+    remote_window(&mut h, &mut c);
+    tap(&mut h, &HUNTER2);
+    tap(&mut h, &[ENTER]);
+    settle(&mut h);
+    assert!(!remote_side(&h.state), "the console unlock ends lock mode");
+    assert_eq!(keyboard(&h), Some(held));
 }
 
 #[test]

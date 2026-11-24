@@ -242,7 +242,8 @@ the journal logs each change ([Troubleshooting](#troubleshooting)).
   A panel, launcher or notification program (layer shell) that opens on
   one of this computer's screens opens on the client's screen under its
   pointer instead; one already open there stays under the lock and takes
-  no keys or clicks from the client until lock mode ends.
+  no keys or clicks from the client until lock mode ends, when the keyboard
+  it held comes back to it.
   Resizing a client's window (`xfreerdp3 /dynamic-resolution`) resizes its
   screen without a reconnect, and the windows keep their place on it. A
   change in the client's number of monitors ends the connection; a client

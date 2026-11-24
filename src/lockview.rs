@@ -836,11 +836,14 @@ fn unlock_side(state: &mut State, side: Side, fade: bool) {
             let remote = remote_focus(state);
             crate::console::console_unlocked(state);
             let shown = |w: WindowId| state.win(w).is_some_and(|x| x.mapped && !x.hidden());
+            // A layer surface that held the keyboard outright here gets it back, as from a window.
+            let outright =
+                (prev.1.clone()).filter(|s| crate::layer::wants_keyboard_outright(state, s));
             match remote {
                 Some(RemoteFocus::Window(w)) if shown(w) && state.window_output(w).is_some() => {
-                    prev = (Some(w), None, false);
+                    prev = (Some(w), outright, false);
                 }
-                Some(RemoteFocus::Desktop) => prev = (None, None, true),
+                Some(RemoteFocus::Desktop) => prev = (None, outright, true),
                 _ => {}
             }
         }
