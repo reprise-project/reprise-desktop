@@ -325,7 +325,11 @@ impl State {
                 }
             })
         });
-        let out = self.opening_output(w, want.as_ref());
+        let named = (asked == Some(WindowState::Fullscreen))
+            .then(|| self.asked_fullscreen_output(w))
+            .flatten()
+            .filter(|o| self.fullscreen_target(o));
+        let out = named.or_else(|| self.opening_output(w, want.as_ref()));
         let area = self.usable_area(out.as_ref());
         let metrics = &self.config.theme.metrics;
         let most = self.win(w).map(|x| area_client(metrics, area, x.chrome()));

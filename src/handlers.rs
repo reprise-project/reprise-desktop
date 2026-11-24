@@ -298,11 +298,13 @@ impl XdgShellHandler for State {
         self.state_request(&surface, xdg_toplevel::State::Maximized, false);
     }
 
-    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<WlOutput>) {
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, output: Option<WlOutput>) {
+        surface.with_pending_state(|s| s.fullscreen_output = output);
         self.state_request(&surface, xdg_toplevel::State::Fullscreen, true);
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        surface.with_pending_state(|s| s.fullscreen_output = None);
         self.state_request(&surface, xdg_toplevel::State::Fullscreen, false);
     }
 
@@ -426,7 +428,8 @@ impl State {
             match state {
                 xdg_toplevel::State::Fullscreen => {
                     if self.tabs.ask_fullscreen(w, on) {
-                        self.set_fullscreen(w, on);
+                        let output = self.asked_fullscreen_output(w);
+                        self.set_fullscreen_on(w, on, output);
                     }
                 }
                 _ => self.set_maximized(w, on),

@@ -1076,6 +1076,92 @@ fn a_toplevel_that_takes_back_its_maximize_before_mapping_is_left_its_own_size()
     assert_eq!(c.side.shells[t.shell].asked(), (0, 0));
 }
 
+/// [`forgetful`] with an 800x600 TEST-2 right of TEST-1, and a client that bound both.
+fn screens_bound() -> (crate::harness::Harness, crate::harness::TestClient) {
+    let mut h = forgetful();
+    h.output("TEST-2", 800, 600);
+    let c = h.connect();
+    assert_eq!(c.outputs().len(), 2);
+    (h, c)
+}
+
+const TEST_2: crate::raster::Rect = crate::raster::Rect::new(1024, 0, 800, 600);
+
+fn shown(h: &crate::harness::Harness, t: crate::harness::Toplevel) -> crate::raster::Rect {
+    h.state.win(t.id).expect("the window").frame_rect()
+}
+
+#[test]
+fn a_window_asking_for_fullscreen_on_an_output_fills_that_output() {
+    let (mut h, mut c) = screens_bound();
+    let t = h.map_toplevel(&mut c, "asker", 300, 200);
+    let second = c.outputs()[1].clone();
+    c.side.shells[t.shell]
+        .toplevel
+        .set_fullscreen(Some(&second));
+    h.roundtrip(&mut c);
+    assert_eq!(shown(&h, t), TEST_2);
+}
+
+#[test]
+fn a_toplevel_asking_to_open_fullscreen_on_an_output_is_sized_to_and_opens_on_it() {
+    let (mut h, mut c) = screens_bound();
+    let second = c.outputs()[1].clone();
+    let t = h.open_toplevel(&mut c, "asker", |t| t.set_fullscreen(Some(&second)));
+    assert_eq!(c.side.shells[t.shell].asked(), (800, 600));
+    h.resize_self(&mut c, t, 800, 600);
+    assert_eq!(shown(&h, t), TEST_2);
+}
+
+#[test]
+fn leaving_fullscreen_on_another_output_puts_the_window_back() {
+    let (mut h, mut c) = screens_bound();
+    let t = h.map_toplevel(&mut c, "asker", 300, 200);
+    h.state.move_to(t.id, 100, 120);
+    let before = shown(&h, t);
+    let second = c.outputs()[1].clone();
+    c.side.shells[t.shell]
+        .toplevel
+        .set_fullscreen(Some(&second));
+    h.roundtrip(&mut c);
+    c.side.shells[t.shell].toplevel.unset_fullscreen();
+    h.roundtrip(&mut c);
+    assert_eq!(shown(&h, t), before);
+}
+
+#[test]
+fn a_maximized_window_leaving_fullscreen_on_another_output_is_maximized_where_it_was() {
+    let (mut h, mut c) = screens_bound();
+    let t = h.map_toplevel(&mut c, "asker", 300, 200);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    let before = shown(&h, t);
+    let second = c.outputs()[1].clone();
+    c.side.shells[t.shell]
+        .toplevel
+        .set_fullscreen(Some(&second));
+    h.roundtrip(&mut c);
+    assert_eq!(shown(&h, t), TEST_2);
+    c.side.shells[t.shell].toplevel.unset_fullscreen();
+    h.roundtrip(&mut c);
+    assert_eq!(shown(&h, t), before);
+}
+
+#[test]
+fn fullscreen_on_an_output_that_went_fills_the_windows_own_output() {
+    let (mut h, mut c) = screens_bound();
+    let t = h.map_toplevel(&mut c, "asker", 300, 200);
+    let two = h.state.scene.outputs()[1].clone();
+    h.state.scene.remove_output(&two);
+    h.state.output_removed(&two);
+    let second = c.outputs()[1].clone();
+    c.side.shells[t.shell]
+        .toplevel
+        .set_fullscreen(Some(&second));
+    h.roundtrip(&mut c);
+    assert_eq!(shown(&h, t), crate::raster::Rect::new(0, 0, 1024, 768));
+}
+
 fn unmap_self(
     h: &mut crate::harness::Harness,
     c: &mut crate::harness::TestClient,

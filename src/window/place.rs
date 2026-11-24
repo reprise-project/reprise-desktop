@@ -214,6 +214,21 @@ impl State {
             .or_else(|| self.first_output())
     }
 
+    /// Whether a client's fullscreen output is one to fill: laid out, and in lock mode a Remote
+    /// one.
+    pub(crate) fn fullscreen_target(&self, output: &smithay::output::Output) -> bool {
+        self.scene.outputs().contains(output)
+            && self.layout_box(Some(output)).width > 0
+            && crate::console::on_desk(self, output)
+    }
+
+    /// The output an xdg toplevel's pending fullscreen request names, when it still exists.
+    pub(crate) fn asked_fullscreen_output(&self, w: WindowId) -> Option<smithay::output::Output> {
+        let t = self.win(w)?.xdg()?;
+        let named = t.with_pending_state(|s| s.fullscreen_output.clone())?;
+        smithay::output::Output::from_resource(&named)
+    }
+
     pub fn output_box_for_window(&self, w: WindowId) -> Rect {
         let Some(r) = self.win(w).map(Window::frame_rect) else {
             return Rect::default();

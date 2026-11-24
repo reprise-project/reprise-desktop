@@ -98,6 +98,7 @@ impl State {
             fullscreen: false,
             saved: None,
             saved_fullscreen: None,
+            fullscreen_from: None,
             snapped: None,
             home: None,
             last_frame: None,
@@ -511,6 +512,7 @@ impl State {
             Kind::X11(x) => (x.is_maximized(), x.is_fullscreen()),
         });
         let (asked_maximized, asked_fullscreen) = asked.unwrap_or_default();
+        let fullscreen_on = self.asked_fullscreen_output(w);
         let state = want.as_ref().and_then(|x| x.state);
         // Maximize before fullscreen, which would refuse it, so leaving fullscreen lands maximized.
         let (was_maximized, was_fullscreen) =
@@ -529,7 +531,7 @@ impl State {
         if state.map_or(asked_fullscreen || was_fullscreen, |s| {
             s == WindowState::Fullscreen
         }) {
-            self.set_fullscreen(w, true);
+            self.set_fullscreen_on(w, true, fullscreen_on);
             if let Some(win) = self.win_mut(w)
                 && !win.maximized
                 && let Some(s) = size

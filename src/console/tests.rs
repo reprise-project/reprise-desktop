@@ -174,6 +174,26 @@ fn a_toplevel_asking_to_open_maximized_in_lock_mode_fills_the_remote_screens_wor
 }
 
 #[test]
+fn fullscreen_on_a_console_output_in_lock_mode_fills_the_remote_screen() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "asker", 300, 200);
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1600, 900, 100)]);
+    h.roundtrip(&mut portal);
+    let edp = c.outputs()[0].clone();
+    c.side.shells[t.shell].toplevel.set_fullscreen(Some(&edp));
+    h.roundtrip(&mut c);
+    let remote = crate::virtualout::remote_outputs(&h.state)[0].clone();
+    assert_eq!(
+        h.state.win(t.id).expect("the window").frame_rect(),
+        h.state.layout_box(Some(&remote))
+    );
+}
+
+#[test]
 fn a_monitor_hotplug_during_lock_mode_keeps_the_remote_screens_and_adds_no_standby() {
     let mut h = Harness::new();
     let edp = h.output("eDP-1", 1920, 1080);

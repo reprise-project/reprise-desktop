@@ -195,6 +195,8 @@ pub struct Window {
     pub fullscreen: bool,
     pub saved: Option<Rect>,
     pub saved_fullscreen: Option<Rect>,
+    /// The output a maximized window filled before going fullscreen on another one.
+    pub fullscreen_from: Option<smithay::output::Output>,
     pub snapped: Option<Rect>,
     /// Where it was on the computer's own screens while lock mode keeps it on a remote one.
     pub home: Option<crate::console::homes::Home>,
