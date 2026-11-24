@@ -19,7 +19,7 @@ repriseconf = { path = "../../repriseconf" }
 reprisekit = { path = "../../reprisekit" }
 repriselogin = { path = "../../repriselogin" }
 zbus.workspace = true
-zbus_polkit = "6.0"
+zbus_polkit = "7"
 async-channel.workspace = true
 futures-util.workspace = true
 blocking.workspace = true

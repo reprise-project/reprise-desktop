@@ -8043,15 +8043,16 @@ dependencies = [
 
 [[package]]
 name = "zbus_polkit"
-version = "6.0.0"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "493c2474ae7bd12adcda9daabda8b7db0a8c95b4563876edf0f34afaf5f9e74e"
+checksum = "16070cc687169c30b9355d6421d8ff44bb3e396de487573f0fd4d72bf55dcb31"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
  "serde_repr",
  "static_assertions",
  "zbus 6.5.0",
+ "zcheapstr",
 ]
 
 [[package]]

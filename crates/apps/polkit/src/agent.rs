@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use zbus::OwnedVariant;
 use zbus::message::Header;
+use zbus_polkit::policykit1::Subject;
 
 pub const PATH: &str = "/reprise/polkit/Agent";
 
@@ -291,13 +292,6 @@ fn foreign_session<'a>(cgroup: &'a str, session: &str) -> Option<&'a str> {
         .filter(|s| *s != session)
 }
 
-/// polkit's `(sa{sv})` subject for the logind session `session`. zbus_polkit's `Subject` has no
-/// constructor for a session, so the registration call sends this tuple itself.
-fn subject(session: &str) -> (&'static str, HashMap<&'static str, OwnedVariant>) {
-    let id = OwnedVariant::from(zbus::Str::from(session));
-    ("unix-session", HashMap::from([("session-id", id)]))
-}
-
 /// Takes the served session's agent name, exiting when another reprise-polkit holds it.
 async fn single_instance(served: &Served, dismissed: Dismissals) {
     let name = &served.name;
@@ -375,7 +369,7 @@ async fn register(authority: &zbus::Proxy<'_>, session: &str, locale: &str) -> z
     authority
         .call::<_, _, ()>(
             "RegisterAuthenticationAgent",
-            &(subject(session), locale, PATH),
+            &(Subject::new_for_unix_session(session), locale, PATH),
         )
         .await
 }
@@ -505,12 +499,9 @@ mod tests {
             name: format!("reprise.polkit.session{session}"),
         };
         assert_eq!(served_session(Some("7"), tty), Ok(served("7")));
-        let (kind, details) = subject("7");
-        assert_eq!(kind, "unix-session");
-        let id = details
-            .get("session-id")
-            .map(|v| String::try_from(v.clone()));
-        assert_eq!(id, Some(Ok("7".to_string())));
+        let subject = Subject::new_for_unix_session("7");
+        assert_eq!(subject.kind(), "unix-session");
+        assert_eq!(subject.session_id(), Some("7"));
         let app_scope = judged(
             "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-reprise-p-1.scope\n",
         );
