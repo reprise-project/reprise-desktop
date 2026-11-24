@@ -625,8 +625,10 @@ impl Explorer {
 
     /// Arms, re-arms or drops the tip for the pointer at `(x, y)`
     /// ([`Explorer::tip_target`]). `true` when the window needs repainting.
+    /// No tip arms while a sheet, a box or another window has the keyboard, or a menu is open.
     pub fn hover_view(&mut self, x: i32, y: i32, lay: &window::Layout, ctx: &Ctx) -> bool {
-        let Some(on) = self.tip_target(x, y, lay, ctx) else {
+        let held = !self.keyboard || self.popup.is_some();
+        let Some(on) = self.tip_target(x, y, lay, ctx).filter(|_| !held) else {
             return self.hide_tip();
         };
         let up = self.tip.is_some();
@@ -692,6 +694,7 @@ pub(crate) mod tests {
         let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), ctx);
         ex.sv.mode = Mode::Thumbnails;
         ex.request_thumbs(1);
+        ex.keyboard = true;
         (dir, ex)
     }
 
@@ -815,6 +818,33 @@ pub(crate) mod tests {
         );
         assert!(reply.redraw);
         assert!(ex.tip.is_none() && ex.hover.is_none());
+    }
+
+    #[test]
+    fn a_window_without_the_keyboard_drops_its_tip_and_arms_none() {
+        let mut ctx = test_ctx();
+        let (_dir, mut ex) = explorer(&mut ctx);
+        let i = index_of(&ex, "b.txt");
+        hover(&mut ex, &ctx, i);
+        settle(&mut ex, &ctx);
+        assert!(ex.tip.is_some());
+
+        let reply = ex.event(crate::MAIN, Event::Focus(false), &mut ctx);
+        assert!(reply.redraw, "the tip that went has to be painted out");
+        assert!(ex.tip.is_none() && ex.hover.is_none());
+        hover(&mut ex, &ctx, i);
+        assert!(
+            ex.hover.is_none() && !ex.tip_pending(),
+            "no hover arms while a sheet has the keys"
+        );
+
+        ex.event(crate::MAIN, Event::Focus(true), &mut ctx);
+        hover(&mut ex, &ctx, i);
+        settle(&mut ex, &ctx);
+        assert!(
+            ex.tip.is_some(),
+            "the keyboard back, the rest shows the tip"
+        );
     }
 
     #[test]
