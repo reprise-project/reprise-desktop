@@ -119,7 +119,8 @@ pub(super) fn shrunk_origin(
 }
 
 /// Client size for a first configure; a CSD client is asked for the whole frame. A normal size
-/// fits `area` and goes under the client's `limits` only where they would not fit it.
+/// fits `area` and goes under the client's `limits` only where they would not fit it. A fixed-size
+/// window asking to be maximized is asked for its one size.
 pub fn first_configure_size(
     m: &Metrics,
     want: &Want,
@@ -138,6 +139,10 @@ pub fn first_configure_size(
             true,
             chrome,
         )),
+        Some(WindowState::Maximized) => {
+            let most = area_client(m, area, chrome);
+            Some((limits.min.0.min(most.0), limits.min.1.min(most.1)))
+        }
         _ => want.size.map(|s| {
             let (w, h) = fit_size(s, area);
             let client = FrameGeometry::client_size_for_total(m, w, h, false, chrome);
