@@ -519,6 +519,7 @@ impl Explorer {
         match sheet {
             crate::props_dialog::PROPS => self.props.is_some(),
             crate::bin_props::BIN_PROPS => self.bin_props.is_some(),
+            crate::folder_opts::FOLDER_OPTS => self.folder_opts.is_some(),
             _ => false,
         }
     }
@@ -528,6 +529,7 @@ impl Explorer {
         let up = match id.win {
             crate::props_dialog::PROPS => self.props.as_ref().map(|p| p.opened),
             crate::bin_props::BIN_PROPS => self.bin_props.as_ref().map(|b| b.opened),
+            crate::folder_opts::FOLDER_OPTS => self.folder_opts.as_ref().map(|f| f.opened),
             _ => None,
         };
         up == Some(id.opened)
@@ -928,7 +930,9 @@ impl Explorer {
                 _ if self.box_stands_alone() => Caption::Fixed,
                 _ => Caption::Prompt,
             },
-            crate::props_dialog::PROPS | crate::bin_props::BIN_PROPS => Caption::Help,
+            crate::props_dialog::PROPS
+            | crate::bin_props::BIN_PROPS
+            | crate::folder_opts::FOLDER_OPTS => Caption::Help,
             crate::browse::ERROR => Caption::Prompt,
             crate::copydlg::COPY | crate::copydlg::REMOVE | crate::copydlg::EXTRACT => {
                 Caption::Prompt
@@ -1006,6 +1010,7 @@ impl Explorer {
         }
         out.extend(self.props_child());
         out.extend(self.bin_props_child());
+        out.extend(self.folder_opts_child());
         out.extend(self.preview_child());
         out.extend(self.progress_children());
         out

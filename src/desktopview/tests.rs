@@ -156,7 +156,7 @@ fn a_desktop_read_marks_folders_and_decodes_their_icon_files() {
         &BTreeMap::new(),
         &[],
         true,
-        reprisefs::names::Extensions::Hide,
+        (reprisefs::names::Extensions::Hide, false),
         false,
     );
     let dirs: Vec<(&str, bool)> = entries
@@ -2126,4 +2126,43 @@ fn a_start_menu_program_dropped_on_the_desktop_is_copied_there_without_explorer(
         .put_all(&[app], &target, DropOp::Copy, &HashSet::new());
     h.until("the launcher lands", |_| desk.join("vim.desktop").exists());
     assert!(h.state.filejobs.jobs.is_empty(), "no Explorer job");
+}
+
+#[test]
+fn single_click_opens_an_icon_on_a_release_without_a_drag() {
+    use reprisekit::selection::Mods;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    create(
+        &mut h.state,
+        "/home/u/Desktop".into(),
+        Default::default(),
+        None,
+    );
+    h.state.desktop.as_mut().unwrap().entries = vec![file("a.txt"), file("b.txt")];
+    let pending = |h: &crate::harness::Harness| h.state.desktop.as_ref().unwrap().click_open;
+
+    h.state.desktop_press(Some(1), (10, 10), 0, Mods::default());
+    assert_eq!(
+        pending(&h),
+        None,
+        "a double-click desktop opens on the second press"
+    );
+
+    h.state.config.folders.single_click = true;
+    h.state
+        .desktop_press(Some(0), (10, 10), 5000, Mods::default());
+    assert_eq!(pending(&h), Some(0));
+    assert!(
+        h.state.desktop.as_ref().unwrap().selection.is(0),
+        "the press selects"
+    );
+    h.state.settle_click(true);
+    assert_eq!(pending(&h), None, "a drag opens nothing");
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    h.state.desktop_press(Some(1), (10, 10), 10000, ctrl);
+    assert_eq!(pending(&h), None, "a Ctrl click only selects");
 }

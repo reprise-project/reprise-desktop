@@ -77,6 +77,7 @@ impl Explorer {
     /// A modal child covers the window, which will not see the release: an armed item drag ends
     /// with no drop, and every other hold lets go where it is.
     pub(crate) fn cancel_pointer(&mut self) {
+        self.click_open = None;
         self.cancel_item_drag();
         self.tab_strip_let_go();
         self.let_go();
@@ -129,9 +130,17 @@ impl Explorer {
                     return reply;
                 }
                 // A drag owns the release: it drops, or acts on what the press meant.
+                let opens = self.click_open.take();
                 let dropped = self.drag.is_some().then(|| self.drag_release(x, y, ctx));
                 self.let_go();
-                dropped.unwrap_or_else(Reply::redraw)
+                let reply = dropped.unwrap_or_else(Reply::redraw);
+                match opens {
+                    Some(i) => {
+                        self.sv.selection.set_only(Some(i));
+                        reply.and(self.open_selected(ctx))
+                    }
+                    None => reply,
+                }
             }
             PointerInput::Motion { x, y } => self.motion(x, y, ctx),
             PointerInput::Scroll { x, y, rows } => self.scroll(x, y, rows, ctx),
@@ -139,6 +148,7 @@ impl Explorer {
             PointerInput::Leave => {
                 // The pointer off the window disarms a drag that never started; a started one
                 // is the compositor's.
+                self.click_open = None;
                 self.cancel_item_drag();
                 self.close_drop_menu();
                 self.tab_strip_leave();

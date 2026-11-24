@@ -77,7 +77,12 @@ pub(crate) fn test_env() {
         std::fs::write(&term, script).expect("write");
         std::fs::set_permissions(&term, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let config = state.join("config.toml");
-        std::fs::write(&config, format!("terminal = \"{}\"\n", term.display())).expect("write");
+        // Full names, so a test names the files it made; one about hidden extensions sets them.
+        let text = format!(
+            "terminal = \"{}\"\ndesktop_extensions = \"show\"\n",
+            term.display()
+        );
+        std::fs::write(&config, text).expect("write");
         reprisefs::configfile::set_path(Some(config));
     });
 }
@@ -203,7 +208,7 @@ fn browse_fixture(ctx: &mut Ctx) -> (tempfile::TempDir, Explorer) {
     std::fs::write(dir.path().join("a.txt"), "x").expect("write");
     std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), ctx);
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     let a = ex
         .items
         .iter()

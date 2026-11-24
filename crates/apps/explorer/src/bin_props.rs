@@ -40,12 +40,12 @@ pub(crate) struct BinProps {
     pub(crate) opened: u64,
 }
 
-/// The order of the sheet's writes of `[recycle_bin]`: each takes a number as OK or Apply asks
+/// The order of a sheet's writes of `config.toml`: each takes a number as OK or Apply asks
 /// for it, and one that runs after a later one wrote writes nothing, so the last asked lands last.
 #[derive(Default)]
 pub(crate) struct Saves {
-    asked: u64,
-    written: Arc<Mutex<u64>>,
+    pub(crate) asked: u64,
+    pub(crate) written: Arc<Mutex<u64>>,
 }
 
 impl BinProps {

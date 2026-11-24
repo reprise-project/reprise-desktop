@@ -401,7 +401,7 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     let mut tools = Menu::default();
     tools.row(row("&Synchronize...", false), Command::Nothing);
     tools.sep();
-    tools.row(row("&Folder Options...", false), Command::Nothing);
+    tools.row(row("&Folder Options...", true), Command::FolderOptions);
 
     let mut help = Menu::default();
     // There is no help viewer: the row is drawn and does nothing.

@@ -8,7 +8,7 @@ terminal = "reprise-terminal"   # a command line, arguments included (quote a pr
 startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start menu's left edge
 # startmenu_style = "glass"   # the Start menu: "classic" (the band and the [[startmenu]] entries), "blue" (programs and places in two columns under your picture) or "glass" (programs, search and places in two columns); default: the interface's own
 desktop_icons = true          # icons for the files in ~/Desktop (XDG_DESKTOP_DIR); false hides them and the desktop takes no files, the system icons stay
-# desktop_extensions = "hide"  # file name extensions in desktop labels: "hide" (every registered type's), "hide_launchers" (only .desktop) or "show"; report.pdf.sh always shows in full
+# desktop_extensions = "hide"  # file name extensions in desktop labels and Explorer's names: "hide" (every registered type's), "hide_launchers" (only .desktop) or "show"; report.pdf.sh always shows in full
 start_icon = false            # the Start button's logo: the icon theme's start-here (true) or the Reprise mark (false)
 adaptive_sync = false         # variable refresh rate on every output that supports it: true, false, or "fullscreen" for only while the focused window is fullscreen on the output (games and videos, without flicker on the desktop); an [[outputs]] entry overrides it, and the Display page of Reprise Settings sets that one
 system_icons = ["documents", "computer", "home", "recycle-bin"]   # the desktop's system icons, in order; home is your home folder
@@ -530,6 +530,17 @@ suspend_after = 0            # run [power] standby
 #                            # every drive's Recycle Bin, at login and daily; 0 keeps them
 # [recycle_bin.drives.home]  # the drive the home folder's Recycle Bin is on; another
 # max_percent = 5            # drive by its file system UUID, else its mount point
+
+# [folders]                  # Explorer and the desktop; Explorer's Tools > Folder Options...
+#                            # writes this table, and open windows follow it at once
+# new_window = false         # true: a folder opened from an Explorer window gets a window of
+#                            # its own; the Folders tree, Address bar, Back and Up stay in it
+# single_click = false       # true: pointing at an item selects it, a click opens it (Ctrl and
+#                            # Shift clicks still select); false: a double click opens
+# show_hidden = false        # hidden files and folders (a leading dot, or a line of the
+#                            # folder's .hidden) list in Explorer and on the desktop; Explorer's
+#                            # View > Hidden Items (Ctrl+H) flips it
+# tips = true                # Explorer shows an item's description when the pointer rests on it
 
 # [thumbnail_cache]          # thumbnails in Explorer and every file dialog, kept in
 #                            # ~/.cache/thumbnails and shared with other file managers

@@ -80,7 +80,7 @@ fn a_click_in_the_folders_pane_opens_the_folder() {
     }
     let here = Place::Folder(dir.path().to_path_buf());
     let mut ex = test_explorer(here.clone(), &mut ctx);
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     ex.build_tree(&mut ctx);
     ex.show(here.clone(), &mut ctx);
     let (a, b) = (

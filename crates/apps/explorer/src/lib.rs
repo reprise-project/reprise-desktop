@@ -17,6 +17,7 @@ mod drag;
 mod extracting;
 mod filemanager;
 mod fileops;
+mod folder_opts;
 mod foldertree;
 mod icons;
 mod keys;
@@ -136,6 +137,17 @@ pub(crate) enum Launch {
 pub(crate) enum Follow {
     Here,
     NewTab,
+    /// A window of its own (`[folders] new_window`); a place with no folder opens here.
+    NewWindow,
+}
+
+/// Starts `argv` as its own process in app `app`'s scope, its window taking the focus.
+pub(crate) fn spawn_in(argv: &[&std::ffi::OsStr], app: &'static str) -> Reply {
+    Reply {
+        spawn: vec![argv.iter().map(|a| a.to_os_string()).collect()],
+        spawn_app: Some(reprisefs::apps::AppId::from_static(app)),
+        ..Reply::none()
+    }
 }
 
 /// What opening a file came to: a program run, or the opening of a file in its program.
@@ -311,6 +323,16 @@ pub struct Explorer {
     /// Recycle Bin Properties, in its own modeless window.
     pub(crate) bin_props: Option<bin_props::BinProps>,
     bin_saves: bin_props::Saves,
+    /// Folder Options, in its own modal window.
+    pub(crate) folder_opts: Option<folder_opts::FolderOpts>,
+    folder_saves: bin_props::Saves,
+    /// What `config.toml` asks of every window, read again when the file changes.
+    pub(crate) folders: settings::Folders,
+    config_watch: Option<repriseconf::ConfigWatch>,
+    /// The `config.toml` Folder Options and Hidden Items write; None writes nothing (tests).
+    pub(crate) config_file: Option<PathBuf>,
+    /// A single-click press on this entry opens it once the button comes up without a drag.
+    pub(crate) click_open: Option<usize>,
     /// A sheet read and waiting for its icons to land before it goes up; for the open sheet read
     /// again after its Apply, that sheet's [`dialogs::SheetId::opened`].
     props_due: Option<(
@@ -611,6 +633,17 @@ impl Explorer {
             props: None,
             bin_props: None,
             bin_saves: Default::default(),
+            folder_opts: None,
+            folder_saves: Default::default(),
+            folders: settings::Folders::current(),
+            config_watch: (!cfg!(test))
+                .then(|| {
+                    let wake = ctx.wake.clone();
+                    repriseconf::watch(move || wake.wake())
+                })
+                .flatten(),
+            click_open: None,
+            config_file: (!cfg!(test)).then(repriseconf::config_path),
             props_due: None,
             sheets_opened: 0,
             preview: None,
@@ -803,7 +836,7 @@ impl Explorer {
             can_undo: self.undo,
             folders: self.settings.folders,
             status_bar: self.settings.status_bar,
-            hidden: self.settings.show_hidden,
+            hidden: self.folders.show_hidden,
             toolbars: [self.settings.toolbars, self.settings.address_bar, false],
             read_only: self.place.read_only(),
             bin: (self.place == Place::RecycleBin).then_some(self.items.len()),
@@ -1068,7 +1101,7 @@ impl Explorer {
         self.search.cancel();
         self.search_job = None;
         self.sync_drives(ctx);
-        let key = (place, self.settings.show_hidden, ctx.icons.scale());
+        let key = (place, self.folders.show_hidden, ctx.icons.scale());
         if let Some(r) = self.reading.take_if(|r| r.key != key) {
             self.leave(r);
         }
@@ -1113,7 +1146,7 @@ impl Explorer {
         let place = self.place.clone();
         let job = Job::spawn(Some(&ctx.wake), self.reader(place.clone(), ctx));
         self.reading = Some(Reading {
-            key: (place, self.settings.show_hidden, ctx.icons.scale()),
+            key: (place, self.folders.show_hidden, ctx.icons.scale()),
             job,
             again: false,
         });
@@ -1121,7 +1154,7 @@ impl Explorer {
 
     /// The read of `place` for a listing's thread.
     pub(crate) fn reader(&self, place: Place, ctx: &Ctx) -> impl FnOnce() -> Read + Send + 'static {
-        let (globs, show_hidden) = (self.globs.clone(), self.settings.show_hidden);
+        let (globs, show_hidden) = (self.globs.clone(), self.folders.show_hidden);
         let (drives, volumes) = (self.drives.clone(), self.volumes.clone());
         let shares = self.shares.shares.clone();
         let portable = self.portable.clone();
@@ -1230,6 +1263,7 @@ impl Explorer {
                 }
             }
         }
+        let shown: Vec<String> = items.iter().map(|it| self.shown_name(it)).collect();
         let mut icons = (ListingIcons::default().with_list(list))
             .drawing(drawn)
             .unread();
@@ -1241,7 +1275,7 @@ impl Explorer {
                 let [icon, icon32, icon48] = icons.get(&mut ctx.icons, &names[i]);
                 let mut e = Entry {
                     id: i as u64,
-                    name: it.label().to_string(),
+                    name: shown[i].clone(),
                     icon,
                     icon32,
                     icon48,
@@ -1447,6 +1481,15 @@ impl Explorer {
         Some(Reply::redraw())
     }
 
+    /// The name `it` shows under: its [`Item::label`], a file's known extension hidden as
+    /// `desktop_extensions` asks ([`reprisefs::names::label_for`]).
+    pub(crate) fn shown_name(&self, it: &Item) -> String {
+        if it.is_dir || it.shortcut.is_some() {
+            return it.label().to_string();
+        }
+        reprisefs::names::label_for(it.label(), &self.globs, self.folders.extensions)
+    }
+
     /// The one selected item, when it opens as a folder.
     pub(crate) fn selected_folder(&self) -> Option<&Item> {
         let i = self.sv.selection.single()?;
@@ -1477,9 +1520,13 @@ impl Explorer {
     }
 
     fn followed(&mut self, place: Place, to: Follow, ctx: &mut Ctx) -> Reply {
-        match to {
-            Follow::Here => self.go(place, ctx),
-            Follow::NewTab => self.open_in_new_tab(place),
+        match (to, place.path()) {
+            (Follow::NewWindow, Some(dir)) => spawn_in(
+                &[std::ffi::OsStr::new("reprise-explorer"), dir.as_os_str()],
+                "reprise-explorer",
+            ),
+            (Follow::Here | Follow::NewWindow, _) => self.go(place, ctx),
+            (Follow::NewTab, _) => self.open_in_new_tab(place),
         }
     }
 
@@ -1518,7 +1565,11 @@ impl Explorer {
             return self.ask_mount_image(ctx);
         }
         if it.is_dir {
-            return self.open_folder(&it, Follow::Here, ctx);
+            let to = match self.folders.new_window {
+                true => Follow::NewWindow,
+                false => Follow::Here,
+            };
+            return self.open_folder(&it, to, ctx);
         }
         if let Some(shortcut) = it.shortcut.as_deref() {
             return self.opened(&it.path, Opened::Open(self.open_for(shortcut)), ctx);
@@ -1835,6 +1886,9 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
     if win == bin_props::BIN_PROPS {
         return ex.bin_props_event(ev, ctx);
     }
+    if win == folder_opts::FOLDER_OPTS {
+        return ex.folder_opts_event(ev, ctx);
+    }
     if win == preview::PREVIEW {
         return ex.preview_event(ev, ctx);
     }
@@ -2038,6 +2092,10 @@ impl App for Lazy {
             ex.draw_bin_props(c, ctx);
             return;
         }
+        if win == folder_opts::FOLDER_OPTS {
+            ex.draw_folder_opts(c, ctx);
+            return;
+        }
         if win == preview::PREVIEW {
             ex.draw_preview(c, ctx);
             return;
@@ -2191,10 +2249,11 @@ impl repriseapp::Extended for Lazy {
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
             preview::PREVIEW => ex.access_preview(tree, ctx),
-            PROPS | bin_props::BIN_PROPS => {
+            PROPS | bin_props::BIN_PROPS | folder_opts::FOLDER_OPTS => {
                 let sheet = match win {
                     PROPS => ex.props.as_ref().map(|p| &p.sheet),
-                    _ => ex.bin_props.as_ref().map(|b| &b.sheet.sheet),
+                    bin_props::BIN_PROPS => ex.bin_props.as_ref().map(|b| &b.sheet.sheet),
+                    _ => ex.folder_opts.as_ref().map(|f| &f.sheet.sheet),
                 };
                 if let Some(sheet) = sheet {
                     let px = ctx.forms().fonts.size_px;

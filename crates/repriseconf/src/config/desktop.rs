@@ -164,6 +164,29 @@ impl Default for OsdConfig {
     }
 }
 
+/// `[folders]`: how Explorer and the desktop open and list files (Explorer's Folder Options).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldersConfig {
+    /// A folder opened from Explorer's view gets a window of its own.
+    pub new_window: bool,
+    /// Pointing at an item selects it and a click opens it.
+    pub single_click: bool,
+    pub show_hidden: bool,
+    /// Explorer shows an item's infotip when the pointer rests on it.
+    pub tips: bool,
+}
+
+impl Default for FoldersConfig {
+    fn default() -> Self {
+        FoldersConfig {
+            new_window: false,
+            single_click: false,
+            show_hidden: false,
+            tips: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreviewsConfig {
     pub taskbar: bool,

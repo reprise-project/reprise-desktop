@@ -34,6 +34,7 @@ pub mod finddlg;
 pub mod fingerprints;
 mod fit;
 pub mod flip;
+pub mod folderopts;
 pub mod fontsample;
 pub mod fontview;
 pub mod form;

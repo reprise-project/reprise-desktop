@@ -71,7 +71,8 @@ pub fn diff(old: &Config, new: &Config) -> Changes {
         icons: old.icons.theme != new.icons.theme,
         desktop: old.system_icons != new.system_icons
             || old.desktop_icons != new.desktop_icons
-            || old.desktop_extensions != new.desktop_extensions,
+            || old.desktop_extensions != new.desktop_extensions
+            || old.folders.show_hidden != new.folders.show_hidden,
         keyboard: crate::config::KeyboardConfig {
             layout_per_window: new.keyboard.layout_per_window,
             ..old.keyboard.clone()
@@ -1042,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn system_icons_desktop_icons_and_extensions_rescan() {
+    fn system_icons_desktop_icons_extensions_and_hidden_files_rescan() {
         let old = Config::default();
         let mut new = old.clone();
         new.system_icons = vec!["recycle-bin".into()];
@@ -1055,6 +1056,9 @@ mod tests {
         assert!(diff(&new, &old).desktop);
         let mut new = old.clone();
         new.desktop_extensions = reprisefs::names::Extensions::Show;
+        assert!(diff(&old, &new).desktop);
+        let mut new = old.clone();
+        new.folders.show_hidden = true;
         assert!(diff(&old, &new).desktop);
     }
 

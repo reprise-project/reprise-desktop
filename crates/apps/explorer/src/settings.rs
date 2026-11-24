@@ -1,5 +1,7 @@
 //! Per-window preferences in `$XDG_STATE_HOME/reprise/explorer.toml`; every field has a default.
+//! What every window shares comes from `config.toml` ([`Folders`]).
 
+use reprisefs::names::Extensions;
 use reprisekit::controls::{explorerbar, listview};
 use reprisekit::theme::TextUnits;
 use serde::{Deserialize, Serialize};
@@ -23,7 +25,6 @@ pub struct Settings {
     /// Details view column widths in 100% px, grown by the text size when
     /// drawn; empty means the built-in defaults.
     pub columns: Vec<i32>,
-    pub show_hidden: bool,
     /// Which task pane sections the user has collapsed, by title. A
     /// title that is not here is open, so a new section needs no entry.
     pub pane_open: BTreeMap<String, bool>,
@@ -44,7 +45,6 @@ impl Default for Settings {
             // 792x573, and `initial_size` wants the client size.
             window: (792, 573),
             columns: Vec::new(),
-            show_hidden: false,
             pane_open: BTreeMap::new(),
         }
     }
@@ -80,6 +80,35 @@ impl Settings {
 
     pub fn save(&self) {
         repriseconf::statefile::save(&repriseconf::statefile::path("explorer"), self);
+    }
+}
+
+/// What `[folders]`, `desktop_extensions` and `[thumbnail_cache] enabled` in `config.toml` ask of
+/// every Explorer window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Folders {
+    pub new_window: bool,
+    pub single_click: bool,
+    pub show_hidden: bool,
+    pub extensions: Extensions,
+    pub tips: bool,
+    pub cache_thumbnails: bool,
+}
+
+impl Folders {
+    pub fn of(c: &repriseconf::config::Config) -> Folders {
+        Folders {
+            new_window: c.folders.new_window,
+            single_click: c.folders.single_click,
+            show_hidden: c.folders.show_hidden,
+            extensions: c.desktop_extensions,
+            tips: c.folders.tips,
+            cache_thumbnails: c.thumbnail_cache.enabled,
+        }
+    }
+
+    pub fn current() -> Folders {
+        Folders::of(&repriseconf::current())
     }
 }
 
@@ -124,7 +153,6 @@ mod tests {
         assert_eq!(s.sort, (0, true));
         assert!(s.folders && s.status_bar && s.toolbars && s.address_bar);
         assert_eq!(s.window, (792, 573));
-        assert!(!s.show_hidden);
     }
 
     #[test]
@@ -133,7 +161,6 @@ mod tests {
             mode: "details".to_string(),
             sort: (2, false),
             columns: vec![200, 80, 100],
-            show_hidden: true,
             ..Settings::default()
         };
         let text = toml::to_string(&s).unwrap();

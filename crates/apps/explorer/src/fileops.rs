@@ -770,6 +770,7 @@ impl Explorer {
         self.ask_pastes(ctx);
         self.answer_ends();
         (self.props, self.props_due, self.bin_props, self.preview) = (None, None, None, None);
+        self.folder_opts = None;
         if self.busy() {
             self.closing = true;
             return Reply::none();

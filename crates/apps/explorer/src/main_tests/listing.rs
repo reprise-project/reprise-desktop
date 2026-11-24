@@ -337,7 +337,7 @@ fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_t
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(shown.clone()), &mut ctx);
     // `tempdir` names start with a dot, which the tree hides by default.
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     ex.build_tree(&mut ctx);
     ex.show(Place::Folder(shown.clone()), &mut ctx);
     wake_until(&mut ex, &mut ctx, watched);
@@ -367,7 +367,7 @@ fn a_folder_above_the_shown_one_renamed_is_followed_and_moved_away_is_left_for_t
 }
 
 #[test]
-fn ctrl_h_lists_hidden_entries_faded_and_keeps_the_setting() {
+fn ctrl_h_lists_hidden_entries_faded_and_a_second_press_drops_them() {
     let dir = tempfile::tempdir().expect("a temp dir");
     for name in ["a.txt", ".x"] {
         std::fs::write(dir.path().join(name), "x").expect("write");
@@ -396,12 +396,12 @@ fn ctrl_h_lists_hidden_entries_faded_and_keeps_the_setting() {
     assert_eq!(names(&ex), [".x", "a.txt"]);
     let faded: Vec<bool> = ex.sv.entries.iter().map(|e| e.hidden).collect();
     assert_eq!(faded, [true, false], "the dot name draws faded");
-    assert!(ex.settings.show_hidden && ex.settings_dirty, "saved");
+    assert!(ex.folders.show_hidden, "shown");
     assert!(ex.menu_state().hidden, "View > Hidden Items is ticked");
 
     ex.key(ctrl_h(), &mut ctx);
     assert_eq!(names(&ex), ["a.txt"]);
-    assert!(!ex.settings.show_hidden);
+    assert!(!ex.folders.show_hidden);
 }
 
 #[test]

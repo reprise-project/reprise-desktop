@@ -197,7 +197,7 @@ impl Explorer {
     fn search_for(&mut self, text: &str, ctx: &mut Ctx) -> Reply {
         let Some(started) = self
             .search
-            .start(&self.place, text, self.settings.show_hidden)
+            .start(&self.place, text, self.folders.show_hidden)
         else {
             return Reply::none();
         };

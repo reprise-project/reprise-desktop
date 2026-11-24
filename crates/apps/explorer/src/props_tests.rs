@@ -569,7 +569,7 @@ fn the_sheets_rename_relabels_a_folders_row_in_the_tree() {
     let here = Place::Folder(dir.path().to_path_buf());
     let mut ex = crate::tests::test_explorer(here.clone(), &mut ctx);
     // `tempdir` names start with a dot, so the tree hides the chain until hidden entries are shown.
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     ex.build_tree(&mut ctx);
     ex.show(here.clone(), &mut ctx);
     let node = ex.tree_path_of(&here).expect("this folder's node");

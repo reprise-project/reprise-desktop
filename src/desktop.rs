@@ -398,17 +398,19 @@ pub fn open_argv(
     })
 }
 
-/// `dir`'s files as desktop icons. It reads the files, so a host runs it off its event loop; a
-/// plain file wears its type's generic icon until [`wear_file_icons`] picks the theme's best.
+/// `dir`'s files as desktop icons, hidden ones only with `show_hidden`. It reads the files, so a
+/// host runs it off its event loop; a plain file wears its type's generic icon until
+/// [`wear_file_icons`] picks the theme's best.
 pub fn scan(
     dir: &Path,
     globs: &reprisefs::apps::MimeDb,
     shown: names::Extensions,
+    show_hidden: bool,
 ) -> Vec<DesktopEntry> {
     scan_with(
         dir,
         globs,
-        shown,
+        (shown, show_hidden),
         Followed::of,
         reprisefs::listing::LINK_WAIT,
     )
@@ -418,7 +420,7 @@ pub fn scan(
 fn scan_with(
     dir: &Path,
     globs: &reprisefs::apps::MimeDb,
-    shown: names::Extensions,
+    (shown, show_hidden): (names::Extensions, bool),
     follow: fn(&Path) -> Followed,
     wait: std::time::Duration,
 ) -> Vec<DesktopEntry> {
@@ -437,7 +439,7 @@ fn scan_with(
     // The entry's own type comes from the listing (d_type).
     let (mut links, plain): (Vec<_>, Vec<_>) = rd
         .flatten()
-        .filter(|e| !listed.hides(&e.file_name()))
+        .filter(|e| show_hidden || !listed.hides(&e.file_name()))
         .map(|e| (e.path(), e.file_type().is_ok_and(|t| t.is_symlink())))
         .partition(|(_, symlink)| *symlink);
     let plain = plain
@@ -853,7 +855,7 @@ mod tests {
         for f in ["firefox.desktop", "noicon.desktop", "broken.desktop"] {
             apps::allow_launching(&dir.join(f)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(
             names,
@@ -886,7 +888,7 @@ mod tests {
         std::fs::create_dir(dir.join("Photos.txt")).unwrap();
         let globs = reprisefs::apps::MimeDb::parse(["50:text/plain:*.txt\n"]);
         let has = |n: &str| n == "gnome-mime-text-plain";
-        let mut list = scan(&dir, &globs, names::Extensions::Hide);
+        let mut list = scan(&dir, &globs, names::Extensions::Hide, false);
         assert_eq!(
             list[1].icon, "text-x-generic",
             "the generic icon until worn"
@@ -914,7 +916,7 @@ mod tests {
         }
         let globs = reprisefs::apps::MimeDb::parse(["50:application/x-shellscript:*.sh\n"]);
         let has = |n: &str| n == "application-x-executable" || n == "application-x-shellscript";
-        let mut list = scan(&dir, &globs, names::Extensions::Hide);
+        let mut list = scan(&dir, &globs, names::Extensions::Hide, false);
         wear_file_icons(&mut list, &globs, &has);
         let by = |n: &str| list.iter().find(|e| e.name == n).unwrap();
         assert_eq!(by("run.sh").icon, "application-x-executable");
@@ -936,16 +938,31 @@ mod tests {
             files.insert(0, recycle_bin(dir.join("trash"), true));
             files
         };
-        let before = with_bin(scan(&dir, &apps::mime_globs(), names::Extensions::Hide));
+        let before = with_bin(scan(
+            &dir,
+            &apps::mime_globs(),
+            names::Extensions::Hide,
+            false,
+        ));
         let aimed = before[1].id();
         let bin = before[0].id();
         assert_eq!(aimed, IconId::File(dir.join("b.txt")));
         std::fs::write(dir.join("a.txt"), "").unwrap();
-        let after = with_bin(scan(&dir, &apps::mime_globs(), names::Extensions::Hide));
+        let after = with_bin(scan(
+            &dir,
+            &apps::mime_globs(),
+            names::Extensions::Hide,
+            false,
+        ));
         assert_eq!(find(&after, &aimed), Some(2), "b.txt is row 2");
         assert_eq!(find(&after, &bin), Some(0), "the Recycle Bin is row 0");
         std::fs::remove_file(dir.join("b.txt")).unwrap();
-        let gone = with_bin(scan(&dir, &apps::mime_globs(), names::Extensions::Hide));
+        let gone = with_bin(scan(
+            &dir,
+            &apps::mime_globs(),
+            names::Extensions::Hide,
+            false,
+        ));
         assert_eq!(find(&gone, &aimed), None);
     }
 
@@ -958,7 +975,7 @@ mod tests {
             std::fs::write(dir.join(f), text).unwrap();
             apps::allow_launching(&dir.join(f)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         let keys: Vec<(&str, &str)> = list
             .iter()
             .map(|e| (e.name.as_str(), e.label.as_str()))
@@ -978,7 +995,8 @@ mod tests {
             scan(
                 Path::new("/nonexistent/reprise-desktop"),
                 &apps::MimeDb::empty(),
-                names::Extensions::Hide
+                names::Extensions::Hide,
+                false,
             )
             .is_empty()
         );
@@ -998,7 +1016,7 @@ mod tests {
         std::os::unix::fs::symlink(dir.join("notes.txt"), dir.join("link.txt")).unwrap();
         std::os::unix::fs::symlink(dir.join("Reports"), dir.join("Reports link")).unwrap();
         apps::allow_launching(&dir.join("app.desktop")).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         let flag = |n: &str| list.iter().find(|e| e.name == n).unwrap().shortcut;
         assert!(!flag("Reports"));
         assert!(!flag("notes.txt"));
@@ -1053,7 +1071,7 @@ mod tests {
         let bare = scan_with(
             &dir.join("desk"),
             &globs,
-            names::Extensions::Hide,
+            (names::Extensions::Hide, false),
             bare,
             wait,
         );
@@ -1062,7 +1080,7 @@ mod tests {
         let full = scan_with(
             &dir.join("desk"),
             &globs,
-            names::Extensions::Hide,
+            (names::Extensions::Hide, false),
             Followed::of,
             wait,
         );
@@ -1093,7 +1111,7 @@ mod tests {
         let list = scan_with(
             &dir,
             &apps::MimeDb::empty(),
-            names::Extensions::Show,
+            (names::Extensions::Show, false),
             follow,
             std::time::Duration::from_millis(200),
         );
@@ -1133,7 +1151,7 @@ mod tests {
             let list = scan_with(
                 &dir,
                 &apps::MimeDb::empty(),
-                names::Extensions::Show,
+                (names::Extensions::Show, false),
                 follow,
                 std::time::Duration::from_millis(100),
             );
@@ -1160,6 +1178,7 @@ mod tests {
             &dir,
             &apps::MimeDb::parse(["50:text/plain:*.txt\n"]),
             names::Extensions::Hide,
+            false,
         );
         assert_eq!(list.len(), 1, "the file is listed");
         assert_eq!(list[0].path, path);
@@ -1190,16 +1209,21 @@ mod tests {
                 && !list[0].shortcut
         };
         assert!(
-            plain(&scan(&dir, &apps::mime_globs(), names::Extensions::Hide)),
+            plain(&scan(
+                &dir,
+                &apps::mime_globs(),
+                names::Extensions::Hide,
+                false
+            )),
             "not executable: a file"
         );
         chmod_exec(&path);
         assert!(!apps::is_trusted(&path));
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         assert!(plain(&list), "untrusted: a file");
         assert!(list[0].allow_launching);
         apps::allow_launching(&path).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         assert_eq!(list[0].label, "Document");
         assert!(
             matches!(list[0].target, Target::Launch(_)),
@@ -1210,8 +1234,27 @@ mod tests {
         // it would not make it a launcher.
         std::fs::write(&path, "[Desktop Entry]\nType=Link\nName=x\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         assert!(!list[0].allow_launching);
+    }
+
+    #[test]
+    fn hidden_files_list_only_when_shown() {
+        let dir = std::env::temp_dir().join(format!("reprise-desk-hidden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".secret"), "").unwrap();
+        std::fs::write(dir.join("listed"), "").unwrap();
+        std::fs::write(dir.join(".hidden"), "listed\n").unwrap();
+        std::fs::write(dir.join("plain"), "").unwrap();
+        let names = |show_hidden| -> Vec<String> {
+            let globs = apps::MimeDb::empty();
+            let list = scan(&dir, &globs, names::Extensions::Hide, show_hidden);
+            list.into_iter().map(|e| e.name).collect()
+        };
+        assert_eq!(names(false), ["plain"]);
+        assert_eq!(names(true), [".hidden", ".secret", "listed", "plain"]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1232,7 +1275,7 @@ mod tests {
             std::fs::write(dir.join(file), text).unwrap();
             apps::allow_launching(&dir.join(file)).unwrap();
         }
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["web.desktop", "hidden.desktop", "link.desktop"]);
         assert!(
@@ -1307,7 +1350,7 @@ mod tests {
             ),
         ];
         for (mode, files) in want {
-            let list = scan(&dir, &globs, mode);
+            let list = scan(&dir, &globs, mode, false);
             let by = |n: &str| list.iter().find(|e| e.name == n).unwrap();
             assert!(
                 list.iter().all(|e| e.name != ".profile.txt"),
@@ -1336,14 +1379,14 @@ mod tests {
             );
             assert!(rename_edit(launcher, mode).all_selected(), "{mode:?}");
         }
-        let shown = scan(&dir, &globs, Show);
+        let shown = scan(&dir, &globs, Show, false);
         let report = shown.iter().find(|e| e.name == "report.pdf").unwrap();
         assert_eq!(
             rename_file(report, "summary.txt"),
             Ok(Some(dir.join("summary.txt"))),
             "a shown extension is the typed one"
         );
-        let hidden = scan(&dir, &globs, Hide);
+        let hidden = scan(&dir, &globs, Hide, false);
         let archive = hidden.iter().find(|e| e.name == "archive.tar.gz").unwrap();
         assert_eq!(
             rename_file(archive, "backup"),
@@ -1369,7 +1412,7 @@ mod tests {
         let theme = reprisekit::theme::Theme::default();
         let text = reprisekit::text::TextRenderer::load(&theme.fonts);
         let drawn = |shown| {
-            let e = scan(&dir, &globs, shown).remove(0);
+            let e = scan(&dir, &globs, shown, false).remove(0);
             let edit = rename_edit(&e, shown);
             let cell = draw_cell(&theme, &text, &e.label, None, false, None, None, None);
             let rename = draw_cell(
@@ -1407,7 +1450,7 @@ mod tests {
         );
         std::fs::write(dir.join("big.desktop"), big).unwrap();
         apps::allow_launching(&dir.join("big.desktop")).unwrap();
-        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide);
+        let list = scan(&dir, &apps::mime_globs(), names::Extensions::Hide, false);
         let names: Vec<&str> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["big.desktop", "pipe.desktop"]);
         assert!(
@@ -1462,7 +1505,7 @@ mod tests {
         );
         std::fs::create_dir(dir.join("Photos")).unwrap();
         let globs = reprisefs::apps::MimeDb::parse(["50:image/png:*.png\n"]);
-        let list = scan(&dir, &globs, names::Extensions::Hide);
+        let list = scan(&dir, &globs, names::Extensions::Hide, false);
         let target = |n: &str| list.iter().find(|e| e.name == n).unwrap().target.clone();
         assert_eq!(
             target("hi.sh"),

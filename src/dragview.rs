@@ -1534,6 +1534,7 @@ mod tests {
             &desk,
             &reprisefs::apps::MimeDb::empty(),
             reprisefs::names::Extensions::Hide,
+            false,
         );
         for name in ["Shortcut to Firefox.desktop", "firefox.desktop"] {
             let e = entries.iter().find(|e| e.name == name);
