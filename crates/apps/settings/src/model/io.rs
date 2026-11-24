@@ -177,8 +177,9 @@ pub fn keys_in(text: &str) -> Vec<Key> {
     let Ok(doc) = text.parse::<DocumentMut>() else {
         return Vec::new();
     };
-    (fields().iter())
-        .map(|f| *f.key())
+    let menu = [crate::startmenu::STARTMENU, crate::startmenu::CHANGES];
+    (fields().iter().map(|f| *f.key()))
+        .chain(menu)
         .filter(|k| get(&doc, k).is_some())
         .collect()
 }

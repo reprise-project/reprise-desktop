@@ -453,8 +453,8 @@ pub struct Settings {
     pub programs: Vec<ProgramShortcut>,
     pub denied: Vec<String>,
 
-    /// The whole `[[startmenu]]` tree, or the default menu when the file
-    /// has none; written whole, as `shortcuts` is.
+    /// The Start menu tree: the file's `[[startmenu]]`, else the default menu with its
+    /// `[[startmenu_changes]]` made.
     pub startmenu: Vec<crate::startmenu::Entry>,
 
     /// `[[tablet_pads]]`' own keys, in file order; none by default.

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::windowrules::{WindowRule, WindowState};
 use repriseconf::config::file::{
-    FileConfig, FileKeybind, FileMenuEntry, FileQuickLaunch, FileWindowRule,
+    FileConfig, FileKeybind, FileMenuChange, FileMenuEntry, FileQuickLaunch, FileWindowRule,
 };
 use std::path::{Path, PathBuf};
 
@@ -69,6 +69,7 @@ impl Config {
         let keybinds = file.keybinds.take();
         let globals = file.global_shortcuts.take();
         let startmenu = file.startmenu.take();
+        let startmenu_changes = file.startmenu_changes.take();
         let quicklaunch = file.quicklaunch.take();
         let rules = file.window_rules.take();
         let pads = file.tablet_pads.take();
@@ -104,7 +105,18 @@ impl Config {
         if let Some(list) = globals {
             cfg.global_shortcuts = global_shortcuts(list);
         }
-        if let Some(entries) = startmenu {
+        // A whole `[[startmenu]]` wins over changes to the default menu.
+        let rows = match (startmenu, startmenu_changes) {
+            (Some(entries), _) => Some(entries),
+            (None, Some(changes)) => {
+                for c in &changes {
+                    c.check()?;
+                }
+                Some(repriseconf::config::startmenu_with(&changes))
+            }
+            (None, None) => None,
+        };
+        if let Some(entries) = rows {
             cfg.startmenu = entries
                 .iter()
                 .map(menu_entry)
@@ -167,9 +179,11 @@ impl Config {
         match Config::parse_over(&text, &toml::Table::new()) {
             Ok((c, dropped, table)) if dropped.is_empty() => {
                 log::info!("loaded config {}", path.display());
+                warn_stray_rows(&table);
                 (c, None, table)
             }
             Ok((c, dropped, table)) => {
+                warn_stray_rows(&table);
                 for d in &dropped {
                     log::warn!(
                         "config {}: {}: {}; using its defaults",
@@ -186,6 +200,23 @@ impl Config {
                 (Config::default(), Some(notice), toml::Table::new())
             }
         }
+    }
+}
+
+/// Logs the `[[startmenu_changes]]` rows the menu built from `table` puts at its end. Once per
+/// read, which builds the menu more than once.
+pub(crate) fn warn_stray_rows(table: &toml::Table) {
+    if table.contains_key("startmenu") {
+        return;
+    }
+    let changes: Option<Vec<FileMenuChange>> =
+        (table.get("startmenu_changes").cloned()).and_then(|v| v.try_into().ok());
+    for c in repriseconf::config::stray_rows(changes.as_deref().unwrap_or_default()) {
+        log::warn!(
+            "startmenu_changes: {:?} names folder {:?}, which is no default folder; the row goes at the menu's end",
+            c.label.as_deref().unwrap_or("-"),
+            c.folder.as_deref().unwrap_or_default()
+        );
     }
 }
 
@@ -208,42 +239,28 @@ fn quicklaunch_entry(f: &FileQuickLaunch) -> Result<QuickLaunchEntry, String> {
 }
 
 pub(super) fn menu_entry(f: &FileMenuEntry) -> Result<MenuEntry, String> {
+    f.check()?;
     if f.separator == Some(true) {
         return Ok(MenuEntry::Separator);
     }
-    let label = f
-        .label
-        .clone()
-        .ok_or("startmenu entry needs a label or separator = true")?;
+    // `check` leaves one target of a known kind.
     let target = match (&f.action, &f.command, &f.submenu, &f.items) {
-        (Some(a), cmd, None, None) => MenuTarget::Action(Action::from_parts(a, cmd.as_deref())?),
-        (None, Some(cmd), None, None) => MenuTarget::Action(Action::Spawn(cmd.clone())),
-        (None, None, Some(kind), None) => match kind.as_str() {
+        (Some(a), cmd, _, _) => MenuTarget::Action(Action::from_parts(a, cmd.as_deref())?),
+        (None, Some(cmd), _, _) => MenuTarget::Action(Action::Spawn(cmd.clone())),
+        (None, None, Some(kind), _) => match kind.as_str() {
             "programs" => MenuTarget::Programs,
             "settings" => MenuTarget::Settings,
-            "documents" => MenuTarget::Documents,
-            other => {
-                return Err(format!(
-                    "startmenu entry {label:?}: unknown submenu {other:?}, expected programs|settings|documents"
-                ));
-            }
+            _ => MenuTarget::Documents,
         },
-        (None, None, None, Some(items)) => MenuTarget::Submenu(
-            items
-                .iter()
+        // A label alone is a folder whose rows were all taken out.
+        (None, None, None, items) => MenuTarget::Submenu(
+            (items.iter().flatten())
                 .map(menu_entry)
                 .collect::<Result<Vec<_>, String>>()?,
         ),
-        // A label alone is a folder whose rows were all taken out.
-        (None, None, None, None) => MenuTarget::Submenu(Vec::new()),
-        _ => {
-            return Err(format!(
-                "startmenu entry {label:?}: command/action, submenu and items are mutually exclusive"
-            ));
-        }
     };
     Ok(MenuEntry::Item {
-        label,
+        label: f.label.clone().unwrap_or_default(),
         icon: f.icon.clone().filter(|s| !s.is_empty()),
         target,
         tip: f.tip.clone().filter(|s| !s.is_empty()),

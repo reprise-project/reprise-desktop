@@ -172,3 +172,85 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
     assert_eq!(a.want.cursor_size, 48, "the Cursor change is still pending");
     assert!(a.dirty());
 }
+
+/// The Start Menu page writes only what sets the menu apart from the default one, and Restore
+/// Defaults takes that out, or a whole `[[startmenu]]` list.
+#[test]
+fn the_start_menu_saves_its_changes_and_restore_defaults_takes_them_out() {
+    use crate::startmenu;
+    let path = tmp("startmenu-changes").join("config.toml");
+    std::fs::write(&path, "").unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let lit =
+        |a: &SettingsApp| match a.sheet.pages[Page::StartMenu.index()].item(propsheet::RESTORE) {
+            Some(it) => matches!(it.control, form::Control::Button { enabled: true, .. }),
+            None => panic!("Start Menu has Restore Defaults"),
+        };
+    assert!(!lit(&a), "the default menu");
+    let help = startmenu::take(&mut a.want.startmenu, &[4]).unwrap();
+    assert_eq!(help.label(), Some("&Help and Support"));
+    a.sync_apply();
+    assert!(lit(&a), "an unapplied change counts");
+    assert!(a.apply());
+    let text = || std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        text(),
+        "[[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n"
+    );
+    assert_eq!(
+        apply::restore_question(Page::StartMenu, &a.restorable(Page::StartMenu)),
+        "Restore the defaults on the Start Menu page?\n\
+         These settings are taken out of config.toml:\n    startmenu_changes"
+    );
+    a.restore_defaults(Page::StartMenu);
+    assert_eq!(text(), "");
+    assert_eq!(a.want.startmenu, startmenu::default_menu());
+    assert_eq!(a.loaded, a.want, "nothing is left pending");
+    assert!(!lit(&a));
+
+    std::fs::write(&path, "[[startmenu]]\nlabel = \"A\"\ncommand = \"a\"\n").unwrap();
+    assert!(a.config_changed());
+    assert!(lit(&a), "a whole menu in the file");
+    assert_eq!(
+        a.restorable(Page::StartMenu).keys,
+        [startmenu::STARTMENU],
+        "the whole list is what goes"
+    );
+    a.restore_defaults(Page::StartMenu);
+    assert_eq!(text(), "");
+    assert_eq!(a.want.startmenu, startmenu::default_menu());
+}
+
+#[test]
+fn apply_writes_back_the_menu_changes_it_cannot_show_as_the_file_has_them() {
+    use crate::startmenu;
+    let typo = "\
+[[startmenu_changes]]
+label = \"Tools\"   # mine
+after = \"run\"
+
+[[startmenu_changes.items]]
+label = \"Edit\"
+command = \"gedit\"
+tooltip = \"Edits text\"
+";
+    let unknown = "\
+[[startmenu_changes]]
+default = \"from-a-later-reprise\"
+hidden = true
+";
+    let path = tmp("startmenu-idle").join("config.toml");
+    let text = format!("# My menu.\n{typo}\n{unknown}");
+    std::fs::write(&path, &text).unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    assert_eq!(a.want.startmenu, startmenu::default_menu());
+    startmenu::shift(&mut a.want.startmenu, &[5], -1).unwrap();
+    assert!(a.apply());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        format!(
+            "# My menu.\n[[startmenu_changes]]\ndefault = \"help\"\nafter = \"run\"\n\n{typo}\n{unknown}"
+        ),
+        "the edit, then the two changes as they were"
+    );
+}

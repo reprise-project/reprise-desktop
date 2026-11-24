@@ -350,6 +350,68 @@ fn startmenu_entry_rejects_ambiguous_or_unknown_targets() {
 }
 
 #[test]
+fn startmenu_changes_build_on_the_default_menu_and_a_whole_list_wins() {
+    let text = "[[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n\n\
+                [[startmenu_changes]]\nlabel = \"Foot\"\ncommand = \"foot\"\nafter = \"run\"\n";
+    let c = Config::parse(text).unwrap();
+    let mut want = Config::default().startmenu;
+    want[4] = MenuEntry::Item {
+        label: "Foot".into(),
+        icon: None,
+        target: MenuTarget::Action(Action::Spawn("foot".into())),
+        tip: None,
+    };
+    want.swap(4, 5);
+    assert_eq!(c.startmenu, want);
+    let whole = format!("{text}\n[[startmenu]]\nlabel = \"A\"\ncommand = \"a\"\n");
+    assert_eq!(Config::parse(&whole).unwrap().startmenu.len(), 1);
+    let bad = format!("{text}\n[[startmenu_changes]]\ndefault = \"run\"\ncommand = \"x\"\n");
+    let (c, dropped) = Config::parse_lenient(&bad).unwrap();
+    assert_eq!(c.startmenu, want, "the bad change alone is dropped");
+    assert_eq!(dropped.len(), 1);
+}
+
+fn menu_labels(c: &Config) -> Vec<&str> {
+    (c.startmenu.iter())
+        .map(|e| match e {
+            MenuEntry::Item { label, .. } => label.as_str(),
+            MenuEntry::Separator => "-",
+        })
+        .collect()
+}
+
+#[test]
+fn a_reload_dropping_a_menu_change_takes_no_other_change_in_its_place() {
+    let foot = "[[startmenu_changes]]\nlabel = \"Foot\"\ncommand = \"foot\"\n";
+    let help = "[[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n";
+    let (running, _, base) =
+        Config::parse_over(&format!("{foot}\n{help}"), &toml::Table::new()).unwrap();
+    let bad = "[[startmenu_changes]]\ndefault = \"run\"\ncommand = \"x\"\n";
+    let (c, dropped, _) = Config::parse_over(&format!("{bad}\n{foot}\n{help}"), &base).unwrap();
+    assert_eq!(
+        menu_labels(&c),
+        menu_labels(&running),
+        "Foot once, Help hidden"
+    );
+    assert_eq!(dropped.len(), 1);
+    assert!(!dropped[0].kept);
+}
+
+#[test]
+fn the_examples_sample_menu_changes_build() {
+    let sample: String = (include_str!("../../config.example.toml").lines())
+        .skip_while(|l| !l.starts_with("#[[startmenu_changes]]"))
+        .take_while(|l| l.starts_with('#') && !l.starts_with("# "))
+        .map(|l| format!("{}\n", &l[1..]))
+        .collect();
+    let c = Config::parse(&sample).unwrap();
+    let labels = menu_labels(&c);
+    assert!(!labels.contains(&"&Help and Support"), "{labels:?}");
+    let run = labels.iter().position(|l| *l == "&Run...").unwrap();
+    assert_eq!(labels[run + 1], "Terminal", "{labels:?}");
+}
+
+#[test]
 fn a_startmenu_folder_without_items_is_an_empty_folder() {
     for text in [
         "[[startmenu]]\nlabel = \"x\"\n",

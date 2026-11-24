@@ -297,6 +297,7 @@ pub(crate) fn read(path: &Path, base: &toml::Table) -> Read {
     match Config::parse_over(&text, base) {
         Ok((cfg, dropped, table)) => {
             log::info!("config {} changed; reloading", path.display());
+            crate::config::warn_stray_rows(&table);
             for d in &dropped {
                 let kept = if d.kept {
                     "keeping its previous value"

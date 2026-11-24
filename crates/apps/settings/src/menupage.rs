@@ -1,6 +1,6 @@
 //! The Start Menu page: the menu's style and banner, then the menu as a tree with Add, Rename,
-//! Remove and Move buttons. Buttons edit the pending menu and the tree in step; Apply writes the
-//! menu whole.
+//! Remove and Move buttons. Buttons edit the pending menu and the tree in step; Apply writes it
+//! as [`crate::startmenu::write`] does.
 
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
@@ -284,7 +284,7 @@ pub fn selected_label(form: &Form, entries: &[Entry]) -> Option<String> {
 
 fn icon_name(e: &Entry) -> Option<String> {
     let fallback = match e {
-        Entry::Separator => return None,
+        Entry::Separator { .. } => return None,
         e if e.is_folder() => "folder",
         _ => "application-x-executable",
     };

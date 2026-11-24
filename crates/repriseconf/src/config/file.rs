@@ -45,9 +45,31 @@ pub struct FileQuickLaunch {
     pub action: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FileMenuEntry {
+    pub label: Option<String>,
+    pub icon: Option<String>,
+    pub command: Option<String>,
+    pub action: Option<String>,
+    pub separator: Option<bool>,
+    pub submenu: Option<String>,
+    pub items: Option<Vec<FileMenuEntry>>,
+    pub tip: Option<String>,
+    /// A default row's id, which `[[startmenu_changes]]` names it by; None for the file's rows.
+    #[serde(skip)]
+    pub id: Option<String>,
+}
+
+/// One `[[startmenu_changes]]` entry: with `default`, a change to that default row; without, a
+/// row of the user's own, written as a `[[startmenu]]` entry. config.example.toml has the rules.
+#[derive(Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FileMenuChange {
+    pub default: Option<String>,
+    pub hidden: Option<bool>,
+    pub folder: Option<String>,
+    pub after: Option<String>,
     pub label: Option<String>,
     pub icon: Option<String>,
     pub command: Option<String>,
@@ -750,6 +772,7 @@ pub struct FileConfig {
     pub storage: Option<FileStorage>,
     pub thumbnail_cache: Option<FileThumbnailCache>,
     pub startmenu: Option<Vec<FileMenuEntry>>,
+    pub startmenu_changes: Option<Vec<FileMenuChange>>,
     pub quicklaunch: Option<Vec<FileQuickLaunch>>,
     pub startmenu_banner: Option<String>,
     pub startmenu_style: Option<String>,

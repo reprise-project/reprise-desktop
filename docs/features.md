@@ -49,6 +49,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Glass have two columns; `startmenu_style` picks any of them under any look.
 - **Your menu.** The Start Menu page of Reprise Settings edits the menu and
   Quick Launch, a folder of `.desktop` files in `~/.config/reprise/quicklaunch/`.
+  It saves only your changes to the default menu, so the rows you leave alone
+  follow each new Reprise's defaults. A menu saved whole as `[[startmenu]]`
+  (by an older Reprise, or by hand) keeps winning and stays whole; Restore
+  Defaults on the page switches it to changes, at the cost of its edits.
   A right-click on the Start button opens your programs folder
   (`~/.local/share/applications`) or, under Properties, that page.
 - **Live program list.** A program shows up in the Start menu and the
