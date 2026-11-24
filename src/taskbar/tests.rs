@@ -1371,3 +1371,41 @@ fn a_pin_dropped_on_an_unpinned_button_takes_its_place() {
         "the new pin 1 after the window"
     );
 }
+
+#[test]
+fn a_window_goes_on_the_screen_holding_its_centre() {
+    let screens = [Rect::new(0, 0, 1280, 800), Rect::new(1280, 0, 1024, 768)];
+    assert_eq!(screen_of(&screens, Rect::new(100, 100, 400, 300)), Some(0));
+    assert_eq!(screen_of(&screens, Rect::new(1400, 100, 400, 300)), Some(1));
+    assert_eq!(
+        screen_of(&screens, Rect::new(1000, 100, 500, 300)),
+        Some(0),
+        "centre x 1250 is left of the seam"
+    );
+    assert_eq!(
+        screen_of(&screens, Rect::new(1100, 100, 400, 300)),
+        Some(1),
+        "centre x 1300 is right of the seam"
+    );
+}
+
+#[test]
+fn a_window_centred_off_every_screen_goes_on_the_nearest() {
+    let screens = [Rect::new(0, 0, 1280, 800), Rect::new(1280, 0, 1024, 768)];
+    assert_eq!(screen_of(&screens, Rect::new(1500, 700, 200, 200)), Some(1));
+    assert_eq!(screen_of(&screens, Rect::new(-500, 300, 400, 300)), Some(0));
+    assert_eq!(
+        screen_of(&screens, Rect::new(1300, 750, 200, 100)),
+        Some(1),
+        "33 px under the shorter screen, 121 px beside the taller"
+    );
+    assert_eq!(
+        screen_of(
+            &[Rect::new(0, 0, 0, 0), Rect::new(0, 0, 1024, 768)],
+            Rect::new(0, 0, 10, 10)
+        ),
+        Some(1),
+        "a screen out of the layout takes no button"
+    );
+    assert_eq!(screen_of(&[], Rect::new(0, 0, 10, 10)), None);
+}

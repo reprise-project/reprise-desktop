@@ -104,7 +104,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("taskbar_buttons", "Taskbar buttons:"),
             (
                 "taskbar_small_icons",
-                "Use small icons on a shorter taskbar",
+                "Use small icons on a shorter Glass taskbar",
             ),
             (
                 "taskbar_show_desktop",
@@ -115,6 +115,10 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Peek at the desktop or a window from the taskbar",
             ),
             ("taskbar_badges", "Show unread counts on task buttons"),
+            (
+                "taskbar_per_monitor",
+                "Show each window's button only on its monitor",
+            ),
             ("taskbar_tray_overflow", "Hide idle notification icons"),
             (
                 "taskbar_network_meter",

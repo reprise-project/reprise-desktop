@@ -318,6 +318,7 @@ fn taskbar_defaults_follow_the_interface() {
             peek: true,
             tray_overflow: true,
             badges: true,
+            per_monitor_buttons: false,
             auto_hide: false,
             reveal_on_edge: true,
             reveal_on_keys: true,
@@ -329,6 +330,15 @@ fn taskbar_defaults_follow_the_interface() {
         }
     );
     assert_eq!(glass, TaskbarConfig::default_for(Interface::Glass));
+}
+
+#[test]
+fn per_monitor_buttons_are_off_by_default_and_take_their_key() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        assert!(!TaskbarConfig::default_for(i).per_monitor_buttons, "{i:?}");
+    }
+    let c = Config::parse("[taskbar]\nper_monitor_buttons = true\n").unwrap();
+    assert!(c.taskbar.per_monitor_buttons);
 }
 
 #[test]

@@ -92,9 +92,17 @@ struct TaskDialog {
     active: bool,
 }
 
+/// Under `[taskbar] per_monitor_buttons`, the screens showing a bar with their boxes, while there
+/// are two or more; [`crate::taskbar::screen_of`] picks each button's.
+type Screens = Vec<(Output, Rect)>;
+
 impl TaskWindows {
-    pub fn gather(state: &State) -> TaskWindows {
-        let windows: Vec<WindowId> = state.task_windows();
+    /// The task buttons the bar on `output` shows: all of them, or with `screens` those on its own.
+    pub fn gather(state: &State, screens: Option<&Screens>, output: &Output) -> TaskWindows {
+        let here = |r: Rect| screens.is_none_or(|s| task_screen(s, r) == Some(output));
+        let windows: Vec<WindowId> = (state.task_windows().into_iter())
+            .filter(|&w| state.win(w).is_some_and(|x| here(x.frame_rect())))
+            .collect();
         let apps = windows
             .iter()
             .filter_map(|&w| state.win(w))
@@ -113,7 +121,7 @@ impl TaskWindows {
             .dialogs
             .views
             .iter()
-            .filter(|v| v.dialog.on_taskbar())
+            .filter(|v| v.dialog.on_taskbar() && here(v.rect()))
             .map(|v| TaskDialog {
                 id: v.id,
                 place: Place {
@@ -132,6 +140,11 @@ impl TaskWindows {
             pager: state.pager_buttons(),
         }
     }
+}
+
+fn task_screen(screens: &Screens, r: Rect) -> Option<&Output> {
+    let boxes: Vec<Rect> = screens.iter().map(|(_, b)| *b).collect();
+    crate::taskbar::screen_of(&boxes, r).map(|i| &screens[i].0)
 }
 
 struct StartMix {
@@ -388,6 +401,47 @@ impl State {
         None
     }
 
+    fn task_screens(&self) -> Option<Screens> {
+        if !self.config.taskbar.per_monitor_buttons {
+            return None;
+        }
+        let screens: Screens = (self.bars.iter())
+            .map(|b| (b.output.clone(), self.layout_box(Some(&b.output))))
+            .filter(|(_, r)| r.width > 0 && r.height > 0)
+            .collect();
+        (screens.len() > 1).then_some(screens)
+    }
+
+    /// Redraw the bars when `w`'s task button is not on its screen's bar alone (per-monitor
+    /// buttons), after a move or resize.
+    pub fn follow_task_screen(&mut self, w: WindowId) {
+        let listed =
+            (self.win(w)).filter(|x| self.has_task_button(x) && self.on_current_desktop(w));
+        if let Some(r) = listed.map(|x| x.frame_rect()) {
+            self.rehome_task(r, |s| s.windows.contains(&w));
+        }
+    }
+
+    /// [`State::follow_task_screen`] for dialog `id`.
+    pub fn follow_dialog_screen(&mut self, id: u64) {
+        let v = (self.dialogs.views.iter()).find(|v| v.id == id && v.dialog.on_taskbar());
+        if let Some(r) = v.map(|v| v.rect()) {
+            self.rehome_task(r, |s| s.dialog == Some(id));
+        }
+    }
+
+    fn rehome_task(&mut self, r: Rect, held: impl Fn(&crate::taskbar::Slot<WindowId>) -> bool) {
+        let Some(screens) = self.task_screens() else {
+            return;
+        };
+        let home = task_screen(&screens, r);
+        let stale =
+            (self.bars.iter()).any(|b| (home == Some(&b.output)) != b.slots.iter().any(&held));
+        if stale {
+            self.redraw_taskbars();
+        }
+    }
+
     /// One taskbar per output; the login screen has none.
     pub fn sync_bars(&mut self) {
         let outputs = if self.host == crate::compositor::Host::Greeter {
@@ -564,12 +618,15 @@ impl State {
         if self.bars.is_empty() {
             return;
         }
-        let tasks = TaskWindows::gather(self);
+        let screens = self.task_screens();
+        let tasks: Vec<TaskWindows> = (self.bars.iter())
+            .map(|b| TaskWindows::gather(self, screens.as_ref(), &b.output))
+            .collect();
         let was: Vec<Vec<Output>> = self.bars.iter().map(|b| self.bar_outputs(b.tree)).collect();
         let mut bars = std::mem::take(&mut self.bars);
         let mut asks: Vec<(Vec<Output>, [NodeId; 2])> = Vec::new();
-        for (bar, was) in bars.iter_mut().zip(was) {
-            if self.redraw_taskbar_with(bar, &tasks) {
+        for ((bar, was), tasks) in bars.iter_mut().zip(was).zip(&tasks) {
+            if self.redraw_taskbar_with(bar, tasks) {
                 asks.push((was, [bar.tree.into(), bar.orb_tree.into()]));
             }
         }
@@ -584,11 +641,12 @@ impl State {
 
     pub fn redraw_taskbar(&mut self, tree: TreeId) {
         let was = self.bar_outputs(tree);
-        let tasks = TaskWindows::gather(self);
-        let changed = self
-            .with_bar(tree, |s, bar| s.redraw_taskbar_with(bar, &tasks))
-            .unwrap_or(false);
+        let screens = self.task_screens();
         let output = self.bar(tree).map(|b| b.output.clone());
+        let tasks = (output.as_ref()).map(|o| TaskWindows::gather(self, screens.as_ref(), o));
+        let changed = tasks
+            .and_then(|t| self.with_bar(tree, |s, bar| s.redraw_taskbar_with(bar, &t)))
+            .unwrap_or(false);
         crate::trayflyout::bar_redrawn(self, output.as_ref());
         let nodes: Option<[NodeId; 2]> =
             (self.bar(tree).filter(|_| changed)).map(|b| [b.tree.into(), b.orb_tree.into()]);

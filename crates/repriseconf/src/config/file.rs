@@ -707,6 +707,7 @@ pub struct FileTaskbar {
     pub peek: Option<bool>,
     pub tray_overflow: Option<bool>,
     pub badges: Option<bool>,
+    pub per_monitor_buttons: Option<bool>,
     pub network_meter: Option<bool>,
     pub calendar_events: Option<bool>,
     pub auto_hide: Option<bool>,

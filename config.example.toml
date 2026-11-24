@@ -167,6 +167,10 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 #                            # flyout in Glass); Customize... sets single items apart
 # badges = true              # a program's unread count (LauncherEntry count)
 #                            # shows in a badge on its task buttons, 99+ above 99
+# per_monitor_buttons = false # with two or more monitors, each one's bar shows
+#                            # only the buttons of the windows whose centre
+#                            # is on it; a window moved across takes its
+#                            # button along. Off, every bar shows every button
 # network_meter = false      # download and upload speed on two lines between
 #                            # the tray icons and the clock, once a second, in
 #                            # thousands of bytes (2.4 MB/s)

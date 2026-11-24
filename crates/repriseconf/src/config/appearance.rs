@@ -210,6 +210,9 @@ pub struct TaskbarConfig {
     pub tray_overflow: bool,
     /// A task button shows its program's unread count (`LauncherEntry` `count`).
     pub badges: bool,
+    /// With more than one monitor, each bar shows only the buttons of the windows whose frame
+    /// centre is on its monitor.
+    pub per_monitor_buttons: bool,
     /// The tray shows download and upload speed beside the clock.
     pub network_meter: bool,
     /// The clock's calendar lists the picked day's events from evolution-data-server.
@@ -242,6 +245,7 @@ impl TaskbarConfig {
             peek: glass,
             tray_overflow: true,
             badges: true,
+            per_monitor_buttons: false,
             network_meter: false,
             calendar_events: true,
             auto_hide: false,

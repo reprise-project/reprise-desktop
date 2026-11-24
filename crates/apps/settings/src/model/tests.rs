@@ -822,6 +822,7 @@ fn save_round_trips_every_field() {
         taskbar_peek: true,
         taskbar_tray_overflow: true,
         taskbar_badges: false,
+        taskbar_per_monitor: true,
         taskbar_network_meter: true,
         taskbar_calendar_events: false,
         notification_sound: false,

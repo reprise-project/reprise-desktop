@@ -134,6 +134,7 @@ impl State {
         self.place_ime_popup();
         self.place_x11(w);
         self.follow_tabs(w, false);
+        self.follow_task_screen(w);
     }
 
     /// Finish moves `drag_to` left pending; for a dragged window, track caption and snap targets

@@ -507,6 +507,7 @@ impl Config {
                 (t.peek, &mut cfg.taskbar.peek),
                 (t.tray_overflow, &mut cfg.taskbar.tray_overflow),
                 (t.badges, &mut cfg.taskbar.badges),
+                (t.per_monitor_buttons, &mut cfg.taskbar.per_monitor_buttons),
                 (t.network_meter, &mut cfg.taskbar.network_meter),
                 (t.calendar_events, &mut cfg.taskbar.calendar_events),
                 (t.auto_hide, &mut cfg.taskbar.auto_hide),
