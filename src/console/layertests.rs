@@ -272,6 +272,20 @@ fn a_console_layer_surface_that_gave_up_the_keyboard_in_lock_mode_gets_none_back
 }
 
 #[test]
+fn a_layer_surface_on_a_remote_screen_is_closed_when_lock_mode_ends() {
+    let mut h = computer();
+    let (_portal, _lock) = begin(&mut h);
+    let mut c = h.connect();
+    let wl = h.map_exclusive_layer(&mut c, Layer::Top);
+    assert!(last_layer(&h).0.starts_with("REMOTE-"));
+    tap(&mut h, &HUNTER2);
+    tap(&mut h, &[ENTER]);
+    settle(&mut h);
+    h.roundtrip(&mut c);
+    assert_eq!(c.side.layers_closed, [wl]);
+}
+
+#[test]
 fn a_console_layer_surface_gets_no_remote_pointer() {
     let mut h = computer();
     h.pointer_to(100.0, 100.0);
