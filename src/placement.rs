@@ -516,7 +516,9 @@ impl State {
         let Some(win) = self.win(w) else {
             return;
         };
-        if !self.config.remember_windows || !win.placeable() || !win.is_resizable() {
+        // A window that opened maximized or fullscreen at its own request has no normal frame yet.
+        if !self.config.remember_windows || !win.placeable() || !win.is_resizable() || win.own_size
+        {
             return;
         }
         let app_id = win.kept_key();
