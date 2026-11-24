@@ -424,8 +424,12 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
         set_tables(doc, &STARTMENU, tables);
         return;
     }
+    if !in_blocks(doc) {
+        log::warn!("startmenu_changes lists something no table; the Start menu is not saved");
+        return;
+    }
     let old = repriseconf::get(doc, &CHANGES);
-    let listed = old.is_none_or(|i| i.is_array() || i.is_array_of_tables());
+    let listed = old.is_none_or(Item::is_array_of_tables);
     // A lone `[startmenu_changes]` table goes first, as the one entry it was likely meant to be;
     // a value that is no table or list stays as the file has it, and so does the menu.
     let lone = match old.filter(|_| !listed).map(lone_table) {
@@ -617,6 +621,30 @@ fn merged(old: &Table, new: Table) -> Table {
     t
 }
 
+/// Rewrites an inline `startmenu_changes = [{...}]` as `[[startmenu_changes]]` tables, the comment
+/// above the key heading the first; false, the file left as it is, when it lists something else.
+fn in_blocks(doc: &mut DocumentMut) -> bool {
+    let Some(Item::Value(toml_edit::Value::Array(a))) = doc.get(CHANGES.name) else {
+        return true;
+    };
+    if !a.iter().all(toml_edit::Value::is_inline_table) {
+        return false;
+    }
+    let root = doc.as_table_mut();
+    let head = (root.key(CHANGES.name)).map_or_else(String::new, |k| prefix(k.leaf_decor()));
+    let Some(Item::Value(toml_edit::Value::Array(a))) = root.remove(CHANGES.name) else {
+        return true;
+    };
+    let mut tables: ArrayOfTables = (a.into_iter())
+        .filter_map(|v| lone_table(&Item::Value(v)))
+        .collect();
+    if let Some(t) = tables.get_mut(0) {
+        t.decor_mut().set_prefix(head);
+    }
+    root.insert(CHANGES.name, Item::ArrayOfTables(tables));
+    true
+}
+
 /// `item`, a `[startmenu_changes]` table, as an entry of `[[startmenu_changes]]`.
 fn lone_table(item: &Item) -> Option<Table> {
     let mut t = match item {
@@ -642,19 +670,10 @@ fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<(usize, Table)> {
     let keep: Vec<bool> = (read.iter())
         .map(|c| c.is_none() || idle.next() == Some(true))
         .collect();
-    let raw: Vec<Option<Table>> = match (item.as_array_of_tables(), item.as_array()) {
-        (Some(a), _) => a.iter().cloned().map(Some).collect(),
-        (None, Some(a)) => (a.iter())
-            .map(|v| {
-                v.as_inline_table()
-                    .cloned()
-                    .map(toml_edit::InlineTable::into_table)
-            })
-            .collect(),
-        (None, None) => Vec::new(),
-    };
-    (raw.into_iter().zip(keep).enumerate())
-        .filter_map(|(i, (t, keep))| Some((i, t.filter(|_| keep)?)))
+    let raw = item.as_array_of_tables().into_iter().flatten();
+    (raw.zip(keep).enumerate())
+        .filter(|(_, (_, keep))| *keep)
+        .map(|(i, (t, _))| (i, t.clone()))
         .collect()
 }
 
@@ -1509,6 +1528,29 @@ command = "mine" # my tool
             scalar,
             "a value no table stays, and so does the menu"
         );
+    }
+
+    #[test]
+    fn an_inline_changes_list_is_written_in_block_form_under_its_comment() {
+        let text = "terminal = \"foot\"\n\n# mine\nstartmenu_changes = [\
+                    { default = \"run\", label = \"&Go...\" }, \
+                    { default = \"newer\", hidden = true }]\n";
+        let want = without(&load(text), "help");
+        let out = saved(text, &want);
+        assert_eq!(
+            out,
+            "terminal = \"foot\"\n\n# mine\n\
+             [[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n\n\
+             [[startmenu_changes]]\ndefault = \"run\"\nlabel = \"&Go...\"\n\n\
+             [[startmenu_changes]]\ndefault = \"newer\"\nhidden = true\n"
+        );
+        assert_eq!(load(&out), want);
+    }
+
+    #[test]
+    fn a_changes_list_holding_no_table_is_not_saved_over() {
+        let text = "startmenu_changes = [\"help\", { default = \"run\", label = \"&Go...\" }]\n";
+        assert_eq!(saved(text, &without(&load(text), "help")), text);
     }
 
     #[test]
