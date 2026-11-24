@@ -196,6 +196,8 @@ pub struct Keyboard {
     pub notify_reply: bool,
     pub notify_center: bool,
     pub displays: bool,
+    /// The task preview panel has the taskbar's arrows (`taskpreview::open_keys`).
+    pub task_preview: bool,
     pub taskbar: Option<TreeId>,
     pub dialog: Option<u64>,
     pub calendar: bool,
@@ -208,7 +210,8 @@ impl Keyboard {
     /// Mark popup `p` up, in the flag `focus_of` reads for it.
     pub fn popup_up(&mut self, p: Popup) {
         let flag = match p {
-            // They take no keys but Escape and never hold the focus.
+            // They take no keys but Escape and never hold the focus; the preview panel with the
+            // taskbar's arrows has its own flag (`task_preview`).
             Popup::TrayFlyout | Popup::TaskPreview => return,
             Popup::SnapPicker => &mut self.snap_picker,
             Popup::Projector => &mut self.projector,
@@ -266,6 +269,8 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
         Some(Surface::Balloons)
     } else if k.notify_center {
         Some(Surface::NotifyCenter)
+    } else if k.task_preview {
+        Some(Surface::TaskPreview)
     } else if let Some(t) = k.taskbar {
         Some(Surface::Taskbar(t))
     } else if let Some(id) = k.dialog {
@@ -290,6 +295,7 @@ fn keyboard(state: &State) -> Keyboard {
             || state.interaction.is_keyboard(),
         snap_picker_keys: state.snap_picker.has_keys(),
         notify_reply: crate::notifyview::reply_focused(state),
+        task_preview: crate::taskpreview::has_keys(state),
         taskbar: state.bar_shared.keys.map(|k| k.bar),
         dialog: state.active_dialog_id(),
         client: state.focused.is_some() || state.layers_shell.focused.is_some(),

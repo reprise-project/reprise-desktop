@@ -10,7 +10,9 @@ use crate::taskpreview::{TITLE_GAP, TITLE_H, WELL_H};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Theme;
 
-pub use crate::taskpreview::{CELL_H, CELL_W, Cell, Grid, TaskPreviewLayout, close_hit, fit, hit};
+pub use crate::taskpreview::{
+    CELL_H, CELL_W, Cell, Grid, PanelKey, TaskPreviewLayout, close_hit, fit, hit, key,
+};
 
 const PAD: i32 = 6;
 const GAP: i32 = 6;
@@ -103,16 +105,21 @@ pub fn draw(
 
 /// The panel's screen reader nodes under `parent`, laid out from the
 /// panel's top-left: a button per cell named for its window's title, and
-/// in the `hot` cell its close button, named "Close".
+/// in the `hot` cell its close button, named "Close". With `keys` the
+/// panel has the keyboard and the hot cell the focus.
 pub fn access(
     layout: &TaskPreviewLayout,
     titles: &[&str],
     hot: Option<usize>,
+    keys: bool,
     tree: &mut Tree,
     parent: NodeId,
 ) {
     for (i, (cell, title)) in layout.cells.iter().zip(titles).enumerate() {
         let id = tree.push(parent, i, access::named(Role::Button, *cell, title));
+        if keys && hot == Some(i) {
+            tree.set_focus(id);
+        }
         if let Some(close) = layout.close(i).filter(|_| hot == Some(i)) {
             tree.push(id, "close", access::named(Role::Button, close, "Close"));
         }
@@ -139,6 +146,7 @@ mod tests {
             &l,
             &["Notes", "Mail"],
             Some(1),
+            false,
             &mut tree,
             crate::access::ROOT,
         );
@@ -166,6 +174,28 @@ mod tests {
             .filter(|(_, n)| n.label() == Some("Close"))
             .count();
         assert_eq!(closes, 1, "only the hot cell has a close button");
+    }
+
+    #[test]
+    fn with_the_keyboard_the_hot_cell_holds_the_focus() {
+        let l = TaskPreviewLayout::compute(
+            CLASSIC,
+            2,
+            Rect::new(300, 1054, 160, 22),
+            SCREEN,
+            Edge::Bottom,
+        );
+        let titles = ["Notes", "Mail"];
+        let mut tree = Tree::window("Previews", (l.rect.width, l.rect.height));
+        access(&l, &titles, Some(1), true, &mut tree, crate::access::ROOT);
+        assert_eq!(tree.find(Role::Button, "Mail"), Some(tree.focus()));
+        let mut tree = Tree::window("Previews", (l.rect.width, l.rect.height));
+        access(&l, &titles, Some(1), false, &mut tree, crate::access::ROOT);
+        assert_eq!(
+            tree.focus(),
+            crate::access::ROOT,
+            "a hovered cell takes no focus"
+        );
     }
 
     const SCREEN: Rect = Rect::new(0, 0, 1920, 1052);

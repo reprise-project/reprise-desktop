@@ -74,6 +74,7 @@ impl State {
             self.redraw_taskbar(t);
         }
         self.redraw_taskbar(tree);
+        crate::taskpreview::focus(self, tree, at);
     }
 
     /// The window a window bind (maximize, snap) acts on and a fullscreen window covering the
@@ -101,6 +102,9 @@ impl State {
         let Some(at) = taskbarfocus::fit(&items, keys.at) else {
             return;
         };
+        if crate::taskpreview::key(self, sym) {
+            return;
+        }
         match taskbarfocus::key(sym, shift) {
             None => {}
             Some(BarKey::Leave) => self.leave_bar_keys(),
@@ -115,6 +119,7 @@ impl State {
             k.at = at;
         }
         self.redraw_taskbar(tree);
+        crate::taskpreview::focus(self, tree, at);
     }
 
     pub fn leave_bar_keys(&mut self) {
@@ -123,6 +128,7 @@ impl State {
         };
         self.redraw_taskbar(k.bar);
         crate::trayreveal::keys_gone(self, k.bar);
+        crate::taskpreview::keys_gone(self);
         match k.back {
             Back::Window(w) if self.win(w).is_some_and(|x| x.mapped && !x.minimized) => {
                 self.focus_window(w)
@@ -161,6 +167,7 @@ impl State {
         if let Some(k) = self.bar_shared.keys.take() {
             self.redraw_taskbar(k.bar);
             crate::trayreveal::keys_gone(self, k.bar);
+            crate::taskpreview::keys_gone(self);
         }
     }
 
@@ -183,7 +190,24 @@ impl State {
             self.bar_shared.keys = None;
             self.redraw_taskbar(tree);
             crate::trayreveal::keys_gone(self, tree);
+            crate::taskpreview::keys_gone(self);
             self.focus_window(w);
+            return;
+        }
+        if button == BTN_LEFT
+            && let TaskbarHit::Task(i) = at
+            && let Some(wins) = self.pinned_group(tree, i)
+        {
+            let active = self.active_task_window();
+            let start = crate::taskbar::group_click_pick(&wins, &self.focus_order, active);
+            if !(self.config.previews.taskbar
+                && crate::taskpreview::open_keys(self, tree, i, start))
+            {
+                self.open_window_list(tree, i);
+                if !self.menus.is_empty() {
+                    self.enter_menu_keys();
+                }
+            }
             return;
         }
         let shown = self.bar_drawn(&b.output).shown;
@@ -208,6 +232,23 @@ impl State {
         if menus_were == 0 && !self.menus.is_empty() && !start_panel {
             self.enter_menu_keys();
         }
+    }
+}
+
+impl State {
+    /// The live windows of task button `i` on bar `tree` when it is a group a click cycles
+    /// through (`[taskbar] pinned`), so Enter lists them instead.
+    fn pinned_group(&self, tree: TreeId, i: usize) -> Option<Vec<WindowId>> {
+        let slot = self.bar(tree)?.slots.get(i)?;
+        if !self.config.taskbar.pinned || slot.dialog.is_some() {
+            return None;
+        }
+        let live = self.task_windows();
+        let wins: Vec<WindowId> = (slot.windows.iter())
+            .copied()
+            .filter(|w| live.contains(w))
+            .collect();
+        (wins.len() > 1).then_some(wins)
     }
 }
 
