@@ -4,24 +4,37 @@
 //!
 //! It is the file `$XDG_RUNTIME_DIR/reprise-undo`, holding the newest [`super::CAP`] entries and
 //! rewritten whole through a rename under an exclusive lock on `reprise-undo.lock`; readers take
-//! no lock and reparse only when the file changed. An undo holds `reprise-undo.run` until it ends ([`Running`]), so another window's
-//! Undo does nothing meanwhile instead of reversing the entry below a half-reversed one. Without
-//! a runtime directory the history is the process's own.
+//! no lock and reparse only when the file changed. An undo holds `reprise-undo.run` until what it
+//! leaves is back ([`Running`]), so another window's Undo does nothing meanwhile instead of
+//! reversing the entry below a half-reversed one. Without a runtime directory the history is the
+//! process's own.
+//!
+//! An edit acts only on the history as it reread it under the lock, and counts only once written
+//! back. One the lock keeps out past [`PATIENCE`], or that cannot read or write the file, changes
+//! nothing, and then:
+//! - a take returns nothing: that Undo does nothing, as does one that cannot open `.run`;
+//! - a push, `forget_gone` or `retain_non_trash` is dropped: every step checks its item before it
+//!   acts, so Undo reaching past a lost entry still never reverses the wrong item;
+//! - a put-back or a clear is retried on a thread of its own for up to [`RETRY_FOR`], holding
+//!   `.run` (the undo's own hold for a put-back) so that no Undo reaches past it meanwhile.
 
-use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use super::{EntryId, FileId, Undo, UndoStack, Undoable};
 use crate::trash::Trashed;
 
-/// How long a write waits for another process's, which only rewrites a small file.
+/// How long an edit waits for another process's, which only rewrites a small file.
 const PATIENCE: Duration = Duration::from_millis(200);
+
+/// How long a put-back or a clear the lock kept out keeps trying.
+const RETRY_FOR: Duration = Duration::from_secs(30);
 
 const MAGIC: &[u8] = b"reprise-undo 3";
 
@@ -32,11 +45,25 @@ const MAX_NESTING: usize = 2;
 /// Far past what [`super::CAP`] entries of real batches take; a bigger file is unreadable.
 const MAX_SIZE: u64 = 64 << 20;
 
-/// The history and the file it lives in, read again whenever another process rewrote it.
+/// The history and the file it lives in, read again whenever another process rewrote it. A clone
+/// is another handle on the same history whose edits wait on nothing the original holds, so a
+/// host hands one to a thread to edit off its loop.
 #[derive(Default)]
 pub struct SharedUndo {
     file: Option<PathBuf>,
-    seen: RefCell<Seen>,
+    seen: Arc<Mutex<Seen>>,
+}
+
+impl Clone for SharedUndo {
+    fn clone(&self) -> Self {
+        match &self.file {
+            Some(file) => SharedUndo::at(file.clone()),
+            None => SharedUndo {
+                file: None,
+                seen: self.seen.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Default)]
@@ -48,7 +75,8 @@ struct Seen {
 /// The file's device, inode, change time and size: every write renames a new inode in.
 type Stamp = (u64, u64, i64, i64, u64);
 
-/// Held while an undo taken off a [`SharedUndo`] runs; dropping it lets the next Undo in.
+/// Held while an undo taken off a [`SharedUndo`] runs; [`SharedUndo::put_back`] lets the next
+/// Undo in once what it left is back.
 pub struct Running {
     _lock: Option<File>,
 }
@@ -68,66 +96,85 @@ impl SharedUndo {
     pub fn at(file: PathBuf) -> Self {
         SharedUndo {
             file: Some(file),
-            seen: RefCell::default(),
+            seen: Arc::default(),
         }
     }
 
+    fn seen(&self) -> MutexGuard<'_, Seen> {
+        self.seen.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn warn(&self, what: &str, e: &io::Error) {
+        let file = self.file.as_deref().unwrap_or(Path::new("-"));
+        log::warn!("reprisefs: undo history {}: {what}: {e}", file.display());
+    }
+
     fn read<R>(&self, f: impl FnOnce(&UndoStack) -> R) -> R {
-        let mut seen = self.seen.borrow_mut();
-        if let Some(file) = &self.file {
-            seen.refresh(file);
+        let mut seen = self.seen();
+        if let Some(file) = &self.file
+            && let Err(e) = seen.refresh(file)
+        {
+            self.warn("read", &e);
         }
         f(&seen.stack)
     }
 
-    /// `f` on the history as the file holds it now, written back before another process reads
-    /// it. A lock or write that fails leaves the change to this process alone.
-    fn edit<R>(&mut self, f: impl FnOnce(&mut UndoStack) -> R) -> R {
-        let seen = self.seen.get_mut();
+    /// `f` on the history as the file holds it under the lock, written back before the lock goes;
+    /// an error, with nothing changed, when the lock stays held past [`PATIENCE`] or the file
+    /// cannot be read or written.
+    fn edit<R>(&self, f: impl FnOnce(&mut UndoStack) -> R) -> io::Result<R> {
+        let mut seen = self.seen();
         let Some(file) = &self.file else {
-            return f(&mut seen.stack);
+            return Ok(f(&mut seen.stack));
         };
-        let lock = hold(&beside(file, ".lock"), Some(PATIENCE))
-            .map_err(|e| log::warn!("reprisefs: undo history {}: {e}", file.display()))
-            .ok();
-        if lock.is_some() {
-            seen.refresh(file);
-        }
-        let r = f(&mut seen.stack);
-        if lock.is_some() {
-            match save(file, &seen.stack) {
-                Ok(stamp) => seen.stamp = Some(stamp),
-                Err(e) => log::warn!("reprisefs: undo history {}: {e}", file.display()),
-            }
-        }
-        r
+        let _lock = hold(&beside(file, ".lock"), Some(PATIENCE))?;
+        seen.refresh(file)?;
+        let mut stack = seen.stack.clone();
+        let r = f(&mut stack);
+        let stamp = save(file, &stack)?;
+        *seen = Seen {
+            stamp: Some(stamp),
+            stack,
+        };
+        Ok(r)
     }
 
-    pub fn push(&mut self, u: Undoable) {
-        self.edit(|s| s.push(u))
+    /// `edit`, dropped with a warning when it fails.
+    fn edit_or_drop(&self, what: &str, f: impl FnOnce(&mut UndoStack)) {
+        if let Err(e) = self.edit(f) {
+            self.warn(what, &e);
+        }
+    }
+
+    pub fn push(&self, u: Undoable) {
+        self.edit_or_drop("dropped a push", |s| s.push(u))
     }
 
     /// [`UndoStack::push_all`].
-    pub fn push_all(&mut self, batch: Vec<Undoable>) {
+    pub fn push_all(&self, batch: Vec<Undoable>) {
         if !batch.is_empty() {
-            self.edit(|s| s.push_all(batch))
+            self.edit_or_drop("dropped a push", |s| s.push_all(batch))
         }
     }
 
     /// [`UndoStack::clear`].
-    pub fn clear(&mut self) {
-        self.edit(UndoStack::clear)
+    pub fn clear(&self) {
+        if let Err(e) = self.edit(UndoStack::clear) {
+            self.warn("retrying a clear", &e);
+            let run = (self.file.as_ref()).and_then(|f| hold(&beside(f, ".run"), None).ok());
+            self.retry(UndoStack::clear, Running { _lock: run });
+        }
     }
 
     /// [`UndoStack::retain_non_trash`].
-    pub fn retain_non_trash(&mut self) {
-        self.edit(UndoStack::retain_non_trash)
+    pub fn retain_non_trash(&self) {
+        self.edit_or_drop("kept trash entries", UndoStack::retain_non_trash)
     }
 
     /// [`UndoStack::forget_gone`].
-    pub fn forget_gone(&mut self, files: &[PathBuf]) {
+    pub fn forget_gone(&self, files: &[PathBuf]) {
         if !files.is_empty() {
-            self.edit(|s| s.forget_gone(files))
+            self.edit_or_drop("kept gone trash entries", |s| s.forget_gone(files))
         }
     }
 
@@ -140,19 +187,24 @@ impl SharedUndo {
         self.read(UndoStack::many)
     }
 
+    /// `f` on the entry Undo would reverse next, as the file holds it now.
+    pub fn top<R>(&self, f: impl FnOnce(EntryId, &Undoable) -> R) -> Option<R> {
+        self.read(|s| s.entries.last().map(|(id, u)| f(*id, u)))
+    }
+
     /// The most recent entry, off the history ([`UndoStack::take`]), with the hold that keeps
-    /// every other Undo off until it drops. None while another undo runs.
-    pub fn take(&mut self) -> Option<(Undo, Running)> {
+    /// every other Undo off until it is put back. None while another undo runs.
+    pub fn take(&self) -> Option<(Undo, Running)> {
         self.take_with(UndoStack::take)
     }
 
     /// [`SharedUndo::take`] when the top entry is still `id` ([`UndoStack::take_entry`]).
-    pub fn take_entry(&mut self, id: EntryId) -> Option<(Undo, Running)> {
+    pub fn take_entry(&self, id: EntryId) -> Option<(Undo, Running)> {
         self.take_with(|s| s.take_entry(id))
     }
 
     fn take_with(
-        &mut self,
+        &self,
         take: impl FnOnce(&mut UndoStack) -> Option<Undo>,
     ) -> Option<(Undo, Running)> {
         let lock = match &self.file {
@@ -161,60 +213,102 @@ impl SharedUndo {
                 Ok(f) => Some(f),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => return None,
                 Err(e) => {
-                    log::warn!("reprisefs: undo history {}: {e}", file.display());
-                    None
+                    self.warn("Undo did nothing", &e);
+                    return None;
                 }
             },
         };
-        let undo = self.edit(take)?;
-        Some((undo, Running { _lock: lock }))
+        match self.edit(take) {
+            Ok(undo) => Some((undo?, Running { _lock: lock })),
+            Err(e) => {
+                self.warn("Undo did nothing", &e);
+                None
+            }
+        }
     }
 
-    /// [`UndoStack::put_back`].
+    /// [`UndoStack::put_back`], then `running` lets the next Undo in. Returns None while a
+    /// put-back the lock kept out is retried.
     pub fn put_back(
-        &mut self,
+        &self,
         undo: Undo,
+        running: Running,
         done: usize,
         error: Option<&io::Error>,
     ) -> Option<EntryId> {
-        self.edit(|s| s.put_back(undo, done, error))
+        let left = undo.leftover(done, error)?;
+        match self.edit(|s| s.restore(left.clone())) {
+            Ok(id) => id,
+            Err(e) => {
+                self.warn("retrying a put-back", &e);
+                self.retry(
+                    move |s| {
+                        s.restore(left.clone());
+                    },
+                    running,
+                );
+                None
+            }
+        }
+    }
+
+    /// `op` tried again on a thread of its own until an edit takes it or [`RETRY_FOR`] runs out,
+    /// with `hold` let go only then.
+    fn retry(&self, op: impl Fn(&mut UndoStack) + Send + 'static, hold: Running) {
+        let Some(file) = self.file.clone() else {
+            return;
+        };
+        let spawned = std::thread::Builder::new()
+            .name("undo history".into())
+            .spawn(move || {
+                let store = SharedUndo::at(file);
+                let start = Instant::now();
+                loop {
+                    std::thread::sleep(PATIENCE);
+                    match store.edit(&op) {
+                        Ok(()) => break,
+                        Err(e) if start.elapsed() >= RETRY_FOR => {
+                            store.warn("gave up", &e);
+                            break;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                drop(hold);
+            });
+        if let Err(e) = spawned {
+            self.warn("no thread to retry on", &e);
+        }
     }
 }
 
 impl Seen {
-    /// Reparse `file` when it changed since it was last read; a missing file is an empty history
-    /// and an unreadable one starts over.
-    fn refresh(&mut self, file: &Path) {
-        let mut f = match File::open(file) {
+    /// Reparse `file` when it changed since it was last read. A missing or unreadable file is a
+    /// history that starts over; one that cannot be opened or read is an error, the copy here
+    /// left as it was.
+    fn refresh(&mut self, file: &Path) -> io::Result<()> {
+        let f = match File::open(file) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 if self.stamp.take().is_some() {
                     self.stack = UndoStack::default();
                 }
-                return;
+                return Ok(());
             }
-            Err(e) => {
-                log::warn!("reprisefs: undo history {}: {e}", file.display());
-                return;
-            }
+            Err(e) => return Err(e),
         };
-        let Ok(meta) = f.metadata() else {
-            return;
-        };
-        let now = stamp(&meta);
+        let now = stamp(&f.metadata()?);
         if self.stamp == Some(now) {
-            return;
+            return Ok(());
         }
         let mut data = Vec::new();
-        if let Err(e) = f.take(MAX_SIZE + 1).read_to_end(&mut data) {
-            log::warn!("reprisefs: undo history {}: {e}", file.display());
-            return;
-        }
+        f.take(MAX_SIZE + 1).read_to_end(&mut data)?;
         self.stack = decode(&data).unwrap_or_else(|| {
             log::warn!("reprisefs: undo history {} is unreadable", file.display());
             UndoStack::default()
         });
         self.stamp = Some(now);
+        Ok(())
     }
 }
 
@@ -484,7 +578,7 @@ mod tests {
 
     #[test]
     fn two_windows_undo_one_history_newest_first() {
-        let (_t, mut a, mut b) = two_windows();
+        let (_t, a, b) = two_windows();
         a.push(Undoable::Copied("/a/copy".into(), None));
         b.push(Undoable::Rename {
             from: "/b/old".into(),
@@ -505,27 +599,27 @@ mod tests {
 
     #[test]
     fn a_second_undo_does_nothing_while_one_runs() {
-        let (_t, mut a, mut b) = two_windows();
+        let (_t, a, b) = two_windows();
         a.push(Undoable::Copied("/x".into(), None));
         b.push(Undoable::Copied("/y".into(), None));
         let (undo, running) = a.take().expect("a takes the newest");
         assert!(b.take().is_none(), "b waits for a's undo");
         assert!(a.take().is_none(), "so does a second Undo in a");
         assert_eq!(b.label(), Some("Undo Copy"), "the entry below stays");
-        a.put_back(undo, 1, None);
-        drop(running);
+        a.put_back(undo, running, 1, None);
         let (undo, _) = b.take().expect("b's turn");
         assert_eq!(path_of(&undo), Path::new("/x"));
     }
 
     #[test]
     fn what_an_undo_leaves_goes_below_what_another_window_pushed_since() {
-        let (_t, mut a, mut b) = two_windows();
+        let (_t, a, b) = two_windows();
         a.push(Undoable::Copied("/x".into(), None));
         let (undo, running) = a.take().unwrap();
         b.push(Undoable::New("/newer".into(), None));
-        let left = a.put_back(undo, 0, None).expect("a cancel keeps it");
-        drop(running);
+        let left = a
+            .put_back(undo, running, 0, None)
+            .expect("a cancel keeps it");
         assert_eq!(path_of(&b.take().unwrap().0), Path::new("/newer"));
         let (undo, _) = b.take_entry(left).expect("ids hold across windows");
         assert_eq!(path_of(&undo), Path::new("/x"));
@@ -533,18 +627,17 @@ mod tests {
 
     #[test]
     fn a_clear_in_one_window_drops_an_undo_another_has_under_way() {
-        let (_t, mut a, mut b) = two_windows();
+        let (_t, a, b) = two_windows();
         a.push(Undoable::Copied("/x".into(), None));
         let (undo, running) = a.take().unwrap();
         b.clear();
-        assert_eq!(a.put_back(undo, 0, None), None);
-        drop(running);
+        assert_eq!(a.put_back(undo, running, 0, None), None);
         assert_eq!(b.label(), None);
     }
 
     #[test]
     fn every_kind_of_entry_reads_back_as_written() {
-        let (_t, mut a, b) = two_windows();
+        let (_t, a, b) = two_windows();
         let odd = PathBuf::from(OsStr::from_bytes(b"/d/caf\xe9\nnew"));
         let entries = vec![
             Undoable::Move {
@@ -577,10 +670,9 @@ mod tests {
         for u in entries {
             a.push(u);
         }
-        let s = &b.seen;
         b.label();
-        let read = &s.borrow().stack;
-        let written = &a.seen.borrow().stack;
+        let (read, written) = (b.seen(), a.seen());
+        let (read, written) = (&read.stack, &written.stack);
         assert_eq!(
             format!("{:?}", read.entries),
             format!("{:?}", written.entries)
@@ -639,19 +731,20 @@ mod tests {
 
     #[test]
     fn an_undo_from_before_the_history_started_over_reaches_nothing_in_it() {
-        let (t, mut a, mut b) = two_windows();
+        let (t, a, b) = two_windows();
         a.push(Undoable::Copied("/old".into(), None));
         let (undo, running) = a.take().unwrap();
-        let asked = a.put_back(undo, 0, None).expect("a cancel keeps it");
-        drop(running);
+        let asked = a
+            .put_back(undo, running, 0, None)
+            .expect("a cancel keeps it");
         for n in 0..=CAP {
             a.push(Undoable::Copied(format!("/c{n}").into(), None));
         }
-        let (under_way, _running) = a.take().unwrap();
+        let (under_way, running) = a.take().unwrap();
 
         std::fs::write(t.path().join("reprise-undo"), b"garbage").unwrap();
         b.push(Undoable::Copied("/new".into(), None));
-        assert_eq!(a.put_back(under_way, 0, None), None);
+        assert_eq!(a.put_back(under_way, running, 0, None), None);
         assert!(
             b.take_entry(asked).is_none(),
             "the old id names no new entry"
@@ -659,9 +752,67 @@ mod tests {
         assert_eq!(b.label(), Some("Undo Copy"));
     }
 
+    fn locked(t: &tempfile::TempDir) -> File {
+        hold(&t.path().join("reprise-undo.lock"), None).unwrap()
+    }
+
+    fn until(what: &str, done: impl Fn() -> bool) {
+        let start = Instant::now();
+        while !done() {
+            assert!(start.elapsed() < Duration::from_secs(10), "{what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_take_the_lock_keeps_out_does_nothing_and_leaves_the_entry() {
+        let (t, a, b) = two_windows();
+        a.push(Undoable::Copied("/x".into(), None));
+        let lock = locked(&t);
+        assert!(a.take().is_none());
+        b.push(Undoable::Copied("/dropped".into(), None));
+        drop(lock);
+        assert_eq!(path_of(&a.take().unwrap().0), Path::new("/x"));
+        assert!(b.take().is_none(), "nothing left: the push was dropped");
+    }
+
+    #[test]
+    fn a_clear_the_lock_keeps_out_lands_once_it_is_free_and_no_undo_reaches_past_it_meanwhile() {
+        let (t, a, b) = two_windows();
+        a.push(Undoable::Copied("/x".into(), None));
+        let lock = locked(&t);
+        b.clear();
+        drop(lock);
+        assert!(a.take().is_none(), "the retry holds every Undo off");
+        until("the clear lands", || a.label().is_none());
+        assert!(a.take().is_none());
+    }
+
+    #[test]
+    fn a_put_back_the_lock_keeps_out_lands_before_the_next_undo_starts() {
+        let (t, a, b) = two_windows();
+        a.push(Undoable::Copied("/x".into(), None));
+        let (undo, running) = a.take().unwrap();
+        let lock = locked(&t);
+        assert_eq!(a.put_back(undo, running, 0, None), None);
+        drop(lock);
+        assert!(b.take().is_none(), "the retry holds the undo's hold");
+        until("the put-back lands", || b.label().is_some());
+        assert_eq!(path_of(&b.take().unwrap().0), Path::new("/x"));
+    }
+
+    #[test]
+    fn an_undo_that_cannot_open_its_hold_does_nothing() {
+        let (t, a, _) = two_windows();
+        a.push(Undoable::Copied("/x".into(), None));
+        std::fs::create_dir(t.path().join("reprise-undo.run")).unwrap();
+        assert!(a.take().is_none());
+        assert_eq!(a.label(), Some("Undo Copy"));
+    }
+
     #[test]
     fn an_unreadable_history_starts_over() {
-        let (t, mut a, _) = two_windows();
+        let (t, a, _) = two_windows();
         std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 3\0x\0").unwrap();
         assert_eq!(a.label(), None);
         a.push(Undoable::Copied("/x".into(), None));

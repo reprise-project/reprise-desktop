@@ -32,8 +32,8 @@ pub(crate) struct Undoing {
     undo: Undo,
     dirs: Vec<PathBuf>,
     error: Option<std::io::Error>,
-    /// Keeps every other window's Undo off until this one ends.
-    _running: Running,
+    /// Keeps every other window's Undo off until what this one leaves is back.
+    running: Running,
 }
 
 pub(crate) struct PendingRemoval {
@@ -179,7 +179,7 @@ impl PendingRemoval {
                 dirs: undo.dirs(),
                 undo,
                 error: None,
-                _running: running,
+                running,
             }),
         }
     }
@@ -299,7 +299,7 @@ impl Explorer {
             }
         }
         let error = undo.and_then(|u| {
-            let left = self.undos.put_back(u.undo, r.done, u.error.as_ref());
+            let left = (self.undos).put_back(u.undo, u.running, r.done, u.error.as_ref());
             u.error.map(|e| (e, left))
         });
         self.undos.forget_gone(&r.gone);
