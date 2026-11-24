@@ -72,7 +72,8 @@ pub fn draw(
         }
         if let Some(base) = text.baseline(row, true, size) {
             let clip = Rect::new(row.x, row.y, row.width + s, row.height + s);
-            text.draw_run_over(canvas, tx + s, base + s, clip, &title, true, SHADOW, size);
+            let shadow = text.inked();
+            shadow.draw_run_over(canvas, tx + s, base + s, clip, &title, true, SHADOW, size);
             text.draw_run_over(canvas, tx, base, clip, &title, true, WHITE, size);
         }
     }

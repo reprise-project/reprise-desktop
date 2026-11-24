@@ -7,6 +7,7 @@ use reprisekit::controls::emojipicker::{self, EmojiPicker, Event, Hit, Key, RECE
 use reprisekit::emoji::{EmojiFont, Entry};
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
+use std::rc::Rc;
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
@@ -18,23 +19,23 @@ use crate::output::upload_scaled;
 /// What outlives the panel: the font and catalog once loaded, and the recent picks.
 #[derive(Default)]
 pub struct Emoji {
-    font: Option<Option<EmojiFont>>,
+    font: Option<Option<Rc<EmojiFont>>>,
     catalog: Vec<Entry>,
     recent: Vec<&'static str>,
 }
 
 impl Emoji {
     fn font(&self) -> Option<&EmojiFont> {
-        self.font.as_ref().and_then(Option::as_ref)
+        self.font.as_ref().and_then(Option::as_deref)
     }
 
     fn load(&mut self) {
         if self.font.is_none() {
-            let font = EmojiFont::load();
+            let font = EmojiFont::shared();
             if font.is_none() {
                 log::warn!("no colour emoji font found; the picker draws emoji as text");
             }
-            self.catalog = reprisekit::emoji::catalog(font.as_ref());
+            self.catalog = reprisekit::emoji::catalog(font.as_deref());
             self.font = Some(font);
         }
     }

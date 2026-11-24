@@ -41,7 +41,7 @@ pub fn breaks(text: &TextRenderer, m: &Metrics, line: &str, width: i32) -> Vec<u
             let n = tab_cols - col % tab_cols;
             (n as i32 * space, n)
         } else {
-            let adv = g.chars().map(|c| text.advance(c, m.bold, m.font_px)).sum();
+            let adv = text.measure(g, m.bold, m.font_px);
             (adv, g.chars().count())
         };
         if g.starts_with(char::is_whitespace) {

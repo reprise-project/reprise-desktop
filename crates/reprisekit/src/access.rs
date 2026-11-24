@@ -759,7 +759,7 @@ fn split_run<'a>(line: Line<'a>, text: &TextRenderer, px: u32, out: &mut Vec<Lin
             .rfind(|(_, c)| c.is_whitespace())
             .map_or(cut, |(i, c)| i + c.len_utf8());
         let piece = &rest.text[..at];
-        let w: i32 = piece.chars().map(|c| text.advance(c, false, px)).sum();
+        let w = text.measure(piece, false, px);
         out.push(Line {
             text: piece,
             start: rest.start,

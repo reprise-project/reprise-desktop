@@ -247,6 +247,39 @@ impl Canvas {
         });
     }
 
+    /// Compose premultiplied `src`, `w` x `h` device pixels, over this canvas from device pixel
+    /// (x, y) inside logical `clip`, alpha included: a colour glyph.
+    pub fn blit_pixels_over(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: usize,
+        h: usize,
+        src: &[u32],
+        clip: Rect,
+    ) {
+        assert!(
+            src.len() >= w * h,
+            "blit_pixels_over: {w}x{h} pixels are short"
+        );
+        let dst = Rect::new(x, y, w as i32, h as i32).intersect(&self.device_area(clip));
+        if dst.is_empty() {
+            return;
+        }
+        let (ox, oy) = ((dst.x - x) as usize, (dst.y - y) as usize);
+        let dw = self.device_size().0 as usize;
+        let n = dst.width as usize;
+        for row in 0..dst.height as usize {
+            let d0 = (dst.y as usize + row) * dw + dst.x as usize;
+            let s0 = (oy + row) * w + ox;
+            for (d, &s) in self.pixels[d0..d0 + n].iter_mut().zip(&src[s0..s0 + n]) {
+                if s >> 24 != 0 {
+                    *d = over_px(s, *d);
+                }
+            }
+        }
+    }
+
     /// Run `f` on each device pixel under a `w` x `h` mask at device (x, y)
     /// inside logical `clip` whose coverage is non-zero.
     #[expect(clippy::too_many_arguments)]

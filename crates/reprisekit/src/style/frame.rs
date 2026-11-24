@@ -187,7 +187,7 @@ fn draw_title(
     } else {
         spec.inactive
     };
-    let title = if translucent {
+    let run = if translucent {
         let baseline = match t.baseline {
             Some(b) => Some(
                 geom.caption.y
@@ -196,20 +196,20 @@ fn draw_title(
             ),
             None => caption_text.baseline(title_rect, spec.bold, size),
         };
-        baseline.and_then(|baseline| {
-            let run = TitleRun {
-                text: caption_text,
-                title: &shown,
-                bold: spec.bold,
-                size,
-                clip: title_rect,
-                baseline,
-            };
-            TitleMask::render(canvas, &run, geom, t.glow.as_ref(), s, m)
+        baseline.map(|baseline| TitleRun {
+            text: caption_text,
+            title: &shown,
+            bold: spec.bold,
+            size,
+            clip: title_rect,
+            baseline,
         })
     } else {
         None
     };
+    let title = run
+        .as_ref()
+        .and_then(|run| TitleMask::render(canvas, run, geom, t.glow.as_ref(), s, m));
     if let (Some(title), Some(glow)) = (&title, t.glow) {
         title.glow(canvas, &glow, state.active);
     }
@@ -237,8 +237,20 @@ fn draw_title(
     }
 
     if translucent {
-        if let Some(title) = title {
+        if let (Some(title), Some(run)) = (title, run) {
             title.ink(canvas, ink);
+            let (x, clip) = (run.clip.x, run.clip);
+            let colour = run.text.colour_only();
+            colour.draw_run(
+                canvas,
+                x,
+                run.baseline,
+                clip,
+                run.title,
+                run.bold,
+                ink,
+                run.size,
+            );
         }
         return;
     }
@@ -249,7 +261,7 @@ fn draw_title(
             title_rect.width,
             title_rect.height,
         );
-        caption_text.draw_clipped(
+        caption_text.inked().draw_clipped(
             canvas,
             shadow_rect,
             title_rect,
@@ -280,8 +292,11 @@ struct TitleRun<'a> {
     baseline: i32,
 }
 
+/// A translucent title's coverage, its colour glyphs drawn as their coverage for the glow, and,
+/// when it has any, its coverage without them for the ink.
 struct TitleMask {
     coverage: Vec<u8>,
+    ink_coverage: Option<Vec<u8>>,
     x: i32,
     y: i32,
     width: usize,
@@ -315,18 +330,24 @@ impl TitleMask {
         let scratch = Canvas::with_scale(r.width as u32, r.height as u32, cs);
         let (width, height) = scratch.device_size();
         let clip = Rect::new(reach, run.clip.y - top, run.clip.width, run.clip.height);
-        let coverage = scratch.ink_coverage(|c, white| {
-            run.text.draw_run(
-                c,
-                reach,
-                run.baseline - top,
-                clip,
-                run.title,
-                run.bold,
-                white,
-                run.size,
-            );
-        });
+        let mask = |text: &TextRenderer| {
+            scratch.clone().ink_coverage(|c, white| {
+                let (title, bold) = (run.title, run.bold);
+                text.draw_run(
+                    c,
+                    reach,
+                    run.baseline - top,
+                    clip,
+                    title,
+                    bold,
+                    white,
+                    run.size,
+                );
+            })
+        };
+        let colour = run.text.has_colour(run.title, run.bold, run.size);
+        let coverage = mask(run.text.inked());
+        let ink_coverage = colour.then(|| mask(run.text.without_colour()));
         let (width, height) = (width as usize, height as usize);
         let d = s * cs;
         let (above, below) = glow.map_or((0, 0), |g| g.rows[m]);
@@ -336,6 +357,7 @@ impl TitleMask {
         );
         Some(TitleMask {
             coverage,
+            ink_coverage,
             x: r.x * cs,
             y: r.y * cs,
             width,
@@ -390,7 +412,7 @@ impl TitleMask {
             self.y,
             self.width,
             self.height,
-            &self.coverage,
+            self.ink_coverage.as_ref().unwrap_or(&self.coverage),
             ink,
             all,
         );

@@ -528,7 +528,8 @@ desktop and stays out of the way when it's missing.
 - A CJK font such as Noto Sans CJK, for Chinese, Japanese and Korean text,
   and a bitmap one such as WenQuanYi Bitmap Song for crisp Chinese with
   `antialias = false`
-- A colour emoji font such as Noto Color Emoji, for the emoji picker
+- A colour emoji font such as Noto Color Emoji, for emoji in colour in text and
+  the emoji picker
 - shared-mime-info, for file types and icons
 - xdg-utils and libarchive, for opening web links, zipping and extracting
   archives in Explorer, opening a network's sign-in page, and attachments

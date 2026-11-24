@@ -1494,3 +1494,23 @@ fn mix_shifted_moves_whole_logical_pixels_at_scale_two() {
         ]
     );
 }
+
+#[test]
+fn pixels_compose_over_in_device_px_inside_the_clip() {
+    let mut c = Canvas::with_scale(2, 2, 2);
+    c.fill_rect(c.bounds(), Color::rgb(0, 0, 0xFF));
+    let half_red = 0x8080_0000;
+    c.blit_pixels_over(
+        1,
+        1,
+        3,
+        1,
+        &[half_red, 0, 0xFF00_FF00],
+        Rect::new(0, 0, 1, 2),
+    );
+    let (w, _) = c.device_size();
+    let at = |x: usize, y: usize| c.pixels[y * w as usize + x];
+    assert_eq!(at(1, 1), 0xFF80_007F, "half red over blue");
+    assert_eq!(at(2, 1), 0xFF00_00FF, "past the clip");
+    assert_eq!(at(0, 1), 0xFF00_00FF, "left of the pixels");
+}

@@ -234,6 +234,7 @@ pub fn draw_menu_at(
                 } else {
                     (cs.menu, cs.gray_text)
                 };
+                let text = if *enabled { text } else { text.inked() };
                 canvas.fill_rect(*r, bg);
                 if flat && hovered_here {
                     canvas.ring_t(*r, cs.hilight, cs.hilight, s);

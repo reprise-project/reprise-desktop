@@ -41,10 +41,10 @@ bus or display. A new crate whose tests touch any of them adds that line.
 reprisekit, which links no bus, sets up its HOME and XDG folders the same
 way in `src/testsession.rs`.
 
-Pixel tests are pinned to Wine 9.0's Tahoma and DejaVu, the CI image's one
-system font. `scripts/pin-env` runs a command in CI's font environment. It
-sets `REPRISE_TEST_FONTS` to the Tahoma that `scripts/test-fonts.sh`
-downloads into your cache and `REPRISE_TEST_STRICT=1`, under a fontconfig
+Pixel tests are pinned to Wine 9.0's Tahoma, Noto Color Emoji 2.051 and
+DejaVu, the CI image's one system font. `scripts/pin-env` runs a command in
+CI's font environment. It sets `REPRISE_TEST_FONTS` to the fonts that
+`scripts/test-fonts.sh` downloads into your cache and `REPRISE_TEST_STRICT=1`, under a fontconfig
 that sees only DejaVu. It drops your session's `REPRISE_*` variables and
 keeps the test and gallery ones such as `REPRISE_BLESS`:
 

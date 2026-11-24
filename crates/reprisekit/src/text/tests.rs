@@ -1236,6 +1236,7 @@ fn a_smooth_glyphs_fringe_under_an_eighth_of_coverage_is_not_drawn_ink() {
         top: 0,
         advance: 4,
         smooth,
+        colour: None,
     };
     assert_eq!(
         glyph(vec![0x1f, 0xff, 0x20], true).drawn_span(),

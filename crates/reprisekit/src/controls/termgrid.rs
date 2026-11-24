@@ -444,7 +444,8 @@ impl Grid<'_> {
         }
         for (start, end, fg) in runs {
             for (i, cell) in cells.iter().enumerate().take(end).skip(start) {
-                self.glyph(c, cell, ox + i as i32 * m.cell_w, y, fg);
+                let spill = cells.get(i + 1).is_some_and(blank);
+                self.glyph(c, cell, ox + i as i32 * m.cell_w, y, fg, spill);
             }
             let flags = cells[start].flags;
             let x0 = ox + start as i32 * m.cell_w;
@@ -461,12 +462,14 @@ impl Grid<'_> {
         }
     }
 
-    /// `cell`'s glyph in `color`, its cell from (`x`, `y`).
-    fn glyph(&self, c: &mut Canvas, cell: &Cell, x: i32, y: i32, color: Rgb) {
-        let Some(clip) = glyph_clip(self.m, x, y, cell).map(|r| r.intersect(&self.bound)) else {
+    /// `cell`'s glyph in `color`, its cell from (`x`, `y`). A colour glyph in a one-cell char
+    /// (U+2764 U+FE0F) inks the next cell too when `spill` says that one is blank.
+    fn glyph(&self, c: &mut Canvas, cell: &Cell, x: i32, y: i32, color: Rgb, spill: bool) {
+        let Some(cell_rect) = glyph_clip(self.m, x, y, cell) else {
             return;
         };
-        if clip.is_empty() || (matches!(cell.ch, ' ' | '\0') && cell.extra.is_none()) {
+        let clip = cell_rect.intersect(&self.bound);
+        if clip.is_empty() || blank(cell) {
             return;
         }
         let over = self.snap.alpha < 255;
@@ -500,6 +503,14 @@ impl Grid<'_> {
             }
         };
         let bold = cell.flags.contains(Flags::BOLD);
+        let clip = match spill && cells == 1 && text.has_colour(s, bold, self.size) {
+            true => Rect {
+                width: 2 * self.m.cell_w,
+                ..cell_rect
+            }
+            .intersect(&self.bound),
+            false => clip,
+        };
         let baseline = y + self.m.baseline;
         if over {
             text.draw_run_over(c, x, baseline, clip, s, bold, color, self.size);
@@ -527,7 +538,7 @@ impl Grid<'_> {
             CursorShape::Block => {
                 fill(c, Rect::new(x, y, w, m.cell_h), self.bound, ink);
                 let (_, bg, _) = colours(self.snap, cell);
-                self.glyph(c, cell, x, y, bg);
+                self.glyph(c, cell, x, y, bg, false);
             }
             CursorShape::Bar => fill(c, Rect::new(x, y, thick, m.cell_h), self.bound, ink),
             CursorShape::Underline => fill(
@@ -548,6 +559,11 @@ impl Grid<'_> {
             }
         }
     }
+}
+
+/// Whether `cell` draws nothing: a space or an empty cell.
+fn blank(cell: &Cell) -> bool {
+    matches!(cell.ch, ' ' | '\0') && cell.extra.is_none()
 }
 
 /// Where a glyph whose cell starts at device (`x`, `y`) may ink: two cells for a wide char, none
@@ -1122,6 +1138,38 @@ mod tests {
             }
         }
         crate::pins::check("termgrid_bar", &got);
+    }
+
+    #[test]
+    fn a_one_cell_colour_emoji_inks_the_next_cell_only_when_it_is_blank() {
+        crate::pins::fonts();
+        let t = tahoma();
+        let hued = |p: u32| {
+            let (r, g, b) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+            r.abs_diff(g) > 40 || g.abs_diff(b) > 40
+        };
+        for s in [1, 2] {
+            let m = metrics(&t, 13, s);
+            let second_cell_hued = |next: char| {
+                let mut snap = Snapshot::new(3, 1, FG, BG);
+                snap.cells[0].ch = '\u{2764}';
+                snap.cells[0].extra = Some("\u{FE0F}".into());
+                snap.cells[1].ch = next;
+                snap.cursor.2 = CursorShape::Hidden;
+                let (w, h) = (3 * m.cell_w / s + 1, m.cell_h / s + 1);
+                let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                draw(&mut c, &t, &m, Rect::new(0, 0, w, h), &snap, 13);
+                (m.cell_w..2 * m.cell_w).any(|x| (0..m.cell_h).any(|y| hued(px(&c, x, y))))
+            };
+            assert!(
+                second_cell_hued(' '),
+                "scale {s}: the heart reaches a blank cell"
+            );
+            assert!(
+                !second_cell_hued('x'),
+                "scale {s}: and stays out of a filled one"
+            );
+        }
     }
 
     #[test]
