@@ -94,6 +94,8 @@ pub struct Picture {
     /// The backends that coded the probe's test frame, best first, each with the dma-buf
     /// modifiers it maps, LINEAR first.
     pub working: Vec<(Backend, Vec<u64>)>,
+    /// The modifiers the CPU reads, for bitmaps: LINEAR, or none where only shared memory reads.
+    pub cpu: Vec<u64>,
 }
 
 impl Picture {
@@ -136,7 +138,7 @@ fn h264_modifiers(importable: &[u64]) -> Vec<u64> {
         .filter(|&m| m != DRM_FORMAT_MOD_LINEAR)
         .collect();
     match tiled.is_empty() {
-        true => vec![DRM_FORMAT_MOD_LINEAR],
+        true => importable.to_vec(),
         false => tiled,
     }
 }
@@ -342,7 +344,7 @@ impl RdpServerDisplay for Display {
             let mut streams = Vec::new();
             for (screen, fd) in grant.screens.iter().zip(fds) {
                 let (stream, frames, sizes) =
-                    stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], APP, gone.clone())
+                    stream::spawn(fd, screen.node, &picture.cpu, APP, gone.clone())
                         .map_err(|e| unshared("the screen stream did not start", e))?;
                 streams.push((stream, frames, sizes));
             }
@@ -374,7 +376,7 @@ impl RdpServerDisplay for Display {
                     gfx: gfx.clone(),
                     offer: stream.offer(),
                     picture: picture.clone(),
-                    modifiers: vec![DRM_FORMAT_MOD_LINEAR],
+                    modifiers: picture.cpu.clone(),
                     on: false,
                 });
                 let device = picture.device.clone();
@@ -822,7 +824,7 @@ impl Live {
                 self.coding = None;
                 path.on = false;
                 path.gfx.close(self.screen);
-                path.offer.modifiers(&[DRM_FORMAT_MOD_LINEAR]);
+                path.offer.modifiers(&path.picture.cpu);
                 self.keyframe = true;
             }
             None => {}
@@ -922,7 +924,7 @@ impl Live {
                     if path.on {
                         log::info!("the graphics pipeline closed; sending bitmaps");
                         path.on = false;
-                        path.offer.modifiers(&[DRM_FORMAT_MOD_LINEAR]);
+                        path.offer.modifiers(&path.picture.cpu);
                         self.keyframe = true;
                     }
                     show_encoder(&self.status, &choice::label(self.choice, None));
@@ -943,7 +945,9 @@ impl Live {
         }
         let (reader, readable) = match (&self.h264, self.using) {
             (Some(path), Some(b)) if h264 => (Some(b), path.picture.modifiers(b)),
-            _ => (None, &[DRM_FORMAT_MOD_LINEAR][..]),
+            (Some(path), _) => (None, &path.picture.cpu[..]),
+            // The stream had no offer but the CPU's.
+            (None, _) => (None, &[DRM_FORMAT_MOD_LINEAR][..]),
         };
         if !crate::encode::reads_offered(reader, readable, &frame) {
             self.hold(frame, now, h264);
@@ -995,7 +999,7 @@ impl Live {
             if let Some(path) = &self.h264 {
                 match h264 {
                     true => path.offer.again(&path.modifiers),
-                    false => path.offer.again(&[DRM_FORMAT_MOD_LINEAR]),
+                    false => path.offer.again(&path.picture.cpu),
                 }
             }
         }

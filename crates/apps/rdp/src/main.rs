@@ -532,7 +532,12 @@ fn picture() -> display::Picture {
     if working.is_empty() {
         log::info!("encoder: {}", choice::BITMAP_LABEL);
     }
-    display::Picture { device, working }
+    let cpu = encode::probe::cpu_modifiers(&device);
+    display::Picture {
+        device,
+        working,
+        cpu,
+    }
 }
 
 /// Once the probe is in: `Encoders` lists what works and `Encoder` names what the config picks,

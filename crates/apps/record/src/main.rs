@@ -36,7 +36,7 @@ use reprisevideo::encode::probe::{self, Backend};
 use reprisevideo::encode::rate::RateControl;
 use reprisevideo::encode::{Codec, choice};
 use reprisevideo::monitor::{NO_MICROPHONE, Tap};
-use reprisevideo::stream::{self, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer};
+use reprisevideo::stream::{self, Frame, FrameBuffer};
 use sound::{Sound, Source};
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
@@ -387,7 +387,8 @@ fn encoders(
             Backend::Software.label(codec)
         );
         let node = PathBuf::from(probe::RENDER_NODE);
-        return (node, vec![(Backend::Software, vec![DRM_FORMAT_MOD_LINEAR])]);
+        let modifiers = probe::cpu_modifiers(&node);
+        return (node, vec![(Backend::Software, modifiers)]);
     }
     let (device, working) = probe::probe(conn, &[codec], probe::file_test);
     let working: Vec<_> = (working.into_iter()).map(|(_, b, m)| (b, m)).collect();
@@ -1024,7 +1025,8 @@ enum Forced {}
 /// encoder fails to open, a Vulkan stand-in first when the probe found none.
 #[cfg(feature = "fallback-test")]
 mod forced {
-    use super::{Backend, DRM_FORMAT_MOD_LINEAR, Forced};
+    use super::{Backend, Forced};
+    use reprisevideo::stream::DRM_FORMAT_MOD_LINEAR;
 
     /// A tiled modifier the stand-in offers besides LINEAR.
     const Y_TILED: u64 = 0x0100_0000_0000_0002;
@@ -1081,6 +1083,7 @@ fn signals(set: libc::sigset_t, tx: mpsc::Sender<Event>, stopping: Arc<AtomicBoo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisevideo::stream::DRM_FORMAT_MOD_LINEAR;
 
     /// H.264 at the default quality, unpaced, without sound.
     fn h264() -> Making {
