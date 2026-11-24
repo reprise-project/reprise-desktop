@@ -701,6 +701,7 @@ mod tests {
             mime_types: Vec::new(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         }];
         let (reply, rx) = async_channel::bounded(1);
         let desktop_id = id.to_string();

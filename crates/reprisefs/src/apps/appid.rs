@@ -121,6 +121,7 @@ mod tests {
             mime_types: Vec::new(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         }
     }
 

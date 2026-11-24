@@ -351,6 +351,19 @@ impl State {
         }
     }
 
+    /// Run `app`'s desktop action `action` in the app's scope, as [`State::launch_entry`] starts
+    /// the app.
+    pub fn launch_action(
+        &mut self,
+        app: &reprisefs::apps::AppEntry,
+        action: &reprisefs::apps::DesktopAction,
+    ) {
+        match reprisefs::apps::action_argv(app, action, &self.config.terminal) {
+            Ok(argv) => self.spawn_app_activated(&argv, &app.id.app_id(), app.path.as_deref()),
+            Err(refused) => self.exec_refused(&refused),
+        }
+    }
+
     /// The error box for a desktop entry Reprise refuses to run; nothing runs.
     pub fn exec_refused(&mut self, refused: &reprisefs::apps::ExecRefused) {
         let d = crate::dialog::Dialog::error(&refused.name, refused.to_string());

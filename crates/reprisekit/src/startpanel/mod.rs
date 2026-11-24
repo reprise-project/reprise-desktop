@@ -167,8 +167,9 @@ pub struct StartPanel {
     pub tree: Vec<TreeRow>,
     pub tree_top: usize,
     pub results: Vec<ResultGroup>,
-    pub jump: Vec<ResultRow>,
-    pub jump_title: String,
+    /// The jump list's titled sections (Recent, then Tasks). [`Spot::Jump`] counts its rows
+    /// through them in order.
+    pub jump: Vec<ResultGroup>,
     /// The text size the panel is laid out and drawn at: its layout and the rows' icons grow by it,
     /// glyphs and the user picture keep their size.
     pub text: TextUnits,
@@ -215,7 +216,6 @@ impl StartPanel {
             tree_top: 0,
             results: Vec::new(),
             jump: Vec::new(),
-            jump_title: String::new(),
             text: TextUnits::default(),
             room: None,
             foot_labels: [0; 2],
@@ -294,6 +294,15 @@ impl StartPanel {
 
     pub fn programs(&self) -> impl Iterator<Item = &ProgramRow> {
         self.pinned.iter().chain(&self.frequent)
+    }
+
+    /// Jump row `k`, counting through the sections in order.
+    pub fn jump_row(&self, k: usize) -> Option<&ResultRow> {
+        self.jump.iter().flat_map(|g| &g.rows).nth(k)
+    }
+
+    pub fn jump_len(&self) -> usize {
+        self.jump.iter().map(|g| g.rows.len()).sum()
     }
 
     pub fn program(&self, i: usize) -> Option<&ProgramRow> {
@@ -507,7 +516,7 @@ impl StartPanel {
 
     /// Relists the jump list as `rows`, the light going where `follow` maps it, else staying put;
     /// an emptied list goes back to Home, lighting its program row if a jump row was lit.
-    pub fn relist_jump(&mut self, rows: Vec<ResultRow>, follow: impl Fn(usize) -> Option<usize>) {
+    pub fn relist_jump(&mut self, rows: Vec<ResultGroup>, follow: impl Fn(usize) -> Option<usize>) {
         self.jump = rows;
         if matches!(self.hot, Some(Spot::Jump(_))) {
             self.hot = None;
@@ -516,7 +525,7 @@ impl StartPanel {
             Some(Spot::Jump(k)) => Some(k),
             _ => None,
         };
-        let n = self.jump.len();
+        let n = self.jump_len();
         match (n, self.mode, lit) {
             (0, Mode::Jump(i), lit) => {
                 self.set_mode(Mode::Home);
@@ -697,7 +706,7 @@ impl StartPanel {
             Some(Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow | Spot::LogOff) => {
                 self.right_column()
             }
-            Some(Spot::Jump(_)) => (0..layout::jumps_shown(self)).map(Spot::Jump).collect(),
+            Some(Spot::Jump(_)) => layout::jumps_shown(self).map(Spot::Jump).collect(),
             _ => self.left_column(),
         };
         if col.is_empty() {
@@ -758,7 +767,8 @@ impl StartPanel {
         match self.lit() {
             Some(Spot::Program(i)) if self.program(i).is_some_and(|r| r.jump) => {
                 self.set_mode(Mode::Jump(i));
-                self.light(Spot::Jump(0));
+                let first = layout::jumps_shown(self).next().unwrap_or(0);
+                self.light(Spot::Jump(first));
             }
             Some(Spot::AllPrograms) if self.mode != Mode::Programs => {
                 self.set_mode(Mode::Programs);
@@ -861,7 +871,7 @@ impl StartPanel {
                 Event::Redraw
             }
             Spot::Clear => self.clear_query(),
-            Spot::Jump(k) if k >= self.jump.len() => Event::None,
+            Spot::Jump(k) if k >= self.jump_len() => Event::None,
             Spot::Result(g, r) if self.results.get(g).is_none_or(|g| r >= g.rows.len()) => {
                 Event::None
             }
@@ -1018,6 +1028,14 @@ pub(crate) mod tests {
             picture: None,
             rule_before: false,
             submenu: false,
+        }
+    }
+
+    /// A jump section `title` listing `names`.
+    pub(crate) fn section(title: &str, names: &[&str]) -> ResultGroup {
+        ResultGroup {
+            title: title.into(),
+            rows: names.iter().map(|n| row(n)).collect(),
         }
     }
 
@@ -1281,23 +1299,56 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_keys_walk_from_the_recent_files_on_into_the_tasks_and_enter_runs_one() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Mail", true)];
+        p.jump = vec![
+            section("Recent", &["a.eml"]),
+            section("Tasks", &["Write Message", "Address Book"]),
+        ];
+        p.key(Key::Down);
+        p.key(Key::Right);
+        assert_eq!(p.lit(), Some(Spot::Jump(0)));
+        p.key(Key::Down);
+        assert_eq!(p.lit(), Some(Spot::Jump(1)), "the first task");
+        assert_eq!(
+            p.jump_row(1).map(|r| r.name.as_str()),
+            Some("Write Message")
+        );
+        p.key(Key::End);
+        assert_eq!(p.lit(), Some(Spot::Jump(2)));
+        assert_eq!(p.key(Key::Enter), Event::Activate(Spot::Jump(2)));
+        p.key(Key::Home);
+        assert_eq!(p.lit(), Some(Spot::Jump(0)));
+
+        p.relist_jump(
+            vec![section("Recent", &[]), section("Tasks", &["Write Message"])],
+            |_| None,
+        );
+        p.key(Key::Left);
+        p.key(Key::Right);
+        assert_eq!(
+            (p.mode(), p.lit()),
+            (Mode::Jump(0), Some(Spot::Jump(0))),
+            "with no recent files Right lights the first task"
+        );
+    }
+
+    #[test]
     fn a_relisted_jump_list_keeps_the_light_on_its_file_and_an_emptied_list_goes_home() {
-        let row = |name: &str| ResultRow {
-            name: name.into(),
-            ..ResultRow::default()
-        };
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", true)];
-        p.jump = vec![row("a.txt"), row("b.txt")];
+        p.jump = vec![section("Recent", &["a.txt", "b.txt"])];
         p.key(Key::Down);
         p.key(Key::Right);
         p.key(Key::Down);
         assert_eq!(p.lit(), Some(Spot::Jump(1)));
-        p.relist_jump(vec![row("new.txt"), row("a.txt"), row("b.txt")], |k| {
-            Some(k + 1)
-        });
+        p.relist_jump(
+            vec![section("Recent", &["new.txt", "a.txt", "b.txt"])],
+            |k| Some(k + 1),
+        );
         assert_eq!(p.lit(), Some(Spot::Jump(2)), "b.txt kept the light");
-        p.relist_jump(vec![row("new.txt")], |_| None);
+        p.relist_jump(vec![section("Recent", &["new.txt"])], |_| None);
         assert_eq!(p.lit(), Some(Spot::Jump(0)), "no row left below: the last");
         p.relist_jump(Vec::new(), |_| None);
         assert_eq!((p.mode(), p.lit()), (Mode::Home, Some(Spot::Program(0))));

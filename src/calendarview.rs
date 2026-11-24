@@ -731,6 +731,7 @@ mod tests {
             mime_types: Vec::new(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         }];
         refresh(&mut h.state);
         assert_eq!(h.state.calendar.answered, 2);

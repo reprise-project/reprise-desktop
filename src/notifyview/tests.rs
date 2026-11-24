@@ -1852,6 +1852,7 @@ fn raise_without_token(desktop_id: &str, app_id: &str, hint: &str) -> (bool, boo
         mime_types: Vec::new(),
         shown: true,
         path: None,
+        actions: Vec::new(),
     }];
     let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
     let mut c = h.connect();

@@ -18,7 +18,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Quick Launch overflow.** A Quick Launch band dragged shorter than its
   buttons puts the rest behind a » at its end.
 - **Jump lists.** Right-click a task button for the program's recent files,
-  its windows, Pin or Unpin, Move to desktop and Close.
+  its tasks (the actions its desktop entry offers, such as New Window), its
+  windows, Pin or Unpin, Move to desktop and Close.
 - **Drag to reorder.** Drag task buttons along the row. Middle-click starts
   another copy of the program.
 - **Live previews.** Point at a task button for live pictures of its windows.

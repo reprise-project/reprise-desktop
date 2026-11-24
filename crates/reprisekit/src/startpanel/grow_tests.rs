@@ -1,4 +1,4 @@
-use super::tests::{place, prow, row};
+use super::tests::{place, prow, row, section};
 use super::*;
 use crate::interface::Interface;
 use crate::interfaces;
@@ -32,11 +32,7 @@ fn with_icons(mut p: StartPanel, s: i32) -> StartPanel {
             TreeRow::Folder { icon, .. } | TreeRow::App { icon, .. } => *icon = Some(small.clone()),
         }
     }
-    for r in p
-        .jump
-        .iter_mut()
-        .chain(p.results.iter_mut().flat_map(|g| &mut g.rows))
-    {
+    for r in (p.jump.iter_mut().chain(&mut p.results)).flat_map(|g| &mut g.rows) {
         r.icon = Some(small.clone());
     }
     p
@@ -100,8 +96,7 @@ fn glass_modes() -> Vec<(&'static str, StartPanel)> {
             depth: 1,
         },
     ];
-    base.jump = vec![row("notes.txt"), row("todo.txt")];
-    base.jump_title = "Recent".into();
+    base.jump = vec![section("Recent", &["notes.txt", "todo.txt"])];
     let mut tree = base.clone();
     tree.set_mode(Mode::Programs);
     let mut search = base.clone();

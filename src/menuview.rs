@@ -109,7 +109,7 @@ pub enum MenuKind {
     File {
         commands: Vec<Option<DesktopCommand>>,
         path: PathBuf,
-        facts: crate::desktop::FileFacts,
+        facts: Box<crate::desktop::FileFacts>,
     },
     /// A grouped taskbar button's popup (`taskbar::window_list`): `button` is the
     /// taskbar button index it hangs off, so clicking it again toggles the list shut.
@@ -278,7 +278,7 @@ impl MenuKind {
                 Some(command) => MenuPick::File {
                     command,
                     path: path.clone(),
-                    facts: facts.clone(),
+                    facts: (**facts).clone(),
                 },
                 None => MenuPick::Nothing,
             },

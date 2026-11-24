@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use reprisefs::apps::{AppEntry, Group};
 use reprisekit::startpanel::{
-    Mode, PROGRAM_ICON, PlaceRow, ProgramRow, ResultRow, SMALL_ICON, Shape, Spot, StartPanel,
-    TreeRow,
+    Mode, PROGRAM_ICON, PlaceRow, ProgramRow, ResultGroup, ResultRow, SMALL_ICON, Shape, Spot,
+    StartPanel, TreeRow,
 };
 
 use crate::compositor::State;
@@ -15,7 +15,8 @@ use crate::raster::Canvas;
 
 use super::PICTURE;
 
-const JUMP_TITLE: &str = "Recent";
+const RECENT_TITLE: &str = "Recent";
+const TASKS_TITLE: &str = "Tasks";
 
 pub(super) fn one_per_name(apps: &[AppEntry]) -> Vec<bool> {
     let mut first: HashMap<&str, usize> = HashMap::new();
@@ -115,7 +116,7 @@ fn shows_stand_in(m: &StartPanel) -> bool {
     let results = m.results.iter().flat_map(|g| &g.rows).map(|r| &r.icon);
     (m.pinned.iter().chain(&m.frequent).map(|r| &r.icon))
         .chain(m.places.iter().map(|r| &r.picture))
-        .chain(m.jump.iter().map(|r| &r.icon))
+        .chain(m.jump.iter().flat_map(|g| &g.rows).map(|r| &r.icon))
         .chain(tree)
         .chain(results)
         .chain(std::iter::once(&m.user_picture))
@@ -159,11 +160,53 @@ fn jump_rows(
         .collect()
 }
 
+/// App `a`'s jump list: Recent with its `files`, then Tasks with its desktop actions
+/// ([`crate::taskbar::jump_tasks`]), each wearing its own icon, else the app's.
+fn jump_sections(
+    icons: &mut crate::icontheme::IconCache,
+    a: &AppEntry,
+    files: &[PathBuf],
+    px: i32,
+) -> Vec<ResultGroup> {
+    let tasks = (crate::taskbar::jump_tasks(a).iter())
+        .map(|t| ResultRow {
+            name: t.name.clone(),
+            icon: (t.icon.as_deref().or(a.icon.as_deref())).and_then(|n| unread(icons, n, px)),
+            detail: String::new(),
+        })
+        .collect();
+    vec![
+        ResultGroup {
+            title: RECENT_TITLE.into(),
+            rows: jump_rows(icons, files, px),
+        },
+        ResultGroup {
+            title: TASKS_TITLE.into(),
+            rows: tasks,
+        },
+    ]
+}
+
+/// Whether app `a`'s row opens a jump list: it has recent `files` or tasks, and the menu is not
+/// Blue's, which has none.
+fn has_jump(shape: Shape, a: &AppEntry, files: &[PathBuf]) -> bool {
+    shape != Shape::Blue && (!files.is_empty() || !crate::taskbar::jump_tasks(a).is_empty())
+}
+
 pub(super) fn jump_file(jumps: &[Vec<PathBuf>], mode: Mode, k: usize) -> Option<&Path> {
     let Mode::Jump(i) = mode else {
         return None;
     };
     jumps.get(i)?.get(k).map(PathBuf::as_path)
+}
+
+/// The desktop action jump row `k` runs, indexing [`crate::taskbar::jump_tasks`]: the rows after
+/// the recent files.
+pub(super) fn jump_task(jumps: &[Vec<PathBuf>], mode: Mode, k: usize) -> Option<usize> {
+    let Mode::Jump(i) = mode else {
+        return None;
+    };
+    k.checked_sub(jumps.get(i)?.len())
 }
 
 pub(super) fn file_name(p: &Path) -> String {
@@ -306,7 +349,7 @@ impl State {
                 ProgramRow {
                     name: a.name.clone(),
                     icon: app_icon(icons, a, px),
-                    jump: !jumps.is_empty(),
+                    jump: has_jump(v.model.shape, a, jumps),
                     new_pin: pin && v.new_pins.contains(&a.id),
                     detail: (blue && pin).then(|| subtitle(a)).flatten(),
                 }
@@ -326,18 +369,20 @@ impl State {
             return;
         };
         let State {
-            start_panel, icons, ..
+            start_panel,
+            icons,
+            app_index,
+            ..
         } = self;
         let Some(v) = start_panel.as_mut() else {
             return;
         };
         let px = v.model.icon_px(SMALL_ICON, scale);
-        v.model.jump = v
-            .jumps
-            .get(i)
-            .map(|files| jump_rows(icons, files, px))
-            .unwrap_or_default();
-        v.model.jump_title = JUMP_TITLE.into();
+        let app = v.programs.get(i).and_then(|&a| app_index.get(a));
+        v.model.jump = match (app, v.jumps.get(i)) {
+            (Some(a), Some(files)) => jump_sections(icons, a, files, px),
+            _ => Vec::new(),
+        };
     }
 
     pub(super) fn list_start_tree(&mut self) {
@@ -425,11 +470,10 @@ impl State {
         }
         if let Mode::Jump(i) = v.model.mode()
             && let Some(files) = v.jumps.get(i)
+            && let Some(a) = v.programs.get(i).and_then(|&a| app_index.get(a))
         {
             let px = v.model.icon_px(SMALL_ICON, scale);
-            for (row, f) in v.model.jump.iter_mut().zip(files) {
-                row.icon = unread(icons, reprisefs::icons::icon_for_file(f), px);
-            }
+            v.model.jump = jump_sections(icons, a, files, px);
         }
         let px = PICTURE * scale;
         if start_pictures.shown(px).is_none() {
@@ -480,10 +524,15 @@ impl State {
             return;
         };
         let mut changed = false;
+        let shape = v.model.shape;
         for (k, &app) in v.programs.iter().enumerate() {
-            let files = match app_index.get(app) {
-                Some(e) if config.recent_files => recent.for_app(crate::taskbar::JUMP_RECENT, e),
-                _ => Vec::new(),
+            let Some(e) = app_index.get(app) else {
+                continue;
+            };
+            let files = if config.recent_files && shape != Shape::Blue {
+                recent.for_app(crate::taskbar::JUMP_RECENT, e)
+            } else {
+                Vec::new()
             };
             let Some(old) = v.jumps.get_mut(k) else {
                 break;
@@ -493,17 +542,19 @@ impl State {
             }
             changed = true;
             if v.model.mode() == Mode::Jump(k) {
-                let rows = jump_rows(icons, &files, v.model.icon_px(SMALL_ICON, scale));
-                v.model.relist_jump(rows, |i| {
-                    reprisekit::selection::follow(old, &files, i, |_| true)
-                });
+                let rows = jump_sections(icons, e, &files, v.model.icon_px(SMALL_ICON, scale));
+                v.model
+                    .relist_jump(rows, |i| match i.checked_sub(old.len()) {
+                        None => reprisekit::selection::follow(old, &files, i, |_| true),
+                        Some(task) => Some(files.len() + task),
+                    });
             }
             let row = match k.checked_sub(v.model.pinned.len()) {
                 None => v.model.pinned.get_mut(k),
                 Some(f) => v.model.frequent.get_mut(f),
             };
             if let Some(row) = row {
-                row.jump = !files.is_empty();
+                row.jump = has_jump(shape, e, &files);
             }
             *old = files;
         }

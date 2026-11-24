@@ -336,6 +336,7 @@ mod tests {
             mime_types: mimes.iter().map(|m| m.to_string()).collect(),
             shown: true,
             path: None,
+            actions: Vec::new(),
         }
     }
 

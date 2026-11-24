@@ -402,7 +402,7 @@ fn draw_contents(
                 search::result(d.canvas, style, text, at(r), icon, name, detail, lit, g);
             }
             Spot::Jump(k) => {
-                let Some(row) = p.jump.get(k) else { continue };
+                let Some(row) = p.jump_row(k) else { continue };
                 if lit == Some(spot) {
                     let (bx, by) = off(r, at::JUMP_BOX);
                     let b = Rect::new(bx, by, r.width, g.len(at::JUMP_BOX_H));
@@ -530,8 +530,11 @@ fn draw_contents(
         let pane_clip = at(l.pane);
         match mode {
             Mode::Jump(_) => {
+                let Some(section) = p.jump.get(gi) else {
+                    continue;
+                };
                 let (x, y) = off(r, (0, at::JUMP_HEAD_BASE));
-                let w = d.line(text, x, y, pane_clip, &p.jump_title, inks.jump_title, size);
+                let w = d.line(text, x, y, pane_clip, &section.title, inks.jump_title, size);
                 let x0 = x + w + g.len(at::JUMP_RULE_GAP);
                 let x1 = r.right() + g.len(at::JUMP_RULE_PAST) + s - o.x;
                 let ry = r.y - o.y + g.len(at::JUMP_RULE_Y);
@@ -600,6 +603,7 @@ mod tests {
     use crate::interface::Interface;
     use crate::interfaces;
     use crate::startpanel::layout::layout;
+    use crate::startpanel::tests::section;
     use crate::startpanel::{PlaceRow, ProgramRow, ResultGroup, ResultRow};
     use crate::textedit::EditKey;
 
@@ -649,8 +653,7 @@ mod tests {
             submenu: false,
         })
         .collect();
-        p.jump = vec![row("notes.txt"), row("todo.txt")];
-        p.jump_title = "Recent".into();
+        p.jump = vec![section("Recent", &["notes.txt", "todo.txt"])];
         match mode {
             Mode::Search => {
                 p.key(crate::startpanel::Key::Char(EditKey::Insert("no".into())));
@@ -1780,6 +1783,54 @@ mod tests {
             assert!(inks_near(&d, recent, INK_HEADER), "Recent");
             assert!(!inks_near(&d, recent, INK_STRONG), "not in black");
         }
+    }
+
+    /// Tasks stand under their own title and rule below the recent files, a lit task boxed as a
+    /// lit file is; pinned at scale 1 and 2, at rest and with the last task lit.
+    #[test]
+    fn a_jump_lists_tasks_draw_under_their_own_title() {
+        crate::pins::fonts();
+        let mut p = sample(Mode::Jump(3), None);
+        p.jump = vec![
+            section("Recent", &["notes.txt", "todo.txt"]),
+            section("Tasks", &["New Window", "Compose Message"]),
+        ];
+        let text = TextRenderer::load(&font());
+        let mut got = Vec::new();
+        for (name, lit) in [("tasks", None), ("task lit", Some(Spot::Jump(3)))] {
+            let mut p = p.clone();
+            p.pointer(lit);
+            for d in [1, 2] {
+                let style = super::super::style(&Settings::default()).at_scale(d);
+                let l = layout(&p).scaled(d);
+                let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+                draw(&mut c, &style, &text, &p, &l, None, true);
+                let drawn = Drawn { c, l };
+                let (tasks, head) = drawn.l.headers[1];
+                assert_eq!(tasks, 1);
+                let (rx, ry) = (head.right() - 2 * d, head.y + at::JUMP_RULE_Y * d);
+                assert_ne!(
+                    drawn.at(rx, ry),
+                    drawn.at(rx, ry - 3 * d),
+                    "{name} at {d}: Tasks has a rule"
+                );
+                let title = Rect::new(head.x, head.y + 4 * d, 30 * d, 9 * d);
+                if face() {
+                    assert!(inks_near(&drawn, title, INK_HEADER), "{name} at {d}: Tasks");
+                }
+                if lit.is_some() && d == 1 {
+                    let r = drawn.l.rect(Spot::Jump(3)).unwrap();
+                    assert_eq!(
+                        drawn.at(r.x + 2, r.y + 6),
+                        part_at(Part::StartHotJump, 2, 5),
+                        "the lit task is boxed"
+                    );
+                }
+                got.push((format!("{name} {d}"), fnv(&drawn.c)));
+            }
+        }
+        assert_ne!(got[0].1, got[2].1, "the lit task differs from the rest");
+        crate::pins::check("glass/start_panel_tasks", &got);
     }
 
     #[test]
