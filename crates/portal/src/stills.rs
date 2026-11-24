@@ -11,12 +11,12 @@ pub(crate) struct Output {
     pub(crate) still: Still,
 }
 
-/// A still of every output with its place in the layout; `cursor` paints
-/// the pointer into them.
-pub(crate) fn capture(cursor: bool) -> Result<Vec<Output>, String> {
+/// A still of every output [`crate::on_desk`] for `desk` with its place in the layout; `cursor`
+/// paints the pointer into them.
+pub(crate) fn capture(cursor: bool, desk: Option<&[String]>) -> Result<Vec<Output>, String> {
     let mut wl = Wayland::connect()?;
     let mut stills = Vec::new();
-    for out in wl.outputs() {
+    for out in crate::on_desk(wl.outputs(), desk) {
         let still = grab(&mut wl, &Target::Output(out.name.clone()), cursor)
             .map_err(|e| format!("{}: {e}", out.name))?;
         stills.push(Output {

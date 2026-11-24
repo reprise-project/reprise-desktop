@@ -157,7 +157,9 @@ impl Screenshot {
             log::info!("Screenshot for {app_id:?} closed");
             return (crate::RESPONSE_CANCELLED, HashMap::new());
         }
-        match blocking::unblock(move || take(shot)).await {
+        let desk =
+            crate::inputlink::live(&self.link).and_then(crate::inputlink::Link::lock_mode_screens);
+        match blocking::unblock(move || take(shot, desk.as_deref())).await {
             Ok(path) => {
                 let mut r = HashMap::new();
                 let uri = format!("file://{}", path.display());
@@ -279,7 +281,7 @@ enum Plan {
     Pick(u32),
     /// The area the user drags in the compositor's region select.
     Area,
-    /// Every screen, after the Access prompt when `ask`.
+    /// Every screen (the client's in lock mode), after the Access prompt when `ask`.
     Desktop { ask: bool },
     /// The focused window, after the Access prompt when `ask`.
     ActiveWindow { ask: bool },
@@ -366,12 +368,13 @@ fn pick(
     Ok(picked.map(|p| (p.target, p.delay)))
 }
 
-/// Capture `shot` and write it out; blocking. An area leaves out the pointer that dragged it.
-fn take(shot: Shot) -> Result<PathBuf, String> {
+/// Capture `shot` from the outputs [`crate::on_desk`] for `desk` and write it out; blocking. An
+/// area leaves out the pointer that dragged it.
+fn take(shot: Shot, desk: Option<&[String]>) -> Result<PathBuf, String> {
     let shot = match shot {
         Shot::Of(t) => grab(&mut Wayland::connect()?, &t, true)?,
-        Shot::Desktop => desktop(&crate::stills::capture(true)?)?,
-        Shot::Area(r) => area_of(&crate::stills::capture(false)?, r)?,
+        Shot::Desktop => desktop(&crate::stills::capture(true, desk)?)?,
+        Shot::Area(r) => area_of(&crate::stills::capture(false, desk)?, r)?,
     };
     let dir = shot_dir()?;
     let now = SystemTime::now();
