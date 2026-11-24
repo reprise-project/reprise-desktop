@@ -2,6 +2,7 @@
 //! as `FT_LOAD_TARGET_MONO` (bytecode hinter, monochrome); on, hinted 8-bit coverage is blended and
 //! `full_hinting` fits stems across as well as down.
 
+use crate::emoji::EmojiFont;
 use crate::fontfallback::{
     FaceFile, FallbackCache, FallbackDraw, fallback_draw, fallback_strike, fontconfig_face_for,
     no_fallback,
@@ -11,8 +12,12 @@ use crate::theme::{Color, FontConfig};
 use freetype::face::LoadFlag;
 use freetype::{Face, Library};
 use rustc_hash::FxHashMap;
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
+use std::rc::Rc;
+use unicode_segmentation::UnicodeSegmentation;
 
+#[cfg(test)]
+mod emoji_tests;
 pub mod fontfile;
 mod fonts;
 mod mnemonic;
@@ -22,6 +27,7 @@ mod wrap;
 
 pub use fonts::families;
 pub(crate) use fonts::hide_tahoma;
+pub(crate) use fonts::stray_note;
 pub(crate) use fonts::system_fonts;
 pub(crate) use fonts::test_fonts;
 use fonts::{full_hinting, load_faces, load_shell_dlg};
@@ -53,6 +59,8 @@ struct Glyph {
     top: i32,
     advance: i32,
     smooth: bool,
+    /// A colour glyph's premultiplied pixels, `bitmap` their alpha.
+    colour: Option<Box<[u32]>>,
 }
 
 impl Glyph {
@@ -158,6 +166,7 @@ impl Glyph {
         top: 0,
         advance: 0,
         smooth: false,
+        colour: None,
     };
 
     fn scaled(self, k: usize) -> Glyph {
@@ -176,13 +185,15 @@ impl Glyph {
             top: self.top * k,
             advance: self.advance * k,
             smooth: self.smooth,
+            colour: None,
         }
     }
 
     /// This glyph slanted for a family without a slanted face: each row moved right by its
     /// height over the baseline over [`SHEAR_RISE`], rows under it left.
     fn sheared(self) -> Glyph {
-        if self.width == 0 || self.bitmap.len() != self.width * self.height {
+        if self.width == 0 || self.bitmap.len() != self.width * self.height || self.colour.is_some()
+        {
             return self;
         }
         let shift = |row: usize| (self.top - 1 - row as i32).div_euclid(SHEAR_RISE);
@@ -243,9 +254,54 @@ pub enum DialogFont {
     ShellDlg,
 }
 
-/// (char, bold, logical size, canvas scale). A `None` char is the shared notdef entry; the face is
-/// settled by the logical size alone.
-type GlyphKey = (Option<char>, bool, u32, u32);
+/// What one glyph draws: a char, or an emoji sequence the emoji face draws whole, as that glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Piece {
+    Char(char),
+    Emoji(u32),
+}
+
+/// `rest` cut into [`Piece`]s, each with its byte offset from `at` and its text.
+struct Pieces<'t, 'r> {
+    r: &'r TextRenderer,
+    rest: &'t str,
+    at: usize,
+}
+
+impl<'t> Iterator for Pieces<'t, '_> {
+    type Item = (usize, &'t str, Piece);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut chars = self.rest.chars();
+        let ch = chars.next()?;
+        let sequence = chars
+            .next()
+            .filter(|&next| crate::emoji::continues(ch, next))
+            .and_then(|_| {
+                let cluster = self.rest.graphemes(true).next()?;
+                let gid = self.r.emoji_font()?.sequence(cluster)?;
+                Some((cluster, Piece::Emoji(gid)))
+            });
+        let (s, piece) = sequence.unwrap_or_else(|| (&self.rest[..ch.len_utf8()], Piece::Char(ch)));
+        let at = self.at;
+        self.rest = &self.rest[s.len()..];
+        self.at += s.len();
+        Some((at, s, piece))
+    }
+}
+
+/// Which glyphs a renderer draws: text drawn as a coverage mask (onto a translucent canvas, under
+/// a glow) takes its uncoloured glyphs in one pass and its colour glyphs in another.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    All,
+    Mask,
+    Colour,
+}
+
+/// (piece, bold, logical size, canvas scale). A `None` piece is the shared notdef entry; the face
+/// is settled by the logical size alone.
+type GlyphKey = (Option<Piece>, bool, u32, u32);
 
 type LineMetrics = (i32, i32, i32);
 
@@ -435,7 +491,9 @@ pub struct TextRenderer {
     regular: Option<LoadedFace>,
     bold: Option<LoadedFace>,
     antialias: bool,
-    cache: RefCell<FxHashMap<GlyphKey, Glyph>>,
+    /// Shared with its [`TextRenderer::inked`], [`TextRenderer::without_colour`] and
+    /// [`TextRenderer::colour_only`] variants, which draw the same glyphs.
+    cache: Rc<RefCell<FxHashMap<GlyphKey, Glyph>>>,
     /// (ascender, descender, line height) per (bold, size); asked of FreeType once because a size
     /// change invalidates the face's hinting state.
     metrics: RefCell<FxHashMap<(bool, u32), LineMetrics>>,
@@ -458,6 +516,13 @@ pub struct TextRenderer {
     for_output: std::cell::OnceCell<Box<TextRenderer>>,
     /// Every glyph from this face, a char it lacks as its notdef: a font file's own sample.
     own_glyphs: bool,
+    /// The colour emoji face emoji draw from, found on first use.
+    emoji: OnceCell<Option<Rc<EmojiFont>>>,
+    /// Colour glyphs draw as their coverage in the text's ink ([`TextRenderer::inked`]).
+    ink_emoji: bool,
+    pass: Pass,
+    /// The inked, without-colour and colour-only variants, made on first use.
+    variants: [OnceCell<Box<TextRenderer>>; 3],
 }
 
 fn coverage(bm: &freetype::Bitmap) -> Vec<u8> {
@@ -568,7 +633,7 @@ impl TextRenderer {
             regular,
             bold,
             antialias,
-            cache: RefCell::default(),
+            cache: Rc::default(),
             metrics: RefCell::default(),
             shell_dlg: None,
             line_faces: None,
@@ -582,6 +647,10 @@ impl TextRenderer {
             prescaled: false,
             for_output: std::cell::OnceCell::new(),
             own_glyphs: false,
+            emoji: OnceCell::new(),
+            ink_emoji: false,
+            pass: Pass::All,
+            variants: Default::default(),
         }
     }
 
@@ -619,18 +688,59 @@ impl TextRenderer {
     }
 
     fn prescaled_copy(&self) -> TextRenderer {
+        self.copy_with(&|t| t.prescaled = true)
+    }
+
+    /// These faces with empty caches, its second dialog font copied alike, then `set`.
+    fn copy_with(&self, set: &impl Fn(&mut TextRenderer)) -> TextRenderer {
         let mut t =
             TextRenderer::with_faces(self.regular.clone(), self.bold.clone(), self.antialias);
-        t.shell_dlg = self
-            .shell_dlg
-            .as_ref()
-            .map(|s| Box::new(s.prescaled_copy()));
+        t.shell_dlg = self.shell_dlg.as_ref().map(|s| Box::new(s.copy_with(set)));
         t.line_faces = self.line_faces.clone();
         t.lead = self.lead;
         t.config = self.config.clone();
         t.sheared = self.sheared;
-        t.prescaled = true;
+        t.prescaled = self.prescaled;
+        t.own_glyphs = self.own_glyphs;
+        t.ink_emoji = self.ink_emoji;
+        t.pass = self.pass;
+        set(&mut t);
         t
+    }
+
+    /// This renderer, sharing its glyph cache, changed by `set`; made once per `slot`.
+    fn variant(&self, slot: usize, set: impl Fn(&mut TextRenderer)) -> &TextRenderer {
+        self.variants[slot].get_or_init(|| {
+            let mut t = self.copy_with(&set);
+            t.cache = Rc::clone(&self.cache);
+            Box::new(t)
+        })
+    }
+
+    /// These faces with colour glyphs drawn as their coverage in the text's ink: greyed or etched
+    /// text, a shadow.
+    pub fn inked(&self) -> &TextRenderer {
+        match self.ink_emoji {
+            true => self,
+            false => self.variant(0, |t| t.ink_emoji = true),
+        }
+    }
+
+    /// These faces drawing only glyphs without colour: text drawn as a coverage mask, whose colour
+    /// glyphs [`TextRenderer::colour_only`] then draws over it.
+    pub fn without_colour(&self) -> &TextRenderer {
+        match self.pass {
+            Pass::Mask => self,
+            _ => self.variant(1, |t| t.pass = Pass::Mask),
+        }
+    }
+
+    /// These faces drawing only colour glyphs, where [`TextRenderer::without_colour`] left them.
+    pub fn colour_only(&self) -> &TextRenderer {
+        match self.pass {
+            Pass::Colour => self,
+            _ => self.variant(2, |t| t.pass = Pass::Colour),
+        }
     }
 
     fn set_prescaled(&mut self) {
@@ -655,6 +765,7 @@ impl TextRenderer {
                 };
                 let mut t = TextRenderer::load(&cfg);
                 t.sheared = !t.regular.as_ref().is_some_and(|f| f.italic);
+                t.ink_emoji = self.ink_emoji;
                 if self.prescaled {
                     t.set_prescaled();
                 }
@@ -711,8 +822,9 @@ impl TextRenderer {
                         top: 1,
                         advance: advance(ch),
                         smooth: false,
+                        colour: None,
                     };
-                    cache.insert((Some(ch), bold, size_px, 1), g);
+                    cache.insert((Some(Piece::Char(ch)), bold, size_px, 1), g);
                 }
             }
         }
@@ -800,6 +912,7 @@ impl TextRenderer {
             top: slot.bitmap_top(),
             advance: (slot.advance().x >> 6) as i32,
             smooth,
+            colour: None,
         };
         Some(if k > 1 {
             glyph.scaled(k as usize)
@@ -808,8 +921,6 @@ impl TextRenderer {
         })
     }
 
-    /// Run `f` with the glyph for `ch` at `size_px` on a canvas at `scale`, caching it. A char
-    /// FreeType rejects caches as [`Glyph::EMPTY`]. `None` only when there is no face.
     fn with_glyph<R>(
         &self,
         ch: char,
@@ -818,11 +929,36 @@ impl TextRenderer {
         scale: u32,
         f: impl FnOnce(&Glyph) -> R,
     ) -> Option<R> {
-        let mut key = (Some(ch), bold, size_px, scale);
+        self.with_piece(Piece::Char(ch), bold, size_px, scale, f)
+    }
+
+    /// Run `f` with the glyph for `piece` at `size_px` on a canvas at `scale`, caching it. A char
+    /// FreeType rejects caches as [`Glyph::EMPTY`]. `None` only when there is no face. A char
+    /// shown as emoji by default draws from the colour emoji face when it has it.
+    fn with_piece<R>(
+        &self,
+        piece: Piece,
+        bold: bool,
+        size_px: u32,
+        scale: u32,
+        f: impl FnOnce(&Glyph) -> R,
+    ) -> Option<R> {
+        let mut key = (Some(piece), bold, size_px, scale);
         if let Some(g) = self.cache.borrow().get(&key) {
             return Some(f(g));
         }
         let (face, strike) = self.source(bold, size_px)?;
+        let ch = match piece {
+            Piece::Char(ch) => ch,
+            Piece::Emoji(gid) => {
+                let glyph = self.colour_glyph(gid, bold, size_px, scale);
+                return Some(self.cached(key, glyph.unwrap_or(Glyph::EMPTY), f));
+            }
+        };
+        let emoji = self.emoji_char(ch);
+        if let Some(glyph) = emoji.and_then(|gid| self.colour_glyph(gid, bold, size_px, scale)) {
+            return Some(self.cached(key, glyph, f));
+        }
         let index = face.get_char_index(ch as usize);
         // A char the UI face lacks comes from a fallback face: a bitmap face in mono when
         // `antialias` is off, a strike fits and the text is drawn at scale 1, else an outline
@@ -875,13 +1011,81 @@ impl TextRenderer {
                 .unwrap_or(Glyph::EMPTY),
         };
         let glyph = if self.sheared { glyph.sheared() } else { glyph };
+        Some(self.cached(key, glyph, f))
+    }
+
+    fn cached<R>(&self, key: GlyphKey, glyph: Glyph, f: impl FnOnce(&Glyph) -> R) -> R {
         let r = f(&glyph);
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= GLYPH_CAP {
             cache.clear();
         }
         cache.insert(key, glyph);
-        Some(r)
+        r
+    }
+
+    /// The colour emoji face, when one is installed; none for a font file's own sample.
+    fn emoji_font(&self) -> Option<&EmojiFont> {
+        if self.own_glyphs {
+            return None;
+        }
+        self.emoji
+            .get_or_init(|| EmojiFont::shared().filter(|f| f.has_colour()))
+            .as_deref()
+    }
+
+    /// The emoji face's glyph for `ch` when `ch` shows as emoji by default.
+    fn emoji_char(&self, ch: char) -> Option<u32> {
+        if !crate::emoji::presents_as_emoji(ch) {
+            return None;
+        }
+        self.emoji_font()?.char_glyph(ch)
+    }
+
+    /// The emoji face's glyph `gid` as text at `size_px` on a canvas at `scale`: em-sized, shrunk
+    /// to the line's height, and moved down or up into the line when it would ink past it.
+    fn colour_glyph(&self, gid: u32, bold: bool, size_px: u32, scale: u32) -> Option<Glyph> {
+        let font = self.emoji_font()?;
+        let ppem = size_px * scale;
+        let (ascent, descent, _) = self.line_metrics(bold, ppem)?;
+        let g = font.text_glyph(gid, ppem, (ascent - descent).max(1) as u32)?;
+        if let Some(stray) = font.stray() {
+            crate::pins::stray(stray);
+        }
+        let (width, height) = (g.pixels.width as usize, g.pixels.height as usize);
+        let pixels = g.pixels.pixels;
+        Some(Glyph {
+            bitmap: pixels.iter().map(|p| (p >> 24) as u8).collect(),
+            width,
+            height,
+            left: g.left,
+            top: g.top.min(ascent).max(descent + height as i32),
+            advance: g.advance,
+            smooth: true,
+            colour: Some(pixels.into()),
+        })
+    }
+
+    /// `text` cut into the pieces its glyphs draw.
+    fn pieces<'t>(&self, text: &'t str) -> Pieces<'t, '_> {
+        Pieces {
+            r: self,
+            rest: text,
+            at: 0,
+        }
+    }
+
+    /// Whether `text` draws a colour glyph, which a coverage mask of it leaves out.
+    pub fn has_colour(&self, text: &str, bold: bool, size_px: u32) -> bool {
+        text.chars().any(crate::emoji::may_draw_in_colour)
+            && self.pieces(text).any(|(_, _, p)| {
+                self.with_piece(p, bold, size_px, 1, |g| g.colour.is_some()) == Some(true)
+            })
+    }
+
+    fn piece_advance(&self, piece: Piece, bold: bool, size_px: u32) -> i32 {
+        self.with_piece(piece, bold, size_px, 1, |g| g.advance)
+            .unwrap_or(0)
     }
 
     /// The face that draws `ch`, which the UI face lacks: the block's previous face if it has it,
@@ -942,18 +1146,20 @@ impl TextRenderer {
     }
 
     pub fn measure(&self, text: &str, bold: bool, size_px: u32) -> i32 {
-        text.chars().map(|ch| self.advance(ch, bold, size_px)).sum()
+        self.pieces(text)
+            .map(|(_, _, p)| self.piece_advance(p, bold, size_px))
+            .sum()
     }
 
     /// How many px `text`'s first glyph inks left of the pen at scale 1 (DejaVu Sans' J hooks
     /// left); 0 when its ink starts at the pen or after. At scale 2 [`TextRenderer::draw_run`]
     /// keeps a glyph's extra overhang inside its line.
     pub fn ink_before(&self, text: &str, bold: bool, size_px: u32) -> i32 {
-        let Some(first) = text.chars().next() else {
+        let Some((_, _, first)) = self.pieces(text).next() else {
             return 0;
         };
         let left = self
-            .with_glyph(first, bold, size_px, 1, |g| g.ink_span())
+            .with_piece(first, bold, size_px, 1, |g| g.ink_span())
             .flatten()
             .map_or(0, |(l, _)| l);
         (-left).max(0)
@@ -962,12 +1168,13 @@ impl TextRenderer {
     /// How far right of the pen `text`'s ink reaches: [`TextRenderer::measure`] less the last
     /// glyph's blank columns after its ink (a space's whole advance).
     pub fn ink_width(&self, text: &str, bold: bool, size_px: u32) -> i32 {
-        let Some(last) = text.chars().next_back() else {
+        let Some((_, _, last)) = self.pieces(text).last() else {
             return 0;
         };
-        let pen = self.measure(text, bold, size_px) - self.advance(last, bold, size_px);
+        let advance = self.piece_advance(last, bold, size_px);
+        let pen = self.measure(text, bold, size_px) - advance;
         let ink = self
-            .with_glyph(last, bold, size_px, 1, |g| {
+            .with_piece(last, bold, size_px, 1, |g| {
                 if g.width == 0 {
                     0
                 } else {
@@ -975,7 +1182,7 @@ impl TextRenderer {
                 }
             })
             .unwrap_or(0);
-        pen + ink.min(self.advance(last, bold, size_px))
+        pen + ink.min(advance)
     }
 
     pub fn advance(&self, ch: char, bold: bool, size_px: u32) -> i32 {
@@ -1014,8 +1221,8 @@ impl TextRenderer {
         };
         let s = scale.max(1);
         let (mut above, mut below) = (0, 0);
-        for ch in text.chars() {
-            let rows = self.with_glyph(ch, bold, size_px, s as u32, |g| {
+        for (_, _, piece) in self.pieces(text) {
+            let rows = self.with_piece(piece, bold, size_px, s as u32, |g| {
                 g.ink_rows()
                     .map(|(t, b)| (baseline * s - g.top + t, baseline * s - g.top + b))
             });
@@ -1045,14 +1252,14 @@ impl TextRenderer {
         bold: bool,
         size_px: u32,
     ) -> (i32, i32, i32) {
-        let mut hit = None;
-        let mut total = 0;
-        for (i, ch) in text.chars().enumerate() {
-            let adv = self.advance(ch, bold, size_px);
-            if i == idx {
+        let (mut hit, mut total, mut i) = (None, 0, 0);
+        for (_, s, piece) in self.pieces(text) {
+            let adv = self.piece_advance(piece, bold, size_px);
+            let n = s.chars().count();
+            if (i..i + n).contains(&idx) {
                 hit = Some((total, adv));
             }
-            total += adv;
+            (total, i) = (total + adv, i + n);
         }
         let (x, w) = hit.unwrap_or((total, 0));
         (x, w, total)
@@ -1075,17 +1282,16 @@ impl TextRenderer {
             let dot = self.advance('.', bold, size_px).max(1);
             return ".".repeat((width / dot).clamp(0, 3) as usize).into();
         }
-        let mut kept = String::new();
-        let mut used = 0;
-        for ch in text.chars() {
-            let adv = self.advance(ch, bold, size_px);
+        let (mut used, mut end) = (0, 0);
+        for (at, s, piece) in self.pieces(text) {
+            let adv = self.piece_advance(piece, bold, size_px);
             if used + adv + dots > width {
                 break;
             }
             used += adv;
-            kept.push(ch);
+            end = at + s.len();
         }
-        let trimmed = kept.trim_end();
+        let trimmed = text[..end].trim_end();
         format!("{trimmed}...").into()
     }
 
@@ -1112,24 +1318,25 @@ impl TextRenderer {
         let (head, tail) = text.split_at(at);
         let room = width - dots - self.measure(tail, bold, size_px);
         let (mut used, mut end) = (0, 0);
-        for (i, ch) in head.char_indices() {
-            used += self.advance(ch, bold, size_px);
+        for (at, s, piece) in self.pieces(head) {
+            used += self.piece_advance(piece, bold, size_px);
             if used > room {
                 break;
             }
-            end = i + ch.len_utf8();
+            end = at + s.len();
         }
         let start = head[..end].trim_end_matches(['.', ' ']);
         if !start.is_empty() {
             return format!("{start}...{tail}").into();
         }
         let (mut used, mut from) = (dots, text.len());
-        for (i, ch) in text.char_indices().rev() {
-            used += self.advance(ch, bold, size_px);
+        let pieces: Vec<_> = self.pieces(text).collect();
+        for &(at, _, piece) in pieces.iter().rev() {
+            used += self.piece_advance(piece, bold, size_px);
             if used > width {
                 break;
             }
-            from = i;
+            from = at;
         }
         format!("...{}", text[from..].trim_start()).into()
     }
@@ -1268,26 +1475,24 @@ impl TextRenderer {
         let start = align.pen(r, total) + lead;
         self.draw_run(c, start, baseline, r, &plain, bold, color, px);
         let cs = c.scale();
-        let nudge = plain
-            .chars()
-            .nth(m)
-            .filter(|_| cs > 1)
-            .map_or(0, |ch| self.nudge(ch, bold, px, cs, start + dx, r));
+        let nudge = plain.chars().nth(m).filter(|_| cs > 1).map_or(0, |ch| {
+            self.nudge(Piece::Char(ch), bold, px, cs, start + dx, r)
+        });
         let ul = Rect::new(start + dx, baseline + s, w, s).scaled(cs);
         let ul = Rect::new(ul.x + nudge, ul.y, ul.width, ul.height);
         c.in_device_px(|c| c.fill_rect(ul.intersect(&r.scaled(cs)), color));
     }
 
     /// How far [`TextRenderer::draw_run`] moves `ch` drawn at scale `s` from pen x `pen` in `line`.
-    fn nudge(&self, ch: char, bold: bool, size_px: u32, s: i32, pen: i32, line: Rect) -> i32 {
+    fn nudge(&self, p: Piece, bold: bool, size_px: u32, s: i32, pen: i32, line: Rect) -> i32 {
         let scaled = s as u32;
-        if self.with_glyph(ch, bold, size_px, scaled, |g| g.boxed_in(pen, s, line)) != Some(false) {
+        if self.with_piece(p, bold, size_px, scaled, |g| g.boxed_in(pen, s, line)) != Some(false) {
             return 0;
         }
         let one = self
-            .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
+            .with_piece(p, bold, size_px, 1, |g| g.ink_span())
             .flatten();
-        self.with_glyph(ch, bold, size_px, scaled, |g| {
+        self.with_piece(p, bold, size_px, scaled, |g| {
             g.nudge_into(one, pen, s, line)
         })
         .unwrap_or(0)
@@ -1347,20 +1552,20 @@ impl TextRenderer {
             Some(a.map_or((l, r), |(al, ar)| (al.min(l), ar.max(r))))
         };
         let (mut one, mut ink, mut rows, mut at) = (None, None, None, h.pen);
-        for ch in h.text.chars() {
+        for (_, _, p) in self.pieces(h.text) {
             if let Some((l, r)) = self
-                .with_glyph(ch, bold, size_px, 1, |g| g.ink_span())
+                .with_piece(p, bold, size_px, 1, |g| g.ink_span())
                 .flatten()
             {
                 one = join(one, (at + l, at + r));
             }
             let nudge = if s > 1 {
-                self.nudge(ch, bold, size_px, s, at, line)
+                self.nudge(p, bold, size_px, s, at, line)
             } else {
                 0
             };
             let dx = s * at + nudge;
-            let drawn = self.with_glyph(ch, bold, size_px, s as u32, |g| {
+            let drawn = self.with_piece(p, bold, size_px, s as u32, |g| {
                 let top = |(t, b): (i32, i32)| (t - g.top, b - g.top);
                 (g.drawn_span(), g.drawn_rows().map(top))
             });
@@ -1372,27 +1577,26 @@ impl TextRenderer {
                     rows = join(rows, r);
                 }
             }
-            at += self.advance(ch, bold, size_px);
+            at += self.piece_advance(p, bold, size_px);
         }
-        let drawn = |ch: char, at: i32| {
+        let drawn = |p: Piece, at: i32| {
             let nudge = if s > 1 {
-                self.nudge(ch, bold, size_px, s, at, line)
+                self.nudge(p, bold, size_px, s, at, line)
             } else {
                 0
             };
-            self.with_glyph(ch, bold, size_px, s as u32, |g| g.drawn_span())
+            self.with_piece(p, bold, size_px, s as u32, |g| g.drawn_span())
                 .flatten()
                 .map(|(l, r)| (s * at + nudge + l, s * at + nudge + r))
         };
-        let before = text[..a].chars().next_back();
+        let before = self.pieces(&text[..a]).last().map(|(_, _, p)| p);
         h.beside = (
             before
-                .and_then(|ch| drawn(ch, h.pen - self.advance(ch, bold, size_px)))
+                .and_then(|p| drawn(p, h.pen - self.piece_advance(p, bold, size_px)))
                 .map(|(_, r)| r),
-            text[b..]
-                .chars()
+            self.pieces(&text[b..])
                 .next()
-                .and_then(|ch| drawn(ch, at))
+                .and_then(|(_, _, p)| drawn(p, at))
                 .map(|(l, _)| l),
         );
         if let (Some(base), Some((t, b))) = (h.baseline, rows) {
@@ -1450,7 +1654,8 @@ impl TextRenderer {
         for strip in ring.map(|strip| strip.intersect(&clip)) {
             if !strip.is_empty() {
                 let (bold, px) = (h.bold, h.size_px);
-                self.draw_line(c, h.pen, baseline, strip, h.line, h.text, bold, color, px);
+                let (line, text) = (h.line, h.text);
+                self.draw_line(c, h.pen, baseline, strip, line, text, bold, color, px);
             }
         }
     }
@@ -1478,7 +1683,7 @@ impl TextRenderer {
 
     /// [`TextRenderer::draw_run`] clipped to `clip`, with glyphs kept inside `line`, the rect the
     /// text was laid in, and ink outside it noted for [`crate::pins::clipped_ink`]. Draws that share
-    /// `line` place every glyph alike whatever their clips.
+    /// `line` place every glyph alike whatever their clips. Whether it left a colour glyph out.
     #[expect(clippy::too_many_arguments)]
     fn draw_line(
         &self,
@@ -1491,25 +1696,41 @@ impl TextRenderer {
         bold: bool,
         color: Color,
         size_px: u32,
-    ) {
+    ) -> bool {
+        let pass = self.pass;
+        if pass == Pass::Colour && !text.chars().any(crate::emoji::may_draw_in_colour) {
+            return false;
+        }
         let s = canvas.scale();
-        let watch = crate::pins::watching_clips().then(|| line.scaled(s));
-        let mut cut = (0, 0);
-        for ch in text.chars() {
-            let logical = (s > 1).then(|| self.advance(ch, bold, size_px));
+        let watch = crate::pins::watching_clips()
+            .then(|| line.scaled(s))
+            .filter(|_| pass != Pass::Colour);
+        let (mut cut, mut left_out) = ((0, 0), false);
+        for (_, _, p) in self.pieces(text) {
+            let logical = (s > 1).then(|| self.piece_advance(p, bold, size_px));
             let nudge = if s > 1 {
-                self.nudge(ch, bold, size_px, s, pen, line)
+                self.nudge(p, bold, size_px, s, pen, line)
             } else {
                 0
             };
-            let drawn = self.with_glyph(ch, bold, size_px, s as u32, |g| {
+            let drawn = self.with_piece(p, bold, size_px, s as u32, |g| {
                 let gx = pen * s + g.left + nudge;
                 let gy = baseline * s - g.top;
                 if let Some(keep) = watch {
                     let (rows, cols) = g.ink_cut(gx, gy, keep);
                     cut = (cut.0 + rows, cut.1 + cols);
                 }
-                canvas.blit_mask(gx, gy, g.width, g.height, &g.bitmap, color, g.smooth, clip);
+                let (w, h) = (g.width, g.height);
+                match (g.colour.as_deref().filter(|_| !self.ink_emoji), pass) {
+                    (Some(px), Pass::All | Pass::Colour) => {
+                        canvas.blit_pixels_over(gx, gy, w, h, px, clip);
+                    }
+                    (Some(_), Pass::Mask) => left_out = true,
+                    (None, Pass::All | Pass::Mask) => {
+                        canvas.blit_mask(gx, gy, w, h, &g.bitmap, color, g.smooth, clip);
+                    }
+                    (None, Pass::Colour) => {}
+                }
                 g.advance
             });
             pen += logical.or(drawn).unwrap_or(0);
@@ -1523,6 +1744,7 @@ impl TextRenderer {
                 cols: cut.1,
             });
         }
+        left_out
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -1542,17 +1764,11 @@ impl TextRenderer {
         }
         let local = Rect::new(0, 0, clip.width, clip.height);
         let ink = Canvas::new(clip.width as u32, clip.height as u32);
+        let mut colour = false;
         let coverage = ink.ink_coverage(|c, white| {
-            self.draw_run(
-                c,
-                pen - clip.x,
-                baseline - clip.y,
-                local,
-                text,
-                bold,
-                white,
-                size_px,
-            );
+            let (x, y) = (pen - clip.x, baseline - clip.y);
+            let mask = self.without_colour();
+            colour = mask.draw_line(c, x, y, local, local, text, bold, white, size_px);
         });
         let all = canvas.bounds();
         canvas.blit_mask_over(
@@ -1564,5 +1780,11 @@ impl TextRenderer {
             color,
             all,
         );
+        if colour {
+            let colour = self.colour_only();
+            colour.draw_line(
+                canvas, pen, baseline, clip, clip, text, bold, color, size_px,
+            );
+        }
     }
 }

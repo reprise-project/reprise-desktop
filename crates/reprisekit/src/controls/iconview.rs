@@ -631,7 +631,8 @@ pub fn draw_cell_at(
         if let Some(ink) = shadow {
             let off = LABEL_SHADOW * s;
             let under = Rect::new(r.x + off, r.y + off, r.width, r.height);
-            text.draw(c, under, &line.text, false, ink, Align::Left, font);
+            text.inked()
+                .draw(c, under, &line.text, false, ink, Align::Left, font);
         }
         text.draw(c, r, &line.text, false, fg, Align::Left, font);
     }

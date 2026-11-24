@@ -25,8 +25,8 @@ fontconfig-parser = "0.5"
 freetype-rs = "0.38"
 # The fallback face for a char the UI face lacks (e.g. CJK).
 yeslogic-fontconfig-sys = "6"
-# Which chars the fallback lookup skips.
-unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+# Which chars the fallback lookup skips, and which draw from the colour emoji face.
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category", "emoji"] }
 # Grapheme clusters, so the caret and Delete never split one.
 unicode-segmentation = "1"
 unicode-blocks = "0.1"

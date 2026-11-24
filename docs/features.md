@@ -196,6 +196,10 @@ shake, the dim, the hidden frame rate and window memory.
   quits. Clipboard managers and middle-click paste work.
 - **Emoji picker.** Super+. opens a grid of emoji at the caret. Search by
   name or shortcode; Enter types it. It wants a colour emoji font.
+- **Colour emoji in text.** Emoji draw in colour from that font wherever
+  Reprise draws text: titles, the taskbar, Notepad, Terminal and every field.
+  Skin tones, families, flags and keycaps draw as one emoji. Greyed labels
+  and menu items draw an emoji in their grey.
 - **Path completion.** Typing a path in Run, Explorer's address bar or a file
   dialog completes it inline and lists the matches.
 - **Pastes keep their place.** In Reprise's programs, keys and clicks after

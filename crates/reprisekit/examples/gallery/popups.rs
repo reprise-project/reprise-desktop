@@ -406,15 +406,19 @@ pub fn render_glass_flyouts(theme: &Theme) -> Canvas {
         20,
         &notifyhistory::draw(theme, &text, &notifyhistory::sample()),
     );
-    let rows = ["cargo build --release", "Image, 1920x1080", "hello world"]
-        .into_iter()
-        .enumerate()
-        .map(|(i, label)| Row {
-            id: i as u64,
-            label: label.into(),
-            icon: None,
-        })
-        .collect();
+    let rows = [
+        "cargo build --release",
+        "Image, 1920x1080",
+        "hello world 👋🏽",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, label)| Row {
+        id: i as u64,
+        label: label.into(),
+        icon: None,
+    })
+    .collect();
     let clip = ClipHistory::new(rows);
     at(
         &mut c,

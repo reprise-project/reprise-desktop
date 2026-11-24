@@ -228,7 +228,7 @@ fn in_dir(path: &Path, dir: &Path) -> bool {
 
 /// Under `REPRISE_TEST_FONTS`, a note naming `family` at `path` and what asked for it when the
 /// face is outside the test set: that directory and DejaVu, CI's one system font.
-pub(super) fn stray_note(
+pub(crate) fn stray_note(
     path: &Path,
     family: &str,
     requested: impl FnOnce() -> String,

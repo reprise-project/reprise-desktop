@@ -1289,6 +1289,7 @@ fn inked(
     }
     let local = Rect::new(0, 0, area.width, area.height);
     let cov = Canvas::new(area.width as u32, area.height as u32).ink_coverage(|cc, white| {
+        let text = text.inked();
         text.draw_run(cc, m, baseline - area.y, local, words, false, white, px);
     });
     ink_mask(c, area, &cov, color, s);

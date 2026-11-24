@@ -105,7 +105,7 @@ pub fn draw_disabled_label(
         let ink = st
             .text_color(part, State::Disabled)
             .unwrap_or(p.cs.gray_text);
-        classic::widgets::draw_label(c, text, r, label, false, ink, align, px, p.s);
+        classic::widgets::draw_label(c, text.inked(), r, label, false, ink, align, px, p.s);
         return;
     }
     classic::widgets::draw_disabled_label(c, text, p, r, label, align, px)

@@ -287,18 +287,23 @@ pub(super) fn draw_title(
     let (mw, mh) = ((w + 2 * reach) as usize, band.height as usize);
     let scratch = Canvas::new(mw as u32, mh as u32);
     let clip = scratch.bounds();
-    let coverage = scratch.ink_coverage(|c, white| {
-        text.draw_run(
-            c,
-            reach,
-            baseline - band.y,
-            clip,
-            &title,
-            spec.bold,
-            white,
-            size,
-        );
-    });
+    let mask = |text: &TextRenderer| {
+        scratch.clone().ink_coverage(|c, white| {
+            text.draw_run(
+                c,
+                reach,
+                baseline - band.y,
+                clip,
+                &title,
+                spec.bold,
+                white,
+                size,
+            );
+        })
+    };
+    let colour = text.has_colour(&title, spec.bold, size);
+    let coverage = mask(text.inked());
+    let ink = colour.then(|| mask(text.without_colour()));
     let (mx, my) = (x - reach, band.y);
     if let Some(glow) = glow {
         let alpha = (glow.alpha)(&GlowMask {
@@ -311,7 +316,15 @@ pub(super) fn draw_title(
         });
         canvas.blit_mask_over(mx, my, mw, mh, &alpha, glow.color, glass);
     }
-    canvas.blit_mask_over(mx, my, mw, mh, &coverage, spec.color, glass);
+    let ink = ink.as_ref().unwrap_or(&coverage);
+    canvas.blit_mask_over(mx, my, mw, mh, ink, spec.color, glass);
+    if colour {
+        let clip = Rect::new(mx, my, mw as i32, mh as i32).intersect(&glass);
+        let colour = text.colour_only();
+        colour.draw_run(
+            canvas, x, baseline, clip, &title, spec.bold, spec.color, size,
+        );
+    }
 }
 
 /// Draw the icons of the pictured cells into `canvas` (`layout.canvas()` size,

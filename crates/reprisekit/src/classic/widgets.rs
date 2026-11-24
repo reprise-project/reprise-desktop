@@ -47,6 +47,7 @@ pub fn draw_disabled_label(
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
+    let text = text.inked();
     let shifted = Rect::new(r.x + s, r.y + s, r.width, r.height);
     draw_label(
         c,
