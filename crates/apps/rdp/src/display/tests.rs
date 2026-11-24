@@ -658,6 +658,7 @@ pub(super) fn picture(working: &[Backend]) -> Arc<Picture> {
         working: (working.iter())
             .map(|&b| (b, vec![DRM_FORMAT_MOD_LINEAR]))
             .collect(),
+        cpu: vec![DRM_FORMAT_MOD_LINEAR],
     })
 }
 
@@ -965,6 +966,7 @@ async fn a_va_error_on_a_tiled_frame_goes_on_with_x264_once_the_stream_is_linear
             (VAAPI, vec![DRM_FORMAT_MOD_LINEAR, Y_TILED]),
             (Backend::Software, vec![DRM_FORMAT_MOD_LINEAR]),
         ],
+        cpu: vec![DRM_FORMAT_MOD_LINEAR],
     });
     c.live.choose(EncoderChoice::Auto);
     code(&mut c.live, dmabuf(Y_TILED)).await;
@@ -1009,6 +1011,28 @@ async fn a_shared_memory_frame_waits_on_a_gpu_encoder() {
     assert!(!c.live.busy, "VA-API is not handed shared memory");
     code(&mut c.live, dmabuf(DRM_FORMAT_MOD_LINEAR)).await;
     assert_eq!(*c.coded.lock().unwrap(), [(VAAPI, true, 25)]);
+}
+
+#[tokio::test]
+async fn x264_takes_shared_memory_only_where_the_cpu_reads_no_dma_buf() {
+    let mut c = coding_on(&[Backend::Software], ready_gfx(), None);
+    c.live.h264.as_mut().unwrap().picture = Arc::new(Picture {
+        device: PathBuf::from("/dev/null"),
+        working: vec![(Backend::Software, Vec::new())],
+        cpu: Vec::new(),
+    });
+    c.live.choose(EncoderChoice::Auto);
+    assert_eq!(c.live.using, Some(Backend::Software));
+    assert_eq!(
+        c.live.h264.as_ref().unwrap().modifiers,
+        [0u64; 0],
+        "the stream is offered no dma-buf"
+    );
+    c.live.take(dmabuf(DRM_FORMAT_MOD_LINEAR));
+    c.live.start(Instant::now());
+    assert!(!c.live.busy, "x264 is not handed a LINEAR dma-buf");
+    code(&mut c.live, frame((4, 2), SMALL)).await;
+    assert_eq!(*c.coded.lock().unwrap(), [(Backend::Software, true, 25)]);
 }
 
 /// A LINEAR frame whose rows are `stride` bytes apart.
@@ -1309,7 +1333,7 @@ async fn the_encoder_label_is_reset_when_the_last_connection_ends() {
     assert_eq!(status.borrow().encoder, "Software H.264");
 }
 #[test]
-fn h264_offers_the_tiled_modifiers_or_else_linear() {
+fn h264_offers_the_tiled_modifiers_or_else_what_imports() {
     const X_TILED: u64 = 0x0100_0000_0000_0001;
     assert_eq!(
         h264_modifiers(&[DRM_FORMAT_MOD_LINEAR, X_TILED, Y_TILED]),
@@ -1319,6 +1343,11 @@ fn h264_offers_the_tiled_modifiers_or_else_linear() {
         h264_modifiers(&[DRM_FORMAT_MOD_LINEAR]),
         vec![DRM_FORMAT_MOD_LINEAR],
         "LINEAR when nothing tiled imports"
+    );
+    assert_eq!(
+        h264_modifiers(&[]),
+        Vec::<u64>::new(),
+        "none when only shared memory reads"
     );
 }
 
