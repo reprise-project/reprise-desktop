@@ -1076,6 +1076,28 @@ fn a_toplevel_that_takes_back_its_maximize_before_mapping_is_left_its_own_size()
     assert_eq!(c.side.shells[t.shell].asked(), (0, 0));
 }
 
+#[test]
+fn a_fixed_size_toplevel_asking_to_open_maximized_is_refused_and_sized_to_its_fixed_size() {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as Xdg;
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let t = h.open_toplevel(&mut c, "fixed", |t| {
+        t.set_min_size(300, 200);
+        t.set_max_size(300, 200);
+        t.set_maximized();
+    });
+    assert_eq!(c.side.shells[t.shell].asked(), (300, 200));
+    let xdg = h
+        .state
+        .win(t.id)
+        .and_then(|w| w.xdg())
+        .expect("an xdg toplevel");
+    assert!(
+        !xdg.with_pending_state(|s| s.states.contains(Xdg::Maximized)),
+        "the configure does not say maximized"
+    );
+}
+
 /// A toplevel that asked for a state before its initial commit, mapped at the size its first
 /// configure asked for, then taking the state back with `undo`; the size it is asked for after.
 fn restored_after_asking(

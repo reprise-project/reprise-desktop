@@ -374,6 +374,10 @@ impl State {
                     Some(WindowState::Maximized) if resizable => {
                         s.states.set(xdg_toplevel::State::Maximized);
                     }
+                    // Refused as `set_maximized` refuses it once mapped.
+                    Some(WindowState::Maximized) => {
+                        s.states.unset(xdg_toplevel::State::Maximized);
+                    }
                     _ => {}
                 }
                 if let Some((cw, ch)) = size {
