@@ -47,6 +47,7 @@ pub mod pathjob;
 mod pool;
 mod primary;
 pub mod recent;
+mod reopen;
 mod reply;
 mod runloop;
 mod sizing;
@@ -198,6 +199,8 @@ struct Slot {
     tip: Option<reprisekit::raster::Rect>,
     /// A form in the window waits to show a label tip, which counts caret blinks.
     tip_waits: bool,
+    /// The [`Extended::reopen`] argument last sent for it.
+    reopen: Option<String>,
 }
 
 impl Slot {
@@ -329,6 +332,7 @@ struct Host {
     effects: Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
     tab_groups: Option<reprise_tabs_v1::RepriseTabsV1>,
     on_top_manager: Option<ontop::reprise_on_top_v1::RepriseOnTopV1>,
+    reopen_manager: Option<reopen::reprise_reopen_v1::RepriseReopenV1>,
     /// Whether the compositor keeps the main window on top, as last asked or heard.
     on_top: bool,
     outputs: Option<outputmgmt::Outputs>,

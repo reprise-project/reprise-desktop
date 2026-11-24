@@ -462,6 +462,12 @@ impl App for Notepad {
 }
 
 impl Extended for Notepad {
+    /// The file the window shows; an Untitled one starts again empty.
+    fn reopen(&self, win: WinId) -> Option<String> {
+        let path = std::path::absolute(self.path.as_ref().filter(|_| win == MAIN)?).ok()?;
+        path.to_str().map(String::from)
+    }
+
     fn emergency(&mut self) {
         self.rescue();
     }

@@ -2057,6 +2057,18 @@ impl App for Lazy {
 }
 
 impl repriseapp::Extended for Lazy {
+    /// The folder window's place; a file job or sheet started alone has none.
+    fn reopen(&self, win: WinId) -> Option<String> {
+        if win != MAIN || self.start.alone.is_some() {
+            return None;
+        }
+        reopen_arg(
+            self.inner
+                .as_ref()
+                .map_or(&self.start.place, |ex| &ex.place),
+        )
+    }
+
     fn hidden(&self) -> bool {
         self.start.alone.is_some() || self.inner.as_ref().is_some_and(|ex| ex.closing)
     }
@@ -2361,6 +2373,17 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         connect: None,
         alone: None,
         search: false,
+    }
+}
+
+/// The PLACE [`parse_args`] opens `p` again from: a network server opens the Network list, as
+/// connecting at login could ask for a password. None for a folder whose path is not UTF-8.
+fn reopen_arg(p: &Place) -> Option<String> {
+    match p {
+        Place::Computer => Some("Computer".into()),
+        Place::RecycleBin => Some("Recycle Bin".into()),
+        Place::Network(_) => Some("Network".into()),
+        _ => p.path()?.into_os_string().into_string().ok(),
     }
 }
 

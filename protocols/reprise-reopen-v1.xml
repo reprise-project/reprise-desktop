@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="reprise_reopen_v1">
+  <copyright>
+    reprise private protocol: what a program's window starts again with at session restore.
+  </copyright>
+
+  <interface name="reprise_reopen_v1" version="1">
+    <description summary="name the argument that opens a toplevel again">
+      One global. A program names, for each of its toplevels, the one
+      command-line argument that opens that window again as it is now: a
+      file, a folder, a page. Session restore keeps it with the session and,
+      at the next login, starts the program's desktop entry once per
+      argument its windows named, the argument in place of the entry's file
+      field code, or after its command line when it has none.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Arguments already named stand.
+      </description>
+    </request>
+
+    <request name="set">
+      <description summary="name toplevel's argument, or none">
+        Asked before toplevel maps, it holds from the map on. Null, an empty
+        string or one holding a control character names none, and the
+        window starts again as the entry starts with no file. Ignored when
+        toplevel belongs to another client.
+      </description>
+      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
+      <arg name="argument" type="string" allow-null="true"/>
+    </request>
+  </interface>
+</protocol>

@@ -91,6 +91,21 @@ fn the_page_argument_names_a_page_or_a_program() {
 }
 
 #[test]
+fn the_sheet_reopens_on_the_page_it_shows() {
+    use repriseapp::Extended;
+    let mut a = app("reopen-page");
+    for page in Page::all() {
+        a.sheet.tabs.open = page.index();
+        let arg = a.reopen(MAIN).unwrap();
+        assert_eq!(
+            page_arg(std::iter::once(arg)).map(|a| a.0),
+            Some(Entry::Page(page))
+        );
+    }
+    assert_eq!(a.reopen(WinId::named("add")), None, "only the sheet");
+}
+
+#[test]
 fn focus_on_a_control_that_left_power_opens_its_page() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string())).map(|a| a.0);
     assert_eq!(

@@ -52,6 +52,9 @@ Such a program can bind every global Reprise offers, including these:
   likes.
 - **On top** (`reprise_on_top_v1`): keeps one of the program's windows
   above the others, below a [consent prompt](#consent-prompts).
+- **Reopen** (`reprise_reopen_v1`): names an argument the desktop entry
+  matching a window's app id starts with at the next login's session
+  restore. That is no more than an autostart file the program could write.
 
 These are the protocols panels, lockers, clipboard managers, screenshot
 tools and input methods are built on; [protocols.md](protocols.md) lists the

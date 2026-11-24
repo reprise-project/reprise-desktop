@@ -1288,6 +1288,23 @@ pub fn open_args_argv(
     Ok(wrap(entry, terminal, argv))
 }
 
+/// The argument vector that starts `entry` with `arg`, a window's session-restore argument: in
+/// the first file code, else after the command line; refused as [`open_argv`] refuses.
+pub fn reopen_argv(
+    entry: &AppEntry,
+    terminal: &str,
+    arg: &str,
+) -> Result<Vec<OsString>, ExecRefused> {
+    refuse_quoted_codes(entry)?;
+    let mut arg = Some(OsString::from(arg));
+    let mut argv = split_exec(&entry.exec_line, |code| match code {
+        'f' | 'F' | 'u' | 'U' => arg.take().into_iter().collect(),
+        _ => entry_field(entry, code),
+    });
+    argv.extend(arg);
+    Ok(wrap(entry, terminal, argv))
+}
+
 /// The argument vector that starts `entry` with no file; refused as [`open_argv`] refuses.
 pub fn launch_argv(entry: &AppEntry, terminal: &str) -> Result<Vec<OsString>, ExecRefused> {
     refuse_quoted_codes(entry)?;

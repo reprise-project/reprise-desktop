@@ -1139,6 +1139,16 @@ impl TestClient {
             .bind(name, 1, &self.qh(), ())
     }
 
+    pub fn bind_reopen(&self) -> reopen_client::reprise_reopen_v1::RepriseReopenV1 {
+        let name = (self.side.globals.iter())
+            .find(|(_, i, _)| i == "reprise_reopen_v1")
+            .map(|(n, _, _)| *n)
+            .expect("reprise_reopen_v1 is advertised");
+        (self.side.registry.as_ref())
+            .expect("wl_registry")
+            .bind(name, 1, &self.qh(), ())
+    }
+
     /// Bind `reprise_input_v1` v5 and watch the sandboxed apps with a window, as the portal
     /// does; the events land in [`ClientSide::sandboxed`].
     pub fn watch_sandboxed(&self) -> input_client::reprise_sandboxed_v1::RepriseSandboxedV1 {
@@ -2023,6 +2033,20 @@ impl wc::Dispatch<on_top_client::reprise_on_top_v1::RepriseOnTopV1, ()> for Clie
         st.on_top.push(on_top != 0);
     }
 }
+
+pub mod reopen_client {
+    pub mod __interfaces {
+        use wayland_client::backend as wayland_backend;
+        use wayland_protocols::xdg::shell::client::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/reprise-reopen-v1.xml");
+    }
+    use self::__interfaces::*;
+    use wayland_client;
+    use wayland_protocols::xdg::shell::client::*;
+    wayland_scanner::generate_client_code!("protocols/reprise-reopen-v1.xml");
+}
+
+wc::delegate_noop!(ClientSide: ignore reopen_client::reprise_reopen_v1::RepriseReopenV1);
 
 impl wc::Dispatch<input_client::reprise_sandboxed_v1::RepriseSandboxedV1, ()> for ClientSide {
     fn event(

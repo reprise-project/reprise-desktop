@@ -2634,3 +2634,18 @@ fn an_alt_letter_no_menu_title_owns_types_nothing() {
     np.event(MAIN, letter('q', false), &mut ctx);
     assert_eq!(np.edit.text(), "q");
 }
+
+#[test]
+fn a_window_reopens_with_its_files_absolute_path_and_an_untitled_one_with_none() {
+    assert_eq!(Notepad::new(None).reopen(MAIN), None);
+    let mut np = Notepad::new(None);
+    np.path = Some(PathBuf::from("/d/a b.txt"));
+    assert_eq!(np.reopen(MAIN).as_deref(), Some("/d/a b.txt"));
+    np.path = Some(PathBuf::from("notes.txt"));
+    let cwd = std::env::current_dir().unwrap();
+    assert_eq!(
+        np.reopen(MAIN),
+        cwd.join("notes.txt").to_str().map(String::from)
+    );
+    assert_eq!(np.reopen(ABOUT), None, "only the main window");
+}

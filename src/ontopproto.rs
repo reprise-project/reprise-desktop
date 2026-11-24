@@ -97,7 +97,7 @@ impl Dispatch2<RepriseOnTopV1, State> for OnTopData {
 }
 
 impl State {
-    fn window_of_toplevel(&self, t: &XdgToplevel) -> Option<WindowId> {
+    pub(crate) fn window_of_toplevel(&self, t: &XdgToplevel) -> Option<WindowId> {
         self.windows
             .iter()
             .find(|w| w.xdg().is_some_and(|x| x.xdg_toplevel() == t))

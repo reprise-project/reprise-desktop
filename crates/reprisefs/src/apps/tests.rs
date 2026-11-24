@@ -488,6 +488,37 @@ fn open_args_argv_puts_the_arguments_in_the_first_file_slot() {
 }
 
 #[test]
+fn reopen_argv_puts_the_argument_in_the_file_slot_else_after_the_command() {
+    let entry = |exec: &str, terminal: bool| {
+        let text = format!(
+            "[Desktop Entry]\nType=Application\nName=x\nExec={exec}\nTerminal={terminal}\n"
+        );
+        parse_desktop(&text, &"x.desktop".parse().unwrap()).unwrap()
+    };
+    let reopen = |exec, terminal, arg| -> Vec<String> {
+        reopen_argv(&entry(exec, terminal), "foot", arg)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect()
+    };
+    assert_eq!(
+        reopen("reprise-notepad %f --x", false, "/d/a b.txt"),
+        ["reprise-notepad", "/d/a b.txt", "--x"]
+    );
+    assert_eq!(
+        reopen("reprise-settings", false, "--page=power"),
+        ["reprise-settings", "--page=power"]
+    );
+    assert_eq!(
+        reopen("top %i", true, "-d1"),
+        ["foot", "-e", "top", "-d1"],
+        "inside the terminal's command"
+    );
+    assert!(reopen_argv(&entry("ed \"%f\"", false), "", "/a").is_err());
+}
+
+#[test]
 fn parses_icon_and_startup_wm_class() {
     let e = parse_desktop(FIREFOX, &"firefox.desktop".parse().unwrap()).unwrap();
     assert_eq!(e.icon.as_deref(), Some("firefox"));

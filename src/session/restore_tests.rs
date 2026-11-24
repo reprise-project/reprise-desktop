@@ -211,3 +211,85 @@ fn a_snap_group_whose_monitor_is_gone_opens_its_windows_unsnapped() {
     assert!(h.state.wm.snap.group_of(right).is_none());
     assert!(h.state.win(left).unwrap().snapped.is_none());
 }
+
+#[test]
+fn windows_that_name_their_argument_each_start_their_program_with_it() {
+    let (mut h, mut c) = desk();
+    let reopen = c.bind_reopen();
+    for arg in ["/d/a.txt", "/d/b.txt"] {
+        h.map_toplevel_after(&mut c, "foot", 500, 400, |h, c, t| {
+            reopen.set(&c.side.shells[t.shell].toplevel, Some(arg.into()));
+            h.roundtrip(c);
+        });
+    }
+    foot(&mut h, &mut c, "untitled");
+    let (apps, ..) = saved(&mut h);
+    let entry = &h.state.app_index[0];
+    let argvs: Vec<Vec<String>> = super::start_argvs(&apps[0], entry, "")
+        .into_iter()
+        .map(|a| a.into_iter().map(|a| a.into_string().unwrap()).collect())
+        .collect();
+    assert_eq!(
+        argvs,
+        [
+            vec!["foot", "/d/a.txt"],
+            vec!["foot", "/d/b.txt"],
+            vec!["foot"]
+        ],
+        "one start per argument, one plain for the window naming none"
+    );
+    crate::spawn::record();
+    let (mut h, _c) = desk();
+    h.state.session.apps = apps;
+    super::restore_now(&mut h.state, &[]);
+    assert_eq!(crate::spawn::recorded().len(), 3);
+}
+
+#[test]
+fn a_program_whose_windows_name_nothing_starts_once() {
+    let (mut h, mut c) = desk();
+    foot(&mut h, &mut c, "a");
+    foot(&mut h, &mut c, "b");
+    let (apps, ..) = saved(&mut h);
+    assert!(apps[0].windows.is_empty(), "nothing extra is saved");
+    crate::spawn::record();
+    let (mut h, _c) = desk();
+    h.state.session.apps = apps;
+    super::restore_now(&mut h.state, &[]);
+    assert_eq!(crate::spawn::recorded().len(), 1);
+}
+
+#[test]
+fn a_restored_window_naming_its_argument_goes_back_to_its_desktop() {
+    let (mut h, mut c) = desk();
+    let reopen = c.bind_reopen();
+    let named = |h: &mut Harness, c: &mut TestClient, arg: &str| {
+        h.map_toplevel_after(c, "foot", 500, 400, |h, c, t| {
+            reopen.set(&c.side.shells[t.shell].toplevel, Some(arg.into()));
+            h.roundtrip(c);
+        })
+    };
+    h.state.desktops.count = 3;
+    let a = named(&mut h, &mut c, "/d/a.txt");
+    let b = named(&mut h, &mut c, "/d/b.txt");
+    h.state.win_mut(a.id).unwrap().desktop = 1;
+    h.state.win_mut(b.id).unwrap().desktop = 2;
+    let s = saved(&mut h);
+    let (mut h, mut c) = restoring(s);
+    h.state.desktops.count = 3;
+    let reopen = c.bind_reopen();
+    let named = |h: &mut Harness, c: &mut TestClient, arg: &str| {
+        h.map_toplevel_after(c, "foot", 500, 400, |h, c, t| {
+            reopen.set(&c.side.shells[t.shell].toplevel, Some(arg.into()));
+            h.roundtrip(c);
+        })
+    };
+    let b = named(&mut h, &mut c, "/d/b.txt");
+    let a = named(&mut h, &mut c, "/d/a.txt");
+    assert_eq!(h.state.win(b.id).unwrap().desktop, 2);
+    assert_eq!(
+        h.state.win(a.id).unwrap().desktop,
+        1,
+        "not only the first back"
+    );
+}
