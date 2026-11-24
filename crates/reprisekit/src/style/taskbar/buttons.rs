@@ -284,6 +284,7 @@ pub(super) fn pager_tile_rect(r: Rect, s: i32) -> Rect {
 /// Ink alpha (70%) of a pager number for a desktop other than the current one.
 pub(super) const PAGER_DIM: u32 = 0xB3;
 
+/// `label` centred in `r` in `ink` at `alpha`; its colour glyphs keep their colours at that alpha.
 pub(super) fn draw_dimmed_number(
     canvas: &mut Canvas,
     text: &TextRenderer,
@@ -296,9 +297,11 @@ pub(super) fn draw_dimmed_number(
     let scratch = canvas.scratch(r.width.max(0) as u32, r.height.max(0) as u32);
     let (w, h) = scratch.device_size();
     let local = Rect::new(0, 0, r.width, r.height);
+    let mut colour = scratch.clone();
     let coverage: Vec<u8> = scratch
         .ink_coverage(|c, white| {
-            text.draw(c, local, label, false, white, Align::Center, size);
+            let mask = text.without_colour();
+            mask.draw(c, local, label, false, white, Align::Center, size);
         })
         .into_iter()
         .map(|c| (u32::from(c) * alpha / 255) as u8)
@@ -314,6 +317,12 @@ pub(super) fn draw_dimmed_number(
         ink,
         all,
     );
+    if text.has_colour(label, false, size) {
+        let pass = text.colour_only();
+        pass.draw(&mut colour, local, label, false, ink, Align::Center, size);
+        colour.fade(alpha, 255);
+        canvas.blit_over(r.x, r.y, &colour);
+    }
 }
 
 pub(super) fn stacked(style: &Style, slot: Rect, stack: Option<u8>, s: i32) -> (Rect, Vec<Rect>) {
