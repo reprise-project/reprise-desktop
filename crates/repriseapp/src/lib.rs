@@ -158,6 +158,8 @@ struct Slot {
     maximized: bool,
     asked: (Option<i32>, Option<i32>),
     own: bool,
+    /// The size the program last sized the window away from ([`sizing::Fit::left`]).
+    left: Option<(i32, i32)>,
     /// The largest client size the compositor suggests (xdg-toplevel `configure_bounds`): its
     /// work area less the frame. The window, its own sizes and its minimum stay inside it.
     bounds: Option<(i32, i32)>,

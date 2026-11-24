@@ -1062,6 +1062,43 @@ fn a_side_at_its_pick_follows_new_bounds_while_the_other_keeps_its_length() {
     assert_eq!(rebounded((568, 486), pick, large, small), (568, 462));
 }
 
+/// The compositor composes a configure from the size it last saw, so one sent before it sees the
+/// window size itself for a new text size asks for the size the window left: that is no ask.
+#[test]
+fn a_configure_asking_the_size_the_window_left_keeps_its_new_size() {
+    let grown = Fit {
+        size: (1912, 1000),
+        picked: (1920, 1000),
+        bounds: Some((1912, 1026)),
+        asked: (Some(952), Some(486)),
+        own: true,
+        left: Some((960, 500)),
+    };
+    let fit = grown.configured((Some(960), Some(500)), Some((1912, 1000)), false);
+    assert_eq!(fit.size, (1912, 1000), "200% keeps its grown size");
+    assert!(at_pick(fit.size, fit.picked, fit.bounds));
+    let fit = fit.configured((Some(1912), Some(1000)), None, false);
+    assert_eq!(fit.size, (1912, 1000));
+
+    let shrunk = Fit {
+        size: (960, 500),
+        picked: (960, 500),
+        bounds: Some((1912, 1000)),
+        asked: (Some(952), Some(460)),
+        own: true,
+        left: Some((1912, 1000)),
+    };
+    let fit = shrunk.configured((Some(1912), Some(1000)), Some((1912, 1026)), false);
+    assert_eq!(fit.size, (960, 500), "100% keeps its shrunk size");
+    assert!(at_pick(fit.size, fit.picked, fit.bounds));
+
+    let asked = shrunk.configured((Some(1200), Some(700)), None, false);
+    assert_eq!(asked.size, (1200, 700), "any other size asked for wins");
+    assert_eq!(asked.left, None);
+    let dragged = shrunk.configured((Some(1912), Some(1000)), None, true);
+    assert_eq!(dragged.size, (1912, 1000), "so does a resize drag's");
+}
+
 // Settings' bounds at output scale 2 on a 1920x1080 screen. It picks 552x532 and the
 // compositor asks the 568 px width its remembered frame gives.
 const CLASSIC: (i32, i32) = (952, 486);
@@ -1078,6 +1115,7 @@ fn settings_opened(bounds: (i32, i32)) -> Fit {
         bounds: None,
         asked: (None, None),
         own: false,
+        left: None,
     };
     fit.configured((Some(568), Some(bounds.1)), Some(bounds), false)
 }
@@ -1126,6 +1164,7 @@ fn an_interface_switch_leaves_a_window_inside_its_bounds_at_its_size() {
         bounds: None,
         asked: (None, None),
         own: false,
+        left: None,
     }
     .configured((None, None), Some(classic), false);
     assert_eq!(

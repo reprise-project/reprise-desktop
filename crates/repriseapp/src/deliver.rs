@@ -364,6 +364,7 @@ impl Host {
             let size = bounded(s.picked, s.bounds);
             if s.size != size {
                 resized = true;
+                s.left = Some(s.size);
                 s.size = size;
                 s.buffers = [None, None];
                 s.pool = None;
