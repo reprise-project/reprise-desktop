@@ -555,22 +555,35 @@ fn rewritten(old: &[Table], want: &[Entry]) -> Vec<Table> {
 
 /// Keeps the comment above `old`'s first table on top of `out`, the tables written over `old`
 /// (`from` names each one's table in `old`). The old first table, written lower down, takes the
-/// spacing the new first one had.
+/// spacing the new first one had, and keeps the part of that comment after its last blank line
+/// when a comment comes before it too.
 fn keep_head(old: &[Table], from: &[Option<usize>], out: &mut [Table]) {
     let first = from.iter().position(|&f| f == Some(0));
     let Some(o) = old.first().filter(|_| !out.is_empty() && first != Some(0)) else {
         return;
     };
     let own = out[0].decor().prefix().map(|_| prefix(out[0].decor()));
+    let mut head = prefix(o.decor());
     if let Some(k) = first {
+        let lines: Vec<&str> = head.split_inclusive('\n').collect();
+        let blank = lines.iter().rposition(|l| l.trim().is_empty());
+        let (above, mine) = lines.split_at(blank.map_or(0, |b| b + 1));
+        let comment = |ls: &[&str]| ls.iter().any(|l| l.trim_start().starts_with('#'));
+        let mine = match comment(above) && comment(mine) {
+            true => mine.concat(),
+            false => String::new(),
+        };
+        head.truncate(head.len() - mine.len());
         let d = out[k].decor_mut();
-        match &own {
-            Some(own) => d.set_prefix(
+        match (&own, mine.is_empty()) {
+            (Some(own), _) => d.set_prefix(
                 (own.split_inclusive('\n'))
                     .filter(|l| !l.trim_start().starts_with('#'))
-                    .collect::<String>(),
+                    .collect::<String>()
+                    + &mine,
             ),
-            None => {
+            (None, false) => d.set_prefix("\n".to_string() + &mine),
+            (None, true) => {
                 let suffix = d.suffix().cloned();
                 d.clear();
                 if let Some(s) = suffix {
@@ -580,10 +593,9 @@ fn keep_head(old: &[Table], from: &[Option<usize>], out: &mut [Table]) {
         }
     }
     let own = own.unwrap_or_default();
-    let head = match own.contains('#') {
-        true => prefix(o.decor()) + &own,
-        false => prefix(o.decor()),
-    };
+    if own.contains('#') {
+        head += &own;
+    }
     out[0].decor_mut().set_prefix(head);
 }
 
@@ -1545,6 +1557,26 @@ command = "mine" # my tool
              [[startmenu_changes]]\ndefault = \"newer\"\nhidden = true\n"
         );
         assert_eq!(load(&out), want);
+    }
+
+    #[test]
+    fn a_first_changes_comment_below_a_blank_line_stays_with_its_table() {
+        let text = "terminal = \"foot\"\n\n# Start menu\n\n# from my laptop\n\
+                    [[startmenu_changes]]\ndefault = \"newer\"\nhidden = true\n";
+        let want = without(&load(text), "help");
+        assert_eq!(
+            saved(text, &want),
+            "terminal = \"foot\"\n\n# Start menu\n\n\
+             [[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n\n\
+             # from my laptop\n[[startmenu_changes]]\ndefault = \"newer\"\nhidden = true\n"
+        );
+        let one = "# Start menu\n[[startmenu_changes]]\ndefault = \"newer\"\nhidden = true\n";
+        assert_eq!(
+            saved(one, &want),
+            "# Start menu\n[[startmenu_changes]]\ndefault = \"help\"\nhidden = true\n\n\
+             [[startmenu_changes]]\ndefault = \"newer\"\nhidden = true\n",
+            "a comment with no blank line under it heads the block"
+        );
     }
 
     #[test]
