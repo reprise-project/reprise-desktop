@@ -296,29 +296,34 @@ mod tests {
         assert_eq!(row(&sheet).0.bottom(), row(&sheet).1.bottom());
     }
 
-    /// Every row's text, a link's with its dots, fits beside the scrollbar in each look at
-    /// scale 1 and 2, where the list is at its narrowest.
+    /// With Tahoma the list keeps its narrowest width in each look, and every row's text, a
+    /// link's with its dots, fits beside the scrollbar at scale 1 and 2 where the list is at its
+    /// shortest.
     #[test]
     fn every_list_row_fits_beside_the_scrollbar_in_every_look() {
         use reprisekit::interface::Interface;
         use reprisekit::interfaces::theme_for;
-        let mut sheet = built();
-        let font = sheet.font;
-        let mut labels = sheet.tabs.labels.clone();
-        let list = sheet.list_mut().unwrap();
-        labels.extend(list.links.iter().map(|l| format!("{}...", l.label)));
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = theme_for(i);
-            let p = theme.paint();
-            let cm = p.look.controls_at_100().grown(p.text);
-            let lay = pagelist::layout(list, Rect::new(0, 0, pagelist::WIDTH, 456), &cm);
+            let text = TextRenderer::load(&theme.fonts);
+            let px = theme.fonts.size_px;
+            let mut sheet = built();
+            sheet.drawn_with(&theme.paint());
+            assert!(
+                !sheet.fit_list(&text, px),
+                "{i:?}: the list keeps its width"
+            );
+            assert_eq!(sheet.list_advance(), pagelist::ADVANCE);
+            let font = sheet.font;
+            let mut labels = sheet.tabs.labels.clone();
+            let list = sheet.list_mut().unwrap();
+            labels.extend(list.links.iter().map(|l| format!("{}...", l.label)));
+            let lay = sheet.layout(&text, px).list.unwrap();
             assert!(lay.scrollbar.is_some());
             for s in [1, 2] {
-                let theme = theme_for(i).scaled(s);
-                let text = TextRenderer::load(&theme.fonts);
                 let room = s * (lay.rows[1].width - pagelist::PAGE_X);
                 for l in &labels {
-                    let w = text.dialog(font).measure(l, false, theme.fonts.size_px);
+                    let w = text.dialog(font).measure(l, false, s as u32 * px);
                     assert!(
                         w <= room,
                         "{i:?} at {s}x: {l} is {w} px, the row holds {room}"
@@ -450,13 +455,17 @@ mod tests {
     fn no_control_covers_another_or_leaves_the_page_at_any_size() {
         use reprisekit::controls::form::Control;
         use reprisekit::interface::Interface;
-        let sizes = [Area::MIN.sheet_size(), crate::winstate::DEFAULT, LARGE];
+        let sizes = [
+            Area::MIN.sheet_size(pagelist::ADVANCE),
+            crate::winstate::DEFAULT,
+            LARGE,
+        ];
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::interfaces::theme_for(i);
             let text = TextRenderer::load(&theme.fonts);
             let (cm, px) = (theme.look.controls_at_100(), theme.fonts.size_px);
             for size in sizes {
-                let a = Area::of_size(size);
+                let a = Area::of_size(size, pagelist::ADVANCE);
                 let page = Rect::new(6, 28, a.w + 28, 464 + a.dh);
                 for (p, f) in every_page(a) {
                     let rects: Vec<(&str, bool, Rect)> = f
@@ -494,7 +503,7 @@ mod tests {
     #[test]
     fn content_grows_with_the_window_and_fixed_controls_keep_their_size() {
         use reprisekit::controls::form::Control;
-        let (small, large) = (Area::MIN, Area::of_size(LARGE));
+        let (small, large) = (Area::MIN, Area::of_size(LARGE, pagelist::ADVANCE));
         assert!(large.dw() > 0 && large.dh > 0);
         let before = every_page(small);
         for ((p, f), (_, g)) in before.iter().zip(every_page(large)) {
@@ -803,10 +812,16 @@ mod tests {
 
     #[test]
     fn the_area_follows_the_sheet_size() {
-        assert_eq!(Area::MIN.sheet_size(), built().size);
-        assert_eq!(Area::of_size((100, 100)), Area::MIN, "never smaller");
-        let a = Area::of_size(LARGE);
-        assert_eq!(a.sheet_size(), LARGE);
+        let advance = built().list_advance();
+        assert_eq!(advance, pagelist::ADVANCE);
+        assert_eq!(Area::MIN.sheet_size(advance), built().size);
+        assert_eq!(
+            Area::of_size((100, 100), advance),
+            Area::MIN,
+            "never smaller"
+        );
+        let a = Area::of_size(LARGE, advance);
+        assert_eq!(a.sheet_size(advance), LARGE);
         assert_eq!((a.w, a.dh), (LARGE.0 - 186, LARGE.1 - 528));
     }
 }

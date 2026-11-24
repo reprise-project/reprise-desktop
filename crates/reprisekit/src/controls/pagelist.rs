@@ -16,10 +16,13 @@ use crate::text::{Align, TextRenderer};
 use accesskit::{NodeId, Role};
 use std::time::Instant;
 
+/// The narrowest list; a sheet widens it for wider text ([`fit_width`]).
 pub const WIDTH: i32 = 140;
-/// The list's left edge to the page's: the list, then the sheet's 6 px
+/// The narrowest list's left edge to the page's: the list, then the sheet's 6 px
 /// margin.
 pub const ADVANCE: i32 = WIDTH + 6;
+/// The sunken frame, inside which the rows and the scrollbar lie.
+const FRAME: i32 = 2;
 pub const ROW_H: i32 = 17;
 const HEADING_X: i32 = 4;
 /// A page or link row's text, in from the row's left edge.
@@ -366,7 +369,7 @@ pub struct Layout {
 }
 
 pub fn layout(list: &PageList, frame: Rect, cm: &ControlMetrics) -> Layout {
-    let mut inner = frame.inset(2);
+    let mut inner = frame.inset(FRAME);
     let mut y = 0;
     let mut tops = Vec::with_capacity(list.rows.len());
     for (i, row) in list.rows.iter().enumerate() {
@@ -487,6 +490,29 @@ pub fn draw(
             );
         }
     });
+}
+
+/// The narrowest list, in px at 1x, whose rows hold their text beside the scrollbar for `text`
+/// at `px`, drawn at scale 1 or 2. The selected row's highlight may clip at the scrollbar.
+pub fn fit_width(
+    list: &PageList,
+    strip: &TabStrip,
+    text: &TextRenderer,
+    px: u32,
+    cm: &ControlMetrics,
+) -> i32 {
+    let wide = |s: &str, bold: bool| {
+        [1, 2]
+            .map(|k: u32| (text.measure(s, bold, k * px) + k as i32 - 1) / k as i32)
+            .into_iter()
+            .max()
+            .unwrap_or(0)
+    };
+    let rows = list.rows.iter().filter_map(|row| match row {
+        Row::Heading(h) => Some(HEADING_X + wide(h, true)),
+        _ => row_text(list, strip, row).map(|(l, _)| PAGE_X + wide(&l, false)),
+    });
+    rows.max().unwrap_or(0) + 2 * FRAME + cm.scroll
 }
 
 /// A page or link row's text and whether it is live; `None` for a heading.

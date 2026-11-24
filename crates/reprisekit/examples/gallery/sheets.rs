@@ -273,6 +273,8 @@ fn render_list_sheets_at(
         sheet.open_mut().set_focus(None);
         sheet.set_apply_enabled(true);
         prep(&mut sheet);
+        sheet.drawn_with(&theme.paint());
+        sheet.fit_list(&text, theme.fonts.size_px / scale as u32);
         let (w, h) = sheet.size;
         let mut sc = Canvas::new((w * scale) as u32, (h * scale) as u32);
         sc.fill_rect(sc.bounds(), theme.colors.button_face);

@@ -110,6 +110,8 @@ pub struct PropSheet {
     /// The dialog font the whole sheet is set in: its first page's.
     pub font: DialogFont,
     pub nav: Nav,
+    /// The page list's width at 100%, in list mode ([`PropSheet::fit_list`]).
+    list_w: i32,
     /// The page's scroll in a client smaller than the sheet ([`PropSheet::fit`]), at 100%: each
     /// way's `short` is how much smaller than `size` the client is.
     scroll: ScrollView,
@@ -219,6 +221,7 @@ impl PropSheet {
             page_dy: 0,
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::Tabs,
+            list_w: pagelist::WIDTH,
             scroll: ScrollView::default(),
             search: SearchField::default(),
             search_focused: false,
@@ -231,8 +234,8 @@ impl PropSheet {
     /// A sheet whose pages are picked from a list down its left side ([`pagelist`]):
     /// `groups` are the headings, each with its rows, and `pages` one per
     /// [`pagelist::Item::Page`] in that order, built for a `client` sized sheet. The
-    /// sheet is [`pagelist::ADVANCE`] wider. Labels carry no `&` access key. Panics
-    /// unless there is one page per page row.
+    /// sheet is [`pagelist::ADVANCE`] wider until [`PropSheet::fit_list`] widens the list.
+    /// Labels carry no `&` access key. Panics unless there is one page per page row.
     pub fn with_list(
         groups: &[(&str, &[pagelist::Item<'_>])],
         pages: Vec<Form>,
@@ -256,6 +259,7 @@ impl PropSheet {
             page_dy: 0,
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::List(PageList::new(groups)),
+            list_w: pagelist::WIDTH,
             scroll: ScrollView::default(),
             search: SearchField::default(),
             search_focused: false,
@@ -277,15 +281,21 @@ impl PropSheet {
         matches!(self.nav, Nav::List(_))
     }
 
-    fn page_dx(&self) -> i32 {
-        if self.is_list() { pagelist::ADVANCE } else { 0 }
+    /// The page's left edge from where it starts in tabs mode: the page list and the margin
+    /// after it, in list mode.
+    pub fn list_advance(&self) -> i32 {
+        if self.is_list() {
+            self.list_w + pagelist::ADVANCE - pagelist::WIDTH
+        } else {
+            0
+        }
     }
 
     /// How far every page's rects have moved from where they were built, at 100%: the list's
     /// advance, the rows of tabs and the page's scroll. The origin is the pages' [`Form::origin`].
     pub fn page_offset(&self) -> (i32, i32) {
         (
-            self.page_dx() - self.scroll.across.top,
+            self.list_advance() - self.scroll.across.top,
             self.page_dy - self.scroll.down.top,
         )
     }
@@ -405,7 +415,7 @@ impl PropSheet {
     /// the margin when OK comes closer than a button gap.
     fn restore_x(&self, ok_x: i32) -> i32 {
         let gap = BUTTON_PITCH - BUTTON_W;
-        (MARGIN + self.page_dx())
+        (MARGIN + self.list_advance())
             .min(ok_x - gap - RESTORE_W)
             .max(MARGIN)
     }
