@@ -1,5 +1,7 @@
 use super::draw::centred;
-use super::layout::{ARROW_SPACE, BORDER, ICON_X, RIGHT_PAD, ROOT_RIGHT_PAD, SEPARATOR_H, TEXT_X};
+use super::layout::{
+    ARROW_SPACE, BANNER_PAD, BORDER, ICON_X, RIGHT_PAD, ROOT_RIGHT_PAD, SEPARATOR_H, TEXT_X,
+};
 use super::*;
 use crate::access::{self, Tree};
 use crate::controls::hosted::{Anchor, Spot};
@@ -1008,6 +1010,62 @@ fn the_start_band_grows_with_the_text_and_holds_the_banner() {
         "(text size, band, icon, label x)"
     );
     crate::pins::check("classic/start_band", &hashes);
+}
+
+#[test]
+fn a_start_menu_with_no_rows_stands_as_tall_as_its_banner() {
+    crate::pins::fonts();
+    let banner = "Reprise Desktop";
+    let full = vec![MenuItem::entry("Programs"); 8];
+    let mut cut = Vec::new();
+    for pct in [100, 200] {
+        let base = Theme::default().with_text_size(pct);
+        let px = base.fonts.size_px;
+        let text = TextRenderer::load(&base.fonts);
+        let fitted = MenuStyle::root(&base).fit(&text, &[], px, i32::MAX);
+        for s in [1, 2] {
+            let theme = base.scaled(s);
+            let text = text.for_output(s);
+            let style = fitted.hold_banner(&theme, text, banner);
+            assert_eq!(
+                MenuLayout::compute_styled(&style, &full, usize::MAX).height,
+                MenuLayout::compute_styled(&fitted, &full, usize::MAX).height,
+                "a full menu keeps its rows' height"
+            );
+            let one = MenuLayout::compute_styled(&style, &items()[..1], usize::MAX);
+            for rows in [&[][..], &items()[..1]] {
+                let l = MenuLayout::compute_styled(&style, rows, usize::MAX).scaled(s);
+                assert_eq!(
+                    l.height,
+                    one.height * s,
+                    "one row or none, the banner sets the height"
+                );
+                let mut c = Canvas::new(l.width as u32, l.height as u32);
+                let ((), cuts) = crate::pins::clipped_ink(|| {
+                    draw_menu(&mut c, &theme, text, &l, rows, None, banner, false);
+                });
+                cut.extend(
+                    cuts.into_iter()
+                        .map(|c| (pct, s, rows.len(), c.text, c.cols)),
+                );
+                let white = theme.colors.menu_band_text.argb();
+                let band = l.inset.left..l.inset.left + l.band;
+                let rows = l.inset.top..l.height - l.inset.bottom;
+                let top = rows
+                    .into_iter()
+                    .find(|&y| band.clone().any(|x| c.get(x, y) == white));
+                assert!(
+                    top.is_some_and(|y| y >= l.inset.top + base.text.len(BANNER_PAD) * s),
+                    "{pct}% scale {s}: the banner's last letter ends a pad under the top, not at {top:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(text size, scale, rows, line, ink columns cut)"
+    );
 }
 
 #[test]
