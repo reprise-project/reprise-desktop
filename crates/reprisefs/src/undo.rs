@@ -1,5 +1,5 @@
 //! The undo behind the Edit > Undo row: reversing the last move, rename, trash or creation. The
-//! host takes the top entry ([`UndoStack::take`]) and reverses its steps on a removal job
+//! host takes the top entry ([`SharedUndo::take`]) and reverses its steps on a removal job
 //! ([`crate::removal::Removal::Undo`]).
 
 use std::io;
@@ -8,16 +8,20 @@ use std::path::{Path, PathBuf};
 
 use crate::trash::{self, Trashed};
 
+mod store;
+pub use store::{Running, SharedUndo};
+
 #[derive(Clone, Debug)]
 pub enum Undoable {
     /// A move into another folder. `listed` when `from`'s folder's
     /// `.hidden` named the item and let go of it with the move
     /// ([`crate::jobs::PutEvent::Landed`]'s `unlisted`): undoing it lists
-    /// the item there again.
+    /// the item there again. `id` is the moved item's [`file_id`] at `to`.
     Move {
         from: PathBuf,
         to: PathBuf,
         listed: bool,
+        id: Option<FileId>,
     },
     /// A rename, with the [`file_id`] of the item at `to` after it: undoing it refuses a different
     /// item that took the name since.
@@ -27,9 +31,9 @@ pub enum Undoable {
         id: Option<FileId>,
     },
     Trash(Trashed),
-    /// A copy or a shortcut that landed at the path. Undoing it trashes
+    /// A copy or a shortcut that landed at the path, with its [`file_id`]. Undoing it trashes
     /// it, a copied folder with everything in it.
-    Copied(PathBuf),
+    Copied(PathBuf, Option<FileId>),
     /// A New Folder or New Text Document, with its [`file_id`] when it was made. Undoing it
     /// trashes a file and removes a folder only while it is empty, and refuses a different item
     /// that took the path since.
@@ -43,7 +47,7 @@ impl Undoable {
             Undoable::Move { .. } => "Undo Move",
             Undoable::Rename { .. } => "Undo Rename",
             Undoable::Trash(_) => "Undo Delete",
-            Undoable::Copied(_) => "Undo Copy",
+            Undoable::Copied(..) => "Undo Copy",
             Undoable::New(..) => "Undo New",
             Undoable::Batch(items) => return items.last()?.label(),
         })
@@ -55,7 +59,7 @@ impl Undoable {
         let paths: Vec<&Path> = match self {
             Undoable::Move { from, to, .. } | Undoable::Rename { from, to, .. } => vec![from, to],
             Undoable::Trash(t) => vec![&t.original],
-            Undoable::Copied(p) | Undoable::New(p, _) => vec![p],
+            Undoable::Copied(p, _) | Undoable::New(p, _) => vec![p],
             Undoable::Batch(items) => {
                 items.iter().for_each(|i| i.dirs(out));
                 return;
@@ -112,7 +116,13 @@ impl Undoable {
             }
         };
         match self {
-            Undoable::Move { from, to, listed } => {
+            Undoable::Move {
+                from,
+                to,
+                listed,
+                id,
+            } => {
+                same_item(to, *id)?;
                 crate::hidden::rename(to, from)?;
                 if *listed && let Err(e) = crate::hidden::list(from) {
                     log::warn!(
@@ -126,8 +136,17 @@ impl Undoable {
                 same_item(to, *id)?;
                 crate::hidden::rename(to, from)
             }
-            Undoable::Trash(t) => trash::restore(t),
-            Undoable::Copied(path) => trash_in(path, crate::ops::erase),
+            Undoable::Trash(t) => {
+                let now = trash::trashed(&t.files)?;
+                if (&now.original, now.deleted) != (&t.original, t.deleted) {
+                    return Err(replaced(&t.files));
+                }
+                trash::restore(t)
+            }
+            Undoable::Copied(path, id) => {
+                same_item(path, *id)?;
+                trash_in(path, crate::ops::erase)
+            }
             // A folder goes only while empty and a file goes to the trash,
             // so nothing the user put there since is lost.
             Undoable::New(path, id) => {
@@ -175,6 +194,13 @@ impl Undo {
     /// The steps, in the order they are reversed.
     pub fn steps(&self) -> &[Undoable] {
         &self.steps
+    }
+
+    /// The folders reversing it adds an entry to or takes one from, each once.
+    pub fn dirs(&self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        self.steps.iter().for_each(|s| s.dirs(&mut out));
+        out
     }
 
     /// Reverses the steps in order up to the first failure ([`Undoable::reverse`]): how many went,
@@ -264,16 +290,33 @@ impl std::error::Error for NoBin {}
 /// An item's (device, inode), told apart from a different item that later takes its path.
 pub type FileId = (u64, u64);
 
-/// `path`'s own metadata, unless `id` names another item than the one there now.
+/// `path`'s own metadata, unless the item is gone or `id` names another item than the one there
+/// now: it was moved, deleted or replaced since, so reversing it would act on the wrong file.
 fn same_item(path: &Path, id: Option<FileId>) -> io::Result<std::fs::Metadata> {
-    let meta = std::fs::symlink_metadata(path)?;
-    if id.is_some_and(|id| id != (meta.dev(), meta.ino())) {
-        return Err(io::Error::new(
+    let meta = std::fs::symlink_metadata(path).map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => io::Error::new(
             io::ErrorKind::NotFound,
-            "a different item has its name now",
-        ));
+            format!(
+                "'{}' was moved or deleted since",
+                crate::bincap::label(path)
+            ),
+        ),
+        _ => e,
+    })?;
+    if id.is_some_and(|id| id != (meta.dev(), meta.ino())) {
+        return Err(replaced(path));
     }
     Ok(meta)
+}
+
+fn replaced(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "a different item has the name '{}' now",
+            crate::bincap::label(path)
+        ),
+    )
 }
 
 /// `path`'s own [`FileId`], a link's rather than its target's.
@@ -333,14 +376,6 @@ impl UndoStack {
 
     pub fn label(&self) -> Option<&'static str> {
         self.entries.last()?.1.label()
-    }
-
-    pub fn undo_dirs(&self) -> Vec<PathBuf> {
-        let mut out = Vec::new();
-        if let Some((_, u)) = self.entries.last() {
-            u.dirs(&mut out);
-        }
-        out
     }
 
     /// The most recent entry, off the stack. What its reversal leaves undone goes back with
@@ -422,22 +457,24 @@ mod tests {
     #[test]
     fn undo_dirs_name_each_folder_the_undo_touches_once() {
         let mut u = UndoStack::default();
-        assert!(u.undo_dirs().is_empty());
+        u.push(Undoable::New("/c/New Folder".into(), None));
         u.push_all(vec![
             Undoable::Move {
                 from: "/a/x".into(),
                 to: "/b/x".into(),
                 listed: false,
+                id: None,
             },
             Undoable::Move {
                 from: "/a/y".into(),
                 to: "/b/y".into(),
                 listed: false,
+                id: None,
             },
         ]);
-        assert_eq!(u.undo_dirs(), [PathBuf::from("/a"), PathBuf::from("/b")]);
-        u.push(Undoable::New("/c/New Folder".into(), None));
-        assert_eq!(u.undo_dirs(), [PathBuf::from("/c")], "the top entry only");
+        let dirs = |u: &mut UndoStack| u.take().unwrap().dirs();
+        assert_eq!(dirs(&mut u), [PathBuf::from("/a"), PathBuf::from("/b")]);
+        assert_eq!(dirs(&mut u), [PathBuf::from("/c")]);
     }
 
     #[test]
@@ -494,7 +531,7 @@ mod tests {
             Undoable::Trash(trash::trash_in(&root, &path(n)).unwrap())
         };
         let mut u = UndoStack::default();
-        u.push(Undoable::Copied(path("made.txt")));
+        u.push(Undoable::Copied(path("made.txt"), None));
         u.push(trashed("a.txt"));
         fs::write(path("new.txt"), "hi").unwrap();
         u.push(Undoable::Batch(vec![
@@ -535,7 +572,7 @@ mod tests {
         u.push(Undoable::Trash(a));
         let (b, _) = bins.trash(&item("b")).unwrap();
         u.push(Undoable::Trash(b.clone()));
-        u.push(Undoable::Copied(item("c")));
+        u.push(Undoable::Copied(item("c"), None));
 
         u.undo_in(Some(&bins), false).unwrap().unwrap();
 
@@ -584,11 +621,79 @@ mod tests {
             from: from.clone(),
             to: to.clone(),
             listed: false,
+            id: None,
         });
 
         u.undo().unwrap().unwrap();
 
         assert!(from.exists() && !to.exists());
+    }
+
+    #[test]
+    fn undo_of_a_move_refuses_an_item_gone_or_replaced_at_its_destination() {
+        let t = tempfile::tempdir().unwrap();
+        let (from, to) = (t.path().join("a.txt"), t.path().join("b.txt"));
+        fs::write(&to, "moved").unwrap();
+        let mut u = UndoStack::default();
+        let moved = Undoable::Move {
+            from: from.clone(),
+            to: to.clone(),
+            listed: false,
+            id: file_id(&to),
+        };
+        fs::rename(&to, t.path().join("c.txt")).unwrap();
+        u.push(moved.clone());
+        let err = u.undo().unwrap().unwrap_err();
+        assert_eq!(err.to_string(), "'b.txt' was moved or deleted since");
+
+        fs::write(&to, "saved by another program").unwrap();
+        u.push(moved);
+        let err = u.undo().unwrap().unwrap_err();
+        assert_eq!(err.to_string(), "a different item has the name 'b.txt' now");
+        assert!(!from.exists());
+        assert_eq!(fs::read_to_string(&to).unwrap(), "saved by another program");
+    }
+
+    #[test]
+    fn undo_of_a_copy_never_erases_a_different_item_that_took_its_path() {
+        let t = tempfile::tempdir().unwrap();
+        let copy = t.path().join("copy.txt");
+        fs::write(&copy, "copied").unwrap();
+        let mut u = UndoStack::default();
+        u.push(Undoable::Copied(copy.clone(), file_id(&copy)));
+        fs::remove_file(&copy).unwrap();
+        fs::write(&copy, "saved by another program").unwrap();
+
+        let err = u.undo_in(None, true).unwrap().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            fs::read_to_string(&copy).unwrap(),
+            "saved by another program"
+        );
+    }
+
+    #[test]
+    fn undo_of_a_trash_refuses_a_different_item_in_its_bin_slot() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("Trash");
+        let (x, y) = (t.path().join("x"), t.path().join("y"));
+        for d in [&x, &y] {
+            fs::create_dir(d).unwrap();
+            fs::write(d.join("a.txt"), d.to_string_lossy().as_bytes()).unwrap();
+        }
+        let first = trash::trash_in(&root, &x.join("a.txt")).unwrap();
+        trash::restore(&first).unwrap();
+        fs::remove_file(x.join("a.txt")).unwrap();
+        let second = trash::trash_in(&root, &y.join("a.txt")).unwrap();
+        assert_eq!(second.files, first.files, "the slot was free again");
+
+        let mut u = UndoStack::default();
+        u.push(Undoable::Trash(first));
+        let err = u.undo().unwrap().unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(!x.join("a.txt").exists() && second.files.exists());
     }
 
     #[test]
@@ -661,7 +766,7 @@ mod tests {
         fs::write(dir.join("a.jpg"), "a").unwrap();
 
         let mut u = UndoStack::default();
-        u.push(Undoable::Copied(dir.clone()));
+        u.push(Undoable::Copied(dir.clone(), None));
         assert_eq!(u.label(), Some("Undo Copy"));
 
         u.undo_in(Some(&trash::Bins::new(root.clone(), Vec::new())), false)
@@ -690,8 +795,8 @@ mod tests {
 
         let mut u = UndoStack::default();
         u.push_all(vec![
-            Undoable::Copied(a.clone()),
-            Undoable::Copied(b.clone()),
+            Undoable::Copied(a.clone(), None),
+            Undoable::Copied(b.clone(), None),
         ]);
         let err = u.undo_in(Some(&bins), false).unwrap().unwrap_err();
 
@@ -777,20 +882,20 @@ mod tests {
     #[test]
     fn what_an_undo_leaves_goes_back_below_newer_entries_and_not_past_a_clear() {
         let mut u = UndoStack::default();
-        u.push(Undoable::Copied("/old".into()));
-        u.push(Undoable::Copied("/x".into()));
+        u.push(Undoable::Copied("/old".into(), None));
+        u.push(Undoable::Copied("/x".into(), None));
         let undo = u.take().unwrap();
         u.push(Undoable::New("/newer".into(), None));
         u.put_back(undo, 0, None);
         let order: Vec<PathBuf> = std::iter::from_fn(|| u.take())
             .map(|t| match t.steps() {
-                [Undoable::Copied(p) | Undoable::New(p, _)] => p.clone(),
+                [Undoable::Copied(p, _) | Undoable::New(p, _)] => p.clone(),
                 _ => panic!("one step"),
             })
             .collect();
         assert_eq!(order, ["/newer", "/x", "/old"].map(PathBuf::from));
 
-        u.push(Undoable::Copied("/x".into()));
+        u.push(Undoable::Copied("/x".into(), None));
         let undo = u.take().unwrap();
         u.clear();
         u.push(Undoable::New("/after".into(), None));
@@ -818,6 +923,7 @@ mod tests {
                 from: moved_from.clone(),
                 to: moved_to.clone(),
                 listed: false,
+                id: None,
             },
             Undoable::Rename {
                 from: from.clone(),
@@ -876,11 +982,11 @@ mod tests {
     #[test]
     fn a_cancelled_undo_keeps_what_it_did_not_reverse_and_a_failed_lone_step_goes() {
         let mut u = UndoStack::default();
-        u.push(Undoable::Copied("/x".into()));
+        u.push(Undoable::Copied("/x".into(), None));
         let lone = u.take().expect("the copy");
         let kept = lone.left(0, None);
         assert!(
-            matches!(kept, Some(Undoable::Copied(_))),
+            matches!(kept, Some(Undoable::Copied(..))),
             "a cancel keeps it"
         );
         u.push(kept.unwrap());
@@ -889,14 +995,14 @@ mod tests {
         assert!(lone.left(0, Some(&failed)).is_none(), "a failure drops it");
 
         u.push_all(vec![
-            Undoable::Copied("/a".into()),
-            Undoable::Copied("/b".into()),
-            Undoable::Copied("/c".into()),
+            Undoable::Copied("/a".into(), None),
+            Undoable::Copied("/b".into(), None),
+            Undoable::Copied("/c".into(), None),
         ]);
         let batch = u.take().expect("the batch");
         let paths: Vec<_> = (batch.steps().iter())
             .map(|s| match s {
-                Undoable::Copied(p) => p.clone(),
+                Undoable::Copied(p, _) => p.clone(),
                 _ => panic!("a copy"),
             })
             .collect();
@@ -904,7 +1010,7 @@ mod tests {
         match batch.left(1, None) {
             Some(Undoable::Batch(rest)) => assert!(matches!(
                 rest.as_slice(),
-                [Undoable::Copied(a), Undoable::Copied(b)] if *a == Path::new("/a") && *b == Path::new("/b")
+                [Undoable::Copied(a, _), Undoable::Copied(b, _)] if *a == Path::new("/a") && *b == Path::new("/b")
             )),
             _ => panic!("the batch keeps /a and /b"),
         }
@@ -915,7 +1021,7 @@ mod tests {
         let mut u = UndoStack::default();
         u.push_all(Vec::new());
         assert_eq!(u.label(), None);
-        u.push_all(vec![Undoable::Copied(PathBuf::from("/x"))]);
+        u.push_all(vec![Undoable::Copied(PathBuf::from("/x"), None)]);
         assert_eq!(u.label(), Some("Undo Copy"));
     }
 }

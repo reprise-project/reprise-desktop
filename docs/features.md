@@ -165,8 +165,9 @@ shake, the dim, the hidden frame rate and window memory.
 
 - **Icons** for Documents, Computer, Home, Recycle Bin and the files in
   `~/Desktop`, to drag, rename and right-click (`desktop_extensions`).
-  New selects what it makes and starts its rename; Ctrl+Z undoes a New or a
-  rename, back to the last other file action on the desktop.
+  New selects what it makes and starts its rename. The desktop and every
+  Explorer window share one undo history: Ctrl+Z in any of them undoes the
+  last New, rename, copy, move or delete made in any of them.
 - **Templates.** New on the desktop and in Explorer lists the files in your
   Templates folder (`XDG_TEMPLATES_DIR`, usually `~/Templates`); each row
   makes a copy named after its file.

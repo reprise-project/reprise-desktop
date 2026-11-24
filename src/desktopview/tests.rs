@@ -1641,21 +1641,22 @@ fn icon(h: &crate::harness::Harness, name: &str) -> usize {
 }
 
 #[test]
-fn ctrl_z_does_not_reach_past_a_delete_or_a_launcher_rename() {
+fn a_delete_leaves_its_undo_entry_to_the_explorer_job_that_runs_it() {
     crate::spawn::record();
-    let (mut h, desk) = desktop_in("desktop-undo-barrier", &["report.pdf"]);
-    let new = desk.join("New Text Document.txt");
+    let (mut h, _) = desktop_in("desktop-undo-delete", &["report.pdf"]);
     h.state
         .desktop_command(DesktopCommand::NewTextDocument, None);
     h.state.cancel_rename();
     h.state.trash_selection(icon(&h, "report.pdf"));
-    assert_eq!(h.state.desktop.as_ref().unwrap().undos.label(), None);
-    ctrl_z(&mut h);
-    assert!(
-        new.exists(),
-        "Ctrl+Z after Delete leaves the earlier New alone"
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo New")
     );
+}
 
+#[test]
+fn ctrl_z_does_not_reach_past_a_launcher_rename() {
+    let (mut h, desk) = desktop_in("desktop-undo-barrier", &[]);
     let link = desk.join("site.desktop");
     std::fs::write(
         &link,
@@ -1732,7 +1733,7 @@ fn a_second_ctrl_z_waits_for_the_first_and_undo_rename_keeps_the_cell() {
     h.until("the rename", |s| {
         s.desktop.as_ref().unwrap().undos.label() == Some("Undo Rename")
     });
-    let undone = |s: &crate::compositor::State| !s.desktop.as_ref().unwrap().undoing;
+    let undone = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing.is_none();
 
     // Two presses with no loop turn between them: the second finds the first still running.
     h.state.undo_icons();
@@ -1840,7 +1841,7 @@ fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
         });
         h.state.cancel_rename();
     }
-    let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing;
+    let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing.is_some();
 
     h.state.fsjobs.refuse_threads = true;
     h.state.undo_icons();

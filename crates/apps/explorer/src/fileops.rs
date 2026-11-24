@@ -594,6 +594,7 @@ impl Explorer {
                 PutEvent::Landed {
                     index,
                     landed,
+                    id,
                     replaced,
                     unlisted,
                 } => {
@@ -609,8 +610,9 @@ impl Explorer {
                             from: src.clone(),
                             to: dest,
                             listed: unlisted,
+                            id,
                         },
-                        _ => Undoable::Copied(dest),
+                        _ => Undoable::Copied(dest, id),
                     });
                 }
                 PutEvent::Failed { index, error } => {
@@ -1535,7 +1537,8 @@ impl Explorer {
 
     /// Undo, with `erasing` the entry whose items the Recycle Bin refused, which are removed for
     /// good; nothing happens unless that entry is on top. Without it such an item stops the undo
-    /// and asks first. The top entry leaves the stack and its steps run on a removal job with the
+    /// and asks first. Nothing happens either while an undo in any window runs. The top entry of
+    /// the session's history leaves it and its steps run on a removal job with the
     /// progress dialog ([`crate::removing::PendingRemoval::undo`]); the Recycle Bins are found on
     /// a job first, as for a delete.
     pub(crate) fn undo_with(
@@ -1543,7 +1546,6 @@ impl Explorer {
         erasing: Option<reprisefs::undo::EntryId>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let dirs = self.undos.undo_dirs();
         let taken = match erasing {
             Some(entry) => self.undos.take_entry(entry),
             None => self.undos.take(),
@@ -1556,13 +1558,8 @@ impl Explorer {
         self.spawn_job(ctx, move || {
             let bins = reprisefs::trash::Bins::system();
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                let pending = crate::removing::PendingRemoval::undo(
-                    undo,
-                    erase,
-                    dirs,
-                    bins,
-                    &ex.shares.shares,
-                );
+                let pending =
+                    crate::removing::PendingRemoval::undo(undo, erase, bins, &ex.shares.shares);
                 ex.remove(pending, ctx);
                 Reply::redraw()
             })

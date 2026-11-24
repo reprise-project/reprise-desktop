@@ -10,7 +10,7 @@ use reprisefs::bincap::Plan;
 use reprisefs::netshare::Share;
 use reprisefs::removal::{Removal, RemoveEvent, RemoveJob, Removed};
 use reprisefs::trash::Bins;
-use reprisefs::undo::{Undo, Undoable};
+use reprisefs::undo::{Running, Undo, Undoable};
 use reprisekit::controls::copyprogress::Kind;
 use std::path::PathBuf;
 
@@ -32,6 +32,8 @@ pub(crate) struct Undoing {
     undo: Undo,
     dirs: Vec<PathBuf>,
     error: Option<std::io::Error>,
+    /// Keeps every other window's Undo off until this one ends.
+    _running: Running,
 }
 
 pub(crate) struct PendingRemoval {
@@ -127,11 +129,10 @@ impl PendingRemoval {
         }
     }
 
-    /// Undo's steps of `undo`, which touches `dirs`; `erase` removes for good what `bins` refuse.
+    /// Undo's steps of `undo`; `erase` removes for good what `bins` refuse.
     pub(crate) fn undo(
-        undo: Undo,
+        (undo, running): (Undo, Running),
         erase: bool,
-        dirs: Vec<PathBuf>,
         bins: Option<Bins>,
         shares: &[Share],
     ) -> Self {
@@ -142,7 +143,7 @@ impl PendingRemoval {
                 let path = match step {
                     Undoable::Move { to, .. } | Undoable::Rename { to, .. } => to.clone(),
                     Undoable::Trash(t) => t.files.clone(),
-                    Undoable::Copied(p) | Undoable::New(p, _) => p.clone(),
+                    Undoable::Copied(p, _) | Undoable::New(p, _) => p.clone(),
                     Undoable::Batch(_) => PathBuf::new(),
                 };
                 let step = step.clone();
@@ -159,7 +160,7 @@ impl PendingRemoval {
                 Some(Place::RecycleBin.title()),
                 title(&t.original),
             ),
-            Some(Undoable::Copied(p) | Undoable::New(p, _)) => (
+            Some(Undoable::Copied(p, _) | Undoable::New(p, _)) => (
                 if erase { Kind::Erase } else { Kind::Delete },
                 title(p),
                 None,
@@ -175,9 +176,10 @@ impl PendingRemoval {
             from: from.unwrap_or_default(),
             to: to.unwrap_or_default(),
             undo: Some(Undoing {
+                dirs: undo.dirs(),
                 undo,
-                dirs,
                 error: None,
+                _running: running,
             }),
         }
     }

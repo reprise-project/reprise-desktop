@@ -382,6 +382,7 @@ fn emptying_the_bin_drops_only_the_trash_undos() {
         from: dir.join("a.txt"),
         to: dir.join("moved.txt"),
         listed: false,
+        id: None,
     });
     ex.delete_now(&[dir.join("b.txt")], false, &mut ctx);
     ex.finish_puts(&mut ctx);

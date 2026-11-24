@@ -421,6 +421,52 @@ fn a_file_pasted_onto_a_folders_name_lands_numbered() {
     );
 }
 
+/// Two windows share one undo history: Undo in the window that copied first reverses the other
+/// window's later rename, which its Edit menu names, then its own copy.
+#[test]
+fn undo_in_one_window_reverses_the_newest_operation_of_any_window_first() {
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (from, dir) = (home.path().join("from"), home.path().join("to"));
+    std::fs::create_dir_all(&from).expect("mkdir");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(from.join("a.txt"), "a").expect("write");
+    std::fs::write(dir.join("b.txt"), "b").expect("write");
+    let history = home.path().join("reprise-undo");
+    let mut ctx = test_ctx();
+    let mut copier = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    let mut renamer = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    copier.undos = reprisefs::undo::SharedUndo::at(history.clone());
+    renamer.undos = reprisefs::undo::SharedUndo::at(history);
+
+    copier.run(Command::Paste, &mut ctx);
+    copier.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![from.join("a.txt")],
+        },
+        &mut ctx,
+    );
+    copier.finish_puts(&mut ctx);
+    renamer.sv.selection.set_only(Some(0));
+    renamer.run(Command::Rename, &mut ctx);
+    let (_, edit) = renamer.sv.edit.as_mut().expect("the rename box");
+    *edit = reprisekit::textedit::TextEdit::new("c.txt", false);
+    renamer.commit_rename(&mut ctx);
+    assert!(dir.join("a.txt").is_file() && dir.join("c.txt").is_file());
+
+    copier.sync_undo();
+    assert_eq!(copier.undo, Some("Rename"));
+    copier.run(Command::Undo, &mut ctx);
+    copier.finish_puts(&mut ctx);
+    assert!(dir.join("b.txt").is_file() && !dir.join("c.txt").exists());
+    assert_eq!(copier.undo, Some("Copy"));
+    copier.run(Command::Undo, &mut ctx);
+    copier.finish_puts(&mut ctx);
+    assert!(!dir.join("a.txt").exists() && from.join("a.txt").is_file());
+    renamer.sync_undo();
+    assert_eq!(renamer.undo, None);
+}
+
 /// Undo of a move whose source folder vanished fails, says so, and keeps the batch, so Undo again once
 /// the folder is back finishes the job.
 #[test]

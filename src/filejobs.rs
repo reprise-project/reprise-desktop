@@ -173,7 +173,8 @@ impl State {
         landings: Vec<(String, Option<(i32, i32)>)>,
         moving: Vec<PathBuf>,
     ) {
-        if what != What::Empty {
+        // A put and a delete push their undo from the job's process.
+        if what == What::Zip {
             self.forget_desktop_undos();
         }
         let argv: Vec<&std::ffi::OsStr> = std::iter::once(EXPLORER.as_ref())

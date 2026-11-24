@@ -43,7 +43,9 @@ The file manager, and the default for folders.
   server's shares or to connect to an SFTP server.
 - **File operations** run in the background, with progress, Pause and Cancel:
   copy, move, delete, Move To, Copy To, Send To, F2 rename (a find-and-replace
-  or numbering dialog for several items) and Copy as Path. Ctrl+Z undoes.
+  or numbering dialog for several items) and Copy as Path. Ctrl+Z undoes the
+  last file operation of any Explorer window or the desktop, which Edit > Undo
+  names.
 - **Archives:** Extract Here and Extract to for zip, 7z and tar, Compress to
   'name.zip' for the selection. An archive that would land outside its folder
   or fill the disk is refused ([limits](security.md#programs-and-files)).
