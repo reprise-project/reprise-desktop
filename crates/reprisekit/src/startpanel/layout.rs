@@ -22,6 +22,9 @@ const ROW_X: i32 = 11;
 const ROW_W: i32 = 246;
 const PROGRAM_TOP: i32 = 10;
 const PROGRAM_H: i32 = 38;
+/// Where a program row with a jump list splits, design px in from the row's left: right of it
+/// is the arrow that opens the list.
+pub const SPLIT_X: i32 = 218;
 const PIN_RULE_H: i32 = 4;
 const PIN_RULE_DOWN: i32 = 2;
 const LEFT_RULE_X: i32 = 20;
@@ -129,6 +132,21 @@ pub fn hit(l: &Layout, x: i32, y: i32) -> Option<Spot> {
         .iter()
         .find(|(_, r)| r.contains(x, y))
         .map(|&(s, _)| s)
+}
+
+/// The Glass program row whose jump-list arrow holds `(x, y)`: the part of a row with a jump list
+/// right of its split ([`SPLIT_X`]).
+pub fn hit_arrow(p: &StartPanel, l: &Layout, x: i32, y: i32) -> Option<usize> {
+    let Some(Spot::Program(i)) = hit(l, x, y) else {
+        return None;
+    };
+    let r = l.rect(Spot::Program(i))?;
+    let g = super::search::Grow {
+        s: l.scale.max(1),
+        u: p.text,
+    };
+    let split = r.x + g.len(SPLIT_X - shift(p));
+    (p.shape == Shape::Glass && p.program(i)?.jump && x >= split).then_some(i)
 }
 
 /// How far the parts from All Programs down sit below their place in a
@@ -536,6 +554,34 @@ mod tests {
     use crate::startpanel::{Key, ResultGroup, TreeRow};
     use crate::textedit::EditKey;
     use crate::theme::TextUnits;
+
+    #[test]
+    fn only_the_part_of_a_jump_row_right_of_its_split_is_its_arrow() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", true), prow("Paint", false)];
+        let l = layout(&p);
+        assert_eq!(hit_arrow(&p, &l, 229, 20), Some(0));
+        assert_eq!(hit_arrow(&p, &l, 256, 20), Some(0));
+        assert_eq!(hit_arrow(&p, &l, 228, 20), None, "left of the split");
+        assert_eq!(hit_arrow(&p, &l, 240, 60), None, "a row with no jump list");
+        p.text = TextUnits::new(22, 11);
+        let l = layout(&p);
+        assert_eq!(
+            hit_arrow(&p, &l, 458, 40),
+            Some(0),
+            "the split grows with the text"
+        );
+        assert_eq!(hit_arrow(&p, &l, 457, 40), None);
+        p.text = TextUnits::default();
+        p.shape = Shape::Blue;
+        let l = layout(&p);
+        let r = l.rect(Spot::Program(0)).unwrap();
+        assert_eq!(
+            hit_arrow(&p, &l, r.right() - 1, r.y + 1),
+            None,
+            "Blue has no jump lists"
+        );
+    }
 
     #[test]
     fn home_puts_the_pane_rows_and_buttons_where_the_design_says() {

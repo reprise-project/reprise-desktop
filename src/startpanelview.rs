@@ -77,6 +77,14 @@ impl StartPanelView {
     pub(crate) fn jump_files(&self) -> impl Iterator<Item = &PathBuf> {
         self.jumps.iter().flatten()
     }
+
+    /// Global `(x, y)` in layout coordinates.
+    fn local(&self, x: f64, y: f64) -> (i32, i32) {
+        (
+            x.floor() as i32 - self.at.0 - self.shift.0,
+            y.floor() as i32 - self.at.1 - self.shift.1,
+        )
+    }
 }
 
 pub fn open_on(state: &State) -> Option<Output> {

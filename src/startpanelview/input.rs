@@ -159,6 +159,14 @@ impl State {
         if let (Button::Left, Some(v)) = (b, self.start_panel.as_mut()) {
             v.pressed = Some(spot);
         }
+        let p = self.pointer_location();
+        if let Some(i) = (b == Button::Left)
+            .then(|| self.start_panel_arrow(p.x, p.y))
+            .flatten()
+        {
+            self.start_panel_event(|m| m.press_arrow(i));
+            return;
+        }
         let program = (b == Button::Left)
             .then(|| self.start_spot_app(spot))
             .flatten()
@@ -187,11 +195,15 @@ impl State {
 
     pub fn start_panel_hit(&self, x: f64, y: f64) -> Option<Spot> {
         let v = self.start_panel.as_ref()?;
-        let (x, y) = (
-            x.floor() as i32 - v.at.0 - v.shift.0,
-            y.floor() as i32 - v.at.1 - v.shift.1,
-        );
+        let (x, y) = v.local(x, y);
         layout::hit(&layout::layout(&v.model), x, y)
+    }
+
+    /// The program row whose jump-list arrow is under `(x, y)`, global coordinates.
+    fn start_panel_arrow(&self, x: f64, y: f64) -> Option<usize> {
+        let v = self.start_panel.as_ref()?;
+        let (x, y) = v.local(x, y);
+        layout::hit_arrow(&v.model, &layout::layout(&v.model), x, y)
     }
 
     fn start_panel_event(&mut self, f: impl FnOnce(&mut StartPanel) -> Event) {

@@ -414,6 +414,16 @@ impl StartPanel {
         }
     }
 
+    /// A left press on program row `i`'s jump-list arrow ([`layout::hit_arrow`]): its jump list
+    /// opens, or stays open.
+    pub fn press_arrow(&mut self, i: usize) -> Event {
+        if !self.program(i).is_some_and(|r| r.jump) || self.mode == Mode::Jump(i) {
+            return Event::None;
+        }
+        self.set_mode(Mode::Jump(i));
+        Event::Redraw
+    }
+
     /// A reader moved the keyboard to `at`, as the arrows or Tab would: a row lights, a place or
     /// Shut down takes the keyboard, the field takes it back. Nothing opens or runs.
     pub fn focus_on(&mut self, at: Spot) -> Event {
@@ -1269,6 +1279,18 @@ pub(crate) mod tests {
         p.pointer(Some(Spot::Program(1)));
         assert_eq!(p.hover_fired(Spot::Program(1)), Event::Redraw);
         assert_eq!(p.mode(), Mode::Home);
+    }
+
+    #[test]
+    fn a_press_on_a_rows_arrow_opens_its_jump_list_and_keeps_it_open() {
+        let mut p = StartPanel::new();
+        p.frequent = vec![prow("Notepad", true), prow("Paint", false)];
+        assert_eq!(p.press_arrow(1), Event::None, "no jump list");
+        assert_eq!(p.mode(), Mode::Home);
+        assert_eq!(p.press_arrow(0), Event::Redraw);
+        assert_eq!(p.mode(), Mode::Jump(0));
+        assert_eq!(p.press_arrow(0), Event::None, "already open");
+        assert_eq!(p.mode(), Mode::Jump(0));
     }
 
     #[test]
