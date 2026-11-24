@@ -123,8 +123,12 @@ pub fn pick(open: &[(String, usize)], apps: &[AppEntry], exclude: &[String]) -> 
     saved
 }
 
+/// The most starts a saved app keeps.
+pub const MAX_STARTS: usize = 32;
+
 /// Give each app in `saved` that one of its `open` windows (app id, desktop, argument) named an
-/// argument for its [`SavedApp::windows`], in the order they came.
+/// argument for its [`SavedApp::windows`], in the order they came. Arguments past the first
+/// `MAX_STARTS - 1` count as none, so the windows naming them share one plain start.
 pub fn note_reopen(saved: &mut [SavedApp], open: &[(String, usize, Option<String>)]) {
     for s in saved {
         let mine = || open.iter().filter(|(a, ..)| *a == s.app_id);
@@ -133,6 +137,13 @@ pub fn note_reopen(saved: &mut [SavedApp], open: &[(String, usize, Option<String
         }
         let mut windows: Vec<SavedWindow> = Vec::new();
         for (_, desktop, reopen) in mine() {
+            let named = windows.iter().filter(|w| w.reopen.is_some()).count();
+            let known = windows.iter().any(|w| w.reopen == *reopen);
+            let reopen = if known || named < MAX_STARTS - 1 {
+                reopen
+            } else {
+                &None
+            };
             match windows.iter_mut().find(|w| w.reopen == *reopen) {
                 Some(w) => w.desktop = *desktop,
                 None => windows.push(SavedWindow {
@@ -239,10 +250,17 @@ pub fn to_start<'a>(
 }
 
 /// The desktops the restored apps' windows go back to, while the login is recent: one per start.
+///
+/// A window goes to the start with its argument (none matching none). One naming no awaited
+/// start's argument, as a folder gone by login that opens Home does, goes to its app's first
+/// awaited start's desktop when it is the app's first window, and on mapping takes no start: it
+/// is a stray, and once an app has as many strays as awaited starts, those starts are back.
 #[derive(Debug, Default)]
 pub struct Pending {
     /// (app id, the start's argument, desktop).
     desktops: Vec<(String, Option<String>, usize)>,
+    /// The app id of each stray mapped, fewer per app than its awaited starts.
+    strays: Vec<String>,
     until: Option<Instant>,
 }
 
@@ -255,25 +273,19 @@ impl Pending {
         });
         Pending {
             desktops: desktops.collect(),
+            strays: Vec::new(),
             until: Some(now + DESKTOP_WINDOW),
         }
     }
 
-    /// The start a window of `app_id` naming `reopen` came from: the one with that argument,
-    /// else, for the app's `first` window, its first still awaited.
-    fn start_of(&self, app_id: &str, reopen: Option<&str>, first: bool) -> Option<usize> {
-        let named = reopen.and_then(|r| {
-            (self.desktops.iter()).position(|(a, s, _)| a == app_id && s.as_deref() == Some(r))
-        });
-        named.or_else(|| {
-            first
-                .then(|| self.desktops.iter().position(|(a, ..)| a == app_id))
-                .flatten()
-        })
+    /// The awaited start of `app_id` with the argument `reopen`.
+    fn start_of(&self, app_id: &str, reopen: Option<&str>) -> Option<usize> {
+        (self.desktops.iter()).position(|(a, s, _)| a == app_id && s.as_deref() == reopen)
     }
 
-    /// The desktop the next window of `app_id` naming `reopen` goes to, if it is a restored
-    /// start's ([`Pending::start_of`]) and the login is recent.
+    /// The desktop the next window of `app_id` naming `reopen` goes to, while the login is
+    /// recent: its start's, or for the app's `first` window naming no start's argument, the
+    /// app's first awaited start's.
     pub fn desktop(
         &self,
         app_id: &str,
@@ -284,14 +296,30 @@ impl Pending {
         if self.until.is_none_or(|u| now > u) {
             return None;
         }
-        let i = self.start_of(app_id, reopen, first)?;
+        let i = self.start_of(app_id, reopen).or_else(|| {
+            first
+                .then(|| self.desktops.iter().position(|(a, ..)| a == app_id))
+                .flatten()
+        })?;
         Some(self.desktops[i].2)
     }
 
-    /// A window of `app_id` naming `reopen` has mapped: the start it came from is back.
+    /// A window of `app_id` naming `reopen` has mapped: the start with its argument is back, or
+    /// it is a stray.
     pub fn mapped(&mut self, app_id: &str, reopen: Option<&str>) {
-        if let Some(i) = self.start_of(app_id, reopen, true) {
-            self.desktops.remove(i);
+        match self.start_of(app_id, reopen) {
+            Some(i) => {
+                self.desktops.remove(i);
+            }
+            None if self.desktops.iter().any(|(a, ..)| a == app_id) => {
+                self.strays.push(app_id.to_string())
+            }
+            None => return,
+        }
+        let left = self.desktops.iter().filter(|(a, ..)| a == app_id).count();
+        if self.strays.iter().filter(|a| *a == app_id).count() >= left {
+            self.desktops.retain(|(a, ..)| a != app_id);
+            self.strays.retain(|a| a != app_id);
         }
     }
 
@@ -1116,7 +1144,6 @@ mod tests {
         let t = Instant::now();
         let mut p = Pending::new(&[&a, &b], t);
         assert_eq!(p.desktop("foot", None, true, t), Some(2));
-        assert_eq!(p.desktop("foot", None, false, t), None, "not foot's first");
         assert_eq!(p.desktop("gimp", None, true, t), Some(0));
         assert_eq!(p.desktop("other", None, true, t), None);
         p.mapped("foot", None);
@@ -1181,7 +1208,7 @@ mod tests {
         );
         assert_eq!(
             p.desktop("ed", None, false, t),
-            None,
+            Some(2),
             "a second window naming none"
         );
         p.mapped("ed", Some("/b"));
@@ -1194,6 +1221,73 @@ mod tests {
         assert!(p.waiting(t));
         p.mapped("ed", None);
         assert!(!p.waiting(t), "every start is back");
+    }
+
+    #[test]
+    fn a_named_and_an_untitled_window_each_go_back_to_their_own_desktop_in_either_order() {
+        let ed = SavedApp {
+            windows: vec![window(Some("/a"), 1), window(None, 2)],
+            ..saved("ed", "ed.desktop", 2)
+        };
+        let want = |r: Option<&str>| if r.is_some() { 1 } else { 2 };
+        let t = Instant::now();
+        for [one, two] in [[None, Some("/a")], [Some("/a"), None]] {
+            let mut p = Pending::new(&[&ed], t);
+            assert_eq!(
+                p.desktop("ed", one, true, t),
+                Some(want(one)),
+                "{one:?} first"
+            );
+            assert_eq!(
+                p.desktop("ed", two, true, t),
+                Some(want(two)),
+                "{two:?} both unmapped"
+            );
+            p.mapped("ed", one);
+            assert_eq!(
+                p.desktop("ed", two, false, t),
+                Some(want(two)),
+                "{two:?} after {one:?}"
+            );
+            p.mapped("ed", two);
+            assert!(!p.waiting(t), "{one:?} then {two:?}: both back");
+        }
+    }
+
+    #[test]
+    fn a_window_naming_no_start_takes_none_of_its_siblings_starts() {
+        let explorer = SavedApp {
+            windows: vec![window(Some("/docs"), 1), window(Some("/gone"), 3)],
+            ..saved("explorer", "explorer.desktop", 3)
+        };
+        let t = Instant::now();
+        let mut p = Pending::new(&[&explorer], t);
+        p.mapped("explorer", Some("/home"));
+        assert!(p.waiting(t), "/docs is still awaited");
+        assert_eq!(p.desktop("explorer", Some("/docs"), false, t), Some(1));
+        p.mapped("explorer", Some("/docs"));
+        assert!(!p.waiting(t), "the stray accounts for /gone's start");
+
+        let mut p = Pending::new(&[&explorer], t);
+        p.mapped("explorer", Some("/docs"));
+        p.mapped("explorer", Some("/home"));
+        assert!(!p.waiting(t), "the stray is the last start back");
+        assert_eq!(p.desktop("explorer", None, true, t), None);
+    }
+
+    #[test]
+    fn note_reopen_keeps_at_most_32_starts_the_rest_plain() {
+        let mut apps = [saved("ed", "ed.desktop", 0)];
+        let open: Vec<_> = (0..40)
+            .map(|i| ("ed".to_string(), i, Some(format!("/{i}"))))
+            .collect();
+        note_reopen(&mut apps, &open);
+        let named: Vec<String> = (0..MAX_STARTS - 1).map(|i| format!("/{i}")).collect();
+        let mut want: Vec<SavedWindow> = (named.iter().enumerate())
+            .map(|(i, n)| window(Some(n), i))
+            .collect();
+        want.push(window(None, 39));
+        assert_eq!(apps[0].windows, want, "the rest start once plainly");
     }
 
     #[test]

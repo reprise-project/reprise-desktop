@@ -23,8 +23,8 @@
     <request name="set">
       <description summary="name toplevel's argument, or none">
         Asked before toplevel maps, it holds from the map on. Null, an empty
-        string or one holding a control character names none, and the
-        window starts again as the entry starts with no file. Ignored when
+        string, one over 1024 bytes or one holding a control character names
+        none, and the window starts again as the entry starts with no file. Ignored when
         toplevel belongs to another client.
       </description>
       <arg name="toplevel" type="object" interface="xdg_toplevel"/>

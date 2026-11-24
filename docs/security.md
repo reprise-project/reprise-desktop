@@ -54,7 +54,10 @@ Such a program can bind every global Reprise offers, including these:
   above the others, below a [consent prompt](#consent-prompts).
 - **Reopen** (`reprise_reopen_v1`): names an argument the desktop entry
   matching a window's app id starts with at the next login's session
-  restore. That is no more than an autostart file the program could write.
+  restore, at most 32 starts per program. That grants nothing a program
+  outside a sandbox can't already do with an autostart file, but it is less
+  visible: it shows in `$XDG_STATE_HOME/reprise/state.toml`, not on Settings'
+  Startup page.
 
 These are the protocols panels, lockers, clipboard managers, screenshot
 tools and input methods are built on; [protocols.md](protocols.md) lists the
