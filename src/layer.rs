@@ -606,6 +606,13 @@ fn on_desk(state: &State, l: &LayerSurface) -> bool {
     crate::console::on_desk(state, &l.output)
 }
 
+/// Whether `surface`, or the layer surface its popups hang from, stays under the console's lock
+/// in lock mode ([`on_desk`]), where it takes no keyboard from the remote side.
+pub fn under_console_lock(state: &State, surface: &WlSurface) -> bool {
+    let root = popup_root(state, surface).unwrap_or_else(|| surface.clone());
+    state.layer_of(&root).is_some_and(|l| !on_desk(state, l))
+}
+
 pub fn focus_layer(state: &mut State, wl: &WlSurface) {
     if !state.layer_of(wl).is_some_and(|l| on_desk(state, l)) {
         return;

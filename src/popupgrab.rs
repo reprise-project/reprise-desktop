@@ -135,7 +135,8 @@ pub fn dismiss(state: &mut State) -> bool {
 }
 
 /// A client destroyed popup `gone`: the keyboard moves now, not on the next key, to the popup
-/// below it or, once none is left, to `root`; under the desktop's lock, to no client.
+/// below it or, once none is left, to `root`; under the desktop's lock or to a surface under the
+/// console's lock in lock mode, to no client.
 pub fn popup_gone(state: &mut State, gone: &WlSurface, root: &WlSurface) {
     let (Some(keyboard), Some(pointer)) = (state.seat.get_keyboard(), state.seat.get_pointer())
     else {
@@ -147,7 +148,8 @@ pub fn popup_gone(state: &mut State, gone: &WlSurface, root: &WlSurface) {
     }
     if keyboard.current_focus().as_ref() == Some(gone) {
         let to = holding(&pointer).map_or_else(|| Some(root.clone()), |g| g.current_grab());
-        let to = to.filter(|_| !state.desktop_locked());
+        let to =
+            to.filter(|s| !(state.desktop_locked() || crate::layer::under_console_lock(state, s)));
         keyboard.set_focus(state, to, SERIAL_COUNTER.next_serial());
     }
 }
