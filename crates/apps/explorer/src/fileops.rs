@@ -595,6 +595,7 @@ impl Explorer {
                     index,
                     landed,
                     id,
+                    copied,
                     replaced,
                     unlisted,
                 } => {
@@ -612,7 +613,7 @@ impl Explorer {
                             listed: unlisted,
                             id,
                         },
-                        _ => Undoable::Copied(dest, id),
+                        _ => Undoable::Copied(dest, copied),
                     });
                 }
                 PutEvent::Failed { index, error } => {
