@@ -146,6 +146,7 @@ fn a_second_press_ends_every_gesture_a_button_holds() {
             dx: 0,
         },
         Interaction::NotifyPress,
+        Interaction::PreviewPress,
         Interaction::DialogPress,
         Interaction::Marquee,
         Interaction::Stir,

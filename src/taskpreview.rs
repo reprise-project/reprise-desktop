@@ -12,12 +12,18 @@
 //! The taskbar's keyboard focus (`barkeys`) on a task button shows its panel after the same delay, and that panel stays
 //! until the focus moves on, whatever the pointer does. Enter on a group opens the panel at once with the arrows
 //! (`open_keys`): they move the hot cell, Enter brings its window up, Delete closes it, Escape goes back to the button.
+//! A window with a media player (`previewmedia`) gets Previous, Play or Pause, and Next under its picture, greyed where
+//! the player can't; a click presses the player and the panel stays. With the arrows, Tab steps through the hot
+//! cell's buttons, Enter and Space press the one focused and Escape goes back to the cell. The buttons follow the
+//! players while the panel is up, and a window gaining its first player or losing its last lays the panel out again.
 
 use std::{sync::Arc, time::Duration};
 
 use reprisekit::{
-    controls::taskpreview::{self, Cell, PanelKey, TaskPreviewLayout},
+    controls::taskpreview::{self, Cell, Media, PanelKey, TaskPreviewLayout},
+    controls::volumepopup::{NowPlaying, Transport},
     interfaces,
+    pointer::Pointer,
     taskbar::Edge,
 };
 use reprisescene::{BufferId, Input, TreeId};
@@ -82,6 +88,27 @@ struct Panel {
     hot: Option<usize>,
     /// The panel has the arrows (`open_keys`), `hot` the keyboard's cell.
     keys: bool,
+    /// Each window's player by bus name, and what its buttons show.
+    players: Vec<Option<(String, NowPlaying)>>,
+    /// The media button the pointer is on or holds, by cell.
+    ptr: Pointer<(usize, Transport)>,
+    /// The hot cell's media button with the keyboard, after Tab.
+    media_focus: Option<Transport>,
+}
+
+impl Panel {
+    fn now_playing(&self) -> Vec<Option<NowPlaying>> {
+        (self.players.iter())
+            .map(|p| p.as_ref().map(|(_, np)| np.clone()))
+            .collect()
+    }
+
+    /// The media button under the pointer at `at`, in layout coordinates.
+    fn media_at(&self, at: (f64, f64)) -> Option<(usize, Transport)> {
+        let r = self.layout.rect;
+        let (x, y) = (at.0.floor() as i32 - r.x, at.1.floor() as i32 - r.y);
+        taskpreview::media_hit(&self.layout, &self.now_playing(), x, y)
+    }
 }
 
 /// The pointer is over `hit` on bar `bar`. A task button starts the delay, or takes over a panel at once, except the one just pressed (`pressed`); anything else on the bar takes it down.
@@ -166,12 +193,18 @@ fn arm(state: &mut State, bar: TreeId, hit: TaskbarHit, keys: bool) {
 }
 
 pub fn hover_panel(state: &mut State, cell: Option<usize>) {
+    let at = state.pointer_location();
     let Some(p) = state.task_preview.shown.as_mut() else {
         return;
     };
     let window = cell.and_then(|i| p.windows.get(i).copied());
+    let over = cell.and(p.media_at((at.x, at.y)));
+    let lit = p.ptr.motion(over);
     if p.hot != cell {
         p.hot = cell;
+        p.media_focus = None;
+        redraw(state);
+    } else if lit {
         redraw(state);
     }
     match window {
@@ -202,8 +235,12 @@ pub fn hit(state: &State, lx: f64, ly: f64) -> Option<usize> {
     taskpreview::hit(&p.layout, lx.floor() as i32 - r.x, ly.floor() as i32 - r.y)
 }
 
-/// A left press on the panel, on `cell`: its close button closes its window, elsewhere activates it; the panel goes either way.
+/// A left press on the panel, on `cell`: a media button holds until the release (`media_release`), a greyed one
+/// does nothing; its close button closes its window, elsewhere activates it, and the panel goes.
 pub fn clicked(state: &mut State, cell: Option<usize>) {
+    if media_press(state) {
+        return;
+    }
     let Some((i, p)) = cell.zip(state.task_preview.shown.as_ref()) else {
         hide(state);
         return;
@@ -217,6 +254,102 @@ pub fn clicked(state: &mut State, cell: Option<usize>) {
     let (cx, cy) = (at.x.floor() as i32, at.y.floor() as i32);
     let on_close = taskpreview::close_hit(&p.layout, p.hot, cx - r.x, cy - r.y) == Some(i);
     pick(state, w, on_close);
+}
+
+/// A left press on a media button: true when the pointer is on one, which holds it if its player can do what it does.
+fn media_press(state: &mut State) -> bool {
+    let at = state.pointer_location();
+    let Some(p) = state.task_preview.shown.as_mut() else {
+        return false;
+    };
+    let Some((i, t)) = p.media_at((at.x, at.y)) else {
+        return false;
+    };
+    if p.players[i].as_ref().is_some_and(|(_, np)| np.can(t)) && p.ptr.press(Some((i, t)), false) {
+        state.interaction = crate::input::Interaction::PreviewPress;
+        redraw(state);
+    }
+    true
+}
+
+/// The pointer moved with a media button held: it draws pushed while the pointer is on it.
+pub fn media_drag(state: &mut State) {
+    let at = state.pointer_location();
+    let Some(p) = state.task_preview.shown.as_mut() else {
+        return;
+    };
+    let over = p.media_at((at.x, at.y));
+    if p.ptr.motion(over) {
+        redraw(state);
+    }
+}
+
+/// The held media button let go: over it, its player gets the press.
+pub fn media_release(state: &mut State) {
+    let Some(p) = state.task_preview.shown.as_mut() else {
+        return;
+    };
+    let pressed = p.ptr.release();
+    let call = pressed.and_then(|(i, t)| Some((p.players.get(i)?.as_ref()?.0.clone(), t)));
+    if let Some((bus, t)) = call {
+        crate::previewmedia::send(state, &bus, t);
+    }
+    redraw(state);
+}
+
+pub fn media_cancel(state: &mut State) {
+    if let Some(p) = state.task_preview.shown.as_mut()
+        && p.ptr.clear()
+    {
+        redraw(state);
+    }
+}
+
+/// The players changed: the panel's buttons follow, and a panel whose windows gained their first player or lost
+/// their last is laid out again.
+pub fn players_changed(state: &mut State) {
+    let Some(p) = state.task_preview.shown.as_ref() else {
+        return;
+    };
+    let players = crate::previewmedia::players_of(state, &p.windows);
+    let row = players.iter().any(Option::is_some);
+    if row != p.layout.grid.media.is_some() {
+        reshow(state);
+        return;
+    }
+    let Some(p) = state.task_preview.shown.as_mut() else {
+        return;
+    };
+    if players == p.players {
+        return;
+    }
+    p.players = players;
+    let hot_player = p.hot.and_then(|i| p.players.get(i)?.as_ref());
+    let focus_kept = p
+        .media_focus
+        .zip(hot_player)
+        .is_some_and(|(t, (_, np))| np.can(t));
+    if !focus_kept {
+        p.media_focus = None;
+    }
+    redraw(state);
+}
+
+/// Lay the shown panel out again on the same button, keeping its hot cell and keyboard; its pictures are held over
+/// as `pick` holds them.
+fn reshow(state: &mut State) {
+    let Some(p) = state.task_preview.shown.as_ref() else {
+        return;
+    };
+    let (bar, button, hot, keys) = (p.bar, p.button, p.hot, p.keys);
+    hold(state);
+    show(state, bar, button);
+    if let Some(p) = state.task_preview.shown.as_mut() {
+        p.hot = hot.filter(|&h| h < p.windows.len());
+        p.keys = keys;
+    }
+    redraw(state);
+    release(state);
 }
 
 /// Take the panel down, then close `w` or bring it up.
@@ -264,14 +397,42 @@ pub fn key(state: &mut State, sym: u32) -> bool {
     };
     let at = p.hot.unwrap_or(0);
     let w = p.windows.get(at).copied();
+    let player = p.players.get(at).cloned().flatten();
+    let focus = p.media_focus;
     match taskpreview::key(&p.layout, at, sym) {
         None => {}
-        Some(PanelKey::To(n)) => hover_panel(state, Some(n)),
-        Some(PanelKey::Activate) => w.into_iter().for_each(|w| pick(state, w, false)),
+        Some(PanelKey::To(n)) => {
+            set_media_focus(state, None);
+            hover_panel(state, Some(n));
+        }
+        Some(PanelKey::Activate) => match (focus, player) {
+            (Some(t), Some((bus, np))) => {
+                if np.can(t) {
+                    crate::previewmedia::send(state, &bus, t);
+                }
+            }
+            _ => w.into_iter().for_each(|w| pick(state, w, false)),
+        },
         Some(PanelKey::Close) => w.into_iter().for_each(|w| pick(state, w, true)),
+        Some(PanelKey::Back) if focus.is_some() => set_media_focus(state, None),
         Some(PanelKey::Back) => hide(state),
+        Some(PanelKey::Tab { back }) => {
+            if let Some((_, np)) = player {
+                set_media_focus(state, taskpreview::media_step(&np, focus, back));
+            }
+        }
     }
     true
+}
+
+fn set_media_focus(state: &mut State, t: Option<Transport>) {
+    let Some(p) = state.task_preview.shown.as_mut() else {
+        return;
+    };
+    if p.media_focus != t {
+        p.media_focus = t;
+        redraw(state);
+    }
 }
 
 /// Take the panel's pictures, and the windows a pending panel keeps awake, out of it before
@@ -415,7 +576,13 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
     let p = state.bar_placement(&output);
     let button = Rect::new(p.shown.x + btn.x, p.shown.y + btn.y, btn.width, btn.height);
     let bounds = preview_bounds(state.layout_box(Some(&output)), &p);
+    let players = crate::previewmedia::players_of(state, &windows);
     let grid = interfaces::task_preview_grid(&state.config.theme);
+    let grid = if players.iter().any(Option::is_some) {
+        grid.with_media()
+    } else {
+        grid
+    };
     let layout = TaskPreviewLayout::compute(grid, windows.len(), button, bounds, p.edge);
     let scale = state.draw_scale_at(Some(&output));
     let scene = &mut state.scene;
@@ -459,6 +626,9 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
         thumbs,
         hot: None,
         keys: false,
+        players,
+        ptr: Pointer::new(),
+        media_focus: None,
     });
     redraw(state);
 }
@@ -477,6 +647,9 @@ fn redraw(state: &mut State) {
     let windows = p.windows.clone();
     let has_thumb: Vec<bool> = p.thumbs.iter().map(Option::is_some).collect();
     let (layout, hot, buffer, tree) = (p.layout.scaled(scale), p.hot, p.buffer, p.tree);
+    let now_playing = p.now_playing();
+    let lit = p.ptr.lit();
+    let focus = (p.hot.zip(p.media_focus)).filter(|_| p.keys);
     let was = state.scene.outputs_of(tree);
     let mut titles = Vec::new();
     let mut app_ids = Vec::new();
@@ -519,6 +692,11 @@ fn redraw(state: &mut State) {
         .collect();
     let area = layout.canvas();
     let mut canvas = Canvas::new(area.width.max(1) as u32, area.height.max(1) as u32);
+    let media = Media {
+        players: &now_playing,
+        lit,
+        focus,
+    };
     interfaces::draw_task_preview(
         &mut canvas,
         &theme,
@@ -526,6 +704,7 @@ fn redraw(state: &mut State) {
         &layout,
         &cells,
         hot,
+        &media,
     );
     upload_scaled(&mut state.scene, buffer, &canvas, scale);
     state.redraw_nodes(was, &[tree.into()]);
@@ -554,7 +733,8 @@ impl TaskPreviewView {
     }
 }
 
-/// The panel's tree: a button per window named by its title, the hovered one with its close button.
+/// The panel's tree: a button per window named by its title, the hovered one with its close button, and the media
+/// buttons of a window with a player.
 pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     use reprisekit::access::{ROOT, accesskit::Role};
     let p = state.task_preview.shown.as_ref()?;
@@ -563,13 +743,20 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
         .map(|&w| state.win(w).map(|x| x.title()).unwrap_or_default())
         .collect();
     let titles: Vec<&str> = titles.iter().map(String::as_str).collect();
-    taskpreview::access(&p.layout, &titles, p.hot, p.keys, &mut tree, ROOT);
+    let now_playing = p.now_playing();
+    let media = Media {
+        players: &now_playing,
+        lit: None,
+        focus: (p.hot.zip(p.media_focus)).filter(|_| p.keys),
+    };
+    taskpreview::access(&p.layout, &titles, p.hot, p.keys, &media, &mut tree, ROOT);
     Some(tree)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisebus::mpris::Players;
 
     #[test]
     fn picking_a_minimized_window_in_the_preview_panel_never_suspends_it() {
@@ -1104,6 +1291,173 @@ mod tests {
         let (c, r) = (p.layout.cells[p.hot.unwrap()], p.layout.rect);
         let cell = Rect::new(r.x + c.x, r.y + c.y, c.width, c.height);
         assert_eq!(crate::access::focus_rect(&h.state), Some(cell));
+    }
+
+    const PLAYER: &str = "org.mpris.MediaPlayer2.mpv";
+
+    /// One player, `status`, with Previous live as `previous` says.
+    fn player(about: reprisebus::mpris::About, status: &str, previous: bool) -> Players {
+        let mut p = Players::default();
+        p.add(
+            PLAYER,
+            &crate::previewmedia::tests::status(status, previous),
+            about,
+        );
+        p
+    }
+
+    fn by_pid(pid: i32) -> reprisebus::mpris::About {
+        reprisebus::mpris::About {
+            pid: Some(pid as u32),
+            ..Default::default()
+        }
+    }
+
+    /// The screen point at the middle of the shown panel's cell `i` media button `t`.
+    fn media_point(h: &crate::harness::Harness, i: usize, t: Transport) -> (f64, f64) {
+        let p = h.state.task_preview.shown.as_ref().expect("the panel");
+        let b = taskpreview::media_button(&p.layout, i, t).expect("a media row");
+        let r = p.layout.rect;
+        let x = f64::from(r.x + b.x + b.width / 2);
+        (x, f64::from(r.y + b.y + b.height / 2))
+    }
+
+    fn sent(h: &crate::harness::Harness) -> Vec<(String, &'static str)> {
+        h.state.preview_players.sent.clone()
+    }
+
+    #[test]
+    fn a_window_whose_process_plays_gets_media_buttons_a_click_presses_and_the_panel_stays() {
+        const PID: i32 = 5_000_101;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect_as(PID);
+        let a = h.map_toplevel(&mut c, "player", 300, 200);
+        let mut o = h.connect();
+        h.map_toplevel(&mut o, "other", 300, 200);
+        h.state.preview_players.players = player(by_pid(PID), "Playing", false);
+        let (i, _, _) = centre(&h, a.id);
+        let tree = h.state.bars[0].tree;
+        show(&mut h.state, tree, i);
+        let p = h.state.task_preview.shown.as_ref().unwrap();
+        assert!(p.layout.media(0).is_some(), "a media row");
+        let np = p.players[0]
+            .as_ref()
+            .map(|(bus, np)| (bus.as_str(), np.playing));
+        assert_eq!(np, Some((PLAYER, true)));
+        let (x, y) = media_point(&h, 0, Transport::PlayPause);
+        h.pointer_to(x, y);
+        h.button(crate::input::BTN_LEFT, true);
+        assert!(sent(&h).is_empty(), "nothing before the release");
+        h.button(crate::input::BTN_LEFT, false);
+        assert_eq!(sent(&h), [(PLAYER.to_string(), "PlayPause")]);
+        assert!(h.state.task_preview.is_shown(), "the panel stays");
+        let (x, y) = media_point(&h, 0, Transport::Previous);
+        h.pointer_to(x, y);
+        h.button(crate::input::BTN_LEFT, true);
+        h.button(crate::input::BTN_LEFT, false);
+        assert_eq!(sent(&h).len(), 1, "a greyed Previous presses nothing");
+        assert!(h.state.task_preview.is_shown());
+    }
+
+    #[test]
+    fn a_press_let_go_off_its_button_presses_nothing() {
+        const PID: i32 = 5_000_102;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect_as(PID);
+        let a = h.map_toplevel(&mut c, "player", 300, 200);
+        h.state.preview_players.players = player(by_pid(PID), "Paused", true);
+        let (i, _, _) = centre(&h, a.id);
+        let tree = h.state.bars[0].tree;
+        show(&mut h.state, tree, i);
+        let (x, y) = media_point(&h, 0, Transport::Next);
+        h.pointer_to(x, y);
+        h.button(crate::input::BTN_LEFT, true);
+        h.pointer_to(x + 40.0, y);
+        h.button(crate::input::BTN_LEFT, false);
+        assert!(sent(&h).is_empty());
+        assert!(h.state.task_preview.is_shown());
+    }
+
+    #[test]
+    fn the_buttons_follow_the_player_and_the_panel_grows_and_shrinks_its_media_row() {
+        const PID: i32 = 5_000_103;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect_as(PID);
+        let a = h.map_toplevel(&mut c, "player", 300, 200);
+        let (i, _, _) = centre(&h, a.id);
+        let tree = h.state.bars[0].tree;
+        show(&mut h.state, tree, i);
+        let height = |h: &crate::harness::Harness| {
+            let p = h.state.task_preview.shown.as_ref().expect("the panel");
+            (
+                p.layout.rect.height,
+                p.players[0].as_ref().map(|(_, np)| np.playing),
+            )
+        };
+        let (plain, none) = height(&h);
+        assert_eq!(none, None);
+        h.state.preview_players.players = player(by_pid(PID), "Playing", true);
+        players_changed(&mut h.state);
+        assert_eq!(height(&h), (plain + 28, Some(true)), "a player came");
+        h.state.preview_players.players = player(by_pid(PID), "Paused", true);
+        players_changed(&mut h.state);
+        assert_eq!(height(&h), (plain + 28, Some(false)), "it paused");
+        h.state.preview_players.players = Players::default();
+        players_changed(&mut h.state);
+        assert_eq!(height(&h), (plain, None), "it went");
+    }
+
+    const KEY_TAB: u32 = 15;
+    const KEY_SPACE: u32 = 57;
+
+    #[test]
+    fn tab_takes_the_keyboard_to_the_hot_windows_media_buttons_and_escape_back() {
+        let (mut h, _c, _, _) = group_with_keys(true);
+        h.state.preview_players.players = player(
+            reprisebus::mpris::About {
+                pid: Some(5_000_104),
+                desktop_entry: "test.app".into(),
+                ..Default::default()
+            },
+            "Playing",
+            false,
+        );
+        tap(&mut h, KEY_ENTER);
+        let focus = |h: &crate::harness::Harness| {
+            (h.state.task_preview.shown.as_ref()).and_then(|p| p.media_focus)
+        };
+        tap(&mut h, KEY_TAB);
+        assert_eq!(focus(&h), Some(Transport::PlayPause), "Previous is greyed");
+        tap(&mut h, KEY_SPACE);
+        assert_eq!(sent(&h), [(PLAYER.to_string(), "PlayPause")]);
+        tap(&mut h, KEY_TAB);
+        assert_eq!(focus(&h), Some(Transport::Next));
+        tap(&mut h, KEY_ENTER);
+        assert_eq!(sent(&h).last(), Some(&(PLAYER.to_string(), "Next")));
+        let tree = access(&h.state).expect("the panel's tree");
+        let focused = tree
+            .get(tree.focus())
+            .and_then(|n| n.label().map(str::to_string));
+        assert_eq!(
+            focused.as_deref(),
+            Some("Next"),
+            "a reader follows the button"
+        );
+        tap(&mut h, KEY_TAB);
+        assert_eq!(focus(&h), None, "past the last, back on the cell");
+        tap(&mut h, KEY_TAB);
+        tap(&mut h, KEY_ESC);
+        assert_eq!(focus(&h), None);
+        assert!(
+            h.state.task_preview.is_shown(),
+            "Escape went back to the cell"
+        );
+        tap(&mut h, KEY_ESC);
+        assert!(!h.state.task_preview.is_shown());
+        assert_eq!(h.state.focused, None, "no window came up");
     }
 
     #[test]

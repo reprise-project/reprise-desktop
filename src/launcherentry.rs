@@ -83,7 +83,7 @@ pub struct Entries {
 }
 
 /// An app id as entries are keyed: in lower case, as app ids and file names differ in case.
-fn key(app: &AppId) -> String {
+pub(crate) fn key(app: &AppId) -> String {
     app.as_str().to_ascii_lowercase()
 }
 

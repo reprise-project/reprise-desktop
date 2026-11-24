@@ -520,6 +520,11 @@ impl State {
                 crate::notifycenter::drag(self, pos.x, pos.y);
                 return None;
             }
+            Interaction::PreviewPress => {
+                self.pointer_motion(None, pos, time);
+                crate::taskpreview::media_drag(self);
+                return None;
+            }
             Interaction::DisplaysSlide => {
                 self.pointer_motion(None, pos, time);
                 crate::displaysview::drag(self, pos.x);

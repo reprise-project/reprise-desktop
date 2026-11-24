@@ -29,6 +29,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   another copy of the program.
 - **Live previews.** Point at a task button for live pictures of its windows.
   Rest on one, or on Show desktop, and the other windows fade to their frames.
+  A window whose program plays media (MPRIS) gets Previous, Play or Pause, and
+  Next under its picture; Tab reaches them from the keyboard.
 - **Attention.** A window that asks for attention flashes its task button
   for 30 s (`[taskbar] attention_flash`), then stays lit until you focus it.
 - **Progress and badges.** A program that reports progress or an unread count

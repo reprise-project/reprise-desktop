@@ -695,7 +695,15 @@ pub fn render_glass_preview() -> Canvas {
                 picture: Some(&window),
             })
             .collect();
-        interfaces::draw_task_preview(&mut panel, &theme, &text, &l, &cells, hot);
+        interfaces::draw_task_preview(
+            &mut panel,
+            &theme,
+            &text,
+            &l,
+            &cells,
+            hot,
+            &Default::default(),
+        );
         c.blit_over(l.rect.x + a.x, l.rect.y + a.y, &panel);
     };
     popup(

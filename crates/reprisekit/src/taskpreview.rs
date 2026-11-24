@@ -11,12 +11,15 @@ pub(crate) const TITLE_GAP: i32 = 4;
 pub(crate) const WELL_H: i32 = 110;
 pub const CELL_H: i32 = TITLE_H + TITLE_GAP + WELL_H;
 const WELL_EDGE: i32 = 2;
+/// The media row under a cell's well, for a window with a media player.
+const MEDIA_GAP: i32 = 4;
+const MEDIA_H: i32 = 24;
 
 /// A look's preview panel geometry, at scale 1: the cell's size, the panel's
 /// padding and gap, and in a cell its well (the picture fits inside its 2 px
-/// edge, see [`fit`]) and the hot cell's close button. `shadow` is how far
-/// the canvas reaches past the panel; `corner` cuts the panel's corners as
-/// `backdrop::rounded_rects` does.
+/// edge, see [`fit`]), the hot cell's close button and, from [`Grid::with_media`], the row of
+/// media buttons. `shadow` is how far the canvas reaches past the panel; `corner` cuts the
+/// panel's corners as `backdrop::rounded_rects` does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grid {
     pub cell: (i32, i32),
@@ -24,8 +27,21 @@ pub struct Grid {
     pub gap: i32,
     pub well: Rect,
     pub close: Rect,
+    pub media: Option<Rect>,
     pub shadow: Insets,
     pub corner: &'static [i32],
+}
+
+impl Grid {
+    /// The grid with a media row under each well, the cells that much taller.
+    pub fn with_media(self) -> Grid {
+        let w = self.well;
+        Grid {
+            cell: (self.cell.0, self.cell.1 + MEDIA_GAP + MEDIA_H),
+            media: Some(Rect::new(w.x, w.bottom() + MEDIA_GAP, w.width, MEDIA_H)),
+            ..self
+        }
+    }
 }
 
 /// The panel's rect (in the coordinates of the `bounds` it was laid out
@@ -118,6 +134,11 @@ impl TaskPreviewLayout {
         self.in_cell(i, self.grid.close)
     }
 
+    /// Cell `i`'s media row, relative to the panel; None on a grid without one.
+    pub fn media(&self, i: usize) -> Option<Rect> {
+        self.in_cell(i, self.grid.media?)
+    }
+
     pub(crate) fn title_row(&self, i: usize) -> Option<Rect> {
         self.in_cell(i, Rect::new(0, 0, self.grid.cell.0, TITLE_H))
     }
@@ -189,11 +210,16 @@ pub enum PanelKey {
     Close,
     /// Back to the task button, the panel down.
     Back,
+    /// Tab: the keyboard steps on to the hot cell's next media button, or back from it.
+    Tab {
+        back: bool,
+    },
 }
 
 /// Key `sym` on the panel with cell `at` hot: Left and Right step through the cells and wrap,
 /// Up and Down move a row, Home and End go to the ends, Enter and Space bring the hot cell's
-/// window up, Delete closes it, Escape goes back to the button.
+/// window up, Delete closes it, Escape goes back to the button, Tab and Shift+Tab step through the
+/// hot cell's media buttons.
 pub fn key(layout: &TaskPreviewLayout, at: usize, sym: u32) -> Option<PanelKey> {
     use keysym::*;
     let n = layout.cells.len();
@@ -217,6 +243,8 @@ pub fn key(layout: &TaskPreviewLayout, at: usize, sym: u32) -> Option<PanelKey> 
         RETURN | KP_ENTER | SPACE => PanelKey::Activate,
         DELETE | KP_DELETE => PanelKey::Close,
         ESCAPE => PanelKey::Back,
+        TAB => PanelKey::Tab { back: false },
+        ISO_LEFT_TAB => PanelKey::Tab { back: true },
         _ => return None,
     })
 }
@@ -318,7 +346,9 @@ mod tests {
         assert_eq!(key(&l, 1, SPACE), Some(PanelKey::Activate));
         assert_eq!(key(&l, 1, DELETE), Some(PanelKey::Close));
         assert_eq!(key(&l, 1, ESCAPE), Some(PanelKey::Back));
-        assert_eq!(key(&l, 1, TAB), None);
+        assert_eq!(key(&l, 1, TAB), Some(PanelKey::Tab { back: false }));
+        assert_eq!(key(&l, 1, ISO_LEFT_TAB), Some(PanelKey::Tab { back: true }));
+        assert_eq!(key(&l, 1, F2), None);
     }
 
     #[test]

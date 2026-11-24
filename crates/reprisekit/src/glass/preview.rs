@@ -12,6 +12,7 @@ pub const GRID: Grid = Grid {
     gap: 2,
     well: Rect::new(6, 27, 203, 112),
     close: Rect::new(193, 9, 14, 14),
+    media: None,
     shadow: Insets::new(12, 11, 11, 8),
     corner: &[4, 2, 1, 1, 0, 0],
 };

@@ -327,7 +327,7 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
     );
     c.blit_over(20, y0 + 1100, &panel);
     let l = taskpreview::TaskPreviewLayout::compute(
-        interfaces::task_preview_grid(&theme),
+        interfaces::task_preview_grid(&theme).with_media(),
         2,
         Rect::new(300, 400, 60, 40),
         Rect::new(0, 0, 640, 400),
@@ -345,7 +345,16 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
         .collect();
     let a = l.canvas();
     let mut panel = Canvas::new(a.width as u32, a.height as u32);
-    interfaces::draw_task_preview(&mut panel, &two, text, &l, &cells, Some(1));
+    let players = [None, Some(super::popups::sample_now_playing())];
+    let media = taskpreview::Media {
+        players: &players,
+        lit: Some((
+            (1, reprisekit::controls::volumepopup::Transport::PlayPause),
+            Interaction::Hot,
+        )),
+        focus: None,
+    };
+    interfaces::draw_task_preview(&mut panel, &two, text, &l, &cells, Some(1), &media);
     c.blit_over(20, y0 + 1500, &panel);
 }
 

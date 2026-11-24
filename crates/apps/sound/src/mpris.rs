@@ -1,71 +1,14 @@
-//! The media player the volume popup's strip shows, followed over MPRIS on the session bus: the newest Playing player, else the one that played last and is Paused. A thread follows every player's `PropertiesChanged` and the players coming and going, and sends the pick on change.
+//! The media player the volume popup's strip shows, from the players `reprisebus::mpris`
+//! follows: the newest Playing player, else the one that played last and is Paused.
 
-use futures_util::stream::{self, StreamExt};
-use reprisebus::bounded::{self, Dict, Value};
-use reprisebus::follow::{Feed, Run, follow};
+use reprisebus::mpris::{Player, Players};
 use reprisekit::controls::volumepopup::{NowPlaying, Transport};
-use std::collections::{BTreeMap, HashMap};
-use std::sync::mpsc::{Receiver, channel};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use zbus::{Connection, MatchRule, Message, MessageStream};
 
-const ROOT: &str = "org.mpris.MediaPlayer2";
-const PREFIX: &str = "org.mpris.MediaPlayer2.";
-const PATH: &str = "/org/mpris/MediaPlayer2";
-const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
-const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// Chars kept of a title, an artist list and a player's name.
 const TEXT_CHARS: usize = 256;
-/// What [`Entry::apply`] reads, asked one by one when `GetAll` is too large.
-const WANTED: &[&str] = &[
-    "PlaybackStatus",
-    "Metadata",
-    "CanControl",
-    "CanGoPrevious",
-    "CanGoNext",
-    "CanPlay",
-    "CanPause",
-];
-/// How long a player gets to answer; one that doesn't holds up the strip no longer.
-const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Status {
-    Playing,
-    Paused,
-    #[default]
-    Stopped,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Entry {
-    status: Status,
-    title: String,
-    artist: String,
-    /// The file name from `xesam:url`, for a track with no title.
-    file: String,
-    identity: String,
-    can_control: bool,
-    can_previous: bool,
-    can_next: bool,
-    can_play: bool,
-    can_pause: bool,
-    /// When it last started playing, or was found: bigger is later.
-    active: u64,
-}
 
 fn cut(s: &str) -> String {
     reprisefs::names::shown_line(s, TEXT_CHARS)
-}
-
-/// `xesam:artist` is a list of names; some players send one string.
-fn artists_of(v: &Value) -> Option<String> {
-    match v {
-        Value::Strs(a) => Some(cut(&a.join(", "))),
-        Value::Str(s) => Some(cut(s)),
-        _ => None,
-    }
 }
 
 fn file_name(url: &str) -> String {
@@ -89,116 +32,24 @@ fn file_name(url: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-impl Entry {
-    fn apply(&mut self, props: &Dict) -> bool {
-        let was = self.status;
-        for (k, v) in props.iter() {
-            let flag = || v.bool().unwrap_or(false);
-            match k {
-                "PlaybackStatus" => {
-                    self.status = match v.str() {
-                        Some("Playing") => Status::Playing,
-                        Some("Paused") => Status::Paused,
-                        _ => Status::Stopped,
-                    }
-                }
-                "Metadata" => {
-                    let meta = v.dict().cloned().unwrap_or_default();
-                    let text = |k| meta.get(k).and_then(Value::str);
-                    self.title = text("xesam:title").map(cut).unwrap_or_default();
-                    self.artist = meta
-                        .get("xesam:artist")
-                        .and_then(artists_of)
-                        .unwrap_or_default();
-                    self.file = text("xesam:url")
-                        .map(|u| cut(&file_name(u)))
-                        .unwrap_or_default();
-                }
-                "CanControl" => self.can_control = flag(),
-                "CanGoPrevious" => self.can_previous = flag(),
-                "CanGoNext" => self.can_next = flag(),
-                "CanPlay" => self.can_play = flag(),
-                "CanPause" => self.can_pause = flag(),
-                _ => {}
-            }
-        }
-        was != Status::Playing && self.status == Status::Playing
-    }
-
-    /// A player that cannot be controlled greys every button.
-    fn now_playing(&self) -> NowPlaying {
-        let title = [&self.title, &self.file, &self.identity]
-            .into_iter()
-            .find(|s| !s.trim().is_empty())
-            .cloned()
-            .unwrap_or_default();
-        let c = self.can_control;
-        NowPlaying {
-            title,
-            artist: self.artist.clone(),
-            playing: self.status == Status::Playing,
-            can_previous: c && self.can_previous,
-            can_next: c && self.can_next,
-            can_play: c && self.can_play,
-            can_pause: c && self.can_pause,
-        }
+/// The strip's line for `p`: its title, else the file it plays, else its name.
+fn now_playing(p: &Player) -> NowPlaying {
+    let title = [cut(&p.title), cut(&file_name(&p.url)), cut(&p.identity)]
+        .into_iter()
+        .find(|s| !s.trim().is_empty())
+        .unwrap_or_default();
+    NowPlaying {
+        title,
+        artist: cut(&p.artist),
+        playing: p.status == reprisebus::mpris::Status::Playing,
+        can_previous: p.can_previous(),
+        can_next: p.can_next(),
+        can_play: p.can_play(),
+        can_pause: p.can_pause(),
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Players {
-    players: BTreeMap<String, Entry>,
-    clock: u64,
-}
-
-impl Players {
-    fn tick(&mut self) -> u64 {
-        self.clock += 1;
-        self.clock
-    }
-
-    pub fn add(&mut self, name: &str, props: &Dict, identity: String) {
-        let mut e = Entry {
-            identity: cut(&identity),
-            // MPRIS: a player that does not say is controllable.
-            can_control: true,
-            ..Entry::default()
-        };
-        e.apply(props);
-        e.active = self.tick();
-        self.players.insert(name.to_string(), e);
-    }
-
-    pub fn changed(&mut self, name: &str, props: &Dict) {
-        let now = self.clock + 1;
-        if let Some(e) = self.players.get_mut(name)
-            && e.apply(props)
-        {
-            e.active = now;
-            self.clock = now;
-        }
-    }
-
-    pub fn remove(&mut self, name: &str) {
-        self.players.remove(name);
-    }
-
-    /// The player the strip shows and its bus name: the newest Playing
-    /// one, else the most recently active Paused one.
-    pub fn pick(&self) -> Option<(String, NowPlaying)> {
-        let newest = |status| {
-            self.players
-                .iter()
-                .filter(|(_, e)| e.status == status)
-                .max_by_key(|(_, e)| e.active)
-        };
-        newest(Status::Playing)
-            .or_else(|| newest(Status::Paused))
-            .map(|(n, e)| (n.clone(), e.now_playing()))
-    }
-}
-
-pub fn method(t: Transport) -> &'static str {
+pub fn method(t: Transport) -> reprisebus::mpris::Method {
     match t {
         Transport::Previous => "Previous",
         Transport::PlayPause => "PlayPause",
@@ -208,255 +59,41 @@ pub fn method(t: Transport) -> &'static str {
 
 pub type Pick = Option<(String, NowPlaying)>;
 
-pub struct Watch {
-    pub picks: Receiver<Pick>,
-    conn: Arc<Mutex<Option<Connection>>>,
+/// The player the strip shows and its bus name.
+pub fn pick(players: &Players) -> Pick {
+    let (name, p) = players.newest()?;
+    Some((name.to_string(), now_playing(p)))
 }
 
-impl Watch {
-    pub fn send(&self, bus: &str, t: Transport) {
-        let Some(conn) = self.conn.lock().ok().and_then(|c| c.clone()) else {
-            return;
-        };
-        let bus = bus.to_string();
-        let spawned = std::thread::Builder::new()
-            .name("reprise-sound-mpris-call".into())
-            .spawn(move || {
-                let call = conn.call_method(Some(bus.as_str()), PATH, Some(PLAYER), method(t), &());
-                if let Err(e) = zbus::block_on(call) {
-                    log::info!("{bus}: {} failed: {e}", method(t));
-                }
-            });
-        if let Err(e) = spawned {
-            log::warn!("no thread for the player call: {e}");
-        }
-    }
-}
-
-async fn read(conn: &Connection, name: &str) -> Option<(Dict, String)> {
-    let player = bounded::proxy(conn, name, PATH, PLAYER).await.ok()?;
-    let props = bounded::properties_of(&player, WANTED).await.ok()?;
-    let identity = match bounded::proxy(conn, name, PATH, ROOT).await {
-        Ok(root) => bounded::property::<String>(&root, "Identity").await.ok(),
-        Err(_) => None,
-    };
-    Some((props, identity.unwrap_or_default()))
-}
-
-async fn owner(dbus: &zbus::fdo::DBusProxy<'_>, name: &str) -> Option<String> {
-    let name = zbus::names::BusName::try_from(name).ok()?;
-    dbus.get_name_owner(name).await.ok().map(|o| o.to_string())
-}
-
-enum Wake {
-    Owner(String, String, String),
-    /// A `PropertiesChanged` and its sender, decoded only once the sender is known to own a player.
-    Props(String, Message),
-}
-
-fn wake_of(m: &Message) -> Option<Wake> {
-    let h = m.header();
-    if h.member().is_some_and(|n| n.as_str() == "NameOwnerChanged") {
-        let (name, old, new): (String, String, String) = m.body().deserialize().ok()?;
-        return Some(Wake::Owner(name, old, new));
-    }
-    let sender = h.sender()?.to_string();
-    Some(Wake::Props(sender, m.clone()))
-}
-
-/// What a `PropertiesChanged` says moved; None when a key was invalidated or the body is over
-/// [`bounded::MAX_BODY`] or of another type, so the player is read again.
-fn changes_of(m: &Message) -> Option<Dict> {
-    let body = bounded::within(m.body(), bounded::MAX_BODY).ok()?;
-    let (_, changed, invalidated) = body.deserialize::<(&str, Dict, Vec<&str>)>().ok()?;
-    invalidated.is_empty().then_some(changed)
-}
-
-fn timed(b: zbus::connection::Builder<'_>) -> zbus::connection::Builder<'_> {
-    b.method_timeout(REPLY_TIMEOUT)
-}
-
-async fn run(feed: &mut Feed<Pick>, shared: &Mutex<Option<Connection>>) -> Run {
-    let conn = timed(zbus::connection::Builder::session()).build();
-    let conn = match conn.await {
-        Ok(c) => c,
-        Err(e) => {
-            return feed
-                .unavailable_because(format_args!("no session bus ({e}); no player to show"));
-        }
-    };
-    let rules = [
-        MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .sender("org.freedesktop.DBus")
-            .interface("org.freedesktop.DBus")
-            .member("NameOwnerChanged")
-            .arg0ns(ROOT)
-            .build(),
-        MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .path(PATH)
-            .interface(PROPERTIES)
-            .member("PropertiesChanged")
-            .arg(0, PLAYER)
-            .build(),
-    ];
-    let mut streams = Vec::new();
-    for rule in rules {
-        let s = match rule {
-            Ok(r) => MessageStream::for_match_rule(r, &conn, None).await,
-            Err(e) => Err(e),
-        };
-        match s {
-            Ok(s) => streams.push(s),
-            Err(e) => {
-                log::warn!("cannot follow the players: {e}");
-                return Run::Ended { delivered: false };
-            }
-        }
-    }
-    let mut wakes = stream::select_all(streams)
-        .filter_map(|m| async move { wake_of(&m.ok()?) })
-        .boxed();
-    let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await else {
-        return Run::Ended { delivered: false };
-    };
-    if let Ok(mut c) = shared.lock() {
-        *c = Some(conn.clone());
-    }
-    let mut owners: HashMap<String, Vec<String>> = HashMap::new();
-    let mut players = Players::default();
-    let names = dbus.list_names().await.unwrap_or_default();
-    for name in names.iter().map(|n| n.to_string()) {
-        if !name.starts_with(PREFIX) {
-            continue;
-        }
-        if let (Some(o), Some((props, identity))) =
-            (owner(&dbus, &name).await, read(&conn, &name).await)
-        {
-            owners.entry(o).or_default().push(name.clone());
-            players.add(&name, &props, identity);
-        }
-    }
-    if !feed.send(players.pick()) {
-        return Run::Closed;
-    }
-    while let Some(wake) = wakes.next().await {
-        match wake {
-            Wake::Owner(name, _, _) if !name.starts_with(PREFIX) => continue,
-            Wake::Owner(name, old, new) => {
-                if !old.is_empty() {
-                    players.remove(&name);
-                    if let Some(v) = owners.get_mut(&old) {
-                        v.retain(|n| *n != name);
-                    }
-                }
-                if !new.is_empty()
-                    && let Some((props, identity)) = read(&conn, &name).await
-                {
-                    owners.entry(new).or_default().push(name.clone());
-                    players.add(&name, &props, identity);
-                }
-            }
-            Wake::Props(sender, msg) => {
-                let names = owners.get(&sender).cloned().unwrap_or_default();
-                let changes = if names.is_empty() {
-                    None
-                } else {
-                    changes_of(&msg)
-                };
-                for name in names {
-                    match &changes {
-                        Some(changed) => players.changed(&name, changed),
-                        None => {
-                            if let Some((props, _)) = read(&conn, &name).await {
-                                players.changed(&name, &props);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !feed.send(players.pick()) {
-            return Run::Closed;
-        }
-    }
-    if let Ok(mut c) = shared.lock() {
-        *c = None;
-    }
-    Run::Ended { delivered: true }
-}
-
-/// Follow the players on a thread; every new pick arrives on `picks` and wakes the app. While the bus is gone `None` arrives and the thread retries after a backoff.
-pub fn watch(waker: repriseapp::Waker) -> Watch {
-    let (tx, rx) = channel();
-    let conn = Arc::new(Mutex::new(None));
-    let shared = conn.clone();
-    follow(
-        "reprise-sound-mpris",
-        tx,
-        move || waker.wake(),
-        move |feed| zbus::block_on(run(feed, &shared)),
-    );
-    Watch { picks: rx, conn }
+pub fn watch(waker: repriseapp::Waker) -> reprisebus::mpris::Watch {
+    reprisebus::mpris::watch("reprise-sound-mpris", move || waker.wake())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::Variant;
+    use reprisebus::bounded::{self, Dict};
+    use reprisebus::mpris::About;
+    use std::collections::HashMap;
+    use zbus::{Message, Variant};
 
     fn props(entries: Vec<(&str, Variant<'static>)>) -> Dict {
         let map: HashMap<&str, Variant> = entries.into_iter().collect();
-        let msg = Message::signal(PATH, PROPERTIES, "PropertiesChanged")
-            .build(&map)
-            .unwrap();
+        let msg = Message::signal(
+            "/org/mpris/MediaPlayer2",
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+        )
+        .build(&map)
+        .unwrap();
         bounded::decode(&msg).unwrap()
     }
 
-    fn status(s: &str) -> Dict {
-        props(vec![("PlaybackStatus", Variant::from(s.to_string()))])
-    }
-
-    fn picked(p: &Players) -> Option<String> {
-        p.pick().map(|(n, _)| n)
-    }
-
-    #[test]
-    fn the_newest_playing_player_wins() {
-        let mut p = Players::default();
-        p.add("org.mpris.MediaPlayer2.a", &status("Playing"), "A".into());
-        p.add("org.mpris.MediaPlayer2.b", &status("Paused"), "B".into());
-        assert_eq!(picked(&p).as_deref(), Some("org.mpris.MediaPlayer2.a"));
-        p.changed("org.mpris.MediaPlayer2.b", &status("Playing"));
-        assert_eq!(
-            picked(&p).as_deref(),
-            Some("org.mpris.MediaPlayer2.b"),
-            "b started last"
-        );
-        // A metadata change on a playing player does not make it newer.
-        p.changed("org.mpris.MediaPlayer2.a", &status("Playing"));
-        assert_eq!(picked(&p).as_deref(), Some("org.mpris.MediaPlayer2.b"));
-    }
-
-    #[test]
-    fn with_none_playing_the_last_active_paused_one_wins() {
-        let mut p = Players::default();
-        p.add("org.mpris.MediaPlayer2.a", &status("Paused"), "A".into());
-        p.add("org.mpris.MediaPlayer2.b", &status("Playing"), "B".into());
-        p.add("org.mpris.MediaPlayer2.c", &status("Stopped"), "C".into());
-        p.changed("org.mpris.MediaPlayer2.a", &status("Playing"));
-        p.changed("org.mpris.MediaPlayer2.a", &status("Paused"));
-        p.changed("org.mpris.MediaPlayer2.b", &status("Paused"));
-        assert_eq!(
-            picked(&p).as_deref(),
-            Some("org.mpris.MediaPlayer2.a"),
-            "a played after b was found"
-        );
-        p.remove("org.mpris.MediaPlayer2.a");
-        assert_eq!(picked(&p).as_deref(), Some("org.mpris.MediaPlayer2.b"));
-        p.remove("org.mpris.MediaPlayer2.b");
-        assert_eq!(picked(&p), None, "a stopped player is not shown");
+    fn named(identity: &str) -> About {
+        About {
+            identity: identity.into(),
+            ..About::default()
+        }
     }
 
     #[test]
@@ -479,9 +116,9 @@ mod tests {
                 ("CanPlay", Variant::from(true)),
                 ("CanPause", Variant::from(true)),
             ]),
-            "A".into(),
+            named("A"),
         );
-        let (_, np) = p.pick().unwrap();
+        let (_, np) = pick(&p).unwrap();
         assert_eq!(
             np,
             NowPlaying {
@@ -498,7 +135,7 @@ mod tests {
             "org.mpris.MediaPlayer2.a",
             &props(vec![("CanControl", Variant::from(false))]),
         );
-        let (_, np) = p.pick().unwrap();
+        let (_, np) = pick(&p).unwrap();
         assert!(!np.can_next && !np.can_pause, "uncontrollable: all greyed");
     }
 
@@ -516,9 +153,9 @@ mod tests {
                 ("PlaybackStatus", Variant::from("Playing")),
                 ("Metadata", Variant::from(meta)),
             ]),
-            long.clone(),
+            named(&long),
         );
-        let (_, np) = p.pick().unwrap();
+        let (_, np) = pick(&p).unwrap();
         assert_eq!(np.title.chars().count(), TEXT_CHARS);
         assert_eq!(np.artist.chars().count(), TEXT_CHARS);
         p.changed(
@@ -528,7 +165,7 @@ mod tests {
                 Variant::from(HashMap::<String, Variant<'static>>::new()),
             )]),
         );
-        assert_eq!(p.pick().unwrap().1.title.chars().count(), TEXT_CHARS);
+        assert_eq!(pick(&p).unwrap().1.title.chars().count(), TEXT_CHARS);
     }
 
     #[test]
@@ -544,9 +181,9 @@ mod tests {
                 ("PlaybackStatus", Variant::from("Paused")),
                 ("Metadata", Variant::from(meta)),
             ]),
-            "mpv".into(),
+            named("mpv"),
         );
-        assert_eq!(p.pick().unwrap().1.title, "My Song.ogg");
+        assert_eq!(pick(&p).unwrap().1.title, "My Song.ogg");
         p.changed(
             "org.mpris.MediaPlayer2.a",
             &props(vec![(
@@ -554,27 +191,6 @@ mod tests {
                 Variant::from(HashMap::<String, Variant<'static>>::new()),
             )]),
         );
-        assert_eq!(p.pick().unwrap().1.title, "mpv");
-    }
-
-    #[test]
-    fn a_player_that_never_answers_is_passed_over() {
-        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
-        let (done, read_done) = channel();
-        std::thread::spawn(move || {
-            zbus::block_on(async {
-                let (server, client) = futures_util::join!(
-                    zbus::connection::Builder::unix_stream(a)
-                        .server(zbus::Guid::generate())
-                        .p2p()
-                        .build(),
-                    timed(zbus::connection::Builder::unix_stream(b).p2p()).build(),
-                );
-                let (_server, client) = (server.unwrap(), client.unwrap());
-                let _ = done.send(read(&client, "org.mpris.MediaPlayer2.hung").await);
-            })
-        });
-        let read = read_done.recv_timeout(Duration::from_secs(5));
-        assert_eq!(read.expect("read gave up"), None);
+        assert_eq!(pick(&p).unwrap().1.title, "mpv");
     }
 }

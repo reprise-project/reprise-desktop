@@ -1,10 +1,14 @@
 //! Classic's task button preview panel: a cell per window with its title over a well. The host owns the pictures,
 //! timers and scene; layout, hit tests and [`fit`] are the root [`crate::taskpreview`], re-exported here.
+//! The media buttons a window with a media player gets under its well are drawn here for every look.
 
 use crate::access::accesskit::{NodeId, Role};
 use crate::access::{self, Tree};
 use crate::art::glyph::Glyph;
 use crate::classic::widgets::{CLOSE_H, CLOSE_W, draw_caption_button};
+use crate::controls::volumepopup::{NowPlaying, Transport};
+use crate::look::widgets::draw_media_button;
+use crate::pointer::{Lit, lit_of};
 use crate::raster::{Canvas, EdgeStyle, Insets, Rect};
 use crate::taskpreview::{TITLE_GAP, TITLE_H, WELL_H};
 use crate::text::{Align, TextRenderer};
@@ -30,9 +34,86 @@ pub const CLASSIC: Grid = Grid {
     gap: GAP,
     well: Rect::new(0, TITLE_H + TITLE_GAP, CELL_W, WELL_H),
     close: Rect::new(CELL_W - 2 - CLOSE_W, 2, CLOSE_W, CLOSE_H),
+    media: None,
     shadow: Insets::ZERO,
     corner: &[],
 };
+
+/// A media button's width and the room between two, centred in the media row.
+const MEDIA_W: i32 = 30;
+const MEDIA_GAP: i32 = 4;
+
+/// Cell `i`'s media button `t`, relative to the panel.
+pub fn media_button(layout: &TaskPreviewLayout, i: usize, t: Transport) -> Option<Rect> {
+    let row = layout.media(i)?;
+    let s = layout.scale;
+    let all = 3 * MEDIA_W + 2 * MEDIA_GAP;
+    let x = row.x + (row.width - all * s) / 2 + t as i32 * (MEDIA_W + MEDIA_GAP) * s;
+    Some(Rect::new(x, row.y, MEDIA_W * s, row.height))
+}
+
+/// The media button at `x`, `y` (relative to the panel) of a cell whose window has a player.
+pub fn media_hit(
+    layout: &TaskPreviewLayout,
+    players: &[Option<NowPlaying>],
+    x: i32,
+    y: i32,
+) -> Option<(usize, Transport)> {
+    let i = hit(layout, x, y).filter(|&i| players.get(i).is_some_and(Option::is_some))?;
+    let on = |t: &Transport| media_button(layout, i, *t).is_some_and(|r| r.contains(x, y));
+    Transport::ALL.into_iter().find(on).map(|t| (i, t))
+}
+
+/// The media buttons' state: each cell's player (none for a window without one), the button the
+/// pointer is on or holds, and the one with the keyboard focus.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Media<'a> {
+    pub players: &'a [Option<NowPlaying>],
+    pub lit: Lit<(usize, Transport)>,
+    pub focus: Option<(usize, Transport)>,
+}
+
+/// Draw the media buttons of `media`'s cells on a panel drawn into `canvas` (sized to
+/// `layout.canvas()`), greyed where the player can't do what they do.
+pub fn draw_media(
+    canvas: &mut Canvas,
+    theme: &Theme,
+    text: &TextRenderer,
+    layout: &TaskPreviewLayout,
+    media: &Media,
+) {
+    let p = theme.paint();
+    let area = layout.canvas();
+    for (i, np) in media.players.iter().enumerate() {
+        let Some(np) = np else {
+            continue;
+        };
+        for t in Transport::ALL {
+            let Some(r) = media_button(layout, i, t) else {
+                break;
+            };
+            let r = Rect::new(r.x - area.x, r.y - area.y, r.width, r.height);
+            let (glyph, _) = np.glyph(t);
+            let ptr = lit_of(media.lit, (i, t));
+            let focus = media.focus == Some((i, t));
+            let px = theme.fonts.size_px;
+            draw_media_button(canvas, text, &p, r, glyph, np.can(t), ptr, focus, px);
+        }
+    }
+}
+
+/// The media button Tab (Shift+Tab with `back`) moves the keyboard to from `from` (None: the
+/// cell): the next one `np` can press, None past the last, back on the cell.
+pub fn media_step(np: &NowPlaying, from: Option<Transport>, back: bool) -> Option<Transport> {
+    let order: Vec<Transport> = Transport::ALL.into_iter().filter(|&t| np.can(t)).collect();
+    let at = from.and_then(|f| order.iter().position(|&t| t == f));
+    match (at, back) {
+        (None, false) => order.first().copied(),
+        (None, true) => order.last().copied(),
+        (Some(k), false) => order.get(k + 1).copied(),
+        (Some(k), true) => k.checked_sub(1).map(|k| order[k]),
+    }
+}
 
 /// Draw a sunken well with `picture` (an icon standing in for the live
 /// one) centred in it.
@@ -104,24 +185,43 @@ pub fn draw(
 }
 
 /// The panel's screen reader nodes under `parent`, laid out from the
-/// panel's top-left: a button per cell named for its window's title, and
-/// in the `hot` cell its close button, named "Close". With `keys` the
-/// panel has the keyboard and the hot cell the focus.
+/// panel's top-left: a button per cell named for its window's title, in
+/// the `hot` cell its close button, named "Close", and in a cell with a
+/// player its media buttons. With `keys` the panel has the keyboard and
+/// the hot cell, or `media`'s focused button, the focus.
 pub fn access(
     layout: &TaskPreviewLayout,
     titles: &[&str],
     hot: Option<usize>,
     keys: bool,
+    media: &Media,
     tree: &mut Tree,
     parent: NodeId,
 ) {
     for (i, (cell, title)) in layout.cells.iter().zip(titles).enumerate() {
         let id = tree.push(parent, i, access::named(Role::Button, *cell, title));
-        if keys && hot == Some(i) {
+        if keys && hot == Some(i) && media.focus.is_none() {
             tree.set_focus(id);
         }
         if let Some(close) = layout.close(i).filter(|_| hot == Some(i)) {
             tree.push(id, "close", access::named(Role::Button, close, "Close"));
+        }
+        let Some(Some(np)) = media.players.get(i) else {
+            continue;
+        };
+        for t in Transport::ALL {
+            let Some(r) = media_button(layout, i, t) else {
+                break;
+            };
+            let (_, name) = np.glyph(t);
+            let b = tree.push(
+                id,
+                ("media", t as usize),
+                access::button(r, name, np.can(t), false),
+            );
+            if keys && media.focus == Some((i, t)) {
+                tree.set_focus(b);
+            }
         }
     }
 }
@@ -147,6 +247,7 @@ mod tests {
             &["Notes", "Mail"],
             Some(1),
             false,
+            &Media::default(),
             &mut tree,
             crate::access::ROOT,
         );
@@ -187,10 +288,26 @@ mod tests {
         );
         let titles = ["Notes", "Mail"];
         let mut tree = Tree::window("Previews", (l.rect.width, l.rect.height));
-        access(&l, &titles, Some(1), true, &mut tree, crate::access::ROOT);
+        access(
+            &l,
+            &titles,
+            Some(1),
+            true,
+            &Media::default(),
+            &mut tree,
+            crate::access::ROOT,
+        );
         assert_eq!(tree.find(Role::Button, "Mail"), Some(tree.focus()));
         let mut tree = Tree::window("Previews", (l.rect.width, l.rect.height));
-        access(&l, &titles, Some(1), false, &mut tree, crate::access::ROOT);
+        access(
+            &l,
+            &titles,
+            Some(1),
+            false,
+            &Media::default(),
+            &mut tree,
+            crate::access::ROOT,
+        );
         assert_eq!(
             tree.focus(),
             crate::access::ROOT,
@@ -199,6 +316,182 @@ mod tests {
     }
 
     const SCREEN: Rect = Rect::new(0, 0, 1920, 1052);
+
+    fn playing() -> NowPlaying {
+        NowPlaying {
+            playing: true,
+            can_previous: true,
+            can_next: true,
+            can_play: true,
+            can_pause: true,
+            ..NowPlaying::default()
+        }
+    }
+
+    fn with_media(n: usize) -> TaskPreviewLayout {
+        let button = Rect::new(300, 1054, 160, 22);
+        TaskPreviewLayout::compute(CLASSIC.with_media(), n, button, SCREEN, Edge::Bottom)
+    }
+
+    #[test]
+    fn the_media_row_puts_three_30_px_buttons_4_px_under_the_well() {
+        let l = with_media(1);
+        assert_eq!(l.cells[0].height, 132 + 28, "the cell is 28 px taller");
+        assert_eq!(
+            l.well(0),
+            Some(Rect::new(6, 28, 176, 110)),
+            "the well stays"
+        );
+        assert_eq!(l.media(0), Some(Rect::new(6, 142, 176, 24)));
+        assert_eq!(
+            Transport::ALL.map(|t| media_button(&l, 0, t).unwrap()),
+            [
+                Rect::new(45, 142, 30, 24),
+                Rect::new(79, 142, 30, 24),
+                Rect::new(113, 142, 30, 24),
+            ],
+            "98 px of buttons centred in the 176 px row"
+        );
+        assert_eq!(
+            media_button(&l.scaled(2), 0, Transport::Next),
+            Some(Rect::new(226, 284, 60, 48))
+        );
+        let plain = TaskPreviewLayout::compute(
+            CLASSIC,
+            1,
+            Rect::new(300, 1054, 160, 22),
+            SCREEN,
+            Edge::Bottom,
+        );
+        assert_eq!(plain.media(0), None, "no row without a player");
+    }
+
+    #[test]
+    fn media_hit_takes_the_buttons_of_a_cell_with_a_player_only() {
+        let l = with_media(2);
+        let players = [None, Some(playing())];
+        let next = media_button(&l, 1, Transport::Next).unwrap();
+        assert_eq!(
+            media_hit(&l, &players, next.x, next.y),
+            Some((1, Transport::Next))
+        );
+        assert_eq!(
+            media_hit(&l, &players, next.right(), next.y),
+            None,
+            "the gap after it"
+        );
+        let first = media_button(&l, 0, Transport::Next).unwrap();
+        assert_eq!(
+            media_hit(&l, &players, first.x, first.y),
+            None,
+            "a window without a player has no buttons"
+        );
+    }
+
+    #[test]
+    fn tab_steps_through_the_buttons_the_player_can_press_and_back_to_the_cell() {
+        let np = NowPlaying {
+            can_previous: false,
+            ..playing()
+        };
+        use Transport::*;
+        assert_eq!(media_step(&np, None, false), Some(PlayPause));
+        assert_eq!(media_step(&np, Some(PlayPause), false), Some(Next));
+        assert_eq!(media_step(&np, Some(Next), false), None, "back on the cell");
+        assert_eq!(media_step(&np, None, true), Some(Next));
+        assert_eq!(media_step(&np, Some(PlayPause), true), None);
+        assert_eq!(media_step(&NowPlaying::default(), None, false), None);
+    }
+
+    #[test]
+    fn access_names_the_media_buttons_by_what_they_do() {
+        let l = with_media(2);
+        let paused = NowPlaying {
+            playing: false,
+            can_next: false,
+            ..playing()
+        };
+        let players = [Some(paused), None];
+        let media = Media {
+            players: &players,
+            lit: None,
+            focus: Some((0, Transport::PlayPause)),
+        };
+        let mut tree = Tree::window("Previews", (l.rect.width, l.rect.height));
+        access(
+            &l,
+            &["Player", "Notes"],
+            Some(0),
+            true,
+            &media,
+            &mut tree,
+            crate::access::ROOT,
+        );
+        let play = tree
+            .find(Role::Button, "Play")
+            .expect("Play, as it is paused");
+        assert_eq!(tree.focus(), play, "the keyboard's button has the focus");
+        let next = tree.find(Role::Button, "Next").unwrap();
+        assert!(tree.get(next).unwrap().is_disabled(), "Next greys");
+        assert_eq!(
+            tree.nodes()
+                .filter(|(_, n)| n.label() == Some("Previous"))
+                .count(),
+            1,
+            "only the cell with a player has buttons"
+        );
+    }
+
+    /// A playing window with the pointer on Next beside a paused one with Play focused, in each
+    /// look at scale 1 and 2. The titles are empty so no system font draws.
+    #[test]
+    fn the_media_row_pins_in_each_look_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        use crate::pointer::Interaction;
+        crate::pins::fonts();
+        let paused = NowPlaying {
+            playing: false,
+            can_previous: false,
+            ..playing()
+        };
+        let players = [Some(playing()), Some(paused)];
+        let media = Media {
+            players: &players,
+            lit: Some(((0, Transport::Next), Interaction::Hot)),
+            focus: Some((1, Transport::PlayPause)),
+        };
+        let blank = || Cell {
+            title: "",
+            icon: None,
+            active: false,
+            picture: None,
+        };
+        let cells = [blank(), blank()];
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let base = crate::interfaces::theme_for(look);
+            let text = TextRenderer::load(&base.fonts);
+            let grid = crate::interfaces::task_preview_grid(&base).with_media();
+            let button = Rect::new(300, 1040, 60, 40);
+            let l = TaskPreviewLayout::compute(grid, 2, button, SCREEN, Edge::Bottom);
+            for s in [1, 2] {
+                let (theme, l) = (base.scaled(s), l.scaled(s));
+                let a = l.canvas();
+                let mut c = Canvas::new(a.width as u32, a.height as u32);
+                crate::interfaces::draw_task_preview(
+                    &mut c,
+                    &theme,
+                    &text,
+                    &l,
+                    &cells,
+                    Some(0),
+                    &media,
+                );
+                got.push((format!("{look:?} {s}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("controls/task_preview_media", &got);
+    }
 
     #[test]
     fn one_window_centres_a_single_cell_over_its_button() {
