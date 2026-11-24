@@ -1165,6 +1165,18 @@ impl TextRenderer {
         (-left).max(0)
     }
 
+    /// Where a left-aligned `text` starts its pen past its rect's x in a rect `width` px wide: its
+    /// [`TextRenderer::ink_before`], so a first glyph that inks left of the pen keeps that ink,
+    /// while the ink still ends inside the rect; else 0.
+    fn hook_room(&self, text: &str, bold: bool, size_px: u32, width: i32) -> i32 {
+        let lead = self.ink_before(text, bold, size_px);
+        if lead > 0 && self.ink_width(text, bold, size_px) + lead <= width {
+            lead
+        } else {
+            0
+        }
+    }
+
     /// How far right of the pen `text`'s ink reaches: [`TextRenderer::measure`] less the last
     /// glyph's blank columns after its ink (a space's whole advance).
     pub fn ink_width(&self, text: &str, bold: bool, size_px: u32) -> i32 {
@@ -1341,6 +1353,8 @@ impl TextRenderer {
         format!("...{}", text[from..].trim_start()).into()
     }
 
+    /// Draw `text` aligned `align` in `rect`. Left-aligned, a first glyph that inks left of its pen
+    /// at scale 1 (DejaVu Sans' J) starts that much right while the ink still ends in `rect`.
     #[expect(clippy::too_many_arguments)]
     pub fn draw(
         &self,
@@ -1356,6 +1370,7 @@ impl TextRenderer {
     }
 
     /// [`TextRenderer::draw`] onto a translucent canvas, as [`TextRenderer::draw_run_over`].
+    /// Left-aligned, a first glyph that inks left of its pen starts as in [`TextRenderer::draw`].
     #[expect(clippy::too_many_arguments)]
     pub fn draw_over(
         &self,
@@ -1370,11 +1385,7 @@ impl TextRenderer {
         let Some(baseline) = self.baseline(rect, bold, size_px) else {
             return;
         };
-        let width = match align {
-            Align::Left => 0,
-            Align::Center | Align::Right => self.measure(text, bold, size_px),
-        };
-        let pen = align.pen(rect, width);
+        let pen = self.pen(rect, text, bold, align, size_px);
         self.draw_run_over(canvas, pen, baseline, rect, text, bold, color, size_px);
     }
 
@@ -1397,14 +1408,19 @@ impl TextRenderer {
         if clip.is_empty() {
             return;
         }
-        let width = match align {
-            Align::Left => 0,
-            Align::Center | Align::Right => self.measure(text, bold, size_px),
-        };
-        let pen = align.pen(rect, width);
+        let pen = self.pen(rect, text, bold, align, size_px);
         self.draw_line(
             canvas, pen, baseline, clip, rect, text, bold, color, size_px,
         );
+    }
+
+    /// The pen x `text` aligned `align` in `rect` starts at; left-aligned, past a first glyph's
+    /// ink left of its pen ([`TextRenderer::hook_room`]).
+    fn pen(&self, rect: Rect, text: &str, bold: bool, align: Align, size_px: u32) -> i32 {
+        match align {
+            Align::Left => rect.x + self.hook_room(text, bold, size_px, rect.width),
+            Align::Center | Align::Right => align.pen(rect, self.measure(text, bold, size_px)),
+        }
     }
 
     /// Draw `text` from `rect`'s x on its baseline, clipped to `clip` and `line`, with glyphs kept
@@ -1435,9 +1451,7 @@ impl TextRenderer {
     }
 
     /// Draw `label` with its access key underlined (`&File` underlines F), the underline `s` px
-    /// under the baseline and `s` px thick. Left-aligned, a first glyph that inks left of the pen
-    /// at scale 1 ([`TextRenderer::ink_before`]) starts that much right while the ink still ends
-    /// in `r`.
+    /// under the baseline and `s` px thick, placed as [`TextRenderer::draw`] places it.
     #[expect(clippy::too_many_arguments)]
     pub fn draw_marked(
         &self,
@@ -1451,28 +1465,15 @@ impl TextRenderer {
         s: i32,
     ) {
         let (plain, mnemonic) = split_mnemonic(label);
-        let lead = match align {
-            Align::Left => {
-                let lead = self.ink_before(&plain, bold, px);
-                let fits = self.ink_width(&plain, bold, px) + lead <= r.width;
-                if fits { lead } else { 0 }
-            }
-            Align::Center | Align::Right => 0,
-        };
         let Some(m) = mnemonic else {
-            if lead == 0 {
-                self.draw(c, r, &plain, bold, color, align, px);
-            } else {
-                let pen = Rect::new(r.x + lead, r.y, r.width - lead, r.height);
-                self.draw_in(c, pen, r, r, &plain, bold, color, px);
-            }
+            self.draw(c, r, &plain, bold, color, align, px);
             return;
         };
         let Some(baseline) = self.baseline(r, bold, px) else {
             return;
         };
-        let (dx, w, total) = self.span_and_measure(&plain, m, bold, px);
-        let start = align.pen(r, total) + lead;
+        let (dx, w, _) = self.span_and_measure(&plain, m, bold, px);
+        let start = self.pen(r, &plain, bold, align, px);
         self.draw_run(c, start, baseline, r, &plain, bold, color, px);
         let cs = c.scale();
         let nudge = plain.chars().nth(m).filter(|_| cs > 1).map_or(0, |ch| {
