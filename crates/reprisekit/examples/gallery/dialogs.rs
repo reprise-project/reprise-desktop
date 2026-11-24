@@ -243,6 +243,55 @@ pub fn render_bin_sheet(with_blue: bool) -> Canvas {
     c
 }
 
+/// Folder Options' General, View with every box flipped, and File Types, in each look.
+pub fn render_folder_sheet(with_blue: bool) -> Canvas {
+    use reprisekit::controls::folderopts::{FolderSheet, Settings};
+    use reprisekit::controls::propsheet;
+    let flipped = Settings {
+        new_window: true,
+        single_click: true,
+        show_hidden: true,
+        hide_extensions: false,
+        tips: false,
+        cache_thumbnails: false,
+    };
+    let sheets: Vec<FolderSheet> = [
+        (Settings::default(), 0),
+        (flipped, 1),
+        (Settings::default(), 2),
+    ]
+    .into_iter()
+    .map(|(settings, tab)| {
+        let mut s = FolderSheet::new(settings);
+        s.sheet.open_tab(tab);
+        s
+    })
+    .collect();
+    let mut themes = vec![cued(interfaces::classic())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let (w, h) = sheets[0].sheet.size;
+    let mut c = Canvas::new(
+        (sheets.len() as i32 * (w + 10) + 10) as u32,
+        (themes.len() as i32 * (h + 10) + 10) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, theme) in themes.iter().enumerate() {
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        for (col, s) in sheets.iter().enumerate() {
+            let mut sheet_c = Canvas::new(w as u32, h as u32);
+            sheet_c.fill_rect(sheet_c.bounds(), p.cs.button_face);
+            propsheet::draw(&mut sheet_c, &text, &p, &s.sheet, true, theme.fonts.size_px);
+            let at = (10 + col as i32 * (w + 10), 10 + row as i32 * (h + 10));
+            c.blit_canvas(at.0, at.1, &sheet_c);
+        }
+    }
+    c
+}
+
 /// The import sheet over GNOME and Plasma settings, the second change unchecked, then done.
 pub fn render_import_sheet(with_blue: bool) -> Canvas {
     use importsheet::{Line, Sheet, Source};

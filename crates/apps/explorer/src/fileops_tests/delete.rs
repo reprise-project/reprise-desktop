@@ -14,7 +14,7 @@ fn the_tree_menus_file_rows_take_the_node() {
     std::fs::write(dir.join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     ex.sv
         .selection
         .set_only(ex.items.iter().position(|it| it.name == "a.txt"));
@@ -121,7 +121,7 @@ fn the_tree_menus_file_rows_skip_a_drive() {
     std::fs::write(stick.join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     ex.build_tree(&mut ctx);
     ex.tree_follow(&Place::Folder(stick.clone()), &mut ctx);
     assert!(ex.node_folder().is_some(), "a plain folder has file rows");

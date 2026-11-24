@@ -24,12 +24,10 @@ fn every_row_with_no_linux_counterpart_is_greyed() {
         assert!(!enabled(&edit, i), "edit row {i}");
     }
     assert!(!enabled(&bar_rows(&s, 2), 12));
-    for title in [3, 4] {
-        let rows = bar_rows(&s, title);
-        for (i, it) in rows.iter().enumerate() {
-            if matches!(it, MenuItem::Entry { .. }) {
-                assert!(!enabled(&rows, i), "title {title} row {i}");
-            }
+    let favorites = bar_rows(&s, 3);
+    for (i, it) in favorites.iter().enumerate() {
+        if matches!(it, MenuItem::Entry { .. }) {
+            assert!(!enabled(&favorites, i), "favorites row {i}");
         }
     }
 }
@@ -39,6 +37,12 @@ fn the_tools_rows() {
     let tools = bar_rows(&MenuState::default(), 4);
     let labels: Vec<&str> = (0..tools.len()).map(|i| label(&tools, i)).collect();
     assert_eq!(labels, ["Synchronize...", "", "Folder Options..."]);
+    assert!(!enabled(&tools, 0), "Synchronize has nothing behind it");
+    assert!(enabled(&tools, 2));
+    assert_eq!(
+        command_for(4, &[2], &MenuState::default()),
+        Command::FolderOptions
+    );
 }
 
 #[test]

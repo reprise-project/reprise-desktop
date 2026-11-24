@@ -1516,3 +1516,21 @@ fn reduce_motion_is_off_by_default_and_leaves_the_motion_keys_alone() {
     let off = Config::parse("[effects]\nreduce_motion = false\n").unwrap();
     assert_eq!(off, Config::parse("").unwrap());
 }
+
+#[test]
+fn folders_open_in_place_by_double_click_with_hidden_files_left_out() {
+    assert_eq!(
+        Config::default().folders,
+        FoldersConfig {
+            new_window: false,
+            single_click: false,
+            show_hidden: false,
+            tips: true,
+        }
+    );
+    let c = Config::parse("[folders]\nsingle_click = true\nshow_hidden = true\ntips = false\n")
+        .unwrap();
+    assert!(c.folders.single_click && c.folders.show_hidden && !c.folders.tips);
+    assert!(!c.folders.new_window);
+    assert!(Config::parse("[folders]\nhide_extensions = true\n").is_err());
+}

@@ -13,7 +13,13 @@ The file manager, and the default for folders.
   size, type or date. A folder tree or a task pane down the side, Back,
   Forward, Up and an address bar (Alt+D). It remembers your view.
 - **Hidden items** (View > Hidden Items, Ctrl+H) shows dot names and the
-  names a folder's `.hidden` lists, their icons faded.
+  names a folder's `.hidden` lists, their icons faded, in every Explorer
+  window and on the desktop.
+- **Folder Options** (Tools menu) picks whether a folder opens in the same
+  window or its own, single- or double-click opening (for the desktop too),
+  hidden items, hidden extensions of known file types, item descriptions and
+  the thumbnail cache. Apply reaches every open Explorer window and the
+  desktop at once. Its File Types tab opens Default Programs.
 - **Tabs:** Ctrl+T opens the folder in a new tab, Ctrl+W closes one, Ctrl+Tab
   goes round them, and a middle click on a folder opens it in a tab behind.
   Each tab keeps its own folder, history, view and selection.

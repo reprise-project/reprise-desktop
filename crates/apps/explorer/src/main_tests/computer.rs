@@ -564,7 +564,7 @@ fn a_phones_folder_leaves_no_node_under_its_parent_after_a_mount_or_an_unmount()
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(at.clone()), &mut ctx);
     // `tempdir` names start with a dot, so the tree hides the chain until hidden entries are shown.
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     ex.build_tree(&mut ctx);
     ex.show(Place::Folder(at.clone()), &mut ctx);
     let parent = Place::Folder(dir.path().to_path_buf());

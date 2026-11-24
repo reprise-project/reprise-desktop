@@ -181,6 +181,22 @@ pub fn save<S>(
     Ok(())
 }
 
+/// [`save`] on the text of a config file, the file's own values read over `def` for `have`. `Err`
+/// when `text` does not parse, rather than replace a file the user is editing.
+pub fn save_text<S: Clone>(
+    text: &str,
+    fields: &[Field<S>],
+    want: &S,
+    base: &S,
+    def: &S,
+) -> Result<String, String> {
+    let mut doc = text.parse::<DocumentMut>().map_err(|e| e.to_string())?;
+    let mut have = def.clone();
+    load(&doc, fields, &mut have);
+    save(&mut doc, fields, want, base, &have, def).map_err(|e| e.to_string())?;
+    Ok(doc.to_string())
+}
+
 pub fn list_to_text(item: &Item) -> Option<String> {
     let arr = item.as_array()?;
     Some(

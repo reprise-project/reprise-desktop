@@ -45,7 +45,7 @@ pub(super) fn read_icons(
     names: &BTreeMap<String, String>,
     system_icons: &[String],
     show_files: bool,
-    shown: reprisefs::names::Extensions,
+    (shown, show_hidden): (reprisefs::names::Extensions, bool),
     drive_bins_full: bool,
 ) -> Vec<DesktopEntry> {
     let mut entries = listed(
@@ -64,7 +64,7 @@ pub(super) fn read_icons(
                 e
             }
         },
-        || desktop::scan(dir, mime, shown),
+        || desktop::scan(dir, mime, shown, show_hidden),
     );
     for e in &mut entries {
         if let (desktop::Kind::Place(_), Target::Open(p)) = (e.kind, &e.target) {
@@ -276,10 +276,11 @@ impl State {
             view.mime.clone(),
             view.system_names.clone(),
         );
-        let (system_icons, show_files, shown, drive_bins_full) = (
+        let (system_icons, show_files, shown, show_hidden, drive_bins_full) = (
             config.system_icons.clone(),
             config.desktop_icons,
             config.desktop_extensions,
+            config.folders.show_hidden,
             view.bins.full,
         );
         let adder = view.watch.as_mut().map(|w| {
@@ -303,7 +304,7 @@ impl State {
                 &names,
                 &system_icons,
                 show_files,
-                shown,
+                (shown, show_hidden),
                 drive_bins_full,
             );
             let art = icon_files(&entries, px);

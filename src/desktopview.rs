@@ -76,6 +76,9 @@ pub struct DesktopView {
     pub(crate) focus_ring: bool,
     /// Pairs presses on one icon, or on empty desktop (None).
     last_click: DoubleClick<Option<usize>>,
+    /// A plain press on this icon under `[folders] single_click`: the release opens it unless a
+    /// drag started (`settle_click`).
+    pub(crate) click_open: Option<usize>,
     /// An in-progress inline rename: the icon index and the edit.
     pub rename: Option<(usize, TextEdit)>,
     /// Which rename `rename` is, unique for the run (`PasteTarget::Rename`).
@@ -274,6 +277,7 @@ pub(crate) fn create(
         drop_hilite: None,
         focus_ring: false,
         last_click: DoubleClick::default(),
+        click_open: None,
         rename: None,
         rename_serial: 0,
         rename_keyed: false,

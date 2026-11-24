@@ -257,6 +257,15 @@ pub struct FileOsd {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileFolders {
+    pub new_window: Option<bool>,
+    pub single_click: Option<bool>,
+    pub show_hidden: Option<bool>,
+    pub tips: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FilePreviews {
     pub taskbar: Option<bool>,
     pub fps: Option<i64>,
@@ -787,6 +796,7 @@ pub struct FileConfig {
     pub power: Option<FilePower>,
     pub desktop_icons: Option<bool>,
     pub desktop_extensions: Option<String>,
+    pub folders: Option<FileFolders>,
     pub start_icon: Option<bool>,
     pub system_icons: Option<Vec<String>>,
     pub desktop_widgets: Option<Vec<String>>,

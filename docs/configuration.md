@@ -61,6 +61,7 @@ while an editor saves it doesn't.
 | `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, `allow_boost`: playback volumes past 100 % up to 150 %, and `on_connect`: which defaults an audio device takes when it connects (`playback`, the default; `playback_and_recording`; `keep`) |
 | `[privacy]` | recent files, location and the red border around a shared or recorded screen |
 | `[time_zone]` | `automatic`: the time zone follows the location, off by default (Date and Time > Time Zone) |
+| `[folders]` | whether a folder opened from Explorer gets its own window, single- or double-click opening on the desktop and in Explorer, hidden files and folders, and Explorer's infotips (Explorer's Tools > Folder Options...) |
 | `[recycle_bin]` | what Delete does, each drive's bin size, `older_than_days` to empty old items (Recycle Bin Properties) |
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |

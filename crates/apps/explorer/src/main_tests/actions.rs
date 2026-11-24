@@ -421,7 +421,7 @@ fn the_tree_menu_pins_and_unpins_a_nodes_folder() {
     let mut ctx = test_ctx();
     let here = Place::Folder(dir.path().to_path_buf());
     let mut ex = test_explorer(here.clone(), &mut ctx);
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     let pins = reprisefs::pins::Pins::start_at(file.clone(), || {});
     pins.wait_first(std::time::Duration::from_secs(5));
     ex.pins = Some(pins);

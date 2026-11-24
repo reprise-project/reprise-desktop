@@ -22,6 +22,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 pub const HOVER: Duration = Duration::from_millis(900);
+/// How long the pointer rests on an entry before single-click mode selects it.
+pub const POINT: Duration = Duration::from_millis(400);
 
 /// What [`Explorer::follow_gone`] asks of the file system: the nearest folder at or above the
 /// gone one, and the folders above the old place that still exist, nearest first.
@@ -246,6 +248,7 @@ impl Explorer {
             self.take_drag_art(ctx),
             self.take_due_sheet(ctx),
             self.take_bin_tabs(ctx),
+            self.take_config(ctx),
             self.take_preview(),
             self.take_checksums(),
             self.take_reads(ctx),
@@ -386,33 +389,64 @@ impl Explorer {
         self.sv.left = self.sv.left.min(max_left);
     }
 
-    /// A hover is armed and its tip not up yet, so the window asks for ticks.
+    /// A hover is armed and waits on a tip, or on [`POINT`]'s select, so the window asks for ticks.
     pub fn tip_pending(&self) -> bool {
-        self.hover.is_some() && self.tip.is_none()
+        let Some(h) = self.hover.filter(|_| self.tip.is_none()) else {
+            return false;
+        };
+        match h.on {
+            HoverOn::Entry(i) => self.folders.tips || self.points_at(i),
+            HoverOn::Pane(..) => true,
+        }
     }
 
-    /// `Event::Tick` at `now`: shows the tip once the pointer has rested
-    /// [`HOVER`], else asks for another tick. A folder's tip starts its walk
-    /// then; whichever of tick and walk finishes last shows it.
-    pub fn tip_tick(&mut self, now: Instant, ctx: &Ctx) -> Reply {
+    /// Single-click mode selects entry `i` once the pointer rests on it, unless it alone is
+    /// selected or a button is held.
+    fn points_at(&self, i: usize) -> bool {
+        self.folders.single_click
+            && self.sv.selection.single() != Some(i)
+            && self.drag.is_none()
+            && self.marquee_from.is_none()
+    }
+
+    /// `Event::Tick` at `now`: in single-click mode selects the entry the pointer has rested on
+    /// [`POINT`], and shows the tip once it has rested [`HOVER`], else asks for another tick. A
+    /// folder's tip starts its walk then; whichever of tick and walk finishes last shows it.
+    pub fn tip_tick(&mut self, now: Instant, ctx: &mut Ctx) -> Reply {
         let Some(h) = self.hover else {
             return Reply::none();
         };
         if self.tip.is_some() {
             return Reply::none();
         }
+        let mut pointed = false;
+        if let HoverOn::Entry(i) = h.on
+            && self.points_at(i)
+            && h.due(now, POINT)
+        {
+            self.sv.selection.set_only(Some(i));
+            self.refresh_chrome(ctx);
+            pointed = true;
+        }
         if !h.due(now, HOVER) {
             return Reply {
-                tick: true,
+                redraw: pointed,
+                tick: self.tip_pending(),
                 ..Reply::none()
             };
         }
         if let HoverOn::Entry(i) = h.on {
+            if !self.folders.tips {
+                return Reply {
+                    redraw: pointed,
+                    ..Reply::none()
+                };
+            }
             self.walk_folder_tip(i, ctx);
         }
         self.show_tip(ctx);
         Reply {
-            redraw: self.tip.is_some(),
+            redraw: pointed || self.tip.is_some(),
             ..Reply::none()
         }
     }
@@ -476,7 +510,7 @@ impl Explorer {
             return;
         }
         let path = it.path.clone();
-        let show_hidden = self.settings.show_hidden;
+        let show_hidden = self.folders.show_hidden;
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = std::sync::mpsc::channel();
         let wake = ctx.wake.clone();
@@ -682,6 +716,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn single_click_selects_the_entry_the_pointer_rests_on_and_tips_off_show_none() {
+        let mut ctx = test_ctx();
+        let (_dir, mut ex) = explorer(&mut ctx);
+        ex.folders.single_click = true;
+        ex.folders.tips = false;
+        let i = index_of(&ex, "b.txt");
+        hover(&mut ex, &ctx, i);
+        let since = ex.hover.expect("armed").since;
+        assert!(ex.tip_pending());
+        ex.tip_tick(since + POINT - Duration::from_millis(1), &mut ctx);
+        assert_eq!(ex.sv.selection.single(), None, "too soon");
+        assert!(ex.tip_tick(since + POINT, &mut ctx).redraw);
+        assert_eq!(ex.sv.selection.single(), Some(i));
+        assert!(!ex.tip_pending(), "with tips off nothing else is due");
+        ex.tip_tick(since + HOVER, &mut ctx);
+        assert!(ex.tip.is_none());
+    }
+
+    #[test]
     fn only_a_file_with_an_image_mime_is_worth_decoding() {
         let mut ctx = test_ctx();
         let (_dir, ex) = explorer(&mut ctx);
@@ -692,7 +745,7 @@ pub(crate) mod tests {
     }
 
     /// A tick after `HOVER` on the hovered entry.
-    fn settle(ex: &mut Explorer, ctx: &Ctx) -> Reply {
+    fn settle(ex: &mut Explorer, ctx: &mut Ctx) -> Reply {
         let since = ex.hover.expect("a hover is armed").since;
         ex.tip_tick(since + HOVER, ctx)
     }
@@ -709,19 +762,22 @@ pub(crate) mod tests {
         assert!(ex.tip.is_none(), "motion alone never shows a tip");
         assert!(ex.tip_pending(), "the window asks for ticks");
 
-        let early = ex.tip_tick(since + Duration::from_millis(EXPECTED_HOVER_MS - 1), &ctx);
+        let early = ex.tip_tick(
+            since + Duration::from_millis(EXPECTED_HOVER_MS - 1),
+            &mut ctx,
+        );
         assert!(
             early.tick && !early.redraw,
             "too soon: wait for the next tick"
         );
         assert!(ex.tip.is_none());
 
-        let on_time = ex.tip_tick(since + Duration::from_millis(EXPECTED_HOVER_MS), &ctx);
+        let on_time = ex.tip_tick(since + Duration::from_millis(EXPECTED_HOVER_MS), &mut ctx);
         assert!(on_time.redraw && !on_time.tick);
         let lines = ex.tip.as_ref().expect("the tick shows it").lines.clone();
         assert!(lines[0].starts_with("Type: "), "{lines:?}");
 
-        let later = settle(&mut ex, &ctx);
+        let later = settle(&mut ex, &mut ctx);
         assert!(!later.redraw && !later.tick);
         assert_eq!(ex.tip.as_ref().expect("still up").lines, lines);
     }
@@ -733,7 +789,7 @@ pub(crate) mod tests {
         let i = index_of(&ex, "b.txt");
 
         hover(&mut ex, &ctx, i);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         assert!(ex.tip.is_some());
         let lay = ex.layout(&ctx);
         let dirty = ex.hover_view(
@@ -746,7 +802,7 @@ pub(crate) mod tests {
         assert!(ex.tip.is_none() && ex.hover.is_none());
 
         hover(&mut ex, &ctx, i);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         assert!(ex.tip.is_some());
         let reply = ex.key(
             KeyInput {
@@ -770,7 +826,7 @@ pub(crate) mod tests {
 
         hover(&mut ex, &ctx, i);
         let since = ex.hover.expect("armed").since;
-        let reply = ex.tip_tick(since + HOVER, &ctx);
+        let reply = ex.tip_tick(since + HOVER, &mut ctx);
         assert!(!reply.redraw && ex.tip.is_none());
 
         let waited = Instant::now()
@@ -797,7 +853,7 @@ pub(crate) mod tests {
             let name = shellview::label_rect(&ex.sv, &sl, i, &ctx.text, px);
             let (x, y) = (name.x + 2, name.y + name.height / 2);
             ex.hover_view(x, y, &lay, &ctx);
-            settle(&mut ex, &ctx);
+            settle(&mut ex, &mut ctx);
             let lines = &ex.tip.as_ref().unwrap_or_else(|| panic!("{mode:?}")).lines;
             assert!(lines[0].starts_with("Type: "), "{mode:?}: {lines:?}");
             if mode == Mode::Details {
@@ -824,7 +880,7 @@ pub(crate) mod tests {
             .expect("a Computer link");
         let row = tl.rows[i][j];
         ex.hover_view(row.x + 4, row.y + row.height / 2, &lay, &ctx);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         let tip = ex.tip.as_ref().expect("the link's tip");
         assert!(tip.plain, "a plain tooltip, not an infotip");
         assert_eq!(tip.lines, [reprisefs::places::ShellPlace::Computer.tip()]);
@@ -844,9 +900,9 @@ pub(crate) mod tests {
         hover(&mut ex, &ctx, sub);
         assert!(!ex.busy(), "motion alone walks nothing");
         let since = ex.hover.expect("armed").since;
-        ex.tip_tick(since + HOVER - Duration::from_millis(1), &ctx);
+        ex.tip_tick(since + HOVER - Duration::from_millis(1), &mut ctx);
         assert!(ex.tip_walk.is_none(), "too soon to walk");
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         let walk = ex.tip_walk.as_ref().expect("the rest starts the walk");
         let stop = walk.stop.clone();
         assert!(!ex.busy(), "a tip walk is no work to wait for");
@@ -859,13 +915,13 @@ pub(crate) mod tests {
         assert!(ex.tip_walk.is_none());
 
         hover(&mut ex, &ctx, sub);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         let stop = ex.tip_walk.as_ref().expect("walking again").stop.clone();
         ex.hide_tip();
         assert!(stop.load(Ordering::Relaxed), "a dropped tip stops its walk");
 
         hover(&mut ex, &ctx, sub);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         assert!(ex.tip_walk.is_some());
         let reply = ex.run(crate::commands::Command::Close, &mut ctx);
         assert!(reply.quit, "close quits with a tip walk out");
@@ -890,7 +946,7 @@ pub(crate) mod tests {
         let (a, b) = (index_of(&ex, "a.png"), index_of(&ex, "b.txt"));
 
         hover(&mut ex, &ctx, a);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         assert!(ex.tip.is_some());
 
         assert!(hover(&mut ex, &ctx, b), "the old tip has to be rubbed out");
@@ -906,7 +962,7 @@ pub(crate) mod tests {
         let path = ex.items[i].path.clone();
 
         hover(&mut ex, &ctx, i);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         let before = ex.tip.as_ref().expect("a tip").lines.clone();
         assert!(before[0].starts_with("Type: "), "{before:?}");
 
@@ -945,7 +1001,7 @@ pub(crate) mod tests {
         let name = shellview::label_rect(&ex.sv, &sl, i, &ctx.text, px);
         ex.hover_view(name.x + 2, name.y + name.height / 2, &lay, &ctx);
         ex.finish_puts(&mut ctx);
-        settle(&mut ex, &ctx);
+        settle(&mut ex, &mut ctx);
         let lines = &ex.tip.as_ref().expect("a tip").lines;
         assert_eq!(lines[0], "Dimensions: 800 x 600");
         assert!(ex.sv.entries[i].thumb.is_none(), "List decodes nothing");
@@ -1486,7 +1542,7 @@ pub(crate) mod tests {
         let read = ex.reader(place.clone(), &ctx);
         let (answer, gate) = std::sync::mpsc::channel::<()>();
         ex.reading = Some(crate::Reading {
-            key: (place.clone(), ex.settings.show_hidden, ctx.icons.scale()),
+            key: (place.clone(), ex.folders.show_hidden, ctx.icons.scale()),
             job: repriseapp::listjob::Job::spawn(None, move || {
                 gate.recv().ok();
                 read()
@@ -1515,7 +1571,7 @@ pub(crate) mod tests {
         let before = ex.reader(place.clone(), &ctx)();
         let (answer, gate) = std::sync::mpsc::channel::<()>();
         ex.reading = Some(crate::Reading {
-            key: (place.clone(), ex.settings.show_hidden, ctx.icons.scale()),
+            key: (place.clone(), ex.folders.show_hidden, ctx.icons.scale()),
             job: repriseapp::listjob::Job::spawn(None, move || {
                 gate.recv().ok();
                 before
@@ -1547,7 +1603,7 @@ pub(crate) mod tests {
         let place = ex.place.clone();
         let before = ex.reader(place.clone(), &ctx)();
         ex.reading = Some(crate::Reading {
-            key: (place, ex.settings.show_hidden, ctx.icons.scale()),
+            key: (place, ex.folders.show_hidden, ctx.icons.scale()),
             job: repriseapp::listjob::Job::spawn(None, move || before),
             again: false,
         });

@@ -1919,3 +1919,51 @@ fn a_rows_dragged_icon_file_is_decoded_at_the_grown_column() {
         }
     }
 }
+
+#[test]
+fn single_click_opens_on_a_release_without_a_drag() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = explorer(&mut ctx);
+    ex.folders.single_click = true;
+    let at = centre(&ex, &ctx, index_of(&ex, "Box"));
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    assert_eq!(selected(&ex), ["Box"], "the press selects");
+    let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
+    assert!(r.start_drag.is_some());
+    ex.drag_ended();
+    release(&mut ex, &mut ctx, at, BTN_LEFT, SeatMods::default());
+    assert_eq!(
+        ex.place,
+        Place::Folder(dir.path().to_path_buf()),
+        "a drag opens nothing"
+    );
+
+    press_with(&mut ex, &mut ctx, at, BTN_LEFT, ctrl());
+    release(&mut ex, &mut ctx, at, BTN_LEFT, ctrl());
+    assert_eq!(
+        ex.place,
+        Place::Folder(dir.path().to_path_buf()),
+        "Ctrl only selects"
+    );
+
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    release(&mut ex, &mut ctx, at, BTN_LEFT, SeatMods::default());
+    assert_eq!(ex.place, Place::Folder(dir.path().join("Box")));
+}
+
+#[test]
+fn a_folder_opens_in_a_window_of_its_own_under_new_window() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = explorer(&mut ctx);
+    ex.folders.new_window = true;
+    ex.sv.selection.set_only(Some(index_of(&ex, "Box")));
+    let r = ex.open_selected(&mut ctx);
+    let argv: Vec<std::ffi::OsString> =
+        vec!["reprise-explorer".into(), dir.path().join("Box").into()];
+    assert_eq!(r.spawn, [argv]);
+    assert_eq!(
+        ex.place,
+        Place::Folder(dir.path().to_path_buf()),
+        "this window stays"
+    );
+}

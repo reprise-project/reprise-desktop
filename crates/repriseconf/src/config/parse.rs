@@ -874,6 +874,19 @@ impl Config {
                     .map_err(|_| format!("lock.away_after_s must be 0..={}, got {s}", u32::MAX))?;
             }
         }
+        if let Some(f) = file.folders {
+            let into = &mut cfg.folders;
+            for (v, at) in [
+                (f.new_window, &mut into.new_window),
+                (f.single_click, &mut into.single_click),
+                (f.show_hidden, &mut into.show_hidden),
+                (f.tips, &mut into.tips),
+            ] {
+                if let Some(v) = v {
+                    *at = v;
+                }
+            }
+        }
         if let Some(o) = file.osd {
             if let Some(v) = o.caps_lock {
                 cfg.osd.caps_lock = v;

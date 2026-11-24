@@ -173,7 +173,7 @@ impl Explorer {
         foldertree::World {
             scale: self.drawn_scale.max(1),
             px: self.tree_places.px,
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: self.drives.clone(),
             volumes: self.volumes.clone(),
             shares: self.shares.shares.clone(),
@@ -190,7 +190,7 @@ impl Explorer {
             return;
         };
         let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             shares: &self.shares.shares,
@@ -329,7 +329,7 @@ impl Explorer {
     /// ([`foldertree::read_kids`]).
     pub fn tree_follow_with(&mut self, place: &Place, read: Vec<(Place, Kids)>, ctx: &mut Ctx) {
         let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             shares: &self.shares.shares,

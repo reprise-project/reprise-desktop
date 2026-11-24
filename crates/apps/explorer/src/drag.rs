@@ -216,15 +216,17 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Reply {
         let (x, y) = at;
-        let double = self.clicks.press(i, ctx.theme.metrics.click(x, y, time));
-        if double {
-            self.sv.selection.set_only(Some(i));
-            return self.open_selected(ctx);
-        }
         let click = Mods {
             ctrl: mods.ctrl,
             shift: mods.shift,
         };
+        let single = self.folders.single_click;
+        let double = self.clicks.press(i, ctx.theme.metrics.click(x, y, time));
+        if double && !single {
+            self.sv.selection.set_only(Some(i));
+            return self.open_selected(ctx);
+        }
+        self.click_open = (single && click == Mods::default()).then_some(i);
         let held_back = self.sv.selection.set.contains(&i);
         if !held_back {
             self.sv.selection.click(i, click);
@@ -285,6 +287,7 @@ impl Explorer {
         let (image, grab) = self
             .drag_image(ctx, self.drawn_scale)
             .unwrap_or_else(|| (Canvas::new(0, 0), (0, 0)));
+        self.click_open = None;
         let d = self.drag.as_mut().expect("still armed");
         d.started = true;
         Reply::start_drag(DragOut {

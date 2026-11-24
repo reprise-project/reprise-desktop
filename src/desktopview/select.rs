@@ -82,7 +82,8 @@ impl State {
 
     /// A left press on the desktop at `at`: on a cell it clicks it (Ctrl toggles,
     /// Shift ranges, see `Selection::click`), and a second plain press on the same
-    /// cell within `double_click_ms` opens it. A plain press on an icon of a
+    /// cell within `double_click_ms` opens it; under `[folders] single_click` a plain press
+    /// opens it once the button comes up without a drag (`settle_click`). A plain press on an icon of a
     /// multi-selection keeps the set for a drag (`Press::Icon`). On empty desktop it clears the
     /// selection (Ctrl keeps it), arms the marquee at `at` and is true on a double click.
     pub fn desktop_press(
@@ -93,9 +94,11 @@ impl State {
         mods: Mods,
     ) -> bool {
         let click = self.config.theme.metrics.click(at.0, at.1, time_msec);
+        let single = self.config.folders.single_click;
         let Some(view) = self.desktop.as_mut() else {
             return false;
         };
+        view.click_open = None;
         let mut empty_double = false;
         let before = view.selection.clone();
         let mut open = None;
@@ -108,8 +111,12 @@ impl State {
                 if !in_set {
                     view.selection.click(i, mods);
                 }
-                if double && mods == Mods::default() {
-                    open = Some(i);
+                if mods == Mods::default() {
+                    match single {
+                        true => view.click_open = Some(i),
+                        false if double => open = Some(i),
+                        false => {}
+                    }
                 }
             }
             None => {
@@ -135,7 +142,8 @@ impl State {
     }
 
     /// The button came up after a press that kept a multi-selection (`Press::Icon`):
-    /// without a drag that icon is selected alone; after one the set stays.
+    /// without a drag that icon is selected alone; after one the set stays. Without a drag a
+    /// single-click press's icon (`click_open`) opens.
     pub fn settle_click(&mut self, dragged: bool) {
         let Some(view) = self.desktop.as_mut() else {
             return;
@@ -147,8 +155,12 @@ impl State {
             }
             _ => None,
         };
+        let opens = view.click_open.take().filter(|_| !dragged);
         if let (Some(i), false) = (pending, dragged) {
             self.select_icon(Some(i));
+        }
+        if let Some(i) = opens {
+            self.open_icon(i);
         }
     }
 

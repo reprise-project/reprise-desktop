@@ -39,7 +39,7 @@ fn a_rename_whose_relist_lands_late_keeps_the_renamed_item_selected() {
     let before = ex.reader(place.clone(), &ctx)();
     let (answer, gate) = std::sync::mpsc::channel::<()>();
     ex.reading = Some(crate::Reading {
-        key: (place, ex.settings.show_hidden, ctx.icons.scale()),
+        key: (place, ex.folders.show_hidden, ctx.icons.scale()),
         job: repriseapp::listjob::Job::spawn(None, move || {
             gate.recv().ok();
             before
@@ -152,7 +152,7 @@ fn renaming_a_folder_relabels_its_row_in_the_tree() {
     let mut ex = test_explorer(here.clone(), &mut ctx);
     // `tempdir` names start with a dot, so the tree hides the whole
     // chain until hidden entries are shown.
-    ex.settings.show_hidden = true;
+    ex.folders.show_hidden = true;
     ex.build_tree(&mut ctx);
     ex.show(here.clone(), &mut ctx);
 

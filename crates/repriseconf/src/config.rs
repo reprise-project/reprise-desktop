@@ -54,6 +54,7 @@ pub struct Config {
     pub lock: LockConfig,
     pub desktop_icons: bool,
     pub desktop_extensions: reprisefs::names::Extensions,
+    pub folders: FoldersConfig,
     pub start_icon: bool,
     /// The desktop's system icons, in order: `documents`, `computer`, `home`,
     /// `recycle-bin`. Old `my-documents`/`my-computer` read as the new names.
@@ -166,6 +167,7 @@ impl Default for Config {
             power: PowerConfig::default(),
             desktop_icons: true,
             desktop_extensions: reprisefs::names::Extensions::Hide,
+            folders: FoldersConfig::default(),
             start_icon: false,
             system_icons: ["documents", "computer", "home", "recycle-bin"]
                 .iter()

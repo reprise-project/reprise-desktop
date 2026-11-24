@@ -225,7 +225,7 @@ fn the_picker_focuses_the_tree_when_the_items_folder_is_hidden() {
     let hidden = dir.path().join(".stash");
     std::fs::create_dir(&hidden).expect("mkdir");
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.settings.show_hidden = false;
+    ex.folders.show_hidden = false;
     ex.browse_items(true, vec![hidden.join("a.txt")], &mut ctx);
 
     let Some(Dialog::Browse(b)) = ex.dialog() else {

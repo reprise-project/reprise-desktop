@@ -116,12 +116,11 @@ impl Explorer {
         let Some(it) = self.items.get(i).filter(|_| self.shell_row(i).is_none()) else {
             return Reply::none();
         };
+        let shown = self.shown_name(it);
+        let whole = it.is_dir || it.shortcut.is_some() || shown != it.label();
         self.focus = Focus::View;
         self.renames += 1;
-        self.sv.edit = Some((
-            i,
-            TextEdit::rename(it.label(), it.is_dir || it.shortcut.is_some()),
-        ));
+        self.sv.edit = Some((i, TextEdit::rename(&shown, whole)));
         self.refresh_chrome(ctx);
         Reply::redraw()
     }
@@ -161,12 +160,18 @@ impl Explorer {
         if it.shortcut.is_some() {
             return self.rename_shortcut(&it, text.trim(), ctx);
         }
+        // A hidden extension goes back on the typed name; an empty one stays empty, so it cancels.
+        let shown = self.shown_name(&it);
+        let text = match (it.name.strip_prefix(shown.as_str()), text.trim()) {
+            (Some(ext), typed) if !ext.is_empty() && !typed.is_empty() => format!("{typed}{ext}"),
+            _ => text.to_string(),
+        };
         // Search results list several folders: only the item's own holds a clash.
         let existing: Vec<String> = (self.items.iter())
             .filter(|x| x.path.parent() == it.path.parent())
             .map(|x| x.name.clone())
             .collect();
-        match verdict(&it.name, text, &existing) {
+        match verdict(&it.name, &text, &existing) {
             Verdict::Cancel => Reply::none(),
             Verdict::Refuse(text) => self.message_box("Rename", text, ctx),
             Verdict::Rename(name) => {

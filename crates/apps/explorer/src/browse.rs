@@ -176,7 +176,7 @@ impl Explorer {
             return Reply::none();
         }
         let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             shares: &self.shares.shares,
@@ -305,7 +305,7 @@ impl Explorer {
             _ => browsefolder::Event::None,
         };
         let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             shares: &self.shares.shares,
@@ -444,7 +444,7 @@ impl Explorer {
             }
         };
         let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             shares: &self.shares.shares,
@@ -549,7 +549,7 @@ impl Explorer {
             Renamed::Done(to, id, kids) => (to, id, kids),
         };
         let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             shares: &self.shares.shares,
@@ -630,7 +630,7 @@ impl Explorer {
         match self.read_job(ctx, read) {
             Ok(kids) => {
                 let inp = Inputs {
-                    show_hidden: self.settings.show_hidden,
+                    show_hidden: self.folders.show_hidden,
                     drives: &self.drives,
                     volumes: &self.volumes,
                     shares: &self.shares.shares,
@@ -663,7 +663,7 @@ impl Explorer {
             return left;
         };
         let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
+            show_hidden: self.folders.show_hidden,
             drives: &self.drives,
             volumes: &self.volumes,
             shares: &self.shares.shares,
