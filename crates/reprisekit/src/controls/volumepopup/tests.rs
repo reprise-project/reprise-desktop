@@ -2196,3 +2196,26 @@ fn access_names_a_programs_output_combo() {
     assert_eq!(n.role(), Role::ComboBox);
     assert_eq!(n.label(), Some("Output"));
 }
+
+/// DejaVu Sans' line at 22 px is taller than a 13 px row at scale 2: the rows draw its
+/// descenders whole.
+#[test]
+fn a_face_taller_than_its_row_keeps_its_descenders_at_scale_2() {
+    let cuts = crate::pins::without_tahoma(|| {
+        let ((), cuts) = crate::pins::clipped_ink(|| {
+            let theme = Theme::default();
+            let theme = Theme {
+                look: theme.look.at_scale(2),
+                ..theme
+            };
+            let text = TextRenderer::load(&theme.fonts);
+            let vp = VolumePopup::new(&with_track(&[app("mpv", 4)], track(true)));
+            let mut c = Canvas::with_scale(950, 880, 2);
+            let lay = layout(&vp, &theme, &text, (475, 870), Edge::Bottom, c.bounds());
+            draw(&mut c, &theme, &text, &vp, &lay);
+        });
+        cuts
+    });
+    let cut: Vec<&str> = cuts.iter().map(|c| c.text.as_str()).collect();
+    assert!(cut.is_empty(), "cut: {cut:?}");
+}

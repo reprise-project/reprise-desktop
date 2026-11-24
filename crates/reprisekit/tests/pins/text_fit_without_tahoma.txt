@@ -34,22 +34,7 @@ tray-arrow-blue-schemes cut "Unchecked Normal" x26  # the gallery's own caption
 tray-arrow-blue-schemes cut "Unchecked Pressed" x26  # the gallery's own caption
 volume-popup ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 volume-popup-blue ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
-volume-popup-blue-x2 cut "Evening Mix" x1  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-blue-x2 cut "Input:" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-blue-x2 cut "Music Player:..." x1  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-blue-x2 cut "Output:" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-blue-x2 cut "mpv" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
 volume-popup-blue-x2 ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 volume-popup-glass ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
-volume-popup-glass-x2 cut "Evening Mix" x1  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-glass-x2 cut "Input:" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-glass-x2 cut "Music Player:..." x1  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-glass-x2 cut "Output:" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-glass-x2 cut "mpv" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
 volume-popup-glass-x2 ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
-volume-popup-x2 cut "Evening Mix" x1  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-x2 cut "Input:" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-x2 cut "Music Player:..." x1  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-x2 cut "Output:" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
-volume-popup-x2 cut "mpv" x3  # a descender at scale 2: DejaVu at 22 px inks lower than twice its 11 px
 volume-popup-x2 ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
