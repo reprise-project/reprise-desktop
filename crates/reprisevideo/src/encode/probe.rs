@@ -446,12 +446,13 @@ impl wl::Dispatch<ZwpLinuxDmabufFeedbackV1, ()> for Feedback {
     }
 }
 
-/// LINEAR, then each modifier the device's planes or GBM name that every stream format maps
-/// into `backend`'s GPU in and converts correctly from. The CPU reads LINEAR only.
+/// For a GPU, LINEAR, then each modifier the device's planes or GBM name that every stream
+/// format maps into `backend`'s GPU in and converts correctly from; for the CPU,
+/// [`cpu_modifiers`].
 pub fn modifiers(backend: Backend, device: &Path) -> Vec<u64> {
     let linear = vec![DRM_FORMAT_MOD_LINEAR];
     let Some(gpu) = backend.gpu() else {
-        return linear;
+        return cpu_modifiers(device);
     };
     let (Ok(devices), Ok(gbm)) = (Devices::open(gpu, device), gbm_device(device)) else {
         return linear;
@@ -472,6 +473,51 @@ pub fn modifiers(backend: Backend, device: &Path) -> Vec<u64> {
             converts(&devices, &gbm, &mut painter, format, modifier).is_ok()
         })
     })
+}
+
+/// The modifiers the CPU reads `device`'s dma-bufs in: LINEAR when a LINEAR buffer the GPU
+/// painted reads back through its mapping, else none, and the stream stays on shared memory.
+/// virtio-gpu's virgl maps a buffer's guest copy, which the host's rendering never reaches.
+pub fn cpu_modifiers(device: &Path) -> Vec<u64> {
+    match cpu_reads_painted(device) {
+        Ok(()) => vec![DRM_FORMAT_MOD_LINEAR],
+        Err(e) => {
+            log::info!(
+                "the CPU reads no dma-buf of {}, so frames come in shared memory: {e}",
+                device.display()
+            );
+            Vec::new()
+        }
+    }
+}
+
+fn cpu_reads_painted(device: &Path) -> Result<(), EncodeError> {
+    let gbm = gbm_device(device)?;
+    let bo = test_bo(&gbm, XRGB8888, Some(DRM_FORMAT_MOD_LINEAR))?;
+    let frame = frame_of(&bo, XRGB8888)?;
+    Painter::new(device).paint(&frame)?;
+    let mut read = Ok(());
+    hwmap::read_rgb(&frame, (TEST_SIDE, TEST_SIDE), |data, stride| {
+        read = holds_pattern(data, stride);
+    })?;
+    read
+}
+
+/// Whether XRGB8888 rows of `stride` bytes hold [`pattern`], sampled.
+fn holds_pattern(data: &[u8], stride: u32) -> Result<(), EncodeError> {
+    let want = pattern(XRGB8888, stride);
+    for y in (8..TEST_SIDE).step_by(16) {
+        for x in (8..TEST_SIDE).step_by(16) {
+            let at = (y * stride + x * 4) as usize;
+            let (got, want) = (&data[at..at + 3], &want[at..at + 3]);
+            if got.iter().zip(want).any(|(g, w)| g.abs_diff(*w) > 1) {
+                return Err(EncodeError(format!(
+                    "a painted buffer reads {got:?} at ({x}, {y}), not {want:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// LINEAR first, then each of `candidates` (once, not LINEAR, not INVALID) that `maps` takes in
@@ -508,10 +554,27 @@ fn test_buffer(
     format: u32,
     modifier: Option<u64>,
 ) -> Result<Frame, EncodeError> {
-    let err = |e: &dyn std::fmt::Display| EncodeError(e.to_string());
-    let gbm_format = gbm::Format::try_from(format).map_err(|e| err(&e))?;
+    let mut bo = test_bo(gbm, format, modifier)?;
+    let mapped = bo.map_mut(0, 0, TEST_SIDE, TEST_SIDE, |map| {
+        let stride = map.stride();
+        map.buffer_mut()[..(stride * TEST_SIDE) as usize].copy_from_slice(&pattern(format, stride));
+    });
+    let frame = frame_of(&bo, format)?;
+    if mapped.is_err() {
+        painter.paint(&frame)?;
+    }
+    Ok(frame)
+}
+
+/// An empty test-sized buffer of `format` and `modifier` (else the driver's choice).
+fn test_bo(
+    gbm: &gbm::Device<File>,
+    format: u32,
+    modifier: Option<u64>,
+) -> Result<gbm::BufferObject<()>, EncodeError> {
+    let gbm_format = gbm::Format::try_from(format).map_err(|e| EncodeError(e.to_string()))?;
     let flags = gbm::BufferObjectFlags::RENDERING;
-    let mut bo = match modifier {
+    match modifier {
         Some(m) => gbm.create_buffer_object_with_modifiers2::<()>(
             TEST_SIDE,
             TEST_SIDE,
@@ -521,11 +584,11 @@ fn test_buffer(
         ),
         None => gbm.create_buffer_object::<()>(TEST_SIDE, TEST_SIDE, gbm_format, flags),
     }
-    .map_err(|e| err(&e))?;
-    let mapped = bo.map_mut(0, 0, TEST_SIDE, TEST_SIDE, |map| {
-        let stride = map.stride();
-        map.buffer_mut()[..(stride * TEST_SIDE) as usize].copy_from_slice(&pattern(format, stride));
-    });
+    .map_err(|e| EncodeError(e.to_string()))
+}
+
+/// `bo` of `format` as a stream frame.
+fn frame_of(bo: &gbm::BufferObject<()>, format: u32) -> Result<Frame, EncodeError> {
     let planes = (0..bo.plane_count() as i32)
         .map(|p| Plane {
             object: 0,
@@ -533,8 +596,8 @@ fn test_buffer(
             stride: bo.stride_for_plane(p),
         })
         .collect();
-    let fd = Arc::new(bo.fd().map_err(|e| err(&e))?);
-    let frame = Frame::unleased(
+    let fd = Arc::new(bo.fd().map_err(|e| EncodeError(e.to_string()))?);
+    Ok(Frame::unleased(
         FrameBuffer::Dmabuf {
             objects: vec![fd],
             fourcc: format,
@@ -542,11 +605,7 @@ fn test_buffer(
             planes,
         },
         (TEST_SIDE, TEST_SIDE),
-    );
-    if mapped.is_err() {
-        painter.paint(&frame)?;
-    }
-    Ok(frame)
+    ))
 }
 
 /// Draws [`pattern`] into test buffers the CPU cannot map, as NVIDIA's tiled ones are; the GL
@@ -1091,6 +1150,32 @@ mod tests {
         let dev: libc::dev_t = 0xe2_80;
         assert_eq!(dev_from_bytes(&dev.to_ne_bytes()), Some(dev));
         assert_eq!(dev_from_bytes(&[1, 2, 3]), None);
+    }
+
+    #[test]
+    fn a_buffer_reads_as_painted_only_when_it_holds_the_pattern() {
+        let stride = TEST_SIDE * 4 + 64;
+        assert!(holds_pattern(&pattern(XRGB8888, stride), stride).is_ok());
+        let unpainted = vec![0; (stride * TEST_SIDE) as usize];
+        let Err(EncodeError(e)) = holds_pattern(&unpainted, stride) else {
+            panic!("a buffer of zeros is not the painted pattern");
+        };
+        assert_eq!(
+            e,
+            "a painted buffer reads [0, 0, 0] at (8, 8), not [128, 8, 8]"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs OpenGL ES on /dev/dri/renderD128"]
+    fn the_cpu_reads_a_linear_buffer_the_gpu_painted() {
+        if lacks(Need::Gl) {
+            return;
+        }
+        assert_eq!(
+            cpu_modifiers(Path::new(RENDER_NODE)),
+            vec![DRM_FORMAT_MOD_LINEAR]
+        );
     }
 
     #[test]
