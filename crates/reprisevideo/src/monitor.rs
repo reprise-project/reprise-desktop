@@ -91,7 +91,8 @@ const UNLINKED_FOR: Duration = Duration::from_secs(2);
 /// with the time of the cycle that queued it, so chunks the thread takes late in a burst keep
 /// their own times. Runs until a stop from `stopped`, a core error, for a named sink the sink
 /// going or, for the microphone, its source going with none to follow; a stream error is the Err,
-/// [`NO_MICROPHONE`] for the microphone's before it streamed.
+/// for the microphone [`NO_MICROPHONE`] before it streamed and [`MICROPHONE_LOST`] for its source
+/// going after.
 /// The stream is called `name` for program `app`.
 pub fn capture(
     tap: Tap,
@@ -173,7 +174,8 @@ pub fn capture(
             let (failed, weak) = (failed.clone(), main_loop.downgrade());
             let timer = main_loop.loop_().add_timer(move |_| {
                 if unlinked.get().gone(Instant::now()) {
-                    *failed.borrow_mut() = Some("The source went away.".to_string());
+                    log::info!("sound: the microphone's source went away");
+                    *failed.borrow_mut() = Some(MICROPHONE_LOST.to_string());
                     if let Some(l) = weak.upgrade() {
                         l.quit();
                     }
@@ -196,6 +198,13 @@ pub fn capture(
 /// fails it when no source is there.
 pub const NO_MICROPHONE: &str = "No microphone was found.";
 
+/// The microphone's capture error when its source went away after it streamed.
+pub const MICROPHONE_LOST: &str =
+    "The microphone was disconnected; the rest of the recording has only what played.";
+
+/// WirePlumber's stream error when the stream's source went away with none to follow.
+const NO_TARGET: &str = "no target node available";
+
 /// Whether a stream has streamed, and since when it has been unlinked from its source after.
 #[derive(Clone, Copy, Debug, Default)]
 struct Unlinked {
@@ -215,13 +224,17 @@ impl Unlinked {
         }
     }
 
-    /// The microphone's capture Err for the stream error `e`.
+    /// The microphone's capture Err for the stream error `e`, which goes to the log as it came.
     fn why(&self, e: String) -> String {
         if !self.streamed {
             log::info!("sound: the microphone did not open: {e}");
             return NO_MICROPHONE.to_string();
         }
-        e
+        log::info!("sound: the microphone stopped: {e}");
+        match e.as_str() {
+            NO_TARGET => MICROPHONE_LOST.to_string(),
+            _ => e,
+        }
     }
 
     fn gone(&self, now: Instant) -> bool {
@@ -303,13 +316,15 @@ mod tests {
     }
 
     #[test]
-    fn a_microphone_failing_before_it_streamed_was_not_found() {
+    fn a_microphone_failing_before_it_streamed_was_not_found_and_after_was_disconnected() {
         use StreamState::{Connecting, Paused, Streaming};
         let unplugged = || "no target node available".to_string();
         let mut u = Unlinked::default();
         u.changed(&Connecting, &Paused, Instant::now());
         assert_eq!(u.why(unplugged()), NO_MICROPHONE);
         u.changed(&Paused, &Streaming, Instant::now());
-        assert_eq!(u.why(unplugged()), unplugged());
+        assert_eq!(u.why(unplugged()), MICROPHONE_LOST);
+        let other = "error alloc buffers: Invalid argument";
+        assert_eq!(u.why(other.into()), other, "the recorder words any other");
     }
 }

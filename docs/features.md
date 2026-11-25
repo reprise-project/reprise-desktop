@@ -240,8 +240,9 @@ shake, the dim, the hidden frame rate and window memory.
   recording running when the desktop locks keeps hearing it, and a change to
   either box applies from the next recording. A microphone that goes away
   mid-recording, or isn't there at the start, leaves the recording running
-  with what plays, and its saved notice says the microphone stopped or wasn't
-  found. A microphone that comes back later stays out of that recording.
+  with what plays, and its saved notice says the microphone was disconnected,
+  stopped working or wasn't found. A microphone that comes back later stays
+  out of that recording.
 - **Colour picker.** Super+Shift+C shows a loupe at the pointer; a click or
   Enter copies the colour as `#rrggbb`.
 

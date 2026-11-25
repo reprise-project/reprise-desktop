@@ -1024,8 +1024,9 @@ mod tests {
             ),
             (
                 MICROPHONE_STOPPED,
-                "The microphone stopped: The source went away.",
-                "Screencast.mp4\nThe microphone stopped: The source went away.",
+                "The microphone was disconnected; the rest of the recording has only what played.",
+                "Screencast.mp4\nThe microphone was disconnected; the rest of the recording has \
+                 only what played.",
             ),
             (
                 MICROPHONE_STOPPED,
