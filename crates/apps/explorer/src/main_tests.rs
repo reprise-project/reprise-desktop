@@ -34,9 +34,12 @@ mod startup;
 #[path = "main_tests/text_fit.rs"]
 mod text_fit;
 
-/// The process's scratch home for tests: state, cache, data (the Recycle Bin) and config.
-fn scratch() -> PathBuf {
-    std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()))
+/// The process's scratch home for tests: state, cache, data (the Recycle Bin) and config. Every
+/// process's sits in one folder, as tests' Folders panes list the temp folder and none is removed.
+pub(crate) fn scratch() -> PathBuf {
+    std::env::temp_dir()
+        .join("reprise-explorer-tests")
+        .join(std::process::id().to_string())
 }
 
 /// Point the Recycle Bin at the scratch home's trash, with no drives and default settings, so a

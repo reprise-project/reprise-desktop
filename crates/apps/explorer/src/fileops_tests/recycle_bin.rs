@@ -7,8 +7,7 @@ fn a_test_without_a_data_home_gets_the_scratch_bin() {
     let _guard = lock(&TRASH_ENV);
     test_ctx();
     let bins = reprisefs::trash::Bins::system().expect("a bin");
-    let scratch =
-        std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
+    let scratch = crate::tests::scratch();
     assert_eq!(bins.home, scratch.join("data/Trash"));
     assert_eq!(bins.mounts, Vec::<PathBuf>::new());
     assert_eq!(bins.policy, reprisefs::bincap::Policy::default());
