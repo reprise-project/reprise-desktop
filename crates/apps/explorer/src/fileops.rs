@@ -63,6 +63,8 @@ pub(crate) struct Put {
     pub(crate) progress: crate::copydlg::Progress,
 }
 
+const UNDO_HELD: &str = "Another undo is still running.";
+
 pub(crate) type JobDone = Box<dyn FnOnce(&mut Explorer, &mut Ctx) -> Reply + Send>;
 
 /// Work on the session's undo history for [`Explorer::edit_undos`].
@@ -1603,13 +1605,30 @@ impl Explorer {
     }
 
     /// Edit > Undo, the background menu's Undo and Ctrl+Z: Undo of the entry the Undo rows name,
-    /// or a box saying another undo still runs.
+    /// or a box saying another undo still runs. While this window's own edits of the history are
+    /// on their way, of the entry they leave on top once they land.
     pub fn undo_last(&mut self, ctx: &mut Ctx) -> Reply {
         if self.undo_held {
-            return self.message_box("Error", "Another undo is still running.".into(), ctx);
+            return self.message_box("Error", UNDO_HELD.into(), ctx);
         }
         match self.undo_entry {
             Some(entry) => self.undo_with(entry, false, ctx),
+            None if self.undo_edits_pending > 0 => {
+                self.edit_undos(ctx, |undos| {
+                    let (head, held) = (undos.head(), undos.held());
+                    Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                        ex.sync_undo();
+                        match (head, held) {
+                            (Some((entry, _)), None) => ex.undo_with(entry, false, ctx),
+                            (Some(_), Some(Hold::Undo)) => {
+                                ex.message_box("Error", UNDO_HELD.into(), ctx)
+                            }
+                            _ => Reply::redraw(),
+                        }
+                    })
+                });
+                Reply::none()
+            }
             None => Reply::none(),
         }
     }
