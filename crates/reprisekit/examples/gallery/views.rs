@@ -533,6 +533,37 @@ pub fn render_grid_drag(scale: i32) -> Canvas {
     c
 }
 
+/// Computer's drives in Tiles over Details, a column per interface.
+pub fn render_drives(scale: i32) -> Canvas {
+    let (w, h) = (520, 200);
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let mut out = Canvas::new(
+        ((w + 8) * looks.len() as i32 * scale) as u32,
+        ((h + 8) * 2 * scale) as u32,
+    );
+    for (col, look) in looks.into_iter().enumerate() {
+        let base = interfaces::theme_for(look);
+        let theme = base.scaled(scale);
+        let text = TextRenderer::load(&theme.fonts);
+        for (row, mode) in [shellview::Mode::Tiles, shellview::Mode::Details]
+            .into_iter()
+            .enumerate()
+        {
+            let sv = shellview::drives_sample(mode);
+            let lay = shellview::layout(&sv, Rect::new(0, 0, w, h), &base.controls());
+            let mut c = Canvas::new((w * scale) as u32, (h * scale) as u32);
+            let px = theme.fonts.size_px;
+            shellview::draw(&mut c, &text, &theme.paint(), &sv, &lay, None, px);
+            out.blit_canvas(
+                col as i32 * (w + 8) * scale,
+                row as i32 * (h + 8) * scale,
+                &c,
+            );
+        }
+    }
+    out
+}
+
 /// The pointer's rings at five steps of their animation, a row per interface, each step over a
 /// light and a dark tile.
 pub fn render_locate_rings(scale: i32) -> Canvas {

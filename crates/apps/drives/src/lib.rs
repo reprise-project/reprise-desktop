@@ -136,6 +136,7 @@ impl DrivesApp {
         static EMPTY: Snapshot = Snapshot {
             disks: Vec::new(),
             volumes: Vec::new(),
+            filesystems: Vec::new(),
         };
         self.snapshot.as_ref().unwrap_or(&EMPTY)
     }

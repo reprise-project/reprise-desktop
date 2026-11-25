@@ -159,6 +159,8 @@ pub struct Snapshot {
     pub disks: Vec<Disk>,
     /// By device.
     pub volumes: Vec<Volume>,
+    /// The file system types UDisks2 has the tools for (the Manager's `SupportedFilesystems`).
+    pub filesystems: Vec<String>,
 }
 
 impl Snapshot {
@@ -194,6 +196,14 @@ impl Snapshot {
     pub fn removable(&self, v: &Volume) -> bool {
         !v.ignore
             && (v.image.is_some() || (!v.system && self.disk_of(v).is_some_and(|d| d.removable)))
+    }
+
+    /// Whether `v`'s label can be set: a file system UDisks2 has the tools for. F2FS takes its
+    /// label only when it is made.
+    pub fn can_label(&self, v: &Volume) -> bool {
+        v.filesystem
+            && !matches!(v.fs_type.as_str(), "f2fs" | "swap")
+            && self.filesystems.contains(&v.fs_type)
     }
 
     /// The loop device this user set up on `file`, if there is one.
@@ -414,7 +424,17 @@ fn fold_for(objects: &Objects, uid: u32) -> Snapshot {
         }
     }
     volumes.sort_by(|a, b| a.device.cmp(&b.device));
-    Snapshot { disks, volumes }
+    let filesystems = objects
+        .iter()
+        .find(|(p, _)| p.as_str() == MANAGER)
+        .and_then(|(_, ifaces)| ifaces.get(MANAGER_IFACE)?.get("SupportedFilesystems"))
+        .and_then(|v| Vec::<String>::try_from(v.clone()).ok())
+        .unwrap_or_default();
+    Snapshot {
+        disks,
+        volumes,
+        filesystems,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -659,6 +679,12 @@ impl Udisks {
         )?;
         let o: OwnedObjectPath = reply.body().deserialize()?;
         Ok(o.as_str().to_string())
+    }
+
+    /// Set the label of the file system on `volume`.
+    pub fn set_label(&self, volume: &str, label: &str) -> Result<(), Error> {
+        self.call(volume, FILESYSTEM_IFACE, "SetLabel", &(label, no_options()))
+            .map(|_| ())
     }
 
     pub fn lock(&self, volume: &str) -> Result<(), Error> {
@@ -1235,6 +1261,44 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn only_a_file_system_udisks_has_the_tools_for_takes_a_label() {
+        let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+        let mut objs = objects();
+        assert!(fold(&objs).filesystems.is_empty(), "no Manager, no types");
+        let stick = |snap: &Snapshot| snap.volume(&format!("{BD}/sdb1")).unwrap().clone();
+        assert!(!fold(&objs).can_label(&stick(&fold(&objs))));
+        let types: Vec<String> = ["ext4", "vfat", "f2fs"].map(String::from).to_vec();
+        objs.insert(
+            path(MANAGER),
+            HashMap::from([(
+                MANAGER_IFACE.to_string(),
+                props(vec![(
+                    "SupportedFilesystems",
+                    OwnedVariant::try_from(Variant::from(types.clone())).unwrap(),
+                )]),
+            )]),
+        );
+        let snap = fold(&objs);
+        assert_eq!(snap.filesystems, types);
+        assert!(snap.can_label(&stick(&snap)), "the FAT stick");
+        let locked = snap.volume(&format!("{BD}/sdc")).unwrap();
+        assert!(
+            !snap.can_label(locked),
+            "an encrypted container has no file system"
+        );
+        let f2fs = Volume {
+            fs_type: "f2fs".into(),
+            ..stick(&snap)
+        };
+        assert!(!snap.can_label(&f2fs), "F2FS is labelled only when made");
+        let xfs = Volume {
+            fs_type: "xfs".into(),
+            ..stick(&snap)
+        };
+        assert!(!snap.can_label(&xfs), "a type UDisks2 does not list");
+    }
+
+    #[test]
     fn a_volume_without_a_label_is_named_by_its_drive() {
         let v = Volume::default();
         assert_eq!(v.name(None), "Removable Disk");
@@ -1347,6 +1411,36 @@ pub(crate) mod tests {
                 st.calls.push(format!("Unmount {}", self.1));
                 st.mounted.retain(|m| m != self.1);
             }
+
+            /// Refuses as UDisks2 does a VFAT label past 11 characters, and polkit "deny".
+            fn set_label(
+                &self,
+                label: String,
+                _options: HashMap<String, OwnedVariant>,
+            ) -> Result<(), FakeError> {
+                if label == "deny" {
+                    return Err(FakeError::NotAuthorizedCanObtain(
+                        "Not authorized to perform operation".into(),
+                    ));
+                }
+                if label.chars().count() > 11 {
+                    return Err(FakeError::Failed(
+                        "Label for VFAT filesystem must be at most 11 characters long.".into(),
+                    ));
+                }
+                let mut st = self.0.lock().unwrap();
+                st.calls.push(format!("SetLabel {} {label}", self.1));
+                Ok(())
+            }
+        }
+
+        #[derive(Debug, zbus::DBusError)]
+        #[zbus(prefix = "org.freedesktop.UDisks2.Error")]
+        enum FakeError {
+            #[zbus(error)]
+            ZBus(zbus::Error),
+            Failed(String),
+            NotAuthorizedCanObtain(String),
         }
 
         struct Loop(Shared);
@@ -1470,6 +1564,28 @@ pub(crate) mod tests {
                 calls(&f),
                 ["LoopSetup read-only=Some(true)", "Delete loop0"]
             );
+        }
+
+        #[test]
+        fn set_label_sends_the_label_and_relays_udisks_refusals() {
+            let Some(f) = fake(Image::Iso, true) else {
+                return;
+            };
+            let at = format!("{BD}/loop0");
+            f.udisks.set_label(&at, "PHOTOS").expect("labelled");
+            assert_eq!(calls(&f), ["SetLabel loop0 PHOTOS"]);
+            let long = f
+                .udisks
+                .set_label(&at, "HOLIDAY PHOTOS")
+                .expect_err("too long");
+            assert_eq!(long.kind, ErrorKind::Other);
+            assert_eq!(
+                long.message,
+                "Label for VFAT filesystem must be at most 11 characters long."
+            );
+            let denied = f.udisks.set_label(&at, "deny").expect_err("refused");
+            assert_eq!(denied.kind, ErrorKind::NotAuthorized);
+            assert_eq!(calls(&f).len(), 1, "only the first call labelled");
         }
 
         #[test]

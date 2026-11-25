@@ -133,12 +133,8 @@ fn grid_drag_image(
         .collect();
     let cells: Vec<Rect> = placed.iter().map(|&(_, _, cell)| cell).collect();
     let (shown, r) = grid_drag_cut(theme.text, &cells, pointer)?;
-    let (cs, s, u, px) = (
-        &theme.colors,
-        theme.scale.max(1),
-        theme.text,
-        theme.fonts.size_px,
-    );
+    let p = theme.paint();
+    let (s, u, px) = (p.s, theme.text, theme.fonts.size_px);
     let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
     let at = |x: Rect| Rect::new(x.x - r.x, x.y - r.y, x.width, x.height).scaled(s);
     for (row, e, cell) in shown.into_iter().map(|i| placed[i]) {
@@ -151,14 +147,13 @@ fn grid_drag_image(
         draw(
             &mut c,
             text,
-            cs,
+            &p,
             e,
             row.icon,
             at(cell),
             Some(label),
             unselected,
             px,
-            s,
             u,
         );
     }

@@ -4,12 +4,12 @@ use crate::classic::widgets::draw_focus_ring;
 use crate::controls::iconview;
 use crate::controls::listview::{GROUP_RULE_Y, GroupRule, draw_group_header};
 use crate::controls::shellview::{Entry, Group, Layout, Mode, ShellView, draw_wrapped_rename};
-use crate::look::Paint;
 use crate::look::widgets::item;
+use crate::look::{self, Paint};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::Caret;
-use crate::theme::{ColorScheme, TextUnits, Theme};
+use crate::theme::{TextUnits, Theme};
 use std::borrow::Cow;
 
 /// A thumbnail's frame, border included.
@@ -26,6 +26,11 @@ pub const TILE_ICON: i32 = 48;
 pub(crate) const TILE_ICON_OFF: (i32, i32) = (5, 4);
 pub(crate) const TILE_TEXT_X: i32 = 58;
 pub(crate) const TILE_TEXT_TOPS: [i32; 3] = [20, 15, 6];
+/// A drive tile's usage bar, in the line slot under its name: at most this wide, this tall, this
+/// far down its slot.
+pub(crate) const TILE_BAR_W: i32 = 150;
+pub(crate) const TILE_BAR_H: i32 = 10;
+pub(crate) const TILE_BAR_Y: i32 = 2;
 
 pub(crate) fn tile_text_top(n: usize) -> i32 {
     TILE_TEXT_TOPS[n.clamp(1, TILE_TEXT_TOPS.len()) - 1]
@@ -155,10 +160,18 @@ fn flow(
     y + if open { cell.1 } else { 0 }
 }
 
+/// A tile's lines: its name, an empty slot for a drive's usage bar, then its `detail`.
 pub(crate) fn tile_lines(e: &Entry) -> Vec<&str> {
+    let bar = e.space.as_ref().map(|_| "");
     std::iter::once(e.name.as_str())
+        .chain(bar)
         .chain(e.detail.iter().map(String::as_str))
         .collect()
+}
+
+/// The usage bar's width in a tile whose text has `avail` px.
+fn tile_bar_w(avail: i32, u: TextUnits) -> i32 {
+    u.len(TILE_BAR_W).min(avail)
 }
 
 pub(crate) fn block_h(n: usize, px: u32, u: TextUnits) -> i32 {
@@ -220,16 +233,16 @@ pub(crate) fn faded<'a>(e: &Entry, icon: Option<&'a Canvas>) -> Option<Cow<'a, C
 pub(crate) fn draw_tile(
     c: &mut Canvas,
     text: &TextRenderer,
-    cs: &ColorScheme,
+    p: &Paint,
     e: &Entry,
     icon: Option<&Canvas>,
     cell: Rect,
     label: Option<Rect>,
     sel: (bool, bool),
     px: u32,
-    s: i32,
     u: TextUnits,
 ) {
+    let Paint { cs, s, .. } = *p;
     let (selected, ring) = sel;
     if let Some(icon) = icon {
         let dy = TILE_ICON_OFF.1 + (cell.height / s - TILE_CELL.1) / 2;
@@ -247,17 +260,23 @@ pub(crate) fn draw_tile(
     }
     let avail = (cell.width - TILE_TEXT_X * s).max(0);
     for (k, line) in tile_lines(e).iter().enumerate() {
+        let top = label.y + k as i32 * u.len(LINE_PITCH) * s;
+        if let (Some(sp), 1) = (&e.space, k) {
+            let bar = Rect::new(
+                label.x / s,
+                top / s + u.len(TILE_BAR_Y),
+                tile_bar_w(avail / s, u),
+                u.len(TILE_BAR_H),
+            );
+            look::widgets::draw_progress(c, p, bar, sp.used(), true);
+            continue;
+        }
         let fg = match (selected, k) {
             (true, _) => cs.hilight_text,
             (false, 0) => cs.window_text,
             (false, _) => cs.gray_text,
         };
-        let r = Rect::new(
-            label.x,
-            label.y + k as i32 * u.len(LINE_PITCH) * s,
-            avail,
-            px as i32 + u.len(3) * s,
-        );
+        let r = Rect::new(label.x, top, avail, px as i32 + u.len(3) * s);
         let shown = text.ellipsize(line, avail, false, px);
         let r = text.ink_box(r, &shown, false, px, c.scale());
         text.draw(c, r, &shown, false, fg, Align::Left, px);
@@ -277,16 +296,16 @@ pub(crate) fn draw_tile(
 pub(crate) fn draw_thumb(
     c: &mut Canvas,
     text: &TextRenderer,
-    cs: &ColorScheme,
+    p: &Paint,
     e: &Entry,
     img: Option<&Canvas>,
     cell: Rect,
     label: Option<Rect>,
     sel: (bool, bool),
     px: u32,
-    s: i32,
     u: TextUnits,
 ) {
+    let Paint { cs, s, .. } = *p;
     let (selected, ring) = sel;
     let at = thumb_frame(Rect::new(0, 0, cell.width / s, cell.height / s));
     let frame = Rect::new(
@@ -425,14 +444,13 @@ pub(crate) fn draw_grid(
                 draw_tile(
                     &mut bc,
                     text,
-                    cs,
+                    p,
                     e,
                     entry_icon(e, Mode::Tiles).as_deref(),
                     cell,
                     (!editing).then_some(label),
                     (selected, ring),
                     px,
-                    s,
                     u,
                 );
                 if editing {
@@ -444,14 +462,13 @@ pub(crate) fn draw_grid(
                 draw_thumb(
                     &mut bc,
                     text,
-                    cs,
+                    p,
                     e,
                     entry_icon(e, Mode::Thumbnails).as_deref(),
                     cell,
                     (!editing).then_some(label),
                     (selected, ring),
                     px,
-                    s,
                     u,
                 );
                 if editing {
@@ -496,6 +513,10 @@ pub(crate) fn label_of(
                 &shown.iter().map(String::as_str).collect::<Vec<_>>(),
                 px,
             );
+            let widest = match e.space {
+                Some(_) => widest.max(tile_bar_w(avail, u)),
+                None => widest,
+            };
             let h = block_h(shown.len(), px, u);
             Rect::new(
                 cell.x + TILE_TEXT_X,

@@ -50,6 +50,8 @@ pub struct MenuState {
     pub compress: Option<String>,
     /// The selection is one disk image: the item menu's default row mounts it.
     pub disk_image: bool,
+    /// The selection is one drive whose label Rename sets.
+    pub relabel: bool,
     /// A lone folder under the item menu: whether it is pinned (Unpin from Places) or not (Pin
     /// to Places).
     pub pinned: Option<bool>,
@@ -83,6 +85,7 @@ impl Default for MenuState {
             local_paths: false,
             compress: None,
             disk_image: false,
+            relabel: false,
             pinned: None,
             share: false,
             can_connect: true,
@@ -330,7 +333,7 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
         None => (writable, false),
     };
     file.row(row("&Delete", delete), Command::Delete { erase });
-    file.row(row("Rena&me", writable), Command::Rename);
+    file.row(row("Rena&me", writable || state.relabel), Command::Rename);
     // With nothing selected, Properties is the place's own sheet, which
     // Computer does not have (`props_host::place_sheet`); the Recycle Bin's
     // is Recycle Bin Properties.
@@ -548,7 +551,7 @@ pub fn item_menu(
     m.sep();
     m.row(row("Create &Shortcut", writable), Command::CreateShortcut);
     m.row(row("&Delete", writable), Command::Delete { erase: false });
-    m.row(row("Rena&me", writable), Command::Rename);
+    m.row(row("Rena&me", writable || state.relabel), Command::Rename);
     m.sep();
     m.row(row("P&roperties", true), Command::Properties);
     m

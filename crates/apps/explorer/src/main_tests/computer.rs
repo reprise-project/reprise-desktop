@@ -144,6 +144,7 @@ fn computer_gains_and_loses_a_locked_stick_as_udisks_reports_it() {
     let stick = PathBuf::from("/dev/sdx");
     let listed = |ex: &Explorer| ex.items.iter().any(|it| it.path == stick);
     let plugged = Snapshot {
+        filesystems: Vec::new(),
         disks: vec![Disk {
             path: "/drives/stick".into(),
             removable: true,
@@ -192,6 +193,7 @@ fn a_udisks_snapshot_that_lands_after_the_drive_scan_marks_its_mounted_stick_rem
         free: 500,
     }];
     let snap = Snapshot {
+        filesystems: Vec::new(),
         disks: vec![Disk {
             path: "/drives/stick".into(),
             removable: true,
@@ -284,6 +286,7 @@ fn computer_and_the_folders_tree_gain_and_lose_a_mounted_disk_image() {
     let mut ex = test_explorer(Place::Computer, &mut ctx);
     let mount = PathBuf::from("/run/media/u/DEBIAN_13");
     let mounted = Snapshot {
+        filesystems: Vec::new(),
         disks: vec![],
         volumes: vec![Volume {
             path: "/block/loop0".into(),
@@ -349,6 +352,7 @@ fn computer_in_the_folders_tree_holds_only_drives_across_an_image_mount_and_ejec
 
     let mount = PathBuf::from("/run/media/u/TESTISO");
     let mounted = Snapshot {
+        filesystems: Vec::new(),
         disks: vec![],
         volumes: vec![Volume {
             path: "/block/loop0".into(),
@@ -665,4 +669,225 @@ fn a_phones_folder_is_addressed_by_the_phones_name_and_reached_by_it() {
     wake_until(&mut ex, &mut ctx, |ex| {
         ex.place == Place::Folder(dcim.clone())
     });
+}
+
+fn space_drive(mount: &str, device: &str, removable: bool) -> reprisefs::places::Drive {
+    reprisefs::places::Drive {
+        mount: PathBuf::from(mount),
+        device: device.into(),
+        fs: "ext4".into(),
+        label: None,
+        removable,
+        optical: false,
+        total: 0,
+        free: 0,
+    }
+}
+
+/// `/` holds 100 GB with 25 free; `/run/media/u/NOREAD` cannot be read.
+fn fake_statvfs(at: &Path) -> Option<(u64, u64)> {
+    (at == Path::new("/")).then_some((100 << 30, 25 << 30))
+}
+
+#[test]
+fn computer_shows_each_drives_total_size_and_free_space_as_read() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.statvfs = fake_statvfs;
+    ex.drives = vec![
+        space_drive("/", "/dev/sda2", false),
+        space_drive("/run/media/u/NOREAD", "/dev/sdz1", true),
+    ];
+    ex.go(Place::Computer, &mut ctx);
+    ex.take_space(LIST_WAIT);
+    assert_eq!(ex.sv.fields, shellview::computer_fields());
+    let row = |ex: &Explorer, path: &str| {
+        use reprisekit::controls::listview::Rows as _;
+        let i = ex.index_of(Path::new(path)).expect("listed");
+        let rows = shellview::DetailsRows(&ex.sv.entries, &ex.sv.fields);
+        [2, 3].map(|c| rows.cell(i, c).into_owned())
+    };
+    assert_eq!(row(&ex, "/"), ["100 GB", "25.0 GB"]);
+    assert_eq!(
+        row(&ex, "/run/media/u/NOREAD"),
+        ["", ""],
+        "a drive that cannot be read shows blank"
+    );
+    let root = ex.index_of(Path::new("/")).unwrap();
+    assert_eq!(ex.sv.entries[root].detail, ["25.0 GB free of 100 GB"]);
+    assert!(
+        (ex.sv.entries[root].space.as_ref().unwrap().used() - 0.75).abs() < 1e-9,
+        "the tile's bar fills three quarters"
+    );
+}
+
+static DEAD: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+static DEAD_GONE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// `/run/media/u/DEAD` answers only once [`DEAD`] is set.
+fn dead_statvfs(at: &Path) -> Option<(u64, u64)> {
+    if at == Path::new("/run/media/u/DEAD") {
+        let held = DEAD.lock().unwrap();
+        drop(DEAD_GONE.wait_while(held, |gone| !*gone).unwrap());
+    }
+    Some((8 << 30, 2 << 30))
+}
+
+/// A mount that does not answer holds neither the listing nor the other drives' space.
+#[test]
+fn a_dead_mount_stays_blank_while_the_other_drives_fill() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.statvfs = dead_statvfs;
+    ex.drives = vec![
+        space_drive("/", "/dev/sda2", false),
+        space_drive("/run/media/u/DEAD", "/dev/sdz1", true),
+    ];
+    ex.go(Place::Computer, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.index_of(Path::new("/"))
+            .is_some_and(|i| ex.sv.entries[i].space.is_some())
+    });
+    ex.take_space(std::time::Duration::from_millis(200));
+    let dead = ex.index_of(Path::new("/run/media/u/DEAD")).expect("listed");
+    assert_eq!(ex.sv.entries[dead].space, None);
+    ex.go(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.go(Place::Computer, &mut ctx);
+    assert_eq!(ex.index_of(Path::new("/run/media/u/DEAD")), Some(dead));
+    assert_eq!(
+        ex.spaces.out_for(Path::new("/run/media/u/DEAD")),
+        1,
+        "a relist joins the read still out"
+    );
+    *DEAD.lock().unwrap() = true;
+    DEAD_GONE.notify_all();
+    wake_until(&mut ex, &mut ctx, |ex| ex.sv.entries[dead].space.is_some());
+}
+
+/// A fake UDisks2 whose volumes take any label but "deny", which polkit refuses.
+struct Labels(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop.UDisks2.Error")]
+enum LabelError {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    NotAuthorizedCanObtain(String),
+}
+
+#[zbus::interface(name = "org.freedesktop.UDisks2.Filesystem")]
+impl Labels {
+    fn set_label(
+        &self,
+        label: String,
+        _options: std::collections::HashMap<String, zbus::OwnedVariant>,
+    ) -> Result<(), LabelError> {
+        if label == "deny" {
+            return Err(LabelError::NotAuthorizedCanObtain("Not authorized".into()));
+        }
+        self.0.lock().unwrap().push(label);
+        Ok(())
+    }
+}
+
+/// F2 on a mounted FAT stick edits its label alone and sets it through UDisks2; a refusal
+/// raises a box in words. An ext4 drive UDisks2 has no tools for greys Rename.
+#[test]
+fn rename_sets_a_drives_label_through_udisks() {
+    use reprisefs::udisks::{Snapshot, Udisks, Volume};
+    let Some(bus) = reprisebus::testbus::bus() else {
+        return;
+    };
+    const STICK: &str = "/org/freedesktop/UDisks2/block_devices/sdz1";
+    let labels = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (_service, client) = zbus::block_on(async {
+        let service = zbus::connection::Builder::address(bus.1.as_str())
+            .name("org.freedesktop.UDisks2")
+            .serve_at(STICK, Labels(labels.clone()))
+            .build()
+            .await
+            .expect("the service");
+        let client = zbus::connection::Builder::address(bus.1.as_str())
+            .build()
+            .await
+            .expect("the client");
+        (service, client)
+    });
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = Explorer::with_settings(
+        Place::Folder(dir.path().to_path_buf()),
+        Settings::default(),
+        Vec::new().into(),
+        Some(Udisks::on(client)),
+        &mut ctx,
+    );
+    ex.drives = vec![
+        space_drive("/", "/dev/sda2", false),
+        space_drive("/run/media/u/STICK", "/dev/sdz1", true),
+    ];
+    let volume = |path: &str, device: &str, mount: &str, fs: &str, label: &str| Volume {
+        path: path.into(),
+        device: device.into(),
+        label: Some(label.into()),
+        fs_type: fs.into(),
+        filesystem: true,
+        mounts: vec![mount.into()],
+        ..Default::default()
+    };
+    ex.volumes = Snapshot {
+        volumes: vec![
+            volume("/block/sda2", "/dev/sda2", "/", "ext4", "root"),
+            volume(STICK, "/dev/sdz1", "/run/media/u/STICK", "vfat", "STICK"),
+        ],
+        filesystems: vec!["vfat".into()],
+        ..Default::default()
+    };
+    ex.go(Place::Computer, &mut ctx);
+
+    let root = ex.index_of(Path::new("/")).expect("/ listed");
+    ex.sv.selection.set_only(Some(root));
+    assert!(
+        !ex.menu_state().relabel,
+        "UDisks2 has no tools for ext4 here"
+    );
+    ex.begin_rename(&mut ctx);
+    assert!(ex.sv.edit.is_none(), "F2 on / does nothing");
+
+    let stick = ex
+        .index_of(Path::new("/run/media/u/STICK"))
+        .expect("listed");
+    ex.sv.selection.set_only(Some(stick));
+    assert!(ex.menu_state().relabel);
+    ex.begin_rename(&mut ctx);
+    let (i, edit) = ex.sv.edit.as_mut().expect("the rename box");
+    assert_eq!((*i, edit.text.as_str()), (stick, "STICK"));
+    *edit = reprisekit::textedit::TextEdit::new("PHOTOS", true);
+    ex.commit_rename(&mut ctx);
+    wake_until(&mut ex, &mut ctx, |_| !labels.lock().unwrap().is_empty());
+    assert_eq!(*labels.lock().unwrap(), ["PHOTOS"]);
+    wake_until(&mut ex, &mut ctx, |ex| ex.jobs_pending == 0);
+
+    // The relabel rescanned this machine's own drives.
+    ex.drives = vec![space_drive("/run/media/u/STICK", "/dev/sdz1", true)];
+    ex.go(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.go(Place::Computer, &mut ctx);
+    let stick = ex
+        .index_of(Path::new("/run/media/u/STICK"))
+        .expect("listed");
+    ex.sv.selection.set_only(Some(stick));
+    ex.begin_rename(&mut ctx);
+    let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+    *edit = reprisekit::textedit::TextEdit::new("deny", true);
+    ex.commit_rename(&mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    match ex.dialog() {
+        Some(Dialog::Message { title, text, .. }) => {
+            assert_eq!(title, "Rename");
+            assert_eq!(text, "You do not have permission to rename STICK.");
+        }
+        _ => panic!("the refusal's box is up"),
+    }
 }

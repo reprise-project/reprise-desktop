@@ -41,10 +41,33 @@ pub enum Field {
     Kind,
     Modified,
     Deleted,
+    /// A drive's [`super::Space`] total, and its free space.
+    Total,
+    Free,
 }
 
 pub fn details_fields() -> Vec<Field> {
     vec![Field::Name, Field::Size, Field::Kind, Field::Modified]
+}
+
+/// Computer's four columns: Name 178, Type 118, Total Size 94 and Free Space 94, both
+/// right-aligned.
+pub fn computer_columns() -> Vec<listview::Column> {
+    let right = |title: &str| listview::Column {
+        title: title.into(),
+        width: 94,
+        right: true,
+    };
+    vec![
+        listview::Column::new("Name", 178),
+        listview::Column::new("Type", 118),
+        right("Total Size"),
+        right("Free Space"),
+    ]
+}
+
+pub fn computer_fields() -> Vec<Field> {
+    vec![Field::Name, Field::Kind, Field::Total, Field::Free]
 }
 
 /// The Recycle Bin's six columns: Name 178, Original Location 180, Date
@@ -130,6 +153,8 @@ pub fn sort(sv: &mut ShellView) {
             Field::Size => Key::Size(if e.is_folder() { 0 } else { e.size }),
             Field::Kind => Key::Text(e.kind.to_lowercase()),
             Field::Modified => Key::Date(e.mtime),
+            Field::Total => Key::Size(e.space.as_ref().map_or(0, |sp| sp.total)),
+            Field::Free => Key::Size(e.space.as_ref().map_or(0, |sp| sp.free)),
         };
         (!e.is_folder(), by, e.name.to_lowercase(), e.name.clone())
     };
@@ -181,6 +206,13 @@ impl listview::Rows for DetailsRows<'_> {
             Some(Field::Kind) => Cow::Borrowed(&e.kind),
             Some(Field::Modified) => Cow::Borrowed(&e.modified),
             Some(Field::Deleted) => Cow::Borrowed(&e.deleted),
+            Some(Field::Total) => e.space.as_ref().map_or(Cow::Borrowed(""), |sp| {
+                Cow::Borrowed(sp.total_text.as_str())
+            }),
+            Some(Field::Free) => e
+                .space
+                .as_ref()
+                .map_or(Cow::Borrowed(""), |sp| Cow::Borrowed(sp.free_text.as_str())),
             None => Cow::Borrowed(""),
         }
     }
