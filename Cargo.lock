@@ -5476,6 +5476,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "repriseapp-pins",
+ "reprisebus",
  "reprisefs",
  "reprisekit",
  "repriselogin",

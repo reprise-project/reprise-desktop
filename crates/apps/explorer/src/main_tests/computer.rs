@@ -216,8 +216,6 @@ fn a_udisks_snapshot_that_lands_after_the_drive_scan_marks_its_mounted_stick_rem
 /// window reads UDisks2 only through `follow_volumes`' thread.
 #[test]
 fn computer_lists_while_udisks_does_not_answer() {
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
     // A listing that waited on UDisks2 would take this long, so a loaded host stays well inside it.
     const UNANSWERED: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -229,20 +227,10 @@ fn computer_lists_while_udisks_does_not_answer() {
         }
     }
 
-    let Ok(mut daemon) = Command::new("dbus-daemon")
-        .args(["--session", "--nofork", "--print-address"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        reprisebus::testbus::skipped("no dbus-daemon");
+    let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
-    let mut address = String::new();
-    BufReader::new(daemon.stdout.take().expect("stdout"))
-        .read_line(&mut address)
-        .expect("the bus address");
-    let address = address.trim();
+    let address = bus.1.as_str();
     let (_service, client) = zbus::block_on(async {
         let service = zbus::connection::Builder::address(address)
             .name("org.freedesktop.UDisks2")
@@ -271,8 +259,7 @@ fn computer_lists_while_udisks_does_not_answer() {
     ex.mounts_seen.clear();
     ex.go(Place::Computer, &mut ctx);
     let took = start.elapsed();
-    let _ = daemon.kill();
-    let _ = daemon.wait();
+    drop(bus);
     assert!(
         took < UNANSWERED / 2,
         "Computer lists without waiting out the call, took {took:?}"

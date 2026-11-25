@@ -1,8 +1,10 @@
 //! A test binary's own session: `#[cfg(test)] reprisebus::test_session!();` at its crate root
-//! points HOME, the XDG folders and the runtime folder at empty folders of the process's own and
-//! drops the buses and displays, before `main`, so no test reads or writes the user's session.
+//! points HOME, the XDG folders, the runtime folder and TMPDIR at empty folders of the process's
+//! own and drops the buses and displays, before `main`, so no test reads or writes the user's
+//! session, and whatever a test leaves in the temp folder goes with the session folder.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Makes the crate's test binary [`enter`] its own session before `main`.
 #[macro_export]
@@ -40,9 +42,38 @@ const DROPPED: [&str; 9] = [
     "XAUTHORITY",
 ];
 
-/// The process's session folder, removed as it exits.
+/// The process's session folder, `reprise-tests/<pid>` in the temp folder the process started
+/// with: removed as the process exits, or by a later test process once that one is gone.
 pub fn dir() -> PathBuf {
-    std::env::temp_dir().join(format!("reprise-session-{}", std::process::id()))
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let parent = std::env::temp_dir().join("reprise-tests");
+        sweep(&parent);
+        let dir = parent.join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    })
+    .clone()
+}
+
+/// Removes the folders under `parent` named for a process that no longer runs.
+fn sweep(parent: &Path) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|n| n.parse::<libc::pid_t>().ok()) else {
+            continue;
+        };
+        // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
+        let gone = pid > 0
+            && unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        if gone {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// Sets up the session [`test_session`] describes. Only before `main`: it writes the environment.
@@ -53,10 +84,12 @@ pub fn enter() {
     }
     let home = dir().join("home");
     let runtime = dir().join("runtime");
+    let tmp = dir().join("tmp");
     for (_, rel) in HOMES {
         let _ = std::fs::create_dir_all(home.join(rel));
     }
     let _ = std::fs::create_dir_all(&runtime);
+    let _ = std::fs::create_dir_all(&tmp);
     // SAFETY: `.init_array` runs `enter` before `main`, so no other thread reads the environment,
     // and `remove` touches nothing torn down before exit handlers.
     unsafe {
@@ -66,6 +99,7 @@ pub fn enter() {
             std::env::set_var(var, home.join(rel));
         }
         std::env::set_var("XDG_RUNTIME_DIR", &runtime);
+        std::env::set_var("TMPDIR", &tmp);
         let no_bus = format!("unix:path={}", runtime.join("no-system-bus").display());
         std::env::set_var("DBUS_SYSTEM_BUS_ADDRESS", no_bus);
         for var in DROPPED {
@@ -93,6 +127,7 @@ mod tests {
             std::env::var_os("XDG_RUNTIME_DIR"),
             Some(dir().join("runtime").into())
         );
+        assert_eq!(std::env::temp_dir(), dir().join("tmp"));
         for var in DROPPED {
             assert_eq!(std::env::var_os(var), None, "{var} is unset");
         }
@@ -103,6 +138,31 @@ mod tests {
         assert!(
             zbus::block_on(zbus::Connection::session()).is_err(),
             "no session bus"
+        );
+    }
+
+    #[test]
+    fn a_sweep_removes_only_the_folders_of_processes_that_exited() {
+        let parent = tempfile::tempdir().unwrap();
+        let mut exited = std::process::Command::new("true").spawn().unwrap();
+        exited.wait().unwrap();
+        let names = [
+            exited.id().to_string(),
+            std::process::id().to_string(),
+            "x".into(),
+        ];
+        for name in &names {
+            std::fs::create_dir(parent.path().join(name)).unwrap();
+        }
+        sweep(parent.path());
+        let kept: Vec<bool> = names
+            .iter()
+            .map(|n| parent.path().join(n).exists())
+            .collect();
+        assert_eq!(
+            kept,
+            [false, true, true],
+            "only the exited process's folder goes"
         );
     }
 }
