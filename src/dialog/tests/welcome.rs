@@ -144,7 +144,8 @@ fn restart_into_is_a_button_after_cancel_left_of_it_under_glass() {
     }
     assert!(d.offer_restart_into(false));
     assert_eq!(d.buttons.len(), 4);
-    assert!(d.buttons[1].default, "the focus went back to Turn Off");
+    assert_eq!(d.buttons[3].action, DialogAction::Cancel);
+    assert!(d.buttons[3].default, "the focus went to Cancel");
 }
 
 fn assert_draws_as_the_power_panel(theme: &Theme, d: &Dialog, cancel: Option<&Theme>) {

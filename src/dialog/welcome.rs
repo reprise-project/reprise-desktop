@@ -219,7 +219,7 @@ impl Dialog {
     }
 
     /// Show or drop a Turn off computer panel's Restart Into... (`on`); true when it changed. Its
-    /// focus moves to Turn Off when it goes.
+    /// focus moves to Cancel when it goes.
     pub fn offer_restart_into(&mut self, on: bool) -> bool {
         let Style::Welcome(w) = &mut self.style else {
             return false;
@@ -232,7 +232,7 @@ impl Dialog {
         }
         w.panel.restart_into = on;
         if !w.panel.live(w.panel.focus) {
-            w.panel.focus = Part::Big(1);
+            w.panel.focus = Part::Cancel;
         }
         self.sync_welcome();
         true
