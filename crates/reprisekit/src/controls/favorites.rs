@@ -162,7 +162,8 @@ pub fn show_selected(form: &mut Form, rows: &[Row]) {
     let row = at.and_then(|i| rows.get(i));
     form.show_edit_text(NAME, row.map_or("", |r| r.label.as_str()));
     form.select_edit_text(NAME);
-    form.set_text(ADDRESS, row.map_or("", |r| r.address.as_str()));
+    let address = row.map_or(String::new(), |r| crate::text::escape_mnemonic(&r.address));
+    form.set_text(ADDRESS, &address);
     form.set_text(NOTE, row.map_or("", |r| r.state.note()));
     form.set_enabled(NAME, row.is_some());
     form.set_enabled("name_l", row.is_some());
@@ -249,6 +250,20 @@ mod tests {
             unreachable!()
         };
         assert_eq!(list.greyed, [false, false, true]);
+    }
+
+    #[test]
+    fn an_ampersand_in_the_address_draws_as_itself() {
+        let rows = [Row {
+            label: "Tom".into(),
+            address: "/home/u/Tom & Jerry".into(),
+            state: State::Opens,
+        }];
+        let f = organize(&rows, Some(0));
+        assert_eq!(
+            crate::text::split_mnemonic(&label(&f, ADDRESS)),
+            ("/home/u/Tom & Jerry".to_string(), None)
+        );
     }
 
     #[test]
