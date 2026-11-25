@@ -109,11 +109,13 @@ pub struct Favorite {
     pub line: LineKey,
 }
 
-/// A bookmark's line: its URI as written and how many lines before it carry the same, so two
-/// spellings of one folder (`file:///a`, `file://localhost/a`) or two copies of a line stay apart.
+/// A bookmark's line: its URI as written, its label and how many lines before it carry both, so
+/// two spellings of one folder (`file:///a`, `file://localhost/a`) or two labels on one URI stay
+/// apart; two copies of a whole line are interchangeable.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LineKey {
     uri: String,
+    label: Option<String>,
     nth: usize,
 }
 
@@ -211,14 +213,15 @@ impl Bookmarks {
 
     /// Every bookmark, in file order, with the key of its line.
     fn keyed(&self) -> impl Iterator<Item = (LineKey, &Entry)> {
-        let mut seen = std::collections::HashMap::<&str, usize>::new();
+        let mut seen = std::collections::HashMap::<(&str, Option<&str>), usize>::new();
         self.lines
             .iter()
             .filter_map(|l| l.entry.as_ref())
             .map(move |e| {
-                let nth = seen.entry(e.uri.as_str()).or_default();
+                let nth = seen.entry((&e.uri, e.label.as_deref())).or_default();
                 let key = LineKey {
                     uri: e.uri.clone(),
+                    label: e.label.clone(),
                     nth: *nth,
                 };
                 *nth += 1;
@@ -230,7 +233,7 @@ impl Bookmarks {
     fn find(&self, key: &LineKey) -> Option<usize> {
         let mut seen = 0;
         self.lines.iter().position(|l| {
-            let hit = l.entry.as_ref().is_some_and(|e| e.uri == key.uri);
+            let hit = (l.entry.as_ref()).is_some_and(|e| e.uri == key.uri && e.label == key.label);
             seen += usize::from(hit);
             hit && seen == key.nth + 1
         })
@@ -953,7 +956,11 @@ smb://nas/My%20Files\n";
             "{}",
             b.text()
         );
-        assert!(b.rename(&share, "  "));
+        assert!(
+            !b.rename(&share, "Again"),
+            "a key names the line as it was listed"
+        );
+        assert!(b.rename(&key(&b, 1), "  "));
         assert!(b.text().contains("\nsftp://h/srv/share\n"));
         let nas = key(&b, 2);
         assert!(!b.rename(&nas, "smb://nas/My Files"), "its own name");
@@ -1348,5 +1355,14 @@ smb://nas/My%20Files\n";
         assert!(pins.take_failed().is_some());
         pins.edit(|b| b.pin(Path::new("/srv/a")));
         wait_until(&pins, &woke, |p| !p.busy() && p.current().len() == 1);
+    }
+
+    #[test]
+    fn a_key_takes_its_own_label_past_another_line_of_its_uri() {
+        let b = Bookmarks::parse("file:///a A\nfile:///a B\n");
+        let second = key(&b, 1);
+        let mut moved = Bookmarks::parse("file:///a B\nfile:///a A\n");
+        assert!(moved.remove(&second));
+        assert_eq!(moved.text(), "file:///a A\n");
     }
 }
