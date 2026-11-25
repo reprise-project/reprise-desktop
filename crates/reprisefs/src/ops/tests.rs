@@ -1979,6 +1979,7 @@ fn write_atomic_through_a_dangling_link_creates_its_target_and_keeps_the_link() 
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path();
     std::fs::create_dir(dir.join("conf")).expect("mkdir");
+    std::fs::create_dir_all(dir.join("dotfiles/gtk")).expect("mkdir");
     let link = dir.join("conf/bookmarks");
     std::os::unix::fs::symlink("../dotfiles/gtk/bookmarks", &link).expect("symlink");
     write_atomic(&link, b"a\n").expect("save");
@@ -1992,6 +1993,29 @@ fn write_atomic_through_a_dangling_link_creates_its_target_and_keeps_the_link() 
     assert_eq!(
         std::fs::read_to_string(dir.join("dotfiles/gtk/bookmarks")).expect("read"),
         "a\n"
+    );
+}
+
+#[test]
+fn write_atomic_through_a_link_into_a_missing_folder_refuses_and_makes_none() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    std::fs::create_dir_all(dir.join("conf")).expect("mkdir");
+    std::fs::create_dir(dir.join("nas")).expect("mkdir");
+    let link = dir.join("conf/bookmarks");
+    std::os::unix::fs::symlink(dir.join("nas/dotfiles/bookmarks"), &link).expect("symlink");
+    let e = write_atomic(&link, b"a\n").expect_err("refused");
+    assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(
+        std::fs::read_dir(dir.join("nas")).expect("dir").count(),
+        0,
+        "no folder made past the link"
+    );
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .expect("lstat")
+            .file_type()
+            .is_symlink()
     );
 }
 
