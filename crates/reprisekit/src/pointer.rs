@@ -245,6 +245,9 @@ impl Pointer<(Axis, ScrollHit)> {
     }
 }
 
+/// Ms the pointer rests on an item before a single-click host (`[folders] single_click`) selects it.
+pub const POINT_MS: u64 = 400;
+
 /// Px a second press may land from the first, on either axis, and still pair into a double click.
 pub const DOUBLE_CLICK_SLOP: i32 = 4;
 

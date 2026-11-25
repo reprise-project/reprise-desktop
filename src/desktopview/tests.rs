@@ -2166,3 +2166,46 @@ fn single_click_opens_an_icon_on_a_release_without_a_drag() {
     h.state.desktop_press(Some(1), (10, 10), 10000, ctrl);
     assert_eq!(pending(&h), None, "a Ctrl click only selects");
 }
+
+#[test]
+fn single_click_selects_the_icon_the_pointer_rests_on() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    create(
+        &mut h.state,
+        "/home/u/Desktop".into(),
+        Default::default(),
+        None,
+    );
+    h.state.desktop.as_mut().unwrap().entries = vec![file("a.txt"), file("b.txt")];
+    h.state.relayout_desktop();
+    let centre = |h: &crate::harness::Harness, i: usize| {
+        let c = h.state.desktop.as_ref().unwrap().cells[i];
+        (f64::from(c.x + c.width / 2), f64::from(c.y + c.height / 2))
+    };
+    let picked = |h: &crate::harness::Harness| h.state.desktop.as_ref().unwrap().selection.single();
+    let rest = reprisekit::pointer::POINT_MS;
+
+    let (x, y) = centre(&h, 1);
+    h.pointer_to(x, y);
+    h.run_for(rest + 200);
+    assert_eq!(
+        picked(&h),
+        None,
+        "a double-click desktop selects on a click"
+    );
+
+    h.state.config.folders.single_click = true;
+    let (x, y) = centre(&h, 0);
+    h.pointer_to(x, y);
+    h.run_for(rest - 150);
+    assert_eq!(picked(&h), None, "too soon");
+    h.run_for(300);
+    assert_eq!(picked(&h), Some(0), "the rest selects it");
+
+    let (x, y) = centre(&h, 1);
+    h.pointer_to(x, y);
+    h.pointer_to(1000.0, 700.0);
+    h.run_for(rest + 200);
+    assert_eq!(picked(&h), Some(0), "passing over an icon selects nothing");
+}

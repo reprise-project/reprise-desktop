@@ -79,6 +79,10 @@ pub struct DesktopView {
     /// A plain press on this icon under `[folders] single_click`: the release opens it unless a
     /// drag started (`settle_click`).
     pub(crate) click_open: Option<usize>,
+    /// The icon the pointer rests on under `[folders] single_click`, and the timer that selects
+    /// it ([`State::desktop_point`]) until it fires.
+    point: Option<usize>,
+    point_timer: Option<RegistrationToken>,
     /// An in-progress inline rename: the icon index and the edit.
     pub rename: Option<(usize, TextEdit)>,
     /// Which rename `rename` is, unique for the run (`PasteTarget::Rename`).
@@ -278,6 +282,8 @@ pub(crate) fn create(
         focus_ring: false,
         last_click: DoubleClick::default(),
         click_open: None,
+        point: None,
+        point_timer: None,
         rename: None,
         rename_serial: 0,
         rename_keyed: false,
