@@ -27,10 +27,7 @@ fn sound_opens_sounds_and_audio_devices() {
     let p = Page::Sound;
     assert_eq!(
         lines(&s, p, "audio_devices_note"),
-        [
-            "To pick speakers and microphones or",
-            "set each program's volume, open"
-        ]
+        ["To pick speakers and microphones or set each program's volume, open"]
     );
     assert_eq!(
         program_for(AUDIO_DEVICES),
@@ -41,6 +38,32 @@ fn sound_opens_sounds_and_audio_devices() {
         Some(("reprise-accounts.desktop", &["--remote-password"][..]))
     );
     assert_eq!(program_for(EDIT_FILE), None);
+}
+
+#[test]
+fn the_sound_header_takes_one_line_once_the_page_is_wide_enough() {
+    reprisekit::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = Theme::default().fonts.size_px;
+    let wide = Area { w: 700, dh: 0 };
+    let page = |a: Area| sound(a, &sound_themes());
+    let note = |a: Area| page(a).item("audio_devices_note").unwrap().rect;
+    let line = "To pick speakers and microphones or set each program's volume, open";
+    let need = text.measure(line, false, px);
+    assert!(
+        need > note(Area::MIN).width,
+        "two lines on the smallest page"
+    );
+    assert!(need <= note(wide).width, "one line on a 700 px page");
+    let header = |a: Area| Rect::new(X, 44, a.w, note(a).height);
+    check_rows(
+        "sound_header",
+        &["smallest", "wide"],
+        &[
+            row_pins(&page(Area::MIN), header(Area::MIN)),
+            row_pins(&page(wide), header(wide)),
+        ],
+    );
 }
 
 #[test]
