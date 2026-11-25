@@ -522,6 +522,16 @@ fn the_tree_menu_pins_and_unpins_a_nodes_folder() {
     let select = |ex: &mut Explorer, place: &Place| {
         ex.tree.selected = Some(ex.tree_path_of(place).expect("the place's node"));
     };
+    let written = |ex: &Explorer| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while ex.favorites_busy() {
+            assert!(
+                std::time::Instant::now() < end,
+                "the pins thread writes the pin"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
     for place in [Place::Computer, Place::RecycleBin] {
         select(&mut ex, &place);
         assert_eq!(pin_row(&ex), None, "{place:?} has no pin row");
@@ -533,6 +543,7 @@ fn the_tree_menu_pins_and_unpins_a_nodes_folder() {
         select(&mut ex, &place);
         assert_eq!(pin_row(&ex), Some(true), "{place:?}: Pin to Places");
         ex.run(Command::NodePin(true), &mut ctx);
+        written(&ex);
         assert_eq!(marks(), std::slice::from_ref(&folder), "{place:?} pinned");
         let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while pin_row(&ex) != Some(false) {
@@ -543,6 +554,7 @@ fn the_tree_menu_pins_and_unpins_a_nodes_folder() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         ex.run(Command::NodePin(false), &mut ctx);
+        written(&ex);
         assert_eq!(marks(), Vec::<PathBuf>::new(), "{place:?} unpinned");
         while pin_row(&ex) != Some(true) {
             assert!(std::time::Instant::now() < end, "{place:?}: unpinned");
