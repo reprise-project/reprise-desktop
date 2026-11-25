@@ -1125,9 +1125,11 @@ impl Explorer {
 
     /// Lists `place`. Its folder is read on a thread; one that takes longer than [`LIST_WAIT`]
     /// lands later through [`Explorer::take_read`], the window showing the listing before
-    /// until then.
+    /// until then. A search under way or shown ends here, and the Search field empties.
     pub fn show(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
-        self.search.cancel();
+        if self.search.cancel() {
+            self.search_field.clear();
+        }
         self.search_job = None;
         self.sync_drives(ctx);
         let key = (place, self.folders.show_hidden, ctx.icons.scale());
