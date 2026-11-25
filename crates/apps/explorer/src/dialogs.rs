@@ -12,6 +12,7 @@ use repriseapp::{Caption, Child, Ctx, Event, PointerInput, Reply, WinId};
 use reprisekit::controls::aboutbox;
 use reprisekit::controls::browsefolder;
 use reprisekit::controls::dlgtemplate::{self, FOLDER_TEXT_H, Template};
+use reprisekit::controls::favorites;
 use reprisekit::controls::filedlg::FileDlg;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::msgbox;
@@ -245,6 +246,8 @@ pub enum Dialog {
     Unlock(Box<Unlock>),
     /// Rename with several items picked; the preview follows each change.
     BatchRename(Box<crate::rename::BatchRename>),
+    AddFavorite(Box<crate::favorites::AddFavorite>),
+    Organize(Box<crate::favorites::Organize>),
     /// Connect to Server, typed into or showing a connection under way.
     Connect(Box<crate::shares::ConnectBox>),
     /// A server's password request.
@@ -334,6 +337,8 @@ impl Dialog {
             Dialog::Browse(_) => "Copy Items".to_string(),
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
             Dialog::BatchRename(_) => "Rename".to_string(),
+            Dialog::AddFavorite(_) => favorites::ADD_TITLE.to_string(),
+            Dialog::Organize(_) => favorites::ORGANIZE_TITLE.to_string(),
             Dialog::Connect(_) => reprisekit::controls::netconnect::CONNECT_TITLE.to_string(),
             Dialog::Login(b) => crate::shares::login_title(&b.host),
             Dialog::Question { title, .. } => title.clone(),
@@ -372,6 +377,8 @@ impl Dialog {
             Dialog::Message { .. }
             | Dialog::AttrConfirm(_)
             | Dialog::BatchRename(_)
+            | Dialog::AddFavorite(_)
+            | Dialog::Organize(_)
             | Dialog::Question { .. }
             | Dialog::Paste(_)
             | Dialog::Reading(_) => false,
@@ -870,6 +877,8 @@ impl Explorer {
             | Dialog::Browse(_)
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_)
+            | Dialog::AddFavorite(_)
+            | Dialog::Organize(_)
             | Dialog::Connect(_)
             | Dialog::Login(_)
             | Dialog::Paste(_)
@@ -961,6 +970,8 @@ impl Explorer {
                     Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
                     Dialog::Unlock(_) => u.size(unlock::CLIENT),
                     Dialog::BatchRename(_) => u.size(reprisekit::controls::batchrename::CLIENT),
+                    Dialog::AddFavorite(_) => u.size(reprisekit::controls::namebox::CLIENT),
+                    Dialog::Organize(_) => u.size(favorites::CLIENT),
                     Dialog::Connect(_) => u.size(reprisekit::controls::netconnect::CONNECT_CLIENT),
                     Dialog::Login(b) => u.size(reprisekit::controls::netconnect::login_client(
                         b.form
@@ -1072,6 +1083,8 @@ impl Explorer {
             Some(Dialog::ChangeIcon { form, .. }) => form,
             Some(Dialog::About(f, _)) => f,
             Some(Dialog::BatchRename(b)) => &b.form,
+            Some(Dialog::AddFavorite(a)) => &a.name.form,
+            Some(Dialog::Organize(o)) => &o.form,
             Some(Dialog::Connect(b)) => &b.form,
             Some(Dialog::Login(b)) => &b.form,
             Some(_) => match self.box_form() {
@@ -1127,6 +1140,8 @@ impl Explorer {
             Some(Dialog::ChangeIcon { form, .. }) => form,
             Some(Dialog::About(f, _)) => f,
             Some(Dialog::BatchRename(b)) => &b.form,
+            Some(Dialog::AddFavorite(a)) => &a.name.form,
+            Some(Dialog::Organize(o)) => &o.form,
             Some(Dialog::Connect(b)) => &b.form,
             Some(Dialog::Login(b)) => &b.form,
             Some(_) => match self.box_form() {
@@ -1173,6 +1188,8 @@ impl Explorer {
             Some(Dialog::ChangeIcon { form, .. }) => Some(form),
             Some(Dialog::About(f, _)) => Some(f),
             Some(Dialog::BatchRename(b)) => Some(&mut b.form),
+            Some(Dialog::AddFavorite(a)) => Some(&mut a.name.form),
+            Some(Dialog::Organize(o)) => Some(&mut o.form),
             _ => None,
         };
         let out = if let Some(form) = kept {
@@ -1256,6 +1273,12 @@ impl Explorer {
         };
         if let Dialog::BatchRename(_) = d {
             return self.batch_rename_answered(out, ctx);
+        }
+        if let Dialog::AddFavorite(_) = d {
+            return self.add_favorite_answered(out, ctx);
+        }
+        if let Dialog::Organize(_) = d {
+            return self.organize_answered(out, ctx);
         }
         if let Dialog::Confirm(c) = d
             && c.script.is_some()
@@ -1353,6 +1376,8 @@ impl Explorer {
             Dialog::ChooseProgram(_)
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_)
+            | Dialog::AddFavorite(_)
+            | Dialog::Organize(_)
             | Dialog::Connect(_)
             | Dialog::Login(_)
             | Dialog::Question { .. }
@@ -1452,6 +1477,8 @@ impl Explorer {
             | Dialog::ChangeIcon { .. }
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_)
+            | Dialog::AddFavorite(_)
+            | Dialog::Organize(_)
             | Dialog::Question {
                 about: crate::shares::Asking::Disconnect(_),
                 ..

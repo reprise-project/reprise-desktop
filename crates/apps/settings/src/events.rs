@@ -273,7 +273,7 @@ impl SettingsApp {
                     let page = &self.sheet.pages[Page::StartMenu.index()];
                     match menupage::selected_label(page, &self.want.startmenu) {
                         Some(l) => {
-                            self.rename = Some(renamedlg::RenameDialog::new(&l));
+                            self.rename = Some(renamedlg::NameBox::new(&l));
                             Reply::redraw_all()
                         }
                         None => Reply::none(),

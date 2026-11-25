@@ -195,7 +195,7 @@ fn every_dialog_fits_its_text_under_every_interface() {
             ),
             (
                 "Rename".into(),
-                crate::renamedlg::RenameDialog::new("Documents").form,
+                crate::renamedlg::NameBox::new("Documents").form,
             ),
             (
                 "Shortcut".into(),

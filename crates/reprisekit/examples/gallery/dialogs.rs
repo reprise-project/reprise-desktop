@@ -3,7 +3,8 @@ use crate::interfaces;
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::controls::form::{self};
 use reprisekit::controls::{
-    aboutbox, endsession, filedlg, importsheet, installsheet, locationprompt, shellview,
+    aboutbox, endsession, favorites, filedlg, importsheet, installsheet, locationprompt, namebox,
+    shellview,
 };
 use reprisekit::interface::Interface;
 use reprisekit::look;
@@ -405,6 +406,55 @@ pub fn render_location_prompt(with_blue: bool) -> Canvas {
         let mut box_c = Canvas::new(bw as u32, bh as u32);
         locationprompt::draw(&mut box_c, &text, &theme.paint(), &f, px);
         c.blit_canvas(10 + i as i32 * (w + 10), 10, &box_c);
+    }
+    c
+}
+
+/// Organize Favorites with an address Explorer cannot open picked, and Add Favorite under it;
+/// Classic then Blue and Glass.
+pub fn render_favorites(with_blue: bool) -> Canvas {
+    let row = |label: &str, address: &str, state| favorites::Row {
+        label: label.into(),
+        address: address.into(),
+        state,
+    };
+    let rows = [
+        row("Projects", "/home/user/Projects", favorites::State::Opens),
+        row("Server", "sftp://server/srv/share", favorites::State::Opens),
+        row(
+            "Backup",
+            "/run/media/user/Backup",
+            favorites::State::Missing,
+        ),
+        row("Recent", "recent:///", favorites::State::Unsupported),
+    ];
+    let organize = favorites::organize(&rows, Some(3));
+    let add = namebox::NameBox::new("Projects").form;
+    let mut themes = vec![cued(interfaces::classic())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let (w, h) = favorites::CLIENT;
+    let add_h = namebox::CLIENT.1;
+    let mut c = Canvas::new(
+        (themes.len() as i32 * (w + 10) + 10) as u32,
+        (h + add_h + 30) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (i, theme) in themes.iter().enumerate() {
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let x = 10 + i as i32 * (w + 10);
+        for (f, (bw, bh), y) in [
+            (&organize, favorites::CLIENT, 10),
+            (&add, namebox::CLIENT, h + 20),
+        ] {
+            let mut box_c = Canvas::new(bw as u32, bh as u32);
+            box_c.fill_rect(box_c.bounds(), p.cs.button_face);
+            form::draw(&mut box_c, &text, &p, f, true, theme.fonts.size_px);
+            c.blit_canvas(x, y, &box_c);
+        }
     }
     c
 }

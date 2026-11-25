@@ -28,6 +28,9 @@ pub enum Command {
     MountImage,
     /// File > Connect to Server...
     ConnectToServer,
+    /// Favorites > Add to Favorites...: the place shown, under a name asked for.
+    AddFavorite,
+    OrganizeFavorites,
     Cut,
     Copy,
     /// Ctrl+Shift+C: the selected items' full paths as text ([`reprisefs::ops::path_lines`]).
@@ -305,6 +308,8 @@ impl Explorer {
             }
             Command::Eject => self.eject_selected(ctx),
             Command::ConnectToServer => self.open_connect(ctx),
+            Command::AddFavorite => self.open_add_favorite(),
+            Command::OrganizeFavorites => self.open_organize(),
             Command::MountImage => self.mount_image(ctx),
             Command::AddressFocus => {
                 self.focus = Focus::Address;
