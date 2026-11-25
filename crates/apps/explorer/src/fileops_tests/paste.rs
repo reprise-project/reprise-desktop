@@ -593,6 +593,31 @@ fn undo_of_a_move_runs_on_a_job_after_the_handler_returns() {
 }
 
 #[test]
+fn a_close_waits_for_a_put_back_the_history_lock_kept_out() {
+    use reprisefs::undo::{SharedUndo, Undoable};
+    let home = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    ex.undos = SharedUndo::at(home.path().join("reprise-undo"));
+    let [a, b] = ["a.txt", "b.txt"].map(|n| home.path().join(n));
+    ex.undos
+        .push_all(vec![Undoable::Copied(a, None), Undoable::Copied(b, None)]);
+
+    ex.run(Command::Undo, &mut ctx);
+    let lock = std::fs::File::create(home.path().join("reprise-undo.lock")).expect("lock file");
+    lock.lock().expect("lock");
+    let held = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        drop(lock);
+    });
+    ex.finish_puts(&mut ctx);
+    held.join().expect("the lock's thread");
+
+    assert!(!ex.undos.retrying(), "the work ended with the retry");
+    assert_eq!(ex.undo, Some("Copy"), "the batch's rest is back");
+}
+
+#[test]
 fn cancel_drops_the_pastes_waiting_behind_the_running_one() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
