@@ -1250,7 +1250,7 @@ pub fn paths_line<P: AsRef<std::path::Path>>(paths: &[P]) -> String {
         .join(" ")
 }
 
-/// Byte index in `s` nearest to `x` px: the char boundary whose prefix advance is closest, so a click on a glyph's right half lands after it; ties go earlier. The walk stops at the first prefix reaching `x`.
+/// Byte index in `s` nearest to `x` px: the grapheme cluster boundary whose prefix advance is closest, so a click on a cluster's right half lands after it; ties go earlier. The walk stops at the first prefix reaching `x`.
 pub fn index_at(text: &crate::text::TextRenderer, s: &str, x: i32, px: u32) -> usize {
     index_at_weight(text, s, x, false, px)
 }
@@ -1263,16 +1263,17 @@ pub fn index_at_weight(
     bold: bool,
     px: u32,
 ) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
     let mut best = (0usize, x.abs());
     let mut pen = 0;
-    for (i, ch) in s.char_indices() {
+    for (i, cluster) in s.grapheme_indices(true) {
         if pen >= x {
             break;
         }
-        pen += text.advance(ch, bold, px);
+        pen += text.measure(cluster, bold, px);
         let d = (pen - x).abs();
         if d < best.1 {
-            best = (i + ch.len_utf8(), d);
+            best = (i + cluster.len(), d);
         }
     }
     best.0
@@ -1887,10 +1888,12 @@ mod tests {
         assert_eq!(index_at(&text, s, w3 + 1, px), 3);
     }
 
-    /// Reference for `index_at`: measure every prefix and keep the first closest.
+    /// Reference for `index_at`: measure every prefix ending on a cluster boundary and keep the
+    /// first closest.
     fn index_by_remeasure(text: &crate::text::TextRenderer, s: &str, x: i32, px: u32) -> usize {
+        use unicode_segmentation::UnicodeSegmentation;
         let mut best = (0usize, i32::MAX);
-        for i in s.char_indices().map(|(i, _)| i).chain([s.len()]) {
+        for i in s.grapheme_indices(true).map(|(i, _)| i).chain([s.len()]) {
             let d = (text.measure(&s[..i], false, px) - x).abs();
             if d < best.1 {
                 best = (i, d);
@@ -1909,6 +1912,7 @@ mod tests {
             "C:\\Program Files\\Reprise\\notepad.exe /a /b",
             "iiiiiiiWWWWWWWiiiiiiiWWWWWWW",
             "áéíóú日本語テキストáéíóú\u{301}x\u{10FFFF}ÿ",
+            "a\u{1F44D}\u{1F3FD}b\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}c\u{1F1ED}\u{1F1FA}d",
         ] {
             for x in -3..=text.measure(s, false, px) + 3 {
                 assert_eq!(
@@ -1917,6 +1921,35 @@ mod tests {
                     "{s:?} at x {x}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_click_on_an_emoji_sequence_lands_at_its_start_or_end() {
+        crate::pins::fonts();
+        let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
+        let px = crate::theme::Theme::default().fonts.size_px;
+        for seq in ["\u{1F44D}\u{1F3FD}", FAMILY, "\u{1F1ED}\u{1F1FA}"] {
+            let s = format!("a{seq}b");
+            let (start, end) = (
+                text.measure("a", false, px),
+                text.measure(&s[..1 + seq.len()], false, px),
+            );
+            assert_eq!(
+                index_at(&text, &s, start + 1, px),
+                1,
+                "{seq}: its left half"
+            );
+            assert_eq!(
+                index_at(&text, &s, end - 1, px),
+                1 + seq.len(),
+                "{seq}: its right half"
+            );
+            assert_eq!(
+                index_at(&text, &s, end, px),
+                1 + seq.len(),
+                "{seq}: its right edge"
+            );
         }
     }
 
