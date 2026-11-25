@@ -563,7 +563,7 @@ pub struct Pins {
     file: PathBuf,
     seen: u64,
     poke: mpsc::Sender<Job>,
-    /// The thread ends once this drops, which [`Drop`] does before it wakes the thread.
+    /// The thread ends once every handle's drops, which [`Drop`] does before it wakes the thread.
     alive: Option<Arc<()>>,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
@@ -650,6 +650,19 @@ impl Pins {
             poke,
             alive: Some(alive),
             wake,
+        }
+    }
+
+    /// Another handle on the same thread, with its own [`Pins::take_changed`], so every reader in
+    /// a process edits the file through one writer. The thread wakes the first handle's `wake`.
+    pub fn share(&self) -> Pins {
+        Pins {
+            shared: self.shared.clone(),
+            file: self.file.clone(),
+            seen: 0,
+            poke: self.poke.clone(),
+            alive: self.alive.clone(),
+            wake: self.wake.clone(),
         }
     }
 
