@@ -2,15 +2,27 @@ use super::*;
 use reprisebus::testbus::{bus, connect};
 use std::sync::{Arc, Mutex};
 
-/// logind's restart-into calls: answers `can_entry` and `can_firmware`, lists `ids`, and keeps
-/// every target it is asked to set.
+/// logind's restart-into calls: answers `can_entry` and `can_firmware`, lists `ids`, keeps every
+/// target it is asked to set, and holds the targets set in its properties.
 struct FakeLogind {
     can_entry: &'static str,
     can_firmware: &'static str,
     ids: Vec<String>,
     set: Arc<Mutex<Vec<String>>>,
-    /// Clearing an entry is refused unless the call allows a password prompt.
+    held: Arc<Mutex<Held>>,
+    /// Clearing a target is refused unless the call allows a password prompt.
     clear_asks: bool,
+}
+
+/// What `RebootToBootLoaderEntry` and `RebootToFirmwareSetup` say.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Held {
+    pub entry: String,
+    pub firmware: bool,
+}
+
+fn prompts(header: &zbus::message::Header<'_>) -> bool {
+    (header.primary().flags()).contains(zbus::message::Flags::ALLOW_INTERACTIVE_AUTH)
 }
 
 #[zbus::interface(name = "org.freedesktop.login1.Manager")]
@@ -28,32 +40,62 @@ impl FakeLogind {
         self.ids.clone()
     }
 
+    #[zbus(property)]
+    fn reboot_to_boot_loader_entry(&self) -> String {
+        self.held.lock().unwrap().entry.clone()
+    }
+
+    #[zbus(property)]
+    fn reboot_to_firmware_setup(&self) -> bool {
+        self.held.lock().unwrap().firmware
+    }
+
     /// Refused where `CanRebootToBootLoaderEntry` says "no".
     fn set_reboot_to_boot_loader_entry(
         &self,
         id: &str,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        let prompts =
-            (header.primary().flags()).contains(zbus::message::Flags::ALLOW_INTERACTIVE_AUTH);
-        if self.can_entry == "no" || (self.clear_asks && id.is_empty() && !prompts) {
+        if self.can_entry == "no" || (self.clear_asks && id.is_empty() && !prompts(&header)) {
             return Err(zbus::fdo::Error::AccessDenied("not allowed".into()));
         }
         self.set.lock().unwrap().push(format!("entry {id:?}"));
+        self.held.lock().unwrap().entry = id.into();
         Ok(())
     }
 
-    fn set_reboot_to_firmware_setup(&self, on: bool) {
+    fn set_reboot_to_firmware_setup(
+        &self,
+        on: bool,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        if self.clear_asks && !on && !prompts(&header) {
+            return Err(zbus::fdo::Error::AccessDenied("not allowed".into()));
+        }
         self.set.lock().unwrap().push(format!("firmware {on}"));
+        self.held.lock().unwrap().firmware = on;
+        Ok(())
     }
 }
 
-/// A fake logind on a bus of its own: a connection to it, and what it was asked to set.
+/// A fake logind on a bus of its own: a connection to it, what it was asked to set, and what it
+/// holds.
 pub(crate) struct Fake {
     _bus: reprisebus::testbus::Bus,
     _server: zbus::Connection,
     pub client: zbus::Connection,
     pub set: Arc<Mutex<Vec<String>>>,
+    pub held: Arc<Mutex<Held>>,
+}
+
+impl Fake {
+    /// Set `entry` and `firmware` as another program would, past the call log.
+    pub(crate) fn hold(&self, entry: &str, firmware: bool) {
+        *self.held.lock().unwrap() = Held {
+            entry: entry.into(),
+            firmware,
+        };
+    }
 }
 
 pub(crate) fn logind(
@@ -64,7 +106,7 @@ pub(crate) fn logind(
     serve(can_entry, can_firmware, ids, false)
 }
 
-/// A fake logind that sets entries without a password but asks for one to clear them.
+/// A fake logind that sets targets without a password but asks for one to clear them.
 pub(crate) fn logind_asking_to_clear() -> Option<Fake> {
     serve("yes", "yes", &[], true)
 }
@@ -77,11 +119,13 @@ fn serve(
 ) -> Option<Fake> {
     let bus = bus()?;
     let set = Arc::new(Mutex::new(Vec::new()));
+    let held = Arc::new(Mutex::new(Held::default()));
     let fake = FakeLogind {
         can_entry,
         can_firmware,
         ids: ids.iter().map(|s| s.to_string()).collect(),
         set: set.clone(),
+        held: held.clone(),
         clear_asks,
     };
     let address = bus.1.clone();
@@ -99,6 +143,7 @@ fn serve(
         _server: server,
         client,
         set,
+        held,
     })
 }
 
@@ -226,6 +271,22 @@ fn an_unanswered_ask_offers_no_answer_and_the_panel_keeps_its_targets() {
     h.state.open_dialog(d);
     assert!(top_offers(&h), "the system bus does not answer the tests");
     assert_eq!(h.state.boot_targets, vec![entry("a.conf", "A")]);
+}
+
+#[test]
+fn logind_reports_the_targets_it_holds_whoever_set_them() {
+    let Some(f) = logind("yes", "yes", &[]) else {
+        return;
+    };
+    assert_eq!(zbus::block_on(aimed(&f.client)), Vec::new());
+    f.hold("memtest86+.conf", true);
+    assert_eq!(
+        zbus::block_on(aimed(&f.client)),
+        vec![
+            entry("memtest86+.conf", "Memtest86+"),
+            BootTarget::firmware(false)
+        ]
+    );
 }
 
 #[test]

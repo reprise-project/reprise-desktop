@@ -33,6 +33,10 @@ impl State {
                 crate::greeterview::power(self, a);
             }
             Outcome::RestartInto { keys } => crate::restartinto::open_menu(self, keys),
+            Outcome::PowerAnyway(again) => {
+                self.close_dialog();
+                crate::sessionend::anyway(self, again);
+            }
             Outcome::SwitchUser => {
                 self.close_dialog();
                 if crate::loginlink::desk_offers(self) {

@@ -821,6 +821,7 @@ impl Dialog {
             DialogAction::Disconnect => Outcome::Disconnect,
             DialogAction::GreeterPower(a) => Outcome::GreeterPower(*a),
             DialogAction::RestartInto => Outcome::RestartInto { keys: false },
+            DialogAction::PowerAnyway(again) => Outcome::PowerAnyway(again.clone()),
             DialogAction::BrowseRun => Outcome::BrowseRun,
             DialogAction::Act(a) => Outcome::Act(a.clone()),
             DialogAction::HideSystemIcon(name) => Outcome::HideSystemIcon(name.clone()),

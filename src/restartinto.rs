@@ -1,7 +1,8 @@
 //! Restart Into: the boot loader entries logind lists (`BootLoaderEntries`) and firmware setup,
 //! offered by the Turn off computer panel's Restart Into... and the Shut down options' Restart into
 //! when logind can set them. A pick restarts through [`crate::sessionend::begin_into`], which sets
-//! the one-shot target just before the reboot and clears it when the reboot does not happen.
+//! the one-shot target just before the reboot and clears it when the reboot does not happen; any
+//! other power action clears what logind still holds ([`aimed`]) first.
 //!
 //! logind lists entry ids only. A type #1 entry's title is read from its file on the boot
 //! partition when the user may read it; anything else shows its id tidied up ([`pretty`]).
@@ -111,6 +112,36 @@ pub async fn aim(
         }
     }
     Ok(())
+}
+
+/// The one-shot targets logind on `conn` holds for the next boot, whoever set them. A property
+/// logind cannot read counts as unset.
+pub async fn aimed(conn: &zbus::Connection) -> Vec<BootTarget> {
+    let mut out = Vec::new();
+    let proxy = match manager(conn).await {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("restart into: logind: {e}");
+            return out;
+        }
+    };
+    match proxy
+        .get_property::<String>("RebootToBootLoaderEntry")
+        .await
+    {
+        Ok(id) if id.is_empty() => {}
+        Ok(id) => out.push(BootTarget {
+            title: title_under(&ENTRY_ROOTS.map(PathBuf::from), &id).unwrap_or_else(|| pretty(&id)),
+            entry: Some(id),
+            password: false,
+        }),
+        Err(e) => log::warn!("restart into: RebootToBootLoaderEntry: {e}"),
+    }
+    match proxy.get_property::<bool>("RebootToFirmwareSetup").await {
+        Ok(on) => out.extend(on.then(|| BootTarget::firmware(false))),
+        Err(e) => log::warn!("restart into: RebootToFirmwareSetup: {e}"),
+    }
+    out
 }
 
 /// `ids` as targets, titled from their files under `roots`; titles two entries share carry the id.
