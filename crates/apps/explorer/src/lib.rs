@@ -855,7 +855,7 @@ impl Explorer {
             toolbars: [self.settings.toolbars, self.settings.address_bar, false],
             read_only: self.place.read_only(),
             bin: (self.place == Place::RecycleBin).then_some(self.items.len()),
-            can_back: self.history.can_back(),
+            can_back: self.can_back(),
             can_forward: self.history.can_forward(),
             extract: None,
             local_paths: self.selected_local().is_some(),

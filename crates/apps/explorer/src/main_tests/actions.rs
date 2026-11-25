@@ -68,13 +68,94 @@ fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
     assert_eq!(ex.search.caption(&[]), None);
     assert_eq!(names(&ex), ["Report-old.md", "a", "other.txt"]);
     assert_eq!(ex.sv.fields, shellview::details_fields());
+    assert_eq!(ex.search_field.text(), "", "leaving the search clears it");
 
     ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
     press(&mut ex, keysym::RETURN, &mut ctx);
-    assert_eq!(names(&ex).len(), 2, "the field kept its text");
+    assert_eq!(names(&ex).len(), 2);
     ex.run(Command::GoTo(Place::Folder(dir.path().join("a"))), &mut ctx);
     assert_eq!(ex.search.caption(&[]), None, "a navigation ends the search");
     assert_eq!(names(&ex), ["b"]);
+}
+
+fn back_on(ex: &Explorer) -> bool {
+    match &ex.toolbar.items[0] {
+        reprisekit::controls::toolbar::Item::DropButton { enabled, .. }
+        | reprisekit::controls::toolbar::Item::Button { enabled, .. } => *enabled,
+        reprisekit::controls::toolbar::Item::Separator => panic!("Back is the first item"),
+    }
+}
+
+#[test]
+fn escape_in_the_search_field_clears_the_query_then_leaves_the_search() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("report.txt"), "x").expect("write");
+    std::fs::write(dir.path().join("other.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.search_run = find_search;
+    ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    assert_eq!(ex.items.len(), 1);
+    ex.run(Command::SearchFocus, &mut ctx);
+
+    press(&mut ex, keysym::ESCAPE, &mut ctx);
+    assert_eq!(ex.search_field.text(), "");
+    assert_eq!(
+        ex.focus,
+        Focus::Search,
+        "the first Escape stays in the field"
+    );
+    assert!(ex.search.caption(&[]).is_some(), "the results stay");
+
+    press(&mut ex, keysym::ESCAPE, &mut ctx);
+    assert_eq!(ex.focus, Focus::View);
+    assert_eq!(ex.search.caption(&[]), None);
+    assert_eq!(ex.items.len(), 2, "the folder's listing is back");
+}
+
+#[test]
+fn back_over_search_results_returns_to_the_folder_searched() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    std::fs::write(sub.join("report.txt"), "x").expect("write");
+    std::fs::write(sub.join("other.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.search_run = find_search;
+    assert!(!back_on(&ex));
+    ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    assert_eq!(ex.items.len(), 1);
+    assert!(back_on(&ex), "Back leaves the results");
+
+    ex.run(Command::Back, &mut ctx);
+    assert_eq!(ex.search.caption(&[]), None);
+    assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
+    assert_eq!(ex.items.len(), 1, "the folder's own listing: sub");
+    assert_eq!(ex.search_field.text(), "");
+    assert!(!back_on(&ex), "no history before the folder");
+
+    ex.run(Command::GoTo(Place::Folder(sub.clone())), &mut ctx);
+    ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    ex.run(Command::Back, &mut ctx);
+    assert_eq!(
+        ex.place,
+        Place::Folder(sub),
+        "the folder searched, not the one before"
+    );
+    assert_eq!(ex.items.len(), 2);
+    assert!(back_on(&ex));
 }
 
 /// Search results list several folders: renaming a hit to a name another folder's hit wears is

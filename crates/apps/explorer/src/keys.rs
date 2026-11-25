@@ -124,12 +124,16 @@ impl Explorer {
             }
         }
 
-        // Search field: Enter searches, Escape stops a search and leaves the field.
+        // Search field: Enter searches; Escape empties the field, then stops a search and leaves.
         if self.focus == Focus::Search && !k.mods.alt {
             if matches!(k.sym, keysym::RETURN | keysym::KP_ENTER) {
                 return self.run_search(ctx);
             }
             if k.sym == keysym::ESCAPE {
+                if !self.search_field.text().is_empty() {
+                    self.search_field.clear();
+                    return Reply::redraw();
+                }
                 self.focus = Focus::View;
                 return self.cancel_search(ctx).unwrap_or_else(Reply::redraw);
             }

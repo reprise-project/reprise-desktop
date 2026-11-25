@@ -26,6 +26,8 @@ The file manager, and the default for folders.
   Each tab keeps its own folder, history, view and selection.
 - **Search** (Ctrl+F or F3) finds files by name anywhere under the folder
   shown, through plocate or fd, and lists them with an In Folder column.
+  Escape in the field empties it, a second Escape (or Escape or Back over the
+  results) returns to the folder.
 - **Open in Terminal** on a folder's right-click menu starts your `terminal`
   there. **Pin to Places** adds the folder to the task pane and to every file
   dialog's places bar. **Disk Usage** opens [Disk Usage](#disk-usage) on it.
