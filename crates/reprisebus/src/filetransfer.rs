@@ -368,12 +368,15 @@ mod tests {
     use std::process::{Child, Command, Stdio};
     use zbus::OwnedVariant;
 
-    struct Bus(Child, String);
+    /// A bus daemon, its address, and the folder of its config and socket. Drop kills the
+    /// daemon, which then leaves its socket behind, and removes the folder.
+    struct Bus(Child, String, PathBuf);
 
     impl Drop for Bus {
         fn drop(&mut self) {
             let _ = self.0.kill();
             let _ = self.0.wait();
+            let _ = std::fs::remove_dir_all(&self.2);
         }
     }
 
@@ -392,7 +395,7 @@ mod tests {
 "#;
 
     /// A bus daemon, the session's or a bare one, or None after `testbus::skipped`.
-    fn bus(session: bool, env: &[(&str, &Path)]) -> Option<(Bus, tempfile::TempDir)> {
+    fn bus(session: bool, env: &[(&str, &Path)]) -> Option<Bus> {
         let bus = spawn(session, env);
         if bus.is_none() {
             crate::testbus::skipped("no dbus-daemon");
@@ -400,9 +403,9 @@ mod tests {
         bus
     }
 
-    fn spawn(session: bool, env: &[(&str, &Path)]) -> Option<(Bus, tempfile::TempDir)> {
-        let dir = tempfile::tempdir().ok()?;
-        let config = dir.path().join("bus.conf");
+    fn spawn(session: bool, env: &[(&str, &Path)]) -> Option<Bus> {
+        let dir = tempfile::tempdir().ok()?.keep();
+        let config = dir.join("bus.conf");
         std::fs::write(&config, BARE).ok()?;
         let mut cmd = Command::new("dbus-daemon");
         if session {
@@ -412,6 +415,7 @@ mod tests {
         }
         let mut child = cmd
             .args(["--nofork", "--print-address"])
+            .arg(format!("--address=unix:dir={}", dir.display()))
             .envs(env.iter().copied())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -421,7 +425,7 @@ mod tests {
         BufReader::new(child.stdout.take()?)
             .read_line(&mut line)
             .ok()?;
-        Some((Bus(child, line.trim().to_string()), dir))
+        Some(Bus(child, line.trim().to_string(), dir))
     }
 
     fn connect(address: &str) -> Connection {
@@ -498,7 +502,7 @@ mod tests {
     }
 
     fn fake() -> Option<(Bus, Connection, Arc<Mutex<Seen>>)> {
-        let (bus, _dir) = bus(false, &[])?;
+        let bus = bus(false, &[])?;
         let seen = Arc::new(Mutex::new(Seen::default()));
         let portal = crate::connect(
             zbus::connection::Builder::address(bus.1.as_str())
@@ -652,7 +656,7 @@ mod tests {
 
     #[test]
     fn no_portal_on_the_bus_is_no_file_transfer() {
-        let Some((bus, _dir)) = bus(false, &[]) else {
+        let Some(bus) = bus(false, &[]) else {
             return;
         };
         assert!(FileTransfer::on(connect(&bus.1)).is_err());
@@ -685,7 +689,7 @@ mod tests {
             ("XDG_RUNTIME_DIR", runtime.as_path()),
             ("XDG_DATA_HOME", home.path()),
         ];
-        let (bus, _dir) = bus(true, &env).expect("dbus-daemon");
+        let bus = bus(true, &env).expect("dbus-daemon");
         let paths = files(home.path(), ["a b.txt".to_string(), "c".to_string()]);
         let source = FileTransfer::on(connect(&bus.1)).expect("the portal answers");
         let key = source.send(&paths).unwrap();

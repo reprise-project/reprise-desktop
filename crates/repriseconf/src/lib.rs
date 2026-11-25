@@ -2,6 +2,9 @@
 //! program's read of it, and the rest edits it in place: `toml_edit` keeps comments, key order and
 //! unknown tables, so a program editing a few keys leaves the rest of the file byte-identical.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use toml_edit::{Decor, DocumentMut, Item, TableLike, Value};

@@ -416,14 +416,14 @@ mod tests {
 
     #[test]
     fn the_tests_scan_reads_and_keeps_nothing_of_the_users_own() {
-        let temp = std::env::temp_dir();
+        let session = crate::testsession::dir();
         assert!(
-            cache_path().is_some_and(|p| p.starts_with(&temp)),
-            "the scan is kept under the temp folder"
+            cache_path().is_some_and(|p| p.starts_with(&session)),
+            "the scan is kept under the test session's folder"
         );
         assert!(
-            reprisexdg::config_home().is_some_and(|p| p.starts_with(&temp)),
-            "fontconfig reads its config under the temp folder"
+            reprisexdg::config_home().is_some_and(|p| p.starts_with(&session)),
+            "fontconfig reads its config under the test session's folder"
         );
     }
 

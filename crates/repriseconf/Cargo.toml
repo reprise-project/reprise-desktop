@@ -21,3 +21,6 @@ repriselogin = { path = "../repriselogin" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 toml_edit.workspace = true
+
+[dev-dependencies]
+reprisebus = { path = "../reprisebus" }

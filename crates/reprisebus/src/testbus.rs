@@ -3,7 +3,9 @@
 //! which every test that needs something this machine may lack reports through.
 
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 use zbus::ObjectPath;
 use zbus::names::OwnedUniqueName;
@@ -77,13 +79,15 @@ async fn pinged(
     futures_lite::future::or(async { ping.await.is_ok() }, late).await
 }
 
-/// A `dbus-daemon`, killed on drop, and its address.
-pub struct Bus(Child, pub String);
+/// A `dbus-daemon`, its address, and the folder of its socket. Drop kills the daemon, which then
+/// leaves its socket behind, and removes the folder.
+pub struct Bus(Child, pub String, PathBuf);
 
 impl Drop for Bus {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+        let _ = std::fs::remove_dir_all(&self.2);
     }
 }
 
@@ -136,23 +140,29 @@ fn no_services() -> Option<&'static std::path::Path> {
 }
 
 fn spawn(services: bool) -> Option<Bus> {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let dir = crate::testsession::dir().join(format!("bus-{}", NEXT.fetch_add(1, Relaxed)));
+    std::fs::create_dir_all(&dir).ok()?;
     let mut command = Command::new("dbus-daemon");
     if services {
         command.arg("--session");
     } else {
         command.arg("--config-file").arg(no_services()?);
     }
-    let mut child = command
+    let child = command
         .args(["--nofork", "--print-address"])
+        .arg(format!("--address=unix:dir={}", dir.display()))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    let mut bus = Bus(child, String::new(), dir);
     let mut line = String::new();
-    BufReader::new(child.stdout.take()?)
+    BufReader::new(bus.0.stdout.take()?)
         .read_line(&mut line)
         .ok()?;
-    Some(Bus(child, line.trim().to_string()))
+    bus.1 = line.trim().to_string();
+    Some(bus)
 }
 
 /// Reports a test that cannot run on this machine: panics under `REPRISE_TEST_STRICT`, else

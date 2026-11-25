@@ -1,14 +1,20 @@
 use super::*;
 use reprisekit::interface::Interface;
 
-/// A folder of a few files and a subfolder, each modified 2026-01-02 and none with an
-/// extension the machine's MIME database names, so the view's text is the same on every machine.
-fn sample_folder(root: &std::path::Path) -> std::path::PathBuf {
-    let dir = root.join("Reports");
-    std::fs::create_dir_all(dir.join("Quarterly Figures")).unwrap();
+/// A folder of a few files and a subfolder in the test session's HOME, each modified 2026-01-02
+/// and none with an extension the machine's MIME database names, so the view's text is the same on
+/// every machine, and the Folders tree reaches it through Home without listing the temp folder.
+fn sample_folder() -> tempfile::TempDir {
+    let home = std::env::var_os("HOME").expect("the test session's HOME");
+    let dir = tempfile::Builder::new()
+        .prefix("Reports")
+        .rand_bytes(0)
+        .tempdir_in(home)
+        .unwrap();
+    std::fs::create_dir(dir.path().join("Quarterly Figures")).unwrap();
     let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_767_355_200);
     for name in ["Budget 2026", "notes", "Team photo"] {
-        let f = std::fs::File::create(dir.join(name)).unwrap();
+        let f = std::fs::File::create(dir.path().join(name)).unwrap();
         f.set_len(48_213).unwrap();
         f.set_modified(when).unwrap();
     }
@@ -20,8 +26,8 @@ fn sample_folder(root: &std::path::Path) -> std::path::PathBuf {
 /// often than Tahoma against `tests/pins/text_fit_without_tahoma.txt`.
 #[test]
 fn the_window_without_tahoma_fits_the_text_it_fits_with_tahoma() {
-    let root = tempfile::tempdir().expect("a temp dir");
-    let dir = sample_folder(root.path());
+    let sample = sample_folder();
+    let dir = sample.path().to_path_buf();
     let found = reprisekit::pins::unfit_without_tahoma(|| {
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let mut ctx = test_ctx();
