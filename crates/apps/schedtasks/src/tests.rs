@@ -1,4 +1,5 @@
 use super::*;
+use reprisekit::pointer::Interaction;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 fn test_ctx(theme: reprisekit::theme::Theme, size: (i32, i32)) -> Ctx {
@@ -202,6 +203,68 @@ fn run_now_enable_and_disable_ask_the_service_manager() {
             },
         ]
     );
+}
+
+fn centre(r: Rect) -> (i32, i32) {
+    (r.x + r.width / 2, r.y + r.height / 2)
+}
+
+#[test]
+fn a_button_let_go_off_it_does_nothing() {
+    let mut w = window();
+    w.tell(Update::Tasks(Ok(vec![backup()])));
+    w.pick("backup.timer");
+    let mut ctx = ctx();
+    let (x, y) = centre(w.app.form.item(RUN).unwrap().rect);
+    let (lx, ly) = centre(w.app.list_rect(&ctx));
+    let events = [
+        PointerInput::Press {
+            x,
+            y,
+            button: BTN_LEFT,
+            time: 0,
+            mods: Default::default(),
+        },
+        PointerInput::Motion { x: lx, y: ly },
+        PointerInput::Release {
+            x: lx,
+            y: ly,
+            button: BTN_LEFT,
+            mods: Default::default(),
+        },
+    ];
+    for ev in events {
+        w.app.event(MAIN, Event::Pointer(ev), &mut ctx);
+    }
+    assert_eq!(w.sent(), [], "Run Now let go over the list runs nothing");
+    w.press(RUN);
+    assert_eq!(w.sent(), [Cmd::Run("backup.service".into())]);
+}
+
+#[test]
+fn a_button_lights_under_the_pointer_in_glass() {
+    let mut w = window();
+    w.tell(Update::Tasks(Ok(vec![backup()])));
+    w.pick("backup.timer");
+    let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
+    let mut ctx = test_ctx(glass, CLIENT);
+    w.app
+        .draw_main(&mut Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32), &ctx);
+    let (x, y) = centre(w.app.form.item(TOGGLE).unwrap().rect);
+    let toggle = w.app.form.index_of(TOGGLE).unwrap();
+    let lit = |w: &Window| w.app.form.lit(toggle, form::Light::Body);
+    let over = w.app.event(
+        MAIN,
+        Event::Pointer(PointerInput::Motion { x, y }),
+        &mut ctx,
+    );
+    assert!(over.redraw);
+    assert_eq!(lit(&w), Interaction::Hot);
+    let gone = w
+        .app
+        .event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+    assert!(gone.redraw);
+    assert_eq!(lit(&w), Interaction::Idle, "nothing stays lit");
 }
 
 #[test]
