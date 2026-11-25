@@ -385,6 +385,23 @@ fn make_new_folder_keeps_open_subfolders_and_undoes() {
 }
 
 #[test]
+fn undo_of_the_pickers_new_folder_leaves_a_different_folder_that_took_its_name() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    ex.open_browse(false, &mut ctx);
+    click_at(&mut ex, 60, 328, &mut ctx);
+    let made = dir.path().join("New Folder");
+    std::fs::rename(&made, dir.path().join("Renamed")).expect("rename");
+    std::fs::create_dir(&made).expect("mkdir");
+
+    ex.undo_last(&mut ctx);
+    ex.finish_puts(&mut ctx);
+
+    assert!(made.is_dir(), "the folder made since stays");
+    assert!(dir.path().join("Renamed").is_dir());
+}
+
+#[test]
 fn a_folder_move_refills_the_folders_panes_source_and_target() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
