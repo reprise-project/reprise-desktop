@@ -102,6 +102,79 @@ fn opening_a_folder_goes_in_and_back_and_up_come_out() {
     assert_eq!(d.root, d.at);
 }
 
+fn press(d: &mut DiskUsage, ctx: &mut Ctx, (x, y): (i32, i32)) -> Reply {
+    let ev = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Default::default(),
+    };
+    d.event(MAIN, Event::Pointer(ev), ctx)
+}
+
+fn release(d: &mut DiskUsage, ctx: &mut Ctx, (x, y): (i32, i32)) -> Reply {
+    let ev = PointerInput::Release {
+        x,
+        y,
+        button: BTN_LEFT,
+        mods: Default::default(),
+    };
+    d.event(MAIN, Event::Pointer(ev), ctx)
+}
+
+fn centre(r: Rect) -> (i32, i32) {
+    (r.x + r.width / 2, r.y + r.height / 2)
+}
+
+#[test]
+fn a_top_button_acts_on_its_release_and_not_when_let_go_off_it() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    fs::create_dir_all(r.join("a/b")).unwrap();
+    let mut d = counted(r);
+    pick(&mut d, "a");
+    d.open_picked();
+    let mut ctx = test_ctx(reprisekit::interfaces::theme_for(
+        reprisekit::interface::Interface::Classic,
+    ));
+    d.draw_main(&mut Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32), &ctx);
+    let up = centre(d.form.rect("up").unwrap());
+    let back = centre(d.form.rect("back").unwrap());
+    let list = centre(d.list_rect(&ctx));
+
+    press(&mut d, &mut ctx, up);
+    let off = PointerInput::Motion {
+        x: list.0,
+        y: list.1,
+    };
+    d.event(MAIN, Event::Pointer(off), &mut ctx);
+    release(&mut d, &mut ctx, list);
+    assert_eq!(d.at, r.join("a"), "Up let go over the list stays put");
+
+    press(&mut d, &mut ctx, back);
+    release(&mut d, &mut ctx, back);
+    assert_eq!(d.at, r, "Back clicked goes back");
+}
+
+#[test]
+fn a_pointer_click_on_a_column_title_sorts_by_it() {
+    let t = tempfile::tempdir().unwrap();
+    files(t.path());
+    let mut d = counted(t.path());
+    let mut ctx = test_ctx(reprisekit::interfaces::theme_for(
+        reprisekit::interface::Interface::Glass,
+    ));
+    let r = d.list_rect(&ctx);
+    let lay = d.list.layout(r, &ctx);
+    let title = (lay.header.x + 4, lay.header.y + lay.header.height / 2);
+    let hit = d.list.view.hit(&lay, title.0, title.1).column();
+    assert_eq!(hit, Some(model::NAME));
+    press(&mut d, &mut ctx, title);
+    release(&mut d, &mut ctx, title);
+    assert_eq!(names(&d), ["notes.txt", "photo.jpg", "video.mkv"]);
+}
+
 #[test]
 fn a_header_click_sorts_and_a_second_flips() {
     let t = tempfile::tempdir().unwrap();
