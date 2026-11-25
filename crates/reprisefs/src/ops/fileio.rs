@@ -112,7 +112,8 @@ pub fn create_temp_beside(
 /// Write `bytes` to `path` through a temp file beside it and a rename
 /// over the target, so neither a reader nor a crash sees half a file.
 /// A symlinked target (a dotfiles checkout), dangling or not, is followed and
-/// the real file written, so the link survives; the new file keeps the old one's mode,
+/// the real file written, so the link survives; a link into a folder that is not there (an
+/// unmounted share) is an error, no folder made past it. The new file keeps the old one's mode,
 /// and is synced before the rename so a crash cannot leave it empty. The
 /// directory is synced after it, so the rename itself survives a crash.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -171,6 +172,7 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 fn replace(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
+    let linked = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
     let path = real_path(path)?;
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
