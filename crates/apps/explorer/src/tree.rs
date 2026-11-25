@@ -205,6 +205,9 @@ impl Explorer {
             &mut ctx.icons,
         );
         self.note_art(place, art);
+        if let Some(tl) = self.tree_layout(ctx) {
+            self.tree.clamp_top(&tl);
+        }
         // The chain runs Desktop, Computer, then the mount.
         let mount_listed = || {
             let chain = self.place.chain_in(&self.drive_mounts);
@@ -346,15 +349,21 @@ impl Explorer {
         for (p, art) in filled {
             self.note_art(&p, art);
         }
-        if let Some(frame) = self.layout(ctx).tree {
-            let tl = treeview::layout(
-                &self.tree,
-                &ctx.text,
-                ctx.theme.fonts.size_px,
-                frame,
-                &ctx.theme.controls(),
-            );
+        if let Some(tl) = self.tree_layout(ctx) {
             self.tree.follow(&tl);
         }
+    }
+
+    /// The Folders pane's layout, while it is shown.
+    fn tree_layout(&self, ctx: &Ctx) -> Option<treeview::Layout> {
+        let frame = self.layout(ctx).tree?;
+        let px = ctx.theme.fonts.size_px;
+        Some(treeview::layout(
+            &self.tree,
+            &ctx.text,
+            px,
+            frame,
+            &ctx.theme.controls(),
+        ))
     }
 }

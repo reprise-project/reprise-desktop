@@ -469,6 +469,53 @@ fn hidden_items_keeps_the_open_folders_open_and_adds_or_drops_hidden_ones() {
 }
 
 #[test]
+fn hiding_hidden_folders_scrolls_the_folders_pane_back_to_rows_it_still_holds() {
+    let top = tempfile::Builder::new()
+        .prefix("tree")
+        .tempdir()
+        .expect("a temp dir");
+    for i in 0..60 {
+        std::fs::create_dir(top.path().join(format!(".h{i:02}"))).expect("mkdir");
+    }
+    let shown = top.path().join("shown");
+    std::fs::create_dir(&shown).expect("mkdir");
+    let here = Place::Folder(shown);
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    ex.folders.show_hidden = true;
+    ex.build_tree(&mut ctx);
+    ex.show(here.clone(), &mut ctx);
+    let lay = |ex: &Explorer, ctx: &Ctx| {
+        let frame = ex.layout(ctx).tree.expect("the Folders pane");
+        let px = ctx.theme.fonts.size_px;
+        treeview::layout(&ex.tree, &ctx.text, px, frame, &ctx.theme.controls())
+    };
+    let rows = ex.tree.visible().len();
+    let tl = lay(&ex, &ctx);
+    assert!(
+        rows > tl.rows,
+        "{rows} rows overflow the pane's {}",
+        tl.rows
+    );
+    ex.tree.scroll(rows as i64, &tl);
+    assert!(ex.tree.top > 0, "scrolled down");
+
+    // The tree's reads answer after the window went on, as a slow disk's do, and after the
+    // listing, which follows the tree to its place.
+    let gate = std::sync::Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.folders.show_hidden = false;
+    ex.rescan_tree(&mut ctx);
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.tree.visible().len() < rows);
+    let tl = lay(&ex, &ctx);
+    let max_top = ex.tree.visible().len().saturating_sub(tl.rows);
+    assert_eq!(ex.tree.top, max_top, "the view ends at the last row");
+}
+
+#[test]
 fn a_folder_made_in_the_shown_folder_gives_its_tree_node_a_plus() {
     let top = tempfile::Builder::new()
         .prefix("tree")
