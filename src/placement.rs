@@ -330,18 +330,23 @@ impl State {
             .filter(|o| self.fullscreen_target(o));
         let out = named.or_else(|| self.opening_output(w, want.as_ref()));
         let area = self.usable_area(out.as_ref());
+        let planned = with_asked(want.clone(), asked);
+        let maximized = planned
+            .as_ref()
+            .is_some_and(|p| p.state == Some(WindowState::Maximized));
+        let chrome = (self.win(w)).map(|x| x.opening_chrome(maximized && x.is_resizable()));
         let metrics = &self.config.theme.metrics;
-        let most = self.win(w).map(|x| area_client(metrics, area, x.chrome()));
+        let most = chrome.map(|c| area_client(metrics, area, c));
         let Some(win) = self.win_mut(w) else {
             return;
         };
-        win.placement = want.clone();
+        win.placement = want;
         if let (Some(t), Some(most)) = (win.xdg(), most)
             && area.width > 0
         {
             t.with_pending_state(|s| s.bounds = Some(most.into()));
         }
-        let Some(want) = with_asked(want, asked) else {
+        let Some(want) = planned else {
             if let Some((cw, ch)) = self.file_dialog_size(w)
                 && let Some(t) = self.win(w).and_then(Window::xdg)
             {
@@ -351,7 +356,7 @@ impl State {
             return;
         };
         let screen = self.layout_box(out.as_ref());
-        let Some(win) = self.win(w) else {
+        let (Some(win), Some(chrome)) = (self.win(w), chrome) else {
             return;
         };
         let limits = win.size_limits();
@@ -362,7 +367,7 @@ impl State {
             limits,
             screen,
             area,
-            win.chrome(),
+            chrome,
         );
         match &win.kind {
             Kind::Xdg(t) => t.with_pending_state(|s| {

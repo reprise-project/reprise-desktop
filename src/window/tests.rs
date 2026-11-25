@@ -1043,6 +1043,25 @@ fn a_toplevel_asking_to_open_maximized_is_sized_to_the_work_area_with_nothing_re
 }
 
 #[test]
+fn a_toplevel_without_a_decoration_asking_to_open_maximized_is_first_asked_for_the_whole_work_area()
+{
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let t = h.open_toplevel(&mut c, "adw", |t| t.set_maximized());
+    let first = c.side.shells[t.shell].asked();
+    let out = h.state.first_output().expect("an output");
+    let area = h.state.usable_area(Some(&out));
+    assert_eq!(
+        first,
+        (area.width, area.height),
+        "it maps with no frame, so no caption is held back"
+    );
+    h.resize_self(&mut c, t, first.0, first.1);
+    assert!(h.state.win(t.id).is_some_and(|w| w.csd));
+    assert_eq!(c.side.shells[t.shell].asked(), first, "no second size");
+}
+
+#[test]
 fn a_toplevel_asking_to_open_fullscreen_is_sized_to_the_screen_with_nothing_remembered() {
     let mut h = forgetful();
     let (asked, frame) = opened_asking(&mut h, |t| t.set_fullscreen(None));
