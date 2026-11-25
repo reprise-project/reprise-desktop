@@ -21,7 +21,7 @@ use smithay::{
             RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
-        wayland_server::DisplayHandle,
+        wayland_server::{DisplayHandle, Resource},
     },
     utils::SERIAL_COUNTER,
 };
@@ -357,6 +357,13 @@ impl State {
             },
         );
         let forward = intercepted.is_none();
+        if pressed {
+            let to = (keyboard.current_focus())
+                .filter(|_| forward)
+                .and_then(|f| f.client())
+                .map(|c| c.id());
+            self.devices.touch.input_to(to.as_ref());
+        }
         if let Some(k) = field_key.as_mut() {
             k.edit = crate::editkeys::from_keyboard(&keyboard, self, code);
         }

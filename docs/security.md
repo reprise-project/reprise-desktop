@@ -641,9 +641,12 @@ A new window takes the keyboard when it maps if any of these holds:
   program can mint only while it has the keyboard, from an input event since
   the keyboard last came to it from another program or the desktop (a click
   in its menu or dialog counts after the keyboard returns to its window),
-  within 3 s of a drop on one of its windows, or within 3 s of a tap on one
-  of its surfaces, from that touch or a later event, while no finger has
-  landed anywhere else since (a launcher panel that takes no keyboard).
+  within 3 s of a drop on one of its windows, or within 3 s of a finger
+  down it was sent, on that down's own serial (a launcher panel that takes
+  no keyboard). The tap mints at most two such tokens, and ends when
+  another finger lands, a click lands on another program or the desktop, a
+  key press reaches anything else, or the session locks; none is minted
+  under the lock.
   Explorer's `org.freedesktop.FileManager1` gets one for the window it opens when the
   caller's process is, descends from or sits in the session of the focused
   window's (a browser's "Show in folder" sends no token Reprise trusts); the

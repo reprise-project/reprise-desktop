@@ -17,7 +17,7 @@
 //!
 //! The client the newest finger down went to may raise a window for a moment
 //! after (`activation`), though the surface took no keyboard. A down the
-//! grab keeps from every client (a drag's) ends it.
+//! grab keeps from every client (a drag's), or input anywhere else, ends it.
 
 use reprisekit::fluid::Source;
 use smithay::{
@@ -68,6 +68,17 @@ pub(crate) struct Tap {
 impl TouchState {
     pub fn any_down(&self) -> bool {
         !self.points.is_empty()
+    }
+
+    /// Input went to `client`, or to Reprise itself for None: a tap on any other client is over.
+    pub(crate) fn input_to(&mut self, client: Option<&ClientId>) {
+        if self
+            .tapped
+            .as_ref()
+            .is_some_and(|t| Some(&t.client) != client)
+        {
+            self.tapped = None;
+        }
     }
 
     /// The grab sent the down `event` to `focus`.
