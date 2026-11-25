@@ -54,12 +54,15 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 
 - **Start.** Super, Ctrl+Esc or the Start button. Classic cascades, Blue and
   Glass have two columns; `startmenu_style` picks any of them under any look.
-- **Your menu.** The Start Menu page of Reprise Settings edits the menu and
-  Quick Launch, a folder of `.desktop` files in `~/.config/reprise/quicklaunch/`.
-  It saves only your changes to the default menu, so the rows you leave alone
-  follow each new Reprise's defaults. A menu saved whole as `[[startmenu]]`
-  (by an older Reprise, or by hand) keeps winning and stays whole; Restore
-  Defaults on the page switches it to changes, at the cost of its edits.
+- **Your menu.** The Start Menu page of Reprise Settings edits the Classic
+  menu's rows and Quick Launch, a folder of `.desktop` files in
+  `~/.config/reprise/quicklaunch/`. It saves only your changes to the default
+  menu, so the rows you leave alone follow each new Reprise's defaults. A menu
+  saved whole as `[[startmenu]]` (by an older Reprise, or by hand) keeps
+  winning and stays whole; Restore Defaults on the page switches it to
+  changes, at the cost of its edits. The Blue and Glass menus don't show
+  these rows: their left column holds the programs you pin with Pin to Start
+  Menu and the ones you use most, their right column a fixed set of places.
   A right-click on the Start button opens your programs folder
   (`~/.local/share/applications`) or, under Properties, that page. In the
   Blue and Glass menus a right-click on your home folder, Documents, Pictures
