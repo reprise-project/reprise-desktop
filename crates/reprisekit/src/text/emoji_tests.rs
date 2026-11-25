@@ -250,3 +250,86 @@ fn emoji_text_pins_at_scale_1_and_2() {
     }
     crate::pins::check("emoji_text", &got);
 }
+
+const SEQUENCES: [&str; 3] = ["👍🏽", "👨‍👩‍👧", "🇭🇺"];
+
+/// `text` drawn white on white at scale `s`, only the glyphs starting at bytes `part`, so only
+/// its emoji show.
+fn emoji_of(r: &TextRenderer, text: &str, part: std::ops::Range<usize>, s: i32) -> Canvas {
+    let line = Rect::new(0, 0, 40, 20);
+    let mut c = Canvas::with_scale(40, 20, s);
+    c.fill_rect(c.bounds(), WHITE);
+    let baseline = r.baseline(line, false, PX).unwrap();
+    r.draw_part(
+        &mut c, 0, baseline, line, line, text, part, false, WHITE, PX,
+    );
+    c
+}
+
+#[test]
+fn a_selection_holds_an_emoji_sequence_whole_when_it_holds_its_first_byte() {
+    let r = tahoma();
+    let line = Rect::new(0, 0, 40, 20);
+    let baseline = r.baseline(line, false, PX);
+    for seq in SEQUENCES {
+        let text = format!("a{seq}b");
+        let cuts: Vec<usize> = (0..=text.len())
+            .filter(|&i| text.is_char_boundary(i))
+            .collect();
+        for s in [1, 2] {
+            let whole = emoji_of(&r, &text, 0..text.len(), s);
+            let (x0, x1, _, _) = ink(&whole, WHITE.argb()).expect("the emoji inks");
+            let blank = emoji_of(&r, "", 0..0, s);
+            for (i, &a) in cuts.iter().enumerate() {
+                for &b in &cuts[i + 1..] {
+                    let holds = (a..b).contains(&1);
+                    let drawn = emoji_of(&r, &text, a..b, s);
+                    let want = if holds { &whole } else { &blank };
+                    assert!(
+                        drawn.pixels == want.pixels,
+                        "{seq} {a}..{b} at scale {s}: drawn whole if {holds}, else not at all"
+                    );
+                    let hl = Rect::new(0, 0, 0, 20);
+                    let h = r.highlight_on(hl, &text, a..b, 0, baseline, line, false, PX, s);
+                    let ink = h.ink.map(|(_, dev)| dev);
+                    assert_eq!(
+                        ink.is_some_and(|(l, r)| l <= x0 && x1 <= r),
+                        holds,
+                        "{seq} {a}..{b} at scale {s}: highlight ink {ink:?}, emoji ink {x0}..{x1}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn carets_before_and_after_an_emoji_sequence_bracket_its_ink() {
+    let r = tahoma();
+    for seq in SEQUENCES {
+        let text = format!("a{seq}b");
+        let end = 1 + seq.len();
+        for s in [1, 2] {
+            let whole = emoji_of(&r, &text, 0..text.len(), s);
+            let (x0, x1, _, _) = ink(&whole, WHITE.argb()).expect("the emoji inks");
+            let caret = |at: usize| r.caret_x(&text, at, 0, false, PX, s);
+            if s == 1 {
+                assert_eq!(caret(1), r.measure("a", false, PX), "{seq}");
+                assert_eq!(caret(end), r.measure(&text[..end], false, PX), "{seq}");
+            }
+            assert!(
+                caret(1) <= x0 && x1 <= caret(end),
+                "{seq} at scale {s}: carets {}..{} hold the ink {x0}..{x1}",
+                caret(1),
+                caret(end)
+            );
+            for at in (2..end).filter(|&i| text.is_char_boundary(i)) {
+                assert_eq!(
+                    caret(at),
+                    caret(end),
+                    "{seq} byte {at} at scale {s}: past the sequence, as a selection from it leaves it out"
+                );
+            }
+        }
+    }
+}
