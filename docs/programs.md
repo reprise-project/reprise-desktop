@@ -418,6 +418,9 @@ in. Lists them by source, all ticked; untick what you'd rather skip and click
 Install. When a device asks for something mid-update (unplug it, press a
 button), the window says what, or a balloon with the window closed. Nothing
 installs on its own, and closing the window doesn't stop an install halfway.
+While PackageKit has an offline update prepared, checks, Check Now included,
+list updates without downloading new package lists, as new lists would
+discard the prepared update.
 
 It also notices a system updated from elsewhere, such as `pacman -Syu` in a
 terminal, once the running kernel's modules are gone or a package leaves

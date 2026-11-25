@@ -48,6 +48,7 @@
 //! [`bounded`] decodes what another peer sends within size caps, never as a `Variant` tree.
 //! [`follow`] reruns a source on a thread with a backoff, sending only what changed.
 //! [`mpris`] follows the media players and calls their transport methods.
+//! [`offline`] reads PackageKit's offline update.
 
 pub mod a11y;
 pub mod airplane;
@@ -76,6 +77,7 @@ pub mod logind;
 pub mod mpris;
 pub mod mutex;
 pub mod notify;
+pub mod offline;
 pub mod peer;
 pub mod permissions;
 pub mod pidfd;
