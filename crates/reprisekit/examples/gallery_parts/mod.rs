@@ -29,7 +29,7 @@ pub fn write_all(n: i32) {
         let st = reprisekit::blue::style_for(v).at_scale(n);
         let back = interfaces::blue_theme(v).colors.button_face;
         write_preview(
-            &page(&st, back, n),
+            || page(&st, back, n),
             &format!("reprisekit-gallery-parts-blue-{}.png", v.as_str()),
         );
     }
@@ -54,7 +54,7 @@ pub fn write_all(n: i32) {
         let theme = interfaces::theme_with(Interface::Glass, Variant::default(), &s).scaled(n);
         let st = theme.look.style().expect("Glass is styled");
         write_preview(
-            &page(st, Color::rgb(0x3A, 0x6E, 0xA5), n),
+            || page(st, Color::rgb(0x3A, 0x6E, 0xA5), n),
             &format!("reprisekit-gallery-parts-glass-{name}.png"),
         );
     }

@@ -2,9 +2,10 @@
 # Renders the gallery (every colour scheme, Classic bands only) and every
 # preview test on BASE and on the working tree, and lists each PNG that
 # differs or exists on one side only. Exits 1 on any difference.
-# --with-blue also renders the Blue bands and the pages only that run draws,
-# and compares Blue previews; without it, PNGs with "blue" in the name are
-# skipped on both sides.
+# --with-blue also renders the gallery with its Blue bands, every page saved as
+# with-blue-<name>, and compares Blue previews; without it, PNGs with "blue"
+# in the name are skipped on both sides. The gallery draws on one thread per
+# heavy job (CARGO_BUILD_JOBS), else per CPU.
 # BASE must include the gallery's REPRISE_SCHEME=all mode.
 # Usage: scripts/pixels-unchanged.sh [--with-blue] [--no-cache] BASE
 #
@@ -105,6 +106,22 @@ prune_old_bases() {
     done
 }
 
+# Ignored tests that draw no PNG: session-bus tests claim live bus names, encoders fail on
+# an old BASE without a GPU, and the rest time or probe the machine (typing_cost for minutes).
+skips=(
+    --skip _on_a_session_bus --skip encode::
+    --skip greeterview::tests::typing_cost
+    --skip taskbarview::tests::bar_redraw_cost
+    --skip notifysheet::tests::droplets::opening_frame_cost
+    --skip notifysheet::tests::droplets::droplet_memory
+    --skip notifysheet::tests::repaint::stack_paint_cost
+    --skip logon::transition::tests::transition_frame_cost
+    --skip logon::transition::tests::click_and_settle_cost
+    --skip glass::clock::tests::bench_glass_clock
+    --skip a_jxl_encode_refused_any_one_allocation_fails_without_aborting
+    --skip devices::tests::this_machine
+)
+
 # render TREE OUT: copy every PNG the tree writes into target/ to OUT. Failure
 # prints the log tail first, since the work directory is trap-deleted.
 render() {
@@ -116,12 +133,11 @@ render() {
     touch "$stamp"
     (
         cd "$tree"
+        export REPRISE_GALLERY_THREADS=${CARGO_BUILD_JOBS:-$(nproc)}
         REPRISE_SCHEME=all REPRISE_GALLERY_LOOK=classic \
             cargo run -q -p reprisekit --example gallery >"$glog" 2>&1 ||
             { echo "gallery render failed in $tree"; tail -n 60 "$glog"; exit 1; }
-        # These tests claim names on the live session bus or need a GPU encoder, and draw no
-        # PNG; a BASE older than the encoders' own GPU checks fails them on a host without one.
-        cargo test -q --workspace -- --ignored --skip _on_a_session_bus --skip encode:: \
+        cargo test -q --workspace --lib --bins --tests -- --ignored "${skips[@]}" \
             >"$tlog" 2>&1 ||
             { echo "preview tests failed in $tree"; tail -n 60 "$tlog"; exit 1; }
         find target -maxdepth 1 -name '*.png' -newer "$stamp" -exec cp -t "$out" {} +
@@ -129,10 +145,11 @@ render() {
             touch "$stamp"
             cargo run -q -p reprisekit --example gallery >"$glog" 2>&1 ||
                 { echo "blue gallery render failed in $tree"; tail -n 60 "$glog"; exit 1; }
-            cp target/reprisekit-gallery.png "$out/with-blue-reprisekit-gallery.png"
-            # The pages only this run draws; its default page is copied above.
-            find target -maxdepth 1 -name 'reprisekit-gallery-*.png' -newer "$stamp" \
-                -exec cp -t "$out" {} +
+            # Prefixed, so the pages both runs draw keep their Classic copy.
+            local f
+            for f in target/reprisekit-gallery*.png; do
+                if [[ $f -nt $stamp ]]; then cp "$f" "$out/with-blue-${f#target/}"; fi
+            done
         fi
     )
 }

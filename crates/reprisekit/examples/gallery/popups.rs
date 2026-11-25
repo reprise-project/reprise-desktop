@@ -926,7 +926,7 @@ pub fn write_volume_popups(with_blue: bool, n: i32) {
     }
     for (name, look) in looks {
         write_preview(
-            &render_volume_popup(&cued(interfaces::theme_for(look)), n),
+            || render_volume_popup(&cued(interfaces::theme_for(look)), n),
             &format!("reprisekit-gallery-volume-popup{name}{at}.png"),
         );
     }
