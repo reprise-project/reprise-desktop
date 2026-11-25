@@ -823,6 +823,7 @@ impl Explorer {
             || !self.acting.is_empty()
             || !self.send.sends.is_empty()
             || !self.browse_left.is_empty()
+            || self.favorites_busy()
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]
