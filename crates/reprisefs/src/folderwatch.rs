@@ -137,6 +137,12 @@ impl Shared {
         {
             return s.note(k, e);
         }
+        // A watched folder moved or deleted names no entry; its watcher re-arms on the path.
+        if e.mask
+            .intersects(EventMask::MOVE_SELF | EventMask::DELETE_SELF)
+        {
+            return self.wds.contains(&e.wd);
+        }
         let mut named = self.only.iter().filter(|(wd, _)| *wd == e.wd).peekable();
         match named.peek() {
             Some(_) => named.any(|(_, name)| e.name == Some(name.as_os_str())),
@@ -249,8 +255,8 @@ impl Watch {
 
     /// Watch every one of `dirs` (the Recycle Bin's folders, one per drive, and the folders above
     /// the home trash) instead of what was being watched. A folder paired with a name counts
-    /// only events naming that entry. A folder that cannot be watched is logged and left
-    /// unwatched; F5 still refreshes it.
+    /// only events naming that entry, and its own move or deletion. A folder that cannot be
+    /// watched is logged and left unwatched; F5 still refreshes it.
     pub fn watch_all(&mut self, dirs: &[(PathBuf, Option<OsString>)]) {
         self.watch_all_later().run(dirs);
     }
@@ -444,7 +450,10 @@ impl AllAdder {
             if lock(&self.shared).generation != self.generation {
                 return;
             }
-            let added = self.watches.add(dir, mask() | WatchMask::MASK_ADD);
+            let added = self.watches.add(
+                dir,
+                mask() | WatchMask::MOVE_SELF | WatchMask::DELETE_SELF | WatchMask::MASK_ADD,
+            );
             let mut shared = lock(&self.shared);
             match added {
                 Ok(wd) if shared.generation != self.generation => {
@@ -554,6 +563,24 @@ mod tests {
         std::fs::create_dir(dir.path().join("Trash")).expect("mkdir");
         watch.sync();
         assert!(watch.take_changed(), "the named entry is");
+    }
+
+    #[test]
+    fn a_folder_watched_for_one_entry_counts_its_own_move_and_deletion() {
+        let mut watch = Watch::new(|| {}).expect("inotify");
+        let top = tempfile::tempdir().expect("tempdir");
+        let dir = top.path().join("gtk-3.0");
+        std::fs::create_dir(&dir).expect("mkdir");
+        watch.watch_all(&[(dir.clone(), Some("bookmarks".into()))]);
+        std::fs::rename(&dir, top.path().join("old")).expect("mv");
+        watch.sync();
+        assert!(watch.take_changed(), "moved");
+
+        std::fs::create_dir(&dir).expect("mkdir");
+        watch.watch_all(&[(dir.clone(), Some("bookmarks".into()))]);
+        std::fs::remove_dir(&dir).expect("rmdir");
+        watch.sync();
+        assert!(watch.take_changed(), "deleted");
     }
 
     #[test]
