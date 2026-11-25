@@ -613,7 +613,8 @@ fn attempt(
 }
 
 /// Set `boot` with logind on `conn`, then `reboot`; a reboot that does not happen clears it, so a
-/// later restart lands where it always does.
+/// later restart lands where it always does. The clear may prompt as the set did; one that fails
+/// is named in the refusal.
 fn restart_into(
     conn: &zbus::Connection,
     boot: &BootTarget,
@@ -625,13 +626,18 @@ fn restart_into(
         let dismissed = || interactive && reprisebus::polkit::dismissed();
         return Some(failure(&e, dismissed).map_or(Failed::Dismissed, Failed::Refused));
     }
-    let failed = reboot();
-    if failed.is_some()
-        && let Err(e) = zbus::block_on(crate::restartinto::aim(conn, boot, false, false))
-    {
-        log::warn!("session end: clearing the restart target: {e}");
+    let failed = reboot()?;
+    match zbus::block_on(crate::restartinto::aim(conn, boot, false, interactive)) {
+        Ok(()) => Some(failed),
+        Err(e) => {
+            log::warn!("session end: clearing the restart target: {e}");
+            let why = match failed {
+                Failed::Refused(why) => Some(Box::new(why)),
+                Failed::Dismissed => None,
+            };
+            Some(Failed::Refused(Refused::Aimed(why, boot.title.clone())))
+        }
     }
-    failed
 }
 
 /// A refusal shows a message box; a dismissed password prompt brings the session back without
@@ -708,6 +714,9 @@ enum Refused {
     Unsupported,
     Held(Vec<Holder>),
     Failed(String),
+    /// The reboot did not happen (`why`, None for a dismissed password prompt) and the restart
+    /// target set for it could not be cleared: the next restart goes to the target titled here.
+    Aimed(Option<Box<Refused>>, String),
 }
 
 /// The session goes on after a power action that did not happen.
@@ -722,24 +731,39 @@ fn resume(state: &mut State, act: Act) {
 fn refuse(state: &mut State, act: Act, why: &Refused) {
     log::warn!("session end: {act:?} refused: {why:?}");
     resume(state, act);
-    // Anyone at the computer reads the lock: it names no program and quotes no command's error.
-    let unnamed = match why {
-        Refused::Held(_) => Refused::Held(Vec::new()),
-        Refused::Failed(_) => Refused::Failed(LOCK_FAILED.into()),
-        why => why.clone(),
-    };
-    crate::lockview::refused(state, refusal_text(act, &unnamed));
+    crate::lockview::refused(state, refusal_text(act, &unnamed(why)));
     state.open_dialog(crate::dialog::Dialog::error(
         act.title(),
         refusal_text(act, why),
     ));
 }
 
+/// `why` for the lock, which anyone at the computer reads: it names no program and quotes no
+/// command's error.
+fn unnamed(why: &Refused) -> Refused {
+    match why {
+        Refused::Held(_) => Refused::Held(Vec::new()),
+        Refused::Failed(_) => Refused::Failed(LOCK_FAILED.into()),
+        Refused::Aimed(why, title) => {
+            Refused::Aimed(why.as_deref().map(|w| Box::new(unnamed(w))), title.clone())
+        }
+        why => why.clone(),
+    }
+}
+
 /// What the lock shows for a failed command or call; the dialog under it keeps the error.
 const LOCK_FAILED: &str = "An error stopped it.";
 
 fn refusal_text(act: Act, why: &Refused) -> String {
-    let reason = match why {
+    format!(
+        "Reprise could not {}.\n\n{}",
+        act.on("the"),
+        reason(act, why)
+    )
+}
+
+fn reason(act: Act, why: &Refused) -> String {
+    match why {
         Refused::NotAllowed => format!("You are not allowed to {}.", act.on("this")),
         Refused::Unsupported => "This computer does not support it.".to_string(),
         Refused::Held(holders) if holders.is_empty() => "A program is preventing it.".to_string(),
@@ -756,8 +780,14 @@ fn refusal_text(act: Act, why: &Refused) -> String {
             text
         }
         Refused::Failed(m) => m.clone(),
-    };
-    format!("Reprise could not {}.\n\n{reason}", act.on("the"))
+        Refused::Aimed(why, title) => {
+            let kept = format!("The next restart still starts {title}.");
+            match why {
+                Some(why) => format!("{}\n\n{kept}", reason(act, why)),
+                None => kept,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1476,6 +1506,39 @@ mod tests {
             *f.set.lock().unwrap(),
             ["entry \"b.conf\""],
             "a reboot under way keeps it"
+        );
+    }
+
+    #[test]
+    fn a_failed_reboot_clears_its_target_with_the_password_prompt_the_set_had() {
+        let Some(f) = crate::restartinto::tests::logind_asking_to_clear() else {
+            return;
+        };
+        let target = BootTarget {
+            entry: Some("b.conf".into()),
+            title: "B".into(),
+            password: false,
+        };
+        let unsupported = || Some(Failed::Refused(Refused::Unsupported));
+        assert_eq!(
+            restart_into(&f.client, &target, true, unsupported),
+            Some(Failed::Refused(Refused::Unsupported))
+        );
+        assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\"", "entry \"\""]);
+        let kept = restart_into(&f.client, &target, false, unsupported);
+        let Some(Failed::Refused(why)) = kept else {
+            panic!("a refusal, not {kept:?}");
+        };
+        assert_eq!(
+            refusal_text(Act::Restart, &why),
+            "Reprise could not restart the computer.\n\nThis computer does not support it.\n\n\
+             The next restart still starts B."
+        );
+        let dismissed = restart_into(&f.client, &target, false, || Some(Failed::Dismissed));
+        assert_eq!(
+            dismissed,
+            Some(Failed::Refused(Refused::Aimed(None, "B".into()))),
+            "a dismissed prompt still says the target stays"
         );
     }
 
