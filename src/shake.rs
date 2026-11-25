@@ -20,8 +20,11 @@ pub struct Detector {
 
 impl Detector {
     /// The pointer is at `pos` at `at`: true when this move completes a
-    /// shake, after which the count starts over.
+    /// shake. A drag shakes once; the turns after it count for nothing.
     pub fn feed(&mut self, pos: (f64, f64), at: Instant) -> bool {
+        if self.shook.is_some() {
+            return false;
+        }
         let shook = self.x.feed(pos.0, at) | self.y.feed(pos.1, at);
         if shook {
             *self = Detector {
@@ -165,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn the_count_starts_over_after_a_shake() {
+    fn a_drag_shakes_once_however_long_it_goes_on() {
         let t0 = Instant::now();
         let mut d = Detector::default();
         let at = |i: u64| t0 + Duration::from_millis(i * 50);
@@ -174,8 +177,14 @@ mod tests {
             .map(|(i, &x)| d.feed((x, 0.0), at(i as u64)))
             .collect();
         assert_eq!(first, [false, false, false, false, true]);
-        assert!(!d.feed((50.0, 0.0), at(5)));
-        assert!(!d.feed((0.0, 0.0), at(6)));
+        let more: Vec<bool> = (5..20)
+            .map(|i| d.feed((if i % 2 == 0 { 0.0 } else { 50.0 }, 0.0), at(i)))
+            .collect();
+        assert!(more.iter().all(|s| !s), "{more:?}");
+        let later: Vec<bool> = (0..8)
+            .map(|i| d.feed((if i % 2 == 0 { 0.0 } else { 50.0 }, 0.0), at(100 + i)))
+            .collect();
+        assert!(later.iter().all(|s| !s), "past WITHIN too: {later:?}");
     }
 
     #[test]
