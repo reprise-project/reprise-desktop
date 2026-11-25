@@ -81,8 +81,8 @@ impl Organize {
     /// Lists `shown`, keeping the pick on the favorite it was on, else at its row.
     fn relist(&mut self, shown: Vec<Favorite>) {
         let at = fav::selected(&self.form);
-        let target = at.and_then(|i| self.shown.get(i)).map(|f| f.target.clone());
-        let keep = target.and_then(|t| shown.iter().position(|f| f.target == t));
+        let line = at.and_then(|i| self.shown.get(i)).map(|f| f.line.clone());
+        let keep = line.and_then(|l| shown.iter().position(|f| f.line == l));
         self.shown = shown;
         fav::set_rows(&mut self.form, &rows(&self.shown), keep.or(at));
     }
@@ -218,14 +218,14 @@ impl Explorer {
                 if name.is_empty() || name == f.label {
                     return Reply::none();
                 }
-                Box::new(move |b| b.rename(&f.target, &name))
+                Box::new(move |b| b.rename(&f.line, &name))
             }
-            (form::Event::Pressed(fav::DELETE), Some(f)) => Box::new(move |b| b.remove(&f.target)),
+            (form::Event::Pressed(fav::DELETE), Some(f)) => Box::new(move |b| b.remove(&f.line)),
             (form::Event::Pressed(fav::UP), Some(f)) => {
-                Box::new(move |b| b.move_entry(&f.target, true))
+                Box::new(move |b| b.move_entry(&f.line, true))
             }
             (form::Event::Pressed(fav::DOWN), Some(f)) => {
-                Box::new(move |b| b.move_entry(&f.target, false))
+                Box::new(move |b| b.move_entry(&f.line, false))
             }
             (form::Event::None, _) => return Reply::none(),
             _ => return Reply::redraw(),
@@ -309,6 +309,7 @@ mod tests {
             label: "x".into(),
             target: t,
             present,
+            line: Default::default(),
         };
         let rows = menu_rows(&[
             at(Target::Folder("/srv".into()), true),
