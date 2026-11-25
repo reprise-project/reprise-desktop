@@ -19,8 +19,8 @@
 //!   acts, so Undo reaching past a lost entry still never reverses the wrong item;
 //! - a put-back or a clear is retried on a thread of its own for up to [`RETRY_FOR`], holding
 //!   `.run` so that no Undo reaches past it meanwhile: a put-back keeps its undo's hold, a clear
-//!   takes `.run` once a running undo ends, however long it runs. A process about to quit waits
-//!   for it ([`SharedUndo::settle`]).
+//!   takes `.run` once a running undo ends, however long it runs, and marks it with
+//!   `.clearing` ([`Hold::Clear`]). A process about to quit waits for it ([`SharedUndo::settle`]).
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -117,7 +117,18 @@ type Stamp = (u64, u64, i64, i64, u64);
 /// Held while an undo taken off a [`SharedUndo`] runs; [`SharedUndo::put_back`] lets the next
 /// Undo in once what it left is back.
 pub struct Running {
+    /// A retried clear's mark beside `.run` ([`Hold::Clear`]), let go before `.run`.
+    _clearing: Option<File>,
     _lock: Option<File>,
+}
+
+/// What holds every Undo off ([`SharedUndo::held`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hold {
+    /// An undo runs, or its put-back is retried.
+    Undo,
+    /// A clear the lock kept out waits to land.
+    Clear,
 }
 
 impl SharedUndo {
@@ -200,8 +211,8 @@ impl SharedUndo {
     pub fn clear(&self) {
         if let Err(e) = self.edit(UndoStack::clear) {
             self.warn("retrying a clear", &e);
-            let run = (self.file.as_ref()).and_then(|f| hold(&beside(f, ".run"), None).ok());
-            self.retry(UndoStack::clear, run.map(|f| Running { _lock: Some(f) }));
+            let run = self.file.as_deref().and_then(|f| hold_for_clear(f).ok());
+            self.retry(UndoStack::clear, run);
         }
     }
 
@@ -246,13 +257,17 @@ impl SharedUndo {
         self.head().map(|(_, label)| label)
     }
 
-    /// Whether an undo runs in any process, or a retried put-back or clear holds Undo off, so an
-    /// Undo now would do nothing.
-    pub fn held(&self) -> bool {
-        let Some(file) = &self.file else {
-            return false;
+    /// What, in any process, makes an Undo now do nothing; None when nothing does.
+    pub fn held(&self) -> Option<Hold> {
+        let file = self.file.as_ref()?;
+        let busy = |suffix| {
+            let held = hold(&beside(file, suffix), None);
+            matches!(held, Err(e) if e.kind() == io::ErrorKind::WouldBlock)
         };
-        matches!(hold(&beside(file, ".run"), None), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
+        busy(".run").then(|| match busy(".clearing") {
+            true => Hold::Clear,
+            false => Hold::Undo,
+        })
     }
 
     /// `f` on the entry Undo would reverse next, as the file holds it now.
@@ -288,7 +303,13 @@ impl SharedUndo {
             },
         };
         match self.edit(take) {
-            Ok(undo) => Some((undo?, Running { _lock: lock })),
+            Ok(undo) => Some((
+                undo?,
+                Running {
+                    _clearing: None,
+                    _lock: lock,
+                },
+            )),
             Err(e) => {
                 self.warn("Undo did nothing", &e);
                 None
@@ -342,18 +363,17 @@ impl SharedUndo {
     }
 
     /// `op` tried again on a thread of its own until an edit takes it or [`RETRY_FOR`] runs out,
-    /// holding `.run` throughout: `running` for a put-back, or for a clear `.run` taken first once
-    /// the undo holding it ends, [`RETRY_FOR`] counting from then.
+    /// holding `.run` throughout: `running` for a put-back, or for a clear `.run` taken first
+    /// ([`hold_for_clear`]) once the undo holding it ends, [`RETRY_FOR`] counting from then.
     fn retry(&self, op: impl Fn(&mut UndoStack) + Send + 'static, running: Option<Running>) {
         let Some(file) = self.file.clone() else {
             return;
         };
-        let run = beside(&file, ".run");
         let retry_for = self.retry_for;
         let spawned = std::thread::Builder::new()
             .name("undo history".into())
             .spawn(move || {
-                let store = SharedUndo::at(file);
+                let store = SharedUndo::at(file.clone());
                 let mut since = Instant::now();
                 let mut running = running;
                 let given_up = |since: Instant, e: &io::Error| {
@@ -366,11 +386,8 @@ impl SharedUndo {
                 loop {
                     std::thread::sleep(PATIENCE);
                     if running.is_none() {
-                        match hold(&run, None) {
-                            Ok(f) => {
-                                (running, since) =
-                                    (Some(Running { _lock: Some(f) }), Instant::now())
-                            }
+                        match hold_for_clear(&file) {
+                            Ok(r) => (running, since) = (Some(r), Instant::now()),
                             // An undo holds `.run` till it ends, however long it runs.
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                             Err(e) if given_up(since, &e) => break,
@@ -465,6 +482,17 @@ fn hold(path: &Path, patience: Option<Duration>) -> io::Result<File> {
             Err(std::fs::TryLockError::WouldBlock) => return Err(io::ErrorKind::WouldBlock.into()),
         }
     }
+}
+
+/// `.run` for a retried clear, with `.clearing` beside it to tell [`SharedUndo::held`] so.
+fn hold_for_clear(file: &Path) -> io::Result<Running> {
+    let run = hold(&beside(file, ".run"), None)?;
+    // Long enough to outlast a `held` probe, the only other holder while `.run` is ours.
+    let clearing = hold(&beside(file, ".clearing"), Some(Duration::from_millis(20)));
+    Ok(Running {
+        _clearing: clearing.ok(),
+        _lock: Some(run),
+    })
 }
 
 fn save(file: &Path, stack: &mut UndoStack) -> io::Result<Stamp> {
@@ -1113,11 +1141,11 @@ mod tests {
     fn held_while_an_undo_runs_in_any_window() {
         let (_t, a, b) = two_windows();
         a.push(copied("/x"));
-        assert!(!b.held());
+        assert_eq!(b.held(), None);
         let (undo, running) = a.take().unwrap();
-        assert!(a.held() && b.held());
+        assert_eq!((a.held(), b.held()), (Some(Hold::Undo), Some(Hold::Undo)));
         a.put_back(undo, running, 1, None);
-        assert!(!b.held());
+        assert_eq!(b.held(), None);
     }
 
     #[test]
@@ -1145,12 +1173,26 @@ mod tests {
         let lock = locked(&t);
         b.clear();
         drop(running);
-        until("the clear's retry takes the run file", || a.held());
+        until("the clear's retry takes the run file", || {
+            a.held() == Some(Hold::Clear)
+        });
         drop(lock);
         assert!(a.take().is_none(), "no Undo reaches past the clear");
         until("the clear lands", || a.label().is_none());
-        a.clone().settle();
-        assert!(!a.held());
+        b.clone().settle();
+        assert_eq!(a.held(), None);
+    }
+
+    #[test]
+    fn a_clear_the_lock_keeps_out_holds_undo_off_as_a_clear() {
+        let (t, a, b) = two_windows();
+        a.push(copied("/x"));
+        let lock = locked(&t);
+        b.clear();
+        assert_eq!(a.held(), Some(Hold::Clear));
+        drop(lock);
+        b.clone().settle();
+        assert_eq!((a.held(), a.label()), (None, None));
     }
 
     #[test]

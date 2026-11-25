@@ -295,7 +295,7 @@ pub struct Explorer {
     pub undo: Option<&'static str>,
     /// The entry the Undo rows name, which they and Ctrl+Z take.
     pub(crate) undo_entry: Option<reprisefs::undo::EntryId>,
-    /// An undo runs in some window ([`reprisefs::undo::SharedUndo::held`]).
+    /// An undo runs in some window ([`reprisefs::undo::Hold::Undo`]).
     pub(crate) undo_held: bool,
     pub undos: reprisefs::undo::SharedUndo,
     /// [`Explorer::edit_undos`]'s thread, and its edits whose results have yet to run.

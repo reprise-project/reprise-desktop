@@ -532,6 +532,32 @@ fn undo_greys_and_ctrl_z_says_so_while_another_window_undoes() {
     assert_eq!(ex.undo, Some("Copy"));
 }
 
+/// While a clear the history lock kept out waits to land, the Undo rows grey and Ctrl+Z, with no
+/// undo running, shows no box.
+#[test]
+fn undo_greys_and_ctrl_z_says_nothing_while_a_clear_waits_to_land() {
+    use reprisefs::undo::{SharedUndo, Undoable};
+    let home = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    let history = home.path().join("reprise-undo");
+    ex.undos = SharedUndo::at(history.clone());
+    let other = SharedUndo::at(history);
+    other.push(Undoable::Copied(home.path().join("x"), None));
+    let lock = std::fs::File::create(home.path().join("reprise-undo.lock")).expect("lock file");
+    lock.lock().expect("lock");
+    other.clear();
+
+    ex.sync_undo();
+    assert_eq!(ex.undo, None, "greyed");
+    ex.run(Command::Undo, &mut ctx);
+    assert!(ex.dialog().is_none(), "no undo runs to say so");
+    drop(lock);
+    other.settle();
+    ex.sync_undo();
+    assert_eq!(ex.undo, None, "the clear landed");
+}
+
 /// An edit of the undo history that panics still comes off the window's count, so Undo and a
 /// close go on, and the edits queued behind it run.
 #[test]

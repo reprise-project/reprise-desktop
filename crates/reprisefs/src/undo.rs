@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::trash::{self, Trashed};
 
 mod store;
-pub use store::{Running, SharedUndo};
+pub use store::{Hold, Running, SharedUndo};
 
 #[derive(Clone, Debug)]
 pub enum Undoable {
