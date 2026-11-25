@@ -2,6 +2,7 @@
 //! real directory; the others are the shell's special places, of which `Computer`
 //! and `Network` have no backing directory.
 
+use crate::space::Spaces;
 use reprisefs::listing::Item;
 use reprisefs::netshare::browse::{self, ROOT};
 use reprisefs::netshare::{Address, Share};
@@ -448,8 +449,9 @@ pub fn folder_of(it: &Item) -> Option<&Path> {
 /// and kind case-insensitively, size and dates numerically, a folder's size blank as
 /// its cell is, folder by path), then
 /// by name; descending reverses that. The Desktop's rows ([`Place::of_row`]) lead either way, in
-/// the tree's order. Keys are built once per item.
-pub fn sort_order(items: &[Item], field: Field, asc: bool) -> Vec<usize> {
+/// the tree's order. Keys are built once per item; Total Size and Free Space read Computer's
+/// drives' `spaces`.
+pub fn sort_order(items: &[Item], field: Field, asc: bool, spaces: &Spaces) -> Vec<usize> {
     let key = |i: usize| {
         let it = &items[i];
         let by = match field {
@@ -460,6 +462,7 @@ pub fn sort_order(items: &[Item], field: Field, asc: bool) -> Vec<usize> {
             Field::Kind => ColumnKey::Kind(it.kind.to_lowercase()),
             Field::Modified => ColumnKey::Date(it.modified),
             Field::Deleted => ColumnKey::Date(it.trashed.as_ref().and_then(|t| t.deleted)),
+            Field::Total | Field::Free => ColumnKey::Size(spaces.key(&it.path, field)),
             Field::Name => ColumnKey::Name,
         };
         (by, it.label().to_lowercase())
@@ -482,7 +485,13 @@ fn row_rank(it: &Item) -> usize {
 
 /// [`sort_order`] run on each group's span, `firsts` being the groups' first
 /// indices. An ungrouped listing (`firsts` empty) sorts whole.
-pub fn sort_order_grouped(items: &[Item], firsts: &[usize], field: Field, asc: bool) -> Vec<usize> {
+pub fn sort_order_grouped(
+    items: &[Item],
+    firsts: &[usize],
+    field: Field,
+    asc: bool,
+    spaces: &Spaces,
+) -> Vec<usize> {
     let mut bounds: Vec<usize> = Vec::with_capacity(firsts.len() + 2);
     if firsts.first() != Some(&0) {
         bounds.push(0);
@@ -492,7 +501,7 @@ pub fn sort_order_grouped(items: &[Item], firsts: &[usize], field: Field, asc: b
     bounds
         .windows(2)
         .flat_map(|w| {
-            sort_order(&items[w[0]..w[1]], field, asc)
+            sort_order(&items[w[0]..w[1]], field, asc, spaces)
                 .into_iter()
                 .map(move |i| i + w[0])
         })
@@ -1095,7 +1104,7 @@ mod tests {
             item("big", false, 900),
         ];
         let names = |asc| -> Vec<&str> {
-            (sort_order(&items, Field::Size, asc).into_iter())
+            (sort_order(&items, Field::Size, asc, &Spaces::default()).into_iter())
                 .map(|i| items[i].name.as_str())
                 .collect()
         };
@@ -1189,6 +1198,7 @@ mod tests {
             ..Volume::default()
         };
         Snapshot {
+            filesystems: Vec::new(),
             disks: vec![
                 disk("/stick", true),
                 disk("/ssd", false),
@@ -1475,7 +1485,7 @@ mod tests {
             (Field::Name, false),
             (Field::Size, false),
         ] {
-            let order = sort_order(&items, field, asc);
+            let order = sort_order(&items, field, asc, &Spaces::default());
             let rows: Vec<Option<Place>> = (order[..5].iter())
                 .map(|&i| Place::of_row(&items[i].path))
                 .collect();
@@ -1486,7 +1496,7 @@ mod tests {
             );
         }
         let by_name = |asc| {
-            let order = sort_order(&items, Field::Name, asc);
+            let order = sort_order(&items, Field::Name, asc, &Spaces::default());
             order[5..]
                 .iter()
                 .map(|&i| items[i].name.clone())

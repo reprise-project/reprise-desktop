@@ -282,7 +282,11 @@ mod tests {
     }
 
     fn snap(disks: Vec<Disk>, volumes: Vec<Volume>) -> Snapshot {
-        Snapshot { disks, volumes }
+        Snapshot {
+            disks,
+            volumes,
+            filesystems: Vec::new(),
+        }
     }
 
     #[test]

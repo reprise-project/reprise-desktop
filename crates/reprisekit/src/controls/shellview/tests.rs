@@ -3,6 +3,7 @@ use super::*;
 use crate::access::accesskit::Role;
 use crate::classic::widgets::FIELD_PAD;
 use crate::controls::iconview::{self, IconMove};
+use crate::controls::shellgrid;
 use crate::look::{Paint, classic_paint};
 use crate::pointer::{COLUMN_PX, WHEEL_ROWS};
 use crate::selection::Mods;
@@ -1629,4 +1630,106 @@ fn a_rows_drag_image_draws_its_pixels() {
             8858607519483314338
         ]
     );
+}
+
+#[test]
+fn computer_details_shows_each_drives_total_size_and_free_space() {
+    use listview::Rows as _;
+    let sv = drives_sample(Mode::Details);
+    let rows = DetailsRows(&sv.entries, &sv.fields);
+    let row = |i: usize| {
+        (0..4)
+            .map(|c| rows.cell(i, c).into_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        row(0),
+        ["Local Disk (/)", "Local Disk", "40.0 GB", "27.5 GB"]
+    );
+    assert_eq!(
+        row(3),
+        ["CD Drive (/dev/sr0)", "CD Drive", "", ""],
+        "a drive without its space read shows blank"
+    );
+    let titles: Vec<&str> = sv.columns.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, ["Name", "Type", "Total Size", "Free Space"]);
+}
+
+#[test]
+fn a_drive_tile_reads_its_free_space_under_its_bar() {
+    let sv = drives_sample(Mode::Tiles);
+    assert_eq!(sv.entries[2].detail, ["6.9 GB free of 7.5 GB"]);
+    assert_eq!(
+        shellgrid::tile_lines(&sv.entries[2]),
+        ["STICK (/run/media/u/STICK)", "", "6.9 GB free of 7.5 GB"]
+    );
+    assert!(
+        sv.entries[3].detail.is_empty(),
+        "the CD drive has no space line"
+    );
+    assert_eq!(shellgrid::tile_lines(&sv.entries[3]).len(), 1);
+}
+
+/// A fuller drive's bar carries more of the bar's ink, and the label box reaches past the bar.
+#[test]
+fn a_drive_tiles_bar_fills_its_used_share() {
+    let (text, px) = rend();
+    let theme = Theme::default();
+    let ink = |free_gb: u64| {
+        let mut sv = drives_sample(Mode::Tiles);
+        sv.selection.clear();
+        let sp = sv.entries[0].space.as_mut().unwrap();
+        sp.total = 100 << 30;
+        sp.free = free_gb << 30;
+        let r = Rect::new(0, 0, 500, 200);
+        let lay = layout(&sv, r, &ControlMetrics::CLASSIC);
+        let mut c = Canvas::new(500, 200);
+        let p = classic_paint(&theme.colors, 1);
+        draw(&mut c, &text, &p, &sv, &lay, None, px);
+        let label = label_rect(&sv, &lay, 0, &text, px);
+        assert!(label.width >= shellgrid::TILE_BAR_W, "{label:?}");
+        let bar_y = label.y + shellgrid::LINE_PITCH + shellgrid::TILE_BAR_Y + 4;
+        (label.x..label.x + shellgrid::TILE_BAR_W)
+            .filter(|&x| c.get(x, bar_y) == theme.colors.hilight.argb())
+            .count()
+    };
+    let (quarter, most) = (ink(75), ink(25));
+    assert!(quarter > 20, "a quarter used shows ink: {quarter}");
+    assert!(
+        most > 2 * quarter,
+        "three quarters used: {most} against {quarter}"
+    );
+}
+
+/// Computer's drives in Tiles and Details, per interface at scale 1 and 2.
+#[test]
+fn computer_drive_views_pin_in_each_interface() {
+    use crate::interface::Interface;
+    let mut got = Vec::new();
+    for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut theme = crate::interfaces::theme_for(look);
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let cm = theme.controls();
+        for mode in [Mode::Tiles, Mode::Details] {
+            let sv = drives_sample(mode);
+            let r = Rect::new(0, 0, 520, 200);
+            let lay = layout(&sv, r, &cm);
+            for s in [1, 2] {
+                theme.scale = s;
+                let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+                draw(
+                    &mut c,
+                    &text,
+                    &theme.paint(),
+                    &sv,
+                    &lay,
+                    None,
+                    px * s as u32,
+                );
+                got.push((format!("{look:?} {mode:?} {s}"), canvas_fnv(&c)));
+            }
+        }
+    }
+    crate::pins::check("shellview/drives", &got);
 }

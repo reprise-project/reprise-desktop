@@ -36,6 +36,7 @@ mod search;
 mod sendreads;
 mod settings;
 mod shares;
+mod space;
 mod tabs;
 mod tree;
 mod volumes;
@@ -224,6 +225,9 @@ pub struct Explorer {
     /// Tells a drive's root apart from a plain folder in the tree.
     pub drive_mounts: Vec<PathBuf>,
     mounts_seen: String,
+    /// Computer's drives' space, read at each listing ([`space`]).
+    pub(crate) spaces: space::Spaces,
+    pub(crate) statvfs: space::Statvfs,
     /// A drive scan still being read, with the `/proc/mounts` it was started for.
     pub(crate) scanning: Option<(String, Job<Vec<reprisefs::places::Drive>>)>,
     pub(crate) udisks: Option<reprisefs::udisks::Udisks>,
@@ -573,6 +577,8 @@ impl Explorer {
             drive_mounts: Vec::new(),
             drives: Vec::new(),
             mounts_seen: String::new(),
+            spaces: Default::default(),
+            statvfs: reprisefs::places::statvfs_totals,
             scanning: None,
             volumes: reprisefs::udisks::Snapshot::default(),
             volume_changes: None,
@@ -861,6 +867,7 @@ impl Explorer {
             local_paths: self.selected_local().is_some(),
             compress: None,
             disk_image: false,
+            relabel: (self.sv.selection.single()).is_some_and(|i| self.relabel_target(i).is_some()),
             pinned: None,
             share: false,
             can_connect: self.shares.gio,
@@ -1321,6 +1328,7 @@ impl Explorer {
                         .and_then(|t| t.deleted)
                         .map(|s| reprisefs::listing::date_text(s, is_12h))
                         .unwrap_or_default(),
+                    space: None,
                 };
                 e.detail = shellview::tile_detail(&e);
                 e
@@ -1372,6 +1380,9 @@ impl Explorer {
         self.place = place.clone();
         self.tabs.set_label(self.title_of(&place));
         self.resort();
+        if place == Place::Computer {
+            self.read_space(ctx);
+        }
 
         let icon = chrome::address_icon(&mut self.chrome_waits, &mut ctx.icons, &place);
         self.reset_address(&place.address_in(&self.shares.shares), icon);
@@ -1407,9 +1418,12 @@ impl Explorer {
     /// touching the saved sort.
     fn set_columns(&mut self, place: &Place) {
         let bin = *place == Place::RecycleBin;
+        let computer = *place == Place::Computer;
         let searched = self.search.shown().is_some();
         let want = if bin {
             shellview::bin_fields()
+        } else if computer {
+            shellview::computer_fields()
         } else if searched {
             shellview::search_fields()
         } else {
@@ -1420,6 +1434,9 @@ impl Explorer {
         }
         if bin {
             self.sv.columns = shellview::bin_columns();
+            self.sv.sort = Some((0, true));
+        } else if computer {
+            self.sv.columns = shellview::computer_columns();
             self.sv.sort = Some((0, true));
         } else if searched {
             self.sv.columns = shellview::search_columns();
@@ -1782,7 +1799,7 @@ impl Explorer {
         let chosen = self.selection_paths();
         let firsts: Vec<usize> = self.sv.groups.iter().map(|g| g.first).collect();
         let field = self.sv.fields.get(col).copied().unwrap_or(Field::Name);
-        let order = sort_order_grouped(&self.items, &firsts, field, asc);
+        let order = sort_order_grouped(&self.items, &firsts, field, asc, &self.spaces);
         let mut items: Vec<Option<Item>> = std::mem::take(&mut self.items)
             .into_iter()
             .map(Some)

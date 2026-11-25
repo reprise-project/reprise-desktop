@@ -123,7 +123,7 @@ use text_size::{
     render_text_size, render_tree_icons,
 };
 use views::{
-    render_backgrounds, render_file_preview, render_grid_drag, render_image_view,
+    render_backgrounds, render_drives, render_file_preview, render_grid_drag, render_image_view,
     render_locate_rings, render_savers, render_show_desktop, render_termgrid,
 };
 use windowing::{render_caption_tabs, render_overview, render_snap_layouts};
@@ -290,6 +290,10 @@ fn write_scale(n: i32) {
         &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
     );
     write_preview(
+        &render_drives(n.max(1)),
+        &format!("reprisekit-gallery-drives@{}.png", n.max(1)),
+    );
+    write_preview(
         &render_locate_rings(n.max(1)),
         &format!("reprisekit-gallery-locate-pointer@{}.png", n.max(1)),
     );
@@ -442,6 +446,7 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
     );
     write_preview(&render_image_view(1), "reprisekit-gallery-imageview.png");
     write_preview(&render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
+    write_preview(&render_drives(1), "reprisekit-gallery-drives.png");
     write_preview(
         &render_label_ellipsis(1),
         "reprisekit-gallery-label-ellipsis.png",

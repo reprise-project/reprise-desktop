@@ -397,10 +397,67 @@ impl Explorer {
     }
 
     /// A box titled `title` over a failed UDisks2 call; nothing for a dismissed prompt.
+    /// The volume Rename relabels for Computer's row `i`: one whose file system UDisks2 can label.
+    pub(crate) fn relabel_target(&self, i: usize) -> Option<Volume> {
+        if self.place != Place::Computer || self.udisks.is_none() {
+            return None;
+        }
+        let it = self.items.get(i)?;
+        place::row_volume(&self.volumes, it)
+            .filter(|v| self.volumes.can_label(v))
+            .cloned()
+    }
+
+    /// Sets the label of row `i`'s file system to `text` on a job: polkit may prompt first. The
+    /// drives are scanned again once it lands, for the new name.
+    pub(crate) fn relabel(&mut self, i: usize, text: &str, ctx: &mut Ctx) -> Reply {
+        let (Some(v), Some(udisks)) = (self.relabel_target(i), self.udisks.clone()) else {
+            return Reply::none();
+        };
+        let label = text.trim().to_string();
+        if Some(&label) == v.label.as_ref() || (label.is_empty() && v.label.is_none()) {
+            return Reply::none();
+        }
+        let name = v.name(self.volumes.disk_of(&v));
+        self.spawn_job(ctx, move || {
+            let done = udisks.set_label(&v.path, &label);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| match done {
+                Ok(()) => ex.relabelled(ctx),
+                Err(e) if e.kind == ErrorKind::Cancelled => Reply::redraw(),
+                Err(e) => {
+                    log::info!("explorer: relabelling {}: {e}", v.path);
+                    ex.message_box("Rename", relabel_failed_text(&name, &e), ctx)
+                }
+            })
+        });
+        Reply::redraw()
+    }
+
+    /// Computer's refresh scans the drives again; elsewhere only the scan runs.
+    fn relabelled(&mut self, ctx: &mut Ctx) -> Reply {
+        if self.place == Place::Computer {
+            return self.refresh(ctx);
+        }
+        self.mounts_seen.clear();
+        self.sync_drives(ctx);
+        Reply::redraw()
+    }
+
     fn udisks_failed(&mut self, title: &str, e: &Error, ctx: &mut Ctx) -> Reply {
         if e.kind == ErrorKind::Cancelled {
             return Reply::redraw();
         }
         self.message_box(title, e.message.clone(), ctx)
+    }
+}
+
+/// Why a drive named `name` kept its label, for the Rename box.
+pub(crate) fn relabel_failed_text(name: &str, e: &Error) -> String {
+    match e.kind {
+        ErrorKind::NotAuthorized => format!("You do not have permission to rename {name}."),
+        ErrorKind::Busy => {
+            format!("{name} is in use. Close any program or window using it, and then try again.")
+        }
+        _ => format!("Cannot rename {name}: {}", e.message),
     }
 }

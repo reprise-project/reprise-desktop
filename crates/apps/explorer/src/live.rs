@@ -205,6 +205,7 @@ impl Explorer {
             | tipped
             | self.take_fills(ctx)
             | self.take_link_status(ctx)
+            | self.take_space(std::time::Duration::ZERO)
             | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons)
             | self.land_address_completion(ctx);
         let mut arrived: Vec<PathBuf> = Vec::new();

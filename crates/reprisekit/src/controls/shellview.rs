@@ -42,8 +42,9 @@ mod scroll;
 
 pub use access::access;
 pub use details::{
-    DetailsRows, Field, bin_columns, bin_fields, details_columns, details_fields, resize_column,
-    search_columns, search_fields, sort, sort_by_column,
+    DetailsRows, Field, bin_columns, bin_fields, computer_columns, computer_fields,
+    details_columns, details_fields, resize_column, search_columns, search_fields, sort,
+    sort_by_column,
 };
 pub use drag::{DragRow, drag_image};
 pub use draw::draw;
@@ -106,6 +107,27 @@ pub struct Entry {
     /// The Original Location column's text, for a Recycle Bin item.
     pub folder: String,
     pub deleted: String,
+    /// A drive's space: Details' Total Size and Free Space, and a tile's usage bar.
+    pub space: Option<Space>,
+}
+
+/// A drive's size and free space in bytes, with the texts its Details cells show.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Space {
+    pub total: u64,
+    pub free: u64,
+    pub total_text: String,
+    pub free_text: String,
+}
+
+impl Space {
+    /// The share of the drive in use, 0 to 1.
+    pub fn used(&self) -> f64 {
+        match self.total {
+            0 => 0.0,
+            t => t.saturating_sub(self.free) as f64 / t as f64,
+        }
+    }
 }
 
 /// Entries wearing a pair's old icons wear its new ones, as
@@ -272,9 +294,13 @@ pub enum Hit {
     Nothing,
 }
 
-/// Tiles' lines under `e`'s name: its kind and [`size_text`]; none for a folder.
-/// A picture's [`image_detail`] replaces them once its size is known.
+/// Tiles' lines under `e`'s name: its kind and [`size_text`]; none for a folder. A drive with its
+/// [`Space`] reads its free space under the usage bar. A picture's [`image_detail`] replaces them
+/// once its size is known.
 pub fn tile_detail(e: &Entry) -> Vec<String> {
+    if let Some(sp) = &e.space {
+        return vec![format!("{} free of {}", sp.free_text, sp.total_text)];
+    }
     if e.is_folder() {
         return Vec::new();
     }
@@ -407,6 +433,7 @@ pub fn sample(mode: Mode, grouped: bool) -> ShellView {
                 },
                 folder: String::new(),
                 deleted: String::new(),
+                space: None,
             }
         })
         .collect();
@@ -427,6 +454,77 @@ pub fn sample(mode: Mode, grouped: bool) -> ShellView {
             Vec::new()
         },
         mode,
+        sort: Some((0, true)),
+        focus_ring: true,
+        ..Default::default()
+    };
+    sv.selection.set_only(Some(2));
+    sv
+}
+
+/// Computer in `mode`: two hard disks and a stick with their [`Space`], then a CD drive with
+/// none, grouped as Explorer groups them, the stick selected. Used by `examples/gallery.rs` and
+/// the drive pins.
+pub fn drives_sample(mode: Mode) -> ShellView {
+    let disk = |c: Color| {
+        let square = |n: u32| {
+            let mut sq = Canvas::new(n, n);
+            sq.fill_rect(Rect::new(0, 0, n as i32, n as i32), c);
+            Rc::new(sq)
+        };
+        (square(16), square(32), square(48))
+    };
+    let gb = |n: f64| (n * (1u64 << 30) as f64) as u64;
+    let drives = [
+        ("Local Disk (/)", "Local Disk", Some((40.0, 27.5))),
+        ("Data (/srv/data)", "Local Disk", Some((465.0, 12.1))),
+        (
+            "STICK (/run/media/u/STICK)",
+            "Removable Disk",
+            Some((7.5, 6.9)),
+        ),
+        ("CD Drive (/dev/sr0)", "CD Drive", None),
+    ];
+    let entries = drives
+        .iter()
+        .enumerate()
+        .map(|(i, (name, kind, space))| {
+            let (icon, icon32, icon48) = disk(Color::rgb(160, 168, 184));
+            let mut e = Entry {
+                id: i as u64,
+                name: (*name).into(),
+                icon: Some(icon),
+                icon32: Some(icon32),
+                icon48: Some(icon48),
+                is_dir: true,
+                kind: (*kind).into(),
+                space: space.map(|(total, free)| Space {
+                    total: gb(total),
+                    free: gb(free),
+                    total_text: format!("{total:.1} GB"),
+                    free_text: format!("{free:.1} GB"),
+                }),
+                ..Default::default()
+            };
+            e.detail = tile_detail(&e);
+            e
+        })
+        .collect();
+    let mut sv = ShellView {
+        entries,
+        groups: vec![
+            Group {
+                title: "Hard Disk Drives".into(),
+                first: 0,
+            },
+            Group {
+                title: "Devices with Removable Storage".into(),
+                first: 2,
+            },
+        ],
+        mode,
+        columns: computer_columns(),
+        fields: computer_fields(),
         sort: Some((0, true)),
         focus_ring: true,
         ..Default::default()

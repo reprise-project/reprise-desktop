@@ -155,6 +155,7 @@ fn an_open_recycle_bin_lists_a_drives_trash_once_udisks_reports_it_mounted() {
     assert!(ex.items.is_empty());
     let listed = |ex: &Explorer| ex.items.iter().any(|it| it.name == "d.txt");
     let stick = |mounts: Vec<PathBuf>, label: &str| Snapshot {
+        filesystems: Vec::new(),
         volumes: vec![Volume {
             path: "/block/sdx1".into(),
             device: "/dev/sdx1".into(),

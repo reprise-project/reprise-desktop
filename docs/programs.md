@@ -34,6 +34,11 @@ The file manager, and the default for folders.
 - **Places:** Desktop, Documents, Home, Computer, Network and the Recycle Bin.
   Computer lists your drives, locked ones included, the shares gvfs mounted
   and phones or cameras on USB; open one to mount it, Eject to remove it.
+  Details shows each drive's Total Size and Free Space, Tiles a usage bar
+  and "free of" line; a drive that does not answer stays blank. F2 or Rename
+  on a drive sets its file system's label through UDisks2, which asks for a
+  password through polkit when the drive is not yours; it is greyed for a file
+  system UDisks2 cannot relabel. Explorer does not format drives.
   The address bar writes a folder on a share, phone or camera under its name
   ("Test Phone/DCIM"), and takes that text typed back.
 - **Disk images** (`.iso`, raw `.img`) open by mounting them read-only, after

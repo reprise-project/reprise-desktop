@@ -9,10 +9,15 @@ fn ascending_puts_folders_first_and_descending_reverses_it_all() {
         item("c.bin", false, 200, "BIN File", Some(40)),
     ];
     let order = |col: usize, asc: bool| {
-        crate::place::sort_order(&items, shellview::details_fields()[col], asc)
-            .into_iter()
-            .map(|i| items[i].name.clone())
-            .collect::<Vec<_>>()
+        crate::place::sort_order(
+            &items,
+            shellview::details_fields()[col],
+            asc,
+            &Default::default(),
+        )
+        .into_iter()
+        .map(|i| items[i].name.clone())
+        .collect::<Vec<_>>()
     };
     assert_eq!(order(0, true), ["zeta", "A.txt", "b.txt", "c.bin"]);
     assert_eq!(order(0, false), ["c.bin", "b.txt", "A.txt", "zeta"]);
@@ -36,10 +41,15 @@ fn a_symlink_to_a_folder_sorts_among_the_files() {
         item("mfolder", true, 0, "File Folder", Some(10)),
     ];
     let order = |col: usize| {
-        crate::place::sort_order(&items, shellview::details_fields()[col], true)
-            .into_iter()
-            .map(|i| items[i].name.as_str())
-            .collect::<Vec<_>>()
+        crate::place::sort_order(
+            &items,
+            shellview::details_fields()[col],
+            true,
+            &Default::default(),
+        )
+        .into_iter()
+        .map(|i| items[i].name.as_str())
+        .collect::<Vec<_>>()
     };
     assert_eq!(order(0), ["mfolder", "a", "b link", "c"], "Name");
     assert_eq!(order(1), ["mfolder", "a", "c", "b link"], "Size");
