@@ -419,12 +419,26 @@ impl Window {
     /// Maximized, such a client draws no shadow, so its geometry tells nothing.
     pub fn draws_own_frame(&self) -> bool {
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State;
-        let Some(t) = self.xdg() else {
-            return false;
-        };
-        !crate::handlers::negotiated(self.wl_surface())
-            && (self.geometry_origin() != (0, 0)
-                || t.with_pending_state(|s| s.states.contains(State::Maximized)))
+        let maximized = (self.xdg())
+            .is_some_and(|t| t.with_pending_state(|s| s.states.contains(State::Maximized)));
+        self.would_draw_own_frame(maximized)
+    }
+
+    /// [`Window::draws_own_frame`] as it will be at map when the window maps `maximized`.
+    fn would_draw_own_frame(&self, maximized: bool) -> bool {
+        self.xdg().is_some()
+            && !crate::handlers::negotiated(self.wl_surface())
+            && (self.geometry_origin() != (0, 0) || maximized)
+    }
+
+    /// [`Window::chrome`] as the window maps `maximized`: without the frame when it will be
+    /// found drawing its own.
+    pub fn opening_chrome(&self, maximized: bool) -> Chrome {
+        let own = !self.csd && self.would_draw_own_frame(maximized);
+        Chrome {
+            decorated: self.chrome().decorated && !own,
+            ..self.chrome()
+        }
     }
 
     fn geometry_origin(&self) -> (i32, i32) {
