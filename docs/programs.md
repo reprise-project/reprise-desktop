@@ -31,6 +31,13 @@ The file manager, and the default for folders.
 - **Open in Terminal** on a folder's right-click menu starts your `terminal`
   there. **Pin to Places** adds the folder to the task pane and to every file
   dialog's places bar. **Disk Usage** opens [Disk Usage](#disk-usage) on it.
+- **Favorites** are GTK's bookmarks (`$XDG_CONFIG_HOME/gtk-3.0/bookmarks`),
+  the same list Pin to Places writes, so GTK programs' and the portal's file
+  dialogs show them too. Add to Favorites... names the folder shown;
+  Organize Favorites... renames, deletes and reorders them. The menu lists
+  each one: a server address (`sftp://`, `smb://`, ...) connects as Connect to
+  Server does, and an address of another kind or a folder that is not there
+  is greyed. A change another program makes shows at once.
 - **Places:** Desktop, Documents, Home, Computer, Network and the Recycle Bin.
   Computer lists your drives, locked ones included, the shares gvfs mounted
   and phones or cameras on USB; open one to mount it, Eject to remove it.

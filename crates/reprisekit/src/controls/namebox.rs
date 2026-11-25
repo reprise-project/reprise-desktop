@@ -1,8 +1,9 @@
-//! Rename dialog for a Start Menu row label.
+//! A box asking for one name: a Name field, OK and Cancel. OK is live while the name is not
+//! blank; [`NameBox::value`] reads it trimmed.
 
-use reprisekit::controls::form::{self, Control, Form, Item};
-use reprisekit::controls::rowsdlg::{EDIT_H, MARGIN, Rows};
-use reprisekit::textedit::TextEdit;
+use crate::controls::form::{self, Control, Form, Item};
+use crate::controls::rowsdlg::{EDIT_H, MARGIN, Rows};
+use crate::textedit::TextEdit;
 
 pub const CLIENT: (i32, i32) = (320, 79);
 
@@ -23,12 +24,12 @@ pub enum Outcome {
     Cancel,
 }
 
-pub struct RenameDialog {
+pub struct NameBox {
     pub form: Form,
 }
 
-impl RenameDialog {
-    pub fn new(label: &str) -> RenameDialog {
+impl NameBox {
+    pub fn new(label: &str) -> NameBox {
         let mut edit = TextEdit::new(label, false);
         edit.select_all();
         let mut items = vec![
@@ -46,7 +47,7 @@ impl RenameDialog {
         items.extend(ROWS.ok_cancel(OK, CANCEL));
         let mut form = Form::new(items);
         form.focus_id(NAME);
-        RenameDialog { form }
+        NameBox { form }
     }
 
     pub fn event(&mut self, ev: form::Event) -> Outcome {
@@ -79,11 +80,11 @@ impl RenameDialog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reprisekit::textedit::EditKey;
+    use crate::textedit::EditKey;
 
     #[test]
     fn typing_replaces_the_label_and_a_blank_one_is_refused() {
-        let mut d = RenameDialog::new("&Run...");
+        let mut d = NameBox::new("&Run...");
         assert_eq!(d.value().as_deref(), Some("&Run..."));
         let ev = d.form.key(form::Key::Edit(EditKey::Insert("R&un".into())));
         assert_eq!(d.event(ev), Outcome::Redraw);
@@ -103,7 +104,7 @@ mod tests {
 
     #[test]
     fn everything_sits_inside_the_client() {
-        let d = RenameDialog::new("x");
+        let d = NameBox::new("x");
         for i in &d.form.items {
             let r = i.rect;
             assert!(

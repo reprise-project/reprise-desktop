@@ -53,7 +53,7 @@ mod regionhost;
 mod regionpage;
 mod registry;
 mod remotehost;
-mod renamedlg;
+pub(crate) use reprisekit::controls::namebox as renamedlg;
 mod saverdlg;
 mod saverhost;
 mod saverpage;
@@ -487,7 +487,7 @@ struct SettingsApp {
     add_layout: Option<layoutdlg::LayoutDialog>,
 
     add_item: Option<additem::AddItemDialog>,
-    rename: Option<renamedlg::RenameDialog>,
+    rename: Option<renamedlg::NameBox>,
     menu_icons_due: bool,
     saver_dlg: Option<saverdlg::SaverDialog>,
     saver_preview: Option<(saverpage::Preview, std::time::Instant)>,

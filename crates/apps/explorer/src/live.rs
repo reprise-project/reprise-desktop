@@ -200,6 +200,7 @@ impl Explorer {
             self.pane_key = None;
             self.refresh_chrome(ctx);
         }
+        let organize_relisted = repinned && self.favorites_changed();
         let mut dirty = repinned
             | landed
             | tipped
@@ -324,6 +325,7 @@ impl Explorer {
         }
         Reply {
             redraw: dirty,
+            redraw_all: organize_relisted,
             ..Default::default()
         }
     }

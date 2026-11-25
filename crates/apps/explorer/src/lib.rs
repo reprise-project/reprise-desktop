@@ -15,6 +15,7 @@ mod copydlg;
 mod dialogs;
 mod drag;
 mod extracting;
+mod favorites;
 mod filemanager;
 mod fileops;
 mod folder_opts;
@@ -476,8 +477,8 @@ pub struct Explorer {
     /// The `--select` entries or a renamed item, and their folder, waiting on that folder's listing.
     selecting: Option<(Place, Vec<PathBuf>)>,
     watch: Option<Watch>,
-    /// The pinned folders, for the task pane's Pinned group and the item menu; None in tests
-    /// that read none.
+    /// The bookmarks: the pinned folders, for the task pane's Pinned group and the item menu, and
+    /// Favorites; None in tests that read none.
     pub(crate) pins: Option<reprisefs::pins::Pins>,
     /// Lists the place again once a link it listed unfollowed answers.
     relist: reprisefs::listing::Relist,
@@ -875,6 +876,8 @@ impl Explorer {
             share: false,
             can_connect: self.shares.gio,
             templates: self.templates.clone(),
+            can_add_favorite: self.favorite_dir().is_some(),
+            favorites: favorites::menu_rows(&self.favorites()),
         }
     }
 
@@ -894,9 +897,7 @@ impl Explorer {
 
     /// Pins `dir` to the places bar, or unpins it, in the bookmarks file the pins are read from.
     pub(crate) fn set_pinned(&self, dir: &std::path::Path, pin: bool) {
-        let file = (self.pins.as_ref())
-            .map_or_else(reprisefs::pins::bookmarks_file, |p| p.file().to_path_buf());
-        reprisefs::pins::set_pinned(&file, dir, pin);
+        reprisefs::pins::set_pinned(&self.bookmarks_file(), dir, pin);
     }
 
     pub(crate) fn flush_settings(&mut self) {

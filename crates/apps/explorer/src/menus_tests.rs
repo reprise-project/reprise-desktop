@@ -24,12 +24,6 @@ fn every_row_with_no_linux_counterpart_is_greyed() {
         assert!(!enabled(&edit, i), "edit row {i}");
     }
     assert!(!enabled(&bar_rows(&s, 2), 12));
-    let favorites = bar_rows(&s, 3);
-    for (i, it) in favorites.iter().enumerate() {
-        if matches!(it, MenuItem::Entry { .. }) {
-            assert!(!enabled(&favorites, i), "favorites row {i}");
-        }
-    }
 }
 
 #[test]
@@ -46,9 +40,37 @@ fn the_tools_rows() {
 }
 
 #[test]
-fn favorites_and_help_rows() {
+fn favorites_rows_follow_the_bookmarks() {
+    let mut s = MenuState::default();
+    let rows = bar_rows(&s, 3);
+    let labels: Vec<&str> = (0..rows.len()).map(|i| label(&rows, i)).collect();
+    assert_eq!(labels, ["Add to Favorites...", "Organize Favorites..."]);
+    assert!(!enabled(&rows, 0), "no folder shown");
+    assert!(enabled(&rows, 1));
+    let go = Command::GoTo(Place::Home);
+    s.can_add_favorite = true;
+    s.favorites = vec![
+        crate::favorites::MenuRow {
+            label: "R&D".into(),
+            go: Some(go.clone()),
+        },
+        crate::favorites::MenuRow {
+            label: "Recent".into(),
+            go: None,
+        },
+    ];
+    let rows = bar_rows(&s, 3);
+    assert!(enabled(&rows, 0));
+    assert_eq!(label(&rows, 3), "R&D", "an ampersand is no access key");
+    assert!(enabled(&rows, 3) && !enabled(&rows, 4));
+    assert_eq!(command_for(3, &[0], &s), Command::AddFavorite);
+    assert_eq!(command_for(3, &[1], &s), Command::OrganizeFavorites);
+    assert_eq!(command_for(3, &[3], &s), go);
+}
+
+#[test]
+fn help_rows() {
     let s = MenuState::default();
-    assert_eq!(label(&bar_rows(&s, 3), 4), "Web Sites");
     let help = bar_rows(&s, 5);
     assert_eq!(help.len(), 3);
     assert_eq!(label(&help, 0), "Help and Support");

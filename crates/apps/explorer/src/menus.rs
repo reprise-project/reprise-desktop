@@ -61,6 +61,10 @@ pub struct MenuState {
     pub can_connect: bool,
     /// The Templates folder's files, New's rows under Text Document.
     pub templates: Vec<reprisefs::templates::Template>,
+    /// The place shown is a folder: Add to Favorites... is live.
+    pub can_add_favorite: bool,
+    /// The Favorites menu's rows under its separator.
+    pub favorites: Vec<crate::favorites::MenuRow>,
 }
 
 impl Default for MenuState {
@@ -90,6 +94,8 @@ impl Default for MenuState {
             share: false,
             can_connect: true,
             templates: Vec::new(),
+            can_add_favorite: false,
+            favorites: Vec::new(),
         }
     }
 }
@@ -395,11 +401,21 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
     view.row(row("R&efresh", true), Command::Refresh);
 
     let mut favorites = Menu::default();
-    favorites.row(row("&Add to Favorites...", false), Command::Nothing);
-    favorites.row(row("&Organize Favorites...", false), Command::Nothing);
-    favorites.sep();
-    favorites.sub(row("Favorites &Bar", false), Menu::default());
-    favorites.sub(row("&Web Sites", false), Menu::default());
+    favorites.row(
+        row("&Add to Favorites...", state.can_add_favorite),
+        Command::AddFavorite,
+    );
+    favorites.row(
+        row("&Organize Favorites...", true),
+        Command::OrganizeFavorites,
+    );
+    if !state.favorites.is_empty() {
+        favorites.sep();
+    }
+    for f in &state.favorites {
+        let item = MenuItem::entry(f.label.as_str()).enabled(f.go.is_some());
+        favorites.row(item, f.go.clone().unwrap_or(Command::Nothing));
+    }
 
     let mut tools = Menu::default();
     tools.row(row("&Synchronize...", false), Command::Nothing);

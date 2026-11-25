@@ -139,7 +139,7 @@ fn at_150_percent_the_window_holds_the_grown_sheet() {
     app.event(MAIN, Event::Resized, &mut ctx);
     assert_eq!(app.sheet.size, (544, 528), "no smaller than its smallest");
 
-    app.rename = Some(renamedlg::RenameDialog::new("Name"));
+    app.rename = Some(renamedlg::NameBox::new("Name"));
     let rename = app.children().into_iter().find(|c| c.id == RENAME_WIN);
     assert_eq!(rename.map(|c| c.size), Some(u.size(renamedlg::CLIENT)));
 }
