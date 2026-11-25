@@ -152,6 +152,30 @@ fn titles_come_from_the_entry_files_and_shared_ones_carry_the_id() {
 }
 
 #[test]
+fn a_title_is_read_from_a_regular_file_and_its_first_64_kib_only() {
+    let root =
+        std::env::temp_dir().join(format!("reprise-restartinto-read-{}", std::process::id()));
+    let roots = std::slice::from_ref(&root);
+    let dir = root.join("loader/entries");
+    std::fs::create_dir_all(&dir).unwrap();
+    let pipe =
+        std::ffi::CString::new(dir.join("pipe.conf").as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: `pipe` is a valid NUL-terminated path for the call's duration.
+    assert_eq!(unsafe { libc::mkfifo(pipe.as_ptr(), 0o600) }, 0);
+    assert_eq!(
+        title_under(roots, "pipe.conf"),
+        None,
+        "no reader blocks on it"
+    );
+    let late = format!("{}\ntitle Late\n", "#".repeat(64 * 1024));
+    std::fs::write(dir.join("late.conf"), late).unwrap();
+    assert_eq!(title_under(roots, "late.conf"), None);
+    std::fs::write(dir.join("early.conf"), "title Early\n").unwrap();
+    assert_eq!(title_under(roots, "early.conf"), Some("Early".into()));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn firmware_setup_sits_under_a_separator_and_rows_map_past_it() {
     let targets = vec![
         entry("a.conf", "A"),
