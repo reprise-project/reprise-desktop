@@ -353,10 +353,10 @@ fn the_page_scrollbar_over_the_side_list_scrolls_the_page() {
     let mut app = app("bar-over-list");
     let mut ctx = test_ctx();
     ctx.text_size = 200;
-    ctx.size = (1000, 700);
+    ctx.size = (1000, 716);
     app.sheet.tabs.open = Page::Keyboard.index();
     app.event(MAIN, Event::Resized, &mut ctx);
-    let mut c = Canvas::new(1000, 700);
+    let mut c = Canvas::new(1000, 716);
     app.draw(MAIN, &mut c, &ctx);
     let bar = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px).bar;
     let bar = bar.expect("the page scrolls");

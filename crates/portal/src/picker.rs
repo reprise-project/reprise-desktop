@@ -1433,8 +1433,8 @@ mod tests {
 
     /// At open the consent line shows whole in every look and text size on short clients, and
     /// the picked source under it, from the first row to the last of a long list. Only on a
-    /// client under 230 px tall may the row or the line go short, the line at the view's top and
-    /// the row the tree's first. A click on a picked row that shows (as a reader's Click lands),
+    /// client under 230 px tall, and taller by as much as the scrollbars grew with the text, may
+    /// the row or the line go short, the line at the view's top and the row the tree's first. A click on a picked row that shows (as a reader's Click lands),
     /// then a reader's Focus on it, leave it picked where it is.
     #[test]
     fn the_dialog_opens_with_the_consent_line_and_then_the_picked_source_in_view() {
@@ -1494,7 +1494,12 @@ mod tests {
                                          {pick}, {app}: line {line:?} row {row:?} in {view:?}",
                                         rs.len()
                                     );
-                                    let top = client.1 < 230 && line.y == view.y;
+                                    let bars = reprisekit::interfaces::theme_for(i)
+                                        .look
+                                        .controls_at_100()
+                                        .scroll
+                                        * (u.small() - 1);
+                                    let top = client.1 < 230 + bars && line.y == view.y;
                                     let at_most = top && first && shown.is_some();
                                     let tall = top && line.height > view.height;
                                     let whole = row.is_some_and(seen);

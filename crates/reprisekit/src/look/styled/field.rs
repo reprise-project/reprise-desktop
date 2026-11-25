@@ -52,7 +52,11 @@ pub fn draw_combo_frame(
     } = look;
     if !editable && st.part(Part::ComboList).is_some() {
         p.fill_back(c, r);
-        st.draw(c, r, Part::ComboList, super::state(enabled, ptr), p.s);
+        // The list is one button carrying its chevron, so all of it grows as a drop button does.
+        let look = p.small_look(c);
+        let g = p.small(&look);
+        let gst = g.look.style().unwrap_or(st);
+        gst.draw(c, r, Part::ComboList, super::state(enabled, ptr), g.s);
         return true;
     }
     if st.part(Part::EditBorder).is_none() {

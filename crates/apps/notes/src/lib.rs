@@ -325,7 +325,7 @@ impl Notes {
     fn follow(&mut self, ctx: &Ctx) {
         self.forms = ctx.forms();
         self.dialog_text = ctx.text.clone();
-        self.metrics.follow_look(&ctx.theme.look.controls_at_100());
+        self.metrics.follow_look(&ctx.theme.controls());
         let px = reprisekit::theme::text_px(TEXT_PX, ctx.text_size);
         self.metrics.font_px = px;
         self.metrics.line_h = px as i32 + 3;

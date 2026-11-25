@@ -1,7 +1,8 @@
 //! The Appearance and Themes tabs' preview: sample windows drawn in the pending colour scheme.
 //! A skinned look hands in its own frame painter ([`Frames`]); sample coordinates count from the
 //! sunken box's inner top-left. The Appearance sample is laid out in 100% px grown by the theme's
-//! [`TextUnits`]; bevels, caption buttons and scroll arrows keep the theme's own sizes.
+//! [`TextUnits`]; bevels and caption buttons keep the theme's own sizes, and the scrollbar grows as
+//! a small control does ([`Paint::small`]).
 
 use crate::art::glyph::Glyph;
 use crate::classic::frame::{Chrome, caption_buttons};
@@ -72,17 +73,15 @@ pub fn draw_window(
         if p.look.style().is_some() {
             draw_sample_scrollbar(c, p, inner);
         } else {
-            let sb = Rect::new(
-                inner.right() - DROP_W * s,
-                inner.y,
-                DROP_W * s,
-                inner.height,
-            );
+            let look = p.small_look(c);
+            let g = &p.small(&look);
+            let w = DROP_W * g.s;
+            let sb = Rect::new(inner.right() - w, inner.y, w, inner.height);
             c.fill_rect(sb, cs.button_face);
-            let up = Rect::new(sb.x, sb.y, sb.width, DROP_W * s);
-            let down = Rect::new(sb.x, sb.bottom() - DROP_W * s, sb.width, DROP_W * s);
-            draw_arrow_button(c, p, up, Arrow::Up, true);
-            draw_arrow_button(c, p, down, Arrow::Down, true);
+            let up = Rect::new(sb.x, sb.y, sb.width, w);
+            let down = Rect::new(sb.x, sb.bottom() - w, sb.width, w);
+            draw_arrow_button(c, g, up, Arrow::Up, true);
+            draw_arrow_button(c, g, down, Arrow::Down, true);
         }
         let tr = Rect::new(inner.x + u(2), inner.y + u(2), inner.width, u(13));
         text.draw(c, tr, "Window Text", true, cs.window_text, Align::Left, px);
@@ -90,7 +89,7 @@ pub fn draw_window(
 }
 
 fn draw_sample_scrollbar(c: &mut Canvas, p: &Paint, inner: Rect) {
-    let w = p.look.controls_at_100().scroll * p.s;
+    let w = p.small_k() * p.look.controls_at_100().scroll * p.s;
     let sb = Rect::new(inner.right() - w, inner.y, w, inner.height);
     let track = (sb.height - 2 * w).max(0) as usize;
     draw_scrollbar(c, p, sb, 0, w as usize, track, None);

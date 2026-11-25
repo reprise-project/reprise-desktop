@@ -32,9 +32,11 @@ pub fn draw_desktop_item(c: &mut Canvas, p: &Paint, r: Rect) -> bool {
         .is_some_and(|st| styled::item::draw_desktop_item(st, c, r, p.s))
 }
 
-/// A tree expander centred on device point `at`; false under a look
-/// without one, which keeps Classic's box.
+/// A tree expander centred on device point `at`, grown with the text ([`Paint::small`]); false
+/// under a look without one, which keeps Classic's box.
 pub fn draw_expander(c: &mut Canvas, p: &Paint, at: (i32, i32), expanded: bool, hot: bool) -> bool {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     p.look
         .style()
         .is_some_and(|st| styled::item::draw_expander(st, c, at, expanded, hot, p.s))

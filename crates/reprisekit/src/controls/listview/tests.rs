@@ -1051,8 +1051,13 @@ fn grown_text_grows_rows_and_group_headers() {
         lv.selection.set_only(Some(1));
         let lay = layout(&lv, Rect::new(0, 0, 400, 200), &cm);
         let b = lv.check_rect(&lay, 1);
-        assert_eq!(b.width, 13, "{pct}%");
-        assert_eq!(b.y, lay.body.y + row_h + 3 + (row_h - ROW_H) / 2, "{pct}%");
+        let k = u.small();
+        assert_eq!(b.width, k * 13, "{pct}%");
+        assert_eq!(
+            b.y,
+            lay.body.y + row_h + 3 + (row_h - ROW_H) / 2 - (k - 1) * 13 / 2,
+            "{pct}%: centred down the row as at 100%"
+        );
         let mut c = Canvas::new(400, 200);
         let p = Paint {
             text: u,
@@ -1064,7 +1069,7 @@ fn grown_text_grows_rows_and_group_headers() {
             cs.button_shadow.argb(),
             "{pct}%: the box's edge"
         );
-        let hx = b.right() + CHECK_TEXT_GAP;
+        let hx = b.right() + k * CHECK_TEXT_GAP;
         let top = lay.body.y + row_h;
         assert_eq!(c.get(hx, top), cs.hilight.argb(), "{pct}%");
         assert_eq!(c.get(hx, top + row_h - 1), cs.hilight.argb(), "{pct}%");

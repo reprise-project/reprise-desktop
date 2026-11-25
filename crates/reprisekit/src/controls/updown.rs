@@ -223,16 +223,16 @@ pub struct Layout {
 }
 
 pub fn layout(x: i32, y: i32) -> Layout {
-    layout_in(Rect::new(x, y, WIDTH, HEIGHT), HEIGHT)
+    layout_in(Rect::new(x, y, WIDTH, HEIGHT), HEIGHT, BUTTON_W)
 }
 
-/// A plain spinner at `r`'s top-left, `field_h` tall, its buttons splitting the column inside
-/// the frame.
-fn layout_in(r: Rect, field_h: i32) -> Layout {
+/// A plain spinner at `r`'s top-left, `field_h` tall, its buttons splitting the `button_w` px
+/// column inside the frame.
+fn layout_in(r: Rect, field_h: i32, button_w: i32) -> Layout {
     let field = Rect::new(r.x, r.y, r.width, field_h);
     let inner = field.inset(2);
-    let bx = inner.right() - BUTTON_W;
-    let (up, down) = split_buttons(Rect::new(bx, inner.y, BUTTON_W, inner.height));
+    let bx = inner.right() - button_w;
+    let (up, down) = split_buttons(Rect::new(bx, inner.y, button_w, inner.height));
     Layout {
         field,
         edit: Rect::new(inner.x, inner.y, bx - inner.x, inner.height),
@@ -274,12 +274,13 @@ pub fn buddy_layout(r: Rect, cm: &ControlMetrics) -> Layout {
     }
 }
 
-/// `ud` filling `r`, a plain one as tall as `u` grows its 20 px field.
+/// `ud` filling `r`, a plain one as tall as `u` grows its 20 px field and its button column by
+/// [`TextUnits::small`].
 pub fn layout_for(ud: &UpDown, r: Rect, cm: &ControlMetrics, u: TextUnits) -> Layout {
     if ud.buddy {
         buddy_layout(r, cm)
     } else {
-        layout_in(r, u.len(HEIGHT))
+        layout_in(r, u.len(HEIGHT), u.small() * BUTTON_W)
     }
 }
 

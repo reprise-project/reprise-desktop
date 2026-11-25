@@ -363,7 +363,8 @@ pub fn layout(cm: &ControlMetrics, panel: &DisplayPanel, text: &TextRenderer, px
     y += ABOVE;
     let separator = Rect::new(left, y, right - left, SEPARATOR_H);
     y += SEPARATOR_H + ABOVE;
-    let night_box = Rect::new(left, y + (line - BOX) / 2, BOX, BOX);
+    let side = u.small() * BOX;
+    let night_box = Rect::new(left, y + (line - side) / 2, side, side);
     let nx = night_box.right() + u.len(BOX_GAP);
     let night_label = Rect::new(nx, y, text.measure(NIGHT_LIGHT, false, px), line);
     let sw = text.measure(&panel.night.state, false, px);

@@ -513,7 +513,7 @@ fn column_layout(
         ),
         check: Rect::new(
             x + d.pad,
-            check_y + (d.row_h - ROW_H) / 2,
+            check_y + (d.row_h - ROW_H) / 2 - (cm.check - cm.check / cm.text.small()) / 2,
             cm.check,
             cm.check,
         ),

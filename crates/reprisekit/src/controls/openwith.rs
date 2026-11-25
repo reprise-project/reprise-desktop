@@ -461,8 +461,13 @@ impl OpenWith {
         let at = |r: Rect| moved(u.rect(r));
         let (plain_group, _) = split_mnemonic(GROUP);
         let (plain_always, _) = split_mnemonic(ALWAYS);
-        // The box keeps its size, centred down the label's grown line.
-        let line = at(Rect::new(CHECK_AT.0, CHECK_AT.1, cm.check, cm.check));
+        // The box grows by its own whole multiple, centred down the label's grown line.
+        let line = at(Rect::new(
+            CHECK_AT.0,
+            CHECK_AT.1,
+            cm.check_100(),
+            cm.check_100(),
+        ));
         let check = Rect::new(
             line.x,
             line.y + (line.height - cm.check) / 2,
@@ -746,7 +751,7 @@ mod tests {
     }
 
     /// At 200% text the client, the list and the buttons grow, the list's rows with them; the
-    /// check box keeps its size centred on its label's line, the icon its 32 px, and Page Down
+    /// check box doubles on its label's line, the icon keeps its 32 px, and Page Down
     /// steps by the rows the grown list shows.
     #[test]
     fn a_grown_chooser_grows_its_rects_and_rows() {
@@ -761,8 +766,8 @@ mod tests {
         assert_eq!(lay.list.frame, Rect::new(48, 162, 676, 420));
         assert_eq!(lay.list.row_h, 36);
         assert_eq!(lay.list.visible, (420 - 4) / 36);
-        assert_eq!(lay.check.width, 13);
-        assert_eq!(lay.check.y, 598 + (26 - 13) / 2);
+        assert_eq!(lay.check.width, 26);
+        assert_eq!(lay.check.y, 598);
         assert_eq!(lay.check_label.height, 26);
         assert_eq!(o.list.selected, Some(1));
         o.key(Key::PageDown);

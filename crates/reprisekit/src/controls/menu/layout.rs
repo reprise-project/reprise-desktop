@@ -64,7 +64,7 @@ pub struct MenuStyle {
 }
 
 impl MenuStyle {
-    /// A Start submenu: its icon column grows with the text size ([`MenuStyle::grown_icons`]).
+    /// A Start submenu: its icon column grows with the text size ([`MenuStyle::grown`]).
     pub fn submenu(theme: &Theme) -> MenuStyle {
         let sm = theme.look.controls_at_100().start_menu;
         MenuStyle {
@@ -73,7 +73,7 @@ impl MenuStyle {
             lit_arrow_menu_text: sm.lit_arrow_menu_text,
             ..Self::compact(&theme.metrics)
         }
-        .grown_icons(theme.text)
+        .grown(theme.text, true, 0, ARROW_RIGHT_INSET)
     }
 
     pub(super) fn compact(m: &Metrics) -> MenuStyle {
@@ -98,13 +98,15 @@ impl MenuStyle {
     /// A look with a [`MenuLook`](crate::style::MenuLook) lays every
     /// context menu out its own way: its rows, its separators, its gutter and
     /// the label past it. With `Icons` the icon column grows with the text
-    /// size ([`MenuStyle::grown_icons`]).
+    /// size ([`MenuStyle::grown`]).
     pub fn context(theme: &Theme, bitmaps: ContextBitmaps) -> MenuStyle {
         let style = Self::context_at_100(theme, bitmaps);
-        match bitmaps {
-            ContextBitmaps::Icons => style.grown_icons(theme.text),
-            ContextBitmaps::None | ContextBitmaps::Glyphs => style,
-        }
+        // A look's own menu checks in a square the row's height inside its gutter.
+        let (column, arrow) = match theme.look.style().and_then(|st| st.menu) {
+            Some(ml) => (ml.gutter, ml.arrow_inset),
+            None => (style.text_x, ARROW_RIGHT_INSET),
+        };
+        style.grown(theme.text, bitmaps == ContextBitmaps::Icons, column, arrow)
     }
 
     fn context_at_100(theme: &Theme, bitmaps: ContextBitmaps) -> MenuStyle {
@@ -186,18 +188,31 @@ impl MenuStyle {
         }
     }
 
-    /// This style with its 16 px icon column grown for text `u`: the icon grows as
-    /// [`TextUnits::icon`] does, and the label, and a gutter, widen with it so the label keeps
-    /// its 100% gap past the icon.
-    fn grown_icons(self, u: TextUnits) -> MenuStyle {
-        let more = u.icon(ICON_SIZE) - ICON_SIZE;
+    /// This style for text `u`. Its check marks and submenu arrows grow by [`TextUnits::small`].
+    /// With `icons` its 16 px icon column, which holds the marks, grows as [`TextUnits::icon`]
+    /// does; without, the `column` left of the label grows with the marks. The label, and a
+    /// gutter, move right by that growth, and the right pad widens where it must to keep the
+    /// label as clear of the grown arrow, inset `arrow` px at 100%, as a Classic row's is.
+    fn grown(self, u: TextUnits, icons: bool, column: i32, arrow: i32) -> MenuStyle {
+        let k = u.small();
+        let (icon, more) = if icons {
+            (u.icon(ICON_SIZE), u.icon(ICON_SIZE) - ICON_SIZE)
+        } else {
+            (ICON_SIZE, (k - 1) * column)
+        };
         MenuStyle {
-            icon: ICON_SIZE + more,
+            icon,
             text_x: self.text_x + more,
             gutter: if self.gutter > 0 {
                 self.gutter + more
             } else {
                 0
+            },
+            right_pad: if k > 1 {
+                self.right_pad
+                    .max(k * (arrow + ARROW_SPACE - ARROW_RIGHT_INSET))
+            } else {
+                self.right_pad
             },
             ..self
         }

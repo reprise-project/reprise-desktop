@@ -470,10 +470,12 @@ impl Layout {
         }
     }
 
-    /// The check box row `row`'s box, centred down it, and its label's line right of the box.
-    pub fn check_parts(row: Rect) -> (Rect, Rect) {
-        let b = Rect::new(row.x, row.y + (row.height - CHECK) / 2, CHECK, CHECK);
-        let x = b.right() + CHECK_GAP;
+    /// The check box row `row`'s box, centred down it, and its label's line right of the box,
+    /// the box and the gap grown by [`TextUnits::small`] of `u`.
+    pub fn check_parts(row: Rect, u: TextUnits) -> (Rect, Rect) {
+        let side = u.small() * CHECK;
+        let b = Rect::new(row.x, row.y + (row.height - side) / 2, side, side);
+        let x = b.right() + u.small() * CHECK_GAP;
         (b, Rect::new(x, row.y, row.right() - x, row.height))
     }
 }
@@ -843,7 +845,7 @@ mod tests {
         assert_eq!(row, Rect::new(11, 168, 224, 20));
         assert!(row.right() < l.cancel.x);
         assert_eq!(
-            Layout::check_parts(row),
+            Layout::check_parts(row, TextUnits::ONE),
             (Rect::new(11, 171, 13, 13), Rect::new(28, 168, 207, 20))
         );
         assert_eq!(hit(&l, 15, 175), Some(Part::Updates));

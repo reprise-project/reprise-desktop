@@ -99,7 +99,7 @@ pub fn draw_updates_box(
     px: u32,
 ) {
     let s = p.s;
-    let (b, label) = Layout::check_parts(row);
+    let (b, label) = Layout::check_parts(row, p.text);
     look::widgets::draw_checkbox(c, p, b.scaled(s), checked, ptr);
     let words = updates_label();
     let label = label.scaled(s);
@@ -375,7 +375,7 @@ mod tests {
         let lay = layout(&p, TextUnits::ONE);
         let row = lay.updates.expect("the check box's row");
         let c = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
-        let (b, label) = Layout::check_parts(row);
+        let (b, label) = Layout::check_parts(row, TextUnits::ONE);
         let differs = |x: i32, y: i32| c.get(x, y) != plain.get(x, y);
         assert!(differs(b.x + 6, b.y + 6), "the box is drawn");
         let white = (label.y..label.bottom())

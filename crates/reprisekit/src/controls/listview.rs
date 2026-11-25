@@ -59,7 +59,8 @@ const CELL_X: i32 = 6;
 const BAR_INSET: i32 = 3;
 const HEADER_TEXT_X: i32 = 6;
 /// A check column's box: the look's check box side (13 px), 8 px from the frame edge, 3 px below the
-/// row top; it replaces the icon and the first cell's text starts 7 px after it.
+/// row top; it replaces the icon and the first cell's text starts 7 px after it. The box and both
+/// gaps grow by [`TextUnits::small`](crate::theme::TextUnits::small).
 const CHECK_X: i32 = 8;
 const CHECK_Y: i32 = 3;
 const CHECK_TEXT_GAP: i32 = 7;
@@ -406,9 +407,11 @@ pub fn layout<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
 
 /// A row's check box, centred down a row taller than 17 px.
 fn check_box(lay: &Layout, at: i32) -> Rect {
+    let k = lay.text.small();
+    let grew = lay.check - lay.check / k;
     Rect::new(
-        lay.frame.x + CHECK_X,
-        lay.body.y + at + CHECK_Y + (lay.row_h() - ROW_H) / 2,
+        lay.frame.x + k * CHECK_X,
+        lay.body.y + at + CHECK_Y + (lay.row_h() - ROW_H) / 2 - grew / 2,
         lay.check,
         lay.check,
     )
@@ -620,7 +623,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         let cx = lay.body.x - self.left_in(lay);
         let cw = self.columns.as_ref().first().map_or(0, |c| lay.col_w(c));
         let tx = match &self.checks {
-            Some(_) => lay.frame.x + CHECK_X + lay.check + CHECK_TEXT_GAP,
+            Some(_) => check_box(lay, 0).right() + lay.text.small() * CHECK_TEXT_GAP,
             None => cx + name_x(self.rows.icon_slot(lay.text)),
         };
         let name = self.rows.cell(row, 0);
@@ -999,7 +1002,7 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
                     } else {
                         draw_checkbox(c, p, cr, checked, lv.held_check.of(i));
                     }
-                    let tx = cr.right() + CHECK_TEXT_GAP * s;
+                    let tx = cr.right() + lay.text.small() * CHECK_TEXT_GAP * s;
                     (tx, cx + cw - tx - 2 * s)
                 } else {
                     if let Some(ic) = lv.rows.icon_in(i, icon_w) {

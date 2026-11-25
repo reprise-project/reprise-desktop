@@ -40,8 +40,9 @@ fn sized_form() -> Form {
 }
 
 /// At 150% and 200% every control's rect grows with the text from its 100% place (both
-/// edges, so neighbours stay apart), a picture keeps its size, a check box keeps its 13 px
-/// box centred on its taller row, and the open combo's rows grow; 100% is the rect as laid out.
+/// edges, so neighbours stay apart), a picture keeps its size, a check box's 13 px box grows by
+/// the text's whole multiple (twice at 200%) centred on its taller row, and the open combo's rows
+/// grow; 100% is the rect as laid out.
 #[test]
 fn grown_form_draws_rects_with_the_text_and_keeps_glyphs() {
     let theme = Theme::default();
@@ -83,29 +84,30 @@ fn grown_form_draws_rects_with_the_text_and_keeps_glyphs() {
         );
         assert_eq!(f.rect("p").unwrap().width, 32, "the picture keeps its size");
 
-        // The check box: 13 px, its top half the row's growth below the row's.
+        // The check box: 13 px times the text's whole multiple, centred down the row.
         let row = f.rect("c").unwrap();
         assert_eq!(row.height, u.len(52 + CHECK) - u.len(52));
-        let by = row.y + (row.height - CHECK) / 2;
+        let side = u.small() * CHECK;
+        let by = row.y + (row.height - side) / 2;
         assert_eq!(
             c.get(row.x, by),
             cs.button_shadow.argb(),
             "{pct}%: the box's top-left"
         );
         assert_eq!(
-            c.get(row.x + 12, by + 12),
+            c.get(row.x + side - 1, by + side - 1),
             cs.button_hilight.argb(),
             "{pct}%: its bottom-right"
         );
         assert_eq!(
-            c.get(row.x + 12, by + 13),
+            c.get(row.x + side - 1, by + side),
             cs.button_face.argb(),
-            "{pct}%: 13 px tall"
+            "{pct}%: {side} px tall"
         );
         assert_eq!(
-            c.get(row.x + 13, by + 12),
+            c.get(row.x + side, by + side - 1),
             cs.button_face.argb(),
-            "{pct}%: 13 px wide"
+            "{pct}%: {side} px wide"
         );
 
         // A click on the grown button's far corner lands on it.
@@ -209,8 +211,8 @@ fn a_grown_rule_grows_along_its_length_only() {
     assert_eq!(f.rect("down"), Some(Rect::new(40, 20, 2, 120)));
 }
 
-/// At 200% a growing icon list's cells double, 72x88, and its height takes them: the bar
-/// sits as far above the frame's foot as at 100%.
+/// At 200% a growing icon list's cells and its bar double, 72x88 and 32 px, and its height takes
+/// them: the bar sits as far above the frame's foot as at 100%.
 #[test]
 fn a_growing_icon_list_doubles_its_cells() {
     let text = TextRenderer::load(&FontConfig::default());
@@ -227,7 +229,11 @@ fn a_growing_icon_list_doubles_its_cells() {
     };
     draw(&mut Canvas::new(400, 500), &text, &p, &f, false, 22);
     let grown = f.rect("icons").unwrap();
-    assert_eq!(grown, Rect::new(20, 40, 152, 199 + 4 * 44));
+    assert_eq!(
+        grown,
+        Rect::new(20, 40, 152, 199 + 4 * 44 + 16),
+        "its bar 16 px thicker"
+    );
     let cm = ControlMetrics::CLASSIC.grown(u);
     let lay = icon_list_layout(true, grown, &cm);
     assert_eq!((lay.cell, lay.icon, lay.cols), ((72, 88), (4, 12), 2));
@@ -262,10 +268,18 @@ fn a_grown_icon_list_widens_and_keeps_its_bar_at_its_foot() {
     };
     draw(&mut Canvas::new(400, 300), &text, &p, &f, false, 22);
     let grown = f.rect("icons").unwrap();
-    assert_eq!(grown, Rect::new(20, 40, 152, 199));
+    assert_eq!(
+        grown,
+        Rect::new(20, 40, 152, 199 + 16),
+        "taller by the bar's growth"
+    );
     let at_100 = iconlist::layout(r, &ControlMetrics::CLASSIC);
-    let lay = iconlist::layout(grown, &ControlMetrics::CLASSIC);
-    assert_eq!(lay.bar.bottom() - grown.y, at_100.bar.bottom() - r.y);
+    let lay = iconlist::layout(grown, &ControlMetrics::CLASSIC.grown(p.text));
+    assert_eq!(lay.bar.bottom() - grown.y, at_100.bar.bottom() - r.y + 16);
+    assert_eq!(
+        grown.bottom() - lay.bar.bottom(),
+        r.bottom() - at_100.bar.bottom()
+    );
     assert_eq!(lay.cols, 4, "the width shows more columns");
 }
 
@@ -608,4 +622,122 @@ fn the_appearance_sample_grows_with_the_text_in_every_look() {
         }
     }
     crate::pins::check("form/sample_text_200", &got);
+}
+
+/// The small controls a form holds: check boxes in each state, radio buttons, a drop-down list,
+/// a spinner, a checked list long enough for its scrollbar, and a tree with expanders.
+fn small_controls_form() -> Form {
+    let mut list = ListBox::new((1..=8).map(|i| format!("Item {i}")).collect(), Some(1));
+    list.checks = vec![true, false, true, false, true, false, true, false];
+    let mut open = treeview::Node::new("Open", true);
+    open.expanded = true;
+    open.children = vec![
+        treeview::Node::new("Folded", true),
+        treeview::Node::new("Leaf", false),
+    ];
+    let tree = TreeView::new(
+        vec![open, treeview::Node::new("Closed", true)],
+        treeview::Style::Classic,
+    );
+    let mut f = Form::new(vec![
+        Item::check("on", 10, 10, "On"),
+        Item::check("off", 10, 30, "Off"),
+        Item::check("greyed", 10, 50, "Greyed").enabled(false),
+        Item::radio("r1", 90, 10, "One", "rg"),
+        Item::radio("r2", 90, 30, "Two", "rg"),
+        Item::combo("cb", 10, 72, 100, &["Picked", "Other"], 2),
+        Item::new(
+            "spin",
+            Rect::new(120, 72, 50, 20),
+            Control::UpDown(UpDown::new(3, 0, 9)),
+        ),
+        Item::new(
+            "list",
+            Rect::new(10, 100, 120, 60),
+            Control::ListBox {
+                list,
+                icons: Vec::new(),
+            },
+        ),
+        Item::new("tree", Rect::new(140, 100, 100, 60), Control::Tree(tree)),
+    ]);
+    f.set_check("on", true);
+    f.set_check("r2", true);
+    f
+}
+
+/// At 200% text the check boxes, radio buttons, drop button, spin arrows, scrollbar and tree
+/// expanders draw at twice their 100% size in every look, at scale 1 and 2.
+#[test]
+fn a_form_grows_its_small_controls_twice_at_200_percent_in_every_look() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for s in [1, 2] {
+            let theme = crate::interfaces::theme_for(i)
+                .with_text_size(200)
+                .scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let f = small_controls_form();
+            let mut c = Canvas::new(500 * s as u32, 330 * s as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &f,
+                false,
+                theme.fonts.size_px,
+            );
+            let at_100 = theme.look.controls_at_100();
+            let cm = f.controls();
+            assert_eq!(
+                (cm.check, cm.radio, cm.scroll, cm.combo_drop),
+                (
+                    2 * at_100.check,
+                    2 * at_100.radio,
+                    2 * at_100.scroll,
+                    2 * at_100.combo_drop
+                ),
+                "{i:?}: the small controls are twice their 100% size"
+            );
+            got.push((format!("{i:?}@{s}"), crate::pins::fnv(&c)));
+        }
+    }
+    crate::pins::check("form/small_controls_200", &got);
+}
+
+/// Classic's check box at 200% text is its 100% box drawn twice as large, pixel for pixel, and its
+/// scrollbar is twice as thick, its arrow buttons the 100% ones doubled.
+#[test]
+fn classic_draws_its_check_box_and_scrollbar_doubled_at_200_percent() {
+    use crate::look::widgets::{draw_checkbox, draw_scrollbar};
+    let theme = Theme::default();
+    let big = theme.with_text_size(200);
+    let (p, pb) = (theme.paint(), big.paint());
+    let doubled = Paint { s: 2, ..p };
+    let (cm, cmb) = (theme.controls(), big.controls());
+    assert_eq!(cmb.check, 2 * cm.check, "the box is 26 px");
+    assert_eq!(cmb.scroll, 2 * cm.scroll, "the bar is 32 px thick");
+    for on in [false, true] {
+        let b = Rect::new(0, 0, cmb.check, cmb.check);
+        let (mut grown, mut want) = (Canvas::new(26, 26), Canvas::new(26, 26));
+        draw_checkbox(&mut grown, &pb, b, on, Interaction::Idle);
+        draw_checkbox(&mut want, &doubled, b, on, Interaction::Idle);
+        assert!(grown == want, "checked {on}: the 13 px box doubled");
+    }
+    let sb = Rect::new(0, 0, cmb.scroll, 200);
+    let (mut grown, mut want) = (Canvas::new(32, 200), Canvas::new(32, 200));
+    draw_scrollbar(&mut grown, &pb, sb, 0, 10, 10, None);
+    draw_scrollbar(&mut want, &doubled, sb, 0, 10, 10, None);
+    assert!(
+        grown == want,
+        "a bar with everything in view is the 16 px bar doubled"
+    );
+    assert_eq!(
+        grown.get(31, 31),
+        theme.colors.button_dk_shadow.argb(),
+        "the up arrow's button is 32 px square"
+    );
 }

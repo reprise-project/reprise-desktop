@@ -30,8 +30,12 @@ pub fn draw_spin_buttons(
         return false;
     }
     let state = |a| super::state(enabled, lit_of(lit, a));
-    st.draw(c, up.scaled(p.s), Part::SpinUp, state(Arrow::Up), p.s);
-    st.draw(c, down.scaled(p.s), Part::SpinDown, state(Arrow::Down), p.s);
+    let (up, down) = (up.scaled(p.s), down.scaled(p.s));
+    let look = p.small_look(c);
+    let p = &p.small(&look);
+    let st = p.look.style().unwrap_or(st);
+    st.draw(c, up, Part::SpinUp, state(Arrow::Up), p.s);
+    st.draw(c, down, Part::SpinDown, state(Arrow::Down), p.s);
     true
 }
 

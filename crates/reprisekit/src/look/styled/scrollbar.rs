@@ -72,8 +72,12 @@ fn bar(
     if !st.has_parts(&[track, back, forward, thumb]) {
         return false;
     }
-    let thumb_min = p.look.controls_at_100().thumb_min;
+    // Laid out at the paint's own scale, as the bar's hit test is, and drawn grown.
+    let thumb_min = p.small_k() * p.look.controls_at_100().thumb_min;
     let parts = scrollbar_parts(sb, p.s, pos, visible, total, horizontal, thumb_min);
+    let look = p.small_look(c);
+    let p = &p.small(&look);
+    let st = p.look.style().unwrap_or(st);
     let live = total > visible;
     let lit = if live { lit } else { None };
     let state = |hit| super::state(live, lit_of(lit, hit));

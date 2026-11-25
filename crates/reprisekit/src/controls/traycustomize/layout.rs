@@ -72,13 +72,19 @@ impl TrayCustomize {
             });
         let (check, check_label) = match g.check {
             Some((cx, cy)) => {
-                let b = at(Rect::new(cx, cy, cm.check, cm.check));
+                let line = at(Rect::new(cx, cy, cm.check_100(), cm.check_100()));
+                let b = Rect::new(
+                    line.x,
+                    line.y + (line.height - cm.check) / 2,
+                    cm.check,
+                    cm.check,
+                );
                 let (plain, _) = split_mnemonic(ALL_ICONS);
                 let l = Rect::new(
                     b.x + cm.check_label,
-                    b.y,
+                    line.y,
                     text.measure(&plain, false, px),
-                    cm.check,
+                    line.height,
                 );
                 (Some(b), Some(l))
             }
@@ -170,7 +176,7 @@ impl TrayCustomize {
             .selected
             .and_then(|i| fields.iter().find(|(j, _)| *j == i))
             .map(|&(i, f)| (i, combo::layout(&self.combo, f, cm)));
-        let row = on_page(g.check(cm.check));
+        let row = on_page(g.check(cm.check_100()));
         let check = Rect::new(
             row.x,
             row.y + (row.height - cm.check) / 2,
@@ -179,7 +185,7 @@ impl TrayCustomize {
         );
         let (plain, _) = split_mnemonic(ALL_ICONS);
         let check_label = Rect::new(
-            check.x + PAGE_CHECK_LABEL,
+            check.x + cm.text.small() * PAGE_CHECK_LABEL,
             row.y - 1,
             text.measure(&plain, false, px),
             row.height,
