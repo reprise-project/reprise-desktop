@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Usage: scripts/feature-drift [PKG...]
+# Lists, per package, the (crate, features) nodes `cargo tree -p PKG` resolves
+# and `cargo tree --workspace` does not, for builds and for test builds. Each
+# such node is a unit `cargo build/test -p PKG` compiles a second time instead
+# of sharing it with `--workspace`. Default PKGs: reprise, reprise-apps,
+# reprise-portal and every member they link that links repriseapp-pins.
+# Exit 1 on any drift: add the missing features to repriseapp-pins (or the
+# member's own dependency line). Reads only the lockfile.
+set -u
+cd "$(dirname "$0")/.." || exit 2
+nodes() {
+	cargo tree -q -e "features,$1" -f '{p} [{f}]' --prefix none "${@:2}" |
+		grep -v ' feature "' | sed 's/ (\*)$//' | sort -u
+}
+if (($# == 0)); then
+	# shellcheck disable=SC2046
+	set -- $(cargo metadata -q --format-version 1 | python3 -c '
+import json, sys
+m = json.load(sys.stdin)
+name = {p["id"]: p["name"] for p in m["packages"]}
+members = set(m["workspace_members"])
+deps = {n["id"]: [d["pkg"] for d in n["deps"]] for n in m["resolve"]["nodes"]}
+def closure(roots):
+    seen, todo = set(), list(roots)
+    while todo:
+        i = todo.pop()
+        if i not in seen:
+            seen.add(i)
+            todo += deps[i]
+    return seen
+ids = {name[i]: i for i in members}
+pins = ids["repriseapp-pins"]
+linked = closure(ids[n] for n in ("reprise", "reprise-apps", "reprise-portal"))
+print(" ".join(sorted(name[i] for i in linked & members if i != pins and pins in closure([i]))))')
+fi
+rc=0
+for edges in normal,build normal,build,dev; do
+	ws=$(nodes "$edges" --workspace)
+	for p in "$@"; do
+		extra=$(comm -23 <(nodes "$edges" -p "$p") <(echo "$ws"))
+		if [ -n "$extra" ]; then
+			rc=1
+			echo "$p ($edges):"
+			echo "$extra" | sed 's/^/    /'
+		fi
+	done
+done
+exit $rc

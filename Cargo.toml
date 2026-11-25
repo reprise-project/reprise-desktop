@@ -102,7 +102,8 @@ ironrdp-tokio = { git = "https://github.com/reprise-project/IronRDP.git", rev = 
 libc = "0.2.191"
 log = "0.4"
 md4 = { version = "0.11", default-features = false }
-pipewire = "0.10"
+# The portal's floor, for every crate: one pipewire unit across `-p` and `--workspace`.
+pipewire = { version = "0.10", features = ["v0_3_34"] }
 png = "0.18"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 rustls = "0.23.46"
@@ -209,6 +210,8 @@ wayland-scanner = "0.31"
 wayland-server = { version = "0.31", features = ["libwayland_1_23"] }
 
 [dev-dependencies]
+# reprisescene's tests turn renderer_test on in `cargo test --workspace`: `-p reprise` shares its units.
+smithay = { workspace = true, features = ["renderer_test"] }
 zbus = { workspace = true, features = ["p2p"] }
 wayland-client.workspace = true
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }

@@ -5416,10 +5416,16 @@ name = "repriseapp-pins"
 version = "0.1.0"
 dependencies = [
  "anstream",
+ "const-oid 0.10.3",
+ "digest 0.11.3",
  "fastrand",
  "hashbrown",
+ "image",
+ "md4",
+ "num-traits",
  "regex-automata",
  "regex-syntax",
+ "repriselogin",
  "rustix 1.1.6",
  "socket2",
  "toml_datetime",
@@ -5429,6 +5435,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-server",
+ "xkeysym",
  "zbus 6.5.0",
 ]
 

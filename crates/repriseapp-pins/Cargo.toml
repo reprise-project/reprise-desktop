@@ -8,14 +8,21 @@ publish.workspace = true
 repository.workspace = true
 description = "No code: turns on, for every build, the union of features the workspace asks of the stack the programs and the compositor share outside reprisekit."
 
-# Keeps `cargo build/test -p <program>` on the zbus, wayland and rustix units
-# `--workspace` builds. After a dependency change, rerun `scripts/kit-units`.
+# Keeps `cargo build/test -p` of the compositor, the portal and the programs on the
+# units `--workspace` builds. After a dependency change, rerun `scripts/feature-drift`
+# and `scripts/kit-units`.
 [dependencies]
 anstream = "1"
+const-oid = { version = "0.10", features = ["db"] }
+digest = { version = "0.11", features = ["rand_core"] }
 fastrand = "2"
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
+image = { workspace = true, features = ["gif", "webp", "tiff", "ico", "qoi", "pnm", "hdr", "exr", "dds"] }
+md4 = { workspace = true, features = ["default", "zeroize"] }
+num-traits = { version = "0.2", features = ["i128"] }
 regex-automata = "0.4"
 regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode"] }
+repriselogin = { path = "../repriselogin", features = ["picture"] }
 rustix = { version = "1", features = ["event", "fs", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
 socket2 = { version = "0.6", features = ["all"] }
 toml_datetime = { version = "1", features = ["serde"] }
@@ -25,4 +32,5 @@ wayland-protocols = { version = "0.32", features = ["client", "server", "staging
 wayland-protocols-misc = { version = "0.3", features = ["client", "server"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client", "server"] }
 wayland-server = { version = "0.31", features = ["libwayland_1_23"] }
+xkeysym = { version = "0.2", features = ["bytemuck"] }
 zbus = { workspace = true, features = ["p2p"] }
