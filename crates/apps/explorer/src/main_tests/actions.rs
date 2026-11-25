@@ -158,6 +158,63 @@ fn back_over_search_results_returns_to_the_folder_searched() {
     assert!(back_on(&ex));
 }
 
+#[test]
+fn backs_drop_over_search_results_with_no_history_offers_the_folder_searched() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("report.txt"), "x").expect("write");
+    std::fs::write(dir.path().join("other.txt"), "x").expect("write");
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    ex.search_run = find_search;
+    assert_eq!(ex.back_rows(), [], "no results and no history");
+    ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    assert_eq!(ex.items.len(), 1);
+
+    let rows = ex.back_rows();
+    assert_eq!(rows, [(ex.title_of(&here), Command::Back)]);
+    ex.run(rows[0].1.clone(), &mut ctx);
+    assert_eq!(ex.search.caption(&[]), None, "the row leaves the results");
+    assert_eq!(ex.place, here);
+    assert_eq!(ex.items.len(), 2, "the folder's own listing");
+    assert_eq!(ex.back_rows(), []);
+}
+
+#[test]
+fn backs_drop_over_search_results_puts_the_folder_searched_above_the_history() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a"), dir.path().join("a/b"));
+    std::fs::create_dir_all(&b).expect("mkdir");
+    std::fs::write(b.join("report.txt"), "x").expect("write");
+    let places = [dir.path(), &a, &b].map(|p| Place::Folder(p.to_path_buf()));
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(places[0].clone(), &mut ctx);
+    ex.search_run = find_search;
+    ex.run(Command::GoTo(places[1].clone()), &mut ctx);
+    ex.run(Command::GoTo(places[2].clone()), &mut ctx);
+    ex.run(Command::SearchFocus, &mut ctx);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    assert!(ex.search.caption(&[]).is_some());
+
+    let rows = ex.back_rows();
+    assert_eq!(
+        rows,
+        [
+            (ex.title_of(&places[2]), Command::Back),
+            (ex.title_of(&places[1]), Command::Go(1)),
+            (ex.title_of(&places[0]), Command::Go(2)),
+        ]
+    );
+    ex.run(rows[1].1.clone(), &mut ctx);
+    assert_eq!(ex.search.caption(&[]), None);
+    assert_eq!(ex.place, places[1], "the row's folder, one step back");
+}
+
 /// Search results list several folders: renaming a hit to a name another folder's hit wears is
 /// no clash, inline or in the Rename dialog.
 #[test]

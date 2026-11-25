@@ -410,11 +410,8 @@ impl Explorer {
                 toolbar::VIEWS => menus::views_menu(self.sv.mode),
                 toolbar::BACK => {
                     let mut m = Menu::default();
-                    for (n, p) in self.history.back_list().iter().enumerate() {
-                        m.row(
-                            reprisekit::controls::menu::MenuItem::entry(self.title_of(p)),
-                            Command::Go(n + 1),
-                        );
+                    for (title, cmd) in self.back_rows() {
+                        m.row(reprisekit::controls::menu::MenuItem::entry(title), cmd);
                     }
                     m
                 }

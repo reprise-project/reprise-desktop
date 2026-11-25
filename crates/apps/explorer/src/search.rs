@@ -1,6 +1,7 @@
 //! The toolbar's Search field: [`reprisefs::search`] rooted at the folder shown runs on a listing
 //! thread, and its results take the folder's place in the view until Escape, Back or a navigation.
 
+use crate::commands::Command;
 use crate::place::{Listed, Place};
 use crate::{Explorer, Focus, Read};
 use repriseapp::listicons::ReadIcons;
@@ -302,6 +303,15 @@ impl Explorer {
     /// Back is on while results are shown: it leaves them for the folder searched.
     pub(crate) fn can_back(&self) -> bool {
         self.history.can_back() || self.search.shown().is_some()
+    }
+
+    /// Back's drop: with results shown, the folder searched (which Back returns to) heads the
+    /// places behind, nearest first.
+    pub(crate) fn back_rows(&self) -> Vec<(String, Command)> {
+        let leave = (self.search.shown()).map(|a| (self.title_of(&a.place), Command::Back));
+        let behind = (self.history.back_list().into_iter().enumerate())
+            .map(|(n, p)| (self.title_of(p), Command::Go(n + 1)));
+        leave.into_iter().chain(behind).collect()
     }
 
     /// A refresh while results are shown searches again for the same text.
