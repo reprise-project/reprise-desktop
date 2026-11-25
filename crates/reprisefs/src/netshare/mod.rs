@@ -86,7 +86,8 @@ impl Address {
                 None => (hostport.to_string(), None),
             }
         };
-        if host.is_empty() || host.contains(char::is_whitespace) {
+        // A host starting with `-` would reach gio's and ssh's command lines as an option.
+        if host.is_empty() || host.starts_with('-') || host.contains(char::is_whitespace) {
             return None;
         }
         Some(Address {
@@ -466,6 +467,8 @@ mod tests {
             "smb://",
             "smb://host:port/x",
             "smb://a b/",
+            "sftp://-oProxyCommand=x/srv",
+            "smb://u@-nas/share",
             "Computer",
         ] {
             assert_eq!(Address::parse(text), None, "{text}");
