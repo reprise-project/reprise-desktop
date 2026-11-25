@@ -360,7 +360,8 @@ the screen takes the interface of the last session used at this computer.
   puts each monitor back in the mode, scale and place it had before, or its
   `[[outputs]]` mode.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
-  that support it draw at the exact scale.
+  that support it draw at the exact scale. The Display page's Scale list names
+  the desktop size each step leaves, and warns below 800 x 600.
 - **Variable refresh rate** per monitor: off, on, or only while the focused
   window is fullscreen there (`adaptive_sync = "fullscreen"`), so a panel
   that flickers at low refresh rates stays fixed on the desktop.

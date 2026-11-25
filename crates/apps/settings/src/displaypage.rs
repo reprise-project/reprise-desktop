@@ -24,6 +24,10 @@ use repriseconf::projection::{self, Home, Projection, Screen};
 /// takes.
 pub const SCALE_ROWS: usize = 13;
 
+/// The smallest desktop, in logical pixels, a scale leaves without a warning: the size Reprise's
+/// windows and dialogs are laid out to fit.
+const MIN_DESKTOP: (i32, i32) = (800, 600);
+
 /// How many rows the Color profile combo's list shows before it scrolls.
 const PROFILE_ROWS: usize = 12;
 
@@ -758,6 +762,26 @@ pub fn row_scale(i: usize) -> f64 {
     1.0 + i.min(SCALE_ROWS - 1) as f64 * 0.25
 }
 
+/// A Scale row: "200% (960 x 540)", the desktop `pick`'s mode leaves at `scale`; the percentage
+/// alone while no mode is picked.
+fn scale_label(pick: Pick, scale: f64) -> String {
+    let percent = (scale * 100.0).round();
+    match logical_size(pick.mode, pick.transform, scale) {
+        (0, _) | (_, 0) => format!("{percent}%"),
+        (w, h) => format!("{percent}% ({w} x {h})"),
+    }
+}
+
+/// The note a scale leaving a desktop smaller than [`MIN_DESKTOP`] shows under the page's notes.
+fn scale_warning(pick: Pick) -> Option<String> {
+    let (w, h) = logical_size(pick.mode, pick.transform, pick.scale);
+    let small = w > 0 && h > 0 && (w < MIN_DESKTOP.0 || h < MIN_DESKTOP.1);
+    small.then(|| {
+        let percent = (pick.scale * 100.0).round();
+        format!("At {percent}% the desktop is {w} x {h}, too small for many windows.")
+    })
+}
+
 /// "1. Make Model on DP-1": the output's number in the well, then the make and model and the
 /// connector, or the connector alone.
 pub fn head_label(number: usize, h: &Head) -> String {
@@ -791,6 +815,7 @@ pub const FORGET: &str = "forget_layouts";
 pub const PROJECTION: &str = "multiple_displays";
 pub const AUTO_ROTATE: &str = "auto_rotate";
 pub const SENSOR_NOTE: &str = "sensor_note";
+pub const SCALE_NOTE: &str = "scale_note";
 pub const PROFILE: &str = "icc_profile";
 pub const TEXT_SIZE_NOTE: &str = "text_size_note";
 
@@ -819,7 +844,8 @@ fn combo(
 }
 
 /// The page for `d` in `a`, in the client's coordinates: the arrangement well, Identify and the
-/// primary check box, the shown output's name, its mode controls, then a note naming Text size.
+/// primary check box, the shown output's name, its mode controls, then a note naming Text size and
+/// one line under it: a warning of a small desktop, else the missing sensor.
 pub fn page(d: &Display, a: Area) -> Form {
     let (Some(head), Some(pick)) = (d.head(), d.pick()) else {
         return Form::new(vec![Item::label_at(
@@ -907,7 +933,7 @@ pub fn page(d: &Display, a: Area) -> Form {
     ));
     items.push(combo(ORIENTATION, (X, 189 + dy, 173), &turns, turn, true));
     let scales: Vec<String> = (0..SCALE_ROWS)
-        .map(|i| format!("{}%", (row_scale(i) * 100.0).round()))
+        .map(|i| scale_label(pick, row_scale(i)))
         .collect();
     items.push(Item::label_at("scale_label", RX, 174 + dy, rw, "S&cale:"));
     items.push(combo(
@@ -984,7 +1010,9 @@ pub fn page(d: &Display, a: Area) -> Form {
         a.w,
         &crate::pages::text_size_note(),
     ));
-    if built_in && d.sensor == Some(false) {
+    if let Some(warning) = scale_warning(pick) {
+        items.push(Item::label_at(SCALE_NOTE, X, note_y + 18, a.w, &warning));
+    } else if built_in && d.sensor == Some(false) {
         items.push(Item::label_at(
             SENSOR_NOTE,
             X,
@@ -1711,6 +1739,73 @@ mod tests {
             label,
             "Text size on the Text & Keys page enlarges all text."
         );
+    }
+
+    fn scale_rows(f: &Form) -> Vec<String> {
+        match &f.item(SCALE).unwrap().control {
+            Control::Combo(c) => c.items.iter().map(|i| i.text.clone()).collect(),
+            other => panic!("a combo: {other:?}"),
+        }
+    }
+
+    fn label(f: &Form, id: &str) -> Option<String> {
+        f.item(id).map(|it| match &it.control {
+            Control::Label { text, .. } => text.clone(),
+            other => panic!("{id} is a label: {other:?}"),
+        })
+    }
+
+    #[test]
+    fn each_scale_row_names_the_desktop_it_leaves() {
+        let mut d = Display::with_heads(vec![test_head("DP-1")]);
+        let rows = scale_rows(&page(&d, Area::MIN));
+        assert_eq!(rows.len(), SCALE_ROWS);
+        assert_eq!(rows[0], "100% (1920 x 1080)");
+        assert_eq!(rows[2], "150% (1280 x 720)");
+        assert_eq!(rows[4], "200% (960 x 540)");
+        assert_eq!(rows[12], "400% (480 x 270)");
+        d.pick_orientation(1);
+        assert_eq!(
+            scale_rows(&page(&d, Area::MIN))[4],
+            "200% (540 x 960)",
+            "a turned output swaps the sides"
+        );
+    }
+
+    #[test]
+    fn a_scale_leaving_a_desktop_under_800_by_600_warns_under_the_notes() {
+        let mut d = Display::with_heads(vec![test_head("DP-1")]);
+        assert_eq!(label(&page(&d, Area::MIN), SCALE_NOTE), None);
+        d.pick_scale(scale_row(1.75));
+        assert_eq!(
+            label(&page(&d, Area::MIN), SCALE_NOTE),
+            None,
+            "1097 x 617 is roomy enough"
+        );
+        d.pick_scale(scale_row(2.0));
+        let f = page(&d, Area::MIN);
+        assert_eq!(
+            label(&f, SCALE_NOTE).as_deref(),
+            Some("At 200% the desktop is 960 x 540, too small for many windows.")
+        );
+        assert_eq!(at(&f, SCALE_NOTE), Rect::new(20, 448, 358, 13));
+        d.pick_resolution(0);
+        assert!(
+            label(&page(&d, Area::MIN), SCALE_NOTE).is_some(),
+            "1024 x 768 at 200% is 512 x 384"
+        );
+    }
+
+    #[test]
+    fn the_scale_warning_takes_the_sensor_notes_line() {
+        let mut d = Display::with_heads(vec![test_head("eDP-1"), test_head("DP-1")]);
+        d.sensor = Some(false);
+        d.pick_scale(scale_row(4.0));
+        let f = page(&d, Area::MIN);
+        assert_eq!(at(&f, SCALE_NOTE), Rect::new(20, 478, 358, 13));
+        assert!(f.item(SENSOR_NOTE).is_none());
+        d.pick_scale(0);
+        assert!(page(&d, Area::MIN).item(SENSOR_NOTE).is_some());
     }
 
     #[test]
