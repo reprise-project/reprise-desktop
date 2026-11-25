@@ -4,6 +4,7 @@
 //! file and reads it off the caller's loop.
 
 use std::ffi::{OsStr, OsString};
+use std::io;
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -16,6 +17,9 @@ pub const MAX_SHOWN: usize = 20;
 
 /// The bookmarks Favorites lists at most.
 pub const MAX_FAVORITES: usize = 100;
+
+/// The longest name, in characters, a pin or favorite shows; the line keeps the whole label.
+pub const MAX_LABEL: usize = 256;
 
 /// The longest bookmarks file read; GTK's own stays far below.
 const MAX_BYTES: u64 = 1 << 20;
@@ -55,12 +59,41 @@ impl Target {
     }
 
     /// The name shown for a bookmark without a label: the folder's name, or the address with
-    /// its escapes decoded.
+    /// any password left out and its escapes decoded.
     pub fn default_name(&self) -> String {
         match self {
             Target::Folder(path) => crate::places::dialog_label(path),
-            Target::Uri(uri) => String::from_utf8_lossy(&crate::trash::percent_decode(uri)).into(),
+            Target::Uri(uri) => {
+                let shown = crate::netshare::Address::parse(uri)
+                    .map_or_else(|| without_password(uri), |a| a.uri());
+                String::from_utf8_lossy(&crate::trash::percent_decode(&shown)).into()
+            }
         }
+    }
+}
+
+/// `uri` with the `:password` of its `user:password@` cut out.
+fn without_password(uri: &str) -> String {
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return uri.to_string();
+    };
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    match authority.rsplit_once('@') {
+        Some((userinfo, host)) => {
+            let user = userinfo.split_once(':').map_or(userinfo, |(user, _)| user);
+            format!("{scheme}://{user}@{host}{path}")
+        }
+        None => uri.to_string(),
+    }
+}
+
+/// The name a pin or favorite shows: its label, else the target's own name, cut at
+/// [`MAX_LABEL`] characters.
+fn shown_label(target: &Target, label: Option<&str>) -> String {
+    let name = label.map_or_else(|| target.default_name(), str::to_string);
+    match name.char_indices().nth(MAX_LABEL) {
+        Some((cut, _)) => name[..cut].to_string(),
+        None => name,
     }
 }
 
@@ -75,30 +108,34 @@ pub struct Favorite {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Line {
-    /// A bookmark: its target and label, and the line as read (None once edited).
-    Entry {
-        target: Target,
-        label: Option<String>,
-        raw: Option<String>,
-    },
-    /// Anything else (a blank line, a comment, text with no URI), written back as read.
-    Other(String),
+struct Entry {
+    target: Target,
+    label: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Line {
+    /// The bookmark on it; None for a blank line, a comment or text with no URI.
+    entry: Option<Entry>,
+    /// The line as read, without its ending, written back byte for byte; None once edited.
+    raw: Option<Vec<u8>>,
+    /// The line ends in CR LF rather than LF.
+    crlf: bool,
 }
 
 impl Line {
     fn folder(&self) -> Option<&Path> {
-        match self {
-            Line::Entry {
+        match &self.entry {
+            Some(Entry {
                 target: Target::Folder(path),
                 ..
-            } => Some(path),
+            }) => Some(path),
             _ => None,
         }
     }
 
     fn is(&self, want: &Target) -> bool {
-        matches!(self, Line::Entry { target, .. } if target == want)
+        self.entry.as_ref().is_some_and(|e| e.target == *want)
     }
 }
 
@@ -109,46 +146,65 @@ pub struct Bookmarks {
 }
 
 impl Bookmarks {
-    pub fn parse(text: &str) -> Bookmarks {
-        let lines = text
-            .lines()
-            .map(|raw| match parse_line(raw) {
-                Some((target, label)) => Line::Entry {
-                    target,
-                    label,
-                    raw: Some(raw.to_string()),
-                },
-                None => Line::Other(raw.to_string()),
-            })
-            .collect();
+    pub fn parse(bytes: impl AsRef<[u8]>) -> Bookmarks {
+        let mut lines = Vec::new();
+        let mut rest = bytes.as_ref();
+        while !rest.is_empty() {
+            let (line, next) = match rest.iter().position(|&b| b == b'\n') {
+                Some(end) => (&rest[..end], &rest[end + 1..]),
+                None => (rest, &[][..]),
+            };
+            let (line, crlf) = match line.strip_suffix(b"\r") {
+                Some(line) => (line, true),
+                None => (line, false),
+            };
+            lines.push(Line {
+                entry: parse_line(line),
+                raw: Some(line.to_vec()),
+                crlf,
+            });
+            rest = next;
+        }
         Bookmarks { lines }
     }
 
-    /// The file's text: lines not edited exactly as read, each ending in a newline.
-    pub fn text(&self) -> String {
-        let mut out = String::new();
+    /// The file's bytes: lines not edited exactly as read, each ending as it did (a last line
+    /// with no ending gets a LF).
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
         for line in &self.lines {
-            match line {
-                Line::Entry { raw: Some(raw), .. } | Line::Other(raw) => out.push_str(raw),
-                Line::Entry { target, label, .. } => {
-                    out.push_str(&target.uri());
+            match (&line.raw, &line.entry) {
+                (Some(raw), _) => out.extend_from_slice(raw),
+                (None, Some(Entry { target, label })) => {
+                    out.extend_from_slice(target.uri().as_bytes());
                     if let Some(label) = label {
-                        out.push(' ');
-                        out.push_str(label);
+                        out.push(b' ');
+                        out.extend_from_slice(label.as_bytes());
                     }
                 }
+                (None, None) => {}
             }
-            out.push('\n');
+            out.extend_from_slice(if line.crlf { b"\r\n" } else { b"\n" });
         }
         out
     }
 
     /// Every bookmark, in file order, with its label.
     pub fn entries(&self) -> impl Iterator<Item = (&Target, Option<&str>)> {
-        self.lines.iter().filter_map(|l| match l {
-            Line::Entry { target, label, .. } => Some((target, label.as_deref())),
-            Line::Other(_) => None,
-        })
+        self.lines
+            .iter()
+            .filter_map(|l| l.entry.as_ref())
+            .map(|e| (&e.target, e.label.as_deref()))
+    }
+
+    /// A new bookmark line, ending as the last line does.
+    fn push(&mut self, target: Target, label: Option<String>) {
+        let crlf = self.lines.last().is_some_and(|l| l.crlf);
+        self.lines.push(Line {
+            entry: Some(Entry { target, label }),
+            raw: None,
+            crlf,
+        });
     }
 
     /// The local folders, in file order, with their labels.
@@ -172,11 +228,7 @@ impl Bookmarks {
         if self.has(dir) {
             return false;
         }
-        self.lines.push(Line::Entry {
-            target: Target::Folder(dir.to_path_buf()),
-            label: None,
-            raw: None,
-        });
+        self.push(Target::Folder(dir.to_path_buf()), None);
         true
     }
 
@@ -202,26 +254,24 @@ impl Bookmarks {
             return self.rename(&target, name);
         }
         let label = label_for(&target, name);
-        self.lines.push(Line::Entry {
-            target,
-            label,
-            raw: None,
-        });
+        self.push(target, label);
         true
     }
 
     /// Names the first bookmark of `target` `name`; false when there is none or the name stays.
     pub fn rename(&mut self, target: &Target, name: &str) -> bool {
         let want = label_for(target, name);
-        let Some(Line::Entry { label, raw, .. }) = self.lines.iter_mut().find(|l| l.is(target))
-        else {
+        let Some(line) = self.lines.iter_mut().find(|l| l.is(target)) else {
             return false;
         };
-        if *label == want {
+        let Some(entry) = &mut line.entry else {
+            return false;
+        };
+        if entry.label == want {
             return false;
         }
-        *label = want;
-        *raw = None;
+        entry.label = want;
+        line.raw = None;
         true
     }
 
@@ -236,7 +286,7 @@ impl Bookmarks {
     /// other lines staying where they are; false at either end.
     pub fn move_entry(&mut self, target: &Target, up: bool) -> bool {
         match self.lines.iter().position(|l| l.is(target)) {
-            Some(at) => self.swap_with(at, up, |l| matches!(l, Line::Entry { .. })),
+            Some(at) => self.swap_with(at, up, |l| l.entry.is_some()),
             None => false,
         }
     }
@@ -269,15 +319,18 @@ pub fn label_for(target: &Target, name: &str) -> Option<String> {
 }
 
 /// A bookmark line's target and label; None for a blank line, a `#` comment or a line with no
-/// URI. The URI ends at the first space; the rest of the line is the label.
-fn parse_line(line: &str) -> Option<(Target, Option<String>)> {
-    if line.starts_with('#') {
+/// URI (or one that is not UTF-8). The URI ends at the first space; the rest of the line is the
+/// label, its bytes that are not UTF-8 shown as U+FFFD.
+fn parse_line(line: &[u8]) -> Option<Entry> {
+    if line.starts_with(b"#") {
         return None;
     }
-    let (uri, label) = match line.split_once(' ') {
-        Some((uri, label)) => (uri, Some(label.to_string()).filter(|l| !l.is_empty())),
+    let (uri, label) = match line.iter().position(|&b| b == b' ') {
+        Some(at) => (&line[..at], Some(&line[at + 1..]).filter(|l| !l.is_empty())),
         None => (line, None),
     };
+    let uri = std::str::from_utf8(uri).ok()?;
+    let label = label.map(|l| String::from_utf8_lossy(l).into_owned());
     let (scheme, _) = uri.split_once(':')?;
     let mut chars = scheme.chars();
     let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -294,29 +347,38 @@ fn parse_line(line: &str) -> Option<(Target, Option<String>)> {
         ))),
         None => Target::Uri(uri.to_string()),
     };
-    Some((target, label))
+    Some(Entry { target, label })
+}
+
+/// The bookmarks file at `file`, empty when it is missing. Any other failure (too large, not a
+/// regular file, unreadable) is an error, and a FIFO there is never opened.
+fn read(file: &Path) -> io::Result<Bookmarks> {
+    match crate::ops::read_regular(file, MAX_BYTES) {
+        Ok(bytes) => Ok(Bookmarks::parse(bytes)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Bookmarks::default()),
+        Err(e) => Err(io::Error::new(
+            e.kind(),
+            format!("cannot read {}: {e}", file.display()),
+        )),
+    }
 }
 
 /// The bookmarks file at `file`; empty when it is missing or unreadable.
 pub fn load(file: &Path) -> Bookmarks {
-    match crate::ops::read_regular(file, MAX_BYTES) {
-        Ok(bytes) => Bookmarks::parse(&String::from_utf8_lossy(&bytes)),
-        Err(e) => {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::info!("bookmarks: cannot read {}: {e}", file.display());
-            }
-            Bookmarks::default()
-        }
-    }
+    read(file).unwrap_or_else(|e| {
+        log::info!("bookmarks: {e}");
+        Bookmarks::default()
+    })
 }
 
 /// Reads `file`, lets `f` edit it and writes it back in one rename when `f` says it changed;
-/// the bookmarks as they now stand. GTK takes no lock either, so a line another program writes
-/// between the read and the rename is lost.
-pub fn edit_at(file: &Path, f: impl FnOnce(&mut Bookmarks) -> bool) -> std::io::Result<Bookmarks> {
-    let mut b = load(file);
+/// the bookmarks as they now stand. A file that cannot be read is an error and never written
+/// over. GTK takes no lock either, so a line another program writes between the read and the
+/// rename is lost.
+pub fn edit_at(file: &Path, f: impl FnOnce(&mut Bookmarks) -> bool) -> io::Result<Bookmarks> {
+    let mut b = read(file)?;
     if f(&mut b) {
-        crate::ops::write_atomic(file, b.text().as_bytes())?;
+        crate::ops::write_atomic(file, &b.bytes())?;
     }
     Ok(b)
 }
@@ -333,9 +395,7 @@ pub fn shown(b: &Bookmarks, network: &std::collections::HashSet<PathBuf>) -> Vec
         .take(MAX_SHOWN)
         .map(|(path, label)| Pin {
             path: path.to_path_buf(),
-            label: label
-                .map(str::to_string)
-                .unwrap_or_else(|| crate::places::dialog_label(path)),
+            label: shown_label(&Target::Folder(path.to_path_buf()), label),
             present: present(path, network),
         })
         .collect()
@@ -347,7 +407,7 @@ pub fn favorites(b: &Bookmarks, network: &std::collections::HashSet<PathBuf>) ->
         .take(MAX_FAVORITES)
         .map(|(target, label)| Favorite {
             target: target.clone(),
-            label: label.map_or_else(|| target.default_name(), str::to_string),
+            label: shown_label(target, label),
             present: match target {
                 Target::Folder(path) => present(path, network),
                 Target::Uri(_) => true,
@@ -358,18 +418,31 @@ pub fn favorites(b: &Bookmarks, network: &std::collections::HashSet<PathBuf>) ->
 
 /// What to watch so `file` is seen changing, arriving or leaving: its folder for its name, or,
 /// while that folder is missing, the nearest folder above that is there for the next name down.
+/// A symlinked file (a dotfiles checkout) is watched where its link ends too.
 fn watches(file: &Path) -> Vec<(PathBuf, Option<OsString>)> {
+    let mut out: Vec<_> = nearest_watch(file).into_iter().collect();
+    if std::fs::symlink_metadata(file).is_ok_and(|m| m.file_type().is_symlink())
+        && let Ok(real) = crate::ops::real_path(file)
+        && let Some(also) = nearest_watch(&real)
+        && !out.contains(&also)
+    {
+        out.push(also);
+    }
+    out
+}
+
+fn nearest_watch(file: &Path) -> Option<(PathBuf, Option<OsString>)> {
     let mut child = file;
     while let Some(dir) = child.parent() {
         if dir.is_dir() {
-            return vec![(
+            return Some((
                 dir.to_path_buf(),
                 child.file_name().map(OsStr::to_os_string),
-            )];
+            ));
         }
         child = dir;
     }
-    Vec::new()
+    None
 }
 
 #[derive(Default)]
@@ -377,17 +450,30 @@ struct Shared {
     pins: Arc<Vec<Pin>>,
     favorites: Arc<Vec<Favorite>>,
     generation: u64,
+    /// Edits sent and not yet written.
+    pending: usize,
+    /// The last edit that could not be written, for [`Pins::take_failed`].
+    failed: Option<io::Error>,
+}
+
+type Edit = Box<dyn FnOnce(&mut Bookmarks) -> bool + Send>;
+
+/// What the thread is asked: read the file again, or edit it first.
+enum Job {
+    Read,
+    Edit(Edit),
 }
 
 /// The pins and Favorites of the bookmarks file, kept current by a thread that watches it: the
-/// thread reads it and looks for each folder, so a dead mount stalls the thread and not its owner's loop.
+/// thread reads and writes it and looks for each folder, so a dead mount or a slow sync stalls the
+/// thread and not its owner's loop.
 pub struct Pins {
     shared: Arc<Mutex<Shared>>,
     file: PathBuf,
     seen: u64,
-    poke: mpsc::Sender<()>,
-    /// The thread ends once this drops.
-    _alive: Arc<()>,
+    poke: mpsc::Sender<Job>,
+    /// The thread ends once this drops, which [`Drop`] does before it wakes the thread.
+    alive: Option<Arc<()>>,
 }
 
 impl Pins {
@@ -407,34 +493,50 @@ impl Pins {
             .name("pins".to_string())
             .spawn(move || {
                 let watch = crate::folderwatch::Watch::new(move || {
-                    let _ = from_watch.send(());
+                    let _ = from_watch.send(Job::Read);
                 });
                 let mut watch = watch
                     .map_err(|e| log::warn!("bookmarks: no watch: {e}"))
                     .ok();
-                let mut watched = None;
-                while pokes.recv().is_ok() {
-                    while pokes.try_recv().is_ok() {}
+                while let Ok(first) = pokes.recv() {
+                    let edits: Vec<Edit> = std::iter::once(first)
+                        .chain(pokes.try_iter())
+                        .filter_map(|job| match job {
+                            Job::Edit(f) => Some(f),
+                            Job::Read => None,
+                        })
+                        .collect();
+                    let edited = !edits.is_empty();
+                    for f in edits {
+                        let written = edit_at(&read, f);
+                        let mut s = lock(&out);
+                        s.pending -= 1;
+                        if let Err(e) = written {
+                            log::warn!("bookmarks: cannot write {}: {e}", read.display());
+                            s.failed = Some(e);
+                        }
+                    }
                     if gone.strong_count() == 0 {
                         return;
                     }
-                    let want = watches(&read);
-                    if let Some(w) = &mut watch
-                        && watched.as_ref() != Some(&want)
-                    {
-                        w.watch_all(&want);
-                        watched = Some(want);
+                    // Re-armed on every read: a folder on the way renamed and made again keeps
+                    // its path but not its inode.
+                    if let Some(w) = &mut watch {
+                        w.watch_all(&watches(&read));
                     }
                     let mounts = std::fs::read("/proc/self/mounts").unwrap_or_default();
                     let network = crate::places::network_mounts(mounts);
                     let b = load(&read);
                     let (pins, favorites) = (shown(&b, &network), favorites(&b, &network));
                     let mut s = lock(&out);
-                    if *s.pins != pins || *s.favorites != favorites || s.generation == 0 {
+                    let changed = *s.pins != pins || *s.favorites != favorites || s.generation == 0;
+                    if changed {
                         s.pins = Arc::new(pins);
                         s.favorites = Arc::new(favorites);
                         s.generation += 1;
-                        drop(s);
+                    }
+                    drop(s);
+                    if changed || edited {
                         wake();
                     }
                 }
@@ -442,13 +544,13 @@ impl Pins {
         if let Err(e) = spawned {
             log::warn!("bookmarks: no reader thread: {e}");
         }
-        let _ = poke.send(());
+        let _ = poke.send(Job::Read);
         Pins {
             shared,
             file,
             seen: 0,
             poke,
-            _alive: alive,
+            alive: Some(alive),
         }
     }
 
@@ -475,7 +577,28 @@ impl Pins {
 
     /// Reads the file and looks for the folders again (a drive may have come or gone).
     pub fn refresh(&self) {
-        let _ = self.poke.send(());
+        let _ = self.poke.send(Job::Read);
+    }
+
+    /// Edits the file on the thread as [`edit_at`] does, then reads it again; a failure comes
+    /// back from [`Pins::take_failed`] after a wake.
+    pub fn edit(&self, f: impl FnOnce(&mut Bookmarks) -> bool + Send + 'static) {
+        lock(&self.shared).pending += 1;
+        if self.poke.send(Job::Edit(Box::new(f))).is_err() {
+            let mut s = lock(&self.shared);
+            s.pending -= 1;
+            s.failed = Some(io::Error::other("the bookmarks thread is not running"));
+        }
+    }
+
+    /// Whether an edit is still to be written.
+    pub fn busy(&self) -> bool {
+        lock(&self.shared).pending > 0
+    }
+
+    /// The last edit's failure since the last call.
+    pub fn take_failed(&mut self) -> Option<io::Error> {
+        lock(&self.shared).failed.take()
     }
 
     /// Waits up to `limit` for the first read, for a caller that shows the pins at once.
@@ -489,7 +612,8 @@ impl Pins {
 
 impl Drop for Pins {
     fn drop(&mut self) {
-        let _ = self.poke.send(());
+        self.alive = None;
+        let _ = self.poke.send(Job::Read);
     }
 }
 
@@ -519,6 +643,12 @@ pub fn shift(file: &Path, dir: &Path, up: bool) {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    impl Bookmarks {
+        fn text(&self) -> String {
+            String::from_utf8(self.bytes()).expect("UTF-8")
+        }
+    }
 
     const FILE: &str = "file:///home/u/Projects\n\
 file:///home/u/My%20Music Tunes\n\
@@ -573,7 +703,7 @@ file:///home/u/caf%C3%A9 \n";
         let mut b = Bookmarks::default();
         b.pin(&dir);
         assert_eq!(b.text(), "file:///home/u/%FF\n");
-        assert!(Bookmarks::parse(&b.text()).has(&dir));
+        assert!(Bookmarks::parse(b.text()).has(&dir));
     }
 
     #[test]
@@ -822,5 +952,183 @@ smb://nas/My%20Files\n";
         assert!(pins.take_changed());
         assert_eq!(pins.current()[0].path, dir.path());
         assert!(pins.current()[0].present);
+    }
+
+    #[test]
+    fn an_edit_never_writes_over_a_file_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("big");
+        let text = "file:///srv/a\n".repeat(MAX_BYTES as usize / 14 + 1);
+        std::fs::write(&big, &text).unwrap();
+        let e = edit_at(&big, |b| b.pin(Path::new("/srv/b"))).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::FileTooLarge);
+        assert_eq!(
+            std::fs::read_to_string(&big).unwrap(),
+            text,
+            "left as it was"
+        );
+
+        let fifo = dir.path().join("fifo");
+        crate::testfs::mkfifo(&fifo);
+        let e = edit_at(&fifo, |b| b.pin(Path::new("/srv/b"))).unwrap_err();
+        assert_eq!(
+            e.kind(),
+            io::ErrorKind::InvalidInput,
+            "never opened to read"
+        );
+        use std::os::unix::fs::FileTypeExt;
+        assert!(
+            std::fs::symlink_metadata(&fifo)
+                .unwrap()
+                .file_type()
+                .is_fifo()
+        );
+
+        let folder = dir.path().join("folder");
+        std::fs::create_dir(&folder).unwrap();
+        assert!(edit_at(&folder, |b| b.pin(Path::new("/srv/b"))).is_err());
+        assert!(folder.is_dir());
+    }
+
+    #[test]
+    fn bytes_that_are_not_utf8_write_back_as_read() {
+        let file: &[u8] = b"# caf\xe9\nfile:///srv/a A\xff\nsmb://nas/x\n";
+        let mut b = Bookmarks::parse(file);
+        assert_eq!(b.entries().next().unwrap().1, Some("A\u{FFFD}"));
+        assert!(b.remove(&Target::Uri("smb://nas/x".into())));
+        assert!(b.pin(Path::new("/srv/b")));
+        assert_eq!(
+            b.bytes(),
+            b"# caf\xe9\nfile:///srv/a A\xff\nfile:///srv/b\n"
+        );
+    }
+
+    #[test]
+    fn each_line_keeps_its_own_ending() {
+        let mut b = Bookmarks::parse("file:///srv/a A\r\n# note\nfile:///srv/b\r\n");
+        assert_eq!(b.text(), "file:///srv/a A\r\n# note\nfile:///srv/b\r\n");
+        assert!(b.rename(&folder("/srv/a"), "Z"));
+        assert!(b.pin(Path::new("/srv/c")));
+        assert_eq!(
+            b.text(),
+            "file:///srv/a Z\r\n# note\nfile:///srv/b\r\nfile:///srv/c\r\n",
+            "a new line ends as the last one does"
+        );
+        assert_eq!(Bookmarks::parse("file:///srv/a").text(), "file:///srv/a\n");
+    }
+
+    #[test]
+    fn an_address_shows_without_its_password() {
+        let name = |uri: &str| Target::Uri(uri.into()).default_name();
+        assert_eq!(name("sftp://user:secret@host/srv"), "sftp://user@host/srv");
+        assert_eq!(
+            name("smb://u:p%40ss@nas/My%20Files"),
+            "smb://u@nas/My Files"
+        );
+        assert_eq!(name("webdav://u:secret@host/x"), "webdav://u@host/x");
+        assert_eq!(name("recent:///"), "recent:///");
+        let b = Bookmarks::parse("sftp://user:secret@host/srv\n");
+        let shown = favorites(&b, &HashSet::new());
+        assert_eq!(shown[0].label, "sftp://user@host/srv");
+    }
+
+    #[test]
+    fn a_long_label_shows_cut_and_stays_whole_in_the_file() {
+        let long = "é".repeat(MAX_LABEL + 50);
+        let mut b = Bookmarks::default();
+        b.add(Path::new("/srv/a"), &long);
+        assert_eq!(
+            favorites(&b, &HashSet::new())[0].label,
+            "é".repeat(MAX_LABEL)
+        );
+        assert_eq!(shown(&b, &HashSet::new())[0].label, "é".repeat(MAX_LABEL));
+        assert!(b.text().ends_with(&format!(" {long}\n")));
+    }
+
+    #[test]
+    fn a_symlinked_file_is_watched_where_its_link_ends_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let (gtk, real) = (dir.path().join("gtk-3.0"), dir.path().join("dotfiles/gtk"));
+        std::fs::create_dir_all(&gtk).unwrap();
+        std::fs::create_dir_all(&real).unwrap();
+        let file = gtk.join("bookmarks");
+        std::os::unix::fs::symlink("../dotfiles/gtk/bookmarks", &file).unwrap();
+        let name = Some(OsString::from("bookmarks"));
+        assert_eq!(
+            watches(&file),
+            [(gtk.clone(), name.clone()), (real.clone(), name.clone())],
+            "dangling"
+        );
+        std::fs::write(real.join("bookmarks"), "").unwrap();
+        assert_eq!(watches(&file), [(gtk, name.clone()), (real, name)]);
+    }
+
+    /// Pins on `file`, and the wakes it sends.
+    fn reading(file: &Path) -> (Pins, mpsc::Receiver<()>) {
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let pins = Pins::start_at(file.to_path_buf(), move || {
+            let _ = lock(&tx).send(());
+        });
+        (pins, rx)
+    }
+
+    fn wait_until(pins: &Pins, woke: &mpsc::Receiver<()>, done: impl Fn(&Pins) -> bool) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done(pins) {
+            assert!(std::time::Instant::now() < end, "timed out");
+            let _ = woke.recv_timeout(std::time::Duration::from_millis(200));
+        }
+    }
+
+    #[test]
+    fn the_thread_sees_an_edit_where_a_symlinked_file_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let (gtk, real) = (dir.path().join("gtk-3.0"), dir.path().join("dotfiles"));
+        std::fs::create_dir_all(&gtk).unwrap();
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("bookmarks"), "").unwrap();
+        std::os::unix::fs::symlink(real.join("bookmarks"), gtk.join("bookmarks")).unwrap();
+        let (pins, woke) = reading(&gtk.join("bookmarks"));
+        wait_until(&pins, &woke, |p| lock(&p.shared).generation > 0);
+        std::fs::write(real.join(".new"), "file:///srv/a A\n").unwrap();
+        std::fs::rename(real.join(".new"), real.join("bookmarks")).unwrap();
+        wait_until(&pins, &woke, |p| p.favorites().len() == 1);
+    }
+
+    #[test]
+    fn the_thread_follows_its_folder_renamed_and_made_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let gtk = dir.path().join("gtk-3.0");
+        std::fs::create_dir(&gtk).unwrap();
+        std::fs::write(gtk.join("bookmarks"), "file:///srv/a A\n").unwrap();
+        let (pins, woke) = reading(&gtk.join("bookmarks"));
+        wait_until(&pins, &woke, |p| p.favorites().len() == 1);
+        std::fs::rename(&gtk, dir.path().join("old")).unwrap();
+        std::fs::create_dir(&gtk).unwrap();
+        wait_until(&pins, &woke, |p| p.favorites().is_empty());
+        std::fs::write(gtk.join("bookmarks"), "file:///srv/b B\nfile:///srv/c C\n").unwrap();
+        wait_until(&pins, &woke, |p| p.favorites().len() == 2);
+    }
+
+    #[test]
+    fn an_edit_runs_on_the_thread_and_a_failure_comes_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("gtk-3.0/bookmarks");
+        let (mut pins, woke) = reading(&file);
+        pins.edit(|b| b.add(Path::new("/srv/a"), "A"));
+        wait_until(&pins, &woke, |p| !p.busy() && p.favorites().len() == 1);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "file:///srv/a A\n");
+        assert!(pins.take_failed().is_none());
+
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        pins.edit(|b| b.add(Path::new("/srv/b"), "B"));
+        wait_until(&pins, &woke, |p| !p.busy());
+        assert_eq!(
+            pins.take_failed().map(|e| e.kind()),
+            Some(io::ErrorKind::InvalidInput)
+        );
+        assert!(pins.take_failed().is_none(), "taken once");
     }
 }
