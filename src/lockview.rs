@@ -552,6 +552,7 @@ pub fn engage(state: &mut State) {
     crate::state::save_screen_locked(true);
     crate::idle::end_dim(state);
     let_go_now(state);
+    state.devices.touch.tapped = None;
     // A modifier StickyKeys latched would eat the password's first letter.
     state.aids_reset();
     seal(state, |s| raise(s, Side::Console));

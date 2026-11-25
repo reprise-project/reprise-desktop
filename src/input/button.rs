@@ -1,6 +1,7 @@
 use smithay::{
     backend::input::{ButtonState, InputTime},
     input::pointer::ButtonEvent,
+    reexports::wayland_server::Resource,
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
@@ -41,6 +42,13 @@ impl State {
 
     fn apply_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
         self.settle_pointer();
+        if state == ButtonState::Pressed {
+            let under = (self.seat.get_pointer())
+                .and_then(|p| p.current_focus())
+                .and_then(|f| f.surface().and_then(|s| s.client()))
+                .map(|c| c.id());
+            self.devices.touch.input_to(under.as_ref());
+        }
         if self.capture_button(button, state) {
             return;
         }

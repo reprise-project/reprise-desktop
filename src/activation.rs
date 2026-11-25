@@ -211,6 +211,9 @@ impl State {
         client: Option<&ClientId>,
         now: Instant,
     ) -> bool {
+        if self.console_locked() || self.desktop_locked() {
+            return false;
+        }
         let touch = &mut self.devices.touch;
         let Some(tap) = touch.tapped.as_mut() else {
             return false;
@@ -748,6 +751,40 @@ mod tests {
             raised.push(l.h.state.focused == Some(l.target.id));
         }
         assert_eq!(raised, [true, true, false]);
+    }
+
+    #[test]
+    fn a_tap_on_a_launcher_raises_nothing_after_a_click_elsewhere() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        let (x, y) = l.busy_point();
+        l.h.click(x, y);
+        l.raise_on(down);
+        assert!(l.keyboard_on_busy());
+    }
+
+    #[test]
+    fn a_tap_on_a_launcher_raises_nothing_after_a_key_another_program_hears() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        l.h.key(30, true);
+        l.h.key(30, false);
+        l.raise_on(down);
+        assert!(l.keyboard_on_busy());
+    }
+
+    #[test]
+    fn a_tap_on_a_launcher_raises_nothing_once_the_session_locked() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        crate::lockview::lock(&mut l.h.state);
+        l.h.dispatch();
+        let token = l.mint(down);
+        crate::lockview::unlock(&mut l.h.state);
+        l.h.dispatch();
+        l.h.state.focus_window(l.busy.1.id);
+        l.present(&token);
+        assert!(l.keyboard_on_busy());
     }
 
     /// A click in the middle of window `t`, given the keyboard first; the serial `c` heard for it.
