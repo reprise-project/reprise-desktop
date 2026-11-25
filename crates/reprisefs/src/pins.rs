@@ -428,9 +428,49 @@ pub fn load(file: &Path) -> Bookmarks {
 pub fn edit_at(file: &Path, f: impl FnOnce(&mut Bookmarks) -> bool) -> io::Result<Bookmarks> {
     let mut b = read(file)?;
     if f(&mut b) {
+        clear_stale_temps(file);
         crate::ops::write_atomic(file, &b.bytes())?;
     }
     Ok(b)
+}
+
+/// How old a temp file beside the bookmarks is before a write takes it for one a killed writer
+/// left, rather than another writer's mid-write.
+const STALE_TEMP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Removes the temp files of this user's writes to `file` (`.NAME.<16 hex>.tmp` beside where it
+/// leads) older than [`STALE_TEMP`].
+fn clear_stale_temps(file: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(real) = crate::ops::real_path(file) else {
+        return;
+    };
+    let (Some(dir), Some(name)) = (real.parent(), real.file_name()) else {
+        return;
+    };
+    let prefix = format!(".{}.", name.to_string_lossy());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::geteuid() };
+    for entry in entries.flatten() {
+        let entry_name = entry.file_name();
+        let ours = (entry_name.to_str())
+            .and_then(|n| n.strip_prefix(&prefix)?.strip_suffix(".tmp"))
+            .is_some_and(|tag| tag.len() == 16 && tag.bytes().all(|b| b.is_ascii_hexdigit()));
+        let stale = (entry.metadata().ok()).is_some_and(|m| {
+            m.file_type().is_file()
+                && m.uid() == uid
+                && m.modified()
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > STALE_TEMP)
+        });
+        if ours && stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Whether `path` is a folder, counting one on any of the `network` mounts as there: a look
@@ -667,8 +707,16 @@ impl Pins {
     }
 }
 
+/// How long a dropped [`Pins`] waits for its edits to be written, so a program quitting right
+/// after an edit (a one-shot file dialog) keeps it.
+const DROP_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl Drop for Pins {
     fn drop(&mut self) {
+        let end = std::time::Instant::now() + DROP_WAIT;
+        while self.busy() && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         self.alive = None;
         let _ = self.poke.send(Job::Read);
     }
@@ -1207,5 +1255,46 @@ smb://nas/My%20Files\n";
             Some(io::ErrorKind::InvalidInput)
         );
         assert!(pins.take_failed().is_none(), "taken once");
+    }
+
+    #[test]
+    fn a_dropped_pins_waits_for_its_edits_to_be_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("gtk-3.0/bookmarks");
+        let (pins, _woke) = reading(&file);
+        pins.edit(|b| {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            b.pin(Path::new("/srv/a"))
+        });
+        drop(pins);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "file:///srv/a\n");
+    }
+
+    #[test]
+    fn a_write_clears_an_old_temp_file_left_beside_the_bookmarks() {
+        let dir = tempfile::tempdir().unwrap();
+        let gtk = dir.path().join("gtk-3.0");
+        std::fs::create_dir(&gtk).unwrap();
+        let old = gtk.join(".bookmarks.0123456789abcdef.tmp");
+        let fresh = gtk.join(".bookmarks.fedcba9876543210.tmp");
+        let other = gtk.join(".bookmarks.mine.tmp");
+        let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        for f in [&old, &fresh, &other] {
+            std::fs::write(f, "file:///half").unwrap();
+        }
+        for f in [&old, &other] {
+            let f = std::fs::File::options().write(true).open(f).unwrap();
+            f.set_modified(hour_ago).unwrap();
+        }
+        let file = gtk.join("bookmarks");
+        edit_at(&file, |_| false).unwrap();
+        assert!(old.exists(), "a read alone clears nothing");
+        edit_at(&file, |b| b.pin(Path::new("/srv/a"))).unwrap();
+        assert!(!old.exists(), "an hour-old temp file is gone");
+        assert!(
+            fresh.exists(),
+            "a new one may be another writer's, mid-write"
+        );
+        assert!(other.exists(), "a name no write gives its temp file stays");
     }
 }
