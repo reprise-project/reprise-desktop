@@ -16,7 +16,7 @@ pub use fileio::{
     copy_xattrs, create_temp_beside, locked_edit, open_regular, read_regular, write_atomic,
     write_document, write_private,
 };
-pub(crate) use fileio::{on_a_drive, read_held, read_opened};
+pub(crate) use fileio::{on_a_drive, read_held, read_opened, real_path};
 pub use mounts::{is_mount_point, mount_root, refuse_holding_mount, refuse_mount_point};
 #[cfg(test)]
 pub(crate) use put::IN_FLUSH;

@@ -1974,6 +1974,27 @@ fn write_document_keeps_mode_and_symlinks() {
     );
 }
 
+#[test]
+fn write_atomic_through_a_dangling_link_creates_its_target_and_keeps_the_link() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    std::fs::create_dir(dir.join("conf")).expect("mkdir");
+    let link = dir.join("conf/bookmarks");
+    std::os::unix::fs::symlink("../dotfiles/gtk/bookmarks", &link).expect("symlink");
+    write_atomic(&link, b"a\n").expect("save");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .expect("lstat")
+            .file_type()
+            .is_symlink(),
+        "the link stays a link"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("dotfiles/gtk/bookmarks")).expect("read"),
+        "a\n"
+    );
+}
+
 /// A save through a symlink renames a new file over the link's target, so the link stays and a
 /// failed write never truncates the target.
 #[test]
