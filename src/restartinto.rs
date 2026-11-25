@@ -43,7 +43,7 @@ pub struct BootTarget {
 }
 
 impl BootTarget {
-    fn firmware(password: bool) -> BootTarget {
+    pub(crate) fn firmware(password: bool) -> BootTarget {
         BootTarget {
             entry: None,
             title: "Firmware Setup".into(),
