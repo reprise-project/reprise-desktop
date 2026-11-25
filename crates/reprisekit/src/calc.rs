@@ -41,11 +41,14 @@ pub fn apply(op: char, a: f64, b: f64) -> f64 {
     }
 }
 
-/// `v` to 12 significant digits, without trailing zeros; huge and tiny
-/// values in exponent form.
+/// `v` to 12 significant digits, without trailing zeros; tiny values, and values past
+/// [`EXACT_MAX`] whose last digits an f64 cannot hold, in exponent form.
 pub fn format(v: f64) -> String {
     format_sig(v, 12)
 }
+
+/// 2^53: every whole number up to it is exact in an f64, written out in full.
+const EXACT_MAX: f64 = 9_007_199_254_740_992.0;
 
 /// `v` to `sig` significant digits, as `format`.
 pub fn format_sig(v: f64, sig: usize) -> String {
@@ -62,7 +65,7 @@ pub fn format_sig(v: f64, sig: usize) -> String {
     if r == 0.0 {
         return "0".into();
     }
-    if r.abs() >= 1e16 || r.abs() < 1e-6 {
+    if r.abs() > EXACT_MAX || r.abs() < 1e-6 {
         let s = format!("{:.*e}", sig - 1, r);
         let (m, e) = s.split_once('e').unwrap_or((&s, "0"));
         let m = m.trim_end_matches('0').trim_end_matches('.');
@@ -314,5 +317,11 @@ mod tests {
         assert_eq!(answer("2^70").as_deref(), Some("1.18059162072e21"));
         assert_eq!(answer("1/2^30").as_deref(), Some("9.31322574615e-10"));
         assert_eq!(answer("10^15").as_deref(), Some("1000000000000000"));
+        assert_eq!(answer("2^53").as_deref(), Some("9007199254740992"));
+        assert_eq!(
+            answer("99999999*99999999").as_deref(),
+            Some("9.9999998e15"),
+            "past 2^53 the last digit is lost, so no whole number is written"
+        );
     }
 }
