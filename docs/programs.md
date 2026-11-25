@@ -38,7 +38,11 @@ The file manager, and the default for folders.
   and "free of" line; a drive that does not answer stays blank. F2 or Rename
   on a drive sets its file system's label through UDisks2, which asks for a
   password through polkit when the drive is not yours; it is greyed for a file
-  system UDisks2 cannot relabel. Explorer does not format drives.
+  system UDisks2 cannot relabel and for the system's own drives (UDisks2's
+  system hint, or mounted at `/`, `/boot`, `/efi`, `/boot/efi` or `/usr`),
+  whose labels `fstab`, `crypttab` or the boot loader may name. A name may not
+  start with `-`, and a drive swapped while the box is up keeps its label.
+  Explorer does not format drives.
   The address bar writes a folder on a share, phone or camera under its name
   ("Test Phone/DCIM"), and takes that text typed back.
 - **Disk images** (`.iso`, raw `.img`) open by mounting them read-only, after

@@ -798,8 +798,22 @@ impl Labels {
     }
 }
 
+/// The text of the box up, which it dismisses.
+fn box_text(ex: &mut Explorer, ctx: &mut repriseapp::Ctx) -> String {
+    let text = match ex.dialog() {
+        Some(Dialog::Message { title, text, .. }) => {
+            assert_eq!(title, "Rename");
+            text.clone()
+        }
+        _ => panic!("a box is up"),
+    };
+    ex.dismiss_up(ctx);
+    text
+}
+
 /// F2 on a mounted FAT stick edits its label alone and sets it through UDisks2; a refusal
-/// raises a box in words. An ext4 drive UDisks2 has no tools for greys Rename.
+/// raises a box in words. Rename is greyed on the system's own drive, which F2 says, and on a
+/// drive UDisks2 has no tools for. A stick swapped while the box is up keeps its label.
 #[test]
 fn rename_sets_a_drives_label_through_udisks() {
     use reprisefs::udisks::{Snapshot, Udisks, Volume};
@@ -832,6 +846,7 @@ fn rename_sets_a_drives_label_through_udisks() {
     );
     ex.drives = vec![
         space_drive("/", "/dev/sda2", false),
+        space_drive("/run/media/u/DATA", "/dev/sdy1", true),
         space_drive("/run/media/u/STICK", "/dev/sdz1", true),
     ];
     let volume = |path: &str, device: &str, mount: &str, fs: &str, label: &str| Volume {
@@ -839,39 +854,63 @@ fn rename_sets_a_drives_label_through_udisks() {
         device: device.into(),
         label: Some(label.into()),
         fs_type: fs.into(),
+        uuid: format!("uuid-{label}"),
         filesystem: true,
         mounts: vec![mount.into()],
         ..Default::default()
     };
+    let stick = volume(STICK, "/dev/sdz1", "/run/media/u/STICK", "vfat", "STICK");
     ex.volumes = Snapshot {
         volumes: vec![
             volume("/block/sda2", "/dev/sda2", "/", "ext4", "root"),
-            volume(STICK, "/dev/sdz1", "/run/media/u/STICK", "vfat", "STICK"),
+            volume(
+                "/block/sdy1",
+                "/dev/sdy1",
+                "/run/media/u/DATA",
+                "xfs",
+                "DATA",
+            ),
+            stick.clone(),
         ],
-        filesystems: vec!["vfat".into()],
+        filesystems: vec!["vfat".into(), "ext4".into()],
         ..Default::default()
     };
     ex.go(Place::Computer, &mut ctx);
+    let row = |ex: &Explorer, at: &str| ex.index_of(Path::new(at)).expect("listed");
 
-    let root = ex.index_of(Path::new("/")).expect("/ listed");
-    ex.sv.selection.set_only(Some(root));
+    ex.sv.selection.set_only(Some(row(&ex, "/")));
+    assert!(!ex.menu_state().relabel, "/ is the system's own drive");
+    ex.begin_rename(&mut ctx);
+    assert!(ex.sv.edit.is_none(), "F2 on / opens no box");
+    assert_eq!(
+        box_text(&mut ex, &mut ctx),
+        "Reprise doesn't rename the system's own drives."
+    );
+
+    ex.sv
+        .selection
+        .set_only(Some(row(&ex, "/run/media/u/DATA")));
     assert!(
         !ex.menu_state().relabel,
-        "UDisks2 has no tools for ext4 here"
+        "UDisks2 has no tools for xfs here"
     );
     ex.begin_rename(&mut ctx);
-    assert!(ex.sv.edit.is_none(), "F2 on / does nothing");
+    assert!(
+        ex.sv.edit.is_none() && ex.dialog().is_none(),
+        "F2 does nothing"
+    );
 
-    let stick = ex
-        .index_of(Path::new("/run/media/u/STICK"))
-        .expect("listed");
-    ex.sv.selection.set_only(Some(stick));
-    assert!(ex.menu_state().relabel);
-    ex.begin_rename(&mut ctx);
-    let (i, edit) = ex.sv.edit.as_mut().expect("the rename box");
-    assert_eq!((*i, edit.text.as_str()), (stick, "STICK"));
-    *edit = reprisekit::textedit::TextEdit::new("PHOTOS", true);
-    ex.commit_rename(&mut ctx);
+    let rename = |ex: &mut Explorer, ctx: &mut repriseapp::Ctx, to: &str| {
+        let at = row(ex, "/run/media/u/STICK");
+        ex.sv.selection.set_only(Some(at));
+        assert!(ex.menu_state().relabel);
+        ex.begin_rename(ctx);
+        let (i, edit) = ex.sv.edit.as_mut().expect("the rename box");
+        assert_eq!((*i, edit.text.as_str()), (at, "STICK"));
+        *edit = reprisekit::textedit::TextEdit::new(to, true);
+        ex.commit_rename(ctx);
+    };
+    rename(&mut ex, &mut ctx, "PHOTOS");
     wake_until(&mut ex, &mut ctx, |_| !labels.lock().unwrap().is_empty());
     assert_eq!(*labels.lock().unwrap(), ["PHOTOS"]);
     wake_until(&mut ex, &mut ctx, |ex| ex.jobs_pending == 0);
@@ -880,20 +919,66 @@ fn rename_sets_a_drives_label_through_udisks() {
     ex.drives = vec![space_drive("/run/media/u/STICK", "/dev/sdz1", true)];
     ex.go(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.go(Place::Computer, &mut ctx);
-    let stick = ex
-        .index_of(Path::new("/run/media/u/STICK"))
-        .expect("listed");
-    ex.sv.selection.set_only(Some(stick));
-    ex.begin_rename(&mut ctx);
-    let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
-    *edit = reprisekit::textedit::TextEdit::new("deny", true);
-    ex.commit_rename(&mut ctx);
+    rename(&mut ex, &mut ctx, "deny");
     wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
-    match ex.dialog() {
-        Some(Dialog::Message { title, text, .. }) => {
-            assert_eq!(title, "Rename");
-            assert_eq!(text, "You do not have permission to rename STICK.");
-        }
-        _ => panic!("the refusal's box is up"),
-    }
+    assert_eq!(
+        box_text(&mut ex, &mut ctx),
+        "You do not have permission to rename STICK."
+    );
+
+    rename(&mut ex, &mut ctx, "-o");
+    assert_eq!(
+        box_text(&mut ex, &mut ctx),
+        "A drive's name cannot start with a hyphen (-)."
+    );
+
+    ex.begin_rename(&mut ctx);
+    let swapped = Volume {
+        uuid: "uuid-another-stick".into(),
+        ..stick
+    };
+    ex.volumes.volumes = vec![swapped];
+    let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+    *edit = reprisekit::textedit::TextEdit::new("MUSIC", true);
+    ex.commit_rename(&mut ctx);
+    assert_eq!(
+        box_text(&mut ex, &mut ctx),
+        "The drive changed; nothing was renamed."
+    );
+    wake_until(&mut ex, &mut ctx, |ex| ex.jobs_pending == 0);
+    assert_eq!(
+        *labels.lock().unwrap(),
+        ["PHOTOS"],
+        "only the first call labelled"
+    );
+}
+
+#[test]
+fn a_relabel_refusal_reads_in_words() {
+    use reprisefs::udisks::{Error, ErrorKind};
+    let failed = |message: &str| Error {
+        kind: ErrorKind::Other,
+        message: message.into(),
+    };
+    let text = |fs: &str, message: &str| {
+        crate::volumes::relabel_failed_text("STICK", fs, &failed(message))
+    };
+    assert_eq!(
+        text(
+            "vfat",
+            "Label for VFAT filesystem must be at most 11 characters long."
+        ),
+        "The name is too long for this drive (at most 11 characters)."
+    );
+    assert_eq!(
+        text("ext4", "Error setting label: label too long"),
+        "The name is too long for this drive (at most 16 characters).",
+        "a type's own limit where UDisks2 names none"
+    );
+    assert_eq!(
+        text("udf", "label too long"),
+        "The name is too long for this drive."
+    );
+    assert_eq!(text("vfat", ""), "Cannot rename STICK.");
+    assert_eq!(text("vfat", "Invalid label"), "Cannot rename STICK.");
 }

@@ -396,37 +396,54 @@ impl Explorer {
         Reply::redraw()
     }
 
-    /// A box titled `title` over a failed UDisks2 call; nothing for a dismissed prompt.
-    /// The volume Rename relabels for Computer's row `i`: one whose file system UDisks2 can label.
+    /// The volume Rename relabels for Computer's row `i`: one whose file system UDisks2 can label
+    /// and that is not the system's own.
     pub(crate) fn relabel_target(&self, i: usize) -> Option<Volume> {
         if self.place != Place::Computer || self.udisks.is_none() {
             return None;
         }
         let it = self.items.get(i)?;
         place::row_volume(&self.volumes, it)
-            .filter(|v| self.volumes.can_label(v))
+            .filter(|v| self.volumes.can_label(v) && !v.holds_system())
             .cloned()
     }
 
-    /// Sets the label of row `i`'s file system to `text` on a job: polkit may prompt first. The
+    /// Computer's row `i` is a file system the system runs from, which Rename leaves alone.
+    pub(crate) fn system_drive(&self, i: usize) -> bool {
+        self.place == Place::Computer
+            && (self.items.get(i))
+                .and_then(|it| place::row_volume(&self.volumes, it))
+                .is_some_and(|v| v.filesystem && v.holds_system())
+    }
+
+    /// Sets the label of `picked`, the volume the Rename box opened on, to `text` on a job:
+    /// polkit may prompt first. A drive swapped out while the box was up is left alone. The
     /// drives are scanned again once it lands, for the new name.
-    pub(crate) fn relabel(&mut self, i: usize, text: &str, ctx: &mut Ctx) -> Reply {
-        let (Some(v), Some(udisks)) = (self.relabel_target(i), self.udisks.clone()) else {
+    pub(crate) fn relabel(&mut self, picked: Volume, text: &str, ctx: &mut Ctx) -> Reply {
+        let Some(udisks) = self.udisks.clone() else {
             return Reply::none();
         };
         let label = text.trim().to_string();
-        if Some(&label) == v.label.as_ref() || (label.is_empty() && v.label.is_none()) {
+        if Some(&label) == picked.label.as_ref() || (label.is_empty() && picked.label.is_none()) {
             return Reply::none();
         }
-        let name = v.name(self.volumes.disk_of(&v));
+        if !(self.volumes.volume(&picked.path)).is_some_and(|v| v.same_as(&picked)) {
+            return self.message_box("Rename", DRIVE_CHANGED.into(), ctx);
+        }
+        // A label tool UDisks2 runs (e2label, fatlabel) may read a leading hyphen as an option.
+        if label.starts_with('-') {
+            return self.message_box("Rename", LEADING_HYPHEN.into(), ctx);
+        }
+        let name = picked.name(self.volumes.disk_of(&picked));
         self.spawn_job(ctx, move || {
-            let done = udisks.set_label(&v.path, &label);
+            let done = udisks.set_label(&picked.path, &label);
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| match done {
                 Ok(()) => ex.relabelled(ctx),
                 Err(e) if e.kind == ErrorKind::Cancelled => Reply::redraw(),
                 Err(e) => {
-                    log::info!("explorer: relabelling {}: {e}", v.path);
-                    ex.message_box("Rename", relabel_failed_text(&name, &e), ctx)
+                    log::info!("explorer: relabelling {}: {e}", picked.path);
+                    let text = relabel_failed_text(&name, &picked.fs_type, &e);
+                    ex.message_box("Rename", text, ctx)
                 }
             })
         });
@@ -443,6 +460,7 @@ impl Explorer {
         Reply::redraw()
     }
 
+    /// A box titled `title` over a failed UDisks2 call; nothing for a dismissed prompt.
     fn udisks_failed(&mut self, title: &str, e: &Error, ctx: &mut Ctx) -> Reply {
         if e.kind == ErrorKind::Cancelled {
             return Reply::redraw();
@@ -451,13 +469,43 @@ impl Explorer {
     }
 }
 
-/// Why a drive named `name` kept its label, for the Rename box.
-pub(crate) fn relabel_failed_text(name: &str, e: &Error) -> String {
+pub(crate) const SYSTEM_DRIVE: &str = "Reprise doesn't rename the system's own drives.";
+const DRIVE_CHANGED: &str = "The drive changed; nothing was renamed.";
+const LEADING_HYPHEN: &str = "A drive's name cannot start with a hyphen (-).";
+
+/// Why a drive named `name` with an `fs_type` file system kept its label, for the Rename box.
+/// UDisks2's own reason is put in words where its shape is known.
+pub(crate) fn relabel_failed_text(name: &str, fs_type: &str, e: &Error) -> String {
     match e.kind {
         ErrorKind::NotAuthorized => format!("You do not have permission to rename {name}."),
         ErrorKind::Busy => {
             format!("{name} is in use. Close any program or window using it, and then try again.")
         }
-        _ => format!("Cannot rename {name}: {}", e.message),
+        _ if label_too_long(&e.message) => match label_limit(&e.message, fs_type) {
+            Some(n) => format!("The name is too long for this drive (at most {n} characters)."),
+            None => "The name is too long for this drive.".into(),
+        },
+        _ => format!("Cannot rename {name}."),
     }
+}
+
+/// libblockdev's "Label for VFAT filesystem must be at most 11 characters long.", or a plain
+/// "too long".
+fn label_too_long(message: &str) -> bool {
+    let m = message.to_lowercase();
+    m.contains("too long") || (m.contains("at most") && m.contains("characters long"))
+}
+
+/// The longest label in characters: the number UDisks2's `message` names, else `fs_type`'s own.
+fn label_limit(message: &str, fs_type: &str) -> Option<usize> {
+    let named =
+        (message.split("at most ").nth(1)).and_then(|rest| rest.split(' ').next()?.parse().ok());
+    named.or(match fs_type {
+        "vfat" | "exfat" => Some(11),
+        "xfs" => Some(12),
+        "ext2" | "ext3" | "ext4" => Some(16),
+        "ntfs" => Some(128),
+        "btrfs" => Some(255),
+        _ => None,
+    })
 }

@@ -104,11 +104,16 @@ impl Explorer {
     }
 
     pub fn begin_rename(&mut self, ctx: &mut Ctx) -> Reply {
-        if let Some(i) = self.sv.selection.single()
-            && let Some(v) = self.relabel_target(i)
-        {
-            let label = v.label.unwrap_or_default();
-            return self.open_rename_box(i, &label, true, ctx);
+        if let Some(i) = self.sv.selection.single() {
+            if let Some(v) = self.relabel_target(i) {
+                let label = v.label.clone().unwrap_or_default();
+                self.open_rename_box(i, &label, true, ctx);
+                self.relabeling = Some(v);
+                return Reply::redraw();
+            }
+            if self.system_drive(i) {
+                return self.message_box("Rename", crate::volumes::SYSTEM_DRIVE.into(), ctx);
+            }
         }
         if self.place.read_only() {
             return Reply::none();
@@ -130,6 +135,7 @@ impl Explorer {
     fn open_rename_box(&mut self, i: usize, text: &str, whole: bool, ctx: &mut Ctx) -> Reply {
         self.focus = Focus::View;
         self.renames += 1;
+        self.relabeling = None;
         self.sv.edit = Some((i, TextEdit::rename(text, whole)));
         self.refresh_chrome(ctx);
         Reply::redraw()
@@ -165,7 +171,10 @@ impl Explorer {
 
     fn rename_to(&mut self, i: usize, text: &str, ctx: &mut Ctx) -> Reply {
         if self.place == crate::place::Place::Computer {
-            return self.relabel(i, text, ctx);
+            return match self.relabeling.take() {
+                Some(v) => self.relabel(v, text, ctx),
+                None => Reply::none(),
+            };
         }
         let Some(it) = self.items.get(i).cloned() else {
             return Reply::none();

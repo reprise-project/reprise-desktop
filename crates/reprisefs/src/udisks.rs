@@ -107,6 +107,8 @@ pub struct Volume {
     pub label: Option<String>,
     /// `IdType`: `vfat`, `ext4`, `crypto_LUKS`.
     pub fs_type: String,
+    /// `IdUUID`; empty when it has none.
+    pub uuid: String,
     pub size: u64,
     /// It carries a file system UDisks2 can mount.
     pub filesystem: bool,
@@ -136,7 +138,21 @@ pub struct Image {
     pub loop_path: String,
 }
 
+/// Where the system's own file systems are mounted.
+const SYSTEM_MOUNTS: [&str; 5] = ["/", "/boot", "/efi", "/boot/efi", "/usr"];
+
 impl Volume {
+    /// Part of the system: UDisks2's `HintSystem`, or mounted where the system boots from.
+    pub fn holds_system(&self) -> bool {
+        self.system || (self.mounts.iter()).any(|m| SYSTEM_MOUNTS.iter().any(|s| m == Path::new(s)))
+    }
+
+    /// The same file system as `other`, as far as UDisks2 tells them apart.
+    pub fn same_as(&self, other: &Volume) -> bool {
+        (self.path == other.path && self.uuid == other.uuid && self.size == other.size)
+            && (self.fs_type == other.fs_type && self.label == other.label)
+    }
+
     /// An encrypted container with no cleartext volume.
     pub fn locked(&self) -> bool {
         self.encrypted && self.cleartext.is_none()
@@ -331,6 +347,7 @@ fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volu
         disk: object(block, "Drive"),
         label,
         fs_type: text(block, "IdType"),
+        uuid: text(block, "IdUUID"),
         size: block
             .get("Size")
             .and_then(|v| u64::try_from(v.clone()).ok())
@@ -880,6 +897,7 @@ pub(crate) mod tests {
             ("Drive", o(drive)),
             ("IdLabel", s(label)),
             ("IdType", s(id_type)),
+            ("IdUUID", s(&format!("uuid{dev}"))),
             ("HintIgnore", b(false)),
             ("HintSystem", b(system)),
             ("HintAuto", b(!system)),
@@ -1296,6 +1314,67 @@ pub(crate) mod tests {
             ..stick(&snap)
         };
         assert!(!snap.can_label(&xfs), "a type UDisks2 does not list");
+    }
+
+    #[test]
+    fn a_volume_the_system_is_on_holds_the_system() {
+        let snap = fold(&objects());
+        let stick = snap.volume(&format!("{BD}/sdb1")).unwrap();
+        assert!(!stick.holds_system(), "the FAT stick");
+        let ssd = snap.volume(&format!("{BD}/sda2")).unwrap();
+        assert!(ssd.holds_system(), "HintSystem on the internal disk");
+        for at in SYSTEM_MOUNTS {
+            let v = Volume {
+                mounts: vec![at.into()],
+                ..stick.clone()
+            };
+            assert!(v.holds_system(), "mounted at {at}");
+        }
+        let home = Volume {
+            mounts: vec!["/home".into()],
+            ..stick.clone()
+        };
+        assert!(!home.holds_system(), "mounted at /home");
+    }
+
+    #[test]
+    fn a_volume_is_the_same_while_its_uuid_size_type_and_label_are() {
+        let snap = fold(&objects());
+        let stick = snap.volume(&format!("{BD}/sdb1")).unwrap();
+        assert_eq!(stick.uuid, "uuid/dev/sdb1");
+        let mounted_elsewhere = Volume {
+            mounts: Vec::new(),
+            ..stick.clone()
+        };
+        assert!(
+            stick.same_as(&mounted_elsewhere),
+            "a mount is not the drive"
+        );
+        let others = [
+            Volume {
+                uuid: "other".into(),
+                ..stick.clone()
+            },
+            Volume {
+                size: stick.size + 1,
+                ..stick.clone()
+            },
+            Volume {
+                fs_type: "exfat".into(),
+                ..stick.clone()
+            },
+            Volume {
+                label: None,
+                ..stick.clone()
+            },
+            Volume {
+                path: format!("{BD}/sdc1"),
+                ..stick.clone()
+            },
+        ];
+        for other in &others {
+            assert!(!stick.same_as(other), "{other:?}");
+        }
     }
 
     #[test]
