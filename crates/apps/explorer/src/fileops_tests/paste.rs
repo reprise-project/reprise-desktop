@@ -472,6 +472,66 @@ fn undo_in_one_window_reverses_the_newest_operation_of_any_window_first() {
     assert_eq!(renamer.undo, None);
 }
 
+/// An open menu's Undo row takes the entry it named, not one another window pushed since.
+#[test]
+fn the_undo_row_takes_only_the_entry_it_named() {
+    use reprisefs::undo::{Undoable, file_id};
+    let home = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    let [named, later] = ["named", "later"].map(|n| home.path().join(n));
+    let push = |ex: &Explorer, p: &std::path::Path| {
+        std::fs::create_dir(p).expect("mkdir");
+        ex.undos.push(Undoable::New(p.to_path_buf(), file_id(p)));
+    };
+    push(&ex, &named);
+    ex.sync_undo();
+    let menu = crate::menus::background_menu(&ex.menu_state());
+    ex.popup = Some(crate::window::Popup::new((0, 0), menu, &ctx, false));
+    push(&ex, &later);
+    ex.sync_undo();
+    assert_eq!(ex.undo, Some("New"));
+
+    ex.popup = None;
+    ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(
+        named.exists() && later.exists(),
+        "its entry is no longer on top"
+    );
+    ex.sync_undo();
+    ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(named.exists() && !later.exists());
+}
+
+/// While another window's undo runs, the Undo rows grey and Ctrl+Z says why it does nothing.
+#[test]
+fn undo_greys_and_ctrl_z_says_so_while_another_window_undoes() {
+    use reprisefs::undo::{SharedUndo, Undoable};
+    let home = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    let history = home.path().join("reprise-undo");
+    ex.undos = SharedUndo::at(history.clone());
+    let other = SharedUndo::at(history);
+    other.push(Undoable::Copied(home.path().join("x"), None));
+    other.push(Undoable::Copied(home.path().join("y"), None));
+    let (undo, running) = other.take().expect("the other window's undo");
+
+    ex.sync_undo();
+    assert_eq!(ex.undo, None, "greyed");
+    ex.run(Command::Undo, &mut ctx);
+    match ex.dialog() {
+        Some(Dialog::Message { text, .. }) => assert_eq!(text, "Another undo is still running."),
+        d => panic!("a box: {:?}", d.is_some()),
+    }
+    ex.take_up();
+    other.put_back(undo, running, 1, None);
+    ex.sync_undo();
+    assert_eq!(ex.undo, Some("Copy"));
+}
+
 /// Undo of a move whose source folder vanished fails, says so, and keeps the batch, so Undo again once
 /// the folder is back finishes the job.
 #[test]
@@ -576,11 +636,11 @@ fn undo_of_a_move_runs_on_a_job_after_the_handler_returns() {
         "the handler moves nothing back"
     );
     assert!(ex.busy(), "the undo is work a close waits for");
-    assert_eq!(ex.undo, None, "its entry left the stack");
     while ex.removing.is_none() {
         std::thread::sleep(std::time::Duration::from_millis(2));
         ex.poll_jobs(&mut ctx);
     }
+    assert_eq!(ex.undo, None, "its entry left the stack");
     let progress = &ex.removing.as_ref().expect("the undo's job").progress;
     assert_eq!(
         (progress.kind, &*progress.from, &*progress.to),
@@ -603,7 +663,12 @@ fn a_close_waits_for_a_put_back_the_history_lock_kept_out() {
     ex.undos
         .push_all(vec![Undoable::Copied(a, None), Undoable::Copied(b, None)]);
 
+    ex.sync_undo();
     ex.run(Command::Undo, &mut ctx);
+    while ex.removing.is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        ex.poll_jobs(&mut ctx);
+    }
     let lock = std::fs::File::create(home.path().join("reprise-undo.lock")).expect("lock file");
     lock.lock().expect("lock");
     let held = std::thread::spawn(move || {

@@ -288,38 +288,47 @@ impl Explorer {
             .or_else(|| undo_failed.map(|e| ("Error", format!("Cannot undo: {e}"))));
         r.progress.ended(r.done, failed.as_ref());
         self.publish_task_progress();
-        if r.purpose == Purpose::Empty && r.failed.is_none() && !r.progress.meter.cancelled() {
-            self.undos.retain_non_trash();
-        }
-        self.undos.push_all(r.batch);
+        let emptied =
+            r.purpose == Purpose::Empty && r.failed.is_none() && !r.progress.meter.cancelled();
         let undo = r.undo.take();
         if let Some(u) = &undo {
             for d in &u.dirs {
                 self.refill_tree_node(&Place::from_path(d), ctx);
             }
         }
-        let error = undo.and_then(|u| {
-            let left = (self.undos).put_back(u.undo, u.running, r.done, u.error.as_ref());
-            u.error.map(|e| (e, left))
-        });
-        self.undos.forget_gone(&r.gone);
-        if self.undos.retrying() {
-            let undos = self.undos.clone();
-            self.spawn_job(ctx, move || {
-                undos.settle();
-                Box::new(|ex: &mut Explorer, _: &mut Ctx| {
-                    ex.sync_undo();
-                    Reply::redraw()
-                })
+        let (batch, gone, done) = (r.batch, r.gone, r.done);
+        self.edit_undos(ctx, move |undos| {
+            if emptied {
+                undos.retain_non_trash();
+            }
+            undos.push_all(batch);
+            let error = undo.and_then(|u| {
+                let items = u.undo.steps().len().saturating_sub(done);
+                let left = undos.put_back(u.undo, u.running, done, u.error.as_ref());
+                u.error.map(|e| (e, left.map(|id| (id, items))))
             });
-        }
-        self.sync_undo();
+            undos.forget_gone(&gone);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                if ex.undos.retrying() {
+                    let undos = ex.undos.clone();
+                    ex.spawn_job(ctx, move || {
+                        undos.settle();
+                        Box::new(|ex: &mut Explorer, _: &mut Ctx| {
+                            ex.sync_undo();
+                            Reply::redraw()
+                        })
+                    });
+                }
+                ex.sync_undo();
+                match error {
+                    Some((e, left)) => ex.undo_failed(&e, left, ctx),
+                    None => Reply::redraw(),
+                }
+            })
+        });
         let mut reply = self.refresh(ctx);
         if let Some((title, text)) = r.failed {
             reply = self.message_box(title, text, ctx);
-        }
-        if let Some((e, left)) = error {
-            reply = reply.and(self.undo_failed(&e, left, ctx));
         }
         if let Some(next) = self.remove_queue.pop_front() {
             self.remove(next, ctx);

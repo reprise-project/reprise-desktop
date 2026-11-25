@@ -330,14 +330,14 @@ fn undo_of_a_named_entry_runs_only_while_it_is_on_top() {
     let below = push(&mut ex, &first);
     let top = push(&mut ex, &second);
 
-    ex.undo_with(Some(below), false, &mut ctx);
+    ex.undo_with(below, false, &mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(
         first.exists() && second.exists(),
         "an entry under another is not undone"
     );
 
-    ex.undo_with(Some(top), false, &mut ctx);
+    ex.undo_with(top, false, &mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(first.exists() && !second.exists());
 }

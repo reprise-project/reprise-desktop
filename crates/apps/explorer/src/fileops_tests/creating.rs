@@ -16,6 +16,7 @@ fn new_folder_creates_the_folder_and_starts_a_rename() {
         .position(|it| it.name == "New Folder")
         .expect("the new folder is listed");
     assert_eq!(ex.sv.edit.as_ref().map(|(j, _)| *j), Some(i));
+    ex.finish_puts(&mut ctx);
     assert_eq!(ex.undo, Some("New"));
 }
 
@@ -35,6 +36,7 @@ fn new_from_a_template_copies_it_under_its_name_and_starts_a_rename() {
     assert_eq!(std::fs::read_to_string(&made).expect("read"), "body");
     let i = ex.index_of(&made).expect("the copy is listed");
     assert_eq!(ex.sv.edit.as_ref().map(|(j, _)| *j), Some(i));
+    ex.finish_puts(&mut ctx);
     assert_eq!(ex.undo, Some("New"));
 }
 
@@ -87,6 +89,7 @@ fn undo_reverses_a_rename() {
 
     ex.sv.edit = Some((0, reprisekit::textedit::TextEdit::new("b.txt", false)));
     ex.commit_rename(&mut ctx);
+    ex.finish_puts(&mut ctx);
     assert_eq!(ex.undo, Some("Rename"));
 
     ex.run(Command::Undo, &mut ctx);

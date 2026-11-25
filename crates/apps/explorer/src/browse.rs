@@ -496,8 +496,8 @@ impl Explorer {
         ctx: &mut Ctx,
     ) {
         self.refill_tree_node(under, ctx);
-        self.undos.push(reprisefs::undo::Undoable::New(made, id));
-        self.sync_undo();
+        let made = reprisefs::undo::Undoable::New(made, id);
+        self.record_undos(ctx, move |undos| undos.push(made));
     }
 
     /// Lands the picker writes its Cancel or Accept left on disk ([`Explorer::browse_left`]): their

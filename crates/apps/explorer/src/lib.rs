@@ -285,8 +285,16 @@ pub struct Explorer {
     window_px: Option<(i32, i32)>,
     pub popup: Option<Popup>,
     pub focus: Focus,
+    /// The Undo rows' verb, None while greyed.
     pub undo: Option<&'static str>,
+    /// The entry the Undo rows name, which they and Ctrl+Z take.
+    pub(crate) undo_entry: Option<reprisefs::undo::EntryId>,
+    /// An undo runs in some window ([`reprisefs::undo::SharedUndo::held`]).
+    pub(crate) undo_held: bool,
     pub undos: reprisefs::undo::SharedUndo,
+    /// [`Explorer::edit_undos`]'s thread, and its edits whose results have yet to run.
+    undo_edits: Option<std::sync::mpsc::Sender<fileops::UndoEdit>>,
+    pub(crate) undo_edits_pending: usize,
     /// New's template rows, as the last folder listing read them.
     templates: Vec<reprisefs::templates::Template>,
     /// Where an asked-for paste goes, captured then: the answer arrives an
@@ -614,10 +622,14 @@ impl Explorer {
             popup: None,
             focus: Focus::View,
             undo: None,
+            undo_entry: None,
+            undo_held: false,
             undos: match cfg!(test) {
                 true => reprisefs::undo::SharedUndo::default(),
                 false => reprisefs::undo::SharedUndo::session(),
             },
+            undo_edits: None,
+            undo_edits_pending: 0,
             templates: Vec::new(),
             paste: None,
             menu_paste: None,
@@ -2056,7 +2068,7 @@ impl App for Lazy {
                     }
                     Some(Alone::EmptyBin) => ex.confirm_empty_bins(ctx),
                     Some(Alone::Zip(paths)) => ex.zip_paths(paths.clone(), ctx),
-                    Some(Alone::Undo(entry)) => ex.undo_with(Some(*entry), false, ctx),
+                    Some(Alone::Undo(entry)) => ex.undo_with(*entry, false, ctx),
                     None => Reply::none(),
                 };
                 ex

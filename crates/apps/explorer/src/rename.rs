@@ -32,12 +32,12 @@ impl Explorer {
         was_dir: bool,
         ctx: &mut Ctx,
     ) {
-        self.undos.push(Undoable::Rename {
+        let renamed = Undoable::Rename {
             from: from.to_path_buf(),
             to: to.to_path_buf(),
             id,
-        });
-        self.sync_undo();
+        };
+        self.record_undos(ctx, move |undos| undos.push(renamed));
         if !was_dir {
             return;
         }
@@ -415,8 +415,7 @@ impl Explorer {
         dirs: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        self.undos.push_all(undone);
-        self.sync_undo();
+        self.record_undos(ctx, move |undos| undos.push_all(undone));
         if dirs && let Some(at) = self.place.path() {
             let place = crate::place::Place::from_path(&at);
             self.refill_tree_node(&place, ctx);
@@ -522,6 +521,7 @@ mod tests {
         let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
         *edit = TextEdit::new(edit.text.replacen('a', "b", 1), false);
         ex.commit_rename(&mut ctx);
+        ex.finish_puts(&mut ctx);
         assert_eq!(names(dir.path()), ["b.txt"]);
         let b = dir.path().join("b.txt");
         std::fs::rename(&b, dir.path().join("c.txt")).expect("rename");
@@ -580,6 +580,7 @@ mod tests {
             "c.jpg"
         );
         assert_eq!(ex.sv.selection.len(), 3, "the renamed items stay picked");
+        ex.finish_puts(&mut ctx);
         assert_eq!(ex.undo, Some("Rename"));
 
         ex.run(Command::Undo, &mut ctx);

@@ -344,6 +344,7 @@ fn make_new_folder_refills_the_folders_pane() {
         ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
     }
     assert!(ex.dialog().is_none());
+    ex.finish_puts(&mut ctx);
     ex.undo_last(&mut ctx);
     ex.finish_puts(&mut ctx);
     assert_eq!(labels(&ex), ["sub"], "Undo takes it out of the pane");
@@ -378,6 +379,7 @@ fn make_new_folder_keeps_open_subfolders_and_undoes() {
     let made = dir.path().join("New Folder");
     assert!(made.is_dir());
     assert_eq!(sub_open(&ex), Some(true), "sub stays open");
+    ex.finish_puts(&mut ctx);
     assert_eq!(ex.undo, Some("New"), "Edit's first row offers the undo");
     ex.undo_last(&mut ctx);
     ex.finish_puts(&mut ctx);
@@ -394,6 +396,7 @@ fn undo_of_the_pickers_new_folder_leaves_a_different_folder_that_took_its_name()
     std::fs::rename(&made, dir.path().join("Renamed")).expect("rename");
     std::fs::create_dir(&made).expect("mkdir");
 
+    ex.finish_puts(&mut ctx);
     ex.undo_last(&mut ctx);
     ex.finish_puts(&mut ctx);
 

@@ -372,7 +372,9 @@ fn undos_erase_answer_erases_only_the_copy_it_asked_about() {
         reprisefs::undo::landed(&asked),
     ));
 
+    ex.sync_undo();
     ex.run(Command::Undo, &mut ctx);
+    until_undo_runs(&mut ex, &mut ctx);
     ex.undos.push(Undoable::Copied(during.clone(), None));
     ex.finish_puts(&mut ctx);
     let Some(Dialog::Confirm(c)) = ex.dialog() else {
@@ -393,6 +395,63 @@ fn undos_erase_answer_erases_only_the_copy_it_asked_about() {
         during.exists() && later.exists(),
         "a newer top entry is not erased"
     );
+}
+
+/// Polls `ex` until the undo it was asked for took its entry and runs.
+fn until_undo_runs(ex: &mut Explorer, ctx: &mut Ctx) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ex.removing.is_none() {
+        assert!(std::time::Instant::now() < end, "the undo starts");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        ex.poll_jobs(ctx);
+    }
+}
+
+/// The erase question counts the items of the entry it asks about, though a batch landed on top
+/// before it came up.
+#[test]
+fn undos_erase_question_counts_the_entry_it_asks_about() {
+    use reprisefs::undo::Undoable;
+    let _guard = lock(&TRASH_ENV);
+    let home = tempfile::tempdir().expect("a temp dir");
+    let data_home = DataHome::set(home.path());
+    data_home.recycle_bin("remove_immediately = true\n");
+    let dir = home.path().join("folder");
+    std::fs::create_dir(&dir).expect("mkdir");
+    let asked = dir.join("asked.txt");
+    std::fs::write(&asked, "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+    ex.undos.push(Undoable::Copied(
+        asked.clone(),
+        reprisefs::undo::landed(&asked),
+    ));
+    ex.sync_undo();
+
+    ex.run(Command::Undo, &mut ctx);
+    until_undo_runs(&mut ex, &mut ctx);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let tick = |what: &str| {
+        assert!(std::time::Instant::now() < end, "{what}");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    };
+    while ex.removing.is_some() {
+        tick("the undo stops");
+        ex.poll_removal(&mut ctx);
+    }
+    // The copy's entry is back on top before the window hears of it.
+    while ex.undos.label().is_none() {
+        tick("the copy's entry is back");
+    }
+    ex.undos.push_all(vec![
+        Undoable::Copied(dir.join("x"), None),
+        Undoable::Copied(dir.join("y"), None),
+    ]);
+    ex.finish_puts(&mut ctx);
+    let Some(Dialog::Confirm(c)) = ex.dialog() else {
+        panic!("the question is up")
+    };
+    assert!(c.text.starts_with("'asked.txt'"), "{}", c.text);
 }
 
 /// Delete on a drive that cannot hold a trash asks to delete for good, and says why.
