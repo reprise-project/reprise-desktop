@@ -573,7 +573,11 @@ mod tests {
         crate::pins::fonts();
         let big = Theme::default().with_text_size(200).controls();
         let (lay, at_100) = (layout(&big), layout(&ControlMetrics::CLASSIC));
-        assert_eq!(width(&big), width(&ControlMetrics::CLASSIC));
+        assert_eq!(
+            width(&big),
+            width(&ControlMetrics::CLASSIC) + 16,
+            "as wide but for the doubled scrollbar"
+        );
         assert_eq!(
             (lay.field.height, lay.name.height),
             (2 * FIELD_H, 2 * NAME_H)

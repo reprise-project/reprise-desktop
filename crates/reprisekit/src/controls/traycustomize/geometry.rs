@@ -483,7 +483,7 @@ impl TrayCustomize {
                 let y = g.list().y + PAGE_BODY_Y + k * g.row_h() + g.combo_y();
                 Rect::new(0, y, 0, PAGE_COMBO.height)
             }
-            Focus::AllIcons => g.check(self.metrics.check).inset(-1),
+            Focus::AllIcons => g.check(self.metrics.check_100()).inset(-1),
             Focus::Restore => g.restore(),
             Focus::List | Focus::Ok | Focus::Cancel => return None,
         };

@@ -251,29 +251,32 @@ pub fn draw_arrow_button(c: &mut Canvas, p: &Paint, r: Rect, arrow: Arrow, enabl
     }
 }
 
-/// A spinner's two raised arrow buttons at their logical rects.
+/// A spinner's two raised arrow buttons at their logical rects, each arrow and edge
+/// [`Paint::small_k`] times its 100% size.
 pub fn draw_spin_buttons(c: &mut Canvas, p: &Paint, up: Rect, down: Rect, enabled: bool) {
     let Paint { cs, s, .. } = *p;
+    let k = p.small_k();
+    let g = s * k;
     for (b, is_up) in [(up, true), (down, false)] {
         let r = b.scaled(s);
         c.fill_rect(r, cs.button_face);
-        c.edge_t(r, EdgeStyle::WindowRaised, cs, s);
-        let cx = (b.x + (b.width - 1) / 2) * s;
+        c.edge_t(r, EdgeStyle::WindowRaised, cs, g);
+        let cx = (b.x + (b.width - k) / 2) * s;
         let (tip, base) = if is_up {
-            let tip = (b.y + (b.height - 1) / 2) * s;
-            (tip, tip + s)
+            let tip = (b.y + (b.height - k) / 2) * s;
+            (tip, tip + g)
         } else {
-            let base = (b.y + (b.height - 2) / 2) * s;
-            (base + s, base)
+            let base = (b.y + (b.height - 2 * k) / 2) * s;
+            (base + g, base)
         };
         let arrow = |c: &mut Canvas, d: i32, ink| {
-            c.fill_rect(Rect::new(cx + d, tip + d, s, s), ink);
-            c.fill_rect(Rect::new(cx - s + d, base + d, 3 * s, s), ink);
+            c.fill_rect(Rect::new(cx + d, tip + d, g, g), ink);
+            c.fill_rect(Rect::new(cx - g + d, base + d, 3 * g, g), ink);
         };
         if enabled {
             arrow(c, 0, cs.button_text);
         } else {
-            arrow(c, s, cs.button_hilight);
+            arrow(c, g, cs.button_hilight);
             arrow(c, 0, cs.button_shadow);
         }
     }
@@ -722,9 +725,12 @@ fn scrollbar(
     total: usize,
     horizontal: bool,
 ) {
+    // Laid out at the paint's own scale, as the bar's hit test is, and drawn grown.
+    let thumb_min = p.small_k() * p.look.controls_at_100().thumb_min;
+    let parts = scrollbar_parts(sb, p.s, pos, visible, total, horizontal, thumb_min);
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     let Paint { cs, s, .. } = *p;
-    let thumb_min = p.look.controls_at_100().thumb_min;
-    let parts = scrollbar_parts(sb, s, pos, visible, total, horizontal, thumb_min);
     let enabled = total > visible;
     c.dither_rect_t(sb, cs.button_face, cs.button_hilight, s);
     let (back, forward) = if horizontal {

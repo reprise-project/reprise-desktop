@@ -60,11 +60,11 @@ pub fn layout_grown(r: Rect, cm: &ControlMetrics, u: TextUnits) -> Layout {
     }
 }
 
-/// The height a list `h` px tall at 100% takes with its cells grown by `u`: its frame and bar
-/// keep theirs.
-pub fn grown_height(h: i32, u: TextUnits) -> i32 {
+/// The height a list `h` px tall at 100% takes with its cells grown by `u` and its bar
+/// `bar_growth` px thicker: its frame keeps its size.
+pub fn grown_height(h: i32, u: TextUnits, bar_growth: i32) -> i32 {
     let rows = ROWS as i32 * CELL_H;
-    h - rows + u.len(rows)
+    h - rows + u.len(rows) + bar_growth
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

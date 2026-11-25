@@ -937,7 +937,7 @@ fn a_page_bigger_than_its_room_narrows_and_scrolls_above_its_band() {
     assert_eq!(l.fields[0].1.x, 184 + 874);
     assert_eq!(l.band, Some(Rect::new(0, 914, 1900, 86)));
     assert_eq!(l.view, Rect::new(0, 0, 1900, 914));
-    assert_eq!(l.page_bar, Some(Rect::new(1883, 0, 17, 914)));
+    assert_eq!(l.page_bar, Some(Rect::new(1866, 0, 34, 914)));
     assert_eq!(l.ok, Rect::new(1400, 934, 152, 46));
     assert_eq!(l.cancel.x, 1564);
     assert_eq!(t.page_scroll.short, 115);
@@ -1113,7 +1113,7 @@ fn a_scrolled_page_draws_its_parts_above_the_band() {
         assert_eq!(c.get(500 * s, 914 * s), inks.rule.argb(), "the band's rule");
         assert_eq!(c.get(500 * s, 999 * s), cs.button_face.argb());
         assert_ne!(c.get(1891 * s, 400 * s), white, "the bar");
-        assert_eq!(c.get(1880 * s, 400 * s), white);
+        assert_eq!(c.get(1860 * s, 400 * s), white);
     }
     let (mut t, text) = grown_page(Some((1900, 600)));
     t.wheel(None, 3);

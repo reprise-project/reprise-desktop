@@ -169,6 +169,7 @@ pub fn draw_menu_at(
     }
     let cs = &theme.colors;
     let s = theme.scale.max(1);
+    let (k, g) = (theme.text.small(), s * theme.text.small());
     let size = theme.fonts.size_px;
     let (ox, oy) = at;
     let flat = theme.look.style().is_some_and(|st| st.flat_menus);
@@ -251,17 +252,21 @@ pub fn draw_menu_at(
                 // Classic greys a disabled label by etching it; a flat
                 // menu draws it grey alone.
                 let etched = !*enabled && !hovered_here && !flat;
-                let glyph_y = centred(r, 7, s);
+                let glyph_y = centred(r, 7 * k, s);
                 match icon {
                     Some(ic) => {
                         let iy = r.y + (r.height - ic.height as i32) / 2;
                         canvas.blit_canvas(r.x + layout.icon_x, iy, ic);
                     }
-                    None if *checked && *radio => {
-                        draw_bullet(canvas, r.x + BULLET_X * s, centred(r, BULLET_D, s), s, fg)
-                    }
+                    None if *checked && *radio => draw_bullet(
+                        canvas,
+                        r.x + BULLET_X * g,
+                        centred(r, BULLET_D * k, s),
+                        g,
+                        fg,
+                    ),
                     None if *checked => {
-                        draw_check(canvas, r.x + CHECK_X * s, glyph_y + CHECK_DY * s, s, fg)
+                        draw_check(canvas, r.x + CHECK_X * g, glyph_y + CHECK_DY * g, g, fg)
                     }
                     None => {
                         if let Some(g) = glyph {
@@ -284,12 +289,12 @@ pub fn draw_menu_at(
                     } else {
                         fg
                     };
-                    draw_arrow(canvas, r.right() - ARROW_RIGHT_INSET * s, glyph_y, s, ink);
+                    draw_arrow(canvas, r.right() - ARROW_RIGHT_INSET * g, glyph_y, g, ink);
                 }
                 let text_rect = Rect::new(
                     r.x + layout.text_x,
                     r.y,
-                    (r.width - layout.text_x - ARROW_SPACE * s).max(0),
+                    (r.width - layout.text_x - ARROW_SPACE * g).max(0),
                     r.height,
                 );
                 let shown = text.ellipsize(label, text_rect.width, *bold, size);
@@ -392,6 +397,9 @@ fn draw_gutter_menu(
     use crate::look::styled::menu as look;
     let cs = &theme.colors;
     let s = theme.scale.max(1);
+    let (k, g) = (theme.text.small(), s * theme.text.small());
+    let marks = theme.paint().small_look(canvas);
+    let marks = marks.style().unwrap_or(st);
     let size = theme.fonts.size_px;
     let all = Rect::new(ox, oy, layout.width, layout.height);
     look::draw_frame(st, m, canvas, all, cs.menu, s);
@@ -457,7 +465,7 @@ fn draw_gutter_menu(
                 canvas.blit_canvas(r.x + layout.icon_x, iy, ic);
             }
             None if *checked => {
-                look::draw_check(st, m, canvas, square, *radio, lit, s);
+                look::draw_check(marks, m, canvas, square, *radio, lit, g);
             }
             None => {
                 if let Some(g) = glyph {
@@ -483,9 +491,9 @@ fn draw_gutter_menu(
             };
             draw_arrow(
                 canvas,
-                r.right() - m.arrow_inset * s,
-                centred(&r, 7, s),
-                s,
+                r.right() - m.arrow_inset * g,
+                centred(&r, 7 * k, s),
+                g,
                 ink,
             );
         }

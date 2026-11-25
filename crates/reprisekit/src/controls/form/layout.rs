@@ -329,8 +329,8 @@ pub(super) fn icon_list_layout(grows: bool, r: Rect, cm: &ControlMetrics) -> ico
 /// Where `it` draws and takes the pointer, on the surface: its 100% `rect` grown by `u` and moved
 /// to `origin`, then by its [`Indent`]. Pictures and controls with fixed art keep their size and
 /// only move; a separator and a rule keep their thickness, and an icon list, whose
-/// rows of fixed icons fill its height, keeps its height. Indents keep their px: they
-/// step past a check box, which keeps its size.
+/// rows of fixed icons fill its height, keeps its height but for its grown scrollbar. Indents
+/// keep their px, but one past a check box steps past the box grown with the text.
 pub(super) fn place(
     it: &Item,
     rect: Rect,
@@ -349,10 +349,14 @@ pub(super) fn place(
         }
         Control::Picture { .. } | Control::Monitor(_) | Control::Spectrum => u.at(rect),
         Control::IconList(_) if it.grows => Rect {
-            height: iconlist::grown_height(rect.height, u),
+            height: iconlist::grown_height(rect.height, u, cm.scroll_growth()),
             ..u.rect(rect)
         },
-        Control::Separator | Control::IconList(_) => Rect {
+        Control::IconList(_) => Rect {
+            height: rect.height + cm.scroll_growth(),
+            ..u.rect(rect)
+        },
+        Control::Separator => Rect {
             height: rect.height,
             ..u.rect(rect)
         },
@@ -391,13 +395,20 @@ pub(super) fn note_lines<'a>(
 }
 
 /// How far down its placed rect a check box's or radio's glyph sits beyond where it does at
-/// 100%: half the row's growth, so the glyph stays centred on its label's line.
+/// 100%: half the row's growth, so the glyph stays centred on its label's line. A glyph grown
+/// with the text ([`grown_dy`]) rises by half its own growth.
 pub(super) fn glyph_dy(it: &Item, placed: Rect) -> i32 {
     (placed.height - it.rect.height) / 2
 }
 
+/// Half of what a glyph `side` px at `cm`'s text grew by past its 100% size.
+fn grown_dy(side: i32, cm: &ControlMetrics) -> i32 {
+    (side - side / cm.text.small()) / 2
+}
+
 pub(super) fn check_box(r: Rect, cm: &ControlMetrics, dy: i32) -> Rect {
-    Rect::new(r.x, r.y + dy, cm.check, cm.check)
+    let y = r.y + dy - grown_dy(cm.check, cm);
+    Rect::new(r.x, y, cm.check, cm.check)
 }
 
 /// A check box's label: `cm.check_label` right of its item rect's left
@@ -415,7 +426,8 @@ pub(super) fn check_label_rect(r: Rect, indent: Indent, cm: &ControlMetrics, w: 
 /// A radio button's circle: `cm.radio` px square at its item rect's top,
 /// `cm.radio_x` right of its left edge.
 pub(super) fn radio_box(r: Rect, cm: &ControlMetrics, dy: i32) -> Rect {
-    Rect::new(r.x + cm.radio_x, r.y + dy, cm.radio, cm.radio)
+    let y = r.y + dy - grown_dy(cm.radio, cm);
+    Rect::new(r.x + cm.radio_x, y, cm.radio, cm.radio)
 }
 
 /// A radio button's label: `cm.radio_label` right of its item rect's left

@@ -362,7 +362,8 @@ fn the_page_scrollbar_covers_no_control() {
     let mut c = Canvas::new(u.len(398) as u32, u.len(300) as u32);
     draw(&mut c, &text, &p, &s, false, px);
 
-    let s = at(edge - 12);
+    // 16 px at 100%: the 32 px bar a 200% page wears.
+    let s = at(edge - 16);
     assert!(s.layout(&text, px).bar.is_some());
     assert_eq!(s.layout(&text, px).hbar, None, "the margin holds the bar");
 

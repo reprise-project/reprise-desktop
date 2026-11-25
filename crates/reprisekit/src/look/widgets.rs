@@ -1,6 +1,8 @@
 //! The common widgets, one function each. Controls and hosts draw widgets
 //! through here; each function paints the look's part when the style has
-//! one (its twin in `look::styled`) and Classic's otherwise.
+//! one (its twin in `look::styled`) and Classic's otherwise. Check boxes,
+//! radio buttons, drop and spin buttons and scrollbars draw at the paint's
+//! small-control scale ([`Paint::small`]), in rects their layouts grew alike.
 
 use crate::classic;
 use crate::classic::widgets::{Arrow, CheckState, ScrollHit};
@@ -113,6 +115,8 @@ pub fn draw_disabled_label(
 
 /// A two-state check box, held when `Pressed`.
 pub fn draw_checkbox(c: &mut Canvas, p: &Paint, b: Rect, checked: bool, ptr: Interaction) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::checkbox::draw_checkbox(st, c, p, b, checked, ptr)
     {
@@ -128,6 +132,8 @@ pub fn draw_checkbox(c: &mut Canvas, p: &Paint, b: Rect, checked: bool, ptr: Int
 
 /// A list row's check box; Classic's is a flat box.
 pub fn draw_list_check(c: &mut Canvas, p: &Paint, b: Rect, checked: bool) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::checkbox::draw_checkbox(st, c, p, b, checked, Interaction::Idle)
     {
@@ -137,6 +143,8 @@ pub fn draw_list_check(c: &mut Canvas, p: &Paint, b: Rect, checked: bool) {
 }
 
 pub fn draw_checkbox_disabled(c: &mut Canvas, p: &Paint, b: Rect, checked: bool) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::checkbox::draw_checkbox_disabled(st, c, p, b, checked)
     {
@@ -153,6 +161,8 @@ pub fn draw_checkbox_state(
     state: CheckState,
     ptr: Interaction,
 ) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::checkbox::draw_checkbox_state(st, c, p, b, state, ptr)
     {
@@ -164,6 +174,8 @@ pub fn draw_checkbox_state(
 /// A greyed check box in any of its three states. Classic's greyed box has
 /// no third state and shows `Mixed` empty.
 pub fn draw_checkbox_state_disabled(c: &mut Canvas, p: &Paint, b: Rect, state: CheckState) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::checkbox::draw_checkbox_state_disabled(st, c, p, b, state)
     {
@@ -173,6 +185,8 @@ pub fn draw_checkbox_state_disabled(c: &mut Canvas, p: &Paint, b: Rect, state: C
 }
 
 pub fn draw_radio(c: &mut Canvas, p: &Paint, b: Rect, checked: bool, ptr: Interaction) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::radio::draw_radio(st, c, p, b, checked, ptr)
     {
@@ -182,6 +196,8 @@ pub fn draw_radio(c: &mut Canvas, p: &Paint, b: Rect, checked: bool, ptr: Intera
 }
 
 pub fn draw_radio_disabled(c: &mut Canvas, p: &Paint, b: Rect, checked: bool) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::radio::draw_radio_disabled(st, c, p, b, checked)
     {
@@ -654,6 +670,8 @@ pub fn draw_combo_drop(
     ptr: Interaction,
     editable: bool,
 ) {
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if let Some(st) = p.look.style()
         && styled::combodrop::draw_combo_drop(st, c, p, r, enabled, ptr, editable)
     {

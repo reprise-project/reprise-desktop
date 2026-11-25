@@ -1110,7 +1110,8 @@ mod tests {
     fn arrow_keys_and_the_wheel_follow_the_grown_rows() {
         use crate::controls::shellview::{Hit, hit, scroll, step};
         use crate::selection::Mods;
-        let r = Rect::new(0, 0, 3 * 150 + 2 * FIELD_PAD + 20, 200);
+        // Room for 200%'s 32 px scrollbar past three grown columns.
+        let r = Rect::new(0, 0, 3 * 150 + 2 * FIELD_PAD + 36, 200);
         for (pct, per_row, pitch) in [(100, 6, 75), (200, 3, 112)] {
             let mut sv = iconed(30, Mode::Icons);
             sv.selection.set_only(Some(0));

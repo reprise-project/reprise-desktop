@@ -2425,3 +2425,59 @@ fn a_menu_in_columns_draws_its_columns_whole() {
     assert_eq!(cut, Vec::new(), "(menu, scale, line) cut above or below");
     crate::pins::check("controls/menu_columns_200", &hashes);
 }
+
+/// A context menu with a check mark, a radio dot and a submenu arrow at 200% text, in each look at
+/// scale 1 and 2: the marks and the arrow draw at twice their 100% size, and Classic's 7x7 check
+/// mark inks a 14x14 box clear of the label.
+#[test]
+fn menu_marks_and_arrows_grow_twice_at_200_percent() {
+    crate::pins::fonts();
+    const INK: u32 = 0xFF00_0000;
+    let items = vec![
+        MenuItem::entry("Word Wrap").checked(true),
+        MenuItem::entry("Status Bar").radio(true).checked(true),
+        MenuItem::Separator,
+        MenuItem::entry("Zoom").submenu(true),
+    ];
+    let mut hashes = Vec::new();
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let base = crate::interfaces::theme_for(interface).with_text_size(200);
+        let text = TextRenderer::load(&base.fonts);
+        let style =
+            MenuStyle::context_for(&base, &items).fit(&text, &items, base.fonts.size_px, i32::MAX);
+        for s in [1, 2] {
+            let l = MenuLayout::compute_styled(&style, &items, usize::MAX).scaled(s);
+            let theme = base.scaled(s);
+            let mut c = Canvas::new(l.width as u32, l.height as u32);
+            draw_menu(
+                &mut c,
+                &theme,
+                text.for_output(s),
+                &l,
+                &items,
+                None,
+                "",
+                false,
+            );
+            if interface == Interface::Classic && s == 1 {
+                let r = l.rows[0];
+                let mark = c.copy_rect(Rect::new(r.x, r.y, l.text_x, r.height));
+                let inked: Vec<(i32, i32)> = (0..mark.height as i32)
+                    .flat_map(|y| (0..mark.width as i32).map(move |x| (x, y)))
+                    .filter(|&(x, y)| mark.get(x, y) == INK)
+                    .collect();
+                let xs = inked.iter().map(|p| p.0);
+                let ys = inked.iter().map(|p| p.1);
+                let w = xs.clone().max().unwrap() - xs.min().unwrap() + 1;
+                let h = ys.clone().max().unwrap() - ys.min().unwrap() + 1;
+                assert_eq!((w, h), (14, 14), "the check mark is 7x7 doubled");
+                assert!(
+                    inked.iter().all(|p| p.0 < l.text_x - 2),
+                    "the mark ends before the label's column"
+                );
+            }
+            hashes.push((format!("{interface:?}@{s}"), crate::pins::fnv(&c)));
+        }
+    }
+    crate::pins::check("controls/menu_marks_200", &hashes);
+}

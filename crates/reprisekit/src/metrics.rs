@@ -467,10 +467,22 @@ impl ControlMetrics {
 }
 
 impl ControlMetrics {
-    /// These sizes for text grown by `u`: the rows that hold a line of text grow; boxes, glyphs,
-    /// icons, scrollbars and drop buttons keep their size.
+    /// These sizes for text grown by `u`: the rows that hold a line of text grow; check boxes,
+    /// radio buttons, scrollbars, drop buttons and spin columns (and their labels' offsets) grow
+    /// by [`TextUnits::small`](crate::theme::TextUnits::small); icons keep their size.
     pub fn grown(self, u: crate::theme::TextUnits) -> ControlMetrics {
+        let k = u.small();
         ControlMetrics {
+            radio: k * self.radio,
+            radio_x: k * self.radio_x,
+            radio_label: k * self.radio_label,
+            check: k * self.check,
+            check_label: k * self.check_label,
+            check_wrap: k * self.check_wrap,
+            scroll: k * self.scroll,
+            thumb_min: k * self.thumb_min,
+            combo_drop: k * self.combo_drop,
+            buddy_spin: k * self.buddy_spin,
             combo_row: u.len(self.combo_row),
             list_row: u.len(self.list_row),
             list_header: u.len(self.list_header),
@@ -500,6 +512,19 @@ impl ControlMetrics {
             text: u,
             ..self
         }
+    }
+}
+
+impl ControlMetrics {
+    /// The check box's side at 100% text: what a layout drawn in 100% px reserves for it before
+    /// growing its rects through [`ControlMetrics::text`].
+    pub fn check_100(&self) -> i32 {
+        self.check / self.text.small()
+    }
+
+    /// How much thicker than at 100% text a scrollbar is.
+    pub fn scroll_growth(&self) -> i32 {
+        self.scroll - self.scroll / self.text.small()
     }
 }
 

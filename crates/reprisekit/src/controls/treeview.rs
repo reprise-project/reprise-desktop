@@ -19,7 +19,7 @@
 //! A tree given icons grows its icon column with the text ([`icon_px`]): each
 //! level indents half the growth further and its expander box moves along with
 //! it, so a box stays under its parent's icon, and labels keep their gap past
-//! the grown icon.
+//! the grown icon. Expanders grow by the whole multiple the text grows by.
 //!
 //! A label renames in place in a box the row's height, its 1 px black border
 //! 5 px left of the label, the text where the label was and 15 px of white
@@ -217,6 +217,8 @@ pub struct Layout {
     pub row_h: i32,
     /// The icon column's width: [`icon_px`] in a tree given icons, else [`ICON_PX`].
     pub icon: i32,
+    /// The multiple of its 100% size an expander draws at ([`TextUnits::small`]).
+    pub expander: i32,
 }
 
 /// A node's icon edge (logical px): 16 px at 100% text, grown with the text and never smaller.
@@ -230,9 +232,10 @@ fn indent(icon: i32) -> i32 {
     INDENT + (icon - ICON_PX) / 2
 }
 
-/// Where a level's expander box starts in its indent: under the parent's icon's middle.
-fn box_x(icon: i32) -> i32 {
-    BOX_X + (icon - ICON_PX) / 2
+/// Where a level's expander box starts in its indent: under the parent's icon's middle, the box
+/// `k` times its 100% size.
+fn box_x(icon: i32, k: i32) -> i32 {
+    BOX_X + (icon - ICON_PX) / 2 - (k - 1) * (BOX / 2)
 }
 
 impl TreeView {
@@ -388,7 +391,13 @@ impl TreeView {
         let row_y = lay.body.y + (i - self.top) as i32 * row_h;
         let ix = lay.body.x - self.left_in(lay) + self.icon_x(row.depth, lay.icon);
         if self.has_box(row.depth) {
-            let expander = Rect::new(ix - indent(lay.icon) + box_x(lay.icon), row_y, BOX, row_h);
+            let k = lay.expander;
+            let expander = Rect::new(
+                ix - indent(lay.icon) + box_x(lay.icon, k),
+                row_y,
+                k * BOX,
+                row_h,
+            );
             if expander.contains(x, y) {
                 let node = self.node(&row.path);
                 if node.is_some_and(|n| n.has_children) {
@@ -784,6 +793,7 @@ fn layout_with(tv: &TreeView, r: Rect, content_w: i32, cm: &ControlMetrics) -> L
         thumb_min: cm.thumb_min,
         row_h,
         icon: tv.icon_slot(cm.text),
+        expander: cm.text.small(),
     }
 }
 
@@ -808,6 +818,7 @@ pub fn draw(
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
+    let g = s * lay.expander;
     let frame = lay.frame.scaled(s);
     if tv.style.flat() {
         c.fill_rect(frame, cs.window);
@@ -853,8 +864,8 @@ pub fn draw(
         };
         open_levels.resize(row.depth + 1, false);
         open_levels[row.depth] = !row.last;
-        let bx = ix - (indent(lay.icon) - box_x(lay.icon)) * s;
-        let cx = bx + (BOX / 2) * s;
+        let bx = ix - (indent(lay.icon) - box_x(lay.icon, lay.expander)) * s;
+        let cx = bx + (BOX / 2) * g;
         let selected = tv.selected.as_ref() == Some(&row.path);
         let drop = tv.drop_hilight == Some(i);
         // A boxing look boxes the row across the body, 1 px in from either side, draws no lines, shows expanders only while the pointer is in the tree or it has focus, and leaves the label as is.
@@ -880,7 +891,9 @@ pub fn draw(
             for (d, cont) in open_levels.iter().enumerate().take(row.depth) {
                 if *cont {
                     let lx = -left
-                        + (tv.icon_x(d, lay.icon) - indent(lay.icon) + box_x(lay.icon) + BOX / 2)
+                        + (tv.icon_x(d, lay.icon) - indent(lay.icon)
+                            + box_x(lay.icon, lay.expander)
+                            + lay.expander * (BOX / 2))
                             * s;
                     dotted(&mut bc, Rect::new(lx, y, s, row_h), s, line);
                 }
@@ -891,13 +904,13 @@ pub fn draw(
             dotted(&mut bc, Rect::new(cx, mid, ix - cx, s), s, line);
         }
         if node.has_children && tv.has_box(row.depth) && !boxed {
-            let b = Rect::new(bx, mid - (BOX / 2) * s, BOX * s, BOX * s);
+            let b = Rect::new(bx, mid - (BOX / 2) * g, BOX * g, BOX * g);
             bc.fill_rect(b, cs.window);
-            bc.ring_t(b, line, line, s);
+            bc.ring_t(b, line, line, g);
             let ink = cs.button_text;
-            bc.fill_rect(Rect::new(b.x + 2 * s, mid, 5 * s, s), ink);
+            bc.fill_rect(Rect::new(b.x + 2 * g, mid, 5 * g, g), ink);
             if !node.expanded {
-                bc.fill_rect(Rect::new(cx, b.y + 2 * s, s, 5 * s), ink);
+                bc.fill_rect(Rect::new(cx, b.y + 2 * g, g, 5 * g), ink);
             }
         }
         if let Some(ic) = node.shown_icon() {

@@ -143,6 +143,36 @@ impl<'a> Paint<'a> {
         }
     }
 
+    /// The multiple a small control drawn with this paint grows by
+    /// ([`crate::theme::TextUnits::small`]).
+    pub fn small_k(&self) -> i32 {
+        self.text.small()
+    }
+
+    /// The look a small control grown with the text draws in on `c`: a styled look built again at
+    /// the grown device scale, so the grown control is a fresh drawing. Hand it to
+    /// [`Paint::small`].
+    pub fn small_look(&self, c: &Canvas) -> Look {
+        match self.small_k() {
+            1 => self.look.clone(),
+            k => self.look.at_scale(self.s.max(1) * c.scale() * k),
+        }
+    }
+
+    /// This paint for a small control: `s` times [`Paint::small_k`], drawing in `look` from
+    /// [`Paint::small_look`]. Its text is 100%, so a painter handed it grows nothing again.
+    pub fn small<'b>(&self, look: &'b Look) -> Paint<'b>
+    where
+        'a: 'b,
+    {
+        Paint {
+            s: self.s * self.small_k(),
+            look,
+            text: crate::theme::TextUnits::ONE,
+            ..*self
+        }
+    }
+
     /// Fill `r` with what sits behind a control there: the face, and over
     /// it the page clipped to `r` when a styled page is under it. Outside
     /// the page, and under a look without its own page, this is the face.

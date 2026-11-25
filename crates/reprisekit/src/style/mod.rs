@@ -92,6 +92,8 @@ pub struct Style {
     pub(crate) client_glass_edges: Option<ClientGlassEdges>,
     pub chrome_colors: Option<ColorScheme>,
     rescale: Option<Rescale>,
+    /// The scale [`Style::at_scale`] built this style at; 1 for the style `rescale` came with.
+    built_at: i32,
     rescaled: Rescaled,
     button_side: Option<ButtonSide>,
     sided: Rescaled,
@@ -217,6 +219,7 @@ impl Style {
             notify: None,
             flyout: None,
             rescale: None,
+            built_at: 1,
             rescaled: Rescaled::default(),
             button_side: None,
             sided: Rescaled::default(),
@@ -275,15 +278,25 @@ impl Style {
         }
     }
 
+    /// This style built at scale `n`. A style already built at a scale above 1 builds again at
+    /// another, as a small control grown with the text asks for ([`crate::look::Paint::small`]).
     pub fn at_scale(self: &Arc<Style>, n: i32) -> Arc<Style> {
-        let Some(build) = self.rescale.as_ref().filter(|_| n > 1) else {
+        let Some(build) = self
+            .rescale
+            .as_ref()
+            .filter(|_| n > 1 && n != self.built_at)
+        else {
             return self.clone();
         };
         let mut kept = lock(&self.rescaled.0);
         if let Some((_, st)) = kept.iter().find(|(k, _)| *k == n) {
             return st.clone();
         }
-        let st = Arc::new(build(n));
+        let st = Arc::new(Style {
+            built_at: n,
+            rescale: Some(build.clone()),
+            ..build(n)
+        });
         kept.push((n, st.clone()));
         st
     }

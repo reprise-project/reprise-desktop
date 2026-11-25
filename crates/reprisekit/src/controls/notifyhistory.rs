@@ -8,7 +8,8 @@
 //!   narrows to a smaller work area and shows fewer rows in a shorter one.
 //! - **Check box**: the look's box (13 px) centred in its 17 px row, its
 //!   label the look's offset in from the box's left edge (18 px in
-//!   Classic, 16 in Blue).
+//!   Classic, 16 in Blue). The box, its label's offset and the fold arrows
+//!   grow by the whole multiple the text grows by.
 //! - **List**: a [`grouplist`] 6 px under the check row, ten 18 px rows
 //!   tall. Each program heads its group: its icon, its name and how many
 //!   it sent, an arrow that points down while the group is open and
@@ -42,7 +43,8 @@ const CHECK_ROW: i32 = 17;
 const LIST_GAP: i32 = 6;
 pub const ROWS: i32 = 10;
 /// A group's Clear button: 44 px wide at 100% text and 2 px shorter than its row, 2 px in from
-/// the row's right end and 1 px down; the fold arrow's 11 px cell 3 px left of it.
+/// the row's right end and 1 px down; the fold arrow's 11 px cell 3 px left of it, both
+/// [`TextUnits::small`] times that.
 const GROUP_CLEAR_W: i32 = 44;
 const GROUP_CLEAR_INSET: i32 = 2;
 const ARROW_CELL: i32 = 11;
@@ -191,6 +193,7 @@ fn time_text(time: &str, replied: bool) -> std::borrow::Cow<'_, str> {
 
 /// A header row's Clear button and fold arrow cell, for `row` at text units `u`.
 fn header_parts(row: Rect, u: TextUnits) -> (Rect, Rect) {
+    let k = u.small();
     let w = u.len(GROUP_CLEAR_W);
     let clear = Rect::new(
         row.right() - GROUP_CLEAR_INSET - w,
@@ -199,9 +202,9 @@ fn header_parts(row: Rect, u: TextUnits) -> (Rect, Rect) {
         row.height - 2,
     );
     let arrow = Rect::new(
-        clear.x - ARROW_GAP - ARROW_CELL,
+        clear.x - k * (ARROW_GAP + ARROW_CELL),
         row.y,
-        ARROW_CELL,
+        k * ARROW_CELL,
         row.height,
     );
     (clear, arrow)
@@ -737,10 +740,11 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
             Meta::Header { open, .. } => {
                 let (clear, arrow) = header_parts(row, cm.text);
                 let arrow = arrow.scaled(s);
+                let g = s * cm.text.small();
                 if *open {
-                    draw_arrow_v(&mut c, arrow, s, true, cs.button_text);
+                    draw_arrow_v(&mut c, arrow, g, true, cs.button_text);
                 } else {
-                    draw_arrow_h(&mut c, arrow, s, true, cs.button_text);
+                    draw_arrow_h(&mut c, arrow, g, true, cs.button_text);
                 }
                 draw_button(
                     &mut c,

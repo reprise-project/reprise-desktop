@@ -125,6 +125,9 @@ pub struct Layout {
     /// bar out with as `draw` does.
     pub thumb_min: i32,
     pub check: i32,
+    /// The multiple of its 100% size the check column takes
+    /// ([`TextUnits::small`](crate::theme::TextUnits::small)).
+    pub check_k: i32,
     pub row_h: i32,
     /// The rows' icon edge: [`icon_px`].
     pub icon: i32,
@@ -153,6 +156,7 @@ pub fn layout(lb: &ListBox, frame: Rect, cm: &ControlMetrics) -> Layout {
         scrollbar,
         thumb_min: cm.thumb_min,
         check: cm.check,
+        check_k: cm.text.small(),
         row_h: cm.list_row,
         icon: icon_px(cm),
     }
@@ -178,8 +182,18 @@ pub fn check_box(lb: &ListBox, lay: &Layout, i: usize) -> Option<Rect> {
     if i >= lb.checks.len() || i < lb.top || i >= lb.top + lay.visible {
         return None;
     }
-    let y = lay.inner.y + (i - lb.top) as i32 * lay.row_h + CHECK_Y + (lay.row_h - ROW_H) / 2;
-    Some(Rect::new(lay.inner.x + CHECK_X, y, lay.check, lay.check))
+    let y = lay.inner.y + (i - lb.top) as i32 * lay.row_h + check_dy(lay);
+    Some(Rect::new(
+        lay.inner.x + lay.check_k * CHECK_X,
+        y,
+        lay.check,
+        lay.check,
+    ))
+}
+
+/// A check box's top from its row's: centred as at 100% however much the row and the box grew.
+fn check_dy(lay: &Layout) -> i32 {
+    CHECK_Y + (lay.row_h - ROW_H) / 2 - (lay.check - lay.check / lay.check_k) / 2
 }
 
 pub fn scroll_parts(lb: &ListBox, lay: &Layout) -> Option<ScrollParts> {
@@ -222,11 +236,11 @@ pub fn top_at(lb: &ListBox, lay: &Layout, y: i32, grab: i32) -> usize {
 }
 
 /// A row's icon x: after its check box in a checked list.
-fn icon_x(lb: &ListBox) -> i32 {
+fn icon_x(lb: &ListBox, lay: &Layout) -> i32 {
     if lb.checks.is_empty() {
         ICON_X
     } else {
-        CHECK_TEXT_X
+        lay.check_k * CHECK_TEXT_X
     }
 }
 
@@ -237,8 +251,8 @@ pub fn text_x(lb: &ListBox, lay: &Layout, icons: &[Option<Canvas>]) -> i32 {
     match (lb.checks.is_empty(), icons.is_empty()) {
         (true, true) => TEXT_X,
         (true, false) => TEXT_X + grown,
-        (false, true) => CHECK_TEXT_X,
-        (false, false) => CHECK_TEXT_X + TEXT_X - ICON_X + grown,
+        (false, true) => lay.check_k * CHECK_TEXT_X,
+        (false, false) => lay.check_k * CHECK_TEXT_X + TEXT_X - ICON_X + grown,
     }
 }
 
@@ -265,7 +279,6 @@ pub fn draw(
     let inner = lay.inner.scaled(s);
     let rh = lay.row_h * s;
     // A taller row (grown text) centres its check box and icon down the row.
-    let glyph_dy = (lay.row_h - ROW_H) / 2 * s;
     let icon_dy = (lay.row_h - lay.icon - 1) / 2 * s;
     let slot = lay.icon * s;
     let mut y = inner.y;
@@ -286,8 +299,8 @@ pub fn draw(
         });
         if let Some(&checked) = lb.checks.get(i) {
             let b = Rect::new(
-                inner.x + CHECK_X * s,
-                y + CHECK_Y * s + glyph_dy,
+                inner.x + lay.check_k * CHECK_X * s,
+                y + check_dy(lay) * s,
                 lay.check * s,
                 lay.check * s,
             );
@@ -295,7 +308,7 @@ pub fn draw(
                 draw_list_check(c, p, b, checked);
             }
         }
-        let icon_x = inner.x + icon_x(lb) * s;
+        let icon_x = inner.x + icon_x(lb, lay) * s;
         if let Some(Some(ic)) = icons.get(i) {
             // An icon smaller than the column (not yet loaded at the text size) sits centred in it.
             let icon_x = icon_x + ((slot - ic.width as i32) / 2).max(0);
@@ -723,7 +736,7 @@ mod tests {
                         unlabelled.detail.clear();
                         let bare = drawn(&unlabelled);
                         let tx = (lay.inner.x + text_x(&lb, &lay, &icons)) * s;
-                        let ix = (lay.inner.x + icon_x(&lb)) * s;
+                        let ix = (lay.inner.x + icon_x(&lb, &lay)) * s;
                         assert_eq!(
                             tx - (ix + icon * s),
                             3 * s,

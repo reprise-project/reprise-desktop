@@ -394,8 +394,8 @@ pub fn text_px(px: u32, pct: u32) -> u32 {
 }
 
 /// How a layout drawn for 100% text grows at the text size: the UI font's px at the text size
-/// over its px at 100%. Rects laid out in 100% units map through it; bevels, glyph boxes and
-/// pictures keep their size.
+/// over its px at 100%. Rects laid out in 100% units map through it; bevels and pictures keep
+/// their size, and the small controls grow by [`TextUnits::small`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextUnits {
     px: u32,
@@ -422,6 +422,13 @@ impl TextUnits {
 
     pub fn is_one(self) -> bool {
         self == TextUnits::ONE
+    }
+
+    /// The whole multiple of their 100% size the small controls draw at (check boxes, radio
+    /// buttons, scrollbars, drop and spin arrows, tree expanders, menu marks): the text's growth
+    /// rounded down, so twice at 200% and their own size below.
+    pub fn small(self) -> i32 {
+        (self.px / self.base).max(1) as i32
     }
 
     /// `v` 100% px at the text size, rounded half up.

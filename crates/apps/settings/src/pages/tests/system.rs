@@ -756,7 +756,7 @@ fn a_startup_list_that_scrolls_draws_only_the_vertical_bar() {
                 "{at}: the last row runs down to the frame"
             );
             assert_ne!(
-                c.get(bar.x + bar.width / 2, bar.bottom() - 3),
+                c.get(bar.x + bar.width / 2, bar.bottom() - 3 * theme.text.small()),
                 window,
                 "{at}: the bar"
             );

@@ -178,10 +178,11 @@ fn draws_boxes_lines_and_the_selection() {
     assert_eq!(c.get(tx - 1, b.y + 2 * ROW_H + 8), cs.hilight.argb());
 }
 
-/// At a grown text size the rows grow with the text while the expander box keeps its 9 px,
-/// centred on the taller row; hit and the selection band follow the grown pitch.
+/// At a grown text size the rows grow with the text and the expander box grows by the text's
+/// whole multiple (9 px, 18 at 200%), centred on the taller row and on its column; hit and the
+/// selection band follow the grown pitch.
 #[test]
-fn grown_text_grows_the_rows_and_keeps_the_box() {
+fn grown_text_grows_the_rows_and_the_box() {
     let text = TextRenderer::load(&FontConfig::default());
     let cs = &Theme::default().colors;
     for (pct, px) in [(100, 11), (150, 17), (200, 22)] {
@@ -202,12 +203,17 @@ fn grown_text_grows_the_rows_and_keeps_the_box() {
         let b = lay.body;
         assert_eq!(tv.hit(&lay, b.x + 60, b.y + 2 * row_h + 1), Hit::Row(2));
         assert_eq!(tv.hit(&lay, b.x + 60, b.y + 2 * row_h - 1), Hit::Row(1));
-        // Row 0's box: its top ring row 4 px above the row's middle, the box 9 px tall.
-        let mid = b.y + row_h / 2;
-        assert_eq!(c.get(b.x + BOX_X, mid - 4), LINE_GRAY.argb(), "{pct}%");
-        assert_eq!(c.get(b.x + BOX_X + 4, mid - 4), LINE_GRAY.argb(), "{pct}%");
-        assert_eq!(c.get(b.x + BOX_X + 4, mid + 4), LINE_GRAY.argb(), "{pct}%");
-        assert_ne!(c.get(b.x + BOX_X + 4, mid + 5), LINE_GRAY.argb(), "{pct}%");
+        // Row 0's box: its top ring row 4 px (times k) above the row's middle, the box 9k tall.
+        let (k, mid) = (u.small(), b.y + row_h / 2);
+        let bx = b.x + BOX_X - (k - 1) * 4;
+        assert_eq!(c.get(bx, mid - 4 * k), LINE_GRAY.argb(), "{pct}%");
+        assert_eq!(c.get(bx + 4 * k, mid - 4 * k), LINE_GRAY.argb(), "{pct}%");
+        assert_eq!(
+            c.get(bx + 4 * k, mid + 5 * k - 1),
+            LINE_GRAY.argb(),
+            "{pct}%"
+        );
+        assert_ne!(c.get(bx + 4 * k, mid + 5 * k), LINE_GRAY.argb(), "{pct}%");
         // The selected row's band fills its grown height.
         let tx = b.x + 2 * INDENT + ICON_PX + LABEL_GAP;
         assert_eq!(c.get(tx - 1, b.y + 2 * row_h), cs.hilight.argb(), "{pct}%");
