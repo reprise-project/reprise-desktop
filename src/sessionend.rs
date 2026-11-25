@@ -794,6 +794,7 @@ fn attempt(state: &mut State, act: Act, cmd: String, boot: Option<BootTarget>, h
     });
     if !spawned {
         state.powering.answer(id);
+        refuse(state, act, &Refused::Internal);
     }
 }
 
@@ -2061,6 +2062,25 @@ mod tests {
         let shown = dialogs(&h);
         answered(&mut h.state, next, Act::StandBy, failed, None);
         assert_eq!(dialogs(&h), shown, "Log Off gave it up");
+    }
+
+    #[test]
+    fn a_power_action_whose_thread_does_not_start_brings_the_session_back() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        h.state.fsjobs.refuse_threads = true;
+        crate::crash::ending();
+        let open = dialogs(&h);
+        let how = Run {
+            override_inhibitors: false,
+            critical: false,
+            wind_down_for: None,
+        };
+        attempt(&mut h.state, Act::Restart, "true".into(), None, how);
+        assert!(!h.state.powering.busy());
+        assert!(!crate::crash::is_ending());
+        assert_eq!(dialogs(&h), open + 1);
     }
 
     #[test]
