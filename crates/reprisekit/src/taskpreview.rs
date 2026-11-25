@@ -60,11 +60,12 @@ impl Grid {
     }
 }
 
-/// The panel's rect (in the coordinates of the `bounds` it was laid out
+/// The panel's rect and its task button's (in the coordinates of the `bounds` it was laid out
 /// in) and each cell relative to the panel's top-left, laid out on `grid`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskPreviewLayout {
     pub rect: Rect,
+    pub button: Rect,
     pub cells: Vec<Rect>,
     /// Device pixels per logical pixel: 1 from `compute`, `n` from
     /// `scaled(n)`.
@@ -126,6 +127,7 @@ impl TaskPreviewLayout {
         };
         TaskPreviewLayout {
             rect: Rect::new(x, y, w, h),
+            button,
             cells,
             scale: 1,
             grid,
@@ -206,10 +208,26 @@ impl TaskPreviewLayout {
         }
     }
 
+    /// Whether (x, y), in `rect`'s coordinates, is on the bar between the button and the panel, over
+    /// the span of both: the pointer crosses it on its way to the panel, which stays open there.
+    pub fn bridges(&self, x: i32, y: i32) -> bool {
+        let (b, r) = (self.button, self.rect);
+        let (x0, x1) = (b.x.min(r.x), b.right().max(r.right()));
+        let (y0, y1) = (b.y.min(r.y), b.bottom().max(r.bottom()));
+        let gap = match self.edge {
+            Edge::Bottom => Rect::new(x0, r.bottom(), x1 - x0, b.y - r.bottom()),
+            Edge::Top => Rect::new(x0, b.bottom(), x1 - x0, r.y - b.bottom()),
+            Edge::Left => Rect::new(b.right(), y0, r.x - b.right(), y1 - y0),
+            Edge::Right => Rect::new(r.right(), y0, b.x - r.right(), y1 - y0),
+        };
+        gap.contains(x, y)
+    }
+
     pub fn scaled(&self, n: i32) -> TaskPreviewLayout {
         let n = n.max(1);
         TaskPreviewLayout {
             rect: self.rect.scaled(n),
+            button: self.button.scaled(n),
             cells: self.cells.iter().map(|r| r.scaled(n)).collect(),
             scale: self.scale * n,
             grid: self.grid,
@@ -448,6 +466,51 @@ mod tests {
                 m.left + right.rect.width + m.bottom,
                 "{i:?}: and to a right bar"
             );
+        }
+    }
+
+    #[test]
+    fn the_rows_between_the_button_and_the_panel_bridge_them_on_every_edge() {
+        let grid = crate::controls::taskpreview::CLASSIC;
+        let lay = |button, bounds, edge| TaskPreviewLayout::compute(grid, 1, button, bounds, edge);
+        let bar_x = Rect::new(300, 1044, 160, 32);
+        let bar_y = Rect::new(4, 500, 52, 32);
+        for (l, gap) in [
+            (
+                lay(bar_x, Rect::new(0, 0, 1920, 1040), Edge::Bottom),
+                Rect::new(286, 1040, 188, 4),
+            ),
+            (
+                lay(
+                    Rect { y: 4, ..bar_x },
+                    Rect::new(0, 40, 1920, 1040),
+                    Edge::Top,
+                ),
+                Rect::new(286, 36, 188, 4),
+            ),
+            (
+                lay(bar_y, Rect::new(60, 0, 1860, 1080), Edge::Left),
+                Rect::new(56, 444, 4, 144),
+            ),
+            (
+                lay(
+                    Rect { x: 1864, ..bar_y },
+                    Rect::new(0, 0, 1860, 1080),
+                    Edge::Right,
+                ),
+                Rect::new(1860, 444, 4, 144),
+            ),
+        ] {
+            for y in gap.y - 3..gap.bottom() + 3 {
+                for x in gap.x - 3..gap.right() + 3 {
+                    assert_eq!(
+                        l.bridges(x, y),
+                        gap.contains(x, y),
+                        "{:?} at ({x}, {y}): bridged only in {gap:?}",
+                        l.edge
+                    );
+                }
+            }
         }
     }
 }
