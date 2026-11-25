@@ -172,6 +172,7 @@ mod tests {
         .map(|&(l, rule)| PlaceRow {
             rule_before: rule,
             submenu: l == "Recent Items",
+            context: false,
             ..place(l)
         })
         .collect();

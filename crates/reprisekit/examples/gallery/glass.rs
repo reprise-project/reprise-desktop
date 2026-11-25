@@ -240,6 +240,7 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
                 picture: None,
                 rule_before: *l == "Computer",
                 submenu: false,
+                context: false,
             })
             .collect();
         if keyed {

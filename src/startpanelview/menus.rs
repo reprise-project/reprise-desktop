@@ -87,11 +87,14 @@ impl State {
         self.push_context_menu_looked(at, items, kind, from, place, skin);
     }
 
+    /// The context menu of program row or place `s`.
     pub(super) fn open_start_context(&mut self, s: Spot) {
-        let Some((app, launched)) = self.start_spot_app(s) else {
-            return;
+        let menu = match s {
+            Spot::Place(i) => self.start_place_menu(i),
+            _ => (self.start_spot_app(s))
+                .and_then(|(app, launched)| self.program_menu_of(app, launched)),
         };
-        let Some((items, rows)) = self.program_menu_of(app, launched) else {
+        let Some((items, rows)) = menu else {
             return;
         };
         let p = self.pointer_location();
@@ -105,6 +108,12 @@ impl State {
         };
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         self.push_start_popup(at, items, kind, place_popup, Skin::Theme);
+    }
+
+    fn start_place_menu(&self, i: usize) -> Option<(Vec<MenuItem>, Vec<Option<StartRow>>)> {
+        let entry = self.start_panel.as_ref()?.places.get(i)?;
+        let kind = crate::startmenu::PlaceMenu::of(entry, &self.recent.document_dirs())?;
+        Some(crate::startmenu::place_menu(entry, &kind))
     }
 
     pub(super) fn open_shutdown_options(&mut self) {
@@ -331,6 +340,20 @@ impl State {
                 if let Some(file) = reprisefs::apps::find_file(&e.id) {
                     self.show_properties(&[file]);
                 }
+            }
+            StartRow::OpenPlace(e) => {
+                let e = e.clone();
+                self.close_start_panel();
+                self.activate_entry(&e);
+            }
+            StartRow::FolderProperties(dir) => {
+                let dir = dir.clone();
+                self.close_start_panel();
+                self.show_properties(&[dir]);
+            }
+            StartRow::ComputerProperties => {
+                self.close_start_panel();
+                self.spawn_argv_activated(&["reprise-about"]);
             }
             StartRow::SwitchUser => {
                 self.close_start_panel();

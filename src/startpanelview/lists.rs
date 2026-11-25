@@ -253,6 +253,7 @@ impl State {
                 picture: icon.as_deref().and_then(|n| unread(&mut self.icons, n, px)),
                 rule_before: rule,
                 submenu: e.opens_submenu(),
+                context: crate::startmenu::PlaceMenu::of(&e, &dirs).is_some(),
             });
             places.push(e);
             rule = false;

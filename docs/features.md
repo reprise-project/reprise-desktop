@@ -61,7 +61,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   (by an older Reprise, or by hand) keeps winning and stays whole; Restore
   Defaults on the page switches it to changes, at the cost of its edits.
   A right-click on the Start button opens your programs folder
-  (`~/.local/share/applications`) or, under Properties, that page.
+  (`~/.local/share/applications`) or, under Properties, that page. In the
+  Blue and Glass menus a right-click on your home folder, Documents, Pictures
+  or Music offers Open, Explore and Properties, and on Computer Open and
+  Properties (About Reprise).
 - **Live program list.** A program shows up in the Start menu and the
   launcher the moment it's installed.
 - **Recent documents** from `recently-used.xbel`, shared with GTK programs.
