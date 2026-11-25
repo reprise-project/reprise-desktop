@@ -303,6 +303,16 @@ impl Explorer {
             u.error.map(|e| (e, left))
         });
         self.undos.forget_gone(&r.gone);
+        if self.undos.retrying() {
+            let undos = self.undos.clone();
+            self.spawn_job(ctx, move || {
+                undos.settle();
+                Box::new(|ex: &mut Explorer, _: &mut Ctx| {
+                    ex.sync_undo();
+                    Reply::redraw()
+                })
+            });
+        }
         self.sync_undo();
         let mut reply = self.refresh(ctx);
         if let Some((title, text)) = r.failed {
