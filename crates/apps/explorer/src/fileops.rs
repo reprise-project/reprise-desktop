@@ -1533,28 +1533,28 @@ impl Explorer {
     }
 
     pub fn undo_last(&mut self, ctx: &mut Ctx) -> Reply {
-        self.undo_with(None, ctx)
+        self.undo_with(None, false, ctx)
     }
 
-    /// Undo, with `erasing` the entry whose items the Recycle Bin refused, which are removed for
-    /// good; nothing happens unless that entry is on top. Without it such an item stops the undo
-    /// and asks first. Nothing happens either while an undo in any window runs. The top entry of
+    /// Undo of the top entry, or of `entry` only while it is the top one. With `erase` what the
+    /// Recycle Bin refuses is removed for good; without it such an item stops the undo and asks
+    /// first. Nothing happens while an undo in any window runs. The top entry of
     /// the session's history leaves it and its steps run on a removal job with the
     /// progress dialog ([`crate::removing::PendingRemoval::undo`]); the Recycle Bins are found on
     /// a job first, as for a delete.
     pub(crate) fn undo_with(
         &mut self,
-        erasing: Option<reprisefs::undo::EntryId>,
+        entry: Option<reprisefs::undo::EntryId>,
+        erase: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        let taken = match erasing {
+        let taken = match entry {
             Some(entry) => self.undos.take_entry(entry),
             None => self.undos.take(),
         };
         let Some(undo) = taken else {
             return Reply::none();
         };
-        let erase = erasing.is_some();
         self.sync_undo();
         self.spawn_job(ctx, move || {
             let bins = reprisefs::trash::Bins::system();

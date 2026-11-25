@@ -278,8 +278,9 @@ pub struct Action {
     /// Some for an action that changes files: what refreshes the view when a change it had
     /// already started lands past the deadline.
     pub late: Option<fn(&mut State)>,
-    /// What runs on the loop when the action gives up at its deadline.
-    pub gave_up: Option<fn(&mut State)>,
+    /// What runs on the loop when the action gives up at its deadline, told whether the work had
+    /// passed [`Gate::change`].
+    pub gave_up: Option<fn(&mut State, bool)>,
 }
 
 impl Action {
@@ -301,7 +302,7 @@ impl Action {
         }
     }
 
-    pub fn on_give_up(self, gave_up: fn(&mut State)) -> Action {
+    pub fn on_give_up(self, gave_up: fn(&mut State, bool)) -> Action {
         Action {
             gave_up: Some(gave_up),
             ..self
@@ -382,7 +383,7 @@ impl State {
                 let text = action.not_responding(changing);
                 state.open_dialog(crate::dialog::Dialog::error(action.title, text));
                 if let Some(gave_up) = action.gave_up {
-                    gave_up(state);
+                    gave_up(state, changing);
                 }
             }
             TimeoutAction::Drop
