@@ -127,7 +127,7 @@ pub fn sort(sv: &mut ShellView) {
     let key = |e: &Entry| {
         let by = match field {
             Field::Name | Field::Folder | Field::Deleted => Key::Name,
-            Field::Size => Key::Size(e.size),
+            Field::Size => Key::Size(if e.is_folder() { 0 } else { e.size }),
             Field::Kind => Key::Text(e.kind.to_lowercase()),
             Field::Modified => Key::Date(e.mtime),
         };
