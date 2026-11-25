@@ -567,3 +567,45 @@ fn a_label_keeps_a_first_glyph_that_hooks_left_of_its_pen() {
     }
     assert_eq!(cut, Vec::new(), "(scale, drawn by, label, ink columns cut)");
 }
+
+/// At 200% text the Appearance sample's box doubles with the form and its windows fill it, in
+/// each look at scale 1 and 2.
+#[test]
+fn the_appearance_sample_grows_with_the_text_in_every_look() {
+    use crate::interface::Interface;
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let theme = crate::interfaces::theme_for(i).with_text_size(200);
+        let f = Form::new(vec![Item::new(
+            "sample",
+            Rect::new(0, 0, 350, 188),
+            Control::Sample {
+                themes: false,
+                theme: theme.clone(),
+                icon: None,
+            },
+        )]);
+        for s in [1, 2] {
+            let theme = theme.scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let mut c = Canvas::new(700 * s as u32, 376 * s as u32);
+            draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &f,
+                false,
+                theme.fonts.size_px,
+            );
+            assert_eq!(f.rect("sample"), Some(Rect::new(0, 0, 700, 376)), "{i:?}");
+            let corner = (696 * s, 372 * s);
+            assert_eq!(
+                c.get(corner.0, corner.1),
+                theme.colors.background.argb(),
+                "{i:?} @{s}: the desktop reaches the box's bottom right"
+            );
+            got.push((format!("{i:?} {s}"), crate::pins::fnv(&c)));
+        }
+    }
+    crate::pins::check("form/sample_text_200", &got);
+}

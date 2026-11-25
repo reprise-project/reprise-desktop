@@ -320,17 +320,17 @@ impl Form {
     }
 }
 
-/// Where `it` draws and takes the pointer, on the surface: its 100% `rect` grown by `u` and moved
-/// to `origin`, then by its [`Indent`]. Pictures and controls with fixed art keep their size and
-/// only move; a separator and a rule keep their thickness, and an icon list, whose
-/// rows of fixed icons fill its height, keeps its height. Indents keep their px: they
-/// step past a check box, which keeps its size.
 /// An icon list's layout in `r`, its cells grown with the text when its item [`Item::grows`].
 pub(super) fn icon_list_layout(grows: bool, r: Rect, cm: &ControlMetrics) -> iconlist::Layout {
     let u = if grows { cm.text } else { TextUnits::ONE };
     iconlist::layout_grown(r, cm, u)
 }
 
+/// Where `it` draws and takes the pointer, on the surface: its 100% `rect` grown by `u` and moved
+/// to `origin`, then by its [`Indent`]. Pictures and controls with fixed art keep their size and
+/// only move; a separator and a rule keep their thickness, and an icon list, whose
+/// rows of fixed icons fill its height, keeps its height. Indents keep their px: they
+/// step past a check box, which keeps its size.
 pub(super) fn place(
     it: &Item,
     rect: Rect,
@@ -347,10 +347,7 @@ pub(super) fn place(
                 ..u.at(rect)
             }
         }
-        Control::Picture { .. }
-        | Control::Monitor(_)
-        | Control::Spectrum
-        | Control::Sample { .. } => u.at(rect),
+        Control::Picture { .. } | Control::Monitor(_) | Control::Spectrum => u.at(rect),
         Control::IconList(_) if it.grows => Rect {
             height: iconlist::grown_height(rect.height, u),
             ..u.rect(rect)
