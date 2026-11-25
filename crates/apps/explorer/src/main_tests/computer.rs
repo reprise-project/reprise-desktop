@@ -761,6 +761,12 @@ fn a_dead_mount_stays_blank_while_the_other_drives_fill() {
         1,
         "a relist joins the read still out"
     );
+    let started = std::time::Instant::now();
+    ex.take_space(std::time::Duration::from_secs(2));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "a read an earlier listing started is not waited for"
+    );
     *DEAD.lock().unwrap() = true;
     DEAD_GONE.notify_all();
     wake_until(&mut ex, &mut ctx, |ex| ex.sv.entries[dead].space.is_some());

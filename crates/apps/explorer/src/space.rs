@@ -29,7 +29,8 @@ pub(crate) type Statvfs = fn(&Path) -> Option<Totals>;
 pub(crate) struct Spaces {
     /// What the last reads answered, by mount.
     pub read: HashMap<PathBuf, Totals>,
-    out: Vec<(PathBuf, Job<Option<Totals>>)>,
+    /// The reads still out, and whether the last listing started each.
+    out: Vec<(PathBuf, Job<Option<Totals>>, bool)>,
 }
 
 impl Spaces {
@@ -45,7 +46,7 @@ impl Spaces {
     /// How many reads of `at` are out.
     #[cfg(test)]
     pub(crate) fn out_for(&self, at: &Path) -> usize {
-        self.out.iter().filter(|(m, _)| m == at).count()
+        self.out.iter().filter(|(m, ..)| m == at).count()
     }
 }
 
@@ -64,32 +65,40 @@ impl Explorer {
     /// land at a wake ([`Explorer::take_space`]).
     pub(crate) fn read_space(&mut self, ctx: &Ctx) {
         self.spaces.read.clear();
+        for (.., fresh) in &mut self.spaces.out {
+            *fresh = false;
+        }
         let mounts: Vec<PathBuf> = (self.items.iter())
             .filter(|it| it.drive.is_some() && self.drives.iter().any(|d| d.mount == it.path))
             .map(|it| it.path.clone())
             .collect();
         for m in mounts {
-            if self.spaces.out.iter().any(|(at, _)| *at == m) {
+            if self.spaces.out.iter().any(|(at, ..)| *at == m) {
                 continue;
             }
             let stat = self.statvfs;
             let at = m.clone();
             let job = self.spawn_read(ctx, move || stat(&at));
-            self.spaces.out.push((m, job));
+            self.spaces.out.push((m, job, true));
         }
         self.take_space(SPACE_WAIT);
     }
 
-    /// Lands the space reads that answer within `wait` on Computer's entries; whether any did.
+    /// Lands the space reads that answer on Computer's entries, waiting up to `wait` for those the
+    /// last listing started (an older one is still out on a mount that did not answer); whether
+    /// any landed.
     pub(crate) fn take_space(&mut self, wait: Duration) -> bool {
         if self.spaces.out.is_empty() {
             return false;
         }
         let until = Instant::now() + wait;
         let mut landed = Vec::new();
-        self.spaces.out.retain(|(at, job)| {
-            let left = until.saturating_duration_since(Instant::now());
-            match job.wait(left) {
+        self.spaces.out.retain(|(at, job, fresh)| {
+            let answer = match fresh {
+                true => job.wait(until.saturating_duration_since(Instant::now())),
+                false => job.take(),
+            };
+            match answer {
                 Some(answer) => {
                     landed.push((at.clone(), answer));
                     false
