@@ -192,8 +192,9 @@ pub fn task_preview_grid(theme: &Theme) -> Grid {
     }
 }
 
-/// is Classic's renderer for `theme.fonts`, unused by Glass, which sets
-/// the titles in its caption face.
+/// The task preview panel in `theme`'s look, then `media`'s buttons. `text`
+/// is Classic's renderer for `theme.fonts`; Glass sets the titles in its
+/// caption face.
 pub fn draw_task_preview(
     canvas: &mut Canvas,
     theme: &Theme,
@@ -201,6 +202,7 @@ pub fn draw_task_preview(
     layout: &TaskPreviewLayout,
     cells: &[Cell],
     hot: Option<usize>,
+    media: &controls::taskpreview::Media,
 ) {
     match theme.look.style() {
         Some(s) if s.glass.is_some() => {
@@ -210,6 +212,7 @@ pub fn draw_task_preview(
         }
         _ => controls::taskpreview::draw(canvas, theme, text, layout, cells, hot),
     }
+    controls::taskpreview::draw_media(canvas, theme, text, layout, media);
 }
 
 pub fn switcher_grid(theme: &Theme) -> switcher::Grid {

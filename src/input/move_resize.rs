@@ -257,6 +257,7 @@ impl State {
                 crate::notifyview::release(self, pos.x, pos.y);
                 crate::notifycenter::release(self, pos.x, pos.y);
             }
+            Interaction::PreviewPress => crate::taskpreview::media_release(self),
             Interaction::DisplaysSlide => crate::displaysview::release(self),
             Interaction::PanelBar => {
                 self.clipview_release();
@@ -328,6 +329,7 @@ impl State {
                 crate::notifyview::cancel_press(self);
                 crate::notifycenter::cancel_press(self);
             }
+            Interaction::PreviewPress => crate::taskpreview::media_cancel(self),
             Interaction::DisplaysSlide => crate::displaysview::release(self),
             Interaction::PanelBar => {
                 self.clipview_release();

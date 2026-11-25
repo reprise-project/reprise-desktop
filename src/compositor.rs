@@ -301,6 +301,8 @@ pub struct State {
     pub netspeed: crate::netspeed::NetSpeed,
     /// Programs' progress for their task buttons (`launcherentry`).
     pub launcher_entries: crate::launcherentry::Entries,
+    /// The media players the task preview's buttons play (`previewmedia`).
+    pub preview_players: crate::previewmedia::PreviewPlayers,
     /// The DRM session, GPU and connectors; None only while starting.
     pub backend: Option<Backend>,
     /// `adaptive_sync` set by output management, by output name, until the config names it again.
@@ -757,6 +759,11 @@ impl State {
             },
             launcher_entries: if session {
                 crate::launcherentry::Entries::start(&handle)
+            } else {
+                Default::default()
+            },
+            preview_players: if session {
+                crate::previewmedia::PreviewPlayers::start(&handle)
             } else {
                 Default::default()
             },

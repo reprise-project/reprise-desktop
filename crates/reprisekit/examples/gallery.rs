@@ -104,7 +104,7 @@ use popups::{
     render_balloon_pictures, render_calendar_events, render_desktop_labels,
     render_glass_clock_popup, render_glass_launcher, render_glass_launcher_dark,
     render_glass_notify_sheets, render_glass_popups, render_launchers, render_now_playing,
-    render_popups_text_size, write_volume_popups,
+    render_popups_text_size, render_preview_media, write_volume_popups,
 };
 use sheets::{
     render_list_sheet_links, render_list_sheet_search, render_list_sheets, render_long_list_sheets,
@@ -671,6 +671,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
             "reprisekit-gallery-list-sheet-scrolled.png",
         );
         write_preview(&render_now_playing(), "reprisekit-gallery-now-playing.png");
+        write_preview(
+            &render_preview_media(),
+            "reprisekit-gallery-preview-media.png",
+        );
         write_preview(
             &render_calendar_events(1),
             "reprisekit-gallery-calendar-events.png",

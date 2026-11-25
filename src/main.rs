@@ -103,6 +103,7 @@ mod peek;
 mod pointers;
 mod popupgrab;
 mod popups;
+mod previewmedia;
 mod privacy;
 mod projection;
 mod projectorview;

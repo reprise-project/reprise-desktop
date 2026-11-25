@@ -79,7 +79,7 @@ struct Sound {
     /// snapshot's own volume, and a wheel burst or key repeat on either
     /// path counts on from it.
     recent: pipewire::Recent<u32, f64>,
-    players: Option<mpris::Watch>,
+    players: Option<reprisebus::mpris::Watch>,
     playing: mpris::Pick,
     /// `[sounds] allow_boost`, reread when the config file changes.
     boost: bool,
@@ -487,7 +487,7 @@ impl Sound {
             }
             E::Media(t) => {
                 if let (Some(w), Some((bus, _))) = (&self.players, &self.playing) {
-                    w.send(bus, t);
+                    w.send(bus, mpris::method(t));
                 }
                 Reply::redraw()
             }
@@ -524,8 +524,8 @@ impl Sound {
         }
         let mut player = None;
         if let Some(w) = &self.players {
-            while let Ok(p) = w.picks.try_recv() {
-                player = Some(p);
+            while let Ok(p) = w.players.try_recv() {
+                player = Some(mpris::pick(&p));
             }
         }
         let landed = self.app_icons.take_landed();

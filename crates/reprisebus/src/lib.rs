@@ -47,6 +47,7 @@
 //! [`eds`] reads a day's events from evolution-data-server's calendars.
 //! [`bounded`] decodes what another peer sends within size caps, never as a `Variant` tree.
 //! [`follow`] reruns a source on a thread with a backoff, sending only what changed.
+//! [`mpris`] follows the media players and calls their transport methods.
 
 pub mod a11y;
 pub mod airplane;
@@ -72,6 +73,7 @@ pub mod locale;
 pub mod localsearch;
 pub mod login;
 pub mod logind;
+pub mod mpris;
 pub mod mutex;
 pub mod notify;
 pub mod peer;

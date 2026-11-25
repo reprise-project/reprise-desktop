@@ -274,6 +274,9 @@ pub enum Interaction {
     /// or Clear All, held down: it acts on the release over it. The history's
     /// held scrollbar follows the pointer until the release.
     NotifyPress,
+    /// A media button of the task preview held down: it draws pushed while the pointer is on it
+    /// and presses the player on the release over it.
+    PreviewPress,
     /// A slider on the displays panel held: it follows the pointer until the release.
     DisplaysSlide,
     /// The clipboard history's or the emoji picker's scrollbar thumb or arrow held: the thumb
@@ -326,6 +329,7 @@ impl Interaction {
             | Interaction::DialogMove { .. }
             | Interaction::DialogPress
             | Interaction::NotifyPress
+            | Interaction::PreviewPress
             | Interaction::DisplaysSlide
             | Interaction::PanelBar
             | Interaction::MiniMove { .. }

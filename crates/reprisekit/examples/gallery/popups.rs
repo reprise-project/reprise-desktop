@@ -705,6 +705,69 @@ pub fn render_calendar_events(scale: i32) -> Canvas {
     c
 }
 
+/// A track a media player plays, every button live.
+pub fn sample_now_playing() -> reprisekit::controls::volumepopup::NowPlaying {
+    reprisekit::controls::volumepopup::NowPlaying {
+        title: "Evening Mix".into(),
+        artist: "The Late Show Band".into(),
+        playing: true,
+        can_previous: true,
+        can_next: true,
+        can_play: true,
+        can_pause: true,
+    }
+}
+
+/// The task preview's media buttons in Classic, Blue and Glass over the striped backdrop: a
+/// playing window with the pointer on Next, beside a paused one with no track before it and the
+/// keyboard on Play.
+pub fn render_preview_media() -> Canvas {
+    use reprisekit::controls::taskpreview::{Cell, Media, TaskPreviewLayout};
+    use reprisekit::controls::volumepopup::Transport;
+    use reprisekit::pointer::Interaction;
+    let (w, h) = (500, 280);
+    let mut c = blurred_stripes(3 * w, h);
+    let mut window = Canvas::new(160, 96);
+    window.fill_rect(window.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
+    window.fill_rect(Rect::new(0, 0, 160, 8), Color::rgb(0xDD, 0xE6, 0xF2));
+    for (i, look) in [Interface::Classic, Interface::Blue, Interface::Glass]
+        .into_iter()
+        .enumerate()
+    {
+        let theme = cued(interfaces::theme_for(look));
+        let text = TextRenderer::load(&theme.fonts);
+        let bounds = Rect::new(i as i32 * w, 0, w, h - 20);
+        let button = Rect::new(bounds.x + w / 2 - 30, h - 20, 60, 20);
+        let grid = interfaces::task_preview_grid(&theme).with_media();
+        let l =
+            TaskPreviewLayout::compute(grid, 2, button, bounds, reprisekit::taskbar::Edge::Bottom);
+        let cells = ["Evening Mix - Player", "Podcast - Player"].map(|title| Cell {
+            title,
+            icon: None,
+            active: false,
+            picture: Some(&window),
+        });
+        let players = [
+            Some(sample_now_playing()),
+            Some(reprisekit::controls::volumepopup::NowPlaying {
+                playing: false,
+                can_previous: false,
+                ..sample_now_playing()
+            }),
+        ];
+        let media = Media {
+            players: &players,
+            lit: Some(((0, Transport::Next), Interaction::Hot)),
+            focus: Some((1, Transport::PlayPause)),
+        };
+        let a = l.canvas();
+        let mut panel = Canvas::new(a.width as u32, a.height as u32);
+        interfaces::draw_task_preview(&mut panel, &theme, &text, &l, &cells, Some(0), &media);
+        c.blit_over(l.rect.x + a.x, l.rect.y + a.y, &panel);
+    }
+    c
+}
+
 pub fn render_now_playing() -> Canvas {
     use volumepopup::{NowPlaying, Transport};
     let (w, h) = (480, 430);
