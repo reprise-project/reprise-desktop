@@ -421,6 +421,25 @@ pub struct EntryId {
     n: u64,
 }
 
+/// `history:n`, as a host passes it to the process it hands an undo to.
+impl std::fmt::Display for EntryId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.history, self.n)
+    }
+}
+
+impl std::str::FromStr for EntryId {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        let (history, n) = s.split_once(':').ok_or(())?;
+        Ok(EntryId {
+            history: history.parse().map_err(|_| ())?,
+            n: n.parse().map_err(|_| ())?,
+        })
+    }
+}
+
 /// How many entries the history keeps; a push past it drops the oldest.
 pub const CAP: usize = 100;
 
@@ -1316,6 +1335,16 @@ mod tests {
             )),
             _ => panic!("the batch keeps /a and /b"),
         }
+    }
+
+    #[test]
+    fn an_entry_id_reads_back_from_its_text() {
+        let mut u = UndoStack::default();
+        u.push(Undoable::New("/n".into(), None));
+        let id = u.entries[0].0;
+        assert_eq!(id.to_string().parse(), Ok(id));
+        assert_eq!("12".parse::<EntryId>(), Err(()));
+        assert_eq!("a:1".parse::<EntryId>(), Err(()));
     }
 
     #[test]

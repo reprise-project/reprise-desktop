@@ -309,6 +309,35 @@ fn a_failure_box_with_no_folder_window_has_a_task_button_and_asks_to_come_up() {
 #[test]
 fn undo_with_nothing_to_undo_ends_at_once() {
     let mut ctx = test_ctx();
-    let mut app = started(&["--undo".as_ref()]);
+    let mut app = started(&["--undo".as_ref(), "1:1".as_ref()]);
     run_out(&mut app, &mut ctx);
+}
+
+#[test]
+fn undo_of_a_named_entry_runs_only_while_it_is_on_top() {
+    use reprisefs::undo::{Undoable, file_id};
+    let bare = parse_args(std::iter::once(std::ffi::OsString::from("--undo")));
+    assert!(bare.alone.is_none(), "--undo names its entry");
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let [first, second] = ["first", "second"].map(|n| dir.path().join(n));
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let push = |ex: &mut Explorer, p: &std::path::Path| {
+        std::fs::create_dir(p).expect("mkdir");
+        ex.undos.push(Undoable::New(p.to_path_buf(), file_id(p)));
+        ex.undos.top(|id, _| id).expect("on top")
+    };
+    let below = push(&mut ex, &first);
+    let top = push(&mut ex, &second);
+
+    ex.undo_with(Some(below), false, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(
+        first.exists() && second.exists(),
+        "an entry under another is not undone"
+    );
+
+    ex.undo_with(Some(top), false, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(first.exists() && !second.exists());
 }

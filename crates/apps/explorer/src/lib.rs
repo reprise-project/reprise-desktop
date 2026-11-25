@@ -2056,7 +2056,7 @@ impl App for Lazy {
                     }
                     Some(Alone::EmptyBin) => ex.confirm_empty_bins(ctx),
                     Some(Alone::Zip(paths)) => ex.zip_paths(paths.clone(), ctx),
-                    Some(Alone::Undo) => ex.undo_last(ctx),
+                    Some(Alone::Undo(entry)) => ex.undo_with(Some(*entry), false, ctx),
                     None => Reply::none(),
                 };
                 ex
@@ -2314,8 +2314,8 @@ enum Alone {
     EmptyBin,
     /// `--zip PATHS...`: Send To > Compressed (zipped) Folder on the PATHS.
     Zip(Vec<PathBuf>),
-    /// `--undo`: Undo on the session's history.
-    Undo,
+    /// `--undo ENTRY`: Undo on the session's history, of that entry while it is the top one.
+    Undo(reprisefs::undo::EntryId),
 }
 
 /// The rest of the command line as paths: None unless there is one and every one is absolute.
@@ -2391,7 +2391,9 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         }
         Some("--empty-bin") => Some(Alone::EmptyBin),
         Some("--zip") => absolute_paths(args.by_ref()).map(Alone::Zip),
-        Some("--undo") => Some(Alone::Undo),
+        Some("--undo") => (args.next())
+            .and_then(|a| a.to_str()?.parse().ok())
+            .map(Alone::Undo),
         _ => None,
     };
     if let Some(alone) = alone {
@@ -2399,7 +2401,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             Alone::Properties(paths) => paths[0].parent().map_or(Place::Home, Place::from_path),
             Alone::OpenWith(path) => path.parent().map_or(Place::Home, Place::from_path),
             Alone::BinProperties | Alone::EmptyBin => Place::RecycleBin,
-            Alone::Undo => Place::Home,
+            Alone::Undo(_) => Place::Home,
             Alone::Put { target, .. } => Place::from_path(target),
             Alone::Delete { paths, .. } | Alone::Zip(paths) => {
                 paths[0].parent().map_or(Place::Home, Place::from_path)

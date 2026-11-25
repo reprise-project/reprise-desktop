@@ -1372,7 +1372,7 @@ impl Explorer {
                 Some(Dialog::Confirm(Confirm {
                     undo_erase: Some(entry),
                     ..
-                })) => self.undo_with(Some(entry), ctx),
+                })) => self.undo_with(Some(entry), true, ctx),
                 Some(Dialog::Confirm(Confirm {
                     bin: Some(items), ..
                 })) => self.erase_from_bin(items, ctx),

@@ -1862,6 +1862,41 @@ fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
 }
 
 #[test]
+fn undo_stays_greyed_until_an_undo_that_gave_up_while_changing_lands() {
+    let (mut h, desk) = desktop_in("desktop-undo-late", &[]);
+    let runtime = crate::harness::scratch().join("desktop-undo-late-runtime");
+    let _ = std::fs::remove_dir_all(&runtime);
+    std::fs::create_dir_all(&runtime).unwrap();
+    let history = runtime.join("reprise-undo");
+    h.state.desktop.as_mut().unwrap().undos = reprisefs::undo::SharedUndo::at(history.clone());
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    h.state.cancel_rename();
+    let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing;
+    crate::fsjobs::setup(&mut h.state);
+    h.state.fsjobs.deadline = Some(std::time::Duration::from_millis(50));
+    let lock = std::fs::File::create(runtime.join("reprise-undo.lock")).unwrap();
+    lock.lock().unwrap();
+
+    h.state.undo_icons();
+    h.until("the give-up", |s| !s.dialogs.views.is_empty());
+    let text = &h.state.dialogs.views.last().unwrap().dialog.text;
+    // A loaded machine may start the work past the deadline, which then changes nothing.
+    let changing = text.contains("may still be made");
+    assert_eq!(undoing(&h.state), changing, "{text}");
+    h.until("the work lands", |s| !undoing(s));
+    drop(lock);
+
+    assert!(
+        desk.join("New Folder").is_dir(),
+        "the lock kept the undo out"
+    );
+    assert_eq!(
+        h.state.desktop.as_ref().unwrap().undos.label(),
+        Some("Undo New")
+    );
+}
+
+#[test]
 fn ctrl_z_hands_an_entry_that_is_more_than_a_desktop_new_or_rename_to_explorer() {
     let (mut h, desk) = desktop_in("desktop-undo-explorer", &["x.txt"]);
     let from = desk.parent().unwrap().join("elsewhere-x.txt");
@@ -1872,10 +1907,12 @@ fn ctrl_z_hands_an_entry_that_is_more_than_a_desktop_new_or_rename_to_explorer()
         listed: false,
         id: None,
     });
+    let entry = view.undos.top(|id, _| id).expect("the move's entry");
     crate::spawn::record();
     ctrl_z(&mut h);
     let job = h.state.filejobs.jobs.last().expect("an Explorer job");
-    assert_eq!(job.args, ["--undo"]);
+    let entry = entry.to_string();
+    assert_eq!(job.args, ["--undo", entry.as_str()]);
     assert!(desk.join("x.txt").exists(), "the desktop moved nothing");
     assert_eq!(
         h.state.desktop.as_ref().unwrap().undos.label(),
