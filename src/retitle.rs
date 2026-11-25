@@ -1,7 +1,8 @@
 //! What a window's title, app id or icon change redraws, and how often
 //! (`State::flush_titles`): a repeat of the same title costs a string
-//! compare, a new title redraws the caption strip, and the taskbars redraw
-//! only when the window's task button shows what changed.
+//! compare, a new title redraws the caption strip and an open task preview
+//! showing the window, and the taskbars redraw only when the window's task
+//! button shows what changed.
 
 use std::time::{Duration, Instant};
 
@@ -187,7 +188,8 @@ impl State {
         }
     }
 
-    /// Redraw for the pending changes: the caption strip, and the bars once if
+    /// Redraw for the pending changes: the caption strip, an open task preview
+    /// showing the window, and the bars once if
     /// any window's button showed what changed when it came (`plan`); a bar
     /// drawn since shows it already. A window redrawn under `MIN_INTERVAL` ago
     /// waits for the timer.
@@ -218,6 +220,7 @@ impl State {
             }
             if changes.any() && mapped {
                 self.redraw_caption(w);
+                crate::taskpreview::retitled(self, w);
             }
         }
         if bars {
