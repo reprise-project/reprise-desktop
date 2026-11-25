@@ -80,6 +80,9 @@ fn picked_trusted<C: PartialEq>(
     })
 }
 
+/// Trusted tokens one tap may mint; a launcher may ask twice for one start.
+const TOKENS_PER_TAP: u8 = 2;
+
 /// Programs Reprise just asked to act, by desktop id, for those the token never reaches: a search
 /// provider call carries none, and some programs drop a notification action's. The next
 /// activation a window of one asks for within [`TOKEN_LIFETIME`] is trusted, once.
@@ -128,21 +131,9 @@ impl XdgActivationHandler for State {
         let serial = (data.serial.as_ref())
             .filter(|(_, seat)| Seat::<State>::from_resource(seat).as_ref() == Some(&self.seat))
             .map(|(serial, _)| *serial);
-        let no_older_than = |from: Option<Serial>| {
-            serial
-                .zip(from)
-                .is_some_and(|(s, from)| s.is_no_older_than(&from))
-        };
-        let serial_ok = no_older_than(since);
+        let serial_ok = (serial.zip(since)).is_some_and(|(s, since)| s.is_no_older_than(&since));
         let now = Instant::now();
-        // A tap on a surface that takes no keyboard (a launcher panel's) leaves the keyboard
-        // elsewhere, so the client that asks is checked, not a surface it may not name.
-        let tapped = no_older_than(self.seat.get_touch().and_then(|t| t.last_down()))
-            && picked_trusted(
-                self.devices.touch.tapped.as_ref(),
-                data.client_id.as_ref(),
-                now,
-            );
+        let tapped = self.tap_trusted(serial, data.client_id.as_ref(), now);
         let token_client = data
             .surface
             .as_ref()
@@ -207,6 +198,32 @@ impl XdgActivationHandler for State {
             self.ask_attention(w);
             self.redraw_taskbars();
         }
+    }
+}
+
+impl State {
+    /// Whether the newest tap trusts `client`'s token on `serial`: it was sent that down within
+    /// [`PICK_GRACE`] and the tap minted fewer than [`TOKENS_PER_TAP`]. The client is checked, not
+    /// the token's surface: a launcher panel without the keyboard names none.
+    fn tap_trusted(
+        &mut self,
+        serial: Option<Serial>,
+        client: Option<&ClientId>,
+        now: Instant,
+    ) -> bool {
+        let touch = &mut self.devices.touch;
+        let Some(tap) = touch.tapped.as_mut() else {
+            return false;
+        };
+        let picked = (tap.client.clone(), tap.at);
+        if serial != Some(tap.serial) || !picked_trusted(Some(&picked), client, now) {
+            return false;
+        }
+        tap.spent += 1;
+        if tap.spent >= TOKENS_PER_TAP {
+            touch.tapped = None;
+        }
+        true
     }
 }
 
@@ -579,13 +596,34 @@ mod tests {
         }
 
         /// A token the launcher asks on `serial`, naming no surface as GTK does without the
-        /// keyboard, presented for `target`.
-        fn raise_on(&mut self, serial: u32) {
+        /// keyboard.
+        fn mint(&mut self, serial: u32) -> String {
             self.launcher.token_from(serial, None);
             self.h.roundtrip(&mut self.launcher);
-            let token = self.launcher.side.tokens.last().expect("a token").clone();
-            self.app.activate(&token, self.target);
+            self.launcher.side.tokens.last().expect("a token").clone()
+        }
+
+        /// `token` presented for `target`.
+        fn present(&mut self, token: &str) {
+            self.app.activate(token, self.target);
             self.h.roundtrip(&mut self.app);
+        }
+
+        /// [`Launcher::mint`] on `serial`, presented for `target`.
+        fn raise_on(&mut self, serial: u32) {
+            let token = self.mint(serial);
+            self.present(&token);
+        }
+
+        /// A point inside `busy`'s window, clear of the panel.
+        fn busy_point(&self) -> (f64, f64) {
+            let w = self.h.state.win(self.busy.1.id).expect("busy");
+            let (x, y) = (w.x + w.geom.client.x + 20, w.y + w.geom.client.y + 40);
+            (f64::from(x), f64::from(y))
+        }
+
+        fn keyboard_on_busy(&self) -> bool {
+            self.h.state.focused == Some(self.busy.1.id)
         }
     }
 
@@ -645,6 +683,71 @@ mod tests {
             Some(l.busy.1.id),
             "busy keeps the keyboard"
         );
+    }
+
+    #[test]
+    fn a_finger_a_drag_keeps_from_the_launcher_lets_it_raise_nothing() {
+        let mut l = launcher();
+        l.busy.0.bind_touch();
+        l.h.roundtrip(&mut l.busy.0);
+        let (x, y) = l.busy_point();
+        l.h.finger_down(0, x, y);
+        l.h.roundtrip(&mut l.busy.0);
+        let serial = l.busy.0.side.touch_down_serial;
+        let source = l.busy.0.data_source(&["text/plain"], b"x");
+        let origin = l.busy.0.side.shells[l.busy.1.shell].surface.clone();
+        (l.busy.0.data_device()).start_drag(Some(&source), &origin, None, serial);
+        l.h.roundtrip(&mut l.busy.0);
+        assert!(l.h.state.dnd.running(), "busy drags under the first finger");
+
+        l.h.finger_down(1, 100.0, 15.0);
+        l.h.roundtrip(&mut l.launcher);
+        assert_eq!(
+            l.launcher.side.touch_down_serial, 0,
+            "the panel hears no down"
+        );
+        let down = (l.h.state.seat.get_touch())
+            .and_then(|t| t.last_down())
+            .expect("the second finger's down");
+        l.raise_on(down.into());
+        assert!(l.keyboard_on_busy(), "busy keeps the keyboard");
+    }
+
+    #[test]
+    fn a_second_finger_on_the_launcher_lets_it_raise_a_window() {
+        let mut l = launcher();
+        l.busy.0.bind_touch();
+        l.h.roundtrip(&mut l.busy.0);
+        let (x, y) = l.busy_point();
+        l.h.finger_down(0, x, y);
+        l.h.finger_down(1, 100.0, 15.0);
+        l.h.roundtrip(&mut l.launcher);
+        let down = l.launcher.side.touch_down_serial;
+        assert_ne!(down, 0, "the panel hears the second finger");
+        l.raise_on(down);
+        assert_eq!(l.h.state.focused, Some(l.target.id));
+    }
+
+    #[test]
+    fn a_tap_on_a_launcher_raises_nothing_on_a_serial_it_was_not_sent() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        l.raise_on(down.wrapping_add(1000));
+        assert!(l.keyboard_on_busy(), "on a later serial");
+    }
+
+    #[test]
+    fn a_tap_on_a_launcher_lets_it_raise_twice() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        let tokens: Vec<String> = (0..3).map(|_| l.mint(down)).collect();
+        let mut raised = Vec::new();
+        for token in &tokens {
+            l.h.state.focus_window(l.busy.1.id);
+            l.present(token);
+            raised.push(l.h.state.focused == Some(l.target.id));
+        }
+        assert_eq!(raised, [true, true, false]);
     }
 
     /// A click in the middle of window `t`, given the keyboard first; the serial `c` heard for it.

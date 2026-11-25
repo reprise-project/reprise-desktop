@@ -15,8 +15,9 @@
 //! down's serial, so the client may start a drag (`dnd`) or a move or size
 //! from a title bar it draws itself (`take_for_grab`).
 //!
-//! The client the newest finger landed on may raise a window for a moment
-//! after (`activation`), though the surface took no keyboard.
+//! The client the newest finger down went to may raise a window for a moment
+//! after (`activation`), though the surface took no keyboard. A down the
+//! grab keeps from every client (a drag's) ends it.
 
 use reprisekit::fluid::Source;
 use smithay::{
@@ -51,13 +52,32 @@ pub struct TouchState {
     stir_moves: Vec<(TouchSlot, Point<f64, Logical>)>,
     /// A client had touch events since the last frame.
     frame_due: bool,
-    /// The client the newest finger down went to, and when; None once a finger lands elsewhere.
-    pub(crate) tapped: Option<(ClientId, Instant)>,
+    /// The newest finger down, when a client heard it and no input went elsewhere since.
+    pub(crate) tapped: Option<Tap>,
+}
+
+/// A finger down sent to `client` on `serial` at `at`.
+pub(crate) struct Tap {
+    pub client: ClientId,
+    pub serial: Serial,
+    pub at: Instant,
+    /// Trusted activation tokens minted on it so far.
+    pub spent: u8,
 }
 
 impl TouchState {
     pub fn any_down(&self) -> bool {
         !self.points.is_empty()
+    }
+
+    /// The grab sent the down `event` to `focus`.
+    fn heard(&mut self, focus: Option<&(WlSurface, Point<f64, Logical>)>, event: &DownEvent) {
+        self.tapped = (focus.and_then(|(s, _)| s.client())).map(|c| Tap {
+            client: c.id(),
+            serial: event.serial,
+            at: Instant::now(),
+            spent: 0,
+        });
     }
 }
 
@@ -143,6 +163,7 @@ impl TouchGrab<State> for EachFinger {
         event: &DownEvent,
     ) {
         handle.down(data, focus.clone(), event);
+        data.devices.touch.heard(focus.as_ref(), event);
         let start = GrabStartData {
             focus,
             slot: event.slot,
@@ -211,6 +232,7 @@ impl TouchGrab<State> for FirstFinger {
         focus: Option<(WlSurface, Point<f64, Logical>)>,
         event: &DownEvent,
     ) {
+        data.devices.touch.heard(focus.as_ref(), event);
         handle.down(data, focus, event);
     }
 
@@ -471,7 +493,6 @@ impl State {
                 if !self.focus_for_press(&surface, window) {
                     Route::Ignored
                 } else if let Some(touch) = self.seat.get_touch() {
-                    let client = surface.client().map(|c| c.id());
                     touch.down(
                         self,
                         Some((surface, origin)),
@@ -483,7 +504,6 @@ impl State {
                         },
                     );
                     self.devices.touch.frame_due = true;
-                    self.devices.touch.tapped = client.map(|c| (c, Instant::now()));
                     Route::Client { at: pos }
                 } else {
                     Route::Ignored
