@@ -34,7 +34,7 @@ png.workspace = true
 image.workspace = true
 jpeg-decoder = { version = "0.3", default-features = false }
 reprisebus = { path = "../reprisebus" }
-pipewire = { workspace = true, features = ["v0_3_34"] }
+pipewire.workspace = true
 wayland-client.workspace = true
 wayland-scanner = "0.31"
 wayland-backend = "0.3"
@@ -42,8 +42,9 @@ async-channel.workspace = true
 futures-lite.workspace = true
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 # No default features: their import-wayland links libwayland-server into
-# every binary built alongside the portal.
-gbm = { version = "0.18", default-features = false }
+# every binary built alongside the portal. drm-support is what the compositor's
+# smithay turns on, so `-p reprise-portal` shares the `--workspace` units.
+gbm = { version = "0.18", default-features = false, features = ["drm-support"] }
 
 [dev-dependencies]
 tempfile.workspace = true

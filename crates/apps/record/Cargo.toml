@@ -25,7 +25,7 @@ reprisebus = { path = "../../reprisebus" }
 reprisevideo = { path = "../../reprisevideo" }
 repriseconf = { path = "../../repriseconf" }
 ffmpeg = { package = "ffmpeg-the-third", version = "6", default-features = false, features = ["codec", "format", "software-scaling"] }
-pipewire = { workspace = true, features = ["v0_3_33"] }
+pipewire.workspace = true
 zbus.workspace = true
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }

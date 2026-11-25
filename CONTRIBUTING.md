@@ -101,7 +101,10 @@ theme installed, and the zombie test when another test's reaper wins.
   `Cargo.toml`, run `scripts/kit-units`. It must report one reprisekit,
   zbus and reprisebus unit; otherwise add the missing features to
   `crates/reprisekit-pins`, or to `crates/repriseapp-pins` when the crate
-  is outside reprisekit's own dependency graph.
+  is outside reprisekit's own dependency graph. `scripts/feature-drift`,
+  which takes seconds, must print nothing: it lists the features
+  `-p reprise`, `-p reprise-apps`, `-p reprise-portal` and the programs
+  resolve differently from `--workspace`, each a second build of a unit.
   A new dependency also goes into the Requirements section of
   docs/install.md, the PKGBUILDs under `packaging/arch/`, and
   `packaging/deb`: its Ubuntu `-dev` package into `build-depends` when the

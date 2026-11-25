@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 repriseconf = { path = "../repriseconf" }
-pipewire = { workspace = true, features = ["v0_3_33"] }
+pipewire.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 libc.workspace = true
 log.workspace = true
