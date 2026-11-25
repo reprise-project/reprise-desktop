@@ -307,8 +307,7 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
             "audio_devices_note",
             Rect::new(X, 44, a.w - 118, 2 * LINE_H),
             Control::Lines(vec![
-                "To pick speakers and microphones or".into(),
-                "set each program's volume, open".into(),
+                "To pick speakers and microphones or set each program's volume, open".into(),
             ]),
         ),
         Item::button_at(
