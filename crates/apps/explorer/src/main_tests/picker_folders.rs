@@ -81,6 +81,7 @@ fn the_pickers_new_folder_is_named_in_place() {
         "the renamed folder stays the pick"
     );
     assert!(ex.dialog().is_some(), "Enter left the picker up");
+    ex.finish_puts(&mut ctx);
     ex.undo_last(&mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(

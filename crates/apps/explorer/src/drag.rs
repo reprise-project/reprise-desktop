@@ -414,6 +414,7 @@ impl Explorer {
     }
 
     pub(crate) fn item_menu_at(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
+        self.sync_undo();
         let lay = self.layout(ctx);
         let sl = self.view_layout(lay.view, ctx);
         match shellview::hit(&self.sv, &sl, x, y) {
