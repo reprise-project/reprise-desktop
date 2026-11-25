@@ -105,11 +105,23 @@ pub struct Favorite {
     pub label: String,
     /// False for a folder that is not there: shown greyed. True for any other URI.
     pub present: bool,
+    /// The line it was read from, which an edit of it changes.
+    pub line: LineKey,
+}
+
+/// A bookmark's line: its URI as written and how many lines before it carry the same, so two
+/// spellings of one folder (`file:///a`, `file://localhost/a`) or two copies of a line stay apart.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct LineKey {
+    uri: String,
+    nth: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
     target: Target,
+    /// The URI as the line spells it, written back as is.
+    uri: String,
     label: Option<String>,
 }
 
@@ -175,8 +187,8 @@ impl Bookmarks {
         for line in &self.lines {
             match (&line.raw, &line.entry) {
                 (Some(raw), _) => out.extend_from_slice(raw),
-                (None, Some(Entry { target, label })) => {
-                    out.extend_from_slice(target.uri().as_bytes());
+                (None, Some(Entry { uri, label, .. })) => {
+                    out.extend_from_slice(uri.as_bytes());
                     if let Some(label) = label {
                         out.push(b' ');
                         out.extend_from_slice(label.as_bytes());
@@ -197,11 +209,42 @@ impl Bookmarks {
             .map(|e| (&e.target, e.label.as_deref()))
     }
 
+    /// Every bookmark, in file order, with the key of its line.
+    fn keyed(&self) -> impl Iterator<Item = (LineKey, &Entry)> {
+        let mut seen = std::collections::HashMap::<&str, usize>::new();
+        self.lines
+            .iter()
+            .filter_map(|l| l.entry.as_ref())
+            .map(move |e| {
+                let nth = seen.entry(e.uri.as_str()).or_default();
+                let key = LineKey {
+                    uri: e.uri.clone(),
+                    nth: *nth,
+                };
+                *nth += 1;
+                (key, e)
+            })
+    }
+
+    /// The index of `key`'s line.
+    fn find(&self, key: &LineKey) -> Option<usize> {
+        let mut seen = 0;
+        self.lines.iter().position(|l| {
+            let hit = l.entry.as_ref().is_some_and(|e| e.uri == key.uri);
+            seen += usize::from(hit);
+            hit && seen == key.nth + 1
+        })
+    }
+
     /// A new bookmark line, ending as the last line does.
     fn push(&mut self, target: Target, label: Option<String>) {
         let crlf = self.lines.last().is_some_and(|l| l.crlf);
         self.lines.push(Line {
-            entry: Some(Entry { target, label }),
+            entry: Some(Entry {
+                uri: target.uri(),
+                target,
+                label,
+            }),
             raw: None,
             crlf,
         });
@@ -234,7 +277,9 @@ impl Bookmarks {
 
     /// Drops every line naming `dir`; false when none did.
     pub fn unpin(&mut self, dir: &Path) -> bool {
-        self.remove(&Target::Folder(dir.to_path_buf()))
+        let before = self.lines.len();
+        self.lines.retain(|l| l.folder() != Some(dir));
+        self.lines.len() != before
     }
 
     /// Moves `dir` past the folder before it (`up`) or after it, the lines of other schemes
@@ -250,23 +295,26 @@ impl Bookmarks {
     /// when nothing changed. A name equal to the folder's own is left out of the line.
     pub fn add(&mut self, dir: &Path, name: &str) -> bool {
         let target = Target::Folder(dir.to_path_buf());
-        if self.lines.iter().any(|l| l.is(&target)) {
-            return self.rename(&target, name);
+        if let Some(at) = self.lines.iter().position(|l| l.is(&target)) {
+            return self.rename_at(at, name);
         }
         let label = label_for(&target, name);
         self.push(target, label);
         true
     }
 
-    /// Names the first bookmark of `target` `name`; false when there is none or the name stays.
-    pub fn rename(&mut self, target: &Target, name: &str) -> bool {
-        let want = label_for(target, name);
-        let Some(line) = self.lines.iter_mut().find(|l| l.is(target)) else {
-            return false;
-        };
+    /// Names the bookmark on `key`'s line `name`, its URI kept as written; false when the line is
+    /// gone or the name stays.
+    pub fn rename(&mut self, key: &LineKey, name: &str) -> bool {
+        self.find(key).is_some_and(|at| self.rename_at(at, name))
+    }
+
+    fn rename_at(&mut self, at: usize, name: &str) -> bool {
+        let line = &mut self.lines[at];
         let Some(entry) = &mut line.entry else {
             return false;
         };
+        let want = label_for(&entry.target, name);
         if entry.label == want {
             return false;
         }
@@ -275,17 +323,15 @@ impl Bookmarks {
         true
     }
 
-    /// Drops every bookmark of `target`; false when there was none.
-    pub fn remove(&mut self, target: &Target) -> bool {
-        let before = self.lines.len();
-        self.lines.retain(|l| !l.is(target));
-        self.lines.len() != before
+    /// Drops `key`'s line; false when it is gone.
+    pub fn remove(&mut self, key: &LineKey) -> bool {
+        self.find(key).map(|at| self.lines.remove(at)).is_some()
     }
 
-    /// Moves the first bookmark of `target` past the bookmark before it (`up`) or after it, the
-    /// other lines staying where they are; false at either end.
-    pub fn move_entry(&mut self, target: &Target, up: bool) -> bool {
-        match self.lines.iter().position(|l| l.is(target)) {
+    /// Moves `key`'s line past the bookmark before it (`up`) or after it, the other lines staying
+    /// where they are; false at either end.
+    pub fn move_entry(&mut self, key: &LineKey, up: bool) -> bool {
+        match self.find(key) {
             Some(at) => self.swap_with(at, up, |l| l.entry.is_some()),
             None => false,
         }
@@ -347,7 +393,11 @@ fn parse_line(line: &[u8]) -> Option<Entry> {
         ))),
         None => Target::Uri(uri.to_string()),
     };
-    Some(Entry { target, label })
+    Some(Entry {
+        target,
+        uri: uri.to_string(),
+        label,
+    })
 }
 
 /// The bookmarks file at `file`, empty when it is missing. Any other failure (too large, not a
@@ -403,15 +453,16 @@ pub fn shown(b: &Bookmarks, network: &std::collections::HashSet<PathBuf>) -> Vec
 
 /// The bookmarks of `b` as Favorites lists them, each folder looked for as [`present`] does.
 pub fn favorites(b: &Bookmarks, network: &std::collections::HashSet<PathBuf>) -> Vec<Favorite> {
-    b.entries()
+    b.keyed()
         .take(MAX_FAVORITES)
-        .map(|(target, label)| Favorite {
-            target: target.clone(),
-            label: shown_label(target, label),
-            present: match target {
+        .map(|(line, e)| Favorite {
+            target: e.target.clone(),
+            label: shown_label(&e.target, e.label.as_deref()),
+            present: match &e.target {
                 Target::Folder(path) => present(path, network),
                 Target::Uri(_) => true,
             },
+            line,
         })
         .collect()
 }
@@ -771,6 +822,11 @@ smb://nas/My%20Files\n";
         Target::Folder(PathBuf::from(p))
     }
 
+    /// The line of `b`'s bookmark `i`.
+    fn key(b: &Bookmarks, i: usize) -> LineKey {
+        favorites(b, &HashSet::new()).swap_remove(i).line
+    }
+
     #[test]
     fn entries_list_every_scheme_and_skip_comments_and_text() {
         let b = Bookmarks::parse(NOTED);
@@ -819,7 +875,7 @@ smb://nas/My%20Files\n";
     #[test]
     fn rename_writes_a_label_and_a_blank_or_own_name_drops_it() {
         let mut b = Bookmarks::parse(NOTED);
-        let share = Target::Uri("sftp://h/srv/share".into());
+        let share = key(&b, 1);
         assert!(b.rename(&share, "Line\none"));
         assert!(
             b.text().contains("\nsftp://h/srv/share Line one\n"),
@@ -828,22 +884,22 @@ smb://nas/My%20Files\n";
         );
         assert!(b.rename(&share, "  "));
         assert!(b.text().contains("\nsftp://h/srv/share\n"));
-        let nas = Target::Uri("smb://nas/My%20Files".into());
+        let nas = key(&b, 2);
         assert!(!b.rename(&nas, "smb://nas/My Files"), "its own name");
-        assert!(!b.rename(&folder("/nowhere"), "x"));
+        assert!(!b.rename(&key(&Bookmarks::parse("file:///nowhere\n"), 0), "x"));
     }
 
     #[test]
     fn remove_and_move_entry_step_over_comments_and_text() {
         let mut b = Bookmarks::parse(NOTED);
-        let share = Target::Uri("sftp://h/srv/share".into());
+        let share = key(&b, 1);
         assert!(b.move_entry(&share, true));
         assert_eq!(
             b.text(),
             "# kept\nsftp://h/srv/share Server\nnot a bookmark\nfile:///home/u/Projects\nsmb://nas/My%20Files\n"
         );
         assert!(!b.move_entry(&share, true), "already first");
-        let nas = Target::Uri("smb://nas/My%20Files".into());
+        let nas = key(&b, 2);
         assert!(!b.move_entry(&nas, false), "already last");
         assert!(b.remove(&share));
         assert!(!b.remove(&share));
@@ -851,6 +907,26 @@ smb://nas/My%20Files\n";
             b.text(),
             "# kept\nnot a bookmark\nfile:///home/u/Projects\nsmb://nas/My%20Files\n"
         );
+    }
+
+    #[test]
+    fn an_edit_takes_the_line_picked_and_keeps_its_uri_as_written() {
+        let text = "file:///ab A\nfile://localhost/ab B\nfile:///a%2Fb\nfile:///ab A\n";
+        let mut b = Bookmarks::parse(text);
+        assert!(b.rename(&key(&b, 1), "Local"));
+        assert!(b.rename(&key(&b, 2), "Slash"));
+        assert_eq!(
+            b.text(),
+            "file:///ab A\nfile://localhost/ab Local\nfile:///a%2Fb Slash\nfile:///ab A\n"
+        );
+        assert!(b.move_entry(&key(&b, 1), true));
+        assert_eq!(
+            b.text(),
+            "file://localhost/ab Local\nfile:///ab A\nfile:///a%2Fb Slash\nfile:///ab A\n"
+        );
+        assert!(b.remove(&key(&b, 3)), "the second copy of a line");
+        assert!(b.remove(&key(&b, 0)));
+        assert_eq!(b.text(), "file:///ab A\nfile:///a%2Fb Slash\n");
     }
 
     #[test]
@@ -996,7 +1072,7 @@ smb://nas/My%20Files\n";
         let file: &[u8] = b"# caf\xe9\nfile:///srv/a A\xff\nsmb://nas/x\n";
         let mut b = Bookmarks::parse(file);
         assert_eq!(b.entries().next().unwrap().1, Some("A\u{FFFD}"));
-        assert!(b.remove(&Target::Uri("smb://nas/x".into())));
+        assert!(b.remove(&key(&b, 1)));
         assert!(b.pin(Path::new("/srv/b")));
         assert_eq!(
             b.bytes(),
@@ -1008,7 +1084,7 @@ smb://nas/My%20Files\n";
     fn each_line_keeps_its_own_ending() {
         let mut b = Bookmarks::parse("file:///srv/a A\r\n# note\nfile:///srv/b\r\n");
         assert_eq!(b.text(), "file:///srv/a A\r\n# note\nfile:///srv/b\r\n");
-        assert!(b.rename(&folder("/srv/a"), "Z"));
+        assert!(b.rename(&key(&b, 0), "Z"));
         assert!(b.pin(Path::new("/srv/c")));
         assert_eq!(
             b.text(),
