@@ -88,7 +88,7 @@ pub async fn offer(conn: &zbus::Connection) -> Vec<BootTarget> {
     out
 }
 
-async fn manager(conn: &zbus::Connection) -> zbus::Result<zbus::Proxy<'static>> {
+pub(crate) async fn manager(conn: &zbus::Connection) -> zbus::Result<zbus::Proxy<'static>> {
     zbus::proxy::Builder::new(conn)
         .destination(LOGIND)
         .path(LOGIND_PATH)
