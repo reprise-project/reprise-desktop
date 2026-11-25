@@ -6,6 +6,8 @@
 use std::hash::Hash;
 use std::ops::{BitOr, BitOrAssign};
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::access::accesskit::{NodeId, Orientation, Role};
 use crate::access::{self, Tree};
 use crate::classic::widgets::{BarHit, ScrollHit};
@@ -442,10 +444,21 @@ impl Grid<'_> {
             runs.push((start, end, fg));
             start = end;
         }
+        let joins = joined(self.text, cells, self.size);
         for (start, end, fg) in runs {
             for (i, cell) in cells.iter().enumerate().take(end).skip(start) {
-                let spill = cells.get(i + 1).is_some_and(blank);
-                self.glyph(c, cell, ox + i as i32 * m.cell_w, y, fg, spill);
+                let x = ox + i as i32 * m.cell_w;
+                match joins.iter().find(|j| (j.start..j.end).contains(&i)) {
+                    Some(j) if j.start == i => {
+                        let span = Rect::new(x, y, (j.end - j.start) as i32 * m.cell_w, m.cell_h);
+                        self.ink(c, &j.text, cell.flags, span, span, fg);
+                    }
+                    Some(_) => {}
+                    None => {
+                        let spill = cells.get(i + 1).is_some_and(blank);
+                        self.glyph(c, cell, x, y, fg, spill);
+                    }
+                }
             }
             let flags = cells[start].flags;
             let x0 = ox + start as i32 * m.cell_w;
@@ -488,11 +501,6 @@ impl Grid<'_> {
             }
             return;
         }
-        let text = if cell.flags.contains(Flags::ITALIC) {
-            self.text.italic()
-        } else {
-            self.text
-        };
         let mut buf = [0; 4];
         let joined;
         let s = match &cell.extra {
@@ -503,19 +511,44 @@ impl Grid<'_> {
             }
         };
         let bold = cell.flags.contains(Flags::BOLD);
-        let clip = match spill && cells == 1 && text.has_colour(s, bold, self.size) {
+        let to = match spill && cells == 1 && self.face(cell.flags).has_colour(s, bold, self.size) {
             true => Rect {
                 width: 2 * self.m.cell_w,
                 ..cell_rect
-            }
-            .intersect(&self.bound),
-            false => clip,
+            },
+            false => cell_rect,
         };
-        let baseline = y + self.m.baseline;
-        if over {
-            text.draw_run_over(c, x, baseline, clip, s, bold, color, self.size);
+        self.ink(c, s, cell.flags, to, to, color);
+    }
+
+    fn face(&self, flags: Flags) -> &TextRenderer {
+        match flags.contains(Flags::ITALIC) {
+            true => self.text.italic(),
+            false => self.text,
+        }
+    }
+
+    /// `s` in `color` in the face `flags` pick, from the start of `cells` (cells of one row), its
+    /// ink cut to `clip`. A colour glyph wider than `cells` draws smaller to fit them.
+    fn ink(&self, c: &mut Canvas, s: &str, flags: Flags, cells: Rect, clip: Rect, color: Rgb) {
+        let clip = clip.intersect(&self.bound);
+        if clip.is_empty() {
+            return;
+        }
+        let text = self.face(flags);
+        let bold = flags.contains(Flags::BOLD);
+        let mut size = self.size;
+        if text.one_colour_glyph(s, bold, size) {
+            let advance = text.measure(s, bold, size);
+            if advance > cells.width {
+                size = (size * cells.width.max(1) as u32 / advance as u32).max(1);
+            }
+        }
+        let (x, baseline) = (cells.x, cells.y + self.m.baseline);
+        if self.snap.alpha < 255 {
+            text.draw_run_over(c, x, baseline, clip, s, bold, color, size);
         } else {
-            text.draw_run(c, x, baseline, clip, s, bold, color, self.size);
+            text.draw_run(c, x, baseline, clip, s, bold, color, size);
         }
     }
 
@@ -536,9 +569,21 @@ impl Grid<'_> {
         match shape {
             CursorShape::Hidden => {}
             CursorShape::Block => {
-                fill(c, Rect::new(x, y, w, m.cell_h), self.bound, ink);
+                let block = Rect::new(x, y, w, m.cell_h);
+                fill(c, block, self.bound, ink);
                 let (_, bg, _) = colours(self.snap, cell);
-                self.glyph(c, cell, x, y, bg, false);
+                let cells = self.snap.row(r);
+                match joined(self.text, cells, self.size)
+                    .into_iter()
+                    .find(|j| (j.start..j.end).contains(&col))
+                {
+                    Some(j) => {
+                        let x = ox + j.start as i32 * m.cell_w;
+                        let span = Rect::new(x, y, (j.end - j.start) as i32 * m.cell_w, m.cell_h);
+                        self.ink(c, &j.text, cells[j.start].flags, span, block, bg);
+                    }
+                    None => self.glyph(c, cell, x, y, bg, false),
+                }
             }
             CursorShape::Bar => fill(c, Rect::new(x, y, thick, m.cell_h), self.bound, ink),
             CursorShape::Underline => fill(
@@ -564,6 +609,59 @@ impl Grid<'_> {
 /// Whether `cell` draws nothing: a space or an empty cell.
 fn blank(cell: &Cell) -> bool {
     matches!(cell.ch, ' ' | '\0') && cell.extra.is_none()
+}
+
+/// Cells `start..end` of a row drawn as `text`'s one colour glyph from `start`.
+#[derive(Debug, PartialEq, Eq)]
+struct Joined {
+    start: usize,
+    end: usize,
+    text: String,
+}
+
+/// The emoji sequences the emulator keeps in several cells (a flag's letters, a skin tone, a
+/// ZWJ family), each a grapheme cluster that `text` draws as one colour glyph. The cells keep the
+/// widths the emulator gave each char, as programs counting with wcwidth expect.
+fn joined(text: &TextRenderer, cells: &[Cell], size: u32) -> Vec<Joined> {
+    let next = |i: usize| match cells[i].flags.contains(Flags::WIDE) {
+        true => (i + 2).min(cells.len()),
+        false => i + 1,
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < cells.len() {
+        let lead = &cells[i];
+        let mut end = next(i);
+        if crate::emoji::may_draw_in_colour(lead.ch) {
+            let mut s = cell_text(lead);
+            let mut parts = 1;
+            while end < cells.len() {
+                let longer = s.clone() + &cell_text(&cells[end]);
+                if longer.graphemes(true).nth(1).is_some() {
+                    break;
+                }
+                (s, end, parts) = (longer, next(end), parts + 1);
+            }
+            let bold = lead.flags.contains(Flags::BOLD);
+            if parts > 1 && text.one_colour_glyph(&s, bold, size) {
+                out.push(Joined {
+                    start: i,
+                    end,
+                    text: s,
+                });
+            } else {
+                end = next(i);
+            }
+        }
+        i = end;
+    }
+    out
+}
+
+fn cell_text(cell: &Cell) -> String {
+    let mut s = String::from(cell.ch);
+    s.push_str(cell.extra.as_deref().unwrap_or_default());
+    s
 }
 
 /// Where a glyph whose cell starts at device (`x`, `y`) may ink: two cells for a wide char, none
@@ -1170,6 +1268,156 @@ mod tests {
                 "scale {s}: and stays out of a filled one"
             );
         }
+    }
+
+    /// Emoji sequences as the emulator stores them, each char in the cells its wcwidth gives it
+    /// and zero-width chars over the cell before: (name, sequence, cells, the cells' chars).
+    const SEQUENCES: [(&str, &str, usize, &[&str]); 4] = [
+        ("flag", "\u{1F1EF}\u{1F1F5}", 2, &["\u{1F1EF}", "\u{1F1F5}"]),
+        (
+            "skin tone",
+            "\u{1F44B}\u{1F3FD}",
+            4,
+            &["\u{1F44B}", "\u{1F3FD}"],
+        ),
+        (
+            "family",
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+            6,
+            &["\u{1F468}\u{200D}", "\u{1F469}\u{200D}", "\u{1F467}"],
+        ),
+        ("keycap", "1\u{FE0F}\u{20E3}", 1, &["1\u{FE0F}\u{20E3}"]),
+    ];
+
+    /// Whether the emulator gives `ch` one cell: ASCII and a flag's letters; the rest take two.
+    fn narrow(ch: char) -> bool {
+        ch.is_ascii() || ('\u{1F1E6}'..='\u{1F1FF}').contains(&ch)
+    }
+
+    /// A 10-cell row holding `parts` from column 0, then "ab"; the cursor at `cursor`.
+    fn sequence_row(parts: &[&str], cursor: (usize, CursorShape)) -> Snapshot {
+        let mut snap = Snapshot::new(10, 1, FG, BG);
+        let mut col = 0;
+        for part in parts.iter().copied().chain(["a", "b"]) {
+            let mut chars = part.chars();
+            let ch = chars.next().unwrap();
+            let rest: String = chars.collect();
+            let cell = &mut snap.cells[col];
+            cell.ch = ch;
+            cell.extra = (!rest.is_empty()).then(|| rest.into());
+            if narrow(ch) {
+                col += 1;
+            } else {
+                cell.flags = Flags::WIDE;
+                snap.cells[col + 1].flags = Flags::WIDE_SPACER;
+                col += 2;
+            }
+        }
+        snap.cursor = (0, cursor.0, cursor.1);
+        snap
+    }
+
+    fn draw_row(t: &TextRenderer, m: &Metrics, s: i32, snap: &Snapshot) -> Canvas {
+        let (w, h) = (10 * m.cell_w / s + 1, m.cell_h / s + 1);
+        let mut c = Canvas::with_scale(w as u32, h as u32, s);
+        draw(&mut c, t, m, Rect::new(0, 0, w, h), snap, 13);
+        c
+    }
+
+    fn columns(c: &Canvas, x: std::ops::Range<i32>, h: i32) -> Vec<u32> {
+        x.flat_map(|x| (0..h).map(move |y| px(c, x, y))).collect()
+    }
+
+    #[test]
+    fn an_emoji_sequence_draws_as_one_glyph_fitted_to_its_cells_and_the_text_after_keeps_its_column()
+     {
+        crate::pins::fonts();
+        let t = tahoma();
+        for s in [1, 2] {
+            let m = metrics(&t, 13, s);
+            for (name, seq, n, parts) in SEQUENCES {
+                assert!(t.one_colour_glyph(seq, false, 13 * s as u32), "{name}");
+                let hidden = (0, CursorShape::Hidden);
+                let c = draw_row(&t, &m, s, &sequence_row(parts, hidden));
+                let span = n as i32 * m.cell_w;
+
+                let size = 13 * s as u32;
+                let fit = size.min(size * span as u32 / t.measure(seq, false, size) as u32);
+                let mut alone = Canvas::with_scale(c.width, c.height, s);
+                alone.in_device_px(|a| {
+                    a.fill_rect(a.bounds(), BG);
+                    let clip = Rect::new(0, 0, span, m.cell_h);
+                    t.draw_run(a, 0, m.baseline, clip, seq, false, FG, fit);
+                });
+                assert!(
+                    columns(&c, 0..span, m.cell_h) == columns(&alone, 0..span, m.cell_h),
+                    "scale {s} {name}: the sequence's whole glyph from its first cell, fitted to its {n} cells"
+                );
+
+                let mut text_only = sequence_row(&[], hidden);
+                text_only.cells.rotate_right(n);
+                let after = draw_row(&t, &m, s, &text_only);
+                let rest = span..10 * m.cell_w;
+                assert!(
+                    columns(&c, rest.clone(), m.cell_h) == columns(&after, rest, m.cell_h),
+                    "scale {s} {name}: \"ab\" from column {n}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_block_cursor_on_a_sequence_shows_the_part_of_its_glyph_under_the_block() {
+        crate::pins::fonts();
+        let t = tahoma();
+        let hued = |p: u32| {
+            let (r, g, b) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+            r.abs_diff(g) > 40 || g.abs_diff(b) > 40
+        };
+        let parts = SEQUENCES[1].3;
+        for s in [1, 2] {
+            let m = metrics(&t, 13, s);
+            let block = |col: usize| {
+                let c = draw_row(&t, &m, s, &sequence_row(parts, (col, CursorShape::Block)));
+                let x = col as i32 * m.cell_w;
+                columns(&c, x..x + 2 * m.cell_w, m.cell_h)
+                    .into_iter()
+                    .any(hued)
+            };
+            assert!(block(0), "scale {s}: the hand under a block on its cell");
+            assert!(
+                !block(2),
+                "scale {s}: a block on the skin tone's cell shows no lone swatch"
+            );
+        }
+    }
+
+    #[test]
+    fn termgrid_sequence_pins_at_scale_1_and_2() {
+        crate::pins::fonts();
+        let t = tahoma();
+        let mut got = Vec::new();
+        for s in [1, 2] {
+            let m = metrics(&t, 13, s);
+            for (name, _, n, parts) in SEQUENCES {
+                let lead = parts[parts.len() - 1].chars().next().unwrap();
+                let last = n - if narrow(lead) { 1 } else { 2 };
+                let states = [("", 0), (" cursor", 0), (" cursor last", last)];
+                for (cursor, col) in states
+                    .into_iter()
+                    .filter(|s| s.1 > 0 || s.0 != " cursor last")
+                {
+                    let shape = match cursor {
+                        "" => CursorShape::Hidden,
+                        _ => CursorShape::Block,
+                    };
+                    let snap = sequence_row(parts, (col, shape));
+                    let c = draw_row(&t, &m, s, &snap);
+                    got.push((format!("{name}{cursor} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("termgrid_sequences", &got);
     }
 
     #[test]

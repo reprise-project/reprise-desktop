@@ -1,0 +1,22 @@
+flag 1 b5b69e99b088f1f8
+flag cursor 1 769f07b6f5a23be3
+flag cursor last 1 d6c7706dcadf91f0
+skin tone 1 df6aaba03b76a4a0
+skin tone cursor 1 40703cc289c0d85d
+skin tone cursor last 1 3853d6d50a417120
+family 1 827efef81abab9d9
+family cursor 1 2472669f4d3c05a4
+family cursor last 1 1bc65f1afe9c1ed9
+keycap 1 33be3069d60ff2ac
+keycap cursor 1 f027cdf6e54e9949
+flag 2 cf34bac8c9de1e46
+flag cursor 2 8853fd88187acb7d
+flag cursor last 2 3a854142f9a3a08a
+skin tone 2 d7b58a1d416fea1c
+skin tone cursor 2 a573ed8c34620c7e
+skin tone cursor last 2 5642e1d7248bd89c
+family 2 fcd3697a6ed5d9d1
+family cursor 2 32be6179ecd6a683
+family cursor last 2 39d8a822f73075d1
+keycap 2 feffdeb71cce7f8f
+keycap cursor 2 950e56878bf78eb3

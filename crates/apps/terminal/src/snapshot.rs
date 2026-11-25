@@ -348,6 +348,24 @@ mod tests {
     }
 
     #[test]
+    fn an_emoji_sequence_keeps_the_columns_wcwidth_counts_with_its_chars_in_order() {
+        for (seq, cols) in [
+            ("\u{1F1EF}\u{1F1F5}", 2),
+            ("\u{1F44B}\u{1F3FD}", 4),
+            ("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", 6),
+            ("1\u{FE0F}\u{20E3}", 1),
+            ("\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}", 3),
+        ] {
+            let mut t = term(12, 1);
+            feed(&mut t, format!("{seq}ab").as_bytes());
+            let snap = filled(&t);
+            assert_eq!(snap.row_text(0), format!("{seq}ab"), "{seq}");
+            assert_eq!(snap.row(0)[cols].ch, 'a', "{seq} takes {cols} columns");
+            assert_eq!(snap.cursor.1, cols + 2, "{seq}");
+        }
+    }
+
+    #[test]
     fn a_tab_stop_shows_blank() {
         let mut t = term(12, 1);
         feed(&mut t, b"a\tb");
