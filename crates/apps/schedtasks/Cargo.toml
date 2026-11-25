@@ -1,0 +1,23 @@
+[package]
+name = "reprise-schedtasks"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Scheduled Tasks: the systemd user timers, run one now, turn one on or off, and see its schedule and command"
+
+[lints]
+workspace = true
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+reprisebus = { path = "../../reprisebus" }
+zbus.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+libc.workspace = true
+log.workspace = true
