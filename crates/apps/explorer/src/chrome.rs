@@ -196,7 +196,7 @@ impl Explorer {
         }
 
         let (back, fwd, up) = (
-            self.history.can_back(),
+            self.can_back(),
             self.history.can_forward(),
             self.place.parent_in(&self.drive_mounts).is_some(),
         );

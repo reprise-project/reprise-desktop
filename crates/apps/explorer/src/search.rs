@@ -1,5 +1,5 @@
 //! The toolbar's Search field: [`reprisefs::search`] rooted at the folder shown runs on a listing
-//! thread, and its results take the folder's place in the view until Escape or a navigation.
+//! thread, and its results take the folder's place in the view until Escape, Back or a navigation.
 
 use crate::place::{Listed, Place};
 use crate::{Explorer, Focus, Read};
@@ -284,18 +284,24 @@ impl Explorer {
         }
     }
 
-    /// Escape: a search under way stops, and results shown give way to the folder's listing.
-    /// `None` when there was neither.
+    /// Escape and Back: a search under way stops, results shown give way to the folder's listing,
+    /// and the field empties. `None` when there was neither.
     pub(crate) fn cancel_search(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let shown = self.search.shown().is_some();
         if !self.search.cancel() {
             return None;
         }
         self.search_job = None;
+        self.search_field.clear();
         Some(match shown {
             true => self.refresh(ctx),
             false => Reply::redraw(),
         })
+    }
+
+    /// Back is on while results are shown: it leaves them for the folder searched.
+    pub(crate) fn can_back(&self) -> bool {
+        self.history.can_back() || self.search.shown().is_some()
     }
 
     /// A refresh while results are shown searches again for the same text.

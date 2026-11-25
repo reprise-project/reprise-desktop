@@ -316,6 +316,9 @@ impl Explorer {
             Command::SearchFocus => self.search_focus(),
             Command::ContextMenu => self.context_menu_key(ctx),
 
+            Command::Back if self.search.shown().is_some() => {
+                self.cancel_search(ctx).unwrap_or_default()
+            }
             Command::Back => match self.history.back().cloned() {
                 Some(p) => self.return_to(p, ctx, Self::show),
                 None => Reply::none(),
