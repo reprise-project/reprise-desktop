@@ -34,8 +34,9 @@ impl Device for Screen {
     }
 }
 
-/// Finger 0 at (`x`, `y`), each 0..1 across the screen.
+/// Finger `slot` at (`x`, `y`), each 0..1 across the screen.
 pub struct Finger {
+    slot: u32,
     x: f64,
     y: f64,
 }
@@ -52,7 +53,7 @@ impl Event<Touchscreen> for Finger {
 
 impl TouchEvent<Touchscreen> for Finger {
     fn slot(&self) -> TouchSlot {
-        TouchSlot::from(Some(0))
+        TouchSlot::from(Some(self.slot))
     }
 }
 
@@ -119,14 +120,33 @@ impl Harness {
 
     /// One finger down and up at layout point (`x`, `y`), each with its frame.
     pub fn tap(&mut self, x: f64, y: f64) {
+        self.finger_down(0, x, y);
+        self.finger_up(0);
+    }
+
+    /// Finger `slot` down at layout point (`x`, `y`) with its frame; it stays down until
+    /// [`Harness::finger_up`].
+    pub fn finger_down(&mut self, slot: u32, x: f64, y: f64) {
         let area = self.state.absolute_area().to_f64();
         let finger = || Finger {
+            slot,
             x: (x - area.loc.x) / area.size.w,
             y: (y - area.loc.y) / area.size.h,
         };
         let s = &mut self.state;
         s.process_input::<Touchscreen>(InputEvent::TouchDown { event: finger() });
         s.process_input::<Touchscreen>(InputEvent::TouchFrame { event: finger() });
+        self.dispatch();
+    }
+
+    /// Finger `slot` up, with its frame.
+    pub fn finger_up(&mut self, slot: u32) {
+        let finger = || Finger {
+            slot,
+            x: 0.0,
+            y: 0.0,
+        };
+        let s = &mut self.state;
         s.process_input::<Touchscreen>(InputEvent::TouchUp { event: finger() });
         s.process_input::<Touchscreen>(InputEvent::TouchFrame { event: finger() });
         self.dispatch();
