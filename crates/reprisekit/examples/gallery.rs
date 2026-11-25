@@ -8,6 +8,7 @@
 //! only a message box, a property sheet, window controls, panes and the shell
 //! view's icon modes in each look at that text size, About's system view, the caption tabs,
 //! the popups (media keys, notification and clipboard history, emoji) and the Start menus.
+//! `REPRISE_GALLERY_THREADS=<n>` draws the pages on `n` threads (default one per CPU).
 
 #[path = "gallery_checksums/mod.rs"]
 mod gallery_checksums;
@@ -54,6 +55,8 @@ use reprisekit::interface::Interface;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::schemes;
 use reprisekit::theme::{Color, Theme};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 #[path = "gallery/clip_test.rs"]
@@ -139,14 +142,14 @@ fn cued(t: Theme) -> Theme {
 fn main() {
     if let Ok(n) = std::env::var("REPRISE_GALLERY_SCALE") {
         let n: i32 = n.parse().expect("REPRISE_GALLERY_SCALE is a whole number");
-        write_scale(n);
+        draw_shared(|| write_scale(n));
         return;
     }
     if let Ok(pct) = std::env::var("REPRISE_GALLERY_TEXT_SIZE") {
         let pct: u32 = pct
             .parse()
             .expect("REPRISE_GALLERY_TEXT_SIZE is a percentage");
-        write_text_size(pct);
+        draw_shared(|| write_text_size(pct));
         return;
     }
     let with_blue = std::env::var("REPRISE_GALLERY_LOOK").as_deref() != Ok("classic");
@@ -158,183 +161,183 @@ fn main() {
             .collect(),
         Some(name) => vec![Some(name)],
     };
-    write_pages(with_blue, &names);
+    draw_shared(|| write_pages(with_blue, &names));
 }
 
 /// The pages `REPRISE_GALLERY_SCALE=<n>` writes, drawn at scale `n` (at least 1).
 fn write_scale(n: i32) {
     gallery_parts::write_all(n.max(1));
     write_preview(
-        &render_tray_arrow_schemes(n.max(1)),
+        || render_tray_arrow_schemes(n.max(1)),
         "reprisekit-gallery-tray-arrow-blue-schemes.png",
     );
     write_preview(
-        &render_orb_glow(n.max(1)),
+        || render_orb_glow(n.max(1)),
         "reprisekit-gallery-orb-glow-glass.png",
     );
     write_volume_popups(true, n.max(1));
     write_preview(
-        &render_calendar_events(n.max(1)),
+        || render_calendar_events(n.max(1)),
         &format!("reprisekit-gallery-calendar-events@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_keys::launcher_windows(n.max(1)),
+        || gallery_keys::launcher_windows(n.max(1)),
         &format!("reprisekit-gallery-launcher-windows@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_keys::key_sheet(n.max(1)),
+        || gallery_keys::key_sheet(n.max(1)),
         &format!("reprisekit-gallery-key-sheet@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_power::render(n.max(1)),
+        || gallery_power::render(n.max(1)),
         &format!("reprisekit-gallery-power@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_logon::render(n.max(1)),
+        || gallery_logon::render(n.max(1)),
         &format!("reprisekit-gallery-logon@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_logon::motion::render(n.max(1)),
+        || gallery_logon::motion::render(n.max(1)),
         &format!("reprisekit-gallery-logon-motion@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_paint::render(n.max(1)),
+        || gallery_paint::render(n.max(1)),
         &format!("reprisekit-gallery-paint@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_doctabs::render(n.max(1)),
+        || gallery_doctabs::render(n.max(1)),
         &format!("reprisekit-gallery-doc-tabs@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_rename::render(n.max(1)),
+        || gallery_rename::render(n.max(1)),
         &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_netconnect::render(n.max(1)),
+        || gallery_netconnect::render(n.max(1)),
         &format!("reprisekit-gallery-netconnect@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_welcome::render(n.max(1)),
+        || gallery_welcome::render(n.max(1)),
         &format!("reprisekit-gallery-welcome@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_remote_password::render(n.max(1)),
+        || gallery_remote_password::render(n.max(1)),
         &format!("reprisekit-gallery-remote-password@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_fingerprints::render(n.max(1)),
+        || gallery_fingerprints::render(n.max(1)),
         &format!("reprisekit-gallery-fingerprints@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_checksums::render(n.max(1)),
+        || gallery_checksums::render(n.max(1)),
         &format!("reprisekit-gallery-checksums@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_miniview::render(n.max(1)),
+        || gallery_miniview::render(n.max(1)),
         &format!("reprisekit-gallery-mini-view@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_widgets::render(n.max(1)),
+        || gallery_widgets::render(n.max(1)),
         &format!("reprisekit-gallery-desk-widgets@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_notes::render(n.max(1)),
+        || gallery_notes::render(n.max(1)),
         &format!("reprisekit-gallery-notes@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_fonts::render(n.max(1)),
+        || gallery_fonts::render(n.max(1)),
         &format!("reprisekit-gallery-fonts@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_programs::calculator(n.max(1)),
+        || gallery_programs::calculator(n.max(1)),
         &format!("reprisekit-gallery-calculator@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_programs::charmap(n.max(1)),
+        || gallery_programs::charmap(n.max(1)),
         &format!("reprisekit-gallery-charmap@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_programs::colordlg(n.max(1)),
+        || gallery_programs::colordlg(n.max(1)),
         &format!("reprisekit-gallery-colordlg@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_perf::render(n.max(1)),
+        || gallery_perf::render(n.max(1)),
         &format!("reprisekit-gallery-perf@{}.png", n.max(1)),
     );
     write_preview(
-        &render_copy_progress(true, n.max(1)),
+        || render_copy_progress(true, n.max(1)),
         &format!("reprisekit-gallery-copy-progress@{}.png", n.max(1)),
     );
     write_preview(
-        &render_task_progress(n.max(1)),
+        || render_task_progress(n.max(1)),
         &format!("reprisekit-gallery-task-progress@{}.png", n.max(1)),
     );
     write_preview(
-        &render_task_attention(n.max(1)),
+        || render_task_attention(n.max(1)),
         &format!("reprisekit-gallery-task-attention@{}.png", n.max(1)),
     );
     write_preview(
-        &render_termgrid(n.max(1)),
+        || render_termgrid(n.max(1)),
         &format!("reprisekit-gallery-termgrid@{}.png", n.max(1)),
     );
     write_preview(
-        &render_file_preview(n.max(1)),
+        || render_file_preview(n.max(1)),
         &format!("reprisekit-gallery-filepreview@{}.png", n.max(1)),
     );
     write_preview(
-        &render_image_view(n.max(1)),
+        || render_image_view(n.max(1)),
         &format!("reprisekit-gallery-imageview@{}.png", n.max(1)),
     );
     write_preview(
-        &render_grid_drag(n.max(1)),
+        || render_grid_drag(n.max(1)),
         &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
     );
     write_preview(
-        &render_drives(n.max(1)),
+        || render_drives(n.max(1)),
         &format!("reprisekit-gallery-drives@{}.png", n.max(1)),
     );
     write_preview(
-        &render_locate_rings(n.max(1)),
+        || render_locate_rings(n.max(1)),
         &format!("reprisekit-gallery-locate-pointer@{}.png", n.max(1)),
     );
     write_preview(
-        &render_windowed_dialog(n.max(1)),
+        || render_windowed_dialog(n.max(1)),
         &format!("reprisekit-gallery-windowed-dialog@{}.png", n.max(1)),
     );
     write_preview(
-        &render_label_ellipsis(n.max(1)),
+        || render_label_ellipsis(n.max(1)),
         &format!("reprisekit-gallery-label-ellipsis@{}.png", n.max(1)),
     );
     write_preview(
-        &render_desktop_labels(n.max(1)),
+        || render_desktop_labels(n.max(1)),
         &format!("reprisekit-gallery-desktop-labels@{}.png", n.max(1)),
     );
     write_preview(
-        &render_blue_start_panel(n.max(1), 100),
+        || render_blue_start_panel(n.max(1), 100),
         &format!("reprisekit-gallery-blue-start-menu@{}.png", n.max(1)),
     );
     write_preview(
-        &render_blue_start_menus(n.max(1)),
+        || render_blue_start_menus(n.max(1)),
         &format!("reprisekit-gallery-blue-start-menus@{}.png", n.max(1)),
     );
     write_preview(
-        &gallery_pathcomplete::render(n.max(1)),
+        || gallery_pathcomplete::render(n.max(1)),
         &format!("reprisekit-gallery-path-complete@{}.png", n.max(1)),
     );
     write_preview(
-        &render_list_sheet_search(n.max(1)),
+        || render_list_sheet_search(n.max(1)),
         &format!("reprisekit-gallery-list-sheet-search@{}.png", n.max(1)),
     );
     write_preview(
-        &render_start_panel_dark(n.max(1)),
+        || render_start_panel_dark(n.max(1)),
         &format!("reprisekit-gallery-start-panel-dark@{}.png", n.max(1)),
     );
     write_preview(
-        &render_glass_launcher_dark(n.max(1)),
+        || render_glass_launcher_dark(n.max(1)),
         &format!("reprisekit-gallery-glass-launcher-dark@{}.png", n.max(1)),
     );
     write_preview(
-        &render_balloon_pictures(n.max(1)),
+        || render_balloon_pictures(n.max(1)),
         &format!("reprisekit-gallery-balloon-pictures@{}.png", n.max(1)),
     );
     for mode in [
@@ -357,7 +360,7 @@ fn write_scale(n: i32) {
             "light"
         };
         write_preview(
-            &render_glass_notify_sheets(&theme),
+            || render_glass_notify_sheets(&theme),
             &format!("reprisekit-gallery-glass-notify-{name}@{}.png", n.max(1)),
         );
     }
@@ -367,59 +370,59 @@ fn write_scale(n: i32) {
 fn write_text_size(pct: u32) {
     {
         write_preview(
-            &render_text_size(pct),
+            || render_text_size(pct),
             &format!("reprisekit-gallery-text-size-{pct}.png"),
         );
         write_preview(
-            &render_about_system(true, pct),
+            || render_about_system(true, pct),
             &format!("reprisekit-gallery-about-system-{pct}.png"),
         );
         write_preview(
-            &render_glass_launcher(pct),
+            || render_glass_launcher(pct),
             &format!("reprisekit-gallery-glass-launcher-{pct}.png"),
         );
         write_preview(
-            &render_glass_clock_popup(pct),
+            || render_glass_clock_popup(pct),
             &format!("reprisekit-gallery-glass-clock-popup-{pct}.png"),
         );
         write_preview(
-            &render_launchers(pct),
+            || render_launchers(pct),
             &format!("reprisekit-gallery-launcher-{pct}.png"),
         );
         write_preview(
-            &render_caption_tabs(pct),
+            || render_caption_tabs(pct),
             &format!("reprisekit-gallery-caption-tabs-{pct}.png"),
         );
         write_preview(
-            &render_popups_text_size(pct),
+            || render_popups_text_size(pct),
             &format!("reprisekit-gallery-popups-text-size-{pct}.png"),
         );
         write_preview(
-            &render_start_panel(pct),
+            || render_start_panel(pct),
             &format!("reprisekit-gallery-start-panel-{pct}.png"),
         );
         write_preview(
-            &render_blue_start_panel(1, pct),
+            || render_blue_start_panel(1, pct),
             &format!("reprisekit-gallery-blue-start-menu-{pct}.png"),
         );
         write_preview(
-            &render_menu_icons(pct),
+            || render_menu_icons(pct),
             &format!("reprisekit-gallery-menu-icons-{pct}.png"),
         );
         write_preview(
-            &render_menu_columns(pct),
+            || render_menu_columns(pct),
             &format!("reprisekit-gallery-menu-columns-{pct}.png"),
         );
         write_preview(
-            &render_list_icons(pct),
+            || render_list_icons(pct),
             &format!("reprisekit-gallery-list-icons-{pct}.png"),
         );
         write_preview(
-            &render_taskpane_icons(pct),
+            || render_taskpane_icons(pct),
             &format!("reprisekit-gallery-taskpane-icons-{pct}.png"),
         );
         write_preview(
-            &render_tree_icons(pct),
+            || render_tree_icons(pct),
             &format!("reprisekit-gallery-tree-icons-{pct}.png"),
         );
     }
@@ -436,292 +439,312 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
                 .unwrap_or_else(|| panic!("no scheme {name:?}; see schemes::names()"));
             out = format!("reprisekit-gallery-{}.png", slug(name));
         }
-        write_preview(&render(&theme, with_blue), &out);
+        write_preview(|| render(&theme, with_blue), &out);
     }
-    write_preview(&render_file_dialog(), "reprisekit-gallery-file-dialog.png");
-    write_preview(&render_termgrid(1), "reprisekit-gallery-termgrid.png");
+    write_preview(render_file_dialog, "reprisekit-gallery-file-dialog.png");
+    write_preview(|| render_termgrid(1), "reprisekit-gallery-termgrid.png");
     write_preview(
-        &render_file_preview(1),
+        || render_file_preview(1),
         "reprisekit-gallery-filepreview.png",
     );
-    write_preview(&render_image_view(1), "reprisekit-gallery-imageview.png");
-    write_preview(&render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
-    write_preview(&render_drives(1), "reprisekit-gallery-drives.png");
+    write_preview(|| render_image_view(1), "reprisekit-gallery-imageview.png");
+    write_preview(|| render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
+    write_preview(|| render_drives(1), "reprisekit-gallery-drives.png");
     write_preview(
-        &render_label_ellipsis(1),
+        || render_label_ellipsis(1),
         "reprisekit-gallery-label-ellipsis.png",
     );
     write_preview(
-        &render_desktop_labels(1),
+        || render_desktop_labels(1),
         "reprisekit-gallery-desktop-labels.png",
     );
     write_preview(
-        &gallery_pathcomplete::render(1),
+        || gallery_pathcomplete::render(1),
         "reprisekit-gallery-path-complete.png",
     );
     write_preview(
-        &render_about_system(with_blue, 100),
+        || render_about_system(with_blue, 100),
         "reprisekit-gallery-about-system.png",
     );
     write_preview(
-        &render_end_session(with_blue),
+        || render_end_session(with_blue),
         "reprisekit-gallery-end-session.png",
     );
     write_preview(
-        &render_monitors(with_blue),
+        || render_monitors(with_blue),
         "reprisekit-gallery-monitors.png",
     );
     write_preview(
-        &render_location_prompt(with_blue),
+        || render_location_prompt(with_blue),
         "reprisekit-gallery-location-prompt.png",
     );
     write_preview(
-        &render_favorites(with_blue),
+        || render_favorites(with_blue),
         "reprisekit-gallery-favorites.png",
     );
     write_preview(
-        &render_form_scroll(with_blue),
+        || render_form_scroll(with_blue),
         "reprisekit-gallery-form-scroll.png",
     );
     write_preview(
-        &render_install_sheet(with_blue),
+        || render_install_sheet(with_blue),
         "reprisekit-gallery-install-sheet.png",
     );
     write_preview(
-        &render_bin_sheet(with_blue),
+        || render_bin_sheet(with_blue),
         "reprisekit-gallery-bin-sheet.png",
     );
     write_preview(
-        &render_folder_sheet(with_blue),
+        || render_folder_sheet(with_blue),
         "reprisekit-gallery-folder-sheet.png",
     );
     write_preview(
-        &render_import_sheet(with_blue),
+        || render_import_sheet(with_blue),
         "reprisekit-gallery-import-sheet.png",
     );
     write_preview(
-        &render_copy_progress(with_blue, 1),
+        || render_copy_progress(with_blue, 1),
         "reprisekit-gallery-copy-progress.png",
     );
     write_preview(
-        &render_task_progress(1),
+        || render_task_progress(1),
         "reprisekit-gallery-task-progress.png",
     );
     write_preview(
-        &render_task_attention(1),
+        || render_task_attention(1),
         "reprisekit-gallery-task-attention.png",
     );
     write_preview(
-        &render_locate_rings(1),
+        || render_locate_rings(1),
         "reprisekit-gallery-locate-pointer.png",
     );
     write_preview(
-        &render_stats_panel(with_blue),
+        || render_stats_panel(with_blue),
         "reprisekit-gallery-stats-panel.png",
     );
     write_volume_popups(with_blue, 1);
     write_preview(
-        &gallery_doctabs::render(1),
+        || gallery_doctabs::render(1),
         "reprisekit-gallery-doc-tabs@1.png",
     );
     write_preview(
-        &gallery_rename::render(1),
+        || gallery_rename::render(1),
         "reprisekit-gallery-rename@1.png",
     );
     write_preview(
-        &gallery_netconnect::render(1),
+        || gallery_netconnect::render(1),
         "reprisekit-gallery-netconnect@1.png",
     );
     write_preview(
-        &gallery_welcome::render(1),
+        || gallery_welcome::render(1),
         "reprisekit-gallery-welcome@1.png",
     );
     write_preview(
-        &gallery_remote_password::render(1),
+        || gallery_remote_password::render(1),
         "reprisekit-gallery-remote-password@1.png",
     );
     write_preview(
-        &gallery_fingerprints::render(1),
+        || gallery_fingerprints::render(1),
         "reprisekit-gallery-fingerprints@1.png",
     );
     write_preview(
-        &gallery_checksums::render(1),
+        || gallery_checksums::render(1),
         "reprisekit-gallery-checksums@1.png",
     );
     write_preview(
-        &gallery_widgets::render(1),
+        || gallery_widgets::render(1),
         "reprisekit-gallery-desk-widgets@1.png",
     );
-    write_preview(&gallery_notes::render(1), "reprisekit-gallery-notes@1.png");
-    write_preview(&gallery_fonts::render(1), "reprisekit-gallery-fonts@1.png");
     write_preview(
-        &gallery_programs::calculator(1),
+        || gallery_notes::render(1),
+        "reprisekit-gallery-notes@1.png",
+    );
+    write_preview(
+        || gallery_fonts::render(1),
+        "reprisekit-gallery-fonts@1.png",
+    );
+    write_preview(
+        || gallery_programs::calculator(1),
         "reprisekit-gallery-calculator@1.png",
     );
     write_preview(
-        &gallery_programs::charmap(1),
+        || gallery_programs::charmap(1),
         "reprisekit-gallery-charmap@1.png",
     );
     write_preview(
-        &gallery_programs::colordlg(1),
+        || gallery_programs::colordlg(1),
         "reprisekit-gallery-colordlg@1.png",
     );
-    write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
-    write_preview(&gallery_logon::render(1), "reprisekit-gallery-logon@1.png");
     write_preview(
-        &gallery_logon::motion::render(1),
+        || gallery_power::render(1),
+        "reprisekit-gallery-power@1.png",
+    );
+    write_preview(
+        || gallery_logon::render(1),
+        "reprisekit-gallery-logon@1.png",
+    );
+    write_preview(
+        || gallery_logon::motion::render(1),
         "reprisekit-gallery-logon-motion@1.png",
     );
     write_preview(
-        &gallery_miniview::render(1),
+        || gallery_miniview::render(1),
         "reprisekit-gallery-mini-view@1.png",
     );
-    write_preview(&gallery_paint::render(1), "reprisekit-gallery-paint@1.png");
-    write_preview(&gallery_perf::render(1), "reprisekit-gallery-perf@1.png");
+    write_preview(
+        || gallery_paint::render(1),
+        "reprisekit-gallery-paint@1.png",
+    );
+    write_preview(|| gallery_perf::render(1), "reprisekit-gallery-perf@1.png");
     if with_blue {
         write_preview(
-            &gallery_keys::launcher_windows(1),
+            || gallery_keys::launcher_windows(1),
             "reprisekit-gallery-launcher-windows@1.png",
         );
         write_preview(
-            &gallery_keys::key_sheet(1),
+            || gallery_keys::key_sheet(1),
             "reprisekit-gallery-key-sheet@1.png",
         );
         write_preview(
-            &render_tray_arrow_schemes(1),
+            || render_tray_arrow_schemes(1),
             "reprisekit-gallery-tray-arrow-blue-schemes.png",
         );
-        write_preview(&render_orb_glow(1), "reprisekit-gallery-orb-glow-glass.png");
         write_preview(
-            &render_windowed_dialog(1),
+            || render_orb_glow(1),
+            "reprisekit-gallery-orb-glow-glass.png",
+        );
+        write_preview(
+            || render_windowed_dialog(1),
             "reprisekit-gallery-windowed-dialog.png",
         );
-        write_preview(&render_glass(), "reprisekit-gallery-glass.png");
-        write_preview(&render_glass_dark(), "reprisekit-gallery-glass-dark.png");
+        write_preview(render_glass, "reprisekit-gallery-glass.png");
+        write_preview(render_glass_dark, "reprisekit-gallery-glass-dark.png");
+        write_preview(render_glass_scale2, "reprisekit-gallery-glass-scale2.png");
+        write_preview(render_show_desktop, "reprisekit-gallery-show-desktop.png");
+        write_preview(render_taskbar_top, "reprisekit-gallery-taskbar-top.png");
         write_preview(
-            &render_glass_scale2(),
-            "reprisekit-gallery-glass-scale2.png",
-        );
-        write_preview(
-            &render_show_desktop(),
-            "reprisekit-gallery-show-desktop.png",
-        );
-        write_preview(&render_taskbar_top(), "reprisekit-gallery-taskbar-top.png");
-        write_preview(
-            &render_taskbar_hidden(),
+            render_taskbar_hidden,
             "reprisekit-gallery-taskbar-hidden.png",
         );
+        write_preview(render_taskbar_edges, "reprisekit-gallery-taskbar-edges.png");
+        write_preview(render_taskbar_drag, "reprisekit-gallery-taskbar-drag.png");
+        write_preview(render_taskbar_cells, "reprisekit-gallery-taskbar-cells.png");
+        write_preview(render_taskbar_keys, "reprisekit-gallery-taskbar-keys.png");
+        write_preview(render_quick_more, "reprisekit-gallery-quick-more.png");
+        write_preview(render_tray_arrow, "reprisekit-gallery-tray-arrow.png");
+        write_preview(render_glass_preview, "reprisekit-gallery-glass-preview.png");
         write_preview(
-            &render_taskbar_edges(),
-            "reprisekit-gallery-taskbar-edges.png",
-        );
-        write_preview(
-            &render_taskbar_drag(),
-            "reprisekit-gallery-taskbar-drag.png",
-        );
-        write_preview(
-            &render_taskbar_cells(),
-            "reprisekit-gallery-taskbar-cells.png",
-        );
-        write_preview(
-            &render_taskbar_keys(),
-            "reprisekit-gallery-taskbar-keys.png",
-        );
-        write_preview(&render_quick_more(), "reprisekit-gallery-quick-more.png");
-        write_preview(&render_tray_arrow(), "reprisekit-gallery-tray-arrow.png");
-        write_preview(
-            &render_glass_preview(),
-            "reprisekit-gallery-glass-preview.png",
-        );
-        write_preview(
-            &render_glass_switcher(),
+            render_glass_switcher,
             "reprisekit-gallery-glass-switcher.png",
         );
-        write_preview(&render_overview(), "reprisekit-gallery-overview.png");
+        write_preview(render_overview, "reprisekit-gallery-overview.png");
+        write_preview(render_snap_layouts, "reprisekit-gallery-snap-layouts.png");
+        write_preview(render_glass_popups, "reprisekit-gallery-glass-popups.png");
         write_preview(
-            &render_snap_layouts(),
-            "reprisekit-gallery-snap-layouts.png",
-        );
-        write_preview(
-            &render_glass_popups(),
-            "reprisekit-gallery-glass-popups.png",
-        );
-        write_preview(
-            &render_start_panel(100),
+            || render_start_panel(100),
             "reprisekit-gallery-start-panel.png",
         );
         write_preview(
-            &render_start_panel_dark(1),
+            || render_start_panel_dark(1),
             "reprisekit-gallery-start-panel-dark.png",
         );
         write_preview(
-            &render_glass_launcher_dark(1),
+            || render_glass_launcher_dark(1),
             "reprisekit-gallery-glass-launcher-dark.png",
         );
         write_preview(
-            &render_blue_start_panel(1, 100),
+            || render_blue_start_panel(1, 100),
             "reprisekit-gallery-blue-start-menu.png",
         );
         write_preview(
-            &render_blue_start_menus(1),
+            || render_blue_start_menus(1),
             "reprisekit-gallery-blue-start-menus.png",
         );
-        write_preview(&render_list_sheets(), "reprisekit-gallery-list-sheet.png");
+        write_preview(render_list_sheets, "reprisekit-gallery-list-sheet.png");
         write_preview(
-            &render_list_sheet_links(),
+            render_list_sheet_links,
             "reprisekit-gallery-list-sheet-links.png",
         );
         write_preview(
-            &render_list_sheet_search(1),
+            || render_list_sheet_search(1),
             "reprisekit-gallery-list-sheet-search.png",
         );
         write_preview(
-            &render_long_list_sheets(),
+            render_long_list_sheets,
             "reprisekit-gallery-list-sheet-scrolled.png",
         );
-        write_preview(&render_now_playing(), "reprisekit-gallery-now-playing.png");
+        write_preview(render_now_playing, "reprisekit-gallery-now-playing.png");
+        write_preview(render_preview_media, "reprisekit-gallery-preview-media.png");
         write_preview(
-            &render_preview_media(),
-            "reprisekit-gallery-preview-media.png",
-        );
-        write_preview(
-            &render_calendar_events(1),
+            || render_calendar_events(1),
             "reprisekit-gallery-calendar-events.png",
         );
         write_preview(
-            &render_balloon_pictures(1),
+            || render_balloon_pictures(1),
             "reprisekit-gallery-balloon-pictures.png",
         );
         write_preview(
-            &render_tray_customize(),
+            render_tray_customize,
             "reprisekit-gallery-tray-customize.png",
         );
-        write_preview(&render_backgrounds(), "reprisekit-gallery-backgrounds.png");
-        write_preview(&render_savers(), "reprisekit-gallery-screensavers.png");
+        write_preview(render_backgrounds, "reprisekit-gallery-backgrounds.png");
+        write_preview(render_savers, "reprisekit-gallery-screensavers.png");
         write_preview(
-            &render_caption_tabs(100),
+            || render_caption_tabs(100),
             "reprisekit-gallery-caption-tabs.png",
         );
-        write_preview(
-            &gallery_p3::render(),
-            "reprisekit-gallery-blue-variants.png",
-        );
+        write_preview(gallery_p3::render, "reprisekit-gallery-blue-variants.png");
     }
 }
 
 /// What a test hands each page and its file name to instead of writing it.
 type Sink = Box<dyn FnMut(&Canvas, &str)>;
 
+/// The names of the pages some thread of [`draw_shared`] has taken.
+type Taken = Arc<Mutex<HashSet<String>>>;
+
 thread_local! {
     static SINK: std::cell::RefCell<Option<Sink>> = const { std::cell::RefCell::new(None) };
+    static SHARED: std::cell::RefCell<Option<Taken>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Writes page `c` as `name`, or hands it to the sink a test set with [`collect_pages`].
-fn write_preview(c: &Canvas, name: &str) {
-    let taken = SINK.with_borrow_mut(|s| s.as_mut().map(|f| f(c, name)).is_some());
-    if !taken {
-        reprisekit::raster::write_preview(c, name);
+/// Draws page `name` and writes it, or hands it to the sink a test set with [`collect_pages`].
+/// Under [`draw_shared`] only the first thread to reach `name` draws it.
+fn write_preview(draw: impl FnOnce() -> Canvas, name: &str) {
+    let mine = SHARED.with_borrow(|s| {
+        s.as_ref()
+            .is_none_or(|taken| taken.lock().unwrap().insert(name.to_owned()))
+    });
+    if !mine {
+        return;
     }
+    let c = draw();
+    let taken = SINK.with_borrow_mut(|s| s.as_mut().map(|f| f(&c, name)).is_some());
+    if !taken {
+        reprisekit::raster::write_preview(&c, name);
+    }
+}
+
+/// Runs `pages` on `REPRISE_GALLERY_THREADS` threads (default one per CPU), which share its
+/// pages out between them: each draws the pages no other thread took first.
+fn draw_shared(pages: impl Fn() + Sync) {
+    let threads = match std::env::var("REPRISE_GALLERY_THREADS") {
+        Ok(n) => n
+            .parse()
+            .expect("REPRISE_GALLERY_THREADS is a whole number"),
+        Err(_) => std::thread::available_parallelism().map_or(1, |n| n.get()),
+    };
+    let taken = Taken::default();
+    let pages = &pages;
+    std::thread::scope(|s| {
+        for _ in 0..threads.max(1) {
+            let taken = taken.clone();
+            s.spawn(move || {
+                SHARED.set(Some(taken));
+                pages();
+            });
+        }
+    });
 }
 
 /// Hands every page this thread writes to `sink` instead of a file, until `None`.
