@@ -565,6 +565,7 @@ pub struct Pins {
     poke: mpsc::Sender<Job>,
     /// The thread ends once this drops, which [`Drop`] does before it wakes the thread.
     alive: Option<Arc<()>>,
+    wake: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl Pins {
@@ -574,6 +575,8 @@ impl Pins {
     }
 
     pub fn start_at(file: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Pins {
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        let on_thread = wake.clone();
         let shared: Arc<Mutex<Shared>> = Arc::default();
         let (poke, pokes) = mpsc::channel();
         let alive = Arc::new(());
@@ -599,7 +602,11 @@ impl Pins {
                         .collect();
                     let edited = !edits.is_empty();
                     for f in edits {
-                        let written = edit_at(&read, f);
+                        let written =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                edit_at(&read, f)
+                            }))
+                            .unwrap_or_else(|_| Err(io::Error::other("the edit stopped short")));
                         let mut s = lock(&out);
                         s.pending -= 1;
                         if let Err(e) = written {
@@ -628,7 +635,7 @@ impl Pins {
                     }
                     drop(s);
                     if changed || edited {
-                        wake();
+                        on_thread();
                     }
                 }
             });
@@ -642,6 +649,7 @@ impl Pins {
             seen: 0,
             poke,
             alive: Some(alive),
+            wake,
         }
     }
 
@@ -679,6 +687,8 @@ impl Pins {
             let mut s = lock(&self.shared);
             s.pending -= 1;
             s.failed = Some(io::Error::other("the bookmarks thread is not running"));
+            drop(s);
+            (self.wake)();
         }
     }
 
@@ -1296,5 +1306,34 @@ smb://nas/My%20Files\n";
             "a new one may be another writer's, mid-write"
         );
         assert!(other.exists(), "a name no write gives its temp file stays");
+    }
+
+    #[test]
+    fn an_edit_with_the_thread_gone_fails_and_wakes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut pins, woke) = reading(&dir.path().join("bookmarks"));
+        pins.alive = None;
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while pins.poke.send(Job::Read).is_ok() {
+            assert!(std::time::Instant::now() < end, "the thread ends");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        while woke.try_recv().is_ok() {}
+        pins.edit(|b| b.pin(Path::new("/srv/a")));
+        assert!(woke.try_recv().is_ok(), "a wake brings the failure");
+        assert!(!pins.busy());
+        assert!(pins.take_failed().is_some());
+    }
+
+    #[test]
+    fn an_edit_that_panics_fails_and_the_next_one_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("bookmarks");
+        let (mut pins, woke) = reading(&file);
+        pins.edit(|_| panic!("a broken edit"));
+        wait_until(&pins, &woke, |p| !p.busy());
+        assert!(pins.take_failed().is_some());
+        pins.edit(|b| b.pin(Path::new("/srv/a")));
+        wait_until(&pins, &woke, |p| !p.busy() && p.current().len() == 1);
     }
 }
