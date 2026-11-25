@@ -232,6 +232,11 @@ opt-level = 3
 debug-assertions = false
 overflow-checks = false
 
+# rav1e's encoder is generic over the pixel type, so reprise-decode's tests compile most of it
+# into their own binary: unoptimised, a 12-bit 2048x2048 picture encodes in 21 s, not 4.5 s.
+[profile.dev.package.reprise-decode]
+opt-level = 3
+
 # One codegen unit runs the programs on about 4% fewer instructions. Thin LTO
 # saves more but makes a workspace rebuild five times slower.
 # A panic's backtrace names file and line; a package moves the line tables
