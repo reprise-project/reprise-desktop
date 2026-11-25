@@ -5,9 +5,10 @@
 //! Turn Off and Restart ask logind first (a Restart Into for its target too), and a refusal before or after the programs close shows a message box;
 //! one that needs a password runs before the fade, so polkit's prompt shows over the desktop.
 //! Stand By and Hibernate close nothing; a refusal shows the same message box.
-//! logind holds the one-shot restart target, whoever set it. A Turn Off, Restart, Stand By or Hibernate other than a Restart Into reads it
+//! logind holds the one-shot restart target, whoever set it. A Turn Off, Restart or Hibernate other than a Restart Into reads it
 //! before anything closes and clears it before the action, before the fade, so polkit's prompt shows; one that won't clear asks whether to go
-//! ahead anyway. A critical battery clears it without a prompt and powers off regardless. Log Off leaves it to the next power action.
+//! ahead anyway. A Restart Into clears a target of the other kind the same way before it sets its own. A critical battery, and a Hibernate
+//! from the lid, idle or a power key, clear it without a prompt and go ahead regardless. Stand By and Log Off leave it to the next power action.
 //! Log Off and a critical battery give up a power action under way, but cannot stop a reboot logind already accepted.
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,7 +24,7 @@ use smithay::reexports::calloop::{
 use crate::compositor::State;
 use crate::fsjobs::OnLoop;
 use crate::lockview::Origin;
-use crate::restartinto::BootTarget;
+use crate::restartinto::{Aimed, BootTarget, Kind};
 use crate::window::WindowId;
 
 const PROMPT_AFTER: Duration = Duration::from_secs(5);
@@ -139,8 +140,20 @@ enum Aim {
     Into(BootTarget),
     /// Clear whatever logind holds ([`clear`]).
     Clear,
-    /// Leave it: the user goes ahead anyway ([`anyway`]).
+    /// Leave it: the user goes ahead anyway ([`anyway`]), or a Stand By, which starts no boot.
     Leave,
+}
+
+impl Aim {
+    /// This end's aim once `new`, which skipped logind's read, joins it: a newer pick sets its
+    /// target, a pick is not carried to another action, and going ahead anyway stays.
+    fn joined(self, new: Aim) -> Aim {
+        match (self, new) {
+            (_, Aim::Into(b)) => Aim::Into(b),
+            (Aim::Leave, _) | (_, Aim::Leave) => Aim::Leave,
+            _ => Aim::Clear,
+        }
+    }
 }
 
 /// Start the end once logind says the action and its restart target are allowed, so a refusal
@@ -170,7 +183,7 @@ fn check(
         start(state, goal, cmd, aim, critical, origin, password);
         return;
     }
-    state.spawn_job(move || {
+    let spawned = state.spawn_job(move || {
         let answer =
             zbus::block_on(async { allowed(connect(true).await.as_ref(), verb, aim, reads).await });
         Box::new(move |state: &mut State| match answer {
@@ -178,10 +191,14 @@ fn check(
             Err(why) => refuse(state, Act::of(goal), &why),
         })
     });
+    if !spawned {
+        refuse(state, Act::of(goal), &Refused::Internal);
+    }
 }
 
 /// logind's answer on `conn` for `verb` and `aim`: a Restart Into's target as logind offers it now,
-/// and the password asked up front, also when it `reads` a target set that the action clears first.
+/// and the password asked up front, also for a target set that the action clears first: one of the
+/// other kind for a Restart Into, any when it `reads`.
 async fn allowed(
     conn: Option<&zbus::Connection>,
     verb: Option<Verb>,
@@ -196,14 +213,21 @@ async fn allowed(
         None => Password::No,
     };
     let (aim, set) = match aim {
-        Aim::Into(b) => (Aim::Into(target_now(conn, b).await?), false),
-        Aim::Clear if reads => {
-            let set = crate::restartinto::aimed(conn).await;
-            (Aim::Clear, !set.is_empty())
+        Aim::Into(b) => {
+            let b = target_now(conn, b).await?;
+            let set = held(conn, Some(b.kind())).await;
+            (Aim::Into(b), set)
         }
+        Aim::Clear if reads => (Aim::Clear, held(conn, None).await),
         aim => (aim, false),
     };
     Ok((password.with(&aim, set), aim))
+}
+
+/// Whether logind on `conn` is known to hold a target other than one of kind `but`.
+async fn held(conn: &zbus::Connection, but: Option<Kind>) -> bool {
+    (crate::restartinto::aimed(conn).await.iter())
+        .any(|a| matches!(a, Aimed::Set(t) if Some(t.kind()) != but))
 }
 
 /// `boot` as logind on `conn` offers it now: refused when logind no longer sets a target of its
@@ -260,8 +284,8 @@ fn start(
             log::info!("session end: now {goal:?}");
             e.goal = goal;
             e.cmd = cmd;
-            e.aim = aim;
-            e.password = password;
+            e.aim = std::mem::replace(&mut e.aim, Aim::Clear).joined(aim);
+            e.password = e.password.or(password);
         }
         e.mode = mode;
         run_step(state, step);
@@ -492,7 +516,7 @@ fn go_on(
                 Box::new(move |state| {
                     let how = Run {
                         override_inhibitors,
-                        critical,
+                        unattended: critical,
                         wind_down_for: Some(goal),
                         faded: false,
                     };
@@ -613,19 +637,42 @@ fn act(
     log::info!("session end: {goal:?} runs {cmd:?}");
     let how = Run {
         override_inhibitors,
-        critical,
+        unattended: critical,
         wind_down_for: None,
         faded: true,
     };
     attempt(state, Act::of(goal), cmd, aim, how);
 }
 
-/// Put the computer to sleep with a `[power]` standby or hibernate `cmd`, closing nothing.
+/// Put the computer to sleep with a `[power]` standby or hibernate `cmd` picked from a menu or a
+/// dialog, closing nothing.
 pub fn sleep(state: &mut State, act: Act, cmd: String) {
-    sleep_with(state, act, cmd, Aim::Clear);
+    let (aim, how) = sleep_run(state, act, false);
+    sleep_with(state, act, cmd, aim, how);
 }
 
-fn sleep_with(state: &mut State, act: Act, cmd: String, aim: Aim) {
+/// [`sleep`] from the lid, idle or a power key, where nobody may see a box or a password prompt.
+pub fn sleep_unattended(state: &mut State, act: Act, cmd: String) {
+    let (aim, how) = sleep_run(state, act, true);
+    sleep_with(state, act, cmd, aim, how);
+}
+
+/// Stand By leaves logind's restart target, as it starts no boot; Hibernate clears it.
+fn sleep_run(state: &State, act: Act, unattended: bool) -> (Aim, Run) {
+    let aim = match act {
+        Act::StandBy => Aim::Leave,
+        _ => Aim::Clear,
+    };
+    let how = Run {
+        override_inhibitors: false,
+        unattended,
+        wind_down_for: None,
+        faded: state.session_fade.darkens(),
+    };
+    (aim, how)
+}
+
+fn sleep_with(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
     if cmd.trim().is_empty() {
         return;
     }
@@ -634,12 +681,6 @@ fn sleep_with(state: &mut State, act: Act, cmd: String, aim: Aim) {
         return;
     }
     log::info!("power: {act:?} runs {cmd:?}");
-    let how = Run {
-        override_inhibitors: false,
-        critical: false,
-        wind_down_for: None,
-        faded: false,
-    };
     attempt(state, act, cmd, aim, how);
 }
 
@@ -658,7 +699,8 @@ pub fn anyway(state: &mut State, again: Again) {
         Act::TurnOff => Goal::TurnOff,
         Act::Restart => Goal::Restart,
         Act::StandBy | Act::Hibernate => {
-            return sleep_with(state, again.act, again.cmd, Aim::Leave);
+            let (_, how) = sleep_run(state, again.act, false);
+            return sleep_with(state, again.act, again.cmd, Aim::Leave, how);
         }
     };
     check(
@@ -755,11 +797,12 @@ impl Ticket {
 }
 
 /// How an [`attempt`] runs.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Run {
     override_inhibitors: bool,
-    /// For a critical battery: a restart target clears without a prompt and holds nothing back.
-    critical: bool,
+    /// Nobody answers (a critical battery, a Hibernate from the lid): a restart target clears
+    /// without a prompt and holds nothing back.
+    unattended: bool,
     /// The session winds down for this goal once the action is under way.
     wind_down_for: Option<Goal>,
     /// The screen is faded out, where a password prompt would not show.
@@ -801,7 +844,7 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
                     Ok(conn) => restart_into(&conn, &boot, interactive, &ticket, go),
                     Err(e) => Some(Failed::Refused(Refused::Failed(e.to_string()))),
                 },
-                Aim::Clear => match clear_set(interactive && !how.critical, how.critical) {
+                Aim::Clear => match clear_set(interactive && !how.unattended, how.unattended) {
                     Some(title) => Some(Failed::Aimed(title)),
                     None => go(),
                 },
@@ -844,7 +887,7 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
 /// polkit lets it. logind out of reach clears nothing and holds nothing back.
 fn clear_set(interactive: bool, regardless: bool) -> Option<String> {
     match zbus::block_on(zbus::Connection::system()) {
-        Ok(conn) => zbus::block_on(clear(&conn, interactive, regardless)),
+        Ok(conn) => zbus::block_on(clear(&conn, None, interactive, regardless)),
         Err(e) => {
             log::warn!("session end: restart target: {e}");
             None
@@ -852,18 +895,27 @@ fn clear_set(interactive: bool, regardless: bool) -> Option<String> {
     }
 }
 
-/// Clear the restart targets logind on `conn` holds, with a password prompt when `interactive`;
-/// the title of the first that would not clear, unless the action goes ahead `regardless`.
-async fn clear(conn: &zbus::Connection, interactive: bool, regardless: bool) -> Option<String> {
-    for t in crate::restartinto::aimed(conn).await {
-        match crate::restartinto::aim(conn, &t, false, interactive).await {
-            Ok(()) => log::info!("session end: cleared the restart target {:?}", t.entry),
+/// Clear the restart targets logind on `conn` holds but one of kind `but`, with a password prompt
+/// when `interactive`; the title of the first set that would not clear, unless the action goes
+/// ahead `regardless`. A kind logind could not read is cleared too, and holds nothing back.
+async fn clear(
+    conn: &zbus::Connection,
+    but: Option<Kind>,
+    interactive: bool,
+    regardless: bool,
+) -> Option<String> {
+    for a in crate::restartinto::aimed(conn).await {
+        let kind = a.kind();
+        if Some(kind) == but {
+            continue;
+        }
+        match crate::restartinto::unaim(conn, kind, interactive).await {
+            Ok(()) => log::info!("session end: cleared the restart target {a:?}"),
             Err(e) => {
-                log::warn!(
-                    "session end: clearing the restart target {:?}: {e}",
-                    t.entry
-                );
-                if !regardless {
+                log::warn!("session end: clearing the restart target {a:?}: {e}");
+                if let Aimed::Set(t) = a
+                    && !regardless
+                {
                     return Some(t.title);
                 }
             }
@@ -872,9 +924,11 @@ async fn clear(conn: &zbus::Connection, interactive: bool, regardless: bool) -> 
     None
 }
 
-/// Set `boot` with logind on `conn`, then `reboot` unless the attempt was given up on. A reboot that
-/// does not happen clears it again, prompting as the set did unless given up on by then; one that
-/// won't clear stays with logind, where the next power action finds it.
+/// Clear a target of the other kind logind on `conn` holds (a firmware flag wins over an entry, and
+/// an entry left after Firmware Setup would boot once), set `boot`, then `reboot` unless the attempt
+/// was given up on. A reboot that does not happen clears it again, prompting as the set did unless
+/// given up on by then or its own prompt was dismissed; one that won't clear stays with logind,
+/// where the next power action finds it.
 fn restart_into(
     conn: &zbus::Connection,
     boot: &BootTarget,
@@ -882,7 +936,10 @@ fn restart_into(
     ticket: &Ticket,
     reboot: impl FnOnce() -> Option<Failed>,
 ) -> Option<Failed> {
-    if let Err(e) = zbus::block_on(crate::restartinto::aim(conn, boot, true, interactive)) {
+    if let Some(title) = zbus::block_on(clear(conn, Some(boot.kind()), interactive, false)) {
+        return Some(Failed::Aimed(title));
+    }
+    if let Err(e) = zbus::block_on(crate::restartinto::aim(conn, boot, interactive)) {
         log::warn!("session end: restart into {:?}: {e}", boot.entry);
         let dismissed = || interactive && reprisebus::polkit::dismissed();
         return Some(failure(&e, dismissed).map_or(Failed::Dismissed, Failed::Refused));
@@ -894,8 +951,8 @@ fn restart_into(
             Failed::Dismissed
         }
     };
-    let interactive = interactive && ticket.still();
-    if let Err(e) = zbus::block_on(crate::restartinto::aim(conn, boot, false, interactive)) {
+    let interactive = interactive && ticket.still() && failed != Failed::Dismissed;
+    if let Err(e) = zbus::block_on(crate::restartinto::unaim(conn, boot.kind(), interactive)) {
         log::warn!("session end: clearing the restart target: {e}");
     }
     Some(failed)
@@ -1180,6 +1237,17 @@ impl Password {
             Aim::Into(b) if b.password => Password::Yes,
             _ if set => Password::Yes,
             _ => self,
+        }
+    }
+
+    /// The stronger of two ends' requirements, for an end that joins one under way.
+    fn or(self, other: Password) -> Password {
+        match (self, other) {
+            (Password::Yes, _) | (_, Password::Yes) => Password::Yes,
+            (Password::OverInhibitors, _) | (_, Password::OverInhibitors) => {
+                Password::OverInhibitors
+            }
+            _ => Password::No,
         }
     }
 
@@ -1853,6 +1921,195 @@ mod tests {
     }
 
     #[test]
+    fn a_restart_into_clears_a_leftover_of_the_other_kind_before_it_sets_its_own() {
+        let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) else {
+            return;
+        };
+        f.hold("a.conf", true);
+        let reboot = || None;
+        assert_eq!(
+            restart_into(&f.client, &target_b(), false, &ticket(false), reboot),
+            None
+        );
+        assert_eq!(
+            *f.set.lock().unwrap(),
+            ["firmware false", "entry \"b.conf\""],
+            "an entry is set over, not cleared"
+        );
+        f.set.lock().unwrap().clear();
+        f.hold("a.conf", false);
+        let firmware = BootTarget::firmware(false);
+        assert_eq!(
+            restart_into(&f.client, &firmware, false, &ticket(false), reboot),
+            None
+        );
+        assert_eq!(*f.set.lock().unwrap(), ["entry \"\"", "firmware true"]);
+    }
+
+    #[test]
+    fn a_leftover_of_the_other_kind_that_will_not_clear_holds_the_restart_into_back() {
+        let Some(f) = crate::restartinto::tests::logind_asking_to_clear() else {
+            return;
+        };
+        f.hold("", true);
+        let failed = restart_into(&f.client, &target_b(), false, &ticket(false), || {
+            panic!("no reboot")
+        });
+        assert_eq!(failed, Some(Failed::Aimed("Firmware Setup".into())));
+        assert!(f.set.lock().unwrap().is_empty(), "B is not set");
+        let failed = restart_into(&f.client, &target_b(), true, &ticket(false), || None);
+        assert_eq!(failed, None, "the password prompt clears it");
+        let held = f.held.lock().unwrap();
+        assert_eq!((held.entry.as_str(), held.firmware), ("b.conf", false));
+    }
+
+    #[test]
+    fn a_leftover_of_the_other_kind_moves_a_restart_into_before_the_fade() {
+        let Some(f) = crate::restartinto::tests::logind("yes", "yes", &["b.conf"]) else {
+            return;
+        };
+        let ask = || {
+            let aim = Aim::Into(target_b());
+            zbus::block_on(allowed(Some(&f.client), None, aim, false)).map(|(p, _)| p)
+        };
+        assert_eq!(ask(), Ok(Password::No));
+        f.hold("a.conf", false);
+        assert_eq!(ask(), Ok(Password::No), "an entry B is set over");
+        f.hold("", true);
+        assert_eq!(ask(), Ok(Password::Yes));
+    }
+
+    #[test]
+    fn a_dismissed_reboot_prompt_clears_its_target_without_a_second_prompt() {
+        let Some(f) = crate::restartinto::tests::logind_asking_to_clear() else {
+            return;
+        };
+        let failed = restart_into(&f.client, &target_b(), true, &ticket(false), || {
+            Some(Failed::Dismissed)
+        });
+        assert_eq!(failed, Some(Failed::Dismissed));
+        assert_eq!(
+            f.held.lock().unwrap().entry,
+            "b.conf",
+            "left for the next power action's read"
+        );
+    }
+
+    #[test]
+    fn a_target_logind_cannot_read_is_cleared_anyway_and_holds_nothing_back() {
+        let Some(f) = crate::restartinto::tests::logind_asking_to_clear() else {
+            return;
+        };
+        f.hold("b.conf", true);
+        f.unreadable();
+        assert_eq!(zbus::block_on(clear(&f.client, None, false, false)), None);
+        assert!(f.set.lock().unwrap().is_empty(), "refused without a prompt");
+        assert_eq!(zbus::block_on(clear(&f.client, None, true, false)), None);
+        assert_eq!(*f.set.lock().unwrap(), ["entry \"\"", "firmware false"]);
+        assert_eq!(
+            zbus::block_on(allowed(Some(&f.client), None, Aim::Clear, true)),
+            Ok((Password::No, Aim::Clear)),
+            "the fade comes first, and the clear asks for no password under it"
+        );
+    }
+
+    #[test]
+    fn stand_by_leaves_the_restart_target_and_an_unattended_hibernate_clears_it_regardless() {
+        let h = fading();
+        let run = |act, unattended| {
+            let (aim, how) = sleep_run(&h.state, act, unattended);
+            (aim, how.unattended)
+        };
+        assert_eq!(run(Act::StandBy, false), (Aim::Leave, false));
+        assert_eq!(run(Act::StandBy, true), (Aim::Leave, true));
+        assert_eq!(
+            run(Act::Hibernate, false),
+            (Aim::Clear, false),
+            "from a menu, a target that won't clear asks"
+        );
+        assert_eq!(run(Act::Hibernate, true), (Aim::Clear, true));
+    }
+
+    #[test]
+    fn a_sleep_during_a_turn_offs_fade_asks_for_no_password() {
+        let mut h = fading();
+        assert!(!sleep_run(&h.state, Act::StandBy, false).1.faded);
+        go_on(
+            &mut h.state,
+            Goal::TurnOff,
+            Some("true".into()),
+            Aim::Clear,
+            false,
+            Password::No,
+            false,
+        );
+        assert!(sleep_run(&h.state, Act::StandBy, false).1.faded);
+        crate::crash::not_ending();
+    }
+
+    #[test]
+    fn an_end_joining_one_under_way_keeps_its_password_and_its_aim() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.ending = Some(Ending {
+            goal: Goal::Restart,
+            cmd: Some("true".into()),
+            aim: Aim::Leave,
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Waiting,
+            password: Password::Yes,
+            unasked: Vec::new(),
+        });
+        begin(
+            &mut h.state,
+            Goal::TurnOff,
+            Some("true".into()),
+            Origin::Desktop,
+        );
+        let e = h.state.ending.as_ref().expect("the end under way");
+        assert_eq!(
+            (e.goal, &e.aim, e.password),
+            (Goal::TurnOff, &Aim::Leave, Password::Yes)
+        );
+        assert_eq!(Aim::Clear.joined(Aim::Clear), Aim::Clear);
+        assert_eq!(
+            Aim::Into(target_b()).joined(Aim::Clear),
+            Aim::Clear,
+            "a pick is not carried to a plain Turn Off"
+        );
+        assert_eq!(
+            Aim::Clear.joined(Aim::Into(target_b())),
+            Aim::Into(target_b())
+        );
+        assert_eq!(
+            Password::OverInhibitors.or(Password::No),
+            Password::OverInhibitors
+        );
+        assert_eq!(Password::No.or(Password::Yes), Password::Yes);
+    }
+
+    #[test]
+    fn a_session_end_whose_check_does_not_start_is_refused() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        h.state.fsjobs.refuse_threads = true;
+        let open = dialogs(&h);
+        begin(
+            &mut h.state,
+            Goal::Restart,
+            Some("true".into()),
+            Origin::Desktop,
+        );
+        assert!(h.state.ending.is_none());
+        assert_eq!(dialogs(&h), open + 1, "the refusal's box");
+    }
+
+    #[test]
     fn a_failed_reboot_clears_its_target_with_the_password_prompt_the_set_had() {
         let Some(f) = crate::restartinto::tests::logind_asking_to_clear() else {
             return;
@@ -2076,7 +2333,7 @@ mod tests {
         let open = dialogs(&h);
         let how = Run {
             override_inhibitors: false,
-            critical: false,
+            unattended: false,
             wind_down_for: None,
             faded: false,
         };
@@ -2141,7 +2398,7 @@ mod tests {
             ["entry \"b.conf\""],
             "no prompt once given up on"
         );
-        assert_eq!(zbus::block_on(clear(&f.client, true, false)), None);
+        assert_eq!(zbus::block_on(clear(&f.client, None, true, false)), None);
         assert_eq!(f.held.lock().unwrap().entry, "", "the next action read it");
     }
 
@@ -2152,18 +2409,18 @@ mod tests {
         };
         f.hold("b.conf", true);
         assert_eq!(
-            zbus::block_on(clear(&f.client, false, false)),
+            zbus::block_on(clear(&f.client, None, false, false)),
             Some("B".into()),
             "without a prompt it stays, and the action is held back"
         );
         assert_eq!(f.held.lock().unwrap().entry, "b.conf");
-        assert_eq!(zbus::block_on(clear(&f.client, true, false)), None);
+        assert_eq!(zbus::block_on(clear(&f.client, None, true, false)), None);
         assert_eq!(
             *f.held.lock().unwrap(),
             Default::default(),
             "the entry and the firmware flag"
         );
-        assert_eq!(zbus::block_on(clear(&f.client, true, false)), None);
+        assert_eq!(zbus::block_on(clear(&f.client, None, true, false)), None);
         assert_eq!(
             f.set.lock().unwrap().len(),
             2,
@@ -2178,7 +2435,7 @@ mod tests {
         };
         f.hold("", true);
         assert_eq!(
-            zbus::block_on(clear(&f.client, false, false)),
+            zbus::block_on(clear(&f.client, None, false, false)),
             Some("Firmware Setup".into())
         );
     }
@@ -2189,12 +2446,12 @@ mod tests {
             return;
         };
         f.hold("b.conf", true);
-        assert_eq!(zbus::block_on(clear(&f.client, false, true)), None);
+        assert_eq!(zbus::block_on(clear(&f.client, None, false, true)), None);
         let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) else {
             return;
         };
         f.hold("b.conf", false);
-        assert_eq!(zbus::block_on(clear(&f.client, false, true)), None);
+        assert_eq!(zbus::block_on(clear(&f.client, None, false, true)), None);
         assert_eq!(f.held.lock().unwrap().entry, "");
     }
 

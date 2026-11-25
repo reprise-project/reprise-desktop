@@ -338,6 +338,11 @@ impl SessionFade {
         }
     }
 
+    /// The screen fades out or stays black after a fade out, where a password prompt would not show.
+    pub fn darkens(&self) -> bool {
+        self.fade.out.is_some()
+    }
+
     #[cfg(test)]
     pub fn fading_out(&self) -> bool {
         self.fade.out_left(Instant::now()).is_some()

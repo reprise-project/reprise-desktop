@@ -301,8 +301,10 @@ are.
   firmware has one. A pick restarts into it once, the same way Restart does.
   An entry shows the title from its file on the boot partition when your
   account may read it, else its id. A one-shot target logind still holds,
-  whoever set it, is cleared before the next Turn Off, Restart, Stand By or
-  Hibernate; when it won't clear, a box asks whether to go ahead anyway.
+  whoever set it, is cleared before the next Turn Off, Restart or Hibernate,
+  and a pick clears one of the other kind first; when it won't clear, a box
+  asks whether to go ahead anyway. A Hibernate from the lid, idle or a power
+  key clears it without asking and goes ahead. Stand By leaves it.
 - **Save prompts.** Log Off, Turn Off and Restart ask every window to close
   and wait, then list who's holding things up, with End Now and Cancel. A
   program holding off log off through the Inhibit portal (a copy under way)

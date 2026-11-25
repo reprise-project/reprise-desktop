@@ -6,7 +6,7 @@ use reprisekit::startpanel::{Shape, Spot};
 use reprisekit::taskbar::Edge;
 
 use crate::compositor::State;
-use crate::config::{Action, PowerAction};
+use crate::config::Action;
 use crate::lockview::Origin;
 use crate::menuview::{MenuKind, Skin};
 use crate::raster::Rect;
@@ -390,11 +390,13 @@ impl State {
             StartRow::RestartInto => {}
             StartRow::Sleep => {
                 self.close_start_panel();
-                crate::power::run_action(self, PowerAction::Standby, Origin::Desktop);
+                let cmd = self.config.power.standby.clone();
+                crate::sessionend::sleep(self, crate::sessionend::Act::StandBy, cmd);
             }
             StartRow::Hibernate => {
                 self.close_start_panel();
-                crate::power::run_action(self, PowerAction::Hibernate, Origin::Desktop);
+                let cmd = self.config.power.hibernate.clone();
+                crate::sessionend::sleep(self, crate::sessionend::Act::Hibernate, cmd);
             }
         }
     }
