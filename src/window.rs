@@ -201,6 +201,8 @@ pub struct Window {
     /// client pick its size.
     pub own_size: bool,
     pub snapped: Option<Rect>,
+    /// What a smaller work area took from its size ([`place::Shrunk`]).
+    pub shrunk: Option<place::Shrunk>,
     /// Where it was on the computer's own screens while lock mode keeps it on a remote one.
     pub home: Option<crate::console::homes::Home>,
     /// Where it was as it last unmapped; the next map goes back there.

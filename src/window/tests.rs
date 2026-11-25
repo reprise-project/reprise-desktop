@@ -209,7 +209,7 @@ fn client_limits_keep_zero_max_unbounded_and_cap_at_32767() {
 
 use super::draw::{client_glass_rects, client_holes};
 use super::owners::{owner_chain_has, walk_owned};
-use super::place::{grown_back_inside, retheme_back_inside, shrunk_origin};
+use super::place::{Shrunk, grown_back_inside, rebound, retheme_back_inside, shrunk_origin};
 use super::*;
 use crate::raster::Rect;
 use crate::theme::Metrics;
@@ -880,8 +880,8 @@ fn a_window_filling_its_bounds_is_asked_to_fit_the_smaller_ones_of_a_look_switch
     let (_, size) = after_reload(&mut h, &mut c, t, "");
     assert_eq!(
         size,
-        (1000, glass.1),
-        "larger bounds leave the size to the window"
+        (1000, classic.1),
+        "back under Classic it regrows to its size"
     );
 }
 
@@ -977,6 +977,48 @@ fn a_window_shrunk_by_a_scale_change_stays_inside_the_work_area() {
             );
         }
     }
+}
+
+#[test]
+fn a_window_shrunk_by_a_scale_change_grows_back_to_its_size_when_the_scale_returns() {
+    use smithay::output::Scale;
+    let mut h = crate::harness::Harness::new();
+    let o = h.output("TEST-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.roundtrip(&mut c);
+    let (bw, bh) = c.side.shells[t.shell].bounds;
+    for size in [(bw, bh), (bw - 40, 300)] {
+        h.state.request_size(t.id, size.0, size.1);
+        h.roundtrip(&mut c);
+        for scale in [2.0, 1.0] {
+            o.change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+            h.state.update_layout();
+            h.roundtrip(&mut c);
+        }
+        assert_eq!(c.side.shells[t.shell].size, size, "back at scale 1");
+    }
+}
+
+#[test]
+fn a_shrunk_window_regrows_as_far_as_the_bounds_allow_until_sized_otherwise() {
+    let (s1, s15, s2) = ((1912, 1016), (1272, 670), (952, 486));
+    let (fit, shrunk) = rebound((1912, 1000), None, s1, s2);
+    assert_eq!(fit, (952, 486));
+    let (fit, shrunk) = rebound(fit, shrunk, s2, s15);
+    assert_eq!(fit, (1272, 670), "part way back");
+    let (fit, shrunk) = rebound(fit, shrunk, s15, s1);
+    assert_eq!((fit, shrunk), ((1912, 1000), None), "all the way back");
+
+    let shrunk = Some(Shrunk {
+        from: (1912, 1000),
+        to: (952, 486),
+    });
+    assert_eq!(
+        rebound((800, 400), shrunk, s2, s1),
+        ((800, 400), None),
+        "a size taken since stays"
+    );
 }
 
 #[test]
