@@ -488,22 +488,14 @@ mod tests {
 
     #[test]
     fn the_tooltip_and_close_button_pin_at_scale_1_and_2() {
-        let want = [
-            (1, "tooltip", 7100469417102715413),
-            (1, "dark tooltip", 1418182114977198849),
-            (1, "close", 4960589212196123621),
-            (2, "tooltip", 16607512807499100920),
-            (2, "dark tooltip", 14632703910114294106),
-            (2, "close", 11477109601501468505),
-        ];
         let got: Vec<_> = [1, 2]
             .into_iter()
             .flat_map(|d| {
                 drawn(d)
                     .into_iter()
-                    .map(move |(n, img)| (d, n, fnv(&img.atlas)))
+                    .map(move |(n, img)| (format!("{n} @{d}"), fnv(&img.atlas)))
             })
             .collect();
-        assert_eq!(got, want);
+        crate::pins::check("glass/tooltip_and_close", &got);
     }
 }

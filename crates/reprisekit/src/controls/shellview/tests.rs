@@ -1054,18 +1054,10 @@ fn a_thumbnail_or_tile_rename_box_draws_its_pixels() {
             let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
             let p = classic_paint(&theme.colors, s);
             draw(&mut c, &text, &p, &sv, &lay, None, px * s as u32);
-            got.push(canvas_fnv(&c));
+            got.push((format!("{mode:?} @{s}"), canvas_fnv(&c)));
         }
     }
-    assert_eq!(
-        got,
-        [
-            1479223255320838175,
-            16852328580782507990,
-            11788696348499992686,
-            10503351735333426934
-        ]
-    );
+    crate::pins::check("shellview/rename_box", &got);
 }
 
 /// Renaming in Details is the transient `ListView`'s own box, placed by `listview::ListView::edit_rect`.
@@ -1562,18 +1554,10 @@ fn a_grid_drag_image_draws_its_pixels() {
             (one.width * 2, one.height * 2),
             "{mode:?}"
         );
-        got.push(canvas_fnv(&one));
-        got.push(canvas_fnv(&two));
+        got.push((format!("{mode:?} @1"), canvas_fnv(&one)));
+        got.push((format!("{mode:?} @2"), canvas_fnv(&two)));
     }
-    assert_eq!(
-        got,
-        [
-            13645227026126532502,
-            1281062025351903798,
-            7530801195331324834,
-            6682858532581181662
-        ]
-    );
+    crate::pins::check("shellview/grid_drag_image", &got);
 }
 
 /// Rows scrolled out of the body stay out of the image, and with none shown there is none.
@@ -1618,18 +1602,10 @@ fn a_rows_drag_image_draws_its_pixels() {
             (one.width * 2, one.height * 2),
             "{mode:?}"
         );
-        got.push(canvas_fnv(&one));
-        got.push(canvas_fnv(&two));
+        got.push((format!("{mode:?} @1"), canvas_fnv(&one)));
+        got.push((format!("{mode:?} @2"), canvas_fnv(&two)));
     }
-    assert_eq!(
-        got,
-        [
-            5882507750434519416,
-            12420945453230247706,
-            7509144477264736716,
-            8858607519483314338
-        ]
-    );
+    crate::pins::check("shellview/rows_drag_image", &got);
 }
 
 #[test]

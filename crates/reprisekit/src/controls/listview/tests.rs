@@ -1531,21 +1531,10 @@ fn a_bar_cell_fills_its_share_in_every_look_and_scale() {
                 clear(body.y + row_h - 3 * s),
                 "{i:?} x{s}: clear below the bar"
             );
-            pins.push(hash(&c));
+            pins.push((format!("{i:?} @{s}"), hash(&c)));
         }
     }
-    assert_eq!(
-        pins,
-        [
-            4876715914481314308,
-            11173558624458108821,
-            16508500649778898160,
-            10870395863740515825,
-            1556155106020882762,
-            17444408658169601235
-        ],
-        "Classic, Blue and Glass at scale 1 and 2"
-    );
+    crate::pins::check("controls/listview_bar_cells", &pins);
 }
 
 /// Draws icon rows ([`IconRows`]) in each look at 100-200% text, scale 1 and 2: the icon column

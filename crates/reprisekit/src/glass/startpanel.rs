@@ -904,22 +904,15 @@ mod tests {
             transparency: false,
             ..Settings::default()
         };
-        let got: Vec<u64> = glasses()
+        let names = ["default", "red", "red smoked", "red molten", "opaque"];
+        let got: Vec<_> = glasses()
             .iter()
             .chain([&opaque])
-            .map(|s| fnv(&panel(s, 1).atlas))
+            .zip(names)
+            .map(|(s, name)| (name.to_string(), fnv(&panel(s, 1).atlas)))
             .collect();
-        assert_eq!(
-            got,
-            [
-                8167216779096584672,
-                10361383592114831827,
-                3516743106138462779,
-                11258273149101495184,
-                18443270805554258285,
-            ],
-            "the panel's atlas, hashed"
-        );
+        assert_eq!(got.len(), names.len());
+        crate::pins::check("glass/start_panel_glass", &got);
     }
 
     #[test]

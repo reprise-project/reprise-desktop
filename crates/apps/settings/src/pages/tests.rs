@@ -241,8 +241,14 @@ fn check_rows(name: &str, states: &[&str], rows: &[[u64; 3]]) {
                 .map(move |(look, &h)| (format!("{state} {look}"), h))
         })
         .collect();
+    pin(name, &got);
+}
+
+/// [`reprisekit::pins::check_file`] on `tests/pins/<name>.txt`.
+#[track_caller]
+fn pin(name: &str, got: &[(String, u64)]) {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins");
-    reprisekit::pins::check_file(&dir.join(format!("{name}.txt")), &got);
+    reprisekit::pins::check_file(&dir.join(format!("{name}.txt")), got);
 }
 
 /// A hash of `row` of `form` drawn in each of Classic, Blue and Glass, with the test fonts.

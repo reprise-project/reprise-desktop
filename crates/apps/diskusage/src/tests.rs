@@ -191,7 +191,7 @@ fn drawn() -> Vec<(reprisekit::interface::Interface, Canvas)> {
 fn the_window_sits_on_its_pixels_in_every_look() {
     reprisekit::pins::fonts();
     let mut pins = Vec::new();
-    for (_, c) in drawn() {
+    for (i, c) in drawn() {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for y in 0..c.height as i32 {
             for x in 0..c.width as i32 {
@@ -200,17 +200,10 @@ fn the_window_sits_on_its_pixels_in_every_look() {
                 }
             }
         }
-        pins.push(h);
+        pins.push((format!("{i:?}"), h));
     }
-    assert_eq!(
-        pins,
-        [
-            17838184590059176232,
-            1122885679241695633,
-            11964789661272981710
-        ],
-        "Classic, Blue and Glass"
-    );
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/window.txt");
+    reprisekit::pins::check_file(std::path::Path::new(file), &pins);
 }
 
 /// Writes `target/diskusage-{classic,blue,glass}.png` for eyeballing; run with `--ignored`.

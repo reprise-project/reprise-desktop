@@ -183,29 +183,12 @@ fn the_search_field_draws_in_every_look() {
                         );
                     }
                 }
-                hashes.push(hash(&c));
+                let state = if typed { "typed" } else { "at rest" };
+                hashes.push((format!("{i:?} @{sc} {state}"), hash(&c)));
             }
         }
     }
-    crate::pins::fonts();
-    assert_eq!(
-        hashes,
-        [
-            13_734_105_841_231_725_477,
-            8_540_630_767_303_374_645,
-            13_749_963_363_385_055_413,
-            13_938_254_622_102_580_021,
-            18_344_086_528_093_623_235,
-            1_027_420_804_912_379_122,
-            16_027_834_627_997_073_328,
-            4_276_650_307_115_636_736,
-            10_754_388_277_530_216_744,
-            3_888_777_649_561_378_003,
-            1_263_881_998_547_729_795,
-            9_342_056_638_551_148_414
-        ],
-        "Classic, Blue, Glass; each at 1x then 2x; each at rest then typed"
-    );
+    crate::pins::check("controls/search_field", &hashes);
 }
 
 #[test]

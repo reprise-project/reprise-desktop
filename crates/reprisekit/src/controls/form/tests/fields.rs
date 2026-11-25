@@ -386,9 +386,9 @@ fn a_read_only_field_pixels() {
     let h = shown.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
         (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
     });
-    assert_eq!(
-        h, 13_058_433_092_486_595_037,
-        "the focused read-only field with its caret"
+    crate::pins::check(
+        "form/read_only_field",
+        &[("focused with its caret".into(), h)],
     );
 }
 

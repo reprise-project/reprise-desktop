@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn delete_badge_pins_at_scale_1_and_2() {
-    for (s, want) in [(1, 0x056e_b456_7847_bf11u64), (2, 0x5abe_c64f_f838_2a75)] {
+    let mut got = Vec::new();
+    for s in [1, 2] {
         let mut c = Canvas::new(32 * s as u32, 32 * s as u32);
         c.fill_rect(c.bounds(), Color::rgb(128, 128, 128));
         draw_delete_badge(&mut c, 0, 0, s);
@@ -10,8 +11,10 @@ fn delete_badge_pins_at_scale_1_and_2() {
         for b in c.pixels.iter().flat_map(|p| p.to_le_bytes()) {
             h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
         }
-        assert_eq!(h, want, "the delete badge at scale {s}");
+        got.push((format!("@{s}"), h));
     }
+    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/delete_badge.txt");
+    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
 }
 
 #[test]

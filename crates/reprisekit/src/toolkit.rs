@@ -419,19 +419,14 @@ mod tests {
         let tokyo = crate::schemes::scheme("Tokyo Night").unwrap();
         let std = ColorScheme::default();
         let got = [
-            fnv(&gtk3_css(&std, Interface::Blue)),
-            fnv(&gtk3_css(&std, Interface::Glass)),
-            fnv(&gtk3_css(&tokyo, Interface::Glass)),
+            ("Blue".into(), fnv(&gtk3_css(&std, Interface::Blue))),
+            ("Glass".into(), fnv(&gtk3_css(&std, Interface::Glass))),
+            (
+                "Glass Tokyo Night".into(),
+                fnv(&gtk3_css(&tokyo, Interface::Glass)),
+            ),
         ];
-        assert_eq!(
-            got,
-            [
-                0x048e_670a_68f4_c335,
-                0x7652_b21b_7b9a_5892,
-                0x0cd0_8386_d9fb_593e
-            ],
-            "{got:#x?}"
-        );
+        crate::pins::check("toolkit/gtk3_sheets", &got);
     }
 
     #[test]
@@ -442,14 +437,13 @@ mod tests {
         assert!(classic.ends_with(&crate::classic::gtk3::gtk4_bevels(&std)));
         assert!(!gtk4_theme_css(&std, Interface::Blue).contains("../gtk-3.0/assets"));
         let got = [
-            fnv(&classic),
-            fnv(&gtk4_theme_css(&tokyo, Interface::Classic)),
+            ("Classic".into(), fnv(&classic)),
+            (
+                "Classic Tokyo Night".into(),
+                fnv(&gtk4_theme_css(&tokyo, Interface::Classic)),
+            ),
         ];
-        assert_eq!(
-            got,
-            [0x4200_98e7_bf6b_be92, 0x023c_d5d3_aceb_fd92],
-            "{got:#x?}"
-        );
+        crate::pins::check("toolkit/gtk4_classic_sheets", &got);
     }
 
     #[test]
