@@ -103,7 +103,30 @@ pub(super) fn shrunk_into(size: (i32, i32), was: (i32, i32), now: (i32, i32)) ->
     (side(size.0, was.0, now.0), side(size.1, was.1, now.1))
 }
 
-/// Where `frame` goes when its client of `client` is asked to shrink to `fit` inside `area`:
+/// A size the work area took from a window: the size it had (`from`) and the one it was last
+/// asked for (`to`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shrunk {
+    pub from: (i32, i32),
+    pub to: (i32, i32),
+}
+
+/// The size a window of `size` is asked for when its bounds go from `was` to `now`: one still at
+/// its shrink's `to` regrows towards `from`, any other is [`shrunk_into`] `now`.
+pub(super) fn rebound(
+    size: (i32, i32),
+    shrunk: Option<Shrunk>,
+    was: (i32, i32),
+    now: (i32, i32),
+) -> ((i32, i32), Option<Shrunk>) {
+    let (from, fit) = match shrunk.filter(|k| k.to == size) {
+        Some(k) => (k.from, (k.from.0.min(now.0), k.from.1.min(now.1))),
+        None => (size, shrunk_into(size, was, now)),
+    };
+    (fit, (fit != from).then_some(Shrunk { from, to: fit }))
+}
+
+/// Where `frame` goes when its client of `client` is asked to take `fit` inside `area`:
 /// inside `area` at the new size, moved as little as that takes.
 pub(super) fn shrunk_origin(
     frame: Rect,
@@ -326,10 +349,10 @@ impl State {
     }
 
     /// Put the bounds `refresh_bounds` sends into `w`'s pending state; true when they changed.
-    /// With `shrink` (the work area changed under the window) a normal window that fitted the
-    /// old bounds and is larger than the new ones is also asked for a size inside them, and
-    /// the frame origin that keeps it inside the work area at that size comes back with it.
-    pub(super) fn set_bounds(&self, w: WindowId, shrink: bool) -> (bool, Option<(i32, i32)>) {
+    /// With `shrink` (the work area changed under the window) a normal window is also asked for
+    /// the size [`rebound`] gives it, and the frame origin that keeps it inside the work area
+    /// at that size comes back with it.
+    pub(super) fn set_bounds(&mut self, w: WindowId, shrink: bool) -> (bool, Option<(i32, i32)>) {
         let Some(win) = self.win(w).filter(|w| w.mapped) else {
             return (false, None);
         };
@@ -345,20 +368,26 @@ impl State {
         let most = area_client(&self.config.theme.metrics, area, win.chrome());
         let shrink = shrink && !win.maximized && !win.fullscreen && win.snapped.is_none();
         let own = win.client_size();
-        t.with_pending_state(|s| {
+        let mut shrunk = win.shrunk;
+        let (changed, to) = t.with_pending_state(|s| {
             let was = s.bounds.replace(most.into());
             let mut to = None;
             if shrink && let Some(was) = was {
                 // The size the configure would repeat, else the one the window took itself.
                 let size = s.size.map_or(own, |z| (z.w, z.h));
-                let fit = shrunk_into(size, (was.w, was.h), most);
+                let fit;
+                (fit, shrunk) = rebound(size, shrunk, (was.w, was.h), most);
                 if fit != size {
                     s.size = Some(fit.into());
                     to = Some(shrunk_origin(r, own, fit, area)).filter(|&at| at != (r.x, r.y));
                 }
             }
             (was != s.bounds, to)
-        })
+        });
+        if shrink && let Some(win) = self.win_mut(w) {
+            win.shrunk = shrunk;
+        }
+        (changed, to)
     }
 
     pub fn usable_area_for_window(&self, w: WindowId) -> Rect {
