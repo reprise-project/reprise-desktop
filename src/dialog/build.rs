@@ -436,6 +436,33 @@ impl Dialog {
         }
     }
 
+    /// The question when a restart target held a power action back (`text`): `go` goes ahead with
+    /// `again` anyway, Cancel, the default, stays.
+    pub fn power_anyway(
+        title: &str,
+        text: String,
+        go: &str,
+        again: crate::sessionend::Again,
+    ) -> Dialog {
+        Dialog {
+            icon: Some("dialog-warning".into()),
+            text,
+            buttons: vec![
+                button(go, DialogAction::PowerAnyway(again), false),
+                button("Cancel", DialogAction::Cancel, true),
+            ],
+            ..Dialog::new(
+                title,
+                Style::Classic {
+                    template: Template::MessageBox,
+                    text_h: None,
+                    delete_badge: false,
+                },
+                Placement::Center,
+            )
+        }
+    }
+
     /// Message box with the error icon and OK.
     pub fn error(title: &str, text: String) -> Dialog {
         Dialog {

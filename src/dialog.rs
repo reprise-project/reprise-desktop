@@ -59,6 +59,8 @@ pub enum DialogAction {
     GreeterPower(repriselogin::greeter::PowerAction),
     /// Open the boot entries to restart into under the button (`restartinto`).
     RestartInto,
+    /// Go ahead with a power action a restart target held back (`sessionend::anyway`).
+    PowerAnyway(crate::sessionend::Again),
     Act(Action),
     HideSystemIcon(String),
     /// Take these `system_icons` off the desktop (none for No), then ask about deleting `files`.
@@ -383,6 +385,8 @@ pub enum Outcome {
     RestartInto {
         keys: bool,
     },
+    /// [`DialogAction::PowerAnyway`].
+    PowerAnyway(crate::sessionend::Again),
     Notice(Box<Dialog>),
     /// [`DialogAction::Script`].
     Script {

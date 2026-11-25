@@ -443,6 +443,18 @@ fn every_dialog(h: &Harness) -> Vec<(&'static str, Dialog)> {
             Dialog::ask_undo_erase("Delete it?".into(), entry),
         ),
         ("error", Dialog::error("Run", "Not found.".into())),
+        (
+            "power_anyway",
+            Dialog::power_anyway(
+                "Restart Computer",
+                "Do you want to restart the computer anyway?".into(),
+                "&Restart Anyway",
+                crate::sessionend::Again {
+                    act: crate::sessionend::Act::Restart,
+                    cmd: "true".into(),
+                },
+            ),
+        ),
         ("run_not_found", Dialog::run_not_found("nothing")),
         ("not_utf8_program", Dialog::not_utf8_program("Run", &tool)),
         (
