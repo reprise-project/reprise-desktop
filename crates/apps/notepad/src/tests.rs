@@ -2197,9 +2197,13 @@ fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved(
 }
 
 #[test]
-fn declining_a_recovered_document_deletes_it_and_offers_the_next() {
+fn declining_a_recovered_document_sends_it_to_the_recycle_bin_and_offers_the_next() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let dir = tmp.path().to_path_buf();
+    let dir = tmp.path().join("recovery");
+    let trash = tmp.path().join("Trash");
+    reprisefs::trash::set_home_trash(Some(trash.clone()));
+    reprisefs::trash::set_mount_table(Some("/dev/null".into()));
+    reprisefs::configfile::set_path(Some(tmp.path().join("config.toml")));
     let first = write_recovery(&dir, 1, "a", &["a"], Format::default()).expect("write");
     let second = write_recovery(&dir, 2, "b", &["b"], Format::default()).expect("write");
     let mut np = Notepad::new(None);
@@ -2212,13 +2216,71 @@ fn declining_a_recovered_document_deletes_it_and_offers_the_next() {
         typed(keysym::RETURN, None, false),
         &mut ctx,
     );
-    assert!(!first.exists(), "No deletes the file");
+    reprisefs::trash::set_home_trash(None);
+    reprisefs::trash::set_mount_table(None);
+    reprisefs::configfile::set_path(None);
+    assert!(
+        !first.exists(),
+        "No takes the file out of the recovery folder"
+    );
+    assert_eq!(
+        std::fs::read_to_string(trash.join("files/recovery-1-a.txt")).ok(),
+        Some("a".into()),
+        "the declined text waits in the Recycle Bin"
+    );
     assert_eq!(
         recovered_file(&np),
         Some(&second),
         "the next file is offered"
     );
     assert_eq!(np.edit.text(), "");
+}
+
+#[test]
+fn each_recovery_prompt_names_its_document_and_counts_them() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().to_path_buf();
+    let untitled = tr!("untitled");
+    write_recovery(&dir, 1, "notes", &["milk"], Format::default()).expect("write");
+    write_recovery(
+        &dir,
+        2,
+        &untitled,
+        &[
+            "",
+            "  Dear Sam, thanks for the books you lent me last week  ",
+            "x",
+        ],
+        Format::default(),
+    )
+    .expect("write");
+    write_recovery(&dir, 3, &untitled, &["", " "], Format::default()).expect("write");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.offer_recovered();
+    let texts: Vec<String> = (np.asks.iter())
+        .filter(|(_, ask)| matches!(ask, Ask::Recovered(_)))
+        .map(|(b, _)| b.fields.text.clone())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "The unsaved text of notes was recovered (1 of 3).\nDo you want to open it?",
+            "The unsaved text of Untitled (\"Dear Sam, thanks for the books you lent...\") \
+             was recovered (2 of 3).\nDo you want to open it?",
+            "The unsaved text of Untitled was recovered (3 of 3).\nDo you want to open it?",
+        ]
+    );
+
+    let lone = tempfile::tempdir().expect("tempdir");
+    write_recovery(lone.path(), 4, "notes", &["milk"], Format::default()).expect("write");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(lone.path().to_path_buf());
+    np.offer_recovered();
+    assert_eq!(
+        np.asks.up().map(|(b, _)| b.fields.text.as_str()),
+        Some("The unsaved text of notes was recovered.\nDo you want to open it?")
+    );
 }
 
 #[test]
