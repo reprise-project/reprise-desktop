@@ -62,7 +62,7 @@ fn opening_an_executable_script_runs_it_in_its_folder_with_its_token() {
     hand(&mut ex, Some("in a terminal"), &mut ctx);
     assert_eq!(ran(), "in a terminal");
     assert!(ex.dialog().is_none());
-    let state = std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
+    let state = super::scratch();
     let term_argv = std::fs::read_to_string(state.join("term-argv")).expect("the terminal ran");
     let a_sh = dir.path().join("a.sh");
     let term_argv: Vec<&str> = term_argv.lines().collect();
