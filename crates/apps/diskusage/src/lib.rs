@@ -458,7 +458,8 @@ impl DiskUsage {
         Reply::redraw()
     }
 
-    /// A pointer event over the list; None when it is elsewhere.
+    /// A press or wheel turn over the list, or the release that clicks a column title; None for
+    /// the rest, which the form sees too.
     fn list_pointer(&mut self, ev: &PointerInput, ctx: &Ctx) -> Option<Reply> {
         let r = self.list_rect(ctx);
         let redraw = |b: bool| if b { Reply::redraw() } else { Reply::none() };
@@ -480,29 +481,23 @@ impl DiskUsage {
                 }
             }
             PointerInput::Release { x, y, button, .. } if button == BTN_LEFT => {
-                let held = self.list.view.header.held();
-                let moved = self.list.release(ctx);
                 let lay = self.list.layout(r, ctx);
                 let over = self.list.view.hit(&lay, x, y).column();
-                match held.filter(|&c| Some(c) == over).and_then(model::sort_of) {
-                    Some(by) => {
-                        let flipped = self.sort.0 == by && !self.sort.1;
-                        self.sort = (by, flipped);
-                        self.list.view.sort = Some((model::col_of(by), flipped));
-                        self.sync();
-                        Reply::redraw()
-                    }
-                    None => redraw(moved),
-                }
+                let held = self.list.view.header.held();
+                let by = held.filter(|&c| Some(c) == over).and_then(model::sort_of)?;
+                self.list.release(ctx);
+                let flipped = self.sort.0 == by && !self.sort.1;
+                self.sort = (by, flipped);
+                self.list.view.sort = Some((model::col_of(by), flipped));
+                self.sync();
+                Reply::redraw()
             }
-            PointerInput::Motion { x, y } => redraw(self.list.motion(x, y, r, ctx)),
             PointerInput::Scroll { x, y, rows } if r.contains(x, y) => {
                 redraw(self.list.wheel(rows, r, ctx))
             }
             PointerInput::ScrollAcross { x, y, cols } if r.contains(x, y) => {
                 redraw(self.list.wheel_across(cols, r, ctx))
             }
-            PointerInput::Leave => redraw(self.list.leave(ctx)),
             _ => return None,
         })
     }
@@ -537,10 +532,23 @@ impl DiskUsage {
             }
             _ => {}
         }
+        // The list follows every motion, release and leave, and the form sees them too: a press
+        // on one of its buttons acts on the release, and only while the pointer is still on it.
+        let lit = match ev {
+            Event::Pointer(PointerInput::Motion { x, y }) => {
+                let r = self.list_rect(ctx);
+                self.list.motion(x, y, r, ctx)
+            }
+            Event::Pointer(PointerInput::Release {
+                button: BTN_LEFT, ..
+            }) => self.list.release(ctx),
+            Event::Pointer(PointerInput::Leave) => self.list.leave(ctx),
+            _ => false,
+        };
         match repriseapp::keys::form_input(&mut self.form, &ev, ctx) {
             Some(form::Event::Pressed(id)) => self.button(id),
-            Some(form::Event::None) | None => Reply::none(),
-            Some(_) => Reply::redraw(),
+            Some(form::Event::None) | None if !lit => Reply::none(),
+            Some(_) | None => Reply::redraw(),
         }
     }
 
