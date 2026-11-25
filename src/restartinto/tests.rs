@@ -9,6 +9,8 @@ struct FakeLogind {
     can_firmware: &'static str,
     ids: Vec<String>,
     set: Arc<Mutex<Vec<String>>>,
+    /// Clearing an entry is refused unless the call allows a password prompt.
+    clear_asks: bool,
 }
 
 #[zbus::interface(name = "org.freedesktop.login1.Manager")]
@@ -27,8 +29,14 @@ impl FakeLogind {
     }
 
     /// Refused where `CanRebootToBootLoaderEntry` says "no".
-    fn set_reboot_to_boot_loader_entry(&self, id: &str) -> zbus::fdo::Result<()> {
-        if self.can_entry == "no" {
+    fn set_reboot_to_boot_loader_entry(
+        &self,
+        id: &str,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        let prompts =
+            (header.primary().flags()).contains(zbus::message::Flags::ALLOW_INTERACTIVE_AUTH);
+        if self.can_entry == "no" || (self.clear_asks && id.is_empty() && !prompts) {
             return Err(zbus::fdo::Error::AccessDenied("not allowed".into()));
         }
         self.set.lock().unwrap().push(format!("entry {id:?}"));
@@ -53,6 +61,20 @@ pub(crate) fn logind(
     can_firmware: &'static str,
     ids: &[&str],
 ) -> Option<Fake> {
+    serve(can_entry, can_firmware, ids, false)
+}
+
+/// A fake logind that sets entries without a password but asks for one to clear them.
+pub(crate) fn logind_asking_to_clear() -> Option<Fake> {
+    serve("yes", "yes", &[], true)
+}
+
+fn serve(
+    can_entry: &'static str,
+    can_firmware: &'static str,
+    ids: &[&str],
+    clear_asks: bool,
+) -> Option<Fake> {
     let bus = bus()?;
     let set = Arc::new(Mutex::new(Vec::new()));
     let fake = FakeLogind {
@@ -60,6 +82,7 @@ pub(crate) fn logind(
         can_firmware,
         ids: ids.iter().map(|s| s.to_string()).collect(),
         set: set.clone(),
+        clear_asks,
     };
     let address = bus.1.clone();
     let (server, client) = zbus::block_on(async {
