@@ -1,7 +1,6 @@
 //! Per-window preferences in `$XDG_STATE_HOME/reprise/explorer.toml`; every field has a default.
 //! What every window shares comes from `config.toml` ([`Folders`]).
 
-use reprisefs::names::Extensions;
 use reprisekit::controls::{explorerbar, listview};
 use reprisekit::theme::TextUnits;
 use serde::{Deserialize, Serialize};
@@ -83,14 +82,14 @@ impl Settings {
     }
 }
 
-/// What `[folders]`, `desktop_extensions` and `[thumbnail_cache] enabled` in `config.toml` ask of
+/// What `[folders]` and `[thumbnail_cache] enabled` in `config.toml` ask of
 /// every Explorer window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Folders {
     pub new_window: bool,
     pub single_click: bool,
     pub show_hidden: bool,
-    pub extensions: Extensions,
+    pub hide_extensions: bool,
     pub tips: bool,
     pub cache_thumbnails: bool,
 }
@@ -101,7 +100,7 @@ impl Folders {
             new_window: c.folders.new_window,
             single_click: c.folders.single_click,
             show_hidden: c.folders.show_hidden,
-            extensions: c.desktop_extensions,
+            hide_extensions: c.folders.hide_extensions,
             tips: c.folders.tips,
             cache_thumbnails: c.thumbnail_cache.enabled,
         }

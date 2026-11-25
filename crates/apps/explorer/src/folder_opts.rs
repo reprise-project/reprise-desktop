@@ -1,5 +1,5 @@
-//! Folder Options' host half: its window, OK and Apply writing `[folders]`, `desktop_extensions`
-//! and `[thumbnail_cache] enabled` in `config.toml`, and every window following the file
+//! Folder Options' host half: its window, OK and Apply writing `[folders]` and
+//! `[thumbnail_cache] enabled` in `config.toml`, and every window following the file
 //! ([`Explorer::take_config`]). View > Hidden Items writes `[folders] show_hidden` the same way.
 
 use crate::Explorer;
@@ -10,7 +10,6 @@ use repriseapp::{Child, Ctx, Event, Reply, WinId};
 use repriseconf::fields::Field;
 use repriseconf::{key as k, lens};
 use reprisefs::deadline::Gate;
-use reprisefs::names::Extensions;
 use reprisekit::controls::folderopts::{FolderSheet, Outcome, Settings};
 use reprisekit::controls::propsheet;
 use reprisekit::look::Paint;
@@ -41,24 +40,19 @@ pub(crate) fn settings_of(f: &Folders) -> Settings {
         new_window: f.new_window,
         single_click: f.single_click,
         show_hidden: f.show_hidden,
-        hide_extensions: f.extensions != Extensions::Show,
+        hide_extensions: f.hide_extensions,
         tips: f.tips,
         cache_thumbnails: f.cache_thumbnails,
     }
 }
 
-/// `f` as the boxes `s` leave it: an extensions setting the box agrees with stays as it was.
-fn folders_of(s: &Settings, f: &Folders) -> Folders {
-    let extensions = match s.hide_extensions {
-        true if f.extensions != Extensions::Show => f.extensions,
-        true => Extensions::Hide,
-        false => Extensions::Show,
-    };
+/// The folder settings as the boxes `s` leave them.
+fn folders_of(s: &Settings) -> Folders {
     Folders {
         new_window: s.new_window,
         single_click: s.single_click,
         show_hidden: s.show_hidden,
-        extensions,
+        hide_extensions: s.hide_extensions,
         tips: s.tips,
         cache_thumbnails: s.cache_thumbnails,
     }
@@ -70,7 +64,7 @@ struct Keys {
     new_window: bool,
     single_click: bool,
     show_hidden: bool,
-    extensions: String,
+    hide_extensions: bool,
     tips: bool,
     thumbnails: bool,
 }
@@ -81,11 +75,7 @@ impl Keys {
             new_window: s.new_window,
             single_click: s.single_click,
             show_hidden: s.show_hidden,
-            extensions: match s.hide_extensions {
-                true => "hide",
-                false => "show",
-            }
-            .into(),
+            hide_extensions: s.hide_extensions,
             tips: s.tips,
             thumbnails: s.cache_thumbnails,
         }
@@ -97,7 +87,7 @@ fn fields() -> Vec<Field<Keys>> {
         Field::Flag(k("folders", "new_window"), lens!(new_window)),
         Field::Flag(k("folders", "single_click"), lens!(single_click)),
         Field::Flag(k("folders", "show_hidden"), lens!(show_hidden)),
-        Field::Text(k("", "desktop_extensions"), lens!(extensions)),
+        Field::Flag(k("folders", "hide_extensions"), lens!(hide_extensions)),
         Field::Flag(k("folders", "tips"), lens!(tips)),
         Field::Flag(k("thumbnail_cache", "enabled"), lens!(thumbnails)),
     ]
@@ -204,7 +194,7 @@ impl Explorer {
             false => Reply::redraw_all(),
         };
         let sheet = sheet.filter(|_| !close);
-        reply = reply.and(self.set_folders(folders_of(&want, &self.folders), ctx));
+        reply = reply.and(self.set_folders(folders_of(&want), ctx));
         let Some(path) = self.config_file.clone() else {
             return reply;
         };
@@ -247,8 +237,8 @@ impl Explorer {
         if f == self.folders {
             return Reply::none();
         }
-        let relist =
-            (f.show_hidden, f.extensions) != (self.folders.show_hidden, self.folders.extensions);
+        let relist = (f.show_hidden, f.hide_extensions)
+            != (self.folders.show_hidden, self.folders.hide_extensions);
         self.folders = f;
         self.click_open = None;
         if let Some(o) = self.folder_opts.as_mut() {
@@ -314,7 +304,6 @@ mod tests {
         std::fs::write(&config, mine).expect("write");
         let mut ctx = test_ctx();
         let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-        ex.folders.extensions = Extensions::Show;
         ex.refresh(&mut ctx);
         assert_eq!(names(&ex), ["config.toml", "notes.txt"]);
         ex.open_folder_opts(&mut ctx);
@@ -335,28 +324,21 @@ mod tests {
     }
 
     #[test]
-    fn the_extensions_box_writes_hide_or_show_and_leaves_a_setting_it_agrees_with() {
-        let on = Settings::default();
-        let off = Settings {
-            hide_extensions: false,
-            ..on
+    fn the_extensions_box_writes_folders_hide_extensions_and_leaves_the_desktops_key() {
+        let off = Settings::default();
+        let on = Settings {
+            hide_extensions: true,
+            ..off
         };
-        let launchers = "desktop_extensions = \"hide_launchers\"\n";
-        assert_eq!(write(launchers, &on, &on).unwrap(), launchers);
-        assert_eq!(
-            write(launchers, &off, &on).unwrap(),
-            "desktop_extensions = \"show\"\n"
+        let desktop = "desktop_extensions = \"show\"\n";
+        let hidden = write(desktop, &on, &off).unwrap();
+        assert!(hidden.starts_with(desktop), "{hidden}");
+        assert!(
+            hidden.ends_with("[folders]\nhide_extensions = true\n"),
+            "{hidden}"
         );
-        assert_eq!(
-            write("desktop_extensions = \"show\"\n", &on, &off).unwrap(),
-            ""
-        );
-        let f = Folders {
-            extensions: Extensions::HideLaunchers,
-            ..Folders::of(&repriseconf::config::Config::default())
-        };
-        assert_eq!(folders_of(&on, &f).extensions, Extensions::HideLaunchers);
-        assert_eq!(folders_of(&off, &f).extensions, Extensions::Show);
+        assert_eq!(write(&hidden, &off, &on).unwrap(), desktop);
+        assert!(folders_of(&on).hide_extensions && !folders_of(&off).hide_extensions);
     }
 
     #[test]
@@ -389,7 +371,7 @@ mod tests {
         ex.globs = std::sync::Arc::new(reprisefs::apps::MimeDb::parse(["50:text/plain:*.txt\n"]));
         ex.set_folders(
             Folders {
-                extensions: Extensions::Show,
+                hide_extensions: false,
                 ..ex.folders
             },
             &mut ctx,
@@ -397,7 +379,7 @@ mod tests {
         assert_eq!(names(&ex), ["data.zzz", "notes.txt"]);
         ex.set_folders(
             Folders {
-                extensions: Extensions::Hide,
+                hide_extensions: true,
                 ..ex.folders
             },
             &mut ctx,

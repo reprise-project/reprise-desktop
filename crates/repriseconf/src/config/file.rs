@@ -261,6 +261,7 @@ pub struct FileFolders {
     pub new_window: Option<bool>,
     pub single_click: Option<bool>,
     pub show_hidden: Option<bool>,
+    pub hide_extensions: Option<bool>,
     pub tips: Option<bool>,
 }
 

@@ -1481,13 +1481,17 @@ impl Explorer {
         Some(Reply::redraw())
     }
 
-    /// The name `it` shows under: its [`Item::label`], a file's known extension hidden as
-    /// `desktop_extensions` asks ([`reprisefs::names::label_for`]).
+    /// The name `it` shows under: its [`Item::label`], a file's known extension hidden when
+    /// `[folders] hide_extensions` asks ([`reprisefs::names::label_for`]).
     pub(crate) fn shown_name(&self, it: &Item) -> String {
         if it.is_dir || it.shortcut.is_some() {
             return it.label().to_string();
         }
-        reprisefs::names::label_for(it.label(), &self.globs, self.folders.extensions)
+        let shown = match self.folders.hide_extensions {
+            true => reprisefs::names::Extensions::Hide,
+            false => reprisefs::names::Extensions::Show,
+        };
+        reprisefs::names::label_for(it.label(), &self.globs, shown)
     }
 
     /// The one selected item, when it opens as a folder.
