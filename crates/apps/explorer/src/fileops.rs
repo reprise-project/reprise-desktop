@@ -65,6 +65,9 @@ pub(crate) struct Put {
 
 pub(crate) type JobDone = Box<dyn FnOnce(&mut Explorer, &mut Ctx) -> Reply + Send>;
 
+/// Work on the session's undo history for [`Explorer::edit_undos`].
+pub(crate) type UndoEdit = Box<dyn FnOnce(&reprisefs::undo::SharedUndo) -> JobDone + Send>;
+
 /// An item of a put: its source, op, display name and whether it is a folder ([`Checked`]).
 pub(crate) type ItemOp = (PathBuf, DropOp, String, bool);
 
@@ -646,8 +649,8 @@ impl Explorer {
         let failed = put.failed.take();
         put.progress.ended(put.landed.len(), failed.as_ref());
         self.publish_task_progress();
-        self.undos.push_all(put.batch);
-        self.sync_undo();
+        let batch = std::mem::take(&mut put.batch);
+        self.record_undos(ctx, move |undos| undos.push_all(batch));
         if put.landed_folder {
             let mut dirs = vec![put.dir.clone()];
             for (src, op, ..) in &put.ops {
@@ -677,6 +680,66 @@ impl Explorer {
             self.start_put(next, ops, ctx);
         }
         Some(reply)
+    }
+
+    /// Run `edit` on the session's undo history on a thread off the loop, after every edit this
+    /// window queued before it: each edit rewrites the whole history, which may run to megabytes.
+    /// Its result runs on the window like a job's, which a close waits for. The Undo rows stay
+    /// greyed till then ([`Explorer::sync_undo`]).
+    pub(crate) fn edit_undos(
+        &mut self,
+        ctx: &Ctx,
+        edit: impl FnOnce(&reprisefs::undo::SharedUndo) -> JobDone + Send + 'static,
+    ) {
+        let mut edit: UndoEdit = Box::new(move |undos| {
+            let done = edit(undos);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                ex.undo_edits_pending -= 1;
+                done(ex, ctx)
+            })
+        });
+        self.jobs_pending += 1;
+        self.undo_edits_pending += 1;
+        if let Some(tx) = &self.undo_edits {
+            match tx.send(edit) {
+                Ok(()) => return,
+                Err(e) => edit = e.0,
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<UndoEdit>();
+        let (undos, done, wake) = (self.undos.clone(), self.jobs_tx.clone(), ctx.wake.clone());
+        let spawned = std::thread::Builder::new()
+            .name("reprise-explorer-undo".into())
+            .spawn(move || {
+                for edit in rx {
+                    if done.send(edit(&undos)).is_ok() {
+                        wake.wake();
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("explorer: no thread for the undo history ({e}); editing it on the window");
+            let _ = self.jobs_tx.send(edit(&self.undos));
+            ctx.wake.wake();
+            return;
+        }
+        let _ = tx.send(edit);
+        self.undo_edits = Some(tx);
+    }
+
+    /// [`Explorer::edit_undos`] for an edit the window learns of through its Undo rows alone.
+    pub(crate) fn record_undos(
+        &mut self,
+        ctx: &Ctx,
+        edit: impl FnOnce(&reprisefs::undo::SharedUndo) + Send + 'static,
+    ) {
+        self.edit_undos(ctx, move |undos| {
+            edit(undos);
+            Box::new(|ex: &mut Explorer, _: &mut Ctx| {
+                ex.sync_undo();
+                Reply::redraw()
+            })
+        });
     }
 
     /// Run `work` on a thread; its result runs on the window at the next wake. Used for slow work
@@ -1219,8 +1282,8 @@ impl Explorer {
                 );
             }
         };
-        self.undos.push(Undoable::New(path.clone(), id));
-        self.sync_undo();
+        let made = Undoable::New(path.clone(), id);
+        self.record_undos(ctx, move |undos| undos.push(made));
         let reply = self.refresh(ctx);
         if self.index_of(&path).is_some() {
             self.select_shown(std::slice::from_ref(&path), ctx);
@@ -1532,36 +1595,45 @@ impl Explorer {
         Some(entry)
     }
 
+    /// Edit > Undo, the background menu's Undo and Ctrl+Z: Undo of the entry the Undo rows name,
+    /// or a box saying another undo still runs.
     pub fn undo_last(&mut self, ctx: &mut Ctx) -> Reply {
-        self.undo_with(None, false, ctx)
+        if self.undo_held {
+            return self.message_box("Error", "Another undo is still running.".into(), ctx);
+        }
+        match self.undo_entry {
+            Some(entry) => self.undo_with(entry, false, ctx),
+            None => Reply::none(),
+        }
     }
 
-    /// Undo of the top entry, or of `entry` only while it is the top one. With `erase` what the
-    /// Recycle Bin refuses is removed for good; without it such an item stops the undo and asks
-    /// first. Nothing happens while an undo in any window runs. The top entry of
-    /// the session's history leaves it and its steps run on a removal job with the
-    /// progress dialog ([`crate::removing::PendingRemoval::undo`]); the Recycle Bins are found on
-    /// a job first, as for a delete.
+    /// Undo of `entry`, only while it is the top one of the session's history and no undo in any
+    /// window runs. With `erase` what the Recycle Bin refuses is removed for good; without it such
+    /// an item stops the undo and asks first. The entry leaves the history and its steps run on a
+    /// removal job with the progress dialog ([`crate::removing::PendingRemoval::undo`]); the
+    /// Recycle Bins are found on that thread first, as for a delete.
     pub(crate) fn undo_with(
         &mut self,
-        entry: Option<reprisefs::undo::EntryId>,
+        entry: reprisefs::undo::EntryId,
         erase: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        let taken = match entry {
-            Some(entry) => self.undos.take_entry(entry),
-            None => self.undos.take(),
-        };
-        let Some(undo) = taken else {
-            return Reply::none();
-        };
-        self.sync_undo();
-        self.spawn_job(ctx, move || {
-            let bins = reprisefs::trash::Bins::system();
+        self.edit_undos(ctx, move |undos| {
+            let taken = undos.take_entry(entry);
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                let pending =
-                    crate::removing::PendingRemoval::undo(undo, erase, bins, &ex.shares.shares);
-                ex.remove(pending, ctx);
+                ex.sync_undo();
+                if let Some(undo) = taken {
+                    ex.spawn_job(ctx, move || {
+                        let bins = reprisefs::trash::Bins::system();
+                        Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
+                            let shares = &ex.shares.shares;
+                            let pending =
+                                crate::removing::PendingRemoval::undo(undo, erase, bins, shares);
+                            ex.remove(pending, ctx);
+                            Reply::redraw()
+                        })
+                    });
+                }
                 Reply::redraw()
             })
         });
@@ -1569,20 +1641,21 @@ impl Explorer {
     }
 
     /// The box after an undo that `e` stopped: the question whether to erase what a Recycle Bin
-    /// refused, about the entry `left` that went back on the stack, else the error.
+    /// refused, about the entry `left` of so many items that went back on the stack, else the
+    /// error.
     pub(crate) fn undo_failed(
         &mut self,
         e: &std::io::Error,
-        left: Option<reprisefs::undo::EntryId>,
+        left: Option<(reprisefs::undo::EntryId, usize)>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let (Some(no_bin), Some(entry)) = (reprisefs::undo::NoBin::of(e), left) else {
+        let (Some(no_bin), Some((entry, items))) = (reprisefs::undo::NoBin::of(e), left) else {
             return self.message_box("Error", format!("Cannot undo: {e}"), ctx);
         };
-        let many = self.undos.many();
+        let many = items > 1;
         let is_dir = no_bin.path.is_dir() && !no_bin.path.is_symlink();
         let text = no_bin.question(many);
-        let kind = ConfirmKind::of(if many { 2 } else { 1 }, is_dir);
+        let kind = ConfirmKind::of(items, is_dir);
         let icon = question_icon(ctx, is_dir);
         let mut c =
             self.delete_question(kind, "", Vec::new(), true, BinLack::None, icon, None, None);
@@ -1591,11 +1664,21 @@ impl Explorer {
         self.raise(Dialog::Confirm(c))
     }
 
+    /// The Undo rows from the history's head, greyed while an undo runs or an edit of this
+    /// window's has yet to land. An open menu keeps the entry its row names.
     pub(crate) fn sync_undo(&mut self) {
-        self.undo = self
-            .undos
-            .label()
-            .map(|label| label.trim_start_matches("Undo "));
+        if self.bar.open.is_some() || self.popup.is_some() {
+            return;
+        }
+        if self.undo_edits_pending > 0 {
+            (self.undo, self.undo_entry, self.undo_held) = (None, None, false);
+            return;
+        }
+        let head = self.undos.head();
+        self.undo_held = head.is_some() && self.undos.held();
+        self.undo_entry = head.map(|(id, _)| id);
+        self.undo =
+            (head.filter(|_| !self.undo_held)).map(|(_, label)| label.trim_start_matches("Undo "));
     }
 
     pub(crate) fn bin_item(&self, i: usize) -> Option<BinItem> {

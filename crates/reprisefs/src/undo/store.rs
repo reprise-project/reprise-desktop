@@ -232,11 +232,6 @@ impl SharedUndo {
         self.head().map(|(_, label)| label)
     }
 
-    /// [`UndoStack::many`].
-    pub fn many(&self) -> bool {
-        self.read(UndoStack::many)
-    }
-
     /// Whether an undo runs in any process, or a retried put-back or clear holds Undo off, so an
     /// Undo now would do nothing.
     pub fn held(&self) -> bool {
