@@ -601,6 +601,12 @@ impl Pins {
         lock(&self.shared).failed.take()
     }
 
+    /// Whether a failure waits for [`Pins::take_failed`]; asked after [`Pins::busy`], an edit
+    /// ending between the two is seen by one of them.
+    pub fn has_failed(&self) -> bool {
+        lock(&self.shared).failed.is_some()
+    }
+
     /// Waits up to `limit` for the first read, for a caller that shows the pins at once.
     pub fn wait_first(&self, limit: std::time::Duration) {
         let end = std::time::Instant::now() + limit;
@@ -632,11 +638,6 @@ fn edit_logged(file: &Path, f: impl FnOnce(&mut Bookmarks) -> bool) {
 /// Pins `dir` in the bookmarks file `file`, or unpins it with `pin` false.
 pub fn set_pinned(file: &Path, dir: &Path, pin: bool) {
     edit_logged(file, |b| if pin { b.pin(dir) } else { b.unpin(dir) });
-}
-
-/// Moves pinned `dir` one place up or down in the bookmarks file `file`.
-pub fn shift(file: &Path, dir: &Path, up: bool) {
-    edit_logged(file, |b| b.shift(dir, up));
 }
 
 #[cfg(test)]

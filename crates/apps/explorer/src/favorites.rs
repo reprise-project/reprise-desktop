@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use repriseapp::{Ctx, Reply};
 use reprisefs::netshare::Address;
-use reprisefs::pins::{self, Bookmarks, Favorite, Target};
+use reprisefs::pins::{Bookmarks, Favorite, Target};
 use reprisekit::controls::favorites::{self as fav, NameBox, Row, State};
 use reprisekit::controls::form::{self, Form};
 
@@ -15,7 +15,7 @@ use crate::dialogs::Dialog;
 use crate::place::Place;
 
 /// The favorites the menu lists at most; Organize Favorites lists the first
-/// [`pins::MAX_FAVORITES`].
+/// [`reprisefs::pins::MAX_FAVORITES`].
 pub const MENU_ROWS: usize = 40;
 
 /// Add Favorite, naming the folder `dir`.
@@ -89,11 +89,6 @@ impl Organize {
 }
 
 impl Explorer {
-    /// The bookmarks file the pins are read from.
-    pub(crate) fn bookmarks_file(&self) -> PathBuf {
-        (self.pins.as_ref()).map_or_else(pins::bookmarks_file, |p| p.file().to_path_buf())
-    }
-
     pub(crate) fn favorites(&self) -> std::sync::Arc<Vec<Favorite>> {
         self.pins
             .as_ref()
@@ -165,9 +160,12 @@ impl Explorer {
         }
     }
 
-    /// Hands `edit` to the pins thread, which writes the file off this loop; the menu and an open
-    /// Organize box follow once it reads the file back.
-    fn edit_favorites(&mut self, edit: impl FnOnce(&mut Bookmarks) -> bool + Send + 'static) {
+    /// Hands `edit` to the pins thread, which writes the file off this loop; the menu, the places
+    /// and an open Organize box follow once it reads the file back.
+    pub(crate) fn edit_favorites(
+        &mut self,
+        edit: impl FnOnce(&mut Bookmarks) -> bool + Send + 'static,
+    ) {
         if let Some(p) = &self.pins {
             p.edit(edit);
         }
@@ -255,7 +253,7 @@ mod tests {
     /// An Explorer reading `file`, once its first read has landed.
     fn reading(file: &Path, ctx: &mut Ctx) -> Explorer {
         let mut ex = test_explorer(Place::Computer, ctx);
-        let mut pins = pins::Pins::start_at(file.to_path_buf(), || {});
+        let mut pins = reprisefs::pins::Pins::start_at(file.to_path_buf(), || {});
         pins.wait_first(std::time::Duration::from_secs(10));
         pins.take_changed();
         ex.pins = Some(pins);
@@ -471,6 +469,46 @@ mod tests {
             big,
             "left as it was"
         );
+    }
+
+    #[test]
+    fn a_pin_right_after_an_add_lands_beside_it_and_a_failed_pin_says_so() {
+        let mut ctx = test_ctx();
+        let (_dir, file) = with_file("");
+        let mut ex = reading(&file, &mut ctx);
+        let (work, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        ex.go(Place::Folder(work.path().to_path_buf()), &mut ctx);
+        ex.run(Command::AddFavorite, &mut ctx);
+        ex.dialog_outcome(form::Event::Default, &mut ctx);
+        ex.set_pinned(other.path(), true);
+        landed(&mut ex);
+        let uri = reprisefs::thumbnails::file_uri;
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            format!("{}\n{}\n", uri(work.path()), uri(other.path()))
+        );
+
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        ex.set_pinned(work.path(), false);
+        wait_for(&mut ex, |ex| !ex.favorites_busy());
+        assert!(ex.take_favorites_failed(&mut ctx).is_some());
+        assert!(matches!(ex.dialog(), Some(Dialog::Message { .. })));
+    }
+
+    #[test]
+    fn a_failed_edit_keeps_a_closed_window_up_for_its_box() {
+        let mut ctx = test_ctx();
+        let (_dir, file) = with_file("");
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        let mut ex = reading(&file, &mut ctx);
+        let work = tempfile::tempdir().unwrap();
+        ex.set_pinned(work.path(), true);
+        assert!(!ex.close(&mut ctx).quit, "the edit is still to be written");
+        wait_for(&mut ex, |ex| !ex.favorites_busy());
+        assert!(!ex.wake(&mut ctx).quit, "the failure is still to be told");
+        assert!(matches!(ex.dialog(), Some(Dialog::Message { .. })));
     }
 
     #[test]
