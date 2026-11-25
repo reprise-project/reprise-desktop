@@ -431,7 +431,11 @@ impl State {
         W: FnOnce() -> OnLoop + Send + 'static,
     {
         let Some(tx) = self.fsjobs.tx.clone() else {
-            work()(self);
+            // On a thread a panic would end only the job.
+            match crate::crash::guarded(work) {
+                Ok(done) => run_one(done, self),
+                Err(_) => log::error!("fsjobs: a job panicked"),
+            }
             return true;
         };
         #[cfg(test)]
@@ -464,6 +468,18 @@ mod tests {
 
     /// Jobs blocked on a file system that does not answer hold at most [`MAX_THREADS`] threads;
     /// later jobs wait instead of stranding more, and start once the blocked ones return.
+    #[test]
+    fn a_job_run_on_the_loop_for_want_of_the_channel_may_panic() {
+        let mut h = crate::harness::Harness::new();
+        assert!(h.state.fsjobs.tx.is_none());
+        assert!(h.state.spawn_job(|| panic!("a bug")));
+        let ran = Arc::new(AtomicBool::new(false));
+        let set = Arc::clone(&ran);
+        h.state
+            .spawn_job(move || Box::new(move |_: &mut State| set.store(true, Ordering::Release)));
+        assert!(ran.load(Ordering::Acquire));
+    }
+
     #[test]
     fn hung_jobs_hold_at_most_max_threads_and_later_ones_wait() {
         use std::os::unix::fs::OpenOptionsExt;
