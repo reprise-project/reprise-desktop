@@ -2,13 +2,14 @@
 //! push to it and undo from it, so Undo anywhere reverses the most recent file operation done
 //! anywhere.
 //!
-//! It is the file `$XDG_RUNTIME_DIR/reprise-undo`, holding the newest [`super::CAP`] entries and
-//! rewritten whole through a rename under an exclusive lock on `reprise-undo.lock`; readers take
-//! no lock and reparse only when the file changed. The Undo row's label sits at its head
-//! ([`SharedUndo::label`]), so a host's loop shows it without reading the rest. An undo holds `reprise-undo.run` until what it
-//! leaves is back ([`Running`]), so another window's Undo does nothing meanwhile instead of
-//! reversing the entry below a half-reversed one. Without a runtime directory the history is the
-//! process's own.
+//! It is the file `$XDG_RUNTIME_DIR/reprise-undo`, holding the newest [`super::CAP`] entries that
+//! fit in [`MAX_SIZE`] and rewritten whole through a rename under an exclusive lock on
+//! `reprise-undo.lock`; readers take no lock and reparse only when the file changed. The Undo
+//! row's label and the id of the entry it names sit at its head ([`SharedUndo::head`]), so a
+//! host's loop shows the row without reading the rest, and the row takes that entry alone. An
+//! undo holds `reprise-undo.run` until what it leaves is back ([`Running`]), so another window's
+//! Undo does nothing meanwhile ([`SharedUndo::held`]) instead of reversing the entry below a
+//! half-reversed one. Without a runtime directory the history is the process's own.
 //!
 //! An edit acts only on the history as it reread it under the lock, and counts only once written
 //! back. One the lock keeps out past [`PATIENCE`], or that cannot read or write the file, changes
@@ -17,8 +18,9 @@
 //! - a push, `forget_gone` or `retain_non_trash` is dropped: every step checks its item before it
 //!   acts, so Undo reaching past a lost entry still never reverses the wrong item;
 //! - a put-back or a clear is retried on a thread of its own for up to [`RETRY_FOR`], holding
-//!   `.run` (the undo's own hold for a put-back) so that no Undo reaches past it meanwhile; a
-//!   process about to quit waits for it ([`SharedUndo::settle`]).
+//!   `.run` so that no Undo reaches past it meanwhile: a put-back keeps its undo's hold, a clear
+//!   takes `.run` once a running undo ends. A process about to quit waits for it
+//!   ([`SharedUndo::settle`]).
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -39,7 +41,7 @@ const PATIENCE: Duration = Duration::from_millis(200);
 /// How long a put-back or a clear the lock kept out keeps trying.
 const RETRY_FOR: Duration = Duration::from_secs(30);
 
-const MAGIC: &[u8] = b"reprise-undo 4";
+const MAGIC: &[u8] = b"reprise-undo 5";
 
 /// Every [`Undoable`] label, as [`SharedUndo::label`] reads one back from the history's head.
 const LABELS: [&str; 5] = [
@@ -50,14 +52,15 @@ const LABELS: [&str; 5] = [
     "Undo New",
 ];
 
-/// Past [`MAGIC`] and the longest of [`LABELS`].
-const HEAD: u64 = 64;
+/// Past [`MAGIC`], the longest of [`LABELS`] and the longest [`EntryId`].
+const HEAD: u64 = 128;
 
 /// A batch holds single steps; one level more is room to spare, and anything deeper is not a
 /// history Reprise wrote.
 const MAX_NESTING: usize = 2;
 
-/// Far past what [`super::CAP`] entries of real batches take; a bigger file is unreadable.
+/// Far past what [`super::CAP`] entries of real batches take. A bigger file is unreadable, so
+/// [`encode`] drops the oldest entries to stay within it.
 const MAX_SIZE: u64 = 64 << 20;
 
 /// The history and the file it lives in, read again whenever another process rewrote it. A clone
@@ -153,7 +156,7 @@ impl SharedUndo {
         seen.refresh(file)?;
         let mut stack = seen.stack.clone();
         let r = f(&mut stack);
-        let stamp = save(file, &stack)?;
+        let stamp = save(file, &mut stack)?;
         *seen = Seen {
             stamp: Some(stamp),
             stack,
@@ -184,7 +187,7 @@ impl SharedUndo {
         if let Err(e) = self.edit(UndoStack::clear) {
             self.warn("retrying a clear", &e);
             let run = (self.file.as_ref()).and_then(|f| hold(&beside(f, ".run"), None).ok());
-            self.retry(UndoStack::clear, Running { _lock: run });
+            self.retry(UndoStack::clear, run.map(|f| Running { _lock: Some(f) }));
         }
     }
 
@@ -200,21 +203,47 @@ impl SharedUndo {
         }
     }
 
-    /// The label of the entry Undo would reverse next, read from the history's head alone, which
-    /// a host's loop can afford: the whole history may run to [`MAX_SIZE`].
-    pub fn label(&self) -> Option<&'static str> {
+    /// The entry Undo would reverse next and its label, read from the history's head alone, which
+    /// a host's loop can afford: the whole history may run to [`MAX_SIZE`]. An Undo row offering
+    /// the label takes that entry ([`SharedUndo::take_entry`]).
+    pub fn head(&self) -> Option<(EntryId, &'static str)> {
         let Some(file) = &self.file else {
-            return self.seen().stack.label();
+            let seen = self.seen();
+            let (id, u) = seen.stack.entries.last()?;
+            return Some((*id, u.label()?));
         };
-        head_label(file).unwrap_or_else(|e| {
-            self.warn("read", &e);
-            None
-        })
+        let read = || -> io::Result<Vec<u8>> {
+            let mut head = Vec::new();
+            File::open(file)?.take(HEAD).read_to_end(&mut head)?;
+            Ok(head)
+        };
+        match read() {
+            Ok(head) => head_of(&head),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => {
+                self.warn("read", &e);
+                None
+            }
+        }
+    }
+
+    /// [`SharedUndo::head`]'s label.
+    pub fn label(&self) -> Option<&'static str> {
+        self.head().map(|(_, label)| label)
     }
 
     /// [`UndoStack::many`].
     pub fn many(&self) -> bool {
         self.read(UndoStack::many)
+    }
+
+    /// Whether an undo runs in any process, or a retried put-back or clear holds Undo off, so an
+    /// Undo now would do nothing.
+    pub fn held(&self) -> bool {
+        let Some(file) = &self.file else {
+            return false;
+        };
+        matches!(hold(&beside(file, ".run"), None), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
     }
 
     /// `f` on the entry Undo would reverse next, as the file holds it now.
@@ -239,7 +268,8 @@ impl SharedUndo {
     ) -> Option<(Undo, Running)> {
         let lock = match &self.file {
             None => None,
-            Some(file) => match hold(&beside(file, ".run"), None) {
+            // Long enough to outlast another process's `held` probe.
+            Some(file) => match hold(&beside(file, ".run"), Some(Duration::from_millis(20))) {
                 Ok(f) => Some(f),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => return None,
                 Err(e) => {
@@ -275,7 +305,7 @@ impl SharedUndo {
                     move |s| {
                         s.restore(left.clone());
                     },
-                    running,
+                    Some(running),
                 );
                 None
             }
@@ -303,28 +333,42 @@ impl SharedUndo {
     }
 
     /// `op` tried again on a thread of its own until an edit takes it or [`RETRY_FOR`] runs out,
-    /// with `hold` let go only then.
-    fn retry(&self, op: impl Fn(&mut UndoStack) + Send + 'static, hold: Running) {
+    /// holding `.run` throughout: `running`, or else `.run` taken first once the undo holding it
+    /// ends.
+    fn retry(&self, op: impl Fn(&mut UndoStack) + Send + 'static, running: Option<Running>) {
         let Some(file) = self.file.clone() else {
             return;
         };
+        let run = beside(&file, ".run");
         let spawned = std::thread::Builder::new()
             .name("undo history".into())
             .spawn(move || {
                 let store = SharedUndo::at(file);
                 let start = Instant::now();
+                let mut running = running;
+                let given_up = |e: &io::Error| {
+                    let late = start.elapsed() >= RETRY_FOR;
+                    if late {
+                        store.warn("gave up", e);
+                    }
+                    late
+                };
                 loop {
                     std::thread::sleep(PATIENCE);
+                    if running.is_none() {
+                        match hold(&run, None) {
+                            Ok(f) => running = Some(Running { _lock: Some(f) }),
+                            Err(e) if given_up(&e) => break,
+                            Err(_) => continue,
+                        }
+                    }
                     match store.edit(&op) {
                         Ok(()) => break,
-                        Err(e) if start.elapsed() >= RETRY_FOR => {
-                            store.warn("gave up", &e);
-                            break;
-                        }
+                        Err(e) if given_up(&e) => break,
                         Err(_) => {}
                     }
                 }
-                drop(hold);
+                drop(running);
             });
         match spawned {
             Ok(h) => (self.retries.lock().unwrap_or_else(PoisonError::into_inner)).push(h),
@@ -363,20 +407,16 @@ impl Seen {
     }
 }
 
-fn head_label(file: &Path) -> io::Result<Option<&'static str>> {
-    let f = match File::open(file) {
-        Ok(f) => f,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    let mut head = Vec::new();
-    f.take(HEAD).read_to_end(&mut head)?;
+/// The top entry's id and label from the start of a history file.
+fn head_of(head: &[u8]) -> Option<(EntryId, &'static str)> {
     let mut fields = head.split(|&b| b == 0);
-    if fields.next() != Some(MAGIC) {
-        return Ok(None);
+    if fields.next()? != MAGIC {
+        return None;
     }
-    let label = fields.next().unwrap_or_default();
-    Ok(LABELS.into_iter().find(|l| l.as_bytes() == label))
+    let label = fields.next()?;
+    let label = LABELS.into_iter().find(|l| l.as_bytes() == label)?;
+    let id = std::str::from_utf8(fields.next()?).ok()?.parse().ok()?;
+    Some((id, label))
 }
 
 fn stamp(m: &std::fs::Metadata) -> Stamp {
@@ -412,7 +452,7 @@ fn hold(path: &Path, patience: Option<Duration>) -> io::Result<File> {
     }
 }
 
-fn save(file: &Path, stack: &UndoStack) -> io::Result<Stamp> {
+fn save(file: &Path, stack: &mut UndoStack) -> io::Result<Stamp> {
     let new = beside(file, ".new");
     let mut f = OpenOptions::new()
         .write(true)
@@ -420,26 +460,60 @@ fn save(file: &Path, stack: &UndoStack) -> io::Result<Stamp> {
         .truncate(true)
         .mode(0o600)
         .open(&new)?;
-    f.write_all(&encode(stack))?;
+    f.write_all(&encode(stack, MAX_SIZE))?;
     std::fs::rename(&new, file)?;
     Ok(stamp(&f.metadata()?))
 }
 
-/// The history as NUL-terminated fields: [`MAGIC`], the top entry's label or `-`, its nonce, the
-/// clear count, the push count, the entry count, then each entry's number and item. A trashed item's record is
-/// not stored: it is always the one beside its `files/` entry.
-fn encode(stack: &UndoStack) -> Vec<u8> {
+/// The history as NUL-terminated fields: [`MAGIC`], the top entry's label and id or `-` twice, its
+/// nonce, the clear count, the push count, the entry count, then each entry's number and item. A
+/// trashed item's record is not stored: it is always the one beside its `files/` entry.
+///
+/// Only the newest entries that fit in `max` bytes are written, and `stack` keeps just those; an
+/// entry too big to fit alone is left out with a warning.
+fn encode(stack: &mut UndoStack, max: u64) -> Vec<u8> {
+    // The fields ahead of the entries take at most two `HEAD`s.
+    let cap = max.saturating_sub(2 * HEAD);
+    let mut room = cap;
+    let mut keep = vec![false; stack.entries.len()];
+    let mut kept = Vec::new();
+    for (i, entry) in stack.entries.iter().enumerate().rev() {
+        let bytes = entry_bytes(entry);
+        let size = bytes.len() as u64;
+        if size > cap {
+            log::warn!("reprisefs: undo history left out an entry of {size} bytes");
+            continue;
+        }
+        if size > room {
+            break;
+        }
+        room -= size;
+        keep[i] = true;
+        kept.push(bytes);
+    }
+    let mut keep = keep.into_iter();
+    stack.entries.retain(|_| keep.next() == Some(true));
     let mut out = Out(Vec::new());
     out.field(MAGIC);
-    out.field(stack.label().unwrap_or("-").as_bytes());
+    match stack.entries.last() {
+        Some((id, u)) => {
+            out.field(u.label().unwrap_or("-").as_bytes());
+            out.num(id);
+        }
+        None => (0..2).for_each(|_| out.field(b"-")),
+    }
     out.num(stack.nonce);
     out.num(stack.epoch);
     out.num(stack.pushed);
     out.num(stack.entries.len());
-    for (id, u) in &stack.entries {
-        out.num(id.n);
-        out.item(u);
-    }
+    kept.into_iter().rev().for_each(|bytes| out.0.extend(bytes));
+    out.0
+}
+
+fn entry_bytes((id, u): &(EntryId, Undoable)) -> Vec<u8> {
+    let mut out = Out(Vec::new());
+    out.num(id.n);
+    out.item(u);
     out.0
 }
 
@@ -452,6 +526,7 @@ fn decode(data: &[u8]) -> Option<UndoStack> {
     if i.field()? != MAGIC {
         return None;
     }
+    i.field()?;
     i.field()?;
     let (nonce, epoch, pushed) = (i.num()?, i.num()?, i.num()?);
     let entries = (0..i.num::<usize>()?)
@@ -782,8 +857,9 @@ mod tests {
         let (t, a, _) = two_windows();
         let entry = |files: &str| {
             let fields = [
-                "reprise-undo 4",
+                "reprise-undo 5",
                 "Undo Delete",
+                "0:1",
                 "0",
                 "1",
                 "0",
@@ -808,7 +884,7 @@ mod tests {
     fn a_history_nested_or_grown_past_what_reprise_writes_is_unreadable() {
         let (t, a, _) = two_windows();
         let nested = |depth: usize| {
-            let mut fields = ["reprise-undo 4", "Undo New", "0", "1", "0", "1", "1"]
+            let mut fields = ["reprise-undo 5", "Undo New", "0:1", "0", "1", "0", "1", "1"]
                 .map(String::from)
                 .to_vec();
             fields.extend((0..depth).flat_map(|_| ["batch".into(), "1".into()]));
@@ -870,7 +946,7 @@ mod tests {
         }
         a.take().unwrap();
         assert_eq!(b.label(), Some("Undo Copy"), "a take rewrites the head");
-        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 3\0Undo New\0").unwrap();
+        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 4\0Undo New\0").unwrap();
         assert_eq!(b.label(), None, "an older history's head is not read");
     }
 
@@ -960,9 +1036,105 @@ mod tests {
     #[test]
     fn an_unreadable_history_starts_over() {
         let (t, a, _) = two_windows();
-        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 4\0-\0x\0").unwrap();
+        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 5\0-\0-\0x\0").unwrap();
         assert_eq!(a.label(), None);
         a.push(Undoable::Copied("/x".into(), None));
         assert_eq!(a.label(), Some("Undo Copy"));
+    }
+
+    #[test]
+    fn the_head_names_the_top_entrys_id_beside_its_label() {
+        let (_t, a, b) = two_windows();
+        assert_eq!(b.head(), None);
+        a.push(Undoable::Copied("/x".into(), None));
+        a.push(Undoable::New("/y".into(), None));
+        let top = a.top(|id, _| id);
+        assert_eq!(b.head(), top.map(|id| (id, "Undo New")));
+        let (undo, _) = b
+            .take_entry(top.unwrap())
+            .expect("the head's id takes its entry");
+        assert_eq!(path_of(&undo), Path::new("/y"));
+        assert_eq!(b.head(), a.top(|id, _| (id, "Undo Copy")));
+    }
+
+    fn copied(p: &str) -> Undoable {
+        Undoable::Copied(p.into(), None)
+    }
+
+    fn paths(s: &UndoStack) -> Vec<PathBuf> {
+        (s.entries.iter())
+            .map(|(_, u)| match u {
+                Undoable::Copied(p, _) => p.clone(),
+                u => panic!("a copy: {u:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_history_past_its_size_keeps_its_newest_entries_and_leaves_out_one_too_big_alone() {
+        let mut stack = UndoStack::default();
+        stack.push(copied("/old"));
+        stack.push(copied("/mid"));
+        stack.push(Undoable::Batch(
+            (0..100).map(|n| copied(&format!("/big/{n}"))).collect(),
+        ));
+        stack.push(copied("/new"));
+        let one = entry_bytes(&stack.entries[0]).len() as u64;
+        let max = 2 * HEAD + 2 * one + one / 2;
+
+        let data = encode(&mut stack, max);
+        assert!(data.len() as u64 <= max, "{} bytes", data.len());
+        let read = decode(&data).expect("readable");
+        assert_eq!(paths(&read), ["/mid", "/new"].map(PathBuf::from));
+        assert_eq!(
+            paths(&stack),
+            paths(&read),
+            "the history keeps what it wrote"
+        );
+        assert_eq!(head_of(&data), Some((stack.entries[1].0, "Undo Copy")));
+    }
+
+    #[test]
+    fn held_while_an_undo_runs_in_any_window() {
+        let (_t, a, b) = two_windows();
+        a.push(copied("/x"));
+        assert!(!b.held());
+        let (undo, running) = a.take().unwrap();
+        assert!(a.held() && b.held());
+        a.put_back(undo, running, 1, None);
+        assert!(!b.held());
+    }
+
+    #[test]
+    fn a_take_waits_out_a_brief_hold_on_the_run_file() {
+        let (t, a, _) = two_windows();
+        a.push(copied("/x"));
+        let run = hold(&t.path().join("reprise-undo.run"), None).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(5));
+            drop(run);
+        });
+        assert!(
+            a.take().is_some(),
+            "a held() probe does not turn an Undo away"
+        );
+        release.join().unwrap();
+    }
+
+    #[test]
+    fn a_clear_the_lock_keeps_out_waits_for_a_running_undo_then_holds_undo_off_till_it_lands() {
+        let (t, a, b) = two_windows();
+        a.push(copied("/x"));
+        a.push(copied("/y"));
+        let (_undo, running) = a.take().unwrap();
+        let lock = locked(&t);
+        b.clear();
+        drop(running);
+        until("the clear's retry takes the run file", || a.held());
+        drop(lock);
+        assert!(a.take().is_none(), "no Undo reaches past the clear");
+        until("the clear lands", || a.label().is_none());
+        a.clone().settle();
+        assert!(!a.held());
     }
 }
