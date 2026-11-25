@@ -22,6 +22,9 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Where the boot partition's `loader/entries` may be mounted, per the Boot Loader Specification.
 const ENTRY_ROOTS: [&str; 3] = ["/efi", "/boot", "/boot/efi"];
 
+/// The most of an entry file read for its title.
+const ENTRY_READ: u64 = 64 * 1024;
+
 /// systemd-boot's own entries that a restart has no use for: firmware setup has its own row.
 const HIDDEN: [&str; 3] = [
     "auto-reboot-to-firmware-setup",
@@ -145,8 +148,18 @@ fn title_under(roots: &[PathBuf], id: &str) -> Option<String> {
         .find_map(|p| read_title(&p))
 }
 
+/// The `title` line of the entry file at `path`, read only when it is a regular file (a FIFO would
+/// block the job) and only its first [`ENTRY_READ`] bytes.
 fn read_title(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    use std::io::Read;
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    (std::fs::File::open(path).ok()?.take(ENTRY_READ))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let text = String::from_utf8_lossy(&bytes);
     text.lines().find_map(|l| {
         let (key, value) = l.trim().split_once(char::is_whitespace)?;
         let value = value.trim();

@@ -198,6 +198,32 @@ fn show_desktop_restores_bottom_first_as_they_were_stacked() {
 }
 
 #[test]
+fn restart_into_opens_no_submenu_once_there_is_nowhere_to_restart_into() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let (items, rows) = crate::startmenu::shutdown_menu(
+        false,
+        reprisekit::powerpanel::Leave::SwitchUser { live: true },
+        true,
+    );
+    let at = (rows.iter())
+        .position(|r| *r == Some(crate::startmenu::StartRow::RestartInto))
+        .unwrap();
+    let kind = MenuKind::StartPanel { rows };
+    h.state
+        .push_context_menu((10, 10), items, kind, MenuFrom::Elsewhere);
+    h.state.open_submenu(0, at);
+    assert_eq!(h.state.menus.len(), 1, "logind offers nothing now");
+    h.state.boot_targets = vec![crate::restartinto::BootTarget {
+        entry: Some("a.conf".into()),
+        title: "A".into(),
+        password: false,
+    }];
+    h.state.open_submenu(0, at);
+    assert_eq!(h.state.menus.len(), 2);
+}
+
+#[test]
 fn an_overflow_rows_pick_names_its_bar_and_button() {
     use crate::taskbar::TaskKey;
     let mut scene = crate::compositor::DeskScene::new();

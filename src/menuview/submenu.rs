@@ -32,6 +32,9 @@ impl State {
                     == Some(crate::startmenu::StartRow::RestartInto) =>
             {
                 let targets = self.boot_targets.clone();
+                if targets.is_empty() {
+                    return None;
+                }
                 return Some((
                     crate::restartinto::menu_items(&targets),
                     MenuKind::RestartInto(targets),
