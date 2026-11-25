@@ -178,7 +178,14 @@ fn replace(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),
     };
-    std::fs::create_dir_all(dir)?;
+    if !linked {
+        std::fs::create_dir_all(dir)?;
+    } else if !dir.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("the link leads into {}, which is not there", dir.display()),
+        ));
+    }
     let mode = match private {
         true => Some(std::fs::Permissions::from_mode(0o600)),
         false => std::fs::metadata(&path).ok().map(|m| m.permissions()),
@@ -198,7 +205,7 @@ fn replace(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
 
 /// Where a write to `path` lands: its canonical path, or for one that does not resolve yet the end
 /// of its chain of symlinks, so a dangling link stays a link.
-pub(crate) fn real_path(path: &Path) -> io::Result<PathBuf> {
+pub fn real_path(path: &Path) -> io::Result<PathBuf> {
     match std::fs::canonicalize(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let at = dangling_target(path)?;

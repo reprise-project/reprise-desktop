@@ -13,10 +13,10 @@ pub(crate) use copy::{build_dir, copy_dir_until, copy_new, in_tree, remove_tree}
 pub use erase::erase;
 pub(crate) use erase::{entries_at, erase_at, erase_counted, erase_stepped, unlink_at};
 pub use fileio::{
-    copy_xattrs, create_temp_beside, locked_edit, open_regular, read_regular, write_atomic,
-    write_document, write_private,
+    copy_xattrs, create_temp_beside, locked_edit, open_regular, read_regular, real_path,
+    write_atomic, write_document, write_private,
 };
-pub(crate) use fileio::{on_a_drive, read_held, read_opened, real_path};
+pub(crate) use fileio::{on_a_drive, read_held, read_opened};
 pub use mounts::{is_mount_point, mount_root, refuse_holding_mount, refuse_mount_point};
 #[cfg(test)]
 pub(crate) use put::IN_FLUSH;

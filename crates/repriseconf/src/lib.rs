@@ -295,8 +295,9 @@ fn watch_at(path: &Path, wake: impl Fn() + Send + Sync + 'static) -> Option<Conf
 }
 
 /// The directories a watch on the config file at `path` covers, each with the entry names that
-/// count: `path`'s own, and, when `path` is a symlink, the file it resolves to, since
-/// [`write_atomic`] and editors writing through the link replace that file in its own directory.
+/// count: `path`'s own, and, when `path` is a symlink, the file it resolves to (dangling or not,
+/// as `reprisefs::ops::real_path` follows it), since [`write_atomic`] and editors writing through
+/// the link replace that file in its own directory.
 pub fn watch_targets(path: &Path) -> Vec<(PathBuf, Vec<OsString>)> {
     let Some(name) = path.file_name() else {
         return Vec::new();
@@ -308,8 +309,9 @@ pub fn watch_targets(path: &Path) -> Vec<(PathBuf, Vec<OsString>)> {
         _ => PathBuf::from("."),
     };
     let mut targets = vec![(dir.clone(), vec![name.to_os_string()])];
-    if let Ok(real) = std::fs::canonicalize(path)
+    if let Ok(real) = reprisefs::ops::real_path(path)
         && let (Some(real_dir), Some(real_name)) = (real.parent(), real.file_name())
+        && real_dir.is_dir()
     {
         // One inotify watch per directory: a link to a file beside it adds a name, not a second
         // watch.
@@ -991,6 +993,26 @@ external_thumbnailers = false
         let woke = rx.recv_timeout(std::time::Duration::from_secs(10));
         assert!(woke.is_ok(), "the save through the link wakes the watch");
         assert!(w.take_changed());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dangling_config_link_is_watched_where_it_leads() {
+        let dir = std::env::temp_dir().join(format!("repriseconf-dangling-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (conf, dots) = (dir.join("conf"), dir.join("dotfiles"));
+        std::fs::create_dir_all(&conf).unwrap();
+        std::fs::create_dir_all(&dots).unwrap();
+        let link = conf.join("config.toml");
+        std::os::unix::fs::symlink("../dotfiles/reprise.toml", &link).unwrap();
+        let dots = std::fs::canonicalize(&dots).unwrap();
+        assert_eq!(
+            watch_targets(&link),
+            [
+                (conf, vec![OsString::from("config.toml")]),
+                (dots, vec![OsString::from("reprise.toml")]),
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
