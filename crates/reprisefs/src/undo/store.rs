@@ -19,8 +19,8 @@
 //!   acts, so Undo reaching past a lost entry still never reverses the wrong item;
 //! - a put-back or a clear is retried on a thread of its own for up to [`RETRY_FOR`], holding
 //!   `.run` so that no Undo reaches past it meanwhile: a put-back keeps its undo's hold, a clear
-//!   takes `.run` once a running undo ends. A process about to quit waits for it
-//!   ([`SharedUndo::settle`]).
+//!   takes `.run` once a running undo ends, however long it runs. A process about to quit waits
+//!   for it ([`SharedUndo::settle`]).
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -66,26 +66,40 @@ const MAX_SIZE: u64 = 64 << 20;
 /// The history and the file it lives in, read again whenever another process rewrote it. A clone
 /// is another handle on the same history whose edits wait on nothing the original holds, so a
 /// host hands one to a thread to edit off its loop.
-#[derive(Default)]
 pub struct SharedUndo {
     file: Option<PathBuf>,
     seen: Arc<Mutex<Seen>>,
     /// The threads retrying a put-back or a clear, shared by every clone.
     retries: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// [`RETRY_FOR`], shorter in tests.
+    retry_for: Duration,
+}
+
+impl Default for SharedUndo {
+    fn default() -> Self {
+        SharedUndo {
+            file: None,
+            seen: Arc::default(),
+            retries: Arc::default(),
+            retry_for: RETRY_FOR,
+        }
+    }
 }
 
 impl Clone for SharedUndo {
     fn clone(&self) -> Self {
-        let retries = self.retries.clone();
+        let (retries, retry_for) = (self.retries.clone(), self.retry_for);
         match &self.file {
             Some(file) => SharedUndo {
                 retries,
+                retry_for,
                 ..SharedUndo::at(file.clone())
             },
             None => SharedUndo {
                 file: None,
                 seen: self.seen.clone(),
                 retries,
+                retry_for,
             },
         }
     }
@@ -328,21 +342,22 @@ impl SharedUndo {
     }
 
     /// `op` tried again on a thread of its own until an edit takes it or [`RETRY_FOR`] runs out,
-    /// holding `.run` throughout: `running`, or else `.run` taken first once the undo holding it
-    /// ends.
+    /// holding `.run` throughout: `running` for a put-back, or for a clear `.run` taken first once
+    /// the undo holding it ends, [`RETRY_FOR`] counting from then.
     fn retry(&self, op: impl Fn(&mut UndoStack) + Send + 'static, running: Option<Running>) {
         let Some(file) = self.file.clone() else {
             return;
         };
         let run = beside(&file, ".run");
+        let retry_for = self.retry_for;
         let spawned = std::thread::Builder::new()
             .name("undo history".into())
             .spawn(move || {
                 let store = SharedUndo::at(file);
-                let start = Instant::now();
+                let mut since = Instant::now();
                 let mut running = running;
-                let given_up = |e: &io::Error| {
-                    let late = start.elapsed() >= RETRY_FOR;
+                let given_up = |since: Instant, e: &io::Error| {
+                    let late = since.elapsed() >= retry_for;
                     if late {
                         store.warn("gave up", e);
                     }
@@ -352,14 +367,19 @@ impl SharedUndo {
                     std::thread::sleep(PATIENCE);
                     if running.is_none() {
                         match hold(&run, None) {
-                            Ok(f) => running = Some(Running { _lock: Some(f) }),
-                            Err(e) if given_up(&e) => break,
+                            Ok(f) => {
+                                (running, since) =
+                                    (Some(Running { _lock: Some(f) }), Instant::now())
+                            }
+                            // An undo holds `.run` till it ends, however long it runs.
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                            Err(e) if given_up(since, &e) => break,
                             Err(_) => continue,
                         }
                     }
                     match store.edit(&op) {
                         Ok(()) => break,
-                        Err(e) if given_up(&e) => break,
+                        Err(e) if given_up(since, &e) => break,
                         Err(_) => {}
                     }
                 }
@@ -1131,5 +1151,22 @@ mod tests {
         until("the clear lands", || a.label().is_none());
         a.clone().settle();
         assert!(!a.held());
+    }
+
+    #[test]
+    fn a_clear_the_lock_keeps_out_waits_for_an_undo_running_past_its_retry_time_and_lands() {
+        let (t, a, mut b) = two_windows();
+        b.retry_for = Duration::from_millis(300);
+        a.push(copied("/x"));
+        a.push(copied("/y"));
+        let (_undo, running) = a.take().unwrap();
+        let lock = locked(&t);
+        b.clear();
+        drop(lock);
+        std::thread::sleep(3 * b.retry_for);
+        assert!(b.retrying(), "the clear waits for the undo");
+        drop(running);
+        b.clone().settle();
+        assert_eq!(a.label(), None, "the clear landed");
     }
 }
