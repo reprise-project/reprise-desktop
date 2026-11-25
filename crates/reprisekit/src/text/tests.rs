@@ -1192,7 +1192,8 @@ fn a_mnemonic_underline_at_scale_2_moves_with_its_glyph() {
         let black = Color::rgb(0, 0, 0);
         let fitted = Rect::new(4, 0, r.measure(&run, bold, px), h);
         let baseline = r.baseline(fitted, bold, px).unwrap();
-        let pen = fitted.x + r.measure(&run[..run.len() - ch.len_utf8()], bold, px);
+        let last = run.len() - ch.len_utf8();
+        let dx = r.caret_x(&run, last, fitted.x, bold, px, 2);
         let ul_row = 2 * (baseline + 1) * 2 * w as i32;
         let left = |c: &Canvas, rows: std::ops::Range<i32>| {
             rows.flat_map(|y| (0..2 * w as i32).map(move |x| (x, y)))
@@ -1215,17 +1216,10 @@ fn a_mnemonic_underline_at_scale_2_moves_with_its_glyph() {
         let glyph = |line: Option<Rect>| {
             let mut c = Canvas::with_scale(w, h as u32, 2);
             let all = c.bounds();
-            let s = ch.to_string();
-            r.draw_line(
-                &mut c,
-                pen,
-                baseline,
-                all,
-                line.unwrap_or(all),
-                &s,
-                bold,
-                black,
-                px,
+            let line = line.unwrap_or(all);
+            let part = last..run.len();
+            r.draw_part(
+                &mut c, fitted.x, baseline, all, line, &run, part, bold, black, px,
             );
             left(&c, 0..2 * h)
         };
@@ -1233,11 +1227,11 @@ fn a_mnemonic_underline_at_scale_2_moves_with_its_glyph() {
             return;
         };
         moved += (at != free) as usize;
-        if ul - 2 * pen != at - free {
+        if ul - dx != at - free {
             wrong.push(format!(
                 "{what}: {run:?} glyph moved {} underline {}",
                 at - free,
-                ul - 2 * pen
+                ul - dx
             ));
         }
     });
@@ -1268,4 +1262,54 @@ fn a_smooth_glyphs_fringe_under_an_eighth_of_coverage_is_not_drawn_ink() {
         glyph(vec![0x1f, 0xff, 0x5f], false).drawn_span(),
         Some((3, 4))
     );
+}
+
+/// DejaVu Sans' hinted "s" is 7 px wide at 11 px but 11 px at 22, so glyphs drawn from doubled
+/// logical pens leave uneven gaps.
+#[test]
+fn a_word_at_scale_2_spaces_its_glyphs_evenly_within_its_logical_width() {
+    crate::pins::fonts();
+    for antialias in [false, true] {
+        let r = TextRenderer::load(&FontConfig {
+            family: vec!["DejaVu Sans".into()],
+            antialias,
+            ..FontConfig::default()
+        });
+        for px in [11, 13] {
+            let line = "Taskbar Start Desktops Windows";
+            let pens: Vec<(i32, i32)> = r
+                .pens(line, false, px, 2, 10)
+                .iter()
+                .map(|g| (g.pen, g.dx))
+                .collect();
+            let mut at = 0;
+            for word in line.split(' ') {
+                let n = word.chars().count();
+                let p = &pens[at..at + n];
+                let start = 10 + r.measure(&line[..at], false, px);
+                assert_eq!(p[0], (start, 2 * start), "{word} starts at its logical pen");
+                if let Some(&(after, dx)) = pens.get(at + n) {
+                    assert_eq!(
+                        dx,
+                        2 * after,
+                        "the space after {word} starts at its logical pen"
+                    );
+                }
+                let off: Vec<i32> = p
+                    .windows(2)
+                    .zip(word.chars())
+                    .map(|(w, ch)| {
+                        w[1].1 - w[0].1 - r.with_glyph(ch, false, px, 2, |g| g.advance).unwrap()
+                    })
+                    .collect();
+                let (lo, hi) = (off.iter().min().unwrap(), off.iter().max().unwrap());
+                assert!(
+                    hi - lo <= 1,
+                    "{word} at {px} px, antialias {antialias}: gaps off their scale-2 advances \
+                     by {off:?}, at most a pixel apart"
+                );
+                at += n + 1;
+            }
+        }
+    }
 }

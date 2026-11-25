@@ -423,11 +423,12 @@ fn draw_with(
         if let Some(hl) = &hl {
             hl.fill(c, room, cs.hilight);
         }
-        let cx = ud.edit.as_ref().map_or(at(shown.len()), |e| at(e.caret()));
-        let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
+        let ci = ud.edit.as_ref().map_or(shown.len(), TextEdit::caret);
+        let bar = Rect::new(at(ci), tr.y + 2 * s, s, tr.height - 4 * s);
+        let x = text.caret_x(&shown, ci, x0, false, px, c.scale());
         let shown_bar = caret
             .shown()
-            .then(|| CaretBar::ground(c, bar, hl.as_ref(), room));
+            .then(|| CaretBar::ground_at(c, bar, x, hl.as_ref(), room));
         text.draw_in(c, pen, tr, tr, &shown, false, cs.button_text, px);
         if caret.focused() {
             if let Some(hl) = &hl {
