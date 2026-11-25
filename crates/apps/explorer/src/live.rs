@@ -254,6 +254,7 @@ impl Explorer {
             self.take_preview(),
             self.take_checksums(),
             self.take_reads(ctx),
+            self.take_favorites_failed(ctx),
         ]
         .into_iter()
         .flatten()

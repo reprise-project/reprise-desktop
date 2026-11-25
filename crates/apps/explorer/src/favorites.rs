@@ -1,7 +1,6 @@
 //! The Favorites menu: Add to Favorites, Organize Favorites and a row per bookmark of GTK's
 //! bookmarks file ([`reprisefs::pins`]), which GTK's and the portal's file dialogs list too.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use repriseapp::{Ctx, Reply};
@@ -15,7 +14,8 @@ use crate::commands::Command;
 use crate::dialogs::Dialog;
 use crate::place::Place;
 
-/// The favorites the menu lists at most; Organize Favorites shows them all.
+/// The favorites the menu lists at most; Organize Favorites lists the first
+/// [`pins::MAX_FAVORITES`].
 pub const MENU_ROWS: usize = 40;
 
 /// Add Favorite, naming the folder `dir`.
@@ -73,20 +73,6 @@ fn rows(shown: &[Favorite]) -> Vec<Row> {
                 Target::Uri(_) => f.target.default_name(),
             },
             state: state(f),
-        })
-        .collect()
-}
-
-/// `b`'s bookmarks as Favorites lists them, a folder's presence carried over from `was`: an edit
-/// lands before the reader thread has looked for the folders again.
-fn relisted(b: &Bookmarks, was: &[Favorite]) -> Vec<Favorite> {
-    let present: HashMap<&Target, bool> = was.iter().map(|f| (&f.target, f.present)).collect();
-    b.entries()
-        .take(pins::MAX_FAVORITES)
-        .map(|(target, label)| Favorite {
-            target: target.clone(),
-            label: label.map_or_else(|| target.default_name(), str::to_string),
-            present: present.get(target).copied().unwrap_or(true),
         })
         .collect()
 }
@@ -172,26 +158,38 @@ impl Explorer {
                 let Some(Dialog::AddFavorite(a)) = self.take_up() else {
                     return Reply::none();
                 };
-                let saved = pins::edit_at(&self.bookmarks_file(), |b| b.add(&a.dir, &name));
-                let reply = match saved {
-                    Ok(_) => Reply::none(),
-                    Err(e) => self.favorites_unsaved(e, ctx),
-                };
-                Reply {
-                    redraw_all: true,
-                    ..reply
-                }
+                let dir = a.dir;
+                self.edit_favorites(move |b| b.add(&dir, &name));
+                Reply::redraw_all()
             }
         }
     }
 
-    fn favorites_unsaved(&mut self, e: std::io::Error, ctx: &mut Ctx) -> Reply {
-        log::warn!("favorites: cannot write the bookmarks: {e}");
-        self.message_box(
+    /// Hands `edit` to the pins thread, which writes the file off this loop; the menu and an open
+    /// Organize box follow once it reads the file back.
+    fn edit_favorites(&mut self, edit: impl FnOnce(&mut Bookmarks) -> bool + Send + 'static) {
+        if let Some(p) = &self.pins {
+            p.edit(edit);
+        }
+    }
+
+    /// An edit the pins thread could not write: Organize Favorites closes and a message says why.
+    pub(crate) fn take_favorites_failed(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let e = self.pins.as_mut()?.take_failed()?;
+        if matches!(self.dialogs.up_mut(), Some(Dialog::Organize(_))) {
+            self.take_up();
+        }
+        let reply = self.message_box(
             "Favorites",
             format!("Explorer cannot save your Favorites.\n\n{e}"),
             ctx,
-        )
+        );
+        Some(reply.and(Reply::redraw_all()))
+    }
+
+    /// Whether a Favorites edit is still to be written.
+    pub(crate) fn favorites_busy(&self) -> bool {
+        self.pins.as_ref().is_some_and(|p| p.busy())
     }
 
     /// Organize Favorites' answer: an edit goes to the bookmarks file at once.
@@ -204,7 +202,7 @@ impl Explorer {
             .form
             .focus()
             .is_some_and(|i| o.form.items[i].id == fav::NAME);
-        let edit: Box<dyn FnOnce(&mut Bookmarks) -> bool> = match (out, picked) {
+        let edit: Box<dyn FnOnce(&mut Bookmarks) -> bool + Send> = match (out, picked) {
             (form::Event::Changed(fav::LIST), _) => {
                 fav::show_selected(&mut o.form, &rows(&o.shown));
                 return Reply::redraw();
@@ -234,23 +232,8 @@ impl Explorer {
             (form::Event::None, _) => return Reply::none(),
             _ => return Reply::redraw(),
         };
-        match pins::edit_at(&self.bookmarks_file(), edit) {
-            Ok(b) => {
-                if let Some(Dialog::Organize(o)) = self.dialogs.up_mut() {
-                    let shown = relisted(&b, &o.shown);
-                    o.relist(shown);
-                }
-                Reply::redraw()
-            }
-            Err(e) => {
-                self.take_up();
-                let reply = self.favorites_unsaved(e, ctx);
-                Reply {
-                    redraw_all: true,
-                    ..reply
-                }
-            }
-        }
+        self.edit_favorites(edit);
+        Reply::redraw()
     }
 }
 
@@ -272,10 +255,22 @@ mod tests {
     /// An Explorer reading `file`, once its first read has landed.
     fn reading(file: &Path, ctx: &mut Ctx) -> Explorer {
         let mut ex = test_explorer(Place::Computer, ctx);
-        let pins = pins::Pins::start_at(file.to_path_buf(), || {});
+        let mut pins = pins::Pins::start_at(file.to_path_buf(), || {});
         pins.wait_first(std::time::Duration::from_secs(10));
+        pins.take_changed();
         ex.pins = Some(pins);
         ex
+    }
+
+    /// Waits for the pins thread to write the edits sent and read the file back, then relists
+    /// Organize as a wake does.
+    fn landed(ex: &mut Explorer) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while ex.favorites_busy() || !ex.pins.as_mut().is_some_and(|p| p.take_changed()) {
+            assert!(std::time::Instant::now() < end, "timed out");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        ex.favorites_changed();
     }
 
     fn wait_for(ex: &mut Explorer, done: impl Fn(&Explorer) -> bool) {
@@ -360,6 +355,7 @@ mod tests {
         }
         ex.dialog_outcome(form::Event::Default, &mut ctx);
         assert!(ex.dialog().is_none());
+        landed(&mut ex);
         let want = format!(
             "# mine\nsftp://h/srv Server\n{} Work & play\n",
             reprisefs::thumbnails::file_uri(work.path())
@@ -405,7 +401,9 @@ mod tests {
         }
         ex.dialog_outcome(form::Event::Changed(fav::NAME), &mut ctx);
         ex.dialog_outcome(form::Event::Pressed(fav::RENAME), &mut ctx);
+        landed(&mut ex);
         ex.dialog_outcome(form::Event::Pressed(fav::UP), &mut ctx);
+        landed(&mut ex);
         assert_eq!(listed(&mut ex), ["NAS", "A", "Recent"]);
         assert_eq!(
             fav::selected(organize_form(&mut ex)),
@@ -419,6 +417,7 @@ mod tests {
 
         pick(&mut ex, 2, &mut ctx);
         ex.dialog_outcome(form::Event::Pressed(fav::DELETE), &mut ctx);
+        landed(&mut ex);
         assert_eq!(listed(&mut ex), ["NAS", "A"]);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
@@ -442,6 +441,35 @@ mod tests {
             fav::selected(organize_form(&mut ex)),
             Some(1),
             "the pick stays on A"
+        );
+    }
+
+    #[test]
+    fn add_to_favorites_on_a_file_it_cannot_read_says_so_and_leaves_it() {
+        let mut ctx = test_ctx();
+        let big = "file:///srv/a\n".repeat(80_000);
+        let (_dir, file) = with_file(&big);
+        let mut ex = reading(&file, &mut ctx);
+        let work = tempfile::tempdir().unwrap();
+        ex.go(Place::Folder(work.path().to_path_buf()), &mut ctx);
+        ex.run(Command::AddFavorite, &mut ctx);
+        ex.dialog_outcome(form::Event::Default, &mut ctx);
+        wait_for(&mut ex, |ex| !ex.favorites_busy());
+        assert!(ex.take_favorites_failed(&mut ctx).is_some());
+        match ex.dialog() {
+            Some(Dialog::Message { title, text, .. }) => {
+                assert_eq!(title, "Favorites");
+                assert!(
+                    text.starts_with("Explorer cannot save your Favorites."),
+                    "{text}"
+                );
+            }
+            _ => panic!("a message box is up"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            big,
+            "left as it was"
         );
     }
 
