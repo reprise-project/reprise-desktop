@@ -147,7 +147,6 @@ glass-dark.png "Item 4" x2
 glass-dark.png "Item 5" x2
 glass-dark.png "Item 6" x2
 glass-dark.png "Letters" x1
-glass-dark.png "Message Text" x1
 glass-dark.png "Music" x1
 glass-dark.png "My Music" x3
 glass-dark.png "My Pictures" x3
@@ -202,7 +201,6 @@ glass.png "Item 4" x2
 glass.png "Item 5" x2
 glass.png "Item 6" x2
 glass.png "Letters" x1
-glass.png "Message Text" x1
 glass.png "Music" x1
 glass.png "My Music" x3
 glass.png "My Pictures" x3
@@ -284,7 +282,6 @@ reprisekit-gallery.png "Line 4: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 5: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Line 6: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Make New Folder" x1
-reprisekit-gallery.png "Message Text" x2
 reprisekit-gallery.png "Music" x2
 reprisekit-gallery.png "My Music" x3
 reprisekit-gallery.png "My Pictures" x3
