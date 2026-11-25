@@ -127,7 +127,9 @@ impl State {
         let (items, rows) = crate::startmenu::shutdown_menu(
             !self.config.power.hibernate.is_empty(),
             crate::console::leave_offered(self),
+            !self.boot_targets.is_empty(),
         );
+        crate::restartinto::refresh(self);
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         let at = (arrow.right(), arrow.y);
         let place = |_, size, usable| shutdown_options_at(edge, arrow, size, usable);
@@ -385,6 +387,7 @@ impl State {
                     Origin::Desktop,
                 );
             }
+            StartRow::RestartInto => {}
             StartRow::Sleep => {
                 self.close_start_panel();
                 crate::power::run_action(self, PowerAction::Standby, Origin::Desktop);

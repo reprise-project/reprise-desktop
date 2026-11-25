@@ -18,6 +18,7 @@ use smithay::reexports::calloop::{
 use crate::compositor::State;
 use crate::fsjobs::OnLoop;
 use crate::lockview::Origin;
+use crate::restartinto::BootTarget;
 use crate::window::WindowId;
 
 const PROMPT_AFTER: Duration = Duration::from_secs(5);
@@ -54,6 +55,8 @@ pub struct Program {
 pub struct Ending {
     pub goal: Goal,
     cmd: Option<String>,
+    /// Where a Restart lands, set with logind just before the reboot.
+    boot: Option<BootTarget>,
     holders: Option<Vec<Holder>>,
     stop: Option<async_channel::Sender<()>>,
     /// The poll moves the portal's monitors to query-end ([`asks_portal`]).
@@ -111,25 +114,48 @@ impl Mode {
 }
 
 pub fn begin(state: &mut State, goal: Goal, cmd: Option<String>, origin: Origin) {
-    check(state, goal, cmd, false, origin);
+    check(state, goal, cmd, None, false, origin);
+}
+
+/// Restart with `cmd` into `boot`.
+pub fn begin_into(state: &mut State, cmd: String, boot: BootTarget) {
+    check(
+        state,
+        Goal::Restart,
+        Some(cmd),
+        Some(boot),
+        false,
+        Origin::Desktop,
+    );
 }
 
 pub fn begin_critical(state: &mut State, cmd: String) {
-    check(state, Goal::TurnOff, Some(cmd), true, Origin::Console);
+    check(state, Goal::TurnOff, Some(cmd), None, true, Origin::Console);
 }
 
 /// Start the end once logind says the action is allowed, so a refusal
 /// closes nothing. A custom command has only its exit status to go by.
-fn check(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, origin: Origin) {
+fn check(
+    state: &mut State,
+    goal: Goal,
+    cmd: Option<String>,
+    boot: Option<BootTarget>,
+    critical: bool,
+    origin: Origin,
+) {
     let verb = cmd.as_deref().and_then(logind_verb);
     let Some(verb) = verb.filter(|_| state.ending.is_none()) else {
-        start(state, goal, cmd, critical, origin, Password::No);
+        let password = Password::No.with(boot.as_ref());
+        start(state, goal, cmd, boot, critical, origin, password);
         return;
     };
     state.spawn_job(move || {
         let answer = zbus::block_on(can(verb));
         Box::new(move |state: &mut State| match answer {
-            Ok(password) => start(state, goal, cmd, critical, origin, password),
+            Ok(password) => {
+                let password = password.with(boot.as_ref());
+                start(state, goal, cmd, boot, critical, origin, password);
+            }
             Err(why) => refuse(state, Act::of(goal), &why),
         })
     });
@@ -139,6 +165,7 @@ fn start(
     state: &mut State,
     goal: Goal,
     cmd: Option<String>,
+    boot: Option<BootTarget>,
     critical: bool,
     origin: Origin,
     password: Password,
@@ -149,6 +176,7 @@ fn start(
             log::info!("session end: now {goal:?}");
             e.goal = goal;
             e.cmd = cmd;
+            e.boot = boot;
             e.password = password;
         }
         e.mode = mode;
@@ -164,7 +192,7 @@ fn start(
     state.session.kept = true;
     if state.locked_for(origin) {
         log::info!("session end: locked, nobody to ask");
-        go_on(state, goal, cmd, false, password);
+        go_on(state, goal, cmd, boot, false, password);
         return;
     }
     let (tx, rx) = channel::channel::<Vec<Holder>>();
@@ -208,6 +236,7 @@ fn start(
     state.ending = Some(Ending {
         goal,
         cmd,
+        boot,
         // Without the thread nothing is known to hold the session.
         holders: stop.is_none().then(Vec::new),
         stop,
@@ -334,7 +363,14 @@ fn finish(state: &mut State, override_inhibitors: bool) {
     {
         let _ = stop.try_send(());
     }
-    go_on(state, e.goal, e.cmd, override_inhibitors, e.password);
+    go_on(
+        state,
+        e.goal,
+        e.cmd,
+        e.boot,
+        override_inhibitors,
+        e.password,
+    );
 }
 
 /// Whether a committed end moves the portal's monitors back to running: a command (Turn Off,
@@ -354,6 +390,7 @@ fn go_on(
     state: &mut State,
     goal: Goal,
     cmd: Option<String>,
+    boot: Option<BootTarget>,
     override_inhibitors: bool,
     password: Password,
 ) {
@@ -365,14 +402,15 @@ fn go_on(
                 state,
                 SAVE_SHOTS,
                 Box::new(move |state| {
-                    attempt(state, Act::of(goal), cmd, override_inhibitors, Some(goal));
+                    let act = Act::of(goal);
+                    attempt(state, act, cmd, boot, override_inhibitors, Some(goal));
                 }),
             );
         }
         cmd => wind_down(
             state,
             goal,
-            Box::new(move |state| act(state, goal, cmd, override_inhibitors)),
+            Box::new(move |state| act(state, goal, cmd, boot, override_inhibitors)),
         ),
     }
 }
@@ -467,13 +505,19 @@ pub fn quit(state: &mut State) {
     );
 }
 
-fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
+fn act(
+    state: &mut State,
+    goal: Goal,
+    cmd: Option<String>,
+    boot: Option<BootTarget>,
+    override_inhibitors: bool,
+) {
     let Some(cmd) = cmd else {
         state.signal.stop();
         return;
     };
     log::info!("session end: {goal:?} runs {cmd:?}");
-    attempt(state, Act::of(goal), cmd, override_inhibitors, None);
+    attempt(state, Act::of(goal), cmd, boot, override_inhibitors, None);
 }
 
 /// Put the computer to sleep with a `[power]` standby or hibernate `cmd`, closing nothing.
@@ -482,26 +526,57 @@ pub fn sleep(state: &mut State, act: Act, cmd: String) {
         return;
     }
     log::info!("power: {act:?} runs {cmd:?}");
-    attempt(state, act, cmd, false, None);
+    attempt(state, act, cmd, None, false, None);
 }
 
-/// Run `cmd` off the loop, on logind when it names a logind action, then [`answered`].
+/// Run `cmd` off the loop, on logind when it names a logind action, into `boot` when set, then
+/// [`answered`].
 fn attempt(
     state: &mut State,
     act: Act,
     cmd: String,
+    boot: Option<BootTarget>,
     override_inhibitors: bool,
     wind_down_for: Option<Goal>,
 ) {
     let env = state.env.clone();
     let interactive = prompts(state);
     state.spawn_job(move || {
-        let failed = match logind_verb(&cmd) {
+        let go = || match logind_verb(&cmd) {
             Some(verb) => zbus::block_on(call(verb, override_inhibitors, interactive)),
             None => run(&cmd, &env).map(Failed::Refused),
         };
+        let failed = match boot {
+            None => go(),
+            Some(boot) => match zbus::block_on(zbus::Connection::system()) {
+                Ok(conn) => restart_into(&conn, &boot, interactive, go),
+                Err(e) => Some(Failed::Refused(Refused::Failed(e.to_string()))),
+            },
+        };
         Box::new(move |state: &mut State| answered(state, act, failed, wind_down_for))
     });
+}
+
+/// Set `boot` with logind on `conn`, then `reboot`; a reboot that does not happen clears it, so a
+/// later restart lands where it always does.
+fn restart_into(
+    conn: &zbus::Connection,
+    boot: &BootTarget,
+    interactive: bool,
+    reboot: impl FnOnce() -> Option<Failed>,
+) -> Option<Failed> {
+    if let Err(e) = zbus::block_on(crate::restartinto::aim(conn, boot, true, interactive)) {
+        log::warn!("session end: restart into {:?}: {e}", boot.entry);
+        let dismissed = || interactive && reprisebus::polkit::dismissed();
+        return Some(failure(&e, dismissed).map_or(Failed::Dismissed, Failed::Refused));
+    }
+    let failed = reboot();
+    if failed.is_some()
+        && let Err(e) = zbus::block_on(crate::restartinto::aim(conn, boot, false, false))
+    {
+        log::warn!("session end: clearing the restart target: {e}");
+    }
+    failed
 }
 
 /// A refusal shows a message box; a dismissed password prompt brings the session back without
@@ -706,6 +781,14 @@ enum Password {
 }
 
 impl Password {
+    /// A target polkit guards asks for the password up front, as the action would.
+    fn with(self, boot: Option<&BootTarget>) -> Password {
+        match boot {
+            Some(b) if b.password => Password::Yes,
+            _ => self,
+        }
+    }
+
     fn asked(self, override_inhibitors: bool) -> bool {
         match self {
             Password::No => false,
@@ -1288,6 +1371,7 @@ mod tests {
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
+            boot: None,
             // Unknown holders keep the end from finishing while the loop turns.
             holders: None,
             stop: None,
@@ -1311,6 +1395,67 @@ mod tests {
             Control::Picture { canvas, .. } => canvas.clone(),
             _ => None,
         }
+    }
+
+    #[test]
+    fn a_restart_into_sets_its_target_first_and_clears_it_when_the_reboot_fails() {
+        let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) else {
+            return;
+        };
+        let target = BootTarget {
+            entry: Some("b.conf".into()),
+            title: "B".into(),
+            password: false,
+        };
+        let mut rebooted = false;
+        let failed = restart_into(&f.client, &target, false, || {
+            rebooted = true;
+            Some(Failed::Refused(Refused::Unsupported))
+        });
+        assert!(rebooted);
+        assert_eq!(failed, Some(Failed::Refused(Refused::Unsupported)));
+        assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\"", "entry \"\""]);
+        f.set.lock().unwrap().clear();
+        assert_eq!(restart_into(&f.client, &target, false, || None), None);
+        assert_eq!(
+            *f.set.lock().unwrap(),
+            ["entry \"b.conf\""],
+            "a reboot under way keeps it"
+        );
+    }
+
+    #[test]
+    fn a_refused_restart_target_reboots_nothing() {
+        let Some(f) = crate::restartinto::tests::logind("no", "no", &[]) else {
+            return;
+        };
+        let target = BootTarget {
+            entry: Some("b.conf".into()),
+            title: "B".into(),
+            password: false,
+        };
+        let failed = restart_into(&f.client, &target, false, || panic!("no reboot"));
+        assert_eq!(failed, Some(Failed::Refused(Refused::NotAllowed)));
+        assert!(f.set.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_guarded_restart_target_asks_for_the_password_up_front() {
+        let guarded = BootTarget {
+            entry: None,
+            title: "Firmware Setup".into(),
+            password: true,
+        };
+        assert_eq!(Password::No.with(Some(&guarded)), Password::Yes);
+        assert_eq!(
+            Password::OverInhibitors.with(None),
+            Password::OverInhibitors
+        );
+        let open = BootTarget {
+            password: false,
+            ..guarded
+        };
+        assert_eq!(Password::No.with(Some(&open)), Password::No);
     }
 
     #[test]
@@ -1339,6 +1484,7 @@ mod tests {
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
+            boot: None,
             holders: None,
             stop: None,
             asked_portal: false,
@@ -1367,6 +1513,7 @@ mod tests {
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
+            boot: None,
             holders: None,
             stop: None,
             asked_portal: false,
@@ -1399,6 +1546,7 @@ mod tests {
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
+            boot: None,
             holders: None,
             stop: None,
             asked_portal: false,
@@ -1522,6 +1670,7 @@ mod tests {
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
+            boot: None,
             holders: Some(Vec::new()),
             stop: None,
             asked_portal: false,
@@ -1561,6 +1710,7 @@ mod tests {
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
+            boot: None,
             holders: Some(vec![copying]),
             stop: None,
             asked_portal: false,
@@ -1602,6 +1752,7 @@ mod tests {
         h.state.ending = Some(Ending {
             goal: Goal::LogOff,
             cmd: None,
+            boot: None,
             holders: Some(Vec::new()),
             stop: None,
             asked_portal: false,
@@ -1638,7 +1789,7 @@ mod tests {
     #[test]
     fn a_committed_log_off_with_a_client_tells_it_the_session_logged_off() {
         let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
-        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
+        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
         assert_eq!(
             h.state.ended_clients,
             [crate::console::ClientsEnd::LoggedOff]
@@ -1646,7 +1797,7 @@ mod tests {
 
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
-        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
+        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
         assert!(h.state.ended_clients.is_empty(), "no client to tell");
         assert!(h.state.session_fade.fading_out(), "the fade runs");
     }
@@ -1657,7 +1808,7 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         crate::standby::rdp_changed(&mut h.state, true);
         assert!(!h.state.remote_controlled());
-        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
+        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
         assert_eq!(
             h.state.ended_clients,
             [crate::console::ClientsEnd::LoggedOff]
@@ -1674,7 +1825,7 @@ mod tests {
             !h.state.standby.rdp_on(),
             "the server is the other session's"
         );
-        go_on(&mut h.state, Goal::LogOff, None, false, Password::No);
+        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
         assert!(h.state.ended_clients.is_empty(), "its clients stay");
     }
 
@@ -1712,6 +1863,7 @@ mod tests {
         let ending = |goal, cmd: Option<&str>, asked_portal| Ending {
             goal,
             cmd: cmd.map(String::from),
+            boot: None,
             holders: None,
             stop: None,
             asked_portal,
@@ -1749,6 +1901,7 @@ mod tests {
             &mut h.state,
             Goal::TurnOff,
             Some("true".into()),
+            None,
             false,
             Password::No,
         );
@@ -1963,6 +2116,7 @@ mod tests {
                 &mut h.state,
                 Goal::TurnOff,
                 Some(cmd.into()),
+                None,
                 false,
                 password,
             );
@@ -1994,6 +2148,7 @@ mod tests {
             &mut h.state,
             Goal::TurnOff,
             Some("false".into()),
+            None,
             false,
             Password::Yes,
         );

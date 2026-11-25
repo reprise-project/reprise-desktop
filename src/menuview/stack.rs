@@ -312,6 +312,9 @@ impl State {
                 MenuPick::WindowList { row, .. } => row == WindowListRow::MoveToMenu,
                 _ => false,
             },
+            Some(kind @ MenuKind::StartPanel { .. }) => {
+                kind.pick(idx) == MenuPick::StartPanel(crate::startmenu::StartRow::RestartInto)
+            }
             _ => false,
         }
     }

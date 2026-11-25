@@ -135,6 +135,9 @@ pub enum MenuKind {
     GreeterPower(Vec<repriselogin::greeter::PowerAction>),
     /// The lock screen's power menu, in `layers.lock`.
     LockPower(Vec<crate::lockpower::LockPower>),
+    /// Where Restart Into... or the Shut down options' Restart into restart to
+    /// ([`crate::restartinto::menu_items`]).
+    RestartInto(Vec<crate::restartinto::BootTarget>),
     Dnd(Vec<Option<crate::notifydnd::Row>>),
     StartPanel {
         rows: Vec<Option<StartRow>>,
@@ -200,6 +203,7 @@ pub enum MenuPick {
     NightLight(crate::nightlight::Row),
     GreeterPower(repriselogin::greeter::PowerAction),
     LockPower(crate::lockpower::LockPower),
+    RestartInto(crate::restartinto::BootTarget),
     Dnd(crate::notifydnd::Row),
     StartPanel(StartRow),
     TaskOverflow {
@@ -324,6 +328,8 @@ impl MenuKind {
                 .get(idx)
                 .copied()
                 .map_or(MenuPick::Nothing, MenuPick::LockPower),
+            MenuKind::RestartInto(targets) => crate::restartinto::target_at(targets, idx)
+                .map_or(MenuPick::Nothing, MenuPick::RestartInto),
             MenuKind::Dnd(rows) => rows
                 .get(idx)
                 .copied()

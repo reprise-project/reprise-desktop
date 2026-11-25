@@ -13,8 +13,7 @@ impl State {
 
     /// The Blue Start menu's Turn Off Computer button, after the menu closed.
     pub fn blue_turn_off(&mut self) {
-        let offered = crate::console::disconnect_offered(self);
-        let d = Dialog::turn_off(&self.config.power, offered).always_blue();
+        let d = self.turn_off_dialog().always_blue();
         self.open_dialog(d);
     }
 

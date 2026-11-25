@@ -117,6 +117,7 @@ mod regionview;
 mod remotekeys;
 mod render;
 mod reopenproto;
+mod restartinto;
 mod samepixels;
 mod sandbox;
 mod screencopy;
@@ -432,6 +433,7 @@ fn run(
     quickwatch::setup(&mut state);
     proxywatch::setup(&mut state);
     recentwatch::setup(&mut state);
+    restartinto::refresh(&mut state);
     xwayland::start(&mut state);
     event_loop.handle().insert_source(
         Generic::new(spawn::sigchld_fd()?, Interest::READ, Mode::Level),

@@ -493,6 +493,8 @@ pub struct State {
     /// Log Off, Turn Off or Restart waiting for the programs to close
     /// (`sessionend`).
     pub ending: Option<crate::sessionend::Ending>,
+    /// What logind offers to restart into (`restartinto`).
+    pub boot_targets: Vec<crate::restartinto::BootTarget>,
     pub session_fade: crate::sessionfade::SessionFade,
     pub calendar: crate::calendarview::CalendarState,
     pub widgets: crate::deskwidgets::DeskWidgets,
@@ -896,6 +898,7 @@ impl State {
             access: crate::access::Access::new(&handle),
             session: crate::session::Session::from_persisted(&persisted),
             ending: None,
+            boot_targets: Vec::new(),
             session_fade: crate::sessionfade::SessionFade::new(config.effects.session_fade_ms().0),
             calendar: Default::default(),
             widgets: Default::default(),

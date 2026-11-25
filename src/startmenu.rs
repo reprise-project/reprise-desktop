@@ -193,6 +193,8 @@ pub enum StartRow {
     LogOff,
     Lock,
     Restart,
+    /// Opens the targets to restart into as a submenu.
+    RestartInto,
     Sleep,
     Hibernate,
 }
@@ -351,8 +353,13 @@ pub fn program_menu(
 }
 
 /// The Shut down options: Disconnect or a live Switch user (`leave`), Log off, Lock, Restart,
-/// then, unless Disconnect is offered, Sleep, and Hibernate when `hibernate` is set.
-pub fn shutdown_menu(hibernate: bool, leave: Leave) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+/// Restart into with `restart_into`, then, unless Disconnect is offered, Sleep, and Hibernate when
+/// `hibernate` is set.
+pub fn shutdown_menu(
+    hibernate: bool,
+    leave: Leave,
+    restart_into: bool,
+) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let mut v = Vec::new();
     let remote = leave == Leave::Disconnect;
     match leave {
@@ -371,6 +378,12 @@ pub fn shutdown_menu(hibernate: bool, leave: Leave) -> (Vec<MenuItem>, Vec<Optio
         (MenuItem::Separator, None),
         (MenuItem::item("&Restart"), Some(StartRow::Restart)),
     ]);
+    if restart_into {
+        v.push((
+            MenuItem::item("Restart &into").submenu(true),
+            Some(StartRow::RestartInto),
+        ));
+    }
     if !remote {
         v.extend([
             (MenuItem::Separator, None),
@@ -622,25 +635,25 @@ mod tests {
     #[test]
     fn the_shutdown_menu_lists_hibernate_only_when_configured() {
         assert_eq!(
-            labels(&shutdown_menu(false, Leave::SwitchUser { live: false }).0),
+            labels(&shutdown_menu(false, Leave::SwitchUser { live: false }, false).0),
             ["&Log off", "L&ock", "", "&Restart", "", "&Sleep"]
         );
         assert!(
-            labels(&shutdown_menu(true, Leave::SwitchUser { live: false }).0)
+            labels(&shutdown_menu(true, Leave::SwitchUser { live: false }, false).0)
                 .contains(&"&Hibernate".to_string())
         );
     }
 
     #[test]
     fn the_shutdown_menu_offers_switch_user_first_under_reprise_login() {
-        let (items, rows) = shutdown_menu(false, Leave::SwitchUser { live: true });
+        let (items, rows) = shutdown_menu(false, Leave::SwitchUser { live: true }, false);
         assert_eq!(labels(&items)[..2], ["S&witch user", "&Log off"]);
         assert_eq!(rows[0], Some(StartRow::SwitchUser));
     }
 
     #[test]
     fn the_shutdown_menu_offers_disconnect_first_on_the_remote_side() {
-        let (items, rows) = shutdown_menu(false, Leave::Disconnect);
+        let (items, rows) = shutdown_menu(false, Leave::Disconnect, false);
         assert_eq!(labels(&items)[..2], ["&Disconnect", "&Log off"]);
         assert_eq!(
             rows[..3],
@@ -655,7 +668,7 @@ mod tests {
 
     #[test]
     fn the_shutdown_menu_offers_no_sleep_or_hibernate_on_the_remote_side() {
-        let (items, rows) = shutdown_menu(true, Leave::Disconnect);
+        let (items, rows) = shutdown_menu(true, Leave::Disconnect, false);
         assert_eq!(
             labels(&items),
             ["&Disconnect", "&Log off", "L&ock", "", "&Restart"]
