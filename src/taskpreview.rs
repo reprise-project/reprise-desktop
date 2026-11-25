@@ -508,6 +508,13 @@ pub fn hide(state: &mut State) {
     crate::autohideview::poke(state);
 }
 
+/// `w`'s title, app id or icon changed: a panel showing it draws it again.
+pub fn retitled(state: &mut State, w: WindowId) {
+    if (state.task_preview.shown.as_ref()).is_some_and(|p| p.windows.contains(&w)) {
+        redraw(state);
+    }
+}
+
 /// `w` is going away or leaving the screen: a panel showing it goes too. Called from `forget_window` and `desktops_changed`.
 pub fn forget_window(state: &mut State, w: WindowId) {
     if state
@@ -1076,6 +1083,34 @@ mod tests {
                 "one Suspended once nothing will show it, after the {view}"
             );
         }
+    }
+
+    #[test]
+    fn an_open_panel_draws_a_windows_new_title() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_titled(&mut c, "editor", "Alpha", (300, 200));
+        h.dispatch();
+        let (i, _, _) = centre(&h, a.id);
+        let tree = h.state.bars[0].tree;
+        let drawn = |h: &crate::harness::Harness| {
+            let p = h.state.task_preview.shown.as_ref().expect("the panel");
+            h.state.scene.buffer_canvas(p.buffer).expect("its canvas")
+        };
+        show(&mut h.state, tree, i);
+        let before = drawn(&h);
+        h.until("the titles drawn", |s| s.title_draws_at_once(a.id));
+        c.side.shells[a.shell]
+            .toplevel
+            .set_title("Evening Mist".into());
+        c.side.shells[a.shell].surface.commit();
+        h.roundtrip(&mut c);
+        h.dispatch();
+        let retitled = drawn(&h);
+        assert!(retitled != before, "the panel redrew");
+        show(&mut h.state, tree, i);
+        assert!(retitled == drawn(&h), "as a panel opened on the new title");
     }
 
     #[test]
