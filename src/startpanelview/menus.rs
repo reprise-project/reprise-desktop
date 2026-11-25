@@ -11,6 +11,7 @@ use crate::lockview::Origin;
 use crate::menuview::{MenuKind, Skin};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, StartRow, place_popup};
+use reprisekit::controls::endsession::Goal;
 
 /// The narrowest Recent Items gets to stand beside its row, at 100% text: an icon and about 20
 /// characters.
@@ -128,6 +129,7 @@ impl State {
             !self.config.power.hibernate.is_empty(),
             crate::console::leave_offered(self),
             !self.boot_targets.is_empty(),
+            self.offline.known.prepared,
         );
         crate::restartinto::refresh(self);
         let kind = crate::menuview::MenuKind::StartPanel { rows };
@@ -388,6 +390,16 @@ impl State {
                 );
             }
             StartRow::RestartInto => {}
+            StartRow::InstallUpdates(goal) => {
+                let goal = *goal;
+                self.close_start_panel();
+                let cmd = match goal {
+                    Goal::Restart => self.config.power.reboot.clone(),
+                    Goal::TurnOff | Goal::LogOff => self.config.power.poweroff.clone(),
+                };
+                let install = reprisekit::powerpanel::Updates::Install;
+                crate::sessionend::begin_updates(self, goal, cmd, install);
+            }
             StartRow::Sleep => {
                 self.close_start_panel();
                 let cmd = self.config.power.standby.clone();

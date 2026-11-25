@@ -51,6 +51,15 @@ pub enum DialogAction {
     Hibernate(String),
     /// End the session toward `Goal`, then run this command (`sessionend`).
     EndSession(Goal, String),
+    /// Turn Off or Restart from the Turn off computer panel while an offline update is prepared:
+    /// [`DialogAction::EndSession`] doing as the Install updates check box says (`offlineupdate`).
+    EndSessionUpdates {
+        goal: Goal,
+        cmd: String,
+        updates: reprisekit::powerpanel::Updates,
+    },
+    /// The Turn off computer panel's Install updates check box.
+    ToggleUpdates,
     /// Lock and hand the screen to the login screen (`loginlink::switch_user`).
     SwitchUser,
     /// Lock the console and let every remote client go (`console::disconnect`).
@@ -177,6 +186,8 @@ pub struct Welcome {
     pub actions: Vec<(Choice, DialogAction)>,
     /// Drawn Blue under glass too, as the Blue Start menu opens it.
     pub always_blue: bool,
+    /// Offers the Install updates check box while an offline update is prepared.
+    pub updates: bool,
 }
 
 /// Where the dialog lands on the output.
@@ -371,6 +382,12 @@ pub enum Outcome {
     StandBy(String),
     Hibernate(String),
     EndSession(Goal, String),
+    /// [`DialogAction::EndSessionUpdates`].
+    EndSessionUpdates {
+        goal: Goal,
+        cmd: String,
+        updates: reprisekit::powerpanel::Updates,
+    },
     /// The session-end prompt's answer: End Now or Cancel.
     SessionEnd(reprisekit::controls::endsession::Choice),
     /// The location prompt's answer for the program `desktop_id`.

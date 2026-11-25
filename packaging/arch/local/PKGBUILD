@@ -49,7 +49,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'gvfs-gphoto2: cameras plugged in by USB, under Computer'\''s Portable Devices'
             'iio-sensor-proxy: the built-in screen turning with a convertible or tablet'
             'colord: the profiles colord keeps outside the ICC folders in the Display page'\''s Color profile list'
-            'packagekit: reprise-updates, the updates tray icon and Software Updates, and installing package files and uninstalling programs from the Start menu'
+            'packagekit: reprise-updates, the updates tray icon and Software Updates, installing package files and uninstalling programs from the Start menu, and installing prepared offline updates on Turn Off and Restart'
             'flatpak: Flatpak application and runtime updates in Software Updates, and installing .flatpakref and .flatpak files'
             'fwupd: firmware updates in Software Updates (curl, which pacman needs too, downloads them)'
             'accountsservice: reprise-accounts (User Accounts), the user pictures on the login screen, the picture the Account portal shares and the language Region & Language hands other login managers'

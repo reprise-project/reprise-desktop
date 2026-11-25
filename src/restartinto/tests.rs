@@ -421,6 +421,7 @@ fn the_shut_down_options_open_restart_into_as_a_submenu() {
         false,
         reprisekit::powerpanel::Leave::SwitchUser { live: true },
         true,
+        false,
     );
     let at = (rows.iter())
         .position(|r| *r == Some(crate::startmenu::StartRow::RestartInto))

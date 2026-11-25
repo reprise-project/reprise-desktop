@@ -810,6 +810,9 @@ impl Dialog {
         if matches!(b.action, DialogAction::BrowseRun) {
             self.button_focus = None;
         }
+        if matches!(b.action, DialogAction::ToggleUpdates) {
+            return self.welcome_toggle_updates();
+        }
         let b = &self.buttons[i];
         match &b.action {
             DialogAction::Cancel => Outcome::Close,
@@ -817,6 +820,12 @@ impl Dialog {
             DialogAction::StandBy(cmd) => Outcome::StandBy(cmd.clone()),
             DialogAction::Hibernate(cmd) => Outcome::Hibernate(cmd.clone()),
             DialogAction::EndSession(goal, cmd) => Outcome::EndSession(*goal, cmd.clone()),
+            DialogAction::EndSessionUpdates { goal, cmd, updates } => Outcome::EndSessionUpdates {
+                goal: *goal,
+                cmd: cmd.clone(),
+                updates: *updates,
+            },
+            DialogAction::ToggleUpdates => Outcome::Nothing,
             DialogAction::SwitchUser => Outcome::SwitchUser,
             DialogAction::Disconnect => Outcome::Disconnect,
             DialogAction::GreeterPower(a) => Outcome::GreeterPower(*a),

@@ -1,14 +1,18 @@
-//! The Log Off and Turn off computer panels put together: Blue's painter, with Cancel and Restart
-//! Into... drawn as Blue's push buttons or the active look's.
+//! The Log Off and Turn off computer panels put together: Blue's painter, with Cancel, Restart
+//! Into... and the Install updates check box drawn as Blue's or the active look's.
 
 use crate::blue::{self, Variant};
 use crate::cues::Cues;
 use crate::look::{self, Look};
 use crate::paint::{Backdrop, Paint};
-use crate::pointer::{Lit, lit_of};
-use crate::powerpanel::{Layout, Panel, Part, restart_into_label};
-use crate::raster::Canvas;
-use crate::text::TextRenderer;
+use crate::pointer::{Interaction, Lit, lit_of};
+use crate::powerpanel::{Layout, Panel, Part, restart_into_label, updates_label};
+use crate::raster::{Canvas, Rect};
+use crate::text::{Align, TextRenderer};
+use crate::theme::Color;
+
+/// The check box label's ink on the panel's dark bottom band.
+const ON_BAND: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 
 /// The Blue scheme a panel drawn under `look` takes: the look's own under Blue, navy otherwise.
 pub fn power_panel_variant(look: &Look) -> Variant {
@@ -18,7 +22,8 @@ pub fn power_panel_variant(look: &Look) -> Variant {
 /// Panel `p` laid out as `lay` onto `c`, a device-px canvas at scale 1 for output scale `s`, in
 /// `v`'s colours; `text` is the host's renderer for `s` and `px` its device size. Cancel and Restart
 /// Into... are push buttons of `cancel`'s look, Blue's in `v` when it is `None`. Each wears the
-/// default ring while it has the focus, and the dotted rectangle too while `cues` shows it.
+/// default ring while it has the focus, and the dotted rectangle too while `cues` shows it. The
+/// Install updates check box is in the same look.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_power_panel(
     c: &mut Canvas,
@@ -66,10 +71,49 @@ pub fn draw_power_panel(
             &label,
             focused,
             lit_of(lit, part),
-            true,
+            p.live(part),
             focused && cues.focus,
             px,
         );
+    }
+    if let (Some(b), Some(row)) = (p.updates, lay.updates) {
+        let focus = p.focus == Part::Updates && cues.focus;
+        let ptr = lit_of(lit, Part::Updates);
+        draw_updates_box(c, text, &paint, row, b.checked, ptr, focus, ON_BAND, px);
+    }
+}
+
+/// The Install updates check box across `row`, in logical px, onto `c` at `p.s`: the look's box,
+/// the label in `ink` with its access key underlined while `p.access_keys`, and the dotted
+/// rectangle round the label while `focus`. The framed Turn off computer dialog draws it too.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_updates_box(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    row: Rect,
+    checked: bool,
+    ptr: Interaction,
+    focus: bool,
+    ink: Color,
+    px: u32,
+) {
+    let s = p.s;
+    let (b, label) = Layout::check_parts(row);
+    look::widgets::draw_checkbox(c, p, b.scaled(s), checked, ptr);
+    let words = updates_label();
+    let label = label.scaled(s);
+    look::widgets::draw_label(c, text, p, label, &words, ink, Align::Left, px);
+    if focus {
+        let w = text.measure(&crate::text::split_mnemonic(&words).0, false, px);
+        let h = px as i32 + 3 * s;
+        let ring = Rect::new(
+            label.x - s,
+            label.y + (label.height - h) / 2,
+            (w + 2 * s).min(label.width + s),
+            h,
+        );
+        look::widgets::draw_focus_ring(c, p, ring, ink);
     }
 }
 
@@ -261,6 +305,95 @@ mod tests {
             add("restart into focused", &t, None, Cues::ALL);
         }
         crate::pins::check("interfaces/power_panel_classic", &got);
+    }
+
+    #[test]
+    fn the_install_updates_box_pins_per_state_look_and_scale() {
+        crate::pins::fonts();
+        let classic = Theme::default();
+        let mut got = Vec::new();
+        for s in [1, 2] {
+            let theme = classic.scaled(s);
+            for (look, cancel) in [("Blue", None), ("Classic", Some(&theme))] {
+                let mut t = Panel::turn_off(First::StandBy {
+                    live: true,
+                    hibernate: false,
+                });
+                t.title = String::new();
+                t.offer_updates(true, true);
+                let mut add = |name: &str, p: &Panel, lit: Lit<Part>, cues: Cues| {
+                    let c = drawn_with(Variant::Blue, cancel, p, lit, cues, s);
+                    got.push((format!("{look} {s} {name}"), fnv(&c)));
+                };
+                add("checked", &t, None, Cues::NONE);
+                add(
+                    "hot",
+                    &t,
+                    Some((Part::Updates, Interaction::Hot)),
+                    Cues::NONE,
+                );
+                add(
+                    "pressed",
+                    &t,
+                    Some((Part::Updates, Interaction::Pressed)),
+                    Cues::NONE,
+                );
+                t.toggle_updates();
+                add("unchecked focused", &t, None, Cues::ALL);
+                t.toggle_updates();
+                t.restart_into = true;
+                add("checked beside a greyed restart into", &t, None, Cues::NONE);
+            }
+            let glass = theme_for(Interface::Glass).scaled(s);
+            let text = TextRenderer::load(&glass.fonts);
+            let paint = glass.paint();
+            let ink = glass.colors.button_text;
+            let row = Rect::new(0, 0, 160, 20);
+            for (name, on, ptr, focus) in [
+                ("checked", true, Interaction::Idle, false),
+                ("hot", true, Interaction::Hot, false),
+                ("unchecked focused", false, Interaction::Idle, true),
+            ] {
+                let mut c = Canvas::new((row.width * s) as u32, (row.height * s) as u32);
+                let px = glass.fonts.size_px;
+                let t = text.for_output(s);
+                draw_updates_box(&mut c, t, &paint, row, on, ptr, focus, ink, px);
+                got.push((format!("Glass {s} {name}"), fnv(&c)));
+            }
+        }
+        crate::pins::check("interfaces/power_panel_updates", &got);
+    }
+
+    #[test]
+    fn the_install_updates_box_shows_only_while_offered_and_writes_white_on_the_band() {
+        let mut p = Panel::turn_off(First::StandBy {
+            live: true,
+            hibernate: false,
+        });
+        let plain = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
+        p.offer_updates(true, true);
+        let lay = layout(&p, TextUnits::ONE);
+        let row = lay.updates.expect("the check box's row");
+        let c = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
+        let (b, label) = Layout::check_parts(row);
+        let differs = |x: i32, y: i32| c.get(x, y) != plain.get(x, y);
+        assert!(differs(b.x + 6, b.y + 6), "the box is drawn");
+        let white = (label.y..label.bottom())
+            .flat_map(|y| (label.x..label.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| c.get(x, y) & 0xFF_FFFF == 0xFF_FFFF)
+            .count();
+        assert!(white > 40, "the label is white on the band ({white} px)");
+        let cancel = lay.cancel;
+        assert_eq!(
+            c.get(cancel.x + 4, cancel.y + 4),
+            plain.get(cancel.x + 4, cancel.y + 4),
+            "Cancel stays where it was"
+        );
+        p.offer_updates(false, false);
+        assert_eq!(
+            drawn(Variant::Blue, &p, None, Cues::NONE, 1).pixels,
+            plain.pixels
+        );
     }
 
     #[test]

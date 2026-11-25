@@ -197,6 +197,8 @@ pub enum StartRow {
     RestartInto,
     Sleep,
     Hibernate,
+    /// Install the prepared offline update, then turn off or restart.
+    InstallUpdates(reprisekit::controls::endsession::Goal),
 }
 
 /// The kind of a two-column Start menu place with a context menu: a folder, or Computer.
@@ -352,16 +354,32 @@ pub fn program_menu(
     v.into_iter().unzip()
 }
 
-/// The Shut down options: Disconnect or a live Switch user (`leave`), Log off, Lock, Restart,
-/// Restart into with `restart_into`, then, unless Disconnect is offered, Sleep, and Hibernate when
-/// `hibernate` is set.
+/// The Shut down options: Install updates and shut down and Install updates and restart while an
+/// offline update is prepared (`updates`), Disconnect or a live Switch user (`leave`), Log off,
+/// Lock, Restart, Restart into with `restart_into`, then, unless Disconnect is offered, Sleep, and
+/// Hibernate when `hibernate` is set.
 pub fn shutdown_menu(
     hibernate: bool,
     leave: Leave,
     restart_into: bool,
+    updates: bool,
 ) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+    use reprisekit::controls::endsession::Goal;
     let mut v = Vec::new();
     let remote = leave == Leave::Disconnect;
+    if updates {
+        v.extend([
+            (
+                MenuItem::item("Install &updates and shut down"),
+                Some(StartRow::InstallUpdates(Goal::TurnOff)),
+            ),
+            (
+                MenuItem::item("Install updates and r&estart"),
+                Some(StartRow::InstallUpdates(Goal::Restart)),
+            ),
+            (MenuItem::Separator, None),
+        ]);
+    }
     match leave {
         Leave::Disconnect => v.push((
             MenuItem::item(&Choice::Disconnect.label()),
@@ -635,25 +653,25 @@ mod tests {
     #[test]
     fn the_shutdown_menu_lists_hibernate_only_when_configured() {
         assert_eq!(
-            labels(&shutdown_menu(false, Leave::SwitchUser { live: false }, false).0),
+            labels(&shutdown_menu(false, Leave::SwitchUser { live: false }, false, false).0),
             ["&Log off", "L&ock", "", "&Restart", "", "&Sleep"]
         );
         assert!(
-            labels(&shutdown_menu(true, Leave::SwitchUser { live: false }, false).0)
+            labels(&shutdown_menu(true, Leave::SwitchUser { live: false }, false, false).0)
                 .contains(&"&Hibernate".to_string())
         );
     }
 
     #[test]
     fn the_shutdown_menu_offers_switch_user_first_under_reprise_login() {
-        let (items, rows) = shutdown_menu(false, Leave::SwitchUser { live: true }, false);
+        let (items, rows) = shutdown_menu(false, Leave::SwitchUser { live: true }, false, false);
         assert_eq!(labels(&items)[..2], ["S&witch user", "&Log off"]);
         assert_eq!(rows[0], Some(StartRow::SwitchUser));
     }
 
     #[test]
     fn the_shutdown_menu_offers_disconnect_first_on_the_remote_side() {
-        let (items, rows) = shutdown_menu(false, Leave::Disconnect, false);
+        let (items, rows) = shutdown_menu(false, Leave::Disconnect, false, false);
         assert_eq!(labels(&items)[..2], ["&Disconnect", "&Log off"]);
         assert_eq!(
             rows[..3],
@@ -667,8 +685,30 @@ mod tests {
     }
 
     #[test]
+    fn a_prepared_update_heads_the_shutdown_menu_with_its_two_install_rows() {
+        use reprisekit::controls::endsession::Goal;
+        let (items, rows) = shutdown_menu(false, Leave::SwitchUser { live: false }, false, true);
+        assert_eq!(
+            labels(&items)[..4],
+            [
+                "Install &updates and shut down",
+                "Install updates and r&estart",
+                "",
+                "&Log off"
+            ]
+        );
+        assert_eq!(
+            rows[..2],
+            [
+                Some(StartRow::InstallUpdates(Goal::TurnOff)),
+                Some(StartRow::InstallUpdates(Goal::Restart))
+            ]
+        );
+    }
+
+    #[test]
     fn the_shutdown_menu_offers_no_sleep_or_hibernate_on_the_remote_side() {
-        let (items, rows) = shutdown_menu(true, Leave::Disconnect, false);
+        let (items, rows) = shutdown_menu(true, Leave::Disconnect, false, false);
         assert_eq!(
             labels(&items),
             ["&Disconnect", "&Log off", "L&ock", "", "&Restart"]

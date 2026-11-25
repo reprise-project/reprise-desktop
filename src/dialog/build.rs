@@ -516,6 +516,7 @@ impl Dialog {
                 (Choice::LogOff, DialogAction::Act(Action::Exit)),
             ],
             always_blue: false,
+            updates: false,
         })
     }
 
@@ -553,6 +554,7 @@ impl Dialog {
                 ),
             ],
             always_blue: false,
+            updates: true,
         })
     }
 
@@ -576,6 +578,7 @@ impl Dialog {
                 ),
             ],
             always_blue: false,
+            updates: false,
         })
     }
 

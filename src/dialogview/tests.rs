@@ -452,6 +452,7 @@ fn every_dialog(h: &Harness) -> Vec<(&'static str, Dialog)> {
                 crate::sessionend::Again {
                     act: crate::sessionend::Act::Restart,
                     cmd: "true".into(),
+                    updates: reprisekit::powerpanel::Updates::Leave,
                 },
             ),
         ),

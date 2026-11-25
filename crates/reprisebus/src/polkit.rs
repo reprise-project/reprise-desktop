@@ -117,6 +117,31 @@ pub async fn may_ask(conn: &zbus::Connection, action: &str) -> bool {
         .is_none_or(|c| c.authorized || c.challenge)
 }
 
+/// What polkit says to an action, asked without interaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    Allowed,
+    /// After a password prompt.
+    Prompts,
+    Refused,
+}
+
+/// polkit's [`Verdict`] on `action` for the owner of `conn`; Allowed when polkit does not answer,
+/// so the service itself says no. A password kept from an earlier call (`auth_admin_keep`)
+/// Prompts, as it may lapse before the action runs.
+pub async fn verdict(conn: &zbus::Connection, action: &str) -> Verdict {
+    judged(check(conn, action).await.as_ref())
+}
+
+fn judged(checked: Option<&Checked>) -> Verdict {
+    match checked {
+        None => Verdict::Allowed,
+        Some(c) if lasting(c.authorized, &c.details) => Verdict::Allowed,
+        Some(c) if c.authorized || c.challenge => Verdict::Prompts,
+        Some(_) => Verdict::Refused,
+    }
+}
+
 /// [`allowed_without_prompt`] for good: a password typed for an earlier call, which polkit keeps
 /// a few minutes (`auth_admin_keep`), does not count.
 pub async fn allowed_without_password(conn: &zbus::Connection, action: &str) -> bool {
@@ -190,6 +215,23 @@ mod tests {
             "tmpauthz7".to_string(),
         )]);
         assert!(!lasting(true, &kept));
+    }
+
+    #[test]
+    fn a_kept_password_prompts_in_a_verdict() {
+        let checked = |authorized, challenge, kept: bool| Checked {
+            authorized,
+            challenge,
+            details: (kept.then(|| ("polkit.temporary_authorization_id".into(), "t".into())))
+                .into_iter()
+                .collect(),
+        };
+        let judge = |c: Checked| judged(Some(&c));
+        assert_eq!(judged(None), Verdict::Allowed, "the service says no itself");
+        assert_eq!(judge(checked(true, false, false)), Verdict::Allowed);
+        assert_eq!(judge(checked(true, false, true)), Verdict::Prompts);
+        assert_eq!(judge(checked(false, true, false)), Verdict::Prompts);
+        assert_eq!(judge(checked(false, false, false)), Verdict::Refused);
     }
 
     #[test]
