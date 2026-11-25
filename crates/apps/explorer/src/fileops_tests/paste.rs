@@ -532,6 +532,36 @@ fn undo_greys_and_ctrl_z_says_so_while_another_window_undoes() {
     assert_eq!(ex.undo, Some("Copy"));
 }
 
+/// An edit of the undo history that panics still comes off the window's count, so Undo and a
+/// close go on, and the edits queued behind it run.
+#[test]
+fn a_panicking_undo_history_edit_frees_the_window_and_the_edits_behind_it_run() {
+    use reprisefs::undo::Undoable;
+    let home = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(home.path().to_path_buf()), &mut ctx);
+    let (go, wait) = std::sync::mpsc::channel::<()>();
+    ex.record_undos(&ctx, move |_| {
+        let _ = wait.recv();
+        panic!("an edit that panics");
+    });
+    let behind = home.path().join("behind");
+    ex.record_undos(&ctx, move |undos| undos.push(Undoable::New(behind, None)));
+    go.send(()).expect("the first edit waits");
+
+    let start = std::time::Instant::now();
+    while ex.busy() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "the window is left busy"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        ex.poll_jobs(&mut ctx);
+    }
+    assert_eq!((ex.undo_edits_pending, ex.jobs_pending), (0, 0));
+    assert_eq!(ex.undo, Some("New"), "the edit behind the panic ran");
+}
+
 /// Undo of a move whose source folder vanished fails, says so, and keeps the batch, so Undo again once
 /// the folder is back finishes the job.
 #[test]

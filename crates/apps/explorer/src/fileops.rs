@@ -692,10 +692,17 @@ impl Explorer {
         edit: impl FnOnce(&reprisefs::undo::SharedUndo) -> JobDone + Send + 'static,
     ) {
         let mut edit: UndoEdit = Box::new(move |undos| {
-            let done = edit(undos);
+            // A panic still takes the edit off the window's count, and the edits behind it run.
+            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(undos)));
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
                 ex.undo_edits_pending -= 1;
-                done(ex, ctx)
+                match done {
+                    Ok(done) => done(ex, ctx),
+                    Err(_) => {
+                        ex.sync_undo();
+                        Reply::redraw()
+                    }
+                }
             })
         });
         self.jobs_pending += 1;
