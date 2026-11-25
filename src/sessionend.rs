@@ -5,6 +5,7 @@
 //! Turn Off and Restart ask logind first (a Restart Into for its target too), and a refusal before or after the programs close shows a message box;
 //! one that needs a password runs before the fade, so polkit's prompt shows over the desktop.
 //! Stand By and Hibernate close nothing; a refusal shows the same message box.
+//! Log Off and a critical battery give up a power action under way, but cannot stop a reboot logind already accepted.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -256,7 +257,7 @@ fn start(
     state.session.kept = true;
     if state.locked_for(origin) {
         log::info!("session end: locked, nobody to ask");
-        go_on(state, goal, cmd, boot, false, password);
+        go_on(state, goal, cmd, boot, false, password, critical);
         return;
     }
     let (tx, rx) = channel::channel::<Vec<Holder>>();
@@ -434,6 +435,7 @@ fn finish(state: &mut State, override_inhibitors: bool) {
         e.boot,
         override_inhibitors,
         e.password,
+        e.mode == Mode::Critical,
     );
 }
 
@@ -457,6 +459,7 @@ fn go_on(
     boot: Option<BootTarget>,
     override_inhibitors: bool,
     password: Password,
+    critical: bool,
 ) {
     crate::crash::ending();
     match cmd {
@@ -466,15 +469,19 @@ fn go_on(
                 state,
                 SAVE_SHOTS,
                 Box::new(move |state| {
-                    let act = Act::of(goal);
-                    attempt(state, act, cmd, boot, override_inhibitors, Some(goal));
+                    let how = Run {
+                        override_inhibitors,
+                        critical,
+                        wind_down_for: Some(goal),
+                    };
+                    attempt(state, Act::of(goal), cmd, boot, how);
                 }),
             );
         }
         cmd => wind_down(
             state,
             goal,
-            Box::new(move |state| act(state, goal, cmd, boot, override_inhibitors)),
+            Box::new(move |state| act(state, goal, cmd, boot, override_inhibitors, critical)),
         ),
     }
 }
@@ -575,12 +582,14 @@ fn act(
     cmd: Option<String>,
     boot: Option<BootTarget>,
     override_inhibitors: bool,
+    critical: bool,
 ) {
     let Some(cmd) = cmd else {
-        let stale = std::mem::take(&mut state.powering.stale);
+        let stale = state.powering.stale.clone();
+        let rebooting = Arc::clone(&state.powering.rebooting);
         let spawned = !stale.is_empty()
             && state.spawn_job(move || {
-                clear_stale(&stale);
+                clear_stale(&stale, false, &rebooting);
                 Box::new(|state: &mut State| state.signal.stop())
             });
         if !spawned {
@@ -589,7 +598,12 @@ fn act(
         return;
     };
     log::info!("session end: {goal:?} runs {cmd:?}");
-    attempt(state, Act::of(goal), cmd, boot, override_inhibitors, None);
+    let how = Run {
+        override_inhibitors,
+        critical,
+        wind_down_for: None,
+    };
+    attempt(state, Act::of(goal), cmd, boot, how);
 }
 
 /// Put the computer to sleep with a `[power]` standby or hibernate `cmd`, closing nothing.
@@ -602,7 +616,12 @@ pub fn sleep(state: &mut State, act: Act, cmd: String) {
         return;
     }
     log::info!("power: {act:?} runs {cmd:?}");
-    attempt(state, act, cmd, None, false, None);
+    let how = Run {
+        override_inhibitors: false,
+        critical: false,
+        wind_down_for: None,
+    };
+    attempt(state, act, cmd, None, how);
 }
 
 /// The power actions run off the loop ([`attempt`]), one at a time. Each is numbered; one given up
@@ -612,6 +631,8 @@ pub fn sleep(state: &mut State, act: Act, cmd: String) {
 pub struct Powering {
     /// The newest number handed out; a thread reads it to learn its attempt was given up on.
     newest: Arc<AtomicU64>,
+    /// The attempt whose reboot logind was asked for and has not refused, 0 for none.
+    rebooting: Arc<AtomicU64>,
     /// The attempt waiting for its answer and the restart target it sets.
     under_way: Option<(u64, Option<BootTarget>)>,
     /// Custom Stand By and Hibernate commands still running past [`ANSWER_WITHIN`] ([`late`]).
@@ -656,7 +677,7 @@ impl Powering {
         true
     }
 
-    /// [`Powering::give_up`], and on the lingering commands too.
+    /// [`Powering::give_up`], giving up the lingering commands too.
     fn give_up_all(&mut self) -> bool {
         let lingered = !self.lingering.is_empty();
         self.lingering.clear();
@@ -671,10 +692,58 @@ impl Powering {
         }
     }
 
-    /// Whether attempt `id` is still the newest, as its thread sees it.
-    fn still(newest: &AtomicU64, id: u64) -> bool {
-        newest.load(Ordering::SeqCst) == id
+    fn ticket(&self, id: u64) -> Ticket {
+        Ticket {
+            id,
+            newest: Arc::clone(&self.newest),
+            rebooting: Arc::clone(&self.rebooting),
+        }
     }
+
+    /// Drop the stale targets of the attempts in `cleared`.
+    fn cleared(&mut self, cleared: &[u64]) {
+        self.stale.retain(|(id, _)| !cleared.contains(id));
+    }
+}
+
+/// An attempt as its thread sees it.
+struct Ticket {
+    id: u64,
+    newest: Arc<AtomicU64>,
+    rebooting: Arc<AtomicU64>,
+}
+
+impl Ticket {
+    /// Whether the attempt is still the newest.
+    fn still(&self) -> bool {
+        self.newest.load(Ordering::SeqCst) == self.id
+    }
+
+    /// Mark the attempt rebooting unless it was given up on. The mark goes first: a clear after a
+    /// give up either sees it or the give up is seen here.
+    fn claim(&self) -> bool {
+        self.rebooting.store(self.id, Ordering::SeqCst);
+        if self.still() {
+            return true;
+        }
+        self.release();
+        false
+    }
+
+    /// The reboot was refused.
+    fn release(&self) {
+        let _ = (self.rebooting).compare_exchange(self.id, 0, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
+/// How an [`attempt`] runs.
+#[derive(Clone, Copy)]
+struct Run {
+    override_inhibitors: bool,
+    /// For a critical battery, which leaves no time for a password prompt to clear a stale target.
+    critical: bool,
+    /// The session winds down for this goal once the action is under way.
+    wind_down_for: Option<Goal>,
 }
 
 /// How long a power action may take to answer before Reprise gives up on it ([`late`]): logind
@@ -682,20 +751,14 @@ impl Powering {
 const ANSWER_WITHIN: Duration = Duration::from_secs(120);
 
 /// Run `cmd` off the loop, on logind when it names a logind action, into `boot` when set, then
-/// [`answered`]. Restart targets left by attempts given up on are cleared first.
-fn attempt(
-    state: &mut State,
-    act: Act,
-    cmd: String,
-    boot: Option<BootTarget>,
-    override_inhibitors: bool,
-    wind_down_for: Option<Goal>,
-) {
+/// [`answered`]. Stale restart targets are cleared first; a plain Restart with one still set is
+/// refused ([`still_aimed`]).
+fn attempt(state: &mut State, act: Act, cmd: String, boot: Option<BootTarget>, how: Run) {
     let env = state.env.clone();
     let interactive = prompts(state);
-    let stale = std::mem::take(&mut state.powering.stale);
     let id = state.powering.begin(boot.clone());
-    let newest = Arc::clone(&state.powering.newest);
+    let stale = state.powering.stale.clone();
+    let ticket = state.powering.ticket(id);
     let lingers = matches!(act, Act::StandBy | Act::Hibernate) && logind_verb(&cmd).is_none();
     let deadline =
         (state.handle).insert_source(Timer::from_duration(ANSWER_WITHIN), move |_, _, state| {
@@ -706,24 +769,28 @@ fn attempt(
         log::warn!("session end: no deadline for {act:?}: {}", e.error);
     }
     let spawned = state.spawn_job(move || {
+        let mut cleared = Vec::new();
         let failed = unpanicked(|| {
-            clear_stale(&stale);
+            cleared = clear_stale(&stale, interactive && !how.critical, &ticket.rebooting);
+            if let Some(why) = still_aimed(act, boot.as_ref(), &stale, &cleared) {
+                return Some(Failed::Refused(why));
+            }
             let go = || match logind_verb(&cmd) {
-                Some(verb) => zbus::block_on(call(verb, override_inhibitors, interactive)),
+                Some(verb) => zbus::block_on(call(verb, how.override_inhibitors, interactive)),
                 None => run(&cmd, &env).map(Failed::Refused),
             };
             match boot {
                 None => go(),
                 Some(boot) => match zbus::block_on(zbus::Connection::system()) {
-                    Ok(conn) => {
-                        let still = || Powering::still(&newest, id);
-                        restart_into(&conn, &boot, interactive, still, go)
-                    }
+                    Ok(conn) => restart_into(&conn, &boot, interactive, &ticket, go),
                     Err(e) => Some(Failed::Refused(Refused::Failed(e.to_string()))),
                 },
             }
         });
-        Box::new(move |state: &mut State| answered(state, id, act, failed, wind_down_for))
+        Box::new(move |state: &mut State| {
+            state.powering.cleared(&cleared);
+            answered(state, id, act, failed, how.wind_down_for);
+        })
     });
     if !spawned {
         state.powering.answer(id);
@@ -759,37 +826,67 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
     refuse(state, act, &Refused::Late);
 }
 
-/// Clear restart targets attempts given up on may have set, asking for no password; one that
-/// fails is logged and the power action goes ahead.
-fn clear_stale(stale: &[(u64, BootTarget)]) {
+/// Clear the stale restart targets, with a password prompt when `interactive`, all but the target
+/// of the attempt `rebooting` ([`Ticket::claim`]); returns the attempts whose targets cleared.
+fn clear_stale(stale: &[(u64, BootTarget)], interactive: bool, rebooting: &AtomicU64) -> Vec<u64> {
     if stale.is_empty() {
-        return;
+        return Vec::new();
     }
-    if let Some(conn) = zbus::block_on(connect(true)) {
-        zbus::block_on(clear(&conn, stale));
+    let rebooting = rebooting.load(Ordering::SeqCst);
+    match zbus::block_on(connect(true)) {
+        Some(conn) => zbus::block_on(clear(&conn, stale, interactive, rebooting)),
+        None => Vec::new(),
     }
 }
 
-async fn clear(conn: &zbus::Connection, stale: &[(u64, BootTarget)]) {
-    for (_, b) in stale {
-        match crate::restartinto::aim(conn, b, false, false).await {
-            Ok(()) => log::info!("session end: cleared the restart target {:?}", b.entry),
+async fn clear(
+    conn: &zbus::Connection,
+    stale: &[(u64, BootTarget)],
+    interactive: bool,
+    rebooting: u64,
+) -> Vec<u64> {
+    let mut cleared = Vec::new();
+    for (id, b) in stale {
+        if *id == rebooting {
+            log::info!("session end: {:?} is left for its reboot", b.entry);
+            continue;
+        }
+        match crate::restartinto::aim(conn, b, false, interactive).await {
+            Ok(()) => {
+                log::info!("session end: cleared the restart target {:?}", b.entry);
+                cleared.push(*id);
+            }
             Err(e) => log::warn!(
                 "session end: clearing the restart target {:?}: {e}",
                 b.entry
             ),
         }
     }
+    cleared
 }
 
-/// Set `boot` with logind on `conn`, then `reboot` while the attempt is `still` the newest; a
-/// reboot that does not happen clears it, so a later restart lands where it always does. The clear
-/// may prompt as the set did; one that fails is named in the refusal.
+/// A plain Restart while a stale target is still set would start that target, so it is refused.
+fn still_aimed(
+    act: Act,
+    boot: Option<&BootTarget>,
+    stale: &[(u64, BootTarget)],
+    cleared: &[u64],
+) -> Option<Refused> {
+    if act != Act::Restart || boot.is_some() {
+        return None;
+    }
+    let (_, b) = stale.iter().find(|(id, _)| !cleared.contains(id))?;
+    Some(Refused::Aimed(None, b.title.clone()))
+}
+
+/// Set `boot` with logind on `conn`, then `reboot` unless the attempt was given up on. A reboot that
+/// does not happen clears it, prompting as the set did unless given up on by then, so a later
+/// restart lands where it always does; a clear that fails is named in the refusal.
 fn restart_into(
     conn: &zbus::Connection,
     boot: &BootTarget,
     interactive: bool,
-    still: impl FnOnce() -> bool,
+    ticket: &Ticket,
     reboot: impl FnOnce() -> Option<Failed>,
 ) -> Option<Failed> {
     if let Err(e) = zbus::block_on(crate::restartinto::aim(conn, boot, true, interactive)) {
@@ -797,13 +894,18 @@ fn restart_into(
         let dismissed = || interactive && reprisebus::polkit::dismissed();
         return Some(failure(&e, dismissed).map_or(Failed::Dismissed, Failed::Refused));
     }
-    let failed = match still() {
-        true => reboot()?,
+    let failed = match ticket.claim() {
+        true => {
+            let failed = reboot()?;
+            ticket.release();
+            failed
+        }
         false => {
             log::info!("session end: restart into {:?} given up on", boot.entry);
             Failed::Dismissed
         }
     };
+    let interactive = interactive && ticket.still();
     match zbus::block_on(crate::restartinto::aim(conn, boot, false, interactive)) {
         Ok(()) => Some(failed),
         Err(e) => {
@@ -1736,22 +1838,16 @@ mod tests {
             password: false,
         };
         let mut rebooted = false;
-        let failed = restart_into(
-            &f.client,
-            &target,
-            false,
-            || true,
-            || {
-                rebooted = true;
-                Some(Failed::Refused(Refused::Unsupported))
-            },
-        );
+        let failed = restart_into(&f.client, &target, false, &ticket(false), || {
+            rebooted = true;
+            Some(Failed::Refused(Refused::Unsupported))
+        });
         assert!(rebooted);
         assert_eq!(failed, Some(Failed::Refused(Refused::Unsupported)));
         assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\"", "entry \"\""]);
         f.set.lock().unwrap().clear();
         assert_eq!(
-            restart_into(&f.client, &target, false, || true, || None),
+            restart_into(&f.client, &target, false, &ticket(false), || None),
             None
         );
         assert_eq!(
@@ -1773,11 +1869,11 @@ mod tests {
         };
         let unsupported = || Some(Failed::Refused(Refused::Unsupported));
         assert_eq!(
-            restart_into(&f.client, &target, true, || true, unsupported),
+            restart_into(&f.client, &target, true, &ticket(false), unsupported),
             Some(Failed::Refused(Refused::Unsupported))
         );
         assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\"", "entry \"\""]);
-        let kept = restart_into(&f.client, &target, false, || true, unsupported);
+        let kept = restart_into(&f.client, &target, false, &ticket(false), unsupported);
         let Some(Failed::Refused(why)) = kept else {
             panic!("a refusal, not {kept:?}");
         };
@@ -1786,18 +1882,23 @@ mod tests {
             "Reprise could not restart the computer.\n\nThis computer does not support it.\n\n\
              The next restart still starts B."
         );
-        let dismissed = restart_into(
-            &f.client,
-            &target,
-            false,
-            || true,
-            || Some(Failed::Dismissed),
-        );
+        let dismissed = restart_into(&f.client, &target, false, &ticket(false), || {
+            Some(Failed::Dismissed)
+        });
         assert_eq!(
             dismissed,
             Some(Failed::Refused(Refused::Aimed(None, "B".into()))),
             "a dismissed prompt still says the target stays"
         );
+    }
+
+    /// Attempt 1, given up on when `given_up`.
+    fn ticket(given_up: bool) -> Ticket {
+        Ticket {
+            id: 1,
+            newest: Arc::new(AtomicU64::new(if given_up { 2 } else { 1 })),
+            rebooting: Arc::default(),
+        }
     }
 
     fn target_b() -> BootTarget {
@@ -2019,33 +2120,100 @@ mod tests {
         let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) else {
             return;
         };
-        let failed = restart_into(
-            &f.client,
-            &target_b(),
-            false,
-            || false,
-            || panic!("no reboot"),
-        );
+        let failed = restart_into(&f.client, &target_b(), false, &ticket(true), || {
+            panic!("no reboot")
+        });
         assert_eq!(failed, Some(Failed::Dismissed));
         assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\"", "entry \"\""]);
     }
 
     #[test]
-    fn stale_restart_targets_clear_without_a_password_prompt() {
+    fn stale_restart_targets_clear_with_a_password_prompt_when_one_may_show() {
         let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) else {
             return;
         };
         let firmware = BootTarget::firmware(false);
-        zbus::block_on(clear(&f.client, &[(1, target_b()), (2, firmware.clone())]));
+        let stale = [(1, target_b()), (2, firmware)];
+        assert_eq!(zbus::block_on(clear(&f.client, &stale, false, 0)), [1, 2]);
         assert_eq!(*f.set.lock().unwrap(), ["entry \"\"", "firmware false"]);
         let Some(f) = crate::restartinto::tests::logind_asking_to_clear() else {
             return;
         };
-        zbus::block_on(clear(&f.client, &[(1, target_b()), (2, firmware)]));
+        assert_eq!(
+            zbus::block_on(clear(&f.client, &stale, false, 0)),
+            [2],
+            "a refused clear goes on to the next"
+        );
+        assert_eq!(zbus::block_on(clear(&f.client, &stale, true, 0)), [1, 2]);
+    }
+
+    #[test]
+    fn a_target_left_set_refuses_a_plain_restart_only() {
+        let stale = [(1, target_b())];
+        assert_eq!(
+            still_aimed(Act::Restart, None, &stale, &[]),
+            Some(Refused::Aimed(None, "B".into()))
+        );
+        assert_eq!(
+            refusal_text(Act::Restart, &Refused::Aimed(None, "B".into())),
+            "Reprise could not restart the computer.\n\nThe next restart still starts B."
+        );
+        assert_eq!(still_aimed(Act::Restart, None, &stale, &[1]), None);
+        assert_eq!(still_aimed(Act::TurnOff, None, &stale, &[]), None);
+        let firmware = BootTarget::firmware(false);
+        assert_eq!(
+            still_aimed(Act::Restart, Some(&firmware), &stale, &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_reboot_logind_took_keeps_its_target_through_a_later_clear() {
+        let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) else {
+            return;
+        };
+        let t = ticket(false);
+        let failed = restart_into(&f.client, &target_b(), false, &t, || {
+            assert_eq!(t.rebooting.load(Ordering::SeqCst), 1);
+            None
+        });
+        assert_eq!(failed, None);
+        let firmware = BootTarget::firmware(false);
+        let stale = [(1, target_b()), (2, firmware)];
+        let cleared = zbus::block_on(clear(&f.client, &stale, false, 1));
+        assert_eq!(cleared, [2]);
         assert_eq!(
             *f.set.lock().unwrap(),
-            ["firmware false"],
-            "a refused clear goes on to the next"
+            ["entry \"b.conf\"", "firmware false"]
+        );
+        assert!(
+            !ticket(true).claim(),
+            "an attempt given up on reboots nothing"
+        );
+        let given_up = ticket(true);
+        given_up.claim();
+        assert_eq!(given_up.rebooting.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_restart_into_given_up_on_during_its_reboot_clears_without_a_password_prompt() {
+        let Some(f) = crate::restartinto::tests::logind_asking_to_clear() else {
+            return;
+        };
+        let t = ticket(false);
+        let failed = restart_into(&f.client, &target_b(), true, &t, || {
+            t.newest.fetch_add(1, Ordering::SeqCst);
+            Some(Failed::Dismissed)
+        });
+        assert_eq!(
+            failed,
+            Some(Failed::Refused(Refused::Aimed(None, "B".into())))
+        );
+        assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\""]);
+        assert_eq!(
+            t.rebooting.load(Ordering::SeqCst),
+            0,
+            "the refused reboot let go"
         );
     }
 
@@ -2059,7 +2227,9 @@ mod tests {
             title: "B".into(),
             password: false,
         };
-        let failed = restart_into(&f.client, &target, false, || true, || panic!("no reboot"));
+        let failed = restart_into(&f.client, &target, false, &ticket(false), || {
+            panic!("no reboot")
+        });
         assert_eq!(failed, Some(Failed::Refused(Refused::NotAllowed)));
         assert!(f.set.lock().unwrap().is_empty());
     }
@@ -2448,7 +2618,15 @@ mod tests {
     #[test]
     fn a_committed_log_off_with_a_client_tells_it_the_session_logged_off() {
         let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
-        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
+        go_on(
+            &mut h.state,
+            Goal::LogOff,
+            None,
+            None,
+            false,
+            Password::No,
+            false,
+        );
         assert_eq!(
             h.state.ended_clients,
             [crate::console::ClientsEnd::LoggedOff]
@@ -2456,7 +2634,15 @@ mod tests {
 
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
-        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
+        go_on(
+            &mut h.state,
+            Goal::LogOff,
+            None,
+            None,
+            false,
+            Password::No,
+            false,
+        );
         assert!(h.state.ended_clients.is_empty(), "no client to tell");
         assert!(h.state.session_fade.fading_out(), "the fade runs");
     }
@@ -2467,7 +2653,15 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         crate::standby::rdp_changed(&mut h.state, true);
         assert!(!h.state.remote_controlled());
-        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
+        go_on(
+            &mut h.state,
+            Goal::LogOff,
+            None,
+            None,
+            false,
+            Password::No,
+            false,
+        );
         assert_eq!(
             h.state.ended_clients,
             [crate::console::ClientsEnd::LoggedOff]
@@ -2484,7 +2678,15 @@ mod tests {
             !h.state.standby.rdp_on(),
             "the server is the other session's"
         );
-        go_on(&mut h.state, Goal::LogOff, None, None, false, Password::No);
+        go_on(
+            &mut h.state,
+            Goal::LogOff,
+            None,
+            None,
+            false,
+            Password::No,
+            false,
+        );
         assert!(h.state.ended_clients.is_empty(), "its clients stay");
     }
 
@@ -2563,6 +2765,7 @@ mod tests {
             None,
             false,
             Password::No,
+            false,
         );
         assert_eq!(
             h.state.ended_clients,
@@ -2778,6 +2981,7 @@ mod tests {
                 None,
                 false,
                 password,
+                false,
             );
         };
         off(&mut h, "false", Password::Yes);
@@ -2810,6 +3014,7 @@ mod tests {
             None,
             false,
             Password::Yes,
+            false,
         );
         assert!(h.state.session_fade.fading_out());
     }
