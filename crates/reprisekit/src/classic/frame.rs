@@ -77,14 +77,16 @@ pub fn draw_frame(
         return;
     }
 
-    match state.icon {
-        Some(icon) => canvas.blit_canvas(geom.caption.x + 2 * s, geom.caption.y + s, icon),
-        None => canvas.blit_canvas(
-            geom.caption.x + 2 * s,
-            geom.caption.y + s,
-            &icon::fallback(theme, icon_px),
-        ),
-    }
+    let fallback;
+    let icon = match state.icon {
+        Some(icon) => icon,
+        None => {
+            fallback = icon::fallback(theme, icon_px);
+            &fallback
+        }
+    };
+    let icon_y = geom.caption.y + (geom.caption.height - icon.height as i32) / 2;
+    canvas.blit_canvas(geom.caption.x + 2 * s, icon_y, icon);
 
     let room = title_rect(geom, s);
     text.draw(
@@ -226,6 +228,42 @@ mod tests {
             .any(|(x, y)| c.get(x, y) == cs.button_text.argb());
         assert!(black);
         assert_eq!(c.get(207, 125), cs.button_dk_shadow.argb());
+    }
+
+    #[test]
+    fn the_caption_icon_is_centred_in_the_caption_at_every_text_size() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let mark = Color::rgb(255, 0, 255);
+        for pct in [100, 125, 150, 200] {
+            for s in [1, 2] {
+                let theme = Theme::default().with_text_size(pct).scaled(s);
+                let mut icon = Canvas::new(16 * s as u32, 16 * s as u32);
+                icon.fill_rect(icon.bounds(), mark);
+                let g = FrameGeometry::layout(&theme.metrics, 200, 100, false, Chrome::WINDOW);
+                let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                let state = FrameState {
+                    title: "Test",
+                    active: true,
+                    maximized: false,
+                    pressed: None,
+                    glow: Glow::lit(None),
+                    icon: Some(&icon),
+                    tabbed: false,
+                };
+                draw_frame(&mut c, &theme, &text, &g, &state);
+                let cap = g.caption;
+                let rows: Vec<i32> = (cap.y..cap.bottom())
+                    .filter(|&y| c.get(cap.x + 2 * s, y) == mark.argb())
+                    .collect();
+                let (top, bottom) = (rows[0] - cap.y, cap.bottom() - 1 - rows[rows.len() - 1]);
+                assert_eq!(rows.len() as i32, 16 * s, "{pct}% @{s}");
+                assert_eq!(top, (cap.height - 16 * s) / 2, "{pct}% @{s}: gap above");
+                assert!(
+                    bottom - top <= 1,
+                    "{pct}% @{s}: {top} above, {bottom} below"
+                );
+            }
+        }
     }
 
     #[test]
