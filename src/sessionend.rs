@@ -145,7 +145,7 @@ fn check(
     origin: Origin,
 ) {
     if critical || goal == Goal::LogOff {
-        if state.powering.give_up() {
+        if state.powering.give_up_all() {
             log::info!("session end: {goal:?} gives up the power action under way");
         }
     } else if state.powering.busy() {
@@ -606,13 +606,16 @@ pub fn sleep(state: &mut State, act: Act, cmd: String) {
 }
 
 /// The power actions run off the loop ([`attempt`]), one at a time. Each is numbered; one given up
-/// on (it ran past [`ANSWER_WITHIN`], or a critical battery or Log Off took over) answers nothing.
+/// on (it ran past [`ANSWER_WITHIN`], or a newer attempt, a critical battery or Log Off took over)
+/// answers nothing.
 #[derive(Default)]
 pub struct Powering {
     /// The newest number handed out; a thread reads it to learn its attempt was given up on.
     newest: Arc<AtomicU64>,
     /// The attempt waiting for its answer and the restart target it sets.
     under_way: Option<(u64, Option<BootTarget>)>,
+    /// Custom Stand By and Hibernate commands still running past [`ANSWER_WITHIN`] ([`late`]).
+    lingering: Vec<u64>,
     /// Restart targets that may still be set, each with the attempt that set it, cleared before
     /// the next power action.
     stale: Vec<(u64, BootTarget)>,
@@ -633,6 +636,10 @@ impl Powering {
 
     /// The restart target attempt `id` set when it may still answer, which it no longer may.
     fn answer(&mut self, id: u64) -> Option<Option<BootTarget>> {
+        if let Some(i) = self.lingering.iter().position(|&n| n == id) {
+            self.lingering.remove(i);
+            return Some(None);
+        }
         if !self.under_way.as_ref().is_some_and(|(n, _)| *n == id) {
             return None;
         }
@@ -649,13 +656,28 @@ impl Powering {
         true
     }
 
+    /// [`Powering::give_up`], and on the lingering commands too.
+    fn give_up_all(&mut self) -> bool {
+        let lingered = !self.lingering.is_empty();
+        self.lingering.clear();
+        self.give_up() || lingered
+    }
+
+    /// Attempt `id`, under way, no longer holds the next one back but still answers.
+    fn linger(&mut self, id: u64) {
+        if self.under_way.as_ref().is_some_and(|(n, _)| *n == id) {
+            self.under_way = None;
+            self.lingering.push(id);
+        }
+    }
+
     /// Whether attempt `id` is still the newest, as its thread sees it.
     fn still(newest: &AtomicU64, id: u64) -> bool {
         newest.load(Ordering::SeqCst) == id
     }
 }
 
-/// How long a power action may take to answer before Reprise gives up on it and says so: logind
+/// How long a power action may take to answer before Reprise gives up on it ([`late`]): logind
 /// stops waiting for a password after 25 s a call, and a Restart Into makes up to three.
 const ANSWER_WITHIN: Duration = Duration::from_secs(120);
 
@@ -674,9 +696,10 @@ fn attempt(
     let stale = std::mem::take(&mut state.powering.stale);
     let id = state.powering.begin(boot.clone());
     let newest = Arc::clone(&state.powering.newest);
+    let lingers = matches!(act, Act::StandBy | Act::Hibernate) && logind_verb(&cmd).is_none();
     let deadline =
         (state.handle).insert_source(Timer::from_duration(ANSWER_WITHIN), move |_, _, state| {
-            late(state, id, act);
+            late(state, id, act, lingers);
             TimeoutAction::Drop
         });
     if let Err(e) = deadline {
@@ -715,14 +738,21 @@ fn unpanicked(work: impl FnOnce() -> Option<Failed>) -> Option<Failed> {
     })
 }
 
-/// Attempt `id` ran past [`ANSWER_WITHIN`]: unless it answered, give up on it and refuse.
-fn late(state: &mut State, id: u64, act: Act) {
+/// Attempt `id` ran past [`ANSWER_WITHIN`]: unless it answered, give up on it and refuse. One that
+/// `lingers`, a custom Stand By or Hibernate command, may wait on purpose (a locker, the resume):
+/// it only stops holding the next action back, and a failure still shows.
+fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
     if !state
         .powering
         .under_way
         .as_ref()
         .is_some_and(|(n, _)| *n == id)
     {
+        return;
+    }
+    if lingers {
+        log::info!("power: {act:?} still runs after {ANSWER_WITHIN:?}");
+        state.powering.linger(id);
         return;
     }
     state.powering.give_up();
@@ -895,7 +925,11 @@ fn resume(state: &mut State, act: Act) {
 
 fn refuse(state: &mut State, act: Act, why: &Refused) {
     log::warn!("session end: {act:?} refused: {why:?}");
-    resume(state, act);
+    match why {
+        // The action may still go through, and the session stays saved as it ended.
+        Refused::Late => crate::sessionfade::restore(state),
+        _ => resume(state, act),
+    }
     crate::lockview::refused(state, refusal_text(act, &unnamed(why)));
     state.open_dialog(crate::dialog::Dialog::error(
         act.title(),
@@ -1876,8 +1910,15 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         let id = h.state.powering.begin(Some(target_b()));
         let open = dialogs(&h);
-        late(&mut h.state, id, Act::Restart);
+        crate::crash::ending();
+        h.state.session.kept = true;
+        late(&mut h.state, id, Act::Restart, false);
         assert_eq!(dialogs(&h), open + 1);
+        assert!(
+            crate::crash::is_ending() && h.state.session.kept,
+            "a restart that goes through late restores the saved session"
+        );
+        crate::crash::not_ending();
         assert!(!h.state.powering.busy());
         assert_eq!(h.state.powering.stale, [(id, target_b())]);
         answered(
@@ -1889,7 +1930,7 @@ mod tests {
         );
         assert_eq!(dialogs(&h), open + 1, "the late answer shows nothing");
         let next = h.state.powering.begin(None);
-        late(&mut h.state, id, Act::Restart);
+        late(&mut h.state, id, Act::Restart, false);
         assert!(
             h.state.powering.busy(),
             "the old deadline leaves attempt {next}"
@@ -1898,6 +1939,27 @@ mod tests {
             reason(Act::Restart, &Refused::Late),
             "It had not happened after 2 minutes."
         );
+    }
+
+    #[test]
+    fn a_custom_sleep_command_past_the_deadline_holds_nothing_back_and_still_reports() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let id = h.state.powering.begin(None);
+        let open = dialogs(&h);
+        late(&mut h.state, id, Act::StandBy, true);
+        assert_eq!(dialogs(&h), open, "no box at the deadline");
+        assert!(!h.state.powering.busy());
+        let next = h.state.powering.begin(None);
+        let failed = Some(Failed::Refused(Refused::Failed("no locker".into())));
+        answered(&mut h.state, id, Act::StandBy, failed.clone(), None);
+        assert_eq!(dialogs(&h), open + 1, "a failure after it still shows");
+        assert!(h.state.powering.busy(), "attempt {next} is under way");
+        late(&mut h.state, next, Act::StandBy, true);
+        begin(&mut h.state, Goal::LogOff, None, Origin::Desktop);
+        let shown = dialogs(&h);
+        answered(&mut h.state, next, Act::StandBy, failed, None);
+        assert_eq!(dialogs(&h), shown, "Log Off gave it up");
     }
 
     #[test]
