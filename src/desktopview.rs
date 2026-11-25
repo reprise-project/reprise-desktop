@@ -192,7 +192,8 @@ pub enum DesktopCommand {
     Copy,
     Paste,
     PasteShortcut,
-    Undo,
+    /// Undo of the entry the row names.
+    Undo(reprisefs::undo::EntryId),
     PasteInto,
     /// Paste on a launcher: the clipboard's files open in its program.
     PasteOpen,

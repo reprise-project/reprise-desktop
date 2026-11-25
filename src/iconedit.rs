@@ -544,25 +544,33 @@ impl State {
         self.desktop.as_ref().is_some_and(|v| v.undoing) || self.undo_job_running()
     }
 
-    /// Ctrl+Z on the desktop: the top entry of the session's undo history is reversed, one at a
-    /// time in the whole session and only while the desktop shows its files. The history is read
-    /// on a file action, off the loop. A rename or New of the desktop's own items is instant and
-    /// runs on that action, where the entry is taken, reversed and put back; what a failure leaves
-    /// undone goes back on the stack and an error box says why, and an item its Recycle Bin
-    /// refuses asks to be deleted for good ([`Dialog::ask_undo_erase`]). Anything else runs in
-    /// Explorer ([`State::undo_in_explorer`]), with its progress and Cancel. Undo stays greyed
-    /// while a reversal that outlived its deadline holds the history.
-    pub fn undo_icons(&mut self) {
-        self.undo_desktop(None);
+    /// Ctrl+Z on the desktop: [`State::undo_icons`] of the entry the history's head names.
+    pub fn undo_icons_head(&mut self) {
+        if let Some((entry, _)) = self.desktop.as_ref().and_then(|v| v.undos.head()) {
+            self.undo_icons(entry);
+        }
+    }
+
+    /// The desktop menu's Undo row: `entry`, provided it is still the top entry of the session's
+    /// undo history, is reversed, one undo at a time in the whole session and only while the
+    /// desktop shows its files. The history is read on a file action, off the loop. A rename or
+    /// New of the desktop's own items is instant and runs on that action, where the entry is
+    /// taken, reversed and put back; what a failure leaves undone goes back on the stack and an
+    /// error box says why, and an item its Recycle Bin refuses asks to be deleted for good
+    /// ([`Dialog::ask_undo_erase`]). Anything else runs in Explorer
+    /// ([`State::undo_in_explorer`]), with its progress and Cancel. Undo stays greyed while a
+    /// reversal that outlived its deadline holds the history.
+    pub fn undo_icons(&mut self, entry: EntryId) {
+        self.undo_desktop(entry, false);
     }
 
     /// The erase question's Yes: `entry` is undone again, erasing what the bin refused, provided
     /// it is still the top entry.
     pub fn undo_icons_erasing(&mut self, entry: EntryId) {
-        self.undo_desktop(Some(entry));
+        self.undo_desktop(entry, true);
     }
 
-    fn undo_desktop(&mut self, erasing: Option<EntryId>) {
+    fn undo_desktop(&mut self, entry: EntryId, erase: bool) {
         if self.desktop_locked() || !self.config.desktop_icons || self.desktop_undoing() {
             return;
         }
@@ -584,19 +592,18 @@ impl State {
         };
         let action = Action::changes("Undo", late).on_give_up(gave_up);
         let spawned = self.spawn_fs_action(action, move |gate| {
-            let entry = match erasing {
-                Some(entry) => entry,
-                None => match history.top(|id, u| (id, u.only_in(&dir))) {
-                    None => return Box::new(State::undo_ended),
-                    Some((id, true)) => id,
-                    Some((id, false)) => {
+            if !erase {
+                match history.top(|id, u| (id == entry, u.only_in(&dir))) {
+                    Some((true, true)) => {}
+                    Some((true, false)) => {
                         return Box::new(move |state: &mut State| {
                             state.undo_ended();
-                            state.undo_in_explorer(id);
+                            state.undo_in_explorer(entry);
                         });
                     }
-                },
-            };
+                    _ => return Box::new(State::undo_ended),
+                }
+            }
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
@@ -604,7 +611,7 @@ impl State {
                 return Box::new(State::undo_ended);
             };
             let bins = reprisefs::trash::Bins::system();
-            let (done, error, purged) = undo.reverse(bins.as_ref(), erasing.is_some());
+            let (done, error, purged) = undo.reverse(bins.as_ref(), erase);
             let renamed: Vec<(String, String)> = (undo.steps()[..done].iter())
                 .filter_map(|step| match step {
                     Undoable::Rename { from, to, .. } => Some((file_name(to), file_name(from))),

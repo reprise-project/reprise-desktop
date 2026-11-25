@@ -1588,9 +1588,9 @@ fn a_new_folder_is_selected_in_rename_and_ctrl_z_undoes_the_rename_then_the_fold
     edit.text = "Plans".into();
     h.state.commit_rename();
     assert!(desk.join("Plans").is_dir());
-    let label = h.state.desktop.as_ref().unwrap().undos.label();
-    let menu = desktop_menu(false, true, label.map(|l| (l, true)), false);
-    assert_eq!(menu.1[7], Some(DesktopCommand::Undo));
+    let head = h.state.desktop.as_ref().unwrap().undos.head();
+    let menu = desktop_menu(false, true, head.map(|(id, l)| (id, l, true)), false);
+    assert_eq!(menu.1[7], head.map(|(id, _)| DesktopCommand::Undo(id)));
     assert!(matches!(
         &menu.0[7],
         MenuItem::Entry { label, shortcut: Some(keys), .. } if label == "Undo Rename" && keys == "Ctrl+Z"
@@ -1736,9 +1736,9 @@ fn a_second_ctrl_z_waits_for_the_first_and_undo_rename_keeps_the_cell() {
     let undone = |s: &crate::compositor::State| !s.desktop.as_ref().unwrap().undoing;
 
     // Two presses with no loop turn between them: the second finds the first still running.
-    h.state.undo_icons();
+    h.state.undo_icons_head();
     assert!(!undone(&h.state));
-    h.state.undo_icons();
+    h.state.undo_icons_head();
     h.until("the undo", undone);
     assert!(desk.join("New Folder").is_dir(), "only the rename undone");
     let view = h.state.desktop.as_ref().unwrap();
@@ -1750,9 +1750,40 @@ fn a_second_ctrl_z_waits_for_the_first_and_undo_rename_keeps_the_cell() {
 }
 
 #[test]
+fn the_undo_rows_click_takes_only_the_entry_it_named() {
+    use reprisefs::undo::{Undoable, file_id};
+    let (mut h, desk) = desktop_in("desktop-undo-named", &[]);
+    crate::fsjobs::setup(&mut h.state);
+    h.state.desktop_command(DesktopCommand::NewFolder, None);
+    h.until("the new folder's rename", |s| {
+        s.desktop.as_ref().is_some_and(|v| v.rename.is_some())
+    });
+    h.state.cancel_rename();
+    let later = desk.join("later.txt");
+    std::fs::write(&later, "1").unwrap();
+    let undos = &h.state.desktop.as_ref().unwrap().undos;
+    let (named, _) = undos.head().expect("Undo New");
+    undos.push(Undoable::New(later.clone(), file_id(&later)));
+    let undone = |s: &crate::compositor::State| !s.desktop.as_ref().unwrap().undoing;
+
+    h.state.desktop_command(DesktopCommand::Undo(named), None);
+    h.until("the undo", undone);
+    assert!(
+        desk.join("New Folder").is_dir() && later.exists(),
+        "no longer on top"
+    );
+    let (top, _) = h.state.desktop.as_ref().unwrap().undos.head().unwrap();
+    h.state.desktop_command(DesktopCommand::Undo(top), None);
+    h.until("the undo", undone);
+    assert!(desk.join("New Folder").is_dir() && !later.exists());
+}
+
+#[test]
 fn undo_is_greyed_and_ctrl_z_inert_while_the_files_are_off_or_an_undo_runs() {
     for (show_files, live) in [(false, true), (true, false)] {
-        let (items, commands) = desktop_menu(false, show_files, Some(("Undo New", live)), false);
+        let entry = "1:1".parse().unwrap();
+        let undo = Some((entry, "Undo New", live));
+        let (items, commands) = desktop_menu(false, show_files, undo, false);
         assert!(matches!(items[7], MenuItem::Entry { enabled: false, .. }));
         assert_eq!(commands[7], None);
     }
@@ -1844,12 +1875,12 @@ fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
     let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing;
 
     h.state.fsjobs.refuse_threads = true;
-    h.state.undo_icons();
+    h.state.undo_icons_head();
     assert!(!undoing(&h.state), "no thread started");
     h.state.fsjobs.refuse_threads = false;
 
     h.state.fsjobs.hold_action_threads();
-    h.state.undo_icons();
+    h.state.undo_icons_head();
     assert!(undoing(&h.state));
     h.until("the give-up", |s| !undoing(s));
     let d = &h.state.dialogs.views.last().expect("an error box").dialog;
@@ -1877,7 +1908,7 @@ fn undo_stays_greyed_until_an_undo_that_gave_up_while_changing_lands() {
     let lock = std::fs::File::create(runtime.join("reprise-undo.lock")).unwrap();
     lock.lock().unwrap();
 
-    h.state.undo_icons();
+    h.state.undo_icons_head();
     h.until("the give-up", |s| !s.dialogs.views.is_empty());
     let text = &h.state.dialogs.views.last().unwrap().dialog.text;
     // A loaded machine may start the work past the deadline, which then changes nothing.

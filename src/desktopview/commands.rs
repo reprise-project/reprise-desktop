@@ -490,7 +490,7 @@ impl State {
         };
         match cmd {
             Dc::Refresh => self.rescan_desktop(),
-            Dc::Undo => self.undo_icons(),
+            Dc::Undo(entry) => self.undo_icons(entry),
             Dc::NextBackground => self.next_slide(),
             Dc::NewFolder => self.new_folder(self.desktop_menu_at),
             Dc::NewTextDocument => self.new_text_document(self.desktop_menu_at),
