@@ -143,6 +143,10 @@ fn check(
     critical: bool,
     origin: Origin,
 ) {
+    if state.powering && !critical {
+        log::info!("session end: {goal:?} while a power action is under way; ignored");
+        return;
+    }
     let verb = cmd.as_deref().and_then(logind_verb);
     if state.ending.is_some() || (verb.is_none() && boot.is_none()) {
         let password = Password::No.with(boot.as_ref());
@@ -580,6 +584,10 @@ pub fn sleep(state: &mut State, act: Act, cmd: String) {
     if cmd.trim().is_empty() {
         return;
     }
+    if state.powering {
+        log::info!("power: {act:?} while a power action is under way; ignored");
+        return;
+    }
     log::info!("power: {act:?} runs {cmd:?}");
     attempt(state, act, cmd, None, false, None);
 }
@@ -596,7 +604,8 @@ fn attempt(
 ) {
     let env = state.env.clone();
     let interactive = prompts(state);
-    state.spawn_job(move || {
+    state.powering = true;
+    let spawned = state.spawn_job(move || {
         let go = || match logind_verb(&cmd) {
             Some(verb) => zbus::block_on(call(verb, override_inhibitors, interactive)),
             None => run(&cmd, &env).map(Failed::Refused),
@@ -610,6 +619,9 @@ fn attempt(
         };
         Box::new(move |state: &mut State| answered(state, act, failed, wind_down_for))
     });
+    if !spawned {
+        state.powering = false;
+    }
 }
 
 /// Set `boot` with logind on `conn`, then `reboot`; a reboot that does not happen clears it, so a
@@ -643,6 +655,7 @@ fn restart_into(
 /// A refusal shows a message box; a dismissed password prompt brings the session back without
 /// one. An action under way winds the session down for `wind_down_for`.
 fn answered(state: &mut State, act: Act, failed: Option<Failed>, wind_down_for: Option<Goal>) {
+    state.powering = false;
     match failed {
         None => {
             if let Some(goal) = wind_down_for {
@@ -1539,6 +1552,51 @@ mod tests {
             dismissed,
             Some(Failed::Refused(Refused::Aimed(None, "B".into()))),
             "a dismissed prompt still says the target stays"
+        );
+    }
+
+    #[test]
+    fn no_other_power_action_starts_while_one_is_under_way() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.powering = true;
+        let target = BootTarget {
+            entry: Some("b.conf".into()),
+            title: "B".into(),
+            password: false,
+        };
+        begin_into(&mut h.state, "true".into(), target);
+        begin(
+            &mut h.state,
+            Goal::Restart,
+            Some("true".into()),
+            Origin::Desktop,
+        );
+        assert!(h.state.ending.is_none());
+        sleep(&mut h.state, Act::StandBy, "true".into());
+        assert!(h.state.powering, "Stand By did not run and answer");
+        answered(&mut h.state, Act::Restart, Some(Failed::Dismissed), None);
+        assert!(!h.state.powering);
+        begin(
+            &mut h.state,
+            Goal::Restart,
+            Some("true".into()),
+            Origin::Desktop,
+        );
+        assert!(h.state.ending.is_some(), "a Restart once it answered");
+    }
+
+    #[test]
+    fn a_critical_battery_turns_off_while_a_power_action_is_under_way() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.powering = true;
+        begin_critical(&mut h.state, "true".into());
+        assert!(
+            h.state
+                .ending
+                .as_ref()
+                .is_some_and(|e| e.mode == Mode::Critical)
         );
     }
 
