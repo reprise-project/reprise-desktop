@@ -9,16 +9,17 @@ use reprisekit::cues::Cues;
 use reprisekit::look::Paint;
 use reprisekit::look::widgets::draw_button;
 use reprisekit::pointer::{Interaction, Lit};
-use reprisekit::powerpanel::{self, Event, Part};
+use reprisekit::powerpanel::{self, Event, Part, Updates};
 
 impl DialogLayout {
-    /// The Blue panel: `powerpanel`'s layout, with its cells, Cancel and Restart Into... as the
-    /// buttons.
+    /// The Blue panel: `powerpanel`'s layout, with its cells, Cancel, Restart Into... and the Install
+    /// updates check box as the buttons.
     pub(super) fn compute_welcome(w: &Welcome, u: TextUnits) -> DialogLayout {
         let lay = powerpanel::layout(&w.panel, u);
         let mut buttons = lay.cells.clone();
         buttons.push(lay.cancel);
         buttons.extend(lay.restart_into);
+        buttons.extend(lay.updates);
         DialogLayout {
             size: lay.size,
             caption: lay.title,
@@ -29,8 +30,8 @@ impl DialogLayout {
     }
 
     /// The Welcome panel under a look with glass (`GLASS_WELCOME_W` on):
-    /// the icon buttons in a centred row, the rest (Cancel) from the
-    /// right of the row under them.
+    /// the icon buttons in a centred row, the rest (Cancel, Restart Into...) from the right of the
+    /// row under them, the Install updates check box from its left up to them.
     pub(super) fn compute_welcome_glass(d: &Dialog) -> DialogLayout {
         let (x0, y0) = (DIALOG_FRAME, DIALOG_FRAME + CAPTION_H);
         let (cw, ch) = GLASS_WELCOME_CELL;
@@ -40,11 +41,20 @@ impl DialogLayout {
         let plain_y = y0 + GLASS_WELCOME_TOP + ch + GLASS_WELCOME_TOP;
         let mut next_icon = 0;
         let mut next_plain = 0;
+        let plains = (d.buttons.iter())
+            .filter(|x| x.choice.is_none() && x.action != DialogAction::ToggleUpdates)
+            .count() as i32;
         let buttons = d
             .buttons
             .iter()
             .map(|x| {
-                if x.choice.is_some() {
+                if x.action == DialogAction::ToggleUpdates {
+                    let left = x0 + GLASS_WELCOME_MARGIN;
+                    let right = x0 + GLASS_WELCOME_W
+                        - GLASS_WELCOME_MARGIN
+                        - plains * (BUTTON_W + BUTTON_GAP);
+                    Rect::new(left, plain_y, right - left, BUTTON_H)
+                } else if x.choice.is_some() {
                     let r = Rect::new(
                         left + next_icon * (cw + GLASS_WELCOME_GAP),
                         y0 + GLASS_WELCOME_TOP,
@@ -100,16 +110,16 @@ const GLASS_WELCOME_GAP: i32 = 12;
 
 pub(super) const GLASS_WELCOME_MARGIN: i32 = 11;
 
-/// What a Welcome panel's button `i` is: its cells, Cancel, then Restart Into..., which the framed
-/// layout puts left of Cancel.
+/// What a Welcome panel's button `i` is: its cells, Cancel, Restart Into... when offered, which the
+/// framed layout puts left of Cancel, then the check box.
 fn part_of(w: &Welcome, i: usize) -> Part {
     let n = w.panel.bigs.len();
-    if i < n {
-        Part::Big(i)
-    } else if i == n {
-        Part::Cancel
-    } else {
-        Part::RestartInto
+    let into = usize::from(w.panel.restart_into);
+    match i {
+        i if i < n => Part::Big(i),
+        i if i == n => Part::Cancel,
+        i if i == n + into => Part::RestartInto,
+        _ => Part::Updates,
     }
 }
 
@@ -118,11 +128,26 @@ fn index_of(w: &Welcome, part: Part) -> usize {
         Part::Big(i) => i,
         Part::Cancel => w.panel.bigs.len(),
         Part::RestartInto => w.panel.bigs.len() + 1,
+        Part::Updates => w.panel.bigs.len() + 1 + usize::from(w.panel.restart_into),
     }
 }
 
-/// The buttons `w`'s panel shows: each big button as it shows now, Cancel, and Restart Into...
-/// when offered. The focused one is the default.
+/// What a big button does with the Install updates check box shown: Turn Off and Restart install
+/// the update, or take back one set elsewhere, as the box says
+/// ([`Panel::updates`](powerpanel::Panel::updates)).
+fn with_updates(action: DialogAction, updates: Updates) -> DialogAction {
+    match (action, updates) {
+        (a, Updates::Leave) => a,
+        (DialogAction::EndSession(goal, cmd), updates) if goal != Goal::LogOff => {
+            DialogAction::EndSessionUpdates { goal, cmd, updates }
+        }
+        (a, _) => a,
+    }
+}
+
+/// The buttons `w`'s panel shows: each big button as it shows now, Cancel, Restart Into... when
+/// offered, greyed while the box is checked, then the Install updates check box while it shows.
+/// The focused one is the default.
 fn buttons_of(w: &Welcome) -> Vec<DialogButton> {
     let p = &w.panel;
     let mut out: Vec<DialogButton> = (0..p.bigs.len())
@@ -133,7 +158,9 @@ fn buttons_of(w: &Welcome) -> Vec<DialogButton> {
                 .actions
                 .iter()
                 .find(|(c, _)| *c == choice)
-                .map_or(DialogAction::Cancel, |(_, a)| a.clone()),
+                .map_or(DialogAction::Cancel, |(_, a)| {
+                    with_updates(a.clone(), p.updates())
+                }),
             default: p.focus == Part::Big(i),
             choice: Some(choice),
             enabled: on,
@@ -146,10 +173,20 @@ fn buttons_of(w: &Welcome) -> Vec<DialogButton> {
         p.focus == Part::Cancel,
     ));
     if p.restart_into {
+        out.push(DialogButton {
+            enabled: p.live(Part::RestartInto),
+            ..super::build::button(
+                &powerpanel::restart_into_label(),
+                DialogAction::RestartInto,
+                p.focus == Part::RestartInto,
+            )
+        });
+    }
+    if p.updates.is_some() {
         out.push(super::build::button(
-            &powerpanel::restart_into_label(),
-            DialogAction::RestartInto,
-            p.focus == Part::RestartInto,
+            &powerpanel::updates_label(),
+            DialogAction::ToggleUpdates,
+            p.focus == Part::Updates,
         ));
     }
     out
@@ -236,6 +273,41 @@ impl Dialog {
         }
         self.sync_welcome();
         true
+    }
+
+    /// Whether an offline update is `prepared` changed what a Turn off computer panel shows: the
+    /// Install updates check box came or went, checked only when it shows from the panel's first
+    /// frame (`late` false). The dialog then wants laying out again.
+    pub fn offer_updates(&mut self, prepared: bool, late: bool) -> bool {
+        let Style::Welcome(w) = &mut self.style else {
+            return false;
+        };
+        if !w.updates || w.panel.offer_updates(prepared, !late) == Event::None {
+            return false;
+        }
+        self.sync_welcome();
+        true
+    }
+
+    /// What the Install updates check box of a Turn off computer panel says to do; Leave for any
+    /// other dialog.
+    pub fn updates(&self) -> Updates {
+        match &self.style {
+            Style::Welcome(w) => w.panel.updates(),
+            _ => Updates::Leave,
+        }
+    }
+
+    /// The Install updates check box was clicked.
+    pub(super) fn welcome_toggle_updates(&mut self) -> Outcome {
+        let Style::Welcome(w) = &mut self.style else {
+            return Outcome::Nothing;
+        };
+        if w.panel.toggle_updates() == Event::None {
+            return Outcome::Nothing;
+        }
+        self.sync_welcome();
+        Outcome::Redraw
     }
 
     /// Shift went down or up while a Welcome panel is open: Stand By turns into Hibernate and back.

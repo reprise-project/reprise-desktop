@@ -1,8 +1,9 @@
 //! The Log Off and Turn off computer panels: a title band with the logo, big icon buttons with
-//! labels under them on a lit band, and Cancel (and Restart Into... when offered) in the bottom band. Model, layout, hit and access
-//! here; `blue::powerpanel` paints it and `interfaces::draw_power_panel` puts the two together.
+//! labels under them on a lit band, and Cancel in the bottom band, with Restart Into... when offered
+//! and the Install updates check box while an offline update is prepared left of it. Model,
+//! layout, hit and access here; `blue::powerpanel` paints it and `interfaces::draw_power_panel` puts the two together.
 
-use crate::access::accesskit::NodeId;
+use crate::access::accesskit::{NodeId, Role};
 use crate::access::{self as ax, Tree};
 use crate::raster::Rect;
 use crate::text::split_mnemonic;
@@ -92,6 +93,7 @@ pub enum First {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     Big(usize),
+    Updates,
     Cancel,
     /// Opens the list of boot entries to restart into.
     RestartInto,
@@ -105,11 +107,37 @@ pub struct Panel {
     pub shift: bool,
     /// Restart Into... shows left of Cancel.
     pub restart_into: bool,
+    /// The Install updates check box, None while no offline update is prepared.
+    pub updates: Option<UpdatesBox>,
+}
+
+/// The Install updates check box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UpdatesBox {
+    pub checked: bool,
+    /// The user ticked or unticked it.
+    pub touched: bool,
+}
+
+/// What Turn Off or Restart does about a prepared offline update.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Updates {
+    /// Install it at the next start.
+    Install,
+    /// The user unticked the box: install nothing, taking back a trigger made elsewhere.
+    Skip,
+    /// No box, or one the user never touched: leave whatever is set.
+    Leave,
 }
 
 /// Restart Into...'s label, with its access key marked by `&`.
 pub fn restart_into_label() -> String {
     tr!("powerpanel-restart-into")
+}
+
+/// The Install updates check box's label, with its access key marked by `&`.
+pub fn updates_label() -> String {
+    tr!("powerpanel-install-updates")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +173,7 @@ impl Panel {
             focus: Part::Big(1),
             shift: false,
             restart_into: false,
+            updates: None,
         }
     }
 
@@ -174,6 +203,7 @@ impl Panel {
             focus: Part::Big(focus),
             shift: false,
             restart_into: false,
+            updates: None,
         }
     }
 
@@ -184,25 +214,73 @@ impl Panel {
     pub fn live(&self, part: Part) -> bool {
         match part {
             Part::Big(i) => self.shown(i).is_some_and(|(_, on)| on),
+            Part::Updates => self.updates.is_some(),
             Part::Cancel => true,
-            Part::RestartInto => self.restart_into,
+            Part::RestartInto => self.restart_into && !self.installs_updates(),
         }
     }
 
-    /// Arrows walk the live big buttons and stop at the ends; Tab and Shift+Tab cycle them,
-    /// Restart Into... and Cancel. Enter and Space press the focused one, Escape presses Cancel and
-    /// a letter the live button whose access key it is.
+    /// Whether a prepared offline update is to be installed: the check box is shown and checked.
+    pub fn installs_updates(&self) -> bool {
+        self.updates.is_some_and(|b| b.checked)
+    }
+
+    /// What Turn Off or Restart does about the prepared update, by the check box.
+    pub fn updates(&self) -> Updates {
+        match self.updates {
+            Some(b) if b.checked => Updates::Install,
+            Some(b) if b.touched => Updates::Skip,
+            _ => Updates::Leave,
+        }
+    }
+
+    /// Show the Install updates check box, `checked` or not, while an update is `prepared`, else
+    /// hide it. Only a box the panel shows from its first frame may start checked, so a late one
+    /// never turns a press under way into an install. A focused part that greys or goes hands the
+    /// focus to the middle button.
+    pub fn offer_updates(&mut self, prepared: bool, checked: bool) -> Event {
+        if prepared == self.updates.is_some() {
+            return Event::None;
+        }
+        self.updates = prepared.then_some(UpdatesBox {
+            checked,
+            touched: false,
+        });
+        if !self.live(self.focus) {
+            self.focus = Part::Big(1.min(self.bigs.len().saturating_sub(1)));
+        }
+        Event::Redraw
+    }
+
+    /// Check or uncheck the Install updates check box, giving it the focus.
+    pub fn toggle_updates(&mut self) -> Event {
+        let Some(b) = self.updates else {
+            return Event::None;
+        };
+        self.updates = Some(UpdatesBox {
+            checked: !b.checked,
+            touched: true,
+        });
+        self.focus = Part::Updates;
+        Event::Redraw
+    }
+
+    /// Arrows walk the live big buttons and stop at the ends; Tab and Shift+Tab cycle them, the
+    /// check box, Restart Into... and Cancel. Enter and Space press the focused one or toggle the
+    /// check box, Escape presses Cancel and a letter the live button whose access key it is or
+    /// toggles the check box.
     pub fn key(&mut self, key: Key) -> Event {
         match key {
             Key::Left | Key::Up => self.step(false),
             Key::Right | Key::Down => self.step(true),
+            Key::Enter | Key::Space if self.focus == Part::Updates => self.toggle_updates(),
             Key::Tab { back } => {
                 let mut stops: Vec<Part> = (0..self.bigs.len())
                     .map(Part::Big)
                     .filter(|&p| self.live(p))
                     .collect();
                 stops.extend(
-                    [Part::RestartInto, Part::Cancel]
+                    [Part::Updates, Part::RestartInto, Part::Cancel]
                         .into_iter()
                         .filter(|&p| self.live(p)),
                 );
@@ -214,13 +292,18 @@ impl Panel {
             Key::Escape => Event::Press(Part::Cancel),
             Key::Char(c) => {
                 let c = c.to_lowercase().next();
+                if self.updates.is_some() && access_key(&updates_label()) == c {
+                    return self.toggle_updates();
+                }
                 let big = (0..self.bigs.len()).find(|&i| {
                     let (choice, on) = self.bigs[i].shown(self.shift);
                     on && access_key(&choice.label()) == c
                 });
                 match big {
                     Some(i) => Event::Press(Part::Big(i)),
-                    None if self.restart_into && access_key(&restart_into_label()) == c => {
+                    None if self.live(Part::RestartInto)
+                        && access_key(&restart_into_label()) == c =>
+                    {
                         Event::Press(Part::RestartInto)
                     }
                     None => Event::None,
@@ -285,6 +368,8 @@ pub struct Layout {
     pub cells: Vec<Rect>,
     pub cancel: Rect,
     pub restart_into: Option<Rect>,
+    /// The Install updates check box and its label, in Cancel's row.
+    pub updates: Option<Rect>,
     pub units: TextUnits,
 }
 
@@ -301,6 +386,23 @@ const ICON_Y: i32 = 8;
 const LABEL_Y: i32 = 44;
 const CANCEL: Rect = Rect::new(W - BORDER - 10 - 60, BORDER + 167, 60, 20);
 const RESTART_INTO: Rect = Rect::new(BORDER + 10, CANCEL.y, 90, CANCEL.height);
+/// The check box's row: from the panel's left as far in as Cancel is from the right, or past
+/// Restart Into... when it shows, up to a gap before Cancel.
+const UPDATES: Rect = Rect::new(
+    BORDER + 10,
+    CANCEL.y,
+    CANCEL.x - 8 - (BORDER + 10),
+    CANCEL.height,
+);
+const UPDATES_PAST_RESTART_INTO: Rect = Rect::new(
+    RESTART_INTO.x + RESTART_INTO.width + 8,
+    CANCEL.y,
+    CANCEL.x - 8 - (RESTART_INTO.x + RESTART_INTO.width + 8),
+    CANCEL.height,
+);
+/// The box itself, and the gap between it and its label.
+pub const CHECK: i32 = 13;
+pub const CHECK_GAP: i32 = 4;
 /// The big buttons' cells by count: their width and left edges.
 const TWO: (i32, [i32; 2]) = (115, [43, 158]);
 const THREE: (i32, [i32; 3]) = (85, [29, 115, 200]);
@@ -329,6 +431,10 @@ pub fn layout(p: &Panel, u: TextUnits) -> Layout {
         cells,
         cancel: u.rect(CANCEL),
         restart_into: p.restart_into.then(|| u.rect(RESTART_INTO)),
+        updates: (p.updates.is_some()).then(|| match p.restart_into {
+            true => u.rect(UPDATES_PAST_RESTART_INTO),
+            false => u.rect(UPDATES),
+        }),
         units: u,
     }
 }
@@ -358,9 +464,17 @@ impl Layout {
     pub fn rect(&self, part: Part) -> Option<Rect> {
         match part {
             Part::Big(i) => self.cells.get(i).copied(),
+            Part::Updates => self.updates,
             Part::Cancel => Some(self.cancel),
             Part::RestartInto => self.restart_into,
         }
+    }
+
+    /// The check box row `row`'s box, centred down it, and its label's line right of the box.
+    pub fn check_parts(row: Rect) -> (Rect, Rect) {
+        let b = Rect::new(row.x, row.y + (row.height - CHECK) / 2, CHECK, CHECK);
+        let x = b.right() + CHECK_GAP;
+        (b, Rect::new(x, row.y, row.right() - x, row.height))
     }
 }
 
@@ -370,6 +484,9 @@ pub fn hit(lay: &Layout, x: i32, y: i32) -> Option<Part> {
     }
     if lay.restart_into.is_some_and(|r| r.contains(x, y)) {
         return Some(Part::RestartInto);
+    }
+    if lay.updates.is_some_and(|r| r.contains(x, y)) {
+        return Some(Part::Updates);
     }
     lay.cells
         .iter()
@@ -399,6 +516,14 @@ pub fn access(
             focus = id;
         }
     }
+    if let (Some(b), Some(r)) = (p.updates, lay.updates) {
+        let label = split_mnemonic(&updates_label()).0;
+        let n = ax::toggle(Role::CheckBox, at(r), &label, b.checked.into(), true);
+        let id = tree.push(parent, "updates", n);
+        if p.focus == Part::Updates {
+            focus = id;
+        }
+    }
     let mut plain = vec![(Part::Cancel, lay.cancel, tr!("cancel"))];
     if let Some(r) = lay.restart_into {
         plain.push((Part::RestartInto, r, restart_into_label()));
@@ -407,7 +532,7 @@ pub fn access(
         let id = tree.push(
             parent,
             ("button", lay.cells.len() + n),
-            ax::button(at(r), &label, true, p.focus == part),
+            ax::button(at(r), &label, p.live(part), p.focus == part),
         );
         if p.focus == part {
             focus = id;
@@ -618,6 +743,139 @@ mod tests {
             .last()
             .map(|(_, n)| n.label().map(str::to_owned));
         assert_eq!(last, Some(Some("Restart Into...".into())));
+    }
+
+    fn standby() -> Panel {
+        Panel::turn_off(First::StandBy {
+            live: true,
+            hibernate: false,
+        })
+    }
+
+    #[test]
+    fn a_prepared_update_adds_a_box_tab_and_its_key_toggle() {
+        let mut p = standby();
+        assert!(!p.installs_updates());
+        assert_eq!(p.offer_updates(false, true), Event::None);
+        assert_eq!(p.offer_updates(true, true), Event::Redraw);
+        assert!(p.installs_updates(), "checked when it shows from the start");
+        assert_eq!(
+            p.offer_updates(true, false),
+            Event::None,
+            "a second answer keeps the choice"
+        );
+        assert_eq!(p.key(Key::Tab { back: false }), Event::Redraw);
+        assert_eq!(p.key(Key::Tab { back: false }), Event::Redraw);
+        assert_eq!(p.focus, Part::Updates, "after Restart, before Cancel");
+        assert_eq!(p.key(Key::Left), Event::None, "the arrows leave it alone");
+        assert_eq!(p.key(Key::Space), Event::Redraw);
+        assert!(!p.installs_updates());
+        assert_eq!(p.key(Key::Enter), Event::Redraw);
+        assert!(p.installs_updates());
+        assert_eq!(p.key(Key::Tab { back: false }), Event::Redraw);
+        assert_eq!(p.focus, Part::Cancel);
+        assert_eq!(p.key(Key::Char('P')), Event::Redraw, "its access key");
+        assert_eq!((p.focus, p.installs_updates()), (Part::Updates, false));
+        assert_eq!(p.offer_updates(false, true), Event::Redraw);
+        assert_eq!(p.focus, Part::Big(1), "Turn Off takes the focus back");
+        assert_eq!(p.key(Key::Char('p')), Event::None, "gone with the update");
+    }
+
+    #[test]
+    fn a_late_box_shows_unticked_and_an_untouched_one_leaves_the_update() {
+        let mut p = standby();
+        assert_eq!(p.updates(), Updates::Leave, "no box");
+        p.offer_updates(true, false);
+        assert!(!p.installs_updates(), "late, so unticked");
+        assert_eq!(p.updates(), Updates::Leave, "never touched");
+        assert_eq!(p.key(Key::Enter), Event::Press(Part::Big(1)));
+        p.toggle_updates();
+        assert_eq!(p.updates(), Updates::Install);
+        p.toggle_updates();
+        assert_eq!(p.updates(), Updates::Skip, "seen and unticked");
+        p.offer_updates(false, false);
+        p.offer_updates(true, true);
+        assert_eq!(
+            p.updates(),
+            Updates::Install,
+            "a box that comes back is new"
+        );
+    }
+
+    #[test]
+    fn a_ticked_box_greys_restart_into() {
+        let mut p = standby();
+        p.restart_into = true;
+        p.focus = Part::RestartInto;
+        p.offer_updates(true, true);
+        assert!(!p.live(Part::RestartInto));
+        assert_eq!(
+            p.focus,
+            Part::Big(1),
+            "the greyed button gives up the focus"
+        );
+        assert_eq!(p.key(Key::Char('i')), Event::None);
+        let stops: Vec<Part> = (0..6)
+            .map(|_| {
+                p.key(Key::Tab { back: false });
+                p.focus
+            })
+            .collect();
+        assert!(!stops.contains(&Part::RestartInto), "{stops:?}");
+        let lay = layout(&p, TextUnits::ONE);
+        let mut tree = Tree::new(ax::node(Role::Dialog, Rect::new(0, 0, 314, 200)));
+        access(&p, &lay, (0, 0), &mut tree, crate::access::ROOT);
+        let (_, last) = tree.nodes().last().unwrap();
+        assert_eq!(last.label(), Some("Restart Into..."));
+        assert!(last.is_disabled());
+        p.toggle_updates();
+        assert!(p.live(Part::RestartInto), "unticked, it is live again");
+        assert_eq!(p.key(Key::Char('i')), Event::Press(Part::RestartInto));
+    }
+
+    #[test]
+    fn the_box_sits_left_of_cancel_in_its_row() {
+        let mut p = standby();
+        assert_eq!(layout(&p, TextUnits::ONE).updates, None);
+        p.offer_updates(true, true);
+        let l = layout(&p, TextUnits::ONE);
+        let row = l.updates.unwrap();
+        assert_eq!(row, Rect::new(11, 168, 224, 20));
+        assert!(row.right() < l.cancel.x);
+        assert_eq!(
+            Layout::check_parts(row),
+            (Rect::new(11, 171, 13, 13), Rect::new(28, 168, 207, 20))
+        );
+        assert_eq!(hit(&l, 15, 175), Some(Part::Updates));
+        assert_eq!(hit(&l, 250, 175), Some(Part::Cancel));
+        let big = layout(&p, TextUnits::new(16, 11));
+        assert_eq!(
+            big.updates.unwrap().bottom(),
+            big.cancel.bottom(),
+            "grows with Cancel"
+        );
+        p.restart_into = true;
+        let l = layout(&p, TextUnits::ONE);
+        let (into, row) = (l.restart_into.unwrap(), l.updates.unwrap());
+        assert_eq!(row, Rect::new(109, 168, 126, 20), "past Restart Into...");
+        assert_eq!(hit(&l, 20, 175), Some(Part::RestartInto));
+        assert_eq!(hit(&l, 112, 175), Some(Part::Updates));
+        assert!(into.right() < row.x && row.right() < l.cancel.x);
+    }
+
+    #[test]
+    fn access_names_the_box_and_its_state() {
+        use crate::access::ROOT;
+        let mut p = standby();
+        p.offer_updates(true, true);
+        p.toggle_updates();
+        let lay = layout(&p, TextUnits::ONE);
+        let mut tree = Tree::new(ax::node(Role::Dialog, Rect::new(0, 0, 314, 200)));
+        let focus = access(&p, &lay, (0, 0), &mut tree, ROOT);
+        let n = tree.get(focus).unwrap();
+        assert_eq!(n.role(), Role::CheckBox);
+        assert_eq!(n.label(), Some("Install updates"));
+        assert_eq!(n.toggled(), Some(crate::access::accesskit::Toggled::False));
     }
 
     #[test]

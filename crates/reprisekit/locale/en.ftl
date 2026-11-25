@@ -116,6 +116,7 @@ powerpanel-restart-tip = Shuts down Reprise and then starts Reprise again.
 powerpanel-disconnect = &Disconnect
 powerpanel-disconnect-tip = Ends every remote connection and leaves your session running, so you can connect to it again.
 powerpanel-restart-into = Restart &Into...
+powerpanel-install-updates = Install u&pdates
 
 ## The login screen
 logon-title = Log On to Reprise

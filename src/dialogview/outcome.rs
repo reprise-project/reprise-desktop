@@ -24,6 +24,10 @@ impl State {
                 self.close_dialog();
                 crate::sessionend::begin(self, goal, Some(cmd), crate::lockview::Origin::Desktop);
             }
+            Outcome::EndSessionUpdates { goal, cmd, updates } => {
+                self.close_dialog();
+                crate::sessionend::begin_updates(self, goal, cmd, updates);
+            }
             Outcome::SessionEnd(choice) => crate::sessionend::answer(self, choice),
             Outcome::Location { desktop_id, answer } => {
                 crate::location::answer(self, &desktop_id, answer)

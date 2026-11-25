@@ -140,6 +140,9 @@ impl State {
         };
         model.user = user.clone();
         model.text = self.config.theme.text;
+        if model.shape == Shape::Glass {
+            crate::offlineupdate::refresh(self);
+        }
         self.refresh_recent();
         let place_px = lists::place_px(&model, scale);
         let (rows, places) = self.start_places(model.shape, place_px, &user);

@@ -205,6 +205,7 @@ fn restart_into_opens_no_submenu_once_there_is_nowhere_to_restart_into() {
         false,
         reprisekit::powerpanel::Leave::SwitchUser { live: true },
         true,
+        false,
     );
     let at = (rows.iter())
         .position(|r| *r == Some(crate::startmenu::StartRow::RestartInto))
@@ -350,6 +351,7 @@ fn escape_in_a_start_panel_popup_closes_the_popup_only() {
     let (items, rows) = crate::startmenu::shutdown_menu(
         false,
         reprisekit::powerpanel::Leave::SwitchUser { live: false },
+        false,
         false,
     );
     assert_eq!(

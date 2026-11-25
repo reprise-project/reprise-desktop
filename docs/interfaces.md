@@ -137,7 +137,9 @@ Lock, Restart, Restart into (where logind offers boot entries), Sleep and
 Hibernate, with Switch user first under
 reprise-login. Where the session offers Disconnect, it comes first instead,
 and Sleep and Hibernate are left out
-([remote-desktop.md](remote-desktop.md#disconnecting)).
+([remote-desktop.md](remote-desktop.md#disconnecting)). While PackageKit has an
+offline update prepared, Install updates and shut down and Install updates and
+restart head the list ([features.md](features.md#lock-power-and-session)).
 
 ### Glass only
 

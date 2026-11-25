@@ -309,6 +309,29 @@ are.
   and wait, then list who's holding things up, with End Now and Cancel. A
   program holding off log off through the Inhibit portal (a copy under way)
   keeps its windows until it lets go.
+- **Install updates on the way out.** While PackageKit has an offline update
+  prepared (by a software center, or `pkcon update --only-download`), the
+  Turn Off dialog has an Install updates check box and Glass's Shut down
+  options list Install updates and shut down and Install updates and restart.
+  The box is checked when the dialog opens with it; one that shows up later,
+  once PackageKit answers, starts unchecked. Turn Off or Restart with it
+  checked sets the update to install just before the computer goes down, the
+  Turn Off through `[power] poweroff`; it installs the next time the computer
+  starts, before anything else, then the computer restarts into the desktop.
+  Where polkit wants a password for that, it asks before anything closes.
+  Cancel a save prompt and nothing is set. When the action fails, or Log Off
+  or a critical battery takes over while it waits, the update is taken back,
+  unless the computer is shutting down by then; when it stays, the message
+  says it installs at the next start. An update
+  gone by the time the computer goes down leaves a plain Turn Off or Restart.
+  Restart Into... is greyed while the box is checked, and an update never
+  installs into a boot logind's restart target sends elsewhere: a target that
+  won't clear asks whether to go ahead without the update. An update another
+  program set to install is taken back only when you untick the box, before
+  Turn Off, Restart or Restart Into...; the power key, Glass's plain Shut down
+  and Restart, and a box you never touched leave it set, and a checked box
+  leaves what that program set the computer to do afterwards. When it won't
+  be taken back, a box asks whether to go ahead anyway.
 - **Session restore.** The programs you left open start again at the next
   login, on their desktops, with their tab and snap groups (`[session] restore`).
   Notepad comes back with each file it had open, Explorer with each window at

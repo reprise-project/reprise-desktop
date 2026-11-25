@@ -10,12 +10,16 @@
 //! ahead anyway. A Restart Into clears a target of the other kind the same way before it sets its own. A critical battery, and a Hibernate
 //! from the lid, idle or a power key, clear it without a prompt and go ahead regardless. Stand By and Log Off leave it to the next power action.
 //! Log Off and a critical battery give up a power action under way, but cannot stop a reboot logind already accepted.
+//! A Turn Off or Restart that installs PackageKit's offline update triggers it on the attempt's thread just before the
+//! action, and takes it back when the action fails (`offlineupdate`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use reprisebus::polkit::Verdict;
 use reprisekit::controls::endsession::{self, Choice, Goal, Row};
+use reprisekit::powerpanel::Updates;
 use smithay::reexports::calloop::{
     RegistrationToken, channel,
     timer::{TimeoutAction, Timer},
@@ -62,6 +66,7 @@ pub struct Ending {
     pub goal: Goal,
     cmd: Option<String>,
     aim: Aim,
+    updates: Updates,
     holders: Option<Vec<Holder>>,
     stop: Option<async_channel::Sender<()>>,
     /// The poll moves the portal's monitors to query-end ([`asks_portal`]).
@@ -119,18 +124,56 @@ impl Mode {
 }
 
 pub fn begin(state: &mut State, goal: Goal, cmd: Option<String>, origin: Origin) {
-    check(state, goal, cmd, Aim::Clear, false, origin);
+    check(state, goal, cmd, Aim::Clear, Updates::Leave, false, origin);
 }
 
-/// Restart with `cmd` into `boot`.
-pub fn begin_into(state: &mut State, cmd: String, boot: BootTarget) {
-    let aim = Aim::Into(boot);
-    check(state, Goal::Restart, Some(cmd), aim, false, Origin::Desktop);
+/// Turn Off or Restart with `cmd`, doing as `updates` says with PackageKit's prepared offline
+/// update just before the computer goes down (`offlineupdate::around`).
+pub fn begin_updates(state: &mut State, goal: Goal, cmd: String, updates: Updates) {
+    let cmd = Some(cmd);
+    check(
+        state,
+        goal,
+        cmd,
+        Aim::Clear,
+        updates,
+        false,
+        Origin::Desktop,
+    );
+}
+
+/// Restart with `cmd` into `boot`; Skip from an unticked Install updates check box takes back an
+/// update another program set to install. It installs nothing, as the update must not install into
+/// a boot that goes elsewhere.
+pub fn begin_into(state: &mut State, cmd: String, boot: BootTarget, updates: Updates) {
+    let (aim, cmd) = (Aim::Into(boot), Some(cmd));
+    let updates = match updates {
+        Updates::Install => Updates::Leave,
+        u => u,
+    };
+    check(
+        state,
+        Goal::Restart,
+        cmd,
+        aim,
+        updates,
+        false,
+        Origin::Desktop,
+    );
 }
 
 pub fn begin_critical(state: &mut State, cmd: String) {
     let cmd = Some(cmd);
-    check(state, Goal::TurnOff, cmd, Aim::Clear, true, Origin::Console);
+    let updates = Updates::Leave;
+    check(
+        state,
+        Goal::TurnOff,
+        cmd,
+        Aim::Clear,
+        updates,
+        true,
+        Origin::Console,
+    );
 }
 
 /// What a power attempt does with logind's restart target before it acts.
@@ -156,17 +199,23 @@ impl Aim {
     }
 }
 
-/// Start the end once logind says the action and its restart target are allowed, so a refusal
-/// closes nothing, and read the target logind holds, which the action clears first. A custom
-/// command has only its exit status to go by.
+/// Start the end once logind says the action and its restart target are allowed, and polkit an
+/// update's install, so a refusal closes nothing, and read the target logind holds, which the
+/// action clears first. A custom command has only its exit status to go by. An end joining one
+/// under way asks polkit only about the install, and a refusal leaves the end under way as it was.
 fn check(
     state: &mut State,
     goal: Goal,
     cmd: Option<String>,
     aim: Aim,
+    updates: Updates,
     critical: bool,
     origin: Origin,
 ) {
+    let updates = match goal {
+        Goal::LogOff => Updates::Leave,
+        Goal::TurnOff | Goal::Restart => updates,
+    };
     if critical || goal == Goal::LogOff {
         if state.powering.give_up_all() {
             log::info!("session end: {goal:?} gives up the power action under way");
@@ -175,35 +224,56 @@ fn check(
         log::info!("session end: {goal:?} while a power action is under way; ignored");
         return;
     }
-    let verb = cmd.as_deref().and_then(logind_verb);
-    let reads = goal != Goal::LogOff && !critical && aim == Aim::Clear;
-    let asks = verb.is_some() || matches!(aim, Aim::Into(_)) || reads;
-    if state.ending.is_some() || !asks {
+    let joins = state.ending.is_some();
+    let verb = (cmd.as_deref().and_then(logind_verb)).filter(|_| !joins);
+    let reads = goal != Goal::LogOff && !critical && aim == Aim::Clear && !joins;
+    let installs = updates == Updates::Install;
+    let asks = verb.is_some() || (matches!(aim, Aim::Into(_)) && !joins) || reads || installs;
+    if !asks {
         let password = Password::No.with(&aim, false);
-        start(state, goal, cmd, aim, critical, origin, password);
+        start(state, goal, cmd, aim, updates, critical, origin, password);
         return;
     }
     let spawned = state.spawn_job(move || {
-        let answer =
-            zbus::block_on(async { allowed(connect(true).await.as_ref(), verb, aim, reads).await });
+        let answer = zbus::block_on(async {
+            allowed(connect(true).await.as_ref(), verb, aim, reads, installs).await
+        });
         Box::new(move |state: &mut State| match answer {
-            Ok((password, aim)) => start(state, goal, cmd, aim, critical, origin, password),
-            Err(why) => refuse(state, Act::of(goal), &why),
+            Ok(_) if joins && state.ending.is_none() => {
+                log::info!("session end: {goal:?} came after the end it joined went on");
+            }
+            Ok((password, aim)) => {
+                start(state, goal, cmd, aim, updates, critical, origin, password)
+            }
+            Err(why) => turned_down(state, goal, joins, &why),
         })
     });
     if !spawned {
-        refuse(state, Act::of(goal), &Refused::Internal);
+        turned_down(state, goal, joins, &Refused::Internal);
+    }
+}
+
+/// [`refuse`] a session end [`check`] stopped, or only tell when it `joins` one under way, which
+/// goes on.
+fn turned_down(state: &mut State, goal: Goal, joins: bool, why: &Refused) {
+    match joins {
+        true => {
+            log::warn!("session end: {goal:?} refused, the end under way goes on: {why:?}");
+            tell(state, Act::of(goal), why);
+        }
+        false => refuse(state, Act::of(goal), why),
     }
 }
 
 /// logind's answer on `conn` for `verb` and `aim`: a Restart Into's target as logind offers it now,
 /// and the password asked up front, also for a target set that the action clears first: one of the
-/// other kind for a Restart Into, any when it `reads`.
+/// other kind for a Restart Into, any when it `reads`, and for the trigger when it `installs`.
 async fn allowed(
     conn: Option<&zbus::Connection>,
     verb: Option<Verb>,
     aim: Aim,
     reads: bool,
+    installs: bool,
 ) -> Result<(Password, Aim), Refused> {
     let Some(conn) = conn else {
         return Ok((Password::No.with(&aim, false), aim));
@@ -211,6 +281,13 @@ async fn allowed(
     let password = match verb {
         Some(verb) => can(conn, verb).await?,
         None => Password::No,
+    };
+    let password = match installs {
+        true => {
+            let trigger = reprisebus::offline::TRIGGER_ACTION;
+            with_trigger(password, reprisebus::polkit::verdict(conn, trigger).await)?
+        }
+        false => password,
     };
     let (aim, set) = match aim {
         Aim::Into(b) => {
@@ -222,6 +299,20 @@ async fn allowed(
         aim => (aim, false),
     };
     Ok((password.with(&aim, set), aim))
+}
+
+/// `password` with polkit's `verdict` on the install's trigger, which runs after the fade without
+/// a prompt unless one is asked for up front.
+fn with_trigger(password: Password, verdict: Verdict) -> Result<Password, Refused> {
+    match verdict {
+        Verdict::Allowed => Ok(password),
+        Verdict::Prompts => Ok(password.or(Password::Yes)),
+        Verdict::Refused => Err(Refused::Failed(not_set(reprisebus::polkit::NOT_ALLOWED))),
+    }
+}
+
+fn not_set(why: &str) -> String {
+    format!("The updates could not be set to install. {why}")
 }
 
 /// Whether logind on `conn` is known to hold a target other than one of kind `but`.
@@ -269,11 +360,13 @@ async fn target_now(conn: &zbus::Connection, mut boot: BootTarget) -> Result<Boo
     Ok(boot)
 }
 
+#[expect(clippy::too_many_arguments)]
 fn start(
     state: &mut State,
     goal: Goal,
     cmd: Option<String>,
     aim: Aim,
+    updates: Updates,
     critical: bool,
     origin: Origin,
     password: Password,
@@ -285,6 +378,7 @@ fn start(
             e.goal = goal;
             e.cmd = cmd;
             e.aim = std::mem::replace(&mut e.aim, Aim::Clear).joined(aim);
+            e.updates = updates;
             e.password = e.password.or(password);
         }
         e.mode = mode;
@@ -300,7 +394,7 @@ fn start(
     state.session.kept = true;
     if state.locked_for(origin) {
         log::info!("session end: locked, nobody to ask");
-        go_on(state, goal, cmd, aim, false, password, critical);
+        go_on(state, goal, cmd, aim, updates, false, password, critical);
         return;
     }
     let (tx, rx) = channel::channel::<Vec<Holder>>();
@@ -345,6 +439,7 @@ fn start(
         goal,
         cmd,
         aim,
+        updates,
         // Without the thread nothing is known to hold the session.
         holders: stop.is_none().then(Vec::new),
         stop,
@@ -476,6 +571,7 @@ fn finish(state: &mut State, override_inhibitors: bool) {
         e.goal,
         e.cmd,
         e.aim,
+        e.updates,
         override_inhibitors,
         e.password,
         e.mode == Mode::Critical,
@@ -496,17 +592,26 @@ fn resets_portal(
 /// the compositor for Log Off, else run `cmd`. A `cmd` that asks for a password runs before the
 /// fade, its prompt over the desktop, and the session winds down once the action is under way.
 /// A lingering Stand By or Hibernate gives up, so its late failure brings nothing back.
+#[expect(clippy::too_many_arguments)]
 fn go_on(
     state: &mut State,
     goal: Goal,
     cmd: Option<String>,
     aim: Aim,
+    updates: Updates,
     override_inhibitors: bool,
     password: Password,
     critical: bool,
 ) {
     crate::crash::ending();
     state.powering.give_up_lingering();
+    let how = Run {
+        override_inhibitors,
+        unattended: critical,
+        wind_down_for: None,
+        faded: true,
+        updates,
+    };
     match cmd {
         Some(cmd) if password.asked(override_inhibitors) && prompts(state) => {
             log::info!("session end: {goal:?} runs {cmd:?} before the fade, for its password");
@@ -515,10 +620,9 @@ fn go_on(
                 SAVE_SHOTS,
                 Box::new(move |state| {
                     let how = Run {
-                        override_inhibitors,
-                        unattended: critical,
                         wind_down_for: Some(goal),
                         faded: false,
+                        ..how
                     };
                     attempt(state, Act::of(goal), cmd, aim, how);
                 }),
@@ -527,7 +631,7 @@ fn go_on(
         cmd => wind_down(
             state,
             goal,
-            Box::new(move |state| act(state, goal, cmd, aim, override_inhibitors, critical)),
+            Box::new(move |state| act(state, goal, cmd, aim, how)),
         ),
     }
 }
@@ -618,29 +722,20 @@ pub fn quit(state: &mut State) {
         state,
         true,
         SAVE_SHOTS,
-        Box::new(|state| state.signal.stop()),
+        Box::new(|state| {
+            crate::offlineupdate::take_back_left(state);
+            state.signal.stop();
+        }),
     );
 }
 
-fn act(
-    state: &mut State,
-    goal: Goal,
-    cmd: Option<String>,
-    aim: Aim,
-    override_inhibitors: bool,
-    critical: bool,
-) {
+fn act(state: &mut State, goal: Goal, cmd: Option<String>, aim: Aim, how: Run) {
     let Some(cmd) = cmd else {
+        crate::offlineupdate::take_back_left(state);
         state.signal.stop();
         return;
     };
     log::info!("session end: {goal:?} runs {cmd:?}");
-    let how = Run {
-        override_inhibitors,
-        unattended: critical,
-        wind_down_for: None,
-        faded: true,
-    };
     attempt(state, Act::of(goal), cmd, aim, how);
 }
 
@@ -668,6 +763,7 @@ fn sleep_run(state: &State, act: Act, unattended: bool) -> (Aim, Run) {
         unattended,
         wind_down_for: None,
         faded: state.session_fade.darkens(),
+        updates: Updates::Leave,
     };
     (aim, how)
 }
@@ -689,6 +785,7 @@ fn sleep_with(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
 pub struct Again {
     pub(crate) act: Act,
     pub(crate) cmd: String,
+    pub(crate) updates: Updates,
 }
 
 /// The held-back box's go ahead: the action runs again as asked, leaving logind's restart target.
@@ -708,6 +805,7 @@ pub fn anyway(state: &mut State, again: Again) {
         goal,
         Some(again.cmd),
         Aim::Leave,
+        again.updates,
         false,
         Origin::Desktop,
     );
@@ -807,6 +905,7 @@ struct Run {
     wind_down_for: Option<Goal>,
     /// The screen is faded out, where a password prompt would not show.
     faded: bool,
+    updates: Updates,
 }
 
 /// How long a power action may take to answer before Reprise gives up on it ([`late`]): logind
@@ -832,19 +931,27 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
     let again = Again {
         act,
         cmd: cmd.clone(),
+        updates: how.updates,
     };
+    let (bus, made) = (Arc::clone(&state.offline.bus), state.offline.made.clone());
     let spawned = state.spawn_job(move || {
         let failed = unpanicked(|| {
-            let go = || match logind_verb(&cmd) {
+            let power = || match logind_verb(&cmd) {
                 Some(verb) => zbus::block_on(call(verb, how.override_inhibitors, interactive)),
                 None => run(&cmd, &env).map(Failed::Refused),
             };
+            let still = || ticket.still();
+            let go = || updating(&*bus, &made, id, how.updates, interactive, &still, power);
             match aim {
                 Aim::Into(boot) => match zbus::block_on(zbus::Connection::system()) {
                     Ok(conn) => restart_into(&conn, &boot, interactive, &ticket, go),
                     Err(e) => Some(Failed::Refused(Refused::Failed(e.to_string()))),
                 },
                 Aim::Clear => match clear_set(interactive && !how.unattended, how.unattended) {
+                    Some(title) => Some(Failed::Aimed(title)),
+                    None => go(),
+                },
+                Aim::Leave if how.updates == Updates::Install => match still_set() {
                     Some(title) => Some(Failed::Aimed(title)),
                     None => go(),
                 },
@@ -859,6 +966,41 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
     }
 }
 
+/// [`crate::offlineupdate::around`] attempt `id`'s `power` with the prepared update as `updates`
+/// asks.
+fn updating(
+    bus: &dyn crate::offlineupdate::Bus,
+    made: &crate::offlineupdate::Made,
+    id: u64,
+    updates: Updates,
+    interactive: bool,
+    still: &dyn Fn() -> bool,
+    power: impl FnOnce() -> Option<Failed>,
+) -> Option<Failed> {
+    use crate::offlineupdate::Held;
+    match crate::offlineupdate::around(bus, made, id, updates, interactive, still, power) {
+        Ok(failed) => failed,
+        Err(Held::Dismissed) => Some(Failed::Dismissed),
+        Err(Held::NotSet(why)) => Some(Failed::Refused(Refused::Failed(not_set(&why)))),
+        Err(Held::StillSet) => Some(Failed::Updates(None)),
+        Err(Held::Stays(failed)) => Some(Failed::Refused(Refused::Stays(match failed {
+            Failed::Refused(why) => Some(Box::new(why)),
+            _ => None,
+        }))),
+    }
+}
+
+/// The title of a restart target logind on the system bus holds, which an update must not
+/// install into.
+fn still_set() -> Option<String> {
+    let conn = zbus::block_on(zbus::Connection::system()).ok()?;
+    let aimed = zbus::block_on(crate::restartinto::aimed(&conn));
+    aimed.into_iter().find_map(|a| match a {
+        Aimed::Set(t) => Some(t.title),
+        Aimed::Unknown(_) => None,
+    })
+}
+
 /// `work`'s answer, or a refusal when it panics, so the attempt still answers.
 fn unpanicked(work: impl FnOnce() -> Option<Failed>) -> Option<Failed> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|_| {
@@ -867,9 +1009,10 @@ fn unpanicked(work: impl FnOnce() -> Option<Failed>) -> Option<Failed> {
     })
 }
 
-/// Attempt `id` ran past [`ANSWER_WITHIN`]: unless it answered, give up on it and refuse. One that
-/// `lingers`, a custom Stand By or Hibernate command, may wait on purpose (a locker, the resume):
-/// it only stops holding the next action back, and a failure still shows.
+/// Attempt `id` ran past [`ANSWER_WITHIN`]: unless it answered, give up on it and refuse, saying
+/// so when the update's trigger it made stands. One that `lingers`, a custom Stand By or Hibernate
+/// command, may wait on purpose (a locker, the resume): it only stops holding the next action
+/// back, and a failure still shows.
 fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
     if state.powering.under_way != Some(id) {
         return;
@@ -880,7 +1023,11 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
         return;
     }
     state.powering.give_up();
-    refuse(state, act, &Refused::Late);
+    let why = match state.offline.made.stands(id) {
+        true => Refused::Stays(Some(Box::new(Refused::Late))),
+        false => Refused::Late,
+    };
+    refuse(state, act, &why);
 }
 
 /// [`clear`] on the system bus, without a method timeout: a password prompt stays up as long as
@@ -945,7 +1092,10 @@ fn restart_into(
         return Some(failure(&e, dismissed).map_or(Failed::Dismissed, Failed::Refused));
     }
     let failed = match ticket.still() {
-        true => reboot()?,
+        true => match reboot()? {
+            Failed::Updates(None) => Failed::Updates(Some(boot.title.clone())),
+            failed => failed,
+        },
         false => {
             log::info!("session end: restart into {:?} given up on", boot.entry);
             Failed::Dismissed
@@ -959,8 +1109,8 @@ fn restart_into(
 }
 
 /// A refusal shows a message box; a dismissed password prompt brings the session back without
-/// one; a restart target that would not clear asks whether to go ahead `again` ([`hold_back`]).
-/// An action under way winds the session down for `wind_down_for`. An attempt given up on answers
+/// one; a restart target or an offline update that would not clear asks whether to go ahead
+/// `again` ([`hold_back`]). An action under way winds the session down for `wind_down_for`. An attempt given up on answers
 /// nothing.
 fn answered(
     state: &mut State,
@@ -984,23 +1134,51 @@ fn answered(
             log::info!("session end: {act:?} password prompt dismissed");
             resume(state, act);
         }
-        Some(Failed::Aimed(title)) => hold_back(state, &title, again),
+        Some(Failed::Aimed(title)) => {
+            let mut set = aimed_text(&title);
+            // An update must not install into a boot that goes elsewhere.
+            let updates = match again.updates {
+                Updates::Install => {
+                    set.push_str(" The updates will install another time.");
+                    Updates::Skip
+                }
+                u => u,
+            };
+            hold_back(state, &set, Again { updates, ..again });
+        }
+        Some(Failed::Updates(into)) => {
+            let again = Again {
+                updates: Updates::Leave,
+                ..again
+            };
+            hold_back(state, &updates_set(into.as_deref()), again);
+        }
         Some(Failed::Refused(why)) => refuse(state, act, &why),
     }
 }
 
-/// The restart target titled `title` would not clear: the session comes back, and a box asks
+/// What is `set` for the next start would not change: the session comes back, and a box asks
 /// whether to go ahead with `again` anyway.
-fn hold_back(state: &mut State, title: &str, again: Again) {
-    log::warn!("session end: {:?} held back by {title:?}", again.act);
+fn hold_back(state: &mut State, set: &str, again: Again) {
+    log::warn!("session end: {:?} held back: {set:?}", again.act);
     let act = again.act;
     resume(state, act);
-    let set = aimed_text(title);
     let lock = format!("Reprise could not {}.\n\n{set}", act.on("the"));
     crate::lockview::refused(state, lock);
     let text = format!("{set}\n\nDo you want to {} anyway?", act.on("the"));
     let d = crate::dialog::Dialog::power_anyway(act.title(), text, act.anyway(), again);
     state.open_dialog(d);
+}
+
+/// A trigger another program made that the user unticked would not cancel. Going ahead anyway
+/// is a plain Restart, not `into` the Restart Into's pick.
+fn updates_set(into: Option<&str>) -> String {
+    let set = "Updates will install the next time the computer starts, and Reprise could not change \
+               that.";
+    match into {
+        Some(title) => format!("{set} Restarting anyway does not start {title}."),
+        None => set.to_string(),
+    }
 }
 
 fn aimed_text(title: &str) -> String {
@@ -1069,6 +1247,9 @@ enum Failed {
     Refused(Refused),
     /// The restart target titled here is set and would not clear.
     Aimed(String),
+    /// The user unticked an update another program set to install, and it would not cancel; a
+    /// Restart Into's target, titled here, is cleared again.
+    Updates(Option<String>),
 }
 
 /// Why the computer stayed up.
@@ -1082,6 +1263,9 @@ enum Refused {
     Late,
     /// Reprise itself failed: the attempt panicked, or its thread did not start.
     Internal,
+    /// The action failed, for this reason when it was refused, and the update set to install for it
+    /// could not be taken back.
+    Stays(Option<Box<Refused>>),
 }
 
 /// The session goes on after a power action that did not happen.
@@ -1098,8 +1282,14 @@ fn refuse(state: &mut State, act: Act, why: &Refused) {
     match why {
         // The action may still go through, and the session stays saved as it ended.
         Refused::Late => crate::sessionfade::restore(state),
+        Refused::Stays(Some(w)) if **w == Refused::Late => crate::sessionfade::restore(state),
         _ => resume(state, act),
     }
+    tell(state, act, why);
+}
+
+/// Show why `act` did not happen, on the lock and in a message box.
+fn tell(state: &mut State, act: Act, why: &Refused) {
     crate::lockview::refused(state, refusal_text(act, &unnamed(why)));
     state.open_dialog(crate::dialog::Dialog::error(
         act.title(),
@@ -1113,6 +1303,7 @@ fn unnamed(why: &Refused) -> Refused {
     match why {
         Refused::Held(_) => Refused::Held(Vec::new()),
         Refused::Failed(_) => Refused::Failed(LOCK_FAILED.into()),
+        Refused::Stays(why) => Refused::Stays(why.as_deref().map(|w| Box::new(unnamed(w)))),
         why => why.clone(),
     }
 }
@@ -1151,8 +1342,12 @@ fn reason(act: Act, why: &Refused) -> String {
             ANSWER_WITHIN.as_secs() / 60
         ),
         Refused::Internal => "An error in Reprise stopped it.".to_string(),
+        Refused::Stays(None) => UPDATES_STAY.to_string(),
+        Refused::Stays(Some(why)) => format!("{}\n\n{UPDATES_STAY}", reason(act, why)),
     }
 }
+
+const UPDATES_STAY: &str = "Updates will install the next time the computer starts.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
@@ -1870,6 +2065,7 @@ mod tests {
             goal: Goal::LogOff,
             cmd: None,
             aim: Aim::Clear,
+            updates: Updates::Leave,
             // Unknown holders keep the end from finishing while the loop turns.
             holders: None,
             stop: None,
@@ -1970,7 +2166,7 @@ mod tests {
         };
         let ask = || {
             let aim = Aim::Into(target_b());
-            zbus::block_on(allowed(Some(&f.client), None, aim, false)).map(|(p, _)| p)
+            zbus::block_on(allowed(Some(&f.client), None, aim, false, false)).map(|(p, _)| p)
         };
         assert_eq!(ask(), Ok(Password::No));
         f.hold("a.conf", false);
@@ -2007,7 +2203,7 @@ mod tests {
         assert_eq!(zbus::block_on(clear(&f.client, None, true, false)), None);
         assert_eq!(*f.set.lock().unwrap(), ["entry \"\"", "firmware false"]);
         assert_eq!(
-            zbus::block_on(allowed(Some(&f.client), None, Aim::Clear, true)),
+            zbus::block_on(allowed(Some(&f.client), None, Aim::Clear, true, false)),
             Ok((Password::No, Aim::Clear)),
             "the fade comes first, and the clear asks for no password under it"
         );
@@ -2039,6 +2235,7 @@ mod tests {
             Goal::TurnOff,
             Some("true".into()),
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::No,
             false,
@@ -2055,6 +2252,7 @@ mod tests {
             goal: Goal::Restart,
             cmd: Some("true".into()),
             aim: Aim::Leave,
+            updates: Updates::Leave,
             holders: None,
             stop: None,
             asked_portal: false,
@@ -2090,6 +2288,42 @@ mod tests {
             Password::OverInhibitors
         );
         assert_eq!(Password::No.or(Password::Yes), Password::Yes);
+    }
+
+    #[test]
+    fn an_end_taking_over_an_install_keeps_only_its_own_choice_and_log_off_installs_nothing() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.ending = Some(Ending {
+            goal: Goal::Restart,
+            cmd: Some("true".into()),
+            aim: Aim::Clear,
+            updates: Updates::Install,
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Waiting,
+            password: Password::No,
+            unasked: Vec::new(),
+        });
+        begin_into(&mut h.state, "true".into(), target_b(), Updates::Leave);
+        let updates = |h: &crate::harness::Harness| h.state.ending.as_ref().unwrap().updates;
+        assert_eq!(
+            updates(&h),
+            Updates::Leave,
+            "a Restart Into installs nothing"
+        );
+        begin_into(&mut h.state, "true".into(), target_b(), Updates::Install);
+        assert_eq!(updates(&h), Updates::Leave, "not even asked to");
+        h.state.ending.as_mut().unwrap().updates = Updates::Install;
+        begin(&mut h.state, Goal::LogOff, None, Origin::Desktop);
+        assert_eq!(updates(&h), Updates::Leave, "nor does Log Off");
+        let e = h.state.ending.as_mut().unwrap();
+        (e.updates, e.mode) = (Updates::Install, Mode::Waiting);
+        begin_critical(&mut h.state, "true".into());
+        assert_eq!(updates(&h), Updates::Leave, "nor a critical battery");
     }
 
     #[test]
@@ -2129,6 +2363,142 @@ mod tests {
         );
     }
 
+    #[test]
+    fn restart_into_from_a_panel_whose_box_was_unticked_takes_back_an_update_set_elsewhere() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut d = crate::dialog::Dialog::turn_off(&h.state.config.power, false);
+        d.offer_restart_into(true);
+        d.offer_updates(true, false);
+        h.state.open_dialog(d);
+        let top = &mut h.state.dialogs.views.last_mut().unwrap().dialog;
+        top.key(reprisekit::controls::form::Key::Access('p'));
+        assert_eq!(top.updates(), Updates::Skip, "unticked");
+        h.state.config.power.reboot = "true".into();
+        crate::restartinto::pick(&mut h.state, target_b());
+        let e = h.state.ending.as_ref().expect("the restart under way");
+        assert_eq!(
+            (e.aim.clone(), e.updates),
+            (Aim::Into(target_b()), Updates::Skip)
+        );
+    }
+
+    #[test]
+    fn an_install_polkit_would_prompt_for_asks_before_the_fade_and_one_it_refuses_is_refused_up_front()
+     {
+        assert_eq!(
+            with_trigger(Password::No, Verdict::Allowed),
+            Ok(Password::No)
+        );
+        assert_eq!(
+            with_trigger(Password::OverInhibitors, Verdict::Prompts),
+            Ok(Password::Yes)
+        );
+        let refused = with_trigger(Password::No, Verdict::Refused);
+        assert_eq!(
+            refused,
+            Err(Refused::Failed(
+                "The updates could not be set to install. You are not allowed to make this change."
+                    .into()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_failed_action_whose_trigger_stays_says_the_updates_install_at_the_next_start() {
+        let stays = Refused::Stays(Some(Box::new(Refused::Failed("exit status 1".into()))));
+        assert_eq!(
+            refusal_text(Act::Restart, &stays),
+            "Reprise could not restart the computer.\n\nexit status 1\n\nUpdates will install \
+             the next time the computer starts."
+        );
+        let lock = Refused::Stays(Some(Box::new(Refused::Failed(LOCK_FAILED.into()))));
+        assert_eq!(unnamed(&stays), lock, "the lock quotes no error");
+        assert_eq!(
+            reason(Act::TurnOff, &Refused::Stays(None)),
+            "Updates will install the next time the computer starts."
+        );
+    }
+
+    #[test]
+    fn an_install_joining_an_end_under_way_waits_for_polkit_and_a_refusal_leaves_that_end() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        h.state.fsjobs.refuse_threads = true;
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            aim: Aim::Clear,
+            updates: Updates::Leave,
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Waiting,
+            password: Password::No,
+            unasked: Vec::new(),
+        });
+        let open = dialogs(&h);
+        begin_updates(&mut h.state, Goal::TurnOff, "true".into(), Updates::Install);
+        let e = h.state.ending.as_ref().expect("the end under way");
+        assert_eq!((e.goal, e.updates), (Goal::LogOff, Updates::Leave));
+        assert_eq!(dialogs(&h), open + 1, "the refusal's box");
+        begin_updates(&mut h.state, Goal::TurnOff, "true".into(), Updates::Skip);
+        let e = h.state.ending.as_ref().unwrap();
+        assert_eq!(
+            (e.goal, e.updates),
+            (Goal::TurnOff, Updates::Skip),
+            "asks nothing"
+        );
+    }
+
+    #[test]
+    fn a_power_action_with_no_answer_in_time_says_when_its_trigger_stands() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let id = h.state.powering.begin();
+        h.state.offline.made.set(Some(id));
+        crate::crash::ending();
+        h.state.session.kept = true;
+        late(&mut h.state, id, Act::Restart, false);
+        let d = &h.state.dialogs.views.last().expect("the refusal").dialog;
+        assert_eq!(
+            d.text,
+            "Reprise could not restart the computer.\n\nIt had not happened after 2 minutes.\n\n\
+             Updates will install the next time the computer starts."
+        );
+        assert!(
+            crate::crash::is_ending() && h.state.session.kept,
+            "it may still go through"
+        );
+        crate::crash::not_ending();
+    }
+
+    #[test]
+    fn a_restart_into_whose_untick_will_not_cancel_says_going_ahead_drops_its_pick() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        if let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) {
+            let failed = restart_into(&f.client, &target_b(), false, &ticket(false), || {
+                Some(Failed::Updates(None))
+            });
+            assert_eq!(failed, Some(Failed::Updates(Some("B".into()))));
+            assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\"", "entry \"\""]);
+        }
+        let id = h.state.powering.begin();
+        let failed = Some(Failed::Updates(Some("B".into())));
+        answered(&mut h.state, id, again(Act::Restart), failed, None);
+        let d = &h.state.dialogs.views.last().expect("the box").dialog;
+        assert_eq!(
+            d.text,
+            "Updates will install the next time the computer starts, and Reprise could not change \
+             that. Restarting anyway does not start B.\n\nDo you want to restart the computer \
+             anyway?"
+        );
+    }
+
     /// Attempt 1, given up on when `given_up`.
     fn ticket(given_up: bool) -> Ticket {
         Ticket {
@@ -2149,6 +2519,7 @@ mod tests {
         Again {
             act,
             cmd: "true".into(),
+            updates: Updates::Leave,
         }
     }
 
@@ -2161,7 +2532,7 @@ mod tests {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         let id = h.state.powering.begin();
-        begin_into(&mut h.state, "true".into(), target_b());
+        begin_into(&mut h.state, "true".into(), target_b(), Updates::Leave);
         begin(
             &mut h.state,
             Goal::Restart,
@@ -2311,6 +2682,7 @@ mod tests {
             Goal::TurnOff,
             Some("true".into()),
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::No,
             false,
@@ -2336,6 +2708,7 @@ mod tests {
             unattended: false,
             wind_down_for: None,
             faded: false,
+            updates: Updates::Leave,
         };
         attempt(&mut h.state, Act::Restart, "true".into(), Aim::Clear, how);
         assert!(!h.state.powering.busy());
@@ -2460,7 +2833,7 @@ mod tests {
         let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) else {
             return;
         };
-        let ask = |aim| zbus::block_on(allowed(Some(&f.client), None, aim, true));
+        let ask = |aim| zbus::block_on(allowed(Some(&f.client), None, aim, true, false));
         assert_eq!(ask(Aim::Clear), Ok((Password::No, Aim::Clear)));
         f.hold("b.conf", false);
         assert_eq!(ask(Aim::Clear), Ok((Password::Yes, Aim::Clear)));
@@ -2610,6 +2983,7 @@ mod tests {
             goal: Goal::LogOff,
             cmd: None,
             aim: Aim::Clear,
+            updates: Updates::Leave,
             holders: None,
             stop: None,
             asked_portal: false,
@@ -2639,6 +3013,7 @@ mod tests {
             goal: Goal::LogOff,
             cmd: None,
             aim: Aim::Clear,
+            updates: Updates::Leave,
             holders: None,
             stop: None,
             asked_portal: false,
@@ -2672,6 +3047,7 @@ mod tests {
             goal: Goal::LogOff,
             cmd: None,
             aim: Aim::Clear,
+            updates: Updates::Leave,
             holders: None,
             stop: None,
             asked_portal: false,
@@ -2796,6 +3172,7 @@ mod tests {
             goal: Goal::LogOff,
             cmd: None,
             aim: Aim::Clear,
+            updates: Updates::Leave,
             holders: Some(Vec::new()),
             stop: None,
             asked_portal: false,
@@ -2836,6 +3213,7 @@ mod tests {
             goal: Goal::LogOff,
             cmd: None,
             aim: Aim::Clear,
+            updates: Updates::Leave,
             holders: Some(vec![copying]),
             stop: None,
             asked_portal: false,
@@ -2878,6 +3256,7 @@ mod tests {
             goal: Goal::LogOff,
             cmd: None,
             aim: Aim::Clear,
+            updates: Updates::Leave,
             holders: Some(Vec::new()),
             stop: None,
             asked_portal: false,
@@ -2919,6 +3298,7 @@ mod tests {
             Goal::LogOff,
             None,
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::No,
             false,
@@ -2935,6 +3315,7 @@ mod tests {
             Goal::LogOff,
             None,
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::No,
             false,
@@ -2954,6 +3335,7 @@ mod tests {
             Goal::LogOff,
             None,
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::No,
             false,
@@ -2979,6 +3361,7 @@ mod tests {
             Goal::LogOff,
             None,
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::No,
             false,
@@ -3021,6 +3404,7 @@ mod tests {
             goal,
             cmd: cmd.map(String::from),
             aim: Aim::Clear,
+            updates: Updates::Leave,
             holders: None,
             stop: None,
             asked_portal,
@@ -3059,6 +3443,7 @@ mod tests {
             Goal::TurnOff,
             Some("true".into()),
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::No,
             false,
@@ -3275,6 +3660,7 @@ mod tests {
                 Goal::TurnOff,
                 Some(cmd.into()),
                 Aim::Clear,
+                Updates::Leave,
                 false,
                 password,
                 false,
@@ -3308,6 +3694,7 @@ mod tests {
             Goal::TurnOff,
             Some("false".into()),
             Aim::Clear,
+            Updates::Leave,
             false,
             Password::Yes,
             false,

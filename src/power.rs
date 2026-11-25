@@ -315,6 +315,26 @@ pub(crate) async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObject
     reply.body().deserialize()
 }
 
+/// logind's `PreparingForShutdown`, blocking: whether a power off or reboot is under way. False
+/// when logind does not answer.
+#[cfg(not(test))]
+pub fn shutting_down() -> bool {
+    let read = async {
+        let login1: Proxy<'_> = zbus::proxy::Builder::new(&reprisebus::system()?)
+            .destination(LOGIN1_NAME)
+            .path(LOGIN1_PATH)
+            .interface(LOGIN1_MANAGER)
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await?;
+        login1.get_property::<bool>("PreparingForShutdown").await
+    };
+    reprisebus::wait(read).unwrap_or_else(|e| {
+        log::warn!("power: PreparingForShutdown: {e}");
+        false
+    })
+}
+
 pub(crate) async fn session_proxy(
     conn: &Connection,
     path: OwnedObjectPath,

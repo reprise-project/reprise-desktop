@@ -304,12 +304,15 @@ fn answered(state: &mut State, targets: Vec<BootTarget>) {
 
 impl State {
     /// The Turn off computer panel for the `[power]` commands, Restart Into... in it when there is
-    /// somewhere to restart into. Asks logind again for the next one.
+    /// somewhere to restart into and the Install updates check box, checked, while the last answer
+    /// had an update prepared. Asks logind and PackageKit again for the next one.
     pub fn turn_off_dialog(&mut self) -> Dialog {
         let disconnect = crate::console::disconnect_offered(self);
         let mut d = Dialog::turn_off(&self.config.power, disconnect);
         d.offer_restart_into(!self.boot_targets.is_empty());
+        d.offer_updates(self.offline.known.prepared, false);
         refresh(self);
+        crate::offlineupdate::refresh(self);
         d
     }
 }
@@ -373,17 +376,20 @@ pub fn open_menu(state: &mut State, keys: bool) {
     }
 }
 
-/// A target was picked: the panel it came from closes and the computer restarts into it.
+/// A target was picked: the panel it came from closes and the computer restarts into it, with the
+/// update as the panel's Install updates check box says.
 pub fn pick(state: &mut State, target: BootTarget) {
-    let top_offers = (state.dialogs.views.last()).is_some_and(|v| {
+    let from = (state.dialogs.views.last()).filter(|v| {
         (v.dialog.buttons.iter()).any(|b| b.action == crate::dialog::DialogAction::RestartInto)
     });
-    if top_offers {
+    let updates = from.map(|v| v.dialog.updates());
+    if updates.is_some() {
         state.apply_dialog(crate::dialog::Outcome::Close);
     }
     log::info!("restart into: {:?}", target.entry);
     let cmd = state.config.power.reboot.clone();
-    crate::sessionend::begin_into(state, cmd, target);
+    let updates = updates.unwrap_or(reprisekit::powerpanel::Updates::Leave);
+    crate::sessionend::begin_into(state, cmd, target, updates);
 }
 
 #[cfg(test)]

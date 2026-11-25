@@ -178,6 +178,16 @@ pub fn draw(
             (Some(_), Some(f)) => (f == i, f == i && dots),
             (Some(_), None) => (b.default, false),
         };
+        if b.action == DialogAction::ToggleUpdates {
+            let checked = welcome_installs(d);
+            let ptr = lit_of(lit, i);
+            let (focus, ink) = (b.default && dots, cs.button_text);
+            let r = *r;
+            reprisekit::interfaces::draw_updates_box(
+                &mut c, text, &paint, r, checked, ptr, focus, ink, px,
+            );
+            continue;
+        }
         if b.choice.is_some() {
             let look = IconButton {
                 default: ring && active,
@@ -210,6 +220,11 @@ pub fn draw(
         pathcomplete::draw(&f.complete, &mut c, text, &paint, &l, px);
     }
     c
+}
+
+/// Whether `d`, a Turn off computer panel, installs the prepared update.
+fn welcome_installs(d: &Dialog) -> bool {
+    matches!(&d.style, Style::Welcome(w) if w.panel.installs_updates())
 }
 
 /// `d`'s `access` part under the dialog node `ROOT`, in dialog
@@ -264,11 +279,14 @@ pub fn access(
     }
     let mut default = None;
     for (i, (r, b)) in layout.buttons.iter().zip(&d.buttons).enumerate() {
-        let id = tree.push(
-            ROOT,
-            ("button", i),
-            ax::button(*r, &b.label, b.enabled, b.default),
-        );
+        let n = if b.action == DialogAction::ToggleUpdates {
+            let label = crate::text::split_mnemonic(&b.label).0;
+            let role = reprisekit::access::accesskit::Role::CheckBox;
+            ax::toggle(role, *r, &label, welcome_installs(d).into(), true)
+        } else {
+            ax::button(*r, &b.label, b.enabled, b.default)
+        };
+        let id = tree.push(ROOT, ("button", i), n);
         if b.default {
             default = Some(id);
         }

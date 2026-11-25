@@ -92,6 +92,7 @@ mod notifycenter;
 mod notifydnd;
 mod notifylog;
 mod notifyview;
+mod offlineupdate;
 mod offscreen;
 mod ontopproto;
 mod outputmgmt;

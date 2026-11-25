@@ -497,6 +497,8 @@ pub struct State {
     pub powering: crate::sessionend::Powering,
     /// What logind offers to restart into (`restartinto`).
     pub boot_targets: Vec<crate::restartinto::BootTarget>,
+    /// PackageKit's offline update (`offlineupdate`).
+    pub offline: crate::offlineupdate::Offline,
     pub session_fade: crate::sessionfade::SessionFade,
     pub calendar: crate::calendarview::CalendarState,
     pub widgets: crate::deskwidgets::DeskWidgets,
@@ -902,6 +904,7 @@ impl State {
             ending: None,
             powering: Default::default(),
             boot_targets: Vec::new(),
+            offline: Default::default(),
             session_fade: crate::sessionfade::SessionFade::new(config.effects.session_fade_ms().0),
             calendar: Default::default(),
             widgets: Default::default(),
