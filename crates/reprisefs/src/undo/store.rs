@@ -16,7 +16,8 @@
 //! - a push, `forget_gone` or `retain_non_trash` is dropped: every step checks its item before it
 //!   acts, so Undo reaching past a lost entry still never reverses the wrong item;
 //! - a put-back or a clear is retried on a thread of its own for up to [`RETRY_FOR`], holding
-//!   `.run` (the undo's own hold for a put-back) so that no Undo reaches past it meanwhile.
+//!   `.run` (the undo's own hold for a put-back) so that no Undo reaches past it meanwhile; a
+//!   process about to quit waits for it ([`SharedUndo::settle`]).
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -25,6 +26,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::{EntryId, FileId, Landed, Undo, UndoStack, Undoable};
@@ -52,15 +54,22 @@ const MAX_SIZE: u64 = 64 << 20;
 pub struct SharedUndo {
     file: Option<PathBuf>,
     seen: Arc<Mutex<Seen>>,
+    /// The threads retrying a put-back or a clear, shared by every clone.
+    retries: Arc<Mutex<Vec<JoinHandle<()>>>>,
 }
 
 impl Clone for SharedUndo {
     fn clone(&self) -> Self {
+        let retries = self.retries.clone();
         match &self.file {
-            Some(file) => SharedUndo::at(file.clone()),
+            Some(file) => SharedUndo {
+                retries,
+                ..SharedUndo::at(file.clone())
+            },
             None => SharedUndo {
                 file: None,
                 seen: self.seen.clone(),
+                retries,
             },
         }
     }
@@ -96,7 +105,7 @@ impl SharedUndo {
     pub fn at(file: PathBuf) -> Self {
         SharedUndo {
             file: Some(file),
-            seen: Arc::default(),
+            ..SharedUndo::default()
         }
     }
 
@@ -252,6 +261,26 @@ impl SharedUndo {
         }
     }
 
+    /// Whether a put-back or a clear the lock kept out is still being retried: a process quitting
+    /// meanwhile loses it.
+    pub fn retrying(&self) -> bool {
+        (self
+            .retries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter())
+        .any(|h| !h.is_finished())
+    }
+
+    /// Waits for every retried put-back and clear to land or give up.
+    pub fn settle(&self) {
+        let retries =
+            std::mem::take(&mut *self.retries.lock().unwrap_or_else(PoisonError::into_inner));
+        for h in retries {
+            let _ = h.join();
+        }
+    }
+
     /// `op` tried again on a thread of its own until an edit takes it or [`RETRY_FOR`] runs out,
     /// with `hold` let go only then.
     fn retry(&self, op: impl Fn(&mut UndoStack) + Send + 'static, hold: Running) {
@@ -276,8 +305,9 @@ impl SharedUndo {
                 }
                 drop(hold);
             });
-        if let Err(e) = spawned {
-            self.warn("no thread to retry on", &e);
+        match spawned {
+            Ok(h) => (self.retries.lock().unwrap_or_else(PoisonError::into_inner)).push(h),
+            Err(e) => self.warn("no thread to retry on", &e),
         }
     }
 }
@@ -823,9 +853,11 @@ mod tests {
         let (undo, running) = a.take().unwrap();
         let lock = locked(&t);
         assert_eq!(a.put_back(undo, running, 0, None), None);
+        assert!(a.retrying());
         drop(lock);
         assert!(b.take().is_none(), "the retry holds the undo's hold");
-        until("the put-back lands", || b.label().is_some());
+        a.clone().settle();
+        assert!(!a.retrying());
         assert_eq!(path_of(&b.take().unwrap().0), Path::new("/x"));
     }
 
