@@ -795,30 +795,31 @@ impl Host {
         }
     }
 
-    /// Pin to Places, Unpin from Places and Move Up/Down: the bookmarks file changes, and its
-    /// watch shows the change in every window.
+    /// Pin to Places, Unpin from Places and Move Up/Down: the pins thread edits the bookmarks
+    /// file off this loop, and its watch shows the change in every window.
     fn pin(&mut self, ev: reprisekit::controls::filedlg::Event) {
         use reprisekit::controls::filedlg::Event as E;
         let tile = |i: usize| self.tiles().into_iter().nth(i).and_then(|p| p.pin);
-        let file = self.pins_file();
-        match ev {
+        let edit: Box<dyn FnOnce(&mut reprisefs::pins::Bookmarks) -> bool + Send> = match ev {
             E::PinEntry { name, pin } => {
                 let Some(dir) = self.folder.and_then(|id| self.folders.path(id)) else {
                     return;
                 };
-                reprisefs::pins::set_pinned(&file, &self.entry_path(dir, &name), pin);
+                let dir = self.entry_path(dir, &name);
+                Box::new(move |b| if pin { b.pin(&dir) } else { b.unpin(&dir) })
             }
-            E::UnpinPlace(i) => {
-                if let Some(dir) = tile(i) {
-                    reprisefs::pins::set_pinned(&file, &dir, false);
-                }
-            }
-            E::ShiftPlace { tile: i, up } => {
-                if let Some(dir) = tile(i) {
-                    reprisefs::pins::shift(&file, &dir, up);
-                }
-            }
-            _ => {}
+            E::UnpinPlace(i) => match tile(i) {
+                Some(dir) => Box::new(move |b| b.unpin(&dir)),
+                None => return,
+            },
+            E::ShiftPlace { tile: i, up } => match tile(i) {
+                Some(dir) => Box::new(move |b| b.shift(&dir, up)),
+                None => return,
+            },
+            _ => return,
+        };
+        if let Some(p) = &self.pins {
+            p.edit(edit);
         }
     }
 

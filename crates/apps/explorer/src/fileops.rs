@@ -824,6 +824,7 @@ impl Explorer {
             || !self.send.sends.is_empty()
             || !self.browse_left.is_empty()
             || self.favorites_busy()
+            || self.pins.as_ref().is_some_and(|p| p.has_failed())
     }
 
     /// File > Close or the close box. With work in flight the window hides and [`Explorer::wake`]

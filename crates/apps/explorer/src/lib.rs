@@ -895,9 +895,11 @@ impl Explorer {
         self.pins.as_ref().map(|p| p.current()).unwrap_or_default()
     }
 
-    /// Pins `dir` to the places bar, or unpins it, in the bookmarks file the pins are read from.
-    pub(crate) fn set_pinned(&self, dir: &std::path::Path, pin: bool) {
-        reprisefs::pins::set_pinned(&self.bookmarks_file(), dir, pin);
+    /// Pins `dir` to the places bar, or unpins it, on the pins thread that writes Favorites too, so
+    /// neither edit undoes the other; a failure comes back as Favorites' does.
+    pub(crate) fn set_pinned(&mut self, dir: &std::path::Path, pin: bool) {
+        let dir = dir.to_path_buf();
+        self.edit_favorites(move |b| if pin { b.pin(&dir) } else { b.unpin(&dir) });
     }
 
     pub(crate) fn flush_settings(&mut self) {

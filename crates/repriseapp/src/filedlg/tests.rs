@@ -2363,7 +2363,7 @@ fn f5_and_ctrl_r_read_the_folder_again_and_a_right_press_opens_the_list_menu() {
 }
 
 /// A pinned folder follows the built-in tiles, opens from its tile, and Pin, Unpin and Move
-/// write the bookmarks file the dialog reads.
+/// write the bookmarks file the dialog reads, on the pins thread.
 #[test]
 fn pinned_folders_tile_after_the_built_in_places() {
     use reprisekit::controls::filedlg::Event as E;
@@ -2391,6 +2391,16 @@ fn pinned_folders_tile_after_the_built_in_places() {
     );
 
     let read = || reprisefs::pins::load(&file);
+    let written = |h: &Host| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while h.pins.as_ref().is_some_and(|p| p.busy()) {
+            assert!(
+                std::time::Instant::now() < end,
+                "the pins thread writes the edit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
     h.outcome(
         &mut dlg,
         E::ShiftPlace {
@@ -2398,9 +2408,11 @@ fn pinned_folders_tile_after_the_built_in_places() {
             up: false,
         },
     );
+    written(&h);
     let order: Vec<PathBuf> = read().folders().map(|(p, _)| p.to_path_buf()).collect();
     assert_eq!(order, [gone.clone(), work.clone()]);
     h.outcome(&mut dlg, E::UnpinPlace(built_in + 1));
+    written(&h);
     assert!(
         !read().has(&gone),
         "the tile read before the move still names its folder"
@@ -2412,6 +2424,7 @@ fn pinned_folders_tile_after_the_built_in_places() {
             pin: true,
         },
     );
+    written(&h);
     assert!(read().has(&t.join("a.txt")));
     let _ = std::fs::remove_dir_all(&t);
 }
