@@ -1,5 +1,5 @@
 //! Log Off and Turn off panels in three Blue schemes and with Classic's Cancel: at rest, hot,
-//! pressed, Shift held, offering Disconnect. Writes `target/reprisekit-gallery-power@<scale>.png`.
+//! pressed, Shift held, offering Disconnect, offering Restart Into... with the focus. Writes `target/reprisekit-gallery-power@<scale>.png`.
 
 use reprisekit::blue::Variant;
 use reprisekit::cues::Cues;
@@ -22,6 +22,12 @@ pub fn render(scale: i32) -> Canvas {
     shifted.set_shift(true);
     let mut cancel = Panel::log_off(Leave::SwitchUser { live: false });
     cancel.focus = Part::Cancel;
+    let mut restart_into = Panel::turn_off(First::StandBy {
+        live: true,
+        hibernate: false,
+    });
+    restart_into.restart_into = true;
+    restart_into.focus = Part::RestartInto;
     let cases = [
         (
             Panel::log_off(Leave::SwitchUser { live: false }),
@@ -53,6 +59,7 @@ pub fn render(scale: i32) -> Canvas {
         (shifted, Some((Part::Big(0), Interaction::Hot)), Cues::ALL),
         (Panel::log_off(Leave::Disconnect), None, Cues::ALL),
         (Panel::turn_off(First::Disconnect), None, Cues::ALL),
+        (restart_into, None, Cues::ALL),
     ];
     let classic = theme.paint();
     let schemes = [

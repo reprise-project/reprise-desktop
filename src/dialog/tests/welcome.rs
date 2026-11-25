@@ -116,6 +116,37 @@ fn under_glass_the_panels_are_framed_unless_they_are_always_blue() {
     }
 }
 
+#[test]
+fn restart_into_is_a_button_after_cancel_left_of_it_under_glass() {
+    let mut d = turn_off();
+    assert!(d.offer_restart_into(true));
+    assert!(!d.offer_restart_into(true), "already offered");
+    assert_eq!(d.buttons.len(), 5);
+    assert_eq!(d.buttons[3].action, DialogAction::Cancel);
+    assert_eq!(d.buttons[4].action, DialogAction::RestartInto);
+    assert_eq!(d.press(4), Outcome::RestartInto { keys: false });
+    assert_eq!(d.key(Key::Access('i')), Outcome::RestartInto { keys: true });
+    let classic = Theme::default();
+    let text = TextRenderer::load(&classic.fonts);
+    let l = DialogLayout::compute(&classic, &text, &d);
+    assert_eq!(Some(l.buttons[4]), l.power.as_ref().unwrap().restart_into);
+    let glass = theme_for(Interface::Glass);
+    let g = DialogLayout::compute(&glass, &text, &d);
+    let (cancel, into) = (g.buttons[3], g.buttons[4]);
+    assert_eq!(into.y, cancel.y);
+    assert_eq!(
+        cancel.x - into.right(),
+        reprisekit::classic::widgets::BUTTON_GAP,
+        "left of Cancel"
+    );
+    if let Style::Welcome(w) = &mut d.style {
+        w.panel.focus = reprisekit::powerpanel::Part::RestartInto;
+    }
+    assert!(d.offer_restart_into(false));
+    assert_eq!(d.buttons.len(), 4);
+    assert!(d.buttons[1].default, "the focus went back to Turn Off");
+}
+
 fn assert_draws_as_the_power_panel(theme: &Theme, d: &Dialog, cancel: Option<&Theme>) {
     use reprisekit::powerpanel::Part;
     let text = TextRenderer::load(&theme.fonts);

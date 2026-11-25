@@ -27,6 +27,18 @@ impl State {
         let parent = self.menus.get(depth)?;
         let output = parent.output.clone();
         match &parent.kind {
+            MenuKind::StartPanel { rows }
+                if rows.get(row).cloned().flatten()
+                    == Some(crate::startmenu::StartRow::RestartInto) =>
+            {
+                let targets = self.boot_targets.clone();
+                return Some((
+                    crate::restartinto::menu_items(&targets),
+                    MenuKind::RestartInto(targets),
+                    true,
+                    RowIcons::default(),
+                ));
+            }
             MenuKind::Taskbar { commands } => {
                 if commands.get(row).copied().flatten() != Some(TaskbarCommand::Toolbars) {
                     return None;

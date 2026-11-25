@@ -817,8 +817,7 @@ impl State {
                 self.open_dialog(d);
             }
             Action::TurnOff => {
-                let offered = crate::console::disconnect_offered(self);
-                let d = crate::dialog::Dialog::turn_off(&self.config.power, offered);
+                let d = self.turn_off_dialog();
                 self.open_dialog(d);
             }
             Action::DoNotDisturb => {

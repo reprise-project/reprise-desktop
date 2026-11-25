@@ -1,5 +1,5 @@
 //! The Log Off and Turn off computer panels: a title band with the logo, big icon buttons with
-//! labels under them on a lit band, and Cancel in the bottom band. Model, layout, hit and access
+//! labels under them on a lit band, and Cancel (and Restart Into... when offered) in the bottom band. Model, layout, hit and access
 //! here; `blue::powerpanel` paints it and `interfaces::draw_power_panel` puts the two together.
 
 use crate::access::accesskit::NodeId;
@@ -93,6 +93,8 @@ pub enum First {
 pub enum Part {
     Big(usize),
     Cancel,
+    /// Opens the list of boot entries to restart into.
+    RestartInto,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +103,13 @@ pub struct Panel {
     pub bigs: Vec<Big>,
     pub focus: Part,
     pub shift: bool,
+    /// Restart Into... shows left of Cancel.
+    pub restart_into: bool,
+}
+
+/// Restart Into...'s label, with its access key marked by `&`.
+pub fn restart_into_label() -> String {
+    tr!("powerpanel-restart-into")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +144,7 @@ impl Panel {
             bigs: vec![first, Big::new(Choice::LogOff, true)],
             focus: Part::Big(1),
             shift: false,
+            restart_into: false,
         }
     }
 
@@ -163,6 +173,7 @@ impl Panel {
             ],
             focus: Part::Big(focus),
             shift: false,
+            restart_into: false,
         }
     }
 
@@ -174,12 +185,13 @@ impl Panel {
         match part {
             Part::Big(i) => self.shown(i).is_some_and(|(_, on)| on),
             Part::Cancel => true,
+            Part::RestartInto => self.restart_into,
         }
     }
 
-    /// Arrows walk the live big buttons and stop at the ends; Tab and Shift+Tab cycle them and
-    /// Cancel. Enter and Space press the focused one, Escape presses Cancel and a letter the
-    /// live big button whose access key it is.
+    /// Arrows walk the live big buttons and stop at the ends; Tab and Shift+Tab cycle them,
+    /// Restart Into... and Cancel. Enter and Space press the focused one, Escape presses Cancel and
+    /// a letter the live button whose access key it is.
     pub fn key(&mut self, key: Key) -> Event {
         match key {
             Key::Left | Key::Up => self.step(false),
@@ -189,7 +201,11 @@ impl Panel {
                     .map(Part::Big)
                     .filter(|&p| self.live(p))
                     .collect();
-                stops.push(Part::Cancel);
+                stops.extend(
+                    [Part::RestartInto, Part::Cancel]
+                        .into_iter()
+                        .filter(|&p| self.live(p)),
+                );
                 let n = stops.len();
                 let at = stops.iter().position(|&p| p == self.focus).unwrap_or(0);
                 self.focus_on(stops[if back { (at + n - 1) % n } else { (at + 1) % n }])
@@ -198,12 +214,17 @@ impl Panel {
             Key::Escape => Event::Press(Part::Cancel),
             Key::Char(c) => {
                 let c = c.to_lowercase().next();
-                (0..self.bigs.len())
-                    .find(|&i| {
-                        let (choice, on) = self.bigs[i].shown(self.shift);
-                        on && access_key(&choice.label()) == c
-                    })
-                    .map_or(Event::None, |i| Event::Press(Part::Big(i)))
+                let big = (0..self.bigs.len()).find(|&i| {
+                    let (choice, on) = self.bigs[i].shown(self.shift);
+                    on && access_key(&choice.label()) == c
+                });
+                match big {
+                    Some(i) => Event::Press(Part::Big(i)),
+                    None if self.restart_into && access_key(&restart_into_label()) == c => {
+                        Event::Press(Part::RestartInto)
+                    }
+                    None => Event::None,
+                }
             }
         }
     }
@@ -263,6 +284,7 @@ pub struct Layout {
     pub band: Rect,
     pub cells: Vec<Rect>,
     pub cancel: Rect,
+    pub restart_into: Option<Rect>,
     pub units: TextUnits,
 }
 
@@ -278,6 +300,7 @@ pub const ICON: i32 = 32;
 const ICON_Y: i32 = 8;
 const LABEL_Y: i32 = 44;
 const CANCEL: Rect = Rect::new(W - BORDER - 10 - 60, BORDER + 167, 60, 20);
+const RESTART_INTO: Rect = Rect::new(BORDER + 10, CANCEL.y, 90, CANCEL.height);
 /// The big buttons' cells by count: their width and left edges.
 const TWO: (i32, [i32; 2]) = (115, [43, 158]);
 const THREE: (i32, [i32; 3]) = (85, [29, 115, 200]);
@@ -305,6 +328,7 @@ pub fn layout(p: &Panel, u: TextUnits) -> Layout {
         band,
         cells,
         cancel: u.rect(CANCEL),
+        restart_into: p.restart_into.then(|| u.rect(RESTART_INTO)),
         units: u,
     }
 }
@@ -335,6 +359,7 @@ impl Layout {
         match part {
             Part::Big(i) => self.cells.get(i).copied(),
             Part::Cancel => Some(self.cancel),
+            Part::RestartInto => self.restart_into,
         }
     }
 }
@@ -342,6 +367,9 @@ impl Layout {
 pub fn hit(lay: &Layout, x: i32, y: i32) -> Option<Part> {
     if lay.cancel.contains(x, y) {
         return Some(Part::Cancel);
+    }
+    if lay.restart_into.is_some_and(|r| r.contains(x, y)) {
+        return Some(Part::RestartInto);
     }
     lay.cells
         .iter()
@@ -371,18 +399,19 @@ pub fn access(
             focus = id;
         }
     }
-    let id = tree.push(
-        parent,
-        ("button", lay.cells.len()),
-        ax::button(
-            at(lay.cancel),
-            &tr!("cancel"),
-            true,
-            p.focus == Part::Cancel,
-        ),
-    );
-    if p.focus == Part::Cancel {
-        focus = id;
+    let mut plain = vec![(Part::Cancel, lay.cancel, tr!("cancel"))];
+    if let Some(r) = lay.restart_into {
+        plain.push((Part::RestartInto, r, restart_into_label()));
+    }
+    for (n, (part, r, label)) in plain.into_iter().enumerate() {
+        let id = tree.push(
+            parent,
+            ("button", lay.cells.len() + n),
+            ax::button(at(r), &label, true, p.focus == part),
+        );
+        if p.focus == part {
+            focus = id;
+        }
     }
     focus
 }
@@ -553,6 +582,42 @@ mod tests {
         access(&p, &lay, (0, 0), &mut tree, ROOT);
         let first = tree.nodes().find(|(id, _)| *id != ROOT).map(|(_, n)| n);
         assert_eq!(first.and_then(|n| n.label()), Some("Disconnect"));
+    }
+
+    #[test]
+    fn restart_into_sits_left_of_cancel_and_takes_tab_and_its_key() {
+        use crate::access::{ROOT, accesskit::Role};
+        let mut p = Panel::turn_off(First::StandBy {
+            live: true,
+            hibernate: false,
+        });
+        assert_eq!(p.key(Key::Char('i')), Event::None, "not offered");
+        assert_eq!(layout(&p, TextUnits::ONE).restart_into, None);
+        p.restart_into = true;
+        let lay = layout(&p, TextUnits::ONE);
+        let r = lay.restart_into.expect("its button");
+        assert_eq!(r, Rect::new(11, 168, 90, 20));
+        assert_eq!((r.y, r.height), (lay.cancel.y, lay.cancel.height));
+        assert_eq!(hit(&lay, 20, 175), Some(Part::RestartInto));
+        assert_eq!(p.key(Key::Char('I')), Event::Press(Part::RestartInto));
+        p.focus = Part::Big(2);
+        assert_eq!(p.key(Key::Tab { back: false }), Event::Redraw);
+        assert_eq!(p.focus, Part::RestartInto);
+        assert_eq!(
+            p.key(Key::Right),
+            Event::None,
+            "the arrows walk the big buttons"
+        );
+        assert_eq!(p.key(Key::Enter), Event::Press(Part::RestartInto));
+        assert_eq!(p.key(Key::Tab { back: false }), Event::Redraw);
+        assert_eq!(p.focus, Part::Cancel);
+        let mut tree = Tree::new(ax::node(Role::Dialog, Rect::new(0, 0, 314, 200)));
+        access(&p, &lay, (0, 0), &mut tree, ROOT);
+        let last = tree
+            .nodes()
+            .last()
+            .map(|(_, n)| n.label().map(str::to_owned));
+        assert_eq!(last, Some(Some("Restart Into...".into())));
     }
 
     #[test]

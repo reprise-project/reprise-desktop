@@ -12,11 +12,13 @@ use reprisekit::pointer::{Interaction, Lit};
 use reprisekit::powerpanel::{self, Event, Part};
 
 impl DialogLayout {
-    /// The Blue panel: `powerpanel`'s layout, with its cells and then Cancel as the buttons.
+    /// The Blue panel: `powerpanel`'s layout, with its cells, Cancel and Restart Into... as the
+    /// buttons.
     pub(super) fn compute_welcome(w: &Welcome, u: TextUnits) -> DialogLayout {
         let lay = powerpanel::layout(&w.panel, u);
         let mut buttons = lay.cells.clone();
         buttons.push(lay.cancel);
+        buttons.extend(lay.restart_into);
         DialogLayout {
             size: lay.size,
             caption: lay.title,
@@ -98,12 +100,16 @@ const GLASS_WELCOME_GAP: i32 = 12;
 
 pub(super) const GLASS_WELCOME_MARGIN: i32 = 11;
 
-/// What a Welcome panel's button `i` is: its cells, then Cancel.
+/// What a Welcome panel's button `i` is: its cells, Cancel, then Restart Into..., which the framed
+/// layout puts left of Cancel.
 fn part_of(w: &Welcome, i: usize) -> Part {
-    if i < w.panel.bigs.len() {
+    let n = w.panel.bigs.len();
+    if i < n {
         Part::Big(i)
-    } else {
+    } else if i == n {
         Part::Cancel
+    } else {
+        Part::RestartInto
     }
 }
 
@@ -111,11 +117,12 @@ fn index_of(w: &Welcome, part: Part) -> usize {
     match part {
         Part::Big(i) => i,
         Part::Cancel => w.panel.bigs.len(),
+        Part::RestartInto => w.panel.bigs.len() + 1,
     }
 }
 
-/// The buttons `w`'s panel shows: each big button as it shows now, then Cancel. The focused one
-/// is the default.
+/// The buttons `w`'s panel shows: each big button as it shows now, Cancel, and Restart Into...
+/// when offered. The focused one is the default.
 fn buttons_of(w: &Welcome) -> Vec<DialogButton> {
     let p = &w.panel;
     let mut out: Vec<DialogButton> = (0..p.bigs.len())
@@ -138,6 +145,13 @@ fn buttons_of(w: &Welcome) -> Vec<DialogButton> {
         DialogAction::Cancel,
         p.focus == Part::Cancel,
     ));
+    if p.restart_into {
+        out.push(super::build::button(
+            &powerpanel::restart_into_label(),
+            DialogAction::RestartInto,
+            p.focus == Part::RestartInto,
+        ));
+    }
     out
 }
 
@@ -183,7 +197,10 @@ impl Dialog {
             }
             Event::Press(part) => {
                 let i = index_of(w, part);
-                self.press(i)
+                match self.press(i) {
+                    Outcome::RestartInto { .. } => Outcome::RestartInto { keys: true },
+                    out => out,
+                }
             }
         }
     }
@@ -199,6 +216,26 @@ impl Dialog {
         }
         self.sync_welcome();
         Outcome::Redraw
+    }
+
+    /// Show or drop a Turn off computer panel's Restart Into... (`on`); true when it changed. Its
+    /// focus moves to Turn Off when it goes.
+    pub fn offer_restart_into(&mut self, on: bool) -> bool {
+        let Style::Welcome(w) = &mut self.style else {
+            return false;
+        };
+        let restarts = (w.actions.iter()).any(|(c, a)| {
+            *c == Choice::Restart && matches!(a, DialogAction::EndSession(Goal::Restart, _))
+        });
+        if !restarts || w.panel.restart_into == on {
+            return false;
+        }
+        w.panel.restart_into = on;
+        if !w.panel.live(w.panel.focus) {
+            w.panel.focus = Part::Big(1);
+        }
+        self.sync_welcome();
+        true
     }
 
     /// Shift went down or up while a Welcome panel is open: Stand By turns into Hibernate and back.

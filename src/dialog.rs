@@ -57,6 +57,8 @@ pub enum DialogAction {
     Disconnect,
     /// Ask reprise-login to turn the machine off or restart it (`greeterview::power`).
     GreeterPower(repriselogin::greeter::PowerAction),
+    /// Open the boot entries to restart into under the button (`restartinto`).
+    RestartInto,
     Act(Action),
     HideSystemIcon(String),
     /// Take these `system_icons` off the desktop (none for No), then ask about deleting `files`.
@@ -377,6 +379,10 @@ pub enum Outcome {
     SwitchUser,
     Disconnect,
     GreeterPower(repriselogin::greeter::PowerAction),
+    /// [`DialogAction::RestartInto`], pressed from the keyboard with `keys`.
+    RestartInto {
+        keys: bool,
+    },
     Notice(Box<Dialog>),
     /// [`DialogAction::Script`].
     Script {

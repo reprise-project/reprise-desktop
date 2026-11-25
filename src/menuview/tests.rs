@@ -324,6 +324,7 @@ fn escape_in_a_start_panel_popup_closes_the_popup_only() {
     let (items, rows) = crate::startmenu::shutdown_menu(
         false,
         reprisekit::powerpanel::Leave::SwitchUser { live: false },
+        false,
     );
     assert_eq!(
         key_act(&items, Some(0), MenuKey::Escape, KeyStops::Enabled),

@@ -295,6 +295,12 @@ are.
   charge limit on or off, where the battery driver supports one.
 - **A Turn Off dialog** that dims the desktop behind it. Shutting down used
   to have a little gravity. Hold Shift and Stand By turns into Hibernate.
+- **Restart into another system.** Where the boot loader lets logind pick the
+  next boot (systemd-boot does), the Turn Off dialog's Restart Into... and
+  Glass's Restart into list its boot entries, and Firmware Setup when the
+  firmware has one. A pick restarts into it once, the same way Restart does.
+  An entry shows the title from its file on the boot partition when your
+  account may read it, else its id.
 - **Save prompts.** Log Off, Turn Off and Restart ask every window to close
   and wait, then list who's holding things up, with End Now and Cancel. A
   program holding off log off through the Inhibit portal (a copy under way)

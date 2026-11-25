@@ -1,12 +1,12 @@
-//! The Log Off and Turn off computer panels put together: Blue's painter, with Cancel drawn as
-//! Blue's push button or the active look's.
+//! The Log Off and Turn off computer panels put together: Blue's painter, with Cancel and Restart
+//! Into... drawn as Blue's push buttons or the active look's.
 
 use crate::blue::{self, Variant};
 use crate::cues::Cues;
 use crate::look::{self, Look};
 use crate::paint::{Backdrop, Paint};
 use crate::pointer::{Lit, lit_of};
-use crate::powerpanel::{Layout, Panel, Part};
+use crate::powerpanel::{Layout, Panel, Part, restart_into_label};
 use crate::raster::Canvas;
 use crate::text::TextRenderer;
 
@@ -16,9 +16,9 @@ pub fn power_panel_variant(look: &Look) -> Variant {
 }
 
 /// Panel `p` laid out as `lay` onto `c`, a device-px canvas at scale 1 for output scale `s`, in
-/// `v`'s colours; `text` is the host's renderer for `s` and `px` its device size. Cancel is the
-/// push button of `cancel`'s look, Blue's in `v` when it is `None`. It wears the default ring while
-/// it has the focus, and the dotted rectangle too while `cues` shows it.
+/// `v`'s colours; `text` is the host's renderer for `s` and `px` its device size. Cancel and Restart
+/// Into... are push buttons of `cancel`'s look, Blue's in `v` when it is `None`. Each wears the
+/// default ring while it has the focus, and the dotted rectangle too while `cues` shows it.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_power_panel(
     c: &mut Canvas,
@@ -52,19 +52,25 @@ pub fn draw_power_panel(
         access_keys: cues.keys,
         ..*p
     });
-    let focused = p.focus == Part::Cancel;
-    look::widgets::draw_button(
-        c,
-        text,
-        &paint,
-        lay.cancel.scaled(s),
-        &tr!("cancel"),
-        focused,
-        lit_of(lit, Part::Cancel),
-        true,
-        focused && cues.focus,
-        px,
-    );
+    let mut plain = vec![(Part::Cancel, lay.cancel, tr!("cancel"))];
+    if let Some(r) = lay.restart_into {
+        plain.push((Part::RestartInto, r, restart_into_label()));
+    }
+    for (part, r, label) in plain {
+        let focused = p.focus == part;
+        look::widgets::draw_button(
+            c,
+            text,
+            &paint,
+            r.scaled(s),
+            &label,
+            focused,
+            lit_of(lit, part),
+            true,
+            focused && cues.focus,
+            px,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -185,6 +191,34 @@ mod tests {
                 add("disconnect log off", drawn(v, &d, None, all, s));
                 let d = untitled(Panel::turn_off(First::Disconnect));
                 add("disconnect turn off", drawn(v, &d, None, Cues::NONE, s));
+                let mut r = untitled(Panel::turn_off(First::StandBy {
+                    live: true,
+                    hibernate: false,
+                }));
+                r.restart_into = true;
+                add("restart into", drawn(v, &r, None, Cues::NONE, s));
+                add(
+                    "restart into hot",
+                    drawn(
+                        v,
+                        &r,
+                        Some((Part::RestartInto, Interaction::Hot)),
+                        Cues::NONE,
+                        s,
+                    ),
+                );
+                r.focus = Part::RestartInto;
+                add("restart into focused", drawn(v, &r, None, all, s));
+                add(
+                    "restart into pressed",
+                    drawn(
+                        v,
+                        &r,
+                        Some((Part::RestartInto, Interaction::Pressed)),
+                        all,
+                        s,
+                    ),
+                );
             }
         }
         crate::pins::check("interfaces/power_panel", &got);
@@ -221,6 +255,10 @@ mod tests {
                 Some((Part::Cancel, Interaction::Pressed)),
                 Cues::ALL,
             );
+            t.restart_into = true;
+            add("restart into", &t, None, Cues::NONE);
+            t.focus = Part::RestartInto;
+            add("restart into focused", &t, None, Cues::ALL);
         }
         crate::pins::check("interfaces/power_panel_classic", &got);
     }
@@ -253,6 +291,39 @@ mod tests {
             under_classic.get(outside.0, outside.1),
             blue.get(outside.0, outside.1),
             "the band around Cancel stays Blue's"
+        );
+    }
+
+    #[test]
+    fn restart_into_inks_its_label_in_its_button_and_leaves_the_band_otherwise() {
+        let mut p = Panel::turn_off(First::StandBy {
+            live: true,
+            hibernate: false,
+        });
+        let bare = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
+        p.restart_into = true;
+        let lay = layout(&p, TextUnits::ONE);
+        let with = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
+        let r = lay.restart_into.unwrap();
+        let differs = |x0: i32, x1: i32, y0: i32, y1: i32| {
+            (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .filter(|&(x, y)| bare.get(x, y) != with.get(x, y))
+                .count()
+        };
+        assert!(
+            differs(r.x + 4, r.right() - 4, r.y + 4, r.bottom() - 4) > 40,
+            "a face and a label"
+        );
+        assert_eq!(
+            differs(0, lay.size.0, 0, r.y - 2),
+            0,
+            "nothing above it moves"
+        );
+        assert_eq!(
+            differs(r.right() + 2, lay.size.0, r.y, r.bottom()),
+            0,
+            "Cancel stays as it was"
         );
     }
 
@@ -316,6 +387,12 @@ mod tests {
             crate::raster::write_preview(
                 &drawn(Variant::Olive, &t, None, Cues::NONE, s),
                 &format!("power-hibernate-olive@{s}.png"),
+            );
+            t.restart_into = true;
+            t.focus = Part::RestartInto;
+            crate::raster::write_preview(
+                &drawn(Variant::Blue, &t, None, Cues::ALL, s),
+                &format!("power-restart-into@{s}.png"),
             );
             crate::raster::write_preview(
                 &drawn(
