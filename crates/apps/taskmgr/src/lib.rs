@@ -175,6 +175,25 @@ fn alive(starts: &HashMap<i32, u64>, scopes: &[Scope], t: &Target) -> bool {
     }
 }
 
+/// Whether End Task or End Process still waits on `t`: it runs and, where `snap` knows the
+/// windows, a program still shows one, since End Task spares a tray program that closed them.
+fn waits_on(starts: &HashMap<i32, u64>, snap: &Snapshot, entries: &[AppEntry], t: &Target) -> bool {
+    let shows = |unit: &String| {
+        let (Some(windows), Some(sc)) = (
+            snap.windows.as_deref(),
+            snap.scopes.iter().find(|s| &s.unit == unit),
+        ) else {
+            return true;
+        };
+        has_window(sc, &snap.scopes, entries, windows, &snap.sandboxed)
+    };
+    alive(starts, &snap.scopes, t)
+        && match t {
+            Target::Scope(unit) => shows(unit),
+            Target::Process(..) => true,
+        }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Act {
     Quit,
@@ -676,12 +695,13 @@ impl TaskMgr {
         self.apps.selected().and_then(|i| self.app_rows.get(i))
     }
 
-    /// Drops what has ended and the questions about it, and offers End Now for each that
-    /// outlived [`END_WAIT`].
+    /// Drops what is done ([`waits_on`]) and the questions about it, and offers End Now for each
+    /// that outlived [`END_WAIT`].
     fn check_ending(&mut self) {
-        let (starts, scopes) = (&self.starts, &self.snap.scopes);
-        self.ending.retain(|e| alive(starts, scopes, &e.target));
-        self.asks.withdraw(|a| !alive(starts, scopes, &a.target()));
+        let (starts, snap, entries) = (&self.starts, &self.snap, &self.entries);
+        let waits = |t: &Target| waits_on(starts, snap, entries, t);
+        self.ending.retain(|e| waits(&e.target));
+        self.asks.withdraw(|a| !waits(&a.target()));
         let now = Instant::now();
         for e in (self.ending.iter_mut()).filter(|e| !e.asked) {
             if now.duration_since(e.since) >= END_WAIT {
