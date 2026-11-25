@@ -19,6 +19,15 @@ struct FakeLogind {
 pub(crate) struct Held {
     pub entry: String,
     pub firmware: bool,
+    /// Both properties fail to read.
+    pub unreadable: bool,
+}
+
+fn unreadable(held: &Held) -> zbus::fdo::Result<()> {
+    match held.unreadable {
+        true => Err(zbus::fdo::Error::Failed("unreadable".into())),
+        false => Ok(()),
+    }
 }
 
 fn prompts(header: &zbus::message::Header<'_>) -> bool {
@@ -41,13 +50,17 @@ impl FakeLogind {
     }
 
     #[zbus(property)]
-    fn reboot_to_boot_loader_entry(&self) -> String {
-        self.held.lock().unwrap().entry.clone()
+    fn reboot_to_boot_loader_entry(&self) -> zbus::fdo::Result<String> {
+        let held = self.held.lock().unwrap();
+        unreadable(&held)?;
+        Ok(held.entry.clone())
     }
 
     #[zbus(property)]
-    fn reboot_to_firmware_setup(&self) -> bool {
-        self.held.lock().unwrap().firmware
+    fn reboot_to_firmware_setup(&self) -> zbus::fdo::Result<bool> {
+        let held = self.held.lock().unwrap();
+        unreadable(&held)?;
+        Ok(held.firmware)
     }
 
     /// Refused where `CanRebootToBootLoaderEntry` says "no".
@@ -94,7 +107,13 @@ impl Fake {
         *self.held.lock().unwrap() = Held {
             entry: entry.into(),
             firmware,
+            unreadable: false,
         };
+    }
+
+    /// logind fails to read either target.
+    pub(crate) fn unreadable(&self) {
+        self.held.lock().unwrap().unreadable = true;
     }
 }
 
@@ -283,9 +302,21 @@ fn logind_reports_the_targets_it_holds_whoever_set_them() {
     assert_eq!(
         zbus::block_on(aimed(&f.client)),
         vec![
-            entry("memtest86+.conf", "Memtest86+"),
-            BootTarget::firmware(false)
+            Aimed::Set(entry("memtest86+.conf", "Memtest86+")),
+            Aimed::Set(BootTarget::firmware(false))
         ]
+    );
+}
+
+#[test]
+fn a_target_logind_cannot_read_is_unknown_not_unset() {
+    let Some(f) = logind("yes", "yes", &[]) else {
+        return;
+    };
+    f.unreadable();
+    assert_eq!(
+        zbus::block_on(aimed(&f.client)),
+        [Aimed::Unknown(Kind::Entry), Aimed::Unknown(Kind::Firmware)]
     );
 }
 
@@ -305,10 +336,10 @@ fn aiming_sets_the_entry_or_firmware_setup_and_clears_it() {
     let linux = entry("linux.conf", "Linux");
     let firmware = BootTarget::firmware(false);
     zbus::block_on(async {
-        aim(&f.client, &linux, true, false).await.unwrap();
-        aim(&f.client, &linux, false, false).await.unwrap();
-        aim(&f.client, &firmware, true, true).await.unwrap();
-        aim(&f.client, &firmware, false, false).await.unwrap();
+        aim(&f.client, &linux, false).await.unwrap();
+        unaim(&f.client, Kind::Entry, false).await.unwrap();
+        aim(&f.client, &firmware, true).await.unwrap();
+        unaim(&f.client, Kind::Firmware, false).await.unwrap();
     });
     assert_eq!(
         *f.set.lock().unwrap(),

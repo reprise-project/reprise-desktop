@@ -1,8 +1,9 @@
 //! Restart Into: the boot loader entries logind lists (`BootLoaderEntries`) and firmware setup,
 //! offered by the Turn off computer panel's Restart Into... and the Shut down options' Restart into
-//! when logind can set them. A pick restarts through [`crate::sessionend::begin_into`], which sets
-//! the one-shot target just before the reboot and clears it when the reboot does not happen; any
-//! other power action clears what logind still holds ([`aimed`]) first.
+//! when logind can set them. A pick restarts through [`crate::sessionend::begin_into`], which clears
+//! a target of the other kind logind still holds, sets the one-shot target just before the reboot
+//! and clears it when the reboot does not happen; any other power action but Stand By clears what
+//! logind still holds ([`aimed`]) first.
 //!
 //! logind lists entry ids only. A type #1 entry's title is read from its file on the boot
 //! partition when the user may read it; anything else shows its id tidied up ([`pretty`]).
@@ -51,6 +52,37 @@ impl BootTarget {
             password,
         }
     }
+
+    pub fn kind(&self) -> Kind {
+        match self.entry {
+            Some(_) => Kind::Entry,
+            None => Kind::Firmware,
+        }
+    }
+}
+
+/// logind holds one one-shot target of each kind; a set firmware flag wins over a set entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Entry,
+    Firmware,
+}
+
+/// What logind holds for the next boot, per kind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Aimed {
+    Set(BootTarget),
+    /// logind could not say whether it holds one of this kind.
+    Unknown(Kind),
+}
+
+impl Aimed {
+    pub fn kind(&self) -> Kind {
+        match self {
+            Aimed::Set(t) => t.kind(),
+            Aimed::Unknown(k) => *k,
+        }
+    }
 }
 
 /// A `Can*` answer that offers the action, and whether it asks for a password.
@@ -90,56 +122,80 @@ pub(crate) async fn manager(conn: &zbus::Connection) -> zbus::Result<zbus::Proxy
         .await
 }
 
-/// Set logind's one-shot `target` for the next reboot, or with `on` false clear it again.
+/// Set logind's one-shot `target` for the next reboot.
 pub async fn aim(
     conn: &zbus::Connection,
     target: &BootTarget,
-    on: bool,
     interactive: bool,
 ) -> zbus::Result<()> {
     let proxy = manager(conn).await?;
-    let auth = match interactive {
-        true => zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
-        false => zbus::proxy::MethodFlags::empty(),
-    };
+    let auth = auth(interactive);
     match &target.entry {
         Some(id) => {
-            let id = if on { id.as_str() } else { "" };
-            (proxy.call_with_flags::<_, _, ()>("SetRebootToBootLoaderEntry", auth, &(id,))).await?;
+            (proxy.call_with_flags::<_, _, ()>("SetRebootToBootLoaderEntry", auth, &(id,))).await?
         }
         None => {
-            (proxy.call_with_flags::<_, _, ()>("SetRebootToFirmwareSetup", auth, &(on,))).await?;
+            (proxy.call_with_flags::<_, _, ()>("SetRebootToFirmwareSetup", auth, &(true,))).await?
         }
-    }
+    };
     Ok(())
 }
 
-/// The one-shot targets logind on `conn` holds for the next boot, whoever set them. A property
-/// logind cannot read counts as unset.
-pub async fn aimed(conn: &zbus::Connection) -> Vec<BootTarget> {
-    let mut out = Vec::new();
+/// Clear logind's one-shot target of `kind`.
+pub async fn unaim(conn: &zbus::Connection, kind: Kind, interactive: bool) -> zbus::Result<()> {
+    let proxy = manager(conn).await?;
+    let auth = auth(interactive);
+    match kind {
+        Kind::Entry => {
+            (proxy.call_with_flags::<_, _, ()>("SetRebootToBootLoaderEntry", auth, &("",))).await?
+        }
+        Kind::Firmware => {
+            (proxy.call_with_flags::<_, _, ()>("SetRebootToFirmwareSetup", auth, &(false,))).await?
+        }
+    };
+    Ok(())
+}
+
+fn auth(interactive: bool) -> zbus::proxy::MethodFlags {
+    match interactive {
+        true => zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
+        false => zbus::proxy::MethodFlags::empty(),
+    }
+}
+
+/// What logind on `conn` holds for the next boot, whoever set it: the targets set, and the kinds
+/// it could not say about.
+pub async fn aimed(conn: &zbus::Connection) -> Vec<Aimed> {
+    let unknown = vec![Aimed::Unknown(Kind::Entry), Aimed::Unknown(Kind::Firmware)];
     let proxy = match manager(conn).await {
         Ok(p) => p,
         Err(e) => {
             log::warn!("restart into: logind: {e}");
-            return out;
+            return unknown;
         }
     };
+    let mut out = Vec::new();
     match proxy
         .get_property::<String>("RebootToBootLoaderEntry")
         .await
     {
         Ok(id) if id.is_empty() => {}
-        Ok(id) => out.push(BootTarget {
+        Ok(id) => out.push(Aimed::Set(BootTarget {
             title: title_under(&ENTRY_ROOTS.map(PathBuf::from), &id).unwrap_or_else(|| pretty(&id)),
             entry: Some(id),
             password: false,
-        }),
-        Err(e) => log::warn!("restart into: RebootToBootLoaderEntry: {e}"),
+        })),
+        Err(e) => {
+            log::warn!("restart into: RebootToBootLoaderEntry: {e}");
+            out.push(Aimed::Unknown(Kind::Entry));
+        }
     }
     match proxy.get_property::<bool>("RebootToFirmwareSetup").await {
-        Ok(on) => out.extend(on.then(|| BootTarget::firmware(false))),
-        Err(e) => log::warn!("restart into: RebootToFirmwareSetup: {e}"),
+        Ok(on) => out.extend(on.then(|| Aimed::Set(BootTarget::firmware(false)))),
+        Err(e) => {
+            log::warn!("restart into: RebootToFirmwareSetup: {e}");
+            out.push(Aimed::Unknown(Kind::Firmware));
+        }
     }
     out
 }

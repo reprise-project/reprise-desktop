@@ -853,6 +853,8 @@ async fn run_greeter(reports: Sender<Report>, calls: async_channel::Receiver<Cal
     }
 }
 
+/// Run `a` for the lid, idle or a power key: Stand By and Hibernate run unattended
+/// ([`crate::sessionend::sleep_unattended`]).
 pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
     log::info!("power: {}", a.name());
     match a {
@@ -861,11 +863,11 @@ pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
         PowerAction::Lock => crate::lockview::lock_for(state, origin),
         PowerAction::Standby => {
             let cmd = state.config.power.standby.clone();
-            crate::sessionend::sleep(state, crate::sessionend::Act::StandBy, cmd);
+            crate::sessionend::sleep_unattended(state, crate::sessionend::Act::StandBy, cmd);
         }
         PowerAction::Hibernate => {
             let cmd = state.config.power.hibernate.clone();
-            crate::sessionend::sleep(state, crate::sessionend::Act::Hibernate, cmd);
+            crate::sessionend::sleep_unattended(state, crate::sessionend::Act::Hibernate, cmd);
         }
         PowerAction::TurnOff => {
             let cmd = state.config.power.poweroff.clone();
