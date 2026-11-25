@@ -1037,7 +1037,8 @@ fn failure(e: &zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<Refused>
     }
 }
 
-/// Run a custom `[power]` command and wait for it.
+/// Run a custom `[power]` command and wait for it. Only the command is waited for: a child it
+/// leaves running (a locker started with `-f`) may hold its stderr open for as long as it runs.
 fn run(cmd: &str, env: &crate::spawn::SessionEnv) -> Option<Refused> {
     let Some(mut c) = crate::spawn::command(cmd, env, None) else {
         return Some(Refused::NotAllowed);
@@ -1045,10 +1046,48 @@ fn run(cmd: &str, env: &crate::spawn::SessionEnv) -> Option<Refused> {
     crate::spawn::detach(&mut c);
     c.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
-    match c.output() {
-        Ok(o) if o.status.success() => None,
-        Ok(o) => Some(Refused::Failed(command_failure(cmd, &o.status, &o.stderr))),
+    let mut child = match c.spawn() {
+        Ok(child) => child,
+        Err(e) => return Some(Refused::Failed(format!("\"{cmd}\" did not start: {e}"))),
+    };
+    let said = Arc::new(Mutex::new(Vec::new()));
+    let (closed, on_close) = std::sync::mpsc::channel();
+    if let Some(stderr) = child.stderr.take() {
+        let said = Arc::clone(&said);
+        std::thread::spawn(move || {
+            read_tail(stderr, &said);
+            let _ = closed.send(());
+        });
+    }
+    let status = child.wait();
+    let _ = on_close.recv_timeout(STDERR_AFTER_EXIT);
+    let said = said.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    match status {
+        Ok(s) if s.success() => None,
+        Ok(s) => Some(Refused::Failed(command_failure(cmd, &s, &said))),
         Err(e) => Some(Refused::Failed(format!("\"{cmd}\" did not start: {e}"))),
+    }
+}
+
+/// How long a command's last stderr lines may trail its exit.
+const STDERR_AFTER_EXIT: Duration = Duration::from_millis(200);
+/// The most of a command's stderr kept, its end.
+const STDERR_KEPT: usize = 8192;
+
+/// Read `from` until it closes, keeping its last [`STDERR_KEPT`] bytes in `into`.
+fn read_tail(mut from: impl std::io::Read, into: &Mutex<Vec<u8>>) {
+    let mut buf = [0; 4096];
+    loop {
+        let n = match from.read(&mut buf) {
+            Ok(0) => return,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return,
+        };
+        let mut kept = into.lock().unwrap_or_else(|e| e.into_inner());
+        kept.extend_from_slice(&buf[..n]);
+        let over = kept.len().saturating_sub(STDERR_KEPT);
+        kept.drain(..over);
     }
 }
 
@@ -2438,6 +2477,22 @@ mod tests {
         assert_eq!(
             command_failure("off", &st, b""),
             "\"off\" failed (exit status: 1)."
+        );
+    }
+
+    #[test]
+    fn a_command_is_done_when_it_exits_while_a_child_it_left_holds_stderr() {
+        let env = crate::spawn::SessionEnv::default();
+        let started = std::time::Instant::now();
+        assert_eq!(run("sleep 20 & exit 0", &env), None);
+        assert_eq!(
+            run("sleep 20 & echo 'no suspend' >&2; exit 1", &env),
+            Some(Refused::Failed("no suspend".into()))
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "waited {:?} for the children",
+            started.elapsed()
         );
     }
 
