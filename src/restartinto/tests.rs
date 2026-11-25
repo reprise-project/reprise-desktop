@@ -178,7 +178,7 @@ fn logind_offers_its_entries_then_firmware_setup() {
     let Some(f) = logind("yes", "challenge", &["linux.conf", "auto-poweroff"]) else {
         return;
     };
-    let got = zbus::block_on(offer(&f.client));
+    let got = zbus::block_on(offer(&f.client)).unwrap();
     assert_eq!(
         got,
         vec![entry("linux.conf", "Linux"), BootTarget::firmware(true)]
@@ -186,11 +186,30 @@ fn logind_offers_its_entries_then_firmware_setup() {
 }
 
 #[test]
+fn an_unanswered_ask_offers_no_answer_and_the_panel_keeps_its_targets() {
+    let Some(bus) = bus() else {
+        return;
+    };
+    let client = zbus::block_on(connect(&bus.1));
+    assert!(
+        zbus::block_on(offer(&client)).is_err(),
+        "no logind on the bus"
+    );
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    answered(&mut h.state, vec![entry("a.conf", "A")]);
+    let d = h.state.turn_off_dialog();
+    h.state.open_dialog(d);
+    assert!(top_offers(&h), "the system bus does not answer the tests");
+    assert_eq!(h.state.boot_targets, vec![entry("a.conf", "A")]);
+}
+
+#[test]
 fn nothing_is_offered_where_logind_cannot_set_a_target() {
     let Some(f) = logind("na", "no", &["linux.conf"]) else {
         return;
     };
-    assert_eq!(zbus::block_on(offer(&f.client)), Vec::new());
+    assert_eq!(zbus::block_on(offer(&f.client)).unwrap(), Vec::new());
 }
 
 #[test]

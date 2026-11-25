@@ -58,34 +58,22 @@ fn offered(answer: &str) -> Option<bool> {
     }
 }
 
-/// What logind on `conn` offers to restart into: its entries, then firmware setup. A call that
-/// fails offers nothing of its kind.
-pub async fn offer(conn: &zbus::Connection) -> Vec<BootTarget> {
-    let proxy = match manager(conn).await {
-        Ok(p) => p,
-        Err(e) => {
-            log::info!("restart into: logind: {e}");
-            return Vec::new();
-        }
-    };
-    let can = async |method: &str| match proxy.call::<_, _, String>(method, &()).await {
-        Ok(answer) => offered(&answer),
-        Err(e) => {
-            log::info!("restart into: {method}: {e}");
-            None
-        }
+/// What logind on `conn` offers to restart into: its entries, then firmware setup.
+pub async fn offer(conn: &zbus::Connection) -> zbus::Result<Vec<BootTarget>> {
+    let proxy = manager(conn).await?;
+    let can = async |method: &str| {
+        let answer: String = proxy.call(method, &()).await?;
+        zbus::Result::Ok(offered(&answer))
     };
     let mut out = Vec::new();
-    if let Some(password) = can("CanRebootToBootLoaderEntry").await {
-        match proxy.get_property::<Vec<String>>("BootLoaderEntries").await {
-            Ok(ids) => out = entries(&ids, password, &ENTRY_ROOTS.map(PathBuf::from)),
-            Err(e) => log::info!("restart into: BootLoaderEntries: {e}"),
-        }
+    if let Some(password) = can("CanRebootToBootLoaderEntry").await? {
+        let ids: Vec<String> = proxy.get_property("BootLoaderEntries").await?;
+        out = entries(&ids, password, &ENTRY_ROOTS.map(PathBuf::from));
     }
-    if let Some(password) = can("CanRebootToFirmwareSetup").await {
+    if let Some(password) = can("CanRebootToFirmwareSetup").await? {
         out.push(BootTarget::firmware(password));
     }
-    out
+    Ok(out)
 }
 
 pub(crate) async fn manager(conn: &zbus::Connection) -> zbus::Result<zbus::Proxy<'static>> {
@@ -182,23 +170,20 @@ fn pretty(id: &str) -> String {
 }
 
 /// Ask logind what there is to restart into, off the loop; an open Turn off computer panel shows
-/// or drops Restart Into... with the answer.
+/// or drops Restart Into... with the answer. A call that fails keeps the targets known before.
 pub fn refresh(state: &mut State) {
     state.spawn_job(|| {
         let targets = zbus::block_on(async {
             let conn = zbus::connection::Builder::system()
                 .method_timeout(CALL_TIMEOUT)
                 .build()
-                .await;
-            match conn {
-                Ok(c) => offer(&c).await,
-                Err(e) => {
-                    log::info!("restart into: system bus: {e}");
-                    Vec::new()
-                }
-            }
+                .await?;
+            offer(&conn).await
         });
-        Box::new(move |state: &mut State| answered(state, targets))
+        Box::new(move |state: &mut State| match targets {
+            Ok(targets) => answered(state, targets),
+            Err(e) => log::info!("restart into: logind: {e}"),
+        })
     });
 }
 
