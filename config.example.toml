@@ -1123,7 +1123,8 @@ label = "Terminal"
 icon = "utilities-terminal"
 action = "terminal"
 
-# The Start menu, top to bottom. An entry runs a `command` or `action`, or
+# The Classic Start menu (`startmenu_style = "classic"`), top to bottom; the
+# Blue and Glass menus don't show it. An entry runs a `command` or `action`, or
 # opens a submenu: `submenu = "programs"` (installed applications),
 # "settings" (applications in the Settings category), "documents" (the XDG
 # user directories that exist, opened in Explorer), or nested
