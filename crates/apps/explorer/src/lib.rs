@@ -231,6 +231,8 @@ pub struct Explorer {
     /// A drive scan still being read, with the `/proc/mounts` it was started for.
     pub(crate) scanning: Option<(String, Job<Vec<reprisefs::places::Drive>>)>,
     pub(crate) udisks: Option<reprisefs::udisks::Udisks>,
+    /// The drive the Rename box is up on, as it was when it opened.
+    pub(crate) relabeling: Option<reprisefs::udisks::Volume>,
     /// Read with every drive scan and every Computer listing, and taken from
     /// `volume_changes`: a stick plugged in without being mounted doesn't change `/proc/mounts`.
     pub(crate) volumes: reprisefs::udisks::Snapshot,
@@ -590,6 +592,7 @@ impl Explorer {
             connection: None,
             last_server: String::new(),
             udisks,
+            relabeling: None,
             globs: Arc::new(reprisefs::apps::mime_globs()),
             specials: reprisefs::places::special_folders(),
             bar: menus::menu_bar(&MenuState::default()),
