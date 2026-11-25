@@ -317,8 +317,10 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
     std::fs::write(&copy, "1").expect("write");
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
-    ex.undos
-        .push(reprisefs::undo::Undoable::Copied(copy.clone(), None));
+    ex.undos.push(reprisefs::undo::Undoable::Copied(
+        copy.clone(),
+        reprisefs::undo::landed(&copy),
+    ));
     ex.sync_undo();
 
     ex.run(Command::Undo, &mut ctx);
@@ -365,7 +367,10 @@ fn undos_erase_answer_erases_only_the_copy_it_asked_about() {
     }
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
-    ex.undos.push(Undoable::Copied(asked.clone(), None));
+    ex.undos.push(Undoable::Copied(
+        asked.clone(),
+        reprisefs::undo::landed(&asked),
+    ));
 
     ex.run(Command::Undo, &mut ctx);
     ex.undos.push(Undoable::Copied(during.clone(), None));
