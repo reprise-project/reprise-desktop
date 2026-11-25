@@ -17,7 +17,7 @@ use reprisefs::names;
 use reprisefs::ops::DropOp;
 use reprisefs::replace::{self, Answer, Asker, Clash, Step, Verdict};
 use reprisefs::sendto::{self, SendTo};
-use reprisefs::undo::Undoable;
+use reprisefs::undo::{Hold, Undoable};
 use reprisekit::controls::menu::{ContextBitmaps, MenuStyle};
 use reprisekit::controls::openwith::{Check, OpenWith, Program};
 use reprisekit::controls::replacebox;
@@ -1671,8 +1671,8 @@ impl Explorer {
         self.raise(Dialog::Confirm(c))
     }
 
-    /// The Undo rows from the history's head, greyed while an undo runs or an edit of this
-    /// window's has yet to land. An open menu keeps the entry its row names.
+    /// The Undo rows from the history's head, greyed while an undo runs, a clear waits to land or
+    /// an edit of this window's has yet to land. An open menu keeps the entry its row names.
     pub(crate) fn sync_undo(&mut self) {
         if self.bar.open.is_some() || self.popup.is_some() {
             return;
@@ -1682,10 +1682,11 @@ impl Explorer {
             return;
         }
         let head = self.undos.head();
-        self.undo_held = head.is_some() && self.undos.held();
+        let held = head.and_then(|_| self.undos.held());
+        self.undo_held = held == Some(Hold::Undo);
+        let head = head.filter(|_| held.is_none());
         self.undo_entry = head.map(|(id, _)| id);
-        self.undo =
-            (head.filter(|_| !self.undo_held)).map(|(_, label)| label.trim_start_matches("Undo "));
+        self.undo = head.map(|(_, label)| label.trim_start_matches("Undo "));
     }
 
     pub(crate) fn bin_item(&self, i: usize) -> Option<BinItem> {
