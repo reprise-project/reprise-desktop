@@ -432,6 +432,23 @@ folder to go into it; Back, Up and Refresh do what they say, and an entry's
 menu adds Open in Explorer and Move to Recycle Bin. Open it from Explorer,
 from the low disk space balloon, or as `reprise-diskusage FOLDER`.
 
+## Scheduled Tasks
+
+The tasks your systemd user manager runs on a schedule: each user timer with
+its schedule in words ("Every day at 3:00", "15 min after startup"), when it
+runs next, when the timer last fired and its status (Ready, Running, Failed or
+Disabled). Run Now
+starts the task's service at once. Enable and Disable turn the timer on or off
+for good, as `systemctl --user enable --now` and `disable --now` do; a timer
+without an `[Install]` section is only started or stopped. Properties shows the
+schedule as the unit file writes it, the command, how the last run ended and
+the unit file. The list follows the manager, so a timer added, changed or
+fired elsewhere shows at once. It's in Start > All Programs > System Tools.
+
+New Task... is greyed: to add a task, put a `.timer` and a `.service` of the
+same name in `~/.config/systemd/user` and run `systemctl --user daemon-reload`;
+the list picks it up.
+
 ## Font Viewer
 
 The default for font files (`.ttf`, `.otf`, `.ttc`, `.woff`, `.woff2`). It

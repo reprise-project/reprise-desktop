@@ -26,6 +26,7 @@ fn entry(program: &str) -> Option<fn(Vec<OsString>)> {
         "reprise-polkit" => reprise_polkit::main,
         "reprise-power" => reprise_power::main,
         "reprise-printers" => reprise_printers::main,
+        "reprise-schedtasks" => reprise_schedtasks::main,
         "reprise-settings" => reprise_settings::main,
         "reprise-sound" => reprise_sound::main,
         "reprise-taskmgr" => reprise_taskmgr::main,

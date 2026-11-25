@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Scheduled Tasks
+Comment=See the tasks that run on a schedule, run one now, and turn one on or off.
+Exec=reprise-schedtasks
+Icon=appointment-soon
+Categories=System;
+Keywords=timer;systemd;cron;schedule;
+StartupWMClass=reprise.schedtasks
+Terminal=false

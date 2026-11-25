@@ -35,6 +35,7 @@ members = [
     "crates/apps/updates",
     "crates/apps/printers",
     "crates/apps/diskusage",
+    "crates/apps/schedtasks",
     "crates/apps/terminal",
     "crates/apps/phone",
     "crates/apps/imageviewer",

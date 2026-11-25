@@ -4793,6 +4793,7 @@ dependencies = [
  "reprise-polkit",
  "reprise-power",
  "reprise-printers",
+ "reprise-schedtasks",
  "reprise-settings",
  "reprise-sound",
  "reprise-taskmgr",
@@ -5246,6 +5247,21 @@ dependencies = [
  "serde",
  "tempfile",
  "wayland-client",
+ "zbus 6.5.0",
+]
+
+[[package]]
+name = "reprise-schedtasks"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "libc",
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "reprisefs",
+ "reprisekit",
+ "serde",
  "zbus 6.5.0",
 ]
 
