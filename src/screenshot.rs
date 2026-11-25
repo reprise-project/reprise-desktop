@@ -488,7 +488,8 @@ fn saved_notice(
 /// which is made if missing. Blocking.
 fn write_file(bytes: &[u8], secs: i64, ext: &str) -> Result<PathBuf, String> {
     use std::io::Write;
-    let dir = shots_folder().ok_or("There is no home folder to save it in.")?;
+    let dir =
+        reprisefs::places::screenshots_dir().ok_or("There is no home folder to save it in.")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot make {}: {e}", dir.display()))?;
     let name = file_name(&reprisefs::locale::localtime(secs), ext);
     write_into(&dir.join(name), |f| f.write_all(bytes))
@@ -512,16 +513,11 @@ fn write_into(
     })
 }
 
-fn shots_folder() -> Option<PathBuf> {
-    let pictures = reprisefs::places::user_dir("PICTURES", "Pictures").filter(|p| p.is_dir());
-    folder(pictures, std::env::var_os("HOME").map(PathBuf::from))
-}
-
 /// Remove the temp files a session that ended mid-write left in the Screenshots folder, off the
 /// loop. One written in the last minute may be another session's under way, so it stays.
 pub fn sweep_temps(state: &mut State) {
     state.spawn_fs_job(|| {
-        if let Some(dir) = shots_folder() {
+        if let Some(dir) = reprisefs::places::screenshots_dir() {
             let old = std::time::SystemTime::now() - Duration::from_secs(60);
             for path in stale_temps(&dir, old) {
                 match std::fs::remove_file(&path) {
@@ -553,11 +549,6 @@ fn stale_temps(dir: &std::path::Path, old: std::time::SystemTime) -> Vec<PathBuf
         })
         .map(|e| e.path())
         .collect()
-}
-
-/// `Screenshots` in the Pictures folder when there is one, else in home.
-fn folder(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
-    pictures.or(home).map(|d| d.join("Screenshots"))
 }
 
 fn file_name(tm: &libc::tm, ext: &str) -> String {
@@ -870,17 +861,5 @@ mod tests {
             );
             assert!(open(&h.state), "{style:?} Start stays open under it");
         }
-    }
-
-    #[test]
-    fn the_folder_is_under_pictures_else_home() {
-        let pics = Some(PathBuf::from("/h/Pictures"));
-        let home = Some(PathBuf::from("/h"));
-        assert_eq!(
-            folder(pics, home.clone()),
-            Some(PathBuf::from("/h/Pictures/Screenshots"))
-        );
-        assert_eq!(folder(None, home), Some(PathBuf::from("/h/Screenshots")));
-        assert_eq!(folder(None, None), None);
     }
 }
