@@ -226,19 +226,22 @@ pub fn render_taskbar_top() -> Canvas {
             Some(s) => TextRenderer::load(&s.start_text.font()),
             None => TextRenderer::load(&FontConfig::default()),
         };
+        let shape = theme.taskbar_shape();
+        let meter_px = reprisekit::netmeter::font_px(
+            &text,
+            theme.fonts.size_px,
+            shape.button_row(&theme.metrics),
+            1,
+        );
         let counts = TaskbarCounts {
             pager: 2,
             tasks: 2,
             tray: 1,
             show_desktop: true,
-            meter: Some(reprisekit::netmeter::size(
-                &text,
-                reprisekit::netmeter::font_px(theme.fonts.size_px, 1),
-            )),
+            meter: Some(reprisekit::netmeter::size(&text, meter_px)),
             ..TaskbarCounts::default()
         };
         let clock = "3:45 PM";
-        let shape = theme.taskbar_shape();
         let layout = TaskbarLayout::compute(
             &theme.metrics,
             &shape,

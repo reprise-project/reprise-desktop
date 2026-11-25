@@ -199,7 +199,8 @@ impl State {
                 hidden,
                 reveal,
                 meter: self.config.taskbar.network_meter.then(|| {
-                    let px = reprisekit::netmeter::font_px(base.fonts.size_px, 1);
+                    let row = shape.button_row(m);
+                    let px = reprisekit::netmeter::font_px(&self.text, base.fonts.size_px, row, 1);
                     reprisekit::netmeter::size(&self.text, px)
                 }),
             },
