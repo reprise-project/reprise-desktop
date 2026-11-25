@@ -129,25 +129,37 @@ impl State {
                     return;
                 }
                 crate::lockview::picture_read(state);
-                let Some(p) = state.start_panel.as_ref() else {
-                    return;
-                };
-                let px = PICTURE * state.draw_scale_at(Some(&p.output)).max(1);
-                let picture = state.start_user_picture(px);
-                if let Some(p) = state.start_panel.as_mut()
-                    && p.model.user_picture != picture
-                {
-                    p.model.user_picture = picture;
-                    state.redraw_start_panel();
-                }
+                state.show_start_picture();
             })
         });
     }
 
-    /// The user picture at `px` device pixels, else avatar-default.
+    /// An open panel shows [`State::start_user_picture`] as it stands now.
+    pub(crate) fn show_start_picture(&mut self) {
+        let Some(p) = self.start_panel.as_ref() else {
+            return;
+        };
+        let px = PICTURE * self.draw_scale_at(Some(&p.output)).max(1);
+        let picture = self.start_user_picture(px);
+        if let Some(p) = self.start_panel.as_mut()
+            && p.model.user_picture != picture
+        {
+            p.model.user_picture = picture;
+            self.redraw_start_panel();
+        }
+    }
+
+    /// The user picture at `px` device pixels. Without one, Blue shows the stock picture its
+    /// lock and login screen give the user (`lockview::find_listed`), the others avatar-default.
     pub(super) fn start_user_picture(&mut self, px: i32) -> Option<Canvas> {
-        (self.start_pictures.shown(px))
-            .or_else(|| super::lists::unread(&mut self.icons, "avatar-default", px))
+        if let Some(p) = self.start_pictures.shown(px) {
+            return Some(p);
+        }
+        if self.config.interface == reprisekit::interface::Interface::Blue {
+            use reprisekit::art::userpic::{ALL, draw};
+            return Some(draw(ALL[self.lock.listed_at % ALL.len()], px as u32));
+        }
+        super::lists::unread(&mut self.icons, "avatar-default", px)
     }
 
     /// Reads the user picture ahead at the Start sizes of each of draw `scales`.

@@ -1223,8 +1223,8 @@ pub fn reset(l: &mut Lock) {
     l.view.model = Logon::locked(m.interface, user, m.offers_switch_user(), m.offers_power());
 }
 
-/// Under reprise-login, finds off the loop where its screen lists this user, so Blue's lock and
-/// login screen give a user without a picture the same stock one.
+/// Under reprise-login, finds off the loop where its screen lists this user, so Blue's Start,
+/// lock and login screen give a user without a picture the same stock one.
 pub fn find_listed(state: &mut State) {
     if state.login_link.is_none() {
         return;
@@ -1236,7 +1236,7 @@ pub fn find_listed(state: &mut State) {
     });
 }
 
-fn listed(state: &mut State, at: usize) {
+pub(crate) fn listed(state: &mut State, at: usize) {
     state.lock.listed_at = at;
     for l in [state.lock.console.as_mut(), state.lock.remote.as_mut()]
         .into_iter()
@@ -1245,6 +1245,7 @@ fn listed(state: &mut State, at: usize) {
         l.view.model.users[0].stock = at;
     }
     redraw(state);
+    state.show_start_picture();
 }
 
 /// The user picture landed: both sides' screens show it.
