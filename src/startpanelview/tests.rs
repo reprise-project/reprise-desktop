@@ -1172,6 +1172,29 @@ fn the_blue_menu_hangs_all_programs_off_its_row_and_drops_it_on_another_row() {
 }
 
 #[test]
+fn blue_start_shows_the_stock_picture_its_lock_gives_a_user_without_one() {
+    use reprisekit::art::userpic::{ALL, draw};
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"blue\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start(bar);
+    let px = PICTURE as u32;
+    let shown = |h: &crate::harness::Harness| {
+        (h.state.start_panel.as_ref()).and_then(|p| p.model.user_picture.clone())
+    };
+    assert!(
+        shown(&h) == Some(draw(ALL[0], px)),
+        "the first stock picture"
+    );
+    crate::lockview::listed(&mut h.state, 3);
+    assert!(
+        shown(&h) == Some(draw(ALL[3], px)),
+        "a listing found later shows at once"
+    );
+}
+
+#[test]
 fn the_blue_menus_menus_and_their_folders_wear_its_look_and_other_menus_keep_the_theme() {
     use crate::menuview::Skin;
     let config = crate::config::Config::parse(
