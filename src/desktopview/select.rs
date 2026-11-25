@@ -1,7 +1,10 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
+use reprisekit::pointer::POINT_MS;
 use reprisekit::selection::{self, Mods};
 use reprisescene::NodeId;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::Rectangle;
 
 use crate::{
@@ -139,6 +142,54 @@ impl State {
             self.open_icon(i);
         }
         empty_double
+    }
+
+    /// The pointer moved onto icon `index`, or off the icons (`None`). Under `[folders]
+    /// single_click` an icon it rests on for `POINT_MS` is selected alone.
+    pub fn desktop_point(&mut self, index: Option<usize>) {
+        let index = index.filter(|_| self.config.folders.single_click);
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
+        if view.point == index {
+            return;
+        }
+        view.point = index;
+        if let Some(t) = view.point_timer.take() {
+            self.handle.remove(t);
+        }
+        let Some(i) = index else {
+            return;
+        };
+        let timer = Timer::from_duration(Duration::from_millis(POINT_MS));
+        match self.handle.insert_source(timer, move |_, _, state| {
+            state.point_rested(i);
+            TimeoutAction::Drop
+        }) {
+            Ok(t) => {
+                if let Some(view) = self.desktop.as_mut() {
+                    view.point_timer = Some(t);
+                }
+            }
+            Err(e) => log::warn!("desktop point timer: {}", e.error),
+        }
+    }
+
+    /// The pointer rested on icon `i`: selected alone unless a button, a menu or a rename holds
+    /// the desktop, or the pointer is no longer on it.
+    fn point_rested(&mut self, i: usize) {
+        let here = self.pointer_location();
+        let on_it = self.desktop_hit(here.x, here.y) == Some(i);
+        let busy = self.interaction != crate::input::Interaction::Idle
+            || self.buttons_down > 0
+            || !self.menus.is_empty();
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
+        view.point_timer = None;
+        if on_it && !busy && view.rename.is_none() && view.selection.single() != Some(i) {
+            self.select_icon(Some(i));
+        }
     }
 
     /// The button came up after a press that kept a multi-selection (`Press::Icon`):

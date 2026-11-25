@@ -559,6 +559,9 @@ impl State {
         if !matches!(hit, Hit::Frame { .. }) {
             self.frame_hover(None, FrameHit::Outside);
         }
+        if !matches!(hit, Hit::Desktop { .. }) {
+            self.desktop_point(None);
+        }
         let over_caption = match hit {
             Hit::Frame {
                 window,
@@ -700,6 +703,7 @@ impl State {
                 self.pointer_motion(None, pos, time);
                 self.set_cursor("default");
                 crate::tooltip::hover_desktop(self, index);
+                self.desktop_point(index);
             }
             Hit::DeskWidget { .. } => {
                 self.pointer_motion(None, pos, time);

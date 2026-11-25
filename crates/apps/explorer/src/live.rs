@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 pub const HOVER: Duration = Duration::from_millis(900);
 /// How long the pointer rests on an entry before single-click mode selects it.
-pub const POINT: Duration = Duration::from_millis(400);
+pub const POINT: Duration = Duration::from_millis(reprisekit::pointer::POINT_MS);
 
 /// What [`Explorer::follow_gone`] asks of the file system: the nearest folder at or above the
 /// gone one, and the folders above the old place that still exist, nearest first.
