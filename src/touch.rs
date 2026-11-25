@@ -14,6 +14,9 @@
 //! The first finger down on a client holds the seat's touch grab under its
 //! down's serial, so the client may start a drag (`dnd`) or a move or size
 //! from a title bar it draws itself (`take_for_grab`).
+//!
+//! The client the newest finger landed on may raise a window for a moment
+//! after (`activation`), though the surface took no keyboard.
 
 use reprisekit::fluid::Source;
 use smithay::{
@@ -25,9 +28,10 @@ use smithay::{
         DownEvent, GrabStartData, MotionEvent, OrientationEvent, ShapeEvent, TouchGrab,
         TouchInnerHandle, UpEvent,
     },
-    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Transform},
 };
+use std::time::Instant;
 
 use crate::{
     compositor::State,
@@ -47,6 +51,8 @@ pub struct TouchState {
     stir_moves: Vec<(TouchSlot, Point<f64, Logical>)>,
     /// A client had touch events since the last frame.
     frame_due: bool,
+    /// The client the newest finger down went to, and when; None once a finger lands elsewhere.
+    pub(crate) tapped: Option<(ClientId, Instant)>,
 }
 
 impl TouchState {
@@ -447,6 +453,7 @@ impl State {
         let pos = self.touch_point(ev);
         let time = Event::time(ev);
         let first = (self.devices.touch.points.iter()).all(|(_, r)| *r == Route::Stir);
+        self.devices.touch.tapped = None;
         // Under a capture the input belongs to the other machine.
         let hit = if self.inputproto.gated() {
             Hit::Nothing
@@ -464,6 +471,7 @@ impl State {
                 if !self.focus_for_press(&surface, window) {
                     Route::Ignored
                 } else if let Some(touch) = self.seat.get_touch() {
+                    let client = surface.client().map(|c| c.id());
                     touch.down(
                         self,
                         Some((surface, origin)),
@@ -475,6 +483,7 @@ impl State {
                         },
                     );
                     self.devices.touch.frame_due = true;
+                    self.devices.touch.tapped = client.map(|c| (c, Instant::now()));
                     Route::Client { at: pos }
                 } else {
                     Route::Ignored

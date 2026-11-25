@@ -14,7 +14,7 @@ use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer, wl_callback, wl_compositor::WlCompositor, wl_data_device,
         wl_data_device_manager, wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput,
-        wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface::WlSurface,
+        wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface::WlSurface, wl_touch,
     },
 };
 use wayland_protocols::{
@@ -86,6 +86,7 @@ mod lockscreen;
 pub mod outputs;
 pub mod screenshot;
 mod touchpad;
+mod touchscreen;
 
 pub use capture::CaptureClient;
 pub use lockscreen::{Heard, LockScreen};
@@ -1322,11 +1323,19 @@ impl TestClient {
     /// Ask for an activation token on input `serial` of the seat, from toplevel `t`'s surface, as
     /// a program raising a window does; the token comes back in `tokens`.
     pub fn token_on(&self, serial: u32, t: Toplevel) {
+        self.token_from(serial, Some(&self.side.shells[t.shell].surface));
+    }
+
+    /// [`TestClient::token_on`] from any `surface` of the client, or from none, as GTK asks while
+    /// the client has no keyboard focus.
+    pub fn token_from(&self, serial: u32, surface: Option<&WlSurface>) {
         let token = (self.side.activation.as_ref())
             .expect("xdg_activation_v1")
             .get_activation_token(&self.qh(), ());
         token.set_serial(serial, self.side.seat.as_ref().expect("wl_seat"));
-        token.set_surface(&self.side.shells[t.shell].surface);
+        if let Some(surface) = surface {
+            token.set_surface(surface);
+        }
         token.commit();
     }
 
@@ -1674,6 +1683,7 @@ pub struct ClientSide {
     activation: Option<XdgActivationV1>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
+    touch: Option<wl_touch::WlTouch>,
     seat: Option<wl_seat::WlSeat>,
     data_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     data_control: Option<ExtDataControlManagerV1>,
@@ -1707,6 +1717,8 @@ pub struct ClientSide {
     pub buttons: Vec<(u32, bool)>,
     /// The serial of the last button event the pointer heard, for a drag it starts.
     pub button_serial: u32,
+    /// The serial of the last `wl_touch.down` heard.
+    pub touch_down_serial: u32,
     /// Each activation token the compositor handed back, in order.
     pub tokens: Vec<String>,
     /// Each `reprise_sandboxed_v1` event heard: an app id for `app`, `None` for `done`.
@@ -1933,6 +1945,21 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
                 st.key_log.push(KeyHeard::Mods(mods_depressed));
             }
             _ => {}
+        }
+    }
+}
+
+impl wc::Dispatch<wl_touch::WlTouch, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &wl_touch::WlTouch,
+        ev: wl_touch::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_touch::Event::Down { serial, .. } = ev {
+            st.touch_down_serial = serial;
         }
     }
 }

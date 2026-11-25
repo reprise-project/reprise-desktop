@@ -66,17 +66,17 @@ impl KeyboardTurn {
     }
 }
 
-/// How long the client a drag was dropped on may raise the window it took it with: the drop
-/// is the user's intent, though the keyboard is still on the drag's source.
-const DROP_GRACE: Duration = Duration::from_secs(3);
+/// How long the client a drag was dropped on, or the last finger landed on, may raise a window:
+/// the drop or the tap is the user's intent, though the keyboard is elsewhere.
+const PICK_GRACE: Duration = Duration::from_secs(3);
 
-fn drop_target_trusted<C: PartialEq>(
-    dropped_on: Option<&(C, Instant)>,
+fn picked_trusted<C: PartialEq>(
+    picked: Option<&(C, Instant)>,
     token_client: Option<&C>,
     now: Instant,
 ) -> bool {
-    dropped_on.is_some_and(|(c, at)| {
-        Some(c) == token_client && now.saturating_duration_since(*at) < DROP_GRACE
+    picked.is_some_and(|(c, at)| {
+        Some(c) == token_client && now.saturating_duration_since(*at) < PICK_GRACE
     })
 }
 
@@ -125,24 +125,34 @@ impl XdgActivationHandler for State {
             .map(|c| c.id());
         let since = (self.keyboard_turn.since(focus_client.as_ref()))
             .or_else(|| keyboard.as_ref().and_then(|k| k.last_enter()));
-        let serial_ok = data.serial.as_ref().is_some_and(|(serial, seat)| {
-            Seat::<State>::from_resource(seat).as_ref() == Some(&self.seat)
-                && since.is_some_and(|since| serial.is_no_older_than(&since))
-        });
+        let serial = (data.serial.as_ref())
+            .filter(|(_, seat)| Seat::<State>::from_resource(seat).as_ref() == Some(&self.seat))
+            .map(|(serial, _)| *serial);
+        let no_older_than = |from: Option<Serial>| {
+            serial
+                .zip(from)
+                .is_some_and(|(s, from)| s.is_no_older_than(&from))
+        };
+        let serial_ok = no_older_than(since);
+        let now = Instant::now();
+        // A tap on a surface that takes no keyboard (a launcher panel's) leaves the keyboard
+        // elsewhere, so the client that asks is checked, not a surface it may not name.
+        let tapped = no_older_than(self.seat.get_touch().and_then(|t| t.last_down()))
+            && picked_trusted(
+                self.devices.touch.tapped.as_ref(),
+                data.client_id.as_ref(),
+                now,
+            );
         let token_client = data
             .surface
             .as_ref()
             .and_then(|s| s.client())
             .map(|c| c.id());
-        let dropped = drop_target_trusted(
-            self.dnd.dropped_on.as_ref(),
-            token_client.as_ref(),
-            Instant::now(),
-        );
+        let dropped = picked_trusted(self.dnd.dropped_on.as_ref(), token_client.as_ref(), now);
         if dropped {
             self.dnd.dropped_on = None;
         }
-        if dropped || client_token_trusted(serial_ok, token_client, focus_client) {
+        if dropped || tapped || client_token_trusted(serial_ok, token_client, focus_client) {
             data.user_data.insert_if_missing(|| Trusted);
         }
         true
@@ -486,24 +496,21 @@ mod tests {
     }
 
     #[test]
-    fn a_drop_target_may_raise_its_window_for_a_moment() {
+    fn a_drop_target_or_a_tapped_client_may_raise_a_window_for_a_moment() {
         let at = Instant::now();
-        let dropped = Some(&(1, at));
-        assert!(drop_target_trusted(
-            dropped,
+        let picked = Some(&(1, at));
+        assert!(picked_trusted(
+            picked,
             Some(&1),
             at + Duration::from_secs(1)
         ));
+        assert!(!picked_trusted(picked, Some(&2), at), "another client");
+        assert!(!picked_trusted(picked, None, at), "no client");
         assert!(
-            !drop_target_trusted(dropped, Some(&2), at),
-            "another client"
-        );
-        assert!(!drop_target_trusted(dropped, None, at), "no surface");
-        assert!(
-            !drop_target_trusted(dropped, Some(&1), at + DROP_GRACE),
+            !picked_trusted(picked, Some(&1), at + PICK_GRACE),
             "the moment has passed"
         );
-        assert!(!drop_target_trusted::<i32>(None, Some(&1), at));
+        assert!(!picked_trusted::<i32>(None, Some(&1), at));
     }
 
     #[test]
@@ -528,6 +535,117 @@ mod tests {
     }
 
     use crate::harness::{Harness, TestClient, Toplevel};
+
+    /// On a touchscreen: a program's `target` window behind `busy`, another program's, which holds
+    /// the keyboard, and a launcher whose 200x30 panel in the top-left corner takes no keyboard.
+    struct Launcher {
+        h: Harness,
+        launcher: TestClient,
+        app: TestClient,
+        target: Toplevel,
+        /// Its client stays connected while the test runs.
+        busy: (TestClient, Toplevel),
+    }
+
+    fn launcher() -> Launcher {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.add_touchscreen();
+        let mut app = h.connect();
+        let target = h.map_toplevel(&mut app, "test.app", 300, 200);
+        let mut other = h.connect();
+        let busy = h.map_toplevel(&mut other, "test.busy", 300, 200);
+        let mut launcher = h.connect();
+        h.map_panel(&mut launcher);
+        launcher.bind_touch();
+        h.roundtrip(&mut launcher);
+        h.state.focus_window(busy.id);
+        h.roundtrip(&mut other);
+        Launcher {
+            h,
+            launcher,
+            app,
+            target,
+            busy: (other, busy),
+        }
+    }
+
+    impl Launcher {
+        /// A tap on the panel; the down's serial the launcher heard.
+        fn tap_panel(&mut self) -> u32 {
+            self.h.tap(100.0, 15.0);
+            self.h.roundtrip(&mut self.launcher);
+            self.launcher.side.touch_down_serial
+        }
+
+        /// A token the launcher asks on `serial`, naming no surface as GTK does without the
+        /// keyboard, presented for `target`.
+        fn raise_on(&mut self, serial: u32) {
+            self.launcher.token_from(serial, None);
+            self.h.roundtrip(&mut self.launcher);
+            let token = self.launcher.side.tokens.last().expect("a token").clone();
+            self.app.activate(&token, self.target);
+            self.h.roundtrip(&mut self.app);
+        }
+    }
+
+    #[test]
+    fn a_tap_on_a_launcher_without_the_keyboard_lets_it_raise_a_window() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        assert_ne!(down, 0, "the panel hears the finger");
+        assert_eq!(
+            l.h.state.focused,
+            Some(l.busy.1.id),
+            "the panel takes no keyboard"
+        );
+        l.raise_on(down);
+        assert_eq!(
+            l.h.state.focused,
+            Some(l.target.id),
+            "the window takes the keyboard"
+        );
+    }
+
+    #[test]
+    fn a_tap_on_a_launcher_raises_nothing_on_an_older_tap_or_after_a_tap_elsewhere() {
+        let mut l = launcher();
+        let first = l.tap_panel();
+        let second = l.tap_panel();
+        l.raise_on(first);
+        assert_eq!(l.h.state.focused, Some(l.busy.1.id), "on the older tap");
+
+        let w = l.h.state.win(l.busy.1.id).expect("busy");
+        let (x, y) = (w.x + w.geom.client.x + 20, w.y + w.geom.client.y + 20);
+        l.h.tap(f64::from(x), f64::from(y));
+        l.raise_on(second);
+        assert_eq!(
+            l.h.state.focused,
+            Some(l.busy.1.id),
+            "after a finger landed elsewhere"
+        );
+        assert!(
+            l.h.state
+                .win(l.target.id)
+                .is_some_and(|w| w.attention.is_some())
+        );
+    }
+
+    #[test]
+    fn a_program_that_was_not_tapped_raises_nothing_on_the_taps_serial() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        l.app.token_on(down, l.target);
+        l.h.roundtrip(&mut l.app);
+        let token = l.app.side.tokens.last().expect("a token").clone();
+        l.app.activate(&token, l.target);
+        l.h.roundtrip(&mut l.app);
+        assert_eq!(
+            l.h.state.focused,
+            Some(l.busy.1.id),
+            "busy keeps the keyboard"
+        );
+    }
 
     /// A click in the middle of window `t`, given the keyboard first; the serial `c` heard for it.
     fn click_on(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> u32 {
