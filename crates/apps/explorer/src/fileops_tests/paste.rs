@@ -457,6 +457,7 @@ fn undo_in_one_window_reverses_the_newest_operation_of_any_window_first() {
     let (_, edit) = renamer.sv.edit.as_mut().expect("the rename box");
     *edit = reprisekit::textedit::TextEdit::new("c.txt", false);
     renamer.commit_rename(&mut ctx);
+    renamer.finish_puts(&mut ctx);
     assert!(dir.join("a.txt").is_file() && dir.join("c.txt").is_file());
 
     copier.sync_undo();
