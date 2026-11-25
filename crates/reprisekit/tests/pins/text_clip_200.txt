@@ -222,7 +222,6 @@ glass.png "notepad" x4
 glass.png "notes.txt" x3
 glass.png "report.odt" x3
 glass.png "setup.exe" x3
-preview-media.png "Evening Mi..." x2
 reprisekit-gallery.png "#0A246A" x1
 reprisekit-gallery.png "00" x1
 reprisekit-gallery.png "1 KB" x1

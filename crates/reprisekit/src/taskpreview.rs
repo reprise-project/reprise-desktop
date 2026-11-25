@@ -17,8 +17,8 @@ const MEDIA_H: i32 = 24;
 
 /// A look's preview panel geometry, at scale 1: the cell's size, the panel's
 /// padding and gap, and in a cell its well (the picture fits inside its 2 px
-/// edge, see [`fit`]), the hot cell's close button and, from [`Grid::with_media`], the row of
-/// media buttons. `shadow` is how far the canvas reaches past the panel; `corner` cuts the
+/// edge, see [`fit`]; the title row ends `TITLE_GAP` above it), the hot cell's close button and,
+/// from [`Grid::with_media`], the row of media buttons. `shadow` is how far the canvas reaches past the panel; `corner` cuts the
 /// panel's corners as `backdrop::rounded_rects` does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grid {
@@ -39,6 +39,22 @@ impl Grid {
         Grid {
             cell: (self.cell.0, self.cell.1 + MEDIA_GAP + MEDIA_H),
             media: Some(Rect::new(w.x, w.bottom() + MEDIA_GAP, w.width, MEDIA_H)),
+            ..self
+        }
+    }
+
+    /// The grid with its title row `g` px taller, for text past 100% ([`Theme::line_growth`]):
+    /// the cells grow by `g`, the well and media row move down by it and the close button stays
+    /// centred in the row.
+    ///
+    /// [`Theme::line_growth`]: crate::theme::Theme::line_growth
+    pub fn grown(self, g: i32) -> Grid {
+        let down = |r: Rect, d: i32| Rect::new(r.x, r.y + d, r.width, r.height);
+        Grid {
+            cell: (self.cell.0, self.cell.1 + g),
+            well: down(self.well, g),
+            close: down(self.close, g / 2),
+            media: self.media.map(|m| down(m, g)),
             ..self
         }
     }
@@ -140,7 +156,8 @@ impl TaskPreviewLayout {
     }
 
     pub(crate) fn title_row(&self, i: usize) -> Option<Rect> {
-        self.in_cell(i, Rect::new(0, 0, self.grid.cell.0, TITLE_H))
+        let h = self.grid.well.y - TITLE_GAP;
+        self.in_cell(i, Rect::new(0, 0, self.grid.cell.0, h))
     }
 
     /// What the panel's canvas covers, relative to the panel: the panel

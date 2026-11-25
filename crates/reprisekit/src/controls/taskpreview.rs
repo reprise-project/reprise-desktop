@@ -644,6 +644,47 @@ mod tests {
     }
 
     #[test]
+    fn at_200_percent_text_the_title_row_grows_by_the_line_and_the_well_moves_down() {
+        use crate::interface::Interface;
+        use crate::interfaces::{task_preview_grid, theme_for};
+        for look in [Interface::Classic, Interface::Blue] {
+            let theme = theme_for(look).with_text_size(200);
+            let g = theme.line_growth();
+            assert!(g > 0, "{look:?}");
+            let button = Rect::new(300, 1054, 160, 22);
+            let l = TaskPreviewLayout::compute(
+                task_preview_grid(&theme),
+                1,
+                button,
+                SCREEN,
+                Edge::Bottom,
+            );
+            let (row, well, close) = (
+                l.title_row(0).unwrap(),
+                l.well(0).unwrap(),
+                l.close(0).unwrap(),
+            );
+            assert_eq!(row.height, TITLE_H + g, "{look:?}");
+            assert_eq!(well.y, row.bottom() + TITLE_GAP, "{look:?}");
+            assert_eq!(well.height, WELL_H, "{look:?}");
+            assert_eq!(l.cells[0].height, CELL_H + g, "{look:?}");
+            let (above, below) = (close.y - row.y, row.bottom() - close.bottom());
+            assert!(
+                (above - below).abs() <= 1,
+                "{look:?}: the close box centred in the row"
+            );
+            let base = theme_for(look);
+            assert_eq!(task_preview_grid(&base), CLASSIC, "{look:?} at 100%");
+        }
+        let glass = theme_for(Interface::Glass).with_text_size(200);
+        assert_eq!(
+            task_preview_grid(&glass),
+            crate::glass::preview::GRID,
+            "Glass keeps its own grid"
+        );
+    }
+
+    #[test]
     fn a_classic_panel_takes_the_pointer_everywhere_on_it() {
         let l = TaskPreviewLayout::compute(
             CLASSIC,

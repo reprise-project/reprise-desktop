@@ -188,7 +188,7 @@ pub fn task_preview_grid(theme: &Theme) -> Grid {
     if theme.glass().is_some() {
         glass::preview::GRID
     } else {
-        controls::taskpreview::CLASSIC
+        controls::taskpreview::CLASSIC.grown(theme.line_growth())
     }
 }
 
