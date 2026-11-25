@@ -558,6 +558,29 @@ fn undo_greys_and_ctrl_z_says_nothing_while_a_clear_waits_to_land() {
     assert_eq!(ex.undo, None, "the clear landed");
 }
 
+/// Ctrl+Z right after a rename, before the window's edit of the history lands, undoes the rename
+/// once it does.
+#[test]
+fn ctrl_z_before_the_windows_own_edit_lands_undoes_it_once_it_does() {
+    let home = tempfile::tempdir().expect("a temp dir");
+    let dir = home.path();
+    std::fs::create_dir(dir.join("b")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.to_path_buf()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+    ex.run(Command::Rename, &mut ctx);
+    let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+    *edit = reprisekit::textedit::TextEdit::new("c", false);
+    ex.commit_rename(&mut ctx);
+    assert!(dir.join("c").is_dir());
+    assert_eq!(ex.undo_edits_pending, 1, "the rename's entry is on its way");
+
+    ex.run(Command::Undo, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(dir.join("b").is_dir() && !dir.join("c").exists());
+    assert!(ex.dialog().is_none());
+}
+
 /// An edit of the undo history that panics still comes off the window's count, so Undo and a
 /// close go on, and the edits queued behind it run.
 #[test]
