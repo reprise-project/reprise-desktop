@@ -35,7 +35,7 @@ use repriseconf::remote::EncoderChoice;
 use reprisevideo::encode::probe::{self, Backend};
 use reprisevideo::encode::rate::RateControl;
 use reprisevideo::encode::{Codec, choice};
-use reprisevideo::monitor::{NO_MICROPHONE, Tap};
+use reprisevideo::monitor::{MICROPHONE_LOST, NO_MICROPHONE, Tap};
 use reprisevideo::stream::{self, Frame, FrameBuffer};
 use sound::{Sound, Source};
 use std::os::fd::RawFd;
@@ -279,13 +279,20 @@ fn outcome(
         (true, true, Err(e), Ok(())) => Ok(Outcome::EndedEarly(e)),
         (true, true, Ok(_), Ok(())) => Ok(match lost {
             (Some(why), _) => Outcome::SoundStopped(why),
-            (None, Some(why)) if why == NO_MICROPHONE => Outcome::MicrophoneStopped(why),
-            (None, Some(why)) => {
-                Outcome::MicrophoneStopped(format!("The microphone stopped: {why}"))
-            }
+            (None, Some(why)) => Outcome::MicrophoneStopped(microphone_line(why)),
             (None, None) => Outcome::Saved,
         }),
     }
+}
+
+/// The saved notice's line for the microphone's capture error `why`: the capture's own line, or a
+/// plain one in place of PipeWire's text, which goes to the log.
+fn microphone_line(why: String) -> String {
+    if why == NO_MICROPHONE || why == MICROPHONE_LOST {
+        return why;
+    }
+    log::warn!("the microphone stopped: {why}");
+    "The microphone stopped working; the rest of the recording has only what played.".into()
 }
 
 /// The path FFmpeg opens to write the movie into `fd`, an inherited regular file. Through
@@ -1408,13 +1415,30 @@ mod tests {
             outcome(true, true, stop(), (Some(gone.into()), None), Ok(())),
             Ok(Outcome::SoundStopped(gone.into()))
         );
-        let unplugged = "The source went away.";
         assert_eq!(
-            outcome(true, true, stop(), (None, Some(unplugged.into())), Ok(())),
-            Ok(Outcome::MicrophoneStopped(
-                "The microphone stopped: The source went away.".into()
-            ))
+            outcome(
+                true,
+                true,
+                stop(),
+                (None, Some(MICROPHONE_LOST.into())),
+                Ok(())
+            ),
+            Ok(Outcome::MicrophoneStopped(MICROPHONE_LOST.into()))
         );
+        for raw in [
+            "error alloc buffers: Invalid argument",
+            "PipeWire ended the capture.",
+        ] {
+            assert_eq!(
+                outcome(true, true, stop(), (None, Some(raw.into())), Ok(())),
+                Ok(Outcome::MicrophoneStopped(
+                    "The microphone stopped working; the rest of the recording has only what \
+                     played."
+                        .into()
+                )),
+                "{raw}"
+            );
+        }
         assert_eq!(
             outcome(
                 true,
@@ -1433,7 +1457,7 @@ mod tests {
                 true,
                 true,
                 ended(),
-                (Some(gone.into()), Some(unplugged.into())),
+                (Some(gone.into()), Some(MICROPHONE_LOST.into())),
                 Ok(())
             ),
             Ok(Outcome::SoundStopped(gone.into())),
@@ -1444,7 +1468,7 @@ mod tests {
                 true,
                 true,
                 e(changed),
-                (None, Some(unplugged.into())),
+                (None, Some(MICROPHONE_LOST.into())),
                 Ok(())
             ),
             Ok(Outcome::EndedEarly(changed.into()))
