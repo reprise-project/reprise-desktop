@@ -6,10 +6,11 @@
 //! [`MAX_W`] x [`MAX_H`] design px).
 
 use crate::interfaces;
+use crate::write_preview;
 use reprisekit::blue::Variant;
 use reprisekit::glass::{Material, Mode, Settings};
 use reprisekit::interface::Interface;
-use reprisekit::raster::{Canvas, Rect, write_preview};
+use reprisekit::raster::{Canvas, Rect};
 use reprisekit::style::{Check, Part, State, Style};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig};

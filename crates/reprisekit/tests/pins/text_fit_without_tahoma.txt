@@ -17,6 +17,48 @@ file-dialog ellipsized "9/12/2026 10:13 AM" x5  # a date in a Details column the
 glass-scale2 ellipsized "Pictures (3)" x4  # a task button's title
 import-sheet ellipsized "Touchpad natural scrolling" x6  # an imported setting's name in the sheet's list
 label-ellipsis ellipsized "HP LaserJet 4250 PostScript Printer Driver" x3  # the page shows an ellipsized label
+parts-blue-blue cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-blue cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-blue cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-carbon cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-carbon cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-carbon cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-cobalt cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-cobalt cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-cobalt cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-ember cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-ember cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-ember cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-obsidian cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-obsidian cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-obsidian cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-olive cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-olive cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-olive cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-sapphire cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-sapphire cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-sapphire cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-silver cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-silver cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-silver cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-slate cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-slate cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-slate cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-steel cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-blue-steel cut "Unchecked Normal" x2  # the gallery's own caption
+parts-blue-steel cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-glass-dark cut "StartShutdownArrowLight" x1  # the gallery's own caption
+parts-glass-dark cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-glass-dark cut "Unchecked Normal" x2  # the gallery's own caption
+parts-glass-dark cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-glass-sky cut "StartShutdownArrowLight" x1  # the gallery's own caption
+parts-glass-sky cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-glass-sky cut "Unchecked Normal" x2  # the gallery's own caption
+parts-glass-sky cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-glass-smoked cut "StartShutdownArrowLight" x1  # the gallery's own caption
+parts-glass-smoked cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-glass-smoked cut "Unchecked Normal" x2  # the gallery's own caption
+parts-glass-smoked cut "Unchecked Pressed" x2  # the gallery's own caption
 reprisekit-gallery cut "Checked Pressed" x2  # the gallery's own caption
 reprisekit-gallery cut "Thumb Pressed" x1  # the gallery's own caption
 reprisekit-gallery ellipsized "Documents" x1  # a name in a list or drop-down of its own width
@@ -26,10 +68,6 @@ reprisekit-gallery ellipsized "OpenDocument Text" x1  # a name in a list or drop
 stats-panel ellipsized "16.7 ms avg, 33.3 max" x3  # the debug overlay's figures
 taskbar-cells ellipsized "Untitled - Notepad" x9  # a task button's title
 taskbar-keys ellipsized "Untitled - Notepad" x24  # a task button's title
-tray-arrow-blue-schemes cut "StartShutdownArrowLight" x3  # the gallery's own caption
-tray-arrow-blue-schemes cut "Unchecked Disabled" x26  # the gallery's own caption
-tray-arrow-blue-schemes cut "Unchecked Normal" x26  # the gallery's own caption
-tray-arrow-blue-schemes cut "Unchecked Pressed" x26  # the gallery's own caption
 volume-popup ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 volume-popup-blue ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 volume-popup-blue-x2 ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
