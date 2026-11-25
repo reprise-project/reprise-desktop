@@ -545,12 +545,13 @@ impl State {
     }
 
     /// Ctrl+Z on the desktop: the top entry of the session's undo history is reversed, one at a
-    /// time in the whole session and only while the desktop shows its files. A rename or New of
-    /// the desktop's own items is instant and runs on a file action, where the entry is taken,
-    /// reversed and put back, so a give-up loses nothing; what a failure leaves undone goes back on
-    /// the stack and an error box says why, and an item its Recycle Bin refuses asks to be deleted
-    /// for good ([`Dialog::ask_undo_erase`]). Anything else runs in Explorer
-    /// ([`State::undo_in_explorer`]), with its progress and Cancel.
+    /// time in the whole session and only while the desktop shows its files. The history is read
+    /// on a file action, off the loop. A rename or New of the desktop's own items is instant and
+    /// runs on that action, where the entry is taken, reversed and put back; what a failure leaves
+    /// undone goes back on the stack and an error box says why, and an item its Recycle Bin
+    /// refuses asks to be deleted for good ([`Dialog::ask_undo_erase`]). Anything else runs in
+    /// Explorer ([`State::undo_in_explorer`]), with its progress and Cancel. Undo stays greyed
+    /// while a reversal that outlived its deadline holds the history.
     pub fn undo_icons(&mut self) {
         self.undo_desktop(None);
     }
@@ -569,18 +570,33 @@ impl State {
             return;
         };
         let dir = view.dir.clone();
-        let entry = match erasing {
-            Some(entry) => entry,
-            None => match view.undos.top(|id, u| (id, u.only_in(&dir))) {
-                None => return,
-                Some((id, true)) => id,
-                Some((_, false)) => return self.undo_in_explorer(),
-            },
-        };
         view.undoing = true;
         let history = view.undos.clone();
-        let action = Action::changes("Undo", State::rescan_desktop).on_give_up(State::undo_ended);
+        let late = |state: &mut State| {
+            state.undo_ended();
+            state.rescan_desktop();
+        };
+        // A give-up past `Gate::change` keeps Undo greyed: the work may still hold the history.
+        let gave_up = |state: &mut State, changing: bool| {
+            if !changing {
+                state.undo_ended();
+            }
+        };
+        let action = Action::changes("Undo", late).on_give_up(gave_up);
         let spawned = self.spawn_fs_action(action, move |gate| {
+            let entry = match erasing {
+                Some(entry) => entry,
+                None => match history.top(|id, u| (id, u.only_in(&dir))) {
+                    None => return Box::new(State::undo_ended),
+                    Some((id, true)) => id,
+                    Some((id, false)) => {
+                        return Box::new(move |state: &mut State| {
+                            state.undo_ended();
+                            state.undo_in_explorer(id);
+                        });
+                    }
+                },
+            };
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }

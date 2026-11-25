@@ -4,7 +4,8 @@
 //!
 //! It is the file `$XDG_RUNTIME_DIR/reprise-undo`, holding the newest [`super::CAP`] entries and
 //! rewritten whole through a rename under an exclusive lock on `reprise-undo.lock`; readers take
-//! no lock and reparse only when the file changed. An undo holds `reprise-undo.run` until what it
+//! no lock and reparse only when the file changed. The Undo row's label sits at its head
+//! ([`SharedUndo::label`]), so a host's loop shows it without reading the rest. An undo holds `reprise-undo.run` until what it
 //! leaves is back ([`Running`]), so another window's Undo does nothing meanwhile instead of
 //! reversing the entry below a half-reversed one. Without a runtime directory the history is the
 //! process's own.
@@ -38,7 +39,19 @@ const PATIENCE: Duration = Duration::from_millis(200);
 /// How long a put-back or a clear the lock kept out keeps trying.
 const RETRY_FOR: Duration = Duration::from_secs(30);
 
-const MAGIC: &[u8] = b"reprise-undo 3";
+const MAGIC: &[u8] = b"reprise-undo 4";
+
+/// Every [`Undoable`] label, as [`SharedUndo::label`] reads one back from the history's head.
+const LABELS: [&str; 5] = [
+    "Undo Move",
+    "Undo Rename",
+    "Undo Delete",
+    "Undo Copy",
+    "Undo New",
+];
+
+/// Past [`MAGIC`] and the longest of [`LABELS`].
+const HEAD: u64 = 64;
 
 /// A batch holds single steps; one level more is room to spare, and anything deeper is not a
 /// history Reprise wrote.
@@ -187,8 +200,16 @@ impl SharedUndo {
         }
     }
 
+    /// The label of the entry Undo would reverse next, read from the history's head alone, which
+    /// a host's loop can afford: the whole history may run to [`MAX_SIZE`].
     pub fn label(&self) -> Option<&'static str> {
-        self.read(UndoStack::label)
+        let Some(file) = &self.file else {
+            return self.seen().stack.label();
+        };
+        head_label(file).unwrap_or_else(|e| {
+            self.warn("read", &e);
+            None
+        })
     }
 
     /// [`UndoStack::many`].
@@ -342,6 +363,22 @@ impl Seen {
     }
 }
 
+fn head_label(file: &Path) -> io::Result<Option<&'static str>> {
+    let f = match File::open(file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut head = Vec::new();
+    f.take(HEAD).read_to_end(&mut head)?;
+    let mut fields = head.split(|&b| b == 0);
+    if fields.next() != Some(MAGIC) {
+        return Ok(None);
+    }
+    let label = fields.next().unwrap_or_default();
+    Ok(LABELS.into_iter().find(|l| l.as_bytes() == label))
+}
+
 fn stamp(m: &std::fs::Metadata) -> Stamp {
     (m.dev(), m.ino(), m.ctime(), m.ctime_nsec(), m.size())
 }
@@ -388,12 +425,13 @@ fn save(file: &Path, stack: &UndoStack) -> io::Result<Stamp> {
     Ok(stamp(&f.metadata()?))
 }
 
-/// The history as NUL-terminated fields: [`MAGIC`], its nonce, the clear count, the push count,
-/// the entry count, then each entry's number and item. A trashed item's record is
+/// The history as NUL-terminated fields: [`MAGIC`], the top entry's label or `-`, its nonce, the
+/// clear count, the push count, the entry count, then each entry's number and item. A trashed item's record is
 /// not stored: it is always the one beside its `files/` entry.
 fn encode(stack: &UndoStack) -> Vec<u8> {
     let mut out = Out(Vec::new());
     out.field(MAGIC);
+    out.field(stack.label().unwrap_or("-").as_bytes());
     out.num(stack.nonce);
     out.num(stack.epoch);
     out.num(stack.pushed);
@@ -414,6 +452,7 @@ fn decode(data: &[u8]) -> Option<UndoStack> {
     if i.field()? != MAGIC {
         return None;
     }
+    i.field()?;
     let (nonce, epoch, pushed) = (i.num()?, i.num()?, i.num()?);
     let entries = (0..i.num::<usize>()?)
         .map(|_| {
@@ -728,7 +767,7 @@ mod tests {
         for u in entries {
             a.push(u);
         }
-        b.label();
+        b.top(|_, _| ());
         let (read, written) = (b.seen(), a.seen());
         let (read, written) = (&read.stack, &written.stack);
         assert_eq!(
@@ -743,7 +782,8 @@ mod tests {
         let (t, a, _) = two_windows();
         let entry = |files: &str| {
             let fields = [
-                "reprise-undo 3",
+                "reprise-undo 4",
+                "Undo Delete",
                 "0",
                 "1",
                 "0",
@@ -759,16 +799,16 @@ mod tests {
         };
         let file = t.path().join("reprise-undo");
         std::fs::write(&file, entry("/T/files/x")).unwrap();
-        assert_eq!(a.label(), Some("Undo Delete"));
+        assert!(readable(&a));
         std::fs::write(&file, entry("/home/u/.profile")).unwrap();
-        assert_eq!(a.label(), None);
+        assert!(!readable(&a));
     }
 
     #[test]
     fn a_history_nested_or_grown_past_what_reprise_writes_is_unreadable() {
         let (t, a, _) = two_windows();
         let nested = |depth: usize| {
-            let mut fields = ["reprise-undo 3", "0", "1", "0", "1", "1"]
+            let mut fields = ["reprise-undo 4", "Undo New", "0", "1", "0", "1", "1"]
                 .map(String::from)
                 .to_vec();
             fields.extend((0..depth).flat_map(|_| ["batch".into(), "1".into()]));
@@ -777,14 +817,61 @@ mod tests {
         };
         let file = t.path().join("reprise-undo");
         std::fs::write(&file, nested(MAX_NESTING)).unwrap();
-        assert_eq!(a.label(), Some("Undo New"));
+        assert!(readable(&a));
         std::fs::write(&file, nested(100_000)).unwrap();
-        assert_eq!(a.label(), None, "refused without recursing that deep");
+        assert!(!readable(&a), "refused without recursing that deep");
 
         let mut big = nested(0).into_bytes();
         big.resize(MAX_SIZE as usize + 1, b'\0');
         std::fs::write(&file, big).unwrap();
-        assert_eq!(a.label(), None);
+        assert!(!readable(&a));
+        assert_eq!(
+            a.label(),
+            Some("Undo New"),
+            "the label reads the head alone"
+        );
+    }
+
+    fn readable(u: &SharedUndo) -> bool {
+        u.top(|_, _| ()).is_some()
+    }
+
+    #[test]
+    fn the_head_names_the_top_entry_of_every_kind() {
+        let (t, a, b) = two_windows();
+        let trashed = Trashed {
+            original: "/a/t.txt".into(),
+            name: "t.txt".into(),
+            files: "/T/files/t.txt".into(),
+            info: "/T/info/t.txt.trashinfo".into(),
+            deleted: None,
+        };
+        let kinds = [
+            Undoable::Move {
+                from: "/a/x".into(),
+                to: "/b/x".into(),
+                listed: false,
+                id: None,
+            },
+            Undoable::Rename {
+                from: "/a/y".into(),
+                to: "/a/z".into(),
+                id: None,
+            },
+            Undoable::Trash(trashed),
+            Undoable::Copied("/a/c".into(), None),
+            Undoable::New("/a/n".into(), None),
+        ];
+        assert_eq!(b.label(), None);
+        for u in kinds {
+            let label = u.label();
+            a.push(u);
+            assert_eq!(b.label(), label);
+        }
+        a.take().unwrap();
+        assert_eq!(b.label(), Some("Undo Copy"), "a take rewrites the head");
+        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 3\0Undo New\0").unwrap();
+        assert_eq!(b.label(), None, "an older history's head is not read");
     }
 
     #[test]
@@ -873,7 +960,7 @@ mod tests {
     #[test]
     fn an_unreadable_history_starts_over() {
         let (t, a, _) = two_windows();
-        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 3\0x\0").unwrap();
+        std::fs::write(t.path().join("reprise-undo"), b"reprise-undo 4\0-\0x\0").unwrap();
         assert_eq!(a.label(), None);
         a.push(Undoable::Copied("/x".into(), None));
         assert_eq!(a.label(), Some("Undo Copy"));

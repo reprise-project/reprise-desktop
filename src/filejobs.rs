@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use reprisefs::ops::DropOp;
+use reprisefs::undo::EntryId;
 
 use crate::compositor::State;
 
@@ -169,10 +170,12 @@ impl State {
         self.file_job(What::Zip, args, Vec::new(), Vec::new());
     }
 
-    /// Undo in Explorer, which shows its progress and can cancel it. Nothing while one runs.
-    pub(crate) fn undo_in_explorer(&mut self) {
+    /// Undo of `entry` in Explorer, which shows its progress and can cancel it; nothing once
+    /// another entry is on top, or while one runs.
+    pub(crate) fn undo_in_explorer(&mut self, entry: EntryId) {
         if !self.undo_job_running() {
-            self.file_job(What::Undo, vec!["--undo".into()], Vec::new(), Vec::new());
+            let args = vec!["--undo".into(), entry.to_string().into()];
+            self.file_job(What::Undo, args, Vec::new(), Vec::new());
         }
     }
 
