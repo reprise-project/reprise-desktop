@@ -1972,3 +1972,88 @@ fn a_programs_tasks_list_in_its_start_jump_list_and_enter_runs_one() {
     assert_eq!(crate::spawn::recorded(), ["mail-book"]);
     assert!(h.state.start_panel.is_none(), "the menu closed");
 }
+
+/// The labels of the open menu's entries.
+fn menu_labels(h: &crate::harness::Harness) -> Vec<String> {
+    use reprisekit::controls::menu::MenuItem;
+    (h.state.menus.first().expect("a menu").items.iter())
+        .filter_map(|i| match i {
+            MenuItem::Entry { label, .. } => Some(label.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_right_click_on_a_folder_place_or_computer_opens_its_menu_and_on_run_none() {
+    use crate::input::{BTN_LEFT, BTN_RIGHT};
+    use crate::startmenu::StartRow;
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    let bar = h.state.bars[0].tree;
+    let right_click = |h: &mut crate::harness::Harness, label: &str| {
+        let v = h.state.start_panel.as_ref().expect("the menu is open");
+        let i = (v.model.places.iter())
+            .position(|p| p.label.as_str() == label)
+            .expect(label);
+        let r = h.state.start_spot_rect(Spot::Place(i)).unwrap();
+        h.pointer_to(f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
+        h.button(BTN_RIGHT, true);
+        h.button(BTN_RIGHT, false);
+        let rows = match h.state.menus.first().map(|m| &m.kind) {
+            Some(crate::menuview::MenuKind::StartPanel { rows }) => rows.clone(),
+            _ => Vec::new(),
+        };
+        (i, rows)
+    };
+    h.state.toggle_start(bar);
+    let (_, rows) = right_click(&mut h, "Computer");
+    assert_eq!(menu_labels(&h), ["Open", "Properties"]);
+    assert_eq!(rows.last(), Some(&Some(StartRow::ComputerProperties)));
+    crate::spawn::record();
+    let (x, y) = {
+        let m = &h.state.menus[0];
+        let r = *m.layout.rows.last().expect("Properties");
+        (
+            f64::from(m.x + r.x + r.width / 2),
+            f64::from(m.y + r.y + r.height / 2),
+        )
+    };
+    h.pointer_to(x, y);
+    h.button(BTN_LEFT, true);
+    h.button(BTN_LEFT, false);
+    assert_eq!(crate::spawn::recorded(), ["reprise-about"]);
+    assert!(
+        h.state.start_panel.is_none(),
+        "Properties closes the Start menu"
+    );
+
+    h.state.toggle_start(bar);
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap();
+    let user = h.state.start_panel.as_ref().unwrap().model.places[0]
+        .label
+        .clone();
+    let (i, rows) = right_click(&mut h, &user);
+    assert_eq!(menu_labels(&h), ["Open", "Explore", "Properties"]);
+    let entry = h.state.start_panel.as_ref().unwrap().places[i].clone();
+    let open = Some(StartRow::OpenPlace(entry));
+    assert_eq!(
+        rows,
+        [
+            open.clone(),
+            open,
+            None,
+            Some(StartRow::FolderProperties(home))
+        ]
+    );
+    h.state.close_menu();
+    let (_, rows) = right_click(&mut h, "Run...");
+    assert!(
+        rows.is_empty() && h.state.menus.is_empty(),
+        "Run has no menu"
+    );
+    assert!(h.state.start_panel.is_some());
+}

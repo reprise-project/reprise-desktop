@@ -65,6 +65,7 @@ fn blue_home() -> StartPanel {
     .map(|&(label, rule)| PlaceRow {
         rule_before: rule,
         submenu: label == "Recent Items",
+        context: false,
         ..place(label)
     })
     .collect();

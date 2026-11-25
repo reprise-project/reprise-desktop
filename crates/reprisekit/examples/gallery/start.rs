@@ -85,6 +85,7 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
             picture: (k == 1).then(|| square(48, Color::rgb(230, 200, 90))),
             rule_before: k == 4 || k == 6,
             submenu: k == 4,
+            context: false,
         })
         .collect();
         p.user_picture = Some(square(48, Color::rgb(240, 120, 30)));
@@ -285,6 +286,7 @@ pub fn render_blue_start_panel(n: i32, pct: u32) -> Canvas {
             picture: Some(square(grown(24), Color::rgb(230, 200, 90))),
             rule_before: rule,
             submenu: label == "Recent Items",
+            context: false,
         })
         .collect();
         p

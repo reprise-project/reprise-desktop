@@ -168,7 +168,7 @@ const RECENT_TIP: &str = "Lists the files you opened most recently.";
 const RUN_TIP: &str = "Opens a program, folder, document or web site by its name.";
 const HELP_TIP: &str = "Opens the Reprise project page.";
 
-/// A row of a Glass Start menu popup: a program row's context menu or the
+/// A row of a Glass Start menu popup: a program row's or a place's context menu or the
 /// Shut down options. The `String` is the program's desktop entry id, so a
 /// rescan while the menu is up leaves the row on its program.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,6 +183,11 @@ pub enum StartRow {
     /// A greyed Uninstall: its infotip says why.
     CannotUninstall(&'static str),
     Properties(String),
+    /// Open or Explore on a place: what a click on it does.
+    OpenPlace(MenuEntry),
+    FolderProperties(std::path::PathBuf),
+    /// Computer's Properties: About Reprise.
+    ComputerProperties,
     SwitchUser,
     Disconnect,
     LogOff,
@@ -190,6 +195,50 @@ pub enum StartRow {
     Restart,
     Sleep,
     Hibernate,
+}
+
+/// The kind of a two-column Start menu place with a context menu: a folder, or Computer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlaceMenu {
+    Folder(std::path::PathBuf),
+    Computer,
+}
+
+impl PlaceMenu {
+    /// The menu of place `entry` of [`places`] or [`blue_places`], by its icon: the home folder,
+    /// the document folders of `dirs` and Computer have one.
+    pub fn of(entry: &MenuEntry, dirs: &[(std::path::PathBuf, &str)]) -> Option<PlaceMenu> {
+        let MenuEntry::Item {
+            icon: Some(icon), ..
+        } = entry
+        else {
+            return None;
+        };
+        match icon.as_str() {
+            "computer" => Some(PlaceMenu::Computer),
+            "user-home" => std::env::var_os("HOME").map(|h| PlaceMenu::Folder(h.into())),
+            _ => (dirs.iter())
+                .find(|(_, i)| i == icon)
+                .map(|(d, _)| PlaceMenu::Folder(d.clone())),
+        }
+    }
+}
+
+/// Place `entry`'s context menu as `kind` has it: Open (bold), Explore for a folder, and
+/// Properties, the folder's sheet or Computer's About Reprise. Rows as in [`program_menu`].
+pub fn place_menu(entry: &MenuEntry, kind: &PlaceMenu) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+    let open = StartRow::OpenPlace(entry.clone());
+    let mut v = vec![(MenuItem::item("&Open").bold(true), Some(open.clone()))];
+    let properties = match kind {
+        PlaceMenu::Folder(dir) => {
+            v.push((MenuItem::item("E&xplore"), Some(open)));
+            StartRow::FolderProperties(dir.clone())
+        }
+        PlaceMenu::Computer => StartRow::ComputerProperties,
+    };
+    v.push((MenuItem::Separator, None));
+    v.push((MenuItem::item("P&roperties"), Some(properties)));
+    v.into_iter().unzip()
 }
 
 /// Whether a program's menu offers Uninstall.

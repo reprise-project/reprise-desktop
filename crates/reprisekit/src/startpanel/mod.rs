@@ -40,13 +40,15 @@ pub struct ProgramRow {
 }
 
 /// A row of the right column. `picture` is Glass's 48 px picture for the lit row, or Blue's 24 px
-/// icon; `rule_before` draws a rule above the row; `submenu` marks a row with a menu of its own.
+/// icon; `rule_before` draws a rule above the row; `submenu` marks a row with a menu of its own;
+/// `context` a row a right-click or the Menu key opens a context menu on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaceRow {
     pub label: String,
     pub picture: Option<Canvas>,
     pub rule_before: bool,
     pub submenu: bool,
+    pub context: bool,
 }
 
 /// A row of the program tree. The host lists every folder with its apps
@@ -597,6 +599,7 @@ impl StartPanel {
         match s {
             Spot::Program(_) | Spot::Result(..) => true,
             Spot::Tree(i) => matches!(self.tree.get(i), Some(TreeRow::App { .. })),
+            Spot::Place(i) => self.places.get(i).is_some_and(|p| p.context),
             _ => false,
         }
     }
@@ -1038,6 +1041,7 @@ pub(crate) mod tests {
             picture: None,
             rule_before: false,
             submenu: false,
+            context: false,
         }
     }
 
@@ -1551,16 +1555,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_right_click_opens_a_context_menu_on_rows_only() {
+    fn a_right_click_opens_a_context_menu_on_program_rows_and_places_with_one() {
         let mut p = StartPanel::new();
         p.frequent = vec![prow("Notepad", false)];
-        p.places = vec![place("Documents")];
+        let documents = PlaceRow {
+            context: true,
+            ..place("Documents")
+        };
+        p.places = vec![documents, place("Run...")];
         p.tree = vec![folder("Graphics"), app("Paint", 1)];
-        for s in [Spot::Program(0), Spot::Tree(1), Spot::Result(0, 0)] {
+        for s in [
+            Spot::Program(0),
+            Spot::Tree(1),
+            Spot::Result(0, 0),
+            Spot::Place(0),
+        ] {
             assert_eq!(p.press(s, Button::Right), Event::Context(s));
         }
         for s in [
-            Spot::Place(0),
+            Spot::Place(1),
             Spot::Tree(0),
             Spot::AllPrograms,
             Spot::Shutdown,
@@ -1571,7 +1584,9 @@ pub(crate) mod tests {
         p.key(Key::Down);
         assert_eq!(p.key(Key::Menu), Event::Context(Spot::Program(0)));
         p.lit = Some(Spot::Place(0));
-        assert_eq!(p.key(Key::Menu), Event::None, "a place has no menu");
+        assert_eq!(p.key(Key::Menu), Event::Context(Spot::Place(0)));
+        p.lit = Some(Spot::Place(1));
+        assert_eq!(p.key(Key::Menu), Event::None, "a place without a menu");
     }
 
     #[test]
@@ -1667,6 +1682,7 @@ pub(crate) mod tests {
             .iter()
             .map(|&l| PlaceRow {
                 submenu: l == "Recent Items",
+                context: false,
                 ..place(l)
             })
             .collect();

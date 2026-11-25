@@ -455,6 +455,7 @@ mod tests {
             picture: None,
             rule_before: rule,
             submenu: label == "Recent Items",
+            context: false,
         })
         .collect();
         p.pointer(hot);

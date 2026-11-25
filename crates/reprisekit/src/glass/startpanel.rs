@@ -650,6 +650,7 @@ mod tests {
             picture: None,
             rule_before: k == 4 || k == 6,
             submenu: false,
+            context: false,
         })
         .collect();
         p.jump = vec![section("Recent", &["notes.txt", "todo.txt"])];
