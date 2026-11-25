@@ -2,7 +2,7 @@
 //! `begin` asks every window to close, then the session ends once no window, inhibitor or recording holds it; after `PROMPT_AFTER`
 //! the session-end prompt lists what is left. A program holding off log off through the Inhibit portal isn't asked until it lets go:
 //! closing its window could stop the work it holds for, as closing a copy's progress dialog cancels the copy. A critical battery kills the remainder after `PROMPT_AFTER` without a prompt.
-//! Turn Off and Restart ask logind first, and a refusal before or after the programs close shows a message box;
+//! Turn Off and Restart ask logind first (a Restart Into for its target too), and a refusal before or after the programs close shows a message box;
 //! one that needs a password runs before the fade, so polkit's prompt shows over the desktop.
 //! Stand By and Hibernate close nothing; a refusal shows the same message box.
 
@@ -133,7 +133,7 @@ pub fn begin_critical(state: &mut State, cmd: String) {
     check(state, Goal::TurnOff, Some(cmd), None, true, Origin::Console);
 }
 
-/// Start the end once logind says the action is allowed, so a refusal
+/// Start the end once logind says the action and its restart target are allowed, so a refusal
 /// closes nothing. A custom command has only its exit status to go by.
 fn check(
     state: &mut State,
@@ -144,21 +144,76 @@ fn check(
     origin: Origin,
 ) {
     let verb = cmd.as_deref().and_then(logind_verb);
-    let Some(verb) = verb.filter(|_| state.ending.is_none()) else {
+    if state.ending.is_some() || (verb.is_none() && boot.is_none()) {
         let password = Password::No.with(boot.as_ref());
         start(state, goal, cmd, boot, critical, origin, password);
         return;
-    };
+    }
     state.spawn_job(move || {
-        let answer = zbus::block_on(can(verb));
+        let answer = zbus::block_on(allowed(verb, boot));
         Box::new(move |state: &mut State| match answer {
-            Ok(password) => {
-                let password = password.with(boot.as_ref());
-                start(state, goal, cmd, boot, critical, origin, password);
-            }
+            Ok((password, boot)) => start(state, goal, cmd, boot, critical, origin, password),
             Err(why) => refuse(state, Act::of(goal), &why),
         })
     });
+}
+
+/// logind's answer for `verb` and `boot`, with `boot`'s password as logind answers now.
+async fn allowed(
+    verb: Option<Verb>,
+    boot: Option<BootTarget>,
+) -> Result<(Password, Option<BootTarget>), Refused> {
+    let password = match verb {
+        Some(verb) => can(verb).await?,
+        None => Password::No,
+    };
+    let boot = match boot {
+        Some(b) => match connect(true).await {
+            Some(conn) => Some(target_now(&conn, b).await?),
+            None => Some(b),
+        },
+        None => None,
+    };
+    Ok((password.with(boot.as_ref()), boot))
+}
+
+/// `boot` as logind on `conn` offers it now: refused when logind no longer sets a target of its
+/// kind or no longer lists its entry. A call that fails lets it through; setting it reports.
+async fn target_now(conn: &zbus::Connection, mut boot: BootTarget) -> Result<BootTarget, Refused> {
+    let proxy = match crate::restartinto::manager(conn).await {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("session end: restart target: {e}");
+            return Ok(boot);
+        }
+    };
+    let method = match boot.entry {
+        Some(_) => "CanRebootToBootLoaderEntry",
+        None => "CanRebootToFirmwareSetup",
+    };
+    match proxy.call::<_, _, String>(method, &()).await {
+        Ok(answer) => {
+            log::info!("session end: {method} says {answer:?}");
+            boot.password = can_answer(&answer)? == Password::Yes;
+        }
+        Err(e) => {
+            log::warn!("session end: {method}: {e}");
+            return Ok(boot);
+        }
+    }
+    if let Some(id) = &boot.entry {
+        match proxy.get_property::<Vec<String>>("BootLoaderEntries").await {
+            Ok(ids) if !ids.contains(id) => {
+                return Err(Refused::Failed(format!(
+                    "\"{}\" is no longer a boot entry.",
+                    boot.title
+                )));
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("session end: BootLoaderEntries: {e}"),
+        }
+    }
+    Ok(boot)
 }
 
 fn start(
@@ -1436,6 +1491,40 @@ mod tests {
         };
         let failed = restart_into(&f.client, &target, false, || panic!("no reboot"));
         assert_eq!(failed, Some(Failed::Refused(Refused::NotAllowed)));
+        assert!(f.set.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_restart_target_is_asked_about_again_before_anything_closes() {
+        let Some(f) = crate::restartinto::tests::logind("challenge", "na", &["a.conf"]) else {
+            return;
+        };
+        let entry = |id: &str| BootTarget {
+            entry: Some(id.into()),
+            title: id.to_uppercase(),
+            password: false,
+        };
+        let now = zbus::block_on(target_now(&f.client, entry("a.conf")));
+        assert_eq!(
+            now.map(|b| b.password),
+            Ok(true),
+            "the password logind asks for now"
+        );
+        assert_eq!(
+            zbus::block_on(target_now(&f.client, entry("b.conf"))),
+            Err(Refused::Failed(
+                "\"B.CONF\" is no longer a boot entry.".into()
+            ))
+        );
+        let firmware = BootTarget {
+            entry: None,
+            title: "Firmware Setup".into(),
+            password: false,
+        };
+        assert_eq!(
+            zbus::block_on(target_now(&f.client, firmware)),
+            Err(Refused::Unsupported)
+        );
         assert!(f.set.lock().unwrap().is_empty());
     }
 
