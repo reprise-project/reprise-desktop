@@ -163,15 +163,16 @@ pub fn hit(l: &Layout, hot: bool, x: i32, y: i32) -> Option<Part> {
 }
 
 /// The frame at the theme's scale: under glass a glass panel with its shadow ([`Look::margin`]
-/// past the frame), else Classic's raised window edge in `button_face`; the picture's rect
-/// letterbox black.
+/// past the frame), the glass running on under the picture as it runs under a glass window's
+/// translucent client; else Classic's raised window edge in `button_face` round a letterbox black
+/// picture rect.
 pub fn draw_frame(theme: &Theme, l: &Layout) -> Canvas {
     let p = theme.paint();
     let s = p.s;
     let (w, h) = l.size;
     let pic = l.picture.scaled(s);
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw(style, spec, w, h, s, |c| c.fill_rect(pic, LETTERBOX));
+        return panel::draw(style, spec, w, h, s, |_| {});
     }
     let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), p.cs.button_face);
@@ -303,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn glass_draws_its_panel_with_the_shadow_past_the_frame() {
+    fn glass_draws_its_panel_with_the_shadow_past_the_frame_and_under_the_picture() {
         let theme = theme_for(Interface::Glass);
         let lk = look(&theme);
         assert_eq!(lk.border, 6);
@@ -319,7 +320,12 @@ mod tests {
             edge > 0 && edge < 0xFF,
             "translucent glass round the picture"
         );
-        assert_eq!(c.get(m.left + 100, m.top + 75), LETTERBOX.argb());
+        let under = c.get(m.left + 100, m.top + 75);
+        assert_ne!(under, LETTERBOX.argb());
+        assert!(
+            under >> 24 > 0 && under >> 24 < 0xFF,
+            "the glass runs on under the picture, so a translucent client shows it"
+        );
     }
 
     #[test]
