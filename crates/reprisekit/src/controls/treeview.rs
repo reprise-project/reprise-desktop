@@ -363,7 +363,7 @@ impl TreeView {
     }
 
     /// Pull `top` back after rows went away so the view ends at the last row.
-    fn clamp_top(&mut self, lay: &Layout) {
+    pub fn clamp_top(&mut self, lay: &Layout) {
         self.set_top(self.top.min(self.max_top(lay)));
     }
 
