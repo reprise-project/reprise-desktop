@@ -32,7 +32,8 @@ pub enum Undoable {
     },
     Trash(Trashed),
     /// A copy or a shortcut that landed at the path, as it landed ([`landed`]). Undoing it trashes
-    /// it, a copied folder with everything in it, and refuses one changed since.
+    /// it, a copied folder with everything in it, and refuses one changed since or one whose
+    /// landing could not be read (`None`).
     Copied(PathBuf, Option<Landed>),
     /// A New Folder or New Text Document, with its [`file_id`] when it was made. Undoing it
     /// trashes a file and removes a folder only while it is empty, and refuses a different item
@@ -156,13 +157,16 @@ impl Undoable {
                 trash::restore(&now)
             }
             Undoable::Copied(path, landed) => {
-                same_item(path, landed.map(|l| l.id))?;
-                if let Some(l) = landed
-                    && newest_change(path)? > l.newest
-                {
+                let name = crate::bincap::label(path);
+                let Some(l) = landed else {
                     return Err(io::Error::other(format!(
-                        "'{}' has changed since it was copied",
-                        crate::bincap::label(path)
+                        "'{name}' could not be read when it was copied, so it may have changed since"
+                    )));
+                };
+                same_item(path, Some(l.id))?;
+                if newest_change(path)? > l.newest {
+                    return Err(io::Error::other(format!(
+                        "'{name}' has changed since it was copied"
                     )));
                 }
                 trash_in(path, crate::ops::erase)
@@ -373,7 +377,8 @@ pub struct Landed {
     pub newest: (i64, i64),
 }
 
-/// `path`'s [`Landed`], for a folder read through everything in it.
+/// `path`'s [`Landed`], for a folder read through everything in it; None when any of it cannot
+/// be read.
 pub fn landed(path: &Path) -> Option<Landed> {
     Some(Landed {
         id: file_id(path)?,
@@ -699,7 +704,8 @@ mod tests {
         u.push(Undoable::Trash(a));
         let (b, _) = bins.trash(&item("b")).unwrap();
         u.push(Undoable::Trash(b.clone()));
-        u.push(Undoable::Copied(item("c"), None));
+        let c = item("c");
+        u.push(Undoable::Copied(c.clone(), landed(&c)));
 
         u.undo_in(Some(&bins), false).unwrap().unwrap();
 
@@ -798,6 +804,40 @@ mod tests {
             fs::read_to_string(&copy).unwrap(),
             "saved by another program"
         );
+    }
+
+    #[test]
+    fn undo_of_a_copy_whose_landing_could_not_be_read_touches_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("Photos");
+        let locked = dir.join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let landing = landed(&dir);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: geteuid takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } != 0 {
+            assert_eq!(landing, None, "a folder in it could not be read");
+        }
+        fs::rename(&dir, t.path().join("Moved")).unwrap();
+        fs::write(&dir, "saved by another program").unwrap();
+        let mut bins = trash::Bins::new(t.path().join("Trash"), Vec::new());
+        bins.policy.global.remove_immediately = true;
+        let mut u = UndoStack::default();
+        u.push(Undoable::Copied(dir.clone(), None));
+
+        let err = u.undo_in(Some(&bins), true).unwrap().unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "'Photos' could not be read when it was copied, so it may have changed since"
+        );
+        assert_eq!(
+            fs::read_to_string(&dir).unwrap(),
+            "saved by another program"
+        );
+        assert_eq!(u.label(), None, "the entry is dropped");
     }
 
     #[test]
@@ -968,8 +1008,8 @@ mod tests {
 
         let mut u = UndoStack::default();
         u.push_all(vec![
-            Undoable::Copied(a.clone(), None),
-            Undoable::Copied(b.clone(), None),
+            Undoable::Copied(a.clone(), landed(&a)),
+            Undoable::Copied(b.clone(), landed(&b)),
         ]);
         let err = u.undo_in(Some(&bins), false).unwrap().unwrap_err();
 

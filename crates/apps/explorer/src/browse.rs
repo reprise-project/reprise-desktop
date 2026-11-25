@@ -50,7 +50,7 @@ pub enum Making {
     /// Make New Folder under the node standing for `under`.
     New {
         under: Place,
-        job: Job<Option<Result<(PathBuf, Kids), String>>>,
+        job: Job<Option<Result<Made, String>>>,
     },
     /// The folder at `from`, the node at `path`, renamed. The click that committed it is
     /// dropped: its release has passed by the time the rename lands.
@@ -68,6 +68,10 @@ pub enum Renamed {
     /// the folder holding it.
     Done(PathBuf, Option<reprisefs::undo::FileId>, Kids),
 }
+
+/// A folder Make New Folder made: its path, its id ([`reprisefs::undo::file_id`]) and the
+/// children of the folder holding it.
+type Made = (PathBuf, Option<reprisefs::undo::FileId>, Kids);
 
 /// A picker write that failed, shown in the error box over the picker.
 pub struct Refused {
@@ -159,10 +163,12 @@ pub fn rename_target(from: &Path, typed: &str) -> Option<Result<PathBuf, String>
     }
 }
 
-pub fn make_new_folder(dir: &Path) -> std::io::Result<PathBuf> {
+/// A new folder in `dir`, with its [`reprisefs::undo::file_id`] read right after it was made.
+pub fn make_new_folder(dir: &Path) -> std::io::Result<(PathBuf, Option<reprisefs::undo::FileId>)> {
     let path = reprisefs::ops::unique_path(dir, "New Folder");
     std::fs::create_dir(&path)?;
-    Ok(path)
+    let id = reprisefs::undo::file_id(&path);
+    Ok((path, id))
 }
 
 impl Explorer {
@@ -350,7 +356,7 @@ impl Explorer {
                 let make = move || {
                     let dir = writable_dir(&at)?;
                     Some(match make_new_folder(&dir) {
-                        Ok(made) => Ok((made, kids())),
+                        Ok((made, id)) => Ok((made, id, kids())),
                         Err(e) => Err(format!("Cannot create New Folder: {e}")),
                     })
                 };
@@ -427,10 +433,10 @@ impl Explorer {
         &mut self,
         mut b: Browse,
         under: &Place,
-        made: Option<Result<(PathBuf, Kids), String>>,
+        made: Option<Result<Made, String>>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let (made, kids) = match made {
+        let (made, id, kids) = match made {
             None => return self.put_back_picker(b, Reply::none()),
             Some(Ok(made)) => made,
             Some(Err(text)) => {
@@ -477,14 +483,20 @@ impl Explorer {
                 b.bf.new_folder_made([p.as_slice(), &[i]].concat(), &lay);
             }
         }
-        self.new_folder_made(under, made, ctx);
+        self.new_folder_made(under, made, id, ctx);
         self.sync_browse_buttons(&mut b, ctx);
         self.put_back_picker(b, Reply::redraw_all())
     }
 
-    fn new_folder_made(&mut self, under: &Place, made: PathBuf, ctx: &mut Ctx) {
+    fn new_folder_made(
+        &mut self,
+        under: &Place,
+        made: PathBuf,
+        id: Option<reprisefs::undo::FileId>,
+        ctx: &mut Ctx,
+    ) {
         self.refill_tree_node(under, ctx);
-        self.undos.push(reprisefs::undo::Undoable::New(made, None));
+        self.undos.push(reprisefs::undo::Undoable::New(made, id));
         self.sync_undo();
     }
 
@@ -495,7 +507,7 @@ impl Explorer {
         for making in std::mem::take(&mut self.browse_left) {
             match making {
                 Making::New { under, job } => match job.take() {
-                    Some(Some(Ok((made, _)))) => self.new_folder_made(&under, made, ctx),
+                    Some(Some(Ok((made, id, _)))) => self.new_folder_made(&under, made, id, ctx),
                     Some(Some(Err(text))) => log::warn!("explorer: {text}"),
                     Some(None) => {}
                     None => {
@@ -991,8 +1003,8 @@ mod tests {
     #[test]
     fn make_new_folder_numbers_past_taken_names() {
         let t = dir("newfolder");
-        let a = make_new_folder(&t).unwrap();
-        let b = make_new_folder(&t).unwrap();
+        let (a, _) = make_new_folder(&t).unwrap();
+        let (b, _) = make_new_folder(&t).unwrap();
         assert_eq!(a, t.join("New Folder"));
         assert_eq!(b, t.join("New Folder (2)"));
         assert!(b.is_dir());
