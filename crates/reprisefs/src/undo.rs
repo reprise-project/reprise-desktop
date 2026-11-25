@@ -535,11 +535,15 @@ impl UndoStack {
     /// `left` back where it was taken from: above the highest entry that was below it then, under
     /// the entries pushed since. Nothing after a [`UndoStack::clear`] or once the history started
     /// over, or when the cap drops it. What its Recycle Bin refused ([`NoBin`]) goes on top
-    /// instead, since the question about it is up now.
+    /// instead, since the question about it is up now. An entry already back, from a write that
+    /// landed though it reported a failure, stays as it is.
     fn restore(&mut self, left: Leftover) -> Option<EntryId> {
         let id = left.id;
         if (id.history, left.epoch) != (self.nonce, self.epoch) {
             return None;
+        }
+        if self.entries.iter().any(|(e, _)| *e == id) {
+            return Some(id);
         }
         let at = match left.asked {
             true => self.entries.len(),
@@ -1166,6 +1170,20 @@ mod tests {
             "older than every entry the cap kept"
         );
         assert_eq!(u.entries.len(), CAP);
+    }
+
+    #[test]
+    fn a_put_back_restored_twice_is_back_once() {
+        let mut u = UndoStack::default();
+        u.push(Undoable::Copied("/x".into(), None));
+        let left = u.take().unwrap().leftover(0, None).unwrap();
+        let id = left.id;
+        assert_eq!(u.restore(left.clone()), Some(id));
+        u.push(Undoable::New("/newer".into(), None));
+        assert_eq!(u.restore(left), Some(id));
+        let ids: Vec<EntryId> = u.entries.iter().map(|(e, _)| *e).collect();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], id, "it stays where the first put-back left it");
     }
 
     #[test]
