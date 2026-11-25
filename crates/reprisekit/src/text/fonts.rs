@@ -109,6 +109,11 @@ pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
     if WITHOUT_TAHOMA.get() {
         return without_tahoma(families);
     }
+    installed_fonts(families)
+}
+
+/// [`system_fonts`] with every face, whatever [`hide_tahoma`] hid from this thread.
+fn installed_fonts(families: &[String]) -> Arc<Database> {
     static FONTS: Mutex<Option<(Arc<Database>, Stamp)>> = Mutex::new(None);
     let mut fonts = lock(&FONTS);
     if let Some((db, stamp)) = fonts.as_ref()
@@ -139,9 +144,7 @@ fn without_tahoma(families: &[String]) -> Arc<Database> {
     if let Some(db) = FILTERED.with_borrow(Clone::clone) {
         return db;
     }
-    WITHOUT_TAHOMA.set(false);
-    let mut db = (*system_fonts(families)).clone();
-    WITHOUT_TAHOMA.set(true);
+    let mut db = (*installed_fonts(families)).clone();
     let hidden: Vec<fontdb::ID> = db
         .faces()
         .filter(|f| {
@@ -212,7 +215,7 @@ pub(crate) fn test_fonts() -> Result<PathBuf, Option<PathBuf>> {
         .get_or_init(|| {
             let dir = test_fonts_dir().ok_or(None)?;
             let families = FontConfig::default().family;
-            let db = system_fonts(&families);
+            let db = installed_fonts(&families);
             let tahoma = families.first().is_some_and(|f| f == "Tahoma")
                 && find_face(&db, &families, false, Weight::NORMAL, fontdb::Style::Normal)
                     .is_some_and(|(path, _, family, _)| family == "Tahoma" && in_dir(&path, &dir));

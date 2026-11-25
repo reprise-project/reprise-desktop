@@ -139,13 +139,19 @@ fn unfit(draw: &(impl Fn() + Sync)) -> Unfit {
     UNFIT.replace(outer).unwrap_or_default()
 }
 
-/// Calls `draw` with the test fonts' Tahoma, then [`without_tahoma`], and lists each line
-/// DejaVu Sans cuts by its rect or to an ellipsis more often than Tahoma: `(key, where)`, the key
-/// naming the surface (as `draw` hands them to [`surface_drawn`]), how, the text and the extra
-/// count. For [`check_list`].
+/// Calls `draw` with the test fonts' Tahoma and, on a second thread at once, [`without_tahoma`],
+/// and lists each line DejaVu Sans cuts by its rect or to an ellipsis more often than Tahoma:
+/// `(key, where)`, the key naming the surface (as `draw` hands them to [`surface_drawn`]), how,
+/// the text and the extra count. For [`check_list`].
 pub fn unfit_without_tahoma(draw: impl Fn() + Sync) -> Vec<(String, String)> {
-    let tahoma = unfit(&draw);
-    let dejavu = without_tahoma(|| unfit(&draw));
+    let (tahoma, dejavu) = std::thread::scope(|s| {
+        let tahoma = s.spawn(|| unfit(&draw));
+        let dejavu = without_tahoma(|| unfit(&draw));
+        let tahoma = tahoma
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e));
+        (tahoma, dejavu)
+    });
     dejavu
         .into_iter()
         .filter_map(|(key, (n, at))| {

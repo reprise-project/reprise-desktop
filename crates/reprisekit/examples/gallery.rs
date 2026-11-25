@@ -745,6 +745,44 @@ fn slug(name: &str) -> String {
 
 /// A `w` x `h` opaque backdrop of diagonal light and dark blue stripes, box blurred three times.
 fn blurred_stripes(w: i32, h: i32) -> Canvas {
+    let (sw, sh) = (stripes_fold(w), stripes_fold(h));
+    let small = blur_stripes(sw, sh);
+    let mut out = Canvas::new(w as u32, h as u32);
+    for y in 0..h {
+        let row = stripes_from(y, h, sh) * sw;
+        for x in 0..w {
+            out.pixels[(y * w + x) as usize] =
+                small.pixels[(row + stripes_from(x, w, sw)) as usize];
+        }
+    }
+    out
+}
+
+// The stripes repeat every 48 px along x + y and three blurs of radius 6 reach 18 px in from an
+// edge, so a pixel past that is the one 48 px over, to the bit: only a folded copy is blurred.
+const STRIPES_PERIOD: i32 = 48;
+const STRIPES_REACH: i32 = 18;
+
+fn stripes_fold(n: i32) -> i32 {
+    let edges = 2 * STRIPES_REACH;
+    if n <= edges + 2 * STRIPES_PERIOD {
+        return n;
+    }
+    edges + STRIPES_PERIOD + (n - edges) % STRIPES_PERIOD
+}
+
+/// The pixel of a side folded from `n` to `folded` px that `at` copies.
+fn stripes_from(at: i32, n: i32, folded: i32) -> i32 {
+    if folded == n || at < STRIPES_REACH {
+        at
+    } else if at >= n - STRIPES_REACH {
+        at - (n - folded)
+    } else {
+        STRIPES_REACH + (at - STRIPES_REACH) % STRIPES_PERIOD
+    }
+}
+
+fn blur_stripes(w: i32, h: i32) -> Canvas {
     let (wu, hu) = (w as usize, h as usize);
     let mut px: Vec<[f32; 3]> = (0..wu * hu)
         .map(|i| {
@@ -785,4 +823,16 @@ fn blurred_stripes(w: i32, h: i32) -> Canvas {
         );
     }
     out
+}
+
+#[cfg(test)]
+#[test]
+fn folded_stripes_are_the_full_blur() {
+    for (w, h) in [(132, 132), (133, 300), (300, 181), (950, 60)] {
+        assert_eq!(
+            blurred_stripes(w, h).pixels,
+            blur_stripes(w, h).pixels,
+            "{w}x{h}"
+        );
+    }
 }

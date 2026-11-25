@@ -36,7 +36,9 @@ fn every_page_without_tahoma_fits_the_text_it_fits_with_tahoma() {
     let found = reprisekit::pins::unfit_without_tahoma(|| {
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for size in [None, Some((1600, 1000))] {
-                let mut app = app(&format!("text-fit-{}", i.as_str()));
+                // The two passes draw at once, each in its own config dir.
+                let pass = std::thread::current().id();
+                let mut app = app(&format!("text-fit-{}-{pass:?}", i.as_str()));
                 sample_startup(&mut app);
                 let mut ctx = test_ctx();
                 ctx.theme = reprisekit::interfaces::theme_for(i);
