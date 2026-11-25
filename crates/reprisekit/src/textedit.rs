@@ -1356,6 +1356,29 @@ mod tests {
     }
 
     #[test]
+    fn a_caret_inside_an_emoji_sequence_steps_out_to_its_edges() {
+        for seq in ["\u{1F44D}\u{1F3FD}", FAMILY, "\u{1F1ED}\u{1F1FA}"] {
+            let text = format!("a{seq}b");
+            let end = 1 + seq.len();
+            for at in (2..end).filter(|&i| text.is_char_boundary(i)) {
+                let mut e = TextEdit::new(text.clone(), false);
+                e.set_selection(at, at);
+                e.key(EditKey::Left {
+                    select: false,
+                    word: false,
+                });
+                assert_eq!(e.caret(), 1, "{seq} byte {at}: Left to its start");
+                e.set_selection(at, at);
+                e.key(EditKey::Right {
+                    select: true,
+                    word: false,
+                });
+                assert_eq!(e.caret(), end, "{seq} byte {at}: shift+Right to its end");
+            }
+        }
+    }
+
+    #[test]
     fn backspace_takes_a_cluster_apart_one_scalar_at_a_time() {
         let mut e = TextEdit::new("e\u{301}", false);
         e.key(EditKey::Backspace { word: false });
