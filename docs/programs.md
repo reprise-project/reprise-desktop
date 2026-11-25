@@ -90,7 +90,9 @@ Encoding box. A save never leaves a file half written. Print is greyed out
 for now. Notepad has always had its priorities.
 
 When Notepad loses the desktop or crashes with unsaved text, it writes the
-text to `~/.local/state/reprise/notepad/` and offers it at the next start.
+text to `~/.local/state/reprise/notepad/` and offers it at the next start,
+one prompt per document naming it ("1 of 2"). No sends that text to the
+Recycle Bin.
 
 ## Sticky Notes
 

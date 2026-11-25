@@ -28,6 +28,16 @@ pub fn write(
     Ok(path)
 }
 
+/// The stem a recovery file was written under: `notes` for `recovery-42-notes.txt`.
+pub fn stem(path: &Path) -> Option<&str> {
+    let rest = path.file_name()?.to_str()?.strip_prefix(PREFIX)?;
+    let (pid, rest) = rest.split_once('-')?;
+    if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(rest.rsplit_once('.').map_or(rest, |(stem, _)| stem))
+}
+
 /// The recovery files in `dir` ending in `.<ext>`, by name.
 pub fn found(dir: &Path, ext: &str) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -64,5 +74,21 @@ mod tests {
         assert_eq!(found(&dir, "png"), [kept]);
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn a_recovery_file_gives_back_its_stem() {
+        let stem =
+            |name: &str| stem(Path::new("/state/notepad").join(name).as_path()).map(String::from);
+        assert_eq!(
+            stem("recovery-42-my-notes.v2.txt").as_deref(),
+            Some("my-notes.v2")
+        );
+        assert_eq!(
+            stem("recovery-42-Untitled.png").as_deref(),
+            Some("Untitled")
+        );
+        assert_eq!(stem("recovery-x-notes.txt"), None);
+        assert_eq!(stem("notes.txt"), None);
     }
 }

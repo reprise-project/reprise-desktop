@@ -64,7 +64,14 @@ save-failed =
 undecodable =
     { $path } is not a { $encoding } text file.
     Do you want to open a copy with the unreadable characters replaced?
-recovered = A document was recovered. Open it?
+# $name is the document's name, or recovered-untitled.
+recovered =
+    { $count ->
+        [one] The unsaved text of { $name } was recovered.
+       *[other] The unsaved text of { $name } was recovered ({ $index } of { $count }).
+    }
+    Do you want to open it?
+recovered-untitled = Untitled ("{ $line }")
 save-changes =
     The text in the { $name } file has changed.
     Do you want to save the changes?

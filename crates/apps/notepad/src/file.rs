@@ -147,22 +147,24 @@ impl Notepad {
         }
     }
 
-    /// Offers the recovery files left in the recovery dir, one prompt at a time.
+    /// Offers the recovery files left in the recovery dir, one prompt at a time, each naming its
+    /// document and its place in the run.
     pub(crate) fn offer_recovered(&mut self) {
         let files = (self.rescue_dir.as_deref())
             .map(recovered_in)
             .unwrap_or_default();
-        for file in files {
-            let prompt = self.recovered_box();
+        let count = files.len();
+        for (i, file) in files.into_iter().enumerate() {
+            let prompt = self.recovered_box(&recovered_name(&file), i + 1, count);
             self.ask(prompt, Ask::Recovered(file));
         }
     }
 
-    fn recovered_box(&self) -> MsgBox {
+    fn recovered_box(&self, name: &str, index: usize, count: usize) -> MsgBox {
         MsgBox::new(
             tr!("name"),
             msgbox::Fields {
-                text: tr!("recovered"),
+                text: tr!("recovered", name = name, index = index, count = count),
                 icon: self.warn_icon.clone(),
                 buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 default: 0,
@@ -174,8 +176,8 @@ impl Notepad {
     }
 
     /// Yes opens the text of `file` as an unsaved Untitled document and offers no more files; No
-    /// deletes the file and the next is offered. Closing the prompt keeps the files for the next
-    /// start.
+    /// sends the file to the Recycle Bin and the next is offered. Closing the prompt keeps the
+    /// files for the next start.
     pub(crate) fn recovered_answered(&mut self, file: PathBuf, answer: Option<usize>) -> Reply {
         match answer {
             Some(0) => {
@@ -189,11 +191,7 @@ impl Notepad {
                     Err(e) => self.open_failed(&file, &e),
                 }
             }
-            Some(_) => {
-                if let Err(e) = std::fs::remove_file(&file) {
-                    log::warn!("remove {}: {e}", file.display());
-                }
-            }
+            Some(_) => recycle(&file),
             None => {
                 self.asks.withdraw(|ask| matches!(ask, Ask::Recovered(_)));
             }
@@ -317,5 +315,43 @@ impl Notepad {
                 Reply::redraw_all()
             }
         }
+    }
+}
+
+/// How a recovery prompt names the text kept in `file`: its document's name, and for an Untitled
+/// document its first line as well.
+fn recovered_name(file: &Path) -> String {
+    const LINE_CHARS: usize = 40;
+    let untitled = tr!("untitled");
+    let stem = reprisefs::recovery::stem(file).unwrap_or(&untitled);
+    if stem != untitled {
+        return stem.to_string();
+    }
+    let Ok((text, _)) = read_text(file) else {
+        return untitled;
+    };
+    let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty()) else {
+        return untitled;
+    };
+    let line = match line.char_indices().nth(LINE_CHARS) {
+        Some((cut, _)) => format!("{}...", line[..cut].trim_end()),
+        None => line.to_string(),
+    };
+    tr!("recovered-untitled", line = line)
+}
+
+/// Sends a declined recovery file to the Recycle Bin, or deletes it on a drive set to remove
+/// files immediately; one that can go neither way stays and is offered at the next start.
+fn recycle(file: &Path) {
+    let Some(bins) = reprisefs::trash::Bins::system() else {
+        log::warn!("no Recycle Bin; {} is kept", file.display());
+        return;
+    };
+    let gone = match bins.fate(file) {
+        reprisefs::bincap::Fate::RemoveImmediately => std::fs::remove_file(file),
+        _ => bins.trash(file).map(drop),
+    };
+    if let Err(e) = gone {
+        log::warn!("{} is kept: {e}", file.display());
     }
 }
