@@ -813,6 +813,7 @@ fn save_round_trips_every_field() {
         saver_folder: "/srv/photos".into(),
         saver_photo_seconds: 20,
         background: "#336699".into(),
+        colors: Vec::new(),
         system_icons: vec!["computer".into(), "recycle-bin".into()],
         desktop_widgets: vec!["meter".into(), "clock".into()],
         taskbar_buttons: "never".into(),

@@ -180,6 +180,9 @@ pub struct Settings {
     /// `[colors] background`, the desktop colour; empty for the one the
     /// interface and its scheme give.
     pub background: String,
+    /// `[colors]`' other entries, name and value, laid over the scheme as the desktop lays
+    /// them: read for the Appearance sample, never written.
+    pub colors: Vec<(String, String)>,
     /// `system_icons`: the desktop's system icons, in order.
     pub system_icons: Vec<String>,
     /// `desktop_widgets`: the widgets standing on the desktop, by name.
@@ -613,6 +616,7 @@ impl Settings {
             saver_folder: String::new(),
             saver_photo_seconds: c.screensaver.options.photo_seconds.into(),
             background: String::new(),
+            colors: Vec::new(),
             system_icons: c.system_icons.clone(),
             desktop_widgets: c.desktop_widgets.iter().map(|k| k.name().into()).collect(),
 

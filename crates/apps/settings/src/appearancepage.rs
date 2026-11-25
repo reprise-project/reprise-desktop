@@ -75,6 +75,11 @@ pub fn theme(s: &Settings) -> Theme {
     let g = glass(s);
     let mut t =
         reprisekit::interfaces::sample_theme(i, &s.color_scheme, &g, Color::parse(&s.background));
+    for (name, value) in &s.colors {
+        if let Some(c) = Color::parse(value) {
+            t.colors.set(name, c);
+        }
+    }
     if i == Interface::Glass && s.taskbar_small_icons {
         reprisekit::interfaces::small_bar(&mut t, &g);
     }
@@ -87,7 +92,7 @@ pub fn theme(s: &Settings) -> Theme {
         FontConfig::SIZE_PX_MAX as i64,
     ) as u32;
     t.fonts.antialias = s.font_antialias;
-    t
+    t.with_text_size(s.text_size.clamp(100, 200) as u32)
 }
 
 /// The Classic scheme an absent `color_scheme` stands for.
@@ -271,5 +276,40 @@ mod tests {
             (f.family, f.size_px, f.antialias),
             (vec!["Verdana".to_string(), "DejaVu Sans".into()], 14, true)
         );
+    }
+
+    #[test]
+    fn the_sample_lays_the_files_colors_over_the_picked_scheme() {
+        let s = crate::model::load(
+            "[appearance]\ncolor_scheme = \"Storm\"\n[colors]\nactive_title = \"#000080\"\nbackground = \"#102030\"\n",
+        );
+        assert_eq!(
+            s.colors,
+            [("active_title".to_string(), "#000080".to_string())]
+        );
+        let t = theme(&s);
+        assert_eq!(t.colors.active_title, Color::rgb(0, 0, 0x80));
+        assert_eq!(t.colors.background, Color::rgb(0x10, 0x20, 0x30));
+        let storm = reprisekit::schemes::scheme("Storm").unwrap();
+        assert_eq!(t.colors.inactive_title, storm.inactive_title);
+    }
+
+    #[test]
+    fn the_sample_draws_at_the_picked_text_size() {
+        for i in ["classic", "blue", "glass"] {
+            let at = |pct| {
+                theme(&Settings {
+                    interface: i.into(),
+                    text_size: pct,
+                    ..Settings::default()
+                })
+            };
+            let (small, big) = (at(100), at(200));
+            assert!(big.fonts.size_px > small.fonts.size_px, "{i}");
+            assert!(
+                big.metrics.caption_height > small.metrics.caption_height,
+                "{i}"
+            );
+        }
     }
 }

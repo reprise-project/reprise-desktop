@@ -64,6 +64,12 @@ pub fn load(text: &str) -> Settings {
     }
     s.tablet_pads = crate::tabletpage::read(&doc);
     s.output_wallpapers = crate::outputwrite::read_wallpapers(&doc);
+    if let Some(t) = doc.get("colors").and_then(Item::as_table_like) {
+        s.colors = (t.iter())
+            .filter(|(name, _)| *name != "background")
+            .filter_map(|(name, v)| Some((name.to_string(), v.as_str()?.to_string())))
+            .collect();
+    }
     if let Some(locker) = get(&doc, &LOCKER).and_then(Item::as_str) {
         s.power_locker = locker.to_string();
     }
