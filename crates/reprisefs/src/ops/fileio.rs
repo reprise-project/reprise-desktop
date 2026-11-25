@@ -111,8 +111,8 @@ pub fn create_temp_beside(
 
 /// Write `bytes` to `path` through a temp file beside it and a rename
 /// over the target, so neither a reader nor a crash sees half a file.
-/// A symlinked target (a dotfiles checkout) is followed and the real file
-/// replaced, so the link survives; the new file keeps the old one's mode,
+/// A symlinked target (a dotfiles checkout), dangling or not, is followed and
+/// the real file written, so the link survives; the new file keeps the old one's mode,
 /// and is synced before the rename so a crash cannot leave it empty. The
 /// directory is synced after it, so the rename itself survives a crash.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -171,13 +171,7 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 fn replace(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
-    let path = std::fs::canonicalize(path).or_else(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            Ok(path.to_path_buf())
-        } else {
-            Err(e)
-        }
-    })?;
+    let path = real_path(path)?;
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),
@@ -198,6 +192,35 @@ fn replace(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
         return written;
     }
     std::fs::File::open(dir)?.sync_all()
+}
+
+/// Where a write to `path` lands: its canonical path, or for one that does not resolve yet the end
+/// of its chain of symlinks, so a dangling link stays a link.
+pub(crate) fn real_path(path: &Path) -> io::Result<PathBuf> {
+    match std::fs::canonicalize(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let at = dangling_target(path)?;
+            Ok(
+                match (at.parent().map(std::fs::canonicalize), at.file_name()) {
+                    (Some(Ok(dir)), Some(name)) => dir.join(name),
+                    _ => at,
+                },
+            )
+        }
+        found => found,
+    }
+}
+
+/// The end of `path`'s chain of symlinks, each relative one read from its link's folder.
+fn dangling_target(path: &Path) -> io::Result<PathBuf> {
+    let mut at = path.to_path_buf();
+    for _ in 0..40 {
+        match std::fs::read_link(&at) {
+            Ok(to) => at = at.parent().unwrap_or(Path::new(".")).join(to),
+            Err(_) => return Ok(at),
+        }
+    }
+    Err(io::Error::from_raw_os_error(libc::ELOOP))
 }
 
 /// Write `bytes` over a file a user edits so a crash or full disk never leaves it truncated:
