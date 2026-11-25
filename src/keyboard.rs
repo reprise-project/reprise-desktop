@@ -463,7 +463,7 @@ impl State {
             KeyRoute::IconCut(i) => self.copy_icons(i, true),
             KeyRoute::IconCopy(i) => self.copy_icons(i, false),
             KeyRoute::IconPaste => self.paste_on_desktop(None, false),
-            KeyRoute::IconUndo => self.undo_icons(),
+            KeyRoute::IconUndo => self.undo_icons_head(),
             KeyRoute::IconRefresh => self.rescan_desktop(),
             KeyRoute::Binds(actions) => {
                 // A bind past an open menu closes it; Start's own toggles it, and a
