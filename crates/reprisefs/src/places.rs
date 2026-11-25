@@ -91,6 +91,18 @@ pub fn user_dir(key: &str, fallback: &str) -> Option<PathBuf> {
     Some(home.join(fallback))
 }
 
+/// Where screenshots are saved: `Screenshots` in the Pictures folder when there is one, else in
+/// home.
+pub fn screenshots_dir() -> Option<PathBuf> {
+    let pictures = user_dir("PICTURES", "Pictures").filter(|p| p.is_dir());
+    screenshots_in(pictures, std::env::var_os("HOME").map(PathBuf::from))
+}
+
+/// [`screenshots_dir`] for a Pictures folder `pictures` and a home `home`.
+pub fn screenshots_in(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
+    pictures.or(home).map(|d| d.join("Screenshots"))
+}
+
 pub fn parse_user_dir(text: &str, home: &Path, key: &str) -> Option<PathBuf> {
     let prefix = format!("XDG_{key}_DIR=");
     for line in text.lines() {
@@ -731,6 +743,21 @@ fn root_of(mounts: &[u8]) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshots_go_under_pictures_else_home() {
+        let pics = Some(PathBuf::from("/h/Pictures"));
+        let home = Some(PathBuf::from("/h"));
+        assert_eq!(
+            screenshots_in(pics, home.clone()),
+            Some(PathBuf::from("/h/Pictures/Screenshots"))
+        );
+        assert_eq!(
+            screenshots_in(None, home),
+            Some(PathBuf::from("/h/Screenshots"))
+        );
+        assert_eq!(screenshots_in(None, None), None);
+    }
 
     #[test]
     fn a_device_mounted_under_the_drive_roots_is_a_drive() {

@@ -1203,9 +1203,12 @@ impl App for SettingsApp {
         self.waker = Some(waker);
         self.units_reading = Some(self.spawn(reprisebus::units::session_programs));
         let had = self.wallpapers.clone();
-        self.scan = Some(
-            self.spawn(move || wallpapers::merge(wallpapers::scan(&wallpapers::dirs()), &had)),
-        );
+        self.scan = Some(self.spawn(move || {
+            wallpapers::merge(
+                wallpapers::scan(&wallpapers::dirs(), &wallpapers::skipped()),
+                &had,
+            )
+        }));
         self.want_preview();
         self.scan_profiles();
         repriseapp::Start::Continue

@@ -38,18 +38,19 @@ fn dirs_for(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Vec<PathBuf> {
     dirs
 }
 
-/// The pictures under `dirs` and up to `DEPTH` folders below each,
-/// sorted by their row's name in `reprisefs::pictures::natural_cmp`
-/// order, then by path. A
+/// The folders [`scan`] leaves out: where screenshots are saved.
+pub fn skipped() -> Vec<PathBuf> {
+    reprisefs::places::screenshots_dir().into_iter().collect()
+}
+
+/// The pictures under `dirs` and up to `DEPTH` folders below each, the
+/// folders in `skip` left out, sorted by their row's name in
+/// `reprisefs::pictures::natural_cmp` order, then by path. A
 /// folder that cannot be read is skipped, and so is every hidden file
 /// and folder (a thumbnail cache). A file reached twice, through a
 /// symlink, is listed once, by the path that sorts first.
-pub fn scan(dirs: &[PathBuf]) -> Vec<PathBuf> {
-    scan_to(dirs, DEPTH)
-}
-
-fn scan_to(dirs: &[PathBuf], max: usize) -> Vec<PathBuf> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize, max: usize) {
+pub fn scan(dirs: &[PathBuf], skip: &[PathBuf]) -> Vec<PathBuf> {
+    fn walk(dir: &Path, skip: &[PathBuf], out: &mut Vec<PathBuf>, depth: usize) {
         let Ok(rd) = std::fs::read_dir(dir) else {
             return;
         };
@@ -59,8 +60,8 @@ fn scan_to(dirs: &[PathBuf], max: usize) -> Vec<PathBuf> {
             }
             let p = e.path();
             if p.is_dir() {
-                if depth < max {
-                    walk(&p, out, depth + 1, max);
+                if depth < DEPTH && !skip.contains(&p) {
+                    walk(&p, skip, out, depth + 1);
                 }
             } else if is_picture(&p) {
                 out.push(p);
@@ -69,7 +70,7 @@ fn scan_to(dirs: &[PathBuf], max: usize) -> Vec<PathBuf> {
     }
     let mut out = Vec::new();
     for d in dirs {
-        walk(d, &mut out, 0, max);
+        walk(d, skip, &mut out, 0);
     }
     let mut keyed: Vec<(String, PathBuf)> = out.into_iter().map(|p| (label(&p), p)).collect();
     keyed.sort_by(|(la, a), (lb, b)| natural_cmp(la, lb).then_with(|| a.cmp(b)));
@@ -174,16 +175,32 @@ mod tests {
         ] {
             touch(root, f);
         }
-        let found = scan(std::slice::from_ref(root));
+        let found = scan(std::slice::from_ref(root), &[]);
         let names: Vec<String> = found
             .iter()
             .map(|p| p.strip_prefix(root).unwrap().display().to_string())
             .collect();
         assert_eq!(names, ["sub/a.jpg", "b.PNG", "x/C.dib", "1/2/3/deep.bmp"]);
         assert!(
-            scan(&[root.join("missing")]).is_empty(),
+            scan(&[root.join("missing")], &[]).is_empty(),
             "a folder that is not there is skipped"
         );
+    }
+
+    #[test]
+    fn the_scan_leaves_out_the_screenshots_folder() {
+        let dir = tmp("shots");
+        let root = &dir.0;
+        for f in [
+            "a.png",
+            "Screenshots/Screenshot 2026-11-25 10-00-00.png",
+            "Screenshots/old/b.png",
+            "trip/c.jpg",
+        ] {
+            touch(root, f);
+        }
+        let found = scan(std::slice::from_ref(root), &[root.join("Screenshots")]);
+        assert_eq!(found, [root.join("a.png"), root.join("trip/c.jpg")]);
     }
 
     #[test]
@@ -198,7 +215,7 @@ mod tests {
         ] {
             touch(root, f);
         }
-        let found = scan(std::slice::from_ref(root));
+        let found = scan(std::slice::from_ref(root), &[]);
         assert_eq!(found, [root.join("a.png")]);
     }
 
@@ -230,7 +247,7 @@ mod tests {
         touch(root, "real/a.png");
         touch(root, "real/b.png");
         std::os::unix::fs::symlink(root.join("real"), root.join("link")).expect("symlink");
-        let found = scan(std::slice::from_ref(root));
+        let found = scan(std::slice::from_ref(root), &[]);
         assert_eq!(found, [root.join("link/a.png"), root.join("link/b.png")]);
         let had = [root.join("real/b.png"), root.join("real/../real/a.png")];
         assert_eq!(
