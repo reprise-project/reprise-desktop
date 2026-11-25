@@ -347,7 +347,7 @@ impl SchedTasks {
         })
     }
 
-    /// A pointer event over the list; None when it is elsewhere.
+    /// A press or wheel turn over the list; None for the rest, which the form sees too.
     fn list_pointer(&mut self, ev: &PointerInput, ctx: &Ctx) -> Option<Reply> {
         let r = self.list_rect(ctx);
         let redraw = |b: bool| if b { Reply::redraw() } else { Reply::none() };
@@ -371,14 +371,12 @@ impl SchedTasks {
                     _ => Reply::redraw(),
                 }
             }
-            PointerInput::Motion { x, y } => redraw(self.list.motion(x, y, r, ctx)),
             PointerInput::Scroll { x, y, rows } if r.contains(x, y) => {
                 redraw(self.list.wheel(rows, r, ctx))
             }
             PointerInput::ScrollAcross { x, y, cols } if r.contains(x, y) => {
                 redraw(self.list.wheel_across(cols, r, ctx))
             }
-            PointerInput::Leave => redraw(self.list.leave(ctx)),
             _ => return None,
         })
     }
@@ -411,19 +409,24 @@ impl SchedTasks {
             }
             _ => {}
         }
-        // A release ends a drag on the list's header or bars and presses a held button alike.
-        let released = matches!(
-            ev,
+        // The list follows every motion, release and leave, and the form sees them too: a press
+        // on one of its buttons acts on the release, and only while the pointer is still on it.
+        let lit = match ev {
+            Event::Pointer(PointerInput::Motion { x, y }) => {
+                let r = self.list_rect(ctx);
+                self.list.motion(x, y, r, ctx)
+            }
             Event::Pointer(PointerInput::Release {
-                button: BTN_LEFT,
-                ..
-            })
-        ) && self.list.release(ctx);
+                button: BTN_LEFT, ..
+            }) => self.list.release(ctx),
+            Event::Pointer(PointerInput::Leave) => self.list.leave(ctx),
+            _ => false,
+        };
         match repriseapp::keys::form_input(&mut self.form, &ev, ctx) {
             Some(form::Event::Pressed(RUN)) => self.act(Act::Run),
             Some(form::Event::Pressed(TOGGLE)) => self.act(Act::Toggle),
             Some(form::Event::Pressed(PROPERTIES)) => self.act(Act::Properties),
-            Some(form::Event::None) | None if !released => Reply::none(),
+            Some(form::Event::None) | None if !lit => Reply::none(),
             Some(_) | None => Reply::redraw(),
         }
     }
