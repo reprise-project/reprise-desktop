@@ -493,6 +493,24 @@ fn closing_waits_for_a_pending_terminal_to_start() {
     assert_eq!(terminal_token_in(dir.path()), "t");
 }
 
+#[test]
+fn a_file_dialog_shows_the_pins_explorer_reads() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let file = dir.path().join("bookmarks");
+    let work = dir.path().join("Work");
+    std::fs::create_dir(&work).expect("mkdir");
+    reprisefs::pins::edit_at(&file, |b| b.pin(&work)).expect("pin");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Computer, &mut ctx);
+    let pins = reprisefs::pins::Pins::start_at(file, || {});
+    pins.wait_first(std::time::Duration::from_secs(5));
+    ex.pins = Some(pins);
+    let mut host = ex.dialog_host();
+    let fields = repriseapp::openwith::browse_fields();
+    let dlg = host.open(dir.path(), fields, reprisekit::theme::TextUnits::ONE);
+    assert_eq!(dlg.places().last().map(|p| p.label.as_str()), Some("Work"));
+}
+
 /// Documents, Home and a plain folder's nodes pin from the tree menu; Computer and the Recycle
 /// Bin are not folders and have no pin row.
 #[test]

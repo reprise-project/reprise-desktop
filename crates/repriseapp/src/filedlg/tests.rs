@@ -2362,6 +2362,37 @@ fn f5_and_ctrl_r_read_the_folder_again_and_a_right_press_opens_the_list_menu() {
     assert_eq!(popped.spots().len(), 1, "the background's menu is up");
 }
 
+#[test]
+fn a_host_given_its_owners_pins_reads_and_edits_through_them() {
+    let t = tmp("shared-pins");
+    let file = t.join("gtk-3.0/bookmarks");
+    let work = t.join("sub");
+    reprisefs::pins::edit_at(&file, |b| b.pin(&work)).unwrap();
+    let owner = Pins::start_at(file.clone(), || {});
+    owner.wait_first(std::time::Duration::from_secs(10));
+    let mut h = host_in(&t);
+    h.share_pins(owner.share());
+    let mut dlg = h.open(&t, open_fields(), TextUnits::ONE);
+    let built_in = places().len();
+    assert_eq!(
+        dlg.places().get(built_in).map(|p| p.label.as_str()),
+        Some("sub")
+    );
+    h.outcome(
+        &mut dlg,
+        reprisekit::controls::filedlg::Event::UnpinPlace(built_in),
+    );
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while owner.busy() {
+        assert!(
+            std::time::Instant::now() < end,
+            "the owner's thread writes it"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!reprisefs::pins::load(&file).has(&work));
+}
+
 /// A pinned folder follows the built-in tiles, opens from its tile, and Pin, Unpin and Move
 /// write the bookmarks file the dialog reads, on the pins thread.
 #[test]

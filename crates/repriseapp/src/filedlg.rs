@@ -608,8 +608,8 @@ pub struct Host {
     memory: Option<Memory>,
     /// The folder read File name's completion asked for.
     completing: crate::pathjob::PathJob,
-    /// The pinned folders, read off the loop; its wake goes through `pins_wake`, filled once the
-    /// loop's waker is known.
+    /// The pinned folders, read off the loop, or the owner's ([`Host::share_pins`]); the Host's own
+    /// wake through `pins_wake`, filled once the loop's waker is known.
     pins: Option<Pins>,
     pins_wake: Arc<Mutex<Option<crate::Waker>>>,
     /// The pinned folders the dialog's tiles show.
@@ -714,6 +714,12 @@ impl Host {
                 None
             }
         }
+    }
+
+    /// Reads and edits the pinned folders through `pins`, its owner's, so a program writes the
+    /// bookmarks file from one thread.
+    pub fn share_pins(&mut self, pins: Pins) {
+        self.pins = Some(pins);
     }
 
     /// Starts reading the pinned folders, waiting [`PINS_WAIT`] for the first read; later opens

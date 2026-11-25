@@ -23,6 +23,15 @@ pub fn chooser_row_icons(
 }
 
 impl Explorer {
+    /// A file dialog's host, reading and editing the pinned folders through Explorer's own.
+    pub(crate) fn dialog_host(&self) -> Host {
+        let mut host = Host::default();
+        if let Some(p) = &self.pins {
+            host.share_pins(p.share());
+        }
+        host
+    }
+
     pub fn chooser_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up_mut() else {
             return Reply::none();
@@ -39,7 +48,7 @@ impl Explorer {
             openwith::Event::Redraw => Reply::redraw(),
             openwith::Event::Cancel => self.dismiss_up(ctx),
             openwith::Event::Browse => {
-                let mut host = Host::default();
+                let mut host = self.dialog_host();
                 host.icons.prime(&mut ctx.icons);
                 let dlg = host.open(Path::new(PROGRAMS_DIR), browse_fields(), self.forms.text);
                 if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up_mut() {
