@@ -215,6 +215,76 @@ fn backs_drop_over_search_results_puts_the_folder_searched_above_the_history() {
     assert_eq!(ex.place, places[1], "the row's folder, one step back");
 }
 
+fn search_for(ex: &mut Explorer, text: &str, ctx: &mut Ctx) {
+    ex.run(Command::SearchFocus, ctx);
+    ex.search_field.clear();
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert(text.into()));
+    press(ex, keysym::RETURN, ctx);
+    assert!(ex.search.caption(&[]).is_some(), "results for {text} shown");
+}
+
+#[test]
+fn every_navigation_from_search_results_empties_the_search_field() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let (a, b) = (dir.path().join("a"), dir.path().join("a/b"));
+    std::fs::create_dir_all(b.join("reports")).expect("mkdir");
+    std::fs::write(b.join("report.txt"), "x").expect("write");
+    let places = [dir.path(), &a, &b].map(|p| Place::Folder(p.to_path_buf()));
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(places[0].clone(), &mut ctx);
+    ex.search_run = find_search;
+    ex.run(Command::GoTo(places[1].clone()), &mut ctx);
+    ex.run(Command::GoTo(places[2].clone()), &mut ctx);
+    let ended = |ex: &Explorer, place: &Place, how: &str| {
+        assert_eq!(ex.search.caption(&[]), None, "{how} ends the search");
+        assert_eq!(&ex.place, place, "{how} lands in its folder");
+        assert_eq!(ex.search_field.text(), "", "{how} empties the field");
+    };
+
+    search_for(&mut ex, "report", &mut ctx);
+    let go = ex.back_rows()[1].1.clone();
+    assert_eq!(go, Command::Go(1));
+    ex.run(go, &mut ctx);
+    ended(&ex, &places[1], "Back's drop");
+
+    search_for(&mut ex, "report", &mut ctx);
+    ex.run(Command::Forward, &mut ctx);
+    ended(&ex, &places[2], "Forward");
+
+    search_for(&mut ex, "report", &mut ctx);
+    ex.run(Command::Up, &mut ctx);
+    ended(&ex, &places[1], "Up");
+
+    ex.run(Command::GoTo(places[2].clone()), &mut ctx);
+    search_for(&mut ex, "report", &mut ctx);
+    let folder = ex.items.iter().position(|it| it.name == "reports");
+    ex.sv.selection.set_only(folder);
+    ex.open_selected(&mut ctx);
+    ended(
+        &ex,
+        &Place::Folder(b.join("reports")),
+        "opening a folder hit",
+    );
+}
+
+#[test]
+fn a_refresh_over_search_results_searches_again_and_keeps_the_field() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("report.txt"), "x").expect("write");
+    std::fs::write(dir.path().join("other.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.search_run = find_search;
+    search_for(&mut ex, "report", &mut ctx);
+    std::fs::write(dir.path().join("report-2.txt"), "x").expect("write");
+
+    ex.run(Command::Refresh, &mut ctx);
+    assert!(ex.search.caption(&[]).is_some(), "the results stay");
+    assert_eq!(ex.items.len(), 2, "the new match is found");
+    assert_eq!(ex.search_field.text(), "report");
+}
+
 /// Search results list several folders: renaming a hit to a name another folder's hit wears is
 /// no clash, inline or in the Rename dialog.
 #[test]

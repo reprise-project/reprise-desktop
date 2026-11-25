@@ -1,5 +1,6 @@
 //! The toolbar's Search field: [`reprisefs::search`] rooted at the folder shown runs on a listing
-//! thread, and its results take the folder's place in the view until Escape, Back or a navigation.
+//! thread, and its results take the folder's place in the view until Escape, Back or a navigation,
+//! each of which empties the field. A refresh searches again for the same text.
 
 use crate::commands::Command;
 use crate::place::{Listed, Place};
@@ -153,6 +154,11 @@ impl Search {
     /// What the view's results answer.
     pub fn shown(&self) -> Option<&Asked> {
         self.shown.as_ref()
+    }
+
+    /// The run under way, else the results shown.
+    pub fn asked(&self) -> Option<&Asked> {
+        (self.running.as_ref().map(|r| &r.asked)).or(self.shown.as_ref())
     }
 
     pub fn running(&self) -> bool {
@@ -314,9 +320,9 @@ impl Explorer {
         leave.into_iter().chain(behind).collect()
     }
 
-    /// A refresh while results are shown searches again for the same text.
+    /// A refresh while a search is under way or shown searches again for the same text.
     pub(crate) fn search_again(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        let text = self.search.shown()?.text.clone();
+        let text = self.search.asked()?.text.clone();
         Some(self.search_for(&text, ctx))
     }
 }
