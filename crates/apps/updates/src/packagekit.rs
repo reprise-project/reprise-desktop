@@ -399,9 +399,16 @@ async fn transaction_within(
     Err(Error::Failed("PackageKit went quiet.".into()))
 }
 
-/// The package updates there are. With `refresh`, the lists are downloaded first; a refresh that fails (no network) leaves the old lists, still worth reading.
+/// The package updates there are. With `refresh`, the lists are downloaded first, unless an offline update is prepared: PackageKit discards that update once the lists change. A refresh that fails (no network) leaves the old lists, still worth reading.
 pub async fn updates(conn: &Connection, refresh: bool) -> Result<Vec<Update>, Error> {
-    if refresh {
+    let prepared = refresh
+        && reprisebus::offline::status(conn)
+            .await
+            .is_some_and(|s| s.prepared);
+    if prepared {
+        log::info!("an offline update is prepared; the package lists stay as they are");
+    }
+    if refresh && !prepared {
         match transaction(conn, Request::Refresh, false, &mut |_, _| {}, None).await {
             Ok(_) | Err(Error::Dismissed) => {}
             Err(Error::Unavailable) => return Err(Error::Unavailable),
@@ -722,15 +729,15 @@ mod tests {
 
     mod bus {
         use std::collections::HashMap;
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
         use std::time::Duration;
 
         use zbus::{OwnedObjectPath, Variant};
 
         use super::super::{
-            EXIT_CANCELLED, Error, NAME, PATH, PROPERTIES, Request, STATUS_DOWNLOAD, TX_IFACE, Tx,
-            cancel, install_file, transaction_within,
+            EXIT_CANCELLED, EXIT_SUCCESS, Error, NAME, PATH, PROPERTIES, Request, STATUS_DOWNLOAD,
+            TX_IFACE, Tx, cancel, install_file, transaction_within, updates,
         };
 
         use reprisebus::testbus::bus;
@@ -784,6 +791,74 @@ mod tests {
                 conn.emit_signal(None::<&str>, TID, TX_IFACE, "Finished", &body)
                     .await
                     .unwrap();
+            }
+        }
+
+        /// PackageKit's offline update, prepared or not.
+        struct Offline(bool);
+
+        #[zbus::interface(name = "org.freedesktop.PackageKit.Offline")]
+        impl Offline {
+            #[zbus(property)]
+            fn update_prepared(&self) -> bool {
+                self.0
+            }
+        }
+
+        /// A transaction that records what it was asked and finishes at once, listing nothing.
+        #[derive(Default)]
+        struct Lists {
+            asked: Arc<Mutex<Vec<&'static str>>>,
+        }
+
+        impl Lists {
+            async fn finish(&self, conn: &zbus::Connection, asked: &'static str) {
+                self.asked.lock().unwrap().push(asked);
+                let body = (EXIT_SUCCESS, 0u32);
+                conn.emit_signal(None::<&str>, TID, TX_IFACE, "Finished", &body)
+                    .await
+                    .unwrap();
+            }
+        }
+
+        #[zbus::interface(name = "org.freedesktop.PackageKit.Transaction")]
+        impl Lists {
+            fn set_hints(&self, _hints: Vec<String>) {}
+
+            async fn refresh_cache(
+                &self,
+                #[zbus(connection)] conn: &zbus::Connection,
+                _force: bool,
+            ) {
+                self.finish(conn, "RefreshCache").await;
+            }
+
+            async fn get_updates(&self, #[zbus(connection)] conn: &zbus::Connection, _filter: u64) {
+                self.finish(conn, "GetUpdates").await;
+            }
+        }
+
+        #[test]
+        fn a_check_leaves_the_package_lists_alone_while_an_offline_update_is_prepared() {
+            for (prepared, asked) in [
+                (true, &["GetUpdates"][..]),
+                (false, &["RefreshCache", "GetUpdates"][..]),
+            ] {
+                let Some(bus) = bus() else {
+                    return;
+                };
+                zbus::block_on(async {
+                    let services = connect(&bus.1).await;
+                    let lists = Lists::default();
+                    let seen = lists.asked.clone();
+                    reprisebus::testbus::serve(&services, PATH, Daemon).await;
+                    reprisebus::testbus::serve(&services, PATH, Offline(prepared)).await;
+                    reprisebus::testbus::serve(&services, TID, lists).await;
+                    services.request_name(NAME).await.unwrap();
+                    let conn = connect(&bus.1).await;
+                    assert_eq!(updates(&conn, true).await, Ok(Vec::new()));
+                    assert_eq!(*seen.lock().unwrap(), asked, "prepared: {prepared}");
+                });
             }
         }
 
