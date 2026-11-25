@@ -395,11 +395,15 @@ pub fn fill_with(
                 .collect()
         })
         .unwrap_or_default();
-    let place_at = |n: &Option<Node>| n.as_ref().map(|n| &places[n.id as usize]);
-    let was: Vec<Option<usize>> = kids
-        .iter()
-        .map(|(_, p, ..)| old.iter().position(|n| place_at(n) == Some(p)))
-        .collect();
+    let was: Vec<Option<usize>> = {
+        let mut at: HashMap<&Place, usize> = HashMap::with_capacity(old.len());
+        for (i, n) in old.iter().enumerate() {
+            if let Some(n) = n {
+                at.entry(&places[n.id as usize]).or_insert(i);
+            }
+        }
+        kids.iter().map(|(_, p, ..)| at.get(p).copied()).collect()
+    };
     let nodes: Vec<Node> = kids
         .into_iter()
         .zip(&was)
