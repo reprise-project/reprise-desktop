@@ -138,7 +138,8 @@ pub enum Control {
     /// [`assets::spectrum`]: crate::classic::assets::spectrum
     Spectrum,
     /// The Appearance preview or Themes sample in `theme`, with the Recycle Bin `icon` on the
-    /// Themes sample; the preview fills the item's rect inside the 2 px edge, at least 346x184.
+    /// Themes sample. The item grows with the text; the preview fills it inside the 2 px edge,
+    /// cut to it where `theme`'s text needs more than 346x184 grown by its text size.
     Sample {
         themes: bool,
         theme: Theme,

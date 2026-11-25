@@ -130,7 +130,7 @@ glass-dark.png "6 KB" x2
 glass-dark.png "Application" x3
 glass-dark.png "Default" x1
 glass-dark.png "Desktop" x1
-glass-dark.png "Disabled" x3
+glass-dark.png "Disabled" x1
 glass-dark.png "Documents" x1
 glass-dark.png "Edit" x3
 glass-dark.png "File Folder" x6
@@ -151,19 +151,16 @@ glass-dark.png "Music" x1
 glass-dark.png "My Music" x3
 glass-dark.png "My Pictures" x3
 glass-dark.png "Name" x5
-glass-dark.png "Normal" x1
 glass-dark.png "On the page" x1
 glass-dark.png "OpenDocu..." x3
 glass-dark.png "Other..." x1
 glass-dark.png "Pictures" x1
 glass-dark.png "Pressed" x1
 glass-dark.png "Second" x1
-glass-dark.png "Selected" x1
 glass-dark.png "Size" x5
 glass-dark.png "Text Docu..." x3
 glass-dark.png "Third" x1
 glass-dark.png "Type" x3
-glass-dark.png "Window Text" x1
 glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
 glass-dark.png "report.odt" x3
@@ -184,7 +181,7 @@ glass.png "6 KB" x2
 glass.png "Application" x3
 glass.png "Default" x1
 glass.png "Desktop" x1
-glass.png "Disabled" x3
+glass.png "Disabled" x1
 glass.png "Documents" x1
 glass.png "Edit" x3
 glass.png "File Folder" x6
@@ -205,19 +202,16 @@ glass.png "Music" x1
 glass.png "My Music" x3
 glass.png "My Pictures" x3
 glass.png "Name" x5
-glass.png "Normal" x1
 glass.png "On the page" x1
 glass.png "OpenDocu..." x3
 glass.png "Other..." x1
 glass.png "Pictures" x1
 glass.png "Pressed" x1
 glass.png "Second" x1
-glass.png "Selected" x1
 glass.png "Size" x5
 glass.png "Text Docu..." x3
 glass.png "Third" x1
 glass.png "Type" x3
-glass.png "Window Text" x1
 glass.png "notepad" x4
 glass.png "notes.txt" x3
 glass.png "report.odt" x3
@@ -260,7 +254,7 @@ reprisekit-gallery.png "Ctrl+Alt+" x1
 reprisekit-gallery.png "Date Mo..." x1
 reprisekit-gallery.png "Default" x1
 reprisekit-gallery.png "Desktop" x4
-reprisekit-gallery.png "Disabled" x9
+reprisekit-gallery.png "Disabled" x1
 reprisekit-gallery.png "Documents" x3
 reprisekit-gallery.png "Field" x1
 reprisekit-gallery.png "File Folder" x4
@@ -288,7 +282,6 @@ reprisekit-gallery.png "Name" x2
 reprisekit-gallery.png "New Folder" x2
 reprisekit-gallery.png "New Text Document.txt" x1
 reprisekit-gallery.png "None" x1
-reprisekit-gallery.png "Normal" x4
 reprisekit-gallery.png "Notepad" x2
 reprisekit-gallery.png "Open" x1
 reprisekit-gallery.png "Open:" x1
@@ -316,7 +309,6 @@ reprisekit-gallery.png "Reprise..." x3
 reprisekit-gallery.png "Scroll Bar" x1
 reprisekit-gallery.png "Scroll Lit" x1
 reprisekit-gallery.png "Search" x1
-reprisekit-gallery.png "Selected" x4
 reprisekit-gallery.png "Size" x2
 reprisekit-gallery.png "Spin" x1
 reprisekit-gallery.png "Stuff" x1
@@ -326,7 +318,6 @@ reprisekit-gallery.png "Text Do..." x1
 reprisekit-gallery.png "Text Docu..." x1
 reprisekit-gallery.png "Trackbar" x1
 reprisekit-gallery.png "Type" x2
-reprisekit-gallery.png "Window Text" x4
 reprisekit-gallery.png "hills.jpg" x2
 reprisekit-gallery.png "notepad readme.txt" x2
 reprisekit-gallery.png "notes.txt" x3

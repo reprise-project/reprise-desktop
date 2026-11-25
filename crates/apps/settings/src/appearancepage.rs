@@ -295,6 +295,19 @@ mod tests {
     }
 
     #[test]
+    fn at_200_percent_the_sample_fills_the_room_above_the_interface_row() {
+        let f = page(&Settings::default(), Area::MIN);
+        let room = |pct| {
+            f.drawn_with(&Theme::default().with_text_size(pct).paint());
+            let sample = f.rect(SAMPLE).expect("the page has a sample");
+            let label = f.rect("interface_label").expect("the page has a label");
+            (sample.height, label.y - sample.bottom())
+        };
+        assert_eq!(room(100), (188, 10));
+        assert_eq!(room(200), (376, 20));
+    }
+
+    #[test]
     fn the_sample_draws_at_the_picked_text_size() {
         for i in ["classic", "blue", "glass"] {
             let at = |pct| {

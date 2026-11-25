@@ -468,7 +468,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 theme,
                 icon,
             } => {
-                let size = (it.rect.width - 4, it.rect.height - 4);
+                let size = (placed.width - 4, placed.height - 4);
                 let pic = form.rendered.get(i, s, size, &it.control, || {
                     vec![crate::look::draw_sample_at(
                         *themes,
@@ -480,7 +480,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     )]
                 });
                 draw_well(c, p, r, EdgeStyle::ButtonSunken);
-                c.blit_canvas(r.x + 2 * s, r.y + 2 * s, &pic[0]);
+                c.with_clip(r.inset(2 * s), |c| {
+                    c.blit_canvas(r.x + 2 * s, r.y + 2 * s, &pic[0])
+                });
             }
             Control::Color(b) => colorbutton::draw(c, p, placed, b),
             Control::Calendar(cal) => {
