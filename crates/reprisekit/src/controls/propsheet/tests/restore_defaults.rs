@@ -78,16 +78,7 @@ fn restore_defaults_draws_in_every_look() {
             }
         }
         assert!(changed, "{i:?}: the button is drawn");
-        hashes.push(h);
+        hashes.push((format!("{i:?}"), h));
     }
-    crate::pins::fonts();
-    assert_eq!(
-        hashes,
-        [
-            11_219_644_271_039_405_423,
-            11_406_097_270_237_410_466,
-            15_751_631_490_463_045_461
-        ],
-        "Classic, Blue, Glass"
-    );
+    crate::pins::check("controls/restore_defaults", &hashes);
 }

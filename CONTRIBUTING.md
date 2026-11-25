@@ -71,10 +71,12 @@ theme installed, and the zombie test when another test's reaper wins.
   with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the
   gallery and the preview tests on BASE and on your tree and lists every
   PNG that differs.
-- **Pinned hashes.** Tests that call `pins::check` keep their image hashes
-  in `crates/reprisekit/tests/pins/`, one `key hash` line per image. After a
-  deliberate drawing change, or a new Blue scheme,
-  `REPRISE_BLESS=1 scripts/pin-env cargo test -p reprisekit` rewrites those
+- **Pinned hashes.** Tests keep their image hashes in the crate's
+  `tests/pins/`, one `key hash` line per image, through `pins::check` (in
+  reprisekit) or `pins::check_file`, never written in the test:
+  `tests/inline_pins.rs` fails on a 64-bit literal in a source that hashes
+  pixels. After a deliberate drawing change, or a new Blue scheme,
+  `REPRISE_BLESS=1 scripts/pin-env cargo test -p <crate>` rewrites those
   files; review their diff like code.
 - **Text at 200%.** The gallery's `clip_test` draws every gallery page with
   its themes at 200% text and lists each line whose rect cuts its ink in

@@ -1497,19 +1497,17 @@ mod tests {
 
     #[test]
     fn glass_fields_pins_at_scale_1_and_2() {
-        let got: Vec<(Part, u64, u64)> = super::parts(1)
+        let got: Vec<(String, u64)> = super::parts(1)
             .into_iter()
             .zip(super::parts(2))
-            .map(|((p, one), (_, two))| (p, fnv(&one.atlas), fnv(&two.atlas)))
+            .flat_map(|((p, one), (_, two))| {
+                [
+                    (format!("{p:?} @1"), fnv(&one.atlas)),
+                    (format!("{p:?} @2"), fnv(&two.atlas)),
+                ]
+            })
             .collect();
-        let want: [(Part, u64, u64); 5] = [
-            (Part::EditBorder, 8138547461712309727, 17424655265791650494),
-            (Part::ComboList, 4051416926766009047, 11988009224700880312),
-            (Part::ComboDrop, 1626082823027008929, 6478819219919109750),
-            (Part::SpinUp, 1699632776566478333, 13060240260583136675),
-            (Part::SpinDown, 14349372546147879217, 9640344259591982766),
-        ];
-        assert_eq!(got, want);
+        crate::pins::check("glass/field_parts", &got);
     }
 
     #[test]

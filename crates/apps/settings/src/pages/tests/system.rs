@@ -613,15 +613,12 @@ fn the_clear_row_pixels() {
         }),
     );
     let done = hash(&page);
-    assert_eq!(
-        [idle, clearing, done],
-        [
-            4_963_357_358_802_389_574,
-            13_921_270_549_905_946_812,
-            18_015_333_014_336_005_774
-        ],
-        "idle, clearing, done"
-    );
+    let got = [
+        ("idle".into(), idle),
+        ("clearing".into(), clearing),
+        ("done".into(), done),
+    ];
+    pin("thumbs_clear_row", &got);
 }
 
 #[test]
@@ -1677,10 +1674,7 @@ fn the_remote_desktop_page_pixels() {
         .fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
-    assert_eq!(
-        h, 1_690_708_961_555_854_480,
-        "the page with its client selected"
-    );
+    pin("remote_desktop_page", &[("client selected".into(), h)]);
 }
 
 #[test]

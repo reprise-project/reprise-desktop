@@ -781,11 +781,7 @@ mod tests {
     #[test]
     fn the_starfield_preview_frame() {
         let (_, c) = run(Kind::Starfield, &Options::default(), 20);
-        assert_eq!(
-            digest(&c),
-            11154973060832422393,
-            "starfield frame 20, seed 7"
-        );
+        crate::pins::check("saver/starfield", &[("frame 20".into(), digest(&c))]);
         assert_eq!(lit(&c), 213, "lit pixels");
         let (_, again) = run(Kind::Starfield, &Options::default(), 20);
         assert_eq!(again.pixels, c.pixels, "the same seed draws the same frame");
@@ -820,7 +816,7 @@ mod tests {
     #[test]
     fn the_mystify_preview_frame() {
         let (_, c) = run(Kind::Mystify, &Options::default(), 40);
-        assert_eq!(digest(&c), 18129435732843836132, "mystify frame 40, seed 7");
+        crate::pins::check("saver/mystify", &[("frame 40".into(), digest(&c))]);
         assert_eq!(lit(&c), 1686, "lit pixels");
     }
 
@@ -927,8 +923,7 @@ mod tests {
     #[test]
     fn the_logo_preview_frame_and_its_bounce() {
         let (s, c) = run(Kind::Logo, &Options::default(), 30);
-        crate::pins::fonts();
-        assert_eq!(digest(&c), 3579411078834488872, "logo frame 30, seed 7");
+        crate::pins::check("saver/logo", &[("frame 30".into(), digest(&c))]);
         let (word, (x, y)) = (s.logo().unwrap(), s.logo_at().unwrap());
         assert!(x >= 0 && y >= 0);
         assert!(x + word.width as i32 <= 152 && y + word.height as i32 <= 112);
@@ -981,9 +976,8 @@ mod tests {
         let two = one.clone().at_scale(&text(), 2);
         let (w1, w2) = (one.logo().unwrap(), two.logo().unwrap());
         assert_eq!((w2.width, w2.height), (w1.width * 2, w1.height * 2));
-        crate::pins::fonts();
-        assert_eq!(digest(&w1), 5770883215788226389, "word at scale 1");
-        assert_eq!(digest(&w2), 483713818963111111, "word at scale 2");
+        let words = [("@1".into(), digest(&w1)), ("@2".into(), digest(&w2))];
+        crate::pins::check("saver/logo_word", &words);
         assert!(
             !doubled(&w2, &last_letter(&w2)),
             "monochrome, still redrawn"

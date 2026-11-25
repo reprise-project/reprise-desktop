@@ -1429,7 +1429,12 @@ mod tests {
         };
         let show = drawn(names::Extensions::Show);
         assert_ne!(show, drawn(names::Extensions::Hide), "the extension shows");
-        assert_eq!(show, [0x2d00afbf3175562c, 0xc88a2a2a945c2e49]);
+        let got = [("label".into(), show[0]), ("rename box".into(), show[1])];
+        let pins = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/pins/shown_extension.txt"
+        );
+        reprisekit::pins::check_file(std::path::Path::new(pins), &got);
     }
 
     /// An executable FIFO named `*.desktop` would block `open(2)` forever,

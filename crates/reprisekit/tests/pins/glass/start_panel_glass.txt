@@ -1,0 +1,5 @@
+default 7157c86389a971e0
+red 8fcb077ae590c1d3
+red smoked 30cdfb38f7afda3b
+red molten 9c3d6bc7bc835390
+opaque fff3a914bd64e16d

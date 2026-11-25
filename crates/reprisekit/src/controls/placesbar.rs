@@ -771,16 +771,9 @@ mod tests {
         use crate::interface::Interface;
         use crate::theme::Color;
         const ICON: Color = Color::rgb(0xE8, 0xC0, 0x50);
-        let want = [
-            (Interface::Classic, 1, 13370575589722211660),
-            (Interface::Classic, 2, 13839850585171954949),
-            (Interface::Blue, 1, 15596967453792755634),
-            (Interface::Blue, 2, 13641811894776302826),
-            (Interface::Glass, 1, 891772286779187367),
-            (Interface::Glass, 2, 11945213783426164471),
-        ];
         let mut got = Vec::new();
-        for (i, scale, _) in want {
+        let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+        for (i, scale) in looks.into_iter().flat_map(|i| [(i, 1), (i, 2)]) {
             let theme = crate::interfaces::theme_for(i).scaled(scale);
             let text = TextRenderer::load(&theme.fonts);
             let p = theme.paint();
@@ -811,10 +804,9 @@ mod tests {
                 ICON.argb(),
                 "{i:?}@{scale}: the first tile in view tops it"
             );
-            got.push((i, scale, hash(&c)));
+            got.push((format!("{i:?} @{scale}"), hash(&c)));
         }
-        let want: Vec<_> = want.to_vec();
-        assert_eq!(got, want);
+        crate::pins::check("controls/places_bar_scrolled", &got);
     }
 
     /// Writes target/placesbar-pinned-preview.png: nine tiles with labels under Classic, Blue

@@ -1,0 +1,10 @@
+EditBorder @1 70f1edcbeb04eddf
+EditBorder @2 f1d0cfa4fb26aabe
+ComboList @1 3839863ac4e48ad7
+ComboList @2 a65df6dfea66e5b8
+ComboDrop @1 169101b651e3a5a1
+ComboDrop @2 59e963c117407e76
+SpinUp @1 17964f0157db15fd
+SpinUp @2 b53f4b5225501da3
+SpinDown @1 c723364df2e30931
+SpinDown @2 85c962070174ceae
