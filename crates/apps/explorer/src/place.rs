@@ -445,7 +445,8 @@ pub fn folder_of(it: &Item) -> Option<&Path> {
 
 /// `items`' indices in the order a column showing `field` puts them. Ascending
 /// lists folders ([`Item::is_folder`]) first, each part by the column's key (name
-/// and kind case-insensitively, size and dates numerically, folder by path), then
+/// and kind case-insensitively, size and dates numerically, a folder's size blank as
+/// its cell is, folder by path), then
 /// by name; descending reverses that. The Desktop's rows ([`Place::of_row`]) lead either way, in
 /// the tree's order. Keys are built once per item.
 pub fn sort_order(items: &[Item], field: Field, asc: bool) -> Vec<usize> {
@@ -455,7 +456,7 @@ pub fn sort_order(items: &[Item], field: Field, asc: bool) -> Vec<usize> {
             Field::Folder => {
                 ColumnKey::Folder(folder_of(it).map(Path::to_path_buf).unwrap_or_default())
             }
-            Field::Size => ColumnKey::Size(it.size),
+            Field::Size => ColumnKey::Size(if it.is_folder() { 0 } else { it.size }),
             Field::Kind => ColumnKey::Kind(it.kind.to_lowercase()),
             Field::Modified => ColumnKey::Date(it.modified),
             Field::Deleted => ColumnKey::Date(it.trashed.as_ref().and_then(|t| t.deleted)),
@@ -1066,6 +1067,40 @@ mod tests {
         );
         // With no second mount both are plain folders.
         assert_eq!(tree_subfolders(&listed, &[PathBuf::from("/")]).len(), 2);
+    }
+
+    #[test]
+    fn size_sorts_folders_by_name_whatever_their_inode_size() {
+        let item = |name: &str, is_dir: bool, size: u64| Item {
+            name: name.to_string(),
+            path: PathBuf::from("/d").join(name),
+            is_dir,
+            is_link: false,
+            exec: false,
+            program: None,
+            hidden: false,
+            size,
+            modified: None,
+            mime: None,
+            kind: String::new(),
+            drive: None,
+            mount_root: false,
+            trashed: None,
+            shortcut: None,
+        };
+        let items = [
+            item("b", true, 44),
+            item("small", false, 10),
+            item("a", true, 396),
+            item("big", false, 900),
+        ];
+        let names = |asc| -> Vec<&str> {
+            (sort_order(&items, Field::Size, asc).into_iter())
+                .map(|i| items[i].name.as_str())
+                .collect()
+        };
+        assert_eq!(names(true), ["a", "b", "small", "big"]);
+        assert_eq!(names(false), ["big", "small", "b", "a"]);
     }
 
     #[test]

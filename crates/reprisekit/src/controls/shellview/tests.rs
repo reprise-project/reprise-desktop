@@ -1326,6 +1326,30 @@ fn sort_orders_by_type_and_by_date() {
     );
 }
 
+#[test]
+fn size_sorts_folders_by_name_whatever_their_inode_size() {
+    let e = |name: &str, is_dir: bool, size: u64| Entry {
+        name: name.into(),
+        is_dir,
+        size,
+        ..Default::default()
+    };
+    let mut sv = ShellView {
+        entries: vec![
+            e("b", true, 44),
+            e("small", false, 10),
+            e("a", true, 396),
+            e("big", false, 900),
+        ],
+        fields: details_fields(),
+        sort: Some((1, true)),
+        ..Default::default()
+    };
+    sort(&mut sv);
+    let names: Vec<&str> = sv.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["a", "b", "small", "big"]);
+}
+
 /// A shortcut to a folder sorts among the files, by name and type alike.
 #[test]
 fn a_shortcut_to_a_folder_sorts_among_the_files() {
