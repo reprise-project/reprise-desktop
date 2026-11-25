@@ -465,11 +465,48 @@ mod tests {
             .unwrap()
     }
 
-    /// Long enough for the wait's first read of the bus to fail.
-    const SETTLE: Duration = Duration::from_millis(500);
+    /// Gets a message once the bus at `session` tells a peer that nothing owns `org.a11y.Bus`: a
+    /// wait started after this call has then made its first read and found no launcher.
+    fn told_no_launcher(session: &str) -> Receiver<()> {
+        let (conn, mut seen) = zbus::block_on(async {
+            let conn = connect(session).await;
+            let seen = zbus::MessageStream::from(&conn);
+            let errors = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Error)
+                .build()
+                .unwrap();
+            let monitoring = zbus::fdo::MonitoringProxy::new(&conn).await.unwrap();
+            monitoring.become_monitor(&[errors], 0).await.unwrap();
+            (conn, seen)
+        });
+        let (tx, told) = channel();
+        std::thread::spawn(move || {
+            let _conn = conn;
+            zbus::block_on(async {
+                while let Some(Ok(m)) = seen.next().await {
+                    let name = m.header().error_name().map(|n| n.to_string());
+                    if name.as_deref() == Some("org.freedesktop.DBus.Error.NameHasNoOwner") {
+                        let _ = tx.send(());
+                        return;
+                    }
+                }
+            });
+        });
+        told
+    }
 
-    /// How long the accessibility bus stays away before it comes.
-    const LATE: Duration = Duration::from_secs(2);
+    /// [`start_wait`] once its first read has found no launcher.
+    fn start_wait_past_first_read(session: &str) -> Waiting {
+        let told = told_no_launcher(session);
+        let wait = start_wait(session);
+        told.recv_timeout(CEILING)
+            .expect("the wait's first read finds no launcher");
+        wait
+    }
+
+    /// Long enough for a wait's read to fail and the wait to fall asleep, or to join a bus it
+    /// should not.
+    const SETTLE: Duration = Duration::from_millis(500);
 
     #[test]
     fn the_wait_sleeps_while_no_accessibility_bus_is_on_the_session_bus() {
@@ -506,8 +543,7 @@ mod tests {
         let (Some(session), Some(a11y)) = (bus_with_no_services(), bus_with_no_services()) else {
             return;
         };
-        let wait = start_wait(&session.1);
-        std::thread::sleep(LATE);
+        let wait = start_wait_past_first_read(&session.1);
         assert!(wait.heard.try_recv().is_err(), "nothing to join yet");
         let _registry = registry(&a11y);
         let _launcher = launcher(&session.1, &a11y.1, None);
@@ -520,8 +556,7 @@ mod tests {
             return;
         };
         let _registry = registry(&a11y);
-        let wait = start_wait(&session.1);
-        std::thread::sleep(SETTLE);
+        let wait = start_wait_past_first_read(&session.1);
         let (asked_tx, asked) = channel();
         let first = launcher(&session.1, &a11y.1, Some(asked_tx));
         asked
