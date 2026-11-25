@@ -61,7 +61,7 @@ while an editor saves it doesn't.
 | `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, `allow_boost`: playback volumes past 100 % up to 150 %, and `on_connect`: which defaults an audio device takes when it connects (`playback`, the default; `playback_and_recording`; `keep`) |
 | `[privacy]` | recent files, location and the red border around a shared or recorded screen |
 | `[time_zone]` | `automatic`: the time zone follows the location, off by default (Date and Time > Time Zone) |
-| `[folders]` | whether a folder opened from Explorer gets its own window, single- or double-click opening on the desktop and in Explorer, hidden files and folders, and Explorer's infotips (Explorer's Tools > Folder Options...) |
+| `[folders]` | whether a folder opened from Explorer gets its own window, single- or double-click opening on the desktop and in Explorer, hidden files and folders, Explorer's extensions of known file types (`hide_extensions`, shown by default) and Explorer's infotips (Explorer's Tools > Folder Options...) |
 | `[recycle_bin]` | what Delete does, each drive's bin size, `older_than_days` to empty old items (Recycle Bin Properties) |
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
@@ -75,6 +75,7 @@ while an editor saves it doesn't.
 | `[[startmenu_changes]]`, `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, as changes to the default menu (what Settings > Start Menu writes, so later default rows still reach you) or as the whole menu (`startmenu = []` for an empty one), which wins and stays whole until Restore Defaults on that page takes it out, and which Start menu you get |
 | `[[outputs]]` | per-monitor mode, scale, rotation, position, adaptive sync and ICC profile; a layout saved for the connected set of monitors wins over all but the profile ([features.md](features.md#displays)) |
 | `[display]` | `gpu`: which GPU draws and drives the monitors; `all_gpus`: also open the other GPUs. Both read when Reprise starts. `auto_rotate`: the built-in screen turns with the machine |
+| `desktop_extensions` | file name extensions on the desktop: `hide` (every known file type's, the default), `hide_launchers` (only `.desktop`) or `show` (Settings > Background); Explorer reads `[folders] hide_extensions` |
 | `desktop_widgets` | widgets on the desktop: `clock`, `calendar`, `meter`; none by default ([features.md](features.md#desktop)) |
 | `terminal`, `script_open`, `script_terminal`, `confirm_scripts` | the terminal, how opening a script runs it, and whether opening a script, a binary or a file its program runs asks first |
 | `task_manager` | what the taskbar menu's Task Manager row and Ctrl+Shift+Escape start; Reprise's Task Manager by default |

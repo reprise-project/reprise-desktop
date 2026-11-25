@@ -49,7 +49,7 @@ fn the_boxes_read_into_the_settings_and_apply_greys_once_saved() {
         new_window: true,
         single_click: true,
         show_hidden: true,
-        hide_extensions: false,
+        hide_extensions: true,
         tips: false,
         cache_thumbnails: false,
     };
@@ -72,7 +72,7 @@ fn restore_defaults_puts_back_only_its_own_pages_boxes() {
         new_window: true,
         single_click: true,
         show_hidden: true,
-        hide_extensions: false,
+        hide_extensions: true,
         tips: false,
         cache_thumbnails: false,
     };
@@ -140,7 +140,7 @@ fn the_sheet_draws_its_pins() {
         new_window: true,
         single_click: true,
         show_hidden: true,
-        hide_extensions: false,
+        hide_extensions: true,
         tips: false,
         cache_thumbnails: false,
     };

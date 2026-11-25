@@ -17,8 +17,9 @@ The file manager, and the default for folders.
   window and on the desktop.
 - **Folder Options** (Tools menu) picks whether a folder opens in the same
   window or its own, single- or double-click opening (for the desktop too),
-  hidden items, hidden extensions of known file types, item descriptions and
-  the thumbnail cache. Apply reaches every open Explorer window and the
+  hidden items, hidden extensions of known file types (shown by default, and
+  only in Explorer: the desktop has `desktop_extensions`), item descriptions
+  and the thumbnail cache. Apply reaches every open Explorer window and the
   desktop at once. Its File Types tab opens Default Programs.
 - **Tabs:** Ctrl+T opens the folder in a new tab, Ctrl+W closes one, Ctrl+Tab
   goes round them, and a middle click on a folder opens it in a tab behind.

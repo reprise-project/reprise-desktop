@@ -880,6 +880,7 @@ impl Config {
                 (f.new_window, &mut into.new_window),
                 (f.single_click, &mut into.single_click),
                 (f.show_hidden, &mut into.show_hidden),
+                (f.hide_extensions, &mut into.hide_extensions),
                 (f.tips, &mut into.tips),
             ] {
                 if let Some(v) = v {

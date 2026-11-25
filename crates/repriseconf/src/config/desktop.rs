@@ -172,6 +172,8 @@ pub struct FoldersConfig {
     /// Pointing at an item selects it and a click opens it.
     pub single_click: bool,
     pub show_hidden: bool,
+    /// Explorer hides a known file type's extension; the desktop follows `desktop_extensions`.
+    pub hide_extensions: bool,
     /// Explorer shows an item's infotip when the pointer rests on it.
     pub tips: bool,
 }
@@ -182,6 +184,7 @@ impl Default for FoldersConfig {
             new_window: false,
             single_click: false,
             show_hidden: false,
+            hide_extensions: false,
             tips: true,
         }
     }

@@ -77,11 +77,7 @@ pub(crate) fn test_env() {
         std::fs::write(&term, script).expect("write");
         std::fs::set_permissions(&term, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let config = state.join("config.toml");
-        // Full names, so a test names the files it made; one about hidden extensions sets them.
-        let text = format!(
-            "terminal = \"{}\"\ndesktop_extensions = \"show\"\n",
-            term.display()
-        );
+        let text = format!("terminal = \"{}\"\n", term.display());
         std::fs::write(&config, text).expect("write");
         reprisefs::configfile::set_path(Some(config));
     });

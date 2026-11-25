@@ -1518,13 +1518,14 @@ fn reduce_motion_is_off_by_default_and_leaves_the_motion_keys_alone() {
 }
 
 #[test]
-fn folders_open_in_place_by_double_click_with_hidden_files_left_out() {
+fn folders_open_in_place_by_double_click_with_hidden_files_left_out_and_extensions_shown() {
     assert_eq!(
         Config::default().folders,
         FoldersConfig {
             new_window: false,
             single_click: false,
             show_hidden: false,
+            hide_extensions: false,
             tips: true,
         }
     );
@@ -1532,5 +1533,11 @@ fn folders_open_in_place_by_double_click_with_hidden_files_left_out() {
         .unwrap();
     assert!(c.folders.single_click && c.folders.show_hidden && !c.folders.tips);
     assert!(!c.folders.new_window);
-    assert!(Config::parse("[folders]\nhide_extensions = true\n").is_err());
+    let hide = Config::parse("[folders]\nhide_extensions = true\n").unwrap();
+    assert!(hide.folders.hide_extensions);
+    assert_eq!(
+        hide.desktop_extensions,
+        reprisefs::names::Extensions::Hide,
+        "the desktop keeps its own key"
+    );
 }
