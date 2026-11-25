@@ -15,10 +15,14 @@ const WIDEST: [&str; 6] = [
     "\u{2191} 888 GB/s",
 ];
 
-/// The meter's font size for a bar font of `size_px` at scale `s`: two px smaller, so two lines
-/// fit a 22 px button row.
-pub fn font_px(size_px: u32, s: i32) -> u32 {
-    size_px.saturating_sub(2 * s.max(1) as u32).max(1)
+/// The meter's font size for a bar font of `size_px` at scale `s` in a button row `row_h` tall:
+/// two px smaller, and smaller again until both lines fit the row.
+pub fn font_px(text: &TextRenderer, size_px: u32, row_h: i32, s: i32) -> u32 {
+    let mut px = size_px.saturating_sub(2 * s.max(1) as u32).max(1);
+    while px > 1 && 2 * line_height(text, px) > row_h {
+        px -= 1;
+    }
+    px
 }
 
 /// The text block, width by height, at `font_px`: the widest reading over two lines.
@@ -63,7 +67,7 @@ mod tests {
     #[test]
     fn the_block_fits_every_reading_and_two_lines_fit_a_classic_row() {
         let text = TextRenderer::load(&FontConfig::default());
-        let px = font_px(11, 1);
+        let px = font_px(&text, 11, 22, 1);
         assert_eq!(px, 9);
         let (w, h) = size(&text, px);
         assert!(h <= 22, "two lines at {px} px are {h} px");
@@ -75,7 +79,7 @@ mod tests {
     #[test]
     fn readings_are_right_aligned_so_the_unit_holds_still() {
         let text = TextRenderer::load(&FontConfig::default());
-        let px = font_px(11, 1);
+        let px = font_px(&text, 11, 22, 1);
         let (w, h) = size(&text, px);
         let r = Rect::new(0, 0, w + 10, h + 4);
         let ink = Color::rgb(0, 0, 0);
@@ -97,10 +101,20 @@ mod tests {
         scale: i32,
         lines: [&str; 2],
     ) -> (Canvas, crate::taskbar::TaskbarLayout) {
+        bar_at(i, 100, scale, lines)
+    }
+
+    fn bar_at(
+        i: crate::interface::Interface,
+        pct: u32,
+        scale: i32,
+        lines: [&str; 2],
+    ) -> (Canvas, crate::taskbar::TaskbarLayout) {
         use crate::taskbar::{TaskbarCounts, TaskbarLayout, TaskbarState};
-        let base = crate::interfaces::theme_for(i);
+        let base = crate::interfaces::theme_for(i).with_text_size(pct);
         let text = TextRenderer::load(&base.fonts);
-        let meter = size(&text, font_px(base.fonts.size_px, 1));
+        let row = base.taskbar_shape().button_row(&base.metrics);
+        let meter = size(&text, font_px(&text, base.fonts.size_px, row, 1));
         let counts = TaskbarCounts {
             tray: 2,
             meter: Some(meter),
@@ -182,6 +196,43 @@ mod tests {
         assert_eq!((m.x, m.width), (l.clock.x, l.clock.width));
         assert_eq!((m.bottom(), m.height), (l.clock.y - 6, 22));
         assert!(l.tray.iter().all(|r| r.bottom() <= m.y - 4));
+    }
+
+    #[test]
+    fn both_lines_fit_the_row_at_every_text_size_and_scale() {
+        use crate::interface::Interface;
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100, 125, 150, 200] {
+                for scale in [1, 2] {
+                    let (_, l) = bar_at(i, pct, scale, ["", ""]);
+                    let theme = crate::interfaces::theme_for(i)
+                        .with_text_size(pct)
+                        .scaled(scale);
+                    let text = TextRenderer::load(&theme.fonts);
+                    let text = text.for_output(scale);
+                    let r = l.meter.unwrap();
+                    let px = font_px(text, theme.fonts.size_px, r.height, scale);
+                    let lines = ["\u{2193} 888 MB/s".into(), "\u{2191} 888 KB/s".into()];
+                    let ink = |clip: Rect| {
+                        let mut c = Canvas::new(l.width as u32, l.height as u32 + 200);
+                        draw(&mut c, text, clip, &lines, Color::rgb(0, 0, 0), px);
+                        let b = c.bounds();
+                        (b.y..b.bottom())
+                            .flat_map(|y| (b.x..b.right()).map(move |x| (x, y)))
+                            .filter(|&(x, y)| c.get(x, y) >> 24 != 0)
+                            .count()
+                    };
+                    let row = Rect::new(r.x, r.y + 100, r.width, r.height);
+                    let unclipped = Rect::new(r.x, r.y, r.width, r.height + 200);
+                    assert_eq!(
+                        ink(row),
+                        ink(unclipped),
+                        "{i:?} {pct}% @{scale}: both lines whole in the {} px row",
+                        r.height
+                    );
+                }
+            }
+        }
     }
 
     #[test]

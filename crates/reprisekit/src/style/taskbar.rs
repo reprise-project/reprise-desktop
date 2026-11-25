@@ -387,7 +387,7 @@ pub(crate) fn draw_taskbar_on(
         ),
     }
     if let (Some(r), Some(lines)) = (layout.meter, &state.meter) {
-        let px = crate::netmeter::font_px(size, s);
+        let px = crate::netmeter::font_px(text, size, r.height, s);
         crate::netmeter::draw(canvas, text, r, lines, style.bar_text, px);
     }
     if let Some(r) = layout.show_desktop {

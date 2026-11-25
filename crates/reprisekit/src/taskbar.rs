@@ -581,9 +581,14 @@ impl TaskbarShape {
         }
     }
 
+    /// The height of a row bar's buttons.
+    pub fn button_row(&self, m: &Metrics) -> i32 {
+        m.taskbar_height - self.button_top - self.button_bottom
+    }
+
     /// Narrowest side bar: one icon-only slot.
     pub fn side_slot(&self, m: &Metrics) -> i32 {
-        let btn = m.taskbar_height - self.button_top - self.button_bottom;
+        let btn = self.button_row(m);
         self.icon_button.map_or(btn, |(w, _)| w) + self.button_top + self.button_bottom
     }
 
@@ -611,7 +616,7 @@ impl TaskbarShape {
     }
 
     fn start_across(&self, m: &Metrics) -> (i32, i32) {
-        let btn = m.taskbar_height - self.button_top - self.button_bottom;
+        let btn = self.button_row(m);
         let h = if self.start.height == 0 {
             btn
         } else {
