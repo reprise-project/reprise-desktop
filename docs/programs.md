@@ -349,8 +349,8 @@ Ctrl+Shift+Escape, or Task Manager on the taskbar's menu, opens it
   desktop icon, while it shows a window; tray programs with no window open
   are left out. End Task closes its windows as their X button does and
   ends the program only when it shows none, so a tray program whose prompt
-  it closed keeps running; End Now is offered for a program still running
-  5 seconds later. Status reads Not Responding while a window doesn't
+  it closed keeps running; End Now is offered for a program still showing a
+  window 5 seconds later. Status reads Not Responding while a window doesn't
   answer.
 - **Processes:** your processes, or every user's, with PID, CPU and memory;
   View > Select Columns... adds Threads, Disk, GPU and Command Line. End

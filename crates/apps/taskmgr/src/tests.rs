@@ -813,6 +813,41 @@ fn end_task_on_a_program_listed_for_a_sandboxed_window_closes_it_and_spares_the_
 }
 
 #[test]
+fn end_task_is_done_once_the_program_shows_no_window_though_it_keeps_running() {
+    let showing = |windows: Vec<(String, u32)>| Snapshot {
+        windows: Some(windows),
+        ..snapshot()
+    };
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.end_task = record_end;
+    t.take(showing(vec![("org.kde.ark".into(), 41)]), &mut ctx);
+    t.event(MAIN, Event::Resized, &mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    ENDED.take();
+    t.ending[0].since -= END_WAIT;
+    t.take(showing(Vec::new()), &mut ctx);
+    assert!(
+        t.ending.is_empty(),
+        "its window closed, so End Task is done"
+    );
+    assert!(t.asks.is_empty(), "no End Now for a program left running");
+
+    t.take(showing(vec![("org.kde.ark".into(), 41)]), &mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    t.ending[0].since -= END_WAIT;
+    t.take(showing(vec![("org.kde.ark".into(), 41)]), &mut ctx);
+    assert!(
+        matches!(t.asks.up(), Some((_, Ask::EndNow(Target::Scope(_))))),
+        "a window still up after the wait is offered End Now"
+    );
+    t.take(showing(Vec::new()), &mut ctx);
+    assert!(t.asks.is_empty(), "End Now goes once the window does");
+}
+
+#[test]
 fn end_task_on_a_program_not_responding_offers_end_now_at_once() {
     let mut ctx = ctx();
     let mut t = loaded(&mut ctx);
