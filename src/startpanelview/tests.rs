@@ -2112,3 +2112,34 @@ fn a_super_bind_over_the_open_panel_closes_it_and_runs_while_plain_keys_search()
     assert!(h.state.start_panel.is_none(), "Super+R closes the panel");
     assert_eq!(h.state.dialogs.views.len(), 1, "and opens Run");
 }
+
+/// The Blue menu opened by the Start key or by Enter on the focused Start button underlines its
+/// rows' letters; opened by the pointer it does not, and Glass never does.
+#[test]
+fn the_blue_menu_opened_from_the_keyboard_underlines_its_letters() {
+    use crate::config::StartMenuStyle;
+    const ENTER: u32 = 28;
+    let keys = |h: &crate::harness::Harness| h.state.start_panel.as_ref().map(|v| v.model.keys);
+    for (style, name) in [
+        (StartMenuStyle::Blue, "blue"),
+        (StartMenuStyle::Glass, "glass"),
+    ] {
+        let blue = style == StartMenuStyle::Blue;
+        let config = format!("startmenu_style = \"{name}\"\n");
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&config).unwrap());
+        h.output("TEST-1", 1024, 768);
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        assert_eq!(keys(&h), Some(false), "{style:?}: a click");
+        h.state.close_start_panel();
+        h.state.toggle_start_from_keys();
+        assert_eq!(keys(&h), Some(blue), "{style:?}: the Start key");
+        h.state.close_start_panel();
+        h.state
+            .focus_bar_item(bar, reprisekit::taskbar::TaskbarHit::Start);
+        h.key(ENTER, true);
+        h.key(ENTER, false);
+        assert_eq!(keys(&h), Some(blue), "{style:?}: Enter on Start");
+    }
+}

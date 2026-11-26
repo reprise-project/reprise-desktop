@@ -118,6 +118,19 @@ impl State {
         if let Some(bar) = self.bars.iter().find(|b| b.output == output) {
             let bar = bar.tree;
             self.open_start_panel(bar);
+            self.start_panel_keys();
+        }
+    }
+
+    /// The keyboard opened the panel: the Blue menu underlines its rows' letters
+    /// ([`StartPanel::keys`]).
+    pub(crate) fn start_panel_keys(&mut self) {
+        let Some(v) = self.start_panel.as_mut() else {
+            return;
+        };
+        if v.model.shape == Shape::Blue && !v.model.keys {
+            v.model.keys = true;
+            self.redraw_start_panel();
         }
     }
 

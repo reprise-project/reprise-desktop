@@ -181,6 +181,9 @@ pub struct StartPanel {
     /// The Blue bottom band's Log Off and Turn Off Computer label widths at 100% text, design px:
     /// the buttons are sized from them. The host measures them after [`StartPanel::fit`].
     pub foot_labels: [i32; 2],
+    /// The Blue menu opened from the keyboard: each row underlines the first letter of its label,
+    /// the letter that jumps to it.
+    pub keys: bool,
     /// Private so every write goes through `key` or `paste`, which keep
     /// the mode in step with the query.
     edit: TextEdit,
@@ -221,6 +224,7 @@ impl StartPanel {
             text: TextUnits::default(),
             room: None,
             foot_labels: [0; 2],
+            keys: false,
             edit: TextEdit::new("", false),
             mode: Mode::Home,
             before_search: Mode::Home,
