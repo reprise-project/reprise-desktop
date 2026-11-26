@@ -434,4 +434,47 @@ mod tests {
         h.state.preview_players.players = p;
         assert!(super::moved(&h.state), "Pause turns to Play");
     }
+
+    #[test]
+    fn when_lock_mode_ends_with_the_console_locked_its_lock_shows_the_player_again() {
+        let mut h = locked(Some(players("Playing", true)));
+        let power = lock(&h).view.model.offers_power();
+        let mut portal = h.connect_portal();
+        let remote = portal.lock_screen();
+        remote.set_layout(&[(0, 0, 1280, 720, 100)]);
+        h.roundtrip(&mut portal);
+        assert_eq!(strip_title(&h), None);
+        drop(remote);
+        portal.hang_up();
+        h.run_for(50);
+        assert!(!crate::console::remote_side(&h.state), "lock mode ends");
+        assert!(h.state.console_locked());
+        assert_eq!(strip_title(&h).as_deref(), Some("Song"));
+        assert!(lock(&h).view.layout.as_ref().unwrap().media.is_some());
+        assert_eq!(lock(&h).view.model.offers_power(), power);
+    }
+
+    #[test]
+    fn in_lock_mode_the_computers_media_keys_leave_the_player_alone_and_keep_the_volume() {
+        const KEY_VOLUMEUP: u32 = 115;
+        const PLAYER_KEYS: [u32; 4] = [163, 164, 165, 166];
+        let mut h = locked(Some(players("Playing", true)));
+        let mut portal = h.connect_portal();
+        let remote = portal.lock_screen();
+        remote.set_layout(&[(0, 0, 1280, 720, 100)]);
+        h.roundtrip(&mut portal);
+        let jobs = h.state.key_input.media.capture();
+        for code in PLAYER_KEYS {
+            tap(&mut h, code);
+        }
+        assert_eq!(jobs.try_iter().count(), 0, "no player call");
+        tap(&mut h, KEY_VOLUMEUP);
+        assert!(
+            matches!(
+                jobs.try_iter().collect::<Vec<_>>()[..],
+                [crate::media::Job::VolumeStep(1, _)]
+            ),
+            "Volume Up steps the volume"
+        );
+    }
 }

@@ -302,8 +302,7 @@ pub(crate) mod tests {
     fn fitted(m: &mut Logon, output: Rect, pct: u32) -> crate::logon::LogonLayout {
         let theme = crate::interfaces::theme_for(m.interface).with_text_size(pct);
         let text = TextRenderer::load(&theme.fonts);
-        crate::interfaces::logon::logon_fit_media(m, &theme, &text, output);
-        logon_layout(m, &theme, &text, output)
+        crate::interfaces::logon::logon_fit_media(m, &theme, &text, output)
     }
 
     #[test]

@@ -5,6 +5,7 @@ use smithay::backend::input::InputTime;
 use smithay::input::keyboard::{KeyboardSource, Keycode, ModifiersState, xkb};
 
 use crate::compositor::State;
+use crate::config::Action;
 use crate::heldkeys::Owner;
 use crate::inputproto::InputSource;
 use crate::keyroute::{KeyRoute, Modes};
@@ -154,6 +155,8 @@ pub fn key(state: &mut State, code: Keycode, pressed: bool) {
                 let a = st.config.power.sleep_button;
                 crate::power::run_action(st, a, Origin::Console);
             }
+            // The player is the remote user's; the computer's keys keep volume and brightness.
+            KeyRoute::Media(Action::PlayPause | Action::Next | Action::Prev | Action::Stop) => {}
             KeyRoute::Media(a) => st.media_key_down(&a, code.raw()),
             KeyRoute::VtSwitch(n) => {
                 if let Some(b) = st.backend.as_mut() {
