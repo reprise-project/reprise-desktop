@@ -1873,7 +1873,6 @@ fn the_erase_answer_leaves_a_new_item_made_at_the_same_name_while_it_was_open() 
 fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
     let (mut h, _desk) = desktop_in("desktop-undo-ended", &[]);
     crate::fsjobs::setup(&mut h.state);
-    h.state.fsjobs.deadline = Some(std::time::Duration::from_millis(50));
     for cmd in [DesktopCommand::NewFolder, DesktopCommand::NewTextDocument] {
         h.state.desktop_command(cmd, None);
         h.until("the new item's rename", |s| {
@@ -1881,6 +1880,7 @@ fn ctrl_z_works_again_after_an_undo_fails_to_start_or_gives_up() {
         });
         h.state.cancel_rename();
     }
+    h.state.fsjobs.deadline = Some(std::time::Duration::from_millis(50));
     let undoing = |s: &crate::compositor::State| s.desktop.as_ref().unwrap().undoing;
 
     h.state.fsjobs.refuse_threads = true;
