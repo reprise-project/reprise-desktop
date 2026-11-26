@@ -32,6 +32,9 @@ use menu::{get_layout, send_menu_event};
 use notifications::{Notifications, Programs, Senders};
 use watcher::{Published, Watcher, split_service};
 
+/// The programs `ActivationFor` mints for: Explorer's FileManager1 and the single-instance
+/// programs, which hand a later start's request to the running copy.
+const MINTS_FOR_CALLERS: [&str; 3] = ["reprise-explorer", "reprise-settings", "reprise-notes"];
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 const WATCHER_IFACE: &str = "org.kde.StatusNotifierWatcher";
@@ -255,8 +258,9 @@ impl Shell {
         (answer.recv().await).map_err(|_| zbus::fdo::Error::Failed("no window list".into()))
     }
 
-    /// A trusted activation token for the window FileManager1 opens for bus peer `caller` while its
-    /// process holds the keyboard, else empty. Only the installed reprise-explorer may ask.
+    /// A trusted activation token for the window FileManager1 opens, or a single-instance program
+    /// raises on a later start, for bus peer `caller` while its process holds the keyboard, else
+    /// empty. Only the installed [`MINTS_FOR_CALLERS`] may ask.
     async fn activation_for(
         &self,
         #[zbus(connection)] conn: &Connection,
@@ -270,7 +274,7 @@ impl Shell {
         let asker = asker
             .and_then(|p| i32::try_from(p).ok())
             .ok_or_else(refused)?;
-        if !crate::inputproto::runs_installed(asker, "reprise-explorer") {
+        if !(MINTS_FOR_CALLERS.iter()).any(|p| crate::inputproto::runs_installed(asker, p)) {
             return Err(refused());
         }
         let caller = reprisebus::peer::pid(conn, &caller).await;
