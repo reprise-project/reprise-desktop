@@ -1203,7 +1203,7 @@ impl repriseapp::Extended for Terminal {
         }
         let lay = self.chrome_layout(ctx);
         let bar = &self.w.chrome.bar;
-        toolbar::access(bar, lay.toolbar, &lay.buttons, tree, ROOT, "toolbar");
+        toolbar::access(bar, lay.toolbar, &lay.buttons, &[], tree, ROOT, "toolbar");
         if !self.w.caption {
             tabstrip::doc_access(&self.w.tabs.strip, &lay.strip, tree, ROOT, "tabs");
         }

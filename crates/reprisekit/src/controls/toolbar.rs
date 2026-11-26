@@ -422,11 +422,13 @@ fn spoken_name(id: &str) -> &str {
     }
 }
 
-/// The toolbar's `access` part over `rects` (from [`layout`]); icon-only buttons are named by what their id stands for.
+/// The toolbar's `access` part over `rects` (from [`layout`]); an icon-only button is named
+/// `names[i]` when the host gives one, else by what its id stands for.
 pub fn access(
     tb: &ToolBar,
     r: Rect,
     rects: &[Rect],
+    names: &[String],
     tree: &mut Tree,
     parent: NodeId,
     key: impl std::hash::Hash,
@@ -445,6 +447,7 @@ pub fn access(
         let label = label
             .as_deref()
             .filter(|l| !l.is_empty())
+            .or_else(|| names.get(i).map(String::as_str))
             .unwrap_or_else(|| spoken_name(id));
         let mut n = access::button(*rect, label, enabled, false);
         if drop {

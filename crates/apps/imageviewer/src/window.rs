@@ -1,4 +1,5 @@
-//! The main window: the menu bar, the picture's box and the status bar, drawn and named.
+//! The main window: the menu bar, the toolbar, the picture's box and the status bar, drawn and
+//! named.
 
 use super::*;
 use reprisekit::access::ROOT;
@@ -11,7 +12,7 @@ use reprisekit::theme::Color;
 const PANELS: [i32; 4] = [80, 110, 80, 60];
 
 impl Viewer {
-    fn client(&self, ctx: &Ctx) -> Rect {
+    pub(crate) fn client(&self, ctx: &Ctx) -> Rect {
         Rect::new(0, 0, ctx.size.0, ctx.size.1)
     }
 
@@ -26,7 +27,7 @@ impl Viewer {
             .reaching(ctx.menu_within())
     }
 
-    /// The picture's box: the client under the menu bar and over the status bar, all of it full
+    /// The picture's box: the client under the toolbar and over the status bar, all of it full
     /// screen.
     pub(crate) fn box_rect(&self, ctx: &Ctx) -> Rect {
         let c = self.client(ctx);
@@ -34,7 +35,7 @@ impl Viewer {
             return c;
         }
         let cm = ctx.theme.controls();
-        let top = menubar::bar_h(&cm);
+        let top = self.chrome(ctx).map_or(0, |ch| ch.bottom);
         let bottom = if self.status_bar {
             statusbar::height(&cm)
         } else {
@@ -128,8 +129,12 @@ impl Viewer {
         if let Some((bar, r)) = self.status(ctx) {
             statusbar::draw(c, &ctx.text, &paint, &bar, r, px);
         }
+        if let Some(ch) = self.chrome(ctx) {
+            self.draw_toolbar(c, ctx, &ch, &paint);
+        }
         let lay = self.bar_layout(ctx);
         self.bar.draw(c, &ctx.text, &ctx.theme, &lay);
+        self.draw_tip(c, ctx);
     }
 
     pub(crate) fn blank_text(&self) -> String {
@@ -193,6 +198,7 @@ impl Viewer {
         } else {
             self.bar.access(&self.bar_layout(ctx), tree, ROOT)
         };
+        self.access_toolbar(tree, ctx);
         let lay = self.view_layout(ctx);
         let name = self.status_texts(ctx)[0].clone();
         let picture = imageview::access(tree, ROOT, &self.view, &lay, &name);

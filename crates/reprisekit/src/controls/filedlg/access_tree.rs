@@ -31,6 +31,7 @@ impl FileDlg {
             &self.toolbar,
             lay.toolbar,
             &lay.toolbar_rects,
+            &[],
             tree,
             root,
             "toolbar",

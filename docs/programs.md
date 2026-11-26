@@ -177,8 +177,11 @@ memory, or 512 MiB, says it is too large to show.
   the picture (or Shift+F10) offers both, with Copy, Delete and Set as
   Desktop Background.
 
-The status bar shows the name, the place in the folder, the size in pixels,
-the file size and the zoom.
+The toolbar under the menu bar has Previous, Next, Zoom In, Zoom Out, Fit to
+Window, Actual Size, the two turns, Slide Show and Delete; each greys with its
+menu row, and resting the pointer on one names it and its key. The status bar
+shows the name, the place in the folder, the size in pixels, the file size and
+the zoom.
 
 ## Paint
 

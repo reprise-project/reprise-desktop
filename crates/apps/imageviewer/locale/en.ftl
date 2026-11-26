@@ -30,6 +30,10 @@ menu-image = &Image
 menu-rotate-cw = Rotate &Clockwise
 menu-rotate-ccw = Rotate C&ounterclockwise
 
+## The toolbar
+# A button's tip: its menu row's name and key.
+button-tip = { $name } ({ $key })
+
 ## The Open dialog
 title-open = Open
 open-button = &Open

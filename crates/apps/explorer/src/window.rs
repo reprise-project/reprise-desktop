@@ -409,7 +409,7 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
     let menus = ex.bar.access(&ex.bar_layout(ctx), tree, ROOT);
     if let Some(r) = lay.toolbar {
         let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
-        toolbar::access(&ex.toolbar, r, &rects, tree, ROOT, "toolbar");
+        toolbar::access(&ex.toolbar, r, &rects, &[], tree, ROOT, "toolbar");
     }
     let search = search_field(ex, ctx)
         .map(|r| searchfield::access(&ex.search_field, r, &ctx.text, px, tree, ROOT, "search"));

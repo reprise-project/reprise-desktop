@@ -163,6 +163,9 @@ impl Viewer {
                         }
                         Action::Ignored => {}
                     }
+                    if let Some(r) = self.toolbar_press(x, y, ctx) {
+                        return r;
+                    }
                     if let Some((bar, r)) = self.status(ctx)
                         && statusbar::hit_grip(&bar, r, x, y)
                     {
@@ -196,14 +199,23 @@ impl Viewer {
                 Some(Nav::Forward) => self.go(Step::Next),
                 None => Reply::none(),
             },
-            PointerInput::Release { .. } => {
+            PointerInput::Release { x, y, button, .. } => {
+                if button == BTN_LEFT
+                    && let Some(r) = self.toolbar_release(x, y, ctx)
+                {
+                    return r;
+                }
                 let lit = self.view.release();
                 self.lit(lit, ctx)
             }
             PointerInput::Leave => {
+                let tools = self.toolbar_leave();
                 let title = self.bar.leave();
                 let lit = self.view.leave() || title;
-                self.lit(lit, ctx)
+                match tools {
+                    true => Reply::redraw(),
+                    false => self.lit(lit, ctx),
+                }
             }
             PointerInput::Motion { x, y } => {
                 if !self.full && self.bar.open.is_some() {
@@ -212,11 +224,16 @@ impl Viewer {
                 }
                 let title = !self.full && self.bar.hover(x, y, &blay);
                 let dragging = self.view.dragging();
-                let moved = self.view.motion(x, y, &lay);
-                if dragging && moved {
-                    return Reply::redraw();
-                }
-                self.lit(moved || title, ctx)
+                let (tools, tick) = match dragging {
+                    true => (false, false),
+                    false => self.toolbar_motion(x, y, ctx),
+                };
+                let moved = self.tools.held.is_none() && self.view.motion(x, y, &lay);
+                let reply = match (dragging && moved) || tools {
+                    true => Reply::redraw(),
+                    false => self.lit(moved || title, ctx),
+                };
+                Reply { tick, ..reply }
             }
             PointerInput::Scroll { x, y, rows } => self.wheel(x, y, rows, ctx),
             PointerInput::ScrollAcross { .. } => Reply::none(),
@@ -285,7 +302,14 @@ impl Viewer {
             return r;
         }
         match ev {
-            Event::Key(k) => self.key(k, ctx),
+            Event::Key(k) => {
+                let tip = self.hide_tip();
+                let r = self.key(k, ctx);
+                Reply {
+                    redraw: r.redraw || tip,
+                    ..r
+                }
+            }
             Event::KeyUp(k) => self.key_up(k, ctx),
             Event::Pointer(p) => self.pointer(p, ctx),
             Event::Wake => match self.drain() {
@@ -299,9 +323,11 @@ impl Viewer {
             Event::Focus(false) => {
                 self.alt_arm.interrupt();
                 self.bar.close();
+                self.toolbar_leave();
                 self.ctrl = false;
                 Reply::redraw()
             }
+            Event::Tick => self.toolbar_tick(),
             Event::Resized | Event::Focus(_) => Reply::redraw(),
             _ => Reply::none(),
         }
