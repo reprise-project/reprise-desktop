@@ -47,13 +47,7 @@ impl SettingsApp {
             return Reply::none();
         }
         let on = row.zip(rule.cloned());
-        let outputs = self
-            .display
-            .model
-            .heads()
-            .iter()
-            .map(|h| h.name.clone())
-            .collect();
+        let outputs = ruledlg::screens(self.display.model.heads());
         self.rule_dlg = Some((ruledlg::RuleDialog::new(rule, outputs), on));
         // Tests leave the session bus alone.
         if !cfg!(test) {

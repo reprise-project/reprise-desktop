@@ -98,13 +98,33 @@ pub fn shown(r: &Rule) -> String {
     }
 }
 
+/// How Screen and the list name `output`: a connector as it is, a monitor id
+/// (`displays::monitor_ids`) as its make and model with the serial in brackets.
+pub fn screen(output: &str) -> String {
+    let mut parts = output.split('|');
+    let (Some(make), Some(model), Some(serial)) = (parts.next(), parts.next(), parts.next()) else {
+        return output.to_string();
+    };
+    let serial = (!serial.is_empty()).then(|| format!("({serial})"));
+    let name = [Some(make.to_string()), Some(model.to_string()), serial]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    match parts.next() {
+        Some(connector) => format!("{name} on {connector}"),
+        None => name,
+    }
+}
+
 /// What the rule sets, as the row's dimmed detail.
 pub fn sets(r: &Rule) -> String {
     let on = |v: Option<bool>, yes: &str, no: &str| v.map(|v| if v { yes } else { no }.to_string());
     let parts: Vec<String> = [
         r.size.map(|[w, h]| format!("{w} x {h}")),
         r.position.map(|[x, y]| format!("at {x}, {y}")),
-        r.output.as_ref().map(|o| format!("on {o}")),
+        r.output.as_ref().map(|o| format!("on {}", screen(o))),
         (r.state.as_deref()).map(|s| {
             STATES
                 .iter()
@@ -241,6 +261,18 @@ mod tests {
             ("foot".into(), "sets nothing".into())
         );
         assert_eq!(shown(&rule("")), "(no app ID)");
+    }
+
+    #[test]
+    fn a_monitor_id_reads_as_the_monitor() {
+        assert_eq!(screen("DP-1"), "DP-1");
+        assert_eq!(
+            screen("Dell Inc.|DELL U2723QE|ABC123"),
+            "Dell Inc. DELL U2723QE (ABC123)"
+        );
+        assert_eq!(screen("|U2720Q|"), "U2720Q");
+        assert_eq!(screen("||ABC123"), "(ABC123)");
+        assert_eq!(screen("Dell|U2720Q||DP-2"), "Dell U2720Q on DP-2");
     }
 
     #[test]
