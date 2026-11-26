@@ -2857,12 +2857,23 @@ mod tests {
         let mut c = h.connect();
         let t = h.map_toplevel(&mut c, "timed", 20, 20);
         let mut client = h.connect_capture((64, 48));
-        record_twice(&mut h, &mut client);
-        assert_eq!(
-            refresh_shown(&mut h, &mut c, (t, 0xff00_8000), &o),
-            CAPTURED,
-            "a frame before the recorder's next copy shows at 30 frames a second"
-        );
+        for attempt in 0.. {
+            assert!(
+                attempt < 10,
+                "a tick within the hold of the recorder's copy"
+            );
+            record_twice(&mut h, &mut client);
+            let copied = crate::captureborder::last_recorded(&h.state).expect("a recording");
+            let shown = refresh_shown(&mut h, &mut c, (t, 0xff00_8000 + attempt), &o);
+            // A stall that outlasts the hold between the copy and the tick proves nothing.
+            if copied.elapsed() < crate::captureborder::HOLD {
+                assert_eq!(
+                    shown, CAPTURED,
+                    "a frame before the recorder's next copy shows at 30 frames a second"
+                );
+                break;
+            }
+        }
         run_past_hold(&mut h);
         assert_eq!(
             refresh_shown(&mut h, &mut c, (t, 0xff80_0000), &o),
