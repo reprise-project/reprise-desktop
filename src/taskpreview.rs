@@ -3,7 +3,8 @@
 //! the menu layer, its edge on the taskbar's on the screen side, with each window behind the button
 //! shown live (`livepreview`). It replaces the button's text tip. The panel stays while the pointer is
 //! on the button, the panel or the bar between them, moves at once to another task button the
-//! pointer reaches, and goes when the pointer leaves them or anything is pressed. The hovered cell shows a close button: a left click on
+//! pointer reaches, over the bar's empty rows and the gaps between buttons too, and goes when the
+//! pointer leaves them or anything is pressed. The hovered cell shows a close button: a left click on
 //! it closes that window, elsewhere on a cell it activates the window. The popup is laid out and drawn
 //! in the look's own way (`interfaces::task_preview_grid`, `interfaces::draw_task_preview`); under
 //! glass its canvas reaches over a shadow round the panel and the panel shows the blurred backdrop
@@ -26,7 +27,7 @@ use reprisekit::{
     controls::volumepopup::{NowPlaying, Transport},
     interfaces,
     pointer::Pointer,
-    taskbar::Edge,
+    taskbar::{AlongTasks, Edge},
 };
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::{
@@ -116,7 +117,7 @@ impl Panel {
     }
 }
 
-/// The pointer is over `hit` on bar `bar`. A task button starts the delay, or takes over a panel at once, except the one just pressed (`pressed`); anything else on the bar takes it down, but for the rows between the button and its panel.
+/// The pointer is over `hit` on bar `bar`. A task button starts the delay, or takes over a panel at once, except the one just pressed (`pressed`); anything else on the bar takes it down, but for the rows between the button and its panel and the bar's empty rows along the task buttons (`open_along`).
 pub fn hover(state: &mut State, bar: TreeId, hit: TaskbarHit) {
     arm(state, bar, hit, false);
 }
@@ -146,6 +147,17 @@ fn arm(state: &mut State, bar: TreeId, hit: TaskbarHit, keys: bool) {
             hover_panel(state, None);
             return;
         }
+        TaskbarHit::Nothing => match open_along(state, bar) {
+            Some(AlongTasks::Button(i)) => (bar, i),
+            Some(AlongTasks::Gap) => {
+                hover_panel(state, None);
+                return;
+            }
+            None => {
+                leave(state);
+                return;
+            }
+        },
         _ => {
             leave(state);
             return;
@@ -199,6 +211,17 @@ fn arm(state: &mut State, bar: TreeId, hit: TaskbarHit, keys: bool) {
         Ok(t) => state.task_preview.timer = Some(t),
         Err(e) => log::warn!("task preview timer: {}", e.error),
     }
+}
+
+/// With a pointer's panel shown on bar `bar`, where the pointer lies along its task buttons, so the
+/// pointer crossing the bar's empty rows or a gap to the next button switches the panel at once.
+fn open_along(state: &State, bar: TreeId) -> Option<AlongTasks> {
+    let v = &state.task_preview;
+    v.shown.as_ref().filter(|p| p.bar == bar && !v.keyed)?;
+    let b = state.bar(bar)?;
+    let (at, o) = (state.pointer_location(), state.bar_drawn(&b.output).shown);
+    b.layout
+        .along_tasks(at.x.floor() as i32 - o.x, at.y.floor() as i32 - o.y)
 }
 
 /// Whether the pointer is on bar `bar` between the shown panel's button and the panel
@@ -1661,9 +1684,25 @@ mod tests {
         [Rect; 2],
         Rect,
     ) {
+        resting_on_the_first_button_at(look, text, scale, Edge::Bottom)
+    }
+
+    /// As `resting_on_the_first_button`, with the bar on `edge`.
+    fn resting_on_the_first_button_at(
+        look: &str,
+        text: u32,
+        scale: i32,
+        edge: Edge,
+    ) -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        [Rect; 2],
+        Rect,
+    ) {
         let toml =
             format!("[appearance]\ninterface = \"{look}\"\n[accessibility]\ntext_size = {text}\n");
-        let config = crate::config::Config::parse(&toml).unwrap();
+        let mut config = crate::config::Config::parse(&toml).unwrap();
+        config.taskbar.position = edge;
         let mut h = crate::harness::Harness::with_config(config);
         let out = h.output("TEST-1", 1920, 1080);
         let scale = smithay::output::Scale::Integer(scale);
@@ -1742,20 +1781,78 @@ mod tests {
                         "{what:?}: closed on the empty bar"
                     );
 
-                    let (mut h, _c, [a, _], panel) = resting_on_the_first_button(look, text, scale);
+                    let (mut h, _c, [a, b], panel) = resting_on_the_first_button(look, text, scale);
                     let x = f64::from(a.x + a.width / 2);
                     let gap = f64::from(a.y) - step;
                     h.pointer_to(x, gap);
                     assert!(on(&h.state, 0), "{what:?}: open above the button");
-                    walk(
-                        &mut h,
-                        (x, gap),
-                        f64::from(a.right().max(panel.right()) + 2),
-                    );
+                    let past = f64::from(a.right().max(panel.right()) + 2);
+                    walk(&mut h, (x, gap), past);
+                    assert!(!on(&h.state, 0), "{what:?}: off the panel past it");
+                    let shown = h.state.task_preview.shown.as_ref();
+                    let end = shown.map_or(b.right(), |p| p.layout.rect.right().max(b.right()));
+                    walk(&mut h, (past, gap), f64::from(end + 2));
                     assert!(
                         !h.state.task_preview.is_shown(),
-                        "{what:?}: closed past the panel"
+                        "{what:?}: closed past the last button and its panel"
                     );
+                }
+            }
+        }
+    }
+
+    /// Walks the pointer from `from` to `to` in steps of `step`, along x then y.
+    fn walk_to(h: &mut crate::harness::Harness, from: (f64, f64), to: (f64, f64), step: f64) {
+        let (mut x, mut y) = from;
+        let toward = |v: f64, end: f64| {
+            if (end - v).abs() <= step {
+                end
+            } else {
+                v + step.copysign(end - v)
+            }
+        };
+        while x != to.0 {
+            x = toward(x, to.0);
+            h.pointer_to(x, y);
+            assert!(h.state.task_preview.is_shown(), "open at {:?}", (x, y));
+        }
+        while y != to.1 {
+            y = toward(y, to.1);
+            h.pointer_to(x, y);
+            assert!(h.state.task_preview.is_shown(), "open at {:?}", (x, y));
+        }
+    }
+
+    #[test]
+    fn moving_from_one_task_button_to_the_next_switches_the_panel_at_once() {
+        for edge in [Edge::Bottom, Edge::Left] {
+            for look in LOOKS {
+                for text in [100, 200] {
+                    for scale in [1, 2] {
+                        let what = (edge, look, text, scale);
+                        let step = 1.0 / f64::from(scale);
+                        let mid =
+                            |r: Rect| (f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
+                        let (mut h, _c, [a, b], _) =
+                            resting_on_the_first_button_at(look, text, scale, edge);
+                        walk_to(&mut h, mid(a), mid(b), step);
+                        assert!(on(&h.state, 1), "{what:?}: straight across");
+
+                        let (mut h, _c, [a, b], _) =
+                            resting_on_the_first_button_at(look, text, scale, edge);
+                        let off = match edge {
+                            Edge::Bottom => (mid(a).0, f64::from(a.y) - step),
+                            _ => (f64::from(a.right()), mid(a).1),
+                        };
+                        walk_to(&mut h, mid(a), off, step);
+                        let beside = match edge {
+                            Edge::Bottom => (mid(b).0, off.1),
+                            _ => (off.0, mid(b).1),
+                        };
+                        walk_to(&mut h, off, beside, step);
+                        walk_to(&mut h, beside, mid(b), step);
+                        assert!(on(&h.state, 1), "{what:?}: over the bar's edge rows");
+                    }
                 }
             }
         }

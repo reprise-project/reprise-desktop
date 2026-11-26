@@ -374,6 +374,15 @@ pub struct PopupCell {
     pub held: bool,
 }
 
+/// Where a point on the bar lies along the run of task buttons (`TaskbarLayout::along_tasks`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlongTasks {
+    /// Across the bar from button `i`, within its span along the bar.
+    Button(usize),
+    /// Between two buttons.
+    Gap,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskbarHit {
     Start,

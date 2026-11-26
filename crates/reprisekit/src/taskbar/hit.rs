@@ -15,6 +15,19 @@ impl TaskbarLayout {
         }
     }
 
+    /// Where bar-local (x, y) lies along the task buttons, whatever its distance across the bar;
+    /// None before the first or past the last.
+    pub fn along_tasks(&self, x: i32, y: i32) -> Option<AlongTasks> {
+        let at = self.along(x, y);
+        let spans: Vec<Rect> = self.along_rects(&self.tasks);
+        if let Some(i) = spans.iter().position(|r| at >= r.x && at < r.right()) {
+            return Some(AlongTasks::Button(i));
+        }
+        let first = spans.iter().map(|r| r.x).min()?;
+        let last = spans.iter().map(|r| r.right()).max()?;
+        (first..last).contains(&at).then_some(AlongTasks::Gap)
+    }
+
     /// The cell under (x, y); a point between the screen edge and a cell, with nothing between them, takes that cell.
     pub fn hit(&self, x: i32, y: i32) -> TaskbarHit {
         let hit = self.hit_drawn(x, y);
