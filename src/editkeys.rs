@@ -1,5 +1,5 @@
 use reprisekit::textedit::{EditKey, key_for};
-use smithay::input::keyboard::{KeyboardHandle, Keycode, xkb};
+use smithay::input::keyboard::{KeyboardHandle, Keycode, ModifiersState, xkb};
 use zeroize::Zeroize;
 
 use crate::compositor::State;
@@ -63,13 +63,17 @@ pub fn from_keyboard(
         let x = ctx.xkb().lock().unwrap();
         // SAFETY: the state is only read; no reference outlives the lock.
         let state = unsafe { x.state() };
-        edit_key(state, code, mods.ctrl, mods.shift)
+        edit_key(state, code, &mods)
     })
 }
 
-/// The editing key `code` stands for under `state`; a Ctrl chord on a non-Latin letter reads the
-/// Latin keysym another configured layout gives the key.
-pub fn edit_key(state: &xkb::State, code: Keycode, ctrl: bool, shift: bool) -> Option<EditKey> {
+/// The editing key `code` stands for under `state`, none under Super; a Ctrl chord on a non-Latin
+/// letter reads the Latin keysym another configured layout gives the key.
+pub fn edit_key(state: &xkb::State, code: Keycode, mods: &ModifiersState) -> Option<EditKey> {
+    if mods.logo {
+        return None;
+    }
+    let (ctrl, shift) = (mods.ctrl, mods.shift);
     let text = KeyText::of_key(state, code);
     let utf8 = text.as_ref().map(KeyText::as_str);
     let syms: Vec<u32> = state.key_get_syms(code).iter().map(|s| s.raw()).collect();
@@ -100,17 +104,40 @@ pub(crate) mod tests {
         state
     }
 
+    fn held(ctrl: bool, shift: bool, logo: bool) -> ModifiersState {
+        ModifiersState {
+            ctrl,
+            shift,
+            logo,
+            ..ModifiersState::default()
+        }
+    }
+
     #[test]
     fn ctrl_c_on_the_russian_layout_copies_and_c_types_es() {
         let state = russian();
         let c = Keycode::new(46 + 8);
-        assert_eq!(edit_key(&state, c, true, false), Some(EditKey::Copy));
-        let z = Keycode::new(44 + 8);
-        assert_eq!(edit_key(&state, z, true, true), Some(EditKey::Redo));
         assert_eq!(
-            edit_key(&state, c, false, false),
+            edit_key(&state, c, &held(true, false, false)),
+            Some(EditKey::Copy)
+        );
+        let z = Keycode::new(44 + 8);
+        assert_eq!(
+            edit_key(&state, z, &held(true, true, false)),
+            Some(EditKey::Redo)
+        );
+        assert_eq!(
+            edit_key(&state, c, &held(false, false, false)),
             Some(EditKey::Insert("с".into()))
         );
+    }
+
+    #[test]
+    fn a_letter_under_super_edits_nothing() {
+        let state = russian();
+        let e = Keycode::new(18 + 8);
+        assert_eq!(edit_key(&state, e, &held(false, false, true)), None);
+        assert_eq!(edit_key(&state, e, &held(true, false, true)), None);
     }
 
     #[test]
