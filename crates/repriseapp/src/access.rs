@@ -5,7 +5,9 @@
 //! `reprisekit::access::Handler` only posts a [`Msg`] to the event loop, where the program's state
 //! lives. Nothing is built until an assistive tool asks for the tree.
 
-use reprisekit::access::{Gesture, Handler, Published, Reveal, Route, Tree, accesskit};
+use reprisekit::access::{
+    Gesture, Handler, Published, Request, Reveal, Route, Target, Tree, accesskit,
+};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
 use crate::{BTN_LEFT, BTN_RIGHT, DropForm, Event, Host, Mods, PointerInput, WinId};
@@ -84,6 +86,61 @@ impl AccessState {
         if !mapped {
             self.dirty = true;
         }
+    }
+
+    /// Whether to rebuild the tree now. One rebuilt while the window `owes_draw` stays dirty:
+    /// that draw may move the layout the tree read (a form's text fit), and hit-testing follows it.
+    pub fn take_rebuild(&mut self, owes_draw: bool) -> bool {
+        let due = self.dirty;
+        self.dirty = due && owes_draw;
+        due
+    }
+}
+
+/// A window's side of a reader's request, apart from the host so [`reader_target`] can be
+/// tested without a display.
+trait Reading {
+    /// Rebuild the tree when the model changed since it was published.
+    fn publish(&mut self);
+    /// Route `req` on the tree last published.
+    fn route(&mut self, req: Request) -> Route;
+    fn reveal(&mut self, r: Reveal);
+}
+
+/// The node reader `req` acts on, routed on a tree rebuilt from the model a resize or a reveal
+/// changed before its draw: the click is hit-tested on that model, not on the frame on screen.
+fn reader_target(w: &mut impl Reading, req: Request) -> Option<Target> {
+    w.publish();
+    let mut route = w.route(req);
+    // A row in a list in a scrolled view can take a scroll of each, and a list out of the
+    // view the view's first. ScrollIntoView takes the same scrolls and never acts.
+    for _ in 0..REVEALS {
+        let Route::Reveal { reveal, .. } = route else {
+            break;
+        };
+        w.reveal(reveal);
+        w.publish();
+        route = w.route(req);
+    }
+    match route {
+        Route::Act(target) => Some(target),
+        _ => None,
+    }
+}
+
+struct Window<'a>(&'a mut Host, WinId);
+
+impl Reading for Window<'_> {
+    fn publish(&mut self) {
+        self.0.publish(self.1);
+    }
+
+    fn route(&mut self, req: Request) -> Route {
+        self.0.reader_route(self.1, req)
+    }
+
+    fn reveal(&mut self, r: Reveal) {
+        self.0.reader_reveal(self.1, r);
     }
 }
 
@@ -183,10 +240,9 @@ impl Host {
             return;
         };
         let s = &mut self.slots[i];
-        if !s.access.state.dirty {
+        if !s.access.state.take_rebuild(s.dirty) {
             return;
         }
-        s.access.state.dirty = false;
         let title = if s.title.is_empty() {
             self.app.title()
         } else {
@@ -250,24 +306,8 @@ impl Host {
 
     /// Carry out a reader's `req` in window `win`; its click goes `live` through
     /// [`Host::pointer`], or, replayed after a paste, straight to the window.
-    pub(crate) fn reader_request(
-        &mut self,
-        win: WinId,
-        req: reprisekit::access::Request,
-        live: bool,
-    ) {
-        let mut route = self.reader_route(win, req);
-        // A row in a list in a scrolled view can take a scroll of each, and a list out of the
-        // view the view's first. ScrollIntoView takes the same scrolls and never acts.
-        for _ in 0..REVEALS {
-            let Route::Reveal { reveal, .. } = route else {
-                break;
-            };
-            self.reader_reveal(win, reveal);
-            self.publish(win);
-            route = self.reader_route(win, req);
-        }
-        let Route::Act(target) = route else {
+    pub(crate) fn reader_request(&mut self, win: WinId, req: Request, live: bool) {
+        let Some(target) = reader_target(&mut Window(self, win), req) else {
             return;
         };
         let Some(g) = reprisekit::access::gesture(req.act, target) else {
@@ -288,7 +328,7 @@ impl Host {
     }
 
     /// How a reader's `req` in window `win` is carried out, on the tree last published there.
-    fn reader_route(&mut self, win: WinId, req: reprisekit::access::Request) -> Route {
+    fn reader_route(&mut self, win: WinId, req: Request) -> Route {
         (self.slot_mut(win))
             .filter(|s| s.access.state.active)
             .map_or(Route::None, |s| s.access.state.published.route(req))
@@ -389,5 +429,92 @@ mod tests {
         a.dirty = true;
         a.after_draw(true);
         assert!(a.dirty, "and a dirty one dirty");
+    }
+
+    #[test]
+    fn a_tree_rebuilt_while_a_draw_is_owed_is_rebuilt_after_that_draw() {
+        let mut a = AccessState::new();
+        assert!(
+            a.take_rebuild(true),
+            "a dirty tree is rebuilt before the draw"
+        );
+        a.after_draw(true);
+        assert!(a.take_rebuild(false), "and again after it");
+        assert!(!a.take_rebuild(false), "then it is clean");
+    }
+
+    /// A window whose controls sit at `model` while the published tree still says `tree`; a
+    /// reveal scrolls the model by 10 and brings the node in.
+    struct Moved {
+        model: f64,
+        tree: f64,
+        hidden: bool,
+    }
+
+    impl Reading for Moved {
+        fn publish(&mut self) {
+            self.tree = self.model;
+        }
+
+        fn route(&mut self, _: Request) -> Route {
+            let at = (self.tree, 0.0);
+            match self.hidden {
+                true => Route::Reveal {
+                    reveal: Reveal {
+                        at,
+                        row: 0,
+                        node: accesskit::Rect::default(),
+                        view: false,
+                    },
+                    then: true,
+                },
+                false => Route::Act(Target {
+                    role: accesskit::Role::Button,
+                    at,
+                }),
+            }
+        }
+
+        fn reveal(&mut self, _: Reveal) {
+            self.model += 10.0;
+            self.hidden = false;
+        }
+    }
+
+    fn click() -> Request {
+        Request {
+            node: accesskit::NodeId(1),
+            act: reprisekit::access::Act::Click,
+        }
+    }
+
+    #[test]
+    fn a_readers_click_routes_on_the_tree_of_the_moved_model() {
+        let mut w = Moved {
+            model: 2.0,
+            tree: 1.0,
+            hidden: false,
+        };
+        let at = reader_target(&mut w, click()).map(|t| t.at);
+        assert_eq!(
+            at,
+            Some((2.0, 0.0)),
+            "the click lands where the control is now"
+        );
+    }
+
+    #[test]
+    fn a_readers_click_after_a_reveal_routes_on_the_scrolled_model() {
+        let mut w = Moved {
+            model: 1.0,
+            tree: 1.0,
+            hidden: true,
+        };
+        let at = reader_target(&mut w, click()).map(|t| t.at);
+        assert_eq!(
+            at,
+            Some((11.0, 0.0)),
+            "the click lands where the reveal scrolled it"
+        );
     }
 }

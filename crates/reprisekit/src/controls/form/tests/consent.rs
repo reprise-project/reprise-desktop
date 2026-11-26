@@ -210,3 +210,64 @@ fn a_plain_form_counts_every_key_and_press() {
     assert!(f.consent_key(RETURN, t));
     assert!(f.consent_press(t));
 }
+
+/// The last draw's fit still widens Allow for its label, and `hit` reads that fit too.
+#[test]
+fn a_tree_published_between_a_move_and_its_draw_routes_a_readers_click_to_the_named_button() {
+    use crate::access::{Act, Gesture, Published, ROOT, Request, Route, Tree, gesture};
+    let mut f = Form::new(vec![
+        Item::button(
+            "allow",
+            Rect::new(10, 40, 75, 23),
+            "&Allow this request for good",
+            true,
+            false,
+        ),
+        Item::button("deny", Rect::new(200, 40, 75, 23), "&Deny", true, true),
+    ]);
+    f.set_consent();
+    drawn(&f, &Theme::default());
+    assert!(
+        f.rendered.fit.borrow().iter().any(|&d| d != (0, 0)),
+        "the draw widens Allow for its label"
+    );
+    let tree = |f: &Form| {
+        let mut t = Tree::window("", (800, 100));
+        f.access(&mut t, ROOT, &tr(), PX);
+        t
+    };
+    let published = |f: &Form| {
+        let mut p = Published::default();
+        p.update(tree(f));
+        p
+    };
+    let deny = (tree(&f).find(Role::DefaultButton, "Deny")).unwrap();
+    let click = |p: &Published| match p.route(Request {
+        node: deny,
+        act: Act::Click,
+    }) {
+        Route::Act(t) => match gesture(Act::Click, t) {
+            Some(Gesture::Click((x, y))) => (x as i32, y as i32),
+            g => panic!("a click on a button clicks, not {g:?}"),
+        },
+        r => panic!("a click on a button acts, not {r:?}"),
+    };
+    let hit = |f: &Form, (x, y): (i32, i32)| f.hit(x, y, &tr(), PX);
+    let named = |f: &Form, at| hit(f, at).map(|h| f.items[h.item].id);
+    let before = published(&f);
+
+    let (a, d) = (f.rect("allow").unwrap(), f.rect("deny").unwrap());
+    let dx = (d.x + d.width / 2) - (a.x + a.width / 2);
+    for id in ["allow", "deny"] {
+        f.item_mut(id).unwrap().rect.x += dx;
+    }
+    assert_eq!(
+        named(&f, click(&before)),
+        Some("allow"),
+        "the tree from before the move aims Deny's click at Allow"
+    );
+    let at = click(&published(&f));
+    assert_eq!(named(&f, at), Some("deny"));
+    f.click(hit(&f, at));
+    assert_eq!(f.release(), Event::Pressed("deny"));
+}
