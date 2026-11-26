@@ -367,6 +367,7 @@ impl MenuKind {
             MenuKind::Documents { tips, .. } => tips.get(idx).cloned().flatten(),
             MenuKind::StartPanel { rows } => match rows.get(idx) {
                 Some(Some(StartRow::CannotUninstall(why))) => Some(why.to_string()),
+                Some(Some(StartRow::OnDesktop)) => Some(crate::startmenu::ON_DESKTOP.to_string()),
                 _ => None,
             },
             _ => None,

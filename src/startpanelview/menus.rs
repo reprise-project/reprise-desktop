@@ -7,6 +7,7 @@ use reprisekit::taskbar::Edge;
 
 use crate::compositor::State;
 use crate::config::Action;
+use crate::dragview::DropOp;
 use crate::lockview::Origin;
 use crate::menuview::{MenuKind, Skin};
 use crate::raster::Rect;
@@ -335,7 +336,30 @@ impl State {
                     self.spawn_argv_activated(&[program[0], program[1], file.as_os_str()]);
                 }
             }
-            StartRow::CannotUninstall(_) => {}
+            StartRow::CannotUninstall(_) | StartRow::OnDesktop => {}
+            StartRow::OpenFileLocation(a) => {
+                let file = entry(self, a).and_then(|e| reprisefs::apps::find_file(&e.id));
+                self.close_start_panel();
+                if let Some(file) = file {
+                    self.open_file_location(&file);
+                }
+            }
+            StartRow::AddToDesktop(a) => {
+                let Some(e) = entry(self, a) else {
+                    return;
+                };
+                let (Some(file), Some(dir)) = (
+                    reprisefs::apps::find_file(&e.id),
+                    crate::desktop::desktop_dir(),
+                ) else {
+                    return;
+                };
+                let taken = (self.desktop.as_ref())
+                    .map(|d| d.entries.iter().map(|e| e.name.clone()).collect())
+                    .unwrap_or_default();
+                let app = crate::dragview::DragSource::App { entry: e, file };
+                self.write_launchers(dir, DropOp::Copy, vec![(app, None, None)], taken);
+            }
             StartRow::Properties(a) => {
                 let Some(e) = entry(self, a) else {
                     return;

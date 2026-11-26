@@ -90,6 +90,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   (`[launcher] contents`, off by default) adds localsearch's results.
 - **Search providers.** Programs that answer the GNOME search provider
   interface add a section each, set on Settings > Search.
+- **A program's menu** in any Start menu or the launcher also offers Open
+  file location (Explorer on its `.desktop` file) and Add to desktop, a
+  copy allowed to launch; the row greys while the desktop holds one.
 - **Uninstall.** Uninstall... on a program's menu removes a Flatpak or,
   through PackageKit, a package, after a sheet says what goes.
 - **Web apps.** A browser's "Install as app" asks first with the icon and
