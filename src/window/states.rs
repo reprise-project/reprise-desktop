@@ -6,7 +6,7 @@ use smithay::output::Output;
 use crate::compositor::State;
 use crate::raster::Rect;
 
-use super::{Kind, Window, WindowId};
+use super::{Kind, Rescued, Window, WindowId};
 
 impl State {
     /// Tell the client whether it is active; an X11 window also takes/gives the X input focus and
@@ -205,6 +205,53 @@ impl State {
         self.request_size(w, cw, ch);
     }
 
+    /// Move `w` to `at` for a shrink from bounds `room`, remembering where it was; one still where
+    /// a rescue or an earlier nudge put it keeps the place and room it had before that.
+    fn nudge(&mut self, w: WindowId, at: (i32, i32), room: Option<(i32, i32)>) {
+        let Some(win) = self.win(w) else {
+            return;
+        };
+        let kept = win.rescued.filter(|k| (win.x, win.y) == k.to);
+        let (from, room) = kept.map_or(((win.x, win.y), room), |k| (k.from, k.room));
+        self.move_to(w, at.0, at.1);
+        if let Some(win) = self.win_mut(w) {
+            win.rescued = Some(Rescued { from, to: at, room });
+        }
+    }
+
+    /// A nudged `w` still where the nudge put it goes back once its bounds have the room they had
+    /// before and its old place is on an output.
+    fn return_nudged(&mut self, w: WindowId) {
+        let Some(win) = self.win(w) else {
+            return;
+        };
+        let Some((k, room)) = win.rescued.and_then(|k| Some((k, k.room?))) else {
+            return;
+        };
+        if (win.x, win.y) != k.to || win.maximized || win.fullscreen {
+            if let Some(win) = self.win_mut(w) {
+                win.rescued = None;
+            }
+            return;
+        }
+        let r = win.frame_rect();
+        let roomy = self
+            .pending_bounds(w)
+            .is_some_and(|b| b.0 >= room.0 && b.1 >= room.1);
+        if !roomy || !self.centre_on_an_output(Rect::new(k.from.0, k.from.1, r.width, r.height)) {
+            return;
+        }
+        self.move_to(w, k.from.0, k.from.1);
+        if let Some(win) = self.win_mut(w) {
+            win.rescued = None;
+        }
+    }
+
+    fn pending_bounds(&self, w: WindowId) -> Option<(i32, i32)> {
+        let t = self.win(w)?.xdg()?;
+        t.with_pending_state(|s| s.bounds).map(|b| (b.w, b.h))
+    }
+
     pub fn fit_target(&self, w: WindowId) -> Rect {
         if self.win(w).is_some_and(|x| x.fullscreen) {
             self.output_box_for_window(w)
@@ -215,18 +262,20 @@ impl State {
 
     /// The work areas changed: maximized, fullscreen and snapped windows refit to theirs, every
     /// xdg toplevel hears its new bounds, and a normal one that no longer fits them is asked to
-    /// and moves inside its work area.
+    /// and moves inside its work area, going back to its place once the room returns.
     pub fn refit_maximized(&mut self) {
         let ids: Vec<WindowId> = self.windows.iter().map(|w| w.id).collect();
         let mut bounded = Vec::new();
         for w in ids {
+            let room = self.pending_bounds(w);
             let (changed, to) = self.set_bounds(w, true);
             if changed {
                 bounded.push(w);
             }
-            if let Some((x, y)) = to {
-                self.move_to(w, x, y);
+            if let Some(at) = to {
+                self.nudge(w, at, room);
             }
+            self.return_nudged(w);
         }
         let fits: Vec<WindowId> = self
             .windows

@@ -206,7 +206,7 @@ pub struct Window {
     pub snapped: Option<Rect>,
     /// What a smaller work area took from its size ([`place::Shrunk`]).
     pub shrunk: Option<place::Shrunk>,
-    /// Where `rescue_offscreen` took it from ([`place::Rescued`]).
+    /// Where an output change rescued or nudged it from ([`place::Rescued`]).
     pub rescued: Option<place::Rescued>,
     /// Where it was on the computer's own screens while lock mode keeps it on a remote one.
     pub home: Option<crate::console::homes::Home>,

@@ -1513,6 +1513,97 @@ fn a_rescued_window_sized_since_stays_where_it_was_put() {
     );
 }
 
+/// A 1200x500 window framed at (300, 100) on a 1920x1080 TEST-1, shrunk and nudged inside by
+/// scale 2, with the frame it had before.
+fn nudged_by_scale_2() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    WindowId,
+    smithay::output::Output,
+    Rect,
+) {
+    let mut h = crate::harness::Harness::new();
+    let o = h.output("TEST-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.roundtrip(&mut c);
+    h.resize_self(&mut c, t, 1200, 500);
+    h.state.move_to(t.id, 300, 100);
+    let before = h.state.win(t.id).unwrap().frame_rect();
+    set_scale(&mut h, &mut c, &o, 2.0);
+    let r = h.state.win(t.id).unwrap().frame_rect();
+    assert!(
+        r.x < before.x && r.width < before.width,
+        "at scale 2 the frame {r:?} is shrunk and nudged left of {before:?}"
+    );
+    (h, c, t.id, o, before)
+}
+
+#[test]
+fn a_window_nudged_inside_by_a_scale_change_goes_back_when_the_scale_returns() {
+    let (mut h, mut c, t, o, before) = nudged_by_scale_2();
+    set_scale(&mut h, &mut c, &o, 1.0);
+    assert_eq!(
+        h.state.win(t).unwrap().frame_rect(),
+        before,
+        "back at scale 1 the frame has its old size and place"
+    );
+}
+
+#[test]
+fn a_nudged_window_stays_nudged_while_the_room_is_short() {
+    let (mut h, mut c, t, o, _) = nudged_by_scale_2();
+    let put = h.state.win(t).unwrap().frame_rect();
+    set_scale(&mut h, &mut c, &o, 1.5);
+    let r = h.state.win(t).unwrap().frame_rect();
+    assert!(
+        r.x < 300,
+        "at scale 1.5 the 1200 px frame {r:?} cannot be at x 300; it was put at {put:?}"
+    );
+    set_scale(&mut h, &mut c, &o, 1.0);
+    let r = h.state.win(t).unwrap().frame_rect();
+    assert_eq!(
+        (r.x, r.y),
+        (300, 100),
+        "back at scale 1 the frame is at (300, 100)"
+    );
+}
+
+#[test]
+fn a_nudged_window_moved_since_stays_where_it_was_moved() {
+    let (mut h, mut c, t, o, _) = nudged_by_scale_2();
+    h.state.move_to(t, 0, 60);
+    set_scale(&mut h, &mut c, &o, 1.0);
+    let r = h.state.win(t).unwrap().frame_rect();
+    assert_eq!((r.x, r.y), (0, 60), "the frame stays at the moved place");
+}
+
+#[test]
+fn a_rescued_window_nudged_by_a_later_change_still_goes_back() {
+    let mut h = crate::harness::Harness::new();
+    let o = h.output("TEST-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.roundtrip(&mut c);
+    h.resize_self(&mut c, t, 800, 400);
+    h.state.move_to(t.id, 1500, 600);
+    let before = h.state.win(t.id).unwrap().frame_rect();
+    set_scale(&mut h, &mut c, &o, 2.0);
+    let rescued = h.state.win(t.id).unwrap().frame_rect();
+    set_scale(&mut h, &mut c, &o, 3.0);
+    let r = h.state.win(t.id).unwrap().frame_rect();
+    assert!(
+        r.width < rescued.width && (r.x, r.y) != (rescued.x, rescued.y),
+        "at scale 3 the rescued frame {rescued:?} is shrunk and nudged, not {r:?}"
+    );
+    set_scale(&mut h, &mut c, &o, 1.0);
+    assert_eq!(
+        h.state.win(t.id).unwrap().frame_rect(),
+        before,
+        "back at scale 1 the frame has its old size and place"
+    );
+}
+
 #[test]
 fn a_maximized_window_on_a_shrunk_rightmost_screen_stays_on_it() {
     use smithay::output::Mode;
