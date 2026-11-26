@@ -149,7 +149,11 @@ impl Pick {
             max_w: repriseapp::dialog_max_w(),
         };
         self.forms = ctx.forms();
-        self.msg = Some((MsgBox::new(self.input.title.clone(), fields), replace));
+        let sound = repriseapp::sound::Event::of_box_icon(icon);
+        self.msg = Some((
+            MsgBox::new(self.input.title.clone(), fields).sounding(sound),
+            replace,
+        ));
         Reply::redraw_all()
     }
 

@@ -120,7 +120,7 @@ impl State {
             }
         };
         let welcome = matches!(d.style, Style::Welcome(_));
-        let sound = crate::eventsound::of_box(d.icon.as_deref());
+        let sound = (d.icon.as_deref()).and_then(repriseaudio::sounds::Event::of_box_icon);
         let tree = self.scene.tree_create(self.layers.menu);
         self.scene
             .set_data(tree, Some(SceneOwner::Dialog(self.dialogs.views.len())));

@@ -291,7 +291,7 @@ impl Explorer {
         let emptied =
             r.purpose == Purpose::Empty && r.failed.is_none() && !r.progress.meter.cancelled();
         if emptied {
-            crate::dialogs::event_sound(repriseaudio::sounds::Event::TrashEmpty);
+            repriseapp::sound::event(repriseapp::sound::Event::TrashEmpty);
         }
         let undo = r.undo.take();
         let mut restored = Vec::new();

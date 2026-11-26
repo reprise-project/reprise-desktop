@@ -1409,6 +1409,7 @@ impl Host {
     /// An OK box titled `title` saying `text`, behind any box up.
     fn tell(&mut self, title: &str, text: String) {
         let msg = MsgBox::new(title, box_fields(text, &["OK"]));
+        let msg = msg.sounding(crate::sound::Event::of_box_icon(ERROR_ICON));
         self.ask.ask(msg, Pending::new(ERROR_ICON, Then::Nothing));
     }
 

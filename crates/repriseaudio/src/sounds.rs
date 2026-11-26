@@ -157,6 +157,15 @@ impl Event {
             Event::PowerUnplug => &["power-unplug"],
         }
     }
+
+    /// The sound of a message box showing icon `icon`: only error and warning boxes have one.
+    pub fn of_box_icon(icon: &str) -> Option<Event> {
+        match icon {
+            "dialog-error" => Some(Event::Error),
+            "dialog-warning" => Some(Event::Warning),
+            _ => None,
+        }
+    }
 }
 
 /// The number of [`Event`]s: the last one's index plus one.
@@ -311,6 +320,13 @@ mod tests {
             std::fs::write(&path, "").unwrap();
         }
         root
+    }
+
+    #[test]
+    fn only_error_and_warning_icons_have_a_box_sound() {
+        assert_eq!(Event::of_box_icon("dialog-error"), Some(Event::Error));
+        assert_eq!(Event::of_box_icon("dialog-warning"), Some(Event::Warning));
+        assert_eq!(Event::of_box_icon("dialog-question"), None);
     }
 
     #[test]

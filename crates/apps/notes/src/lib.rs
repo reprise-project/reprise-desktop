@@ -276,7 +276,8 @@ impl Notes {
                     min_w: 0,
                     max_w: repriseapp::dialog_max_w(),
                 },
-            ),
+            )
+            .sounding(repriseapp::sound::Event::Warning),
             (),
         );
         Reply::redraw_all()

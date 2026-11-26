@@ -651,7 +651,10 @@ impl Terminal {
             min_w: 0,
             max_w: repriseapp::dialog_max_w(),
         };
-        self.w.asks.ask(MsgBox::new("Terminal", fields), what);
+        (self.w.asks).ask(
+            MsgBox::new("Terminal", fields).sounding(repriseapp::sound::Event::Warning),
+            what,
+        );
     }
 
     /// The window whose boxes include box window `win`.

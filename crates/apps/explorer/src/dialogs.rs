@@ -77,13 +77,6 @@ pub(crate) const FAILED_BUTTONS: [&str; 3] = ["&Skip", "&Retry", "Cancel"];
 /// The icon of the error boxes, and of the questions before running or mounting a file.
 pub(crate) const ERROR_ICON: &[&str] = &["dialog-error", "dialog-warning"];
 
-/// Play `event`'s sound when `[sounds] events` is on. Tests stay silent.
-pub(crate) fn event_sound(event: repriseaudio::sounds::Event) {
-    let config = repriseconf::current();
-    if cfg!(not(test)) && config.sounds.events {
-        repriseaudio::sounds::play_event(event, config.sounds.theme.clone());
-    }
-}
 pub(crate) const QUESTION_ICON: &[&str] = &["dialog-warning", "dialog-question"];
 pub(crate) const TRASH_ICON: &[&str] = &["user-trash-full"];
 
@@ -601,7 +594,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Reply {
         self.wear_error_icon(ctx);
-        event_sound(repriseaudio::sounds::Event::Error);
+        repriseapp::sound::event(repriseapp::sound::Event::Error);
         self.raise(Dialog::Message {
             title: title.to_string(),
             text,
@@ -734,7 +727,7 @@ impl Explorer {
         if self.closing {
             return Reply::none();
         }
-        event_sound(repriseaudio::sounds::Event::Error);
+        repriseapp::sound::event(repriseapp::sound::Event::Error);
         self.raise(Dialog::Confirm(Confirm {
             title,
             text,
