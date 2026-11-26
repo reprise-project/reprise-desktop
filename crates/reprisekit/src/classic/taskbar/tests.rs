@@ -435,7 +435,7 @@ fn tray_icons_are_drawn_at_their_rects() {
         text.measure("00:00", false, 11),
     );
     let mut icon = Canvas::new(16, 16);
-    icon.fill_rect(Rect::new(0, 0, 16, 16), Color::rgb(1, 2, 3));
+    icon.fill_rect(Rect::new(0, 0, 16, 16), Color::rgb(10, 120, 200));
     let state = TaskbarState {
         start_pressed: false,
         start_focus: false,
@@ -469,7 +469,7 @@ fn tray_icons_are_drawn_at_their_rects() {
     let mut c = Canvas::new(800, 30);
     draw_taskbar(&mut c, &theme, &text, &l, &state);
     let r = l.tray[0];
-    assert_eq!(c.get(r.x + 8, r.y + 8), Color::rgb(1, 2, 3).argb());
+    assert_eq!(c.get(r.x + 8, r.y + 8), Color::rgb(10, 120, 200).argb());
     assert_eq!(c.get(r.x - 1, r.y + 8), theme.colors.button_face.argb());
 }
 

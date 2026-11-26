@@ -18,7 +18,7 @@ pub use attention::{Attention, FLASH_HALF};
 pub use badge::BadgeArt;
 pub use draw::{
     draw_chevron, draw_clock_lines, draw_more, draw_tray_arrow, draw_tray_arrow_side,
-    quick_icon_origin,
+    draw_tray_icon, quick_icon_origin,
 };
 pub use hit::slot_at;
 pub use layout::{QUICK_W, RESIZE_W, TASK_GAP, reveal_width, revealed};
