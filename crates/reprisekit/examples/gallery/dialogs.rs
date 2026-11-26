@@ -3,8 +3,8 @@ use crate::interfaces;
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameState, Glow};
 use reprisekit::controls::form::{self};
 use reprisekit::controls::{
-    aboutbox, endsession, favorites, filedlg, importsheet, installsheet, locationprompt, namebox,
-    shellview,
+    aboutbox, endsession, favorites, filedlg, fontdlg, importsheet, installsheet, locationprompt,
+    namebox, shellview,
 };
 use reprisekit::interface::Interface;
 use reprisekit::look;
@@ -914,5 +914,55 @@ pub fn render_file_dialog() -> Canvas {
     let mut c = Canvas::new(w as u32 + 20, h as u32 + 20);
     c.fill_rect(c.bounds(), theme.colors.background);
     c.blit_canvas(10, 10, &dc);
+    c
+}
+
+/// The Font dialog on Tahoma Bold 14 pt at `scale`; Classic then Blue and Glass.
+pub fn render_font_dialog(with_blue: bool, scale: i32) -> Canvas {
+    let mut themes = vec![cued(interfaces::classic())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let families = [
+        "Arial",
+        "DejaVu Sans",
+        "DejaVu Sans Mono",
+        "Lucida Console",
+        "Tahoma",
+    ]
+    .map(String::from)
+    .to_vec();
+    let pick = fontdlg::Pick {
+        family: "Tahoma".into(),
+        style: fontdlg::Style::Bold,
+        size: 14,
+    };
+    let sample = TextRenderer::load(&FontConfig {
+        family: vec![pick.family.clone()],
+        antialias: true,
+        ..FontConfig::default()
+    });
+    let (w, h) = (fontdlg::CLIENT.0 * scale, fontdlg::CLIENT.1 * scale);
+    let mut c = Canvas::new(
+        (themes.len() as i32 * (w + 10) + 10) as u32,
+        (h + 20) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (i, theme) in themes.iter().enumerate() {
+        let theme = theme.scaled(scale);
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let f = fontdlg::form(&families, &pick);
+        let mut box_c = Canvas::new(w as u32, h as u32);
+        box_c.fill_rect(box_c.bounds(), p.cs.button_face);
+        let s = fontdlg::Sample {
+            text: &sample,
+            bold: pick.style.bold(),
+            px: fontdlg::px(pick.size) * scale as u32,
+        };
+        fontdlg::draw(&mut box_c, &text, &p, &f, theme.fonts.size_px, &s);
+        c.blit_canvas(10 + i as i32 * (w + 10), 10, &box_c);
+    }
     c
 }

@@ -1077,6 +1077,7 @@ pub mod keysym {
     pub const CONTROL_R: u32 = 0xffe4;
     pub const KP_ADD: u32 = 0xffab;
     pub const KP_SUBTRACT: u32 = 0xffad;
+    pub const KP_0: u32 = 0xffb0;
     pub const ALT_L: u32 = 0xffe9;
     pub const ALT_R: u32 = 0xffea;
     /// A seat sends Shift+Tab as this keysym rather than Tab with Shift.

@@ -35,13 +35,38 @@ pub(crate) mod row {
     pub const SELECT_ALL: usize = 13;
     pub const TIME_DATE: usize = 14;
     pub const WORD_WRAP: usize = 0;
-    pub const STATUS_BAR: usize = 0;
+    pub const FONT: usize = 1;
+    pub const ZOOM: usize = 0;
+    pub const STATUS_BAR: usize = 1;
     pub const ABOUT: usize = 2;
 }
 
-pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
+/// The rows of View > Zoom.
+pub(crate) mod zoom {
+    pub const IN: usize = 0;
+    pub const OUT: usize = 1;
+    pub const RESET: usize = 2;
+}
+
+/// The zoom's percent steps and bounds.
+pub(crate) const ZOOM_STEP: u32 = 10;
+pub(crate) const ZOOM_MIN: u32 = 10;
+pub(crate) const ZOOM_MAX: u32 = 500;
+
+pub(crate) fn menus() -> Vec<(String, MenuTree)> {
+    let mut view = MenuTree::new();
+    view.push_sub(
+        mi(&tr!("menu-zoom"), None, true),
+        MenuTree::flat(vec![
+            mi(&tr!("menu-zoom-in"), Some("Ctrl+Plus"), true),
+            mi(&tr!("menu-zoom-out"), Some("Ctrl+Minus"), true),
+            mi(&tr!("menu-zoom-reset"), Some("Ctrl+0"), true),
+        ]),
+    );
+    view.push(mi(&tr!("menu-status-bar"), None, true));
+    let flat = |title: String, items: Vec<MenuItem>| (title, MenuTree::flat(items));
     vec![
-        (
+        flat(
             tr!("menu-file"),
             vec![
                 mi(&tr!("menu-new"), Some("Ctrl+N"), true),
@@ -55,7 +80,7 @@ pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
                 mi(&tr!("menu-exit"), None, true),
             ],
         ),
-        (
+        flat(
             tr!("menu-edit"),
             vec![
                 mi(&tr!("menu-undo"), Some("Ctrl+Z"), true),
@@ -75,18 +100,15 @@ pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
                 mi(&tr!("menu-time-date"), Some("F5"), true),
             ],
         ),
-        (
+        flat(
             tr!("menu-format"),
             vec![
                 mi(&tr!("menu-word-wrap"), None, true),
-                mi(&tr!("menu-font"), None, false),
+                mi(&tr!("menu-font"), None, true),
             ],
         ),
-        (
-            tr!("menu-view"),
-            vec![mi(&tr!("menu-status-bar"), None, true)],
-        ),
-        (
+        (tr!("menu-view"), view),
+        flat(
             tr!("menu-help"),
             vec![
                 mi(&tr!("menu-help-topics"), None, false),
@@ -153,26 +175,66 @@ impl Notepad {
                 self.goto = Some(goto_form(&at));
             }
             (title::FORMAT, row::WORD_WRAP) => {
-                self.metrics.wrap = !self.metrics.wrap;
-                if let MenuItem::Entry { checked, .. } =
-                    &mut self.bar.menus[title::FORMAT][row::WORD_WRAP]
-                {
-                    *checked = self.metrics.wrap;
-                }
+                self.settings.word_wrap = !self.settings.word_wrap;
+                self.sync_toggles();
+                self.save_settings();
                 self.scroll_to_caret(ctx);
             }
+            (title::FORMAT, row::FONT) => self.open_font(),
+            (title::VIEW, row::ZOOM) => {}
             (title::VIEW, row::STATUS_BAR) => {
-                self.status_bar = !self.status_bar;
-                if let MenuItem::Entry { checked, .. } =
-                    &mut self.bar.menus[title::VIEW][row::STATUS_BAR]
-                {
-                    *checked = self.status_bar;
-                }
+                self.settings.status_bar = !self.settings.status_bar;
+                self.sync_toggles();
+                self.save_settings();
             }
             (title::HELP, row::ABOUT) => self.about = true,
             _ => {}
         }
         reply
+    }
+
+    /// Notepad's kept settings take effect: the font, Word Wrap and the status bar.
+    pub(crate) fn take_settings(&mut self, s: Settings) {
+        self.settings = s;
+        self.mono = edit_font(&self.settings);
+        self.sync_toggles();
+    }
+
+    /// Word Wrap and Status Bar as the settings have them, their rows checked to match.
+    fn sync_toggles(&mut self) {
+        self.metrics.wrap = self.settings.word_wrap;
+        self.status_bar = self.settings.status_bar;
+        let rows = [
+            (title::FORMAT, row::WORD_WRAP, self.metrics.wrap),
+            (title::VIEW, row::STATUS_BAR, self.status_bar),
+        ];
+        for (t, r, on) in rows {
+            if let MenuItem::Entry { checked, .. } = &mut self.bar.menus[t][r] {
+                *checked = on;
+            }
+        }
+    }
+
+    /// A row picked by its `path` from title `title`'s menu: View > Zoom's rows, else
+    /// [`Notepad::command`].
+    pub(crate) fn chosen(&mut self, title: usize, path: &[usize], ctx: &Ctx) -> Reply {
+        match path {
+            [row::ZOOM, z] if title == title::VIEW => self.zoom_by(*z, ctx),
+            _ => self.command(title, path[0], ctx),
+        }
+    }
+
+    /// Zoom In and Out step the text's size by [`ZOOM_STEP`] percent within its bounds;
+    /// Restore Default Zoom goes back to 100%.
+    pub(crate) fn zoom_by(&mut self, z: usize, ctx: &Ctx) -> Reply {
+        self.zoom = match z {
+            zoom::IN => (self.zoom + ZOOM_STEP).min(ZOOM_MAX),
+            zoom::OUT => self.zoom.saturating_sub(ZOOM_STEP).max(ZOOM_MIN),
+            _ => 100,
+        };
+        self.follow(ctx);
+        self.scroll_to_caret(ctx);
+        Reply::redraw()
     }
 
     fn menu_ctx<'a>(&self, ctx: &'a Ctx) -> MenuCtx<'a> {
@@ -205,7 +267,7 @@ impl Notepad {
     /// Below the caret's line, where Shift+F10 and the Menu key open the context menu.
     pub(crate) fn caret_point(&self, ctx: &Ctx) -> (i32, i32) {
         let el = self.edit_layout(ctx);
-        multiedit::caret_point(&self.mono, &self.metrics, &self.edit, &el, self.view)
+        multiedit::caret_point(self.mono.get(), &self.metrics, &self.edit, &el, self.view)
     }
 
     fn context_step(&mut self, step: editmenu::Step, ctx: &Ctx) -> Reply {
@@ -284,6 +346,16 @@ impl Notepad {
     /// repriseapp routes keys only to the focused window, so a modeless Find hands these back here.
     pub(crate) fn accel(&mut self, k: &KeyInput, ctx: &Ctx) -> Option<Reply> {
         if k.mods.ctrl {
+            // Plus is Shift+= on most layouts, so = zooms in too.
+            let z = match k.sym {
+                0x2b | 0x3d | keysym::KP_ADD => Some(zoom::IN),
+                0x2d | keysym::KP_SUBTRACT => Some(zoom::OUT),
+                0x30 | keysym::KP_0 => Some(zoom::RESET),
+                _ => None,
+            };
+            if let Some(z) = z {
+                return Some(self.zoom_by(z, ctx));
+            }
             match k.sym | 0x20 {
                 0x6e => return Some(self.command(title::FILE, row::NEW, ctx)),
                 0x6f => return Some(self.command(title::FILE, row::OPEN, ctx)),

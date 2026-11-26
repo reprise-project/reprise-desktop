@@ -3,9 +3,48 @@
 use super::*;
 
 pub(crate) const EDIT_PX: u32 = 13;
+/// The status bar's zoom panel: "500%" between its text pads, clear of the grip.
+const ZOOM_PANEL_W: i32 = 76;
 
-pub(crate) fn edit_font() -> TextRenderer {
-    TextRenderer::monospace(EDIT_PX)
+/// The text box's font, set in its italic face for an italic pick.
+pub(crate) struct EditFont {
+    text: TextRenderer,
+    italic: bool,
+}
+
+impl EditFont {
+    pub(crate) fn get(&self) -> &TextRenderer {
+        match self.italic {
+            true => self.text.italic(),
+            false => &self.text,
+        }
+    }
+}
+
+/// The font `s` names; with no family named, the fixed-pitch face plain text is set in.
+pub(crate) fn edit_font(s: &Settings) -> EditFont {
+    use reprisekit::theme::FontConfig;
+    let text = match s.font.is_empty() {
+        true => TextRenderer::monospace(EDIT_PX),
+        false => TextRenderer::load(&FontConfig {
+            family: vec![s.font.clone()],
+            size_px: EDIT_PX,
+            antialias: true,
+            ..FontConfig::default()
+        }),
+    };
+    EditFont {
+        text,
+        italic: s.italic,
+    }
+}
+
+/// The family a font with no family named is set in: the first of
+/// [`reprisekit::text::MONOSPACE`] installed.
+pub(crate) fn default_family(families: &[String]) -> Option<&str> {
+    reprisekit::text::MONOSPACE
+        .into_iter()
+        .find(|f| families.iter().any(|g| g == f))
 }
 
 /// Time/Date's stamp: the time as the LC_TIME locale writes it (12- or 24-hour), then its
@@ -74,7 +113,7 @@ impl Notepad {
 
     pub(crate) fn edit_layout(&self, ctx: &Ctx) -> multiedit::Layout {
         multiedit::layout(
-            &self.mono,
+            self.mono.get(),
             &self.metrics,
             &self.edit,
             self.edit_rect(ctx),
@@ -85,11 +124,11 @@ impl Notepad {
     pub(crate) fn scroll_to_caret(&mut self, ctx: &Ctx) {
         let lay = self.edit_layout(ctx);
         self.view
-            .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+            .follow(self.mono.get(), &self.metrics, &self.edit, &lay, 1);
     }
 
     pub(crate) fn edit_key(&mut self, key: MultiKey, ctx: &Ctx) {
-        if self.edit.key(key, &self.mono, &self.metrics).edited() {
+        if self.edit.key(key, self.mono.get(), &self.metrics).edited() {
             self.dirty = true;
         }
         self.scroll_to_caret(ctx);
@@ -121,7 +160,7 @@ impl Notepad {
         let el = self.edit_layout(ctx);
         multiedit::draw(
             c,
-            &self.mono,
+            self.mono.get(),
             &paint,
             &self.metrics,
             &self.edit,
@@ -162,6 +201,12 @@ impl Notepad {
                     pad: statusbar::TEXT_PAD,
                     icon: None,
                 },
+                Panel {
+                    text: format!("{}%", self.zoom),
+                    width: ZOOM_PANEL_W,
+                    pad: statusbar::TEXT_PAD,
+                    icon: None,
+                },
             ],
             grip: !ctx.maximized,
         };
@@ -178,7 +223,7 @@ impl Notepad {
             self.view,
             &el,
             &self.metrics,
-            &self.mono,
+            self.mono.get(),
             tree,
             ROOT,
             "edit",

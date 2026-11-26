@@ -7,9 +7,11 @@ mod drop;
 mod file;
 mod filedlg_host;
 mod find;
+mod font;
 mod input;
 mod menu;
 mod pending;
+mod settings;
 mod window;
 
 reprisekit::strings!("notepad");
@@ -38,9 +40,10 @@ use reprisekit::controls::aboutbox;
 use reprisekit::controls::editmenu;
 use reprisekit::controls::filedlg::{CLIENT, DlgMode, Fields, FileDlg};
 use reprisekit::controls::finddlg;
+use reprisekit::controls::fontdlg;
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::hosted::Hosted;
-use reprisekit::controls::menu::{MenuCtx, MenuItem};
+use reprisekit::controls::menu::{MenuCtx, MenuItem, MenuTree};
 use reprisekit::controls::menubar::{self, Action, Bar, Key};
 use reprisekit::controls::msgbox;
 use reprisekit::controls::multiedit::{self, Metrics, MultiEdit, MultiKey, View};
@@ -54,9 +57,10 @@ use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{EditKey, TextEdit, keysym};
 use reprisekit::theme::Theme;
 use reprisekit::tr;
+use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use window::{EDIT_PX, edit_font};
+use window::{EditFont, edit_font};
 
 const GOTO: WinId = WinId::named("goto");
 const GOTO_CLIENT: (i32, i32) = (268, 95);
@@ -68,12 +72,17 @@ const ABOUT: WinId = WinId::named("about");
 const ASK: WinId = WinId::named("ask");
 const OPEN: WinId = WinId::named("open");
 const SAVEAS: WinId = WinId::named("saveas");
+const FONT: WinId = WinId::named("font");
 
 struct Notepad {
     edit: MultiEdit,
     view: View,
     metrics: Metrics,
-    mono: TextRenderer,
+    mono: EditFont,
+    /// What Notepad keeps between runs: the font, Word Wrap and the status bar.
+    settings: Settings,
+    /// Where `settings` is kept; None keeps them for this run only.
+    settings_path: Option<PathBuf>,
     bar: Bar,
     path: Option<std::path::PathBuf>,
     /// `path` as it was opened or last saved; a save asks first when the file no longer matches.
@@ -89,9 +98,14 @@ struct Notepad {
     /// took the keyboard in between.
     alt_arm: AltArm,
     status_bar: bool,
+    /// The text's size in percent of its own (View > Zoom).
+    zoom: u32,
     goto: Option<Form>,
     find: Option<Form>,
     replace: Option<Form>,
+    /// Format > Font while it is open, and its sample's face with the family it was loaded for.
+    font: Option<Form>,
+    font_sample: Option<(String, TextRenderer)>,
     last_query: Option<(String, multiedit::FindOpts)>,
     info_icon: Option<Canvas>,
     /// The About dialog is open; its fields never change.
@@ -145,14 +159,17 @@ impl Notepad {
                 }
             },
         };
-        let mono = edit_font();
-        let bar = Bar::new(menus());
+        let settings = Settings::default();
+        let mono = edit_font(&settings);
+        let bar = Bar::with_trees(menus());
         let mut np = Notepad {
             edit: MultiEdit::new(&format.line_end.to_edit(&text)),
             format,
             view: View::default(),
             metrics: Metrics::default(),
             mono,
+            settings,
+            settings_path: None,
             bar,
             stamp: path.as_deref().and_then(Stamp::of),
             path,
@@ -161,9 +178,12 @@ impl Notepad {
             text_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
             status_bar: false,
+            zoom: 100,
             goto: None,
             find: None,
             replace: None,
+            font: None,
+            font_sample: None,
             last_query: None,
             info_icon: None,
             about: false,
@@ -208,8 +228,10 @@ impl Notepad {
         self.forms = ctx.forms();
         self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
         self.metrics.follow_look(&ctx.theme.controls());
-        let px = reprisekit::theme::text_px(EDIT_PX, ctx.text_size);
+        let px = reprisekit::theme::text_px(fontdlg::px(self.settings.size), ctx.text_size);
+        let px = ((px * self.zoom + 50) / 100).max(1);
         self.metrics.font_px = px;
+        self.metrics.bold = self.settings.bold;
         self.metrics.line_h = px as i32;
     }
 
@@ -305,6 +327,15 @@ impl App for Notepad {
                 modal: false,
             });
         }
+        if self.font.is_some() {
+            kids.push(Child {
+                id: FONT,
+                title: reprisekit::kit_tr!("fontdlg-title"),
+                size: self.forms.text.size(fontdlg::CLIENT),
+                fixed: true,
+                modal: true,
+            });
+        }
         if self.about {
             kids.push(Child {
                 id: ABOUT,
@@ -346,7 +377,7 @@ impl App for Notepad {
         // Selection and text change in many places (the pointer, Find, Replace), so the rows
         // are greyed after every event, before the next draw or menu choice.
         let clip = match win {
-            GOTO | FIND | REPLACE_WIN => self
+            GOTO | FIND | REPLACE_WIN | FONT => self
                 .drop_form(win)
                 .map(|d| form_clipboard(d.form.focused_edit(), &ev)),
             _ => None,
@@ -361,7 +392,7 @@ impl App for Notepad {
             self.find_focused = on.then_some(win);
         }
         self.event_win = match win {
-            GOTO | FIND | REPLACE_WIN | OPEN | SAVEAS => win,
+            GOTO | FIND | REPLACE_WIN | FONT | OPEN | SAVEAS => win,
             w if self.asks.owns(w) => self.parent(w).unwrap_or(MAIN),
             _ => MAIN,
         };
@@ -369,6 +400,7 @@ impl App for Notepad {
             GOTO => self.goto_event(ev, ctx),
             FIND => self.find_event(ev, ctx),
             REPLACE_WIN => self.replace_event(ev, ctx),
+            FONT => self.font_event(ev, ctx),
             w if self.asks.owns(w) => self.ask_event(w, ev),
             ABOUT => self.about_event(ev),
             OPEN => self.open_event(ev, ctx),
@@ -426,6 +458,7 @@ impl App for Notepad {
                     );
                 }
             }
+            FONT => self.draw_font(c, ctx),
             w if self.asks.owns(w) => self.asks.draw(c, &self.forms, &self.dialog_text),
             ABOUT => {
                 c.fill_rect(c.bounds(), cs.button_face);
@@ -482,6 +515,7 @@ impl Extended for Notepad {
         let open = |w: WinId| match w {
             GOTO => self.goto.is_some(),
             FIND | REPLACE_WIN => self.find_form(w).is_some(),
+            FONT => self.font.is_some(),
             OPEN => self.open.is_some(),
             SAVEAS => self.saveas.is_some(),
             _ => false,
@@ -508,6 +542,7 @@ impl Extended for Notepad {
             GOTO => (self.goto.as_mut()?, None),
             FIND => (self.find.as_mut()?, Some(self.forms.fonts.size_px)),
             REPLACE_WIN => (self.replace.as_mut()?, Some(self.forms.fonts.size_px)),
+            FONT => (self.font.as_mut()?, Some(self.forms.fonts.size_px)),
             _ => return None,
         };
         Some(DropForm { form, px })
@@ -544,6 +579,7 @@ impl Extended for Notepad {
                     oneshot::access_form(f, tree, &ctx.text, fpx);
                 }
             }
+            FONT => self.access_font(tree),
             w if self.asks.owns(w) => self.asks.access(tree, dt, forms),
             ABOUT => {
                 built(&self.about_form(), tree);
@@ -567,6 +603,10 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     let mut notepad = Notepad::new(path);
     notepad.forms = repriseapp::start_forms();
     notepad.recent = Recent::new(DESKTOP);
+    notepad.settings_path = settings::path();
+    if let Some(path) = notepad.settings_path.clone() {
+        notepad.take_settings(settings::load(&path));
+    }
     if let Some(p) = notepad.path.clone() {
         notepad.recent.record(&p);
     }

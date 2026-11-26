@@ -138,7 +138,7 @@ impl Notepad {
     fn drop_pos(&self, x: i32, y: i32, ctx: &Ctx) -> Pos {
         let lay = self.edit_layout(ctx);
         multiedit::pos_at(
-            &self.mono,
+            self.mono.get(),
             &self.metrics,
             &self.edit,
             &lay,
@@ -153,7 +153,7 @@ impl Notepad {
         let h = self.hover.filter(|h| h.kind == DropKind::Text)?;
         let lay = self.edit_layout(ctx);
         multiedit::drag_scroll(
-            &self.mono,
+            self.mono.get(),
             &self.metrics,
             &self.edit,
             &lay,

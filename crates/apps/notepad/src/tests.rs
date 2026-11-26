@@ -1,5 +1,6 @@
 use super::*;
 use crate::menu::{row, title};
+use crate::window::EDIT_PX;
 use reprisekit::controls::filedlg::Event as FileEvent;
 use reprisekit::icontheme::IconCache;
 use reprisekit::theme::FontConfig;
@@ -15,7 +16,8 @@ use repriseapp::filedlg::places;
 
 #[test]
 fn a_fallback_edit_font_is_antialiased() {
-    let mono = edit_font();
+    let font = edit_font(&Settings::default());
+    let mono = font.get();
     if mono.has_face("Lucida Console") {
         return;
     }
@@ -69,7 +71,19 @@ fn menu_constants_point_at_their_rows() {
     assert_eq!(label_at(title::EDIT, row::SELECT_ALL), "Select All");
     assert_eq!(label_at(title::EDIT, row::TIME_DATE), "Time/Date");
     assert_eq!(label_at(title::FORMAT, row::WORD_WRAP), "Word Wrap");
+    assert_eq!(label_at(title::VIEW, row::ZOOM), "Zoom");
     assert_eq!(label_at(title::VIEW, row::STATUS_BAR), "Status Bar");
+    let zoom = menus()[title::VIEW]
+        .1
+        .child(row::ZOOM)
+        .cloned()
+        .expect("Zoom's submenu");
+    assert_eq!(label_of(&zoom[crate::menu::zoom::IN]), "Zoom In");
+    assert_eq!(label_of(&zoom[crate::menu::zoom::OUT]), "Zoom Out");
+    assert_eq!(
+        label_of(&zoom[crate::menu::zoom::RESET]),
+        "Restore Default Zoom"
+    );
     assert_eq!(label_at(title::HELP, row::ABOUT), "About Notepad");
 }
 
@@ -343,7 +357,7 @@ fn typed(sym: u32, utf8: Option<&str>, shift: bool) -> Event {
 fn at_col(np: &Notepad, ctx: &Ctx, col: usize) -> (i32, i32) {
     let el = np.edit_layout(ctx);
     let x = multiedit::x_of(
-        &np.mono,
+        np.mono.get(),
         &np.metrics,
         &np.edit,
         &el,
@@ -566,7 +580,7 @@ fn shift_f10_opens_the_context_menu_under_the_caret_and_it_draws_over_the_text()
     assert!(np.bar.open.is_none(), "Shift+F10 is not the menu bar's F10");
     let chain = np.context.as_ref().expect("Shift+F10 opens the menu");
     let el = np.edit_layout(&ctx);
-    let caret_x = multiedit::x_of(&np.mono, &np.metrics, &np.edit, &el, np.edit.caret());
+    let caret_x = multiedit::x_of(np.mono.get(), &np.metrics, &np.edit, &el, np.edit.caret());
     assert_eq!(
         (chain.rect().x, chain.rect().y),
         (
@@ -795,7 +809,15 @@ fn the_text_boxs_thumb_drags_and_its_track_pages() {
         (sb.y..sb.bottom())
             .find(|&y| {
                 matches!(
-                    multiedit::bar_hit(&np.mono, &np.metrics, &np.edit, &el, np.view, sb.x + 8, y),
+                    multiedit::bar_hit(
+                        np.mono.get(),
+                        &np.metrics,
+                        &np.edit,
+                        &el,
+                        np.view,
+                        sb.x + 8,
+                        y
+                    ),
                     Some((_, widgets::BarHit::Thumb(_)))
                 )
             })
@@ -2076,6 +2098,129 @@ fn the_query_field_keeps_its_caret_between_keystrokes() {
         "hello",
         "the \"l\" lands where the caret sits"
     );
+}
+
+#[test]
+fn ctrl_plus_minus_and_zero_zoom_the_text_and_the_status_bar_shows_it() {
+    let mut np = Notepad::new(None);
+    let mut ctx = test_ctx();
+    let ctrl = |sym| {
+        Event::Key(KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            edit: None,
+        })
+    };
+    np.event(MAIN, ctrl(u32::from(b'=')), &mut ctx);
+    np.event(MAIN, ctrl(keysym::KP_ADD), &mut ctx);
+    assert_eq!(np.zoom, 120);
+    assert_eq!(np.metrics.font_px, (EDIT_PX * 120 + 50) / 100);
+    np.status_bar = true;
+    let (bar, _) = np.status(&ctx).expect("the status bar");
+    assert_eq!(bar.panels.last().map(|p| p.text.as_str()), Some("120%"));
+    np.event(MAIN, ctrl(u32::from(b'-')), &mut ctx);
+    assert_eq!(np.zoom, 110);
+    np.event(MAIN, ctrl(u32::from(b'0')), &mut ctx);
+    assert_eq!((np.zoom, np.metrics.font_px), (100, EDIT_PX));
+    for _ in 0..20 {
+        np.event(MAIN, ctrl(keysym::KP_SUBTRACT), &mut ctx);
+    }
+    assert_eq!(
+        np.zoom,
+        crate::menu::ZOOM_MIN,
+        "the zoom stops at its smallest"
+    );
+    np.chosen(title::VIEW, &[row::ZOOM, crate::menu::zoom::RESET], &ctx);
+    assert_eq!(np.zoom, 100, "View > Zoom > Restore Default Zoom");
+}
+
+/// Format > Font through its menu row, `edit` done to the dialog's form, then OK.
+fn pick_font(np: &mut Notepad, ctx: &mut Ctx, edit: impl FnOnce(&mut Form)) {
+    np.command(title::FORMAT, row::FONT, ctx);
+    assert!(np.children().iter().any(|c| c.id == FONT && c.modal));
+    edit(np.font.as_mut().expect("Font is open"));
+    np.font_event_out(form::Event::Pressed(fontdlg::OK), ctx);
+    assert!(np.font.is_none(), "OK closes Font");
+}
+
+impl Notepad {
+    fn font_event_out(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
+        self.event(FONT, Event::FieldDropped(out), ctx)
+    }
+}
+
+#[test]
+fn format_font_sets_the_text_in_the_pick_and_keeps_it_for_the_next_start() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("reprise").join("notepad.toml");
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.settings_path = Some(path.clone());
+    pick_font(&mut np, &mut ctx, |_| {});
+    assert_eq!(
+        np.settings,
+        Settings::default(),
+        "the default face stays unnamed"
+    );
+
+    pick_font(&mut np, &mut ctx, |f| {
+        f.show_edit_text(fontdlg::FAMILY, "Tahoma");
+        fontdlg::follow(f, &form::Event::Changed(fontdlg::FAMILY));
+        f.select_list(fontdlg::STYLE_LIST, Some(2));
+        f.show_edit_text(fontdlg::SIZE, "12");
+    });
+    assert_eq!(
+        (
+            np.settings.font.as_str(),
+            np.settings.bold,
+            np.settings.size
+        ),
+        ("Tahoma", true, 12)
+    );
+    assert!(np.mono.get().has_face("Tahoma"));
+    assert_eq!((np.metrics.font_px, np.metrics.bold), (16, true));
+
+    let mut next = Notepad::new(None);
+    next.take_settings(settings::load(&path));
+    next.follow(&ctx);
+    assert_eq!(next.settings, np.settings);
+    assert!(next.mono.get().has_face("Tahoma"));
+    assert_eq!(next.metrics.font_px, 16);
+}
+
+#[test]
+fn a_size_that_names_no_font_keeps_font_open() {
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.command(title::FORMAT, row::FONT, &ctx);
+    np.font.as_mut().unwrap().show_edit_text(fontdlg::SIZE, "0");
+    np.font_event_out(form::Event::Pressed(fontdlg::OK), &mut ctx);
+    assert!(np.font.is_some());
+    np.font_event_out(form::Event::Pressed(fontdlg::CANCEL), &mut ctx);
+    assert!(np.font.is_none());
+    assert_eq!(np.settings, Settings::default());
+}
+
+#[test]
+fn word_wrap_and_the_status_bar_are_kept_for_the_next_start() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("notepad.toml");
+    let ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.settings_path = Some(path.clone());
+    np.command(title::FORMAT, row::WORD_WRAP, &ctx);
+    np.command(title::VIEW, row::STATUS_BAR, &ctx);
+    let mut next = Notepad::new(None);
+    next.take_settings(settings::load(&path));
+    assert!(next.metrics.wrap && next.status_bar);
+    assert!(matches!(
+        next.bar.menus[title::FORMAT][row::WORD_WRAP],
+        MenuItem::Entry { checked: true, .. }
+    ));
 }
 
 #[test]

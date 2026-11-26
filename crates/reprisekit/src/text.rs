@@ -592,17 +592,16 @@ fn coverage(bm: &freetype::Bitmap) -> Vec<u8> {
     out
 }
 
+/// The families [`TextRenderer::monospace`] tries, in turn.
+pub const MONOSPACE: [&str; 3] = ["Lucida Console", "Liberation Mono", "DejaVu Sans Mono"];
+
 impl TextRenderer {
     /// The fixed-pitch face plain text is set in at `px`: Lucida Console drawn hinted monochrome,
     /// else Liberation Mono or DejaVu Sans Mono antialiased, as a fallback mono blotches
     /// monochrome at 13 px.
     pub fn monospace(px: u32) -> TextRenderer {
         let cfg = |antialias| FontConfig {
-            family: vec![
-                "Lucida Console".into(),
-                "Liberation Mono".into(),
-                "DejaVu Sans Mono".into(),
-            ],
+            family: MONOSPACE.map(String::from).to_vec(),
             size_px: px,
             antialias,
             italic: false,
