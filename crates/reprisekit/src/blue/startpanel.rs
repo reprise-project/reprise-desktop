@@ -148,11 +148,16 @@ pub fn draw(
     for &(spot, r) in &l.spots {
         let r = at(r);
         let is_lit = lit == Some(spot);
-        let line = |canvas: &mut Canvas, pen: i32, base: i32, label: &str, bold: bool, ink| {
+        // `keyed`: the label's first letter is the row's jump letter.
+        let line = |canvas: &mut Canvas, pen, base, label: &str, bold, ink, keyed: bool| {
             let x = r.x + g.len(pen);
             let clip = Rect::new(x, r.y, r.right() - x - 2 * d, r.height);
             let shown = text.ellipsize(label, clip.width, bold, size);
-            text.draw_run_over(canvas, x, r.y + g.len(base), clip, &shown, bold, ink, size);
+            let base = r.y + g.len(base);
+            text.draw_run_over(canvas, x, base, clip, &shown, bold, ink, size);
+            if keyed && p.keys && shown.chars().next() == label.chars().next() {
+                key_mark(canvas, text, x, base, clip, &shown, bold, ink, size, d);
+            }
         };
         match spot {
             Spot::Program(i) => {
@@ -168,7 +173,16 @@ pub fn draw(
                 let pinned = i < p.pinned.len();
                 match row.detail.as_deref().filter(|_| pinned) {
                     Some(detail) => {
-                        line(canvas, at::PROGRAM_PEN, at::NAME_LINE, &row.name, true, ink);
+                        let name = &row.name;
+                        line(
+                            canvas,
+                            at::PROGRAM_PEN,
+                            at::NAME_LINE,
+                            name,
+                            true,
+                            ink,
+                            true,
+                        );
                         let grey = if is_lit { hot_ink } else { DETAIL };
                         line(
                             canvas,
@@ -177,6 +191,7 @@ pub fn draw(
                             detail,
                             false,
                             grey,
+                            false,
                         );
                     }
                     None => line(
@@ -186,6 +201,7 @@ pub fn draw(
                         &row.name,
                         pinned,
                         ink,
+                        true,
                     ),
                 }
             }
@@ -201,6 +217,9 @@ pub fn draw(
                 let clip = Rect::new(r.x, r.y, r.width, r.height);
                 let y = r.y + g.len(at::ALL_BASE);
                 text.draw_run_over(canvas, x, y, clip, ALL_PROGRAMS, true, ink, size);
+                if p.keys {
+                    key_mark(canvas, text, x, y, clip, ALL_PROGRAMS, true, ink, size, d);
+                }
                 let ay = r.y + (r.height - ah) / 2;
                 canvas.blit_over(x + w + gap, ay, &arrow(s, d));
             }
@@ -223,6 +242,7 @@ pub fn draw(
                     &place.label,
                     i < first_rule,
                     ink,
+                    true,
                 );
                 if place.submenu {
                     let (ax, ay) = at::PLACE_ARROW;
@@ -265,10 +285,47 @@ pub fn draw(
                     size,
                 );
                 text.draw_run_over(canvas, pen, base, clip, label, false, m.band_ink, size);
+                if p.keys {
+                    let (sx, sb) = (pen + d, base + d);
+                    key_mark(
+                        canvas,
+                        text,
+                        sx,
+                        sb,
+                        clip,
+                        label,
+                        false,
+                        m.band_shadow,
+                        size,
+                        d,
+                    );
+                    key_mark(
+                        canvas, text, pen, base, clip, label, false, m.band_ink, size, d,
+                    );
+                }
             }
             _ => {}
         }
     }
+}
+
+/// The access-key underline under `shown`'s first letter, set at pen `x` on baseline `base`: `d`
+/// px under the baseline and `d` thick, inside `clip`.
+#[expect(clippy::too_many_arguments)]
+fn key_mark(
+    canvas: &mut Canvas,
+    text: &TextRenderer,
+    x: i32,
+    base: i32,
+    clip: Rect,
+    shown: &str,
+    bold: bool,
+    ink: Color,
+    size: u32,
+    d: i32,
+) {
+    let (dx, w) = text.span(shown, 0, bold, size);
+    canvas.fill_rect(Rect::new(x + dx, base + d, w, d).intersect(&clip), ink);
 }
 
 fn stops(m: &StartMenu) -> Vec<(f64, Px)> {
@@ -581,5 +638,82 @@ mod tests {
             let one = tile_image(tile, TILE_PX, 1, State::Normal);
             assert_eq!((one.width, one.height), (24, 24));
         }
+    }
+
+    /// Opened from the keyboard, each row underlines its first letter in its ink, `d` px under
+    /// the baseline and `d` thick, a lit row in the lit ink and the bottom band's buttons with
+    /// their labels' shadow; nothing else moves.
+    #[test]
+    fn opened_from_the_keyboard_each_row_underlines_its_first_letter() {
+        let s = Variant::Blue.scheme();
+        let px =
+            |c: Color| 0xFF00_0000 | u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b);
+        for d in [1, 2] {
+            let g = Grow::at(d);
+            let lit = sample(Some(Spot::Place(2)));
+            let mut keyed = lit.clone();
+            keyed.keys = true;
+            let (plain, _) = render(Variant::Blue, &lit, d, None);
+            let (marked, l) = render(Variant::Blue, &keyed, d, None);
+            let under = |spot: Spot, pen: i32, base: i32| {
+                let r = l.rect(spot).unwrap();
+                let (x, y) = (
+                    r.x - l.canvas.x + g.len(pen),
+                    r.y - l.canvas.y + g.len(base) + d,
+                );
+                Rect::new(x, y, 6, d)
+            };
+            for (spot, pen, base, ink) in [
+                (
+                    Spot::Place(0),
+                    at::PLACE_PEN,
+                    at::PLACE_BASE,
+                    s.start_menu.places_ink,
+                ),
+                (
+                    Spot::Place(2),
+                    at::PLACE_PEN,
+                    at::PLACE_BASE,
+                    s.system.hilight_text,
+                ),
+                (
+                    Spot::Program(3),
+                    at::PROGRAM_PEN,
+                    at::PROGRAM_BASE,
+                    s.system.menu_text,
+                ),
+            ] {
+                let u = under(spot, pen, base);
+                for y in u.y..u.bottom() {
+                    for x in u.x..u.right() {
+                        assert_eq!(marked.get(x, y), px(ink), "@{d} {spot:?} at ({x}, {y})");
+                    }
+                }
+                assert_ne!(plain.get(u.x, u.y), px(ink), "@{d} {spot:?} bare");
+                assert_ne!(
+                    marked.get(u.right(), u.y),
+                    px(ink),
+                    "@{d} {spot:?} one letter"
+                );
+            }
+            let moved = (plain.pixels.iter().zip(&marked.pixels)).filter(|(a, b)| a != b);
+            let marks = 1 + 6 + 1 + 5 + 2 * 2;
+            assert_eq!(moved.count(), (marks * 6 * d) as usize, "@{d}");
+        }
+    }
+
+    #[test]
+    fn keyboard_underlines_pin_in_blue_and_olive_at_scale_1_and_2() {
+        let got: Vec<_> = [Variant::Blue, Variant::Olive]
+            .into_iter()
+            .flat_map(|v| {
+                [1, 2].map(|d| {
+                    let mut p = sample(Some(Spot::LogOff));
+                    p.keys = true;
+                    (format!("{v:?} {d}"), fnv(&render(v, &p, d, None).0))
+                })
+            })
+            .collect();
+        crate::pins::check("blue/start_panel_keys", &got);
     }
 }

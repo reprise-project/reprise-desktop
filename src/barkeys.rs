@@ -241,6 +241,7 @@ impl State {
         let menus_were = self.menus.len();
         if button == BTN_LEFT && at == TaskbarHit::Start {
             self.toggle_start(tree);
+            self.start_panel_keys();
         } else if enter_toggles_run(crate::trayreveal::arrow_look(self), at, button) {
             crate::trayreveal::toggle(self, tree);
         } else {
