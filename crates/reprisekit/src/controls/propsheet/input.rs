@@ -251,8 +251,17 @@ impl PropSheet {
 
     /// A key for the sheet: the strip's keys ([`PropSheet::strip_key`]) first, the open page's
     /// after. `ctrl_tab` is `Some(back)` for Ctrl+Tab and Ctrl+Shift+Tab, which turn
-    /// the tabs; `key` is then ignored.
+    /// the tabs; `key` is then ignored. Escape is Cancel on a tabbed sheet only: a list-mode
+    /// sheet is a main window, where Escape empties the search and closes lists but never the sheet.
     pub fn key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
+        let escape = ctrl_tab.is_none() && key == form::Key::Escape;
+        match self.routed_key(key, ctrl_tab) {
+            Event::Cancel if escape && self.is_list() => Event::None,
+            ev => ev,
+        }
+    }
+
+    fn routed_key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
         if ctrl_tab.is_none() && key == form::Key::Edit(EditKey::Paste) {
             self.ask_paste();
         }

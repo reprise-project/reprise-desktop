@@ -295,7 +295,7 @@ fn ctrl_f_closes_a_dropped_combo_list() {
     assert!(s.open().popup_open());
     assert_eq!(s.focus_search(), Event::Redraw);
     assert!(!s.open().popup_open());
-    assert_eq!(s.key(form::Key::Escape, None), Event::Cancel);
+    assert_eq!(s.key(form::Key::Escape, None), Event::None);
 }
 
 #[test]
@@ -340,7 +340,7 @@ fn a_press_that_closes_a_dropped_list_starts_no_double_click() {
 }
 
 #[test]
-fn escape_clears_the_query_then_cancels() {
+fn escape_clears_the_query_and_never_cancels_the_sheet() {
     let mut s = list_sheet();
     s.focus_search();
     s.key(form::Key::Edit(EditKey::Insert("mo".into())), None);
@@ -349,8 +349,8 @@ fn escape_clears_the_query_then_cancels() {
     assert!(s.search_focused);
     assert_eq!(
         s.key(form::Key::Escape, None),
-        Event::Cancel,
-        "an empty field passes it on"
+        Event::None,
+        "with the field empty Escape does nothing"
     );
     s.search.key(EditKey::Insert("mo".into()));
     s.click(Some(Hit::Tab(0)));
@@ -364,7 +364,7 @@ fn escape_clears_the_query_then_cancels() {
 }
 
 #[test]
-fn escape_on_a_page_control_clears_the_query_before_it_cancels() {
+fn escape_on_a_page_control_clears_the_query_and_leaves_the_sheet_open() {
     let mut first = check_page("Night Light");
     first
         .items
@@ -377,7 +377,7 @@ fn escape_on_a_page_control_clears_the_query_before_it_cancels() {
     assert_eq!(s.key(form::Key::Escape, None), Event::Search);
     assert_eq!(s.search.text(), "");
     assert_eq!(focused(&s), Some("check"), "the control keeps the keyboard");
-    assert_eq!(s.key(form::Key::Escape, None), Event::Cancel);
+    assert_eq!(s.key(form::Key::Escape, None), Event::None);
 
     s.search.key(EditKey::Insert("mo".into()));
     s.focus_control("combo");
@@ -388,6 +388,19 @@ fn escape_on_a_page_control_clears_the_query_before_it_cancels() {
     assert_ne!(s.key(form::Key::Escape, None), Event::Search);
     assert!(!s.open().popup_open(), "an open list closes first");
     assert_eq!(s.search.text(), "mo");
+    s.search.clear();
+    s.key(form::Key::Drop, None);
+    assert_eq!(s.key(form::Key::Escape, None), Event::Redraw);
+    assert!(
+        !s.open().popup_open(),
+        "with no query Escape closes only the list"
+    );
+    s.click(Some(Hit::Tab(0)));
+    assert_eq!(
+        s.key(form::Key::Escape, None),
+        Event::None,
+        "nor from the list"
+    );
 }
 
 fn filtered_link_sheet(pages: [bool; 3], links: [bool; 2]) -> PropSheet {
