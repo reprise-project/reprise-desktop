@@ -272,6 +272,8 @@ user's server.
   assembly at build time
 - cargo-nextest 0.9.149 or later, to run the tests (`cargo test` works
   without it)
+- A process cargo starts (the tests, `cargo run`) plays no sounds: `pw-play`
+  never starts with `CARGO_MANIFEST_DIR` set
 - Reprise Terminal's emulation comes from the `alacritty_terminal` crate,
   built in; it needs no runtime library
 - Python 3, for the tests' string id check (`scripts/i18n-check`) and the
