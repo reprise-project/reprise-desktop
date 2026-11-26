@@ -40,7 +40,12 @@ The file manager, and the default for folders.
   is greyed. A change another program makes shows at once.
 - **Places:** Desktop, Documents, Home, Computer, Network and the Recycle Bin.
   Computer lists your drives, locked ones included, the shares gvfs mounted
-  and phones or cameras on USB; open one to mount it, Eject to remove it.
+  and phones or cameras on USB; open one to mount it, Eject (on its menu or
+  File) to remove it: every file system on the drive is unmounted, then an
+  optical drive's disc comes out and any other drive powers off. A drive
+  holding part of the system (`/`, `/boot`, `/home`, `/var` and the like,
+  mounted or in fstab), swap or an LVM or RAID volume stays in, with a box
+  that says why.
   Details shows each drive's Total Size and Free Space, Tiles a usage bar
   and "free of" line; a drive that does not answer stays blank. F2 or Rename
   on a drive sets its file system's label through UDisks2, which asks for a

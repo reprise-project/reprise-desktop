@@ -358,7 +358,15 @@ impl Explorer {
             "Problem Ejecting {}",
             disk.map_or_else(|| v.name(None), |d| d.name())
         );
-        let volume = v.name(disk);
+        // The busy box names the drive when another of its volumes may be the one in use.
+        let mounted_on = |d: &reprisefs::udisks::Disk| {
+            let on = self.volumes.volumes_on(&d.path);
+            on.iter().filter(|o| !o.mounts.is_empty()).count()
+        };
+        let volume = match disk {
+            Some(d) if mounted_on(d) > 1 => d.name(),
+            _ => v.name(disk),
+        };
         let image = v.image.as_ref().map(|i| i.loop_path.clone());
         let disk = disk.map(|d| d.path.clone());
         self.spawn_job(ctx, move || {
@@ -371,16 +379,9 @@ impl Explorer {
             };
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
                 let reply = ex.rescan(ctx);
-                match removed {
-                    Ok(()) => reply,
-                    Err(e) if e.kind == ErrorKind::Busy => {
-                        let text = format!(
-                            "'{volume}' is in use. Close any program or window using it, \
-                             and then try again."
-                        );
-                        ex.message_box(&title, text, ctx)
-                    }
-                    Err(e) => ex.udisks_failed(&title, &e, ctx),
+                match removed.map_err(|e| reprisefs::udisks::eject_failed_text(&volume, &e)) {
+                    Ok(()) | Err(None) => reply,
+                    Err(Some(text)) => ex.message_box(&title, text, ctx),
                 }
             })
         });

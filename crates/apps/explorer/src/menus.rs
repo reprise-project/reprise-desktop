@@ -55,7 +55,10 @@ pub struct MenuState {
     /// A lone folder under the item menu: whether it is pinned (Unpin from Places) or not (Pin
     /// to Places).
     pub pinned: Option<bool>,
-    /// The item menu is a network share's: its Eject row reads Disconnect.
+    /// The selection is one removable drive, disk image, phone or network share: File and the
+    /// item menu show Eject.
+    pub eject: bool,
+    /// The selection is a network share: its Eject row reads Disconnect.
     pub share: bool,
     /// gio is there to connect with: File's Connect to Server... is live.
     pub can_connect: bool,
@@ -91,6 +94,7 @@ impl Default for MenuState {
             disk_image: false,
             relabel: false,
             pinned: None,
+            eject: false,
             share: false,
             can_connect: true,
             templates: Vec::new(),
@@ -315,6 +319,11 @@ fn send_to_menu(send_to: &[(String, bool, Option<Canvas>)]) -> Menu {
     m
 }
 
+fn eject_row(m: &mut Menu, state: &MenuState) {
+    let label = if state.share { "D&isconnect" } else { "E&ject" };
+    m.row(row(label, true), Command::Eject);
+}
+
 /// The six menus of the bar with their commands, greyed and checked for
 /// `state`. [`menu_bar`] draws them and [`command_for`] resolves a row.
 fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
@@ -332,6 +341,10 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
         ),
     }
     file.sep();
+    if state.eject {
+        eject_row(&mut file, state);
+        file.sep();
+    }
     file.row(row("Create &Shortcut", writable), Command::CreateShortcut);
     // An item in the Recycle Bin can only be deleted for good.
     let (delete, erase) = match state.bin {
@@ -481,11 +494,10 @@ impl ItemKind {
 /// of Open. "Run as..." sits greyed under them for every file. A folder has Open in Terminal under
 /// Explore, then Pin to Places (or Unpin, `state.pinned`) and Disk Usage, and Paste under Copy,
 /// into it. A launcher has no Open With and has Paste under Copy, opening the clipboard's files
-/// in its program. `eject` adds Eject, in a group above Cut and Copy, for a removable drive.
+/// in its program. Eject sits in a group above Cut and Copy.
 pub fn item_menu(
     state: &MenuState,
     kind: ItemKind,
-    eject: bool,
     open_with: &[(String, Option<Canvas>)],
     send_to: &[(String, bool, Option<Canvas>)],
 ) -> Menu {
@@ -547,10 +559,9 @@ pub fn item_menu(
         row("Se&nd To", !send_to.is_empty() && writable),
         send_to_menu(send_to),
     );
-    if eject {
+    if state.eject {
         m.sep();
-        let label = if state.share { "&Disconnect" } else { "E&ject" };
-        m.row(row(label, true), Command::Eject);
+        eject_row(&mut m, state);
     }
     m.sep();
     m.row(row("Cu&t", writable), Command::Cut);

@@ -344,7 +344,6 @@ fn the_context_menus_answer_for_their_submenu_rows() {
     let m = item_menu(
         &s,
         ItemKind::File,
-        false,
         &apps,
         &[("Desktop".to_string(), true, None)],
     );
@@ -354,7 +353,7 @@ fn the_context_menus_answer_for_their_submenu_rows() {
     assert_eq!(m.command(&[3, 3]), Command::ChooseProgram);
     assert_eq!(label(m.items(), 4), "Send To");
     assert_eq!(m.command(&[4, 0]), Command::SendTo(0));
-    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
     assert_eq!(m.command(&[3, 0]), Command::ChooseProgram);
     assert!(!enabled(m.items(), 4), "Send To with no targets");
 
@@ -413,7 +412,7 @@ fn the_tree_menu_never_acts_on_the_views_selection() {
 #[test]
 fn a_folders_menu_explores_and_a_files_opens_with() {
     let s = MenuState::default();
-    let m = item_menu(&s, ItemKind::Folder, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::Folder, &[], &[]);
     assert_eq!(label(m.items(), 1), "Open in New Tab");
     assert_eq!(m.command(&[1]), Command::OpenInNewTab);
     assert_eq!(label(m.items(), 2), "Explore");
@@ -421,7 +420,7 @@ fn a_folders_menu_explores_and_a_files_opens_with() {
     assert_eq!(label(m.items(), 4), "Disk Usage");
     assert_eq!(m.command(&[4]), Command::DiskUsage);
     assert_eq!(label(m.items(), 5), "Sharing and Security...");
-    let m = item_menu(&s, ItemKind::File, false, &[("Notepad".into(), None)], &[]);
+    let m = item_menu(&s, ItemKind::File, &[("Notepad".into(), None)], &[]);
     assert_eq!(label(m.items(), 1), "Run as...");
     assert!(!enabled(m.items(), 1));
     assert_eq!(label(m.items(), 3), "Open With");
@@ -431,7 +430,7 @@ fn a_folders_menu_explores_and_a_files_opens_with() {
 #[test]
 fn an_archives_menu_extracts_here_or_into_its_folder() {
     let s = MenuState::default();
-    let plain = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let plain = item_menu(&s, ItemKind::File, &[], &[]);
     let rows = |m: &Menu| {
         (0..m.items().len())
             .map(|i| label(m.items(), i).to_string())
@@ -442,7 +441,7 @@ fn an_archives_menu_extracts_here_or_into_its_folder() {
         extract: Some("pack/".into()),
         ..MenuState::default()
     };
-    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
     let at = rows(&m)
         .iter()
         .position(|r| r == "Extract Here")
@@ -460,7 +459,7 @@ fn compress_to_names_its_zip_above_send_to_on_files_and_folders() {
             .map(|i| label(m.items(), i).to_string())
             .collect::<Vec<_>>()
     };
-    let plain = item_menu(&MenuState::default(), ItemKind::File, false, &[], &[]);
+    let plain = item_menu(&MenuState::default(), ItemKind::File, &[], &[]);
     assert!(!rows(&plain).iter().any(|r| r.starts_with("Compress")));
     let s = MenuState {
         extract: Some("pack/".into()),
@@ -468,7 +467,7 @@ fn compress_to_names_its_zip_above_send_to_on_files_and_folders() {
         ..MenuState::default()
     };
     for kind in [ItemKind::File, ItemKind::Folder] {
-        let m = item_menu(&s, kind, false, &[], &[]);
+        let m = item_menu(&s, kind, &[], &[]);
         let at = rows(&m)
             .iter()
             .position(|r| r == "Compress to 'R&D.zip'")
@@ -476,7 +475,7 @@ fn compress_to_names_its_zip_above_send_to_on_files_and_folders() {
         assert_eq!(m.command(&[at]), Command::Compress);
         assert_eq!(label(m.items(), at + 1), "Send To", "{kind:?}");
     }
-    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
     let at = rows(&m).iter().position(|r| r == "Extract to pack/");
     assert_eq!(
         at.map(|i| label(m.items(), i + 1)),
@@ -492,14 +491,14 @@ fn a_disk_images_menu_mounts_by_default_and_still_opens() {
         disk_image: true,
         ..MenuState::default()
     };
-    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
     assert_eq!(label(m.items(), 0), "Mount");
     assert!(bold(&m, 0), "the default row");
     assert_eq!(m.command(&[0]), Command::MountImage);
     assert_eq!(label(m.items(), 1), "Open");
     assert!(!bold(&m, 1));
     assert_eq!(m.command(&[1]), Command::Open);
-    let plain = item_menu(&MenuState::default(), ItemKind::File, false, &[], &[]);
+    let plain = item_menu(&MenuState::default(), ItemKind::File, &[], &[]);
     assert_eq!(label(plain.items(), 0), "Open");
     assert!(bold(&plain, 0));
     assert_eq!(label(plain.items(), 1), "Run as...", "no Mount row");
@@ -513,13 +512,7 @@ fn a_launcher_has_paste_under_copy_and_no_open_with() {
         read_only: true,
         ..Default::default()
     };
-    let m = item_menu(
-        &s,
-        ItemKind::Launcher,
-        false,
-        &[("Notepad".into(), None)],
-        &[],
-    );
+    let m = item_menu(&s, ItemKind::Launcher, &[("Notepad".into(), None)], &[]);
     let labels: Vec<&str> = (0..m.items().len()).map(|i| label(m.items(), i)).collect();
     assert_eq!(
         labels,
@@ -546,7 +539,7 @@ fn a_launcher_has_paste_under_copy_and_no_open_with() {
         enabled(m.items(), 7),
         "Paste opens files, so a read-only place keeps it"
     );
-    let file = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let file = item_menu(&s, ItemKind::File, &[], &[]);
     assert!(
         (0..file.items().len()).all(|i| file.command(&[i]) != Command::PasteOnItem),
         "a plain file has no Paste"
@@ -560,7 +553,7 @@ fn a_folder_has_paste_into_it_under_copy() {
         can_paste: true,
         ..Default::default()
     };
-    let m = item_menu(&s, ItemKind::Folder, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::Folder, &[], &[]);
     let copy = (0..m.items().len())
         .position(|i| label(m.items(), i) == "Copy")
         .expect("Copy");
@@ -571,7 +564,7 @@ fn a_folder_has_paste_into_it_under_copy() {
         read_only: true,
         ..s
     };
-    let m = item_menu(&read_only, ItemKind::Folder, false, &[], &[]);
+    let m = item_menu(&read_only, ItemKind::Folder, &[], &[]);
     assert!(
         !enabled(m.items(), copy + 1),
         "a drive under Computer takes no paste"
@@ -586,7 +579,7 @@ fn a_read_only_place_greys_every_writing_row() {
         can_paste: true,
         ..Default::default()
     };
-    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
     for (i, _) in m.items().iter().enumerate() {
         let c = m.command(&[i]);
         if matches!(
@@ -610,7 +603,7 @@ fn send_to_rows_carry_their_icons() {
         ),
         ("Desktop (create shortcut)".to_string(), false, None),
     ];
-    let m = item_menu(&s, ItemKind::File, false, &[], &send_to);
+    let m = item_menu(&s, ItemKind::File, &[], &send_to);
     let rows = m.at(&[4]).expect("the Send To submenu").items();
     assert!(
         matches!(&rows[0], MenuItem::Entry { icon: Some(_), .. }),
@@ -627,7 +620,7 @@ fn an_ampersand_in_a_program_or_target_name_shows_and_is_no_access_key() {
     };
     let open_with = [("R&D Viewer".to_string(), None)];
     let send_to = [("R&D share".to_string(), true, None)];
-    let m = item_menu(&s, ItemKind::File, false, &open_with, &send_to);
+    let m = item_menu(&s, ItemKind::File, &open_with, &send_to);
     let sub = |name: &str| {
         let at = (0..m.items().len())
             .find(|&i| label(m.items(), i) == name)
@@ -650,20 +643,18 @@ fn an_ampersand_in_a_program_or_target_name_shows_and_is_no_access_key() {
 /// Eject sits alone between Sharing and Security... and Copy, on access key j.
 #[test]
 fn only_a_removable_drives_menu_has_eject() {
-    let s = MenuState {
+    let fixed = MenuState {
         read_only: true,
         selection: 1,
         ..Default::default()
     };
     let has_eject = |m: &Menu| (0..m.items().len()).any(|i| m.command(&[i]) == Command::Eject);
-    assert!(!has_eject(&item_menu(
-        &s,
-        ItemKind::Folder,
-        false,
-        &[],
-        &[]
-    )));
-    let m = item_menu(&s, ItemKind::Folder, true, &[], &[]);
+    assert!(!has_eject(&item_menu(&fixed, ItemKind::Folder, &[], &[])));
+    let s = MenuState {
+        eject: true,
+        ..fixed
+    };
+    let m = item_menu(&s, ItemKind::Folder, &[], &[]);
     let rows = m.items();
     let at = (0..rows.len())
         .find(|&i| m.command(&[i]) == Command::Eject)
@@ -684,6 +675,36 @@ fn only_a_removable_drives_menu_has_eject() {
     assert_eq!(label(rows, at + 3), "Copy", "Cut then Copy follow Eject");
 }
 
+/// File's Eject is its own group under New, there only for a removable drive.
+#[test]
+fn the_file_menu_ejects_a_removable_drive() {
+    let fixed = MenuState {
+        read_only: true,
+        selection: 1,
+        ..Default::default()
+    };
+    let file = bar_rows(&fixed, 0);
+    assert_eq!(
+        label(&file, 2),
+        "Create Shortcut",
+        "no Eject on a fixed drive"
+    );
+    let removable = MenuState {
+        eject: true,
+        ..fixed
+    };
+    let file = bar_rows(&removable, 0);
+    assert_eq!(label(&file, 2), "Eject");
+    assert!(enabled(&file, 2));
+    assert!(matches!(file[3], MenuItem::Separator));
+    assert_eq!(command_for(0, &[2], &removable), Command::Eject);
+    let share = MenuState {
+        share: true,
+        ..removable
+    };
+    assert_eq!(label(&bar_rows(&share, 0), 2), "Disconnect");
+}
+
 /// A Recycle Bin item's menu: Restore, greyed Cut and Copy as Path, Delete (for good), then
 /// Properties as the bold default.
 #[test]
@@ -694,7 +715,7 @@ fn a_recycle_bin_items_menu_is_restore_cut_delete_properties() {
         bin: Some(2),
         ..Default::default()
     };
-    let m = item_menu(&s, ItemKind::File, false, &[("Notepad".into(), None)], &[]);
+    let m = item_menu(&s, ItemKind::File, &[("Notepad".into(), None)], &[]);
     let rows = m.items();
     let labels: Vec<&str> = (0..rows.len()).map(|i| label(rows, i)).collect();
     assert_eq!(
@@ -739,7 +760,7 @@ fn copy_as_path_follows_copy_and_greys_without_local_paths() {
             local_paths: local,
             ..Default::default()
         };
-        let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+        let m = item_menu(&s, ItemKind::File, &[], &[]);
         let rows = m.items();
         let copy = (0..rows.len())
             .find(|&i| label(rows, i) == "Copy")
@@ -824,16 +845,16 @@ fn a_scripts_menu_runs_it_in_place_of_open_with_the_default_bold() {
     let bold =
         |items: &[MenuItem], i: usize| matches!(&items[i], MenuItem::Entry { bold: true, .. });
     let s = MenuState::default();
-    let m = item_menu(&s, ItemKind::Script(Terminal), false, &[], &[]);
+    let m = item_menu(&s, ItemKind::Script(Terminal), &[], &[]);
     assert_eq!(label(m.items(), 0), "Run");
     assert_eq!(label(m.items(), 1), "Run in terminal");
     assert_eq!(m.command(&[0]), Command::Run(Run));
     assert_eq!(m.command(&[1]), Command::Run(Terminal));
     assert!(!bold(m.items(), 0) && bold(m.items(), 1));
     assert_eq!(label(m.items(), 4), "Open With", "a script is still a file");
-    let m = item_menu(&s, ItemKind::Script(Run), false, &[], &[]);
+    let m = item_menu(&s, ItemKind::Script(Run), &[], &[]);
     assert!(bold(m.items(), 0) && !bold(m.items(), 1));
-    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
     assert_eq!(
         label(m.items(), 0),
         "Open",
@@ -850,7 +871,7 @@ fn open_in_terminal_shows_on_a_folder_and_the_background_of_a_place_on_disk() {
     };
     let has = |m: &Menu, cmd: Command| rows(m).contains(&("Open in Terminal".into(), cmd));
     let s = MenuState::default();
-    let folder = item_menu(&s, ItemKind::Folder, false, &[], &[]);
+    let folder = item_menu(&s, ItemKind::Folder, &[], &[]);
     assert_eq!(
         rows(&folder)[3],
         ("Open in Terminal".into(), Command::OpenTerminal)
@@ -867,7 +888,7 @@ fn open_in_terminal_shows_on_a_folder_and_the_background_of_a_place_on_disk() {
         ItemKind::Script(ScriptOpen::Run),
     ] {
         assert!(
-            !has(&item_menu(&s, kind, false, &[], &[]), Command::OpenTerminal),
+            !has(&item_menu(&s, kind, &[], &[]), Command::OpenTerminal),
             "{kind:?}"
         );
     }
@@ -877,7 +898,7 @@ fn open_in_terminal_shows_on_a_folder_and_the_background_of_a_place_on_disk() {
         ..MenuState::default()
     };
     assert!(!has(&background_menu(&computer), Command::OpenTerminalHere));
-    let drive = item_menu(&computer, ItemKind::Folder, true, &[], &[]);
+    let drive = item_menu(&computer, ItemKind::Folder, &[], &[]);
     assert!(!has(&drive, Command::OpenTerminal));
     let bin = MenuState {
         read_only: true,
@@ -886,7 +907,7 @@ fn open_in_terminal_shows_on_a_folder_and_the_background_of_a_place_on_disk() {
     };
     assert!(!has(&background_menu(&bin), Command::OpenTerminalHere));
     assert!(!has(
-        &item_menu(&bin, ItemKind::Folder, false, &[], &[]),
+        &item_menu(&bin, ItemKind::Folder, &[], &[]),
         Command::OpenTerminal
     ));
 }
@@ -897,14 +918,14 @@ fn a_lone_folders_menu_pins_or_unpins_it() {
         pinned: p,
         ..MenuState::default()
     };
-    let m = item_menu(&pinned(Some(false)), ItemKind::Folder, false, &[], &[]);
+    let m = item_menu(&pinned(Some(false)), ItemKind::Folder, &[], &[]);
     assert_eq!(label(m.items(), 4), "Pin to Places");
     assert_eq!(m.command(&[4]), Command::Pin(true));
-    let m = item_menu(&pinned(Some(true)), ItemKind::Folder, false, &[], &[]);
+    let m = item_menu(&pinned(Some(true)), ItemKind::Folder, &[], &[]);
     assert_eq!(label(m.items(), 4), "Unpin from Places");
     assert_eq!(m.command(&[4]), Command::Pin(false));
     assert_eq!(label(m.items(), 5), "Disk Usage", "under the pin row");
-    let m = item_menu(&pinned(None), ItemKind::Folder, false, &[], &[]);
+    let m = item_menu(&pinned(None), ItemKind::Folder, &[], &[]);
     assert_eq!(label(m.items(), 4), "Disk Usage", "no pin row");
 }
 

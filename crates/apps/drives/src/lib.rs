@@ -79,7 +79,8 @@ enum Unlocked {
 /// A pending safe removal's names, read before the drive goes away.
 struct Removing {
     disk: String,
-    volumes: String,
+    /// What a refusal names: a drive's one mounted volume, or else the drive or share.
+    named: String,
 }
 
 #[derive(Default)]
@@ -464,13 +465,11 @@ impl DrivesApp {
         };
         match result {
             Ok(()) => self.notify(model::safe_balloon(&r.disk)),
-            Err(e) if e.kind == ErrorKind::Cancelled => {}
-            Err(e) if e.kind == ErrorKind::Busy => {
-                self.notify(model::busy_balloon(&r.disk, &r.volumes))
-            }
             Err(e) => {
-                log::warn!("removing {disk}: {e}");
-                self.notify((tr!("eject-failed", disk = r.disk.as_str()), e.message));
+                log::info!("removing {disk}: {e}");
+                if let Some(text) = reprisefs::udisks::eject_failed_text(&r.named, &e) {
+                    self.notify((tr!("eject-failed", disk = r.disk.as_str()), text));
+                }
             }
         }
     }
@@ -482,7 +481,7 @@ impl DrivesApp {
         };
         match result {
             Ok(()) => self.notify(model::safe_balloon(&r.disk)),
-            Err(Unmount::Busy) => self.notify(model::busy_balloon(&r.disk, &r.volumes)),
+            Err(Unmount::Busy) => self.notify(model::busy_balloon(&r.disk, &r.named)),
             Err(Unmount::Error(e)) => {
                 log::warn!("unmounting {}: {e}", r.disk);
                 self.notify((tr!("eject-failed", disk = r.disk.as_str()), e));
@@ -502,7 +501,7 @@ impl DrivesApp {
                 };
                 let r = Removing {
                     disk: s.name.clone(),
-                    volumes: s.name.clone(),
+                    named: s.name.clone(),
                 };
                 self.removing.insert(entry.target.clone(), r);
                 if let Some(c) = &self.calls {
@@ -523,7 +522,10 @@ impl DrivesApp {
             .collect();
         let r = Removing {
             disk: d.name(),
-            volumes: volumes.join(", "),
+            named: match volumes.as_slice() {
+                [one] => one.clone(),
+                _ => d.name(),
+            },
         };
         self.removing.insert(entry.target.clone(), r);
         if let Some(c) = &self.calls {

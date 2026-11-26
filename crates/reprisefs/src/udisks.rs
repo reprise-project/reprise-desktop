@@ -20,6 +20,7 @@ pub const ENCRYPTED_IFACE: &str = "org.freedesktop.UDisks2.Encrypted";
 pub const DRIVE_IFACE: &str = "org.freedesktop.UDisks2.Drive";
 pub const LOOP_IFACE: &str = "org.freedesktop.UDisks2.Loop";
 pub const PARTITION_IFACE: &str = "org.freedesktop.UDisks2.Partition";
+pub const SWAPSPACE_IFACE: &str = "org.freedesktop.UDisks2.Swapspace";
 pub const MANAGER: &str = "/org/freedesktop/UDisks2/Manager";
 pub const MANAGER_IFACE: &str = "org.freedesktop.UDisks2.Manager";
 const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
@@ -114,6 +115,10 @@ pub struct Volume {
     pub filesystem: bool,
     /// Where it is mounted now; empty when it is not.
     pub mounts: Vec<PathBuf>,
+    /// Where `/etc/fstab` mounts it (UDisks2's `Configuration`).
+    pub fstab: Vec<PathBuf>,
+    /// It is swap space in use.
+    pub swap: bool,
     /// It is an encrypted container.
     pub encrypted: bool,
     /// For an unlocked container: its cleartext volume.
@@ -140,11 +145,21 @@ pub struct Image {
 
 /// Where the system's own file systems are mounted.
 const SYSTEM_MOUNTS: [&str; 5] = ["/", "/boot", "/efi", "/boot/efi", "/usr"];
+/// Where the running system keeps its users' and its own changing files.
+const SYSTEM_DATA: [&str; 2] = ["/home", "/var"];
 
 impl Volume {
     /// Part of the system: UDisks2's `HintSystem`, or mounted where the system boots from.
     pub fn holds_system(&self) -> bool {
         self.system || (self.mounts.iter()).any(|m| SYSTEM_MOUNTS.iter().any(|s| m == Path::new(s)))
+    }
+
+    /// The running system needs it, so its drive is not safely removed: it holds the system, or
+    /// it is mounted or listed in fstab where the system boots from, at `/home` or at `/var`.
+    pub fn system_needs(&self) -> bool {
+        let needed =
+            |m: &PathBuf| (SYSTEM_MOUNTS.iter().chain(&SYSTEM_DATA)).any(|s| m == Path::new(s));
+        self.holds_system() || self.mounts.iter().chain(&self.fstab).any(needed)
     }
 
     /// The same file system as `other`, as far as UDisks2 tells them apart.
@@ -333,6 +348,21 @@ fn disk_of(path: &str, p: &Props) -> Disk {
 /// The most of a drive's label shown, in characters: NTFS's longest.
 const LABEL_MAX: usize = 32;
 
+/// The mount points of a block's fstab entries: its `Configuration` is `a(sa{sv})`, an
+/// `("fstab", {"dir": ay, ..})` per entry.
+fn fstab_dirs(block: &Props) -> Vec<PathBuf> {
+    type Entries = Vec<(String, HashMap<String, OwnedVariant>)>;
+    let entries = block
+        .get("Configuration")
+        .and_then(|v| Entries::try_from(v.clone()).ok())
+        .unwrap_or_default();
+    (entries.into_iter())
+        .filter(|(kind, _)| kind == "fstab")
+        .filter_map(|(_, e)| Vec::<u8>::try_from(e.get("dir")?.clone()).ok())
+        .map(bytes_path)
+        .collect()
+}
+
 fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volume {
     let fs = ifaces.get(FILESYSTEM_IFACE);
     let crypt = ifaces.get(ENCRYPTED_IFACE);
@@ -358,6 +388,10 @@ fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volu
             .and_then(|v| Vec::<Vec<u8>>::try_from(v.clone()).ok())
             .map(|ms| ms.into_iter().map(bytes_path).collect())
             .unwrap_or_default(),
+        fstab: fstab_dirs(block),
+        swap: ifaces
+            .get(SWAPSPACE_IFACE)
+            .is_some_and(|s| flag(s, "Active")),
         encrypted: crypt.is_some(),
         cleartext: crypt.and_then(|c| object(c, "CleartextDevice")),
         backing: object(block, "CryptoBackingDevice"),
@@ -603,6 +637,8 @@ async fn read(conn: &zbus::Connection) -> Snapshot {
 #[derive(Clone)]
 pub struct Udisks {
     conn: zbus::Connection,
+    /// Where sysfs is: `/sys`, or a test's stand-in.
+    sys: PathBuf,
 }
 
 impl Udisks {
@@ -611,7 +647,7 @@ impl Udisks {
         let conn =
             reprisebus::connect(zbus::connection::Builder::system().method_timeout(CALL_TIMEOUT));
         match conn {
-            Ok(conn) => Some(Udisks { conn }),
+            Ok(conn) => Some(Udisks::on(conn)),
             Err(e) => {
                 log::info!("no system bus ({e}); no drives from UDisks2");
                 None
@@ -620,7 +656,10 @@ impl Udisks {
     }
 
     pub fn on(conn: zbus::Connection) -> Udisks {
-        Udisks { conn }
+        Udisks {
+            conn,
+            sys: PathBuf::from("/sys"),
+        }
     }
 
     /// The system bus connection, for a caller's own calls beside these.
@@ -801,13 +840,34 @@ impl Udisks {
         self.delete_loop(loop_path)
     }
 
-    /// Make drive `disk` safe to pull out: unmount every file system on
-    /// it, cleartext ones first, lock every unlocked container, then power
-    /// the drive off (or eject its media). Once everything is unmounted
-    /// the data is on the drive, so a drive that refuses the power-off is
-    /// still safe and only logged.
+    /// Make removable drive `disk` safe to pull out: unmount its file systems (cleartext first)
+    /// and lock its containers, stopping at the first refusal, then eject an optical drive's disc
+    /// or power any other drive off. A drive that is fixed or unknown, holds a volume the system
+    /// needs, or has a volume in use as swap or under a device stacked on it (LVM, RAID) is
+    /// refused before any call. A refused eject or power-off is an error too: UDisks2 refuses
+    /// when something this snapshot does not show still holds the drive.
     pub fn safely_remove(&self, snap: &Snapshot, disk: &str) -> Result<(), Error> {
+        let refused = |message: &str| Error {
+            kind: ErrorKind::Other,
+            message: message.into(),
+        };
+        let Some(d) = snap.disk(disk).filter(|d| d.removable) else {
+            return Err(refused(NOT_REMOVABLE));
+        };
         let on = snap.volumes_on(disk);
+        if on.iter().any(|v| v.system_needs()) {
+            return Err(refused(HOLDS_SYSTEM));
+        }
+        let name = |v: &Volume| Path::new(&v.device).file_name().map(|n| n.to_owned());
+        let own: Vec<_> = on.iter().filter_map(|v| name(v)).collect();
+        let held = on.iter().any(|v| {
+            v.swap
+                || (name(v))
+                    .is_some_and(|n| holders(&self.sys, &n).iter().any(|h| !own.contains(h)))
+        });
+        if held {
+            return Err(refused(HELD));
+        }
         let (clear, plain): (Vec<&&Volume>, Vec<&&Volume>) =
             on.iter().partition(|v| v.backing.is_some());
         for v in clear.iter().chain(plain.iter()) {
@@ -820,21 +880,56 @@ impl Udisks {
                 self.lock(&v.path)?;
             }
         }
-        let Some(d) = snap.disk(disk) else {
-            return Ok(());
-        };
-        let off = if d.can_power_off {
-            self.call(disk, DRIVE_IFACE, "PowerOff", &(no_options(),))
-        } else if d.ejectable {
-            self.call(disk, DRIVE_IFACE, "Eject", &(no_options(),))
+        // A USB optical drive can power off too; Eject is what brings its disc out.
+        let method = if d.ejectable && (d.optical || !d.can_power_off) {
+            "Eject"
+        } else if d.can_power_off {
+            "PowerOff"
         } else {
             return Ok(());
         };
-        if let Err(e) = off {
-            log::info!("{disk} stayed powered after its volumes came off: {e}");
-        }
-        Ok(())
+        let off = self.call(disk, DRIVE_IFACE, method, &(no_options(),));
+        off.map(|_| ()).map_err(|e| {
+            log::info!("{disk} stayed in after its volumes came off: {e}");
+            match e.kind {
+                ErrorKind::Other => Error {
+                    kind: ErrorKind::Other,
+                    message: format!("{NOT_STOPPED} {}", e.message).trim_end().into(),
+                },
+                _ => e,
+            }
+        })
     }
+}
+
+const NOT_REMOVABLE: &str = "This drive cannot be removed safely.";
+const HOLDS_SYSTEM: &str = "This drive holds part of the system, so it cannot be removed safely.";
+const HELD: &str = "Part of this drive is in use as swap space or by an LVM or RAID volume, so it \
+                    cannot be removed safely.";
+const NOT_STOPPED: &str = "Its volumes were unmounted, but the drive could not be stopped and may \
+                           still be in use.";
+
+/// The kernel names of the devices stacked on block device `name` (`sdb1`): an LVM volume, a
+/// RAID array or a container's cleartext.
+fn holders(sys: &Path, name: &std::ffi::OsStr) -> Vec<std::ffi::OsString> {
+    let dir = sys.join("class/block").join(name).join("holders");
+    let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
+    entries.map(|e| e.file_name()).collect()
+}
+
+/// Why `volume` stayed in after Eject or Safely Remove Hardware, in words; `None` when the user
+/// dismissed the prompt.
+pub fn eject_failed_text(volume: &str, e: &Error) -> Option<String> {
+    Some(match e.kind {
+        ErrorKind::Cancelled => return None,
+        ErrorKind::Busy => format!(
+            "'{volume}' is in use: a program is using a file on it. Close any program or window \
+             using it, and then try again."
+        ),
+        ErrorKind::NotAuthorized => format!("You do not have permission to eject '{volume}'."),
+        ErrorKind::Other if e.message.is_empty() => format!("'{volume}' could not be ejected."),
+        ErrorKind::Other => e.message.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -1337,6 +1432,86 @@ pub(crate) mod tests {
         assert!(!home.holds_system(), "mounted at /home");
     }
 
+    /// A block's `Configuration` with one fstab entry mounting it at `dir`.
+    fn fstab(dir: &str) -> OwnedVariant {
+        let entry = HashMap::from([(
+            "dir".to_string(),
+            Variant::from(format!("{dir}\0").into_bytes()),
+        )]);
+        OwnedVariant::try_from(Variant::from(vec![("fstab".to_string(), entry)])).unwrap()
+    }
+
+    #[test]
+    fn a_volume_the_running_system_needs_is_told_by_its_mounts_and_fstab() {
+        let mut m = objects();
+        let sdb1 = OwnedObjectPath::try_from(format!("{BD}/sdb1")).unwrap();
+        let block = m.get_mut(&sdb1).unwrap().get_mut(BLOCK_IFACE).unwrap();
+        block.insert("Configuration".into(), fstab("/home"));
+        m.get_mut(&sdb1)
+            .unwrap()
+            .insert(SWAPSPACE_IFACE.into(), props(vec![("Active", b(true))]));
+        let snap = fold(&m);
+        let stick = snap.volume(&sdb1).unwrap();
+        assert_eq!(stick.fstab, [PathBuf::from("/home")]);
+        assert!(stick.swap, "Swapspace.Active");
+        assert!(stick.system_needs(), "listed in fstab at /home");
+        let plain = Volume {
+            fstab: vec![],
+            ..stick.clone()
+        };
+        assert!(!plain.system_needs(), "mounted under /run/media");
+        for at in SYSTEM_MOUNTS.iter().chain(&SYSTEM_DATA) {
+            let v = Volume {
+                mounts: vec![at.into()],
+                ..plain.clone()
+            };
+            assert!(v.system_needs(), "mounted at {at}");
+        }
+        let ssd = snap.volume(&format!("{BD}/sda2")).unwrap();
+        assert!(ssd.system_needs(), "HintSystem");
+    }
+
+    #[test]
+    fn an_eject_refusal_reads_in_words() {
+        let text = |kind, message: &str| {
+            let e = Error {
+                kind,
+                message: message.into(),
+            };
+            eject_failed_text("STICK", &e)
+        };
+        assert_eq!(
+            text(
+                ErrorKind::Busy,
+                "Error unmounting /dev/sdb1: target is busy"
+            )
+            .as_deref(),
+            Some(
+                "'STICK' is in use: a program is using a file on it. Close any program or window \
+                 using it, and then try again."
+            )
+        );
+        assert_eq!(
+            text(
+                ErrorKind::NotAuthorized,
+                "Not authorized to perform operation"
+            )
+            .as_deref(),
+            Some("You do not have permission to eject 'STICK'.")
+        );
+        assert_eq!(text(ErrorKind::Cancelled, ""), None, "a dismissed prompt");
+        assert_eq!(
+            text(ErrorKind::Other, "Error ejecting: no medium").as_deref(),
+            Some("Error ejecting: no medium"),
+            "UDisks2's own reason"
+        );
+        assert_eq!(
+            text(ErrorKind::Other, "").as_deref(),
+            Some("'STICK' could not be ejected."),
+            "UDisks2 gave no reason"
+        );
+    }
+
     #[test]
     fn a_volume_is_the_same_while_its_uuid_size_type_and_label_are() {
         let snap = fold(&objects());
@@ -1682,6 +1857,411 @@ pub(crate) mod tests {
                 calls(&f),
                 ["Unmount loop0p1", "Unmount loop0p2", "Delete loop0"]
             );
+        }
+    }
+
+    /// A fake UDisks2 on a private bus, every file system mounted: a two-partition USB stick, a USB
+    /// optical drive holding a disc, an unlocked LUKS stick, a card reader that ejects but cannot
+    /// power off, a USB bay that does neither, and the internal disk. The tests read the calls
+    /// `safely_remove` makes, in order.
+    mod drive_bus {
+        use super::*;
+        use std::sync::{Arc, Mutex};
+
+        use reprisebus::testbus::{Bus, bus};
+
+        /// Each file system's object name, its drive, and its device.
+        const VOLUMES: [(&str, &str, &str); 7] = [
+            ("sdb1", "Stick", "/dev/sdb1"),
+            ("sdb2", "Stick", "/dev/sdb2"),
+            ("sr0", "Cd", "/dev/sr0"),
+            ("sda2", "Ssd", "/dev/sda2"),
+            ("dm_2d0", "Vault", "/dev/dm-0"),
+            ("mmcblk0p1", "Reader", "/dev/mmcblk0p1"),
+            ("sdd1", "Bay", "/dev/sdd1"),
+        ];
+
+        /// The drives, and whether each ejects and powers off.
+        const DRIVES: [(&str, bool, bool); 6] = [
+            ("Stick", true, true),
+            ("Cd", true, true),
+            ("Ssd", false, false),
+            ("Vault", true, true),
+            ("Reader", true, false),
+            ("Bay", false, false),
+        ];
+
+        #[derive(Default)]
+        struct State {
+            /// The file system a program holds open.
+            busy: Option<&'static str>,
+            /// The file system polkit refuses to unmount.
+            denied: Option<&'static str>,
+            /// The file system fstab mounts at /home.
+            home: Option<&'static str>,
+            /// The block in use as swap.
+            swap: Option<&'static str>,
+            /// Lock fails as it does with an LVM volume active inside.
+            lock_fails: bool,
+            /// PowerOff fails as it does with the device held open.
+            power_off_fails: bool,
+            calls: Vec<String>,
+        }
+
+        type Shared = Arc<Mutex<State>>;
+
+        fn objects(st: &State) -> Objects {
+            let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+            let mut m = Objects::new();
+            for (name, ejects, powers_off) in DRIVES {
+                let mut d = drive(
+                    "Vendor",
+                    name,
+                    name != "Ssd",
+                    if name == "Ssd" { "" } else { "usb" },
+                );
+                let p = d.get_mut(DRIVE_IFACE).unwrap();
+                p.insert("Optical".into(), b(name == "Cd"));
+                p.insert("Ejectable".into(), b(ejects));
+                p.insert("CanPowerOff".into(), b(powers_off));
+                m.insert(path(&format!("{DR}/{name}")), d);
+            }
+            let mut sdc = block("/dev/sdc", &format!("{DR}/Vault"), "", "crypto_LUKS", false);
+            sdc.insert("Size".into(), OwnedVariant::from(1u64 << 30));
+            m.insert(
+                path(&format!("{BD}/sdc")),
+                HashMap::from([
+                    (BLOCK_IFACE.to_string(), sdc),
+                    (
+                        ENCRYPTED_IFACE.to_string(),
+                        props(vec![("CleartextDevice", o(&format!("{BD}/dm_2d0")))]),
+                    ),
+                ]),
+            );
+            for (name, disk, dev) in VOLUMES {
+                let system = disk == "Ssd";
+                let fs = if disk == "Cd" { "iso9660" } else { "vfat" };
+                let at = match system {
+                    true => "/".to_string(),
+                    false => format!("/run/media/u/{name}"),
+                };
+                let mut blk = match disk {
+                    "Vault" => {
+                        let mut c = block(dev, "/", "", "ext4", false);
+                        c.insert("CryptoBackingDevice".into(), o(&format!("{BD}/sdc")));
+                        c
+                    }
+                    _ => block(dev, &format!("{DR}/{disk}"), "", fs, system),
+                };
+                if st.home == Some(name) {
+                    blk.insert("Configuration".into(), fstab("/home"));
+                }
+                let mut ifaces = HashMap::from([
+                    (BLOCK_IFACE.to_string(), blk),
+                    (
+                        FILESYSTEM_IFACE.to_string(),
+                        props(vec![("MountPoints", aay(&[&at]))]),
+                    ),
+                ]);
+                if st.swap == Some(name) {
+                    ifaces.remove(FILESYSTEM_IFACE);
+                    ifaces.insert(SWAPSPACE_IFACE.into(), props(vec![("Active", b(true))]));
+                }
+                m.insert(path(&format!("{BD}/{name}")), ifaces);
+            }
+            m
+        }
+
+        struct ObjectManager(Shared);
+
+        #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
+        impl ObjectManager {
+            fn get_managed_objects(&self) -> Objects {
+                objects(&self.0.lock().unwrap())
+            }
+        }
+
+        #[derive(Debug, zbus::DBusError)]
+        #[zbus(prefix = "org.freedesktop.UDisks2.Error")]
+        enum FakeError {
+            #[zbus(error)]
+            ZBus(zbus::Error),
+            DeviceBusy(String),
+            Failed(String),
+            NotAuthorizedCanObtain(String),
+        }
+
+        struct Filesystem(Shared, &'static str);
+
+        #[zbus::interface(name = "org.freedesktop.UDisks2.Filesystem")]
+        impl Filesystem {
+            /// Refuses as UDisks2 does with a file open on the volume, and as polkit's "deny".
+            fn unmount(&self, _options: HashMap<String, OwnedVariant>) -> Result<(), FakeError> {
+                let mut st = self.0.lock().unwrap();
+                if st.busy == Some(self.1) {
+                    return Err(FakeError::DeviceBusy(format!(
+                        "Error unmounting /dev/{}: target is busy",
+                        self.1
+                    )));
+                }
+                if st.denied == Some(self.1) {
+                    return Err(FakeError::NotAuthorizedCanObtain(
+                        "Not authorized to perform operation".into(),
+                    ));
+                }
+                st.calls.push(format!("Unmount {}", self.1));
+                Ok(())
+            }
+        }
+
+        struct Encrypted(Shared);
+
+        #[zbus::interface(name = "org.freedesktop.UDisks2.Encrypted")]
+        impl Encrypted {
+            fn lock(&self, _options: HashMap<String, OwnedVariant>) -> Result<(), FakeError> {
+                let mut st = self.0.lock().unwrap();
+                if st.lock_fails {
+                    return Err(FakeError::Failed(
+                        "Error locking /dev/dm-0: Device or resource busy".into(),
+                    ));
+                }
+                st.calls.push("Lock sdc".into());
+                Ok(())
+            }
+        }
+
+        struct Drive(Shared, &'static str);
+
+        #[zbus::interface(name = "org.freedesktop.UDisks2.Drive")]
+        impl Drive {
+            fn eject(&self, _options: HashMap<String, OwnedVariant>) {
+                let mut st = self.0.lock().unwrap();
+                st.calls.push(format!("Eject {}", self.1));
+            }
+
+            fn power_off(&self, _options: HashMap<String, OwnedVariant>) -> Result<(), FakeError> {
+                let mut st = self.0.lock().unwrap();
+                if st.power_off_fails {
+                    return Err(FakeError::Failed(
+                        "Error opening /dev/sdb: Device or resource busy".into(),
+                    ));
+                }
+                st.calls.push(format!("PowerOff {}", self.1));
+                Ok(())
+            }
+        }
+
+        struct Fake {
+            udisks: Udisks,
+            state: Shared,
+            /// The sysfs `udisks` reads holders from.
+            sys: tempfile::TempDir,
+            _service: zbus::Connection,
+            _bus: Bus,
+        }
+
+        fn fake(state: State) -> Option<Fake> {
+            let bus = bus()?;
+            let state = Arc::new(Mutex::new(state));
+            let service = zbus::block_on(async {
+                let mut b = zbus::connection::Builder::address(bus.1.as_str())
+                    .name(NAME)
+                    .serve_at(ROOT, ObjectManager(state.clone()))
+                    .serve_at(format!("{BD}/sdc"), Encrypted(state.clone()));
+                for (name, _, _) in VOLUMES {
+                    b = b.serve_at(format!("{BD}/{name}"), Filesystem(state.clone(), name));
+                }
+                for (disk, _, _) in DRIVES {
+                    b = b.serve_at(format!("{DR}/{disk}"), Drive(state.clone(), disk));
+                }
+                b.build().await.expect("serve")
+            });
+            let client = zbus::block_on(async {
+                zbus::connection::Builder::address(bus.1.as_str())
+                    .build()
+                    .await
+                    .expect("connect")
+            });
+            let sys = tempfile::tempdir().unwrap();
+            let mut udisks = Udisks::on(client);
+            udisks.sys = sys.path().to_path_buf();
+            Some(Fake {
+                udisks,
+                state,
+                sys,
+                _service: service,
+                _bus: bus,
+            })
+        }
+
+        impl Fake {
+            fn remove(&self, disk: &str) -> Result<(), Error> {
+                let snap = self.udisks.snapshot();
+                self.udisks.safely_remove(&snap, &format!("{DR}/{disk}"))
+            }
+
+            fn calls(&self) -> Vec<String> {
+                self.state.lock().unwrap().calls.clone()
+            }
+
+            /// Stacks kernel device `holder` on block device `name` in the fake sysfs.
+            fn hold(&self, name: &str, holder: &str) {
+                let dir = self
+                    .sys
+                    .path()
+                    .join("class/block")
+                    .join(name)
+                    .join("holders");
+                std::fs::create_dir_all(dir.join(holder)).unwrap();
+            }
+        }
+
+        #[test]
+        fn a_stick_unmounts_each_partition_then_powers_off() {
+            let Some(f) = fake(State::default()) else {
+                return;
+            };
+            f.remove("Stick").expect("removed");
+            assert_eq!(
+                f.calls(),
+                ["Unmount sdb1", "Unmount sdb2", "PowerOff Stick"]
+            );
+        }
+
+        #[test]
+        fn an_optical_drive_ejects_its_disc_rather_than_powering_off() {
+            let Some(f) = fake(State::default()) else {
+                return;
+            };
+            f.remove("Cd").expect("ejected");
+            assert_eq!(f.calls(), ["Unmount sr0", "Eject Cd"]);
+        }
+
+        #[test]
+        fn a_drive_that_cannot_power_off_is_ejected_and_one_that_does_neither_is_left_unmounted() {
+            let Some(f) = fake(State::default()) else {
+                return;
+            };
+            f.remove("Reader").expect("ejected");
+            f.remove("Bay").expect("unmounted");
+            assert_eq!(
+                f.calls(),
+                ["Unmount mmcblk0p1", "Eject Reader", "Unmount sdd1"]
+            );
+        }
+
+        #[test]
+        fn an_encrypted_stick_unmounts_its_cleartext_then_locks_then_powers_off() {
+            let Some(f) = fake(State::default()) else {
+                return;
+            };
+            f.hold("sdc", "dm-0");
+            f.remove("Vault").expect("removed");
+            assert_eq!(f.calls(), ["Unmount dm_2d0", "Lock sdc", "PowerOff Vault"]);
+        }
+
+        #[test]
+        fn a_refused_lock_leaves_the_encrypted_stick_powered() {
+            let Some(f) = fake(State {
+                lock_fails: true,
+                ..State::default()
+            }) else {
+                return;
+            };
+            let e = f.remove("Vault").expect_err("not locked");
+            assert_eq!(
+                e.message,
+                "Error locking /dev/dm-0: Device or resource busy"
+            );
+            assert_eq!(f.calls(), ["Unmount dm_2d0"]);
+        }
+
+        #[test]
+        fn a_refused_power_off_is_an_error_rather_than_safe_to_remove() {
+            let Some(f) = fake(State {
+                power_off_fails: true,
+                ..State::default()
+            }) else {
+                return;
+            };
+            let e = f.remove("Stick").expect_err("still held");
+            assert_eq!(e.kind, ErrorKind::Other);
+            assert_eq!(
+                e.message,
+                "Its volumes were unmounted, but the drive could not be stopped and may still be \
+                 in use. Error opening /dev/sdb: Device or resource busy"
+            );
+            assert_eq!(f.calls(), ["Unmount sdb1", "Unmount sdb2"]);
+        }
+
+        #[test]
+        fn a_fixed_drive_is_refused_before_any_call() {
+            let Some(f) = fake(State::default()) else {
+                return;
+            };
+            f.remove("Ssd").expect_err("not removable");
+            f.remove("Gone").expect_err("unknown");
+            assert!(f.calls().is_empty(), "{:?}", f.calls());
+        }
+
+        #[test]
+        fn a_stick_holding_a_system_volume_is_refused_before_any_call() {
+            let Some(f) = fake(State {
+                home: Some("sdb2"),
+                ..State::default()
+            }) else {
+                return;
+            };
+            let e = f.remove("Stick").expect_err("holds /home");
+            assert_eq!(
+                e.message,
+                "This drive holds part of the system, so it cannot be removed safely."
+            );
+            assert!(f.calls().is_empty(), "{:?}", f.calls());
+        }
+
+        #[test]
+        fn a_stick_with_swap_or_a_volume_stacked_on_it_is_refused_before_any_call() {
+            const HELD: &str = "Part of this drive is in use as swap space or by an LVM or RAID \
+                                volume, so it cannot be removed safely.";
+            let Some(f) = fake(State {
+                swap: Some("sdb2"),
+                ..State::default()
+            }) else {
+                return;
+            };
+            assert_eq!(f.remove("Stick").expect_err("swap").message, HELD);
+            f.state.lock().unwrap().swap = None;
+            f.hold("sdb1", "dm-3");
+            assert_eq!(f.remove("Stick").expect_err("an LVM volume").message, HELD);
+            assert!(f.calls().is_empty(), "{:?}", f.calls());
+        }
+
+        #[test]
+        fn a_busy_file_system_stops_the_removal_with_udisks_reason() {
+            let Some(f) = fake(State {
+                busy: Some("sdb2"),
+                ..State::default()
+            }) else {
+                return;
+            };
+            let e = f.remove("Stick").expect_err("busy");
+            assert_eq!(e.kind, ErrorKind::Busy);
+            assert_eq!(e.message, "Error unmounting /dev/sdb2: target is busy");
+            assert_eq!(f.calls(), ["Unmount sdb1"], "the stick stays powered");
+        }
+
+        #[test]
+        fn a_refused_unmount_stops_the_removal() {
+            let Some(f) = fake(State {
+                denied: Some("sdb1"),
+                ..State::default()
+            }) else {
+                return;
+            };
+            let e = f.remove("Stick").expect_err("refused");
+            assert_eq!(e.kind, ErrorKind::NotAuthorized);
+            assert!(f.calls().is_empty(), "{:?}", f.calls());
         }
     }
 }
