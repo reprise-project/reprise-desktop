@@ -22,8 +22,8 @@ fn disabled_row(label: &str) -> MenuItem {
 }
 
 const TERMINAL: &str = "Open in Termina&l";
-const PIN: &str = "P&in to Places";
-const UNPIN: &str = "Unp&in from Places";
+const PIN: &str = "Pin to Pl&aces";
+const UNPIN: &str = "Unpin from Pl&aces";
 
 /// A menu's rows, each with what it does, so a row and its command cannot drift.
 type Rows = Vec<(MenuItem, Option<DesktopCommand>)>;
@@ -168,7 +168,7 @@ pub fn drop_menu(
             Some(DropShortcut),
         ),
         SEP,
-        (entry("Cancel"), Some(DropCancel)),
+        (entry("C&ancel"), Some(DropCancel)),
     ]);
     split(rows)
 }
