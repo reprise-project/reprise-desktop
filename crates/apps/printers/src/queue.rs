@@ -292,6 +292,12 @@ impl Queue {
             match self.bar.press(x, y, &lay, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, row, .. } => return self.chosen(title, row, s),
                 Action::Redraw => return Outcome::Redraw,
+                Action::Passed => {
+                    return match self.press(at, button, s, ctx) {
+                        Outcome::None => Outcome::Redraw,
+                        out => out,
+                    };
+                }
                 Action::Ignored => {}
             }
         }
@@ -335,6 +341,13 @@ impl Queue {
         redraw(self.list.release(ctx))
     }
 
+    /// The window lost the keyboard: the menu bar leaves keyboard mode.
+    pub fn blur(&mut self) -> Outcome {
+        let lit = self.bar.is_active();
+        self.bar.close();
+        redraw(lit)
+    }
+
     pub fn leave(&mut self, ctx: &Ctx) -> Outcome {
         let title = self.bar.leave() && ctx.styled();
         redraw(self.list.leave(ctx) || title)
@@ -371,7 +384,7 @@ impl Queue {
             match self.bar.key(bk, &lay, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, row, .. } => return self.chosen(title, row, s),
                 Action::Redraw => return Outcome::Redraw,
-                Action::Ignored => {}
+                Action::Ignored | Action::Passed => {}
             }
         }
         let r = self.list_rect(ctx);

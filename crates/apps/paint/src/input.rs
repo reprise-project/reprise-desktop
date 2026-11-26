@@ -33,6 +33,7 @@ impl Paint {
             Event::CloseRequest => self.confirm(Then::Quit),
             Event::Focus(false) => {
                 self.alt_arm.interrupt();
+                self.bar.close();
                 Reply::redraw()
             }
             Event::Resized => {
@@ -106,7 +107,7 @@ impl Paint {
             match self.bar.key(bk, &lay, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
                 Action::Redraw => return Reply::redraw(),
-                Action::Ignored => {}
+                Action::Ignored | Action::Passed => {}
             }
         }
         if self.doc.text_box.is_some() {
@@ -288,6 +289,12 @@ impl Paint {
                             return self.command(title, row, ctx);
                         }
                         Action::Redraw => return Reply::redraw(),
+                        Action::Passed => {
+                            return Reply {
+                                redraw: true,
+                                ..self.pointer(p, ctx)
+                            };
+                        }
                         Action::Ignored => {}
                     }
                     if let Some((bar, r)) = self.status(&l, ctx)

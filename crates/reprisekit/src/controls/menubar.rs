@@ -664,6 +664,9 @@ impl Key {
 pub enum Action {
     Ignored,
     Redraw,
+    /// A press off the bar ended its keyboard mode: the window redraws and handles the press as
+    /// if the bar were idle. Only [`Bar::press`] returns it.
+    Passed,
     /// A row of a title's menu was chosen; `path` names it from the title's menu
     /// down (`[3, 1]` is the second row of row 3's submenu), `row` is `path[0]`.
     Chosen {
@@ -934,9 +937,13 @@ impl Bar {
             }
             return Action::Redraw;
         }
-        if self.is_active() {
+        if self.open.is_some() {
             self.close();
             return Action::Redraw;
+        }
+        if self.active.is_some() {
+            self.close();
+            return Action::Passed;
         }
         Action::Ignored
     }
@@ -1544,6 +1551,35 @@ mod bar_tests {
             theme.colors.button_hilight.argb(),
             "popup edge"
         );
+    }
+
+    #[test]
+    fn a_press_off_the_bar_in_keyboard_mode_ends_it_and_passes_on() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let (m, px) = (&theme, theme.fonts.size_px);
+        let mut b = bar();
+        let lay = Layout::compute(
+            &text,
+            px,
+            Rect::new(0, 0, 300, 200),
+            &b.titles,
+            &MenuTitles::CLASSIC,
+        );
+        b.key(Key::Char('e', true), &lay, &text, m, px);
+        b.key(Key::Escape, &lay, &text, m, px);
+        assert_eq!(b.active, Some(1), "Esc leaves Edit lit");
+        assert_eq!(b.press(150, 150, &lay, &text, m, px), Action::Passed);
+        assert!(!b.is_active());
+        assert_eq!(b.press(150, 150, &lay, &text, m, px), Action::Ignored);
+
+        b.key(Key::Char('f', true), &lay, &text, m, px);
+        assert_eq!(
+            b.press(150, 150, &lay, &text, m, px),
+            Action::Redraw,
+            "a press off an open menu only closes it"
+        );
+        assert!(!b.is_active());
     }
 
     #[test]

@@ -666,6 +666,7 @@ impl PrintersApp {
             Event::Pointer(PointerInput::Motion { x, y }) => q.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => q.release(ctx),
             Event::Pointer(PointerInput::Leave) => q.leave(ctx),
+            Event::Focus(false) => q.blur(),
             Event::Pointer(PointerInput::Scroll { rows, .. }) => q.wheel(rows, ctx),
             Event::Pointer(PointerInput::ScrollAcross { cols, .. }) => q.wheel_across(cols, ctx),
             _ => return Reply::none(),

@@ -192,7 +192,7 @@ impl Explorer {
                 Some(self.run(cmd, ctx))
             }
             Action::Redraw => Some(Reply::redraw()),
-            Action::Ignored => None,
+            Action::Ignored | Action::Passed => None,
         }
     }
 
