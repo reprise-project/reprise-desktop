@@ -9,8 +9,8 @@
 //! there leaves nothing set. PackageKit restarts into the desktop once the update is in, whether
 //! it was a Turn Off or a Restart. A trigger made there is taken back when the action fails, and
 //! when the attempt is given up on while its action runs, by the next attempt or the session's
-//! end ([`Made`]), unless logind is shutting the computer down by then; a trigger another program
-//! made is taken back only when the user unticks a box that showed.
+//! end ([`Made`]), unless the computer is going down by then; a trigger another program made is
+//! taken back only when the user unticks a box that showed.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -34,7 +34,7 @@ pub trait Bus: Send + Sync {
     fn status(&self) -> Option<Status>;
     fn trigger(&self, after: After, interactive: bool) -> Answer;
     fn cancel(&self, interactive: bool) -> Answer;
-    /// logind's `PreparingForShutdown`; false when logind does not answer.
+    /// Whether the computer is going down ([`crate::power::shutting_down`]).
     fn shutting_down(&self) -> bool;
 }
 
@@ -222,8 +222,8 @@ pub enum Held<F> {
 /// `updates` asks, first taking back a trigger an earlier attempt left. Install triggers it unless
 /// the attempt is no longer `still` the newest, nothing is prepared any more, or it is set to
 /// install already, and takes back a trigger it made when the attempt was given up on meanwhile
-/// or `power` fails, unless logind is shutting the computer down. Skip takes back a trigger another
-/// program made first.
+/// or `power` fails, unless the computer is going down. Skip takes back a trigger another program
+/// made first.
 pub fn around<F>(
     bus: &dyn Bus,
     made: &Made,

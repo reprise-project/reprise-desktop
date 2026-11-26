@@ -30,6 +30,9 @@ pub(crate) const LOGIN1_NAME: &str = "org.freedesktop.login1";
 pub(crate) const LOGIN1_PATH: &str = "/org/freedesktop/login1";
 pub(crate) const LOGIN1_MANAGER: &str = "org.freedesktop.login1.Manager";
 const LOGIN1_SESSION: &str = "org.freedesktop.login1.Session";
+const SYSTEMD_NAME: &str = "org.freedesktop.systemd1";
+const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
+const SYSTEMD_MANAGER: &str = "org.freedesktop.systemd1.Manager";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 /// Well under logind's `InhibitDelayMaxSec` (5 s by default).
 const COVER_WAIT: Duration = Duration::from_millis(2000);
@@ -317,20 +320,23 @@ pub(crate) async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObject
     reply.body().deserialize()
 }
 
-/// logind's `PreparingForShutdown`, blocking: whether a power off or reboot is under way. False
-/// when logind does not answer.
+/// Whether a power off or reboot is under way, blocking: logind's `PreparingForShutdown`, or
+/// systemd's queued `shutdown.target`, which a `[power]` command going around logind starts too.
+/// False when neither answers.
 #[cfg(not(test))]
 pub fn shutting_down() -> bool {
     match reprisebus::system() {
-        Ok(conn) => reprisebus::wait(preparing(&conn)),
+        Ok(conn) => {
+            reprisebus::wait(async { preparing(&conn).await || shutdown_queued(&conn).await })
+        }
         Err(e) => {
-            log::warn!("power: PreparingForShutdown: {e}");
+            log::warn!("power: shutting down: {e}");
             false
         }
     }
 }
 
-/// [`shutting_down`] on `conn`.
+/// logind's `PreparingForShutdown` on `conn`; false when logind does not answer.
 async fn preparing(conn: &Connection) -> bool {
     let read = async {
         let login1: Proxy<'_> = zbus::proxy::Builder::new(conn)
@@ -346,6 +352,38 @@ async fn preparing(conn: &Connection) -> bool {
         log::warn!("power: PreparingForShutdown: {e}");
         false
     })
+}
+
+/// Whether systemd on `conn` has a start job queued for `shutdown.target`, which every power off,
+/// reboot, halt and kexec pulls in; false when systemd does not answer.
+async fn shutdown_queued(conn: &Connection) -> bool {
+    type Job = (
+        u32,
+        String,
+        String,
+        String,
+        OwnedObjectPath,
+        OwnedObjectPath,
+    );
+    let read = async {
+        let systemd: Proxy<'_> = zbus::proxy::Builder::new(conn)
+            .destination(SYSTEMD_NAME)
+            .path(SYSTEMD_PATH)
+            .interface(SYSTEMD_MANAGER)
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await?;
+        systemd.call::<_, _, Vec<Job>>("ListJobs", &()).await
+    };
+    match read.await {
+        Ok(jobs) => {
+            (jobs.iter()).any(|(_, unit, kind, ..)| unit == "shutdown.target" && kind == "start")
+        }
+        Err(e) => {
+            log::warn!("power: systemd's jobs: {e}");
+            false
+        }
+    }
 }
 
 pub(crate) async fn session_proxy(
@@ -1324,8 +1362,8 @@ mod tests {
         use std::time::{Duration, Instant};
 
         use super::super::{
-            Call, Hint, LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, preparing, session_proxy,
-            watch_session, watch_sleep,
+            Call, Hint, LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, SYSTEMD_NAME,
+            SYSTEMD_PATH, preparing, session_proxy, shutdown_queued, watch_session, watch_sleep,
         };
 
         /// Says `PreparingForShutdown` is what `preparing` holds.
@@ -1364,6 +1402,72 @@ mod tests {
                 let alone = reprisebus::testbus::connect(&empty.1).await;
                 assert!(!preparing(&alone).await, "no logind on the bus");
             });
+        }
+
+        /// systemd's job queue, as `ListJobs` lists it: unit and job type.
+        struct FakeSystemd {
+            jobs: Vec<(&'static str, &'static str)>,
+        }
+
+        #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
+        impl FakeSystemd {
+            fn list_jobs(
+                &self,
+            ) -> Vec<(
+                u32,
+                String,
+                String,
+                String,
+                zbus::OwnedObjectPath,
+                zbus::OwnedObjectPath,
+            )> {
+                let path = |p: &str| zbus::OwnedObjectPath::try_from(p).expect("path");
+                (self.jobs.iter().enumerate())
+                    .map(|(i, (unit, kind))| {
+                        let job = path(&format!("/org/freedesktop/systemd1/job/{i}"));
+                        let at = path("/org/freedesktop/systemd1/unit/x");
+                        (
+                            i as u32,
+                            unit.to_string(),
+                            kind.to_string(),
+                            "waiting".into(),
+                            job,
+                            at,
+                        )
+                    })
+                    .collect()
+            }
+        }
+
+        #[test]
+        fn a_queued_shutdown_target_counts_as_a_shutdown_whoever_started_it() {
+            let queued = |jobs: Vec<(&'static str, &'static str)>| {
+                let bus = bus()?;
+                Some(zbus::block_on(async {
+                    let _systemd = zbus::connection::Builder::address(bus.1.as_str())
+                        .name(SYSTEMD_NAME)
+                        .serve_at(SYSTEMD_PATH, FakeSystemd { jobs })
+                        .build()
+                        .await
+                        .expect("the fake systemd");
+                    shutdown_queued(&reprisebus::testbus::connect(&bus.1).await).await
+                }))
+            };
+            let reboot = vec![
+                ("user@1000.service", "stop"),
+                ("reboot.target", "start"),
+                ("shutdown.target", "start"),
+            ];
+            let Some(down) = queued(reboot) else {
+                return;
+            };
+            assert!(down);
+            assert_eq!(queued(vec![("foo.service", "start")]), Some(false));
+            assert_eq!(
+                queued(vec![("shutdown.target", "stop")]),
+                Some(false),
+                "a stop job is no shutdown"
+            );
         }
 
         /// Refuses `Inhibit` while `refusals` lasts, then hands out /dev/null.
