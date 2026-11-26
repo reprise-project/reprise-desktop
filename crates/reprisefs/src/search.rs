@@ -635,7 +635,7 @@ fn collect_with(
         pending.extend_from_slice(&buf[..n]);
         while let Some(nl) = pending.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = pending.drain(..=nl).collect();
-            let path = PathBuf::from(OsStr::from_bytes(&line[..nl]));
+            let path = PathBuf::from(OsStr::from_bytes(without_end_slash(&line[..nl])));
             if keep(q, &path) && to_check.send(path).is_ok() {
                 waiting += 1;
             }
@@ -644,6 +644,14 @@ fn collect_with(
     over.store(true, Ordering::Relaxed);
     abandon(child);
     found
+}
+
+/// `fd` ends a folder's line with a `/`, which would stay in the path's text.
+fn without_end_slash(line: &[u8]) -> &[u8] {
+    match line {
+        [rest @ .., b'/'] if !rest.is_empty() => rest,
+        _ => line,
+    }
 }
 
 /// Kills `child` and reaps it on a thread of its own. A tool with a thread blocked on a stopped
@@ -895,6 +903,17 @@ mod tests {
         );
         // The last line has no newline.
         assert_eq!(found, [PathBuf::from("/home/u/notes")]);
+    }
+
+    #[test]
+    fn collect_drops_the_slash_fd_ends_a_folder_with() {
+        let found = collect(
+            sh("printf '/home/u/notes/\\n/home/u/notes.txt\\n'"),
+            &q("/home/u", None),
+            &AtomicBool::new(false),
+        );
+        let text: Vec<_> = found.iter().map(|p| p.to_str().unwrap()).collect();
+        assert_eq!(text, ["/home/u/notes", "/home/u/notes.txt"]);
     }
 
     #[test]
