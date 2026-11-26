@@ -130,7 +130,8 @@ pub struct Volume {
     pub backing: Option<String>,
     /// `HintIgnore`: not to be shown.
     pub ignore: bool,
-    /// `HintSystem`: part of the system, not the user's to mount.
+    /// `HintSystem`: part of the system, not the user's to mount. UDisks2 sets it on every loop
+    /// device; it is false on one this user set up and on its partitions.
     pub system: bool,
     /// `HintAuto`: fine to mount on its own when it appears.
     pub auto: bool,
@@ -441,21 +442,23 @@ fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volu
     }
 }
 
-/// The image file behind a loop device this user set up.
+/// The image file behind a loop device this user set up. UDisks2 reports `SetupByUID` 0 for
+/// root and for one not set up through it (losetup, fstab, snaps), so root owns none.
 fn own_loop(lp: &Props, uid: u32) -> Option<PathBuf> {
     let by = lp
         .get("SetupByUID")
         .and_then(|v| u32::try_from(v.clone()).ok());
     let file = dev_name(lp, "BackingFile");
-    (by == Some(uid) && !file.is_empty()).then(|| PathBuf::from(file))
+    (uid != 0 && by == Some(uid) && !file.is_empty()).then(|| PathBuf::from(file))
 }
 
 /// Every drive and block device in `objects`. A cleartext volume takes
 /// the drive and the hints of the container it was unlocked from: UDisks2
 /// gives it no drive, so it would otherwise read as the system's.
 ///
-/// A loop device `uid` set up carries its [`Image`], and so do its partitions; when the image's
-/// whole device holds a file system (a hybrid ISO), its partitions are ignored.
+/// A loop device `uid` set up carries its [`Image`], and so do its partitions, none of them nor
+/// a volume unlocked from one the system's; when the image's whole device holds a file system (a hybrid ISO), its partitions
+/// are ignored.
 pub fn fold(objects: &Objects) -> Snapshot {
     // SAFETY: getuid cannot fail and touches no memory.
     fold_for(objects, unsafe { libc::getuid() })
@@ -475,11 +478,6 @@ fn fold_for(objects: &Objects, uid: u32) -> Snapshot {
                 .map(|b| volume_of(p.as_str(), ifaces, b))
         })
         .collect();
-    let containers: HashMap<String, Volume> = volumes
-        .iter()
-        .filter(|v| v.encrypted)
-        .map(|v| (v.path.clone(), v.clone()))
-        .collect();
     let images: HashMap<String, (PathBuf, bool)> = objects
         .iter()
         .filter_map(|(p, ifaces)| {
@@ -497,12 +495,6 @@ fn fold_for(objects: &Objects, uid: u32) -> Snapshot {
         })
         .collect();
     for v in &mut volumes {
-        if let Some(c) = v.backing.as_ref().and_then(|b| containers.get(b)) {
-            v.disk = v.disk.take().or_else(|| c.disk.clone());
-            v.ignore = c.ignore;
-            v.system = c.system;
-            v.auto = c.auto;
-        }
         let table = tables.get(&v.path).cloned();
         let whole = table.as_deref().unwrap_or(&v.path);
         if let Some((file, whole_fs)) = images.get(whole) {
@@ -510,7 +502,21 @@ fn fold_for(objects: &Objects, uid: u32) -> Snapshot {
                 file: file.clone(),
                 loop_path: whole.to_string(),
             });
+            v.system = false;
             v.ignore |= table.is_some() && *whole_fs;
+        }
+    }
+    let containers: HashMap<String, Volume> = volumes
+        .iter()
+        .filter(|v| v.encrypted)
+        .map(|v| (v.path.clone(), v.clone()))
+        .collect();
+    for v in &mut volumes {
+        if let Some(c) = v.backing.as_ref().and_then(|b| containers.get(b)) {
+            v.disk = v.disk.take().or_else(|| c.disk.clone());
+            v.ignore = c.ignore;
+            v.system = c.system;
+            v.auto = c.auto;
         }
     }
     volumes.sort_by(|a, b| a.device.cmp(&b.device));
@@ -1340,10 +1346,22 @@ pub(crate) mod tests {
             })
         );
         assert!(snap.removable(iso), "though UDisks2 calls it the system's");
+        assert!(!iso.holds_system(), "set up by this user, so theirs");
         assert_eq!(iso.name(None), "DEBIAN_13");
         let other = snap.volume_by_device("/dev/loop1").unwrap();
         assert_eq!(other.image, None);
         assert!(!snap.removable(other));
+        assert!(
+            other.holds_system(),
+            "another user's loop device keeps HintSystem"
+        );
+        let root = fold_for(&m, 0);
+        assert!(
+            root.volumes
+                .iter()
+                .all(|v| v.image.is_none() && v.holds_system()),
+            "SetupByUID 0 is also a loop device not set up through UDisks2"
+        );
         assert_eq!(
             snap.image_of(Path::new("/home/u/debian.iso")),
             Some(&*format!("{BD}/loop0"))
@@ -1358,6 +1376,37 @@ pub(crate) mod tests {
             ["/dev/loop0"],
             "an image not mounted yet is listed like a stick"
         );
+    }
+
+    #[test]
+    fn a_volume_unlocked_from_this_users_image_is_not_the_systems() {
+        let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+        let mut m = Objects::new();
+        let mut luks = loop_dev("loop0", "/home/u/vault.img", uid(), false);
+        luks.get_mut(BLOCK_IFACE)
+            .unwrap()
+            .insert("IdType".into(), s("crypto_LUKS"));
+        luks.insert(
+            ENCRYPTED_IFACE.to_string(),
+            props(vec![("CleartextDevice", o(&format!("{BD}/dm_2d0")))]),
+        );
+        m.insert(path(&format!("{BD}/loop0")), luks);
+        let mut clear = block("/dev/dm-0", "/", "VAULT", "ext4", true);
+        clear.insert("CryptoBackingDevice".into(), o(&format!("{BD}/loop0")));
+        m.insert(
+            path(&format!("{BD}/dm_2d0")),
+            HashMap::from([
+                (BLOCK_IFACE.to_string(), clear),
+                (
+                    FILESYSTEM_IFACE.to_string(),
+                    props(vec![("MountPoints", aay(&["/run/media/u/VAULT"]))]),
+                ),
+            ]),
+        );
+        let snap = fold(&m);
+        let vault = snap.volume_by_device("/dev/dm-0").unwrap();
+        assert_eq!(vault.backing, Some(format!("{BD}/loop0")));
+        assert!(!vault.holds_system(), "its container is the user's image");
     }
 
     #[test]
@@ -1406,6 +1455,13 @@ pub(crate) mod tests {
         assert_eq!(drives.len(), 1, "only what is mounted");
         assert_eq!(drives[0].mount, PathBuf::from("/run/media/u/BOOT"));
         assert_eq!(drives[0].device, "/dev/loop0p1");
+        assert!(
+            !snap
+                .volume_by_device("/dev/loop0p1")
+                .unwrap()
+                .holds_system(),
+            "an image's partition is the user's too"
+        );
         assert!(drives[0].removable && !drives[0].optical);
     }
 
