@@ -72,7 +72,8 @@ fn blue_home() -> StartPanel {
     p
 }
 
-/// Glass's Home, its program tree, a search and a jump list: every row that wears an icon.
+/// Glass's Home, its program tree (short, and long enough for its scroll bar), a search and a
+/// jump list: every row that wears an icon.
 fn glass_modes() -> Vec<(&'static str, StartPanel)> {
     let mut base = StartPanel::new();
     programs(&mut base);
@@ -108,11 +109,21 @@ fn glass_modes() -> Vec<(&'static str, StartPanel)> {
     }]);
     let mut jump = base.clone();
     jump.set_mode(Mode::Jump(3));
+    let mut long = base.clone();
+    long.tree = (0..30)
+        .map(|k| TreeRow::App {
+            name: format!("App {k}"),
+            icon: None,
+            depth: 0,
+        })
+        .collect();
+    long.set_mode(Mode::Programs);
     vec![
         ("home", base),
         ("programs", tree),
         ("search", search),
         ("jump", jump),
+        ("scrolled", long),
     ]
 }
 
