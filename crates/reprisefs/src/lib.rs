@@ -69,6 +69,7 @@ pub mod search;
 pub mod searchproviders;
 pub mod sendto;
 pub mod software;
+pub mod stillfile;
 pub mod subprocess;
 pub mod sysinfo;
 pub mod templates;

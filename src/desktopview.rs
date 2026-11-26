@@ -43,7 +43,7 @@ pub(crate) use drives::DriveBins;
 use layout::CellKey;
 pub(crate) use menus::entry;
 pub use menus::{
-    IconMenu, NEW_MENU_ICONS, arrange_menu, desktop_menu, drop_menu, icon_menu, new_menu,
+    IconMenu, NEW_MENU_ICONS, Pastable, arrange_menu, desktop_menu, drop_menu, icon_menu, new_menu,
     open_with_menu, send_to_menu,
 };
 #[cfg(test)]

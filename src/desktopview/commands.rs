@@ -10,6 +10,7 @@ use crate::{
     compositor::State,
     desktop::{self, IconId, Target},
     dialog::Dialog,
+    dragview::DropTarget,
     fsjobs::Action,
 };
 
@@ -73,7 +74,7 @@ impl State {
             },
             SendTo::Phone(id) => reprisefs::sendto::send_to_phone(id, &paths),
             SendTo::Folder(dir) => {
-                use crate::dragview::{DropOp, DropTarget};
+                use crate::dragview::DropOp;
                 // A copy onto a drive that stopped answering would hold a file action until it
                 // answers: a fresh stat of the drive goes first, and one out already sends nothing.
                 match self.desktop.as_mut().and_then(|v| v.drives.send_stat(&dir)) {
@@ -349,6 +350,75 @@ impl State {
                 name,
                 desktop::to_saved(grid, desktop::cell_at(grid, area, x, y)),
             );
+        }
+        self.rescan_desktop();
+    }
+
+    /// Paste of a picture alone on the clipboard: a new file in `[screenshot] format`
+    /// ([`reprisefs::stillfile::pasted_file`]) in the folder `target` names, or in its desktop
+    /// cell, selected with its rename begun as New's item is. The encode runs on a file job of its
+    /// own: a JPEG XL takes past an action's deadline.
+    pub(crate) fn paste_image(&mut self, target: DropTarget) {
+        let (dir, cell) = match target {
+            DropTarget::Desktop(cell) => match self.desktop.as_ref() {
+                Some(v) => (v.dir.clone(), Some(cell)),
+                None => return,
+            },
+            DropTarget::Folder(dir) => (dir, None),
+            _ => return,
+        };
+        let how = self.config.screenshot.still();
+        self.clip_image(move |state, bytes| {
+            state.spawn_fs_job(move || {
+                let file = reprisefs::stillfile::pasted_file(&bytes, &how);
+                Box::new(move |state: &mut State| state.write_pasted(dir, cell, file))
+            });
+        });
+    }
+
+    fn write_pasted(
+        &mut self,
+        dir: PathBuf,
+        cell: Option<(i32, i32)>,
+        file: std::io::Result<(Vec<u8>, &'static str)>,
+    ) {
+        let history = self.desktop_history();
+        let secs = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
+            .map_or(0, |d| d.as_secs() as i64);
+        let action = Action::changes("Paste", State::rescan_desktop);
+        self.spawn_fs_action(action, move |gate| {
+            if !gate.change(&dir) {
+                return Box::new(|_| {});
+            }
+            let made = file
+                .and_then(|(file, ext)| reprisefs::stillfile::write_pasted(&dir, &file, ext, secs));
+            if let Ok(path) = &made {
+                record_new(&history, path);
+            }
+            Box::new(move |state: &mut State| match made {
+                Ok(path) => state.pasted_landed(&path, cell),
+                Err(e) => {
+                    log::warn!("desktop: paste of a picture: {e}");
+                    let text = format!("Cannot save the pasted picture: {e}");
+                    state.open_dialog(Dialog::error("Paste", text));
+                }
+            })
+        });
+    }
+
+    /// A pasted picture landed at `path`: on the desktop it takes `cell` and New's selection.
+    fn pasted_landed(&mut self, path: &Path, cell: Option<(i32, i32)>) {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let Some(view) = self
+            .desktop
+            .as_mut()
+            .filter(|v| path.parent() == Some(&*v.dir))
+        else {
+            return;
+        };
+        view.made = Some(name.to_string());
+        if let Some(cell) = cell.filter(|_| !view.auto_arrange) {
+            self.land_icon(&name, cell);
         }
         self.rescan_desktop();
     }

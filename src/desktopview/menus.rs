@@ -43,15 +43,24 @@ fn split(rows: Rows) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     rows.into_iter().unzip()
 }
 
+/// What the clipboard holds for the desktop's Paste rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pastable {
+    Nothing,
+    /// A picture alone: Paste saves it as a file, Paste Shortcut has nothing to link.
+    Picture,
+    Files,
+}
+
 /// The empty-desktop menu, the Widgets submenu under Arrange Icons By, ending on Reprise
-/// Settings and About Reprise. Paste
-/// and Paste Shortcut are greyed unless `can_paste`. With `show_files` false, New
+/// Settings and About Reprise. Paste and Paste Shortcut are greyed unless `paste` offers them
+/// ([`Pastable`]). With `show_files` false, New
 /// and the Paste pair are greyed (what they make would land in ~/Desktop, which
 /// is not shown). `undo` (the entry the history's head names, its "Undo New", and whether it can
 /// run now) adds its row under the Paste pair, greyed while it cannot or the files are off. While a
 /// `slideshow` runs, "Next desktop background" follows Refresh, ahead of Open in Terminal.
 pub fn desktop_menu(
-    can_paste: bool,
+    paste: Pastable,
     show_files: bool,
     undo: Option<(reprisefs::undo::EntryId, &str, bool)>,
     slideshow: bool,
@@ -63,7 +72,11 @@ pub fn desktop_menu(
         (disabled_row("Ne&w").submenu(true), None)
     };
     let paste = |label: &str, cmd: DesktopCommand| {
-        if can_paste && show_files {
+        let live = match cmd {
+            PasteShortcut => paste == Pastable::Files,
+            _ => paste != Pastable::Nothing,
+        };
+        if live && show_files {
             (entry(label), Some(cmd))
         } else {
             (disabled_row(label), None)
