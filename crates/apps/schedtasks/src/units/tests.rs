@@ -344,4 +344,9 @@ fn a_program_is_an_executable_path_or_a_name_on_path() {
     assert_eq!(odd("BIN/./tool"), Some(tool.clone()), "a . dropped");
     assert_eq!(odd("BIN/../bin/tool"), None, "a .. refused");
     assert_eq!(find_program("tool", None), None);
+    assert_ne!(
+        find_program("~//bin/sh", None),
+        Some("/bin/sh".into()),
+        "~// stays under home"
+    );
 }

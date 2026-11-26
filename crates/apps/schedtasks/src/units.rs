@@ -164,7 +164,7 @@ pub fn find_program(typed: &str, path: Option<&OsStr>) -> Option<PathBuf> {
     };
     let home = || std::env::var_os("HOME").map(PathBuf::from);
     let found = match typed.strip_prefix("~/") {
-        Some(rest) => home()?.join(rest),
+        Some(rest) => home()?.join(rest.trim_start_matches('/')),
         None if typed.contains('/') => PathBuf::from(typed),
         None => std::env::split_paths(path?)
             .map(|dir| dir.join(typed))
