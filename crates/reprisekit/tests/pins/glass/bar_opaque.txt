@@ -1,0 +1,8 @@
+Light taskbar at 1 bf14780d0e302a81
+Light strip at 1 df50ef86df129740
+Light taskbar at 2 7b273e6467ada81d
+Light strip at 2 be8a7319ca997c48
+Dark taskbar at 1 e43027d9562d1275
+Dark strip at 1 ee6bee58531be20c
+Dark taskbar at 2 9973cb45e4ce5f8d
+Dark strip at 2 d7e5373c9c896746

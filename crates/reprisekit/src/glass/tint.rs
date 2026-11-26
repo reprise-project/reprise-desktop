@@ -21,7 +21,7 @@
 //! default intensity is the art itself and sheens, lines and glyphs keep what they add over the glass.
 
 use super::art;
-use super::{Material, Settings, Swatch, bar};
+use super::{Material, Mode, Settings, Swatch, bar};
 use crate::backdrop::{Dim, Lift};
 use crate::theme::Color;
 
@@ -145,14 +145,27 @@ impl Surface {
 
     /// The art's plain glass pixel for this surface (Sky, default intensity): through [`Recolour::new`] it lands on [`plain`].
     pub fn plain_px(self) -> u32 {
-        self.art().0
+        match self {
+            Surface::Active => art::PLAIN[0],
+            Surface::Inactive => art::PLAIN[1],
+            Surface::Taskbar => bar::BAR_PLAIN,
+        }
     }
 
-    fn art(self) -> (u32, [u8; 3]) {
+    /// The colour the art's glass lies over with transparency off, in `mode`.
+    pub fn opaque_under(self, mode: Mode) -> [u8; 3] {
+        let dark = mode == Mode::Dark;
         match self {
-            Surface::Active => (art::PLAIN[0], art::OPAQUE_UNDER[0]),
-            Surface::Inactive => (art::PLAIN[1], art::OPAQUE_UNDER[1]),
-            Surface::Taskbar => (bar::BAR_PLAIN, bar::BAR_OPAQUE_UNDER),
+            Surface::Active | Surface::Inactive => {
+                let i = (self == Surface::Inactive) as usize;
+                if dark {
+                    art::OPAQUE_UNDER_DARK[i]
+                } else {
+                    art::OPAQUE_UNDER[i]
+                }
+            }
+            Surface::Taskbar if dark => bar::BAR_OPAQUE_UNDER_DARK,
+            Surface::Taskbar => bar::BAR_OPAQUE_UNDER,
         }
     }
 }
@@ -338,8 +351,8 @@ impl Recolour {
     /// Sky's at the default intensity, so opaque glass pales toward light grey as the intensity falls.
     /// The rest of the art lies over the colour that puts the plain glass there.
     pub fn new(s: &Settings, surface: Surface) -> Recolour {
-        let (art_px, art_under) = surface.art();
-        let (a0, p0) = split(art_px);
+        let art_under = surface.opaque_under(s.mode);
+        let (a0, p0) = split(surface.plain_px());
         let (da, dp) = shift(s, surface);
         let under = (!s.transparency).then(|| {
             let d = sky();
@@ -419,7 +432,7 @@ mod tests {
         for w in SWATCHES {
             let rgb = [w.color.r, w.color.g, w.color.b];
             for surface in SURFACES {
-                let (plain_px, _) = surface.art();
+                let plain_px = surface.plain_px();
                 for transparency in [true, false] {
                     let r = Recolour::new(&settings(rgb, w.intensity, transparency), surface);
                     let px = r.px(plain_px);
@@ -469,8 +482,44 @@ mod tests {
             );
             assert_eq!(
                 opaque.under,
-                Some(surface.art().1),
+                Some(surface.opaque_under(Mode::Light)),
                 "{surface:?}: the art's opaque colour"
+            );
+        }
+    }
+
+    #[test]
+    fn with_transparency_off_dark_mode_lays_the_glass_over_a_dark_colour() {
+        for surface in SURFACES {
+            let glass = |mode| {
+                let s = Settings {
+                    mode,
+                    transparency: false,
+                    ..Settings::default()
+                };
+                let px = Recolour::new(&s, surface).px(surface.plain_px());
+                [16, 8, 0].map(|sh| (px >> sh) & 0xFF)
+            };
+            let (light, dark) = (glass(Mode::Light), glass(Mode::Dark));
+            assert!(
+                light.iter().all(|&c| c > 150),
+                "{surface:?}: light {light:?}"
+            );
+            assert!(dark.iter().all(|&c| c < 100), "{surface:?}: dark {dark:?}");
+        }
+    }
+
+    #[test]
+    fn the_dark_opaque_colours_are_the_light_ones_turned_dark() {
+        let dark = |[r, g, b]: [u8; 3]| {
+            let c = crate::glass::dark::remap_color(Color::rgb(r, g, b));
+            [c.r, c.g, c.b]
+        };
+        for surface in SURFACES {
+            assert_eq!(
+                surface.opaque_under(Mode::Dark),
+                dark(surface.opaque_under(Mode::Light)),
+                "{surface:?}"
             );
         }
     }
