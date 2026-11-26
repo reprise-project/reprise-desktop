@@ -879,7 +879,7 @@ pub struct Powering {
     under_way: Option<u64>,
     /// Custom Stand By and Hibernate commands still running past [`ANSWER_WITHIN`] ([`late`]).
     lingering: Vec<u64>,
-    /// A refusal held back while the session ended ([`turned_down`]).
+    /// A refusal held back while the session ended ([`turned_down`], [`tell_when_back`]).
     untold: Option<(Act, Refused)>,
     /// A session end went on past its programs ([`go_on`]) and the desktop has not come back.
     went_on: bool,
@@ -919,10 +919,8 @@ impl Powering {
         true
     }
 
-    /// [`Powering::give_up`], giving up the lingering commands too. The session ends, so nothing
-    /// is told.
+    /// [`Powering::give_up`], giving up the lingering commands too.
     fn give_up_all(&mut self) -> bool {
-        self.late_unsure = None;
         let lingered = !self.lingering.is_empty();
         self.give_up_lingering();
         self.give_up() || lingered
@@ -1234,10 +1232,10 @@ fn answered(
     if !state.powering.answer(id) {
         log::info!("session end: {act:?} given up on answered {failed:?}");
         let unsure = state.powering.late_unsure.take_if(|n| *n == id).is_some();
-        if let Some(Failed::Refused(why @ Refused::Stays(_))) = &failed
+        if let Some(Failed::Refused(why @ Refused::Stays(_))) = failed
             && unsure
         {
-            tell(state, act, why);
+            tell_when_back(state, act, why);
         }
         return;
     }
@@ -1276,6 +1274,16 @@ fn answered(
             log::info!("session end: {act:?} stops: the computer is going down");
             back(state);
         }
+    }
+}
+
+/// [`tell`] now, or once the desktop comes back ([`back`]) while a power action or a session end
+/// is under way or the screen fades out.
+fn tell_when_back(state: &mut State, act: Act, why: Refused) {
+    let p = &state.powering;
+    match p.busy() || p.went_on || state.ending.is_some() || state.session_fade.darkens() {
+        true => state.powering.untold = Some((act, why)),
+        false => tell(state, act, &why),
     }
 }
 
@@ -2688,9 +2696,9 @@ mod tests {
         let id = h.state.powering.begin();
         h.state.offline.made.set(Some(id));
         let made = h.state.offline.made.clone();
-        let cancel = made.locked();
+        let held = made.locked();
         late(&mut h.state, id, Act::Restart, false);
-        drop(cancel);
+        drop(held);
         crate::crash::not_ending();
         let open = dialogs(&h);
         let text = |h: &crate::harness::Harness| {
@@ -2708,16 +2716,36 @@ mod tests {
             "Reprise could not restart the computer.\n\nsignal 15\n\n\
              Updates will install the next time the computer starts."
         );
-        let id = h.state.powering.begin();
-        let made = h.state.offline.made.clone();
-        let cancel = made.locked();
-        late(&mut h.state, id, Act::Restart, false);
-        drop(cancel);
-        quit(&mut h.state);
+        let unsure = |h: &mut crate::harness::Harness| {
+            let id = h.state.powering.begin();
+            let made = h.state.offline.made.clone();
+            let held = made.locked();
+            late(&mut h.state, id, Act::Restart, false);
+            drop(held);
+            id
+        };
+        let id = unsure(&mut h);
+        begin(&mut h.state, Goal::LogOff, None, Origin::Desktop);
+        cancel(&mut h.state);
         crate::crash::not_ending();
         let open = dialogs(&h);
         answered(&mut h.state, id, again(Act::Restart), stays(), None);
-        assert_eq!(dialogs(&h), open, "a session that quit tells nothing");
+        assert_eq!(
+            dialogs(&h),
+            open + 1,
+            "a Log Off cancelled in between still tells"
+        );
+        let id = unsure(&mut h);
+        quit(&mut h.state);
+        h.until("the fade", |s| s.session_fade.darkens());
+        crate::crash::not_ending();
+        let open = dialogs(&h);
+        answered(&mut h.state, id, again(Act::Restart), stays(), None);
+        assert_eq!(dialogs(&h), open, "no box over a session that quit");
+        assert!(
+            h.state.powering.untold.is_some(),
+            "told if the desktop comes back"
+        );
     }
 
     #[test]
