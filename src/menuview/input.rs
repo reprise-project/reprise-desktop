@@ -69,10 +69,12 @@ impl State {
         }
     }
 
+    /// The pointer rests on row `idx` of menu `depth`: the row lights and its infotip comes up.
     pub fn menu_hover(&mut self, depth: usize, idx: Option<usize>) {
         if self.is_tray_menu(depth) {
             crate::tray::menu_hover(self, depth, idx);
             self.set_menu_hover(depth, idx);
+            crate::tooltip::hover_menu(self, depth, idx);
             return;
         }
         if let Some(i) = idx {
@@ -84,6 +86,7 @@ impl State {
             self.schedule_menu_hover(pending);
         }
         self.set_menu_hover(depth, idx);
+        crate::tooltip::hover_menu(self, depth, idx);
     }
 
     pub(super) fn schedule_menu_hover(&mut self, pending: Option<MenuPending>) {
@@ -134,6 +137,8 @@ impl State {
         }
     }
 
+    /// Lights row `idx` of menu `depth`. A tip shows only for the pointer (`menu_hover`), so a
+    /// move here takes down the menu's tip.
     pub(crate) fn set_menu_hover(&mut self, depth: usize, idx: Option<usize>) {
         let changed = match self.menus.get_mut(depth) {
             Some(m) if m.hovered != idx => {
@@ -144,7 +149,7 @@ impl State {
         };
         if changed {
             self.redraw_menu(depth);
-            crate::tooltip::hover_menu(self, depth, idx);
+            crate::tooltip::hover_menu(self, depth, None);
         }
     }
 

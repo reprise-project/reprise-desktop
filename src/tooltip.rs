@@ -577,6 +577,38 @@ mod tests {
     }
 
     #[test]
+    fn keys_through_the_start_menu_raise_no_infotip_and_the_pointer_does() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.toggle_start_from_keys();
+        h.dispatch();
+        h.state.menu_key(crate::keys::KEY_s);
+        let depth = h.state.menus.len() - 1;
+        assert_eq!(depth, 1, "S opens Settings");
+        let row = h.state.menus[depth].hovered.expect("its first row is lit");
+        assert!(h.state.menus[depth].kind.tip(row).is_some());
+        let up = |h: &crate::harness::Harness| {
+            h.state.tooltip.shown.is_some() || h.state.tooltip.pending.is_some()
+        };
+        h.run_for(u64::from(SHOW_MS) + 200);
+        assert!(!up(&h), "a row the keys light gets no tip");
+        h.state.menu_hover(depth, Some(row));
+        h.run_for(u64::from(SHOW_MS) + 200);
+        assert!(
+            h.state.tooltip.shown.is_some(),
+            "the pointer resting on it does"
+        );
+        assert_eq!(h.state.menus.len(), 3, "Control Panel's own list opened");
+        h.state.menu_key(crate::keys::KEY_Left);
+        assert!(
+            h.state.tooltip.shown.is_some(),
+            "closing the list leaves it"
+        );
+        h.state.menu_key(crate::keys::KEY_Down);
+        assert!(!up(&h), "a key moving on takes it down");
+    }
+
+    #[test]
     fn the_maximize_tip_names_the_snap_layouts_keys_when_bound() {
         use CaptionButton::{Close, Maximize, Minimize};
         let keys = Some("Super+Z");
