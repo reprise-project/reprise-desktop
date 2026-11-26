@@ -466,6 +466,7 @@ fn prompt(
         modal: input.modal,
         job: None,
         fit: None,
+        answered: false,
     }
 }
 
@@ -1028,6 +1029,22 @@ mod tests {
         assert_eq!(c.items[0].text, "Built in");
         let p = prompt(&input, f, size, None, Arc::default());
         assert_eq!(p.title, "Allow access?");
+    }
+
+    #[test]
+    fn an_allow_after_a_deny_in_one_dispatch_grants_nothing() {
+        use reprisekit::controls::form::Event;
+        let input = Input::default();
+        let out = Arc::new(Mutex::new(Output::default()));
+        let (f, size) = form(&input);
+        let mut p = prompt(&input, f, size, None, out.clone());
+        assert!(
+            p.decide(Event::Pressed("deny")).quit,
+            "Deny closes the prompt"
+        );
+        let allow = p.decide(Event::Pressed("allow"));
+        assert!(!allow.quit, "an Allow after it answers nothing");
+        assert!(!out.lock().unwrap().granted, "the Deny stands");
     }
 
     #[test]

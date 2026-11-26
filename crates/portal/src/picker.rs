@@ -440,6 +440,7 @@ fn prompt(
         }),
         job: None,
         fit: Some(FormScroll::new(&["share", "cancel"], lay).head(&["prompt"])),
+        answered: false,
     }
 }
 
@@ -1183,6 +1184,27 @@ mod tests {
             }
         }
         assert!(hidden > 100, "{hidden} nodes scrolled out");
+    }
+
+    #[test]
+    fn a_share_after_a_cancel_in_one_dispatch_shares_nothing() {
+        use reprisekit::interface::Interface;
+        let mut ctx = crate::dialog::test_ctx(100);
+        let chosen = Arc::new(Mutex::new(None));
+        let mut open = || {
+            let i = Interface::Classic;
+            fitted(&mut ctx, i, CLIENT, Purpose::Share, "", chosen.clone())
+        };
+        let share = |p: &mut Prompt| p.decide(form::Event::Pressed("share"));
+        let mut p = open();
+        assert!(
+            p.decide(form::Event::Cancel).quit,
+            "Cancel closes the picker"
+        );
+        assert!(!share(&mut p).quit, "a Share after it answers nothing");
+        assert_eq!(*chosen.lock().unwrap(), None, "the Cancel stands");
+        assert!(share(&mut open()).quit);
+        assert!(chosen.lock().unwrap().is_some(), "a Share alone shares");
     }
 
     /// The narrow client moves Share to where Cancel was.
