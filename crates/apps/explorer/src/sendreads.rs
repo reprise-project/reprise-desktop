@@ -83,7 +83,8 @@ impl Explorer {
         }
         let until = Instant::now() + self.list_wait();
         self.land_send_reads(Some(until), ctx);
-        let mut rows = self.send.drives.send_to_rows(&self.send.dirs);
+        let folder = self.picked().any(|(_, it)| it.is_folder());
+        let mut rows = self.send.drives.send_to_rows(&self.send.dirs, folder);
         rows.extend(sendto::phone_rows());
         rows
     }

@@ -29,7 +29,10 @@ pub enum Sel {
     None,
     File,
     Folder,
-    Many,
+    /// Two or more, `folder` when one of them is a folder, which mail cannot attach.
+    Many {
+        folder: bool,
+    },
 }
 
 const NEW_FOLDER: &[&str] = &["folder-new"];
@@ -98,7 +101,7 @@ pub fn tasks(place: &Place, sel: Sel, count: usize) -> PaneSection {
                 ),
                 match sel {
                     Sel::None => row("Restore all items", RESTORE, Command::Restore, true),
-                    Sel::Many => row(
+                    Sel::Many { .. } => row(
                         "Restore the selected items",
                         RESTORE,
                         Command::Restore,
@@ -128,7 +131,7 @@ fn folder_tasks(sel: Sel) -> Vec<PaneRow> {
             row("Move this file", MOVE, Command::MoveTo, true),
             row("Copy this file", COPY, Command::CopyTo, true),
             dead("Publish this file to the Web", PUBLISH),
-            dead("E-mail this file", MAIL),
+            row("E-mail this file", MAIL, Command::Mail, true),
             row(
                 "Delete this file",
                 DELETE,
@@ -149,11 +152,11 @@ fn folder_tasks(sel: Sel) -> Vec<PaneRow> {
                 true,
             ),
         ],
-        Sel::Many => vec![
+        Sel::Many { folder } => vec![
             row("Move the selected items", MOVE, Command::MoveTo, true),
             row("Copy the selected items", COPY, Command::CopyTo, true),
             dead("Publish the selected items to the Web", PUBLISH),
-            dead("E-mail the selected items", MAIL),
+            row("E-mail the selected items", MAIL, Command::Mail, !folder),
             row(
                 "Delete the selected items",
                 DELETE,
@@ -324,7 +327,9 @@ impl Explorer {
             [] => Sel::None,
             [(_, it)] if it.is_folder() => Sel::Folder,
             [_] => Sel::File,
-            _ => Sel::Many,
+            ref many => Sel::Many {
+                folder: many.iter().any(|(_, it)| it.is_folder()),
+            },
         }
     }
 
@@ -397,17 +402,16 @@ mod tests {
                 ("Move this file".to_string(), true),
                 ("Copy this file".to_string(), true),
                 ("Publish this file to the Web".to_string(), false),
-                ("E-mail this file".to_string(), false),
+                ("E-mail this file".to_string(), true),
                 ("Delete this file".to_string(), true),
             ]
         );
         assert_eq!(s.rows[0].cmd, Command::Rename);
         assert_eq!(s.rows[1].cmd, Command::MoveTo);
         assert_eq!(s.rows[2].cmd, Command::CopyTo);
+        assert_eq!(s.rows[3].cmd, Command::Nothing);
+        assert_eq!(s.rows[4].cmd, Command::Mail);
         assert_eq!(s.rows[5].cmd, Command::Delete { erase: false });
-        for r in &s.rows[3..5] {
-            assert_eq!(r.cmd, Command::Nothing);
-        }
     }
 
     #[test]
@@ -428,16 +432,22 @@ mod tests {
 
     #[test]
     fn several_selected_lose_rename_and_gain_the_plural() {
-        let s = tasks(&folder(), Sel::Many, 3);
+        let s = tasks(&folder(), Sel::Many { folder: false }, 3);
         assert_eq!(
             table(&s).1,
             vec![
                 ("Move the selected items".to_string(), true),
                 ("Copy the selected items".to_string(), true),
                 ("Publish the selected items to the Web".to_string(), false),
-                ("E-mail the selected items".to_string(), false),
+                ("E-mail the selected items".to_string(), true),
                 ("Delete the selected items".to_string(), true),
             ]
+        );
+        let mixed = tasks(&folder(), Sel::Many { folder: true }, 3);
+        assert_eq!(
+            table(&mixed).1[3],
+            ("E-mail the selected items".to_string(), false),
+            "a folder among them greys mail"
         );
     }
 
@@ -497,7 +507,7 @@ mod tests {
         let one = tasks(&Place::RecycleBin, Sel::File, 2);
         assert_eq!(texts(&one)[1], "Restore this item");
         assert!(one.rows[1].enabled);
-        let many = tasks(&Place::RecycleBin, Sel::Many, 2);
+        let many = tasks(&Place::RecycleBin, Sel::Many { folder: false }, 2);
         assert_eq!(texts(&many)[1], "Restore the selected items");
         assert_eq!(many.rows[1].cmd, Command::Restore);
         let home = Place::Home.title();

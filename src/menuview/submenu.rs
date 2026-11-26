@@ -167,7 +167,11 @@ impl State {
                         .map(|t| s.open_with_apps(t))
                         .unwrap_or_default()
                 };
-                let (items, commands, waits) = self.desktop_submenu(command, &output, apps)?;
+                let folder = (target.as_ref())
+                    .and_then(|t| crate::desktop::find(&self.desktop.as_ref()?.entries, t))
+                    .is_some_and(|i| self.sends_folder(i));
+                let (items, commands, waits) =
+                    self.desktop_submenu(command, &output, folder, apps)?;
                 return Some((items, MenuKind::Desktop { commands, target }, true, waits));
             }
             MenuKind::File {
@@ -178,7 +182,8 @@ impl State {
                 let (path, facts) = (path.clone(), facts.clone());
                 let command = commands.get(row).cloned().flatten()?;
                 let apps = |s: &Self| s.open_with_apps_for(&path);
-                let (items, commands, waits) = self.desktop_submenu(command, &output, apps)?;
+                let (items, commands, waits) =
+                    self.desktop_submenu(command, &output, facts.is_dir, apps)?;
                 let kind = MenuKind::File {
                     commands,
                     path,
@@ -333,11 +338,13 @@ impl State {
     }
 
     /// The submenu desktop row `command` opens: Arrange Icons By, New, Open
-    /// With (listing `open_with`'s programs) or Send To.
+    /// With (listing `open_with`'s programs) or Send To (Mail Recipient greyed when it sends a
+    /// `folder`).
     fn desktop_submenu(
         &mut self,
         command: DesktopCommand,
         output: &Output,
+        folder: bool,
         open_with: impl FnOnce(&Self) -> Vec<(reprisefs::apps::DesktopId, String)>,
     ) -> Option<(Vec<MenuItem>, Vec<Option<DesktopCommand>>, RowIcons)> {
         let px = self.context_icon_px(output);
@@ -385,7 +392,7 @@ impl State {
             }
             DesktopCommand::SendTo => {
                 let view = self.desktop.as_mut()?;
-                let mut rows = view.drives.send_to_rows(&view.send_dirs);
+                let mut rows = view.drives.send_to_rows(&view.send_dirs, folder);
                 rows.extend(reprisefs::sendto::phone_rows());
                 let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
                 let names: Vec<&'static str> = rows.iter().map(|r| r.icon).collect();

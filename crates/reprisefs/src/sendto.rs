@@ -164,12 +164,15 @@ impl Drives {
             .then(|| self.stats.insert(dir.to_path_buf()))
     }
 
-    /// The Send To rows for `dirs` and the found drives, one whose stat is out greyed.
-    pub fn send_to_rows(&self, dirs: &Dirs) -> Vec<SendToRow> {
+    /// The Send To rows for `dirs` and the found drives, one whose stat is out greyed, and Mail
+    /// Recipient greyed for a selection holding a `folder`.
+    pub fn send_to_rows(&self, dirs: &Dirs, folder: bool) -> Vec<SendToRow> {
         let mut rows = self::rows(dirs.desktop, dirs.documents.clone(), &self.found);
         for r in &mut rows {
-            if let SendTo::Folder(d) = &r.dest {
-                r.enabled &= !self.stats.contains(d);
+            match &r.dest {
+                SendTo::Folder(d) => r.enabled &= !self.stats.contains(d),
+                SendTo::Mail => r.enabled &= !folder,
+                _ => {}
             }
         }
         rows
@@ -242,13 +245,30 @@ pub fn send_to_phone(id: String, paths: &[PathBuf]) {
     }
 }
 
-pub fn mail_argv(paths: &[PathBuf]) -> Vec<OsString> {
-    let mut argv = vec![OsString::from("xdg-email")];
+/// The program Mail Recipient runs, from xdg-utils. It attaches files only, so a folder greys the
+/// row.
+pub const MAIL_PROGRAM: &str = "xdg-email";
+
+/// The box a Mail Recipient shows when [`MAIL_PROGRAM`] is not installed.
+pub const NO_MAIL_TITLE: &str = "Mail Recipient";
+pub const NO_MAIL_TEXT: &str = "Reprise sends files by mail through xdg-email, which is not \
+                                 installed. Install xdg-utils, then try again.";
+
+/// The command line attaching `paths` to a new mail, None when xdg-email is not on `PATH`.
+pub fn mail_argv(paths: &[PathBuf]) -> Option<Vec<OsString>> {
+    mail_argv_if(
+        crate::autostart::find_program(MAIL_PROGRAM).is_some(),
+        paths,
+    )
+}
+
+fn mail_argv_if(installed: bool, paths: &[PathBuf]) -> Option<Vec<OsString>> {
+    let mut argv = vec![OsString::from(MAIL_PROGRAM)];
     for p in paths {
         argv.push("--attach".into());
         argv.push(p.into());
     }
-    argv
+    installed.then_some(argv)
 }
 
 #[cfg(test)]
@@ -307,8 +327,29 @@ mod tests {
 
     #[test]
     fn mail_attaches_every_path() {
-        let argv = mail_argv(&["/a b".into(), "/c".into()]);
+        let paths = ["/a b".into(), "/c".into()];
+        let argv = mail_argv_if(true, &paths).unwrap();
         assert_eq!(argv, ["xdg-email", "--attach", "/a b", "--attach", "/c"]);
+        assert_eq!(
+            mail_argv_if(false, &paths),
+            None,
+            "no xdg-email, no command"
+        );
+        assert!(NO_MAIL_TEXT.contains("xdg-email") && NO_MAIL_TEXT.contains("xdg-utils"));
+    }
+
+    #[test]
+    fn a_selection_holding_a_folder_greys_mail_recipient() {
+        let drives = Drives::new(places::MountedDrives::new());
+        let mail = |folder| {
+            let rows = drives.send_to_rows(&Dirs::default(), folder);
+            rows.iter()
+                .find(|r| r.dest == SendTo::Mail)
+                .unwrap()
+                .enabled
+        };
+        assert!(mail(false), "files alone send");
+        assert!(!mail(true), "a folder greys the row");
     }
 
     #[test]
@@ -372,7 +413,7 @@ mod tests {
         drives.land_stat(card.clone(), true);
         drives.land_stat(dead.clone(), true);
         let enabled = |d: &Drives, top: &PathBuf| {
-            let rows = d.send_to_rows(&Dirs::default());
+            let rows = d.send_to_rows(&Dirs::default(), false);
             let dest = SendTo::Folder(top.clone());
             let row = rows.iter().find(|r| r.dest == dest);
             row.map(|r| r.enabled)
@@ -391,7 +432,7 @@ mod tests {
     #[test]
     fn send_to_rows_take_the_desktop_folder_as_the_desktop_read_found_it() {
         let drives = drives_listing(&[]);
-        let desktop = |dirs: &Dirs| drives.send_to_rows(dirs)[1].enabled;
+        let desktop = |dirs: &Dirs| drives.send_to_rows(dirs, false)[1].enabled;
         assert!(!desktop(&Dirs::default()), "before the first read");
         let dir = std::env::temp_dir();
         assert!(desktop(&Dirs::read(&dir)));

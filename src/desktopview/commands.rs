@@ -22,17 +22,30 @@ impl State {
         };
         let sources = self.aimed_sources(index, true);
         let beside = view.cells.get(index).map(|c| (c.x, c.y));
-        self.send_sources_to(row, &sources, beside);
+        let folder = self.sends_folder(index);
+        self.send_sources_to(row, &sources, beside, folder);
+    }
+
+    /// Whether the icons a Send To aimed at icon `index` sends hold a folder, which greys Mail
+    /// Recipient.
+    pub(crate) fn sends_folder(&self, index: usize) -> bool {
+        let Some(view) = self.desktop.as_ref() else {
+            return false;
+        };
+        let aimed =
+            super::select::aimed_in(&view.entries, &self.selection_around(index), index, true);
+        aimed.into_iter().any(|i| view.entries[i].is_dir)
     }
 
     /// Send To row `row` (of the rows the submenu last listed) for `sources`:
     /// a zip, a desktop shortcut on the cell nearest `beside` (else the first
-    /// free one), a mail, a copy or a share to a phone.
+    /// free one), a mail (none for a `folder` among them), a copy or a share to a phone.
     pub(crate) fn send_sources_to(
         &mut self,
         row: usize,
         sources: &[crate::dragview::DragSource],
         beside: Option<(i32, i32)>,
+        folder: bool,
     ) {
         use reprisefs::sendto::SendTo;
         let Some(dest) = (self.desktop.as_ref())
@@ -50,7 +63,14 @@ impl State {
                 let target = self.desktop_drop_at(x, y);
                 self.perform_all(sources, &target, crate::dragview::DropOp::Shortcut);
             }
-            SendTo::Mail => self.spawn_argv_activated(&reprisefs::sendto::mail_argv(&paths)),
+            SendTo::Mail if folder => {}
+            SendTo::Mail => match reprisefs::sendto::mail_argv(&paths) {
+                Some(argv) => self.spawn_argv_activated(&argv),
+                None => self.open_dialog(crate::dialog::Dialog::error(
+                    reprisefs::sendto::NO_MAIL_TITLE,
+                    reprisefs::sendto::NO_MAIL_TEXT.into(),
+                )),
+            },
             SendTo::Phone(id) => reprisefs::sendto::send_to_phone(id, &paths),
             SendTo::Folder(dir) => {
                 use crate::dragview::{DropOp, DropTarget};

@@ -134,7 +134,9 @@ impl State {
             Dc::Print | Dc::Edit => self.print_or_edit(vec![path], cmd == Dc::Print),
             Dc::OpenWithApp(app) => self.open_files_with(vec![path], &app),
             Dc::ChooseProgram => self.choose_program(&path),
-            Dc::SendToDest(row) => self.send_sources_to(row, &[DragSource::file(path)], None),
+            Dc::SendToDest(row) => {
+                self.send_sources_to(row, &[DragSource::file(path)], None, facts.is_dir)
+            }
             Dc::Cut | Dc::Copy => {
                 if self.desktop_locked() {
                     return;
