@@ -2,7 +2,7 @@
 pkgname=reprise-git
 pkgver=r0
 pkgrel=1
-pkgdesc="Wayland desktop with a classic retro look, with Notepad, Explorer and a settings sheet"
+pkgdesc="Retro Wayland desktop in the style of Windows 95, XP and 7, with Notepad, Explorer and a settings sheet"
 arch=('x86_64')
 url="https://github.com/reprise-project/reprise-desktop"
 license=('GPL-3.0-or-later')

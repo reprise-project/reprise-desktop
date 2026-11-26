@@ -15,7 +15,8 @@ More in the [showcase](docs/showcase.md).
 I wanted my taskbar back. This got out of hand.
 
 Reprise is a Wayland desktop from back when computers were fun to use. It
-comes in three looks, and you can switch between them without logging out:
+comes in three looks, in the style of Windows 95, XP and 7, and you can
+switch between them without logging out:
 
 - **Reprise Classic.** Grey bevels, navy title bars, and buttons that go in
   when you press them. Thirty-two colour schemes, from Brick to Tokyo Night,
@@ -23,9 +24,9 @@ comes in three looks, and you can switch between them without logging out:
 - **Reprise Blue.** Glossy caption buttons, a rounded Start button and a
   taskbar with a gradient on it. Ten schemes, from Blue to Steel. The
   computer looks like it's about to tell you it's ready to use.
-- **Reprise Glass.** Translucent frames over a blur of whatever's behind
-  them, a Start orb, window shadows, a 3D window switcher and a dark mode.
-  Finally, windows you can actually see through.
+- **Reprise Glass.** Aero-style translucent frames over a blur of whatever's
+  behind them, a Start orb, window shadows, a 3D window switcher and a dark
+  mode. Finally, windows you can actually see through.
 
 You can tell which window has focus. You can tell what's clickable. The
 scrollbar is still there, even when you're not looking directly at it.
@@ -181,5 +182,6 @@ Reprise's source code is licensed under the
 Fonts, icons and other third-party assets retain their own licenses. See
 [docs/assets.md](docs/assets.md) for sources, licenses and installation details.
 
-Reprise is an independent project and is not affiliated with or endorsed by
+Windows and Aero are trademarks of the Microsoft group of companies. Reprise is
+an independent project and is not affiliated with, sponsored by or endorsed by
 Microsoft.
