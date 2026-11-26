@@ -47,6 +47,7 @@ pub mod multicall;
 pub mod names;
 pub mod netshare;
 pub mod netspeed;
+pub mod newshortcut;
 pub mod ops;
 pub mod pictures;
 pub mod pins;

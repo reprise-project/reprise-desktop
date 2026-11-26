@@ -46,6 +46,7 @@ fn row(d: &Dialog) -> Option<usize> {
         Dialog::Question { .. } => 13,
         Dialog::AddFavorite(_) => 14,
         Dialog::Organize(_) => 15,
+        Dialog::NewShortcut(_) => 16,
         Dialog::Paste(_) | Dialog::Reading(_) => return None,
     })
 }
@@ -156,6 +157,7 @@ fn raise(i: usize) -> Option<Raised> {
         }
         14 => drop(ex.open_add_favorite()),
         15 => drop(ex.open_organize()),
+        16 => drop(ex.new_shortcut(&mut ctx)),
         _ => return None,
     }
     ex.answered = false;
@@ -206,5 +208,5 @@ fn every_box_leaves_the_same_by_its_close_box_as_by_escape() {
         assert_eq!(closed.up, None, "row {i} leaves no box");
         rows.push(i);
     }
-    assert_eq!(rows.len(), 16, "a row for every kind with a window");
+    assert_eq!(rows.len(), 17, "a row for every kind with a window");
 }

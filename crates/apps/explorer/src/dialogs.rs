@@ -1,6 +1,6 @@
 //! Explorer's modal dialogs in a child window: the error box, the delete and replace confirmations, the Open With chooser, the Properties sheet's Advanced Attributes, Confirm Attribute Changes and Change Icon, the Move and Copy folder picker (`browse`), Unlock Drive, and Connect to Server with its password and question boxes.
 //!
-//! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's Browse... opens the program picker (`PROGRAM_BROWSE`) over it, and a refused name or a failed Make New Folder in the Move/Copy picker raises its error box (`browse::ERROR`). The message, question, confirm and replace boxes keep only their fields and focused button, so their [`Form`] is rebuilt per event ([`Explorer::box_form`]); the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
+//! One child at a time: a box raised while another is up waits for it ([`Explorer::raise`]). Two stack instead: the chooser's and the shortcut wizard's Browse... open the file picker (`PROGRAM_BROWSE`) over them, and a refused name or a failed Make New Folder in the Move/Copy picker raises its error box (`browse::ERROR`). The message, question, confirm and replace boxes keep only their fields and focused button, so their [`Form`] is rebuilt per event ([`Explorer::box_form`]); the chooser keeps an `openwith` control that takes its own events ([`crate::openwith`]).
 
 use crate::icons::{IconSlot, land_picture};
 use crate::place;
@@ -247,6 +247,8 @@ pub enum Dialog {
     Unlock(Box<Unlock>),
     /// Rename with several items picked; the preview follows each change.
     BatchRename(Box<crate::rename::BatchRename>),
+    /// New > Shortcut's wizard.
+    NewShortcut(Box<crate::newshortcut::ShortcutWizard>),
     AddFavorite(Box<crate::favorites::AddFavorite>),
     Organize(Box<crate::favorites::Organize>),
     /// Connect to Server, typed into or showing a connection under way.
@@ -338,6 +340,7 @@ impl Dialog {
             Dialog::Browse(_) => "Copy Items".to_string(),
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
             Dialog::BatchRename(_) => "Rename".to_string(),
+            Dialog::NewShortcut(_) => reprisekit::controls::newshortcut::TITLE.to_string(),
             Dialog::AddFavorite(_) => favorites::ADD_TITLE.to_string(),
             Dialog::Organize(_) => favorites::ORGANIZE_TITLE.to_string(),
             Dialog::Connect(_) => reprisekit::controls::netconnect::CONNECT_TITLE.to_string(),
@@ -350,6 +353,10 @@ impl Dialog {
     /// Theme icons decoded off the loop landed: the dialog wears those it waited on. True when
     /// it changed.
     pub(crate) fn land_icons(&mut self, ctx: &mut Ctx) -> bool {
+        if let Dialog::NewShortcut(w) = self {
+            let cm = ctx.forms().controls();
+            return w.land_icons(&mut ctx.icons, &cm);
+        }
         if let Dialog::ChooseProgram(cp) = self {
             let landed = cp.waits.landed(&mut ctx.icons);
             if landed {
@@ -378,6 +385,7 @@ impl Dialog {
             Dialog::Message { .. }
             | Dialog::AttrConfirm(_)
             | Dialog::BatchRename(_)
+            | Dialog::NewShortcut(_)
             | Dialog::AddFavorite(_)
             | Dialog::Organize(_)
             | Dialog::Question { .. }
@@ -880,6 +888,7 @@ impl Explorer {
             | Dialog::Browse(_)
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_)
+            | Dialog::NewShortcut(_)
             | Dialog::AddFavorite(_)
             | Dialog::Organize(_)
             | Dialog::Connect(_)
@@ -920,8 +929,8 @@ impl Explorer {
             (w, Some(Dialog::Browse(_))) if is_dialog(w) => {
                 Some(browsefolder::min(&self.forms.controls()))
             }
-            (PROGRAM_BROWSE, Some(Dialog::ChooseProgram(cp))) => {
-                cp.browse.as_ref().map(|b| b.dlg.min_client())
+            (PROGRAM_BROWSE, Some(d)) => {
+                crate::newshortcut::picker_of(d).map(|b| b.dlg.min_client())
             }
             _ => None,
         }
@@ -973,6 +982,7 @@ impl Explorer {
                     Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
                     Dialog::Unlock(_) => u.size(unlock::CLIENT),
                     Dialog::BatchRename(_) => u.size(reprisekit::controls::batchrename::CLIENT),
+                    Dialog::NewShortcut(_) => u.size(reprisekit::controls::newshortcut::CLIENT),
                     Dialog::AddFavorite(_) => u.size(reprisekit::controls::namebox::CLIENT),
                     Dialog::Organize(_) => u.size(favorites::CLIENT),
                     Dialog::Connect(_) => u.size(reprisekit::controls::netconnect::CONNECT_CLIENT),
@@ -1011,9 +1021,7 @@ impl Explorer {
                 modal: true,
             });
         }
-        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up()
-            && let Some(b) = &cp.browse
-        {
+        if let Some(b) = self.dialogs.up().and_then(crate::newshortcut::picker_of) {
             out.push(Child {
                 id: PROGRAM_BROWSE,
                 title: "Browse".into(),
@@ -1077,6 +1085,20 @@ impl Explorer {
             );
             return;
         }
+        if let Some(Dialog::NewShortcut(w)) = self.dialogs.up() {
+            reprisekit::controls::newshortcut::draw(
+                c,
+                &self.dialog_text,
+                &Paint {
+                    s: 1,
+                    ..self.forms.paint()
+                },
+                &w.wizard,
+                true,
+                self.forms.fonts.size_px,
+            );
+            return;
+        }
         // The kept form is drawn itself, not a copy: it keeps the sizes of
         // the look it was drawn in, which its hit test then reads.
         let built;
@@ -1136,6 +1158,11 @@ impl Explorer {
             cp.ow.access(tree, &lay);
             return;
         }
+        if let Some(Dialog::NewShortcut(w)) = self.dialogs.up() {
+            w.wizard
+                .access(tree, &self.dialog_text, self.forms.fonts.size_px);
+            return;
+        }
         let built;
         let form = match self.dialogs.up() {
             Some(Dialog::AttrConfirm(a)) => &a.form,
@@ -1191,6 +1218,7 @@ impl Explorer {
             Some(Dialog::ChangeIcon { form, .. }) => Some(form),
             Some(Dialog::About(f, _)) => Some(f),
             Some(Dialog::BatchRename(b)) => Some(&mut b.form),
+            Some(Dialog::NewShortcut(w)) => Some(&mut w.wizard.wizard.form),
             Some(Dialog::AddFavorite(a)) => Some(&mut a.name.form),
             Some(Dialog::Organize(o)) => Some(&mut o.form),
             _ => None,
@@ -1276,6 +1304,9 @@ impl Explorer {
         };
         if let Dialog::BatchRename(_) = d {
             return self.batch_rename_answered(out, ctx);
+        }
+        if let Dialog::NewShortcut(_) = d {
+            return self.new_shortcut_answered(out, ctx);
         }
         if let Dialog::AddFavorite(_) = d {
             return self.add_favorite_answered(out, ctx);
@@ -1379,6 +1410,7 @@ impl Explorer {
             Dialog::ChooseProgram(_)
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_)
+            | Dialog::NewShortcut(_)
             | Dialog::AddFavorite(_)
             | Dialog::Organize(_)
             | Dialog::Connect(_)
@@ -1480,6 +1512,7 @@ impl Explorer {
             | Dialog::ChangeIcon { .. }
             | Dialog::Unlock(_)
             | Dialog::BatchRename(_)
+            | Dialog::NewShortcut(_)
             | Dialog::AddFavorite(_)
             | Dialog::Organize(_)
             | Dialog::Question {

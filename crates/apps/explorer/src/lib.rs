@@ -24,6 +24,7 @@ mod icons;
 mod keys;
 mod live;
 mod menus;
+mod newshortcut;
 mod openwith;
 mod pane;
 mod place;
@@ -2096,6 +2097,7 @@ impl App for Lazy {
                 opened = match &start.alone {
                     Some(Alone::Properties(paths)) => ex.open_paths_properties(paths, ctx),
                     Some(Alone::OpenWith(path)) => ex.choose_program_for(path, None, ctx),
+                    Some(Alone::NewShortcut(dir)) => ex.new_shortcut_in(dir.clone(), ctx),
                     Some(Alone::BinProperties) => ex.open_bin_props(ctx),
                     Some(Alone::Put {
                         op,
@@ -2277,10 +2279,8 @@ impl repriseapp::Extended for Lazy {
     }
 
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
-        let Some(Dialog::ChooseProgram(cp)) = self.inner.as_mut()?.dialogs.up_mut() else {
-            return None;
-        };
-        let b = cp.browse.as_mut().filter(|_| win == PROGRAM_BROWSE)?;
+        let up = self.inner.as_mut()?.dialogs.up_mut()?;
+        let b = crate::newshortcut::picker_of_mut(up).filter(|_| win == PROGRAM_BROWSE)?;
         Some(FileDrop {
             dlg: &mut b.dlg,
             host: &mut b.host,
@@ -2354,6 +2354,8 @@ enum Alone {
     Properties(Vec<PathBuf>),
     /// `--open-with PATH`: the Open With chooser.
     OpenWith(PathBuf),
+    /// `--new-shortcut DIR`: New > Shortcut's wizard, writing into folder DIR.
+    NewShortcut(PathBuf),
     /// `--bin-properties`: Recycle Bin Properties.
     BinProperties,
     /// `--put copy|move|link TARGET -- SOURCES...`: the SOURCES pasted into folder TARGET.
@@ -2393,14 +2395,14 @@ fn put_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<Alone>
 }
 
 /// `reprise-explorer [--search] [PLACE]`, `--select PATH...`, `--properties PATH...`,
-/// `--open-with PATH`, `--bin-properties` or one of [`Alone`]'s file jobs. PLACE is a
+/// `--open-with PATH`, `--new-shortcut DIR`, `--bin-properties` or one of [`Alone`]'s file jobs. PLACE is a
 /// folder's path, "Computer", "Recycle Bin" or "Network", or a server address, which opens
 /// Computer and connects to it; a missing or unknown one is Home. `--search` puts the keyboard in
 /// the Search field. `--select` opens the folder the first absolute PATH sits in with it and the
 /// others there selected, the first scrolled into view (Find Target's window). `--properties`
 /// shows the Properties sheet of the absolute PATHs alone, combined for two or more;
-/// `--open-with` shows the Open With chooser for PATH alone, and `--bin-properties` Recycle Bin
-/// Properties. A file job runs with its questions, progress and error boxes, and the process
+/// `--open-with` shows the Open With chooser for PATH alone, `--new-shortcut` New > Shortcut's
+/// wizard writing into the absolute DIR, and `--bin-properties` Recycle Bin Properties. A file job runs with its questions, progress and error boxes, and the process
 /// ends with it.
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
@@ -2452,6 +2454,11 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .map(Alone::OpenWith),
+        Some("--new-shortcut") => args
+            .next()
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .map(Alone::NewShortcut),
         Some("--bin-properties") => Some(Alone::BinProperties),
         Some("--put") => put_args(args.by_ref()),
         Some("--delete") => {
@@ -2470,6 +2477,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         let place = match &alone {
             Alone::Properties(paths) => paths[0].parent().map_or(Place::Home, Place::from_path),
             Alone::OpenWith(path) => path.parent().map_or(Place::Home, Place::from_path),
+            Alone::NewShortcut(dir) => Place::from_path(dir),
             Alone::BinProperties | Alone::EmptyBin => Place::RecycleBin,
             Alone::Undo(_) => Place::Home,
             Alone::Put { target, .. } => Place::from_path(target),

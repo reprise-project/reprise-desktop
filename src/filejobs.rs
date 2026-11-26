@@ -1,11 +1,14 @@
 //! The desktop's file jobs run in Explorer, each in a `reprise-explorer` process of its own that
 //! asks, shows the progress dialog and says why it stopped: a drop's or paste's put (`--put`), a
-//! delete (`--delete`), Empty Recycle Bin (`--empty-bin`), Send To's zip (`--zip`) and an Undo
-//! that is more than a desktop New or rename (`--undo`). Each records its own undo entry.
+//! delete (`--delete`), Empty Recycle Bin (`--empty-bin`), Send To's zip (`--zip`), New >
+//! Shortcut's wizard (`--new-shortcut`) and an Undo that is more than a desktop New or rename
+//! (`--undo`). Each records its own undo entry.
 //!
 //! The desktop keeps the processes it started. A put onto the desktop names the icons it will
 //! land; when the desktop's scan first finds one, it takes its cell (a put onto a cell) and is
-//! selected: a scan's first landing in place of what was, the rest beside it. A landing leaves the
+//! selected: a scan's first landing in place of what was, the rest beside it. The wizard's
+//! launcher, whose name only the wizard learns, is the first new `.desktop` icon a scan finds; it
+//! lands in its rename, as New's item does. A landing leaves the
 //! selection alone once the user changed it since the put started. A move's cut files leave the
 //! clipboard once its process has ended, those it moved only.
 
@@ -34,6 +37,7 @@ pub enum What {
     Empty,
     Zip,
     Undo,
+    NewShortcut,
 }
 
 impl What {
@@ -44,6 +48,7 @@ impl What {
             What::Delete | What::Empty => "Error Deleting File or Folder",
             What::Zip => reprisefs::compress::FAILURE_TITLE,
             What::Undo => "Undo",
+            What::NewShortcut => "New Shortcut",
         }
     }
 }
@@ -56,6 +61,8 @@ pub struct Job {
     /// The desktop icons the job lands by name, each with its 100% cell (`desktop::to_saved`)
     /// when it was put onto one.
     landings: Vec<(String, Option<(i32, i32)>)>,
+    /// New > Shortcut's launcher, not landed yet, with its cell.
+    launcher: Option<Option<(i32, i32)>>,
     /// One of `landings` has landed, so the next joins the selection.
     selected: bool,
     /// The desktop's selection, by name, when the put started.
@@ -181,6 +188,25 @@ impl State {
         }
     }
 
+    /// New > Shortcut's wizard in Explorer, writing into the desktop folder; the launcher lands in
+    /// the cell under `at`.
+    pub(crate) fn new_shortcut(&mut self, at: Option<(i32, i32)>) {
+        if !self.config.desktop_icons {
+            return;
+        }
+        let Some(dir) = self.desktop.as_ref().map(|v| v.dir.clone()) else {
+            return;
+        };
+        let auto = self.desktop.as_ref().is_some_and(|v| v.auto_arrange);
+        let area = self.desktop_area();
+        let cell = at.filter(|_| !auto && area.width > 0).map(|(x, y)| {
+            let grid = self.desktop_grid();
+            crate::desktop::to_saved(grid, crate::desktop::cell_at(grid, area, x, y))
+        });
+        let args = vec!["--new-shortcut".into(), dir.into()];
+        self.file_job_at(What::NewShortcut, args, Vec::new(), Vec::new(), cell);
+    }
+
     pub(crate) fn undo_job_running(&self) -> bool {
         self.filejobs.running().any(|j| j.what == What::Undo)
     }
@@ -191,6 +217,18 @@ impl State {
         args: Vec<OsString>,
         landings: Vec<(String, Option<(i32, i32)>)>,
         moving: Vec<PathBuf>,
+    ) {
+        self.file_job_at(what, args, landings, moving, None);
+    }
+
+    /// [`Self::file_job`], New > Shortcut's launcher landing in `cell`.
+    fn file_job_at(
+        &mut self,
+        what: What,
+        args: Vec<OsString>,
+        landings: Vec<(String, Option<(i32, i32)>)>,
+        moving: Vec<PathBuf>,
+        cell: Option<(i32, i32)>,
     ) {
         let argv: Vec<&std::ffi::OsStr> = std::iter::once(EXPLORER.as_ref())
             .chain(args.iter().map(|a| a.as_os_str()))
@@ -205,14 +243,16 @@ impl State {
         ) {
             Ok(Some(pid)) => {
                 let picked = (self.desktop.as_ref())
-                    .filter(|_| !landings.is_empty())
+                    .filter(|_| !landings.is_empty() || what == What::NewShortcut)
                     .map(selected_names)
                     .unwrap_or_default();
+                let launcher = (what == What::NewShortcut).then_some(cell);
                 let job = Job {
                     pid,
                     what,
                     args,
                     landings,
+                    launcher,
                     selected: false,
                     picked,
                     moving,
@@ -250,8 +290,9 @@ impl State {
 
     /// A desktop scan found `fresh`, names it did not list before: the jobs' icons among them
     /// take their cells and are selected while the selection is the one their put started with,
-    /// or the one their last landing left. Jobs whose process ended a while ago are let go.
-    pub(crate) fn land_job_icons(&mut self, fresh: &[String]) {
+    /// or the one their last landing left. Jobs whose process ended a while ago are let go. The
+    /// index of a wizard's launcher that landed comes back for its rename.
+    pub(crate) fn land_job_icons(&mut self, fresh: &[String]) -> Option<usize> {
         self.file_jobs_ended();
         let shown = self
             .desktop
@@ -260,6 +301,7 @@ impl State {
             .unwrap_or_default();
         let ours = self.filejobs.landed.as_ref() == Some(&shown);
         let mut landed = Vec::new();
+        let mut renamed = None;
         let now = Instant::now();
         for j in &mut self.filejobs.jobs {
             let first = !j.selected;
@@ -272,6 +314,15 @@ impl State {
                 }
                 !found
             });
+            if let Some(cell) = j.launcher
+                && let Some(name) =
+                    (fresh.iter()).find(|n| reprisefs::apps::DesktopId::from_file_name(n).is_some())
+            {
+                landed.push((name.clone(), cell, select.then_some(first)));
+                renamed = Some(name.clone());
+                j.selected = true;
+                j.launcher = None;
+            }
             if j.ended.is_none() && !crate::spawn::running(j.pid) {
                 j.ended = Some(now);
             }
@@ -300,6 +351,8 @@ impl State {
             }
             self.filejobs.landed = Some(selected_names(view));
         }
+        let view = self.desktop.as_ref()?;
+        renamed.and_then(|n| view.entries.iter().position(|e| e.name == n))
     }
 }
 

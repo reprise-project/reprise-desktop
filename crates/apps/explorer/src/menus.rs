@@ -199,7 +199,7 @@ const BIN_SORT_COLUMNS: [&str; 6] = [
 fn new_menu(writable: bool, templates: &[reprisefs::templates::Template]) -> Menu {
     let mut m = Menu::default();
     m.row(row("&Folder", writable), Command::NewFolder);
-    m.row(row("&Shortcut", false), Command::Nothing);
+    m.row(row("&Shortcut...", writable), Command::NewShortcut);
     m.sep();
     m.row(row("&Text Document", writable), Command::NewTextDocument);
     for t in templates {

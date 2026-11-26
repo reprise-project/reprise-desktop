@@ -87,6 +87,9 @@ impl Explorer {
     }
 
     pub fn program_browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        if matches!(self.dialogs.up(), Some(Dialog::NewShortcut(_))) {
+            return self.shortcut_browse_event(ev, ctx);
+        }
         let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up_mut() else {
             return Reply::none();
         };
@@ -124,9 +127,7 @@ impl Explorer {
     }
 
     pub fn draw_program_browse(&self, c: &mut Canvas) {
-        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up()
-            && let Some(b) = &cp.browse
-        {
+        if let Some(b) = self.dialogs.up().and_then(crate::newshortcut::picker_of) {
             let (w, h) = b.dlg.client();
             b.dlg.draw(
                 c,
@@ -142,9 +143,7 @@ impl Explorer {
     }
 
     pub fn access_program_browse(&self, tree: &mut reprisekit::access::Tree) {
-        if let Some(Dialog::ChooseProgram(cp)) = self.dialogs.up()
-            && let Some(b) = &cp.browse
-        {
+        if let Some(b) = self.dialogs.up().and_then(crate::newshortcut::picker_of) {
             let (w, h) = b.dlg.client();
             b.dlg.access(
                 tree,
