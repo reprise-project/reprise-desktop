@@ -1,9 +1,11 @@
 //! The lock's now-playing strip: the player's title over its artist, then Previous, Play or Pause
-//! and Next at its right end. Each interface picks where the strip goes and inks its text; the
-//! buttons are drawn by `interfaces::logon`. The strip shows nothing of the player but the two
+//! and Next at its right end, in a frame of the look's own so the text reads as the player's and
+//! not the lock's. Each interface picks where the strip goes and draws the frame and the text;
+//! the buttons are drawn by `interfaces::logon`. A strip that would leave the output or meet
+//! another part of the screen is not shown. The strip shows nothing of the player but the two
 //! lines, and a press only asks the host for [`LogonAction::Media`](super::LogonAction::Media).
 
-use super::Part;
+use super::{LogonLayout, Part};
 use crate::media::{NowPlaying, Transport};
 use crate::raster::Rect;
 use crate::theme::TextUnits;
@@ -16,6 +18,8 @@ const BUTTON_W: i32 = 32;
 const BUTTON_H: i32 = 28;
 const BUTTON_GAP: i32 = 4;
 const LABEL_GAP: i32 = 8;
+/// The gap between a frame and the strip inside it.
+pub const PAD: i32 = 6;
 /// The most characters of a title or artist the strip keeps.
 pub const TEXT_MAX: usize = 200;
 
@@ -50,20 +54,35 @@ pub fn lines(np: &NowPlaying, u: TextUnits, strip: Rect) -> Vec<(Rect, &str)> {
         .collect()
 }
 
-/// `s` as the strip keeps it: no control characters, at most [`TEXT_MAX`] characters.
+/// `s` as the strip keeps it: no control, format or private-use characters and no line or
+/// paragraph separators, at most [`TEXT_MAX`] characters.
 pub fn clean(s: &str) -> String {
+    let private = |c: char| matches!(c, '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{ffffd}' | '\u{100000}'..='\u{10fffd}');
     s.chars()
-        .filter(|c| !c.is_control())
+        .filter(|&c| !c.is_control() && !crate::text::invisible(c) && !private(c))
         .take(TEXT_MAX)
         .collect()
 }
 
-/// What a reader hears for the strip's text.
+/// What a reader hears for the strip's text: the lines it shows, empty when it shows none.
 pub fn label(np: &NowPlaying) -> String {
-    match np.artist.is_empty() {
-        true => np.title.clone(),
-        false => format!("{}, {}", np.title, np.artist),
-    }
+    [np.title.as_str(), np.artist.as_str()]
+        .into_iter()
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Whether `l`'s strip lies on its output clear of the dialog and every other part.
+pub fn fits(l: &LogonLayout) -> bool {
+    let Some(strip) = l.media else {
+        return true;
+    };
+    let others = (l.parts.iter())
+        .filter(|(p, _)| !matches!(p, Part::Media(_)))
+        .map(|&(_, r)| r)
+        .chain(l.dialog);
+    l.output.union(&strip) == l.output && others.into_iter().all(|r| !r.intersects(strip))
 }
 
 #[cfg(test)]
@@ -172,8 +191,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_strip_keeps_no_control_characters_and_200_characters_at_most() {
+    fn the_strip_keeps_no_control_format_or_private_characters_and_200_characters_at_most() {
         assert_eq!(clean("a\nb\u{1b}[2Jc"), "ab[2Jc");
+        let tricks =
+            "a\u{202e}b\u{2066}c\u{2069}d\u{2028}e\u{2029}f\u{200b}g\u{200f}h\u{feff}i\u{e000}j";
+        assert_eq!(clean(tricks), "abcdefghij");
         assert_eq!(clean(&"x".repeat(500)).chars().count(), TEXT_MAX);
         let mut m = lock(Interface::Classic, None);
         m.set_media(Some(NowPlaying {
@@ -225,10 +247,15 @@ pub(crate) mod tests {
                 m.key(LogonKey::Enter),
                 Some(LogonAction::Media(Transport::PlayPause))
             );
-            assert_eq!(m.key(LogonKey::Text("x")), None, "typing presses nothing");
-            assert_eq!(m.password.text, "", "nor reaches the password");
             m.key(LogonKey::Escape);
             assert_eq!(m.focus, Part::Password, "Escape goes back to the password");
+            m.focus = Part::Media(Transport::Next);
+            assert_eq!(m.key(LogonKey::Text("x")), None, "typing presses nothing");
+            assert_eq!(
+                (m.focus, m.password.text.as_str()),
+                (Part::Password, "x"),
+                "{i:?}: typing goes to the password"
+            );
         }
     }
 
@@ -270,36 +297,61 @@ pub(crate) mod tests {
         assert_eq!(m.focus, Part::Password, "gone");
     }
 
+    /// `m` laid out over `output` with its text at `pct` percent, its player dropped first when
+    /// the strip does not fit, as a host does.
+    fn fitted(m: &mut Logon, output: Rect, pct: u32) -> crate::logon::LogonLayout {
+        let theme = crate::interfaces::theme_for(m.interface).with_text_size(pct);
+        let text = TextRenderer::load(&theme.fonts);
+        crate::interfaces::logon::logon_fit_media(m, &theme, &text, output);
+        logon_layout(m, &theme, &text, output)
+    }
+
     #[test]
-    fn each_look_puts_the_strip_on_the_output_clear_of_the_screens_other_parts() {
+    fn each_look_puts_the_strip_on_the_output_clear_of_the_screens_other_parts_or_drops_it() {
+        let outputs = [OUTPUT, Rect::new(0, 0, 800, 600), Rect::new(0, 0, 640, 480)];
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            let m = lock(i, Some(playing()));
-            let l = laid_out(&m);
-            let strip = l.media.expect("a strip");
-            assert_eq!(OUTPUT.union(&strip), OUTPUT, "{i:?}: {strip:?}");
-            let (media, rest): (Vec<_>, Vec<_>) = l
-                .parts
-                .iter()
-                .copied()
-                .partition(|(p, _)| matches!(p, Part::Media(_)));
-            assert_eq!(media.len(), 3, "{i:?}");
-            for (p, r) in &media {
-                assert_eq!(strip.union(r), strip, "{i:?}: {p:?} in the strip");
-                let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
-                assert_eq!(hit(&l, x, y), Some(*p), "{i:?}");
+            for output in outputs {
+                for pct in [100, 150, 200] {
+                    let at = format!("{i:?} {}x{} {pct}%", output.width, output.height);
+                    let mut m = lock(i, Some(playing()));
+                    let l = fitted(&mut m, output, pct);
+                    let bare = fitted(&mut lock(i, None), output, pct);
+                    let (media, rest): (Vec<_>, Vec<_>) = (l.parts.iter())
+                        .copied()
+                        .partition(|(p, _)| matches!(p, Part::Media(_)));
+                    assert_eq!((&bare.parts, bare.media), (&rest, None), "{at}");
+                    let Some(strip) = l.media else {
+                        assert!(media.is_empty(), "{at}: no buttons without the strip");
+                        assert_eq!(m.media, None, "{at}: nor Tab stops");
+                        assert_eq!(m.stops(), lock(i, None).stops(), "{at}");
+                        continue;
+                    };
+                    assert_eq!(output.union(&strip), output, "{at}: {strip:?}");
+                    assert_eq!(media.len(), 3, "{at}");
+                    for (p, r) in &media {
+                        assert_eq!(strip.union(r), strip, "{at}: {p:?} in the strip");
+                        let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
+                        assert_eq!(hit(&l, x, y), Some(*p), "{at}");
+                    }
+                    for (p, r) in &rest {
+                        assert!(!r.intersects(strip), "{at}: {p:?} {r:?} clear of {strip:?}");
+                    }
+                    assert!(
+                        l.dialog.is_none_or(|d| !d.intersects(strip)),
+                        "{at}: clear of the dialog"
+                    );
+                }
             }
-            for (p, r) in &rest {
-                assert!(
-                    !r.intersects(strip),
-                    "{i:?}: {p:?} {r:?} clear of {strip:?}"
-                );
-            }
+            let shown = fitted(&mut lock(i, Some(playing())), OUTPUT, 100);
             assert!(
-                l.dialog.is_none_or(|d| !d.intersects(strip)),
-                "{i:?}: clear of the dialog"
+                shown.media.is_some(),
+                "{i:?}: 1024x768 at 100% shows the strip"
             );
-            let bare = laid_out(&lock(i, None));
-            assert_eq!((bare.media, bare.parts), (None, rest));
+        }
+        let small = Rect::new(0, 0, 800, 600);
+        for i in [Interface::Classic, Interface::Blue] {
+            let l = fitted(&mut lock(i, Some(playing())), small, 200);
+            assert_eq!(l.media, None, "{i:?}: 800x600 at 200% has no room");
         }
     }
 
@@ -325,5 +377,39 @@ pub(crate) mod tests {
         assert!(tree.get(next).unwrap().is_disabled(), "Next greys");
         let text = (tree.nodes()).find(|(_, n)| n.value() == Some("Night Drive, The Examples"));
         assert!(text.is_some_and(|(_, n)| n.role() == Role::Label));
+        let group = tree
+            .find(Role::Group, "Now playing")
+            .expect("the strip's group");
+        let under = tree.get(group).unwrap().children();
+        for id in [text.unwrap().0, play, next] {
+            assert!(under.contains(&id), "under the strip's group");
+        }
+    }
+
+    #[test]
+    fn a_reader_hears_only_the_lines_the_strip_shows() {
+        let alone = |title: &str, artist: &str| {
+            label(&NowPlaying {
+                title: title.into(),
+                artist: artist.into(),
+                ..playing()
+            })
+        };
+        assert_eq!(alone("", "Band"), "Band");
+        assert_eq!(alone("Song", ""), "Song");
+        assert_eq!(alone("", ""), "");
+    }
+
+    #[test]
+    fn classics_strip_reads_outside_its_dialog() {
+        let m = lock(Interface::Classic, Some(playing()));
+        let l = laid_out(&m);
+        let mut tree = Tree::window("Unlock", (OUTPUT.width, OUTPUT.height));
+        access(&m, &l, &mut tree);
+        let group = tree
+            .find(Role::Group, "Now playing")
+            .expect("the strip's group");
+        let root = tree.get(crate::access::ROOT).unwrap().children();
+        assert!(root.contains(&group), "not under the dialog");
     }
 }

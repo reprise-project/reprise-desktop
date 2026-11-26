@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
-use reprisebus::bounded;
 use smithay::reexports::calloop::{
     Interest, Mode, PostAction, RegistrationToken, channel,
     generic::Generic,
@@ -26,7 +25,12 @@ pub enum Job {
     Mute,
     MicMute,
     Kbd(i32),
-    Player(&'static str),
+    /// Call `method` on the player whose unique bus name is `bus`; `name` is what the OSD calls it.
+    Player {
+        method: &'static str,
+        bus: String,
+        name: String,
+    },
     Wifi,
     Airplane,
     Display(DisplayJob),
@@ -627,55 +631,11 @@ async fn perform_display(
 const PLAYER_NAME_MAX: usize = 64;
 
 const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
-const MPRIS_ROOT: &str = "org.mpris.MediaPlayer2";
 const MPRIS_PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
 /// A player's name for the OSD: any session-bus peer sets `Identity`, so it is cut to PLAYER_NAME_MAX chars.
-fn player_name(identity: String) -> String {
-    reprisefs::names::shown_line(&identity, PLAYER_NAME_MAX)
-}
-
-/// How long a player gets to answer a property read; one that doesn't is passed over.
-const PLAYER_ANSWER: Duration = Duration::from_millis(300);
-
-/// `name`'s property `prop` of `iface`, None when it doesn't answer within [`PLAYER_ANSWER`].
-async fn player_property(conn: &Connection, name: &str, iface: &str, prop: &str) -> Option<String> {
-    let read = async {
-        let proxy = bounded::proxy(conn, name, MPRIS_PATH, iface).await.ok()?;
-        bounded::property::<String>(&proxy, prop).await.ok()
-    };
-    let late = async {
-        async_io::Timer::after(PLAYER_ANSWER).await;
-        None
-    };
-    futures_lite::future::or(read, late).await
-}
-
-/// The player a media key goes to and its name for the OSD: the first that reports Playing, else
-/// the first that answers. Every player is asked at once.
-async fn pick_player(conn: &Connection) -> Option<(String, String)> {
-    let dbus = zbus::fdo::DBusProxy::new(conn).await.ok()?;
-    let names: Vec<String> = dbus
-        .list_names()
-        .await
-        .ok()?
-        .into_iter()
-        .map(|n| n.to_string())
-        .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
-        .collect();
-    let asked = names
-        .iter()
-        .map(|name| player_property(conn, name, MPRIS_PLAYER, "PlaybackStatus"));
-    let statuses = futures_util::future::join_all(asked).await;
-    let answered = || names.iter().zip(&statuses).filter(|(_, s)| s.is_some());
-    let (name, _) = answered()
-        .find(|(_, s)| s.as_deref() == Some("Playing"))
-        .or_else(|| answered().next())?;
-    // The name is cosmetic: a player that doesn't give it still gets its key press.
-    let identity = player_property(conn, name, MPRIS_ROOT, "Identity")
-        .await
-        .unwrap_or_else(|| name.clone());
-    Some((name.clone(), player_name(identity)))
+fn player_name(identity: &str) -> String {
+    reprisefs::names::shown_line(identity, PLAYER_NAME_MAX)
 }
 
 async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
@@ -711,8 +671,8 @@ async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
                 level: v as f64 / max.max(1) as f64,
             })
         }
-        Job::Player(method) => {
-            let r = player(buses.session().await?, method).await;
+        Job::Player { method, bus, name } => {
+            let r = player(buses.session().await?, method, &bus, name).await;
             if r.is_none() {
                 buses.session = None;
             }
@@ -737,17 +697,15 @@ async fn perform_radio(conn: &Connection, job: &Job) -> Option<Report> {
     r.inspect_err(|e| log::warn!("media: {job:?}: {e}")).ok()
 }
 
-async fn player(conn: &Connection, method: &'static str) -> Option<Report> {
-    let (bus, name) = pick_player(conn).await?;
-    conn.call_method(
-        Some(bus.as_str()),
-        MPRIS_PATH,
-        Some(MPRIS_PLAYER),
-        method,
-        &(),
-    )
-    .await
-    .ok()?;
+async fn player(
+    conn: &Connection,
+    method: &'static str,
+    bus: &str,
+    name: String,
+) -> Option<Report> {
+    conn.call_method(Some(bus), MPRIS_PATH, Some(MPRIS_PLAYER), method, &())
+        .await
+        .ok()?;
     Some(Report::Player { name, verb: method })
 }
 
@@ -1095,10 +1053,10 @@ impl State {
             }
             Action::KbdBrightnessUp => Job::Kbd(1),
             Action::KbdBrightnessDown => Job::Kbd(-1),
-            Action::PlayPause => Job::Player("PlayPause"),
-            Action::Next => Job::Player("Next"),
-            Action::Prev => Job::Player("Previous"),
-            Action::Stop => Job::Player("Stop"),
+            Action::PlayPause => return self.send_player("PlayPause"),
+            Action::Next => return self.send_player("Next"),
+            Action::Prev => return self.send_player("Previous"),
+            Action::Stop => return self.send_player("Stop"),
             Action::Wifi => Job::Wifi,
             Action::Touchpad(on) => {
                 self.set_touchpad(*on);
@@ -1112,6 +1070,28 @@ impl State {
             _ => return,
         };
         self.send_job(job);
+    }
+
+    fn send_player(&self, method: &'static str) {
+        if let Some(job) = self.player_job(method) {
+            self.send_job(job);
+        }
+    }
+
+    /// A media key's call: `method` on the player the lock's strip and every single media control
+    /// go to ([`Players::target`](reprisebus::mpris::Players::target)), by its unique bus name.
+    pub(crate) fn player_job(&self, method: &'static str) -> Option<Job> {
+        let (well_known, p) = self.preview_players.players.target()?;
+        let identity = if p.identity.is_empty() {
+            well_known
+        } else {
+            &p.identity
+        };
+        Some(Job::Player {
+            method,
+            bus: p.owner.clone(),
+            name: player_name(identity),
+        })
     }
 
     pub(crate) fn send_job(&self, job: Job) {
@@ -1241,9 +1221,9 @@ Invalid display
 
     #[test]
     fn a_player_name_is_cut_to_64_chars() {
-        assert_eq!(player_name("mpv".into()), "mpv");
-        assert_eq!(player_name("\u{e9}".repeat(100)), "\u{e9}".repeat(64));
-        assert_eq!(player_name("m\u{202e}p\u{0}v".into()), "mpv");
+        assert_eq!(player_name("mpv"), "mpv");
+        assert_eq!(player_name(&"\u{e9}".repeat(100)), "\u{e9}".repeat(64));
+        assert_eq!(player_name("m\u{202e}p\u{0}v"), "mpv");
     }
 
     #[test]

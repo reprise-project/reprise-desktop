@@ -1,6 +1,6 @@
 //! Blue's welcome screen: dark bands, the Reprise mark left of a middle rule and the user tiles
 //! right of it. The lock opens its one tile, puts Switch User at the bottom band's right end and
-//! its now-playing strip in the band's middle.
+//! its now-playing strip, in a rimmed box, in the band's middle.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -254,11 +254,14 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
         ));
     }
     let media = m.media.as_ref().map(|_| {
-        let (w, h) = media::size(theme.text);
+        let u = theme.text;
+        let (w, h) = media::size(u);
+        let pad = u.len(media::PAD);
+        let (w, h) = (w + 2 * pad, h + 2 * pad);
         let b = f.bottom;
-        let strip = Rect::new(b.x + (b.width - w) / 2, b.y + (b.height - h) / 2, w, h);
-        parts.extend(media::buttons(theme.text, strip));
-        strip
+        let frame = Rect::new(b.x + (b.width - w) / 2, b.y + (b.height - h) / 2, w, h);
+        parts.extend(media::buttons(u, frame.inset(pad)));
+        frame
     });
     LogonLayout {
         output,
@@ -485,6 +488,24 @@ fn field_box(fill: Color, rim: Color, w: i32, h: i32, d: i32) -> Canvas {
     })
 }
 
+/// A clear box `w` x `h` design px at `d` inside a 1 px `rim` with rounded corners: the frame
+/// that marks the now-playing strip's text as the player's.
+fn rim_box(rim: Color, w: i32, h: i32, d: i32) -> Canvas {
+    let k = f64::from(d);
+    let (fw, fh) = (f64::from(w) * k, f64::from(h) * k);
+    shape::draw(w, h, d, |x, y| {
+        let outer = rounded(x, y, fw, fh, FIELD_R * k);
+        let inner = rounded(
+            x - k,
+            y - k,
+            fw - 2.0 * k,
+            fh - 2.0 * k,
+            (FIELD_R - 1.0) * k,
+        );
+        shape::scale(solid(rim), outer - inner)
+    })
+}
+
 fn badge_box(fill: Color, d: i32) -> Canvas {
     let k = f64::from(d);
     let n = f64::from(BADGE) * k;
@@ -665,7 +686,13 @@ fn draw_titled(
     draw_mark(c, m, &f, k, &pen, block);
     if block {
         draw_column(c, m, l, theme, sc, k, &pen);
-        if let (Some(np), Some(strip)) = (&m.media, l.media) {
+        if let (Some(np), Some(frame)) = (&m.media, l.media) {
+            let at = pen.at(frame);
+            if c.reaches(at) {
+                let rim = rim_box(sc.welcome_tile_frame, frame.width, frame.height, s);
+                c.blit_over(at.x, at.y, &rim);
+            }
+            let strip = frame.inset(theme.text.len(media::PAD));
             for (r, words) in media::lines(np, theme.text, strip) {
                 pen.line(c, r, words, false, px, Align::Left);
             }

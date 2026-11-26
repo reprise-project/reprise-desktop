@@ -58,6 +58,9 @@ pub mod text {
     pub fn caps_lock() -> String {
         tr!("logon-caps-lock")
     }
+    pub fn now_playing() -> String {
+        tr!("logon-now-playing")
+    }
     pub fn power_refused() -> String {
         tr!("logon-power-refused")
     }
@@ -556,7 +559,8 @@ impl Logon {
         stops
     }
 
-    /// While busy only Tab and Enter on a focused Power or media button do anything.
+    /// While busy only Tab and Enter on a focused Power or media button do anything. On the
+    /// lock, typing with a button focused types into the password.
     pub fn key(&mut self, key: LogonKey) -> Option<LogonAction> {
         if self.busy {
             return match key {
@@ -578,6 +582,9 @@ impl Logon {
                 (None, _) => None,
             },
             LogonKey::Text(s) => {
+                if self.unlocking() && self.home() == Part::Password {
+                    self.focus = Part::Password;
+                }
                 if let Some(edit) = self.focused_edit() {
                     edit.key(EditKey::Insert(s.to_owned()));
                 }
@@ -1039,6 +1046,21 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
         Part::Media(_) => m.media_live(p),
         _ => !m.busy || p == Part::Power,
     };
+    let strip = match (&m.media, l.media) {
+        (Some(np), Some(r)) => {
+            let group = tree.push(
+                ROOT,
+                "media",
+                ax::named(Role::Group, r, &text::now_playing()),
+            );
+            let said = media::label(np);
+            if !said.is_empty() {
+                tree.push(group, "media text", ax::static_text(r, &said, true));
+            }
+            Some(group)
+        }
+        _ => None,
+    };
     let mut focus: Option<NodeId> = None;
     for &(part, r) in &l.parts {
         let label = m.name_of(part);
@@ -1070,7 +1092,11 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
             }
             _ => ax::button(r, &label, live(part), part == Part::Submit),
         };
-        let id = tree.push(parent, part, node);
+        let under = match part {
+            Part::Media(_) => strip.unwrap_or(parent),
+            _ => parent,
+        };
+        let id = tree.push(under, part, node);
         if m.focus == part {
             focus = Some(id);
         }
@@ -1083,9 +1109,6 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
         let mut n = ax::label(r, &said.join(" "), true);
         n.set_live(Live::Polite);
         tree.push(parent, ("message", m.failures), n);
-    }
-    if let (Some(np), Some(r)) = (&m.media, l.media) {
-        tree.push(parent, "media", ax::static_text(r, &media::label(np), true));
     }
     if let Some(id) = focus {
         tree.set_focus(id);

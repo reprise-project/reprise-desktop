@@ -1,41 +1,57 @@
-//! The lock screen's now-playing strip. The console's lock shows the player a single media control
-//! goes to (`Players::newest`: the newest playing, else the last paused) by its title and artist
-//! alone, and its buttons call that player's Previous, PlayPause or Next and nothing else: no
-//! window opens or rises, and no art or other property of the player is read. The remote side's
-//! lock shows none, as the player plays on this computer.
+//! The lock screen's now-playing strip. The console's lock shows the player the media keys go to
+//! (`Players::target`) while it plays or is paused, by its title and artist alone, and its
+//! buttons call that player's Previous, PlayPause or Next and nothing else: no window opens or
+//! rises, and no art or other property of the player is read. A press goes to the player the
+//! strip showed, by the unique bus name it had then. The remote side's lock shows none, and
+//! neither does the console's in lock mode: the session and its player are the remote user's.
 
-use reprisebus::mpris::{Players, Status};
+use reprisebus::mpris::Status;
 use reprisekit::media::{NowPlaying, Transport};
 
 use crate::compositor::State;
 use crate::console::Side;
 
-/// The player the lock shows and what its strip shows, by its bus name.
-fn shown(players: &Players) -> Option<(&str, NowPlaying)> {
-    let (bus, p) = players.newest()?;
-    debug_assert!(matches!(p.status, Status::Playing | Status::Paused));
-    Some((bus, crate::previewmedia::now_playing(p)))
+/// The player a lock's strip shows: its unique bus name and what the strip shows of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Shown {
+    pub owner: String,
+    pub np: NowPlaying,
 }
 
-/// What `side`'s lock shows: the console's player, or none.
-pub fn media(state: &State, side: Side) -> Option<NowPlaying> {
-    match side {
-        Side::Console => shown(&state.preview_players.players).map(|(_, np)| np),
-        Side::Remote => None,
+/// What `side`'s lock shows now: the console's player outside lock mode, or none.
+pub fn shown(state: &State, side: Side) -> Option<Shown> {
+    if side != Side::Console || crate::console::remote_side(state) {
+        return None;
     }
+    let (_, p) = state.preview_players.players.newest()?;
+    debug_assert!(matches!(p.status, Status::Playing | Status::Paused));
+    Some(Shown {
+        owner: p.owner.clone(),
+        np: crate::previewmedia::now_playing(p),
+    })
 }
 
-/// A press of `side`'s strip button `t`: the player shown now gets `t`'s call, if it can take it.
+/// Whether a lock's strip would show another player or other text or state than it does.
+pub fn moved(state: &State) -> bool {
+    [Side::Console, Side::Remote].into_iter().any(|side| {
+        state
+            .lock
+            .on(side)
+            .is_some_and(|l| l.media != shown(state, side))
+    })
+}
+
+/// A press of `side`'s strip button `t`: the player the strip shows gets `t`'s call, if it can
+/// take it.
 pub fn press(state: &mut State, side: Side, t: Transport) {
-    if side != Side::Console {
+    if side != Side::Console || crate::console::remote_side(state) {
         return;
     }
-    let Some((bus, np)) = shown(&state.preview_players.players) else {
+    let Some(Shown { owner, np }) = state.lock.on(side).and_then(|l| l.media.clone()) else {
         return;
     };
     if np.can(t) {
-        let bus = bus.to_string();
-        crate::previewmedia::send(state, &bus, t);
+        crate::previewmedia::send(state, &owner, t);
     }
 }
 
@@ -50,10 +66,12 @@ mod tests {
     use reprisekit::media::Transport;
     use zbus::Variant;
 
+    use crate::console::Side;
     use crate::harness::Harness;
     use crate::lockview::{Helpers, Lock};
 
     const BUS: &str = "org.mpris.MediaPlayer2.mpv.instance7";
+    const OWNER: &str = ":1.7";
     const KEY_TAB: u32 = 15;
     const KEY_ENTER: u32 = 28;
     const KEY_A: u32 = 30;
@@ -61,8 +79,16 @@ mod tests {
     /// One player, `status`, with Previous live as `previous` says, playing "Song" by "Band" from
     /// a local file, with art on the network and an identity of its own.
     fn players(status: &str, previous: bool) -> Players {
+        let mut p = Players::default();
+        add(&mut p, BUS, OWNER, "Song", status, previous);
+        p
+    }
+
+    /// Player `bus`, owned by `owner`, `status` and playing `title` by "Band"; Previous live as
+    /// `previous` says.
+    fn add(p: &mut Players, bus: &str, owner: &str, title: &str, status: &str, previous: bool) {
         let meta: HashMap<String, Variant<'static>> = HashMap::from([
-            ("xesam:title".to_string(), Variant::from("Song")),
+            ("xesam:title".to_string(), Variant::from(title.to_string())),
             (
                 "xesam:artist".to_string(),
                 Variant::from(vec!["Band".to_string()]),
@@ -87,15 +113,31 @@ mod tests {
         let msg = zbus::Message::signal("/", "org.freedesktop.DBus.Properties", "Changed")
             .build(&props)
             .unwrap();
-        let mut p = Players::default();
         let about = About {
             identity: "Hidden Player".into(),
             desktop_entry: "hidden".into(),
+            owner: owner.into(),
             pid: Some(7),
             app: None,
         };
-        p.add(BUS, &reprisebus::bounded::decode(&msg).unwrap(), about);
-        p
+        p.add(bus, &reprisebus::bounded::decode(&msg).unwrap(), about);
+    }
+
+    /// Player `bus` turns `status`.
+    fn turn(p: &mut Players, bus: &str, status: &str) {
+        p.changed(bus, &crate::previewmedia::tests::status(status, true));
+    }
+
+    fn strip_title(h: &Harness) -> Option<String> {
+        lock(h).view.model.media.as_ref().map(|np| np.title.clone())
+    }
+
+    /// The bus a media key's PlayPause goes to.
+    fn key_target(h: &Harness) -> Option<String> {
+        match h.state.player_job("PlayPause")? {
+            crate::media::Job::Player { bus, .. } => Some(bus),
+            _ => None,
+        }
     }
 
     /// A harness locked behind its own screen over one window, the password check never passing.
@@ -149,12 +191,12 @@ mod tests {
     }
 
     #[test]
-    fn the_strips_buttons_call_only_the_players_previous_play_pause_and_next() {
+    fn the_strips_buttons_call_only_the_players_previous_play_pause_and_next_by_its_unique_name() {
         let mut h = locked(Some(players("Playing", true)));
         for t in Transport::ALL {
             click(&mut h, Part::Media(t));
         }
-        let bus = BUS.to_string();
+        let bus = OWNER.to_string();
         assert_eq!(
             sent(&h),
             [
@@ -180,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_reaches_the_buttons_after_the_screens_own_and_enter_presses_them_and_nothing_else() {
+    fn tab_reaches_the_buttons_after_the_screens_own_and_enter_presses_them() {
         let mut h = locked(Some(players("Playing", true)));
         let stops = lock(&h).view.model.stops();
         let at = |p| stops.iter().position(|&s| s == p).unwrap();
@@ -194,13 +236,30 @@ mod tests {
             tap(&mut h, KEY_TAB);
         }
         assert_eq!(lock(&h).view.model.focus, Part::Media(Transport::PlayPause));
-        tap(&mut h, KEY_A);
-        assert!(sent(&h).is_empty(), "a letter presses nothing");
-        tap(&mut h, KEY_ENTER);
-        assert_eq!(sent(&h), [(BUS.to_string(), "PlayPause")]);
-        untouched(&h);
         let tree = crate::lockview::access(&h.state).expect("the lock's tree");
         assert_eq!(tree.find(Role::Button, "Pause"), Some(tree.focus()));
+        tap(&mut h, KEY_ENTER);
+        assert_eq!(sent(&h), [(OWNER.to_string(), "PlayPause")]);
+        untouched(&h);
+    }
+
+    #[test]
+    fn typing_on_a_focused_media_button_types_into_the_password() {
+        let mut h = locked(Some(players("Playing", true)));
+        for _ in 0..lock(&h).view.model.stops().len() - 2 {
+            tap(&mut h, KEY_TAB);
+        }
+        assert_eq!(lock(&h).view.model.focus, Part::Media(Transport::PlayPause));
+        tap(&mut h, KEY_A);
+        let l = lock(&h);
+        assert_eq!((l.view.model.focus, l.input()), (Part::Password, "a"));
+        tap(&mut h, KEY_ENTER);
+        assert!(sent(&h).is_empty(), "Enter unlocks, it does not play");
+        let m = &lock(&h).view.model;
+        assert!(
+            m.busy || m.message.is_some(),
+            "the password went to the check"
+        );
     }
 
     #[test]
@@ -271,12 +330,108 @@ mod tests {
     #[test]
     fn the_remote_sides_lock_shows_no_player() {
         let mut h = locked(Some(players("Playing", true)));
-        assert!(super::media(&h.state, crate::console::Side::Remote).is_none());
-        super::press(
-            &mut h.state,
-            crate::console::Side::Remote,
-            Transport::PlayPause,
-        );
+        assert!(super::shown(&h.state, Side::Remote).is_none());
+        super::press(&mut h.state, Side::Remote, Transport::PlayPause);
         assert!(sent(&h).is_empty());
+    }
+
+    #[test]
+    fn in_lock_mode_the_consoles_lock_shows_no_player_and_presses_nothing() {
+        let mut h = locked(Some(players("Playing", true)));
+        assert!(strip_title(&h).is_some());
+        let mut portal = h.connect_portal();
+        let remote = portal.lock_screen();
+        remote.set_layout(&[(0, 0, 1280, 720, 100)]);
+        h.roundtrip(&mut portal);
+        assert!(crate::console::remote_side(&h.state));
+        let l = lock(&h);
+        assert_eq!((&l.media, &l.view.model.media), (&None, &None));
+        assert_eq!(l.view.layout.as_ref().and_then(|l| l.media), None);
+        assert!(super::shown(&h.state, Side::Console).is_none());
+        super::press(&mut h.state, Side::Console, Transport::PlayPause);
+        assert!(sent(&h).is_empty());
+    }
+
+    #[test]
+    fn the_strip_and_the_media_keys_follow_the_same_player() {
+        let mut p = Players::default();
+        add(
+            &mut p,
+            "org.mpris.MediaPlayer2.a",
+            ":1.10",
+            "A",
+            "Playing",
+            true,
+        );
+        add(
+            &mut p,
+            "org.mpris.MediaPlayer2.b",
+            ":1.11",
+            "B",
+            "Paused",
+            true,
+        );
+        let mut h = locked(Some(p.clone()));
+        let agree = |h: &Harness, title: &str, owner: &str| {
+            assert_eq!(strip_title(h).as_deref(), Some(title));
+            assert_eq!(
+                key_target(h).as_deref(),
+                Some(owner),
+                "the key goes to {title}"
+            );
+        };
+        agree(&h, "A", ":1.10");
+        let mut set = |h: &mut Harness, bus: &str, status: &str| {
+            turn(&mut p, bus, status);
+            h.state.preview_players.players = p.clone();
+            crate::lockview::update(&mut h.state);
+        };
+        set(&mut h, "org.mpris.MediaPlayer2.b", "Playing");
+        agree(&h, "B", ":1.11");
+        set(&mut h, "org.mpris.MediaPlayer2.b", "Paused");
+        agree(&h, "A", ":1.10");
+        set(&mut h, "org.mpris.MediaPlayer2.a", "Paused");
+        agree(&h, "B", ":1.11");
+        set(&mut h, "org.mpris.MediaPlayer2.b", "Stopped");
+        set(&mut h, "org.mpris.MediaPlayer2.a", "Stopped");
+        assert_eq!(strip_title(&h), None, "a stopped player shows no strip");
+        assert!(key_target(&h).is_some(), "but takes the keys");
+    }
+
+    #[test]
+    fn a_press_goes_to_the_player_the_strip_showed() {
+        let mut h = locked(Some(players("Playing", true)));
+        let mut p = players("Playing", true);
+        add(
+            &mut p,
+            "org.mpris.MediaPlayer2.other",
+            ":1.20",
+            "Other",
+            "Playing",
+            true,
+        );
+        h.state.preview_players.players = p;
+        click(&mut h, Part::Media(Transport::PlayPause));
+        assert_eq!(sent(&h), [(OWNER.to_string(), "PlayPause")]);
+    }
+
+    #[test]
+    fn only_a_change_the_strip_shows_redraws_the_lock() {
+        let mut h = locked(Some(players("Playing", true)));
+        assert!(!super::moved(&h.state));
+        let mut p = players("Playing", true);
+        add(
+            &mut p,
+            "org.mpris.MediaPlayer2.idle",
+            ":1.30",
+            "Idle",
+            "Stopped",
+            true,
+        );
+        h.state.preview_players.players = p.clone();
+        assert!(!super::moved(&h.state), "a stopped player is not shown");
+        turn(&mut p, BUS, "Paused");
+        h.state.preview_players.players = p;
+        assert!(super::moved(&h.state), "Pause turns to Play");
     }
 }

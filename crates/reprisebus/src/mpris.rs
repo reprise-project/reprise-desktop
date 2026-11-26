@@ -48,6 +48,9 @@ pub struct Player {
     pub identity: String,
     /// The desktop entry the player names itself by (`DesktopEntry`).
     pub desktop_entry: String,
+    /// The unique bus name owning the player's name when it was found: the one its calls go to,
+    /// so a name that changes hands takes no call meant for its last owner.
+    pub owner: String,
     /// The process owning the player's bus name.
     pub pid: Option<u32>,
     /// The app that process runs as: its Flatpak or snap id, or the desktop id of the Reprise app
@@ -67,6 +70,7 @@ pub struct Player {
 pub struct About {
     pub identity: String,
     pub desktop_entry: String,
+    pub owner: String,
     pub pid: Option<u32>,
     pub app: Option<String>,
 }
@@ -150,6 +154,7 @@ impl Players {
         let mut p = Player {
             identity: about.identity,
             desktop_entry: about.desktop_entry,
+            owner: about.owner,
             pid: about.pid,
             app: about.app,
             // MPRIS: a player that does not say is controllable.
@@ -179,15 +184,23 @@ impl Players {
         self.players.iter().map(|(n, p)| (n.as_str(), p))
     }
 
-    /// The player a single media control goes to: the newest Playing one, else the most recently
-    /// active Paused one.
-    pub fn newest(&self) -> Option<(&str, &Player)> {
+    /// The player the media keys and every single media control go to: the newest Playing one,
+    /// else the most recently active Paused one, else the most recently active Stopped one.
+    pub fn target(&self) -> Option<(&str, &Player)> {
         let newest = |status| {
             self.iter()
                 .filter(|(_, p)| p.status == status)
                 .max_by_key(|(_, p)| p.active)
         };
-        newest(Status::Playing).or_else(|| newest(Status::Paused))
+        newest(Status::Playing)
+            .or_else(|| newest(Status::Paused))
+            .or_else(|| newest(Status::Stopped))
+    }
+
+    /// The [`target`](Players::target) while it plays or is paused: the player a control showing
+    /// a track shows.
+    pub fn newest(&self) -> Option<(&str, &Player)> {
+        self.target().filter(|(_, p)| p.status != Status::Stopped)
     }
 }
 
@@ -255,6 +268,7 @@ async fn read_about(
     let about = About {
         identity,
         desktop_entry,
+        owner: owner.to_string(),
         pid,
         app,
     };
@@ -492,7 +506,12 @@ mod tests {
         p.remove("org.mpris.MediaPlayer2.a");
         assert_eq!(newest(&p).as_deref(), Some("org.mpris.MediaPlayer2.b"));
         p.remove("org.mpris.MediaPlayer2.b");
-        assert_eq!(newest(&p), None, "a stopped player is not picked");
+        assert_eq!(newest(&p), None, "a stopped player is not shown");
+        assert_eq!(
+            p.target().map(|(n, _)| n),
+            Some("org.mpris.MediaPlayer2.c"),
+            "the keys still reach it"
+        );
     }
 
     #[test]
