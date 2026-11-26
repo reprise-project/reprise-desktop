@@ -138,7 +138,8 @@ fn grid_drag_image(
     let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
     let at = |x: Rect| Rect::new(x.x - r.x, x.y - r.y, x.width, x.height).scaled(s);
     for (row, e, cell) in shown.into_iter().map(|i| placed[i]) {
-        let label = at(shellgrid::label_of(sv.mode, cell, e, text, px, u));
+        let l = shellgrid::label_of(sv.mode, cell, e, text, px, u, s);
+        let label = Rect::new(l.x - r.x * s, l.y - r.y * s, l.width, l.height);
         let draw = match sv.mode {
             Mode::Tiles => shellgrid::draw_tile,
             _ => shellgrid::draw_thumb,
