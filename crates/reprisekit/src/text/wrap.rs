@@ -46,7 +46,7 @@ fn wrap_by(body: &str, max_w: i32, space: i32, measure: impl Fn(&str) -> i32) ->
     for para in body.split('\n') {
         let mut line = String::new();
         let mut line_w = 0;
-        for word in para.split_whitespace() {
+        for word in para.split(breaks).filter(|w| !w.is_empty()) {
             let word_w = measure(word);
             if !line.is_empty() && line_w + space + word_w <= max_w {
                 line.push(' ');
@@ -77,6 +77,11 @@ fn wrap_by(body: &str, max_w: i32, space: i32, measure: impl Fn(&str) -> i32) ->
         lines.clear();
     }
     lines
+}
+
+/// Whitespace a line may break at: all but the no-break spaces.
+fn breaks(c: char) -> bool {
+    c.is_whitespace() && !matches!(c, '\u{a0}' | '\u{2007}' | '\u{202f}')
 }
 
 /// The byte length of the head of `word` that goes on a line `max_w` wide:

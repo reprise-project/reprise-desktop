@@ -808,6 +808,14 @@ fn wrap_chars_fills_lines_to_the_column_count() {
 }
 
 #[test]
+fn wrap_never_breaks_at_a_no_break_space() {
+    assert_eq!(
+        wrap_chars("was recovered (1\u{a0}of\u{a0}2).", 17),
+        vec!["was recovered", "(1\u{a0}of\u{a0}2)."]
+    );
+}
+
+#[test]
 fn wrap_chars_breaks_a_long_word_after_its_last_separator_that_fits() {
     assert_eq!(
         wrap_chars("in /srv/projects/Downloads/archive", 18),
