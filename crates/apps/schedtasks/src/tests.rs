@@ -649,3 +649,58 @@ fn the_buttons_fit_their_labels() {
     });
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
+
+#[test]
+fn a_title_click_sorts_by_its_column_and_a_second_flips_keeping_the_pick() {
+    let mut w = window();
+    w.tell(Update::Tasks(Ok(vec![backup(), cleanup()])));
+    w.pick("backup.timer");
+    let mut ctx = ctx();
+    let r = w.app.list_rect(&ctx);
+    let lay = w.app.list.layout(r, &ctx);
+    let title = (lay.header.x + 4, lay.header.y + lay.header.height / 2);
+    let mut click = |app: &mut SchedTasks| {
+        for ev in [
+            PointerInput::Press {
+                x: title.0,
+                y: title.1,
+                button: BTN_LEFT,
+                time: 0,
+                mods: Default::default(),
+            },
+            PointerInput::Release {
+                x: title.0,
+                y: title.1,
+                button: BTN_LEFT,
+                mods: Default::default(),
+            },
+        ] {
+            app.event(MAIN, Event::Pointer(ev), &mut ctx);
+        }
+    };
+    let names = |app: &SchedTasks| -> Vec<String> {
+        app.list
+            .view
+            .rows
+            .cells
+            .iter()
+            .map(|c| c[0].clone())
+            .collect()
+    };
+    click(&mut w.app);
+    assert_eq!(names(&w.app), ["cleanup", "Copy the photos"]);
+    assert_eq!(w.app.list.view.sort, Some((0, true)));
+    assert_eq!(
+        w.app.picked().map(|t| t.timer.as_str()),
+        Some("backup.timer")
+    );
+    click(&mut w.app);
+    assert_eq!(names(&w.app), ["Copy the photos", "cleanup"]);
+    assert_eq!(w.app.list.view.sort, Some((0, false)));
+    w.tell(Update::Tasks(Ok(vec![cleanup(), backup()])));
+    assert_eq!(
+        names(&w.app),
+        ["Copy the photos", "cleanup"],
+        "a fresh list keeps the order"
+    );
+}
