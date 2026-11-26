@@ -561,7 +561,9 @@ impl Config {
                 return Err(format!("unknown color name {name:?}"));
             }
         }
-        for (name, value) in file.metrics.unwrap_or_default() {
+        let metrics = file.metrics.unwrap_or_default();
+        let own_bar = !metrics.contains_key("taskbar_height");
+        for (name, value) in metrics {
             if !(0..=METRIC_MAX).contains(&value) {
                 return Err(format!(
                     "metrics.{name} must be between 0 and {METRIC_MAX}, got {value}"
@@ -1604,7 +1606,12 @@ impl Config {
             cfg.workspace_animation.ms = 0;
         }
         // Last: the text size scales the theme `[metrics]` and `[fonts]` made.
-        cfg.theme = cfg.theme.with_text_size(cfg.accessibility.text_size);
+        let pct = cfg.accessibility.text_size;
+        cfg.theme = if own_bar {
+            cfg.theme.with_text_size_own_bar(pct)
+        } else {
+            cfg.theme.with_text_size(pct)
+        };
         Ok(cfg)
     }
 }
