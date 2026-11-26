@@ -267,12 +267,18 @@ const NO_PACKAGEKIT: &str = "Uninstalling a program from the system's packages n
 
 impl Uninstall {
     /// What the menu of a program `remover` removes offers (None: no desktop file): a Flatpak
-    /// app, a system package (only with `packagekit`) or a launcher an app installed is
-    /// uninstalled; the user's own entry is not.
-    pub fn of(remover: Option<reprisefs::software::Remover>, packagekit: bool) -> Uninstall {
+    /// app (only with `flatpak`), a system package (greyed without `packagekit`) or a launcher an
+    /// app installed is uninstalled; the user's own entry is not.
+    pub fn of(
+        remover: Option<reprisefs::software::Remover>,
+        packagekit: bool,
+        flatpak: bool,
+    ) -> Uninstall {
         use reprisefs::software::Remover;
         match remover {
-            Some(Remover::Flatpak(_) | Remover::Launcher) => Uninstall::Offered,
+            Some(Remover::Flatpak(_)) if flatpak => Uninstall::Offered,
+            Some(Remover::Flatpak(_)) => Uninstall::Absent,
+            Some(Remover::Launcher) => Uninstall::Offered,
             Some(Remover::Package) if packagekit => Uninstall::Offered,
             Some(Remover::Package) => Uninstall::Greyed(NO_PACKAGEKIT),
             Some(Remover::None) | None => Uninstall::Absent,
@@ -285,14 +291,14 @@ impl Uninstall {
 pub fn uninstall_offers(
     apps: &[reprisefs::apps::AppEntry],
 ) -> std::collections::HashMap<reprisefs::apps::DesktopId, Uninstall> {
-    use reprisefs::software::{packagekit_present, remover_among};
+    use reprisefs::software::{flatpak_present, packagekit_present, remover_among};
     let installs = reprisefs::flatpak::installations();
-    let packagekit = packagekit_present();
+    let (packagekit, flatpak) = (packagekit_present(), flatpak_present());
     (apps.iter())
         .map(|a| {
             let file = reprisefs::apps::find_file(&a.id);
             let remover = file.map(|f| remover_among(&f, &installs));
-            (a.id.clone(), Uninstall::of(remover, packagekit))
+            (a.id.clone(), Uninstall::of(remover, packagekit, flatpak))
         })
         .collect()
 }
@@ -607,22 +613,30 @@ mod tests {
     fn uninstall_follows_what_removes_the_program() {
         use reprisefs::software::{Installation, Remover};
         let flatpak = Some(Remover::Flatpak(Installation::User));
-        assert_eq!(Uninstall::of(flatpak, false), Uninstall::Offered);
+        assert_eq!(Uninstall::of(flatpak, false, true), Uninstall::Offered);
         assert_eq!(
-            Uninstall::of(Some(Remover::Launcher), false),
+            Uninstall::of(flatpak, true, false),
+            Uninstall::Absent,
+            "a Flatpak app without the flatpak program"
+        );
+        assert_eq!(
+            Uninstall::of(Some(Remover::Launcher), false, false),
             Uninstall::Offered
         );
         assert_eq!(
-            Uninstall::of(Some(Remover::Package), true),
+            Uninstall::of(Some(Remover::Package), true, false),
             Uninstall::Offered
         );
         assert_eq!(
-            Uninstall::of(Some(Remover::Package), false),
+            Uninstall::of(Some(Remover::Package), false, true),
             Uninstall::Greyed(NO_PACKAGEKIT)
         );
-        assert_eq!(Uninstall::of(Some(Remover::None), true), Uninstall::Absent);
         assert_eq!(
-            Uninstall::of(None, true),
+            Uninstall::of(Some(Remover::None), true, true),
+            Uninstall::Absent
+        );
+        assert_eq!(
+            Uninstall::of(None, true, true),
             Uninstall::Absent,
             "no desktop file"
         );

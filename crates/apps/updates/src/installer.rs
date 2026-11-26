@@ -26,6 +26,8 @@ const DESKTOP_ID: &str = "reprise-install";
 const NO_PACKAGEKIT: &str = "Reprise installs and uninstalls the system's packages through \
                              PackageKit, which is not installed.";
 const NO_FLATPAK: &str = "Installing a Flatpak needs Flatpak, which is not installed.";
+const NO_APP_ID: &str =
+    "This program's Flatpak app ID is not valid, so Reprise cannot uninstall it.";
 const UNKNOWN: &str = "Unknown";
 /// A `.flatpakref`'s size until Flatpak says how much it downloads.
 const SIZE_LATER: &str = "Known once the download starts";
@@ -228,10 +230,12 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
     };
     let plan = match reprisefs::software::remover_of(file) {
         Remover::Flatpak(at) => {
-            let app = reprisefs::software::flatpak_app(&text, file);
             let install = install_of(at);
-            match flatpak::info(install, &app) {
-                Ok(info) => {
+            let app = (reprisefs::software::flatpak_app(&text, file))
+                .ok_or_else(|| NO_APP_ID.to_string())
+                .and_then(|app| flatpak::info(install, &app).map(|info| (app, info)));
+            match app {
+                Ok((app, info)) => {
                     let source = format!(
                         "{} (Flatpak, {} installation)",
                         info.origin,
