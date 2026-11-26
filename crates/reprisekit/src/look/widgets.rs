@@ -264,7 +264,7 @@ pub fn draw_hscrollbar(
 /// `button_face`, with the size grip ([`draw_size_grip`]) when `grip`. It
 /// follows the bars: beside Classic bars it is Classic's grip even when the
 /// style has a size box, and a look with its own scrollbars but no size box
-/// part leaves out the grip.
+/// part leaves out the grip. The grip grows with the bars ([`Paint::small`]).
 pub fn draw_scroll_corner(c: &mut Canvas, p: &Paint, r: Rect, grip: bool) {
     // Styled only when both bars draw styled.
     let styled = p.look.style().is_some_and(|st| {
@@ -279,6 +279,8 @@ pub fn draw_scroll_corner(c: &mut Canvas, p: &Paint, r: Rect, grip: bool) {
             Part::ScrollThumbH,
         ])
     });
+    let look = p.small_look(c);
+    let p = &p.small(&look);
     if grip && !styled {
         classic::widgets::draw_size_grip(c, p.cs, r, p.s);
         return;
@@ -1462,6 +1464,29 @@ mod tests {
         draw_scroll_corner(&mut a, &theme.paint(), r, false);
         b.fill_rect(r, theme.colors.button_face);
         assert!(a == b, "a Classic corner without a grip is plain face");
+    }
+
+    /// At 200% text the corner between the grown bars draws its grip as the 100% corner at
+    /// scale 2, in every look.
+    #[test]
+    fn a_scroll_corner_grip_grows_twice_at_200_percent_in_every_look() {
+        crate::pins::fonts();
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let side = theme_for(i).look.controls_at_100().scroll;
+            for s in [1, 2] {
+                let big = theme_for(i).with_text_size(200).scaled(s);
+                let r = Rect::new(0, 0, 2 * side * s, 2 * side * s);
+                let mut grown = Canvas::new(r.width as u32, r.height as u32);
+                draw_scroll_corner(&mut grown, &big.paint(), r, true);
+                let doubled = theme_for(i).scaled(2 * s);
+                let mut want = Canvas::new(r.width as u32, r.height as u32);
+                draw_scroll_corner(&mut want, &doubled.paint(), r, true);
+                assert!(grown == want, "{i:?}@{s}: the 100% corner at scale 2");
+                got.push((format!("{i:?}@{s}"), crate::pins::fnv(&grown)));
+            }
+        }
+        crate::pins::check("controls/scroll_corner_200", &got);
     }
 
     #[test]
