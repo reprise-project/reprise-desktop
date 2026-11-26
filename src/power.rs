@@ -321,8 +321,19 @@ pub(crate) async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObject
 /// when logind does not answer.
 #[cfg(not(test))]
 pub fn shutting_down() -> bool {
+    match reprisebus::system() {
+        Ok(conn) => reprisebus::wait(preparing(&conn)),
+        Err(e) => {
+            log::warn!("power: PreparingForShutdown: {e}");
+            false
+        }
+    }
+}
+
+/// [`shutting_down`] on `conn`.
+async fn preparing(conn: &Connection) -> bool {
     let read = async {
-        let login1: Proxy<'_> = zbus::proxy::Builder::new(&reprisebus::system()?)
+        let login1: Proxy<'_> = zbus::proxy::Builder::new(conn)
             .destination(LOGIN1_NAME)
             .path(LOGIN1_PATH)
             .interface(LOGIN1_MANAGER)
@@ -331,7 +342,7 @@ pub fn shutting_down() -> bool {
             .await?;
         login1.get_property::<bool>("PreparingForShutdown").await
     };
-    reprisebus::wait(read).unwrap_or_else(|e| {
+    read.await.unwrap_or_else(|e| {
         log::warn!("power: PreparingForShutdown: {e}");
         false
     })
@@ -1308,14 +1319,52 @@ mod tests {
 
     mod logind {
         use reprisebus::testbus::bus;
-        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
         use std::sync::{Arc, Mutex};
         use std::time::{Duration, Instant};
 
         use super::super::{
-            Call, Hint, LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, session_proxy,
+            Call, Hint, LOGIN1_MANAGER, LOGIN1_NAME, LOGIN1_PATH, Report, preparing, session_proxy,
             watch_session, watch_sleep,
         };
+
+        /// Says `PreparingForShutdown` is what `preparing` holds.
+        struct FakeShutdown {
+            preparing: Arc<AtomicBool>,
+        }
+
+        #[zbus::interface(name = "org.freedesktop.login1.Manager")]
+        impl FakeShutdown {
+            #[zbus(property)]
+            fn preparing_for_shutdown(&self) -> bool {
+                self.preparing.load(Ordering::SeqCst)
+            }
+        }
+
+        #[test]
+        fn preparing_for_shutdown_is_read_live_and_an_absent_logind_reads_as_no_shutdown() {
+            let (Some(bus), Some(empty)) = (bus(), bus()) else {
+                return;
+            };
+            let flag = Arc::new(AtomicBool::new(false));
+            zbus::block_on(async {
+                let fake = FakeShutdown {
+                    preparing: flag.clone(),
+                };
+                let _logind = zbus::connection::Builder::address(bus.1.as_str())
+                    .name(LOGIN1_NAME)
+                    .serve_at(LOGIN1_PATH, fake)
+                    .build()
+                    .await
+                    .expect("the fake logind");
+                let ours = reprisebus::testbus::connect(&bus.1).await;
+                assert!(!preparing(&ours).await);
+                flag.store(true, Ordering::SeqCst);
+                assert!(preparing(&ours).await, "read again, not cached");
+                let alone = reprisebus::testbus::connect(&empty.1).await;
+                assert!(!preparing(&alone).await, "no logind on the bus");
+            });
+        }
 
         /// Refuses `Inhibit` while `refusals` lasts, then hands out /dev/null.
         struct FakeManager {
