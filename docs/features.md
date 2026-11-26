@@ -22,9 +22,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   every window.
 - **Quick Launch overflow.** A Quick Launch band dragged shorter than its
   buttons puts the rest behind a » at its end.
-- **Jump lists.** Right-click a task button for the program's recent files,
-  its tasks (the actions its desktop entry offers, such as New Window), its
-  windows, Pin or Unpin, Move to desktop and Close.
+- **Jump lists.** With `[taskbar] pinned` on (Glass's default), right-click a
+  task button for the program's jump list: its recent files and its tasks
+  (the actions its desktop entry offers, such as New Window) under Recent and
+  Tasks headings, its windows, Pin or Unpin, Move to desktop and Close.
+  Shift+right-click opens the window menu instead. With `pinned` off (Classic's
+  and Blue's default), right-click opens the window menu, or a group's window
+  list, with a Recent Files submenu when the program has recent files.
 - **Drag to reorder.** Drag task buttons along the row. Middle-click starts
   another copy of the program.
 - **Live previews.** Point at a task button for live pictures of its windows.
