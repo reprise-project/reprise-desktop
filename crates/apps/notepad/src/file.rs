@@ -340,8 +340,9 @@ fn recovered_name(file: &Path) -> String {
     tr!("recovered-untitled", line = line)
 }
 
-/// Sends a declined recovery file to the Recycle Bin, or deletes it on a drive set to remove
-/// files immediately; one that can go neither way stays and is offered at the next start.
+/// Sends a declined recovery file to the Recycle Bin under [`recycled_name`], or deletes it on
+/// a drive set to remove files immediately; one that can go neither way stays and is offered at
+/// the next start.
 fn recycle(file: &Path) {
     let Some(bins) = reprisefs::trash::Bins::system() else {
         log::warn!("no Recycle Bin; {} is kept", file.display());
@@ -349,9 +350,42 @@ fn recycle(file: &Path) {
     };
     let gone = match bins.fate(file) {
         reprisefs::bincap::Fate::RemoveImmediately => std::fs::remove_file(file),
-        _ => bins.trash(file).map(drop),
+        _ => trash_named(&bins, file),
     };
     if let Err(e) = gone {
         log::warn!("{} is kept: {e}", file.display());
     }
+}
+
+/// Renamed beside itself first; a refused trash renames it back, so it keeps the recovery name
+/// the next start looks for.
+fn trash_named(bins: &reprisefs::trash::Bins, file: &Path) -> std::io::Result<()> {
+    use reprisefs::trash::move_to_free;
+    let named = file.with_file_name(format!("{}.txt", recycled_name(file)));
+    if move_to_free(file, &named).is_err() {
+        return bins.trash(file).map(drop);
+    }
+    bins.trash(&named).map(drop).inspect_err(|_| {
+        if let Err(e) = move_to_free(&named, file) {
+            log::warn!("cannot name {} back: {e}", named.display());
+        }
+    })
+}
+
+/// The name a declined recovery file shows in the Recycle Bin: its document's, and for an
+/// Untitled one the time its text was kept.
+fn recycled_name(file: &Path) -> String {
+    use reprisefs::locale;
+    let untitled = tr!("untitled");
+    let stem = reprisefs::recovery::stem(file).unwrap_or(&untitled);
+    let name = if stem == untitled {
+        let kept = (file.metadata().and_then(|m| m.modified()).ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs() as i64);
+        let when = locale::strftime(&locale::localtime(kept), c"%Y-%m-%d %H.%M");
+        format!("{untitled} {when}")
+    } else {
+        stem.to_string()
+    };
+    tr!("recycled-name", name = name)
 }

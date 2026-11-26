@@ -2237,6 +2237,8 @@ fn declining_a_recovered_document_sends_it_to_the_recycle_bin_and_offers_the_nex
     reprisefs::configfile::set_path(Some(tmp.path().join("config.toml")));
     let first = write_recovery(&dir, 1, "a", &["a"], Format::default()).expect("write");
     let second = write_recovery(&dir, 2, "b", &["b"], Format::default()).expect("write");
+    let untitled =
+        write_recovery(&dir, 3, &tr!("untitled"), &["c"], Format::default()).expect("write");
     let mut np = Notepad::new(None);
     np.rescue_dir = Some(dir.clone());
     np.offer_recovered();
@@ -2247,6 +2249,15 @@ fn declining_a_recovered_document_sends_it_to_the_recycle_bin_and_offers_the_nex
         typed(keysym::RETURN, None, false),
         &mut ctx,
     );
+    let after_first = recovered_file(&np).cloned();
+    for _ in 0..2 {
+        np.asks.up_mut().expect("the prompt").fields.default = 1;
+        np.event(
+            np.asks.win().unwrap(),
+            typed(keysym::RETURN, None, false),
+            &mut ctx,
+        );
+    }
     reprisefs::trash::set_home_trash(None);
     reprisefs::trash::set_mount_table(None);
     reprisefs::configfile::set_path(None);
@@ -2255,16 +2266,28 @@ fn declining_a_recovered_document_sends_it_to_the_recycle_bin_and_offers_the_nex
         "No takes the file out of the recovery folder"
     );
     assert_eq!(
-        std::fs::read_to_string(trash.join("files/recovery-1-a.txt")).ok(),
+        std::fs::read_to_string(trash.join("files/a (recovered).txt")).ok(),
         Some("a".into()),
-        "the declined text waits in the Recycle Bin"
+        "the declined text waits in the Recycle Bin under its document's name"
     );
     assert_eq!(
-        recovered_file(&np),
+        after_first.as_ref(),
         Some(&second),
         "the next file is offered"
     );
     assert_eq!(np.edit.text(), "");
+    assert!(!untitled.exists());
+    let mut names: Vec<String> = std::fs::read_dir(trash.join("files"))
+        .expect("the bin")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names[1..], ["a (recovered).txt", "b (recovered).txt"]);
+    let dated = names[0]
+        .strip_prefix("Untitled ")
+        .and_then(|n| n.strip_suffix(" (recovered).txt"))
+        .unwrap_or_else(|| panic!("Untitled with its date: {:?}", names[0]));
+    assert_eq!(dated.len(), "2026-11-26 14.05".len(), "{dated}");
 }
 
 #[test]

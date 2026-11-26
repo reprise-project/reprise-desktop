@@ -119,7 +119,8 @@ always had its priorities.
 When Notepad loses the desktop or crashes with unsaved text, it writes the
 text to `~/.local/state/reprise/notepad/` and offers it at the next start,
 one prompt per document naming it ("1 of 2"). No sends that text to the
-Recycle Bin.
+Recycle Bin as "notes (recovered).txt", or for an Untitled document
+"Untitled" with the date and time it was kept.
 
 ## Sticky Notes
 

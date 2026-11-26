@@ -72,6 +72,8 @@ recovered =
     }
     Do you want to open it?
 recovered-untitled = Untitled ("{ $line }")
+# A declined recovery file's name in the Recycle Bin; $name is the document's name, an Untitled one's with the date.
+recycled-name = { $name } (recovered)
 save-changes =
     The text in the { $name } file has changed.
     Do you want to save the changes?
