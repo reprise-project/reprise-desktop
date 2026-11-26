@@ -985,7 +985,10 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
             let go = || updating(&*bus, &made, id, how.updates, interactive, &still, power);
             match aim {
                 Aim::Into(boot) => match zbus::block_on(zbus::Connection::system()) {
-                    Ok(conn) => restart_into(&conn, &boot, interactive, &ticket, go),
+                    Ok(conn) => {
+                        let go = || elsewhere(&*bus, &made, id, how.updates, go);
+                        restart_into(&conn, &boot, interactive, &ticket, go)
+                    }
                     Err(e) => Some(Failed::Refused(Refused::Failed(e.to_string()))),
                 },
                 Aim::Clear => match clear_set(interactive && !how.unattended, how.unattended) {
@@ -1005,6 +1008,21 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
         state.powering.answer(id);
         refuse(state, act, &Refused::Internal);
     }
+}
+
+/// A Restart Into's `go`, after taking back a trigger an earlier attempt left: an update must not
+/// install into a boot that goes elsewhere, so one that stays holds the restart back.
+fn elsewhere(
+    bus: &dyn crate::offlineupdate::Bus,
+    made: &crate::offlineupdate::Made,
+    id: u64,
+    updates: Updates,
+    go: impl FnOnce() -> Option<Failed>,
+) -> Option<Failed> {
+    if updates == Updates::Leave && !made.take_back(bus, Some(id)) {
+        return Some(Failed::Updates(None));
+    }
+    go()
 }
 
 /// [`crate::offlineupdate::around`] attempt `id`'s `power` with the prepared update as `updates`
@@ -1305,8 +1323,8 @@ enum Failed {
     Refused(Refused),
     /// The restart target titled here is set and would not clear.
     Aimed(String),
-    /// The user unticked an update another program set to install, and it would not cancel; the
-    /// Restart Into's target, if any.
+    /// An update set to install would not cancel: one the user unticked, or one an earlier attempt
+    /// left before a Restart Into. The Restart Into's target, if any.
     Updates(Option<Pick>),
 }
 
@@ -2633,6 +2651,44 @@ mod tests {
             "Updates will install the next time the computer starts, and Reprise could not change \
              that. The computer is also still set to start B, so restarting anyway starts it.\n\n\
              Do you want to restart the computer anyway?"
+        );
+    }
+
+    #[test]
+    fn a_restart_into_whose_left_trigger_will_not_come_back_asks_before_it_restarts() {
+        struct Stuck;
+        impl crate::offlineupdate::Bus for Stuck {
+            fn status(&self) -> Option<reprisebus::offline::Status> {
+                None
+            }
+            fn trigger(
+                &self,
+                _: reprisebus::offline::After,
+                _: bool,
+            ) -> crate::offlineupdate::Answer {
+                Err(Some("no".into()))
+            }
+            fn cancel(&self, _: bool) -> crate::offlineupdate::Answer {
+                Err(Some("no".into()))
+            }
+            fn shutting_down(&self) -> bool {
+                false
+            }
+        }
+        let made = crate::offlineupdate::Made::default();
+        made.set(Some(1));
+        let failed = elsewhere(&Stuck, &made, 2, Updates::Leave, || panic!("no restart"));
+        assert_eq!(failed, Some(Failed::Updates(None)));
+        assert_eq!(
+            elsewhere(&Stuck, &made, 2, Updates::Leave, || None),
+            None,
+            "none left"
+        );
+        made.set(Some(1));
+        assert_eq!(
+            elsewhere(&Stuck, &made, 2, Updates::Skip, || None),
+            None,
+            "Skip asks for itself"
         );
     }
 
