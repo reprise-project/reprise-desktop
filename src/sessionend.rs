@@ -1108,9 +1108,9 @@ fn unpanicked(work: impl FnOnce() -> Option<Failed>) -> Option<Failed> {
 /// Attempt `id` ran past [`ANSWER_WITHIN`]: unless it answered, give up on it and refuse, saying
 /// so when the update's trigger it made stands, which then stays as another program's would
 /// ([`crate::offlineupdate::Made::hand_over`]); its answer says so when that was not yet known
-/// ([`answered`]). One that `lingers`, a custom Stand By or Hibernate
-/// command, may wait on purpose (a locker, the resume): it only stops holding the next action
-/// back, and a failure still shows.
+/// ([`answered`]). Its password prompts are withdrawn, as answering one would still run the
+/// action. One that `lingers`, a custom Stand By or Hibernate command, may wait on purpose (a
+/// locker, the resume): it only stops holding the next action back, and a failure still shows.
 fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
     if state.powering.under_way != Some(id) {
         return;
@@ -1121,6 +1121,7 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
         return;
     }
     state.powering.give_up();
+    withdraw_prompts(state);
     let why = match state.offline.made.hand_over(id) {
         Some(true) => Refused::Stays(Some(Box::new(Refused::Late))),
         Some(false) => Refused::Late,
@@ -2664,13 +2665,38 @@ mod tests {
 
     #[test]
     fn a_power_action_with_no_answer_in_time_says_when_its_trigger_stands() {
+        struct Withdraws(std::sync::atomic::AtomicBool);
+        impl crate::offlineupdate::Bus for Withdraws {
+            fn status(&self) -> Option<reprisebus::offline::Status> {
+                None
+            }
+            fn trigger(
+                &self,
+                _: reprisebus::offline::After,
+                _: bool,
+            ) -> crate::offlineupdate::Answer {
+                Err(Some("no".into()))
+            }
+            fn cancel(&self, _: bool) -> crate::offlineupdate::Answer {
+                Err(Some("no".into()))
+            }
+            fn shutting_down(&self) -> bool {
+                false
+            }
+            fn withdraw(&self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
+        let bus = Arc::new(Withdraws(Default::default()));
+        h.state.offline = crate::offlineupdate::Offline::on(bus.clone());
         let id = h.state.powering.begin();
         h.state.offline.made.set(Some(id));
         crate::crash::ending();
         h.state.session.kept = true;
         late(&mut h.state, id, Act::Restart, false);
+        assert!(bus.0.load(Ordering::SeqCst), "its prompts are withdrawn");
         assert_eq!(h.state.offline.made.by(), None, "nothing takes it back now");
         let d = &h.state.dialogs.views.last().expect("the refusal").dialog;
         assert_eq!(
