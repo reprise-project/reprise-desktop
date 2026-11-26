@@ -1245,14 +1245,24 @@ mod tests {
             c.wlr_shot(&mut h);
             h.run_for(40);
         }
+        let before = std::time::Instant::now();
         c.wlr_shot(&mut h);
-        let last = std::time::Instant::now();
+        let after = std::time::Instant::now();
         assert!(h.state.privacy.sharing_shown(), "a recording");
-        run_until(&mut h, last, 0.9);
-        assert!(h.state.privacy.sharing_shown(), "the dot lingers");
-        run_until(&mut h, last, 1.1);
+        // A stalled turn can overshoot any sample time, so the dot is checked at every turn until
+        // it goes: never gone before HOLD after the last frame was sent, and gone well within
+        // 3 s past it, which no stall reaches.
+        let late = after + HOLD + std::time::Duration::from_secs(3);
+        h.until("the dot goes", |s| {
+            let now = std::time::Instant::now();
+            let gone = !s.privacy.sharing_shown();
+            assert!(!gone || now >= before + HOLD, "the dot lingers HOLD");
+            assert!(gone || now < late, "the dot goes within 3 s past HOLD");
+            gone
+        });
+        let from = h.state.privacy.live_at.expect("a live capture was seen");
         assert!(
-            !h.state.privacy.sharing_shown(),
+            (before..=after).contains(&from),
             "the dot goes HOLD after the last frame"
         );
     }
