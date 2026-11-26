@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     backend::input::InputTime,
-    input::pointer::{CursorImageStatus, MotionEvent},
+    input::pointer::{ClickGrab, CursorImageStatus, MotionEvent},
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::protocol::wl_surface::WlSurface,
@@ -110,6 +110,16 @@ impl State {
     /// (`Popup::owns_pointer`) holds it.
     pub(crate) fn pointer_free(&self) -> bool {
         self.shell_leaves_pointer() && self.seat.get_pointer().is_some_and(|p| !p.is_grabbed())
+    }
+
+    /// The client surface a held button keeps the pointer on, if any.
+    fn click_grab_surface(&self) -> Option<WlSurface> {
+        let pointer = self.seat.get_pointer()?;
+        pointer
+            .with_grab(|_, g| g.is::<ClickGrab<State>>())
+            .unwrap_or(false)
+            .then(|| pointer.current_focus()?.surface().cloned())
+            .flatten()
     }
 
     /// `pointer_free` short of the seat's grab.
@@ -602,6 +612,18 @@ impl State {
             self.pointer_motion(None, pos, time);
             self.set_cursor("default");
             return None;
+        }
+        // A button held on a client keeps that client the pointer's focus
+        // (the seat's click grab), so the cursor stays the one it set.
+        if let Some(held) = self.click_grab_surface() {
+            let focus = match &hit {
+                Hit::Surface {
+                    surface, origin, ..
+                } if *surface == held => Some((held, *origin)),
+                _ => None,
+            };
+            self.pointer_motion(focus, pos, time);
+            return Some(seen);
         }
         match hit {
             Hit::Surface {
