@@ -329,7 +329,8 @@ pub enum Hit {
 
 /// The layout's lengths at the text size: the columns, their text rows, the channels and the
 /// Advanced button grow with the text; the slots, the etched lines, the channel's width, the
-/// speakers, the check box and the thumbs keep their size.
+/// speakers and the thumbs keep their size. The check box and the scrollbar come from
+/// [`Theme::controls`].
 #[derive(Clone, Copy, Debug)]
 struct Dims {
     device_w: i32,
@@ -561,7 +562,7 @@ fn last_first_at(m: &Mixer, d: &Dims, w: i32) -> usize {
 pub fn layout(m: &Mixer, theme: &Theme, text: &TextRenderer, body: Rect) -> Layout {
     let text = text.dialog(DialogFont::ShellDlg);
     let px = theme.fonts.size_px;
-    let cm = theme.look.controls_at_100();
+    let cm = theme.controls();
     let d = Dims::new(theme.text);
     let scrolls = m.columns.len() > fitting(m, &d, 0, body.width);
     let first = m.first.min(last_first_at(m, &d, body.width));
