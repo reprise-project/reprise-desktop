@@ -8,7 +8,7 @@ use crate::media::{NowPlaying, Transport};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
-use crate::textedit::{EditKey, TextEdit};
+use crate::textedit::{EditKey, Limit, TextEdit};
 
 pub mod media;
 mod motion;
@@ -855,7 +855,7 @@ impl Logon {
             false => TextEdit::secret(),
         };
         if self.unlocking() {
-            edit.set_limit(UNLOCK_MAX);
+            edit.set_limit(Limit::Bytes(UNLOCK_MAX));
         }
         edit
     }

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use reprisekit::textedit::Limit;
 use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 pub const NAME: &str = "org.freedesktop.UDisks2";
@@ -106,6 +107,8 @@ pub struct Volume {
     /// it takes its encrypted backing volume's.
     pub disk: Option<String>,
     pub label: Option<String>,
+    /// `IdLabel` whole, without control or format characters; empty when it has none.
+    pub full_label: String,
     /// `IdType`: `vfat`, `ext4`, `crypto_LUKS`.
     pub fs_type: String,
     /// `IdUUID`; empty when it has none.
@@ -165,7 +168,7 @@ impl Volume {
     /// The same file system as `other`, as far as UDisks2 tells them apart.
     pub fn same_as(&self, other: &Volume) -> bool {
         (self.path == other.path && self.uuid == other.uuid && self.size == other.size)
-            && (self.fs_type == other.fs_type && self.label == other.label)
+            && (self.fs_type == other.fs_type && self.full_label == other.full_label)
     }
 
     /// An encrypted container with no cleartext volume.
@@ -182,6 +185,21 @@ impl Volume {
             None => "Removable Disk".into(),
         }
     }
+}
+
+/// The longest label an `fs_type` file system takes, within what UDisks2's label check allows.
+/// NTFS and exFAT labels are UTF-16 and count units; NTFS is held to 32 of the 128 it could take.
+pub fn label_limit(fs_type: &str) -> Option<Limit> {
+    Some(match fs_type {
+        "vfat" => Limit::Bytes(11),
+        "exfat" => Limit::Utf16(11),
+        "ntfs" => Limit::Utf16(32),
+        "ext2" | "ext3" | "ext4" => Limit::Bytes(16),
+        "xfs" => Limit::Bytes(12),
+        "btrfs" => Limit::Bytes(255),
+        "nilfs2" => Limit::Bytes(80),
+        _ => return None,
+    })
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -345,7 +363,7 @@ fn disk_of(path: &str, p: &Props) -> Disk {
     }
 }
 
-/// The most of a drive's label shown, in characters: NTFS's longest.
+/// The most of a drive's label shown, in characters.
 const LABEL_MAX: usize = 32;
 
 /// The mount points of a block's fstab entries: its `Configuration` is `a(sa{sv})`, an
@@ -366,6 +384,7 @@ fn fstab_dirs(block: &Props) -> Vec<PathBuf> {
 fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volume {
     let fs = ifaces.get(FILESYSTEM_IFACE);
     let crypt = ifaces.get(ENCRYPTED_IFACE);
+    let full_label = crate::names::shown_line(&text(block, "IdLabel"), usize::MAX);
     let shown = |key| Some(crate::names::shown_line(&text(block, key), LABEL_MAX));
     let label = shown("IdLabel")
         .filter(|l| !l.is_empty())
@@ -376,6 +395,7 @@ fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volu
         preferred: dev_name(block, "PreferredDevice"),
         disk: object(block, "Drive"),
         label,
+        full_label,
         fs_type: text(block, "IdType"),
         uuid: text(block, "IdUUID"),
         size: block
@@ -1371,7 +1391,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_drive_label_loses_control_and_bidi_characters_and_its_tail_past_32() {
+    fn a_drive_label_loses_control_and_bidi_characters_and_shows_no_tail_past_32() {
         let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
         let mut m = Objects::new();
         for (dev, label) in [
@@ -1389,6 +1409,9 @@ pub(crate) mod tests {
         assert_eq!(name("/dev/sdc1"), "gpj.exeHome");
         assert_eq!(name("/dev/sdd1"), "Removable Disk", "nothing left to show");
         assert_eq!(name("/dev/sde1"), "x".repeat(32));
+        let full = |d: &str| snap.volume_by_device(d).unwrap().full_label.clone();
+        assert_eq!(full("/dev/sde1"), "x".repeat(40), "Rename edits it whole");
+        assert_eq!(full("/dev/sdc1"), "gpj.exeHome");
     }
 
     #[test]
@@ -1585,7 +1608,7 @@ pub(crate) mod tests {
                 ..stick.clone()
             },
             Volume {
-                label: None,
+                full_label: String::new(),
                 ..stick.clone()
             },
             Volume {

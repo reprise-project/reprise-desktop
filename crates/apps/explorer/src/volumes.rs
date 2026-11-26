@@ -425,7 +425,7 @@ impl Explorer {
             return Reply::none();
         };
         let label = text.trim().to_string();
-        if Some(&label) == picked.label.as_ref() || (label.is_empty() && picked.label.is_none()) {
+        if label == label_text(&picked) || label == picked.full_label {
             return Reply::none();
         }
         if !(self.volumes.volume(&picked.path)).is_some_and(|v| v.same_as(&picked)) {
@@ -434,6 +434,11 @@ impl Explorer {
         // A label tool UDisks2 runs (e2label, fatlabel) may read a leading hyphen as an option.
         if label.starts_with('-') {
             return self.message_box("Rename", LEADING_HYPHEN.into(), ctx);
+        }
+        if let Some(limit) =
+            reprisefs::udisks::label_limit(&picked.fs_type).filter(|l| !l.fits(&label))
+        {
+            return self.message_box("Rename", too_long_text(Some(limit.max())), ctx);
         }
         let name = picked.name(self.volumes.disk_of(&picked));
         self.spawn_job(ctx, move || {
@@ -474,6 +479,22 @@ pub(crate) const SYSTEM_DRIVE: &str = "Reprise doesn't rename the system's own d
 const DRIVE_CHANGED: &str = "The drive changed; nothing was renamed.";
 const LEADING_HYPHEN: &str = "A drive's name cannot start with a hyphen (-).";
 
+/// What the Rename box opens with: the file system's label, else the name the system gives the
+/// volume.
+pub(crate) fn label_text(v: &Volume) -> String {
+    match v.full_label.is_empty() {
+        true => v.label.clone().unwrap_or_default(),
+        false => v.full_label.clone(),
+    }
+}
+
+fn too_long_text(limit: Option<usize>) -> String {
+    match limit {
+        Some(n) => format!("The name is too long for this drive (at most {n} characters)."),
+        None => "The name is too long for this drive.".into(),
+    }
+}
+
 /// Why a drive named `name` with an `fs_type` file system kept its label, for the Rename box.
 /// UDisks2's own reason is put in words where its shape is known.
 pub(crate) fn relabel_failed_text(name: &str, fs_type: &str, e: &Error) -> String {
@@ -482,10 +503,7 @@ pub(crate) fn relabel_failed_text(name: &str, fs_type: &str, e: &Error) -> Strin
         ErrorKind::Busy => {
             format!("{name} is in use. Close any program or window using it, and then try again.")
         }
-        _ if label_too_long(&e.message) => match label_limit(&e.message, fs_type) {
-            Some(n) => format!("The name is too long for this drive (at most {n} characters)."),
-            None => "The name is too long for this drive.".into(),
-        },
+        _ if label_too_long(&e.message) => too_long_text(label_limit(&e.message, fs_type)),
         _ => format!("Cannot rename {name}."),
     }
 }
@@ -501,12 +519,5 @@ fn label_too_long(message: &str) -> bool {
 fn label_limit(message: &str, fs_type: &str) -> Option<usize> {
     let named =
         (message.split("at most ").nth(1)).and_then(|rest| rest.split(' ').next()?.parse().ok());
-    named.or(match fs_type {
-        "vfat" | "exfat" => Some(11),
-        "xfs" => Some(12),
-        "ext2" | "ext3" | "ext4" => Some(16),
-        "ntfs" => Some(128),
-        "btrfs" => Some(255),
-        _ => None,
-    })
+    named.or(reprisefs::udisks::label_limit(fs_type).map(|l| l.max()))
 }
