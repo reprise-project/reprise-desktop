@@ -100,14 +100,14 @@ fn wayland_app(dir: &Path) -> Option<String> {
 }
 
 /// Flatpak's app id rules: at most 255 bytes, three or more dot-separated elements of ASCII
-/// letters, digits, `_` and `-`, none empty or starting with a digit.
-fn valid_app_id(id: &str) -> bool {
+/// letters, digits, `_` and `-`, each starting with a letter or `_`. So an id never reads as an
+/// option on `flatpak`'s command line.
+pub fn valid_app_id(id: &str) -> bool {
     let elements = id.split('.');
     id.len() <= 255
         && elements.clone().count() >= 3
         && elements.into_iter().all(|e| {
-            !e.is_empty()
-                && !e.starts_with(|c: char| c.is_ascii_digit())
+            e.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
                 && e.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
         })

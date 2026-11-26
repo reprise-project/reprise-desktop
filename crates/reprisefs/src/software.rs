@@ -134,16 +134,15 @@ fn remove_launcher_in(file: &Path, data_home: &Path) -> std::io::Result<()> {
 }
 
 /// The id of the Flatpak app that exports desktop file `file` with contents `text`: the
-/// `X-Flatpak` key Flatpak adds on export, else the file's name.
-pub fn flatpak_app(text: &str, file: &Path) -> String {
+/// `X-Flatpak` key Flatpak adds on export, else the file's name. None when that is no valid app
+/// id ([`crate::flatpak::valid_app_id`]).
+pub fn flatpak_app(text: &str, file: &Path) -> Option<String> {
     let kv = crate::apps::desktop_entry_kv(text);
-    match kv.get("X-Flatpak") {
+    let id = match kv.get("X-Flatpak").map(|v| v.trim()) {
         Some(id) if !id.is_empty() => id.to_string(),
-        _ => file
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-    }
+        _ => file.file_stem()?.to_str()?.to_string(),
+    };
+    crate::flatpak::valid_app_id(&id).then_some(id)
 }
 
 /// A `.flatpakref` file: the app or runtime it installs and the repository it comes from.
@@ -175,6 +174,11 @@ pub fn flatpak_ref(text: &str) -> Option<FlatpakRef> {
         runtime_repo: get("RuntimeRepo"),
         id,
     })
+}
+
+/// Whether the `flatpak` program is on `PATH`.
+pub fn flatpak_present() -> bool {
+    crate::autostart::find_program("flatpak").is_some()
 }
 
 /// Whether the system bus can start PackageKit: its service file is in a directory the bus
@@ -325,10 +329,31 @@ mod tests {
         let file =
             Path::new("/var/lib/flatpak/exports/share/applications/org.example.App.Tool.desktop");
         let text = "[Desktop Entry]\nName=Tool\nX-Flatpak=org.example.App\n";
-        assert_eq!(flatpak_app(text, file), "org.example.App");
+        assert_eq!(flatpak_app(text, file).as_deref(), Some("org.example.App"));
         assert_eq!(
-            flatpak_app("[Desktop Entry]\nName=Tool\n", file),
-            "org.example.App.Tool"
+            flatpak_app("[Desktop Entry]\nName=Tool\n", file).as_deref(),
+            Some("org.example.App.Tool")
+        );
+    }
+
+    #[test]
+    fn a_flatpak_app_id_that_is_not_one_is_refused() {
+        let file = Path::new("/var/lib/flatpak/exports/share/applications/org.example.App.desktop");
+        for bad in [
+            "--system",
+            "-v.x.y",
+            "org.example",
+            "org..App",
+            "org.example.App;rm",
+        ] {
+            let text = format!("[Desktop Entry]\nName=Tool\nX-Flatpak={bad}\n");
+            assert_eq!(flatpak_app(&text, file), None, "X-Flatpak={bad}");
+        }
+        let dashed = Path::new("/var/lib/flatpak/exports/share/applications/--user.desktop");
+        assert_eq!(
+            flatpak_app("[Desktop Entry]\nName=Tool\n", dashed),
+            None,
+            "file --user"
         );
     }
 }
