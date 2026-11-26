@@ -797,3 +797,45 @@ fn a_motion_over_water_looks_under_the_pointer_once() {
         assert_eq!(super::pointer::SCENE_HITS.get(), 1, "{held}");
     }
 }
+
+#[test]
+fn a_button_held_on_a_client_keeps_its_cursor_off_the_window_until_released() {
+    use smithay::input::pointer::{CursorIcon, CursorImageStatus};
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "a", 300, 200);
+    h.state.move_to(a.id, 400, 300);
+    h.dispatch();
+    let w = h.state.win(a.id).expect("a");
+    let (client, caption, x, y) = (w.geom.client, w.geom.caption, w.x, w.y);
+    h.pointer_to(
+        f64::from(x + client.x + client.width / 2),
+        f64::from(y + client.y + client.height / 2),
+    );
+    h.button(BTN_LEFT, true);
+    let crosshair = CursorImageStatus::Named(CursorIcon::Crosshair);
+    h.state.cursor = crosshair.clone();
+    for (px, py, over) in [
+        (
+            f64::from(x + 10),
+            f64::from(y + caption.y + 5),
+            "the caption",
+        ),
+        (f64::from(x - 3), f64::from(y + 100), "the frame's edge"),
+        (900.0, 100.0, "the desktop"),
+    ] {
+        h.pointer_to(px, py);
+        assert_eq!(
+            h.state.cursor, crosshair,
+            "the client's crosshair stays over {over}"
+        );
+    }
+    h.button(BTN_LEFT, false);
+    h.pointer_to(901.0, 100.0);
+    assert_eq!(
+        h.state.cursor,
+        CursorImageStatus::Named(CursorIcon::Default),
+        "the arrow once the button is up"
+    );
+}
