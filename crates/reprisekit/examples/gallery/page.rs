@@ -508,7 +508,7 @@ fn page_dialogs(mut c: Canvas, theme: &Theme, text: &TextRenderer, mono: &TextRe
         true,
         px,
     );
-    let sample = sample::draw_appearance(theme, text, None, sample::APPEARANCE_SIZE);
+    let sample = sample::draw_appearance(theme, text, None, sample::APPEARANCE_SIZE, 0);
     let small = sample.resample_box(173, 92);
     c.blit_canvas(545, 310, &small);
     let monitor = form::Form::new(vec![

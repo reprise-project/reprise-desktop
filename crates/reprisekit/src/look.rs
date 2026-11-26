@@ -428,17 +428,29 @@ pub fn draw_sample_at(
     use sample::Frames;
     let s = s.max(1);
     let scaled = theme.scaled(s);
-    let draw = |frames: Option<Frames>| {
+    let draw = |frames: Option<Frames>, message_w: i32| {
         if themes {
             sample::draw_themes(&scaled, text, icon, frames)
         } else {
-            sample::draw_appearance(&scaled, text, frames, size)
+            sample::draw_appearance(&scaled, text, frames, size, message_w)
         }
     };
     let Some(style) = theme.look.style() else {
-        return draw(None);
+        return draw(None, 0);
     };
     let caption_text = caption_text(style);
+    let message_w = {
+        let spec = &style.caption_text;
+        let at = |n: i32| {
+            caption_text.measure(sample::MESSAGE_TITLE, spec.bold, spec.size_px * n as u32)
+        };
+        // A title set at scale `s` can run wider than `s` times its scale-1 width.
+        let wider = ((at(s) + s - 1) / s - at(1)).max(0);
+        let fit = caption_fit(theme, sample::MESSAGE_TITLE, Chrome::DIALOG) + wider;
+        FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG)
+            .total
+            .0
+    };
     let paint = |c: &mut Canvas, outer: Rect, title: &str, active: bool, chrome: Chrome| {
         let m = &theme.metrics;
         let (w, h) = FrameGeometry::client_size_for_total(
@@ -474,7 +486,7 @@ pub fn draw_sample_at(
         c.fill_rect(client, scaled.colors.button_face);
         client
     };
-    draw(Some(&paint))
+    draw(Some(&paint), message_w)
 }
 
 #[cfg(test)]
@@ -542,6 +554,28 @@ mod tests {
     fn caption_fit_leaves_a_blue_or_glass_title_exactly_its_room() {
         fits_its_room(Interface::Blue, 179, 179);
         fits_its_room(Interface::Glass, 201, 201);
+    }
+
+    /// At 100% text the Appearance sample's message box under Blue and Glass is wide enough for
+    /// its title and keeps its text inside the frame, at scale 1 and 2.
+    #[test]
+    fn the_appearance_samples_message_box_fits_its_title_in_blue_and_glass() {
+        let mut got = Vec::new();
+        for i in [Interface::Blue, Interface::Glass] {
+            let theme = theme_for(i);
+            let fit = caption_fit(&theme, sample::MESSAGE_TITLE, Chrome::DIALOG);
+            let total = FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG).total;
+            assert!(
+                28 + total.0 <= sample::APPEARANCE_SIZE.0,
+                "{i:?}: the widened box stays in the sample"
+            );
+            for s in [1, 2] {
+                let text = TextRenderer::load(&theme.scaled(s).fonts);
+                let c = draw_sample(false, &theme, s, &text, None);
+                got.push((format!("{i:?}@{s}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("look/appearance_sample_100", &got);
     }
 
     /// Blue draws its controls hot and held; Classic and Glass draw them the same whatever the pointer does, so hover asks them for no redraw.
@@ -699,7 +733,7 @@ mod tests {
         let scaled = theme.scaled(2);
         assert_eq!(
             draw_sample(false, &theme, 2, &text, None),
-            sample::draw_appearance(&scaled, &text, None, sample::APPEARANCE_SIZE)
+            sample::draw_appearance(&scaled, &text, None, sample::APPEARANCE_SIZE, 0)
         );
         assert_eq!(
             draw_sample(true, &theme, 1, &text, None),
