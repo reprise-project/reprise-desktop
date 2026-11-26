@@ -167,6 +167,10 @@ fn sided_buttons(v: Variant, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
     parts
 }
 
+/// How far a selected desktop label's edge darkens the highlight: the default wallpaper runs
+/// through the highlight's own blue, where an unedged box would vanish.
+pub(crate) const DESKTOP_LABEL_EDGE: u8 = 112;
+
 /// `v`'s style at `scale` device pixels per design pixel. Parts painted from geometry are
 /// painted at `scale` and marked so
 /// ([`PartImage::at_scale`](crate::style::PartImage::at_scale)); other parts are design-size
@@ -188,6 +192,7 @@ fn build(v: Variant, scale: i32) -> Style {
     .with_task_progress(taskprogress::painter(v))
     .with_task_badge(std::sync::Arc::new(taskbadge::paint))
     .with_flat_menus()
+    .with_desktop_label_edge(DESKTOP_LABEL_EDGE)
     .with_painted_group(&[Part::MenuFrame, Part::MenuItem], move || {
         menus::parts(v.scheme(), scale)
     })
