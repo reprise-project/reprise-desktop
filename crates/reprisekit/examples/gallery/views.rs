@@ -380,6 +380,8 @@ pub fn render_termgrid(scale: i32) -> Canvas {
     put(3, 0, "selected", fg, Flags::SELECTED);
     put(3, 9, "match", fg, Flags::MATCH);
     put(3, 15, "current", fg, Flags::MATCH | Flags::MATCH_CURRENT);
+    put(3, 23, "link", blue, Flags::LINK);
+    put(3, 28, "hovered", blue, Flags::LINK | Flags::UNDERLINE);
     put(
         4,
         0,

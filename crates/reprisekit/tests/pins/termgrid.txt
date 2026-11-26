@@ -2,6 +2,8 @@ plain 1 909caa75335460f2
 bold 1 da0e97a07e0390b2
 italic 1 e7a3c80ace2baf72
 underline 1 39c56d8e9b4e09b2
+link 1 c93bd430b2b3b732
+link_hover 1 39c56d8e9b4e09b2
 strike 1 e53079ac27f0fbf2
 inverse 1 c787e78983443c12
 dim 1 63067f0318cf6972
@@ -16,6 +18,8 @@ plain 2 168176300f3c0c45
 bold 2 168176300f3c0c45
 italic 2 b40d34c656894445
 underline 2 3292b8e4b1e0d745
+link 2 82c46ac1cdf28dc5
+link_hover 2 3292b8e4b1e0d745
 strike 2 7891e21c8c9e80c5
 inverse 2 1dbab88d1eb9e0dd
 dim 2 d85e850eccc25405

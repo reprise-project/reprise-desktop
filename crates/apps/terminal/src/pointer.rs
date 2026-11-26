@@ -1,20 +1,23 @@
-//! The pointer over the grid: selection, mouse reports, the wheel, primary paste, URL clicks;
-//! and over the scrollback bar.
+//! The pointer over the grid: selection, mouse reports, the wheel, primary paste, URL clicks,
+//! the hovered link and its tip; and over the scrollback bar.
 //! Report encoding ported from alacritty (Apache-2.0, Copyright The Alacritty Project).
 
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Line, Point, Side as TermSide};
 use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::cell::Hyperlink;
 use alacritty_terminal::term::{Term, TermMode};
+use repriseapp::tip::Rest;
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Mods, PointerInput, Reply};
 use reprisekit::controls::termgrid::{self, Hit, Scrollback, Side};
+use reprisekit::controls::tooltip;
 use reprisekit::pointer::{Click, DOUBLE_CLICK_SLOP};
 use reprisekit::raster::Rect;
 
 use crate::Terminal;
 use crate::chrome::{self, BTN_MIDDLE};
 use crate::tab::Tab;
-use crate::urls;
+use crate::{cwd, links, urls};
 
 /// A cell, (col, row) in the viewport.
 type CellAt = (usize, usize);
@@ -32,6 +35,18 @@ pub struct Mouse {
     clicks: Clicks,
     /// The cell last reported to the program: motion within one cell reports nothing.
     reported: Option<CellAt>,
+    /// The link under the pointer, its cells underlined.
+    pub link: Option<Hyperlink>,
+    /// The rest on [`Mouse::link`] that brings up its URI.
+    pub tip: Option<LinkTip>,
+    /// Counts the links hovered, so a rest tells one link from the next.
+    hovers: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct LinkTip {
+    pub rest: Rest<u32>,
+    pub shown: bool,
 }
 
 impl Mouse {
@@ -188,6 +203,9 @@ pub fn wheel(rows: i32, cell: CellAt, mode: TermMode) -> Wheel {
 impl Terminal {
     /// Route a pointer event: a gesture begun on the grid keeps it until the release.
     pub(crate) fn pointer(&mut self, p: PointerInput, ctx: &mut Ctx) -> Reply {
+        if matches!(p, PointerInput::Press { .. }) {
+            self.drop_link_tip();
+        }
         if self.w.chrome.menu.is_some() {
             return self.chrome_pointer(p, ctx);
         }
@@ -217,7 +235,7 @@ impl Terminal {
                 let reply = self.chrome_pointer(p, ctx).and(self.bar_hover(x, y, ctx));
                 match grid.contains(x, y) {
                     true => reply.and(self.grid_hover(x, y, ctx)),
-                    false => reply,
+                    false => reply.and(self.hover_link(None, (x, y))),
                 }
             }
             PointerInput::Release { button, .. } if self.w.bar.holding() => {
@@ -240,7 +258,9 @@ impl Terminal {
             }
             PointerInput::Leave if !self.w.bar.holding() => {
                 let lit = self.w.bar.leave() && ctx.styled();
-                let reply = self.chrome_pointer(p, ctx);
+                let reply = self
+                    .chrome_pointer(p, ctx)
+                    .and(self.hover_link(None, (0, 0)));
                 match lit {
                     true => reply.and(Reply::redraw()),
                     false => reply,
@@ -393,6 +413,10 @@ impl Terminal {
                 paste_primary: true,
                 ..Default::default()
             },
+            BTN_RIGHT => match tab.link_at(cell) {
+                Some(link) => self.open_link_menu(link.uri().to_owned(), (x, y), ctx),
+                None => Reply::none(),
+            },
             _ => Reply::none(),
         }
     }
@@ -442,7 +466,72 @@ impl Terminal {
                 tab.write(bytes.into());
             }
         }
-        Reply::none()
+        let link = tab.link_at(cell);
+        self.hover_link(link, (x, y))
+    }
+
+    /// The pointer at `at` over `link`: another link underlines, and a rest on one brings up its
+    /// tip, which goes once the pointer moves off the link.
+    fn hover_link(&mut self, link: Option<Hyperlink>, at: (i32, i32)) -> Reply {
+        let m = &mut self.w.mouse;
+        let changed = m.link != link;
+        if changed {
+            m.link = link;
+            m.hovers = m.hovers.wrapping_add(1);
+        }
+        let was = m.tip;
+        let shown = was.is_some_and(|t| t.shown);
+        let on = m.link.as_ref().map(|_| m.hovers);
+        let rest = Rest::moved(
+            was.map(|t| t.rest),
+            on,
+            at,
+            shown,
+            std::time::Instant::now(),
+        );
+        let kept = shown && rest == was.map(|t| t.rest);
+        m.tip = rest.map(|rest| LinkTip { rest, shown: kept });
+        let gone = shown && !kept;
+        if gone {
+            self.w.full = true;
+        }
+        Reply {
+            redraw: changed || gone,
+            tick: self.w.mouse.tip.is_some_and(|t| !t.shown),
+            ..Reply::none()
+        }
+    }
+
+    /// A host tick: the link tip comes up once the pointer rested [`tooltip::SHOW_MS`].
+    pub(crate) fn link_tick(&mut self) -> Reply {
+        let Some(t) = &mut self.w.mouse.tip else {
+            return Reply::none();
+        };
+        if t.shown {
+            return Reply::none();
+        }
+        let delay = std::time::Duration::from_millis(tooltip::SHOW_MS.into());
+        if t.rest.due(std::time::Instant::now(), delay) {
+            t.shown = true;
+            return Reply::redraw();
+        }
+        Reply {
+            tick: true,
+            ..Reply::none()
+        }
+    }
+
+    /// Take down the link tip, up or waiting; the next motion over the link waits afresh.
+    pub(crate) fn drop_link_tip(&mut self) {
+        if self.w.mouse.tip.take().is_some_and(|t| t.shown) {
+            self.w.full = true;
+        }
+    }
+
+    /// The URI of the hovered link, when its tip is up, and where the pointer rested.
+    pub(crate) fn link_tip(&self) -> Option<(&str, (i32, i32))> {
+        let tip = self.w.mouse.tip.filter(|t| t.shown)?;
+        Some((self.w.mouse.link.as_ref()?.uri(), tip.rest.at))
     }
 
     fn grid_release(&mut self, x: i32, y: i32, button: u32, ctx: &Ctx) -> Reply {
@@ -517,17 +606,27 @@ impl Terminal {
         }
     }
 
-    /// Open the URL drawn at `cell` with xdg-open; None when there is none.
+    /// Open the link or the URL drawn at `cell` with xdg-open; None when there is neither. A
+    /// link [`links::target`] refuses takes the click and opens nothing.
     fn open_url(&self, (col, row): CellAt) -> Option<Reply> {
         if row >= self.w.snap.rows {
             return None;
         }
+        if let Some(link) = self.w.tabs.current()?.link_at((col, row)) {
+            let target = links::target(link.uri(), &cwd::hostname());
+            return Some(target.map_or_else(Reply::none, open_with));
+        }
         let line: String = self.w.snap.row(row).iter().map(|c| c.ch).collect();
         let url = urls::at(&line, col)?;
-        Some(Reply {
-            spawn: vec![vec!["xdg-open".into(), url.into()]],
-            ..Reply::none()
-        })
+        Some(open_with(url.into()))
+    }
+}
+
+/// Hand `target` to xdg-open.
+pub fn open_with(target: std::ffi::OsString) -> Reply {
+    Reply {
+        spawn: vec![vec!["xdg-open".into(), target]],
+        ..Reply::none()
     }
 }
 

@@ -38,6 +38,8 @@ impl Flags {
     pub const SELECTED: Flags = Flags(1 << 8);
     pub const MATCH: Flags = Flags(1 << 9);
     pub const MATCH_CURRENT: Flags = Flags(1 << 10);
+    /// A hyperlink, dotted underneath; [`Flags::UNDERLINE`] on it draws the solid line instead.
+    pub const LINK: Flags = Flags(1 << 11);
 
     pub const fn contains(self, other: Flags) -> bool {
         self.0 & other.0 == other.0
@@ -425,7 +427,7 @@ impl Grid<'_> {
             default,
         );
 
-        let lines = |c: &Cell| c.flags.0 & (Flags::UNDERLINE.0 | Flags::STRIKE.0);
+        let lines = |c: &Cell| c.flags.0 & (Flags::UNDERLINE.0 | Flags::STRIKE.0 | Flags::LINK.0);
         let mut runs: Vec<(usize, usize, Rgb)> = Vec::new();
         let mut start = 0;
         while start < cells.len() {
@@ -464,9 +466,26 @@ impl Grid<'_> {
             let x0 = ox + start as i32 * m.cell_w;
             let run_w = (end - start) as i32 * m.cell_w;
             let lt = self.light();
+            let uy = (y + m.baseline + lt).min(y + m.cell_h - lt);
             if flags.contains(Flags::UNDERLINE) {
-                let uy = (y + m.baseline + lt).min(y + m.cell_h - lt);
                 fill(c, Rect::new(x0, uy, run_w, lt), self.bound, premul(fg, 255));
+            } else if flags.contains(Flags::LINK) {
+                // Dots one line wide with a line's gap, phased from the row's start so
+                // neighbouring runs continue the pattern.
+                let run_end = x0 + run_w;
+                let mut x = x0 - (x0 - ox) % (2 * lt);
+                while x < run_end {
+                    let (from, to) = (x.max(x0), (x + lt).min(run_end));
+                    if to > from {
+                        fill(
+                            c,
+                            Rect::new(from, uy, to - from, lt),
+                            self.bound,
+                            premul(fg, 255),
+                        );
+                    }
+                    x += 2 * lt;
+                }
             }
             if flags.contains(Flags::STRIKE) {
                 let sy = y + m.baseline - m.baseline / 4;
@@ -938,6 +957,39 @@ mod tests {
         );
         assert_eq!(px(&c, 2, 2), BG.argb(), "plain cell on its bg");
         assert_eq!(px(&c, 10, 2), FG.argb(), "inverse cell on its fg");
+    }
+
+    #[test]
+    fn a_link_is_dotted_and_solid_once_underlined() {
+        for s in [1, 2] {
+            let mut snap = Snapshot::new(3, 1, FG, BG);
+            snap.cells[0].flags = Flags::LINK;
+            snap.cells[1].flags = Flags::LINK;
+            snap.cells[2].flags = Flags::LINK | Flags::UNDERLINE;
+            snap.cursor.2 = CursorShape::Hidden;
+            let m = Metrics {
+                cell_w: M.cell_w * s,
+                cell_h: M.cell_h * s,
+                baseline: M.baseline * s,
+            };
+            let mut c = Canvas::with_scale(24, 16, s);
+            let area = Rect::new(0, 0, 24, 16);
+            draw(&mut c, &TextRenderer::fontless(), &m, area, &snap, 13);
+            let lt = crate::boxdraw::light(m.cell_h, s);
+            let uy = m.baseline + lt;
+            let on: Vec<bool> = (0..24 * s).map(|x| px(&c, x, uy) == FG.argb()).collect();
+            let dots: Vec<bool> = (0..16 * s).map(|x| (x / lt) % 2 == 0).collect();
+            let split = 16 * s as usize;
+            assert_eq!(on[..split], dots, "the two link cells dot at scale {s}");
+            assert!(
+                on[split..].iter().all(|&o| o),
+                "underlined: solid at scale {s}"
+            );
+            assert!(
+                (0..24 * s).all(|x| px(&c, x, uy - 1) == BG.argb()),
+                "a line deep at scale {s}"
+            );
+        }
     }
 
     #[test]
@@ -1429,6 +1481,8 @@ mod tests {
             ("bold", Flags::BOLD),
             ("italic", Flags::ITALIC),
             ("underline", Flags::UNDERLINE),
+            ("link", Flags::LINK),
+            ("link_hover", Flags::LINK | Flags::UNDERLINE),
             ("strike", Flags::STRIKE),
             ("inverse", Flags::INVERSE),
             ("dim", Flags::DIM),

@@ -5,13 +5,16 @@ use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event as TermEvent, EventListener, Notify, OnResize, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
 use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::sync::FairMutex;
+use alacritty_terminal::term::cell::Hyperlink;
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{ClipboardType, Config, Term, TermMode};
 use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite, Pty, Shell};
@@ -22,6 +25,7 @@ use reprisekit::controls::termgrid::{Scrollback, Snapshot};
 
 use crate::cwd;
 use crate::find::{Marks, Search};
+use crate::links;
 use crate::newtab::Launch;
 use crate::schemes::Scheme;
 use crate::settings::{Cursor, Settings};
@@ -138,6 +142,8 @@ pub struct Tab {
     pid: u32,
     /// The directory the shell last reported with OSC 7, unchecked.
     osc7: Arc<Mutex<Option<PathBuf>>>,
+    /// The OSC 8 links the PTY thread passed on since the last [`links::sweep`].
+    links: Arc<AtomicUsize>,
     search: RefCell<Option<Search>>,
     /// Every write handed to the PTY, for the tests to read back.
     #[cfg(test)]
@@ -180,6 +186,7 @@ impl Tab {
         let pid = pty.child().id();
         let osc7 = Arc::new(Mutex::new(None));
         let reader = cwd::Reader::new(pty.file().try_clone()?, pid, cwd::hostname(), osc7.clone());
+        let links = reader.opened();
         let pty = Watched { pty, reader };
         let inbox = Arc::new(Mutex::new(Inbox::default()));
         let proxy = Proxy {
@@ -205,6 +212,7 @@ impl Tab {
             exit: None,
             pid,
             osc7,
+            links,
             #[cfg(test)]
             written: RefCell::default(),
             search: RefCell::new(None),
@@ -276,13 +284,25 @@ impl Tab {
         });
     }
 
-    pub fn snapshot(&self, scheme: &Scheme, out: &mut Snapshot) {
+    /// The view into `out`, the cells of link `hover` underlined.
+    pub fn snapshot(&self, scheme: &Scheme, hover: Option<&Hyperlink>, out: &mut Snapshot) {
         let term = self.term.lock();
         let marks = match self.search.borrow_mut().as_mut() {
             Some(s) => s.marks(&term),
             None => Marks::default(),
         };
-        crate::snapshot::fill_marked(&term, scheme, &marks, out);
+        crate::snapshot::fill_marked(&term, scheme, &marks, hover, out);
+    }
+
+    /// The link of the viewport's cell (`col`, `row`).
+    pub fn link_at(&self, (col, row): (usize, usize)) -> Option<Hyperlink> {
+        use alacritty_terminal::grid::Dimensions;
+        let term = self.term.lock();
+        if col >= term.columns() || row >= term.screen_lines() {
+            return None;
+        }
+        let line = Line(row as i32 - term.grid().display_offset() as i32);
+        term.grid()[Point::new(line, Column(col))].hyperlink()
     }
 
     /// Step to the next match of `text` and scroll to it; a new query starts from the view's edge.
@@ -360,6 +380,9 @@ impl Tab {
         }
         if exited {
             self.exit = Some(status.unwrap_or(0));
+        }
+        if self.links.load(Ordering::Relaxed) >= links::SWEEP_AT {
+            links::sweep(&mut self.term.lock(), &self.links);
         }
         Some(pumped)
     }

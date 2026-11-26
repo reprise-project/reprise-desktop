@@ -404,7 +404,7 @@ mod tests {
         let scheme = crate::schemes::scheme("reprise", reprisekit::interface::Interface::Classic);
         let black = Color::rgb(0, 0, 0);
         let mut snap = Snapshot::new(0, 0, black, black);
-        crate::snapshot::fill_marked(&t, &scheme, &marks, &mut snap);
+        crate::snapshot::fill_marked(&t, &scheme, &marks, None, &mut snap);
         let row = snap.row(0);
         let flags = |c: usize| {
             (
@@ -438,7 +438,7 @@ mod tests {
         let scheme = crate::schemes::scheme("reprise", reprisekit::interface::Interface::Classic);
         let black = Color::rgb(0, 0, 0);
         let mut snap = Snapshot::new(0, 0, black, black);
-        crate::snapshot::fill_marked(&t, &scheme, &marks, &mut snap);
+        crate::snapshot::fill_marked(&t, &scheme, &marks, None, &mut snap);
         assert!(
             snap.cells
                 .iter()

@@ -121,6 +121,11 @@ impl Reader {
         }
     }
 
+    /// The count of OSC 8 links this reader passed on ([`escapes::Filter::opened`]).
+    pub fn opened(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        self.filter.opened()
+    }
+
     fn shell_in_front(&self) -> bool {
         // SAFETY: tcgetpgrp only reads the foreground group of the open PTY master `file` holds.
         let pgrp = unsafe { libc::tcgetpgrp(self.file.as_raw_fd()) };
