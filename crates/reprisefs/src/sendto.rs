@@ -23,34 +23,52 @@ pub enum SendTo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SendToRow {
     pub label: String,
-    pub icon: &'static str,
+    /// Icon names, the first the theme carries worn.
+    pub icons: &'static [&'static str],
     pub dest: SendTo,
     pub enabled: bool,
 }
 
+/// The icon of mailing files, on Mail Recipient and Explorer's task pane. A theme without the
+/// action names often carries `mail-forward` or the mail program's `internet-mail`.
+pub const MAIL_ICONS: &[&str] = &[
+    "mail-send",
+    "mail-message-new",
+    "mail-forward",
+    "internet-mail",
+];
+
 /// The rows for a desktop folder that is there or not, the Documents folder and `drives`; this
 /// touches no file, so a folder on a mount that stopped answering cannot hold it.
 pub fn rows(desktop: bool, documents: Option<PathBuf>, drives: &[PathBuf]) -> Vec<SendToRow> {
-    let row = |label: &str, icon: &'static str, dest: SendTo| SendToRow {
+    let row = |label: &str, icons: &'static [&'static str], dest: SendTo| SendToRow {
         label: label.to_string(),
-        icon,
+        icons,
         dest,
         enabled: true,
     };
     let mut rows = vec![
-        row("Compressed (zipped) Folder", "application-zip", SendTo::Zip),
+        row(
+            "Compressed (zipped) Folder",
+            &["application-zip"],
+            SendTo::Zip,
+        ),
         SendToRow {
             enabled: desktop,
             ..row(
                 "Desktop (create shortcut)",
-                "user-desktop",
+                &["user-desktop"],
                 SendTo::DesktopShortcut,
             )
         },
-        row("Mail Recipient", "internet-mail", SendTo::Mail),
+        row("Mail Recipient", MAIL_ICONS, SendTo::Mail),
     ];
     if let Some(docs) = documents {
-        rows.push(row("Documents", "folder-documents", SendTo::Folder(docs)));
+        rows.push(row(
+            "Documents",
+            &["folder-documents"],
+            SendTo::Folder(docs),
+        ));
     }
     for d in drives {
         let label = d
@@ -59,7 +77,7 @@ pub fn rows(desktop: bool, documents: Option<PathBuf>, drives: &[PathBuf]) -> Ve
             .unwrap_or_else(|| d.display().to_string());
         rows.push(row(
             &label,
-            "drive-removable-media",
+            &["drive-removable-media"],
             SendTo::Folder(d.clone()),
         ));
     }
@@ -217,7 +235,7 @@ fn rows_for_phones(devices: &[Device]) -> Vec<SendToRow> {
         .filter(|d| d.share)
         .map(|d| SendToRow {
             label: d.name.clone(),
-            icon: "phone",
+            icons: &["phone"],
             dest: SendTo::Phone(d.id.clone()),
             enabled: true,
         })
@@ -296,7 +314,7 @@ mod tests {
         assert!(rows.iter().all(|r| r.enabled), "every row is live");
         assert_eq!(rows[1].dest, SendTo::DesktopShortcut);
         assert_eq!(rows[4].dest, SendTo::Folder("/run/media/u/USB".into()));
-        assert_eq!(rows[4].icon, "drive-removable-media");
+        assert_eq!(rows[4].icons, ["drive-removable-media"]);
 
         let bare = super::rows(false, None, &[]);
         assert_eq!(bare.len(), 3);
@@ -316,7 +334,7 @@ mod tests {
             rows,
             [SendToRow {
                 label: "Pixel".into(),
-                icon: "phone",
+                icons: &["phone"],
                 dest: SendTo::Phone("p1".into()),
                 enabled: true,
             }],

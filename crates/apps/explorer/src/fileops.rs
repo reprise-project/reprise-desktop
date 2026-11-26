@@ -1377,7 +1377,7 @@ impl Explorer {
         let px = menu_icon_px(&ctx.theme);
         (self.send_to.iter())
             .map(|r| {
-                let icon = waits.first(&mut ctx.icons, &[r.icon], px);
+                let icon = waits.first(&mut ctx.icons, r.icons, px);
                 (r.label.clone(), r.enabled, icon)
             })
             .collect()
@@ -1481,8 +1481,9 @@ impl Explorer {
             .collect()
     }
 
-    /// The icon name of the Open With or Send To row that runs `cmd`.
-    pub(crate) fn row_icon(&self, cmd: &crate::commands::Command) -> Option<String> {
+    /// The icon names of the Open With or Send To row that runs `cmd`, the first the theme carries
+    /// worn; none for any other row.
+    pub(crate) fn row_icons(&self, cmd: &crate::commands::Command) -> Vec<String> {
         use crate::commands::Command;
         match cmd {
             Command::OpenWith(i) => {
@@ -1490,10 +1491,12 @@ impl Explorer {
                     .open_with_apps
                     .get(*i)
                     .and_then(|&a| self.app_index.get(a));
-                app.and_then(|a| a.icon.clone())
+                app.and_then(|a| a.icon.clone()).into_iter().collect()
             }
-            Command::SendTo(i) => self.send_to.get(*i).map(|r| r.icon.to_string()),
-            _ => None,
+            Command::SendTo(i) => (self.send_to.get(*i)).map_or(Vec::new(), |r| {
+                r.icons.iter().map(|n| n.to_string()).collect()
+            }),
+            _ => Vec::new(),
         }
     }
 

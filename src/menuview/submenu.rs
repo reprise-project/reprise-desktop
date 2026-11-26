@@ -395,7 +395,10 @@ impl State {
                 let mut rows = view.drives.send_to_rows(&view.send_dirs, folder);
                 rows.extend(reprisefs::sendto::phone_rows());
                 let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
-                let names: Vec<&'static str> = rows.iter().map(|r| r.icon).collect();
+                let has = |n: &&str| self.icons.has_unread(n);
+                let names: Vec<&'static str> = (rows.iter())
+                    .map(|r| r.icons.iter().copied().find(has).unwrap_or(r.icons[0]))
+                    .collect();
                 view.send_to = rows;
                 for (row, (item, name)) in items.iter_mut().zip(names).enumerate() {
                     if let MenuItem::Entry { icon, .. } = item {

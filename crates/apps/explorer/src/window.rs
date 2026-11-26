@@ -517,21 +517,22 @@ impl Popup {
         Popup { waits, ..self }
     }
 
-    /// Theme icons landed: the rows that waited wear theirs at `px`, `name` giving each row's icon
-    /// name by its command. True when they did.
+    /// Theme icons landed: the rows that waited wear theirs at `px`, `names` giving each row's icon
+    /// names by its command (none leaves the row alone). True when they did.
     pub fn land_icons(
         &mut self,
         icons: &mut IconCache,
         px: i32,
-        name: impl Fn(&Command) -> Option<String>,
+        names: impl Fn(&Command) -> Vec<String>,
     ) -> bool {
         if !self.waits.landed(icons) {
             return false;
         }
         let mut waits = IconWaits::default();
         (self.menu).wear_icons(&mut |cmd| {
-            let name = name(cmd)?;
-            Some(waits.first(icons, &[&name], px))
+            let names = names(cmd);
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            (!names.is_empty()).then(|| waits.first(icons, &names, px))
         });
         self.waits = waits;
         self.tree = self.menu.tree();
