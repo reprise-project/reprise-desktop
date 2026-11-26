@@ -174,12 +174,18 @@ fn tile_bar_w(avail: i32, u: TextUnits) -> i32 {
     u.len(TILE_BAR_W).min(avail)
 }
 
+/// Line `k`'s box in a label block whose top-left is `at`, in device px at paint scale `s`.
+fn line_rect(at: (i32, i32), width: i32, k: usize, px: u32, u: TextUnits, s: i32) -> Rect {
+    let top = at.1 + k as i32 * u.len(LINE_PITCH) * s;
+    Rect::new(at.0, top, width, px as i32 + u.len(3) * s)
+}
+
 /// The height of `n` label lines at paint scale `s`, `px` being the font as drawn: down to where
 /// the last line's descent ends.
 pub(crate) fn block_h(text: &TextRenderer, n: usize, px: u32, u: TextUnits, s: i32) -> i32 {
-    let line = Rect::new(0, 0, 0, px as i32 + u.len(3) * s);
-    let last = text.line_bottom(line, false, px).unwrap_or(0);
-    (n.max(1) as i32 - 1) * u.len(LINE_PITCH) * s + last.max(px as i32)
+    let last = line_rect((0, 0), 1, n.max(1) - 1, px, u, s);
+    let foot = text.line_bottom(last, false, px).unwrap_or(0);
+    foot.max(last.y + px as i32)
 }
 
 pub(crate) fn widths(text: &TextRenderer, lines: &[&str], px: u32) -> (i32, Vec<i32>) {
@@ -270,11 +276,11 @@ pub(crate) fn draw_tile(
     }
     let avail = (cell.width - TILE_TEXT_X * s).max(0);
     for (k, line) in tile_lines(e).iter().enumerate() {
-        let top = label.y + k as i32 * u.len(LINE_PITCH) * s;
+        let r = line_rect((label.x, label.y), avail, k, px, u, s);
         if let (Some(sp), 1) = (&e.space, k) {
             let bar = Rect::new(
                 label.x / s,
-                top / s + u.len(TILE_BAR_Y),
+                r.y / s + u.len(TILE_BAR_Y),
                 tile_bar_w(avail / s, u),
                 u.len(TILE_BAR_H),
             );
@@ -286,7 +292,6 @@ pub(crate) fn draw_tile(
             (false, 0) => cs.window_text,
             (false, _) => cs.gray_text,
         };
-        let r = Rect::new(label.x, top, avail, px as i32 + u.len(3) * s);
         let shown = text.ellipsize(line, avail, false, px);
         let r = text.ink_box(r, &shown, false, px, c.scale());
         text.draw(c, r, &shown, false, fg, Align::Left, px);
@@ -349,12 +354,7 @@ pub(crate) fn draw_thumb(
         cs.window_text
     };
     for (k, line) in thumb_lines(text, &e.name, px, u, s).iter().enumerate() {
-        let r = Rect::new(
-            label.x,
-            label.y + k as i32 * u.len(LINE_PITCH) * s,
-            label.width,
-            px as i32 + u.len(3) * s,
-        );
+        let r = line_rect((label.x, label.y), label.width, k, px, u, s);
         let r = text.ink_box(r, line, false, px, c.scale());
         text.draw(c, r, line, false, fg, Align::Center, px);
     }
@@ -608,6 +608,72 @@ mod tests {
         assert_eq!(
             l.height, 28,
             "one line, down to where the font's descent ends at 22 px"
+        );
+    }
+
+    #[test]
+    fn a_selected_drive_tiles_highlight_covers_all_three_lines() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let ink = Color::rgb(255, 0, 255);
+        let mut out = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let mut theme = crate::interfaces::theme_for(look);
+            theme.colors.hilight_text = ink;
+            let text = TextRenderer::load(&theme.fonts);
+            let px = theme.fonts.size_px;
+            let mut sv = crate::controls::shellview::drives_sample(Mode::Tiles);
+            sv.focus_ring = false;
+            sv.selection.set_only(Some(0));
+            let r = Rect::new(0, 0, 520, 200);
+            let lay = layout(&sv, r, &theme.controls());
+            for s in [1, 2] {
+                theme.scale = s;
+                let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+                let px = px * s as u32;
+                crate::controls::shellview::draw(
+                    &mut c,
+                    &text,
+                    &theme.paint(),
+                    &sv,
+                    &lay,
+                    None,
+                    px,
+                );
+                let label = label_of(
+                    Mode::Tiles,
+                    lay.cells[0],
+                    &sv.entries[0],
+                    &text,
+                    px,
+                    lay.controls.text,
+                    s,
+                );
+                let ink = ink.argb();
+                let mut inked = false;
+                for y in 0..c.height as i32 {
+                    for x in 0..c.width as i32 {
+                        if c.get(x, y) == ink {
+                            inked = true;
+                            if !label.contains(x, y) {
+                                out.push((look, s, x, y, label));
+                            }
+                        }
+                    }
+                }
+                // Glass boxes a selected cell and keeps the window's text colours.
+                assert_eq!(
+                    inked,
+                    look != Interface::Glass,
+                    "{look:?} at {s}: highlight text drawn"
+                );
+            }
+        }
+        assert_eq!(
+            out.first(),
+            None,
+            "(look, scale, x, y, label): {} px of text outside",
+            out.len()
         );
     }
 
@@ -1102,11 +1168,13 @@ mod tests {
     /// A grown thumbnail keeps its 96 px frame, centred in the wider cell, and wraps its label to the grown width.
     #[test]
     fn a_grown_thumbnail_centres_its_frame_over_a_wider_label() {
-        const EXPECTED_FRAME_X: [(u32, i32); 3] = [(100, 17), (150, 43), (200, 65)];
+        // (pct, frame x, label height): two lines, the second down to where its descent ends.
+        const EXPECTED: [(u32, i32, i32); 3] =
+            [(100, 17, 13 + 14), (150, 43, 20 + 22), (200, 65, 26 + 28)];
         let mut sv = iconed(2, Mode::Thumbnails);
         sv.entries[0].name = "Holiday photos from the hills".into();
         sv.selection.set_only(Some(0));
-        for (pct, x) in EXPECTED_FRAME_X {
+        for (pct, x, h) in EXPECTED {
             let (c, lay, theme) = render_at(&sv, Rect::new(0, 0, 600, 400), pct);
             let text = TextRenderer::load(&theme.fonts);
             let px = theme.fonts.size_px;
@@ -1138,11 +1206,7 @@ mod tests {
             assert!(widest <= u.len(EXPECTED_THUMB_FRAME), "{pct}%: {widest}");
             let label = crate::controls::shellview::label_rect(&sv, &lay, 0, &text, px);
             assert_eq!(label.y, frame.bottom() + THUMB_LABEL_GAP, "{pct}%");
-            assert_eq!(
-                label.height,
-                block_h(&text, 2, px, u, 1),
-                "{pct}%: two lines"
-            );
+            assert_eq!(label.height, h, "{pct}%: two lines");
             assert!((label.x + label.width / 2 - (frame.x + frame.width / 2)).abs() <= 1);
             assert!(
                 label.bottom() <= cell.bottom(),
