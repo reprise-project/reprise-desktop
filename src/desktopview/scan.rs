@@ -251,7 +251,8 @@ impl State {
     }
 
     /// Reads the desktop's icons off the loop, since a file on the desktop may sit on a mount that
-    /// never answers; the icons on screen stay until the read lands. One read runs at a time.
+    /// never answers; the icons on screen stay until the read lands. One read runs at a time, and
+    /// none while one of the desktop's own renames runs.
     pub fn rescan_desktop(&mut self) {
         let first = self.first_output();
         let px = ICON_PX * self.draw_scale_at(first.as_ref());
@@ -266,7 +267,7 @@ impl State {
         else {
             return;
         };
-        if view.scanning {
+        if view.scanning || view.renaming > 0 {
             view.rescan_again = true;
             return;
         }
@@ -391,9 +392,30 @@ impl State {
         self.relayout_desktop();
     }
 
+    /// One of the desktop's own renames begins: a read overlapping it may list either name and lose
+    /// the selection, so the one running is dropped and none starts until it ends.
+    pub(crate) fn desktop_rename_started(&mut self) {
+        if let Some(view) = self.desktop.as_mut() {
+            view.renaming += 1;
+            view.stale |= view.scanning;
+        }
+    }
+
+    /// A rename [`State::desktop_rename_started`] began landed or gave up: a read it held back
+    /// starts once no rename runs.
+    pub(crate) fn desktop_rename_ended(&mut self) {
+        let Some(view) = self.desktop.as_mut() else {
+            return;
+        };
+        view.renaming = view.renaming.saturating_sub(1);
+        if view.renaming == 0 && !view.scanning && std::mem::take(&mut view.rescan_again) {
+            self.rescan_desktop();
+        }
+    }
+
     /// A desktop read is done: its icon files go into the icon cache, its plain files wear the
     /// theme's icons, and the icons on screen are replaced.
-    fn desktop_scanned(
+    pub(super) fn desktop_scanned(
         &mut self,
         mut entries: Vec<DesktopEntry>,
         art: Vec<(String, Option<reprisekit::raster::Canvas>)>,
@@ -408,6 +430,11 @@ impl State {
             return;
         };
         view.scanning = false;
+        if std::mem::take(&mut view.stale) {
+            view.rescan_again = false;
+            self.rescan_desktop();
+            return;
+        }
         view.landed.clear();
         icons.put_files(art.into_iter().map(|(f, c)| (f, px, c)).collect());
         view.icons_read = (px, icons.file_drops());

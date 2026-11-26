@@ -478,8 +478,10 @@ impl State {
         // rename lands.
         self.relayout_desktop();
         let history = self.desktop_history();
-        let action = Action::changes("Rename", State::rescan_desktop);
-        self.spawn_fs_action(action, move |gate| {
+        let action = Action::changes("Rename", State::rescan_desktop)
+            .on_give_up(|state, _| state.desktop_rename_ended());
+        self.desktop_rename_started();
+        let spawned = self.spawn_fs_action(action, move |gate| {
             if !gate.change(&entry.path) {
                 return Box::new(|_| {});
             }
@@ -499,15 +501,21 @@ impl State {
                     id: file_id(to),
                 });
             }
-            Box::new(move |state: &mut State| match done {
-                Ok(Some(to)) => state.renamed(&entry.path, &to),
-                Ok(None) => state.rescan_desktop(),
-                Err(text) => {
-                    log::warn!("desktop: rename {}: {text}", entry.path.display());
-                    state.open_dialog(crate::dialog::Dialog::error("Rename", text));
+            Box::new(move |state: &mut State| {
+                match done {
+                    Ok(Some(to)) => state.renamed(&entry.path, &to),
+                    Ok(None) => state.rescan_desktop(),
+                    Err(text) => {
+                        log::warn!("desktop: rename {}: {text}", entry.path.display());
+                        state.open_dialog(crate::dialog::Dialog::error("Rename", text));
+                    }
                 }
+                state.desktop_rename_ended();
             })
         });
+        if !spawned {
+            self.desktop_rename_ended();
+        }
     }
 
     pub fn cancel_rename(&mut self) {

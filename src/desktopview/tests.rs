@@ -2327,3 +2327,44 @@ fn single_click_selects_the_icon_the_pointer_rests_on() {
     h.run_for(rest + 200);
     assert_eq!(picked(&h), Some(0), "passing over an icon selects nothing");
 }
+
+#[test]
+fn a_read_running_when_a_rename_begins_is_dropped_so_the_renamed_icon_stays_selected() {
+    let (mut h, _desk) = desktop_in("desktop-rename-stale-read", &["a.txt"]);
+    let before = h.state.desktop.as_ref().unwrap().entries.clone();
+    h.state.begin_rename(icon(&h, "a.txt"));
+    h.state.rename_paste("b");
+    h.state.desktop.as_mut().unwrap().scanning = true;
+    h.state.commit_rename();
+    h.state
+        .desktop_scanned(before, Vec::new(), crate::desktop::ICON_PX);
+    let i = icon(&h, "b.txt");
+    let view = h.state.desktop.as_ref().unwrap();
+    assert!(
+        !view.entries.iter().any(|e| e.name == "a.txt"),
+        "a.txt is gone"
+    );
+    assert_eq!(view.selection.set, [i].into(), "b.txt is the selection");
+    assert_eq!(view.selection.focus, Some(i), "b.txt has the focus");
+}
+
+#[test]
+fn a_read_asked_for_during_a_rename_runs_once_the_rename_gives_up() {
+    let (mut h, desk) = desktop_in("desktop-rename-holds-reads", &["a.txt"]);
+    crate::fsjobs::setup(&mut h.state);
+    h.state.fsjobs.deadline = Some(std::time::Duration::from_millis(50));
+    h.state.fsjobs.hold_action_threads();
+    h.state.begin_rename(icon(&h, "a.txt"));
+    h.state.rename_paste("b");
+    h.state.commit_rename();
+    std::fs::write(desk.join("c.txt"), "").unwrap();
+    h.state.rescan_desktop();
+    assert!(
+        !h.state.desktop.as_ref().unwrap().scanning,
+        "no read starts while the rename runs"
+    );
+    h.until("the give-up", |s| !s.dialogs.views.is_empty());
+    h.until("c.txt listed", |s| {
+        (s.desktop.as_ref().unwrap().entries.iter()).any(|e| e.name == "c.txt")
+    });
+}
