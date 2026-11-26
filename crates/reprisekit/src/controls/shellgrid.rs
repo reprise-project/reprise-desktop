@@ -174,8 +174,11 @@ fn tile_bar_w(avail: i32, u: TextUnits) -> i32 {
     u.len(TILE_BAR_W).min(avail)
 }
 
-pub(crate) fn block_h(n: usize, px: u32, u: TextUnits) -> i32 {
-    (n.max(1) as i32 - 1) * u.len(LINE_PITCH) + px as i32
+/// A label block of `n` lines at the pitch, down to where the last line's descent ends.
+pub(crate) fn block_h(text: &TextRenderer, n: usize, px: u32, u: TextUnits) -> i32 {
+    let line = Rect::new(0, 0, 0, px as i32 + u.len(3));
+    let last = text.line_bottom(line, false, px).unwrap_or(0);
+    (n.max(1) as i32 - 1) * u.len(LINE_PITCH) + last.max(px as i32)
 }
 
 pub(crate) fn widths(text: &TextRenderer, lines: &[&str], px: u32) -> (i32, Vec<i32>) {
@@ -517,7 +520,7 @@ pub(crate) fn label_of(
                 Some(_) => widest.max(tile_bar_w(avail, u)),
                 None => widest,
             };
-            let h = block_h(shown.len(), px, u);
+            let h = block_h(text, shown.len(), px, u);
             Rect::new(
                 cell.x + TILE_TEXT_X,
                 cell.y + u.len(tile_text_top(shown.len())),
@@ -533,7 +536,7 @@ pub(crate) fn label_of(
                 &lines.iter().map(String::as_str).collect::<Vec<_>>(),
                 px,
             );
-            let h = block_h(lines.len(), px, u);
+            let h = block_h(text, lines.len(), px, u);
             Rect::new(
                 frame.x + (frame.width - widest) / 2,
                 frame.bottom() + THUMB_LABEL_GAP,
@@ -908,6 +911,87 @@ mod tests {
         );
     }
 
+    /// A label's highlight reaches down past its descenders in every icon mode, text size, scale
+    /// and font, so a selected "gypsy.txt" keeps its tails.
+    #[test]
+    fn a_label_box_holds_its_descenders() {
+        crate::pins::fonts();
+        let mut short = Vec::new();
+        for family in ["Tahoma", "DejaVu Sans"] {
+            for mode in [Mode::Icons, Mode::Tiles, Mode::Thumbnails] {
+                let mut sv = iconed(1, mode);
+                sv.entries[0].name = "gypsy.txt".into();
+                sv.entries[0].detail = vec!["Text Document".into(), "jpg, 4 KB".into()];
+                for pct in [100, 125, 150, 200] {
+                    let mut theme = Theme::default().with_text_size(pct);
+                    theme.fonts.family = vec![family.into()];
+                    let text = TextRenderer::load(&theme.fonts);
+                    if !text.has_face(family) {
+                        crate::pins::skipped(&format!("no {family} installed"));
+                        continue;
+                    }
+                    let r = Rect::new(0, 0, 300, 200);
+                    let lay = layout(&sv, r, &theme.controls());
+                    let px = theme.fonts.size_px;
+                    let label = crate::controls::shellview::label_rect(&sv, &lay, 0, &text, px);
+                    for s in [1, 2] {
+                        let mut c = Canvas::with_scale(300, 200, s);
+                        crate::controls::shellview::draw(
+                            &mut c,
+                            &text,
+                            &theme.paint(),
+                            &sv,
+                            &lay,
+                            None,
+                            px,
+                        );
+                        let (l, dw) = (label.scaled(s), c.device_size().0 as i32);
+                        let bg = theme.colors.window.argb();
+                        let at = |x: i32, y: i32| c.pixels[(y * dw + x) as usize];
+                        let inked = (l.y..lay.cells[0].scaled(s).bottom())
+                            .filter(|&y| (l.x..l.right()).any(|x| at(x, y) != bg))
+                            .max();
+                        if let Some(y) = inked.filter(|&y| y >= l.bottom()) {
+                            short.push((family, mode, pct, s, y + 1 - l.bottom()));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            short,
+            Vec::new(),
+            "(font, mode, text size, scale, ink rows under the label box)"
+        );
+    }
+
+    /// A selected thumbnail's and tile's label with descenders, in Classic and Blue at scale 1 and 2.
+    #[test]
+    fn selected_labels_with_descenders_pin() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue] {
+            let theme = crate::interfaces::theme_for(i);
+            let text = TextRenderer::load(&theme.fonts);
+            for mode in [Mode::Thumbnails, Mode::Tiles] {
+                let mut sv = iconed(1, mode);
+                sv.entries[0].name = "gypsy.txt".into();
+                sv.entries[0].detail = vec!["Text Document".into(), "jpg, 4 KB".into()];
+                sv.selection.set_only(Some(0));
+                let lay = layout(&sv, Rect::new(0, 0, 240, 150), &theme.controls());
+                for s in [1, 2] {
+                    let mut c = Canvas::with_scale(240, 150, s);
+                    let px = theme.fonts.size_px;
+                    let p = theme.paint();
+                    crate::controls::shellview::draw(&mut c, &text, &p, &sv, &lay, None, px);
+                    got.push((format!("{i:?} {mode:?} {s}"), crate::pins::fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("shellview/selected_labels", &got);
+    }
+
     /// `sv` laid out and drawn in Classic at `pct` text size, with the size's controls and font.
     fn render_at(sv: &ShellView, r: Rect, pct: u32) -> (Canvas, Layout, Theme) {
         let theme = Theme::default().with_text_size(pct);
@@ -946,9 +1030,10 @@ mod tests {
     /// The icons keep their size in a grown cell: a tile's 48 px icon stays 5 px in and centres down the cell.
     #[test]
     fn a_grown_tile_keeps_its_icon_and_spaces_its_lines_at_the_grown_pitch() {
-        // (pct, icon top, text top, block height): three lines at a 20 px pitch at 150%, 26 px at 200%.
+        // (pct, icon top, text top, block height): three lines at a 20 px pitch at 150%, 26 px at 200%,
+        // the last down to its descent.
         const EXPECTED: [(u32, i32, i32, i32); 2] =
-            [(150, 19, 9, 2 * 20 + 17), (200, 32, 12, 2 * 26 + 22)];
+            [(150, 19, 9, 2 * 20 + 22), (200, 32, 12, 2 * 26 + 28)];
         let mut sv = iconed(2, Mode::Tiles);
         sv.entries[0].detail = vec!["Text Document".into(), "1 KB".into()];
         sv.selection.set_only(Some(0));
@@ -1012,11 +1097,7 @@ mod tests {
             assert!(widest <= u.len(EXPECTED_THUMB_FRAME), "{pct}%: {widest}");
             let label = crate::controls::shellview::label_rect(&sv, &lay, 0, &text, px);
             assert_eq!(label.y, frame.bottom() + THUMB_LABEL_GAP, "{pct}%");
-            assert_eq!(
-                label.height,
-                u.len(LINE_PITCH) + px as i32,
-                "{pct}%: two lines"
-            );
+            assert_eq!(label.height, block_h(&text, 2, px, u), "{pct}%: two lines");
             assert!((label.x + label.width / 2 - (frame.x + frame.width / 2)).abs() <= 1);
             assert!(
                 label.bottom() <= cell.bottom(),
