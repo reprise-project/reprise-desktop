@@ -180,10 +180,11 @@ fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet
             x,
             y,
             button: BTN_LEFT,
+            time,
             ..
         }) => {
             let hit = sheet.hit(*x, *y, &ctx.text, px);
-            sheet.click(hit)
+            sheet.press(hit, ctx.theme.metrics.click(*x, *y, *time))
         }
         Event::Pointer(PointerInput::Press {
             x,

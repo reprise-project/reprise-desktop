@@ -838,9 +838,9 @@ impl Form {
     }
 
     /// The second press of a double click. On a list box row the row is
-    /// taken and the dialog's default button acts; in an edit field the
-    /// word under the pointer is selected. Anywhere else it is a plain
-    /// press.
+    /// taken and the dialog's default button acts; in an edit field or a
+    /// number field's digits the word under the pointer is selected.
+    /// Anywhere else it is a plain press.
     pub fn double_click(&mut self, hit: Option<Hit>) -> Event {
         if let Some(Hit {
             item,
@@ -855,6 +855,20 @@ impl Form {
         {
             edit.select_word_at(at);
             self.set_focus(Some(item));
+            self.drag = None;
+            return Event::Redraw;
+        }
+        if let Some(Hit {
+            item,
+            part: Part::UpDown(updown::Hit::Edit(at)),
+            ..
+        }) = hit
+            && matches!(&self.items[item].control, Control::UpDown(u) if u.enabled)
+        {
+            self.set_focus(Some(item));
+            if let Control::UpDown(u) = &mut self.items[item].control {
+                u.select_word_at(at);
+            }
             self.drag = None;
             return Event::Redraw;
         }

@@ -299,6 +299,47 @@ fn ctrl_f_closes_a_dropped_combo_list() {
 }
 
 #[test]
+fn a_press_that_closes_a_dropped_list_starts_no_double_click() {
+    let pages = vec![
+        Form::new(vec![
+            Item::combo("pick", 20, 50, 100, &["One", "Two"], 4),
+            Item::edit("name", Rect::new(20, 120, 150, 21), "one two", true),
+        ]),
+        check_page("Effects"),
+        check_page("Mouse"),
+    ];
+    let mut s = PropSheet::with_list(LIST_GROUPS, pages, (398, 424));
+    let edit = Some(Hit::Control(form::Hit {
+        item: 1,
+        part: form::Part::Edit(1),
+        x: 0,
+    }));
+    let at = |time| crate::pointer::Click {
+        x: 30,
+        y: 125,
+        time,
+        double_ms: 500,
+    };
+    let selection = |s: &PropSheet| match &s.open().items[1].control {
+        Control::Edit { edit, .. } => edit.selection(),
+        _ => unreachable!(),
+    };
+    s.focus_control("pick");
+    s.key(form::Key::Drop, None);
+    assert!(s.open().popup_open());
+    s.press(edit, at(1000));
+    assert!(!s.open().popup_open(), "the first press closes the list");
+    s.press(edit, at(1100));
+    assert_eq!(selection(&s), 1..1, "the second press places the caret");
+    s.press(edit, at(1200));
+    assert_eq!(
+        selection(&s),
+        0..4,
+        "a pair after it selects the word and its space"
+    );
+}
+
+#[test]
 fn escape_clears_the_query_then_cancels() {
     let mut s = list_sheet();
     s.focus_search();
