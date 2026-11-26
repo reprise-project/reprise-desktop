@@ -112,19 +112,69 @@ fn table(r: &Rule) -> Table {
 
 /// `want`, edited from `base`, once the list reads `have`: a rule added or removed outside the
 /// sheet since `base` (Always Open Here, a hand edit) is added or removed, and the edits stay.
+/// An added rule goes where the fewest of the file's rules around it change sides, the latest such
+/// place on a tie, so the later-wins order stays as the file has it and a rule at the end stays last.
 pub fn merge(want: &[Rule], base: &[Rule], have: &[Rule]) -> Vec<Rule> {
     if want == base {
         return have.to_vec();
     }
-    let mut rules: Vec<Rule> = (want.iter())
-        .filter(|r| !base.contains(r) || have.contains(r))
-        .cloned()
+    let edit = paired(base, want, 3, alike);
+    let kept = paired(base, have, 1, |_, b, h| b == h);
+    let mut on_file = vec![false; base.len()];
+    kept.iter().flatten().for_each(|&j| on_file[j] = true);
+    let mut rules = Vec::new();
+    let mut at = vec![None; want.len()];
+    for (k, w) in want.iter().enumerate() {
+        if !edit[k].is_some_and(|j| base[j] == *w && !on_file[j]) {
+            at[k] = Some(rules.len());
+            rules.push(w.clone());
+        }
+    }
+    // Where each of `have`'s rules sits in `rules`: through its base rule's edit, or as a rule
+    // the sheet added or edited to the same.
+    let mut claimed = vec![false; want.len()];
+    let mut pos: Vec<Option<usize>> = (have.iter().zip(&kept))
+        .map(|(h, b)| match b {
+            Some(j) => edit.iter().position(|e| *e == Some(*j)).and_then(|k| at[k]),
+            None => {
+                let k = (0..want.len()).find(|&k| {
+                    !claimed[k] && edit[k].is_none_or(|j| base[j] != want[k]) && want[k] == *h
+                })?;
+                claimed[k] = true;
+                at[k]
+            }
+        })
         .collect();
-    let added = have
-        .iter()
-        .filter(|r| !base.contains(r) && !want.contains(r));
-    rules.extend(added.cloned());
+    for (i, h) in have.iter().enumerate() {
+        if kept[i].is_some() || pos[i].is_some() {
+            continue;
+        }
+        let flips = |slot: usize| {
+            (pos.iter().enumerate())
+                .filter(|(n, p)| p.is_some_and(|p| if *n < i { p >= slot } else { p < slot }))
+                .count()
+        };
+        let slot = (0..=rules.len())
+            .rev()
+            .min_by_key(|&s| flips(s))
+            .unwrap_or(0);
+        for p in pos.iter_mut().flatten().filter(|p| **p >= slot) {
+            *p += 1;
+        }
+        pos[i] = Some(slot);
+        rules.insert(slot, h.clone());
+    }
     rules
+}
+
+/// Whether file rule `r` is sheet rule `w` in `paired`'s `pass`: 0 reads as it, 1 has its app and
+/// title, 2 its app.
+fn alike(pass: usize, r: &Rule, w: &Rule) -> bool {
+    match pass {
+        0 => r == w,
+        1 => r.app_id == w.app_id && r.title == w.title,
+        _ => r.app_id == w.app_id,
+    }
 }
 
 /// Write `want` over `base` (as loaded or last saved) into `doc`, whose rules read as `have`, as
@@ -140,11 +190,7 @@ pub fn write(doc: &mut DocumentMut, want: &[Rule], base: &[Rule], have: &[Rule])
     let rules = merge(want, base, have);
     let old = array(doc, &KEY);
     let read: Vec<Rule> = old.iter().map(|t| read_rule(t)).collect();
-    let from = paired(&read, &rules, 3, |pass, r, w| match pass {
-        0 => r == w,
-        1 => r.app_id == w.app_id && r.title == w.title,
-        _ => r.app_id == w.app_id,
-    });
+    let from = paired(&read, &rules, 3, alike);
     let mut out: Vec<Table> = (rules.iter().zip(&from))
         .map(|(w, f)| match f {
             Some(j) if read[*j] == *w => {
@@ -445,6 +491,104 @@ desktop = 2
             merge(&base, &base, &have),
             have,
             "nothing pending: the file's"
+        );
+    }
+
+    #[test]
+    fn a_rule_added_meanwhile_keeps_its_place_among_the_files_rules() {
+        let [a, b, c, x, y] = ["a", "b", "c", "x", "y"].map(rule);
+        let edited = |r: &Rule| Rule {
+            desktop: Some(2),
+            ..r.clone()
+        };
+        let base = [a.clone(), b.clone(), c.clone()];
+        let want = [a.clone(), edited(&b), c.clone()];
+        let have = [x.clone(), a.clone(), y.clone(), b.clone(), c.clone()];
+        assert_eq!(
+            merge(&want, &base, &have),
+            [x.clone(), a.clone(), y.clone(), edited(&b), c.clone()]
+        );
+        let want = [a.clone(), b.clone(), edited(&c)];
+        let have = [a.clone(), b.clone(), x.clone(), y.clone(), c.clone()];
+        assert_eq!(
+            merge(&want, &base, &have),
+            [a, b, x, y, edited(&c)],
+            "before the rule that follows it, edited or not"
+        );
+    }
+
+    #[test]
+    fn a_rule_added_meanwhile_keeps_its_place_beside_edited_rules_of_one_app() {
+        let x = rule("x");
+        let ff = |desktop| Rule {
+            desktop: Some(desktop),
+            ..rule("firefox")
+        };
+        let base = [ff(1), ff(2)];
+        let have = [ff(1), x.clone(), ff(2)];
+        let want = [ff(3), ff(4)];
+        assert_eq!(merge(&want, &base, &have), [ff(3), x.clone(), ff(4)]);
+
+        let [a, b, c] = ["a", "b", "c"].map(rule);
+        let b2 = Rule {
+            sticky: Some(true),
+            ..b.clone()
+        };
+        let base = [a.clone(), b.clone(), c.clone()];
+        let have = [a.clone(), x.clone(), b, c.clone()];
+        let want = [a.clone(), c.clone(), b2.clone()];
+        assert_eq!(
+            merge(&want, &base, &have),
+            [a, x, c, b2],
+            "a rule removed and one added for its app: x stays before c"
+        );
+    }
+
+    #[test]
+    fn an_edit_the_file_already_holds_is_written_once_and_a_hand_edit_stays() {
+        let [a, b] = ["a", "b"].map(rule);
+        let edited = |r: &Rule| Rule {
+            desktop: Some(2),
+            ..r.clone()
+        };
+        assert_eq!(
+            merge(&[edited(&a)], std::slice::from_ref(&a), &[edited(&a)]),
+            [edited(&a)],
+            "the edit once"
+        );
+        let n = rule("n");
+        assert_eq!(
+            merge(
+                &[a.clone(), n.clone()],
+                std::slice::from_ref(&a),
+                &[a.clone(), a.clone()]
+            ),
+            [a.clone(), n, a.clone()],
+            "a second copy of an unedited rule goes in as added, last"
+        );
+        let base = [a.clone(), b.clone()];
+        let want = [a.clone(), edited(&b)];
+        let hand = Rule {
+            sticky: Some(true),
+            ..a.clone()
+        };
+        assert_eq!(
+            merge(&want, &base, &[hand.clone(), b.clone()]),
+            [hand, edited(&b)],
+            "a rule edited by hand that Settings left alone takes the hand edit"
+        );
+    }
+
+    #[test]
+    fn a_pending_move_turns_round_no_more_of_the_files_pairs_than_it_must() {
+        let [a, b, c, x] = ["a", "b", "c", "x"].map(rule);
+        let base = [a.clone(), b.clone(), c.clone()];
+        let have = [a.clone(), b.clone(), x.clone(), c.clone()];
+        let want = [c.clone(), a.clone(), b.clone()];
+        assert_eq!(
+            merge(&want, &base, &have),
+            [c, a, b, x],
+            "x stays after a and b; only c, moved above them, changes sides"
         );
     }
 }
