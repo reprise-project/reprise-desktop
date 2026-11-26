@@ -910,6 +910,53 @@ fn typed_text_wraps_at_the_box_and_lands_with_the_same_breaks() {
 }
 
 #[test]
+fn a_click_opens_a_line_tall_box_that_widens_as_text_is_typed() {
+    reprisekit::pins::fonts();
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(160, 100, WHITE);
+    pick(&mut p, &mut ctx, Tool::Text);
+    p.text.font = textbox::Font {
+        family: "Tahoma".into(),
+        px: 13,
+        bold: false,
+    };
+    drag(&mut p, &mut ctx, (20, 10), (20, 10), BTN_LEFT);
+    let lh = p.text.line_h();
+    let open = p.text.fit(p.doc.text_box.expect("a click opens a box"));
+    assert_eq!(
+        (open.x, open.y, open.height),
+        (20, 10, lh),
+        "one line tall at the click"
+    );
+    assert!(open.width >= 13, "room for a character: {open:?}");
+    typed(&mut p, &mut ctx, "Hi there friend");
+    let one = p.text.fit(p.doc.text_box.unwrap());
+    assert!(one.width > open.width, "the box widens: {one:?}");
+    assert_eq!((one.x, one.height), (20, lh), "one row, still at the click");
+    let shown = p.shown(one, false);
+    let inked = (0..one.width)
+        .flat_map(|x| (0..lh).map(move |y| (x, y)))
+        .filter(|&(x, y)| shown.get(x, y).is_some_and(|v| v != WHITE))
+        .count();
+    assert!(inked > 30, "the text shows: {inked} pixels");
+    typed(&mut p, &mut ctx, " and some more words");
+    let wide = p.text.fit(p.doc.text_box.unwrap());
+    assert_eq!(wide.right(), 160, "it stops at the picture's right edge");
+    assert!(wide.height >= 2 * lh, "and wraps there: {wide:?}");
+    p.event(
+        MAIN,
+        key(reprisekit::textedit::keysym::RETURN, false),
+        &mut ctx,
+    );
+    let down = p.text.fit(p.doc.text_box.unwrap());
+    assert_eq!(down.height, wide.height + lh, "Enter adds a row below");
+    drag(&mut p, &mut ctx, (150, 90), (150, 90), BTN_LEFT);
+    assert!(p.doc.text_box.is_none());
+    assert!(p.doc.hist.can_undo(), "the text is on the picture");
+}
+
+#[test]
 fn the_magnifiers_zoom_labels_keep_the_100_percent_font_at_every_text_size() {
     reprisekit::pins::fonts();
     let mut got = Vec::new();

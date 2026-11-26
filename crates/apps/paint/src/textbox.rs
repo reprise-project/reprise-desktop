@@ -1,6 +1,7 @@
 //! The text tool's box: the text typed into it, its font, and the coverage it lays on the
 //! picture. The box sits on the picture at `Doc::text_box`; its lines wrap at the box's width and
-//! it grows down as rows are added.
+//! it grows down as rows are added. A box a click opened also widens with its widest line, up to
+//! the picture's right edge.
 
 use reprisekit::controls::multiedit::{self, Metrics, MultiEdit, MultiKey};
 use reprisekit::raster::{Canvas, Rect};
@@ -27,9 +28,17 @@ impl Default for Font {
     }
 }
 
+/// How far short of its width the kit's edit wraps a row: the caret's room.
+const CARET_ROOM: i32 = 3;
+
+/// A clicked box's width at first, in ems of its font.
+const CLICKED_EMS: i32 = 4;
+
 pub struct TextBox {
     pub edit: MultiEdit,
     pub font: Font,
+    /// Set while the box was opened by a click: the widest it may grow, in picture px.
+    grow: Option<i32>,
     renderer: RefCell<Option<(String, TextRenderer)>>,
 }
 
@@ -38,6 +47,7 @@ impl Default for TextBox {
         TextBox {
             edit: MultiEdit::new(""),
             font: Font::default(),
+            grow: None,
             renderer: RefCell::new(None),
         }
     }
@@ -107,6 +117,19 @@ impl TextBox {
 
     pub fn clear(&mut self) {
         self.edit = MultiEdit::new("");
+        self.grow = None;
+    }
+
+    /// The box a drag over `r` opens. A click, a 1x1 `r`, opens one a line tall and a few
+    /// characters wide that widens as text is typed, up to `room` px.
+    pub fn opened(&mut self, r: Rect, room: i32) -> Rect {
+        let clicked = r.width == 1 && r.height == 1;
+        self.grow = clicked.then_some(room);
+        if !clicked {
+            return r;
+        }
+        let w = (self.font.px as i32 * CLICKED_EMS).min(room);
+        Rect::new(r.x, r.y, w, self.line_h())
     }
 
     /// A key in a box `w` px wide.
@@ -123,12 +146,19 @@ impl TextBox {
         self.edit.paste(text)
     }
 
-    /// `r` grown down to hold every row.
+    /// `r` grown down to hold every row, and for a clicked box right to hold its widest line.
     pub fn fit(&self, r: Rect) -> Rect {
         let m = self.metrics();
-        let rows = self.with_renderer(|t| self.rows(t, &m, r.width).len());
+        let (w, rows) = self.with_renderer(|t| {
+            let w = match self.grow {
+                Some(room) => (multiedit::widest_px(t, &m, &self.edit) + CARET_ROOM)
+                    .clamp(r.width, room.max(r.width)),
+                None => r.width,
+            };
+            (w, self.rows(t, &m, w).len())
+        });
         let h = rows as i32 * self.line_h();
-        Rect::new(r.x, r.y, r.width, r.height.max(h))
+        Rect::new(r.x, r.y, w, r.height.max(h))
     }
 
     /// One byte of coverage per pixel of a `w`x`h` box.

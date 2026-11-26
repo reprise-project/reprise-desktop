@@ -146,7 +146,7 @@ impl Paint {
             MultiKey::Edit(EditKey::Paste) => reply.paste = true,
             _ => {}
         }
-        let w = self.doc.text_box.map_or(1, |b| b.width);
+        let w = self.doc.text_box.map_or(1, |b| self.text.fit(b).width);
         self.text.key(key, w);
         reply
     }
@@ -255,7 +255,14 @@ impl Paint {
     /// Ends the drag on the picture at `at`, committed as its button's release commits it.
     fn release_held(&mut self, at: (i32, i32), m: Mods) -> Effect {
         self.held = None;
-        self.doc.release(self.tool, at, m)
+        let had_box = self.doc.text_box.is_some();
+        let fx = self.doc.release(self.tool, at, m);
+        if !had_box && let Some(b) = self.doc.text_box {
+            let bounds = self.doc.img.bounds();
+            let b = self.text.opened(b, bounds.right() - b.x);
+            self.doc.text_box = Some(b.intersect(&bounds));
+        }
+        fx
     }
 
     /// A modal child covers the window, which will not see the release: the drag on the picture
