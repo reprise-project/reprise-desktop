@@ -172,8 +172,8 @@ impl Made {
     /// Take back, blocking, a trigger an attempt other than `but` made and left; false when it
     /// stays.
     pub fn take_back(&self, bus: &dyn Bus, but: Option<u64>) -> bool {
-        let down = going_down(self, bus, |id| Some(id) != but);
-        left_behind(&mut self.lock(), bus, but, down)
+        let (mut held, down) = lock_down(self, bus, |id| Some(id) != but);
+        left_behind(&mut held, bus, but, down)
     }
 
     /// Whether attempt `id`'s trigger stands, leaving it to stay as another program's would: nothing
@@ -203,11 +203,22 @@ impl Made {
     }
 }
 
-/// Whether the computer is going down while `made` holds a trigger `of` picks, read off the lock:
-/// a shutdown's SIGTERM, or its kill of a `[power]` command, must not take back its update.
-fn going_down(made: &Made, bus: &dyn Bus, of: impl Fn(u64) -> bool) -> bool {
-    let held = made.lock().is_some_and(of);
-    held && bus.shutting_down()
+/// `made` locked, and whether the computer is going down while it holds a trigger `of` picks: a
+/// shutdown's SIGTERM, or its kill of a `[power]` command, must not take back its update. The read
+/// is made off the lock, and again under it when a trigger appeared in between.
+fn lock_down<'a>(
+    made: &'a Made,
+    bus: &dyn Bus,
+    of: impl Fn(u64) -> bool,
+) -> (MutexGuard<'a, Option<u64>>, bool) {
+    let read = made.lock().is_some_and(&of);
+    let down = read && bus.shutting_down();
+    let held = made.lock();
+    let down = match held.is_some_and(&of) && !read {
+        true => bus.shutting_down(),
+        false => down,
+    };
+    (held, down)
 }
 
 fn stays_down(id: u64) -> bool {
@@ -215,7 +226,7 @@ fn stays_down(id: u64) -> bool {
     false
 }
 
-/// [`Made::take_back`] with its lock held, `down` read before.
+/// [`Made::take_back`] with its lock held, `down` read by [`lock_down`].
 fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>, down: bool) -> bool {
     let Some(id) = made.take_if(|id| Some(*id) != but) else {
         return true;
@@ -336,8 +347,7 @@ fn install<F>(
     still: &dyn Fn() -> bool,
     power: impl FnOnce() -> Option<F>,
 ) -> Result<Option<F>, Held<F>> {
-    let down = going_down(made, bus, |n| n != id);
-    let mut held = made.lock();
+    let (mut held, down) = lock_down(made, bus, |n| n != id);
     let left = !left_behind(&mut held, bus, Some(id), down);
     if !still() {
         return Err(Held::Dismissed);
@@ -391,8 +401,7 @@ fn stays_if<F>(left: bool, failed: Option<F>) -> Result<Option<F>, Held<F>> {
 
 /// Take back attempt `id`'s trigger unless something already did; false when it stays.
 fn take_own(made: &Made, bus: &dyn Bus, id: u64) -> bool {
-    let down = going_down(made, bus, |n| n == id);
-    let mut held = made.lock();
+    let (mut held, down) = lock_down(made, bus, |n| n == id);
     if held.take_if(|n| *n == id).is_none() {
         return true;
     }

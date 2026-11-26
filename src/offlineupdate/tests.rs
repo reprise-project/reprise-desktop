@@ -622,3 +622,22 @@ fn a_session_end_that_gives_up_the_power_action_withdraws_its_prompts_and_runs_n
         crate::crash::not_ending();
     }
 }
+
+#[test]
+fn a_trigger_that_appears_between_the_shutdown_read_and_the_lock_is_read_under_the_lock() {
+    let fake = Fake::new(false, Ok(()));
+    fake.down.store(true, Ordering::SeqCst);
+    let made = Made::default();
+    made.set(Some(7));
+    let first = Cell::new(true);
+    let appears = |_| !first.replace(false);
+    let (held, down) = lock_down(&made, &*fake, appears);
+    assert!(down, "the computer is going down");
+    assert_eq!(*held, Some(7));
+    drop(held);
+    assert_eq!(fake.calls(), ["down"], "read once, under the lock");
+    let (held, down) = lock_down(&made, &*fake, |_| false);
+    drop(held);
+    assert!(!down);
+    assert_eq!(fake.calls(), ["down"], "no trigger, nothing read");
+}
