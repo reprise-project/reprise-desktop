@@ -459,8 +459,9 @@ impl State {
         let settings = v
             .settings
             .iter()
-            .map(|s| Row {
+            .map(|s| launcher::FoundRow {
                 name: s.name(app_index),
+                detail: s.detail(&query, app_index).unwrap_or_default().into(),
                 icon: s.icon(app_index).and_then(|n| unread(icons, &n, px)),
             })
             .collect();
