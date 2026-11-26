@@ -695,6 +695,7 @@ fn a_menus_fade_in_steps_on_its_outputs_frames_over_its_time() {
         &mut h.state,
         crate::animclock::Anim::MenuOpen,
         &["TEST-1"],
+        opened + ms / 2,
         opened + ms,
     );
     assert_eq!(

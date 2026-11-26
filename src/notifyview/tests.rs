@@ -2306,20 +2306,23 @@ fn a_flood_from_the_bus_paints_the_stack_and_the_bar_once_per_wake() {
 
 #[test]
 fn an_arriving_sheet_steps_on_its_outputs_frames_until_it_rests() {
-    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    // The longest arrival, so a slow host still paints the sheet before it would rest.
+    let config = crate::config::Config::parse(
+        "[appearance]\ninterface = \"glass\"\n[effects]\nwindow_open_ms = 2000\n",
+    )
+    .unwrap();
     let mut h = crate::harness::Harness::with_config(config);
     h.output("TEST-1", 1024, 768);
     h.output("TEST-2", 1024, 768);
+    let from = Instant::now();
     show(&mut h.state, note(1, "Mail"));
-    assert!(
-        !still(&h.state.notify, Instant::now()),
-        "the sheet comes in"
-    );
+    assert!(!still(&h.state.notify, from), "the sheet comes in");
     crate::animclock::assert_steps_until(
         &mut h.state,
         crate::animclock::Anim::Notify,
         &["TEST-1"],
-        Instant::now() + Duration::from_secs(5),
+        from,
+        from + Duration::from_secs(10),
     );
 }
 

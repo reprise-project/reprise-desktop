@@ -840,6 +840,7 @@ mod tests {
             &mut h.state,
             crate::animclock::Anim::IdleDim,
             &["TEST-1"],
+            start + Duration::from_secs(1),
             start + Duration::from_secs(2),
         );
         assert_eq!(shade(&h), Some(dim_color(1.0)), "fully dimmed at its end");
