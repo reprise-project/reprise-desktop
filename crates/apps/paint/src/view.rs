@@ -247,6 +247,11 @@ impl Paint {
         None
     }
 
+    /// The sizing handles around the picture.
+    pub(crate) fn handles(&self, l: &Lay) -> sizehandles::Layout {
+        sizehandles::layout(self.on_window(l, self.doc.img.bounds()))
+    }
+
     /// Holds both scroll offsets to their range after a zoom, resize or picture change.
     pub(crate) fn hold_scroll(&mut self, ctx: &Ctx) {
         let l = self.lay(ctx);
@@ -391,10 +396,9 @@ impl Paint {
             .map(|(x, y)| tr!("status-position", x = x.to_string(), y = y.to_string()))
             .unwrap_or_default();
         let size = self
-            .doc
-            .sel
-            .as_ref()
-            .map(|s| s.rect)
+            .sizing
+            .map(|d| Rect::new(0, 0, d.size.0, d.size.1))
+            .or(self.doc.sel.as_ref().map(|s| s.rect))
             .or(self.doc.dragged_box())
             .or(self.doc.text_box.map(|b| self.text.fit(b)))
             .map(|r| {
@@ -431,7 +435,10 @@ impl Paint {
         };
         c.fill_rect(c.bounds(), cs.button_face);
         c.fill_rect(l.view, cs.button_shadow);
-        c.with_clip(l.view, |c| self.draw_picture(c, &l, ctx));
+        c.with_clip(l.view, |c| {
+            self.draw_picture(c, &l, ctx);
+            self.draw_handles(c, &l, ctx);
+        });
         let s = c.scale();
         let dev = Look {
             s,
@@ -537,6 +544,20 @@ impl Paint {
         }
     }
 
+    fn draw_handles(&self, c: &mut Canvas, l: &Lay, ctx: &Ctx) {
+        let s = c.scale();
+        let paint = Look {
+            s,
+            ..ctx.theme.paint()
+        };
+        let lay = self.handles(l);
+        c.in_device_px(|d| sizehandles::draw(d, &paint, &lay));
+        if let Some(drag) = self.sizing {
+            let to = self.on_window(l, Rect::new(0, 0, drag.size.0, drag.size.1));
+            c.in_device_px(|d| sizehandles::draw_outline(d, &paint, to));
+        }
+    }
+
     pub(crate) fn access_main(&self, tree: &mut Tree, ctx: &Ctx) {
         let l = self.lay(ctx);
         let menus = self.bar.access(&self.bar_layout(ctx), tree, ROOT);
@@ -544,6 +565,7 @@ impl Paint {
         let tools = toolbox::access(&tb, &toolbox::layout(&tb, l.tools), tree, ROOT);
         let pal = self.palette();
         palette::access(&pal, &palette::layout(&pal, l.colors), tree, ROOT);
+        sizehandles::access(&self.handles(&l), tree, ROOT);
         if let Some((bar, r)) = self.status(&l, ctx) {
             statusbar::access(&bar, r, ctx.theme.text, tree, ROOT);
         }

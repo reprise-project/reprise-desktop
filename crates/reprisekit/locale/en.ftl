@@ -179,3 +179,8 @@ charmap-to-copy = Characters to c&opy:
 charmap-select = &Select
 charmap-copy = &Copy
 charmap-grid = Characters
+
+## A raster editor's sizing handles
+size-handle-right = Resize width
+size-handle-bottom = Resize height
+size-handle-corner = Resize width and height

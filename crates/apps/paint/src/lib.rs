@@ -35,6 +35,7 @@ use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menubar::Bar;
 use reprisekit::controls::scrollbar::PageScroll;
+use reprisekit::controls::sizehandles;
 use reprisekit::look::Paint as Look;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
@@ -97,6 +98,8 @@ struct Paint {
     held: Option<(u32, (i32, i32))>,
     /// The pointer over the picture, in picture pixels.
     hover: Option<(i32, i32)>,
+    /// A drag on one of the picture's sizing handles.
+    sizing: Option<sizehandles::Drag>,
     clicks: DoubleClick<()>,
     /// Presses on the colour box's wells, by well and button.
     well_clicks: DoubleClick<(usize, u32)>,
@@ -167,6 +170,7 @@ impl Paint {
             bar: Bar::new(menu::menus()),
             held: None,
             hover: None,
+            sizing: None,
             clicks: DoubleClick::default(),
             well_clicks: DoubleClick::default(),
             wells: art::PALETTE.iter().map(|&(c, _)| c).collect(),
