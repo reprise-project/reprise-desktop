@@ -217,6 +217,37 @@ fn a_trigger_left_while_its_action_runs_is_taken_back_by_the_next_attempt_or_the
 }
 
 #[test]
+fn a_left_trigger_that_will_not_come_back_is_told_when_the_next_action_fails() {
+    let next = |updates, triggered, power_fails: bool| {
+        let fake = Fake::new(triggered, Err(Some("Not allowed.".into())));
+        let made = Made::default();
+        made.set(Some(1));
+        let power = || power_fails.then_some("refused");
+        (
+            around(&*fake, &made, 2, updates, false, &|| true, power),
+            made.by(),
+        )
+    };
+    assert_eq!(
+        next(Updates::Leave, true, true),
+        (Err(Held::Stays("refused")), None)
+    );
+    assert_eq!(next(Updates::Leave, true, false), (Ok(None), None));
+    assert_eq!(
+        next(Updates::Install, true, true),
+        (Err(Held::Stays("refused")), None),
+        "set to install already, by attempt 1"
+    );
+    let fake = Fake::with(None, Ok(()), Ok(()));
+    let made = Made::default();
+    made.set(Some(1));
+    let failed = around(&*fake, &made, 2, Updates::Leave, false, &|| true, || {
+        Some("refused")
+    });
+    assert_eq!(failed, Ok(Some("refused")), "taken back");
+}
+
+#[test]
 fn the_session_ending_during_a_shutdown_keeps_a_trigger_an_attempt_left() {
     let fake = Fake::new(false, Ok(()));
     let made = Made::default();

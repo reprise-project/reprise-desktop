@@ -156,9 +156,10 @@ impl Made {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Take back, blocking, a trigger an attempt other than `but` made and left.
-    pub fn take_back(&self, bus: &dyn Bus, but: Option<u64>) {
-        left_behind(&mut self.lock(), bus, but);
+    /// Take back, blocking, a trigger an attempt other than `but` made and left; false when it
+    /// stays.
+    pub fn take_back(&self, bus: &dyn Bus, but: Option<u64>) -> bool {
+        left_behind(&mut self.lock(), bus, but)
     }
 
     /// Whether attempt `id`'s trigger stands; false while a Trigger or Cancel holds the lock.
@@ -187,20 +188,29 @@ fn going_down(bus: &dyn Bus, id: u64) -> bool {
     down
 }
 
-fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>) {
+/// [`Made::take_back`] with its lock held.
+fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>) -> bool {
     let Some(id) = made.take_if(|id| Some(*id) != but) else {
-        return;
+        return true;
     };
     if going_down(bus, id) {
-        return;
+        return false;
     }
     match bus.cancel(false) {
-        Ok(()) => log::info!("offline update: took back the trigger attempt {id} left"),
-        Err(why) => log::warn!("offline update: the trigger attempt {id} left stays ({why:?})"),
+        Ok(()) => {
+            log::info!("offline update: took back the trigger attempt {id} left");
+            true
+        }
+        Err(why) => {
+            log::warn!("offline update: the trigger attempt {id} left stays ({why:?})");
+            false
+        }
     }
 }
 
-/// Take back, blocking, a trigger a power attempt given up on left, as the session ends.
+/// Take back, blocking, a trigger a power attempt given up on left, as the session ends. One that
+/// stays is only logged: the next Turn off computer panel offers the update, and unticking it
+/// takes it back.
 pub fn take_back_left(state: &State) {
     state.offline.made.take_back(&*state.offline.bus, None);
 }
@@ -235,8 +245,8 @@ pub fn around<F>(
 ) -> Result<Option<F>, Held<F>> {
     match updates {
         Updates::Leave => {
-            made.take_back(bus, Some(id));
-            Ok(power())
+            let left = !made.take_back(bus, Some(id));
+            stays_if(left, power())
         }
         Updates::Skip => {
             made.take_back(bus, Some(id));
@@ -263,7 +273,7 @@ fn install<F>(
     power: impl FnOnce() -> Option<F>,
 ) -> Result<Option<F>, Held<F>> {
     let mut held = made.lock();
-    left_behind(&mut held, bus, Some(id));
+    let left = !left_behind(&mut held, bus, Some(id));
     if !still() {
         return Err(Held::Dismissed);
     }
@@ -277,7 +287,7 @@ fn install<F>(
         Some(s) if s.triggered => {
             log::info!("offline update: already set to install");
             drop(held);
-            return Ok(power());
+            return stays_if(left, power());
         }
         _ => {}
     }
@@ -302,6 +312,15 @@ fn install<F>(
         }
         Some(failed) if take_own(made, bus, id) => Ok(Some(failed)),
         Some(failed) => Err(Held::Stays(failed)),
+    }
+}
+
+/// `failed`, as a failure that leaves the update set to install when a trigger an earlier attempt
+/// `left` stays.
+fn stays_if<F>(left: bool, failed: Option<F>) -> Result<Option<F>, Held<F>> {
+    match failed {
+        Some(failed) if left => Err(Held::Stays(failed)),
+        failed => Ok(failed),
     }
 }
 
