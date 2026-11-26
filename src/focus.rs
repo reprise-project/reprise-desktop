@@ -322,7 +322,8 @@ impl State {
     }
 
     /// A trusted token for a window opened for the process `lineage` and `session` describe while
-    /// it holds the keyboard ([`crate::mapfocus::holds_focus`]); None under the lock.
+    /// it holds the keyboard ([`crate::mapfocus::holds_focus`]) or runs in a multiplexer pane its
+    /// terminal serves ([`crate::mapfocus::serves_multiplexer`]); None under the lock.
     pub fn token_for_focus_holder(
         &mut self,
         lineage: &[i32],
@@ -336,8 +337,10 @@ impl State {
                 ..Default::default()
             });
         let holder = crate::mapfocus::holder(reprise, window);
-        let holds =
-            !self.desktop_locked() && crate::mapfocus::holds_focus(lineage, session, holder);
+        let holds = !self.desktop_locked()
+            && (crate::mapfocus::holds_focus(lineage, session, holder)
+                || (holder.and_then(|h| h.pid))
+                    .is_some_and(|f| crate::mapfocus::serves_multiplexer(lineage, f)));
         holds.then(|| self.new_activation_token())
     }
 

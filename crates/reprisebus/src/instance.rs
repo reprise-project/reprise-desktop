@@ -3,7 +3,7 @@
 //! a later start hands its request to that copy ([`claim`]) and exits.
 //! The later start's xdg-activation token and its by-key mark ride along as
 //! platform data ([`Handoff`]), so the running copy can raise its window with
-//! them.
+//! them. A start without a token (typed in a terminal) gets the compositor's for it.
 
 use crate::mutex::lock;
 use crate::peer::HostOnly;
@@ -261,6 +261,10 @@ fn path(name: &str) -> String {
     format!("/{}", name.replace('.', "/"))
 }
 
+/// How long a hand-off waits for the compositor's token: well under the second start's
+/// [`crate::METHOD_TIMEOUT`], so its `Activate` never times out into a second running copy.
+const MINT_WAIT: Duration = Duration::from_secs(1);
+
 #[derive(Clone)]
 struct Application {
     tx: Sender<Request>,
@@ -269,8 +273,28 @@ struct Application {
 }
 
 impl Application {
-    fn send(&self, action: Option<(String, Vec<String>)>, data: &HashMap<String, OwnedVariant>) {
-        let handoff = Handoff::from_platform_data(data);
+    /// Hands the request on with the compositor's token for its caller, given while the caller's
+    /// process holds the keyboard ([`crate::tray::activation_for`]), else the one it brought (which
+    /// may be spent: a shell can inherit its terminal's).
+    async fn send(
+        &self,
+        conn: &Connection,
+        header: &Header<'_>,
+        action: Option<(String, Vec<String>)>,
+        data: &HashMap<String, OwnedVariant>,
+    ) {
+        let mut handoff = Handoff::from_platform_data(data);
+        if let Some(caller) = header.sender() {
+            let minted = crate::tray::activation_for(conn, caller);
+            let late = async {
+                async_io::Timer::after(MINT_WAIT).await;
+                log::info!("no activation for {caller} within {MINT_WAIT:?}");
+                None
+            };
+            if let Some(t) = futures_lite::future::or(minted, late).await {
+                handoff.token = Some(t);
+            }
+        }
         if self.tx.send(Request { action, handoff }).is_ok()
             && let Some(wake) = &*lock(&self.wake)
         {
@@ -288,7 +312,7 @@ impl Application {
         platform_data: HashMap<String, OwnedVariant>,
     ) -> zbus::fdo::Result<()> {
         self.host_only.check(conn, &header).await?;
-        self.send(None, &platform_data);
+        self.send(conn, &header, None, &platform_data).await;
         Ok(())
     }
 
@@ -302,7 +326,7 @@ impl Application {
         platform_data: HashMap<String, OwnedVariant>,
     ) -> zbus::fdo::Result<()> {
         self.host_only.check(conn, &header).await?;
-        self.send(None, &platform_data);
+        self.send(conn, &header, None, &platform_data).await;
         Ok(())
     }
 
@@ -319,7 +343,8 @@ impl Application {
             .iter()
             .filter_map(|v| <&str>::try_from(&**v).ok().map(str::to_string))
             .collect();
-        self.send(Some((action_name, params)), &platform_data);
+        self.send(conn, &header, Some((action_name, params)), &platform_data)
+            .await;
         Ok(())
     }
 }
@@ -483,6 +508,105 @@ mod tests {
         assert_eq!(requests.next(), None, "the owner heard nothing");
         assert!(matches!(claim_on(name, None, connect), Claim::Handed));
         assert_eq!(requests.next(), Some(Request::default()));
+    }
+
+    /// The compositor's `org.reprise.Tray`: after `delay`, a token named for the caller it is
+    /// asked for, or none (an empty string) unless `mints`.
+    struct Minter {
+        mints: bool,
+        delay: Duration,
+    }
+
+    #[zbus::interface(name = "org.reprise.Tray")]
+    impl Minter {
+        async fn activation_for(&self, caller: String) -> String {
+            async_io::Timer::after(self.delay).await;
+            if self.mints {
+                format!("for {caller}")
+            } else {
+                String::new()
+            }
+        }
+    }
+
+    /// The tokens an Application hands on for `starts` sent to it in turn, with `minter` serving
+    /// as the compositor, and the caller's name.
+    fn handed(
+        bus: &crate::testbus::Bus,
+        minter: Minter,
+        starts: &[Handoff],
+    ) -> (Vec<Option<String>>, String) {
+        let connect = || zbus::block_on(crate::testbus::connect(&bus.1));
+        let (tray, server, caller) = (connect(), connect(), connect());
+        let (tx, rx) = channel();
+        let app = Application {
+            tx,
+            wake: Wake::default(),
+            host_only: HostOnly::under(std::path::Path::new("/proc")),
+        };
+        let path = path("org.example.App");
+        let server_name = server.unique_name().unwrap().to_string();
+        let caller_name = caller.unique_name().unwrap().to_string();
+        zbus::block_on(async {
+            crate::testbus::serve(&tray, crate::tray::PATH, minter).await;
+            tray.request_name(crate::tray::NAME).await.unwrap();
+            crate::testbus::serve(&server, path.as_str(), app).await;
+            let to = (server_name.as_str(), path.as_str(), "Activate");
+            for handoff in starts {
+                call(&caller, to, &(handoff.platform_data(),))
+                    .await
+                    .unwrap();
+            }
+        });
+        (
+            rx.try_iter().map(|r| r.handoff.token).collect(),
+            caller_name,
+        )
+    }
+
+    fn own() -> Handoff {
+        Handoff {
+            token: Some("own".into()),
+            by_key: false,
+        }
+    }
+
+    #[test]
+    fn a_start_hands_on_the_token_the_compositor_mints_for_it_over_its_own() {
+        let Some(bus) = crate::testbus::bus() else {
+            return;
+        };
+        let minter = Minter {
+            mints: true,
+            delay: Duration::ZERO,
+        };
+        let (tokens, caller) = handed(&bus, minter, &[Handoff::default(), own()]);
+        let minted = Some(format!("for {caller}"));
+        assert_eq!(tokens, [minted.clone(), minted]);
+    }
+
+    #[test]
+    fn a_start_keeps_its_own_token_when_the_compositor_mints_none_in_time() {
+        let Some(bus) = crate::testbus::bus() else {
+            return;
+        };
+        let none = Minter {
+            mints: false,
+            delay: Duration::ZERO,
+        };
+        let (tokens, _) = handed(&bus, none, &[own()]);
+        assert_eq!(tokens, [Some("own".into())], "none minted");
+        let late = Minter {
+            mints: true,
+            delay: MINT_WAIT * 3,
+        };
+        let start = Instant::now();
+        let (tokens, _) = handed(&bus, late, &[own()]);
+        assert_eq!(tokens, [Some("own".into())], "minted too late");
+        assert!(
+            start.elapsed() < MINT_WAIT * 2,
+            "Activate answers within MINT_WAIT"
+        );
     }
 
     #[test]

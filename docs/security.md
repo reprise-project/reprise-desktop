@@ -648,9 +648,14 @@ A new window takes the keyboard when it maps if any of these holds:
   key press reaches anything else, or the session locks; none is minted
   under the lock.
   Explorer's `org.freedesktop.FileManager1` gets one for the window it opens when the
-  caller's process is, descends from or sits in the session of the focused
-  window's (a browser's "Show in folder" sends no token Reprise trusts); the
-  compositor mints it only for the installed `reprise-explorer`
+  caller's process is or descends from the focused window's, sits in the
+  session it leads, or runs in a tmux, screen, zellij, abduco or dtach pane
+  whose client runs in the focused terminal (a browser's "Show in folder" sends no token
+  Reprise trusts), and so does Settings or Sticky Notes for the window it
+  raises when a later start (typed in a terminal) hands it its request; the
+  compositor mints it only for the installed `reprise-explorer`,
+  `reprise-settings` and `reprise-notes`. That keeps sandboxed and stray
+  programs out, not an unsandboxed one, which can already act as you.
 - Reprise started its program within the last 30 s
 - it shares a Wayland connection or a process with the focused window, its
   process descends from it or sits in the session it leads, or the focused

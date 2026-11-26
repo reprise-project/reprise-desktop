@@ -153,8 +153,9 @@ pub enum TrayEvent {
     },
     /// `org.reprise.Tray.TaskWindows`, answered on `reply`.
     WindowsByApp(async_channel::Sender<Vec<reprisebus::tray::AppWindow>>),
-    /// `org.reprise.Tray.ActivationFor` from Explorer's FileManager1: a token on `reply` when the
-    /// caller, by its process `lineage` and `session`, holds the keyboard; else an empty one.
+    /// `org.reprise.Tray.ActivationFor` from Explorer's FileManager1 or a single-instance program's
+    /// hand-off: a token on `reply` when the caller, by its process `lineage` and `session`, holds
+    /// the keyboard; else an empty one.
     ActivationFor {
         lineage: Vec<i32>,
         session: Option<i32>,
