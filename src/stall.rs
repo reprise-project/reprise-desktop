@@ -618,15 +618,27 @@ mod tests {
     }
 
     #[inline(never)]
-    fn hold_the_loop_in_a_test(d: Duration) {
-        std::thread::sleep(d);
+    fn hold_the_loop_in_a_test(until: &mpsc::Receiver<()>) {
+        let _ = until.recv();
     }
 
+    /// The seconds a report line gives after `prefix`.
+    fn secs(line: &str, prefix: &str) -> f64 {
+        let rest = line
+            .strip_prefix(prefix)
+            .unwrap_or_else(|| panic!("{line}"));
+        let n = rest.split_once(' ').map_or(rest, |(n, _)| n);
+        n.parse().unwrap_or_else(|_| panic!("{line}"))
+    }
+
+    /// The loop is held until its report arrives: on a busy host the watcher's polls and the
+    /// report's symbolising run late, which delays the report rather than missing the turn.
     #[test]
-    fn a_turn_blocked_for_2_5_s_is_reported_with_its_stack_and_its_end() {
+    fn a_turn_blocked_past_2_s_is_reported_with_its_stack_and_its_end() {
         capture::before_exec();
         capture::install().expect("installs over the ignored signal a restart's exec keeps");
         let (tx, rx) = mpsc::channel();
+        let (release, held) = mpsc::channel::<()>();
         let (done, finished) = mpsc::channel::<()>();
         let main = std::thread::spawn(move || {
             let beacon = Beacon(Arc::new(Shared::default()));
@@ -639,38 +651,40 @@ mod tests {
             });
             parked(&beacon.0, true);
             beacon.0.begin();
-            hold_the_loop_in_a_test(Duration::from_millis(2500));
+            hold_the_loop_in_a_test(&held);
             beacon.0.end();
             let _ = finished.recv();
             drop(beacon);
             watcher.join().unwrap();
         });
-        let mut lines = vec![];
-        while lines.len() < 2
-            && let Ok(line) = rx.recv_timeout(Duration::from_secs(10))
-        {
-            lines.push(line);
-        }
+        let stuck = rx.recv_timeout(Duration::from_secs(60));
+        drop(release);
+        let ended = rx.recv_timeout(Duration::from_secs(60));
         drop(done);
         main.join().unwrap();
-        assert!(rx.iter().next().is_none(), "nothing after the end");
-        assert_eq!(lines.len(), 2, "{lines:#?}");
-        let (level, stuck) = &lines[0];
-        assert_eq!(*level, log::Level::Warn);
+        let after: Vec<_> = rx.iter().collect();
         assert!(
-            stuck.starts_with("main loop stuck in one turn for 2."),
-            "{stuck}"
+            after.is_empty(),
+            "nothing after the end: {stuck:?} {ended:?} {after:?}"
+        );
+        let (level, stuck) = stuck.expect("a report while the loop is held");
+        assert_eq!(level, log::Level::Warn);
+        let ran = secs(&stuck, "main loop stuck in one turn for ");
+        assert!(
+            ran >= FIRST.as_secs_f64() && ran < SECOND.as_secs_f64(),
+            "the first report comes between 2 and 10 s: {stuck}"
         );
         assert!(stuck.contains("thread state S"), "{stuck}");
-        assert!(stuck.contains("nanosleep("), "{stuck}");
+        assert!(stuck.contains("futex("), "{stuck}");
         assert!(stuck.contains("hold_the_loop_in_a_test"), "{stuck}");
         assert!(
             !stuck.contains("on_signal"),
             "the handler's frames are dropped: {stuck}"
         );
-        let (level, ended) = &lines[1];
-        assert_eq!(*level, log::Level::Info);
-        assert!(ended.starts_with("main loop stalled for 2."), "{ended}");
+        let (level, ended) = ended.expect("a line once the turn ends");
+        assert_eq!(level, log::Level::Info);
+        let stalled = secs(&ended, "main loop stalled for ");
+        assert!(stalled >= ran, "the turn outlasts its report: {ended}");
     }
 
     /// Waits up to 2 s for the watcher to be parked (`true`) or woken.
