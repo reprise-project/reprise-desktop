@@ -371,6 +371,11 @@ impl IconCache {
         self.has_with(name, true)
     }
 
+    /// [`IconTheme::rank`]: `names`, alternatives for one icon, in the order to try them.
+    pub fn rank<'a>(&self, names: &[&'a str]) -> Vec<&'a str> {
+        self.theme.rank(names)
+    }
+
     fn has_with(&self, name: &str, defer: bool) -> bool {
         if let Some(&known) = self.known.borrow().get(name) {
             return known;

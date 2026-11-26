@@ -23,7 +23,7 @@ pub enum SendTo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SendToRow {
     pub label: String,
-    /// Icon names, the first the theme carries worn.
+    /// Icon names, alternatives for one icon: hosts try them in `IconCache::rank`'s order.
     pub icons: &'static [&'static str],
     pub dest: SendTo,
     pub enabled: bool,
