@@ -206,6 +206,19 @@ pub fn place(cursor: (i32, i32), size: (i32, i32), screen: Rect, below: bool) ->
     (x, y.max(screen.y))
 }
 
+/// `screen` less the reach of `theme`'s box shadow on its right and bottom: the room a box tip
+/// ([`draw_tip`], [`draw_info_tip`], the infotip) is placed in so its shadow stays on `screen`.
+pub fn shadow_room(theme: &Theme, screen: Rect) -> Rect {
+    let s = theme.scale.max(1);
+    let o = tooltip::insets(&theme.paint()).map_or(Insets::ZERO, |(_, o)| o.scaled(s));
+    Rect::new(
+        screen.x,
+        screen.y,
+        screen.width - o.right,
+        screen.height - o.bottom,
+    )
+}
+
 /// Where a tip of `size` goes for a pointer at `cursor` on a side bar whose
 /// facing edge is at x `edge`: 2 px off it, right of a left bar (`right`) and
 /// left of a right one, level with the pointer, kept inside `screen` as [`place`]
