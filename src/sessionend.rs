@@ -759,17 +759,17 @@ pub fn quit(state: &mut State) {
         true,
         true,
         SAVE_SHOTS,
-        Box::new(|state| {
-            crate::offlineupdate::take_back_left(state);
-            state.signal.stop();
-        }),
+        Box::new(|state| crate::offlineupdate::take_back_left(state, stop)),
     );
+}
+
+fn stop(state: &mut State) {
+    state.signal.stop();
 }
 
 fn act(state: &mut State, goal: Goal, cmd: Option<String>, aim: Aim, how: Run) {
     let Some(cmd) = cmd else {
-        crate::offlineupdate::take_back_left(state);
-        state.signal.stop();
+        crate::offlineupdate::take_back_left(state, stop);
         return;
     };
     log::info!("session end: {goal:?} runs {cmd:?}");

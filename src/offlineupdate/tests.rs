@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::*;
 use crate::dialog::Style;
@@ -484,4 +484,93 @@ fn log_off_takes_back_a_trigger_an_attempt_it_gave_up_on_left() {
     crate::sessionend::begin(&mut h.state, Goal::LogOff, None, Origin::Desktop);
     h.until("the take-back", |_| fake.calls() == ["down", "cancel"]);
     assert_eq!(h.state.offline.made.by(), None);
+}
+
+/// A Trigger whose password prompt waits on this compositor's loop: holds `made`'s lock until
+/// told to let go, then leaves attempt 7's trigger behind.
+fn hold(made: &Made) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+    let made = made.clone();
+    let (held, holding) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let trigger = std::thread::spawn(move || {
+        let mut lock = made.lock();
+        held.send(()).unwrap();
+        let _ = released.recv_timeout(Duration::from_secs(10));
+        *lock = Some(7);
+    });
+    holding.recv().unwrap();
+    (release, trigger)
+}
+
+#[test]
+fn log_off_keeps_the_loop_turning_while_a_trigger_holds_the_lock_then_takes_back_what_it_left() {
+    let fake = Fake::new(false, Ok(()));
+    let mut h = harness(&fake);
+    let (release, trigger) = hold(&h.state.offline.made);
+    let started = Instant::now();
+    crate::sessionend::begin(&mut h.state, Goal::LogOff, None, Origin::Desktop);
+    h.until("the take-back under way", |s| s.offline.ends.is_some());
+    let took = started.elapsed();
+    let bound = Duration::from_secs(5);
+    assert!(
+        took < bound,
+        "the loop turns on past the end within {bound:?}, took {took:?}"
+    );
+    assert!(
+        fake.calls().is_empty(),
+        "nothing asked while the lock is held"
+    );
+    release.send(()).unwrap();
+    trigger.join().unwrap();
+    h.until("the end", |s| s.offline.ends.is_none());
+    assert_eq!(fake.calls(), ["down", "cancel"]);
+    assert_eq!(h.state.offline.made.by(), None);
+}
+
+#[test]
+fn a_take_back_past_its_deadline_ends_the_session_once() {
+    static ENDS: AtomicUsize = AtomicUsize::new(0);
+    let fake = Fake::new(false, Ok(()));
+    let mut h = harness(&fake);
+    let (release, trigger) = hold(&h.state.offline.made);
+    take_back_within(&mut h.state, Duration::from_millis(100), |_| {
+        ENDS.fetch_add(1, Ordering::SeqCst);
+    });
+    h.until("the deadline", |_| ENDS.load(Ordering::SeqCst) == 1);
+    release.send(()).unwrap();
+    trigger.join().unwrap();
+    h.until("the take-back", |_| fake.calls() == ["down", "cancel"]);
+    let after = Instant::now();
+    h.until("its answer", |_| {
+        after.elapsed() > Duration::from_millis(200)
+    });
+    assert_eq!(ENDS.load(Ordering::SeqCst), 1, "the session ends once");
+}
+
+#[test]
+fn a_take_back_that_panics_still_ends_the_session() {
+    struct Panics;
+    impl Bus for Panics {
+        fn status(&self) -> Option<Status> {
+            None
+        }
+        fn trigger(&self, _: After, _: bool) -> Answer {
+            Ok(())
+        }
+        fn cancel(&self, _: bool) -> Answer {
+            Ok(())
+        }
+        fn shutting_down(&self) -> bool {
+            panic!("a bus read that panics");
+        }
+    }
+    static ENDS: AtomicUsize = AtomicUsize::new(0);
+    let mut h = Harness::new();
+    crate::fsjobs::setup(&mut h.state);
+    h.state.offline = Offline::on(Arc::new(Panics));
+    h.state.offline.made.set(Some(7));
+    take_back_within(&mut h.state, Duration::from_secs(60), |_| {
+        ENDS.fetch_add(1, Ordering::SeqCst);
+    });
+    h.until("the end", |_| ENDS.load(Ordering::SeqCst) == 1);
 }
