@@ -132,7 +132,15 @@ pub(crate) fn draw_taskbar_on(
         let (ink, alpha) = match state.pager_mark {
             PagerMark::Light if lights => {
                 if b.current {
-                    draw_slot_light_foot(canvas, style, *r, State::Hot, s, layout.edge);
+                    draw_slot_light_foot(
+                        canvas,
+                        style,
+                        Part::PagerLight,
+                        *r,
+                        State::Hot,
+                        s,
+                        layout.edge,
+                    );
                 }
                 if hot {
                     draw_slot_edges(canvas, style, *r, State::Hot, s, layout.edge);

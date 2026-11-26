@@ -12,3 +12,4 @@
 30 px edges e033ce2c76d05a05
 30 px foot light de90a15c1f590bf5
 30 px strip 28b6d09de28b1733
+pager light b93c8e18f20493ad

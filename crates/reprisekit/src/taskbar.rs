@@ -21,7 +21,7 @@ pub use draw::{
     quick_icon_origin,
 };
 pub use hit::slot_at;
-pub use layout::{RESIZE_W, TASK_GAP, reveal_width, revealed};
+pub use layout::{QUICK_W, RESIZE_W, TASK_GAP, reveal_width, revealed};
 
 /// A task button's progress, as its program reports it through its launcher entry.
 #[derive(Clone, Copy, Debug, PartialEq)]

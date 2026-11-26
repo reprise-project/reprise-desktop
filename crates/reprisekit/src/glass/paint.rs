@@ -73,7 +73,7 @@ pub fn dominant_colour(icon: &Canvas) -> Option<Color> {
 }
 
 /// The small 30 px bar's parts (`[taskbar] small_icons`), each painted at `scale`.
-pub fn small_bar(s: &Settings, scale: i32) -> [(Part, PartImage); 11] {
+pub fn small_bar(s: &Settings, scale: i32) -> [(Part, PartImage); 12] {
     let h = super::SMALL_TASKBAR_HEIGHT;
     let button = (super::SMALL_ICON_BUTTON.0, h);
     [
@@ -92,6 +92,7 @@ pub fn small_bar(s: &Settings, scale: i32) -> [(Part, PartImage); 11] {
             Part::SlotLight,
             bar::slot_light(super::SMALL_ICON_BUTTON.0, scale),
         ),
+        (Part::PagerLight, bar::pager_light(scale)),
         (Part::SlotBand, bar::slot_band(s, h, scale)),
         (Part::PagerTile, taskbutton::pager_tiles(s, button, scale)),
     ]
@@ -951,6 +952,7 @@ mod tests {
             (Part::ShowDesktop, (vec![n, h], 15, 60)),
             (Part::SlotEdge, (vec![h, p], 2, 60)),
             (Part::SlotLight, (vec![h, p], 44, 14)),
+            (Part::PagerLight, (vec![h], 23, 7)),
             (Part::SlotBand, (vec![p], 1, 30)),
             (Part::PagerTile, (vec![h, c, ch], 44, 90)),
         ];

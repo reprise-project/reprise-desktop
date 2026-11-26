@@ -4,7 +4,7 @@ use crate::raster::Rect;
 use crate::theme::Metrics;
 
 /// Quick Launch button width: 16 px icon, 3 px padding, 1 px frame each side. A pager button is as wide.
-const QUICK_W: i32 = 23;
+pub const QUICK_W: i32 = 23;
 /// Width of the » cell ending a Quick Launch band too short for its buttons on a Bottom or Top bar; down a side bar it is a `QUICK_W` cell.
 const QUICK_MORE_W: i32 = 14;
 const PAGER_GAP: i32 = 4;

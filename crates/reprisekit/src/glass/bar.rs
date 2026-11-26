@@ -251,9 +251,20 @@ pub fn slot_edge(s: &Settings, h: i32, d: i32) -> PartImage {
 
 /// The light along a lit or held slot's foot, `w` px wide and [`LIGHT_ROWS`] tall: whole at the middle of the bottom row, fading over an ellipse [`LIGHT_REACH`] across and up. Turned over on a top bar.
 pub fn slot_light(w: i32, d: i32) -> PartImage {
+    foot_light(w, LIGHT_REACH.0, &[State::Hot, State::Pressed], d)
+}
+
+/// The current pager cell's foot light: [`slot_light`] narrowed to the cell, its reach across ending at the cell's two outer columns, so the cell's sides cut none of it.
+pub fn pager_light(d: i32) -> PartImage {
+    let w = crate::taskbar::QUICK_W;
+    foot_light(w, f64::from(w - 1) / 2.0, &[State::Hot], d)
+}
+
+fn foot_light(w: i32, rx: f64, states: &[State], d: i32) -> PartImage {
     let h = LIGHT_ROWS;
-    let mut c = Canvas::new((w * d) as u32, (2 * h * d) as u32);
-    let (rx, ry) = LIGHT_REACH;
+    let frames = states.len() as i32;
+    let mut c = Canvas::new((w * d) as u32, (frames * h * d) as u32);
+    let ry = LIGHT_REACH.1;
     for y in 0..h * d {
         for x in 0..w * d {
             // Down the light, within its rows: it ends at its top row
@@ -262,11 +273,12 @@ pub fn slot_light(w: i32, d: i32) -> PartImage {
             let dx = (centre(x, d) + 0.5 - (f64::from(w / 2) + 0.5)) / rx;
             let dy = (f64::from(h) - y_at - 0.5) / ry;
             let px = pack(ink(1.0 - dx.hypot(dy), LIGHT_INK));
-            c.put_raw(x, y, px);
-            c.put_raw(x, h * d + y, px);
+            for f in 0..frames {
+                c.put_raw(x, f * h * d + y, px);
+            }
         }
     }
-    PartImage::new(c, &[State::Hot, State::Pressed], Layout::Vertical).at_scale(d)
+    PartImage::new(c, states, Layout::Vertical).at_scale(d)
 }
 
 /// The Show desktop strip's dark edge: the plain glass under these shades
@@ -627,6 +639,7 @@ mod tests {
                 "{h} px strip"
             );
         }
+        assert_eq!(size(&pager_light(1)), (23, LIGHT_ROWS, 1), "pager light");
         // The two top lines stay fixed when the bar is drawn at another
         // height; the glass under them stretches.
         assert_eq!(taskbar(&s, 40, 1).sizing, Insets::new(LEFT, 2, 0, 0));
@@ -677,6 +690,38 @@ mod tests {
             0,
             "clear past its reach"
         );
+    }
+
+    #[test]
+    fn the_pager_light_peaks_at_the_cells_middle_and_is_clear_at_its_outer_columns() {
+        for d in [1, 2] {
+            let light = pager_light(d);
+            let (w, foot) = (23 * d, LIGHT_ROWS * d - 1);
+            let alpha = |x| light.atlas.get(x, foot) >> 24;
+            let mid = 11 * d + d / 2;
+            assert_eq!(
+                alpha(mid),
+                (0..w).map(alpha).max().unwrap(),
+                "scale {d}: brightest at the middle"
+            );
+            assert!(alpha(mid) > 230, "scale {d}: near whole at the middle");
+            for y in 0..LIGHT_ROWS * d {
+                for x in [0, w - 1] {
+                    assert_eq!(
+                        light.atlas.get(x, y),
+                        0,
+                        "scale {d}: column {x} row {y} is clear"
+                    );
+                }
+            }
+            for x in 0..w {
+                assert_eq!(
+                    alpha(x),
+                    alpha(w - 1 - x),
+                    "scale {d}: symmetric at column {x}"
+                );
+            }
+        }
     }
 
     use crate::style::{Part, Style};
@@ -772,6 +817,9 @@ mod tests {
                 let got = part_twice_over(&one, &two, (button, LIGHT_ROWS), |_, _, _, _| false);
                 assert_eq!(got, Ok(()), "{:?} {h} px foot light", s.material);
             }
+            let (one, two) = (pager_light(1), pager_light(2));
+            let got = part_twice_over(&one, &two, (23, LIGHT_ROWS), |_, _, _, _| false);
+            assert_eq!(got, Ok(()), "{:?} pager light", s.material);
         }
     }
 
@@ -804,6 +852,7 @@ mod tests {
                 got.push((format!("{h} px {name}"), fnv(&img)));
             }
         }
+        got.push(("pager light".into(), fnv(&pager_light(2))));
         crate::pins::check("glass/bar_parts_at_2", &got);
     }
 }

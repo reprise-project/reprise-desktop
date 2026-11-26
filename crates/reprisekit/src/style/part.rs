@@ -36,6 +36,8 @@ pub enum Part {
     LabelRow,
     SlotEdge,
     SlotLight,
+    /// The current pager cell's foot light, as wide as the cell.
+    PagerLight,
     SlotBand,
     PagerTile,
     TaskLabel,

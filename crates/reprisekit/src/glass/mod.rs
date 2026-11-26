@@ -490,6 +490,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         Part::SlotLight,
         lazy(|_, d| bar::slot_light(ICON_BUTTON.0, d)),
     )
+    .with_painted(Part::PagerLight, lazy(|_, d| bar::pager_light(d)))
     .with_painted(
         Part::SlotBand,
         lazy(|s, d| bar::slot_band(s, BAR_HEIGHT, d)),
@@ -1546,6 +1547,7 @@ mod tests {
             Part::TaskLabelEdge,
             Part::SlotEdge,
             Part::SlotLight,
+            Part::PagerLight,
             Part::SlotBand,
             Part::PagerTile,
             Part::TrayArea,
@@ -1620,6 +1622,7 @@ mod tests {
             (Part::ShowDesktop, (15, 40), (15, 30)),
             (Part::SlotEdge, (2, 40), (2, 30)),
             (Part::SlotLight, (60, 7), (44, 7)),
+            (Part::PagerLight, (23, 7), (23, 7)),
             (Part::SlotBand, (1, 40), (1, 30)),
             (Part::PagerTile, (60, 40), (44, 30)),
         ] {

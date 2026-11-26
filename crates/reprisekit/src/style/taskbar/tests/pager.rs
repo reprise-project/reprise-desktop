@@ -27,6 +27,15 @@ fn a_glass_pager_lights_the_current_desktop_at_its_foot() {
             r1.x + 11,
             "small {small}: the light peaks at the cell's middle column"
         );
+        for x in [r1.x, r1.right() - 1] {
+            for y in r1.y..r1.bottom() {
+                assert_eq!(
+                    c.get(x, y),
+                    bar.get(x, y),
+                    "small {small}: the light ends inside the cell, its outer column {x} is bar at row {y}"
+                );
+            }
+        }
         for (x, y) in (0..3).flat_map(|x| (0..3).map(move |y| (x, y))) {
             assert_eq!(
                 c.get(r1.x + x, r1.y + y),
@@ -40,6 +49,55 @@ fn a_glass_pager_lights_the_current_desktop_at_its_foot() {
             "small {small}: another desktop's number is dimmer than the current one's"
         );
     }
+}
+
+#[test]
+fn glass_pager_pins() {
+    use crate::taskbar::PagerMark;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for small in [false, true] {
+        for pct in [100, 200] {
+            for sc in [1, 2] {
+                let mut theme = theme_for(Interface::Glass);
+                if small {
+                    crate::interfaces::small_bar(&mut theme, &Default::default());
+                }
+                let theme = theme.with_text_size(pct);
+                let s = theme.look.style().unwrap();
+                let counts = TaskbarCounts {
+                    pager: 4,
+                    ..TaskbarCounts::default()
+                };
+                let mut layout =
+                    TaskbarLayout::compute(&theme.metrics, &s.taskbar, 400, true, counts, 60);
+                layout.lay_tasks(
+                    &theme.metrics,
+                    &s.taskbar,
+                    &[],
+                    crate::taskbar::TaskRow::Icons,
+                );
+                let (theme, layout) = (theme.scaled(sc), layout.scaled(sc));
+                let text = TextRenderer::load(&theme.fonts);
+                let start = TextRenderer::load(&s.start_text.font());
+                let mut st = state_with_tasks(&[]);
+                st.pager = vec![crate::taskbar::PagerButton::default(); 4];
+                st.pager[1].current = true;
+                st.pager_hot = Some(2);
+                st.pager_mark = PagerMark::Light;
+                let mut c = Canvas::new(layout.width as u32, layout.height as u32);
+                draw_taskbar(&mut c, s, &theme, &text, &start, &layout, &st);
+                let (first, last) = (layout.pager[0], layout.pager[3]);
+                let cells = Rect::new(first.x, 0, last.right() - first.x, layout.height);
+                let bar = if small { 30 } else { 40 };
+                got.push((
+                    format!("{bar} px bar {pct}% s{sc}"),
+                    crate::pins::fnv(&c.copy_rect(cells)),
+                ));
+            }
+        }
+    }
+    crate::pins::check("glass/pager", &got);
 }
 
 #[test]
