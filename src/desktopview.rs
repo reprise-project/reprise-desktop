@@ -111,6 +111,10 @@ pub struct DesktopView {
     /// A rescan is reading the folder off the loop; `rescan_again` asks for one more after it.
     scanning: bool,
     rescan_again: bool,
+    /// The desktop's own renames running, and whether the read running when one began is to be
+    /// dropped ([`State::desktop_rename_started`]).
+    renaming: usize,
+    stale: bool,
     /// The icon size the last read decoded the icon files at, and the icon cache's
     /// `file_drops` after it put them in: a change in either means a read again.
     icons_read: (i32, u64),
@@ -302,6 +306,8 @@ pub(crate) fn create(
         mime: std::sync::Arc::new(apps::mime_globs()),
         scanning: false,
         rescan_again: false,
+        renaming: 0,
+        stale: false,
         icons_read: (0, 0),
         landed: Vec::new(),
         send_to: Vec::new(),
