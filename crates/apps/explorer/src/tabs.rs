@@ -1,8 +1,10 @@
 //! The window's tabs. The open tab lives in the window itself; each other tab keeps its folder,
 //! history, view, selection and scroll in a [`TabState`] until it opens again and re-lists.
+//! Session restore brings back each tab's folder and view and which tab showed ([`Restored`]).
 
+use crate::commands::{mode_from_name, mode_name};
 use crate::place::Place;
-use crate::{BTN_LEFT, Explorer};
+use crate::{BTN_LEFT, Explorer, reopen_arg};
 use repriseapp::{Ctx, Reply};
 use reprisefs::history::History;
 use reprisekit::access::Tree;
@@ -36,6 +38,65 @@ impl TabState {
             selected: Vec::new(),
             scroll: (0, 0),
         }
+    }
+}
+
+/// Leads the one argument a window of several tabs reopens with:
+/// `--tabs=OPEN;MODE:PLACE;MODE:PLACE...`, OPEN the shown tab's index, each PLACE as
+/// [`reopen_arg`] names it with `%` and `;` escaped as `%25` and `%3B`.
+const TABS_ARG: &str = "--tabs=";
+/// The longest argument session restore keeps.
+const ARG_MAX: usize = 1024;
+
+/// A window's tabs for session restore: each one's place and view in strip order, and the shown one.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Restored {
+    pub(crate) list: Vec<(Place, Mode)>,
+    pub(crate) open: usize,
+}
+
+impl Restored {
+    /// The argument that reopens these tabs: the shown tab's plain place when it is the only one
+    /// named. A tab with no nameable place is left out, and tabs from the end make room past
+    /// [`ARG_MAX`]; the shown tab always stays, and the window names none without it.
+    pub(crate) fn arg(&self) -> Option<String> {
+        let named = |p: &Place| reopen_arg(p).filter(|a| !a.contains(char::is_control));
+        let shown = named(&self.list.get(self.open)?.0)?;
+        let mut kept: Vec<(usize, String)> = (self.list.iter().enumerate())
+            .filter_map(|(i, (place, mode))| {
+                let place = named(place)?.replace('%', "%25").replace(';', "%3B");
+                Some((i, format!("{}:{place}", mode_name(*mode))))
+            })
+            .collect();
+        while kept.len() > 1 {
+            let open = kept.iter().position(|(i, _)| *i == self.open)?;
+            let mut arg = format!("{TABS_ARG}{open}");
+            for (_, tab) in &kept {
+                arg.push(';');
+                arg.push_str(tab);
+            }
+            if arg.len() <= ARG_MAX {
+                return Some(arg);
+            }
+            let last = kept.iter().rposition(|(i, _)| *i != self.open)?;
+            kept.remove(last);
+        }
+        Some(shown)
+    }
+
+    /// The tabs [`Restored::arg`] named in `arg`; None for any other argument.
+    pub(crate) fn parse(arg: &str) -> Option<Restored> {
+        let mut parts = arg.strip_prefix(TABS_ARG)?.split(';');
+        let open = parts.next()?.parse().ok()?;
+        let list = parts
+            .map(|tab| {
+                let (mode, place) = tab.split_once(':')?;
+                let place = place.replace("%3B", ";").replace("%25", "%");
+                let (place, _) = Place::read_address(&place, None, &[])?;
+                Some((place, mode_from_name(mode)))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        (list.len() > 1 && open < list.len()).then_some(Restored { list, open })
     }
 }
 
@@ -86,6 +147,34 @@ impl Explorer {
     pub(crate) fn access_tabs(&self, tree: &mut Tree, ctx: &Ctx) {
         if let Some(l) = self.tab_layout(ctx) {
             tabstrip::doc_access(&self.tabs.strip, &l, tree, reprisekit::access::ROOT, "tabs");
+        }
+    }
+
+    /// The tabs as they stand, the open one at the window's place and view.
+    pub(crate) fn restored(&self) -> Restored {
+        let open = self.tabs.strip.open;
+        let list = (self.tabs.list.iter().enumerate())
+            .map(|(i, t)| match i == open {
+                true => (self.place.clone(), self.sv.mode),
+                false => (t.place.clone(), t.mode),
+            })
+            .collect();
+        Restored { list, open }
+    }
+
+    /// A restored window's tabs: `r`'s open tab is the one the window shows.
+    pub(crate) fn restore_tabs(&mut self, r: Restored, ctx: &mut Ctx) {
+        let mut tabs = reprisekit::controls::doctabs::Tabs::new();
+        tabs.strip.adder_menu = false;
+        for (place, mode) in r.list {
+            let label = self.title_of(&place);
+            tabs.push(TabState::at(place, mode, self.sv.sort), label);
+        }
+        tabs.select(r.open);
+        let mode = tabs.list[r.open].mode;
+        self.tabs = tabs;
+        if mode != self.sv.mode {
+            self.show_mode(mode, ctx);
         }
     }
 

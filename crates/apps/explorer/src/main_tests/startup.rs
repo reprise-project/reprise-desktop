@@ -40,6 +40,7 @@ fn select_opens_the_folder_on_the_entry() {
             alone: None,
             connect: None,
             search: false,
+            tabs: None,
         }
     );
 
@@ -400,4 +401,125 @@ fn a_folder_window_reopens_at_its_place() {
         None,
         "a sheet alone"
     );
+}
+
+#[test]
+fn a_window_of_tabs_reopens_each_tab_in_its_view_on_the_one_it_showed() {
+    use repriseapp::Extended;
+    use shellview::Mode;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let [one, two, three] = ["one", "two", "three"].map(|n| dir.path().join(n));
+    for d in [&one, &two, &three] {
+        std::fs::create_dir(d).expect("mkdir");
+    }
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(one.clone()), &mut ctx);
+    ex.run(Command::Mode(Mode::Details), &mut ctx);
+    for (folder, mode) in [(&two, Mode::List), (&three, Mode::Icons)] {
+        ex.run(Command::NewTab, &mut ctx);
+        ex.go(Place::Folder(folder.clone()), &mut ctx);
+        ex.run(Command::Mode(mode), &mut ctx);
+    }
+    ex.run(Command::NextTab { back: true }, &mut ctx);
+    let arg = ex.restored().arg().expect("an argument");
+    assert!(arg.starts_with("--tabs=1;"), "{arg}");
+
+    let mut app = Lazy {
+        start: parse_args([arg.clone().into()]),
+        inner: None,
+        units: TextUnits::ONE,
+    };
+    assert_eq!(app.reopen(MAIN).as_deref(), Some(arg.as_str()));
+    let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    let ex = app.inner.as_mut().expect("the window");
+    assert_eq!(ex.tabs.strip.labels, ["one", "two", "three"]);
+    assert_eq!(ex.tabs.strip.open, 1);
+    assert_eq!(ex.place, Place::Folder(two.clone()));
+    assert_eq!(ex.sv.mode, Mode::List);
+    let modes: Vec<Mode> = ex.restored().list.iter().map(|t| t.1).collect();
+    assert_eq!(modes, [Mode::Details, Mode::List, Mode::Icons]);
+    assert_eq!(app.reopen(MAIN).as_deref(), Some(arg.as_str()));
+
+    let ex = app.inner.as_mut().expect("the window");
+    ex.run(Command::NextTab { back: false }, &mut ctx);
+    assert_eq!(ex.place, Place::Folder(three));
+    assert_eq!(ex.sv.mode, Mode::Icons);
+    ex.run(Command::CloseTab, &mut ctx);
+    ex.run(Command::CloseTab, &mut ctx);
+    assert_eq!(
+        app.reopen(MAIN),
+        one.into_os_string().into_string().ok(),
+        "one tab left names its plain folder"
+    );
+}
+
+#[test]
+fn a_plain_folder_argument_reopens_one_tab() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let start = parse_args([dir.path().as_os_str().to_os_string()]);
+    assert_eq!(start.tabs, None);
+    let mut ctx = test_ctx();
+    let mut app = Lazy {
+        start,
+        inner: None,
+        units: TextUnits::ONE,
+    };
+    let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    let ex = app.inner.as_ref().expect("the window");
+    assert_eq!(ex.tabs.list.len(), 1);
+    assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
+}
+
+#[test]
+fn tab_places_with_semicolons_and_percents_round_trip() {
+    use shellview::Mode;
+    let tabs = tabs::Restored {
+        list: vec![
+            (Place::Folder("/a;b%3B;".into()), Mode::Tiles),
+            (Place::Folder("/c%25d".into()), Mode::Thumbnails),
+            (Place::Computer, Mode::Details),
+            (Place::RecycleBin, Mode::List),
+        ],
+        open: 3,
+    };
+    let arg = tabs.arg().expect("an argument");
+    assert_eq!(tabs::Restored::parse(&arg), Some(tabs));
+    assert_eq!(
+        parse_args(["--tabs=0;details:/a".into()]).place,
+        Place::Home,
+        "one tab is no tabs argument"
+    );
+}
+
+#[test]
+fn tabs_past_1024_bytes_drop_from_the_end_and_the_shown_one_stays() {
+    use shellview::Mode;
+    let long = |c: &str| Place::Folder(format!("/{}", c.repeat(400)).into());
+    let tabs = |open| tabs::Restored {
+        list: vec![
+            (long("a"), Mode::List),
+            (long("b"), Mode::List),
+            (long("c"), Mode::List),
+        ],
+        open,
+    };
+    let kept = |open| {
+        let arg = tabs(open).arg().expect("an argument");
+        assert!(arg.len() <= 1024, "{} bytes", arg.len());
+        let r = tabs::Restored::parse(&arg).expect("tabs");
+        (r.list.into_iter().map(|t| t.0).collect::<Vec<_>>(), r.open)
+    };
+    assert_eq!(kept(0), (vec![long("a"), long("b")], 0));
+    assert_eq!(kept(2), (vec![long("a"), long("c")], 1));
+    let wide = tabs::Restored {
+        list: vec![
+            (long("a"), Mode::List),
+            (
+                Place::Folder(format!("/{}", "b".repeat(1100)).into()),
+                Mode::List,
+            ),
+        ],
+        open: 0,
+    };
+    assert_eq!(wide.arg(), Some(format!("/{}", "a".repeat(400))));
 }

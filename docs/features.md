@@ -353,9 +353,9 @@ are.
   be taken back, a box asks whether to go ahead anyway.
 - **Session restore.** The programs you left open start again at the next
   login, on their desktops, with their tab and snap groups (`[session] restore`).
-  Notepad comes back with each file it had open, Explorer with each window at
-  its folder (a network server's at the Network list) and Settings on its
-  page. An Untitled Notepad comes back empty, as unsaved text is not kept; a
+  Notepad comes back with each file it had open, Explorer with each window's
+  tabs in their order, each at its folder and view (a network server's at the
+  Network list), on the tab it showed, and Settings on its page. An Untitled Notepad comes back empty, as unsaved text is not kept; a
   file gone by then comes back as an empty document under its name, written
   only if you save it, and a folder gone by then opens Home. Other programs
   start once each, as their Start menu entry starts them, without the files
