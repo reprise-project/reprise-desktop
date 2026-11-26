@@ -46,8 +46,10 @@ impl State {
         let pinned_start = self.launches.is_pinned(&entry.id);
         let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
         let uninstall = (self.app_uninstall.get(&entry.id).copied()).unwrap_or(Uninstall::Absent);
-        let on_desktop = (self.desktop.as_ref())
-            .is_some_and(|d| d.entries.iter().any(|e| e.name == entry.id.as_str()));
+        let on_desktop = (self.desktop.as_ref()).is_some_and(|d| {
+            let name = copied_name(&entry.id, &reprisefs::apps::default_dirs());
+            d.entries.iter().any(|e| e.name == name)
+        });
         Some(program_menu(
             entry.id.as_str(),
             pinned_start,
@@ -259,6 +261,14 @@ pub enum Uninstall {
     /// Shown greyed, with an infotip saying why.
     Greyed(&'static str),
     Absent,
+}
+
+/// The name Add to desktop copies `id`'s file under: its file name in `dirs` (`kde-foo.desktop`
+/// stored as `kde/foo.desktop` is `foo.desktop`), else the id.
+fn copied_name(id: &reprisefs::apps::DesktopId, dirs: &[std::path::PathBuf]) -> String {
+    (reprisefs::apps::find_file_in(dirs, id).as_deref())
+        .and_then(std::path::Path::file_name)
+        .map_or_else(|| id.as_str().into(), |n| n.to_string_lossy().into_owned())
 }
 
 pub(crate) const ON_DESKTOP: &str = "The desktop already holds a copy of this program.";
@@ -738,6 +748,24 @@ mod tests {
             allow_launching: true,
         }];
         assert!(!offered(&h), "a copy on the desktop greys the row");
+    }
+
+    #[test]
+    fn a_program_from_a_subfolder_is_copied_under_its_file_name() {
+        let apps = std::env::temp_dir().join(format!("reprise-copied-{}", std::process::id()));
+        std::fs::create_dir_all(apps.join("kde")).unwrap();
+        std::fs::write(apps.join("kde/foo.desktop"), "").unwrap();
+        let dirs = [apps.clone()];
+        assert_eq!(
+            copied_name(&"kde-foo.desktop".parse().unwrap(), &dirs),
+            "foo.desktop"
+        );
+        assert_eq!(
+            copied_name(&"gone.desktop".parse().unwrap(), &dirs),
+            "gone.desktop",
+            "the id while no file holds it"
+        );
+        std::fs::remove_dir_all(&apps).unwrap();
     }
 
     #[test]
