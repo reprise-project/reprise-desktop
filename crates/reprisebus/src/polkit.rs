@@ -1,6 +1,7 @@
 //! reprise-polkit's record of dismissed password prompts, on the session bus under one [`name`]
 //! per logind session. A service behind polkit answers the same error for a dismissed prompt and
-//! a refused password; a program asks here which one it was.
+//! a refused password; a program asks here which one it was, and [`withdraw`]s the prompts it
+//! stopped waiting for.
 //! [`allowed_without_prompt`] and [`allowed_without_password`] ask polkit itself whether an action
 //! needs a password, [`may_ask`] whether a password would allow it.
 
@@ -38,27 +39,53 @@ fn agent_name(cgroup: &str, record: &str) -> Option<String> {
     judged_session(cgroup, record).and_then(name)
 }
 
-/// Whether the last password prompt polkit opened for this process was
-/// dismissed, forgetting it once asked. False when reprise-polkit does not
-/// answer. Blocks for at most [`crate::METHOD_TIMEOUT`].
-pub fn dismissed() -> bool {
+/// Calls `method`, which takes nothing, on the reprise-polkit that shows this process's prompts.
+/// Blocks for at most [`crate::METHOD_TIMEOUT`].
+fn ask_agent(method: &str) -> Result<zbus::Message, String> {
     let (cgroup, record) = (
         crate::logind::own_cgroup(),
         crate::logind::own_user_record(),
     );
-    let Some(agent) = agent_name(&cgroup, &record) else {
-        log::warn!("no logind session whose reprise-polkit would know of a dismissed prompt");
-        return false;
-    };
-    let answer = crate::session().and_then(|conn| {
-        crate::wait(conn.call_method(Some(agent.as_str()), PATH, Some(INTERFACE), "Take", &()))?
-            .body()
-            .deserialize::<bool>()
-    });
+    let agent = agent_name(&cgroup, &record)
+        .ok_or("no logind session whose reprise-polkit shows this process's prompts")?;
+    crate::session()
+        .and_then(|conn| {
+            crate::wait(conn.call_method(Some(agent.as_str()), PATH, Some(INTERFACE), method, &()))
+        })
+        .map_err(|e| format!("{agent}: {e}"))
+}
+
+/// Whether the last password prompt polkit opened for this process was
+/// dismissed, forgetting it once asked. False when reprise-polkit does not
+/// answer. Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn dismissed() -> bool {
+    let answer = ask_agent("Take")
+        .and_then(|reply| (reply.body().deserialize::<bool>()).map_err(|e| e.to_string()));
     answer.unwrap_or_else(|e| {
-        log::warn!("{agent} does not say whether the prompt was dismissed: {e}");
+        log::warn!("no word whether the prompt was dismissed: {e}");
         false
     })
+}
+
+/// Withdraw the password prompts reprise-polkit shows for this process: the service that asked
+/// polkit gets no password, so one typed later changes nothing. Blocks for at most
+/// [`crate::METHOD_TIMEOUT`].
+pub fn withdraw() {
+    let answer = ask_agent("Withdraw")
+        .and_then(|reply| (reply.body().deserialize::<u32>()).map_err(|e| e.to_string()));
+    match answer {
+        Ok(0) => {}
+        Ok(n) => log::info!("withdrew {n} password prompt(s)"),
+        Err(e) => log::warn!("no password prompt withdrawn: {e}"),
+    }
+}
+
+/// [`withdraw`] after a call that let polkit ask for a password (`interactive`) timed out with
+/// `e`: the service may still wait on the prompt, and act on a password typed into it.
+pub fn withdraw_timed_out(e: &zbus::Error, interactive: bool) {
+    if interactive && crate::error::timed_out(e) {
+        withdraw();
+    }
 }
 
 /// How a service behind polkit said no.

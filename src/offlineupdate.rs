@@ -32,8 +32,8 @@ const TAKE_BACK_WITHIN: Duration = Duration::from_secs(40);
 /// A bus call's answer: the error is what to tell the user, None for a dismissed password prompt.
 pub type Answer = Result<(), Option<String>>;
 
-/// What Reprise asks PackageKit, and logind whether the computer is going down. `interactive`
-/// lets polkit ask for a password.
+/// What Reprise asks PackageKit, logind whether the computer is going down, and reprise-polkit to
+/// withdraw its prompts. `interactive` lets polkit ask for a password.
 pub trait Bus: Send + Sync {
     /// None when PackageKit does not answer.
     fn status(&self) -> Option<Status>;
@@ -41,6 +41,8 @@ pub trait Bus: Send + Sync {
     fn cancel(&self, interactive: bool) -> Answer;
     /// Whether the computer is going down ([`crate::power::shutting_down`]).
     fn shutting_down(&self) -> bool;
+    /// Withdraw the password prompts polkit shows for Reprise ([`reprisebus::polkit::withdraw`]).
+    fn withdraw(&self) {}
 }
 
 #[cfg(not(test))]
@@ -59,6 +61,9 @@ impl Bus for PackageKit {
     }
     fn shutting_down(&self) -> bool {
         crate::power::shutting_down()
+    }
+    fn withdraw(&self) {
+        reprisebus::polkit::withdraw();
     }
 }
 

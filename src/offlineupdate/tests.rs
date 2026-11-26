@@ -10,7 +10,8 @@ use reprisekit::controls::endsession::Goal;
 use reprisekit::powerpanel::UpdatesBox;
 
 /// A PackageKit that records its calls, answers its status with `status`, Trigger with `answer`
-/// and Cancel with `cancel`, and the computer going down (logind or systemd) while `down`.
+/// and Cancel with `cancel`, and the computer going down (logind or systemd) while `down`. It
+/// records the prompts' withdrawal too.
 struct Fake {
     status: Option<Status>,
     answer: Answer,
@@ -64,6 +65,9 @@ impl Bus for Fake {
     fn shutting_down(&self) -> bool {
         self.call("down");
         self.down.load(Ordering::SeqCst)
+    }
+    fn withdraw(&self) {
+        self.call("withdraw");
     }
 }
 
@@ -573,4 +577,45 @@ fn a_take_back_that_panics_still_ends_the_session() {
         ENDS.fetch_add(1, Ordering::SeqCst);
     });
     h.until("the end", |_| ENDS.load(Ordering::SeqCst) == 1);
+}
+
+#[test]
+fn a_session_end_that_gives_up_the_power_action_withdraws_its_prompts_and_runs_no_action() {
+    type End = fn(&mut State);
+    let ends: [(&str, End); 2] = [
+        ("quit", crate::sessionend::quit),
+        ("log-off", |s| {
+            crate::sessionend::begin(s, Goal::LogOff, None, Origin::Desktop)
+        }),
+    ];
+    for (how, end) in ends {
+        let fake = Fake::new(false, Ok(()));
+        let mut h = harness(&fake);
+        let ran =
+            std::env::temp_dir().join(format!("reprise-given-up-{}-{how}", std::process::id()));
+        let _ = std::fs::remove_file(&ran);
+        let stand_by = format!("touch '{}'", ran.display());
+        let attempt_done = |_: &State| Arc::strong_count(&fake) == 2;
+        crate::sessionend::sleep(
+            &mut h.state,
+            crate::sessionend::Act::StandBy,
+            stand_by.clone(),
+        );
+        h.until("the Stand By command", |_| ran.exists());
+        h.until("its attempt's thread", attempt_done);
+        std::fs::remove_file(&ran).unwrap();
+        // The attempt's thread waits on the lock as on a password prompt.
+        let (release, trigger) = hold(&h.state.offline.made);
+        crate::sessionend::sleep(&mut h.state, crate::sessionend::Act::StandBy, stand_by);
+        h.until("the attempt", |s| s.powering.busy());
+        end(&mut h.state);
+        h.until("the withdrawal", |_| {
+            fake.calls().iter().any(|c| c == "withdraw")
+        });
+        release.send(()).unwrap();
+        trigger.join().unwrap();
+        h.until("its attempt's thread", attempt_done);
+        assert!(!ran.exists(), "{how}: the Stand By command does not run");
+        crate::crash::not_ending();
+    }
 }

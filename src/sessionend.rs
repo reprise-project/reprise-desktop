@@ -9,7 +9,8 @@
 //! before anything closes and clears it before the action, before the fade, so polkit's prompt shows; one that won't clear asks whether to go
 //! ahead anyway. A Restart Into clears a target of the other kind the same way before it sets its own. A critical battery, and a Hibernate
 //! from the lid, idle or a power key, clear it without a prompt and go ahead regardless. Stand By and Log Off leave it to the next power action.
-//! Log Off and a critical battery give up a power action under way, but cannot stop a reboot logind already accepted.
+//! Log Off, a critical battery and quitting give up a power action under way and withdraw its password prompts, so a password
+//! typed into one hidden under the fade runs nothing; they cannot stop a reboot logind already accepted.
 //! A Turn Off or Restart that installs PackageKit's offline update triggers it on the attempt's thread just before the
 //! action, and takes it back when the action fails (`offlineupdate`).
 
@@ -219,6 +220,7 @@ fn check(
     if critical || goal == Goal::LogOff {
         if state.powering.give_up_all() {
             log::info!("session end: {goal:?} gives up the power action under way");
+            withdraw_prompts(state);
         }
     } else if state.powering.busy() {
         log::info!("session end: {goal:?} while a power action is under way; ignored");
@@ -757,6 +759,7 @@ pub fn quit(state: &mut State) {
     crate::crash::ending();
     if state.powering.give_up_all() {
         log::info!("session end: quitting gives up the power action under way");
+        withdraw_prompts(state);
     }
     fade_out(
         state,
@@ -769,6 +772,19 @@ pub fn quit(state: &mut State) {
 
 fn stop(state: &mut State) {
     state.signal.stop();
+}
+
+/// Withdraw, off the loop, the password prompts of a power action just given up on: one left open
+/// under the fade would still run the action on a password typed blind.
+fn withdraw_prompts(state: &mut State) {
+    let bus = Arc::clone(&state.offline.bus);
+    let spawned = state.spawn_job(move || {
+        bus.withdraw();
+        Box::new(|_: &mut State| {})
+    });
+    if !spawned {
+        log::warn!("session end: the power action's password prompts stay");
+    }
 }
 
 fn act(state: &mut State, goal: Goal, cmd: Option<String>, aim: Aim, how: Run) {
@@ -981,7 +997,10 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
     let (bus, made) = (Arc::clone(&state.offline.bus), state.offline.made.clone());
     let spawned = state.spawn_job(move || {
         let failed = unpanicked(|| {
+            // A prompt before it (a restart target's clear) may have been answered after the
+            // attempt was given up on.
             let power = || match logind_verb(&cmd) {
+                _ if !ticket.still() => Some(Failed::Dismissed),
                 Some(verb) => zbus::block_on(call(verb, how.override_inhibitors, interactive)),
                 None => run(&cmd, &env).map(Failed::Refused),
             };
@@ -1625,7 +1644,7 @@ fn too_old_for_flags(e: &zbus::Error) -> bool {
 }
 
 async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Option<Failed> {
-    // No method timeout: a password prompt stays up as long as polkit lets it.
+    // No method timeout: logind stops waiting on the password prompt after 25 s.
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
         Err(e) => return Some(Failed::Refused(Refused::Failed(e.to_string()))),
@@ -1658,6 +1677,8 @@ async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Optio
     }
     .await;
     let e = reply.err()?;
+    // polkit leaves the prompt up after logind stopped waiting on it.
+    reprisebus::polkit::withdraw_timed_out(&e, interactive);
     let dismissed = || interactive && reprisebus::polkit::dismissed();
     let Some(why) = failure(&e, dismissed) else {
         return Some(Failed::Dismissed);
