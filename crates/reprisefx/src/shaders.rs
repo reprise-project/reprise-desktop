@@ -66,6 +66,7 @@ void main() {
 /// out = B + gain·(C·luma(B) - mean·B - (C - mean)/2)
 /// ```
 ///
+/// clamped, then dimmed past its knee (`reprisekit::backdrop::Dim`),
 /// inside the shape's rounded rectangle (anti-aliased over one pixel by its
 /// distance field), nothing outside. The caller cuts holes by leaving them out
 /// of the drawn damage.
@@ -104,6 +105,8 @@ uniform vec4 radii;
 uniform vec3 colour;
 // The lift's mean of C and gain; a gain of 0 shows the backdrop alone.
 uniform vec2 lift;
+// The dim's knee and keep; a knee of 1 dims nothing.
+uniform vec2 dim;
 // Which material: 0 Frosted, 1 Smoked, 2 Molten. Molten bends `uv` first.
 uniform float material;
 // Molten's lens: band, strength, rim, scale (crate::lens::Lens).
@@ -161,6 +164,10 @@ void main() {
     }
     float l = dot(b, vec3(0.299, 0.587, 0.114));
     vec3 c = clamp(b + lift.y * (colour * l - lift.x * b - (colour - lift.x) * 0.5), 0.0, 1.0);
+    float lc = dot(c, vec3(0.299, 0.587, 0.114));
+    if (lc > dim.x) {
+        c *= (dim.x + (lc - dim.x) * dim.y) / lc;
+    }
     c *= 1.0 - shade;
     vec3 hue = b / max(max(b.r, max(b.g, b.b)), 1e-3);
     vec3 hl = clamp(light, 0.0, 1.0) * mix(vec3(1.0), hue, SPEC_TINT);
@@ -574,6 +581,7 @@ impl Programs {
                 UniformName::new("radii", UniformType::_4f),
                 UniformName::new("colour", UniformType::_3f),
                 UniformName::new("lift", UniformType::_2f),
+                UniformName::new("dim", UniformType::_2f),
                 UniformName::new("material", UniformType::_1f),
                 UniformName::new("lens", UniformType::_4f),
                 UniformName::new("lens_box", UniformType::_4f),

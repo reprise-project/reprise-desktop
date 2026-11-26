@@ -811,6 +811,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn glass_samples_dim_a_white_desktop_only_under_white_labels() {
+        use crate::backdrop::Dim;
+        use crate::glass::{Mode, Settings};
+        use crate::interfaces::sample_theme;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let undimmed = |theme: &Theme| {
+            let mut flat = theme.clone();
+            let mut style = theme.look.style().unwrap().clone();
+            for l in &mut style.glass.as_mut().unwrap().lift {
+                l.dim = Dim::NONE;
+            }
+            flat.look = Look::Styled(std::sync::Arc::new(style));
+            flat
+        };
+        let luma = |px: u32| {
+            let ch = |k: u32| f64::from((px >> k) & 0xFF);
+            0.299 * ch(16) + 0.587 * ch(8) + 0.114 * ch(0)
+        };
+        // The focused window's right border, over the desktop.
+        let border = (339, 60);
+        let mut got = Vec::new();
+        for (mode, m) in [(Mode::Dark, "dark"), (Mode::Light, "light")] {
+            let g = Settings {
+                mode,
+                ..Settings::default()
+            };
+            for (desk, d) in [
+                (Color::rgb(255, 255, 255), "white"),
+                (Color::rgb(0, 0, 0), "black"),
+            ] {
+                let theme = sample_theme(Interface::Glass, "", &g, Some(desk));
+                for s in [1, 2] {
+                    let c = draw_sample(false, &theme, s, &text, None);
+                    let flat = draw_sample(false, &undimmed(&theme), s, &text, None);
+                    let px = |c: &Canvas| luma(c.get(border.0 * s, border.1 * s));
+                    let (dim, was) = (px(&c), px(&flat));
+                    match (mode, d) {
+                        (Mode::Dark, "white") => {
+                            assert!(dim < was - 40.0, "{m} {d} {s}: {dim} from {was}")
+                        }
+                        (Mode::Dark, _) => assert_eq!(dim, was, "{m} over {d} at {s}"),
+                        _ => assert_eq!(c.pixels, flat.pixels, "{m} over {d} at {s} dims nothing"),
+                    }
+                    got.push((format!("{m} {d} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("look/glass_sample_dim", &got);
+    }
+
     fn empty_taskbar_state() -> TaskbarState {
         TaskbarState {
             start_pressed: false,
