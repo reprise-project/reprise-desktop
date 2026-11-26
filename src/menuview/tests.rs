@@ -72,7 +72,7 @@ fn an_open_start_menu_row_takes_an_icon_installed_while_it_is_open() {
         MenuItem::Entry { icon, .. } => icon
             .as_ref()
             .map(|c| c.get(c.width as i32 / 2, c.height as i32 / 2)),
-        MenuItem::Separator => None,
+        MenuItem::Separator | MenuItem::Heading(_) => None,
     };
     assert_eq!(icon(&h), None, "no file has the name yet");
     std::fs::write(
@@ -109,7 +109,7 @@ fn a_row_waiting_on_an_icon_file_shows_its_cold_stand_in_once_that_lands() {
     h.state.open_start_menu(bar);
     let icon = |h: &crate::harness::Harness| match &h.state.menus[0].items[0] {
         MenuItem::Entry { icon, .. } => icon.clone().expect("the row's icon"),
-        MenuItem::Separator => unreachable!(),
+        MenuItem::Separator | MenuItem::Heading(_) => unreachable!(),
     };
     assert!(
         icon(&h).pixels.iter().all(|&p| p == 0),
@@ -131,7 +131,7 @@ fn a_rows_own_icon_ends_its_wait_on_the_stand_in() {
     let waits = || vec![(0, file.to_string(), 16), (0, stand_in.to_string(), 16)];
     let width = |items: &[MenuItem]| match &items[0] {
         MenuItem::Entry { icon, .. } => icon.as_ref().map(|c| c.width),
-        MenuItem::Separator => None,
+        MenuItem::Separator | MenuItem::Heading(_) => None,
     };
     let (own, shown) = (Some(Canvas::new(16, 16)), Some(Canvas::new(8, 8)));
 
@@ -172,7 +172,7 @@ fn an_icon_file_lands_on_its_waiting_rows_only() {
     assert!(land_icon(&mut items, &mut waits, file, 16, &art));
     let icon_width = |it: &MenuItem| match it {
         MenuItem::Entry { icon, .. } => icon.as_ref().map(|c| c.width),
-        MenuItem::Separator => None,
+        MenuItem::Separator | MenuItem::Heading(_) => None,
     };
     assert_eq!(
         items.iter().map(icon_width).collect::<Vec<_>>(),

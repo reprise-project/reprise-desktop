@@ -618,7 +618,10 @@ fn the_drop_menus_rows() {
                     enabled,
                     ..
                 } => (label.clone(), *bold, *enabled),
-                reprisekit::controls::menu::MenuItem::Separator => ("-".to_string(), false, true),
+                reprisekit::controls::menu::MenuItem::Separator
+                | reprisekit::controls::menu::MenuItem::Heading(_) => {
+                    ("-".to_string(), false, true)
+                }
             })
             .collect::<Vec<_>>()
     };

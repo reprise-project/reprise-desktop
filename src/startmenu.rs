@@ -573,7 +573,7 @@ mod tests {
                     }
                     s.into_iter().collect()
                 }
-                MenuItem::Separator => String::new(),
+                MenuItem::Separator | MenuItem::Heading(_) => String::new(),
             })
             .collect()
     }

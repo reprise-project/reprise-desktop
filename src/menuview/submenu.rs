@@ -99,6 +99,33 @@ impl State {
                 let (items, rows) = crate::winmenu::tabs_of_menu(rows);
                 return Some((items, MenuKind::Window { window, rows }, true, waits));
             }
+            MenuKind::Window { window, rows }
+                if rows.get(row).copied().flatten() == Some(WindowMenuRow::RecentMenu) =>
+            {
+                let (target, button) = self.jump_target_of(*window)?;
+                let (items, rows, waits) = self.recent_menu(&target, &output);
+                let kind = MenuKind::JumpList {
+                    rows,
+                    target: Box::new(target),
+                    button,
+                };
+                return Some((items, kind, true, waits));
+            }
+            MenuKind::WindowList {
+                windows,
+                rows,
+                button,
+            } if rows.get(row).copied().flatten() == Some(WindowListRow::RecentMenu) => {
+                let button = *button;
+                let (target, _) = self.jump_target_of(*windows.first()?)?;
+                let (items, rows, waits) = self.recent_menu(&target, &output);
+                let kind = MenuKind::JumpList {
+                    rows,
+                    target: Box::new(target),
+                    button,
+                };
+                return Some((items, kind, true, waits));
+            }
             MenuKind::JumpList {
                 rows,
                 target,

@@ -9,6 +9,7 @@ use super::glyph::{Mark, Piece};
 use super::panel::{self, Fade, LightBox};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{Px, Stops, centre, draw, ellipse, mix, premul, radial, ringed, scale};
+use crate::startpanel::search::INK_HEADER;
 use crate::style::{DropShadow, Layout, MenuLook, Part, PartImage, State};
 use crate::theme::Color;
 
@@ -30,6 +31,11 @@ const LOOK: MenuLook = MenuLook {
     arrow_inset: 13,
     arrow: Color::rgb(0x27, 0x27, 0x27),
     greyed: super::GREYED_CHOICE_TEXT,
+    heading: Color::rgb(
+        (INK_HEADER >> 16) as u8,
+        (INK_HEADER >> 8) as u8,
+        INK_HEADER as u8,
+    ),
     check_at: (7, 5),
     radio_at: (7, 7),
     shadow: None,
@@ -74,6 +80,7 @@ fn in_mode(mode: Mode, light: MenuLook) -> MenuLook {
             rule: (remap_color(light.rule.0), remap_color(light.rule.1)),
             arrow: remap_color(light.arrow),
             greyed: remap_color(light.greyed),
+            heading: remap_color(light.heading),
             ..light
         },
     }

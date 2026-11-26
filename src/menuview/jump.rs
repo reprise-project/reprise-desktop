@@ -64,6 +64,50 @@ impl State {
         })
     }
 
+    /// The jump target of the task button that holds window `w`, and the button.
+    pub(crate) fn jump_target_of(&self, w: WindowId) -> Option<(JumpTarget, usize)> {
+        self.bars.iter().find_map(|b| {
+            let i = b.slots.iter().position(|s| s.windows.contains(&w))?;
+            Some((self.jump_target(b.tree, i)?, i))
+        })
+    }
+
+    /// Whether the program of window `w`'s task button had recent files at the last read; asks for
+    /// another.
+    pub(crate) fn has_recent(&mut self, w: WindowId) -> bool {
+        let Some((target, _)) = self.jump_target_of(w) else {
+            return false;
+        };
+        self.refresh_recent();
+        !self.jump_recent(&target).is_empty()
+    }
+
+    /// The Recent Files submenu of `target` on `output`: its recent files with their icons, or a
+    /// greyed (Empty) once none are left.
+    pub(crate) fn recent_menu(
+        &mut self,
+        target: &JumpTarget,
+        output: &Output,
+    ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>, RowIcons) {
+        let recent = self.jump_recent(target);
+        let [files, _] = crate::taskbar::jump_sections(&recent, &[]);
+        let px = self.context_icon_px(output);
+        let mut waits = RowIcons::default();
+        let entry = target.entry.as_ref();
+        let (mut items, mut rows) = (Vec::new(), Vec::new());
+        for (n, (label, row)) in files.rows.into_iter().enumerate() {
+            let icon = crate::taskbar::jump_icon(entry, &row)
+                .and_then(|name| self.menu_icon(n, name, px, &mut waits));
+            items.push(MenuItem::entry(label).icon(icon));
+            rows.push(Some(row));
+        }
+        if items.is_empty() {
+            items.push(MenuItem::entry("(Empty)").enabled(false));
+            rows.push(None);
+        }
+        (items, rows, waits)
+    }
+
     pub(crate) fn window_icon(&mut self, w: WindowId, px: i32) -> Option<Canvas> {
         let win = self.windows.iter().find(|x| x.id == w)?;
         crate::icon::window_icon(&mut self.icons, &self.app_index, win, px)
@@ -80,53 +124,53 @@ impl State {
         }
     }
 
-    pub fn open_jump_list(&mut self, tree: TreeId, i: usize, at: (i32, i32)) {
-        let Some(target) = self.jump_target(tree, i) else {
-            return;
-        };
-        self.refresh_recent();
-        let recent = self.jump_recent(&target);
-        let titles: Vec<String> = target
-            .windows
-            .iter()
+    /// `target`'s jump list on `output`: its rows, what each does, and the icons they wait on.
+    pub(crate) fn jump_menu(
+        &mut self,
+        target: &JumpTarget,
+        output: &Output,
+    ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>, RowIcons) {
+        let recent = self.jump_recent(target);
+        let titles: Vec<String> = (target.windows.iter())
             .filter_map(|&w| self.win(w))
             .map(|w| w.title())
             .collect();
-        let tasks = target
-            .entry
-            .as_ref()
-            .map_or(&[][..], crate::taskbar::jump_tasks);
-        let task_names: Vec<&str> = tasks.iter().map(|a| a.name.as_str()).collect();
+        let entry = target.entry.as_ref();
+        let tasks = entry.map_or(&[][..], crate::taskbar::jump_tasks);
         let (items, rows) = crate::taskbar::jump_list(
+            &crate::taskbar::jump_sections(&recent, tasks),
             &target.name,
-            &recent,
-            &task_names,
             target.pin_file.is_some(),
             target.source.is_some(),
             &titles,
             self.desktops.count,
         );
+        let px = self.context_icon_px(output);
+        let mut waits = RowIcons::default();
+        let items = (items.into_iter().zip(&rows).enumerate())
+            .map(|(n, (item, row))| {
+                let icon = match row {
+                    Some(JumpRow::Window(k)) => (target.windows.get(*k))
+                        .and_then(|&w| self.menu_window_icon(n, w, px, &mut waits)),
+                    Some(row) => crate::taskbar::jump_icon(entry, row)
+                        .and_then(|name| self.menu_icon(n, name, px, &mut waits)),
+                    None => None,
+                };
+                item.icon(icon)
+            })
+            .collect();
+        (items, rows, waits)
+    }
+
+    pub fn open_jump_list(&mut self, tree: TreeId, i: usize, at: (i32, i32)) {
+        let Some(target) = self.jump_target(tree, i) else {
+            return;
+        };
         let Some(output) = self.output_at(at.0 as f64, at.1 as f64) else {
             return;
         };
-        let px = self.context_icon_px(&output);
-        let mut waits = RowIcons::default();
-        let items = (items.into_iter().zip(&rows).enumerate())
-            .map(|(n, (item, row))| match row {
-                Some(JumpRow::Window(k)) => {
-                    let icon = (target.windows.get(*k))
-                        .and_then(|&w| self.menu_window_icon(n, w, px, &mut waits));
-                    item.icon(icon)
-                }
-                Some(JumpRow::Task(k)) => {
-                    let icon = (tasks.get(*k).and_then(|a| a.icon.as_deref()))
-                        .or(target.entry.as_ref().and_then(|e| e.icon.as_deref()))
-                        .and_then(|name| self.menu_icon(n, name, px, &mut waits));
-                    item.icon(icon)
-                }
-                _ => item,
-            })
-            .collect();
+        self.refresh_recent();
+        let (items, rows, waits) = self.jump_menu(&target, &output);
         self.close_menu();
         let kind = MenuKind::JumpList {
             rows,
@@ -198,6 +242,76 @@ impl State {
 mod tests {
     use reprisekit::controls::menu::MenuItem;
 
+    /// With `[taskbar] pinned` off, a task button's window menu opens on Recent Files when the
+    /// program has recent files, its submenu listing them; another program's menu has no such row.
+    #[test]
+    fn a_task_buttons_window_menu_offers_the_programs_recent_files() {
+        let dir = std::env::temp_dir().join(format!("reprise-recent-menu-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let notes = dir.join("notes.txt");
+        std::fs::write(&notes, "x").unwrap();
+        let xbel = dir.join("recently-used.xbel");
+        std::fs::write(
+            &xbel,
+            format!(
+                "<xbel><bookmark href=\"file://{}\" modified=\"2026-01-01T00:00:00Z\">\
+                 <bookmark:application name=\"Mail\" exec=\"'mail %u'\" \
+                 modified=\"2026-01-01T00:00:00Z\" count=\"1\"/></bookmark></xbel>",
+                notes.display()
+            ),
+        )
+        .unwrap();
+        let entry = |name: &str, exec: &str| {
+            let text = format!("[Desktop Entry]\nType=Application\nName={name}\nExec={exec} %f\n");
+            let id = format!("{exec}.desktop").parse().unwrap();
+            reprisefs::apps::parse_desktop(&text, &id).unwrap()
+        };
+        let mut config = crate::config::Config::default();
+        config.taskbar.pinned = false;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("o", 1024, 768);
+        h.state.app_index = vec![entry("Mail", "mail"), entry("Paint", "paint")];
+        h.state.recent = crate::recentdocs::RecentDocs::reading(xbel);
+        h.state.refresh_recent();
+        h.until("the recent files read", |s| {
+            !s.recent.current(10).is_empty()
+        });
+        let mut c = h.connect();
+        let mail = h.map_toplevel(&mut c, "mail", 400, 300);
+        let paint = h.map_toplevel(&mut c, "paint", 400, 300);
+        let labels = |m: &crate::menuview::Menu| -> Vec<String> {
+            (m.items.iter())
+                .map(|i| match i {
+                    MenuItem::Entry { label, .. } => label.clone(),
+                    MenuItem::Separator => "-".into(),
+                    MenuItem::Heading(t) => t.clone(),
+                })
+                .collect()
+        };
+        h.state.open_window_menu(paint.id, (100, 700), true);
+        assert!(
+            !labels(&h.state.menus[0]).contains(&"Recent Files".to_string()),
+            "a program with no recent files"
+        );
+        h.state.open_window_menu(mail.id, (100, 700), true);
+        assert_eq!(
+            labels(&h.state.menus[0])[..3],
+            ["Recent Files", "-", "Restore"]
+        );
+        assert!(matches!(
+            h.state.menus[0].items[0],
+            MenuItem::Entry { submenu: true, .. }
+        ));
+        h.state.open_submenu(0, 0);
+        assert_eq!(labels(&h.state.menus[1]), ["notes.txt"]);
+        assert!(matches!(
+            &h.state.menus[1].kind,
+            crate::menuview::MenuKind::JumpList { rows, .. }
+                if rows[..] == [Some(crate::taskbar::JumpRow::Recent(notes.clone()))]
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A running program's task button lists its desktop actions under its recent files, and
     /// picking one runs that action.
     #[test]
@@ -220,11 +334,12 @@ mod tests {
             .map(|i| match i {
                 MenuItem::Entry { label, .. } => label.as_str(),
                 MenuItem::Separator => "-",
+                MenuItem::Heading(t) => t.as_str(),
             })
             .collect();
-        assert_eq!(labels[..3], ["Address Book", "-", "Mail"]);
+        assert_eq!(labels[..4], ["Tasks", "Address Book", "-", "Mail"]);
         crate::spawn::record();
-        h.state.menu_activate(0, 0);
+        h.state.menu_activate(0, 1);
         assert_eq!(crate::spawn::recorded(), ["mail-book"]);
     }
 }

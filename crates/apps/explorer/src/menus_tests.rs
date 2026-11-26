@@ -8,7 +8,7 @@ fn enabled(items: &[MenuItem], i: usize) -> bool {
 fn label(items: &[MenuItem], i: usize) -> &str {
     match &items[i] {
         MenuItem::Entry { label, .. } => label,
-        MenuItem::Separator => "",
+        MenuItem::Separator | MenuItem::Heading(_) => "",
     }
 }
 
@@ -227,7 +227,7 @@ fn hidden_items_is_ticked_with_hidden_items_shown_and_takes_ctrl_h_from_history(
                 shortcut,
                 ..
             } => (label.clone(), *checked, shortcut.clone()),
-            MenuItem::Separator => panic!("not an entry"),
+            MenuItem::Separator | MenuItem::Heading(_) => panic!("not an entry"),
         }
     };
     assert_eq!(

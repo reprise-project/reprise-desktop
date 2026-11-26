@@ -457,7 +457,7 @@ pub enum MenuRoot {
 
 impl Menu {
     /// Relists a Documents menu or a jump list as `items` and `kind`, built afresh by
-    /// `documents_rows` (with its `icons`) or `jump_relisted`, in place. Returns whether a row
+    /// `documents_rows` or `jump_menu` (with its `icons`), in place. Returns whether a row
     /// changed. `fit` gives the column width the new rows need (`MenuLayout::fit_column`).
     pub(crate) fn relist_to(
         &mut self,
@@ -503,7 +503,19 @@ impl Menu {
                 self.icons = icons;
             }
             (MenuKind::JumpList { rows, .. }, MenuKind::JumpList { rows: new_rows, .. }) => {
-                if *rows == new_rows {
+                let keys = |rows: &[Option<JumpRow>],
+                            items: &[MenuItem]|
+                 -> Vec<(Option<JumpRow>, Option<String>)> {
+                    let heading = |it: &MenuItem| match it {
+                        MenuItem::Heading(t) => Some(t.clone()),
+                        _ => None,
+                    };
+                    (rows.iter().zip(items))
+                        .map(|(r, it)| (r.clone(), heading(it)))
+                        .collect()
+                };
+                let (old, new) = (keys(rows, &self.items), keys(&new_rows, &items));
+                if old == new {
                     return false;
                 }
                 let column = fit(&self.layout, &items);
@@ -511,41 +523,18 @@ impl Menu {
                     &mut self.items,
                     &mut self.layout,
                     &mut self.hovered,
-                    rows,
-                    &new_rows,
+                    &old,
+                    &new,
                     items,
                     column,
                 );
-                let shift = (jump_lead(rows), jump_lead(&new_rows));
-                self.icons = std::mem::take(&mut self.icons).shifted(shift.0, shift.1);
                 *rows = new_rows;
+                self.icons = icons;
             }
             _ => return false,
         }
         true
     }
-}
-
-/// How many rows a jump list's recent files take: theirs and the separator under them.
-fn jump_lead(rows: &[Option<JumpRow>]) -> usize {
-    let listed = rows
-        .iter()
-        .take_while(|r| matches!(r, Some(JumpRow::Recent(_))))
-        .count();
-    if listed > 0 { listed + 1 } else { 0 }
-}
-
-/// An open jump list's `items` and `rows` with its recent files replaced by `recent`.
-pub(crate) fn jump_relisted(
-    items: &[MenuItem],
-    rows: &[Option<JumpRow>],
-    recent: &[PathBuf],
-) -> (Vec<MenuItem>, Vec<Option<JumpRow>>) {
-    let rest = jump_lead(rows);
-    let (mut new_items, mut new_rows) = crate::taskbar::jump_recent_rows(recent);
-    new_items.extend(items.iter().skip(rest).cloned());
-    new_rows.extend(rows.iter().skip(rest).cloned());
-    (new_items, new_rows)
 }
 
 #[cfg(test)]
@@ -657,20 +646,6 @@ pub(crate) struct RowIcons {
     from: Vec<(usize, RowIcon, i32)>,
     /// (row, icon file or theme name, px) for the rows showing a stand-in until a job decodes it.
     waits: Vec<(usize, String, i32)>,
-}
-
-impl RowIcons {
-    /// The rows at and past `old` move to `new`, as a jump list's do when its recent files change.
-    fn shifted(mut self, old: usize, new: usize) -> RowIcons {
-        self.from.retain(|(row, ..)| *row >= old);
-        self.waits.retain(|(row, ..)| *row >= old);
-        for row in
-            (self.from.iter_mut().map(|f| &mut f.0)).chain(self.waits.iter_mut().map(|w| &mut w.0))
-        {
-            *row = *row - old + new;
-        }
-        self
-    }
 }
 
 /// Puts `art`, icon file or theme name `key` decoded at `px`, on the rows of `items` that `waits`

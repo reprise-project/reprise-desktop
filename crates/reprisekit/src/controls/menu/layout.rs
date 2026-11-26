@@ -316,6 +316,7 @@ fn longest_row(
                     .unwrap_or(right_pad);
                 text.measure(label, *bold, size_px) + sc
             }
+            MenuItem::Heading(title) => text.measure(title, true, size_px) + right_pad,
             MenuItem::Separator => right_pad,
         })
         .max()
@@ -327,7 +328,7 @@ pub struct MenuLayout {
     pub width: i32,
     pub height: i32,
     pub rows: Vec<Rect>,
-    /// Parallel to `rows`: true for an `Entry` row, false for a `Separator`.
+    /// Parallel to `rows`: true for an `Entry` row, false for a `Separator` or `Heading`.
     pub selectable: Vec<bool>,
     pub columns: usize,
     pub column_width: i32,
@@ -378,6 +379,7 @@ impl MenuLayout {
             for it in chunk {
                 let (h, sel) = match it {
                     MenuItem::Entry { .. } => (style.row_height, true),
+                    MenuItem::Heading(_) => (style.row_height, false),
                     MenuItem::Separator => (style.separator_h, false),
                 };
                 rows.push(Rect::new(x, y, inner_w, h));

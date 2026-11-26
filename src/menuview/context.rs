@@ -110,7 +110,11 @@ impl State {
             .find(|b| b.keysym == keys::KEY_F4 && b.mods == keys::MOD_ALT)
             .or_else(|| close_binds().next())
             .map(|b| crate::keysheetview::chord_text(b.mods, b.keysym));
-        let (items, rows) = crate::winmenu::window_menu(state, close_keys.as_deref());
+        let mut menu = crate::winmenu::window_menu(state, close_keys.as_deref());
+        if from_taskbar && self.has_recent(w) {
+            menu = crate::winmenu::with_recent(menu);
+        }
+        let (items, rows) = menu;
         let from = if from_taskbar {
             MenuFrom::Bar
         } else {
@@ -169,7 +173,7 @@ impl State {
             WindowMenuRow::MoveTo(n) => self.move_to_desktop(&[w], n),
             WindowMenuRow::TabsOf(target) => self.join_tabs(w, target, usize::MAX, false),
             WindowMenuRow::LeaveTabs => self.leave_tabs(w),
-            WindowMenuRow::MoveToMenu | WindowMenuRow::TabsOfMenu => {}
+            WindowMenuRow::MoveToMenu | WindowMenuRow::TabsOfMenu | WindowMenuRow::RecentMenu => {}
         }
     }
 

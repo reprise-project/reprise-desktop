@@ -734,45 +734,82 @@ pub fn jump_tasks(entry: &reprisefs::apps::AppEntry) -> &[reprisefs::apps::Deskt
     &entry.actions[..entry.actions.len().min(JUMP_TASKS)]
 }
 
-/// A jump list's head: a row per recent file, then a separator unless there are none.
-pub fn jump_recent_rows(recent: &[std::path::PathBuf]) -> (Vec<MenuItem>, Vec<Option<JumpRow>>) {
-    let mut items = Vec::new();
-    let mut rows = Vec::new();
-    for p in recent {
-        let label = p
-            .file_name()
-            .map_or_else(|| p.to_string_lossy(), |n| n.to_string_lossy());
-        items.push(MenuItem::entry(label.into_owned()));
-        rows.push(Some(JumpRow::Recent(p.clone())));
-    }
-    if !recent.is_empty() {
-        items.push(MenuItem::Separator);
-        rows.push(None);
-    }
-    (items, rows)
+pub const RECENT_TITLE: &str = "Recent";
+pub const TASKS_TITLE: &str = "Tasks";
+
+/// A jump list section: its title and, per row, the label and what the row does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JumpSection {
+    pub title: &'static str,
+    pub rows: Vec<(String, JumpRow)>,
 }
 
-/// A task button's jump list: the app's `recent` files (at most `JUMP_RECENT`, newest first) and a
-/// separator, its `tasks` (desktop action names, [`jump_tasks`]) and a separator, a group's window
-/// `titles` and a separator (a single window gets no row), the app's `name`
-/// (new instance), Pin/Unpin this program (greyed when `can_pin` is false: no `.desktop` file), and for
-/// a running app Move to desktop (a submenu with more than one of `desktops`) and Close window or Close
-/// all windows. Returns the rows and, parallel to them, what each does (None at a separator).
-pub fn jump_list(
-    name: &str,
+/// A program's jump list sections, the Start panel's and a task button's: Recent with its
+/// `recent` files, then Tasks with its desktop `tasks` ([`jump_tasks`]).
+pub fn jump_sections(
     recent: &[std::path::PathBuf],
-    tasks: &[&str],
+    tasks: &[reprisefs::apps::DesktopAction],
+) -> [JumpSection; 2] {
+    let file = |p: &std::path::PathBuf| {
+        let name = p
+            .file_name()
+            .map_or_else(|| p.to_string_lossy(), |n| n.to_string_lossy());
+        (name.into_owned(), JumpRow::Recent(p.clone()))
+    };
+    [
+        JumpSection {
+            title: RECENT_TITLE,
+            rows: recent.iter().map(file).collect(),
+        },
+        JumpSection {
+            title: TASKS_TITLE,
+            rows: (tasks.iter().enumerate())
+                .map(|(k, t)| (t.name.clone(), JumpRow::Task(k)))
+                .collect(),
+        },
+    ]
+}
+
+/// The icon jump row `row` of program `app` wears: a recent file its type's, a task its own or
+/// else the program's, the program's own row the program's.
+pub fn jump_icon<'a>(app: Option<&'a reprisefs::apps::AppEntry>, row: &JumpRow) -> Option<&'a str> {
+    let own = app.and_then(|a| a.icon.as_deref());
+    match row {
+        JumpRow::Recent(p) => Some(reprisefs::icons::icon_for_file(p)),
+        JumpRow::Task(k) => app
+            .and_then(|a| jump_tasks(a).get(*k)?.icon.as_deref())
+            .or(own),
+        JumpRow::Launch => own,
+        _ => None,
+    }
+}
+
+/// A task button's jump list: each of `sections` with rows under its heading, then a separator,
+/// a group's window `titles` and a separator (a single window gets no row), the app's `name`
+/// (new instance), Pin/Unpin this program (greyed when `can_pin` is false: no `.desktop` file), and
+/// for a running app Move to desktop (a submenu with more than one of `desktops`) and Close window
+/// or Close all windows. Returns the rows and, parallel to them, what each does (None at a heading
+/// or separator).
+pub fn jump_list(
+    sections: &[JumpSection],
+    name: &str,
     pinned: bool,
     can_pin: bool,
     titles: &[String],
     desktops: usize,
 ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>) {
-    let (mut items, mut rows) = jump_recent_rows(recent);
-    if !tasks.is_empty() {
-        for (k, t) in tasks.iter().enumerate() {
-            items.push(MenuItem::entry(*t));
-            rows.push(Some(JumpRow::Task(k)));
+    let mut items = Vec::new();
+    let mut rows = Vec::new();
+    let listed = sections.iter().filter(|s| !s.rows.is_empty());
+    for section in listed.clone() {
+        items.push(MenuItem::heading(section.title));
+        rows.push(None);
+        for (label, row) in &section.rows {
+            items.push(MenuItem::entry(label.clone()));
+            rows.push(Some(row.clone()));
         }
+    }
+    if listed.count() > 0 {
         items.push(MenuItem::Separator);
         rows.push(None);
     }
@@ -818,14 +855,18 @@ pub enum WindowListRow {
     MoveToMenu,
     MoveTo(usize),
     Close,
+    /// Opens the program's recent files (`State::recent_menu`), does nothing itself.
+    RecentMenu,
 }
 
-/// A grouped task button's window list: the windows' `titles`, then below a separator Minimize Group,
-/// Move to desktop (a submenu with more than one of `desktops`) and Close Group. Returns the rows and,
-/// parallel to them, what each does (None at the separator).
+/// A grouped task button's window list: the windows' `titles`, then below a separator Recent Files
+/// (a submenu, when the program has `recent` files), Minimize Group, Move to desktop (a submenu with
+/// more than one of `desktops`) and Close Group. Returns the rows and, parallel to them, what each
+/// does (None at the separator).
 pub fn window_list(
     titles: &[String],
     desktops: usize,
+    recent: bool,
 ) -> (Vec<MenuItem>, Vec<Option<WindowListRow>>) {
     let mut items: Vec<MenuItem> = titles.iter().map(|t| MenuItem::entry(t.clone())).collect();
     let mut rows: Vec<_> = (0..titles.len())
@@ -833,6 +874,10 @@ pub fn window_list(
         .collect();
     items.push(MenuItem::Separator);
     rows.push(None);
+    if recent {
+        items.push(MenuItem::item(crate::winmenu::RECENT_FILES).submenu(true));
+        rows.push(Some(WindowListRow::RecentMenu));
+    }
     items.push(MenuItem::entry("Minimize Group"));
     rows.push(Some(WindowListRow::Minimize));
     if desktops > 1 {

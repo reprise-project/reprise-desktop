@@ -38,7 +38,7 @@ impl MenuItem {
     fn label_for_test(&self) -> String {
         match self {
             MenuItem::Entry { label, .. } => label.clone(),
-            MenuItem::Separator => String::new(),
+            MenuItem::Separator | MenuItem::Heading(_) => String::new(),
         }
     }
 }
@@ -894,7 +894,7 @@ fn fit_widens_for_long_labels_only() {
         .iter()
         .map(|it| match it {
             MenuItem::Entry { label, .. } => text.measure(label, false, 11),
-            MenuItem::Separator => 0,
+            MenuItem::Separator | MenuItem::Heading(_) => 0,
         })
         .max()
         .unwrap();
@@ -1552,7 +1552,7 @@ fn an_open_chain_wears_the_icons_its_tree_swapped_in_and_keeps_its_layout() {
     p.wear_icons(&tree(0xff20_40c0));
     let worn = |level: usize, row: usize| match &p.levels()[level].items[row] {
         MenuItem::Entry { icon, .. } => icon.as_ref().map(|c| c.get(8, 8)),
-        MenuItem::Separator => None,
+        MenuItem::Separator | MenuItem::Heading(_) => None,
     };
     assert_eq!(worn(0, 0), Some(0xff20_40c0), "the root's row");
     assert_eq!(worn(1, 2), Some(0xff20_40c0), "the open submenu's row");
@@ -2480,4 +2480,68 @@ fn menu_marks_and_arrows_grow_twice_at_200_percent() {
         }
     }
     crate::pins::check("controls/menu_marks_200", &hashes);
+}
+
+/// A jump list's Recent and Tasks headings in each look at scale 1 and 2: the title inks, a rule
+/// runs on past it, the pointer and the arrows pass over it, and a reader hears a heading.
+#[test]
+fn a_heading_sets_its_title_before_a_rule_and_takes_no_hover_or_key() {
+    crate::pins::fonts();
+    let mut hashes = Vec::new();
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let base = crate::interfaces::theme_for(interface);
+        let text = TextRenderer::load(&base.fonts);
+        let style = MenuStyle::context(&base, ContextBitmaps::Icons);
+        for s in [1, 2] {
+            let side = (style.icon_px() * s) as u32;
+            let mut ic = Canvas::new(side, side);
+            ic.pixels.fill(0xFF20_70C0);
+            let file = |l: &str| MenuItem::entry(l).icon(Some(ic.clone()));
+            let items = vec![
+                MenuItem::heading("Recent"),
+                file("notes.txt"),
+                file("todo.txt"),
+                MenuItem::heading("Tasks"),
+                file("New Window"),
+                MenuItem::Separator,
+                MenuItem::entry("Notepad"),
+                MenuItem::entry("Close window"),
+            ];
+            let fitted = style.fit(&text, &items, base.fonts.size_px, i32::MAX);
+            let l = MenuLayout::compute_styled(&fitted, &items, usize::MAX);
+            let at = format!("{interface:?} at {s}");
+            let head = l.rows[0];
+            let mid = (head.x + head.width / 2, head.y + head.height / 2);
+            assert_eq!(l.hit(mid.0, mid.1), None, "{at}: no hover on a heading");
+            for stops in [KeyStops::Enabled, KeyStops::Entries] {
+                assert_eq!(step_selection(&items, None, 1, stops), Some(1), "{at}");
+                assert_eq!(step_selection(&items, Some(2), 1, stops), Some(4), "{at}");
+            }
+            let node = access_row(&items[3], head, false).expect("a node");
+            assert_eq!(node.role(), access::accesskit::Role::Heading, "{at}");
+            assert_eq!(node.label(), Some("Tasks"), "{at}");
+
+            let l = l.scaled(s);
+            let theme = base.scaled(s);
+            let face = text.for_output(s);
+            let mut c = Canvas::new(l.width as u32, l.height as u32);
+            draw_menu(&mut c, &theme, face, &l, &items, None, "", false);
+            let r = l.rows[0];
+            let paper = c.get(r.right() - 4 * s, r.y + s);
+            let x = r.x + r.width * 3 / 4;
+            let ruled = (r.y..r.bottom()).filter(|&y| c.get(x, y) != paper).count() as i32;
+            assert!(
+                (1..=2 * s).contains(&ruled),
+                "{at}: a rule {ruled} rows deep runs past the title"
+            );
+            let title = Rect::new(r.x + l.text_x, r.y, 20 * s, r.height);
+            assert!(
+                (title.y..title.bottom())
+                    .any(|y| (title.x..title.right()).any(|x| c.get(x, y) != paper)),
+                "{at}: the title inks"
+            );
+            hashes.push((format!("{interface:?} {s}"), crate::pins::fnv(&c)));
+        }
+    }
+    crate::pins::check("controls/menu_headings", &hashes);
 }

@@ -48,7 +48,7 @@ fn a_fallback_edit_font_is_antialiased() {
 fn label_of(item: &MenuItem) -> String {
     match item {
         MenuItem::Entry { label, .. } => label.clone(),
-        MenuItem::Separator => panic!("that row is a separator"),
+        MenuItem::Separator | MenuItem::Heading(_) => panic!("that row is a separator"),
     }
 }
 
@@ -238,7 +238,7 @@ fn find_rows_grey_on_an_empty_buffer() {
     let mut np = Notepad::new(None);
     let on = |np: &Notepad, r: usize| match &np.bar.menus[title::EDIT][r] {
         MenuItem::Entry { enabled, .. } => *enabled,
-        MenuItem::Separator => panic!("that row is a separator"),
+        MenuItem::Separator | MenuItem::Heading(_) => panic!("that row is a separator"),
     };
     np.sync_menus();
     assert!(!on(&np, row::FIND), "Find is greyed with no text");
@@ -258,7 +258,7 @@ fn edit_rows_grey_until_there_is_a_selection_or_an_edit_to_undo() {
     let mut ctx = test_ctx();
     let on = |np: &Notepad, r: usize| match &np.bar.menus[title::EDIT][r] {
         MenuItem::Entry { enabled, .. } => *enabled,
-        MenuItem::Separator => panic!("that row is a separator"),
+        MenuItem::Separator | MenuItem::Heading(_) => panic!("that row is a separator"),
     };
     let key = |edit| {
         Event::Key(KeyInput {
@@ -361,7 +361,7 @@ fn context_rows(np: &Notepad) -> Vec<bool> {
     tree.iter()
         .filter_map(|item| match item {
             MenuItem::Entry { enabled, .. } => Some(*enabled),
-            MenuItem::Separator => None,
+            MenuItem::Separator | MenuItem::Heading(_) => None,
         })
         .collect()
 }
@@ -2346,7 +2346,7 @@ fn word_wrap_folds_long_lines_into_the_box_and_off_draws_as_before() {
     assert!(np.edit_layout(&ctx).hscroll.is_some());
     let checked = |np: &Notepad| match &np.bar.menus[title::FORMAT][row::WORD_WRAP] {
         MenuItem::Entry { checked, .. } => *checked,
-        MenuItem::Separator => unreachable!(),
+        MenuItem::Separator | MenuItem::Heading(_) => unreachable!(),
     };
     np.command(title::FORMAT, row::WORD_WRAP, &ctx);
     assert!(checked(&np));
