@@ -79,6 +79,9 @@ pub struct Style {
     /// The Start panel's Shut down options menu, when it differs from [`Style::menu`].
     pub options_menu: Option<MenuLook>,
     pub selection_box: Option<SelectionBox>,
+    /// How far a selected desktop label's 1 px edge darkens the highlight toward black
+    /// ([`Color::toward`](crate::theme::Color::toward)); None fills the label edge to edge.
+    pub desktop_label_edge: Option<u8>,
     pub flyout: Option<FlyoutLook>,
     pub caption_tabs: Option<CaptionTabLook>,
     pub(crate) tray_arrow: Option<Arc<trayarrow::TrayArrowArt>>,
@@ -217,6 +220,7 @@ impl Style {
             menu: None,
             options_menu: None,
             selection_box: None,
+            desktop_label_edge: None,
             caption_tabs: None,
             tray_arrow: None,
             start_bloom: None,
@@ -597,6 +601,11 @@ impl Style {
 
     pub fn with_selection_box(mut self, b: SelectionBox) -> Style {
         self.selection_box = Some(b);
+        self
+    }
+
+    pub fn with_desktop_label_edge(mut self, darken: u8) -> Style {
+        self.desktop_label_edge = Some(darken);
         self
     }
 

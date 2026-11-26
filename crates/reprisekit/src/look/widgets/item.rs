@@ -4,6 +4,7 @@
 use crate::look::Paint;
 use crate::look::styled;
 use crate::raster::{Canvas, Rect};
+use crate::theme::Color;
 
 pub use crate::look::styled::item::Mark;
 
@@ -30,6 +31,19 @@ pub fn draw_desktop_item(c: &mut Canvas, p: &Paint, r: Rect) -> bool {
     p.look
         .style()
         .is_some_and(|st| styled::item::draw_desktop_item(st, c, r, p.s))
+}
+
+/// A selected desktop label's `fill` across `r`, inside a 1 px darker edge under a look with
+/// [`Style::desktop_label_edge`](crate::style::Style::desktop_label_edge), so the box holds
+/// its shape on a wallpaper of the fill's own colour.
+pub fn fill_desktop_label(c: &mut Canvas, p: &Paint, r: Rect, fill: Color) {
+    match p.look.style().and_then(|st| st.desktop_label_edge) {
+        Some(darken) => {
+            c.fill_rect(r, fill.toward(Color::rgb(0, 0, 0), darken));
+            c.fill_rect(r.inset(p.s), fill);
+        }
+        None => c.fill_rect(r, fill),
+    }
 }
 
 /// A tree expander centred on device point `at`, grown with the text ([`Paint::small`]); false

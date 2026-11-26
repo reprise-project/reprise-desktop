@@ -521,7 +521,8 @@ pub(crate) fn draw_edit(
 
 /// One desktop cell at `theme.scale`, grown with `theme.text` ([`Cell::grown`]): the icon
 /// (already sized to `ICON_PX * scale`) near the top, the name below on up to two centred lines. A selected
-/// cell blends the icon with `hilight`, fills the label in `hilight_text` and,
+/// cell blends the icon with `hilight`, fills the label box in `hilight` (inside a darker
+/// edge under a look with [`crate::style::Style::desktop_label_edge`]) and,
 /// once the keyboard has been used, draws the dotted focus ring. A look with its
 /// own desktop box ([`crate::style::Part::DesktopItem`]) draws that instead.
 /// `rename` draws the in-progress edit box in place of the label, with `preedit`
@@ -628,7 +629,11 @@ pub fn draw_cell_at(
     let l = label.rect;
     let rect = Rect::new(x0 + l.x, y0 + l.y, l.width, l.height);
     let (fg, shadow) = match (selected, ground) {
-        (Some(_), _) => {
+        (Some(_), Ground::Wallpaper) => {
+            item::fill_desktop_label(c, &theme.paint(), rect, cs.hilight);
+            (cs.hilight_text, None)
+        }
+        (Some(_), Ground::Window) => {
             c.fill_rect(rect, cs.hilight);
             (cs.hilight_text, None)
         }
@@ -1182,6 +1187,61 @@ mod tests {
             }
         }
         crate::pins::check("controls/desktop_label", &got);
+    }
+
+    #[test]
+    fn a_selected_blue_desktop_label_keeps_a_darker_edge_on_a_wallpaper_of_its_own_blue() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let t = text();
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(i).scaled(s);
+                let hil = theme.colors.hilight;
+                let mut c = Canvas::new((CELL * s) as u32, (CELL * s) as u32);
+                c.fill_rect(c.bounds(), hil);
+                let sel = Some(Selection {
+                    ring: false,
+                    origin: (0, 0),
+                });
+                draw_cell_at(
+                    &mut c,
+                    (0, 0),
+                    Cell::square(CELL),
+                    &theme,
+                    &t,
+                    "Recycle Bin",
+                    None,
+                    false,
+                    sel,
+                    None,
+                    Ground::Wallpaper,
+                );
+                got.push((format!("{i:?} @{s}"), fnv(&c)));
+                let font = theme.fonts.size_px;
+                let r = label_layout(&t, "Recycle Bin", font, s, CELL, theme.text).rect;
+                let edge = match i {
+                    Interface::Blue => {
+                        hil.toward(Color::rgb(0, 0, 0), crate::blue::DESKTOP_LABEL_EDGE)
+                    }
+                    _ => hil,
+                };
+                for (x, y) in [
+                    (r.x, r.y + r.height / 2),
+                    (r.right() - 1, r.y + r.height / 2),
+                    (r.x + 2 * s, r.y),
+                    (r.x + 2 * s, r.bottom() - 1),
+                ] {
+                    assert_eq!(c.get(x, y), edge.argb(), "{i:?} @{s}: edge at {x},{y}");
+                }
+                for (x, y) in [(r.x + s, r.y + s), (r.right() - 1 - s, r.bottom() - 1 - s)] {
+                    assert_eq!(c.get(x, y), hil.argb(), "{i:?} @{s}: fill at {x},{y}");
+                }
+                assert_eq!(c.get(r.x - 1, r.y + s), hil.argb(), "{i:?} @{s}: wallpaper");
+            }
+        }
+        crate::pins::check("controls/desktop_label_selected", &got);
     }
 
     #[test]
