@@ -1482,6 +1482,14 @@ mod tests {
             .to_string()
     }
 
+    /// Press and release `code` in one turn, so a slow turn cannot start its repeat.
+    fn tap(h: &mut crate::harness::Harness, code: u32) {
+        h.from(InputSource::Physical, |s| {
+            s.handle_key((code + 8).into(), true, InputTime::now());
+            s.handle_key((code + 8).into(), false, InputTime::now());
+        });
+    }
+
     /// Hold `code` until `done` holds (or 5 s pass), then release it.
     fn hold(
         h: &mut crate::harness::Harness,
@@ -1505,8 +1513,7 @@ mod tests {
         h.state.config.keyboard.repeat_rate = 25;
         h.state.open_dialog(crate::dialog::Dialog::run(&[]));
         for _ in 0..6 {
-            h.key(KEY_A, true);
-            h.key(KEY_A, false);
+            tap(&mut h, KEY_A);
         }
         assert_eq!(run_box_text(&h), "aaaaaa");
         hold(&mut h, KEY_BACKSPACE, |h| run_box_text(h).len() <= 2);
@@ -1531,12 +1538,14 @@ mod tests {
         h.state.config.keyboard.repeat_rate = 25;
         h.state.open_dialog(crate::dialog::Dialog::run(&[]));
         for _ in 0..4 {
-            h.key(KEY_A, true);
-            h.key(KEY_A, false);
+            tap(&mut h, KEY_A);
         }
-        h.key(KEY_BACKSPACE, true);
-        assert!(h.state.key_input.field_repeat.is_some());
-        crate::backend::pause_session(&mut h.state);
+        // No turn runs between the press and the pause, so the repeat cannot fire first.
+        h.from(InputSource::Physical, |s| {
+            s.handle_key((KEY_BACKSPACE + 8).into(), true, InputTime::now());
+            assert!(s.key_input.field_repeat.is_some());
+            crate::backend::pause_session(s);
+        });
         assert!(h.state.key_input.field_repeat.is_none());
         h.run_for(500);
         assert_eq!(run_box_text(&h), "aaa", "only the press deletes");
