@@ -66,6 +66,8 @@ pub struct Persisted {
     pub launches: Vec<String>,
     /// The tray Customize dialog's choices, by tray item key.
     pub tray_icons: BTreeMap<String, crate::tray::Remembered>,
+    /// Tray item keys in the order the tray first saw them: the order its cells keep.
+    pub tray_order: Vec<String>,
     /// The colour filter `color-filter` last turned off, by its config name: the one it turns back
     /// on.
     pub color_filter_last: Option<String>,
@@ -319,6 +321,18 @@ fn tray_icons_keys(choices: &BTreeMap<String, crate::tray::Remembered>) -> toml:
     }
 }
 
+/// Queue a write of `tray_order`, leaving every other key as it is.
+pub fn save_tray_order(keys: &[String]) {
+    let path = path();
+    let keys = tray_order_keys(keys);
+    run_in_order(move || patch(&path, keys));
+}
+
+fn tray_order_keys(keys: &[String]) -> toml::Table {
+    let list = toml::Value::Array(keys.iter().map(|k| k.as_str().into()).collect());
+    toml::Table::from_iter([("tray_order".to_string(), list)])
+}
+
 /// Queue a write of the place icons' renamed labels (`system_icon_names`), leaving every other key
 /// as it is.
 pub fn save_system_names(names: &BTreeMap<String, String>) {
@@ -570,6 +584,22 @@ mod tests {
         let back = load_from(&path);
         assert_eq!(back.tray_icons, choices);
         assert!(back.auto_arrange);
+    }
+
+    #[test]
+    fn the_tray_order_round_trips_and_a_file_without_it_reads() {
+        let dir = scratch("tray-order");
+        let path = dir.join("state.toml");
+        std::fs::write(&path, "[tray_icons.nm-applet]\nbehaviour = \"hide\"\n").unwrap();
+        assert!(load_from(&path).tray_order.is_empty());
+        let keys = vec!["nm-applet".to_string(), "reprise-sound".into()];
+        let p = path.clone();
+        let k = keys.clone();
+        run_in_order(move || patch(&p, tray_order_keys(&k)));
+        flush();
+        let back = load_from(&path);
+        assert_eq!(back.tray_order, keys);
+        assert_eq!(back.tray_icons.len(), 1, "the choices stay");
     }
 
     #[test]
