@@ -1,0 +1,100 @@
+Blue plain 1 56b3ec9b31ac6255
+Blue hot 1 1b7b642438aa0aa0
+Blue selected 1 bc127b5f35616945
+Blue selected hot 1 658ad1591854cdac
+Blue held 1 22a33c31c5bb7ebf
+Blue plain 2 bdd29281c55e581b
+Blue hot 2 5e190128b354b5dc
+Blue selected 2 349534c1b18665d3
+Blue selected hot 2 64a8fd47b74db21c
+Blue held 2 688a939193f532cd
+Olive plain 1 56b3ec9b31ac6255
+Olive hot 1 1b7b642438aa0aa0
+Olive selected 1 bc127b5f35616945
+Olive selected hot 1 658ad1591854cdac
+Olive held 1 22a33c31c5bb7ebf
+Olive plain 2 bdd29281c55e581b
+Olive hot 2 5e190128b354b5dc
+Olive selected 2 349534c1b18665d3
+Olive selected hot 2 64a8fd47b74db21c
+Olive held 2 688a939193f532cd
+Silver plain 1 56b3ec9b31ac6255
+Silver hot 1 1b7b642438aa0aa0
+Silver selected 1 28d6ee69fb0bc359
+Silver selected hot 1 bd4ac060a4a18a90
+Silver held 1 22a33c31c5bb7ebf
+Silver plain 2 bdd29281c55e581b
+Silver hot 2 5e190128b354b5dc
+Silver selected 2 0d86d56daaea2e2b
+Silver selected hot 2 2aca4a2b66e197c8
+Silver held 2 688a939193f532cd
+Slate plain 1 3034232e1d538809
+Slate hot 1 635bed6641c90b50
+Slate selected 1 501b76fa3f169d8e
+Slate selected hot 1 3d5188c37b7f3e82
+Slate held 1 3d8ea511da2e62b3
+Slate plain 2 0566cd1d93743602
+Slate hot 2 2db699aa735c49a0
+Slate selected 2 8a7c6af8329ede62
+Slate selected hot 2 420e5c5301f822d0
+Slate held 2 39c76ff184d1d5d2
+Sapphire plain 1 3034232e1d538809
+Sapphire hot 1 05fdd88de5c8db58
+Sapphire selected 1 f5ea8855ddf6ff26
+Sapphire selected hot 1 2e78b1ee4c330fc5
+Sapphire held 1 2a537c9f86daf9d8
+Sapphire plain 2 0566cd1d93743602
+Sapphire hot 2 8a2c455bcfeee98f
+Sapphire selected 2 44129284b4717ac2
+Sapphire selected hot 2 c443c4802df2b839
+Sapphire held 2 e6a0ec4157f76853
+Obsidian plain 1 3034232e1d538809
+Obsidian hot 1 05fdd88de5c8db58
+Obsidian selected 1 f5ea8855ddf6ff26
+Obsidian selected hot 1 2e78b1ee4c330fc5
+Obsidian held 1 2a537c9f86daf9d8
+Obsidian plain 2 0566cd1d93743602
+Obsidian hot 2 8a2c455bcfeee98f
+Obsidian selected 2 44129284b4717ac2
+Obsidian selected hot 2 c443c4802df2b839
+Obsidian held 2 e6a0ec4157f76853
+Ember plain 1 3034232e1d538809
+Ember hot 1 6f96357ed14de5e5
+Ember selected 1 32d119ccb2e128ee
+Ember selected hot 1 9164f06177966a30
+Ember held 1 e3eab09e37982c4b
+Ember plain 2 0566cd1d93743602
+Ember hot 2 0ec925b7692f8c54
+Ember selected 2 d35e9d934e1c474a
+Ember selected hot 2 5adf201b25ba075e
+Ember held 2 30afa470595ec33c
+Cobalt plain 1 3034232e1d538809
+Cobalt hot 1 05fdd88de5c8db58
+Cobalt selected 1 f5ea8855ddf6ff26
+Cobalt selected hot 1 2e78b1ee4c330fc5
+Cobalt held 1 2a537c9f86daf9d8
+Cobalt plain 2 0566cd1d93743602
+Cobalt hot 2 8a2c455bcfeee98f
+Cobalt selected 2 44129284b4717ac2
+Cobalt selected hot 2 c443c4802df2b839
+Cobalt held 2 e6a0ec4157f76853
+Carbon plain 1 3034232e1d538809
+Carbon hot 1 05fdd88de5c8db58
+Carbon selected 1 f5ea8855ddf6ff26
+Carbon selected hot 1 2e78b1ee4c330fc5
+Carbon held 1 2a537c9f86daf9d8
+Carbon plain 2 0566cd1d93743602
+Carbon hot 2 8a2c455bcfeee98f
+Carbon selected 2 44129284b4717ac2
+Carbon selected hot 2 c443c4802df2b839
+Carbon held 2 e6a0ec4157f76853
+Steel plain 1 56b3ec9b31ac6255
+Steel hot 1 1b7b642438aa0aa0
+Steel selected 1 ed6c46938fd93505
+Steel selected hot 1 a5e4e49694457d29
+Steel held 1 22a33c31c5bb7ebf
+Steel plain 2 bdd29281c55e581b
+Steel hot 2 5e190128b354b5dc
+Steel selected 2 8d2e534aa490eeb3
+Steel selected hot 2 2d64838f9f80c16a
+Steel held 2 688a939193f532cd

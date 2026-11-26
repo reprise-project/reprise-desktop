@@ -1,5 +1,5 @@
 //! The toolbar's parts: [`Part::ToolbarButton`] and [`Part::ToolbarDrop`] each hold six 9x38 frames stacked in the order of [`STATES`]; [`Part::ToolbarSeparator`] is one 6x4 frame. Frames are drawn from the scheme's faces at the style's scale.
-//! A lit frame is a 1 px rim round a face, corners rounded over 3 px. The face takes the scheme's `down` shading for its row plus its `across` shading for its column (less the across shading's middle). Hot is near-white at the top, greying down and darkening along the right edge; Pressed is darker with a grey rim; Checked is white inside a blue rim, warming under the pointer (CheckedHot). The nine-grid keeps four columns and rows of each edge and stretches the rest, so one frame draws Explorer's 38 px strip and the file dialog's 22 px one.
+//! A lit frame is a 1 px rim round a face, corners rounded over 3 px. The face takes the scheme's `down` shading for its row plus its `across` shading for its column (less the across shading's middle). Hot is near-white at the top, greying down and darkening along the right edge; Pressed is darker with a grey rim; Checked is white inside a blue rim, warming under the pointer (CheckedHot). The nine-grid keeps four columns and rows of each edge and stretches the rest, so one frame draws Explorer's 38 px strip, the file dialog's 22 px one and its places tiles.
 //! Normal and Disabled are empty: a button at rest shows the rebar behind it.
 //! The separator is a 1 px line two columns into a 6 px slot, from two rows under the band's top to one row over its bottom.
 
@@ -99,7 +99,8 @@ pub(in crate::blue) fn inks(v: Variant) -> [(Part, State, Color); 3] {
     ]
 }
 
-fn button(lit: [&Face; 4], d: i32) -> PartImage {
+/// The six frames of [`STATES`] from `lit`'s hot, pressed, checked and checked-hot faces.
+pub(super) fn button(lit: [&Face; 4], d: i32) -> PartImage {
     let mut a = Canvas::new((W * d) as u32, (H * d * STATES.len() as i32) as u32);
     let mut lit = lit.into_iter();
     for (i, state) in STATES.into_iter().enumerate() {
