@@ -327,8 +327,9 @@ pub fn jumps_shown(p: &StartPanel) -> impl Iterator<Item = usize> {
 }
 
 /// Where the parts go at the panel's text size: the 100% layout with every rect grown
-/// ([`crate::theme::TextUnits::rect`]). Rules keep their thickness, the tree's bar its width at the rows' right,
-/// and the user picture's frame its size, centred where the grown frame would be.
+/// ([`crate::theme::TextUnits::rect`]). Rules keep their thickness, the tree's bar grows by
+/// [`crate::theme::TextUnits::small`] at the rows' right, and the user picture's frame keeps its
+/// size, centred where the grown frame would be.
 pub fn layout(p: &StartPanel) -> Layout {
     let l = match p.shape {
         Shape::Glass => layout_100(p),
@@ -344,7 +345,8 @@ pub fn layout(p: &StartPanel) -> Layout {
     };
     let tree_bar = l.tree_bar.map(|r| {
         let g = u.rect(r);
-        Rect::new(g.right() - r.width, g.y, r.width, g.height)
+        let w = u.small() * r.width;
+        Rect::new(g.right() - w, g.y, w, g.height)
     });
     let spots = l
         .spots
@@ -1124,9 +1126,9 @@ mod tests {
         assert_eq!(hit(&l, 30, 100), Some(Spot::Program(1)));
     }
 
-    /// The tree's bar keeps its 16 px at the grown rows' right, and the rows reach it.
+    /// The tree's bar doubles to 32 px at the grown rows' right, and the rows reach it.
     #[test]
-    fn at_200_percent_the_tree_bar_keeps_its_width() {
+    fn at_200_percent_the_tree_bar_doubles_its_width() {
         let mut p = StartPanel::new();
         p.tree = (0..25)
             .map(|k| TreeRow::App {
@@ -1139,7 +1141,9 @@ mod tests {
         p.text = TextUnits::new(22, 11);
         assert_eq!(tree_capacity(&p), 20);
         let l = layout(&p);
-        assert_eq!(l.tree_bar, Some(Rect::new(500, 20, 16, 760)));
-        assert_eq!(l.rect(Spot::Tree(1)), Some(Rect::new(22, 58, 478, 38)));
+        assert_eq!(l.tree_bar, Some(Rect::new(484, 20, 32, 760)));
+        assert_eq!(l.rect(Spot::Tree(1)), Some(Rect::new(22, 58, 462, 38)));
+        p.text = TextUnits::new(19, 11);
+        assert_eq!(layout(&p).tree_bar.unwrap().width, 16, "175% keeps 16 px");
     }
 }

@@ -434,7 +434,7 @@ pub fn draw_start_panel_backed(
             s: l.scale.max(1),
             back: Backdrop::Face,
             active: true,
-            text: crate::theme::TextUnits::ONE,
+            text: p.text,
             access_keys: true,
         };
         let o = l.canvas;
