@@ -577,8 +577,9 @@ pub(super) fn ellipsized<'a>(
 }
 
 /// The tip a form drawn into `c` reported ([`Canvas::report_tip`]), kept inside `c` and wrapped
-/// to its width; the rect it covers. `theme` is the one the form draws in. The program runtime
-/// and the compositor's dialogs call it after the window's draw, so it lands over everything.
+/// to its width; the rect it covers, its shadow included. `theme` is the one the form draws in.
+/// The program runtime and the compositor's dialogs call it after the window's draw, so it lands
+/// over everything.
 pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme) -> Option<Rect> {
     let crate::raster::ReportedTip {
         text: full,
@@ -591,12 +592,9 @@ pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme) -> Option<Re
     let label = lines.join("\n");
     let size = tooltip::tip_size(text, theme, &label);
     let at = tooltip::place((x * s, y * s), size, bounds, true);
-    c.blit_over(
-        at.0,
-        at.1,
-        &tooltip::draw_tip_at(theme, text, &label, c.scale()),
-    );
-    Some(Rect::new(at.0, at.1, size.0, size.1))
+    let tip = tooltip::draw_tip_at(theme, text, &label, c.scale());
+    c.blit_over(at.0, at.1, &tip);
+    Some(Rect::new(at.0, at.1, tip.width as i32, tip.height as i32))
 }
 
 /// The form's open popups, which [`draw`] puts over the other controls. A host drawing its
