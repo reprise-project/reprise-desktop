@@ -883,6 +883,9 @@ pub struct Powering {
     untold: Option<(Act, Refused)>,
     /// A session end went on past its programs ([`go_on`]) and the desktop has not come back.
     went_on: bool,
+    /// The attempt [`late`] gave up on without knowing whether its trigger stands, as a Trigger or
+    /// Cancel held the lock: its answer tells the user when the trigger stays.
+    late_unsure: Option<u64>,
 }
 
 impl Powering {
@@ -916,8 +919,10 @@ impl Powering {
         true
     }
 
-    /// [`Powering::give_up`], giving up the lingering commands too.
+    /// [`Powering::give_up`], giving up the lingering commands too. The session ends, so nothing
+    /// is told.
     fn give_up_all(&mut self) -> bool {
+        self.late_unsure = None;
         let lingered = !self.lingering.is_empty();
         self.give_up_lingering();
         self.give_up() || lingered
@@ -1093,7 +1098,8 @@ fn unpanicked(work: impl FnOnce() -> Option<Failed>) -> Option<Failed> {
 
 /// Attempt `id` ran past [`ANSWER_WITHIN`]: unless it answered, give up on it and refuse, saying
 /// so when the update's trigger it made stands, which then stays as another program's would
-/// ([`crate::offlineupdate::Made::hand_over`]). One that `lingers`, a custom Stand By or Hibernate
+/// ([`crate::offlineupdate::Made::hand_over`]); its answer says so when that was not yet known
+/// ([`answered`]). One that `lingers`, a custom Stand By or Hibernate
 /// command, may wait on purpose (a locker, the resume): it only stops holding the next action
 /// back, and a failure still shows.
 fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
@@ -1107,8 +1113,12 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
     }
     state.powering.give_up();
     let why = match state.offline.made.hand_over(id) {
-        true => Refused::Stays(Some(Box::new(Refused::Late))),
-        false => Refused::Late,
+        Some(true) => Refused::Stays(Some(Box::new(Refused::Late))),
+        Some(false) => Refused::Late,
+        None => {
+            state.powering.late_unsure = Some(id);
+            Refused::Late
+        }
     };
     refuse(state, act, &why);
 }
@@ -1201,7 +1211,7 @@ fn restart_into(
 /// A refusal shows a message box; a dismissed password prompt brings the session back without
 /// one; a restart target or an offline update that would not clear asks whether to go ahead
 /// `again` ([`hold_back`]). An action under way winds the session down for `wind_down_for`. An attempt given up on answers
-/// nothing.
+/// nothing, but for a [`late`] one whose trigger turned out to stay.
 fn answered(
     state: &mut State,
     id: u64,
@@ -1212,6 +1222,12 @@ fn answered(
     let act = again.act;
     if !state.powering.answer(id) {
         log::info!("session end: {act:?} given up on answered {failed:?}");
+        let unsure = state.powering.late_unsure.take_if(|n| *n == id).is_some();
+        if let Some(Failed::Refused(why @ Refused::Stays(_))) = &failed
+            && unsure
+        {
+            tell(state, act, why);
+        }
         return;
     }
     match failed {
@@ -2641,6 +2657,49 @@ mod tests {
             "it may still go through"
         );
         crate::crash::not_ending();
+    }
+
+    #[test]
+    fn a_late_power_action_whose_take_back_held_the_lock_says_when_its_trigger_stays() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let stays = || {
+            let why = Refused::Failed("signal 15".into());
+            Some(Failed::Refused(Refused::Stays(Some(Box::new(why)))))
+        };
+        let id = h.state.powering.begin();
+        h.state.offline.made.set(Some(id));
+        let made = h.state.offline.made.clone();
+        let cancel = made.locked();
+        late(&mut h.state, id, Act::Restart, false);
+        drop(cancel);
+        crate::crash::not_ending();
+        let open = dialogs(&h);
+        let text = |h: &crate::harness::Harness| {
+            let d = &h.state.dialogs.views.last().expect("a box").dialog;
+            d.text.clone()
+        };
+        assert_eq!(
+            text(&h),
+            "Reprise could not restart the computer.\n\nIt had not happened after 2 minutes."
+        );
+        answered(&mut h.state, id, again(Act::Restart), stays(), None);
+        assert_eq!(dialogs(&h), open + 1, "the trigger that stayed is told");
+        assert_eq!(
+            text(&h),
+            "Reprise could not restart the computer.\n\nsignal 15\n\n\
+             Updates will install the next time the computer starts."
+        );
+        let id = h.state.powering.begin();
+        let made = h.state.offline.made.clone();
+        let cancel = made.locked();
+        late(&mut h.state, id, Act::Restart, false);
+        drop(cancel);
+        quit(&mut h.state);
+        crate::crash::not_ending();
+        let open = dialogs(&h);
+        answered(&mut h.state, id, again(Act::Restart), stays(), None);
+        assert_eq!(dialogs(&h), open, "a session that quit tells nothing");
     }
 
     #[test]
