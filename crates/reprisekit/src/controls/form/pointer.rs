@@ -154,7 +154,7 @@ impl Form {
             return;
         };
         let r = self.at(it);
-        let lay = trackbar::layout(t, r.x, r.y, r.width);
+        let lay = self.track_layout(t, r);
         if !lay.bounds.contains(x, y) {
             return;
         }
@@ -299,7 +299,7 @@ impl Form {
                     }
                 }
                 Control::TrackBar(t) => {
-                    let lay = trackbar::layout(t, self.at(it).x, self.at(it).y, self.at(it).width);
+                    let lay = self.track_layout(t, self.at(it));
                     match trackbar::hit(&lay, x, y) {
                         Some(h) => Part::TrackBar(h),
                         None => continue,
@@ -754,6 +754,7 @@ impl Form {
         }
         let rect = self.at(&self.items[i]);
         let id = self.items[i].id;
+        let grow = self.units().small();
         match (&mut self.items[i].control, drag) {
             (Control::Edit { edit, .. }, Drag::Edit(_)) => {
                 // The host hit-tested the pointer already, so the index
@@ -772,7 +773,7 @@ impl Form {
                 }
             }
             (Control::TrackBar(t), Drag::TrackBar(_)) => {
-                let lay = trackbar::layout(t, rect.x, rect.y, rect.width);
+                let lay = trackbar::layout_grown(t, rect.x, rect.y, rect.width, grow);
                 if t.set(trackbar::position_at(&lay, x)) {
                     return Event::Changed(id);
                 }

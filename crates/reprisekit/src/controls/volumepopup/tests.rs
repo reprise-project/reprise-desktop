@@ -1968,7 +1968,7 @@ fn the_speaker_button_is_a_toggle_named_mute() {
 }
 
 #[test]
-fn at_200_percent_the_parts_grow_and_icons_glyphs_and_thumbs_keep_their_size() {
+fn at_200_percent_the_parts_and_thumbs_grow_and_icons_and_glyphs_keep_their_size() {
     let theme = Theme::default().with_form_text(200);
     let mut a = app("mpv", 8);
     a.icon = Some(Canvas::new(32, 32));
@@ -1982,7 +1982,9 @@ fn at_200_percent_the_parts_grow_and_icons_glyphs_and_thumbs_keep_their_size() {
     assert_eq!((c.mute.width, c.mute.height), (60, 52));
     assert_eq!(c.icon.map(|r| (r.width, r.height)), Some((32, 32)));
     let size = |r: Rect| (r.width, r.height);
-    assert_eq!(size(c.track.thumb), size(c1.track.thumb));
+    let (w, h) = size(c1.track.thumb);
+    assert_eq!(size(c.track.thumb), (2 * w, 2 * h));
+    assert_eq!(c.track.bounds.width, 2 * c1.track.bounds.width);
     assert_eq!(l.output.field.width, 720);
     assert_eq!(l.output.row_h, 2 * one.output.row_h);
     assert_eq!(l.bar, None);

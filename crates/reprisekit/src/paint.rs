@@ -153,8 +153,13 @@ impl<'a> Paint<'a> {
     /// the grown device scale, so the grown control is a fresh drawing. Hand it to
     /// [`Paint::small`].
     pub fn small_look(&self, c: &Canvas) -> Look {
-        match self.small_k() {
-            1 => self.look.clone(),
+        self.look_grown(c, self.small_k())
+    }
+
+    /// [`Paint::small_look`] for a control laid out `k` times its 100% size.
+    pub fn look_grown(&self, c: &Canvas, k: i32) -> Look {
+        match k {
+            ..=1 => self.look.clone(),
             k => self.look.at_scale(self.s.max(1) * c.scale() * k),
         }
     }

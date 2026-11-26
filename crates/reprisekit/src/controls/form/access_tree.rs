@@ -231,7 +231,7 @@ impl Form {
                     (id, Some(id))
                 }
                 Control::TrackBar(t) => {
-                    let lay = trackbar::layout(t, r.x, r.y, r.width);
+                    let lay = self.track_layout(t, r);
                     let id = trackbar::access(t, &lay, tree, up, key);
                     (id, Some(id))
                 }

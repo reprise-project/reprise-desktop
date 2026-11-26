@@ -648,3 +648,70 @@ pub fn render_tree_icons(pct: u32) -> Canvas {
     }
     c
 }
+
+/// Trackbars in each look, a look a row, at `pct` text and at scale 1 and 2: ticked, at rest,
+/// focused, greyed, and an upright volume slider past 100%, each grown with the text.
+pub fn render_trackbars(pct: u32) -> Canvas {
+    use reprisekit::look::widgets::draw_trackbar;
+    use reprisekit::pointer::Interaction;
+    use reprisekit::trackbar::{self, TrackBar};
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let mut rows: Vec<Vec<Canvas>> = Vec::new();
+    for &look in &looks {
+        let base = interfaces::theme_for(look).with_text_size(pct);
+        let k = base.text.small();
+        let mut parts = Vec::new();
+        for s in [1, 2] {
+            let theme = base.scaled(s);
+            let w = base.text.len(120);
+            let flat = TrackBar::new(3, 11);
+            let upright = TrackBar::new(12, 16).boosted(Some(10));
+            let thumb = theme.look.controls_at_100().vtrack_thumb;
+            let tall = base.text.len(90);
+            let lays = [
+                (trackbar::layout_grown(&flat, 4, 4, w, k), true, false),
+                (trackbar::layout_grown(&flat, 4, 4, w, k), true, true),
+                (trackbar::layout_grown(&flat, 4, 4, w, k), false, false),
+                (
+                    trackbar::layout_vertical_with(&upright, 4, 4, tall, thumb, k),
+                    true,
+                    false,
+                ),
+            ];
+            for (lay, enabled, focused) in lays {
+                let (pw, ph) = (lay.bounds.width + 8, lay.bounds.height + 8);
+                let mut part = Canvas::new((pw * s) as u32, (ph * s) as u32);
+                part.fill_rect(part.bounds(), theme.colors.button_face);
+                draw_trackbar(
+                    &mut part,
+                    &theme.paint(),
+                    &lay,
+                    enabled,
+                    focused,
+                    Interaction::Idle,
+                );
+                parts.push(part);
+            }
+        }
+        rows.push(parts);
+    }
+    let w = (rows.iter())
+        .map(|r| r.iter().map(|p| p.width as i32 + 10).sum::<i32>())
+        .max()
+        .unwrap_or(0);
+    let heights: Vec<i32> = (rows.iter())
+        .map(|r| r.iter().map(|p| p.height as i32 + 10).max().unwrap_or(0))
+        .collect();
+    let mut c = Canvas::new((w + 10) as u32, (heights.iter().sum::<i32>() + 10) as u32);
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    let mut y = 10;
+    for (parts, h) in rows.iter().zip(heights) {
+        let mut x = 10;
+        for p in parts {
+            c.blit_canvas(x, y, p);
+            x += p.width as i32 + 10;
+        }
+        y += h;
+    }
+    c
+}

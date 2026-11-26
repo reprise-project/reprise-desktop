@@ -359,6 +359,8 @@ struct Dims {
     output_h: i32,
     output_inset: i32,
     output_row: i32,
+    /// [`TextUnits::small`]: how many times their 100% size the trackbars draw.
+    small: i32,
 }
 
 impl Dims {
@@ -366,6 +368,7 @@ impl Dims {
         let l = |v| u.len(v);
         let (track_y, track_h, check_gap, row_h) = (l(TRACK_Y), l(TRACK_H), l(CHECK_GAP), l(ROW_H));
         Dims {
+            small: u.small(),
             device_w: l(DEVICE_W),
             col_w: SLOT + l(COL_W - SLOT),
             min_w: l(MIN_W),
@@ -466,9 +469,10 @@ fn column_layout(
     let label_w = w - 2 * d.pad;
     let check_y = y + d.track_y + track_h + d.check_gap;
     let check_w = text.measure(col.check.label(), false, px);
-    // The channels run from a pixel left of the centre line.
-    let channel_x = x + mid - 1;
-    let balance_x = channel_x + CHANNEL_W / 2 - d.balance_w / 2;
+    let k = d.small;
+    // The channels run from a pixel left of the centre line, `k` grown.
+    let channel_x = x + mid - k;
+    let balance_x = channel_x + k * CHANNEL_W / 2 - d.balance_w / 2;
     let speaker_y = y + d.balance_y + SPEAKER_Y;
     let thumb = cm.vtrack_thumb;
     let row = |top: i32, w: i32| Rect::new(x + d.pad, y + top, w, d.row_h);
@@ -488,7 +492,7 @@ fn column_layout(
         title: row(d.title_y, label_w),
         underline: device.then(|| Rect::new(x + d.pad, y + d.underline_y, d.underline_w, 2)),
         balance_label: row(d.balance_label_y, label_w),
-        balance: trackbar::layout(&col.balance, balance_x, y + d.balance_y, d.balance_w),
+        balance: trackbar::layout_grown(&col.balance, balance_x, y + d.balance_y, d.balance_w, k),
         speakers: [
             Rect::new(
                 balance_x - SPEAKER_GAP - SPEAKER,
@@ -506,10 +510,11 @@ fn column_layout(
         volume_label: row(d.volume_label_y, label_w),
         volume: trackbar::layout_vertical_with(
             &col.volume,
-            channel_x - (trackbar::vertical_width(thumb) - CHANNEL_W) / 2,
+            channel_x - k * ((trackbar::vertical_width(thumb) - CHANNEL_W) / 2),
             y + d.track_y,
             track_h,
             thumb,
+            k,
         ),
         check: Rect::new(
             x + d.pad,
@@ -762,7 +767,12 @@ impl Layout {
 /// The focus ring round a balance trackbar: 8 px out from its channel's
 /// ends, from 2 px over the thumb to the ticks' last row.
 fn balance_ring(t: &trackbar::Layout) -> Rect {
-    Rect::new(t.channel.x - 8, t.bounds.y - 2, t.channel.width + 16, 28)
+    Rect::new(
+        t.channel.x - 8,
+        t.bounds.y - 2,
+        t.channel.width + 16,
+        t.bounds.height + 2,
+    )
 }
 
 /// The focus ring round a volume trackbar: 8 px over and under its

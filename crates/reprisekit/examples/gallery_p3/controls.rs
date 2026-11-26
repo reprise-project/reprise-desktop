@@ -169,8 +169,14 @@ fn draw_group_c(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
         .into_iter()
         .enumerate()
     {
-        let lay =
-            trackbar::layout_vertical_with(&upright, x + 460 + i as i32 * 40, y + 72, 56, thumb_w);
+        let lay = trackbar::layout_vertical_with(
+            &upright,
+            x + 460 + i as i32 * 40,
+            y + 72,
+            56,
+            thumb_w,
+            1,
+        );
         draw_vertical_trackbar(c, &p, &lay, true, false, ptr);
     }
 }

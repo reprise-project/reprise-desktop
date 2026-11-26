@@ -469,7 +469,8 @@ impl ControlMetrics {
 impl ControlMetrics {
     /// These sizes for text grown by `u`: the rows that hold a line of text grow; check boxes,
     /// radio buttons, scrollbars, drop buttons and spin columns (and their labels' offsets) grow
-    /// by [`TextUnits::small`](crate::theme::TextUnits::small); icons keep their size.
+    /// by [`TextUnits::small`](crate::theme::TextUnits::small); icons keep their size. A trackbar's
+    /// layout grows its own thumb ([`crate::trackbar::layout_grown`]), so `vtrack_thumb` stays.
     pub fn grown(self, u: crate::theme::TextUnits) -> ControlMetrics {
         let k = u.small();
         ControlMetrics {

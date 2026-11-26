@@ -927,6 +927,8 @@ pub fn draw_progress(c: &mut Canvas, p: &Paint, r: Rect, fraction: f64, enabled:
 /// The trackbar. The style draws its thumb in its state for `thumb` and
 /// `focused` (whether the trackbar holds the keyboard); Classic holds the
 /// thumb when `Pressed`. A vertical layout goes to [`draw_vertical_trackbar`].
+/// A layout grown with the text ([`trackbar::Layout::grow`]) draws in the
+/// look built again at the grown scale ([`Paint::look_grown`]).
 pub fn draw_trackbar(
     c: &mut Canvas,
     p: &Paint,
@@ -938,7 +940,8 @@ pub fn draw_trackbar(
     if lay.vertical {
         return draw_vertical_trackbar(c, p, lay, enabled, focused, thumb);
     }
-    if let Some(st) = p.look.style()
+    let look = p.look_grown(c, lay.grow);
+    if let Some(st) = look.style()
         && styled::trackbar::draw_trackbar(st, c, p, lay, enabled, focused, thumb)
     {
         return;
@@ -955,7 +958,8 @@ pub fn draw_vertical_trackbar(
     focused: bool,
     thumb: Interaction,
 ) {
-    if let Some(st) = p.look.style()
+    let look = p.look_grown(c, lay.grow);
+    if let Some(st) = look.style()
         && styled::trackbar::draw_vertical_trackbar(st, c, p, lay, enabled, focused, thumb)
     {
         return;
@@ -1798,6 +1802,49 @@ mod tests {
                 for &(x, y) in &opaque {
                     let at = idle.get(x0 + x, y0 + y);
                     assert_eq!(at, icon.get(x, y), "{interface:?} at {s} ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    /// A trackbar laid out twice its size draws, in every look and state, as its 100% self does
+    /// at scale 2: Classic's pattern doubled, Blue's and Glass's parts drawn afresh at the grown
+    /// scale; upright too, with a volume slider's boost zone.
+    #[test]
+    fn a_trackbar_grown_twice_draws_as_its_100_percent_self_at_scale_2() {
+        let flat = trackbar::TrackBar::new(3, 11);
+        let upright = trackbar::TrackBar::new(2, 7).boosted(Some(5));
+        let lays = [
+            (
+                trackbar::layout(&flat, 0, 0, 71),
+                trackbar::layout_grown(&flat, 0, 0, 142, 2),
+            ),
+            (
+                trackbar::layout_vertical_with(&upright, 0, 0, 71, 21, 1),
+                trackbar::layout_vertical_with(&upright, 0, 0, 142, 21, 2),
+            ),
+        ];
+        let states = [
+            (true, false, Interaction::Idle),
+            (true, true, Interaction::Hot),
+            (true, false, Interaction::Pressed),
+            (false, false, Interaction::Idle),
+        ];
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = theme_for(i);
+            let (at_2, grown) = (theme.scaled(2), theme.with_text_size(200));
+            for (one, two) in &lays {
+                for (enabled, focused, ptr) in states {
+                    let draw = |p: &Paint, lay: &trackbar::Layout| {
+                        let mut c = Canvas::new(150, 150);
+                        draw_trackbar(&mut c, p, lay, enabled, focused, ptr);
+                        c
+                    };
+                    assert!(
+                        draw(&at_2.paint(), one) == draw(&grown.paint(), two),
+                        "{i:?}, vertical {}, {enabled} {focused} {ptr:?}",
+                        one.vertical
+                    );
                 }
             }
         }
