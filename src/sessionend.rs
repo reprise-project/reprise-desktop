@@ -254,9 +254,14 @@ fn check(
 }
 
 /// [`refuse`] a session end [`check`] stopped, or only tell when it `joins` one under way, which
-/// goes on.
+/// goes on. Once that end went on (the screen may be fading out) no box opens: the refusal is told
+/// when the session comes back ([`back`]).
 fn turned_down(state: &mut State, goal: Goal, joins: bool, why: &Refused) {
     match joins {
+        true if state.ending.is_none() && crate::crash::is_ending() => {
+            log::warn!("session end: {goal:?} refused after the end it joined went on: {why:?}");
+            state.powering.untold = Some((Act::of(goal), why.clone()));
+        }
         true => {
             log::warn!("session end: {goal:?} refused, the end under way goes on: {why:?}");
             tell(state, Act::of(goal), why);
@@ -852,6 +857,8 @@ pub struct Powering {
     under_way: Option<u64>,
     /// Custom Stand By and Hibernate commands still running past [`ANSWER_WITHIN`] ([`late`]).
     lingering: Vec<u64>,
+    /// A refusal held back while the session ended ([`turned_down`]).
+    untold: Option<(Act, Refused)>,
 }
 
 impl Powering {
@@ -1327,15 +1334,23 @@ fn resume(state: &mut State, act: Act) {
         crate::crash::not_ending();
         state.session.kept = false;
     }
+    back(state);
+}
+
+/// Bring the desktop back, with the refusal of an end that joined one gone on ([`turned_down`]).
+fn back(state: &mut State) {
     crate::sessionfade::restore(state);
+    if let Some((act, why)) = state.powering.untold.take() {
+        tell(state, act, &why);
+    }
 }
 
 fn refuse(state: &mut State, act: Act, why: &Refused) {
     log::warn!("session end: {act:?} refused: {why:?}");
     match why {
         // The action may still go through, and the session stays saved as it ended.
-        Refused::Late => crate::sessionfade::restore(state),
-        Refused::Stays(Some(w)) if **w == Refused::Late => crate::sessionfade::restore(state),
+        Refused::Late => back(state),
+        Refused::Stays(Some(w)) if **w == Refused::Late => back(state),
         _ => resume(state, act),
     }
     tell(state, act, why);
@@ -2505,6 +2520,27 @@ mod tests {
             (Goal::TurnOff, Updates::Skip),
             "asks nothing"
         );
+    }
+
+    #[test]
+    fn a_refusal_for_an_end_joining_one_that_went_on_waits_for_the_session_to_come_back() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let open = dialogs(&h);
+        crate::crash::ending();
+        turned_down(&mut h.state, Goal::TurnOff, true, &Refused::NotAllowed);
+        assert_eq!(dialogs(&h), open, "no box over the fade");
+        resume(&mut h.state, Act::Restart);
+        let texts: Vec<_> = (h.state.dialogs.views.iter().skip(open))
+            .map(|v| v.dialog.text.clone())
+            .collect();
+        assert_eq!(
+            texts,
+            [refusal_text(Act::TurnOff, &Refused::NotAllowed)],
+            "told once the session is back"
+        );
+        resume(&mut h.state, Act::Restart);
+        assert_eq!(dialogs(&h), open + 1, "told once");
     }
 
     #[test]
