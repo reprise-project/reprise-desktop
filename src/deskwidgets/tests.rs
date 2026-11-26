@@ -139,6 +139,8 @@ fn the_widgets_menu_ticks_what_stands_and_a_widget_menu_ends_in_remove() {
 /// reading the store puts them back.
 #[test]
 fn widgets_stand_clear_of_icons_move_by_drag_and_come_back_after_a_restart() {
+    let own = crate::harness::scratch().join("widgets-restart.toml");
+    store::OWN_PATH.set(Some(own));
     let mut h = Harness::new();
     let out = h.output("TEST-1", 1024, 768);
     h.state.setup_widgets();
