@@ -64,11 +64,11 @@ save-failed =
 undecodable =
     { $path } is not a { $encoding } text file.
     Do you want to open a copy with the unreadable characters replaced?
-# $name is the document's name, or recovered-untitled.
+# $name is the document's name, or recovered-untitled. The counter's no-break spaces keep it on one line.
 recovered =
     { $count ->
         [one] The unsaved text of { $name } was recovered.
-       *[other] The unsaved text of { $name } was recovered ({ $index } of { $count }).
+       *[other] The unsaved text of { $name } was recovered ({ $index }{"\u00A0"}of{"\u00A0"}{ $count }).
     }
     Do you want to open it?
 recovered-untitled = Untitled ("{ $line }")

@@ -2296,10 +2296,10 @@ fn each_recovery_prompt_names_its_document_and_counts_them() {
     assert_eq!(
         texts,
         [
-            "The unsaved text of notes was recovered (1 of 3).\nDo you want to open it?",
+            "The unsaved text of notes was recovered (1\u{a0}of\u{a0}3).\nDo you want to open it?",
             "The unsaved text of Untitled (\"Dear Sam, thanks for the books you lent...\") \
-             was recovered (2 of 3).\nDo you want to open it?",
-            "The unsaved text of Untitled was recovered (3 of 3).\nDo you want to open it?",
+             was recovered (2\u{a0}of\u{a0}3).\nDo you want to open it?",
+            "The unsaved text of Untitled was recovered (3\u{a0}of\u{a0}3).\nDo you want to open it?",
         ]
     );
 
