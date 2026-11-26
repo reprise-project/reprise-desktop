@@ -213,8 +213,7 @@ fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>, down: bo
 }
 
 /// Take back, blocking, a trigger a power attempt given up on left, as the session ends. One that
-/// stays is only logged: the next Turn off computer panel offers the update, and unticking it
-/// takes it back.
+/// stays is only logged; the next Turn off computer panel offers the update.
 pub fn take_back_left(state: &State) {
     state.offline.made.take_back(&*state.offline.bus, None);
 }
