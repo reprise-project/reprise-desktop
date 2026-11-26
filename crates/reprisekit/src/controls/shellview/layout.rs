@@ -45,7 +45,7 @@ pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, p
                 cell.height,
             )
         }
-        mode => shellgrid::label_of(mode, cell, e, text, px, lay.controls.text),
+        mode => shellgrid::label_of(mode, cell, e, text, px, lay.controls.text, 1),
     }
 }
 

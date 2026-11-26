@@ -174,11 +174,12 @@ fn tile_bar_w(avail: i32, u: TextUnits) -> i32 {
     u.len(TILE_BAR_W).min(avail)
 }
 
-/// A label block of `n` lines at the pitch, down to where the last line's descent ends.
-pub(crate) fn block_h(text: &TextRenderer, n: usize, px: u32, u: TextUnits) -> i32 {
-    let line = Rect::new(0, 0, 0, px as i32 + u.len(3));
+/// The height of `n` label lines at paint scale `s`, `px` being the font as drawn: down to where
+/// the last line's descent ends.
+pub(crate) fn block_h(text: &TextRenderer, n: usize, px: u32, u: TextUnits, s: i32) -> i32 {
+    let line = Rect::new(0, 0, 0, px as i32 + u.len(3) * s);
     let last = text.line_bottom(line, false, px).unwrap_or(0);
-    (n.max(1) as i32 - 1) * u.len(LINE_PITCH) + last.max(px as i32)
+    (n.max(1) as i32 - 1) * u.len(LINE_PITCH) * s + last.max(px as i32)
 }
 
 pub(crate) fn widths(text: &TextRenderer, lines: &[&str], px: u32) -> (i32, Vec<i32>) {
@@ -205,8 +206,14 @@ pub(crate) fn label_room(mode: Mode, cell_w: i32, u: TextUnits) -> i32 {
     }
 }
 
-pub(crate) fn thumb_lines(text: &TextRenderer, name: &str, px: u32, u: TextUnits) -> Vec<String> {
-    iconview::wrap_label(text, name, u.len(THUMB_FRAME), px)
+pub(crate) fn thumb_lines(
+    text: &TextRenderer,
+    name: &str,
+    px: u32,
+    u: TextUnits,
+    s: i32,
+) -> Vec<String> {
+    iconview::wrap_label(text, name, u.len(THUMB_FRAME) * s, px)
 }
 
 /// The icon `mode` draws for `e`, faded to half (a copy) when the entry is cut or hidden. Thumbnails fall back to the 32 px icon.
@@ -341,7 +348,7 @@ pub(crate) fn draw_thumb(
     } else {
         cs.window_text
     };
-    for (k, line) in thumb_lines(text, &e.name, px, u).iter().enumerate() {
+    for (k, line) in thumb_lines(text, &e.name, px, u, s).iter().enumerate() {
         let r = Rect::new(
             label.x,
             label.y + k as i32 * u.len(LINE_PITCH) * s,
@@ -371,11 +378,9 @@ pub(crate) fn draw_grid(
     let mut bc = c.scratch(body.width.max(0) as u32, body.height.max(0) as u32);
     let all = Rect::new(0, 0, body.width, body.height);
     bc.fill_rect(all, cs.window);
-    // Scaled and moved into the scratch canvas' own space.
-    let off = |r: Rect| {
-        let r = r.scaled(s);
-        Rect::new(r.x - body.x, r.y - body.y, r.width, r.height)
-    };
+    // Device px moved into the scratch canvas' own space; `off` scales a logical rect first.
+    let moved = |r: Rect| Rect::new(r.x - body.x, r.y - body.y, r.width, r.height);
+    let off = |r: Rect| moved(r.scaled(s));
     for (h, g) in lay.headers.iter().zip(&sv.groups) {
         let r = off(*h);
         if !r.intersect(&all).is_empty() {
@@ -397,7 +402,7 @@ pub(crate) fn draw_grid(
         if off(at).intersect(&all).is_empty() {
             continue;
         }
-        let label = off(label_of(sv.mode, at, e, text, px, u));
+        let label = moved(label_of(sv.mode, at, e, text, px, u, s));
         let cell = off(at);
         let editing = matches!(&sv.edit, Some((j, _)) if *j == i);
         // A look that boxes its items boxes the cell, from its top to 2 px under the label (a tile's whole cell), and draws the rest as if nothing were selected.
@@ -490,7 +495,8 @@ pub(crate) fn draw_grid(
     c.blit_canvas(body.x, body.y, &bc);
 }
 
-/// The label rect for an icon-mode cell at text size `u`: what `draw` highlights and where a rename box goes.
+/// The label rect for the icon-mode `cell` (logical) at text size `u`, in device px at paint
+/// scale `s`, `px` being the font as drawn: what `draw` highlights and where a rename box goes.
 pub(crate) fn label_of(
     mode: Mode,
     cell: Rect,
@@ -498,18 +504,19 @@ pub(crate) fn label_of(
     text: &TextRenderer,
     px: u32,
     u: TextUnits,
+    s: i32,
 ) -> Rect {
     match mode {
         Mode::Icons => {
-            let r = iconview::label_layout(text, &e.name, px, 1, cell.width, u).rect;
-            Rect::new(cell.x + r.x, cell.y + r.y, r.width, r.height)
+            let r = iconview::label_layout(text, &e.name, px, s, cell.width, u).rect;
+            Rect::new(cell.x * s + r.x, cell.y * s + r.y, r.width, r.height)
         }
         Mode::Tiles => {
             let lines = tile_lines(e);
             let avail = (cell.width - TILE_TEXT_X).max(0);
             let shown: Vec<String> = lines
                 .iter()
-                .map(|l| text.ellipsize(l, avail, false, px).into_owned())
+                .map(|l| text.ellipsize(l, avail * s, false, px).into_owned())
                 .collect();
             let (widest, _) = widths(
                 text,
@@ -517,31 +524,29 @@ pub(crate) fn label_of(
                 px,
             );
             let widest = match e.space {
-                Some(_) => widest.max(tile_bar_w(avail, u)),
+                Some(_) => widest.max(tile_bar_w(avail, u) * s),
                 None => widest,
             };
-            let h = block_h(text, shown.len(), px, u);
             Rect::new(
-                cell.x + TILE_TEXT_X,
-                cell.y + u.len(tile_text_top(shown.len())),
+                (cell.x + TILE_TEXT_X) * s,
+                (cell.y + u.len(tile_text_top(shown.len()))) * s,
                 widest,
-                h,
+                block_h(text, shown.len(), px, u, s),
             )
         }
         _ => {
-            let frame = thumb_frame(cell);
-            let lines = thumb_lines(text, &e.name, px, u);
+            let frame = thumb_frame(cell).scaled(s);
+            let lines = thumb_lines(text, &e.name, px, u, s);
             let (widest, _) = widths(
                 text,
                 &lines.iter().map(String::as_str).collect::<Vec<_>>(),
                 px,
             );
-            let h = block_h(text, lines.len(), px, u);
             Rect::new(
                 frame.x + (frame.width - widest) / 2,
-                frame.bottom() + THUMB_LABEL_GAP,
+                frame.bottom() + THUMB_LABEL_GAP * s,
                 widest,
-                h,
+                block_h(text, lines.len(), px, u, s),
             )
         }
     }
@@ -569,6 +574,42 @@ mod tests {
     const EXPECTED_GROUP_PITCH: i32 = 99;
     const EXPECTED_GROUP_RULE_Y: i32 = 18;
     const EXPECTED_GROUP_INDENT: i32 = 11;
+
+    #[test]
+    fn a_tile_label_at_paint_scale_2_is_measured_in_device_px() {
+        let (text, px) = rend();
+        let px = px * 2;
+        let e = Entry {
+            name: "Quarterly budget.xlsx".into(),
+            ..Default::default()
+        };
+        let name_w = text.measure(&e.name, false, px);
+        let avail = TILE_CELL.0 - TILE_TEXT_X;
+        assert!(
+            name_w > avail && name_w < 2 * avail,
+            "the premise: {name_w}"
+        );
+        let cell = Rect::new(10, 20, TILE_CELL.0, TILE_CELL.1);
+        let l = label_of(
+            Mode::Tiles,
+            cell,
+            &e,
+            &text,
+            px,
+            crate::theme::TextUnits::ONE,
+            2,
+        );
+        let top = (20 + tile_text_top(1)) * 2;
+        assert_eq!((l.x, l.y), ((10 + TILE_TEXT_X) * 2, top));
+        assert_eq!(
+            l.width, name_w,
+            "the whole name, not one cut to the logical width"
+        );
+        assert_eq!(
+            l.height, 28,
+            "one line, down to where the font's descent ends at 22 px"
+        );
+    }
 
     #[test]
     fn thumbnails_flow_at_their_pitch() {
@@ -1087,7 +1128,7 @@ mod tests {
                 theme.colors.window.argb()
             );
             let u = theme.controls().text;
-            let lines = thumb_lines(&text, &sv.entries[0].name, px, u);
+            let lines = thumb_lines(&text, &sv.entries[0].name, px, u, 1);
             assert_eq!(lines.len(), 2, "{pct}%: {lines:?}");
             let widest = lines
                 .iter()
@@ -1097,7 +1138,11 @@ mod tests {
             assert!(widest <= u.len(EXPECTED_THUMB_FRAME), "{pct}%: {widest}");
             let label = crate::controls::shellview::label_rect(&sv, &lay, 0, &text, px);
             assert_eq!(label.y, frame.bottom() + THUMB_LABEL_GAP, "{pct}%");
-            assert_eq!(label.height, block_h(&text, 2, px, u), "{pct}%: two lines");
+            assert_eq!(
+                label.height,
+                block_h(&text, 2, px, u, 1),
+                "{pct}%: two lines"
+            );
             assert!((label.x + label.width / 2 - (frame.x + frame.width / 2)).abs() <= 1);
             assert!(
                 label.bottom() <= cell.bottom(),
