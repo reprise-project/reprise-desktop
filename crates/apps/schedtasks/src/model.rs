@@ -1,5 +1,6 @@
 //! A user timer as the window shows it, and the text of each column.
 
+use reprisefs::locale;
 use reprisekit::tr;
 
 /// systemd's `USEC_INFINITY`: no time set.
@@ -211,7 +212,7 @@ pub fn day_name(abbr: &str) -> Option<String> {
     // SAFETY: `libc::tm` is plain data; strftime's `%A` reads only `tm_wday`.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     tm.tm_wday = wday as i32;
-    Some(reprisefs::locale::strftime(&tm, c"%A"))
+    Some(locale::strftime(&tm, c"%A"))
 }
 
 /// The weekdays of a normalized spec's `Mon..Fri` or `Mon,Wed` part in words.
@@ -247,8 +248,21 @@ fn clock(time: &str, is_12h: bool) -> Option<String> {
     })
 }
 
+/// A normalized `YYYY-MM-DD` as the LC_TIME locale writes the day with its weekday.
+fn long_date(date: &str) -> Option<String> {
+    let mut it = date.split('-').map(str::parse::<i32>);
+    let (y, mo, d) = (it.next()?.ok()?, it.next()?.ok()?, it.next()?.ok()?);
+    if it.next().is_some() {
+        return None;
+    }
+    let tm = locale::localtime(locale::mktime(y, mo, d, 12, 0, 0));
+    let real = (tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday) == (y, mo, d);
+    real.then(|| locale::long_date(&tm))
+}
+
 /// A normalized `OnCalendar` spec in words where it has a common shape (every day, given
-/// weekdays or a day of the month at a time; every hour or minute), else the spec itself.
+/// weekdays or a day of the month at a time, a date at a time; every hour or minute), else the
+/// spec itself.
 pub fn calendar(spec: &str, is_12h: bool) -> String {
     calendar_words(spec, is_12h).unwrap_or_else(|| spec.to_string())
 }
@@ -264,6 +278,9 @@ fn calendar_words(spec: &str, is_12h: bool) -> Option<String> {
     match (dow, date, at) {
         (None, "*-*-*", Some(time)) => Some(tr!("schedule-daily", time = time)),
         (Some(d), "*-*-*", Some(time)) => Some(tr!("schedule-days", days = days(d)?, time = time)),
+        (None, date, Some(time)) if !date.starts_with('*') => {
+            Some(tr!("schedule-once", date = long_date(date)?, time = time))
+        }
         (None, date, Some(time)) => {
             let day = date.strip_prefix("*-*-")?;
             let n: i64 = day.parse().ok()?;
@@ -363,6 +380,20 @@ mod tests {
     }
 
     #[test]
+    fn a_date_reads_as_once_on_its_long_date() {
+        use reprisefs::locale::{localtime, long_date, mktime};
+        let date = long_date(&localtime(mktime(2026, 11, 27, 12, 0, 0)));
+        assert_eq!(
+            calendar("2026-11-27 09:00:00", false),
+            format!("Once, {date} at 9:00")
+        );
+        assert_eq!(
+            calendar("2026-11-27 21:30:00", true),
+            format!("Once, {date} at 9:30 PM")
+        );
+    }
+
+    #[test]
     fn other_calendar_specs_show_as_systemd_writes_them() {
         for spec in [
             "*-*-* 03:00:30",
@@ -371,6 +402,8 @@ mod tests {
             "*-*-* 03:00:00 Europe/Budapest",
             "Mon *-*-01 00:00:00",
             "Xyz *-*-* 00:00:00",
+            "2026-02-30 09:00:00",
+            "2026-*-27 09:00:00",
         ] {
             assert_eq!(calendar(spec, false), spec);
         }

@@ -48,6 +48,8 @@ status-stopped = Stopped
 schedule-daily = Every day at { $time }
 schedule-days = Every { $days } at { $time }
 schedule-monthly = Day { $day } of every month at { $time }
+# $date is a weekday and date in the locale's long form.
+schedule-once = Once, { $date } at { $time }
 schedule-hourly = Every hour
 schedule-hourly-at = Every hour at :{ $minute }
 schedule-minutely = Every minute
