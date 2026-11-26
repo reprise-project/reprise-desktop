@@ -46,12 +46,13 @@ pub(super) enum ResultKind {
 }
 
 /// The search's groups and what each holds: the answer, programs, settings, then each found
-/// section under its heading, every group but the answer counted. A found row's detail is its
-/// folder (`~` for `home`) or its search provider's description.
+/// section under its heading, every group but the answer counted. A setting is (name, detail),
+/// the detail [`crate::search::Setting::detail`]'s or empty. A found row's detail is its folder
+/// (`~` for `home`) or its search provider's description.
 pub(super) fn result_groups<'a>(
     calc: Option<&str>,
     apps: &[String],
-    settings: &[String],
+    settings: &[(String, String)],
     found: impl Iterator<Item = (&'a str, &'a [Found])>,
     home: Option<&Path>,
 ) -> (Vec<ResultGroup>, Vec<ResultKind>) {
@@ -82,7 +83,13 @@ pub(super) fn result_groups<'a>(
     group(
         ResultKind::Settings,
         format!("Settings ({})", settings.len()),
-        named(settings),
+        (settings.iter())
+            .map(|(name, detail)| ResultRow {
+                name: name.clone(),
+                icon: None,
+                detail: detail.clone(),
+            })
+            .collect(),
     );
     for (s, (heading, rows)) in found.enumerate() {
         let rows = &rows[..rows.len().min(SEARCH_ROWS)];
@@ -149,10 +156,12 @@ impl State {
             .iter()
             .map(|&i| app_index[i].name.clone())
             .collect();
-        let settings: Vec<String> = v
-            .result_settings
-            .iter()
-            .map(|s| s.name(app_index))
+        let query = v.model.query();
+        let settings: Vec<(String, String)> = (v.result_settings.iter())
+            .map(|s| {
+                let detail = s.detail(query, app_index).unwrap_or_default();
+                (s.name(app_index), detail.to_string())
+            })
             .collect();
         let calc = v.answer.as_ref().map(|(row, _)| row.clone());
         let found = (v.search.sections()).map(|(source, rows)| (source.heading(), rows));

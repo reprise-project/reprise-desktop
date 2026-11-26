@@ -2060,6 +2060,61 @@ mod tests {
     }
 
     #[test]
+    fn a_settings_result_draws_its_keyword_after_the_page_in_every_look() {
+        crate::pins::fonts();
+        let text = TextRenderer::load(&font());
+        let with = |name: &str, detail: &str| {
+            let mut p = sample(Mode::Search, None);
+            p.set_results(vec![ResultGroup {
+                title: "Settings (1)".into(),
+                rows: vec![ResultRow {
+                    name: name.into(),
+                    icon: None,
+                    detail: detail.into(),
+                }],
+            }]);
+            p
+        };
+        let blank = with("", "");
+        let bare = with("Advanced", "");
+        let keyed = with("Advanced", "low disk space");
+        let differ = |a: &Drawn, b: &Drawn| -> Vec<(i32, i32)> {
+            (0..b.c.height as i32)
+                .flat_map(|y| (0..b.c.width as i32).map(move |x| (x, y)))
+                .filter(|&(x, y)| a.c.get(x, y) != b.c.get(x, y))
+                .map(|(x, y)| (x + b.l.canvas.x, y + b.l.canvas.y))
+                .collect()
+        };
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for d in [1, 2] {
+                let theme = interfaces::theme_for(look).scaled(d);
+                let glass = Settings::default();
+                let draw = |p: &StartPanel| {
+                    let l = layout(p).scaled(d);
+                    let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+                    interfaces::draw_start_panel(&mut c, &theme, &glass, &text, p, &l, None, true);
+                    Drawn { c, l }
+                };
+                let (blank, bare, keyed) = (draw(&blank), draw(&bare), draw(&keyed));
+                let row = keyed.l.rect(Spot::Result(0, 0)).expect("the result row");
+                let name_end = (differ(&blank, &bare).iter())
+                    .map(|&(x, _)| x)
+                    .max()
+                    .expect("the name draws");
+                let keyword = differ(&bare, &keyed);
+                assert!(!keyword.is_empty(), "{look:?} at {d}: the keyword draws");
+                assert!(
+                    (keyword.iter()).all(|&(x, y)| row.contains(x, y) && x > name_end),
+                    "{look:?} at {d}: the keyword stays in the row, right of the name"
+                );
+                got.push((format!("{look:?} {d}"), fnv(&keyed.c)));
+            }
+        }
+        crate::pins::check("glass/start_panel_setting_keyword", &got);
+    }
+
+    #[test]
     fn glass_has_every_start_panel_part() {
         let st = super::super::style(&Settings::default());
         for (part, _) in parts(&Settings::default(), 1) {
