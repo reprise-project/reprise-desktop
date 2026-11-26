@@ -1122,20 +1122,27 @@ fn restart_into(
         return Some(failure(&e, dismissed).map_or(Failed::Dismissed, Failed::Refused));
     }
     let failed = match ticket.still() {
-        true => match reboot()? {
-            Failed::Updates(None) => Failed::Updates(Some(boot.title.clone())),
-            failed => failed,
-        },
+        true => reboot()?,
         false => {
             log::info!("session end: restart into {:?} given up on", boot.entry);
             Failed::Dismissed
         }
     };
     let interactive = interactive && ticket.still() && failed != Failed::Dismissed;
-    if let Err(e) = zbus::block_on(crate::restartinto::unaim(conn, boot.kind(), interactive)) {
-        log::warn!("session end: clearing the restart target: {e}");
-    }
-    Some(failed)
+    let cleared = match zbus::block_on(crate::restartinto::unaim(conn, boot.kind(), interactive)) {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!("session end: clearing the restart target: {e}");
+            false
+        }
+    };
+    Some(match failed {
+        Failed::Updates(None) => Failed::Updates(Some(Pick {
+            title: boot.title.clone(),
+            cleared,
+        })),
+        failed => failed,
+    })
 }
 
 /// A refusal shows a message box; a dismissed password prompt brings the session back without
@@ -1181,7 +1188,7 @@ fn answered(
                 updates: Updates::Leave,
                 ..again
             };
-            hold_back(state, &updates_set(into.as_deref()), again);
+            hold_back(state, &updates_set(into.as_ref()), again);
         }
         Some(Failed::Refused(why)) => refuse(state, act, &why),
     }
@@ -1201,12 +1208,21 @@ fn hold_back(state: &mut State, set: &str, again: Again) {
 }
 
 /// A trigger another program made that the user unticked would not cancel. Going ahead anyway
-/// is a plain Restart, not `into` the Restart Into's pick.
-fn updates_set(into: Option<&str>) -> String {
+/// is a plain Restart, which starts the Restart Into's pick `into` only when it was not cleared.
+fn updates_set(into: Option<&Pick>) -> String {
     let set = "Updates will install the next time the computer starts, and Reprise could not change \
                that.";
     match into {
-        Some(title) => format!("{set} Restarting anyway does not start {title}."),
+        Some(Pick {
+            title,
+            cleared: true,
+        }) => format!("{set} Restarting anyway does not start {title}."),
+        Some(Pick {
+            title,
+            cleared: false,
+        }) => format!(
+            "{set} The computer is also still set to start {title}, so restarting anyway starts it."
+        ),
         None => set.to_string(),
     }
 }
@@ -1277,9 +1293,16 @@ enum Failed {
     Refused(Refused),
     /// The restart target titled here is set and would not clear.
     Aimed(String),
-    /// The user unticked an update another program set to install, and it would not cancel; a
-    /// Restart Into's target, titled here, is cleared again.
-    Updates(Option<String>),
+    /// The user unticked an update another program set to install, and it would not cancel; the
+    /// Restart Into's target, if any.
+    Updates(Option<Pick>),
+}
+
+/// A Restart Into's target after its reboot did not happen, and whether it was cleared again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Pick {
+    title: String,
+    cleared: bool,
 }
 
 /// Why the computer stayed up.
@@ -2507,26 +2530,46 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_into_whose_untick_will_not_cancel_says_going_ahead_drops_its_pick() {
+    fn a_restart_into_whose_untick_will_not_cancel_says_whether_going_ahead_starts_its_pick() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
+        let untick = || Some(Failed::Updates(None));
         if let Some(f) = crate::restartinto::tests::logind("yes", "yes", &[]) {
-            let failed = restart_into(&f.client, &target_b(), false, &ticket(false), || {
-                Some(Failed::Updates(None))
-            });
-            assert_eq!(failed, Some(Failed::Updates(Some("B".into()))));
+            let failed = restart_into(&f.client, &target_b(), false, &ticket(false), untick);
+            assert_eq!(failed, Some(Failed::Updates(Some(pick_b(true)))));
             assert_eq!(*f.set.lock().unwrap(), ["entry \"b.conf\"", "entry \"\""]);
         }
-        let id = h.state.powering.begin();
-        let failed = Some(Failed::Updates(Some("B".into())));
-        answered(&mut h.state, id, again(Act::Restart), failed, None);
-        let d = &h.state.dialogs.views.last().expect("the box").dialog;
+        if let Some(f) = crate::restartinto::tests::logind_asking_to_clear() {
+            let failed = restart_into(&f.client, &target_b(), false, &ticket(false), untick);
+            assert_eq!(failed, Some(Failed::Updates(Some(pick_b(false)))));
+            assert_eq!(f.held.lock().unwrap().entry, "b.conf", "B stays set");
+        }
+        let mut shown = |cleared| {
+            let id = h.state.powering.begin();
+            let failed = Some(Failed::Updates(Some(pick_b(cleared))));
+            answered(&mut h.state, id, again(Act::Restart), failed, None);
+            let d = &h.state.dialogs.views.last().expect("the box").dialog;
+            d.text.clone()
+        };
         assert_eq!(
-            d.text,
+            shown(true),
             "Updates will install the next time the computer starts, and Reprise could not change \
              that. Restarting anyway does not start B.\n\nDo you want to restart the computer \
              anyway?"
         );
+        assert_eq!(
+            shown(false),
+            "Updates will install the next time the computer starts, and Reprise could not change \
+             that. The computer is also still set to start B, so restarting anyway starts it.\n\n\
+             Do you want to restart the computer anyway?"
+        );
+    }
+
+    fn pick_b(cleared: bool) -> Pick {
+        Pick {
+            title: "B".into(),
+            cleared,
+        }
     }
 
     /// Attempt 1, given up on when `given_up`.
