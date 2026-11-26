@@ -28,18 +28,31 @@ pub(super) fn metrics() -> PlacesMetrics {
     }
 }
 
+/// A tile's lit, held and selected frames are the toolbar button's, standing inside the
+/// panel's rim and white lines.
+const TILE_INSET: i32 = 3;
+
 pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
-    vec![(
-        Part::PlacesBar,
-        PartImage::new(
-            panel(&v.scheme().places_bar.normal, scale),
-            &[State::Normal],
-            Layout::Vertical,
-        )
-        .sizing(Insets::new(INSET, INSET, INSET, INSET))
-        .fill(Fill::Tile)
-        .at_scale(scale),
-    )]
+    let b = &v.scheme().toolbar_button;
+    vec![
+        (
+            Part::PlacesBar,
+            PartImage::new(
+                panel(&v.scheme().places_bar.normal, scale),
+                &[State::Normal],
+                Layout::Vertical,
+            )
+            .sizing(Insets::new(INSET, INSET, INSET, INSET))
+            .fill(Fill::Tile)
+            .at_scale(scale),
+        ),
+        (
+            Part::PlacesTile,
+            super::toolbar::button([&b.hot, &b.pressed, &b.checked, &b.checked_hot], scale).outset(
+                Insets::new(-TILE_INSET, -TILE_INSET, -TILE_INSET, -TILE_INSET),
+            ),
+        ),
+    ]
 }
 
 fn panel(face: &Face, d: i32) -> Canvas {

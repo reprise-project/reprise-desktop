@@ -75,4 +75,78 @@ mod tests {
             "the shade's fade is not doubled: {right:x?}"
         );
     }
+
+    /// A 71 px Blue tile over the bar's panel at scale `d` in `v`: plain, lit, selected,
+    /// selected and lit, held.
+    fn blue_tiles(v: Variant, d: i32) -> Vec<Canvas> {
+        use crate::look::widgets::placesbar::draw_tile;
+        use crate::style::State;
+        let theme = blue_theme(v).scaled(d);
+        let p = theme.paint();
+        let r = Rect::new(0, 0, 87, 71).scaled(d);
+        [
+            None,
+            Some(State::Hot),
+            Some(State::Checked),
+            Some(State::CheckedHot),
+            Some(State::Pressed),
+        ]
+        .into_iter()
+        .map(|state| {
+            let mut c = Canvas::new(r.width as u32, r.height as u32);
+            draw_panel(&mut c, &p, r);
+            if let Some(state) = state {
+                draw_tile(&mut c, &p, r, state);
+            }
+            c
+        })
+        .collect()
+    }
+
+    #[test]
+    fn a_blue_tile_tells_each_state_apart_inside_the_panels_rim() {
+        for v in Variant::ALL {
+            for d in [1, 2] {
+                let tiles = blue_tiles(v, d);
+                for i in 0..tiles.len() {
+                    for j in i + 1..tiles.len() {
+                        assert!(tiles[i].pixels != tiles[j].pixels, "{v:?} @{d}: {i} vs {j}");
+                    }
+                }
+                let (w, h) = (87 * d, 71 * d);
+                let rim: Vec<(i32, i32)> = (0..3 * d)
+                    .flat_map(|k| (0..h).flat_map(move |y| [(k, y), (w - 1 - k, y)]))
+                    .chain(
+                        (0..3 * d).flat_map(|k| (0..w).flat_map(move |x| [(x, k), (x, h - 1 - k)])),
+                    )
+                    .collect();
+                for (n, t) in tiles.iter().enumerate().skip(1) {
+                    for &(x, y) in &rim {
+                        assert_eq!(
+                            t.get(x, y),
+                            tiles[0].get(x, y),
+                            "{v:?} @{d} state {n} at ({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn blue_places_tiles_pin_at_scale_1_and_2() {
+        const STATES: [&str; 5] = ["plain", "hot", "selected", "selected hot", "held"];
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| {
+                [1, 2].into_iter().flat_map(move |d| {
+                    STATES
+                        .iter()
+                        .zip(blue_tiles(v, d))
+                        .map(move |(s, c)| (format!("{v:?} {s} {d}"), crate::pins::fnv(&c)))
+                })
+            })
+            .collect();
+        crate::pins::check("blue/places_tiles", &got);
+    }
 }

@@ -101,7 +101,7 @@ pub(super) const GROUPS: [Group; 19] = [
         &[Part::ExplorerBarHeader, Part::ExplorerBarClose],
         explorerbar::parts,
     ),
-    (&[Part::PlacesBar], placesbar::parts),
+    (&[Part::PlacesBar, Part::PlacesTile], placesbar::parts),
 ];
 
 /// The ? box `side` design px square at `scale`.
