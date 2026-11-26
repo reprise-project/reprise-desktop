@@ -97,6 +97,7 @@ pub struct Style {
     rescaled: Rescaled,
     button_side: Option<ButtonSide>,
     sided: Rescaled,
+    start_pill: Option<StartPill>,
 }
 
 /// Art [`Style::warm`] found unpainted at one scale; [`Warm::paint`] paints it, on any thread.
@@ -143,6 +144,16 @@ type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
 
 /// Paints a look's caption and ? buttons `side` design px square at the style's scale.
 type ButtonSide = Arc<dyn Fn(i32) -> Vec<(Part, PartImage)> + Send + Sync>;
+
+/// A labelled Start button drawn afresh at any size ([`Style::with_start_pill`]).
+#[derive(Clone)]
+struct StartPill {
+    /// The room from the label's left to the button's end at 100% text, design px: it grows by
+    /// the text size, so the button keeps room for any face's label.
+    label: i32,
+    /// Paints the button `width` x `height` design px at the style's scale.
+    paint: Arc<dyn Fn(i32, i32) -> PartImage + Send + Sync>,
+}
 
 /// Draws a look's client glass edges ([`crate::glass::frame::client_glass_edges`]): canvas,
 /// band, client height, state, scale.
@@ -222,6 +233,7 @@ impl Style {
             built_at: 1,
             rescaled: Rescaled::default(),
             button_side: None,
+            start_pill: None,
             sided: Rescaled::default(),
         }
     }
@@ -243,6 +255,20 @@ impl Style {
         paint: impl Fn(i32) -> Vec<(Part, PartImage)> + Send + Sync + 'static,
     ) -> Style {
         self.button_side = Some(Arc::new(paint));
+        self
+    }
+
+    /// A Start button that `paint` draws at any width and height, for a bar grown with the text
+    /// size ([`Style::with_text_size`]); `label` is the room its label has at 100% text.
+    pub(crate) fn with_start_pill(
+        mut self,
+        label: i32,
+        paint: impl Fn(i32, i32) -> PartImage + Send + Sync + 'static,
+    ) -> Style {
+        self.start_pill = Some(StartPill {
+            label,
+            paint: Arc::new(paint),
+        });
         self
     }
 
@@ -395,20 +421,32 @@ impl Style {
         kept.retain(|(n, _)| keep(*n));
     }
 
-    pub fn with_text_size(self: &Arc<Style>, pct: u32) -> Arc<Style> {
+    /// This style with its text at `pct` percent and the bar's lines `grow` px taller: the caption
+    /// text grows, and a Start pill ([`Style::with_start_pill`]) is drawn again `grow` px taller
+    /// and as much wider as its label's room grows, its label grown alike.
+    pub fn with_text_size(self: &Arc<Style>, pct: u32, grow: i32) -> Arc<Style> {
         if pct == 100 {
             return self.clone();
         }
-        let mut st = Style::clone(self);
-        st.caption_text = st.caption_text.with_text_size(pct);
-        st.rescale = self.rescale.clone().map(|build| -> Rescale {
-            Arc::new(move |n| {
-                let mut st = build(n);
-                st.caption_text = st.caption_text.with_text_size(pct);
-                st
-            })
-        });
+        let mut st = Style::clone(self).grown_text(pct, grow);
+        st.rescale = self
+            .rescale
+            .clone()
+            .map(|build| -> Rescale { Arc::new(move |n| build(n).grown_text(pct, grow)) });
         Arc::new(st)
+    }
+
+    fn grown_text(mut self, pct: u32, grow: i32) -> Style {
+        self.caption_text = self.caption_text.with_text_size(pct);
+        let Some(pill) = self.start_pill.clone() else {
+            return self;
+        };
+        self.start_text = self.start_text.with_text_size(pct);
+        let label = (pill.label * pct as i32 + 50) / 100;
+        let w = self.metrics.start_button_width + label - pill.label;
+        let h = self.taskbar.start.height + grow;
+        self.metrics.start_button_width = w;
+        self.with_painted(Part::StartButton, move || (pill.paint)(w, h))
     }
 
     pub fn with_glass(mut self, g: GlassSpec) -> Style {

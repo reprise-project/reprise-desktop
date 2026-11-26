@@ -620,9 +620,10 @@ impl Theme {
     /// text, and the heights that hold one line of it (caption, menu rows,
     /// Start menu rows, taskbar) grow, each by [`line_growth`].
     /// Caption buttons grow as much as the caption; a joined [`CaptionGroup`]
-    /// keeps its shape ([`CaptionGroup::grown`]). Classic's Start button widens with its label;
-    /// a styled look's Start label and button, frames, icons and the output
-    /// scale keep their size.
+    /// keeps its shape ([`CaptionGroup::grown`]). Classic's Start button widens
+    /// with its label, a styled look's Start pill grows with the bar and its
+    /// label ([`crate::style::Style::with_text_size`]); an orb, frames, icons
+    /// and the output scale keep their size.
     pub fn with_text_size(&self, pct: u32) -> Theme {
         if pct == 100 {
             return self.clone();
@@ -651,7 +652,10 @@ impl Theme {
                 m.start_button_width = 21 + (label * pct as i32 + 50) / 100;
             }
             crate::paint::Look::Styled(s) => {
-                t.look = crate::paint::Look::Styled(s.with_text_size(pct));
+                let grown = s.with_text_size(pct, grow);
+                m.start_button_width +=
+                    grown.metrics.start_button_width - s.metrics.start_button_width;
+                t.look = crate::paint::Look::Styled(grown);
             }
         }
         t

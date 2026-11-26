@@ -242,6 +242,10 @@ fn build(v: Variant, scale: i32) -> Style {
     .with_painted(Part::StartButton, move || {
         start::start_button(v.scheme(), scale)
     })
+    .with_start_pill(
+        v.scheme().metrics.start_width() - crate::style::taskbar::START_LABEL_X,
+        move |w, h| start::start_button_sized(v.scheme(), scale, w, h),
+    )
     .with_painted(Part::TaskButton, move || taskbutton::task_button(v, scale))
     .with_painted(Part::TrayArea, move || bar::tray_area(v.scheme(), scale));
     let style = controls::toolbar::inks(v)
