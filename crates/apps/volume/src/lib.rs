@@ -15,6 +15,7 @@ reprisebus::test_session!();
 
 mod dialogs;
 mod fit;
+mod scroll;
 mod state;
 mod view;
 
@@ -34,6 +35,7 @@ use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::menubar::{self, Action, Bar, Key};
 use reprisekit::controls::mixer::{self, Mixer};
+use reprisekit::controls::scrollview::ScrollView;
 use reprisekit::controls::statusbar::{self, Panel, StatusBar};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
@@ -142,6 +144,10 @@ struct Volume {
     room: Option<i32>,
     /// Client size at the last event; a dialog's OK re-lays the columns out in it.
     main_size: (i32, i32),
+    /// The client size last asked for the main window.
+    asked: (i32, i32),
+    /// The body's scroll in a window too short for it ([`scroll`]).
+    down: ScrollView,
 }
 
 impl Volume {
@@ -178,6 +184,8 @@ impl Volume {
             state_path: None,
             room: None,
             main_size,
+            asked: main_size,
+            down: ScrollView::default(),
         }
     }
 
@@ -194,10 +202,20 @@ impl Volume {
         }
     }
 
+    /// The size the window asks for: [`fit::window`], wider by the body's bar while the window
+    /// is too short for the columns.
     fn refit(&mut self, theme: &Theme) -> Option<(i32, i32)> {
-        let want = fit::window(&self.mixer, theme, self.room, self.opts.view.title());
+        let (w, h) = fit::window(&self.mixer, theme, self.room, self.opts.view.title());
+        // A window the compositor holds shorter than asked stays that short.
+        let tall = match self.main_size.1 < self.asked.1 {
+            true => self.main_size.1.min(h),
+            false => h,
+        };
+        let bars = menubar::bar_h(&theme.controls()) + fit::status_h(theme);
+        let want = (w + scroll::bar_room(&self.mixer, theme, tall - bars), h);
+        self.asked = want;
         (want != self.main_size).then(|| {
-            self.main_size = want;
+            self.main_size = (want.0, tall);
             want
         })
     }
@@ -208,8 +226,31 @@ impl Volume {
         Rect::new(0, top, w, h - top - fit::status_h(&ctx.theme))
     }
 
+    fn placed(&self, ctx: &Ctx) -> scroll::Placed {
+        scroll::place(
+            &self.mixer,
+            &ctx.theme,
+            &ctx.text,
+            self.body(ctx),
+            &self.down,
+        )
+    }
+
     fn mixer_layout(&self, ctx: &Ctx) -> mixer::Layout {
-        mixer::layout(&self.mixer, &ctx.theme, &ctx.text, self.body(ctx))
+        let body = self.placed(ctx).mixer;
+        mixer::layout(&self.mixer, &ctx.theme, &ctx.text, body)
+    }
+
+    /// Scroll the body so the focused control shows. True when it moved.
+    fn reveal_focus(&mut self, ctx: &Ctx) -> bool {
+        let placed = self.placed(ctx);
+        if !placed.scrolls() {
+            return false;
+        }
+        let Some(r) = self.mixer.focus_rect(&self.mixer_layout(ctx)) else {
+            return false;
+        };
+        self.down.reveal(&placed.frame, r) != (0, 0)
     }
 
     fn bar_layout(&self, ctx: &Ctx) -> menubar::Layout {
@@ -425,7 +466,12 @@ impl Volume {
         };
         let ml = self.mixer_layout(ctx);
         let ev = self.mixer.key(&ml, key);
-        self.mixer_outcome(ev, ctx)
+        let revealed = self.reveal_focus(ctx);
+        let reply = self.mixer_outcome(ev, ctx);
+        Reply {
+            redraw: reply.redraw || revealed,
+            ..reply
+        }
     }
 
     fn key_up(&mut self, k: KeyInput, ctx: &Ctx) -> Reply {
@@ -455,6 +501,9 @@ impl Volume {
         let m = &ctx.theme;
         let px = ctx.theme.fonts.size_px;
         let ml = self.mixer_layout(ctx);
+        let placed = self.placed(ctx);
+        // Columns scrolled under the menu bar or the status line take no pointer there.
+        let hidden = |x: i32, y: i32| placed.scrolls() && !placed.view.clip.contains(x, y);
         let ev = match p {
             PointerInput::Press {
                 x,
@@ -477,6 +526,16 @@ impl Volume {
                 if statusbar::hit_grip(&sb, r, x, y) {
                     return Reply::resize();
                 }
+                if let Some(h) = placed.hit(&self.down, x, y) {
+                    self.down.press(&placed.frame, h);
+                    return Reply {
+                        tick: self.down.ticking(),
+                        ..Reply::redraw()
+                    };
+                }
+                if hidden(x, y) {
+                    return Reply::none();
+                }
                 self.mixer.press(&ml, x, y)
             }
             PointerInput::Motion { x, y } => {
@@ -484,23 +543,47 @@ impl Volume {
                     self.bar.motion(x, y, &lay, &ctx.text, m, px);
                     return Reply::redraw();
                 }
-                let title = self.bar.hover(x, y, &lay) && ctx.styled();
-                match self.mixer.motion(&ml, x, y) {
+                let dragged = self
+                    .down
+                    .drag(&placed.frame, &placed.view, placed.thumb_min, x, y);
+                if dragged.is_some() {
+                    return Reply::redraw();
+                }
+                let bar = self.down.motion(placed.hit(&self.down, x, y));
+                let title = (self.bar.hover(x, y, &lay) && ctx.styled()) || bar;
+                let ev = if hidden(x, y) && !self.mixer.dragging() {
+                    self.mixer.leave()
+                } else {
+                    self.mixer.motion(&ml, x, y)
+                };
+                match ev {
                     mixer::Event::None if title => mixer::Event::Redraw,
                     ev => ev,
                 }
             }
             PointerInput::Release {
                 button: BTN_LEFT, ..
-            } => self.mixer.release(),
+            } => match (self.down.release(), self.mixer.release()) {
+                (true, mixer::Event::None) => mixer::Event::Redraw,
+                (_, ev) => ev,
+            },
             PointerInput::Leave => {
-                let title = self.bar.leave() && ctx.styled();
+                let title = (self.bar.leave() && ctx.styled()) | self.down.leave();
                 match self.mixer.leave() {
                     mixer::Event::None if title => mixer::Event::Redraw,
                     ev => ev,
                 }
             }
-            PointerInput::Scroll { x, y, rows } => self.mixer.scroll(&ml, x, y, rows),
+            PointerInput::Scroll { x, y, .. } if hidden(x, y) => {
+                return Reply::none();
+            }
+            PointerInput::Scroll { x, y, rows } => match placed.hit(&self.down, x, y) {
+                Some(_) => {
+                    self.down.wheel(&placed.frame, rows);
+                    mixer::Event::Redraw
+                }
+                None => self.mixer.scroll(&ml, x, y, rows),
+            },
             _ => mixer::Event::None,
         };
         self.mixer_outcome(ev, ctx)
@@ -606,7 +689,15 @@ impl Volume {
         };
         c.fill_rect(c.bounds(), p.cs.button_face);
         let ml = self.mixer_layout(ctx);
-        mixer::draw(c, &ctx.theme, &ctx.text, &self.mixer, &ml);
+        let placed = self.placed(ctx);
+        if placed.scrolls() {
+            c.with_clip(placed.view.clip, |c| {
+                mixer::draw(c, &ctx.theme, &ctx.text, &self.mixer, &ml)
+            });
+        } else {
+            mixer::draw(c, &ctx.theme, &ctx.text, &self.mixer, &ml);
+        }
+        self.down.draw(c, &p, &placed.frame, &placed.view);
         let (sb, r) = self.status(ctx);
         statusbar::draw(c, &ctx.text, &p, &sb, r, ctx.theme.fonts.size_px);
         let lay = self.bar_layout(ctx);
@@ -698,6 +789,8 @@ impl App for Volume {
         }
         if win == repriseapp::MAIN {
             self.main_size = ctx.size;
+            let placed = self.placed(ctx);
+            self.down.scroll_to(&placed.frame, self.down.offset().1);
         } else {
             self.alt_arm.interrupt();
         }
@@ -713,6 +806,14 @@ impl App for Volume {
                     size: self.refit(&ctx.theme),
                     ..Reply::redraw()
                 },
+                Event::Tick if self.down.ticking() => {
+                    let placed = self.placed(ctx);
+                    self.down.tick(&placed.frame, Instant::now());
+                    Reply {
+                        tick: self.down.ticking(),
+                        ..Reply::redraw()
+                    }
+                }
                 Event::Output((w, _)) => {
                     self.room = Some(w);
                     Reply {
@@ -1105,5 +1206,127 @@ mod tests {
         );
         assert!(fit > mixer::MIN_W);
         assert_eq!(v.initial_size().0, fit, "one column widens to the title");
+    }
+
+    /// At 200% in a window cut shorter than the columns at their shortest, the window asks for
+    /// the bar's width more, the body scrolls down, Tab brings each control into view, and a
+    /// column under the status line takes no press there.
+    #[test]
+    fn a_window_too_short_for_its_columns_scrolls_the_body() {
+        let snap = Snapshot {
+            sinks: vec![device(50, "speakers")],
+            ..Snapshot::default()
+        };
+        let mut v = Volume::new(View::Playback, snap, State::default());
+        let mut ctx = test_ctx();
+        ctx.theme = Theme::default().with_text_size(200);
+        let (w, h) = fit::window(&v.mixer, &ctx.theme, None, "Volume Control");
+        ctx.size = v.initial_size();
+        let reply = v.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        assert_eq!(reply.size, Some((w, h)));
+        ctx.size = (w, 400);
+        let reply = v.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        let bar = ctx.theme.controls().scroll;
+        assert_eq!(reply.size, Some((w + bar, h)));
+        ctx.size = (w + bar, 400);
+        v.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        let placed = v.placed(&ctx);
+        assert!(placed.scrolls());
+        let clip = placed.view.clip;
+        assert_eq!(clip.width, w, "the columns keep their width beside the bar");
+        let check = v.mixer_layout(&ctx).columns[0].as_ref().unwrap().check;
+        assert!(check.y > clip.bottom(), "{check:?} lies below {clip:?}");
+
+        let press = |x, y| {
+            Event::Pointer(PointerInput::Press {
+                x,
+                y,
+                button: BTN_LEFT,
+                time: 0,
+                mods: repriseapp::Mods::default(),
+            })
+        };
+        v.event(
+            repriseapp::MAIN,
+            press(check.x + 2, clip.bottom() + 2),
+            &mut ctx,
+        );
+        assert_eq!(
+            v.mixer.focus_rect(&v.mixer_layout(&ctx)).map(|_| ()),
+            Some(())
+        );
+        let tab = || KeyInput {
+            sym: keysym::TAB,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: None,
+        };
+        for _ in 0..3 {
+            v.event(repriseapp::MAIN, Event::Key(tab()), &mut ctx);
+            let r = v.mixer.focus_rect(&v.mixer_layout(&ctx)).unwrap();
+            let clip = v.placed(&ctx).view.clip;
+            assert!(
+                r.y >= clip.y && r.bottom() <= clip.bottom(),
+                "{r:?} shows in {clip:?}"
+            );
+        }
+        assert!(v.down.offset().1 > 0, "Tab scrolled the body");
+
+        ctx.size = (w + bar, h);
+        let reply = v.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+        assert_eq!(reply.size, Some((w, h)), "a whole window drops the bar");
+        assert_eq!(v.down.offset().1, 0);
+    }
+
+    /// The body cut short at 200% under each interface: the columns beside the bar, scrolled to
+    /// the top and to the bottom.
+    #[test]
+    fn at_200_percent_the_body_cut_short_pins() {
+        use reprisekit::interface::Interface;
+        reprisekit::pins::fonts();
+        let mut got = Vec::new();
+        for (name, i) in [
+            ("classic", Interface::Classic),
+            ("blue", Interface::Blue),
+            ("glass", Interface::Glass),
+        ] {
+            let snap = Snapshot {
+                sinks: vec![device(50, "speakers")],
+                ..Snapshot::default()
+            };
+            let mut v = Volume::new(View::Playback, snap, State::default());
+            let mut ctx = test_ctx();
+            ctx.theme = reprisekit::interfaces::theme_for(i).with_text_size(200);
+            ctx.text = TextRenderer::load(&ctx.theme.fonts).into();
+            ctx.size = v.initial_size();
+            let (w, _) = v
+                .event(repriseapp::MAIN, Event::Resized, &mut ctx)
+                .size
+                .unwrap();
+            ctx.size = (w, 400);
+            let (w, _) = v
+                .event(repriseapp::MAIN, Event::Resized, &mut ctx)
+                .size
+                .unwrap();
+            ctx.size = (w, 400);
+            v.event(repriseapp::MAIN, Event::Resized, &mut ctx);
+            assert!(v.placed(&ctx).scrolls(), "{name}");
+            for end in ["top", "bottom"] {
+                if end == "bottom" {
+                    let placed = v.placed(&ctx);
+                    v.down.scroll_to(&placed.frame, i32::MAX);
+                }
+                let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+                v.draw(repriseapp::MAIN, &mut c, &ctx);
+                let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
+                    (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
+                });
+                got.push((format!("{name}-{end}"), hash));
+            }
+        }
+        reprisekit::pins::check_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins/body_cut_short.txt"),
+            &got,
+        );
     }
 }
