@@ -870,6 +870,29 @@ fn a_miss_covers_the_window_that_searched() {
 }
 
 #[test]
+fn find_next_goes_on_from_the_other_end_past_the_last_match() {
+    let mut np = Notepad::new(None);
+    np.edit = MultiEdit::new("hello world\nhello");
+    let at = |line, col| multiedit::Pos { line, col };
+    for (down, from, found) in [
+        (true, at(1, 5), (at(0, 0), at(0, 5))),
+        (false, at(0, 0), (at(1, 0), at(1, 5))),
+    ] {
+        np.last_query = Some((
+            "hello".into(),
+            multiedit::FindOpts {
+                match_case: true,
+                down,
+            },
+        ));
+        np.edit.place(from, false);
+        assert!(np.find_next(), "down {down}: found past the end");
+        assert_eq!(np.edit.selection(), found, "down {down}");
+        assert!(np.asks.is_empty(), "down {down}: no box");
+    }
+}
+
+#[test]
 fn replace_swaps_the_match_then_advances() {
     let mut np = Notepad::new(None);
     np.edit = MultiEdit::new("a a a");
