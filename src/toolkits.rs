@@ -83,14 +83,15 @@ pub fn refresh(state: &mut crate::compositor::State) {
 pub fn update(generated: &mut Generated, cfg: &Config, dirs: &Dirs) {
     gtk4::update(&mut generated.gtk4, cfg, &dirs.config_home);
     let colors = &cfg.theme.colors;
+    let text_size = cfg.accessibility.text_size;
     if cfg.toolkits.gtk_theme == TOOLKIT_REPRISE {
-        let css = toolkit::gtk3_css(colors, cfg.interface);
+        let css = toolkit::gtk3_css(colors, cfg.interface, text_size);
         if let Some(slot) = generated.gtk_slot_for(&css) {
             let theme = dirs.data_home.join("themes").join(GTK_SLOTS[slot]);
             let dir = theme.join("gtk-3.0");
-            let gtk4 = toolkit::gtk4_theme_css(colors, cfg.interface);
+            let gtk4 = toolkit::gtk4_theme_css(colors, cfg.interface, text_size);
             // The pictures first: GTK reads them once the CSS names them.
-            let written = toolkit::gtk3_assets(colors, cfg.interface)
+            let written = toolkit::gtk3_assets(colors, cfg.interface, text_size)
                 .iter()
                 .try_for_each(|(rel, bytes)| write_bytes_if_changed(&dir.join(rel), bytes))
                 .and_then(|()| write_if_changed(&theme.join("gtk-4.0/gtk.css"), &gtk4))
@@ -229,19 +230,35 @@ mod tests {
         let first = d.data_home.join("themes/Reprise/gtk-3.0/gtk.css");
         assert_eq!(
             std::fs::read_to_string(&first).unwrap(),
-            toolkit::gtk3_css(&cfg.theme.colors, cfg.interface)
+            toolkit::gtk3_css(
+                &cfg.theme.colors,
+                cfg.interface,
+                cfg.accessibility.text_size
+            )
         );
         assert_eq!(
             std::fs::read_to_string(d.data_home.join("themes/Reprise/gtk-4.0/gtk.css")).ok(),
-            Some(toolkit::gtk4_theme_css(&cfg.theme.colors, cfg.interface)),
+            Some(toolkit::gtk4_theme_css(
+                &cfg.theme.colors,
+                cfg.interface,
+                cfg.accessibility.text_size
+            )),
             "GTK4 reads the same theme"
         );
         assert_eq!(
             std::fs::read_to_string(d.data_home.join("themes/Reprise/gtk-4.0/gtk-dark.css")).ok(),
-            Some(toolkit::gtk4_theme_css(&cfg.theme.colors, cfg.interface)),
+            Some(toolkit::gtk4_theme_css(
+                &cfg.theme.colors,
+                cfg.interface,
+                cfg.accessibility.text_size
+            )),
             "and under a dark colour scheme"
         );
-        for (rel, bytes) in toolkit::gtk3_assets(&cfg.theme.colors, cfg.interface) {
+        for (rel, bytes) in toolkit::gtk3_assets(
+            &cfg.theme.colors,
+            cfg.interface,
+            cfg.accessibility.text_size,
+        ) {
             let file = d.data_home.join("themes/Reprise/gtk-3.0").join(&rel);
             assert_eq!(std::fs::read(&file).ok(), Some(bytes), "{rel}");
         }
@@ -258,6 +275,20 @@ mod tests {
         cfg.theme.colors = reprisekit::schemes::scheme("Brick").unwrap();
         update(&mut g, &cfg, &d);
         assert_eq!(g.gtk_theme(), Some("Reprise"), "and back to the first");
+        cfg.interface = reprisekit::interface::Interface::Classic;
+        cfg.accessibility.text_size = 200;
+        update(&mut g, &cfg, &d);
+        assert_eq!(
+            g.gtk_theme(),
+            Some("Reprise-alt"),
+            "a text size is a new look"
+        );
+        assert!(
+            std::fs::read_to_string(d.data_home.join("themes/Reprise-alt/gtk-3.0/gtk.css"))
+                .unwrap()
+                .contains("min-width: 26px;"),
+            "the check boxes double at 200%"
+        );
     }
 
     #[test]

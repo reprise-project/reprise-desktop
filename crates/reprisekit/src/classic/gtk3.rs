@@ -1,7 +1,9 @@
 //! Classic's 3D edges for the generated GTK theme ([`crate::toolkit`]): `gtk3.css` and `gtk4.css` with their
 //! placeholders filled in for a colour scheme, and the pictures they read (GTK3 reads no `data:` URLs, so
 //! they are files in `gtk-3.0/`). An edge is a stack of 1 px inset box shadows; each ring's bottom-right
-//! colour lies over its top-left one.
+//! colour lies over its top-left one. GTK grows only its text with the text size, so the check boxes
+//! and radio buttons are drawn, and their nodes sized, `k` times their 100% size
+//! ([`crate::theme::TextUnits::small`]).
 
 use crate::classic::widgets::{
     Arrow, CheckState, draw_arrow_h, draw_arrow_v, draw_checkbox_disabled, draw_checkbox_held,
@@ -17,12 +19,12 @@ const GTK4_RULES: &str = include_str!("gtk4.css");
 /// GTK4 reads the pictures from the GTK3 half of the theme, beside its own `gtk-4.0/`.
 const GTK4_ASSETS: &str = "../gtk-3.0/assets";
 
-pub fn bevels(cs: &ColorScheme) -> String {
-    filled(RULES, &fills(cs, ASSETS))
+pub fn bevels(cs: &ColorScheme, k: i32) -> String {
+    filled(RULES, &fills(cs, ASSETS, k))
 }
 
-pub fn gtk4_bevels(cs: &ColorScheme) -> String {
-    filled(GTK4_RULES, &fills(cs, GTK4_ASSETS))
+pub fn gtk4_bevels(cs: &ColorScheme, k: i32) -> String {
+    filled(GTK4_RULES, &fills(cs, GTK4_ASSETS, k))
 }
 
 fn filled(rules: &str, fills: &[(&str, String)]) -> String {
@@ -44,8 +46,13 @@ fn filled(rules: &str, fills: &[(&str, String)]) -> String {
     out
 }
 
-fn fills(cs: &ColorScheme, dir: &str) -> Vec<(&'static str, String)> {
+const CHECK: i32 = 13;
+const RADIO: i32 = 12;
+
+fn fills(cs: &ColorScheme, dir: &str, k: i32) -> Vec<(&'static str, String)> {
     let mut v = vec![
+        ("check_px", format!("{}px", k * CHECK)),
+        ("radio_px", format!("{}px", k * RADIO)),
         ("raised", stack(&edge_rings(cs, EdgeStyle::ButtonRaised))),
         (
             "window_raised",
@@ -104,12 +111,12 @@ const ART: [&str; 22] = [
     "dither",
 ];
 
-pub fn assets(cs: &ColorScheme) -> Vec<(String, Vec<u8>)> {
+pub fn assets(cs: &ColorScheme, k: i32) -> Vec<(String, Vec<u8>)> {
     [(1, ""), (2, "@2")]
         .into_iter()
         .flat_map(|(s, tag)| {
             ART.iter()
-                .zip(art(cs, s))
+                .zip(art(cs, s, k))
                 .map(move |(name, c)| (format!("{name}{tag}.png"), rgba_png(&c)))
         })
         .collect()
@@ -157,11 +164,12 @@ fn hex(c: Color) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
 }
 
-fn art(cs: &ColorScheme, s: i32) -> Vec<Canvas> {
+/// [`ART`] at scale `s`, the check boxes and radio buttons `k` times their 100% size.
+fn art(cs: &ColorScheme, s: i32, k: i32) -> Vec<Canvas> {
     let p = Paint {
         cs,
         look: &Look::Classic,
-        s,
+        s: s * k,
         back: Backdrop::Face,
         active: true,
         access_keys: true,
@@ -173,7 +181,12 @@ fn art(cs: &ColorScheme, s: i32) -> Vec<Canvas> {
         f(&mut c, r);
         c
     };
-    let check = |state, held| draw(13, 13, &|c, r| draw_checkbox_held(c, &p, r, state, held));
+    let (check_px, radio_px) = (k * CHECK, k * RADIO);
+    let check = |state, held| {
+        draw(check_px, check_px, &|c, r| {
+            draw_checkbox_held(c, &p, r, state, held)
+        })
+    };
     let arrow = |dir: Arrow, greyed: bool| {
         draw(16, 16, &|c, r| {
             let one = |c: &mut Canvas, r: Rect, ink| match dir {
@@ -191,10 +204,18 @@ fn art(cs: &ColorScheme, s: i32) -> Vec<Canvas> {
             }
         })
     };
-    let greyed_check = |on| draw(13, 13, &|c, r| draw_checkbox_disabled(c, &p, r, on));
-    let radio = |on| draw(12, 12, &|c, r| draw_radio(c, &p, r, on));
-    let greyed_radio = |on| draw(12, 12, &|c, r| draw_radio_disabled(c, &p, r, on));
-    let list_check = |on| draw(13, 13, &|c, r| draw_list_check(c, &p, r, on));
+    let greyed_check = |on| {
+        draw(check_px, check_px, &|c, r| {
+            draw_checkbox_disabled(c, &p, r, on)
+        })
+    };
+    let radio = |on| draw(radio_px, radio_px, &|c, r| draw_radio(c, &p, r, on));
+    let greyed_radio = |on| {
+        draw(radio_px, radio_px, &|c, r| {
+            draw_radio_disabled(c, &p, r, on)
+        })
+    };
+    let list_check = |on| draw(check_px, check_px, &|c, r| draw_list_check(c, &p, r, on));
     vec![
         check(CheckState::Off, false),
         check(CheckState::On, false),
@@ -251,7 +272,7 @@ mod tests {
     use super::*;
 
     fn sheet(cs: &ColorScheme) -> String {
-        let css = bevels(cs);
+        let css = bevels(cs, 1);
         assert!(!css.contains('%'), "a placeholder is left");
         css
     }
@@ -319,7 +340,7 @@ mod tests {
     #[test]
     fn the_sheet_reads_only_defined_colours() {
         let cs = ColorScheme::default();
-        let css = crate::toolkit::gtk3_css(&cs, crate::interface::Interface::Classic);
+        let css = crate::toolkit::gtk3_css(&cs, crate::interface::Interface::Classic, 100);
         let defined: Vec<&str> = css
             .lines()
             .filter_map(|l| l.strip_prefix("@define-color "))
@@ -330,15 +351,15 @@ mod tests {
                 assert!(defined.contains(&name), "@{name} is not defined");
             }
         }
-        assert!(css.ends_with(&bevels(&cs)), "the edges come last");
-        let gtk4 = crate::toolkit::gtk4_theme_css(&cs, crate::interface::Interface::Classic);
+        assert!(css.ends_with(&bevels(&cs, 1)), "the edges come last");
+        let gtk4 = crate::toolkit::gtk4_theme_css(&cs, crate::interface::Interface::Classic, 100);
         for word in GTK4_RULES.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '@')) {
             if let Some(name) = word.strip_prefix('@') {
                 assert!(defined.contains(&name), "GTK4: @{name} is not defined");
             }
         }
         assert!(
-            gtk4.ends_with(&gtk4_bevels(&cs)),
+            gtk4.ends_with(&gtk4_bevels(&cs, 1)),
             "GTK4: the edges come last"
         );
     }
@@ -346,7 +367,7 @@ mod tests {
     #[test]
     fn gtk4_draws_the_same_edges_as_gtk3() {
         let cs = ColorScheme::default();
-        let (gtk3, gtk4) = (sheet(&cs), gtk4_bevels(&cs));
+        let (gtk3, gtk4) = (sheet(&cs), gtk4_bevels(&cs, 1));
         assert!(!gtk4.contains('%'), "a placeholder is left");
         let shadow = |css: &str, sel: &str| {
             let r = rule(css, sel);
@@ -403,7 +424,7 @@ mod tests {
         let cs = ColorScheme::default();
         let flat = |r: &str| r.split_whitespace().collect::<Vec<_>>().join(" ");
         let (hi, sh, dk) = ("@reprise_hilight", "@reprise_shadow", "@reprise_dk_shadow");
-        for css in [sheet(&cs), gtk4_bevels(&cs)] {
+        for css in [sheet(&cs), gtk4_bevels(&cs, 1)] {
             for (sel, edge) in [
                 (
                     "notebook > header.bottom > tabs > tab:checked",
@@ -458,7 +479,7 @@ mod tests {
         for want in ["border: none;", "border-radius: 0;", raised] {
             assert!(gtk3.contains(want), "GTK3: {want}");
         }
-        let gtk4 = gtk4_bevels(&cs);
+        let gtk4 = gtk4_bevels(&cs, 1);
         let node = rule(&gtk4, "popover.background, popover.background:backdrop {");
         for want in [
             "border: none;",
@@ -480,8 +501,8 @@ mod tests {
     #[test]
     fn gtk4_reads_the_pictures_beside_gtk3s() {
         let cs = ColorScheme::default();
-        let gtk4 = gtk4_bevels(&cs);
-        let names: Vec<String> = assets(&cs).into_iter().map(|(n, _)| n).collect();
+        let gtk4 = gtk4_bevels(&cs, 1);
+        let names: Vec<String> = assets(&cs, 1).into_iter().map(|(n, _)| n).collect();
         let mut used = 0;
         for url in gtk4.split("url(\"").skip(1) {
             let path = &url[..url.find('"').unwrap()];
@@ -511,7 +532,7 @@ mod tests {
     #[test]
     fn the_art_is_classics_own_drawing() {
         let cs = ColorScheme::default();
-        let files = assets(&cs);
+        let files = assets(&cs, 1);
         let css = sheet(&cs);
         assert_eq!(files.len(), 2 * ART.len());
         for (name, _) in &files {
@@ -567,5 +588,81 @@ mod tests {
         assert_eq!(px(&greyed, 4, 9), [0x80, 0x80, 0x80, 255]);
         assert_eq!(px(&greyed, 4, 10)[3], 0);
         assert_eq!(px(&greyed, 11, 10), [255, 255, 255, 255]);
+    }
+
+    /// At 200% text the check boxes and radio buttons are their 100% pictures doubled pixel for
+    /// pixel, in nodes twice as large; the arrows and the dither keep their size.
+    #[test]
+    fn at_200_percent_the_check_boxes_and_radios_double() {
+        let cs = ColorScheme::default();
+        let (one, two) = (assets(&cs, 1), assets(&cs, 2));
+        let decode = |files: &[(String, Vec<u8>)], name: &str| {
+            let bytes = &files.iter().find(|(n, _)| n == name).unwrap().1;
+            let mut r = png::Decoder::new(std::io::Cursor::new(bytes))
+                .read_info()
+                .unwrap();
+            let mut buf = vec![0; r.output_buffer_size().unwrap()];
+            let info = r.next_frame(&mut buf).unwrap();
+            (info.width, info.height, buf)
+        };
+        for name in [
+            "check_on",
+            "check_mixed",
+            "radio_on",
+            "list_check_on",
+            "arrow_up",
+            "dither",
+        ] {
+            for tag in ["", "@2"] {
+                let file = format!("{name}{tag}.png");
+                let (w, h, small) = decode(&one, &file);
+                let (gw, gh, big) = decode(&two, &file);
+                if matches!(name, "arrow_up" | "dither") {
+                    assert_eq!((gw, gh), (w, h), "{file} keeps its size");
+                    continue;
+                }
+                assert_eq!((gw, gh), (2 * w, 2 * h), "{file} doubles");
+                for y in 0..gh {
+                    for x in 0..gw {
+                        let at = |buf: &[u8], w: u32, x: u32, y: u32| {
+                            let i = ((y * w + x) * 4) as usize;
+                            buf[i..i + 4].to_vec()
+                        };
+                        assert_eq!(
+                            at(&big, gw, x, y),
+                            at(&small, w, x / 2, y / 2),
+                            "{file} ({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
+        let (gtk3, gtk4) = (bevels(&cs, 2), gtk4_bevels(&cs, 2));
+        let nodes = [
+            (
+                &gtk3,
+                "checkbutton check, checkbutton check:hover, checkbutton check:backdrop,",
+                26,
+            ),
+            (
+                &gtk3,
+                "radiobutton radio, radiobutton radio:hover, radiobutton radio:backdrop, radiobutton radio:active {",
+                24,
+            ),
+            (&gtk4, "check, radio, check:hover", 26),
+            (
+                &gtk4,
+                "radio, radio:hover, radio:active, radio:checked,",
+                24,
+            ),
+        ];
+        for (css, selector, px) in nodes {
+            assert!(!css.contains('%'), "a placeholder is left");
+            let r = rule(css, selector);
+            assert!(
+                r.contains(&format!("min-width: {px}px;\n  min-height: {px}px;")),
+                "{selector}: {px} px"
+            );
+        }
     }
 }

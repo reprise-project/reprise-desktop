@@ -19,7 +19,14 @@ fn hex(c: Color) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
 }
 
-pub fn gtk3_css(cs: &ColorScheme, interface: Interface) -> String {
+/// The multiple GTK's check boxes and radio buttons grow by at `text_size` percent: GTK scales
+/// its text by `text_size / 100` and leaves its widgets' sizes to the theme.
+fn gtk_small(text_size: u32) -> i32 {
+    crate::theme::TextUnits::new(text_size, 100).small()
+}
+
+/// The generated theme's `gtk-3.0/gtk.css` at `text_size` percent.
+pub fn gtk3_css(cs: &ColorScheme, interface: Interface, text_size: u32) -> String {
     let adwaita = if cs.is_dark() {
         "gtk-contained-dark.css"
     } else {
@@ -28,7 +35,7 @@ pub fn gtk3_css(cs: &ColorScheme, interface: Interface) -> String {
     let sheet = format!("resource:///org/gtk/libgtk/theme/Adwaita/{adwaita}");
     let mut out = recoloured(cs, interface, &sheet, &[GTK3_RULES]);
     if interface == Interface::Classic {
-        out += &crate::classic::gtk3::bevels(cs);
+        out += &crate::classic::gtk3::bevels(cs, gtk_small(text_size));
     }
     out
 }
@@ -36,7 +43,7 @@ pub fn gtk3_css(cs: &ColorScheme, interface: Interface) -> String {
 /// The generated theme's `gtk-4.0/gtk.css`: GTK4's own Default sheet with GTK3's named colours
 /// and rules laid over it, plus rules for the nodes only GTK4 has, and Classic's edges under
 /// Classic. libadwaita ignores the theme.
-pub fn gtk4_theme_css(cs: &ColorScheme, interface: Interface) -> String {
+pub fn gtk4_theme_css(cs: &ColorScheme, interface: Interface, text_size: u32) -> String {
     let default = if cs.is_dark() {
         "Default-dark.css"
     } else {
@@ -49,17 +56,21 @@ pub fn gtk4_theme_css(cs: &ColorScheme, interface: Interface) -> String {
         &[GTK3_RULES, GTK4_RULES],
     );
     if interface == Interface::Classic {
-        out += &crate::classic::gtk3::gtk4_bevels(cs);
+        out += &crate::classic::gtk3::gtk4_bevels(cs, gtk_small(text_size));
     }
     out
 }
 
-pub fn gtk3_assets(cs: &ColorScheme, interface: Interface) -> Vec<(String, Vec<u8>)> {
+pub fn gtk3_assets(
+    cs: &ColorScheme,
+    interface: Interface,
+    text_size: u32,
+) -> Vec<(String, Vec<u8>)> {
     if interface != Interface::Classic {
         return Vec::new();
     }
     let dir = crate::classic::gtk3::ASSETS;
-    crate::classic::gtk3::assets(cs)
+    crate::classic::gtk3::assets(cs, gtk_small(text_size))
         .into_iter()
         .map(|(name, bytes)| (format!("{dir}/{name}"), bytes))
         .collect()
@@ -228,7 +239,7 @@ mod tests {
 
     #[test]
     fn standard_gtk3_lays_its_colours_over_light_adwaita() {
-        let css = gtk3_css(&ColorScheme::default(), Interface::Classic);
+        let css = gtk3_css(&ColorScheme::default(), Interface::Classic, 100);
         assert_eq!(
             css.lines().nth(1),
             Some("@import url(\"resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained.css\");")
@@ -260,13 +271,13 @@ mod tests {
     #[test]
     fn a_dark_scheme_takes_adwaitas_dark_sheet() {
         let cs = crate::schemes::scheme("Tokyo Night").unwrap();
-        let css = gtk3_css(&cs, Interface::Classic);
+        let css = gtk3_css(&cs, Interface::Classic, 100);
         assert!(css.contains("Adwaita/gtk-contained-dark.css"));
         assert_eq!(
             line(&css, "@define-color theme_base_color"),
             format!("@define-color theme_base_color {};", hex(cs.window))
         );
-        let glass = gtk3_css(&cs, Interface::Glass);
+        let glass = gtk3_css(&cs, Interface::Glass, 100);
         assert!(!glass.contains("linear-gradient(to right"));
         assert_eq!(
             line(&glass, "@define-color reprise_caption "),
@@ -283,11 +294,11 @@ mod tests {
         for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let cs = ColorScheme::default();
             assert!(
-                gtk3_css(&cs, interface).contains(rule),
+                gtk3_css(&cs, interface, 100).contains(rule),
                 "GTK3 {interface:?}"
             );
             assert!(
-                gtk4_theme_css(&cs, interface).contains(rule),
+                gtk4_theme_css(&cs, interface, 100).contains(rule),
                 "GTK4 {interface:?}"
             );
         }
@@ -295,7 +306,7 @@ mod tests {
 
     #[test]
     fn the_rules_read_only_defined_colours() {
-        let css = gtk3_css(&ColorScheme::default(), Interface::Classic);
+        let css = gtk3_css(&ColorScheme::default(), Interface::Classic, 100);
         let defined: Vec<&str> = css
             .lines()
             .filter_map(|l| l.strip_prefix("@define-color "))
@@ -312,12 +323,12 @@ mod tests {
     #[test]
     fn gtk4_lays_the_same_colours_over_its_default_sheet() {
         let cs = ColorScheme::default();
-        let css = gtk4_theme_css(&cs, Interface::Classic);
+        let css = gtk4_theme_css(&cs, Interface::Classic, 100);
         assert_eq!(
             css.lines().nth(1),
             Some("@import url(\"resource:///org/gtk/libgtk/theme/Default/Default-light.css\");")
         );
-        let gtk3 = gtk3_css(&cs, Interface::Classic);
+        let gtk3 = gtk3_css(&cs, Interface::Classic, 100);
         let named = |t: &str| -> Vec<String> {
             t.lines()
                 .filter(|l| l.starts_with("@define-color "))
@@ -328,7 +339,7 @@ mod tests {
         assert!(css.contains(GTK3_RULES) && css.contains(GTK4_RULES));
         assert!(css.contains("linear-gradient(to right, #0a246a, #a6caf0)"));
         let dark = crate::schemes::scheme("Tokyo Night").unwrap();
-        assert!(gtk4_theme_css(&dark, Interface::Glass).contains("Default/Default-dark.css"));
+        assert!(gtk4_theme_css(&dark, Interface::Glass, 100).contains("Default/Default-dark.css"));
     }
 
     #[test]
@@ -336,7 +347,7 @@ mod tests {
         let hcb = crate::schemes::scheme("High Contrast Black").unwrap();
         assert_eq!(
             line(
-                &gtk3_css(&hcb, Interface::Classic),
+                &gtk3_css(&hcb, Interface::Classic, 100),
                 "@define-color borders "
             ),
             format!("@define-color borders {};", hex(hcb.button_hilight))
@@ -345,7 +356,7 @@ mod tests {
 
     #[test]
     fn a_marked_scales_knob_takes_the_face() {
-        let css = gtk3_css(&ColorScheme::default(), Interface::Blue);
+        let css = gtk3_css(&ColorScheme::default(), Interface::Blue, 100);
         for orient in ["horizontal", "vertical"] {
             for (side, other) in [("before", "after"), ("after", "before")] {
                 for state in [
@@ -387,7 +398,7 @@ mod tests {
 
     #[test]
     fn header_bar_popovers_keep_their_own_text_colours() {
-        let css = gtk4_theme_css(&ColorScheme::default(), Interface::Classic);
+        let css = gtk4_theme_css(&ColorScheme::default(), Interface::Classic, 100);
         let rule = |sel: &str| {
             let at = css.find(sel).unwrap_or_else(|| panic!("no rule for {sel}"));
             let open = at + css[at..].find('{').unwrap();
@@ -419,11 +430,11 @@ mod tests {
         let tokyo = crate::schemes::scheme("Tokyo Night").unwrap();
         let std = ColorScheme::default();
         let got = [
-            ("Blue".into(), fnv(&gtk3_css(&std, Interface::Blue))),
-            ("Glass".into(), fnv(&gtk3_css(&std, Interface::Glass))),
+            ("Blue".into(), fnv(&gtk3_css(&std, Interface::Blue, 100))),
+            ("Glass".into(), fnv(&gtk3_css(&std, Interface::Glass, 100))),
             (
                 "Glass Tokyo Night".into(),
-                fnv(&gtk3_css(&tokyo, Interface::Glass)),
+                fnv(&gtk3_css(&tokyo, Interface::Glass, 100)),
             ),
         ];
         crate::pins::check("toolkit/gtk3_sheets", &got);
@@ -433,14 +444,14 @@ mod tests {
     fn classic_gtk4_sheet_is_pinned() {
         let tokyo = crate::schemes::scheme("Tokyo Night").unwrap();
         let std = ColorScheme::default();
-        let classic = gtk4_theme_css(&std, Interface::Classic);
-        assert!(classic.ends_with(&crate::classic::gtk3::gtk4_bevels(&std)));
-        assert!(!gtk4_theme_css(&std, Interface::Blue).contains("../gtk-3.0/assets"));
+        let classic = gtk4_theme_css(&std, Interface::Classic, 100);
+        assert!(classic.ends_with(&crate::classic::gtk3::gtk4_bevels(&std, 1)));
+        assert!(!gtk4_theme_css(&std, Interface::Blue, 100).contains("../gtk-3.0/assets"));
         let got = [
             ("Classic".into(), fnv(&classic)),
             (
                 "Classic Tokyo Night".into(),
-                fnv(&gtk4_theme_css(&tokyo, Interface::Classic)),
+                fnv(&gtk4_theme_css(&tokyo, Interface::Classic, 100)),
             ),
         ];
         crate::pins::check("toolkit/gtk4_classic_sheets", &got);
