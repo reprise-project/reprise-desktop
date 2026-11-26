@@ -1003,6 +1003,18 @@ fn a_toolbar_press_survives_a_closed_tab() {
     );
 }
 
+/// The calling thread's CPU time, which a busy host does not stretch the way it does wall time.
+fn thread_cpu_time() -> std::time::Duration {
+    let mut t = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `t` is a valid timespec to write to.
+    let r = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    assert_eq!(r, 0);
+    std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+}
+
 /// A 1 MB paste into a program reading raw bytes reaches the PTY as one write and arrives whole.
 fn paste_arrives(bracketed: bool) {
     const MB: usize = 1 << 20;
@@ -1026,13 +1038,13 @@ fn paste_arrives(bracketed: bool) {
     let text = format!("{}\n", "a".repeat(1023)).repeat(1024);
     assert_eq!(text.len(), MB);
     t.w.tabs.current().unwrap().written.borrow_mut().clear();
-    let start = std::time::Instant::now();
+    let start = thread_cpu_time();
     t.event(MAIN, Event::Pasted(text), &mut ctx);
     // Only an O(n^2) pass gets near this; a linear one takes a few ms even unoptimised.
-    let took = start.elapsed();
+    let took = thread_cpu_time() - start;
     assert!(
         took < std::time::Duration::from_millis(250),
-        "the paste took {took:?}"
+        "the paste took {took:?} of CPU"
     );
     let lens: Vec<usize> =
         t.w.tabs
