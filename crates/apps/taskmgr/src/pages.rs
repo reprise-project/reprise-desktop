@@ -5,9 +5,9 @@ use repriseapp::Ctx;
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::BUTTON_H;
 use reprisekit::controls::form::{self, Form, Item};
-use reprisekit::controls::menubar;
 use reprisekit::controls::statusbar::{self, Panel, StatusBar};
 use reprisekit::controls::tabstrip;
+use reprisekit::controls::{listview, menubar};
 use reprisekit::look::Paint;
 use reprisekit::look::widgets::draw_page;
 use reprisekit::raster::{Canvas, Rect};
@@ -202,6 +202,7 @@ fn status_bar(t: &TaskMgr) -> StatusBar {
 
 pub fn draw(t: &mut TaskMgr, c: &mut Canvas, ctx: &Ctx) {
     follow_form(t, ctx);
+    close_moved_tip(t, ctx);
     let t = &*t;
     let lay = layout(t, ctx);
     let px = ctx.theme.fonts.size_px;
@@ -237,6 +238,22 @@ pub fn draw(t: &mut TaskMgr, c: &mut Canvas, ctx: &Ctx) {
             text: row.cmdline.clone(),
             at: tip.rest.at,
         });
+    }
+}
+
+/// Drops the process tip once the row under the pointer holds another process.
+fn close_moved_tip(t: &mut TaskMgr, ctx: &Ctx) {
+    let Some(tip) = &t.tip else { return };
+    let list = layout(t, ctx).list.filter(|_| t.page() == Page::Processes);
+    let under = list.and_then(|r| {
+        let (x, y) = tip.pointer;
+        match t.procs.view.hit(&t.procs.layout(r, ctx), x, y) {
+            listview::Hit::Row(i) => t.proc_rows.get(i).map(|p| p.pid),
+            _ => None,
+        }
+    });
+    if under != Some(tip.rest.on) {
+        t.tip = None;
     }
 }
 

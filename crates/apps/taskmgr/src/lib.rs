@@ -204,10 +204,13 @@ enum Act {
     OnTop(bool),
 }
 
-/// The pointer resting on a process row, by pid; `shown` once its command line is up.
+/// The pointer resting on a process row, by pid; `shown` once its command line is up. `pointer`
+/// is where the pointer is now, so a re-sort or scroll that puts another process under it
+/// closes the tip ([`pages::draw`]).
 struct Tip {
     rest: Rest<i32>,
     shown: bool,
+    pointer: (i32, i32),
 }
 
 pub struct TaskMgr {
@@ -992,6 +995,7 @@ impl TaskMgr {
             self.tip = rest.map(|rest| Tip {
                 rest,
                 shown: tip_was && self.tip.as_ref().is_some_and(|t| t.rest == rest),
+                pointer: (x, y),
             });
             tick = self.tip.as_ref().is_some_and(|t| !t.shown);
         } else {
