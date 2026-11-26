@@ -642,6 +642,11 @@ pub mod statefile;
 pub mod welcome;
 
 pub mod system_icons {
+    /// An older name that no longer names an icon, so `current_list` drops it.
+    pub fn retired(name: &str) -> bool {
+        current(name).is_none()
+    }
+
     pub fn current(name: &str) -> Option<&str> {
         match name {
             "my-documents" => Some("documents"),
@@ -838,6 +843,8 @@ external_thumbnailers = false
             ["documents", "computer", "recycle-bin", "custom-x"]
         );
         assert_eq!(system_icons::current("home"), Some("home"));
+        assert!(system_icons::retired("my-network-places"));
+        assert!(!system_icons::retired("my-computer"));
     }
 
     #[test]

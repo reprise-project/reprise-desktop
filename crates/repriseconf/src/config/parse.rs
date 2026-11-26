@@ -614,6 +614,9 @@ impl Config {
             cfg.start_icon = v;
         }
         if let Some(v) = file.system_icons {
+            if v.iter().any(|n| crate::system_icons::retired(n)) {
+                log::warn!("config: system_icons: my-network-places is retired and is left out");
+            }
             cfg.system_icons = crate::system_icons::current_list(v.iter().map(String::as_str));
         }
         if let Some(v) = file.desktop_widgets {
