@@ -17,6 +17,7 @@
 //! opens nothing; Enter on it, or a press on it, comes back as [`Event::Link`].
 //! A search field over the list is the tab stop before it: Ctrl+F ([`find_key`]) and typing on the
 //! list reach it, Escape empties it wherever the keyboard is, Enter opens the first row it leaves.
+//! Escape never cancels a list-mode sheet; Cancel and the close box do.
 //! Ctrl+Tab, Ctrl+Page Down and their reverses step pages in either mode
 //! ([`page_step`]).
 //!

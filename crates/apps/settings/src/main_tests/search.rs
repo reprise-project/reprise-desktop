@@ -54,7 +54,10 @@ fn escape_on_the_found_control_clears_the_query_and_keeps_the_sheet_open() {
     assert_eq!(a.sheet.list_mut().unwrap().filter(), None);
     assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
     plain_key(&mut a, &ctx, escape);
-    assert!(cancelled(&a), "with the field empty Escape cancels");
+    assert!(
+        !cancelled(&a),
+        "with the field empty Escape leaves Settings open"
+    );
 }
 
 #[test]
