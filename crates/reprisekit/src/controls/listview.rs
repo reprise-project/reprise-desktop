@@ -46,9 +46,12 @@ pub const GROUP_H: i32 = 31;
 /// The band the title is centred in, the rule on its last row.
 const GROUP_TITLE_H: i32 = 19;
 pub const ICON_PX: i32 = 16;
-/// The name column: icon 2 px in, text 2 px after it; other columns' text and the header text 6 px in.
+/// The name column: icon 2 px in, text [`NAME_GAP`] after it; other columns' text and the header
+/// text 6 px in.
 pub(crate) const ICON_X: i32 = 2;
-const NAME_X: i32 = ICON_X + ICON_PX + 2;
+/// From an icon's edge to its name's text; a selected name's highlight starts at the edge.
+pub(crate) const NAME_GAP: i32 = 2;
+const NAME_X: i32 = ICON_X + ICON_PX + NAME_GAP;
 
 /// The name's x in its row past an icon column `slot` px wide.
 fn name_x(slot: i32) -> i32 {

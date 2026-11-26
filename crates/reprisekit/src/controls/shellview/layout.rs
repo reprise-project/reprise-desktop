@@ -35,11 +35,11 @@ pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, p
     };
     match sv.mode {
         Mode::List => {
-            let slot = lay.controls.text.len(ICON_PX);
-            let w = (cell.width - slot).max(0);
+            let x = lay.controls.text.len(ICON_PX) + listview::NAME_GAP;
+            let w = (cell.width - x).max(0);
             let shown = text.ellipsize(&e.name, w, false, px);
             Rect::new(
-                cell.x + slot,
+                cell.x + x,
                 cell.y,
                 text.measure(&shown, false, px).min(w),
                 cell.height,

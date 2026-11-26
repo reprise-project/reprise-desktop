@@ -213,6 +213,58 @@ fn type_ahead_jumps_to_the_next_match() {
 
 /// List and Details draw an entry's 16 px icon at 100% and its 32 px one at 200%, in a
 /// column grown to 32 px with the name starting past it.
+/// A selected name keeps the same gap from its icon in List as in Details: the highlight starts
+/// at the icon's edge and the name's ink a gap past it, at 1x and 2x.
+#[test]
+fn list_and_details_keep_the_same_gap_between_icon_and_name() {
+    let (text, px) = rend();
+    let red = Color::rgb(255, 0, 0);
+    let mut gaps = Vec::new();
+    for s in [1, 2] {
+        for mode in [Mode::List, Mode::Details] {
+            let cs = ColorScheme::default();
+            let mut sv = view(1);
+            sv.mode = mode;
+            sv.entries[0].name = "Hb".into();
+            sv.entries[0].icon = Some(Rc::new(square((16 * s) as u32, red)));
+            sv.selection.set_only(Some(0));
+            let r = Rect::new(0, 0, 400, 120);
+            let lay = layout(&sv, r, &Theme::default().controls());
+            let mut c = Canvas::new((400 * s) as u32, (120 * s) as u32);
+            draw(&mut c, &text, &classic_paint(&cs, s), &sv, &lay, None, px);
+            let reds: Vec<(i32, i32)> = (0..120 * s)
+                .flat_map(|y| (0..400 * s).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) == red.argb())
+                .collect();
+            let edge = reds.iter().map(|p| p.0).max().unwrap() + 1;
+            let mid = reds[0].1 + 8 * s;
+            assert_eq!(
+                c.get(edge, mid),
+                cs.hilight.argb(),
+                "{mode:?} @{s}: the highlight starts at the icon's edge"
+            );
+            let ink = (edge..400 * s)
+                .find(|&x| {
+                    (reds[0].1..reds[0].1 + 16 * s).any(|y| c.get(x, y) == cs.hilight_text.argb())
+                })
+                .unwrap();
+            gaps.push((mode, s, ink - edge));
+        }
+    }
+    let list: Vec<i32> = gaps
+        .iter()
+        .filter(|g| g.0 == Mode::List)
+        .map(|g| g.2)
+        .collect();
+    let details: Vec<i32> = gaps
+        .iter()
+        .filter(|g| g.0 == Mode::Details)
+        .map(|g| g.2)
+        .collect();
+    assert_eq!(list, details, "List keeps Details' gap: {gaps:?}");
+    assert!(list[0] >= 2, "a gap of at least 2 px at 1x: {gaps:?}");
+}
+
 #[test]
 fn list_and_details_icons_grow_to_32_px_at_200_percent() {
     let (text, _) = rend();
@@ -361,7 +413,7 @@ fn stepping_past_the_visible_columns_scrolls_to_follow() {
 /// computes for the 180 px label width (196 column - 16 icon).
 #[test]
 fn an_overrunning_label_is_ellipsized_to_the_fixed_column() {
-    const EXPECTED_LABEL_W: i32 = 180; // 196 px column - 16 px icon
+    const EXPECTED_LABEL_W: i32 = 178; // 196 px column - 16 px icon - 2 px gap
     let theme = Theme::default();
     let cs = &theme.colors;
     let (text, px) = rend();
@@ -385,7 +437,7 @@ fn an_overrunning_label_is_ellipsized_to_the_fixed_column() {
 
     let mut want = Canvas::new(400, 100);
     want.fill_rect(Rect::new(0, 0, 400, 100), cs.window);
-    let label = Rect::new(cell.x + 16, cell.y, EXPECTED_LABEL_W, cell.height);
+    let label = Rect::new(cell.x + 18, cell.y, EXPECTED_LABEL_W, cell.height);
     text.draw(
         &mut want,
         label,
