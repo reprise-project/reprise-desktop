@@ -725,6 +725,7 @@ impl State {
                 self.spawn_command_activated(&cmd);
             }
             Action::Explorer => self.spawn_argv_activated(&["reprise-explorer"]),
+            Action::Settings => self.spawn_argv_activated(&["reprise-settings"]),
             Action::Exit => crate::sessionend::begin(
                 self,
                 reprisekit::controls::endsession::Goal::LogOff,
@@ -1320,6 +1321,16 @@ mod tests {
         let k = decode(state, Keycode::new(evdev + 8), mods, true);
         let binds = crate::config::Config::default().keybinds;
         crate::keyroute::route(modes, &k, &binds, &[]).route
+    }
+
+    #[test]
+    fn the_settings_action_starts_reprise_settings() {
+        crate::spawn::record();
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state
+            .run_action(&crate::config::Action::Settings, keys::MOD_LOGO);
+        assert_eq!(crate::spawn::recorded(), ["reprise-settings"]);
     }
 
     #[test]

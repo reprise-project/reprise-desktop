@@ -786,7 +786,7 @@ suspend_after = 0            # run [power] standby
 #     desktop-carry-3 desktop-carry-4 desktop-carry-5 desktop-carry-6
 #     desktop-carry-7 desktop-carry-8 desktop-carry-9
 #   Launch and search: launcher startmenu run task-manager terminal explorer
-#     taskbar-item-1 taskbar-item-2 taskbar-item-3 taskbar-item-4
+#     settings taskbar-item-1 taskbar-item-2 taskbar-item-3 taskbar-item-4
 #     taskbar-item-5 taskbar-item-6 taskbar-item-7 taskbar-item-8
 #     taskbar-item-9 taskbar-item-10 clipboard-history emoji-picker
 #     color-picker
@@ -858,6 +858,10 @@ action = "showdesktop"
 [[keybinds]]                 # an Explorer window on the home folder
 keys = "Super+e"
 action = "explorer"
+
+[[keybinds]]                 # Reprise Settings
+keys = "Super+i"
+action = "settings"
 
 [[keybinds]]                 # the task manager (`task_manager`)
 keys = "Ctrl+Shift+Escape"
@@ -954,6 +958,10 @@ action = "screenshot-window"
 
 [[keybinds]]                 # drag out a rectangle, or click a window; Esc cancels
 keys = "Shift+Print"
+action = "screenshot-region"
+
+[[keybinds]]                 # the same, for keyboards without PrtSc
+keys = "Super+Shift+s"
 action = "screenshot-region"
 
 [[keybinds]]                 # the focused window's content, without its frame

@@ -185,6 +185,24 @@ fn super_digits_d_and_e_are_bound_by_default() {
 }
 
 #[test]
+fn super_shift_s_and_super_i_are_bound_by_default() {
+    let cfg = Config::default();
+    let on = |keys: &str| {
+        let (mods, keysym) = parse_keybind(keys).unwrap();
+        (cfg.keybinds.iter())
+            .filter(|b| b.mods == mods && b.keysym == keysym)
+            .map(|b| b.action.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        on("Super+Shift+s"),
+        [Action::ScreenshotRegion],
+        "the area pick, as Shift+PrtSc"
+    );
+    assert_eq!(on("Super+i"), [Action::Settings]);
+}
+
+#[test]
 fn toggleframe_is_bound_by_default() {
     let (mods, keysym) = parse_keybind("Super+Shift+b").unwrap();
     let cfg = Config::default();
