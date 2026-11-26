@@ -1103,8 +1103,9 @@ fn launcher_sample() -> launcher::Launcher {
         name: "= 14".to_string(),
         icon: Some(small.clone()),
     }));
-    l.set_settings(vec![launcher::Row {
+    l.set_settings(vec![launcher::FoundRow {
         name: "Notifications".to_string(),
+        detail: "notes".to_string(),
         icon: Some(small.clone()),
     }]);
     l.set_rows(vec![

@@ -7,8 +7,8 @@
 //! rows (then headed "Programs") when the host ranks them first, else under them.
 //! Then a greyed "Settings" heading with an etched rule
 //! over the settings rows, and each section of found rows the host fills (files by name,
-//! by contents, a program's results) under its own heading the same way, the detail dimmed
-//! after each name.
+//! by contents, a program's results) under its own heading the same way. A settings or found
+//! row's detail draws dimmed after its name.
 //! Arrows step over headings. A query nothing matches shows the Start menu search's greyed
 //! [`NO_RESULTS`] line, which takes no highlight.
 //! The panel grows with the text size; the bevels and the 32 px icon keep their size, and a row's
@@ -59,8 +59,9 @@ pub struct Row {
     pub icon: Option<Canvas>,
 }
 
-/// A found row: its name, the dimmed detail after it (a file's folder as the host words it,
-/// `~/Documents`, or a program result's description), and its 16 px icon.
+/// A settings or found row: its name, the dimmed detail after it (what a setting was found by,
+/// a file's folder as the host words it, `~/Documents`, or a program result's description),
+/// and its 16 px icon.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FoundRow {
     pub name: String,
@@ -127,7 +128,7 @@ pub struct Launcher {
     /// The window rows go above the app rows.
     windows_first: bool,
     apps: Vec<Row>,
-    settings: Vec<Row>,
+    settings: Vec<FoundRow>,
     found: Vec<Section>,
     /// The top match's tail shown in `edit`.
     inline: Inline,
@@ -345,8 +346,8 @@ impl Launcher {
                     (r.name.clone(), r.icon.clone(), String::new())
                 }
                 Line::Row(Pick::Setting(i)) => {
-                    let r = &self.settings[i];
-                    (r.name.clone(), r.icon.clone(), String::new())
+                    let f = &self.settings[i];
+                    (f.name.clone(), f.icon.clone(), f.detail.clone())
                 }
                 Line::Row(Pick::Found(s, i)) => {
                     let f = &self.found[s].rows[i];
@@ -383,7 +384,7 @@ impl Launcher {
         self.rebuild(None);
     }
 
-    pub fn set_settings(&mut self, rows: Vec<Row>) {
+    pub fn set_settings(&mut self, rows: Vec<FoundRow>) {
         self.settings = rows.into_iter().take(MAX_SETTINGS).collect();
         self.rebuild(None);
     }
@@ -1432,6 +1433,16 @@ mod tests {
             .collect()
     }
 
+    fn settings(names: &[&str]) -> Vec<FoundRow> {
+        (names.iter())
+            .map(|n| FoundRow {
+                name: n.to_string(),
+                detail: String::new(),
+                icon: None,
+            })
+            .collect()
+    }
+
     fn typed(l: &mut Launcher, s: &str) -> Event {
         l.key(Key::Char(EditKey::Insert(s.into())))
     }
@@ -1441,7 +1452,7 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "x");
         l.set_calc(rows(&["= 1"]).pop());
-        l.set_settings(rows(&["Display"]));
+        l.set_settings(settings(&["Display"]));
         l.set_rows(rows(&["Xa", "Xb"]));
         l.key(Key::Down);
         let selected = l.list.selected;
@@ -2127,7 +2138,7 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "no");
         let names: Vec<String> = (1..=8).map(|i| format!("Notes {i}")).collect();
-        l.set_settings(rows(&["Notifications", "Network", "Mouse", "Sounds"]));
+        l.set_settings(settings(&["Notifications", "Network", "Mouse", "Sounds"]));
         l.set_rows(rows(&names.iter().map(String::as_str).collect::<Vec<_>>()));
         let names: Vec<String> = (1..=8).map(|i| format!("note{i}.txt")).collect();
         let found: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "~")).collect();
@@ -2390,7 +2401,7 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "2+3*4");
         l.set_calc(rows(&["= 14"]).pop());
-        l.set_settings(rows(&["Mouse"]));
+        l.set_settings(settings(&["Mouse"]));
         l.set_rows(rows(&["2048"]));
         set_files(&mut l, files(&[("2+3*4.txt", "~")]));
         l
@@ -2464,7 +2475,7 @@ mod tests {
         typed(&mut l, "te");
         l.set_calc(None);
         l.set_windows(rows(&["notes.txt - Editor"]), false);
-        l.set_settings(rows(&["Keyboard"]));
+        l.set_settings(settings(&["Keyboard"]));
         l.set_rows(rows(&["Terminal"]));
         assert_eq!(
             l.list.items,
@@ -2542,13 +2553,26 @@ mod tests {
         let mut l = Launcher::new();
         typed(&mut l, "wifi");
         l.set_calc(None);
-        l.set_settings(rows(&["Network Connections"]));
+        l.set_settings(settings(&["Network Connections"]));
         l.set_rows(Vec::new());
         assert_eq!(l.list.items, [SETTINGS_HEADING, "Network Connections"]);
         assert_eq!(l.picked(), Some(Pick::Setting(0)));
         l.key(Key::Up);
         assert_eq!(l.picked(), Some(Pick::Setting(0)), "only the heading above");
         assert_eq!(l.key(Key::CtrlEnter), Event::Launch(Pick::Setting(0)));
+    }
+
+    #[test]
+    fn a_settings_row_dims_what_it_was_found_by_after_its_name() {
+        let mut l = Launcher::new();
+        typed(&mut l, "disk");
+        l.set_calc(None);
+        let mut rows = settings(&["Advanced", "Keyboard"]);
+        rows[0].detail = "low disk space".into();
+        l.set_settings(rows);
+        l.set_rows(Vec::new());
+        assert_eq!(l.list.items, [SETTINGS_HEADING, "Advanced", "Keyboard"]);
+        assert_eq!(l.list.detail, ["", "low disk space", ""]);
     }
 
     /// The list of `with_every_kind` in `theme`'s list box: the answer
