@@ -583,6 +583,7 @@ impl State {
             Dc::Undo(entry) => self.undo_icons(entry),
             Dc::NextBackground => self.next_slide(),
             Dc::NewFolder => self.new_folder(self.desktop_menu_at),
+            Dc::NewShortcut => self.new_shortcut(self.desktop_menu_at),
             Dc::NewTextDocument => self.new_text_document(self.desktop_menu_at),
             Dc::NewFrom(template) => self.new_from_template(template, self.desktop_menu_at),
             Dc::Open => {

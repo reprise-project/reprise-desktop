@@ -69,6 +69,10 @@ The file manager, and the default for folders.
   or numbering dialog for several items) and Copy as Path. Ctrl+Z undoes the
   last file operation of any Explorer window or the desktop, which Edit > Undo
   names. While an undo runs in one window, Undo is greyed in the others.
+- **New > Shortcut...** (File > New, the folder's right-click New and the
+  desktop's) asks what the shortcut opens: a program from the list, a file
+  Browse... picks, a folder, a command line or a web address. Then it asks a
+  name and writes a launcher the desktop runs. Undo removes it.
 - **Pasting a picture** (Ctrl+V or Paste with a picture and no files on the
   clipboard, as after Print Screen) saves it as a new "Pasted image" file
   named for the date and time, in `[screenshot] format`, as PNG when that
@@ -95,8 +99,8 @@ The file manager, and the default for folders.
   folder window.
 - **The desktop's file work** runs in Explorer the same way: a drop or paste
   onto the desktop or one of its folders, Delete and Shift+Delete, Empty
-  Recycle Bin and Send To > Compressed (zipped) Folder each start a process
-  that asks, shows the progress dialog and ends with its job.
+  Recycle Bin, Send To > Compressed (zipped) Folder and New > Shortcut... each
+  start a process that asks, shows the progress dialog and ends with its job.
 - **Log Off waits for file work.** While a copy, move, delete, Empty Recycle
   Bin, extraction or zip runs, in a folder window or a process of its own,
   Explorer holds off log off through the Inhibit portal, as other file

@@ -1328,7 +1328,7 @@ impl Explorer {
     /// A New's item landed at the path `made` holds, with its identity: one undo entry, then it
     /// is selected and scrolled into view with its rename begun. A failure names `name` in an
     /// error box.
-    fn item_made(
+    pub(crate) fn item_made(
         &mut self,
         name: &str,
         made: std::io::Result<(Option<reprisefs::undo::FileId>, PathBuf)>,

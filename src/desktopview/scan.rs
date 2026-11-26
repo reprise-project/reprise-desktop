@@ -467,9 +467,11 @@ impl State {
             view.made = None;
         }
         // A rename the user is typing keeps the keyboard.
-        let rename = made.flatten().filter(|_| view.rename.is_none());
+        let typing = view.rename.is_some();
+        let rename = made.flatten().filter(|_| !typing);
         let again = std::mem::take(&mut view.rescan_again);
-        self.land_job_icons(&fresh);
+        let launcher = self.land_job_icons(&fresh).filter(|_| !typing);
+        let rename = rename.or(launcher);
         self.relayout_desktop();
         if let Some(i) = rename {
             self.begin_rename(i);

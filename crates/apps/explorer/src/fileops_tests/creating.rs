@@ -164,3 +164,65 @@ fn a_pasted_picture_saves_as_a_new_file_and_starts_a_rename() {
     assert_eq!(ex.undo, Some("New"));
     repriseapp::fake_clipboard_image(false);
 }
+
+/// New > Shortcut to a folder: Next reads the location and offers its name, Finish writes a
+/// trusted launcher opening it in Explorer, selected with its rename begun and undone as a New.
+#[test]
+fn new_shortcut_writes_a_launcher_for_the_location_and_starts_a_rename() {
+    use reprisekit::controls::{form, wizard};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let music = dir.path().join("Music");
+    std::fs::create_dir(&music).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+
+    ex.run(Command::NewShortcut, &mut ctx);
+    let Some(Dialog::NewShortcut(w)) = ex.dialogs.up_mut() else {
+        panic!("the wizard is up")
+    };
+    w.wizard.set_location(&music.to_string_lossy());
+    let next = form::Event::Pressed(wizard::NEXT);
+    ex.new_shortcut_answered(next, &mut ctx);
+    let Some(Dialog::NewShortcut(w)) = ex.dialogs.up() else {
+        panic!("the wizard stays up")
+    };
+    assert_eq!(w.wizard.name(), "Music", "the folder's name is offered");
+    ex.new_shortcut_answered(next, &mut ctx);
+
+    let made = dir.path().join("Music.desktop");
+    let text = std::fs::read_to_string(&made).expect("the launcher");
+    let exec = reprisefs::apps::exec_arg(&music.to_string_lossy());
+    assert!(
+        text.contains(&format!("Exec=reprise-explorer {exec}\n")),
+        "{text}"
+    );
+    assert!(reprisefs::apps::is_trusted(&made));
+    assert!(ex.dialog().is_none(), "Finish closes the wizard");
+    let i = ex.index_of(&made).expect("listed");
+    assert_eq!(ex.sv.edit.as_ref().map(|(j, _)| *j), Some(i));
+    ex.finish_puts(&mut ctx);
+    assert_eq!(ex.undo, Some("New"));
+}
+
+#[test]
+fn new_shortcut_to_a_command_that_is_not_there_says_so_and_stays_on_its_page() {
+    use reprisekit::controls::newshortcut::Page;
+    use reprisekit::controls::{form, wizard};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.run(Command::NewShortcut, &mut ctx);
+    let Some(Dialog::NewShortcut(w)) = ex.dialogs.up_mut() else {
+        panic!("the wizard is up")
+    };
+    w.wizard.set_location("reprise-no-such-program --flag");
+    ex.new_shortcut_answered(form::Event::Pressed(wizard::NEXT), &mut ctx);
+    let Some(Dialog::NewShortcut(w)) = ex.dialogs.up() else {
+        panic!("the wizard stays up")
+    };
+    assert_eq!(w.wizard.page, Page::Target);
+    assert!(
+        !dir.path().read_dir().expect("list").any(|_| true),
+        "nothing written"
+    );
+}

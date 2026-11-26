@@ -163,6 +163,7 @@ pub enum DesktopCommand {
     Refresh,
     NextBackground,
     NewFolder,
+    NewShortcut,
     NewTextDocument,
     /// New > a template: a copy of this file from the Templates folder.
     NewFrom(PathBuf),

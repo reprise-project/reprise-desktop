@@ -63,6 +63,7 @@ pub mod msgbox;
 pub mod multiedit;
 pub mod namebox;
 pub mod netconnect;
+pub mod newshortcut;
 pub mod notifyhistory;
 pub mod notifysheet;
 pub mod openwith;

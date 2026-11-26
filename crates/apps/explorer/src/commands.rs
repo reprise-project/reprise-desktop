@@ -47,6 +47,7 @@ pub enum Command {
     EmptyRecycleBin,
     Restore,
     NewTextDocument,
+    NewShortcut,
     /// New > a template: a copy of this file from the Templates folder.
     NewFrom(std::path::PathBuf),
     CreateShortcut,
@@ -535,6 +536,7 @@ impl Explorer {
             Command::EmptyRecycleBin => self.confirm_empty_bin(ctx),
             Command::Restore => self.restore(ctx),
             Command::NewTextDocument => self.new_item(false, ctx),
+            Command::NewShortcut => self.new_shortcut(ctx),
             Command::NewFrom(template) => self.new_from_template(template, ctx),
             Command::CreateShortcut => self.create_shortcut(ctx),
             Command::SendTo(i) => self.send_to(i, ctx),

@@ -808,8 +808,9 @@ fn desktop_menu_lists_its_commands_with_separators() {
     let (items, commands) = new_menu(&[]);
     assert_eq!(items.len(), NEW_MENU_ICONS.len());
     assert_eq!(commands[0], Some(DesktopCommand::NewFolder));
-    assert!(matches!(items[1], MenuItem::Separator));
-    assert_eq!(commands[2], Some(DesktopCommand::NewTextDocument));
+    assert_eq!(commands[1], Some(DesktopCommand::NewShortcut));
+    assert!(matches!(items[2], MenuItem::Separator));
+    assert_eq!(commands[3], Some(DesktopCommand::NewTextDocument));
     let (items, commands) = arrange_menu(true);
     assert_eq!(
         commands,
@@ -2020,10 +2021,16 @@ fn new_lists_the_templates_under_text_document_and_one_makes_a_copy_in_rename() 
         .collect();
     assert_eq!(
         labels,
-        ["Folder", "Text Document", "Notes & Plans", "Report"]
+        [
+            "Folder",
+            "Shortcut...",
+            "Text Document",
+            "Notes & Plans",
+            "Report"
+        ]
     );
     let report = folder.join("Report.odt");
-    assert_eq!(commands[4], Some(DesktopCommand::NewFrom(report.clone())));
+    assert_eq!(commands[5], Some(DesktopCommand::NewFrom(report.clone())));
 
     h.state
         .desktop_command(DesktopCommand::NewFrom(report), None);
@@ -2507,4 +2514,35 @@ fn a_pasted_picture_lands_as_a_new_file_in_its_rename() {
     let view = h.state.desktop.as_ref().unwrap();
     let (i, _) = view.rename.as_ref().expect("its rename begins");
     assert_eq!(&view.entries[*i].name, name);
+}
+
+#[test]
+fn new_shortcut_runs_the_wizard_in_explorer_and_its_launcher_lands_in_its_rename() {
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join("desktop-new-shortcut");
+    let _ = std::fs::remove_dir_all(&desk);
+    std::fs::create_dir_all(&desk).unwrap();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+
+    h.state.desktop_command(DesktopCommand::NewShortcut, None);
+    let d = desk.display().to_string();
+    assert_eq!(job_args(&h), [vec!["--new-shortcut", &d]]);
+
+    std::fs::write(desk.join("notes.txt"), "").unwrap();
+    std::fs::write(
+        desk.join("htop.desktop"),
+        "[Desktop Entry]\nType=Application\nName=htop\nExec=htop\n",
+    )
+    .unwrap();
+    h.state.rescan_desktop();
+    let view = h.state.desktop.as_ref().unwrap();
+    let (i, _) = view.rename.as_ref().expect("the launcher's rename begins");
+    assert_eq!(view.entries[*i].name, "htop.desktop");
+    assert_eq!(
+        view.selection.set,
+        BTreeSet::from([*i]),
+        "it alone selected"
+    );
 }
