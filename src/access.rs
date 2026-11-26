@@ -825,11 +825,12 @@ fn reveal(state: &mut State, surface: Surface, r: Reveal) {
     }
 }
 
-/// Click pointer `button` at layout point `at` as a press and release would, without moving the pointer: the press goes through `State::press`, the release through the interaction it started, with `State::pointer_location` reading `at` meanwhile. No client hears it. Nothing happens while locked, mid-gesture or with a button held.
+/// Click pointer `button` at layout point `at` as a press and release would, without moving the pointer: the press goes through `State::press`, the release through the interaction it started, with `State::pointer_location` reading `at` meanwhile. No client hears the click. Nothing happens while locked. What the pointer holds ends first ([`let_go`]).
 pub fn click(state: &mut State, at: (f64, f64), button: u32) {
-    if state.desktop_locked() || state.interaction != Interaction::Idle || state.buttons_down > 0 {
+    if state.desktop_locked() {
         return;
     }
+    let_go(state);
     let real = state.pointer_location();
     let pos = Point::from(at);
     state.access.click_at = Some(pos);
@@ -849,6 +850,17 @@ pub fn click(state: &mut State, at: (f64, f64), button: u32) {
     state.access.click_at = None;
     state.repoint(real, InputTime::now());
     state.redraw_all();
+}
+
+/// End what the pointer holds before [`click`]: a keyboard move or size commits, as a
+/// press would commit it; a drag drops nothing, and a held button lets go as when an overlay
+/// takes the pointer (`State::release_all_buttons`).
+fn let_go(state: &mut State) {
+    if state.interaction.is_keyboard() {
+        state.end_interaction();
+    }
+    state.cancel_drag();
+    state.release_all_buttons(InputTime::now());
 }
 
 /// Tell a listening screen reader about key `k` (xkb keycode `code`),
@@ -1032,6 +1044,122 @@ mod tests {
             ),
             "another program's flyout closes and the click reaches the icon"
         );
+    }
+
+    /// A point on the Start button of the first bar.
+    fn start_button(h: &crate::harness::Harness) -> (f64, f64) {
+        use reprisekit::taskbar::TaskbarHit;
+        let bar = h.state.bar(h.state.bars[0].tree).expect("bar");
+        let y = 754.0;
+        let x = (0..1024)
+            .map(f64::from)
+            .find(|&x| h.state.bar_hit(bar, x, y) == TaskbarHit::Start)
+            .expect("the Start button");
+        (x + 8.0, y)
+    }
+
+    fn start_open(s: &State) -> bool {
+        !s.menus.is_empty() || s.start_panel.is_some()
+    }
+
+    #[test]
+    fn a_readers_click_while_a_button_is_held_lets_it_go_and_clicks() {
+        use crate::harness::LEFT;
+        for caption in [true, false] {
+            let what = if caption {
+                "a caption drag"
+            } else {
+                "a press in the window"
+            };
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+            let w = h.state.win(t.id).expect("the window");
+            let part = if caption {
+                w.geom.caption
+            } else {
+                w.geom.client
+            };
+            let (px, py) = (
+                f64::from(w.x + part.x + part.width / 2),
+                f64::from(w.y + part.y + part.height / 2),
+            );
+            h.pointer_to(px, py);
+            h.button(LEFT, true);
+            h.pointer_to(px + 40.0, py + 30.0);
+            h.state.settle_moves();
+            let held = h.state.win(t.id).expect("the window").frame_rect();
+            assert_eq!(
+                matches!(h.state.interaction, Interaction::Move { .. }),
+                caption,
+                "{what}: only a caption press moves the window"
+            );
+            let start = start_button(&h);
+            click(&mut h.state, start, BTN_LEFT);
+            assert_eq!(
+                h.state.interaction,
+                Interaction::Idle,
+                "{what}: the gesture ends"
+            );
+            assert_eq!(h.state.buttons_down, 0, "{what}: no button counts as down");
+            assert!(start_open(&h.state), "{what}: the click opens Start");
+            h.button(LEFT, false);
+            h.state.settle_moves();
+            h.roundtrip(&mut c);
+            let heard: &[(u32, bool)] = if caption {
+                &[]
+            } else {
+                &[(LEFT, true), (LEFT, false)]
+            };
+            assert_eq!(
+                c.side.buttons, heard,
+                "{what}: the window hears the release once"
+            );
+            assert_eq!(
+                h.state.win(t.id).expect("the window").frame_rect(),
+                held,
+                "{what}: the window stays where the gesture left it"
+            );
+            assert!(
+                start_open(&h.state),
+                "{what}: the late release leaves Start open"
+            );
+        }
+    }
+
+    #[test]
+    fn a_readers_click_during_a_keyboard_move_commits_it_and_clicks() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.state.move_to(t.id, 100, 100);
+        h.dispatch();
+        h.state.begin_key_move(t.id);
+        assert!(
+            h.state.interaction.is_keyboard(),
+            "the move is a keyboard move"
+        );
+        let p = h.state.pointer_location();
+        h.pointer_to(p.x + 80.0, p.y + 60.0);
+        h.state.settle_moves();
+        let moved = h.state.win(t.id).expect("the window").frame_rect();
+        assert_eq!(
+            (moved.x, moved.y),
+            (180, 160),
+            "the window follows the pointer"
+        );
+        let start = start_button(&h);
+        click(&mut h.state, start, BTN_LEFT);
+        h.state.settle_moves();
+        assert_eq!(h.state.interaction, Interaction::Idle, "the move ends");
+        assert_eq!(
+            h.state.win(t.id).expect("the window").frame_rect(),
+            moved,
+            "the window stays where it was moved"
+        );
+        assert!(start_open(&h.state), "the click opens Start");
     }
 
     #[test]
