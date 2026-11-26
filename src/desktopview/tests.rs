@@ -2368,3 +2368,89 @@ fn a_read_asked_for_during_a_rename_runs_once_the_rename_gives_up() {
         (s.desktop.as_ref().unwrap().entries.iter()).any(|e| e.name == "c.txt")
     });
 }
+
+/// F2 on the desktop: the icon whose rename it began.
+fn f2(h: &mut crate::harness::Harness) -> Option<usize> {
+    const F2: u32 = 60;
+    h.key(F2, true);
+    h.key(F2, false);
+    h.state
+        .desktop
+        .as_ref()
+        .unwrap()
+        .rename
+        .as_ref()
+        .map(|r| r.0)
+}
+
+#[test]
+fn an_undone_rename_keeps_the_icon_selected_past_an_overlapping_read_and_f2_renames_it() {
+    let (mut h, desk) = desktop_in("desktop-undo-rename-select", &["a.txt"]);
+    h.state.focus_desktop();
+    h.state.begin_rename(icon(&h, "a.txt"));
+    h.state.rename_paste("b");
+    h.state.commit_rename();
+    assert!(desk.join("b.txt").exists(), "renamed");
+    let before = h.state.desktop.as_ref().unwrap().entries.clone();
+    h.state.desktop.as_mut().unwrap().scanning = true;
+    ctrl_z(&mut h);
+    assert!(desk.join("a.txt").exists(), "the rename undone");
+    h.state
+        .desktop_scanned(before, Vec::new(), crate::desktop::ICON_PX);
+    let i = icon(&h, "a.txt");
+    let view = h.state.desktop.as_ref().unwrap();
+    assert!(
+        !view.entries.iter().any(|e| e.name == "b.txt"),
+        "b.txt is gone"
+    );
+    assert_eq!(view.selection.set, [i].into(), "a.txt is the selection");
+    assert_eq!(view.selection.focus, Some(i), "a.txt has the focus");
+    assert_eq!(f2(&mut h), Some(i), "F2 renames a.txt");
+}
+
+#[test]
+fn an_undone_move_or_delete_selects_the_icon_explorer_puts_back_and_f2_renames_it() {
+    use reprisefs::undo::Undoable;
+    for (name, deleted) in [
+        ("desktop-undo-move-select", false),
+        ("desktop-undo-delete-select", true),
+    ] {
+        let (mut h, desk) = desktop_in(name, &["y.txt"]);
+        h.state.focus_desktop();
+        let away = desk.parent().unwrap().join(format!("{name}-x.txt"));
+        std::fs::write(&away, "").unwrap();
+        let back = desk.join("x.txt");
+        let undo = if deleted {
+            Undoable::Trash(reprisefs::trash::Trashed {
+                original: back.clone(),
+                name: "x.txt".into(),
+                files: away.clone(),
+                info: away.with_extension("trashinfo"),
+                deleted: None,
+            })
+        } else {
+            Undoable::Move {
+                from: back.clone(),
+                to: away.clone(),
+                listed: false,
+                id: None,
+            }
+        };
+        h.state.desktop.as_ref().unwrap().undos.push(undo);
+        crate::spawn::record();
+        ctrl_z(&mut h);
+        let job = h.state.filejobs.jobs.last().expect("an Explorer job");
+        assert_eq!(job.args[0], "--undo", "{name}: Explorer undoes it");
+        std::fs::rename(&away, &back).unwrap();
+        h.state.rescan_desktop();
+        let i = icon(&h, "x.txt");
+        let view = h.state.desktop.as_ref().unwrap();
+        assert_eq!(
+            view.selection.set,
+            [i].into(),
+            "{name}: x.txt is the selection"
+        );
+        assert_eq!(view.selection.focus, Some(i), "{name}: x.txt has the focus");
+        assert_eq!(f2(&mut h), Some(i), "{name}: F2 renames x.txt");
+    }
+}
