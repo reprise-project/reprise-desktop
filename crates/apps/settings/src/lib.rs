@@ -617,7 +617,7 @@ impl SettingsApp {
         let (u, min) = (self.units, self.smallest_sheet());
         let shown = (u.within(size.0), u.within(size.1));
         let size = (shown.0.max(min.0), shown.1.max(min.1));
-        if size == self.sheet.size {
+        if size == self.sheet.size && Area::shown(&self.sheet, shown) == self.area() {
             if !self.sheet.fit(shown) {
                 return false;
             }
@@ -626,7 +626,7 @@ impl SettingsApp {
             return true;
         }
         self.sheet.resize(size);
-        let a = self.area();
+        let a = Area::shown(&self.sheet, shown);
         let offset = self.sheet.page_offset();
         let src = registry::Sources {
             icon_themes: &[],

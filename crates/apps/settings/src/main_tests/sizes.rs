@@ -236,6 +236,46 @@ fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
     }
 }
 
+/// At 200% on a 1440x900 screen a maximized window is shorter than the sheet under every
+/// interface: a page that scrolls down, Glass's Appearance page among them, leaves its scrollbar
+/// room, so none scrolls sideways.
+#[test]
+fn at_200_percent_a_page_cut_short_leaves_its_scrollbar_room() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let m = reprisekit::interfaces::theme_for(i)
+            .with_text_size(200)
+            .metrics;
+        let (w, h) = FrameGeometry::client_size_for_total(
+            &m,
+            1440,
+            900 - m.taskbar_height,
+            true,
+            Chrome::WINDOW,
+        );
+        let dir = tmp(&format!("cut-short-200-{}", i.as_str()));
+        let path = dir.join("config.toml");
+        let config = format!("[appearance]\ninterface = \"{}\"\n", i.as_str());
+        std::fs::write(&path, config).unwrap();
+        let mut app = SettingsApp::open(path, "us".into());
+        let mut ctx = test_ctx();
+        ctx.theme = reprisekit::interfaces::theme_for(i);
+        ctx.text_size = 200;
+        ctx.size = (w, h);
+        ctx.maximized = true;
+        app.event(MAIN, Event::Resized, &mut ctx);
+        let mut c = Canvas::new(w as u32, h as u32);
+        for pg in Page::all() {
+            app.sheet.tabs.open = pg.index();
+            app.draw(MAIN, &mut c, &ctx);
+            let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
+            if (i, pg) == (Interface::Glass, Page::Appearance) {
+                assert!(l.bar.is_some(), "{i:?}: {pg:?} scrolls down");
+            }
+            assert_eq!(l.hbar, None, "{i:?}: {pg:?} keeps to the page's width");
+        }
+    }
+}
+
 /// At 200% on a 960x540 work area (a 1920x1080 screen at scale 2) the window is narrower than
 /// the sheet under every interface: Restore Defaults moves left to stay clear of OK, and the
 /// whole button row shows.

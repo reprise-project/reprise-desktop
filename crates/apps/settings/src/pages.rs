@@ -184,7 +184,20 @@ impl Area {
     }
 
     pub fn of(sheet: &PropSheet) -> Area {
-        Area::of_size(sheet.size, sheet.list_advance())
+        Area::shown(sheet, sheet.shown())
+    }
+
+    /// The area of `sheet` showing `shown` of it: one cut short scrolls its pages down, so they
+    /// leave the scrollbar room and none scrolls sideways for it.
+    pub fn shown(sheet: &PropSheet, shown: (i32, i32)) -> Area {
+        let a = Area::of_size(sheet.size, sheet.list_advance());
+        if shown.1 >= sheet.size.1 {
+            return a;
+        }
+        Area {
+            w: (a.w - sheet.page_bar_len()).max(Area::MIN.w),
+            ..a
+        }
     }
 
     /// The list sheet whose pages fill this area beside a list taking `advance`.
