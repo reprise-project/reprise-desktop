@@ -13,8 +13,8 @@ use super::system::{
     ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, LOCKER_NOTE, NOTIFICATION_SOUND, QUALITY_VALUE,
     REMOTE_BORDER, REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE,
     REMOTE_PORT, REMOTE_QUALITY, REMOTE_SCREEN_LOCK, REMOTE_SCREEN_NOTE, REMOTE_SCREEN_SHOW,
-    REMOTE_SECOND_JOIN, REMOTE_SECOND_REPLACE, REMOTE_SOUND, SOUND_CONTROLS, clipboard_label,
-    follow_lock, follow_screen,
+    REMOTE_SECOND_JOIN, REMOTE_SECOND_REPLACE, REMOTE_SOUND, SESSION_EXCLUDE, SOUND_CONTROLS,
+    TERMINAL_APPS, clipboard_label, follow_lock, follow_screen,
 };
 use super::{
     BOUNCE_DELAY, CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN,
@@ -96,6 +96,8 @@ pub(super) enum Bind {
     Icon(&'static str, Lens<Settings, Vec<String>>),
     /// An edit holding the list's entries apart by commas, an empty entry kept as one.
     Names(&'static str, Lens<Settings, Vec<String>>),
+    /// As [`Bind::Names`] for app ids, an empty entry dropped.
+    Ids(&'static str, Lens<Settings, Vec<String>>),
     /// A check box ticked while the list holds its name: a desktop widget.
     Member(&'static str, Lens<Settings, Vec<String>>, &'static str),
     /// The quiet hours check box: ticked while the list holds From and To. Unticking empties it;
@@ -175,6 +177,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag(cap::AUDIO_VBR, lens!(recording_audio_vbr)),
         Bind::Num(cap::FLAC_COMPRESSION, lens!(recording_flac_compression)),
         Bind::Flag("clipboard_history", lens!(clipboard_history)),
+        Bind::Ids(TERMINAL_APPS[1], lens!(clipboard_terminal_apps)),
         Bind::Named("interface", lens!(interface), INTERFACES),
         Bind::Scheme(
             crate::appearancepage::CLASSIC_SCHEME,
@@ -248,6 +251,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("dim_inactive", lens!(dim_inactive)),
         Bind::Num("hidden_frame_rate", lens!(hidden_frame_rate)),
         Bind::Flag("session_restore", lens!(session_restore)),
+        Bind::Ids(SESSION_EXCLUDE[1], lens!(session_exclude)),
         Bind::Flag("session_end_processes", lens!(session_end_processes)),
         Bind::Flag("restart_notice", lens!(restart_notice)),
         Bind::Named(
@@ -281,6 +285,7 @@ pub(super) fn binds() -> Vec<Bind> {
             "taskbar_reveal_on_attention",
             lens!(taskbar_reveal_on_attention),
         ),
+        Bind::Num("taskbar_attention_flash", lens!(taskbar_attention_flash)),
         Bind::Flag("recent_files", lens!(recent_files)),
         Bind::Flag(PRIVACY_LOCATION, lens!(location)),
         Bind::Flag("capture_border", lens!(capture_border)),
@@ -496,10 +501,20 @@ impl Bind {
             | Bind::Hex(id, _)
             | Bind::Icon(id, _)
             | Bind::Names(id, _)
+            | Bind::Ids(id, _)
             | Bind::Member(id, _, _)
             | Bind::Quiet(id, _)
             | Bind::QuietTime(id, _, _) => id,
         }
+    }
+
+    /// `text` as a [`Bind::Names`] or [`Bind::Ids`] list.
+    fn list(&self, text: &str) -> Vec<String> {
+        let mut list = names(text);
+        if matches!(self, Bind::Ids(..)) {
+            list.retain(|n| !n.is_empty());
+        }
+        list
     }
 
     /// Move the field this control writes off its value in `s`.
@@ -530,9 +545,10 @@ impl Bind {
             | Bind::Level(_, at, _) => *at.get_mut(s) += 1,
             Bind::Flag(_, at) => *at.get_mut(s) ^= true,
             Bind::Icon(_, at) => at.get_mut(s).push(String::new()),
-            Bind::Names(_, at) | Bind::Quiet(_, at) | Bind::QuietTime(_, at, _) => {
-                at.get_mut(s).push("\u{1}".into())
-            }
+            Bind::Names(_, at)
+            | Bind::Ids(_, at)
+            | Bind::Quiet(_, at)
+            | Bind::QuietTime(_, at, _) => at.get_mut(s).push("\u{1}".into()),
             Bind::Member(_, at, name) => {
                 let list = at.get_mut(s);
                 match list.iter().position(|n| n == name) {
@@ -657,8 +673,8 @@ pub fn write_form(form: &mut Form, s: &Settings) {
                 *edit = TextEdit::new(at.get(s).clone(), false);
                 first.set(0);
             }
-            (Bind::Names(_, at), Control::Edit { edit, first, .. })
-                if names(&edit.text) != *at.get(s) =>
+            (Bind::Names(_, at) | Bind::Ids(_, at), Control::Edit { edit, first, .. })
+                if b.list(&edit.text) != *at.get(s) =>
             {
                 *edit = TextEdit::new(at.get(s).join(", "), false);
                 first.set(0);
@@ -904,6 +920,12 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         tb.set_enabled(id, glass);
     }
     tb.set_enabled("taskbar_small_icons", glass);
+    for id in TERMINAL_APPS {
+        sheet.pages[Page::Privacy.index()].set_enabled(id, s.clipboard_history);
+    }
+    for id in SESSION_EXCLUDE {
+        sheet.pages[Page::Startup.index()].set_enabled(id, s.session_restore);
+    }
     let sm = &mut sheet.pages[Page::StartMenu.index()];
     for id in ["banner_label", "startmenu_banner"] {
         sm.set_enabled(id, s.startmenu_style == "classic");
@@ -1030,8 +1052,8 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
                 (Bind::Text(_, at), Control::Edit { edit, .. }) => {
                     *at.get_mut(s) = edit.text.clone()
                 }
-                (Bind::Names(_, at), Control::Edit { edit, .. }) => {
-                    *at.get_mut(s) = names(&edit.text)
+                (Bind::Names(_, at) | Bind::Ids(_, at), Control::Edit { edit, .. }) => {
+                    *at.get_mut(s) = b.list(&edit.text)
                 }
                 (Bind::Num(_, at), Control::UpDown(u)) => *at.get_mut(s) = u.value() as i64,
                 (Bind::Flag(_, at), Control::Check { checked, .. }) => *at.get_mut(s) = *checked,

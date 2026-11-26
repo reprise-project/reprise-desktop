@@ -109,6 +109,8 @@ pub struct Settings {
     pub clipboard_history: bool,
     /// `[clipboard] trusted_apps`: the Flatpak app ids given the clipboard in the background.
     pub clipboard_trusted: Vec<String>,
+    /// `[clipboard] terminal_apps`: app ids a history pick pastes into with Ctrl+Shift+V.
+    pub clipboard_terminal_apps: Vec<String>,
 
     /// `[appearance] interface`: "classic", "blue" or "glass".
     /// [`Settings::for_interface`] leaves it at Classic, the compositor's
@@ -229,6 +231,8 @@ pub struct Settings {
     pub taskbar_reveal_on_edge: bool,
     pub taskbar_reveal_on_keys: bool,
     pub taskbar_reveal_on_attention: bool,
+    /// `[taskbar] attention_flash`: seconds a button flashes, 0 to [`ATTENTION_FLASH_MAX`].
+    pub taskbar_attention_flash: i64,
     /// `[privacy] recent_files`.
     pub recent_files: bool,
     /// `[privacy] location`: off, every program asking for the location
@@ -301,6 +305,8 @@ pub struct Settings {
     pub hidden_frame_rate: i64,
     /// `[session] restore`.
     pub session_restore: bool,
+    /// `[session] exclude`: app ids never started again, globs allowed.
+    pub session_exclude: Vec<String>,
     /// `[session] end_processes`.
     pub session_end_processes: bool,
     /// `[updates] restart_notice`.
@@ -570,6 +576,7 @@ impl Settings {
             recording_flac_compression: rec.flac_compression.into(),
             clipboard_history: c.clipboard.history,
             clipboard_trusted: c.clipboard.trusted_apps.clone(),
+            clipboard_terminal_apps: c.clipboard.terminal_apps.clone(),
 
             interface: Interface::Classic.as_str().into(),
             color_scheme: c.color_scheme.clone().unwrap_or_default(),
@@ -645,6 +652,7 @@ impl Settings {
             taskbar_reveal_on_edge: c.taskbar.reveal_on_edge,
             taskbar_reveal_on_keys: c.taskbar.reveal_on_keys,
             taskbar_reveal_on_attention: c.taskbar.reveal_on_attention,
+            taskbar_attention_flash: c.taskbar.attention_flash.into(),
             recent_files: c.recent_files,
             location: c.location,
             capture_border: c.capture_border,
@@ -687,6 +695,7 @@ impl Settings {
             dim_inactive: c.dim_inactive.into(),
             hidden_frame_rate: c.hidden_frame_rate.into(),
             session_restore: c.session.restore,
+            session_exclude: c.session.exclude.clone(),
             session_end_processes: c.session.end_processes,
             restart_notice: c.restart_notice,
 

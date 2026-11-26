@@ -7,7 +7,8 @@ use super::{
     ends_track, group, shortcuts, spin, updown,
 };
 use crate::model::{
-    CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, GESTURE_FINGERS, TEXT_SIZES, VISUAL_BELLS,
+    ATTENTION_FLASH_MAX, CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, GESTURE_FINGERS,
+    TEXT_SIZES, VISUAL_BELLS,
 };
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
@@ -557,8 +558,8 @@ fn delay_group(
     items
 }
 
-/// The Pointer & Alerts page: MouseKeys, the Ctrl tap that shows where the pointer is, and what
-/// flashes when a program rings the bell.
+/// The Pointer & Alerts page: MouseKeys, the Ctrl tap that shows where the pointer is, what
+/// flashes when a program rings the bell, and how long a button asking for attention flashes.
 pub fn pointer_and_alerts(a: Area) -> Form {
     let gw = a.gw();
     // The keypad moves the pointer: the switch and Num Lock's share a row, and the
@@ -615,7 +616,7 @@ pub fn pointer_and_alerts(a: Area) -> Form {
             gw,
             "Rings grow round the pointer, wherever it is.",
         ),
-        group(a, "visual_group", 216, 82, "Visual Alerts"),
+        group(a, "visual_group", 216, 134, "Visual Alerts"),
         Item::label_at(
             "visual_note",
             GX,
@@ -631,6 +632,25 @@ pub fn pointer_and_alerts(a: Area) -> Form {
             278,
             gw,
             "The Sound page sets whether the bell sounds too.",
+        ),
+    ]);
+    items.extend(spin(
+        "attention_flash_label",
+        "taskbar_attention_flash",
+        GX,
+        306,
+        206,
+        "Flash a &taskbar button for attention:",
+        (0, ATTENTION_FLASH_MAX as i32),
+    ));
+    items.extend([
+        Item::label_at("attention_flash_units", GX + 264, 306, gw - 264, "seconds"),
+        Item::label_at(
+            "attention_flash_note",
+            GX,
+            328,
+            gw,
+            "Then it stays lit until you switch to it. 0: no flashing.",
         ),
     ]);
     Form::new(items)

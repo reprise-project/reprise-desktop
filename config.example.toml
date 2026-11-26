@@ -187,7 +187,8 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 #                            # a new balloon
 # attention_flash = 30       # seconds a window's button flashes when it asks
 #                            # for attention, then it stays lit until the
-#                            # window is focused; 0: lit at once, no flashing
+#                            # window is focused; 0: lit at once, no flashing.
+#                            # Settings > Pointer & Alerts
 
 [keyboard]                   # xkb rules/model/layout/variant/options
 # rules = ""                 # empty means the system default
@@ -406,6 +407,7 @@ suspend_after = 0            # run [power] standby
 #                            # a copy then leaves the clipboard when its program quits
 # terminal_apps = ["reprise.terminal", "foot", "kitty", "Alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "org.gnome.Console", "konsole", "xterm"]
 #                            # app ids a pick pastes into with Ctrl+Shift+V instead of Ctrl+V
+#                            # (Settings > Privacy)
 # trusted_apps = []          # Flatpak app ids given the clipboard managers' protocols, for a
 #                            # clipboard manager or sync tool; they read everything you copy
 #                            # and replace it, even in the background. Settings > Privacy > Clipboard Access
@@ -714,6 +716,7 @@ suspend_after = 0            # run [power] standby
 #                            # back with the file, folder and page they showed; false: nothing
 #                            # starts again
 # exclude = ["foot"]         # app ids never started again. Globs: * and ?. X11: the class.
+#                            # Settings > Startup
 # end_processes = true       # Log Off ends every program Reprise started and, after a display
 #                            # manager login, every one left in the login session, windowless
 #                            # ones too; false leaves them running

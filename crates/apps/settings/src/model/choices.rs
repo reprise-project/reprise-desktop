@@ -408,6 +408,8 @@ pub const DIM_INACTIVE_MAX: i64 = repriseconf::config::DIM_INACTIVE_MAX as i64;
 
 pub const HIDDEN_FRAME_RATE_MAX: i64 = repriseconf::config::HIDDEN_FRAME_RATE_MAX as i64;
 
+pub const ATTENTION_FLASH_MAX: i64 = repriseconf::config::ATTENTION_FLASH_MAX as i64;
+
 pub const SNAP_DISTANCE_MAX: i64 = repriseconf::config::SNAP_DISTANCE_MAX as i64;
 
 pub const SWITCH_MS_MAX: i64 = repriseconf::config::SWITCH_MS_MAX as i64;

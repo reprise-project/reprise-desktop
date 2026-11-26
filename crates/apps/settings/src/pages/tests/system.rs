@@ -403,6 +403,7 @@ fn privacy_holds_app_permissions_history_and_the_sharing_border() {
         [
             "clipboard.history",
             "clipboard.trusted_apps",
+            "clipboard.terminal_apps",
             "privacy.recent_files",
             "privacy.location",
             "privacy.capture_border"
@@ -432,27 +433,31 @@ fn privacy_holds_app_permissions_history_and_the_sharing_border() {
     assert_eq!(rect(&s, p, FORGET), Rect::new(291, 61, 75, 23));
     assert_eq!(
         rect(&s, p, "clip_access_group"),
-        Rect::new(20, 193, 358, 117)
+        Rect::new(20, 193, 358, 100)
     );
     assert_eq!(rect(&s, p, "clip_access_note"), Rect::new(GX, 215, 334, 26));
     assert_eq!(
         rect(&s, p, crate::clipaccess::LIST),
-        Rect::new(GX, 245, 334, 55)
+        Rect::new(GX, 245, 334, 38)
     );
-    assert_eq!(rect(&s, p, "history_group"), Rect::new(20, 320, 358, 70));
-    assert_eq!(rect(&s, p, "clipboard_history"), Rect::new(GX, 364, 13, 13));
-    assert_eq!(rect(&s, p, "sharing_group"), Rect::new(20, 400, 358, 48));
-    assert_eq!(rect(&s, p, "capture_border"), Rect::new(GX, 422, 13, 13));
+    assert_eq!(rect(&s, p, "history_group"), Rect::new(20, 303, 358, 88));
+    assert_eq!(rect(&s, p, "clipboard_history"), Rect::new(GX, 347, 13, 13));
+    assert_eq!(
+        rect(&s, p, "clipboard_terminal_apps"),
+        Rect::new(GX + 180, 363, 154, 20)
+    );
+    assert_eq!(rect(&s, p, "sharing_group"), Rect::new(20, 401, 358, 48));
+    assert_eq!(rect(&s, p, "capture_border"), Rect::new(GX, 423, 13, 13));
     let tall = Area { w: 358, dh: 41 };
     let clip = privacy(tall).item(crate::clipaccess::LIST).unwrap().rect;
     assert_eq!(
         (permissions(tall).height, clip.height),
-        (85 + 20, 55 + 21),
+        (85 + 20, 38 + 21),
         "the two lists share the extra height"
     );
     assert_eq!(
         privacy(tall).item("sharing_group").unwrap().rect.bottom(),
-        448 + 41
+        449 + 41
     );
     assert_eq!(PERMISSION_COLUMNS[2].0, "Answer");
     inside_page(&s, p);
@@ -689,11 +694,12 @@ fn the_startup_page_geometry() {
     let p = Page::Startup;
     assert_eq!(rect(&s, p, ADD), Rect::new(222, 311, 75, 23));
     assert_eq!(rect(&s, p, REMOVE), Rect::new(303, 311, 75, 23));
-    assert_eq!(rect(&s, p, "session_group"), Rect::new(20, 343, 358, 66));
+    assert_eq!(rect(&s, p, "session_group"), Rect::new(20, 343, 358, 92));
     assert_eq!(rect(&s, p, "session_restore"), Rect::new(32, 365, 13, 13));
+    assert_eq!(rect(&s, p, "session_exclude"), Rect::new(144, 385, 222, 20));
     assert_eq!(
         rect(&s, p, "session_end_processes"),
-        Rect::new(32, 387, 13, 13)
+        Rect::new(32, 413, 13, 13)
     );
     inside_page(&s, p);
 
@@ -1934,5 +1940,141 @@ fn the_region_pages_system_group_pins_its_pixels_in_every_look() {
         "region_system_group",
         &["lit", "ask an administrator", "no localed"],
         &pins,
+    );
+}
+
+#[test]
+fn session_exclude_terminal_apps_and_attention_flash_write_their_keys() {
+    let want = Settings {
+        session_exclude: vec!["foot".into(), "steam*".into()],
+        clipboard_terminal_apps: vec!["st".into()],
+        taskbar_attention_flash: 0,
+        ..Settings::default()
+    };
+    let text = crate::model::save("", &want, &Settings::default()).unwrap();
+    for line in [
+        "exclude = [\"foot\", \"steam*\"]",
+        "terminal_apps = [\"st\"]",
+        "attention_flash = 0",
+    ] {
+        assert!(text.contains(line), "{line} in\n{text}");
+    }
+    let back = crate::model::load(&text);
+    assert_eq!(
+        (
+            &back.session_exclude,
+            &back.clipboard_terminal_apps,
+            back.taskbar_attention_flash
+        ),
+        (&want.session_exclude, &want.clipboard_terminal_apps, 0)
+    );
+    let defaults = crate::model::save("", &Settings::default(), &want).unwrap();
+    assert!(
+        defaults.trim().is_empty(),
+        "defaults write nothing:\n{defaults}"
+    );
+}
+
+#[test]
+fn an_app_id_list_drops_its_empty_entries() {
+    let mut s = with(&Settings::default());
+    let mut got = Settings::default();
+    for id in ["clipboard_terminal_apps", "session_exclude"] {
+        let form = s.pages.iter_mut().find_map(|f| f.item_mut(id)).unwrap();
+        if let Control::Edit { edit, .. } = &mut form.control {
+            *edit = reprisekit::textedit::TextEdit::new("foot, , kitty,".to_string(), false);
+        }
+        read_one(&s, id, &mut got);
+    }
+    assert_eq!(got.clipboard_terminal_apps, ["foot", "kitty"]);
+    assert_eq!(got.session_exclude, ["foot", "kitty"]);
+}
+
+#[test]
+fn session_exclude_greys_with_restore_off_and_terminal_apps_with_the_history_off() {
+    let on = with(&Settings::default());
+    assert!(enabled_on(&on, Page::Startup, "session_exclude"));
+    assert!(enabled_on(&on, Page::Privacy, "clipboard_terminal_apps"));
+    let off = with(&Settings {
+        session_restore: false,
+        clipboard_history: false,
+        ..Settings::default()
+    });
+    for (page, ids) in [
+        (Page::Startup, ["session_exclude_label", "session_exclude"]),
+        (
+            Page::Privacy,
+            ["terminal_apps_label", "clipboard_terminal_apps"],
+        ),
+    ] {
+        for id in ids {
+            assert!(!enabled_on(&off, page, id), "{id} greys");
+        }
+    }
+}
+
+/// Each row filled and greyed (attention flash at 30 and 0 s), at scale 1 and 2.
+#[test]
+fn the_session_exclude_terminal_apps_and_attention_flash_rows_pin_their_pixels() {
+    let s = Settings {
+        session_exclude: vec!["foot".into(), "steam*".into()],
+        ..Settings::default()
+    };
+    let both = |f: &Form, row: Rect| [row_pins_at(f, row, 1), row_pins_at(f, row, 2)];
+    let mut rows = Vec::new();
+    for (mut f, row, ids) in [
+        (
+            startup(Area::MIN),
+            Rect::new(20, 381, 358, 28),
+            ["session_exclude_label", "session_exclude"],
+        ),
+        (
+            privacy(Area::MIN),
+            Rect::new(20, 359, 358, 28),
+            ["terminal_apps_label", "clipboard_terminal_apps"],
+        ),
+    ] {
+        write_form(&mut f, &s);
+        rows.extend(both(&f, row));
+        for id in ids {
+            f.set_enabled(id, false);
+        }
+        rows.extend(both(&f, row));
+    }
+    let mut f = pointer_and_alerts(Area::MIN);
+    let row = Rect::new(20, 298, 358, 46);
+    write_form(&mut f, &s);
+    rows.extend(both(&f, row));
+    if let Some(Control::UpDown(u)) = f
+        .item_mut("taskbar_attention_flash")
+        .map(|i| &mut i.control)
+    {
+        u.set(0);
+    }
+    rows.extend(both(&f, row));
+    let x1: Vec<_> = rows.iter().step_by(2).collect();
+    for (i, r) in x1.iter().enumerate() {
+        assert!(
+            !x1[..i].contains(r),
+            "state {i} draws apart from the ones before"
+        );
+    }
+    check_rows(
+        "config_only_rows",
+        &[
+            "session exclude x1",
+            "session exclude x2",
+            "session exclude greyed x1",
+            "session exclude greyed x2",
+            "terminal apps x1",
+            "terminal apps x2",
+            "terminal apps greyed x1",
+            "terminal apps greyed x2",
+            "attention flash 30 x1",
+            "attention flash 30 x2",
+            "attention flash 0 x1",
+            "attention flash 0 x2",
+        ],
+        &rows,
     );
 }

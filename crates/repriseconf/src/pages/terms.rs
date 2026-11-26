@@ -331,6 +331,10 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Show where the pointer is when I tap Ctrl",
             ),
             ("visual_bell", "Flash on the bell:"),
+            (
+                "taskbar_attention_flash",
+                "Flash a taskbar button for attention:",
+            ),
         ],
         Page::MagnifierFilters => &[
             ("color_filter", "Color filter:"),
@@ -396,6 +400,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "session_restore",
                 "Reopen the programs that were open at the last log off",
             ),
+            ("session_exclude", "Except app ids:"),
             (
                 "session_end_processes",
                 "End the programs still running when I log off",
@@ -473,6 +478,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Show recently used files in menus and file dialogs",
             ),
             ("clipboard_history", "Keep a clipboard history"),
+            ("clipboard_terminal_apps", "Paste with Ctrl+Shift+V into:"),
             (
                 "capture_border",
                 "Show a red border around what is being shared",

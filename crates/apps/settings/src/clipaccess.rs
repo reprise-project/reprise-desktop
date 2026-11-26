@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 pub const LIST: &str = "clipboard_apps";
 /// The list's rows at [`Area::MIN`](crate::pages::Area::MIN).
-pub const ROWS: usize = 3;
+pub const ROWS: usize = 2;
 
 /// An installed Flatpak app that may open Wayland connections, with the name and icon of its
 /// desktop entry when it exports one.
