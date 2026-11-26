@@ -546,7 +546,7 @@ pub fn item_menu(
         if let Some(to) = &state.extract {
             m.row(row("E&xtract Here", true), Command::Extract { here: true });
             m.row(
-                row(&format!("Extr&act to {to}"), true),
+                row(&format!("Extr&act to {}", escape_mnemonic(to)), true),
                 Command::Extract { here: false },
             );
         }
