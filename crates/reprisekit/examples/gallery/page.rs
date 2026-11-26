@@ -879,8 +879,17 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
             enabled: true,
             pinned: false,
         })
+        .chain(
+            [("Projects", true), ("Stick", false)].map(|(label, enabled)| placesbar::Place {
+                label: label.into(),
+                icon: None,
+                enabled,
+                pinned: true,
+            }),
+        )
         .collect(),
     );
+    filedlg.set_place_folders(vec![Some(5), None, None, None, None, None, Some(6), None]);
     filedlg.set_listing(filedlg::Folder {
         id: 1,
         parent: None,
@@ -916,6 +925,12 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
     });
     filedlg.set_file_name("readme.txt");
     let (dw, dh) = filedlg::CLIENT;
+    // Look in open on the shown folder and the two pinned ones, the second missing.
+    filedlg.click(
+        Rect::new(0, 0, dw, dh),
+        Some(filedlg::Hit::LookIn(combo::Hit::Drop)),
+        Default::default(),
+    );
     let mut filedlg_c = Canvas::new(dw as u32, dh as u32);
     filedlg_c.fill_rect(filedlg_c.bounds(), cs.button_face);
     filedlg.draw(

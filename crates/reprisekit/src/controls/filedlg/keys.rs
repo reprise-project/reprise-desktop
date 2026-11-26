@@ -31,8 +31,8 @@ impl FileDlg {
     /// A key on Look in: a crumb it picks is listed, as the wheel's is.
     fn lookin_key(&mut self, key: form::Key) -> Event {
         match self.lookin.key(key) {
-            combo::Act::Picked(i) => match self.crumbs.get(i) {
-                Some(c) => Event::NeedListing(c.id),
+            combo::Act::Picked(i) => match self.lookin_target(i) {
+                Some(id) => Event::NeedListing(id),
                 None => Event::Redraw,
             },
             a => redraw_unless_none(a),

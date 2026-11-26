@@ -1310,7 +1310,7 @@ fn the_look_in_field_wears_a_folder_icon() {
     let wake = crate::Waker::noop();
     let worn = |h: &Host, dlg: &FileDlg| {
         let mut want = dlg.clone();
-        want.set_crumb_icons(vec![h.icons.folder.clone()]);
+        want.set_folder_icon(h.icons.folder.clone());
         *dlg == want
     };
     let mut h = host_in(&t.path().join("list"));

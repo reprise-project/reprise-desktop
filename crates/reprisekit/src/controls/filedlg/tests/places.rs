@@ -157,3 +157,119 @@ fn down_on_an_empty_places_bar_does_not_panic() {
     d.places.selected = Some(0);
     let _ = d.key(R, form::Key::Down, None, Mods::default());
 }
+
+/// Six built-in tiles, then two pinned folders, the second missing, over folder 1.
+fn bookmarked() -> FileDlg {
+    let tile = |label: &str, enabled, pinned| Place {
+        label: label.into(),
+        enabled,
+        pinned,
+        ..Place::default()
+    };
+    let mut d = multi(DlgMode::Open, false);
+    let built_in = [
+        "Recent",
+        "Home",
+        "Desktop",
+        "Documents",
+        "Downloads",
+        "Computer",
+    ];
+    let mut places: Vec<Place> = (built_in.iter()).map(|l| tile(l, true, false)).collect();
+    places.extend([tile("Work", true, true), tile("Stick", false, true)]);
+    let mut folders: Vec<Option<FolderId>> = (10..16).map(Some).collect();
+    folders.extend([Some(20), None]);
+    d.set_places(places, folders);
+    d
+}
+
+fn lookin_rows(d: &FileDlg) -> Vec<(&str, bool)> {
+    (d.lookin.items.iter())
+        .map(|it| (it.text.as_str(), it.greyed))
+        .collect()
+}
+
+#[test]
+fn look_in_lists_the_pinned_folders_under_the_shown_one() {
+    let mut d = bookmarked();
+    assert_eq!(
+        lookin_rows(&d),
+        [("Folder", false), ("Work", false), ("Stick", true)]
+    );
+    assert_eq!(d.lookin.selected, 0, "the shown folder stays picked");
+    d.click(R, Some(Hit::LookIn(combo::Hit::Drop)), Mods::default());
+    let ev = d.click(R, Some(Hit::LookIn(combo::Hit::Row(1))), Mods::default());
+    assert!(matches!(ev, Event::NeedListing(20)), "got {ev:?}");
+
+    d.set_listing(folder(20, None, vec![]));
+    assert_eq!(
+        lookin_rows(&d).len(),
+        3,
+        "a new listing keeps the pinned rows"
+    );
+    d.click(R, Some(Hit::LookIn(combo::Hit::Drop)), Mods::default());
+    let ev = d.click(R, Some(Hit::LookIn(combo::Hit::Row(2))), Mods::default());
+    assert!(
+        !matches!(ev, Event::NeedListing(_)),
+        "a missing folder lists nothing, got {ev:?}"
+    );
+
+    d.set_places(vec![], vec![]);
+    assert_eq!(
+        lookin_rows(&d),
+        [("Folder", false)],
+        "unpinned, the rows go"
+    );
+}
+
+/// The dialog with two pinned folders, the second missing: the places bar scrolled to them and
+/// Look in open on them, under each interface at 1x and 2x.
+#[test]
+fn the_pinned_folders_are_drawn_as_pinned_in_every_interface() {
+    use crate::interface::Interface;
+    use crate::theme::Color;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    for (i, s) in looks.into_iter().flat_map(|i| [(i, 1), (i, 2)]) {
+        let theme = crate::interfaces::theme_for(i).scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let solid = |side: i32, colour| {
+            let mut c = Canvas::new((side * s) as u32, (side * s) as u32);
+            c.fill_rect(c.bounds(), colour);
+            c
+        };
+        let mut d = bookmarked();
+        let tile_icon = solid(32, Color::rgb(0x40, 0x80, 0xC0));
+        d.set_place_icons(vec![Some(tile_icon); 8]);
+        d.set_folder_icon(Some(solid(16, Color::rgb(0xE8, 0xC0, 0x50))));
+        d.places.top = 8;
+        d.click(R, Some(Hit::LookIn(combo::Hit::Drop)), Mods::default());
+        let mut c = Canvas::new((CLIENT.0 * s) as u32, (CLIENT.1 * s) as u32);
+        d.draw(&mut c, &text, &p, R, theme.fonts.size_px);
+        got.push((format!("{i:?} @{s}"), crate::pins::fnv(&c)));
+    }
+    crate::pins::check("filedlg_pinned_folders", &got);
+}
+
+/// Writes target/filedlg-pinned-preview.png: [`bookmarked`] with Look in open under Classic, Blue
+/// and Glass.
+#[test]
+#[ignore]
+fn render_pinned_folders() {
+    use crate::interface::Interface;
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let mut out = Canvas::new((3 * CLIENT.0 + 20) as u32, CLIENT.1 as u32);
+    for (k, i) in looks.into_iter().enumerate() {
+        let theme = crate::interfaces::theme_for(i);
+        let mut d = bookmarked();
+        d.places.top = 8;
+        d.click(R, Some(Hit::LookIn(combo::Hit::Drop)), Mods::default());
+        let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
+        let text = TextRenderer::load(&theme.fonts);
+        d.draw(&mut c, &text, &theme.paint(), R, theme.fonts.size_px);
+        out.blit_canvas(k as i32 * (CLIENT.0 + 10), 0, &c);
+    }
+    crate::raster::write_preview(&out, "filedlg-pinned-preview.png");
+}
