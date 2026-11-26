@@ -137,13 +137,25 @@ pub fn hit(lay: &Layout, x: i32, y: i32) -> Hit {
         Hit::Nothing
     } else if lay.close.contains(x, y) {
         Hit::Close
-    } else if lay.splitter.contains(x, y) {
+    } else if grip(lay).contains(x, y) {
         Hit::Splitter
     } else if lay.body.contains(x, y) {
         Hit::Body
     } else {
         Hit::Nothing
     }
+}
+
+/// Where a press takes the splitter: the splitter and the bar's ring columns
+/// left of it, so the grip runs from the body's edge to the view.
+pub fn grip(lay: &Layout) -> Rect {
+    let x = lay.body.right().min(lay.splitter.x);
+    Rect::new(
+        x,
+        lay.splitter.y,
+        lay.splitter.right() - x,
+        lay.splitter.height,
+    )
 }
 
 /// The bar's pane, named by its title, holding its close box as a button. The host adds the
@@ -313,6 +325,29 @@ mod tests {
         assert_eq!(hit(&lay, 100, 200), Hit::Body);
         assert_eq!(hit(&lay, 10, 92), Hit::Nothing);
         assert_eq!(hit(&lay, lay.close.x - 1, 92), Hit::Nothing);
+    }
+
+    #[test]
+    fn the_grip_runs_from_the_body_to_the_view_in_every_look() {
+        use crate::interface::Interface;
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let cm = crate::interfaces::theme_for(look).controls();
+            let lay = layout(&bar(), BAR, &cm);
+            let y = lay.body.y + 10;
+            assert_eq!(
+                hit(&lay, lay.body.right() - 1, y),
+                Hit::Body,
+                "{look:?}: the body's last column"
+            );
+            for x in lay.body.right()..lay.splitter.right() {
+                assert_eq!(hit(&lay, x, y), Hit::Splitter, "{look:?}: x {x}");
+            }
+            assert_eq!(
+                hit(&lay, lay.splitter.right(), y),
+                Hit::Nothing,
+                "{look:?}: the view's first column"
+            );
+        }
     }
 
     #[test]

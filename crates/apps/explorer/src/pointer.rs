@@ -56,7 +56,7 @@ impl Explorer {
         self.tree.bars.release_bar();
         self.sv.bars.release_bar();
         self.sv.header.release();
-        if std::mem::take(&mut self.dragging) {
+        if self.dragging.take().is_some() {
             self.settings.bar_width = self.explorer_bar.width;
             self.settings_dirty = true;
         }
@@ -280,7 +280,7 @@ impl Explorer {
             match explorerbar::hit(bl, x, y) {
                 explorerbar::Hit::Close => return self.run(Command::CloseBar, ctx),
                 explorerbar::Hit::Splitter => {
-                    self.dragging = true;
+                    self.dragging = Some(x - bl.splitter.x);
                     return Reply::redraw();
                 }
                 explorerbar::Hit::Body => {
@@ -605,7 +605,7 @@ impl Explorer {
     /// The pointer's shape at (`x`, `y`), from the control under it as `press` finds it; a held
     /// splitter or column edge keeps its arrow through the drag.
     fn shape_at(&self, x: i32, y: i32, ctx: &Ctx) -> Shape {
-        if self.dragging || self.resizing.is_some() {
+        if self.dragging.is_some() || self.resizing.is_some() {
             return Shape::ColResize;
         }
         if self.popup.is_some() || self.bar.open.is_some() || self.drag.is_some() {
@@ -655,7 +655,7 @@ impl Explorer {
             || self.tree_thumb.holding()
             || self.marquee_from.is_some()
             || self.resizing.is_some()
-            || self.dragging;
+            || self.dragging.is_some();
         let held = self.tree.bars.holding() || self.sv.bars.holding() || self.sv.header.holding();
         let (tree, view) = self.bars_at(x, y, ctx);
         let free = !grab && !held;
@@ -807,13 +807,13 @@ impl Explorer {
                 Reply::none()
             };
         }
-        if self.dragging {
+        if let Some(grab) = self.dragging {
             // The view keeps at least 200 px, the width the task pane
             // would have taken.
             let u = ctx.theme.controls().text;
             let widest = u.within(ctx.size.0 - explorerbar::SPLITTER_W - 200);
             let width = u
-                .within(x - explorerbar::SPLITTER_W / 2)
+                .within(x - grab)
                 .clamp(explorerbar::MIN_W, widest.max(explorerbar::MIN_W));
             if width != self.explorer_bar.width {
                 self.explorer_bar.width = width;

@@ -382,7 +382,8 @@ pub struct Explorer {
     keyboard: bool,
     /// The last input was a key, not a pointer press: a dialog opened now shows keyboard cues from the start.
     keyed: bool,
-    dragging: bool,
+    /// The held splitter's grab: the press's x less the bar's right edge.
+    dragging: Option<i32>,
     /// A marquee drag in the view; its rectangle lives in `sv.marquee`.
     marquee_from: Option<shellview::MarqueeDrag>,
     /// A Details column divider drag: the column, the press position and the column's 100% width then.
@@ -684,7 +685,7 @@ impl Explorer {
             alt_arm: AltArm::default(),
             keyboard: false,
             keyed: false,
-            dragging: false,
+            dragging: None,
             marquee_from: None,
             resizing: None,
             thumb: ThumbDrag::default(),
