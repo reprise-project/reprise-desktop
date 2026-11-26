@@ -396,7 +396,7 @@ impl Paint {
             .as_ref()
             .map(|s| s.rect)
             .or(self.doc.dragged_box())
-            .or(self.doc.text_box)
+            .or(self.doc.text_box.map(|b| self.text.fit(b)))
             .map(|r| {
                 tr!(
                     "status-size",
