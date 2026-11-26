@@ -133,7 +133,8 @@ impl Host {
             .event(win, ev, &mut self.ctx)
             .with_clipboard(keys::take_clipboard());
         reply.tick |= self.ctx.want_tick.take() || filedlg::marquee_scrolls(&mut *self.app, win);
-        if let Some(size) = keys::take_sheet_size()
+        let sheet = keys::take_sheet_size();
+        if let Some(size) = sheet
             && win == MAIN
         {
             reply.size = reply.size.or(Some(size));
@@ -148,6 +149,13 @@ impl Host {
             self.reread(win, &reply);
         }
         self.apply(win, reply);
+        if let Some(size) = sheet
+            && win != MAIN
+            && let Some(s) = self.slot_mut(win)
+        {
+            s.sheet = Some(size);
+            self.refit(win);
+        }
     }
 
     /// Mark the reader trees of the windows `reply` to `win` draws again for a rebuild.

@@ -205,6 +205,7 @@ impl Host {
             given: None,
             bounds: None,
             wanted: size,
+            sheet: None,
             picked: size,
             declared: None,
             activated: true,
@@ -300,7 +301,7 @@ impl Host {
             }
         } else {
             let c = self.children().into_iter().find(|c| c.id == id)?;
-            let size = sane_size(c.size);
+            let size = self.child_size(&c);
             match c.fixed {
                 true => (size, Some(size)),
                 false => (self.app.min_size(id).map_or(size, sane_size), None),
@@ -310,13 +311,23 @@ impl Host {
     }
 
     /// The size window `id`'s program picks for it now: the main window's opening size, a
-    /// child's [`Child::size`].
+    /// child's [`Host::child_size`].
     fn natural(&self, id: WinId) -> Option<(i32, i32)> {
         if id == MAIN {
             return Some(opening_size(&*self.app).0);
         }
         let c = self.children().into_iter().find(|c| c.id == id)?;
-        Some(sane_size(c.size))
+        Some(self.child_size(&c))
+    }
+
+    /// Child `c`'s client size: what a property sheet in it asked for, else its [`Child::size`].
+    fn child_size(&self, c: &Child) -> (i32, i32) {
+        let sheet = self
+            .slots
+            .iter()
+            .find(|s| s.id == c.id)
+            .and_then(|s| s.sheet);
+        sane_size(sheet.unwrap_or(c.size))
     }
 
     /// Fit window `id` to what its program asks now, after that changed (the text size, a
@@ -506,6 +517,7 @@ impl Host {
                 s.modal = c.modal;
                 if s.wanted != sane_size(c.size) {
                     s.wanted = sane_size(c.size);
+                    s.sheet = None;
                     resized.push(c.id);
                 }
                 if s.title != c.title

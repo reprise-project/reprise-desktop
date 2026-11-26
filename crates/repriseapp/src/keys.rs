@@ -156,7 +156,7 @@ pub(crate) fn take_clipboard() -> Reply {
 /// label ([`Form::tip_tick`]), clipboard keys for the focused field ([`form_clipboard`]) and
 /// `Event::Pasted` for the field Ctrl+V was pressed in. `None` is an event the host answers
 /// itself. First the sheet fits the window ([`PropSheet::fit`], [`PropSheet::fit_tabs`]): a
-/// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. A main
+/// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. A
 /// window at its program's pick that the compositor cut short grows by the page's scrollbar
 /// ([`PropSheet::fit_bar_room`]). While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {

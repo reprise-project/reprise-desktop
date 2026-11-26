@@ -169,6 +169,9 @@ struct Slot {
     bounds: Option<(i32, i32)>,
     /// The size the program last asked for a child window ([`Child::size`]).
     wanted: (i32, i32),
+    /// The client size a property sheet in the child asked for ([`keys::sheet_input`]), standing
+    /// in for its [`Child::size`] until that changes.
+    sheet: Option<(i32, i32)>,
     /// The size the program last gave the window: its opening size, a `Reply::size` or a refit.
     picked: (i32, i32),
     /// The min and max size last told the compositor (`declare_limits`).
