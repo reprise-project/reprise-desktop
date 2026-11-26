@@ -480,7 +480,9 @@ The tasks your systemd user manager runs on a schedule: each user timer with
 its schedule in words ("Every day at 3:00", "15 min after startup"), when it
 runs next, when it last ran (on its schedule or by Run Now) and its status
 (Ready, Running, Failed, Stopped or Disabled; Stopped when a signal ended the
-last run, as Stop does). Run Now starts the task's service at once, and Stop
+last run, as Stop does). The manager forgets a service's last run once it
+unloads the service, as after Disable; the window keeps showing the last run
+it saw until it closes. Run Now starts the task's service at once, and Stop
 stops it while it runs. Enable and Disable turn the timer on or off for good,
 as `systemctl --user enable --now` and `disable --now` do; a timer without an
 `[Install]` section is only started or stopped. Properties shows the schedule

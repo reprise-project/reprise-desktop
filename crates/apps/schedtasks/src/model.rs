@@ -120,6 +120,17 @@ impl Task {
             .map_or_else(|| tr!("when-never"), |us| when(us, is_12h))
     }
 
+    /// Takes the run `was` (this timer as read before) shows when the manager no longer reports
+    /// one as late: it forgets a service's start and result once it unloads the service.
+    pub fn keep_run(&mut self, was: &Task) {
+        if was.last > self.last {
+            self.last = was.last;
+            self.result.clone_from(&was.result);
+            self.exit_code = was.exit_code;
+            self.exit_status = was.exit_status;
+        }
+    }
+
     /// How the last run ended.
     pub fn result_text(&self) -> String {
         match self.result.as_str() {

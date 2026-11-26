@@ -353,6 +353,44 @@ fn a_kept_size_too_narrow_for_the_columns_opens_at_the_width_that_fits_them() {
 }
 
 #[test]
+fn the_last_run_seen_stays_once_the_manager_unloads_the_service() {
+    const S: u64 = 1_000_000;
+    let mut w = window();
+    let ran = Task {
+        last: Some(2_000_000_000 * S),
+        result: "exit-code".into(),
+        exit_code: libc::CLD_EXITED,
+        exit_status: 3,
+        ..backup()
+    };
+    w.tell(Update::Tasks(Ok(vec![ran.clone()])));
+    let unloaded = Task {
+        timer_state: "inactive".into(),
+        service_state: String::new(),
+        description: String::new(),
+        last: Some(1_900_000_000 * S),
+        result: String::new(),
+        exit_code: 0,
+        exit_status: 0,
+        ..backup()
+    };
+    w.tell(Update::Tasks(Ok(vec![unloaded.clone()])));
+    let t = &w.app.tasks[0];
+    assert_eq!(t.last, ran.last, "the service's start, not the timer's");
+    assert_eq!(t.result_text(), "Exited with status 3");
+    assert_eq!(
+        w.app.list.view.rows.cells[0][3],
+        model::when(ran.last.unwrap(), false)
+    );
+    let fired = Task {
+        last: Some(2_100_000_000 * S),
+        ..unloaded
+    };
+    w.tell(Update::Tasks(Ok(vec![fired.clone()])));
+    assert_eq!(w.app.tasks[0].last, fired.last, "a later trigger wins");
+}
+
+#[test]
 fn stop_stops_a_running_task() {
     let mut w = window();
     let running = Task {
