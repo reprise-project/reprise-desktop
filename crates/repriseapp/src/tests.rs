@@ -1514,3 +1514,42 @@ fn only_a_window_without_a_caption_asks_for_no_frame() {
     assert_eq!(decorations(Caption::None), WindowDecorations::RequestClient);
     assert_eq!(decoration_mode(Caption::None), DecorationMode::Client);
 }
+
+/// Terminal Options (a fixed 800x680 child) opens on a 683x512 screen cut to its 680x465
+/// bounds, and its sheet asks for its bar beside the cut page. A larger screen's bounds give
+/// back what the sheet asks, no more; a resizable window the user sized keeps its size.
+#[test]
+fn a_fixed_window_cut_by_its_bounds_regrows_when_they_grow() {
+    let ask = |w, h| (Some(w), Some(h));
+    let (cut, big) = ((680, 465), Some((1904, 1002)));
+    let opened = Fit {
+        size: (800, 680),
+        picked: (800, 680),
+        bounds: None,
+        asked: (None, None),
+        own: false,
+        left: None,
+        given: None,
+    };
+    let opened = opened.configured(ask(680, 465), Some(cut), false);
+    assert_eq!(opened.size, cut);
+    let sheet = (817, 680);
+    let barred = opened.refitted(cut, Some(cut), Some(sheet));
+    assert_eq!(barred.size, cut);
+    let grown = barred.configured(ask(680, 465), big, false);
+    assert_eq!(grown.size, sheet, "the sheet's whole ask");
+    let moved = barred.configured(ask(680, 465), Some((900, 600)), false);
+    assert_eq!(moved.size, (817, 600), "held inside the new bounds");
+
+    let sized = Fit {
+        size: (600, 400),
+        picked: (948, 532),
+        bounds: Some(cut),
+        asked: ask(600, 400),
+        own: false,
+        left: None,
+        given: None,
+    };
+    let sized = sized.refitted((544, 300), None, Some((948, 532)));
+    assert_eq!(sized.configured(ask(600, 400), big, false).size, (600, 400));
+}

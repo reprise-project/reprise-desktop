@@ -164,18 +164,20 @@ impl Fit {
     /// The fit after the program's limits `min` and `max` or its pick `natural` changed: a
     /// fixed window takes its size; a resizable one still at its program's pick takes the size
     /// the program picks now, one the user sized the size they gave it ([`regrown`]); both at
-    /// least `min`. A new size is the program's own, sized away from the old one (`left`).
+    /// least `min`. A new size is the program's own, sized away from the old one (`left`). A
+    /// fixed window's pick is `natural` as asked, so bounds that grow give back what they cut.
     pub(crate) fn refitted(
         self,
         min: (i32, i32),
         max: Option<(i32, i32)>,
         natural: Option<(i32, i32)>,
     ) -> Fit {
+        let pick = natural;
         let natural = natural.filter(|_| at_pick(self.size, self.picked, self.bounds));
         let (size, given) = regrown(self.size, self.given, min, max, natural);
         let size = bounded(size, self.bounds);
         let picked = match max {
-            Some(_) => size,
+            Some(_) => pick.unwrap_or(size),
             None => natural.unwrap_or(self.picked),
         };
         let fit = Fit {

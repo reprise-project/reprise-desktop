@@ -290,12 +290,13 @@ impl Host {
     }
 
     /// Window `id`'s min and max client size as the program asks for them now: a fixed window
-    /// pinned at its size, a resizable one held at its minimum. Both stay inside the bounds.
+    /// pinned at its program's pick, a resizable one held at its minimum. Both stay inside the
+    /// bounds.
     pub(crate) fn limits(&self, id: WinId) -> Option<Limits> {
         let s = self.slots.iter().find(|s| s.id == id)?;
         let (min, max) = if id == MAIN {
             if self.app.fixed() {
-                (s.size, Some(s.size))
+                (s.picked, Some(s.picked))
             } else {
                 (self.app.min_size(MAIN).map_or(MIN_SIZE, sane_size), None)
             }
@@ -310,10 +311,13 @@ impl Host {
         Some((bounded(min, s.bounds), max.map(|m| bounded(m, s.bounds))))
     }
 
-    /// The size window `id`'s program picks for it now: the main window's opening size, a
-    /// child's [`Host::child_size`].
+    /// The size window `id`'s program picks for it now: a fixed main window's last pick, a
+    /// resizable one's opening size, a child's [`Host::child_size`].
     fn natural(&self, id: WinId) -> Option<(i32, i32)> {
         if id == MAIN {
+            if self.app.fixed() {
+                return self.slots.iter().find(|s| s.id == MAIN).map(|s| s.picked);
+            }
             return Some(opening_size(&*self.app).0);
         }
         let c = self.children().into_iter().find(|c| c.id == id)?;
