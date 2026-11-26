@@ -202,3 +202,45 @@ fn picking_another_filter_says_so() {
         Event::Redraw | Event::None
     ));
 }
+
+#[test]
+fn a_pattern_of_one_glob_gives_its_extension() {
+    assert_eq!(pattern_ext("*.txt"), Some("txt"));
+    assert_eq!(pattern_ext("*.*"), None);
+    assert_eq!(pattern_ext("*"), None);
+    assert_eq!(pattern_ext("*.jpg;*.jpeg"), None);
+    assert_eq!(pattern_ext("*.tar.gz"), None);
+}
+
+#[test]
+fn save_adds_the_types_extension_to_a_bare_unquoted_name() {
+    use std::path::PathBuf;
+    let mut d = FileDlg::new(
+        Fields {
+            title: "Save As".into(),
+            accept_label: "Save".into(),
+            filters: vec!["Text Documents (*.txt)".into(), "All Files (*.*)".into()],
+            mode: DlgMode::Save,
+            multiple: false,
+        },
+        vec![],
+    );
+    let picked = |name: &str| PathBuf::from("/home/u").join(name);
+    d.set_file_name("notes");
+    assert_eq!(d.with_type_ext(picked("notes")), picked("notes.txt"));
+    d.set_file_name("notes.md");
+    assert_eq!(d.with_type_ext(picked("notes.md")), picked("notes.md"));
+    d.set_file_name("\"notes\"");
+    assert_eq!(
+        d.with_type_ext(picked("notes")),
+        picked("notes"),
+        "a quoted name is kept as typed"
+    );
+    d.set_filter(1);
+    d.set_file_name("notes");
+    assert_eq!(
+        d.with_type_ext(picked("notes")),
+        picked("notes"),
+        "All Files adds nothing"
+    );
+}

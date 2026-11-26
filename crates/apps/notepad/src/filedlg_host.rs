@@ -146,7 +146,10 @@ impl Notepad {
     pub(crate) fn saveas_driven(&mut self, driven: Driven) -> Reply {
         let path = match driven {
             Driven::Reply(r) => return *r,
-            Driven::Picked(path) => path,
+            Driven::Picked(path) => match &self.saveas {
+                Some(dlg) => dlg.with_type_ext(path),
+                None => path,
+            },
             Driven::Cancelled => {
                 self.close_saveas();
                 self.pending.cancelled();

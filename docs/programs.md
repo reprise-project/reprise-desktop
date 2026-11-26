@@ -111,8 +111,10 @@ bar. A right-click on the text (or Shift+F10) opens the edit commands.
 Ctrl+Z steps back through up to 1000 edits, Ctrl+Y redoes. It opens UTF-8
 files, with or without a byte order mark, and UTF-16 LE and BE files with
 one, and saves each back in its encoding and line endings; Save As has an
-Encoding box. A save never leaves a file half written. Print is greyed out
-for now. Notepad has always had its priorities.
+Encoding box, and adds `.txt` to a name without an extension while Text
+Documents is the type (put the name in quotes to save it as typed). A save
+never leaves a file half written. Print is greyed out for now. Notepad has
+always had its priorities.
 
 When Notepad loses the desktop or crashes with unsaved text, it writes the
 text to `~/.local/state/reprise/notepad/` and offers it at the next start,

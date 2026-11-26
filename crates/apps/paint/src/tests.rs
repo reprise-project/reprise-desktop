@@ -586,6 +586,19 @@ fn save_as_adds_the_types_extension_only_when_missing() {
     assert_eq!(files::with_ext(png.clone(), Kind::Bmp), png);
 }
 
+#[test]
+fn a_quoted_save_as_name_is_written_as_typed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = Paint::new(None);
+    p.saveas_dialog();
+    p.saveas.as_mut().unwrap().set_file_name("\"cat\"");
+    let path = dir.path().join("cat");
+    p.saveas_driven(Driven::Picked(path.clone()));
+    assert!(path.exists(), "cat is written");
+    assert!(!dir.path().join("cat.png").exists(), "no .png is added");
+    assert!(file::load(&path).is_ok(), "as a PNG");
+}
+
 /// A one-frame 4x2 GIF at `path`.
 fn write_gif(path: &Path) -> Vec<u8> {
     let mut bytes = Vec::new();
