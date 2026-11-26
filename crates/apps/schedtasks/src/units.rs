@@ -132,14 +132,15 @@ pub fn is_our_stem(stem: &str) -> bool {
     })
 }
 
-/// `reprise-task-<slug>`, with `-2`, `-3`... added while `dir` holds a unit file or drop-in
-/// folder of that name or `taken` (the timers the manager knows) the timer.
+/// `reprise-task-<slug>`, with `-2`, `-3`... added while `dir` holds a unit file, drop-in folder
+/// or enable link of that name or `taken` (the timers the manager knows) the timer.
 pub fn free_stem(dir: &Path, slug: &str, taken: &[String]) -> String {
     let used = |stem: &str| {
-        let file = |ext: &str| dir.join(format!("{stem}.{ext}")).symlink_metadata().is_ok();
+        let file = |name: String| dir.join(name).symlink_metadata().is_ok();
         ["timer", "service", "timer.d", "service.d"]
             .into_iter()
-            .any(file)
+            .any(|ext| file(format!("{stem}.{ext}")))
+            || file(format!("timers.target.wants/{stem}.timer"))
             || taken.iter().any(|t| *t == format!("{stem}.timer"))
     };
     let base = format!("{PREFIX}{slug}");

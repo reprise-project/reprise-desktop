@@ -606,10 +606,10 @@ fn a_create_the_manager_refuses_after_writing_leaves_nothing() {
             Err("Unit file does not exist.".into())
         );
         assert_eq!(left(&dir), Vec::<String>::new());
-        let timer = "reprise-task-start-refused.timer";
+        let stale = "reprise-task-start-refused.timer";
         let wants = dir.join("timers.target.wants");
         std::fs::create_dir(&wants).unwrap();
-        std::os::unix::fs::symlink(dir.join(timer), wants.join(timer)).unwrap();
+        std::os::unix::fs::symlink(dir.join(stale), wants.join(stale)).unwrap();
         let refused = create(&conn, Some(&dir), &task("start refused"), &[]).await;
         assert_eq!(
             refused.map_err(|e| told(&e)),
@@ -617,9 +617,10 @@ fn a_create_the_manager_refuses_after_writing_leaves_nothing() {
         );
         assert_eq!(
             left(&dir),
-            ["timers.target.wants"],
-            "the files and the enable link are gone"
+            [stale, "timers.target.wants"],
+            "the files are gone, and the link the Create did not make stays"
         );
+        let timer = "reprise-task-start-refused-2.timer";
         assert_eq!(
             *lock(&calls),
             [
