@@ -338,6 +338,7 @@ fn problem(p: Problem) -> String {
         Problem::Control => tr!("new-control"),
         Problem::Program => tr!("new-no-program"),
         Problem::Quote => tr!("new-quote"),
+        Problem::Special => tr!("new-special"),
     }
 }
 
@@ -513,6 +514,25 @@ mod tests {
         assert_eq!(label(&b, HINT), "That time has passed.");
         assert_eq!(next_day((2026, 12, 31, 0, 0)), (2027, 1, 1));
         assert_eq!(next_day((2028, 2, 28, 0, 0)), (2028, 2, 29));
+    }
+
+    #[test]
+    fn a_program_path_systemd_refuses_is_told_before_create() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut b = filled();
+        for name in ["Bob's backup.sh", "sync [nas].sh"] {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            b.browsed(&path);
+            assert_eq!(
+                label(&b, HINT),
+                "The program's path cannot hold \\ \" ' * ? or [.",
+                "{name}"
+            );
+            assert!(!enabled(&b, CREATE));
+        }
     }
 
     #[test]

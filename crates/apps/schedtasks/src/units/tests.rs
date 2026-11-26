@@ -103,6 +103,21 @@ fn every_exec_start_word_is_quoted_and_escaped() {
     ] {
         assert_eq!(exec(odd, &[]), Err(Problem::Program), "{odd}");
     }
+    for odd in [
+        r"/opt/a\b",
+        r#"/opt/"x""#,
+        "/home/u/Bob's backup.sh",
+        "/opt/*",
+        "/opt/what?",
+        "/home/u/sync [nas].sh",
+    ] {
+        assert_eq!(exec(odd, &[]), Err(Problem::Special), "{odd}");
+    }
+    assert_eq!(
+        exec("/bin/echo", &["it's", "*", "[x]"]),
+        Ok(r#":"/bin/echo" "it's" "*" "[x]""#.into()),
+        "an argument may hold them"
+    );
     assert_eq!(exec("/bin/echo", &["a\nb"]), Err(Problem::Control));
     assert_eq!(exec("/bin/echo", &["a\tb"]), Err(Problem::Control));
 }

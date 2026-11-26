@@ -131,6 +131,7 @@ new-no-program = Type the program to run, or Browse for it.
 new-no-such-program = Cannot find the program { $program }.
 new-quote = An argument opens a quote it never closes, or ends in \.
 new-control = The name, program and arguments cannot hold control characters.
+new-special = The program's path cannot hold \ " ' * ? or [.
 new-bad-date = Type the date as 2026-12-31.
 new-past = That time has passed.
 new-logon-now = The task also runs once now, when it is made.

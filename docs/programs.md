@@ -494,15 +494,16 @@ once. It's in Start > All Programs > System Tools.
 
 New Task... makes a task: a name, the program to run (typed, found on `PATH`,
 or picked with Browse...), its arguments as a shell splits them, and when it
-runs: daily, weekly or monthly at a time, once at a date and time, or at log on.
-The arguments reach the program as typed: `$HOME`, `~` and `*` are not
-expanded. The box shows the timer setting the schedule writes, such as
-`OnCalendar=Mon *-*-* 09:00:00`. Create writes `reprise-task-NAME.timer` and
-`.service` into the user manager's own folder (`~/.config/systemd/user`, or
-`systemd/user` under the manager's `$XDG_CONFIG_HOME`), enables the timer,
-reloads the user manager and starts the timer, as `systemctl --user enable`,
-`daemon-reload` and `start` do. When a step after writing fails, the two files
-are removed again.
+runs: daily, weekly or monthly at a time, once at a date and time, or at log
+on. The arguments reach the program as typed: `$HOME`, `~` and `*` are not
+expanded. The program's path cannot hold `\`, `"`, `'`, `*`, `?` or `[`, which
+systemd refuses in a command. The box shows the timer setting the schedule
+writes, such as `OnCalendar=Mon *-*-* 09:00:00`. Create writes
+`reprise-task-NAME.timer` and `.service` into the user manager's own folder
+(`~/.config/systemd/user`, or `systemd/user` under the manager's
+`$XDG_CONFIG_HOME`), enables the timer, reloads the user manager and starts
+the timer, as `systemctl --user enable`, `daemon-reload` and `start` do. When
+a step after writing fails, the two files are removed again.
 
 A task runs only while the user manager does, that is while you are logged on
 (or always, after `loginctl enable-linger`). A run whose time passes while the
