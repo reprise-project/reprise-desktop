@@ -117,8 +117,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   frame rate while no screen shows its window.
 - **Window memory.** A program opens where its last window closed, per set
   of connected screens (`[windows] remember`).
-- **Window rules** in the config match windows by app id and title and pin
-  their size, place, screen, desktop, state or tab group. A browser's
+- **Window rules** match windows by app id and title and pin their size,
+  place, screen, desktop, state or tab group. Settings > Window Rules lists
+  them in order and adds, edits, moves and removes them; an Always Open Here
+  rule edited there is yours, and the window menu leaves it alone. A browser's
   picture-in-picture video stays on top on every desktop unless a rule says
   otherwise.
 - **Small conveniences.** Super+C centres a window, Super+Shift+B hides its

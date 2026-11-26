@@ -135,6 +135,7 @@ impl SettingsApp {
         changed |= self.forget_done();
         changed |= self.away_done();
         changed |= self.notify_seen_done();
+        changed |= self.open_windows_done();
         changed |= self.units_done();
         changed |= self.remote_done();
         changed |= self.capture_done();

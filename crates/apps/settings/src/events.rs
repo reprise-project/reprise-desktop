@@ -3,10 +3,10 @@
 use crate::backuphost::Then;
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, CHOOSER_WIN, COLOR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN, SHORTCUT_WIN,
-    SettingsApp, additem, backgroundpage, defaultspage, displayhost, displaypage, filepick::Pick,
-    layoutdlg, magnifierpage, menupage, notifypage, pages, quickpage, regionpage, renamedlg,
-    saverdlg, saverpage,
+    ADD_ITEM_WIN, ADD_WIN, CHOOSER_WIN, COLOR_WIN, LAYOUT_WIN, RENAME_WIN, RULE_WIN, SAVER_WIN,
+    SHORTCUT_WIN, SettingsApp, additem, backgroundpage, defaultspage, displayhost, displaypage,
+    filepick::Pick, layoutdlg, magnifierpage, menupage, notifypage, pages, quickpage, regionpage,
+    renamedlg, saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -55,6 +55,9 @@ impl SettingsApp {
                 }
                 if p == Page::Search.index() && id == crate::providerpage::LIST {
                     return self.providers_changed();
+                }
+                if p == Page::WindowRules.index() && id == crate::rulespage::LIST {
+                    return self.rules_picked();
                 }
                 if id == pages::REMOTE_ALLOW {
                     self.remote_toggled();
@@ -282,6 +285,11 @@ impl SettingsApp {
                 menupage::FOLDER | menupage::REMOVE | menupage::UP | menupage::DOWN => {
                     self.menu_button(id)
                 }
+                crate::rulespage::ADD
+                | crate::rulespage::EDIT
+                | crate::rulespage::REMOVE
+                | crate::rulespage::UP
+                | crate::rulespage::DOWN => self.rules_button(id),
                 _ => Reply::redraw(),
             },
             propsheet::Event::Page(..) => Reply::redraw(),
@@ -412,6 +420,9 @@ impl SettingsApp {
         }
         if win == SAVER_WIN {
             return self.saver_dlg_event(ev, ctx);
+        }
+        if win == RULE_WIN {
+            return self.rule_dlg_event(ev, ctx);
         }
         if win == displayhost::MONITOR_WIN {
             return self.monitor_event(ev, ctx);

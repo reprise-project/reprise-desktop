@@ -300,7 +300,7 @@ pub fn read(doc: &DocumentMut) -> Option<Vec<Entry>> {
     )
 }
 
-fn tables(item: &Item) -> Option<Vec<&dyn TableLike>> {
+pub(crate) fn tables(item: &Item) -> Option<Vec<&dyn TableLike>> {
     if let Some(a) = item.as_array_of_tables() {
         return Some(a.iter().map(|t| t as &dyn TableLike).collect());
     }
@@ -424,7 +424,7 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
         set_tables(doc, &STARTMENU, tables);
         return;
     }
-    if !in_blocks(doc) {
+    if !in_blocks(doc, &CHANGES) {
         log::warn!("startmenu_changes lists something no table; the Start menu is not saved");
         return;
     }
@@ -474,7 +474,7 @@ pub fn write(doc: &mut DocumentMut, want: &[Entry], base: &[Entry], have: &[Entr
 }
 
 /// The array of tables `key`, empty when the file has none.
-fn array(doc: &DocumentMut, key: &Key) -> Vec<Table> {
+pub(crate) fn array(doc: &DocumentMut, key: &Key) -> Vec<Table> {
     (repriseconf::get(doc, key))
         .and_then(Item::as_array_of_tables)
         .map_or_else(Vec::new, |a| a.iter().cloned().collect())
@@ -487,7 +487,7 @@ fn prefix(d: &toml_edit::Decor) -> String {
 
 /// For each of `want`, the index of the item in `old` it takes the place of: the first one not
 /// taken that `same` matches in the lowest of `passes` passes.
-fn paired<O, W>(
+pub(crate) fn paired<O, W>(
     old: &[O],
     want: &[W],
     passes: usize,
@@ -557,7 +557,7 @@ fn rewritten(old: &[Table], want: &[Entry]) -> Vec<Table> {
 /// (`from` names each one's table in `old`). The old first table, written lower down, takes the
 /// spacing the new first one had, and keeps the part of that comment after its last blank line
 /// when a comment comes before it too.
-fn keep_head(old: &[Table], from: &[Option<usize>], out: &mut [Table]) {
+pub(crate) fn keep_head(old: &[Table], from: &[Option<usize>], out: &mut [Table]) {
     let first = from.iter().position(|&f| f == Some(0));
     let Some(o) = old.first().filter(|_| !out.is_empty() && first != Some(0)) else {
         return;
@@ -633,18 +633,18 @@ fn merged(old: &Table, new: Table) -> Table {
     t
 }
 
-/// Rewrites an inline `startmenu_changes = [{...}]` as `[[startmenu_changes]]` tables, the comment
-/// above the key heading the first; false, the file left as it is, when it lists something else.
-fn in_blocks(doc: &mut DocumentMut) -> bool {
-    let Some(Item::Value(toml_edit::Value::Array(a))) = doc.get(CHANGES.name) else {
+/// Rewrites an inline `key = [{...}]` as `[[key]]` tables, the comment above the key heading the
+/// first; false, the file left as it is, when it lists something else.
+pub(crate) fn in_blocks(doc: &mut DocumentMut, key: &Key) -> bool {
+    let Some(Item::Value(toml_edit::Value::Array(a))) = doc.get(key.name) else {
         return true;
     };
     if !a.iter().all(toml_edit::Value::is_inline_table) {
         return false;
     }
     let root = doc.as_table_mut();
-    let head = (root.key(CHANGES.name)).map_or_else(String::new, |k| prefix(k.leaf_decor()));
-    let Some(Item::Value(toml_edit::Value::Array(a))) = root.remove(CHANGES.name) else {
+    let head = (root.key(key.name)).map_or_else(String::new, |k| prefix(k.leaf_decor()));
+    let Some(Item::Value(toml_edit::Value::Array(a))) = root.remove(key.name) else {
         return true;
     };
     let mut tables: ArrayOfTables = (a.into_iter())
@@ -653,7 +653,7 @@ fn in_blocks(doc: &mut DocumentMut) -> bool {
     if let Some(t) = tables.get_mut(0) {
         t.decor_mut().set_prefix(head);
     }
-    root.insert(CHANGES.name, Item::ArrayOfTables(tables));
+    root.insert(key.name, Item::ArrayOfTables(tables));
     true
 }
 
@@ -690,7 +690,7 @@ fn idle_tables(doc: &DocumentMut, hidden: &[String]) -> Vec<(usize, Table)> {
 }
 
 /// `tables` as the array `key`, taken out when empty.
-fn set_tables(doc: &mut DocumentMut, key: &Key, tables: Vec<Table>) {
+pub(crate) fn set_tables(doc: &mut DocumentMut, key: &Key, tables: Vec<Table>) {
     if tables.is_empty() {
         remove(doc, key);
         return;

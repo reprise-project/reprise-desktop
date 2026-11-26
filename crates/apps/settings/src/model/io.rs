@@ -63,6 +63,7 @@ pub fn load(text: &str) -> Settings {
         s.startmenu = menu;
     }
     s.tablet_pads = crate::tabletpage::read(&doc);
+    s.window_rules = crate::windowrules::read(&doc);
     s.output_wallpapers = crate::outputwrite::read_wallpapers(&doc);
     if let Some(t) = doc.get("colors").and_then(Item::as_table_like) {
         s.colors = (t.iter())
@@ -128,6 +129,12 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     }
     crate::startmenu::write(&mut doc, &want.startmenu, &base.startmenu, &have.startmenu);
     crate::tabletpage::write(&mut doc, &want.tablet_pads, &base.tablet_pads);
+    crate::windowrules::write(
+        &mut doc,
+        &want.window_rules,
+        &base.window_rules,
+        &have.window_rules,
+    );
     crate::outputwrite::write_wallpapers(
         &mut doc,
         &want.output_wallpapers,
@@ -136,7 +143,7 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     Ok(doc.to_string())
 }
 
-/// `config.toml` changed under the sheet: every value `want` still holds as `base` (what the sheet loaded or last saved) takes `fresh`'s, the file as it reads now; a value the user moved stays pending.
+/// `config.toml` changed under the sheet: every value `want` still holds as `base` (what the sheet loaded or last saved) takes `fresh`'s, the file as it reads now; a value the user moved stays pending. The window rules merge, so the rules added or removed outside join the pending edits.
 pub fn rebase(want: &mut Settings, base: &Settings, fresh: &Settings) {
     fn follow<T: PartialEq + Clone>(want: &mut T, base: &T, fresh: &T) {
         if want == base {
@@ -158,6 +165,8 @@ pub fn rebase(want: &mut Settings, base: &Settings, fresh: &Settings) {
     follow(&mut want.denied, &base.denied, &fresh.denied);
     follow(&mut want.startmenu, &base.startmenu, &fresh.startmenu);
     follow(&mut want.tablet_pads, &base.tablet_pads, &fresh.tablet_pads);
+    want.window_rules =
+        crate::windowrules::merge(&want.window_rules, &base.window_rules, &fresh.window_rules);
     follow(
         &mut want.output_wallpapers,
         &base.output_wallpapers,
@@ -284,6 +293,11 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
         }
     }
     check_snap_layouts(&s.snap_layouts)?;
+    if s.window_rules != base.window_rules
+        && let Some(i) = (s.window_rules.iter()).position(|r| r.app_id.trim().is_empty())
+    {
+        return Err(format!("Window rule {} needs an app ID.", i + 1));
+    }
     let as_loaded = |p: &ProgramShortcut| {
         (base.programs.iter()).any(|b| b.app == p.app && b.id == p.id && b.keys == p.keys)
     };

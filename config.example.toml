@@ -728,7 +728,8 @@ suspend_after = 0            # run [power] standby
 #                            # window until the restart; false shows none of them (Settings > Advanced)
 
 # [[window_rules]]           # every rule that matches applies, in file order; later ones win,
-# app_id = "foot"            # and a rule beats the remembered place. Globs: * and ?. X11: the class.
+#                            # and a rule beats the remembered place. Settings > Window Rules
+# app_id = "foot"            # Globs: * and ?. X11: the class.
 # title = "*build*"          # optional; matched once, when the window opens
 # size = [800, 600]          # outer size, frame included
 # position = [40, 40]        # frame's top-left from the screen's top-left, kept inside the work area
@@ -744,6 +745,7 @@ suspend_after = 0            # run [power] standby
 #                            # dialogs keep centring on their owner; fixed-size windows ignore size
 # from_menu = true           # written by the window menu's Always Open Here, which ticks, replaces
 #                            # and removes it; one per app id, last so it beats hand-written rules
+#                            # Settings drops it from a rule edited there
 #                            # Built in before every rule: a window titled "Picture-in-Picture" or
 #                            # "Picture in picture" (a browser's video) is always on top and sticky
 

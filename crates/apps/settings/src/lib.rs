@@ -54,6 +54,9 @@ mod regionpage;
 mod registry;
 mod remotehost;
 pub(crate) use reprisekit::controls::namebox as renamedlg;
+mod ruledlg;
+mod ruleshost;
+mod rulespage;
 mod saverdlg;
 mod saverhost;
 mod saverpage;
@@ -67,6 +70,7 @@ mod thunderbolthost;
 mod wake;
 mod wallpapers;
 pub mod welcome;
+mod windowrules;
 mod winstate;
 
 use crate::pages::Area;
@@ -110,6 +114,7 @@ const LAYOUT_WIN: WinId = WinId::named("layout");
 const ADD_ITEM_WIN: WinId = WinId::named("add_item");
 const RENAME_WIN: WinId = WinId::named("rename");
 const SAVER_WIN: WinId = WinId::named("saver");
+const RULE_WIN: WinId = WinId::named("window_rule");
 
 const CHOOSER_WIN: WinId = WinId::named("openwith");
 
@@ -490,6 +495,10 @@ struct SettingsApp {
     rename: Option<renamedlg::NameBox>,
     menu_icons_due: bool,
     saver_dlg: Option<saverdlg::SaverDialog>,
+    /// The rule dialog, with the Window Rules row it opened on and the rule there (`None` adds one).
+    rule_dlg: Option<(ruledlg::RuleDialog, Option<(usize, windowrules::Rule)>)>,
+    /// The open windows' app ids, being asked of the compositor for the rule dialog.
+    open_windows: Option<Receiver<Vec<String>>>,
     saver_preview: Option<(saverpage::Preview, std::time::Instant)>,
     saver_ticking: bool,
     /// BlueZ's paired devices, listed each time the Screen Saver & Lock page opens.
@@ -704,6 +713,7 @@ impl SettingsApp {
             (self.add_item.is_some(), ADD_ITEM_WIN),
             (self.rename.is_some(), RENAME_WIN),
             (self.saver_dlg.is_some(), SAVER_WIN),
+            (self.rule_dlg.is_some(), RULE_WIN),
         ];
         (self.asking.win().into_iter())
             .chain(open.into_iter().filter(|&(up, _)| up).map(|(_, w)| w))
@@ -852,6 +862,8 @@ impl SettingsApp {
             add_item: None,
             rename: None,
             saver_dlg: None,
+            rule_dlg: None,
+            open_windows: None,
             saver_preview: None,
             saver_ticking: false,
             away_devices: Vec::new(),
@@ -1076,6 +1088,15 @@ impl App for SettingsApp {
                 modal: true,
             });
         }
+        if let Some((d, _)) = &self.rule_dlg {
+            kids.push(Child {
+                id: RULE_WIN,
+                title: d.title.into(),
+                size: self.units.size(ruledlg::CLIENT),
+                fixed: true,
+                modal: true,
+            });
+        }
         if self.display.flow.question.is_some() {
             kids.push(Child {
                 id: displayhost::MONITOR_WIN,
@@ -1276,6 +1297,7 @@ impl repriseapp::Extended for SettingsApp {
             ADD_ITEM_WIN => &mut self.add_item.as_mut()?.form,
             RENAME_WIN => &mut self.rename.as_mut()?.form,
             SAVER_WIN => &mut self.saver_dlg.as_mut()?.form,
+            RULE_WIN => &mut self.rule_dlg.as_mut()?.0.form,
             _ => return None,
         };
         Some(DropForm { form, px: None })

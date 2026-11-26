@@ -218,6 +218,17 @@ fn every_dialog_fits_its_text_under_every_interface() {
                 crate::shortcutdlg::ShortcutDialog::for_program("Ctrl+Alt+T", vec![]).form,
             ),
         ];
+        let rule = crate::windowrules::Rule {
+            app_id: "org.example.ALongProgramName".into(),
+            title: Some("*a long window title*".into()),
+            output: Some("Dell Inc.|DELL U2723QE|ABC123".into()),
+            tab_group: Some("shells".into()),
+            ..Default::default()
+        };
+        forms.push((
+            "Window rule".into(),
+            crate::ruledlg::RuleDialog::new(Some(&rule), vec!["DP-1".into()]).form,
+        ));
         for kind in reprisekit::saver::Kind::ALL {
             let d = crate::saverdlg::SaverDialog::new(kind, &Settings::default());
             forms.push((format!("{kind:?} settings"), d.form));
