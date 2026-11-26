@@ -169,9 +169,8 @@ impl Made {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Take back, blocking, a trigger an attempt other than `but` made and left; false when it
-    /// stays.
-    pub fn take_back(&self, bus: &dyn Bus, but: Option<u64>) -> bool {
+    /// Take back, blocking, a trigger an attempt other than `but` made and left.
+    pub fn take_back(&self, bus: &dyn Bus, but: Option<u64>) -> Left {
         let (mut held, down) = lock_down(self, bus, |id| Some(id) != but);
         left_behind(&mut held, bus, but, down)
     }
@@ -226,22 +225,33 @@ fn stays_down(id: u64) -> bool {
     false
 }
 
+/// What a [`Made::take_back`] left set to install.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Left {
+    Nothing,
+    /// A trigger that would not cancel.
+    Stays,
+    /// A trigger kept for the shutdown under way, which installs it.
+    Down,
+}
+
 /// [`Made::take_back`] with its lock held, `down` read by [`lock_down`].
-fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>, down: bool) -> bool {
+fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>, down: bool) -> Left {
     let Some(id) = made.take_if(|id| Some(*id) != but) else {
-        return true;
+        return Left::Nothing;
     };
     if down {
-        return stays_down(id);
+        stays_down(id);
+        return Left::Down;
     }
     match bus.cancel(false) {
         Ok(()) => {
             log::info!("offline update: took back the trigger attempt {id} left");
-            true
+            Left::Nothing
         }
         Err(why) => {
             log::warn!("offline update: the trigger attempt {id} left stays ({why:?})");
-            false
+            Left::Stays
         }
     }
 }
@@ -320,7 +330,7 @@ pub fn around<F>(
 ) -> Result<Option<F>, Held<F>> {
     match updates {
         Updates::Leave => {
-            let left = !made.take_back(bus, Some(id));
+            let left = made.take_back(bus, Some(id)) != Left::Nothing;
             stays_if(left, power())
         }
         Updates::Skip => {
@@ -348,7 +358,7 @@ fn install<F>(
     power: impl FnOnce() -> Option<F>,
 ) -> Result<Option<F>, Held<F>> {
     let (mut held, down) = lock_down(made, bus, |n| n != id);
-    let left = !left_behind(&mut held, bus, Some(id), down);
+    let left = left_behind(&mut held, bus, Some(id), down) != Left::Nothing;
     if !still() {
         return Err(Held::Dismissed);
     }
