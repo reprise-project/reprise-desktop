@@ -522,6 +522,7 @@ fn prompt(
         }),
         job: None,
         fit: None,
+        answered: false,
     }
 }
 
@@ -685,6 +686,24 @@ mod tests {
         );
         assert_eq!(answer_to(Event::Cancel), Answer::Dismissed);
         assert_eq!(answer_to(Event::Default), Answer::Dismissed);
+    }
+
+    #[test]
+    fn a_press_after_the_prompt_answered_or_closed_changes_nothing() {
+        use reprisekit::controls::form::Event;
+        let answer_to = |events: [Event; 2]| {
+            let answer = Arc::new(Mutex::new(Answer::Dismissed));
+            let kind = Kind::Shortcuts;
+            let mut p = prompt(kind, deskflow(false), CLIENT, None, None, answer.clone());
+            let [first, second] = events;
+            assert!(p.decide(first).quit, "the first answer closes the prompt");
+            assert!(!p.decide(second).quit, "a second answers nothing");
+            *answer.lock().unwrap()
+        };
+        let (allow, deny) = (Event::Pressed("allow"), Event::Pressed("deny"));
+        assert_eq!(answer_to([deny, allow]), Answer::Deny);
+        assert_eq!(answer_to([allow, deny]), Answer::Allow { remember: false });
+        assert_eq!(answer_to([Event::Cancel, allow]), Answer::Dismissed);
     }
 
     #[test]

@@ -307,6 +307,8 @@ impl Job {
 /// A prompt's window: `icon` over `form`, fixed at `size` (100% text), owned by `parent`
 /// and, when `modal`, blocking it. `accept` runs `on_accept`, which returns
 /// whether the prompt is answered; any other close runs `on_cancel` and quits.
+/// The first answer or close stands: input queued behind it in the same dispatch
+/// runs neither callback.
 pub struct Prompt {
     pub title: String,
     pub size: (i32, i32),
@@ -322,13 +324,18 @@ pub struct Prompt {
     /// For a prompt whose form can give up room when the work area holds less than `size`:
     /// lays it out for the client it got and scrolls what still does not fit.
     pub fit: Option<FormScroll>,
+    /// Set by the first answer or close; a builder starts it false.
+    pub answered: bool,
 }
 
 impl Prompt {
     pub fn decide(&mut self, ev: form::Event) -> Reply {
         match ev {
             form::Event::Pressed(id) if id == self.accept => {
-                if (self.on_accept)(&self.form) {
+                if self.answered {
+                    Reply::none()
+                } else if (self.on_accept)(&self.form) {
+                    self.answered = true;
                     Reply {
                         quit: true,
                         ..Default::default()
@@ -395,6 +402,9 @@ impl Prompt {
     }
 
     fn cancelled(&mut self, how: Refusal) -> Reply {
+        if std::mem::replace(&mut self.answered, true) {
+            return Reply::none();
+        }
         (self.on_cancel)(&self.form, how);
         Reply {
             quit: true,
@@ -655,6 +665,7 @@ mod tests {
             modal: false,
             job: None,
             fit: None,
+            answered: false,
         };
         let mut ctx = test_ctx(175);
         let reply = p.event(repriseapp::MAIN, Event::Resized, &mut ctx);
@@ -688,6 +699,7 @@ mod tests {
                 Box::new(|f: &mut Form| f.set_text("note", "done"))
             })),
             fit: None,
+            answered: false,
         };
         let mut ctx = test_ctx(100);
         assert!(!p.event(repriseapp::MAIN, Event::Wake, &mut ctx).redraw);
