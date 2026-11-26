@@ -356,9 +356,9 @@ impl State {
         dialogs
     }
 
-    fn flip_layers(&self) -> [TreeId; 3] {
+    fn flip_layers(&self) -> [TreeId; 4] {
         let l = &self.layers;
-        [l.windows, l.on_top, l.fullscreen]
+        [l.windows, l.on_top, l.popups, l.fullscreen]
     }
 
     fn show_after_flip(&mut self, hidden: &[TreeId]) {

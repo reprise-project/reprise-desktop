@@ -2215,9 +2215,14 @@ fn an_x11_parent_reprise_does_not_manage_owns_nothing() {
     assert_eq!(h.state.owner_from(Some(handle)), Some(main.id));
 }
 
-/// The windows in the windows layer, bottom first.
+/// The windows bottom to top: the normal layer, the on-top one, then X11 popups.
 fn stacking(h: &crate::harness::Harness) -> Vec<super::WindowId> {
-    let trees = h.state.scene.children(h.state.layers.windows);
+    let layers = [
+        h.state.layers.windows,
+        h.state.layers.on_top,
+        h.state.layers.popups,
+    ];
+    let trees = layers.map(|l| h.state.scene.children(l)).concat();
     let window = |t| h.state.windows.iter().find(|w| w.tree.node() == t);
     trees
         .iter()
@@ -2354,6 +2359,104 @@ fn a_task_button_or_alt_tab_brings_a_family_up_with_its_modal_box_on_top() {
         }
         assert!(above(&h, folder.id, other.id), "{how}: the family comes up");
     }
+}
+
+#[test]
+fn a_focused_modal_box_stacks_over_an_on_top_window_until_the_focus_leaves() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let pinned = h.map_toplevel(&mut c, "test.pinned", 500, 400);
+    h.state.set_on_top(pinned.id, true);
+    let notes = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let font = h.map_modal(&mut c, "test.app", notes, (300, 200));
+    assert_eq!(h.state.focused, Some(font.id));
+    assert!(
+        above(&h, font.id, pinned.id),
+        "the focused box is over the on-top window"
+    );
+    assert!(above(&h, pinned.id, notes.id), "its owner stays under it");
+
+    h.state.focus_window(pinned.id);
+    assert!(
+        above(&h, pinned.id, font.id),
+        "the on-top window covers it again"
+    );
+    assert!(above(&h, font.id, notes.id), "the box stays over its owner");
+
+    h.state.focus_window(notes.id);
+    assert_eq!(h.state.focused, Some(font.id));
+    assert!(
+        above(&h, font.id, pinned.id),
+        "focused again, it comes back over"
+    );
+}
+
+#[test]
+fn an_x11_popup_stays_over_the_focused_modal_box_it_belongs_to() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let pinned = h.map_toplevel(&mut c, "test.pinned", 500, 400);
+    h.state.set_on_top(pinned.id, true);
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let dialog = h.map_modal(&mut c, "test.app", main, (300, 200));
+    let list = h.map_toplevel(&mut c, "test.app", 100, 80);
+    h.state.move_to(list.id, 900, 650);
+    if let Some(w) = h.state.win_mut(list.id) {
+        w.override_redirect = true;
+    }
+    h.state.focus_window(dialog.id);
+    click_in(&mut h, dialog.id);
+    assert_eq!(h.state.focused, Some(dialog.id));
+    assert!(above(&h, dialog.id, pinned.id), "the box is lifted");
+    assert!(
+        above(&h, list.id, dialog.id),
+        "its drop-down list stays over it"
+    );
+}
+
+#[test]
+fn another_programs_popup_stays_under_a_focused_on_top_window() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let pinned = h.map_toplevel(&mut c, "test.pinned", 500, 400);
+    h.state.set_on_top(pinned.id, true);
+    let mut game = h.connect();
+    let splash = h.map_toplevel(&mut game, "test.game", 1024, 768);
+    if let Some(w) = h.state.win_mut(splash.id) {
+        w.override_redirect = true;
+    }
+    h.state.focus_window(pinned.id);
+    h.state.focus_window(splash.id);
+    assert!(
+        above(&h, splash.id, pinned.id),
+        "its own client's focus lifts it"
+    );
+    h.state.focus_window(pinned.id);
+    assert_eq!(h.state.focused, Some(pinned.id));
+    assert!(
+        above(&h, pinned.id, splash.id),
+        "the focused on-top window covers another program's popup"
+    );
+}
+
+#[test]
+fn a_lifted_modal_box_drops_back_when_a_layer_surface_keeps_the_keyboard() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let pinned = h.map_toplevel(&mut c, "test.pinned", 500, 400);
+    h.state.set_on_top(pinned.id, true);
+    let main = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let dialog = h.map_modal(&mut c, "test.app", main, (300, 200));
+    assert!(above(&h, dialog.id, pinned.id));
+    let mut launcher = h.connect();
+    h.map_flyout(&mut launcher);
+    h.state.set_minimized(main.id, true);
+    assert_eq!(h.state.focused, None, "the launcher keeps the keyboard");
+    assert_eq!(
+        h.state.scene.parent(h.state.win(dialog.id).unwrap().tree),
+        Some(h.state.layers.windows),
+        "the unfocused box is back in the normal layer"
+    );
 }
 
 #[test]
