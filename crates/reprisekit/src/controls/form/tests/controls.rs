@@ -269,6 +269,17 @@ fn tabbing_into_a_spinner_selects_its_number() {
 }
 
 #[test]
+fn a_double_click_in_a_spinner_selects_its_digits() {
+    let mut f = form();
+    let h = f.hit(13, 90, &tr(), PX).unwrap();
+    f.click(Some(h));
+    assert_eq!(f.double_click(Some(h)), Event::Redraw);
+    assert_eq!(spin(&f).edit().map(|e| e.selection()), Some(0..2));
+    f.key(Key::Char('7'));
+    assert_eq!(spin(&f).value(), 7, "a typed digit replaces the number");
+}
+
+#[test]
 fn clicking_a_spinner_puts_the_caret_under_the_pointer() {
     let mut f = form();
     // The field's white part runs from x 12; "10" sits right-aligned

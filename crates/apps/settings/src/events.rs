@@ -497,7 +497,7 @@ impl SettingsApp {
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
                 let page_row = matches!(hit, Some(propsheet::Hit::Tab(_)));
                 let was = self.sheet.tabs.open;
-                let ev = self.sheet.click(hit);
+                let ev = self.sheet.press(hit, ctx.theme.metrics.click(x, y, time));
                 self.sheet_took_keyboard();
                 if self.sheet.tabs.open != was
                     && !self.sheet.tabs.focused

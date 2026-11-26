@@ -1657,3 +1657,72 @@ fn the_rule_dialog_writes_the_rule_it_opened_on_after_the_list_moves_under_it() 
         "OK on an unedited rule removed meanwhile does not bring it back"
     );
 }
+
+/// A left press and release at (`x`, `y`) at event time `time`, as the window reads them.
+fn click_at(a: &mut SettingsApp, ctx: &mut Ctx, (x, y): (i32, i32), time: u32) -> Reply {
+    let mods = Mods::default();
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time,
+        mods,
+    };
+    let reply = a.event(MAIN, Event::Pointer(press), ctx);
+    let release = PointerInput::Release {
+        x,
+        y,
+        button: BTN_LEFT,
+        mods,
+    };
+    a.event(MAIN, Event::Pointer(release), ctx);
+    reply
+}
+
+/// A point in control `id` of the open page whose hit `part` accepts.
+fn point_in(a: &SettingsApp, ctx: &Ctx, id: &str, part: impl Fn(form::Part) -> bool) -> (i32, i32) {
+    let px = a.sheet.open().units().px(ctx.theme.fonts.size_px);
+    let r = a.sheet.open().rect(id).expect("the control");
+    (r.x..r.right())
+        .flat_map(|x| (r.y..r.bottom()).map(move |y| (x, y)))
+        .find(|&(x, y)| {
+            matches!(a.sheet.hit(x, y, &ctx.text, px),
+                Some(propsheet::Hit::Control(h)) if part(h.part))
+        })
+        .expect("the part shows")
+}
+
+#[test]
+fn a_double_click_selects_a_number_fields_digits_and_a_list_rows_leaves_the_sheet_open() {
+    use reprisekit::controls::updown;
+    let mut a = app("double-click-digits");
+    let mut ctx = test_ctx();
+    ctx.size = (1920, 1080);
+    a.open_page(Page::VirtualDesktops, None);
+    a.event(MAIN, Event::Resized, &mut ctx);
+    let digits = point_in(&a, &ctx, "desktops", |p| {
+        matches!(p, form::Part::UpDown(updown::Hit::Edit(_)))
+    });
+    click_at(&mut a, &mut ctx, digits, 1000);
+    click_at(&mut a, &mut ctx, digits, 1200);
+    let Some(form::Control::UpDown(u)) = a.sheet.open().item("desktops").map(|i| &i.control) else {
+        panic!("the number of desktops is a number field");
+    };
+    assert_eq!(
+        u.edit().map(|e| e.selection()),
+        Some(0..u.shown().len()),
+        "the digits are selected"
+    );
+
+    a.open_page(Page::Search, None);
+    a.event(MAIN, Event::Resized, &mut ctx);
+    let row = point_in(&a, &ctx, crate::providerpage::LIST, |p| {
+        matches!(
+            p,
+            form::Part::List(reprisekit::controls::listbox::Hit::Row(0))
+        )
+    });
+    click_at(&mut a, &mut ctx, row, 3000);
+    let reply = click_at(&mut a, &mut ctx, row, 3200);
+    assert!(!reply.quit, "the sheet stays open");
+}
