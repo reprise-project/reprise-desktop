@@ -221,11 +221,10 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
                 crate::look::widgets::placesbar::draw_tile(c, p, band, state);
             }
             if let Some(icon) = &place.icon {
+                // In `c`'s units, as `icon.width` is: a program's scaled canvas draws at s = 1.
                 let side = pm.icon * s;
-                let shrunk = (icon.device_size().0 as i32 > side).then(|| {
-                    let w = (side / icon.scale()) as u32;
-                    icon.resample_box(w, w)
-                });
+                let shrunk =
+                    (icon.width as i32 > side).then(|| icon.resample_box(side as u32, side as u32));
                 let icon = shrunk.as_ref().unwrap_or(icon);
                 let ix = content_x + (content_w - icon.width as i32) / 2;
                 let iy = tile_y + pm.icon_top * s;
@@ -449,6 +448,23 @@ mod tests {
                 assert_eq!(c.get(x, y) == ICON.argb(), want, "tile {tile} row {y}");
             }
         }
+    }
+
+    #[test]
+    fn a_scale_2_canvas_draws_a_scale_2_icon_its_full_32_px() {
+        use crate::theme::Color;
+        const ICON: Color = Color::rgb(1, 2, 3);
+        let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
+        let text = TextRenderer::load(&theme.fonts);
+        let mut pb = sample();
+        let mut icon = Canvas::with_scale(ICON_PX as u32, ICON_PX as u32, 2);
+        icon.fill_rect(icon.bounds(), ICON);
+        pb.places[0].icon = Some(icon);
+        let r = Rect::new(0, 0, WIDTH, 338);
+        let mut c = Canvas::with_scale(WIDTH as u32, 338, 2);
+        draw(&mut c, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
+        let lit = |y: i32| (0..WIDTH).filter(|&x| c.get(x, y) == ICON.argb()).count();
+        assert_eq!([lit(4), lit(5), lit(36), lit(37)], [0, 32, 32, 0]);
     }
 
     #[test]
