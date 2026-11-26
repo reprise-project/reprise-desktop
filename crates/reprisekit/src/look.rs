@@ -1661,6 +1661,64 @@ mod tests {
     }
 
     #[test]
+    fn an_opaque_glass_bar_inks_symbolic_tray_icons_like_its_labels_and_keeps_colour_ones() {
+        use crate::glass::{Mode, Settings};
+        use crate::taskbar::TaskbarCounts;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let red = Color::rgb(200, 40, 40);
+        // A square of `ink` under a half-covered rim row.
+        let icon = |px: i32, ink: Color| {
+            let mut c = Canvas::new(px as u32, px as u32);
+            let k = px / 16;
+            c.fill_rect(Rect::new(4 * k, 4 * k, 8 * k, 8 * k), ink);
+            let rim = crate::icon::premultiply(0x8000_0000 | (ink.argb() & 0xFF_FFFF));
+            for x in 3 * k..13 * k {
+                c.pixels[(3 * k * px + x) as usize] = rim;
+            }
+            std::sync::Arc::new(c)
+        };
+        let mut got = Vec::new();
+        for (mode, ink) in [
+            (Mode::Light, Color::rgb(0, 0, 0)),
+            (Mode::Dark, Color::rgb(0xFF, 0xFF, 0xFF)),
+        ] {
+            let g = Settings {
+                mode,
+                transparency: false,
+                ..Settings::default()
+            };
+            let base =
+                crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, &g);
+            let counts = TaskbarCounts {
+                tray: 3,
+                ..TaskbarCounts::default()
+            };
+            let style = base.look.style().unwrap();
+            let l = TaskbarLayout::compute(&base.metrics, &style.taskbar, 400, true, counts, 60);
+            for s in [1, 2] {
+                let (theme, l) = (base.scaled(s), l.scaled(s));
+                let mut st = empty_taskbar_state();
+                st.tray_icons = [Color::rgb(0xFF, 0xFF, 0xFF), Color::rgb(0, 0, 0), red]
+                    .map(|c| Some(icon(16 * s, c)))
+                    .into();
+                let mut c = Canvas::new(l.width as u32, l.height as u32);
+                draw_taskbar(&mut c, &theme, &text, &text, &l, &st);
+                let at = |cell: usize| {
+                    let r = l.tray[cell];
+                    c.get(r.x + 8 * s, r.y + 8 * s)
+                };
+                for cell in [0, 1] {
+                    assert_eq!(at(cell), ink.argb(), "{mode:?} {s}: symbolic icon {cell}");
+                }
+                assert_eq!(at(2), red.argb(), "{mode:?} {s}: the colour icon");
+                got.push((format!("{mode:?} {s}"), fnv(&c)));
+            }
+        }
+        crate::pins::check("look/glass_opaque_tray_ink", &got);
+    }
+
+    #[test]
     fn the_quick_launch_more_cell_is_a_quick_button_face_under_the_double_chevron_on_every_edge() {
         use crate::taskbar::{Edge, draw_more};
         for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {

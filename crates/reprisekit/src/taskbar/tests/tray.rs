@@ -734,3 +734,43 @@ fn revealed_counts_the_whole_cells_inside_the_run() {
     assert_eq!(revealed(&s, 3, 500), 3, "never more than are hidden");
     assert_eq!(revealed(&s, 0, 60), 0);
 }
+
+fn tray_icon(pixels: &[u32]) -> Canvas {
+    let mut c = Canvas::new(pixels.len() as u32, 1);
+    c.pixels.copy_from_slice(pixels);
+    c
+}
+
+#[test]
+fn a_one_grey_tray_icon_at_any_coverage_takes_the_ink_and_a_coloured_one_keeps_its_own() {
+    let ink = Color::rgb(0x10, 0x20, 0x30);
+    let half = |argb: u32| crate::icon::premultiply(0x8000_0000 | argb);
+    let drawn = |icon: &Canvas| {
+        let mut c = Canvas::new(icon.width, 1);
+        c.fill_rect(
+            Rect::new(0, 0, icon.width as i32, 1),
+            Color::rgb(0x80, 0x80, 0x80),
+        );
+        draw_tray_icon(&mut c, 0, 0, icon, ink);
+        c.pixels
+    };
+    let white = tray_icon(&[0xFFFF_FFFF, half(0xFF_FFFF), 0x1000_0000, 0]);
+    let got = drawn(&white);
+    assert_eq!(got[0], ink.argb(), "a covered pixel is the ink");
+    assert_eq!(
+        got[1], 0xFF47_4F57,
+        "a half-covered one is the ink half over the bar"
+    );
+    let coloured = tray_icon(&[0xFFFF_FFFF, 0xFFC8_2828]);
+    assert_eq!(
+        drawn(&coloured),
+        coloured.pixels,
+        "a colour icon is drawn as it is"
+    );
+    let two_greys = tray_icon(&[0xFFFF_FFFF, 0xFF00_0000]);
+    assert_eq!(
+        drawn(&two_greys),
+        two_greys.pixels,
+        "two greys are a picture"
+    );
+}

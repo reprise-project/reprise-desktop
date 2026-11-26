@@ -351,7 +351,7 @@ pub(crate) fn draw_taskbar_on(
 
     for (r, icon) in layout.tray.iter().zip(&state.tray_icons) {
         if let Some(ic) = icon {
-            canvas.blit_canvas(r.x, r.y, ic);
+            crate::taskbar::draw_tray_icon(canvas, r.x, r.y, ic, style.bar_text);
         }
     }
     if let Some(r) = layout.chevron {
