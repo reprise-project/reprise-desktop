@@ -1615,6 +1615,52 @@ mod tests {
     }
 
     #[test]
+    fn an_opaque_glass_bar_inks_its_labels_black_in_light_mode_and_white_in_dark() {
+        use crate::glass::{Mode, Settings};
+        use crate::taskbar::{TaskEntry, TaskbarCounts};
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut got = Vec::new();
+        for (mode, want) in [
+            (Mode::Light, Color::rgb(0, 0, 0)),
+            (Mode::Dark, Color::rgb(0xFF, 0xFF, 0xFF)),
+        ] {
+            let g = Settings {
+                mode,
+                transparency: false,
+                ..Settings::default()
+            };
+            let base =
+                crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, &g);
+            let style = base.look.style().unwrap();
+            assert_eq!(style.bar_text, want, "{mode:?}");
+            let counts = TaskbarCounts {
+                tasks: 2,
+                ..TaskbarCounts::default()
+            };
+            let l = TaskbarLayout::compute(&base.metrics, &style.taskbar, 600, true, counts, 60);
+            let mut st = empty_taskbar_state();
+            st.tasks = ["Calculator", "Notepad"]
+                .iter()
+                .map(|t| TaskEntry {
+                    title: (*t).to_string(),
+                    active: *t == "Notepad",
+                    attention: crate::taskbar::Attention::None,
+                    icon: None,
+                    glow: None,
+                })
+                .collect();
+            for s in [1, 2] {
+                let (theme, l) = (base.scaled(s), l.scaled(s));
+                let mut c = Canvas::new(l.width as u32, l.height as u32);
+                draw_taskbar(&mut c, &theme, &text, &text, &l, &st);
+                got.push((format!("{mode:?} {s}"), fnv(&c)));
+            }
+        }
+        crate::pins::check("look/glass_opaque_bar_labels", &got);
+    }
+
+    #[test]
     fn the_quick_launch_more_cell_is_a_quick_button_face_under_the_double_chevron_on_every_edge() {
         use crate::taskbar::{Edge, draw_more};
         for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {

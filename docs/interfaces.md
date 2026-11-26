@@ -109,6 +109,8 @@ documents each key.
   Under `night` or `hours` the look and the portal switch at each edge as
   if you had changed `mode` yourself. Picking Light or Dark ends the
   schedule.
+- **Transparency off** in light mode gives the taskbar black labels and
+  clock over its pale opaque glass; Smoked keeps them white.
 - **Smoked** glass lets less through, with white titles in either mode.
 - **Molten** glass blurs less, shows richer colours and bends what lies just
   past its edges, with a faint colour fringe and a light catching its rims.

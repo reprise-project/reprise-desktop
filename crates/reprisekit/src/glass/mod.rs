@@ -395,7 +395,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         metrics(),
         caption_text(title_ink),
         start_text(),
-        Color::rgb(0xFF, 0xFF, 0xFF),
+        bar_ink(s),
         taskbar_shape(),
     )
     .with_glass(GlassSpec {
@@ -934,6 +934,22 @@ fn light_glass(material: Material, mode: Mode) -> bool {
     mode == Mode::Light && material != Material::Smoked
 }
 
+/// The taskbar's labels, clock and pager over an opaque bar paler than this luma (0..255): the grey
+/// where black and white labels read alike.
+const PALE_BAR_LUMA: f64 = 118.0;
+
+/// The ink of the taskbar's labels, clock, pager and arrows: white over glass and over a dark opaque
+/// bar, black over an opaque bar paler than [`PALE_BAR_LUMA`].
+pub fn bar_ink(s: &Settings) -> Color {
+    let bar = tint::Surface::Taskbar;
+    let px = tint::Recolour::new(s, bar).px(bar.plain_px());
+    let [r, g, b] = [16, 8, 0].map(|sh| f64::from((px >> sh) & 0xFF));
+    match !s.transparency && 0.299 * r + 0.587 * g + 0.114 * b > PALE_BAR_LUMA {
+        true => Color::rgb(0, 0, 0),
+        false => Color::rgb(0xFF, 0xFF, 0xFF),
+    }
+}
+
 /// The window title: the caption face at 12 px (9 pt), no shadow, in `ink`
 /// focused and not ([`caption_ink`]).
 fn caption_text([color, inactive]: [Color; 2]) -> TextSpec {
@@ -1041,6 +1057,48 @@ pub const SMALL_ORB_RISE: OrbRise = OrbRise {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taskbar_labels_read_over_every_opaque_bar() {
+        let lum = |c: Color| {
+            let ch = |v: u8| {
+                let v = f64::from(v) / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+        };
+        let contrast = |a: Color, b: Color| {
+            let (a, b) = (lum(a) + 0.05, lum(b) + 0.05);
+            a.max(b) / a.min(b)
+        };
+        for w in SWATCHES {
+            for mode in Mode::ALL {
+                for material in Material::ALL {
+                    let s = Settings {
+                        color: w.color,
+                        intensity: w.intensity,
+                        mode,
+                        material,
+                        transparency: false,
+                        ..Settings::default()
+                    };
+                    let bar = tint::Surface::Taskbar;
+                    let px = tint::Recolour::new(&s, bar).px(bar.plain_px());
+                    let face = Color::rgb((px >> 16) as u8, (px >> 8) as u8, px as u8);
+                    let ratio = contrast(bar_ink(&s), face);
+                    assert!(
+                        ratio >= 4.5,
+                        "{} {mode:?} {material:?}: {ratio:.2} over {face:?}",
+                        w.name
+                    );
+                }
+            }
+        }
+    }
 
     fn dark_settings() -> Settings {
         Settings {
