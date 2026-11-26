@@ -867,6 +867,28 @@ mod tests {
     }
 
     #[test]
+    fn a_token_minted_before_the_lock_raises_nothing_under_it() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let sheet = h.map_toplevel(&mut c, "test.sheet", 300, 200);
+        let folder = h.map_toplevel(&mut c, "test.folder", 300, 200);
+        let pick = click_on(&mut h, &mut c, folder);
+        c.token_on(pick, folder);
+        h.roundtrip(&mut c);
+        let token = c.side.tokens.last().expect("a token").clone();
+        crate::lockview::lock(&mut h.state);
+        h.dispatch();
+        c.activate(&token, sheet);
+        h.roundtrip(&mut c);
+        assert_eq!(h.state.focused, Some(folder.id), "the folder stays active");
+        assert!(
+            h.state.win(sheet.id).is_some_and(|w| w.attention.is_some()),
+            "the sheet asks for attention"
+        );
+    }
+
+    #[test]
     fn a_program_without_the_keyboard_raises_nothing_on_a_serial_as_new_as_the_focused_ones() {
         let mut h = Harness::new();
         h.output("TEST-1", 1024, 768);
