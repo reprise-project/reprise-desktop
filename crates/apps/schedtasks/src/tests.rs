@@ -293,6 +293,91 @@ fn properties_opens_a_sheet_that_closes_with_its_timer() {
 }
 
 #[test]
+fn the_window_opens_wide_enough_for_every_column() {
+    for pct in [100, 200] {
+        let theme = reprisekit::theme::Theme::default().with_text_size(pct);
+        let mut ctx = test_ctx(theme, CLIENT);
+        ctx.text_size = pct;
+        ctx.size = ctx.forms().text.size(CLIENT);
+        let mut w = window();
+        w.tell(Update::Tasks(Ok(vec![backup(); 60])));
+        let lay = w.app.list.layout(w.app.list_rect(&ctx), &ctx);
+        assert!(lay.scrollbar.is_some(), "60 rows scroll at {pct}%");
+        assert!(
+            lay.hscroll.is_none() && lay.total_w <= lay.body.width,
+            "every column shows at {pct}%: {} of {} px",
+            lay.total_w,
+            lay.body.width
+        );
+    }
+}
+
+#[test]
+fn stop_stops_a_running_task() {
+    let mut w = window();
+    let running = Task {
+        service_state: "active".into(),
+        ..backup()
+    };
+    w.tell(Update::Tasks(Ok(vec![running, cleanup()])));
+    w.pick("cleanup.timer");
+    assert!(!enabled(&w.app, STOP), "cleanup is not running");
+    w.pick("backup.timer");
+    assert!(enabled(&w.app, STOP));
+    w.press(STOP);
+    assert_eq!(w.sent(), [Cmd::Stop("backup.service".into())]);
+}
+
+#[test]
+fn view_output_shows_the_services_journal_read_only() {
+    let mut w = window();
+    w.tell(Update::Tasks(Ok(vec![backup(), cleanup()])));
+    assert!(!enabled(&w.app, VIEW_OUTPUT), "greyed with nothing picked");
+    w.pick("backup.timer");
+    w.press(VIEW_OUTPUT);
+    assert_eq!(w.sent(), [Cmd::Output("backup.service".into())]);
+    let titles: Vec<String> = w.app.children().into_iter().map(|c| c.title).collect();
+    assert_eq!(titles, ["Copy the photos Output"]);
+    let text = |w: &Window| w.app.output.as_ref().unwrap().text();
+    assert_eq!(text(&w), "Reading the journal...");
+    w.tell(Update::Output(
+        "cleanup.service".into(),
+        Ok("not this one".into()),
+    ));
+    assert_eq!(text(&w), "Reading the journal...", "another unit's lines");
+    w.tell(Update::Output(
+        "backup.service".into(),
+        Ok("Nov 26 03:00:01 rsync[12]: sent 4 files\n".into()),
+    ));
+    assert_eq!(text(&w), "Nov 26 03:00:01 rsync[12]: sent 4 files");
+    let mut ctx = ctx();
+    let a = KeyInput {
+        sym: 'a' as u32,
+        utf8: Some("a".into()),
+        mods: Default::default(),
+        edit: Some(reprisekit::textedit::EditKey::Insert("a".into())),
+    };
+    w.app.event(OUTPUT, Event::Key(a), &mut ctx);
+    assert_eq!(
+        text(&w),
+        "Nov 26 03:00:01 rsync[12]: sent 4 files",
+        "read only"
+    );
+    w.tell(Update::Output("backup.service".into(), Ok(" \n".into())));
+    assert_eq!(text(&w), "The journal holds no lines for this task yet.");
+    w.tell(Update::Output(
+        "backup.service".into(),
+        Err("No such file or directory (os error 2)".into()),
+    ));
+    assert_eq!(
+        text(&w),
+        "The journal could not be read: No such file or directory (os error 2)"
+    );
+    w.app.event(OUTPUT, Event::CloseRequest, &mut ctx);
+    assert!(w.app.output.is_none());
+}
+
+#[test]
 fn a_refusal_is_told_in_a_box() {
     let mut w = window();
     w.tell(Update::Refused(
@@ -310,6 +395,11 @@ fn drawn() -> Vec<(String, Canvas)> {
     w.tell(Update::Tasks(Ok(vec![backup(), cleanup()])));
     w.pick("backup.timer");
     w.app.act(Act::Properties);
+    w.app.act(Act::Output);
+    w.tell(Update::Output(
+        "backup.service".into(),
+        Ok("Nov 26 03:00:01 rsync[12]: sent 4 files\nNov 26 03:00:02 systemd[1]: Finished.".into()),
+    ));
     let mut out = Vec::new();
     use reprisekit::interface::Interface;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
@@ -318,8 +408,12 @@ fn drawn() -> Vec<(String, Canvas)> {
         w.app.draw_main(&mut c, &test_ctx(theme.clone(), CLIENT));
         out.push((format!("window {i:?}"), c));
         let mut c = Canvas::new(props::CLIENT.0 as u32, props::CLIENT.1 as u32);
-        w.app.draw_props(&mut c, &test_ctx(theme, props::CLIENT));
+        w.app
+            .draw_props(&mut c, &test_ctx(theme.clone(), props::CLIENT));
         out.push((format!("properties {i:?}"), c));
+        let mut c = Canvas::new(output::CLIENT.0 as u32, output::CLIENT.1 as u32);
+        w.app.draw_output(&mut c, &test_ctx(theme, output::CLIENT));
+        out.push((format!("output {i:?}"), c));
     }
     out
 }
@@ -364,6 +458,10 @@ fn the_buttons_fit_their_labels() {
         vec![
             ("window".to_string(), Form::new(buttons())),
             ("enable".to_string(), form),
+            (
+                "output".to_string(),
+                output::Output::new("backup.service", "Copy the photos").form,
+            ),
         ]
     });
     assert!(over.is_empty(), "{}", over.join("\n"));

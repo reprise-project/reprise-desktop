@@ -188,8 +188,9 @@ pub enum MultiKey {
 
 pub use crate::textedit::Took;
 
-/// The text with its caret and anchor; `caret == anchor` means nothing is selected.
-/// Invariant: `lines` holds at least one line, and both positions sit on a char boundary of one.
+/// The text with its caret and anchor; `caret == anchor` means nothing is selected. A `read_only`
+/// edit refuses every key, paste and drop that would change its text; the caret, the selection
+/// and Copy work as ever. Invariant: `lines` holds at least one line, and both positions sit on a char boundary of one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MultiEdit {
     lines: Vec<String>,
@@ -204,6 +205,7 @@ pub struct MultiEdit {
     widths: RefCell<Widths>,
     /// Boxed, so an enum holding a `MultiEdit` stays small.
     wraps: RefCell<Box<wrap::Wraps>>,
+    read_only: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -246,7 +248,16 @@ impl MultiEdit {
             edits: 0,
             widths: RefCell::default(),
             wraps: RefCell::default(),
+            read_only: false,
         }
+    }
+
+    pub fn set_read_only(&mut self, on: bool) {
+        self.read_only = on;
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Replace every match ([`replace_all`]) as one undo step, returning the count.
@@ -305,7 +316,7 @@ impl MultiEdit {
             can_undo: self.can_undo(),
             can_redo: self.can_redo(),
             selected: self.has_selection(),
-            read_only: false,
+            read_only: self.read_only,
             digits: false,
         }
     }
@@ -569,7 +580,7 @@ impl MultiEdit {
     /// Paste `text` over the selection (all its lines).
     pub fn paste(&mut self, text: &str) -> bool {
         let clean = printable(text);
-        if clean.is_empty() {
+        if clean.is_empty() || self.read_only {
             return false;
         }
         self.checkpoint(Edit::None);
@@ -581,7 +592,7 @@ impl MultiEdit {
     /// Insert dropped `text` at `p`, leaving the selection alone and selecting what landed.
     pub fn drop_text(&mut self, p: Pos, text: &str) -> bool {
         let clean = printable(text);
-        if clean.is_empty() {
+        if clean.is_empty() || self.read_only {
             return false;
         }
         self.checkpoint(Edit::None);
@@ -661,6 +672,9 @@ impl MultiEdit {
     }
 
     fn apply_edit(&mut self, k: EditKey) {
+        if self.read_only && k.edits() {
+            return;
+        }
         match k {
             EditKey::Insert(s) => {
                 let single = s.chars().count() == 1;
@@ -828,6 +842,7 @@ impl MultiEdit {
                 let to = self.end();
                 self.move_to(to, select);
             }
+            MultiKey::Enter | MultiKey::Tab if self.read_only => {}
             MultiKey::Enter => {
                 self.checkpoint(Edit::None);
                 self.insert("\n");

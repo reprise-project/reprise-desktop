@@ -1,6 +1,6 @@
 //! reprise-schedtasks: the systemd user manager's timers with their schedule, next and last run
-//! and status; Run Now, Enable or Disable and Properties on the one picked. docs/programs.md
-//! covers what the window does.
+//! and status; Run Now, Stop, Enable or Disable, Properties and View Output on the one picked.
+//! docs/programs.md covers what the window does.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -8,6 +8,7 @@ reprisebus::test_session!();
 reprisekit::strings!("schedtasks");
 
 mod model;
+mod output;
 mod props;
 mod systemd;
 
@@ -34,27 +35,31 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use systemd::{Bus, Cmd, Update};
 
-const CLIENT: (i32, i32) = (660, 380);
+/// Wide enough for every column at its width, its scrollbar and its frame.
+const CLIENT: (i32, i32) = (800, 400);
 const MARGIN: i32 = 8;
 const STATUS_Y: i32 = 40;
 /// Where the list starts, at 100% text.
 const LIST_Y: i32 = 60;
 
 const PROPS: WinId = WinId::named("props");
+const OUTPUT: WinId = WinId::named("output");
 
 const RUN: &str = "run";
+const STOP: &str = "stop";
 const TOGGLE: &str = "toggle";
 const PROPERTIES: &str = "properties";
+const VIEW_OUTPUT: &str = "output";
 /// New Task..., greyed: docs/programs.md says how to add a task.
 const NEW: &str = "new";
 const STATUS: &str = "status";
 
 fn columns() -> [(String, i32); 5] {
     [
-        (tr!("column-name"), 170),
-        (tr!("column-schedule"), 180),
-        (tr!("column-next"), 110),
-        (tr!("column-last"), 110),
+        (tr!("column-name"), 220),
+        (tr!("column-schedule"), 220),
+        (tr!("column-next"), 120),
+        (tr!("column-last"), 120),
         (tr!("column-status"), 70),
     ]
 }
@@ -92,8 +97,10 @@ fn cells(t: &Task, is_12h: bool) -> [String; 5] {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Act {
     Run,
+    Stop,
     Toggle,
     Properties,
+    Output,
 }
 
 struct SchedTasks {
@@ -106,6 +113,7 @@ struct SchedTasks {
     popup: Option<Popup<Act>>,
     note: ErrorBox,
     props: Option<props::Props>,
+    output: Option<output::Output>,
     big_icon: Option<Canvas>,
     is_12h: bool,
 }
@@ -115,8 +123,10 @@ fn buttons() -> Vec<Item> {
     let mut items = Vec::new();
     for (id, label, w) in [
         (RUN, tr!("run"), 85),
+        (STOP, tr!("stop"), 75),
         (TOGGLE, tr!("disable"), 75),
         (PROPERTIES, tr!("properties"), 85),
+        (VIEW_OUTPUT, tr!("view-output"), 90),
         (NEW, tr!("new-task"), 85),
     ] {
         items.push(Item::button(
@@ -155,6 +165,7 @@ impl SchedTasks {
             popup: None,
             note: ErrorBox::default(),
             props: None,
+            output: None,
             big_icon: None,
             is_12h: reprisefs::locale::is_12h(),
         }
@@ -201,6 +212,9 @@ impl SchedTasks {
         self.form
             .set_enabled(RUN, picked.as_ref().is_some_and(Task::can_run));
         self.form
+            .set_enabled(STOP, picked.as_ref().is_some_and(Task::running));
+        self.form.set_enabled(VIEW_OUTPUT, picked.is_some());
+        self.form
             .set_enabled(TOGGLE, picked.as_ref().is_some_and(Task::can_toggle));
         self.form.set_enabled(PROPERTIES, picked.is_some());
         let label = match picked.is_some_and(|t| !t.on()) {
@@ -226,6 +240,7 @@ impl SchedTasks {
         };
         match act {
             Act::Run if t.can_run() => self.send(Cmd::Run(t.service)),
+            Act::Stop if t.running() => self.send(Cmd::Stop(t.service)),
             Act::Toggle if t.can_toggle() => self.send(Cmd::Turn {
                 on: !t.on(),
                 timer: t.timer,
@@ -233,6 +248,11 @@ impl SchedTasks {
             }),
             Act::Properties => {
                 self.props = Some(props::Props::new(&t, self.big_icon.clone(), self.is_12h));
+                return Reply::redraw_all();
+            }
+            Act::Output => {
+                self.output = Some(output::Output::new(&t.service, t.name()));
+                self.send(Cmd::Output(t.service));
                 return Reply::redraw_all();
             }
             _ => {}
@@ -252,16 +272,22 @@ impl SchedTasks {
                     self.unanswered = Some(why);
                     self.sync();
                 }
+                Update::Output(unit, read) => {
+                    if let Some(o) = self.output.as_mut().filter(|o| o.service == unit) {
+                        o.show(read);
+                    }
+                }
                 Update::Refused(cmd, why) => {
                     let text = match cmd {
                         Cmd::Run(unit) => tr!("refused-run", unit = unit, why = why),
+                        Cmd::Stop(unit) => tr!("refused-stop", unit = unit, why = why),
                         Cmd::Turn {
                             timer, on: true, ..
                         } => {
                             tr!("refused-enable", unit = timer, why = why)
                         }
                         Cmd::Turn { timer, .. } => tr!("refused-disable", unit = timer, why = why),
-                        Cmd::Refresh => continue,
+                        Cmd::Refresh | Cmd::Output(_) => continue,
                     };
                     self.note.show(&tr!("name"), text, None);
                 }
@@ -280,8 +306,10 @@ impl SchedTasks {
         };
         let rows = vec![
             (item(&tr!("menu-run"), t.can_run()), Some(Act::Run)),
+            (item(&tr!("menu-stop"), t.running()), Some(Act::Stop)),
             (item(&toggle, t.can_toggle()), Some(Act::Toggle)),
             (MenuItem::Separator, None),
+            (item(&tr!("menu-output"), true), Some(Act::Output)),
             (item(&tr!("menu-properties"), true), Some(Act::Properties)),
         ];
         self.popup = Popup::open(rows, x, y, ctx, by_keyboard);
@@ -424,6 +452,8 @@ impl SchedTasks {
         };
         match repriseapp::keys::form_input(&mut self.form, &ev, ctx) {
             Some(form::Event::Pressed(RUN)) => self.act(Act::Run),
+            Some(form::Event::Pressed(STOP)) => self.act(Act::Stop),
+            Some(form::Event::Pressed(VIEW_OUTPUT)) => self.act(Act::Output),
             Some(form::Event::Pressed(TOGGLE)) => self.act(Act::Toggle),
             Some(form::Event::Pressed(PROPERTIES)) => self.act(Act::Properties),
             Some(form::Event::None) | None if !lit => Reply::none(),
@@ -453,6 +483,36 @@ impl SchedTasks {
         Reply::redraw_all()
     }
 
+    fn output_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+        let Some(o) = self.output.as_mut() else {
+            return Reply::none();
+        };
+        let out = match ev {
+            Event::CloseRequest => output::Outcome::Close,
+            Event::Blink => {
+                o.form.blink(ctx.caret_on);
+                return Reply::redraw();
+            }
+            ev => match repriseapp::keys::form_input(&mut o.form, &ev, ctx) {
+                Some(e) => o.event(e),
+                None => return Reply::none(),
+            },
+        };
+        match out {
+            output::Outcome::None => Reply::none(),
+            output::Outcome::Redraw => Reply::redraw(),
+            output::Outcome::Refresh => {
+                let unit = o.service.clone();
+                self.send(Cmd::Output(unit));
+                Reply::redraw()
+            }
+            output::Outcome::Close => {
+                self.output = None;
+                Reply::redraw_all()
+            }
+        }
+    }
+
     fn load_icons(&mut self, ctx: &mut Ctx) {
         if self.list.view.rows.icon.is_none() {
             self.list.view.rows.icon = ctx.icons.get(ICON, 16);
@@ -471,6 +531,18 @@ impl SchedTasks {
         self.list.draw(c, self.list_rect(ctx), ctx);
         if let Some(p) = &self.popup {
             p.draw(c, ctx);
+        }
+    }
+
+    fn draw_output(&self, c: &mut Canvas, ctx: &Ctx) {
+        let forms = ctx.forms();
+        c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+        if let Some(o) = &self.output {
+            let paint = Paint {
+                s: 1,
+                ..forms.paint()
+            };
+            form::draw(c, &ctx.text, &paint, &o.form, true, forms.fonts.size_px);
         }
     }
 
@@ -516,6 +588,15 @@ impl App for SchedTasks {
                 modal: false,
             });
         }
+        if let Some(o) = &self.output {
+            out.push(Child {
+                id: OUTPUT,
+                title: o.title(),
+                size: forms.text.size(output::CLIENT),
+                fixed: true,
+                modal: false,
+            });
+        }
         out.extend(self.note.child(&text, &forms));
         out
     }
@@ -533,6 +614,7 @@ impl App for SchedTasks {
         }
         match win {
             PROPS => self.props_event(ev, ctx),
+            OUTPUT => self.output_event(ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
             _ => self.main_event(ev, ctx),
         }
@@ -542,6 +624,7 @@ impl App for SchedTasks {
         let forms = ctx.forms();
         match win {
             PROPS => self.draw_props(c, ctx),
+            OUTPUT => self.draw_output(c, ctx),
             w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
             _ => self.draw_main(c, ctx),
         }
@@ -567,6 +650,11 @@ impl repriseapp::Extended for SchedTasks {
             PROPS => {
                 if let Some(p) = &self.props {
                     oneshot::access_sheet(&p.sheet, tree, &ctx.text, forms.fonts.size_px);
+                }
+            }
+            OUTPUT => {
+                if let Some(o) = &self.output {
+                    oneshot::access_form(&o.form, tree, &ctx.text, forms.fonts.size_px);
                 }
             }
             w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
