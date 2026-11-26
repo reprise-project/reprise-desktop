@@ -41,9 +41,9 @@ pub use geometry::SizeLimits;
 use geometry::client_extent;
 pub(crate) use geometry::{client_limits, x11_geometry};
 pub use place::{
-    ResizeAnchor, anchor_done, anchored_position, area_client, below_top_bar, cascade_from,
-    cascade_position, centre_on, first_configure_size, fit_size, keep_inside, landing,
-    rect_below_top_bar,
+    Rescued, ResizeAnchor, anchor_done, anchored_position, area_client, below_top_bar,
+    cascade_from, cascade_position, centre_on, first_configure_size, fit_size, keep_inside,
+    landing, rect_below_top_bar,
 };
 
 pub const PROMPT_TAG: &str = "prompt";
@@ -206,6 +206,8 @@ pub struct Window {
     pub snapped: Option<Rect>,
     /// What a smaller work area took from its size ([`place::Shrunk`]).
     pub shrunk: Option<place::Shrunk>,
+    /// Where `rescue_offscreen` took it from ([`place::Rescued`]).
+    pub rescued: Option<place::Rescued>,
     /// Where it was on the computer's own screens while lock mode keeps it on a remote one.
     pub home: Option<crate::console::homes::Home>,
     /// Where it was as it last unmapped; the next map goes back there.

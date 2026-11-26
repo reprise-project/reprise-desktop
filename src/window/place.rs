@@ -111,6 +111,14 @@ pub struct Shrunk {
     pub to: (i32, i32),
 }
 
+/// A frame origin an output change took off the outputs (`from`) and the one the window was
+/// rescued to (`to`); it goes back to `from` once that is on again, unless it left `to` since.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rescued {
+    pub from: (i32, i32),
+    pub to: (i32, i32),
+}
+
 /// The size a window of `size` is asked for when its bounds go from `was` to `now`: one still at
 /// its shrink's `to` regrows towards `from`, any other is [`shrunk_into`] `now`.
 pub(super) fn rebound(

@@ -26,7 +26,7 @@ use crate::{
     config::{OutputMode, VrrPolicy},
     console::Side,
     raster::{Canvas, Rect},
-    window::WindowId,
+    window::{Rescued, WindowId},
 };
 
 /// The integer scale chrome is drawn at on an output of `scale`: rounded
@@ -891,7 +891,9 @@ impl State {
 
     /// Centre each window whose frame centre is off the outputs (in lock mode, the Remote ones) on
     /// the pointer's output; a zoned or unacked window with its origin on stays, and a held one.
+    /// A rescued window not moved or sized since goes back once its old place is on again.
     pub fn rescue_offscreen(&mut self) {
+        self.return_rescued();
         let pos = self.pointer_location();
         let pointed = self.output_at(pos.x, pos.y);
         let target = if crate::console::remote_side(self) {
@@ -917,7 +919,40 @@ impl State {
             .map(|w| w.id)
             .collect();
         for w in lost {
+            let Some(from) = self
+                .win(w)
+                .map(|w| w.rescued.map_or((w.x, w.y), |k| k.from))
+            else {
+                continue;
+            };
             self.centre_window(w, Some(&target));
+            if let Some(win) = self.win_mut(w) {
+                win.rescued = Some(Rescued {
+                    from,
+                    to: (win.x, win.y),
+                });
+            }
+        }
+    }
+
+    fn return_rescued(&mut self) {
+        let mut back = Vec::new();
+        for win in self.windows.iter_mut() {
+            let Some(k) = win.rescued else { continue };
+            if (win.x, win.y) != k.to || win.maximized || win.fullscreen {
+                win.rescued = None;
+                continue;
+            }
+            let r = win.frame_rect();
+            back.push((win.id, Rect::new(k.from.0, k.from.1, r.width, r.height)));
+        }
+        for (w, at) in back {
+            if self.centre_on_an_output(at) {
+                self.move_to(w, at.x, at.y);
+                if let Some(win) = self.win_mut(w) {
+                    win.rescued = None;
+                }
+            }
         }
     }
 

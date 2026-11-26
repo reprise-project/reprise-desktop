@@ -102,6 +102,7 @@ impl State {
             own_size: false,
             sized_at: None,
             shrunk: None,
+            rescued: None,
             snapped: None,
             home: None,
             last_frame: None,

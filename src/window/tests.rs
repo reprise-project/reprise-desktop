@@ -1414,6 +1414,106 @@ fn undocking_rescues_a_window_whose_centre_was_on_the_gone_screen() {
 }
 
 #[test]
+fn a_window_rescued_by_an_unplug_goes_back_when_the_screen_comes_back() {
+    let mut h = crate::harness::Harness::new();
+    h.output("A-1", 1920, 1080);
+    let b = h.output("B-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    h.roundtrip(&mut c);
+    h.state.move_to(t.id, 2400, 300);
+    let before = h.state.win(t.id).unwrap().frame_rect();
+    h.state.scene.remove_output(&b);
+    h.state.output_removed(&b);
+    h.roundtrip(&mut c);
+    assert_ne!(
+        h.state.win(t.id).unwrap().frame_rect(),
+        before,
+        "rescued onto A-1"
+    );
+    h.output("B-1", 1920, 1080);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.win(t.id).unwrap().frame_rect(),
+        before,
+        "back on B-1 where it was"
+    );
+}
+
+/// A 300x200 window framed at (1500, 600) on a 1920x1080 TEST-1, rescued by scale 2, with the
+/// frame it had before.
+fn rescued_by_scale_2() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    WindowId,
+    smithay::output::Output,
+    Rect,
+) {
+    let mut h = crate::harness::Harness::new();
+    let o = h.output("TEST-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.roundtrip(&mut c);
+    h.state.move_to(t.id, 1500, 600);
+    let before = h.state.win(t.id).unwrap().frame_rect();
+    set_scale(&mut h, &mut c, &o, 2.0);
+    let r = h.state.win(t.id).unwrap().frame_rect();
+    assert!(
+        h.state.centre_on_an_output(r),
+        "at scale 2 the frame {r:?} is rescued onto TEST-1"
+    );
+    (h, c, t.id, o, before)
+}
+
+fn set_scale(
+    h: &mut crate::harness::Harness,
+    c: &mut crate::harness::TestClient,
+    o: &smithay::output::Output,
+    scale: f64,
+) {
+    let scale = smithay::output::Scale::Fractional(scale);
+    o.change_current_state(None, None, Some(scale), None);
+    h.state.update_layout();
+    h.roundtrip(c);
+}
+
+#[test]
+fn a_rescued_window_goes_back_to_its_place_when_the_scale_returns() {
+    let (mut h, mut c, t, o, before) = rescued_by_scale_2();
+    set_scale(&mut h, &mut c, &o, 3.0);
+    set_scale(&mut h, &mut c, &o, 1.0);
+    assert_eq!(
+        h.state.win(t).unwrap().frame_rect(),
+        before,
+        "back at scale 1 the frame is where it was before the rescues"
+    );
+}
+
+#[test]
+fn a_rescued_window_moved_since_stays_where_it_was_moved() {
+    let (mut h, mut c, t, o, _) = rescued_by_scale_2();
+    h.state.move_to(t, 100, 100);
+    set_scale(&mut h, &mut c, &o, 1.0);
+    let r = h.state.win(t).unwrap().frame_rect();
+    assert_eq!((r.x, r.y), (100, 100), "the frame stays at the moved place");
+}
+
+#[test]
+fn a_rescued_window_sized_since_stays_where_it_was_put() {
+    let (mut h, mut c, t, o, _) = rescued_by_scale_2();
+    let put = h.state.win(t).unwrap().frame_rect();
+    h.state.begin_resize(t, Edges::BOTTOM);
+    h.state.end_interaction();
+    set_scale(&mut h, &mut c, &o, 1.0);
+    let r = h.state.win(t).unwrap().frame_rect();
+    assert_eq!(
+        (r.x, r.y),
+        (put.x, put.y),
+        "the frame stays at the rescued place"
+    );
+}
+
+#[test]
 fn a_maximized_window_on_a_shrunk_rightmost_screen_stays_on_it() {
     use smithay::output::Mode;
     let mut h = crate::harness::Harness::new();
