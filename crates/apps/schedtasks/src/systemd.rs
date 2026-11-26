@@ -3,7 +3,7 @@
 //! asks for a read when a shown timer or its unit changes, a unit file is enabled or disabled, or
 //! the manager reloads. The window never waits on the bus.
 
-use crate::model::{self, NEVER, Task};
+use crate::model::{self, Task};
 use futures_util::StreamExt;
 use repriseapp::Poster;
 use reprisebus::mutex::lock;
@@ -260,9 +260,11 @@ async fn task(
             time("NextElapseUSecMonotonic"),
             now,
         ),
-        // A start by hand leaves `LastTriggerUSec` alone, and its own start time goes when the
-        // manager unloads the finished service: the last run is the timer's.
-        last: Some(time("LastTriggerUSec")).filter(|&t| t != 0 && t != NEVER),
+        last: model::last_run([
+            time("LastTriggerUSec"),
+            prop(&exec, "ExecMainStartTimestamp").unwrap_or(0),
+            prop(&started, "InactiveExitTimestamp").unwrap_or(0),
+        ]),
         result: text(&exec, "Result"),
         exit_code: prop(&exec, "ExecMainCode").unwrap_or(0),
         exit_status: prop(&exec, "ExecMainStatus").unwrap_or(0),
