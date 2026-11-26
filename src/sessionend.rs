@@ -1051,7 +1051,8 @@ fn unpanicked(work: impl FnOnce() -> Option<Failed>) -> Option<Failed> {
 }
 
 /// Attempt `id` ran past [`ANSWER_WITHIN`]: unless it answered, give up on it and refuse, saying
-/// so when the update's trigger it made stands. One that `lingers`, a custom Stand By or Hibernate
+/// so when the update's trigger it made stands, which then stays as another program's would
+/// ([`crate::offlineupdate::Made::hand_over`]). One that `lingers`, a custom Stand By or Hibernate
 /// command, may wait on purpose (a locker, the resume): it only stops holding the next action
 /// back, and a failure still shows.
 fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
@@ -1064,7 +1065,7 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
         return;
     }
     state.powering.give_up();
-    let why = match state.offline.made.stands(id) {
+    let why = match state.offline.made.hand_over(id) {
         true => Refused::Stays(Some(Box::new(Refused::Late))),
         false => Refused::Late,
     };
@@ -2585,6 +2586,7 @@ mod tests {
         crate::crash::ending();
         h.state.session.kept = true;
         late(&mut h.state, id, Act::Restart, false);
+        assert_eq!(h.state.offline.made.by(), None, "nothing takes it back now");
         let d = &h.state.dialogs.views.last().expect("the refusal").dialog;
         assert_eq!(
             d.text,
