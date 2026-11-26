@@ -875,6 +875,16 @@ impl Config {
                 cfg.lock.away_after_s = u32::try_from(s)
                     .map_err(|_| format!("lock.away_after_s must be 0..={}, got {s}", u32::MAX))?;
             }
+            // An unknown value reads as off, the least shown, rather than failing back to title.
+            if let Some(v) = l.media {
+                cfg.lock.media =
+                    (v.as_str().and_then(super::LockMedia::from_name)).unwrap_or_else(|| {
+                        log::warn!(
+                            "config: lock.media {v} is not title, controls or off; reading off"
+                        );
+                        super::LockMedia::Off
+                    });
+            }
         }
         if let Some(f) = file.folders {
             let into = &mut cfg.folders;

@@ -147,6 +147,13 @@ pub const SWITCH_ANIMATIONS: &Choices = &[
     ("wipe", "Wipe"),
 ];
 
+/// What the lock shows of the media playing. Mirrors `LockMedia::name` in `repriseconf::config`.
+pub const LOCK_MEDIA: &Choices = &[
+    ("title", "Title, artist and buttons"),
+    ("controls", "Buttons only"),
+    ("off", "Nothing"),
+];
+
 /// How menus open. Mirrors `MenuAnimation::name` in `repriseconf::config`.
 pub const MENU_ANIMATIONS: &Choices = &[("fade", "Fade"), ("slide", "Slide"), ("none", "None")];
 

@@ -48,6 +48,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("lock_on_sleep", "Lock the computer when it goes to sleep"),
             ("away_device", "Lock when this device disconnects:"),
             ("away_after_s", "After:"),
+            ("lock_media", "Now playing:"),
         ],
         Page::Display => &[
             ("primary", "Use as the primary display"),

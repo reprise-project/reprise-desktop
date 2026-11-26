@@ -305,6 +305,9 @@ are.
   pointer or by Tab after the password. Nothing else of the player shows,
   and the media keys keep working on the same player. A screen too small
   for it, or a remote user's session in lock mode, shows none.
+  `[lock] media = "controls"` keeps the buttons and leaves the title and
+  artist out; `"off"` shows no strip (Now playing on the Screen Saver &
+  Lock page).
 - **Lock and unlock in motion.** On Blue and Glass the lock comes in and
   fades out (`[effects] logon_animation`).
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its

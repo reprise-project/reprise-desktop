@@ -933,6 +933,7 @@ fn save_round_trips_every_field() {
         lock_fade: 4,
         away_device: "AA:BB:CC:DD:EE:01".into(),
         away_after_s: 45,
+        lock_media: "controls".into(),
         mouse_speed: -5,
         mouse_accel: false,
         mouse_natural: true,
