@@ -637,7 +637,7 @@ pub fn render_glass_popup_parts(theme: &Theme) -> Canvas {
     let tile = theme.look.controls_at_100().places.tile;
     for (i, (selected, hot, pressed)) in [(1, 0, None), (1, 1, Some(0))].into_iter().enumerate() {
         let places = placesbar::PlacesBar {
-            places: vec![place("My Recent Documents"), place("Desktop")],
+            places: vec![place("Recent Items"), place("Desktop")],
             selected: Some(selected),
             hot: Some(hot),
             pressed,

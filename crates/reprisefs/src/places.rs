@@ -151,7 +151,10 @@ pub fn document_dir_paths() -> Vec<(PathBuf, &'static str)> {
         .collect()
 }
 
-/// The folder path the My Recent Documents tile stands for. It is no real
+/// The name of the recently used files' place, in the places bar as in Start.
+pub const RECENT_LABEL: &str = "Recent Items";
+
+/// The folder path the Recent Items tile stands for. It is no real
 /// folder (every listed folder is absolute): [`is_recent`] tells it apart and
 /// `listing::dialog_rows` lists the recently used files for it.
 pub const RECENT: &str = "recent:";
@@ -160,14 +163,14 @@ pub fn is_recent(p: &Path) -> bool {
     p == Path::new(RECENT)
 }
 
-/// The folder a dialog's Up goes to; None at `/` and in My Recent Documents.
+/// The folder a dialog's Up goes to; None at `/` and in Recent Items.
 pub fn dialog_parent(dir: &Path) -> Option<&Path> {
     if is_recent(dir) { None } else { dir.parent() }
 }
 
 pub fn dialog_label(dir: &Path) -> String {
     if is_recent(dir) {
-        return "My Recent Documents".to_string();
+        return RECENT_LABEL.to_string();
     }
     dir.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -193,11 +196,11 @@ pub fn home_label() -> String {
     }
 }
 
-/// The Open and Save dialogs' places bar, top to bottom: My Recent
-/// Documents, home ([`home_label`]), Desktop, Documents, Downloads and
+/// The Open and Save dialogs' places bar, top to bottom: Recent Items,
+/// home ([`home_label`]), Desktop, Documents, Downloads and
 /// Computer (`/`). Shared by every program's dialog and the compositor's
-/// Browse. Without `recent` (`[privacy] recent_files = false`) the My Recent
-/// Documents tile is greyed.
+/// Browse. Without `recent` (`[privacy] recent_files = false`) the Recent
+/// Items tile is greyed.
 pub fn dialog_places(recent: bool) -> Vec<DialogPlace> {
     let home_label = home_label();
     let place = |label: &str, icon, dir| DialogPlace {
@@ -208,7 +211,7 @@ pub fn dialog_places(recent: bool) -> Vec<DialogPlace> {
     };
     vec![
         place(
-            "My Recent Documents",
+            RECENT_LABEL,
             "document-open-recent",
             recent.then(|| PathBuf::from(RECENT)),
         ),
@@ -1093,7 +1096,7 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
     fn dialog_places_run_recent_home_desktop_documents_downloads_computer() {
         let places = dialog_places(true);
         let labels: Vec<&str> = places.iter().map(|p| p.label.as_str()).collect();
-        assert_eq!(labels[0], "My Recent Documents");
+        assert_eq!(labels[0], "Recent Items");
         assert!(labels[1].ends_with("Home"), "the home tile is second");
         assert_eq!(
             labels[2..],

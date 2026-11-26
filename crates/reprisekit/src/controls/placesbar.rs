@@ -1,6 +1,5 @@
-//! The file dialog's places bar: the five-tile vertical strip down its
-//! left edge (My Recent Documents, Desktop, My Documents, My Computer, My
-//! Network Places).
+//! The file dialog's places bar: the vertical strip of tiles down its left
+//! edge (`reprisefs::places::dialog_places` lists them).
 //!
 //! The panel and the tiles' frames are the look's
 //! ([`crate::look::widgets::placesbar`]): Classic a sunken `button_shadow`

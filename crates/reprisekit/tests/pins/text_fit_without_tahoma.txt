@@ -61,7 +61,7 @@ parts-glass-smoked cut "Unchecked Normal" x2  # the gallery's own caption
 parts-glass-smoked cut "Unchecked Pressed" x2  # the gallery's own caption
 reprisekit-gallery cut "Checked Pressed" x2  # the gallery's own caption
 reprisekit-gallery cut "Thumb Pressed" x1  # the gallery's own caption
-reprisekit-gallery ellipsized "Documents" x3  # a name in a list or drop-down of its own width
+reprisekit-gallery ellipsized "Documents" x2  # a name in a list or drop-down of its own width
 reprisekit-gallery ellipsized "HDMI-A-1 (1920x1080)" x1  # a name in a list or drop-down of its own width
 reprisekit-gallery ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 reprisekit-gallery ellipsized "OpenDocument Text" x1  # a name in a list or drop-down of its own width

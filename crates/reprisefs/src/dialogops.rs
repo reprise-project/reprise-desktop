@@ -99,7 +99,8 @@ pub fn typed_path(
                 Some(raw) => base.join(raw),
                 None if places::is_recent(base) => {
                     return Err(format!(
-                        "{n} is not in My Recent Documents. Type the full path to save or open it elsewhere."
+                        "{n} is not in {}. Type the full path to save or open it elsewhere.",
+                        places::RECENT_LABEL
                     ));
                 }
                 None => base.join(n),
@@ -110,7 +111,7 @@ pub fn typed_path(
 }
 
 /// What [`typed_path`] reads the name of an entry at `path`, listed in `dir`, as: the full path
-/// of one that lives elsewhere (My Recent Documents), the raw name of one whose name is not
+/// of one that lives elsewhere (Recent Items), the raw name of one whose name is not
 /// UTF-8; none when the shown name is the name on disk.
 pub fn alias(dir: &Path, path: &Path) -> Option<OsString> {
     if path.parent() != Some(dir) {
@@ -169,7 +170,10 @@ mod tests {
         assert_eq!(f("/srv/b.txt"), Ok("/srv/b.txt".into()));
         assert_eq!(
             f("b.txt"),
-            Err("b.txt is not in My Recent Documents. Type the full path to save or open it elsewhere.".into())
+            Err(
+                "b.txt is not in Recent Items. Type the full path to save or open it elsewhere."
+                    .into()
+            )
         );
     }
 

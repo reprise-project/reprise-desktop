@@ -557,7 +557,7 @@ fn page_dialogs(mut c: Canvas, theme: &Theme, text: &TextRenderer, mono: &TextRe
 
     let places = placesbar::PlacesBar {
         places: [
-            "My Recent Documents",
+            "Recent Items",
             "user's Home",
             "Desktop",
             "Documents",
@@ -868,7 +868,7 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
             filters: vec!["Text Documents (*.txt)".into(), "All Files (*.*)".into()],
         },
         [
-            "My Recent Documents",
+            "Recent Items",
             "user's Home",
             "Desktop",
             "Documents",
