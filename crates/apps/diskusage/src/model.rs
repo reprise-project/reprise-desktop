@@ -78,12 +78,15 @@ pub fn sort_of(col: usize) -> Option<Sort> {
     }
 }
 
-pub fn col_of(sort: Sort) -> usize {
-    match sort {
+/// The header's sort arrow for `sort`: its column and whether ascending. Name runs A to Z
+/// unflipped, Size and Files largest first.
+pub fn arrow(sort: Sort, flipped: bool) -> (usize, bool) {
+    let col = match sort {
         Sort::Name => NAME,
         Sort::Size => SIZE,
         Sort::Files => FILES,
-    }
+    };
+    (col, (sort == Sort::Name) != flipped)
 }
 
 /// Where the scan stands, said of folder `at`.
