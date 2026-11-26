@@ -134,21 +134,31 @@ pub enum MouseButton {
     Right,
 }
 
-/// The MouseKeys indicator in a `px` square: the button the keys click (`pick`) is filled grey,
-/// black while held.
+/// Coverage of the picked button's black fill: a third, so it reads 128 grey over a 192 face. One
+/// ink at two coverages lets `taskbar::draw_tray_icon` redraw it in a dark bar's label ink.
+const MOUSE_PICK_ALPHA: u32 = 0x55;
+
+/// The MouseKeys indicator in a `px` square: the button the keys click (`pick`) is filled with a
+/// third of black, all black while held.
 pub fn draw_mouse_keys(px: i32, pick: MouseButton, held: bool) -> Canvas {
     let ink = Color::rgb(0, 0, 0);
-    let fill = if held { ink } else { Color::rgb(128, 128, 128) };
+    let mark = Color::rgb(255, 255, 255);
     let cell = match pick {
         MouseButton::Left => 64,
         MouseButton::Middle => 96,
         MouseButton::Right => 128,
     };
-    draw_icon(px, &icons::MOUSE_KEYS, |c| match c.r {
+    let mut c = draw_icon(px, &icons::MOUSE_KEYS, |c| match c.r {
         0 => Some(ink),
-        v if v == cell => Some(fill),
+        v if v == cell => Some(if held { ink } else { mark }),
         _ => None,
-    })
+    });
+    for p in &mut c.pixels {
+        if *p == mark.argb() {
+            *p = MOUSE_PICK_ALPHA << 24;
+        }
+    }
+    c
 }
 
 const BADGE: Color = Color::rgb(220, 24, 24);
@@ -324,12 +334,12 @@ mod tests {
     }
 
     #[test]
-    fn the_mouse_keys_mouse_greys_the_picked_button_and_blackens_it_held() {
+    fn the_mouse_keys_mouse_shades_the_picked_button_a_third_black_and_blackens_it_held() {
         let row = |c: &Canvas, y: i32| -> String {
             (0..16)
                 .map(|x| match c.get(x, y) {
                     0xff00_0000 => '#',
-                    0xff80_8080 => '+',
+                    0x5500_0000 => '+',
                     p => {
                         assert_eq!(p >> 24, 0, "({x}, {y}) is ink, grey or clear");
                         '.'
@@ -349,6 +359,14 @@ mod tests {
         assert_eq!(row(&right, 4), "..#...#..#####..");
         let two = draw_mouse_keys(32, MouseButton::Left, false);
         assert_eq!(two.get(7, 9), left.get(3, 4), "scale 2 doubles every cell");
+        let mut face = Canvas::new(16, 16);
+        face.fill_rect(Rect::new(0, 0, 16, 16), Color::rgb(192, 192, 192));
+        face.blit_canvas(0, 0, &left);
+        assert_eq!(
+            face.get(3, 4),
+            0xff80_8080,
+            "the pick reads 128 grey over a 192 face"
+        );
     }
 
     #[test]
