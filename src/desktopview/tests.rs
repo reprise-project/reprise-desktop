@@ -355,13 +355,21 @@ fn a_drive_top_the_user_cannot_read_is_not_watched() {
     std::fs::create_dir_all(&open).unwrap();
     std::fs::create_dir_all(&shut).unwrap();
     std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o300)).unwrap();
+    struct Cleanup(PathBuf, PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.1, std::fs::Permissions::from_mode(0o700));
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(top.clone(), shut.clone());
     let bins = reprisefs::trash::Bins::new(top.join("home"), vec![open.clone(), shut]);
     let dirs: Vec<PathBuf> = drive_tops(&bins)
         .iter()
         .flat_map(|top| drive_trash_wants(&bins, top))
         .map(|w| w.dir)
         .collect();
-    let _ = std::fs::remove_dir_all(&top);
     assert_eq!(dirs, [open]);
 }
 

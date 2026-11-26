@@ -50,10 +50,33 @@ pub fn dir() -> PathBuf {
         let parent = std::env::temp_dir().join("reprise-tests");
         sweep(&parent);
         let dir = parent.join(std::process::id().to_string());
-        let _ = std::fs::remove_dir_all(&dir);
+        remove_tree(&dir);
         dir
     })
     .clone()
+}
+
+/// Removes `path` after making every folder under it listable, so a test that left one at
+/// mode 0o300 does not leave the session behind.
+fn remove_tree(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fn open_up(dir: &Path) {
+        let Ok(meta) = std::fs::symlink_metadata(dir) else {
+            return;
+        };
+        if !meta.is_dir() {
+            return;
+        }
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            open_up(&entry.path());
+        }
+    }
+    open_up(path);
+    let _ = std::fs::remove_dir_all(path);
 }
 
 /// Removes the folders under `parent` named for a process that no longer runs.
@@ -71,7 +94,7 @@ fn sweep(parent: &Path) {
             && unsafe { libc::kill(pid, 0) } == -1
             && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
         if gone {
-            let _ = std::fs::remove_dir_all(entry.path());
+            remove_tree(&entry.path());
         }
     }
 }
@@ -80,7 +103,7 @@ fn sweep(parent: &Path) {
 #[doc(hidden)]
 pub fn enter() {
     extern "C" fn remove() {
-        let _ = std::fs::remove_dir_all(dir());
+        remove_tree(&dir());
     }
     let home = dir().join("home");
     let runtime = dir().join("runtime");
@@ -164,5 +187,20 @@ mod tests {
             [false, true, true],
             "only the exited process's folder goes"
         );
+    }
+
+    #[test]
+    fn the_sweep_removes_a_dead_process_folder_holding_an_unlistable_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        let parent = dir().join("tmp").join("sweep-test");
+        let shut = parent.join(pid.to_string()).join("shut");
+        std::fs::create_dir_all(&shut).unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o300)).unwrap();
+        sweep(&parent);
+        assert!(!parent.join(pid.to_string()).exists());
+        let _ = std::fs::remove_dir_all(&parent);
     }
 }
