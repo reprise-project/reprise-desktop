@@ -25,13 +25,14 @@ pub(super) struct ListRow<'a> {
     pub(super) label: bool,
 }
 
-/// The label's part of an already-scaled List cell: all of it right of an icon column `slot`
-/// px wide.
+/// The label's part of an already-scaled List cell: all of it [`listview::NAME_GAP`] past an
+/// icon column `slot` px wide.
 fn label_area(cell_s: Rect, s: i32, slot: i32) -> Rect {
+    let x = (slot + listview::NAME_GAP) * s;
     Rect::new(
-        cell_s.x + slot * s,
+        cell_s.x + x,
         cell_s.y,
-        (cell_s.width - slot * s).max(0),
+        (cell_s.width - x).max(0),
         cell_s.height,
     )
 }
@@ -52,8 +53,13 @@ pub(super) fn draw_list_row(
     let shown = text.ellipsize(row.name, label_full.width, false, px);
     // A look that boxes its items boxes the icon and name, 3 px past its ink, under both; the text stays.
     let ink_w = text.measure(&shown, false, px);
-    let item_box =
-        Rect::new(cell_s.x, cell_s.y, slot * s + ink_w + 3 * s, cell_s.height).intersect(&clip_s);
+    let item_box = Rect::new(
+        cell_s.x,
+        cell_s.y,
+        label_full.x - cell_s.x + ink_w + 3 * s,
+        cell_s.height,
+    )
+    .intersect(&clip_s);
     let boxed = item::draw_item(c, p, item_box, row.mark);
     if let Some(icon) = row.icon {
         let (mut dx, mut dy) = (0, (cell_s.height / s - slot) / 2 * s);
@@ -68,7 +74,9 @@ pub(super) fn draw_list_row(
         return;
     }
     let fg = if row.selected && !boxed {
-        c.fill_rect(label, cs.hilight);
+        let gap = listview::NAME_GAP * s;
+        let lit = Rect::new(label.x - gap, label.y, ink_w + 2 * gap, label.height);
+        c.fill_rect(lit.intersect(&clip_s), cs.hilight);
         cs.hilight_text
     } else {
         cs.window_text
