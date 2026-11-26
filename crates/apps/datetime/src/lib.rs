@@ -252,7 +252,11 @@ impl App for DateTimeApp {
         self.dialog_text = Some(ctx.text.clone());
         self.forms = ctx.forms();
         let mut reply = self.dispatch(win, ev, ctx);
-        let size = self.forms.text.size(sheet::CLIENT);
+        let wide = self.sheet.as_ref().map_or(0, |s| s.sheet.bar_room());
+        let size = self
+            .forms
+            .text
+            .size((sheet::CLIENT.0 + wide, sheet::CLIENT.1));
         reply.ask_size(&mut self.asked, size);
         reply
     }

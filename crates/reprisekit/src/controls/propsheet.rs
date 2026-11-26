@@ -116,6 +116,9 @@ pub struct PropSheet {
     /// The page's scroll in a client smaller than the sheet ([`PropSheet::fit`]), at 100%: each
     /// way's `short` is how much smaller than `size` the client is.
     scroll: ScrollView,
+    /// How much wider than built the sheet is for its page's scrollbar, at 100%
+    /// ([`PropSheet::fit_bar_room`]).
+    bar_room: i32,
     /// The search field over the page list, in list mode.
     pub search: SearchField,
     /// The field has the keyboard: neither the list (`tabs.focused`) nor the page does.
@@ -226,6 +229,7 @@ impl PropSheet {
             nav: Nav::Tabs,
             list_w: pagelist::WIDTH,
             scroll: ScrollView::default(),
+            bar_room: 0,
             search: SearchField::default(),
             search_focused: false,
             paste_to: None,
@@ -265,6 +269,7 @@ impl PropSheet {
             nav: Nav::List(PageList::new(groups)),
             list_w: pagelist::WIDTH,
             scroll: ScrollView::default(),
+            bar_room: 0,
             search: SearchField::default(),
             search_focused: false,
             paste_to: None,

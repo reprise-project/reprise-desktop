@@ -547,3 +547,42 @@ fn an_open_combos_field_outside_the_view_leaves_the_sheets_parts_their_presses()
         );
     }
 }
+
+/// A 361x482 sheet whose group reaches near the page's right edge, shown 400 tall at 200%: cut
+/// short alone it scrolls sideways too, as the group runs under the bar down the page; widened by
+/// that bar it scrolls down only, the group beside the bar, and a client as tall as the sheet
+/// narrows it back.
+#[test]
+fn a_sheet_cut_short_widens_by_its_bar_and_scrolls_down_only() {
+    let theme = Theme::default().with_form_text(200);
+    let (u, px) = (theme.text, theme.fonts.size_px);
+    let text = TextRenderer::load(&FontConfig::default());
+    let p = theme.paint();
+    let page = Form::new(vec![
+        Item::group("group", Rect::new(21, 40, 320, 100), "Group"),
+        Item::check("low", 20, 420, "Low"),
+    ]);
+    let mut s = PropSheet::new(&["General"], vec![page], (361, 482));
+    s.drawn_with(&p);
+    s.fit((361, 400));
+    let l = s.layout(&text, px);
+    assert!(l.bar.is_some() && l.hbar.is_some(), "cut short alone");
+
+    let bar = s.page_bar_len();
+    assert_eq!(u.len(bar), theme.controls().scroll);
+    assert!(s.fit_bar_room(400));
+    assert!(!s.fit_bar_room(400), "idempotent");
+    assert_eq!(s.size, (361 + bar, 482));
+    s.fit((361 + bar, 400));
+    let l = s.layout(&text, px);
+    let down = l.bar.expect("the page scrolls down");
+    assert_eq!(l.hbar, None, "and not sideways");
+    assert_eq!(l.apply.right(), u.len(361 + bar - MARGIN));
+    let group = s.open().rect("group").unwrap();
+    assert!(group.right() <= down.x, "{group:?} shows beside {down:?}");
+
+    assert!(s.fit_bar_room(482));
+    assert_eq!(s.size, (361, 482), "a whole sheet narrows back");
+    s.fit((361, 482));
+    assert_eq!(s.layout(&text, px).bar, None);
+}

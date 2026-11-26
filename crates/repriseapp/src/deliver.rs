@@ -133,6 +133,11 @@ impl Host {
             .event(win, ev, &mut self.ctx)
             .with_clipboard(keys::take_clipboard());
         reply.tick |= self.ctx.want_tick.take() || filedlg::marquee_scrolls(&mut *self.app, win);
+        if let Some(size) = keys::take_sheet_size()
+            && win == MAIN
+        {
+            reply.size = reply.size.or(Some(size));
+        }
         let tip = keys::take_tip_waits();
         if let Some(s) = self.slot_mut(win) {
             // A program answers a blink by ticking its forms itself, past this note.
