@@ -703,6 +703,16 @@ pub fn page_desk(
         }
     }
 
+    {
+        use reprisekit::art::noteicon::{SIZES, draw};
+        c.fill_rect(Rect::new(380, 5070, 144, 56), cs.window);
+        let mut x = 384;
+        for n in SIZES {
+            c.blit_over(x, 5074, &draw(n));
+            x += n + 4;
+        }
+    }
+
     // Stacked: side by side would clip the second page.
     {
         let exterior = wizard::Wizard::new(

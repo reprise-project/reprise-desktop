@@ -157,7 +157,9 @@ package() {
   ln -s ../reprise-file-manager.service "$pkgdir/usr/lib/systemd/user/reprise-session.target.wants/reprise-file-manager.service"
   install -Dm644 data/reprise.desktop "$pkgdir/usr/share/wayland-sessions/reprise.desktop"
   for size in 16x16 24x24 32x32 48x48; do
-    install -Dm644 "data/icons/hicolor/$size/apps/reprise.png" "$pkgdir/usr/share/icons/hicolor/$size/apps/reprise.png"
+    for icon in reprise reprise-notes; do
+      install -Dm644 "data/icons/hicolor/$size/apps/$icon.png" "$pkgdir/usr/share/icons/hicolor/$size/apps/$icon.png"
+    done
   done
   install -Dm644 data/icons/hicolor/scalable/apps/reprise.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/reprise.svg"
   install -Dm644 data/reprise-portals.conf "$pkgdir/usr/share/xdg-desktop-portal/reprise-portals.conf"
