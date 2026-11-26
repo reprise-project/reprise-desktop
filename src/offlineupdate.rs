@@ -17,12 +17,17 @@ use std::time::{Duration, Instant};
 
 use reprisebus::offline::{After, Status};
 use reprisekit::powerpanel::Updates;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::State;
 
 /// How long an answer stands before a panel opening reads PackageKit again, which starts
 /// packagekitd when it is not running.
 const FRESH: Duration = Duration::from_secs(10);
+
+/// How long a session end waits for its take-back before it ends anyway: past a take-back that
+/// got the lock (a 5 s shutdown read and a 30 s Cancel), under systemd's 90 s stop timeout.
+const TAKE_BACK_WITHIN: Duration = Duration::from_secs(40);
 
 /// A bus call's answer: the error is what to tell the user, None for a dismissed password prompt.
 pub type Answer = Result<(), Option<String>>;
@@ -85,6 +90,8 @@ pub struct Offline {
     reading: bool,
     pub(crate) bus: Arc<dyn Bus>,
     pub(crate) made: Made,
+    /// What runs once the session end's take-back answers or [`TAKE_BACK_WITHIN`] passes.
+    pub(crate) ends: Option<fn(&mut State)>,
 }
 
 impl Default for Offline {
@@ -105,6 +112,7 @@ impl Offline {
             reading: false,
             bus,
             made: Made::default(),
+            ends: None,
         }
     }
 }
@@ -212,10 +220,48 @@ fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>, down: bo
     }
 }
 
-/// Take back, blocking, a trigger a power attempt given up on left, as the session ends. One that
-/// stays is only logged; the next Turn off computer panel offers the update.
-pub fn take_back_left(state: &State) {
-    state.offline.made.take_back(&*state.offline.bus, None);
+/// Take back, off the loop, a trigger a given-up attempt left as the session ends, then run `then`
+/// once: a Trigger holding the lock may wait on a password prompt this compositor draws.
+pub fn take_back_left(state: &mut State, then: fn(&mut State)) {
+    take_back_within(state, TAKE_BACK_WITHIN, then);
+}
+
+fn take_back_within(state: &mut State, within: Duration, then: fn(&mut State)) {
+    if state.offline.ends.replace(then).is_some() {
+        return;
+    }
+    let (bus, made) = (Arc::clone(&state.offline.bus), state.offline.made.clone());
+    let spawned = state.spawn_job(move || {
+        let took = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            made.take_back(&*bus, None);
+        }));
+        if took.is_err() {
+            log::error!("offline update: the take-back panicked");
+        }
+        Box::new(end)
+    });
+    if !spawned {
+        state.offline.made.take_back(&*state.offline.bus, None);
+        end(state);
+        return;
+    }
+    let timer = Timer::from_duration(within);
+    let armed = state.handle.insert_source(timer, move |_, _, state| {
+        if state.offline.ends.is_some() {
+            log::warn!("offline update: no take-back within {within:?}; the session ends");
+        }
+        end(state);
+        TimeoutAction::Drop
+    });
+    if let Err(e) = armed {
+        log::warn!("offline update: no deadline for the take-back: {}", e.error);
+    }
+}
+
+fn end(state: &mut State) {
+    if let Some(then) = state.offline.ends.take() {
+        then(state);
+    }
 }
 
 /// Why [`around`] did not get to the power action, or what its failure left.
