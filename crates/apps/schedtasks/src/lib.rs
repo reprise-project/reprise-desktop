@@ -103,6 +103,21 @@ fn cells(t: &Task, is_12h: bool) -> [String; 5] {
     ]
 }
 
+/// What a column sorts by: its time, or its text with case ignored.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum SortKey {
+    Time(Option<u64>),
+    Text(String),
+}
+
+fn sort_key(t: &Task, col: usize, is_12h: bool) -> SortKey {
+    match col {
+        2 => SortKey::Time(t.next),
+        3 => SortKey::Time(t.last),
+        _ => SortKey::Text(cells(t, is_12h)[col].to_lowercase()),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Act {
     Run,
@@ -123,6 +138,8 @@ struct SchedTasks {
     /// Why the manager could not list the timers.
     unanswered: Option<String>,
     list: List<Lines>,
+    /// The column a title click sorts by and whether it ascends; None keeps the manager's order.
+    sort: Option<(usize, bool)>,
     form: Form,
     popup: Option<Popup<Act>>,
     note: ErrorBox,
@@ -184,6 +201,7 @@ impl SchedTasks {
             tasks: Vec::new(),
             unanswered: None,
             list,
+            sort: None,
             form,
             popup: None,
             note: ErrorBox::default(),
@@ -219,6 +237,7 @@ impl SchedTasks {
         }
         let picked = self.picked().map(|t| t.timer.clone());
         self.tasks = tasks;
+        self.sort_tasks();
         self.unanswered = None;
         let made = self
             .want_pick
@@ -237,6 +256,32 @@ impl SchedTasks {
                 None => self.props = None,
             }
         }
+        self.sync();
+    }
+
+    fn sort_tasks(&mut self) {
+        let Some((col, asc)) = self.sort else {
+            return;
+        };
+        let is_12h = self.is_12h;
+        let mut keyed: Vec<_> = std::mem::take(&mut self.tasks)
+            .into_iter()
+            .map(|t| (sort_key(&t, col, is_12h), t))
+            .collect();
+        keyed.sort_by(|a, b| if asc { a.0.cmp(&b.0) } else { b.0.cmp(&a.0) });
+        self.tasks = keyed.into_iter().map(|(_, t)| t).collect();
+    }
+
+    /// A click on column `col`'s title sorts by it, a second flips it; the pick stays on its task.
+    fn sort_by(&mut self, col: usize) {
+        let asc = !matches!(self.sort, Some((c, true)) if c == col);
+        self.sort = Some((col, asc));
+        self.list.view.sort = self.sort;
+        let picked = self.picked().map(|t| t.timer.clone());
+        self.sort_tasks();
+        let keep = picked.and_then(|p| self.tasks.iter().position(|t| t.timer == p));
+        self.list.view.selection = Default::default();
+        self.list.view.selection.set_only(keep);
         self.sync();
     }
 
@@ -535,7 +580,13 @@ impl SchedTasks {
             }
             Event::Pointer(PointerInput::Release {
                 button: BTN_LEFT, ..
-            }) => self.list.release(ctx),
+            }) => {
+                let released = self.list.release(ctx);
+                if let Some(col) = released.column {
+                    self.sort_by(col);
+                }
+                released.redraw
+            }
             Event::Pointer(PointerInput::Leave) => self.list.leave(ctx),
             _ => false,
         };
