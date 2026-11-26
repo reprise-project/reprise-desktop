@@ -15,9 +15,6 @@ use crate::raster::Canvas;
 
 use super::PICTURE;
 
-const RECENT_TITLE: &str = "Recent";
-const TASKS_TITLE: &str = "Tasks";
-
 pub(super) fn one_per_name(apps: &[AppEntry]) -> Vec<bool> {
     let mut first: HashMap<&str, usize> = HashMap::new();
     for (i, a) in apps.iter().enumerate().filter(|(_, a)| a.shown) {
@@ -145,46 +142,28 @@ pub(super) fn refill_tree(
     }
 }
 
-fn jump_rows(
-    icons: &mut crate::icontheme::IconCache,
-    files: &[PathBuf],
-    px: i32,
-) -> Vec<ResultRow> {
-    files
-        .iter()
-        .map(|p| ResultRow {
-            name: file_name(p),
-            icon: unread(icons, reprisefs::icons::icon_for_file(p), px),
-            detail: String::new(),
-        })
-        .collect()
-}
-
-/// App `a`'s jump list: Recent with its `files`, then Tasks with its desktop actions
-/// ([`crate::taskbar::jump_tasks`]), each wearing its own icon, else the app's.
+/// App `a`'s jump list ([`crate::taskbar::jump_sections`]) with its recent `files`, each row
+/// wearing [`crate::taskbar::jump_icon`].
 fn jump_sections(
     icons: &mut crate::icontheme::IconCache,
     a: &AppEntry,
     files: &[PathBuf],
     px: i32,
 ) -> Vec<ResultGroup> {
-    let tasks = (crate::taskbar::jump_tasks(a).iter())
-        .map(|t| ResultRow {
-            name: t.name.clone(),
-            icon: (t.icon.as_deref().or(a.icon.as_deref())).and_then(|n| unread(icons, n, px)),
-            detail: String::new(),
+    let sections = crate::taskbar::jump_sections(files, crate::taskbar::jump_tasks(a));
+    (sections.into_iter())
+        .map(|section| ResultGroup {
+            title: section.title.into(),
+            rows: (section.rows.iter())
+                .map(|(name, row)| ResultRow {
+                    name: name.clone(),
+                    icon: crate::taskbar::jump_icon(Some(a), row)
+                        .and_then(|n| unread(icons, n, px)),
+                    detail: String::new(),
+                })
+                .collect(),
         })
-        .collect();
-    vec![
-        ResultGroup {
-            title: RECENT_TITLE.into(),
-            rows: jump_rows(icons, files, px),
-        },
-        ResultGroup {
-            title: TASKS_TITLE.into(),
-            rows: tasks,
-        },
-    ]
+        .collect()
 }
 
 /// Whether app `a`'s row opens a jump list: it has recent `files` or tasks, and the menu is not
@@ -207,12 +186,6 @@ pub(super) fn jump_task(jumps: &[Vec<PathBuf>], mode: Mode, k: usize) -> Option<
         return None;
     };
     k.checked_sub(jumps.get(i)?.len())
-}
-
-pub(super) fn file_name(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 /// The tree's scroll, lit and hot rows index the old rows and are dropped.

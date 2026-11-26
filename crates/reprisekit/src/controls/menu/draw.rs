@@ -16,6 +16,9 @@ fn draw_check(canvas: &mut Canvas, x: i32, y: i32, s: i32, color: crate::theme::
     canvas.paint_map(x, y, s, &CHECK_GLYPH, |ch| (ch == 'X').then_some(color));
 }
 
+/// Design px between a heading's title and its rule.
+const HEADING_GAP: i32 = 4;
+
 pub const BULLET_D: i32 = 6;
 const BULLET_RUNS: [(i32, i32); BULLET_D as usize] =
     [(1, 4), (0, 6), (0, 6), (0, 6), (0, 6), (1, 4)];
@@ -216,6 +219,31 @@ pub fn draw_menu_at(
                     canvas.fill_rect(line, cs.button_shadow);
                 } else {
                     canvas.etched_hline_t(r.x + dx, r.right() - dx, y, cs, s);
+                }
+            }
+            MenuItem::Heading(title) => {
+                canvas.fill_rect(*r, cs.menu);
+                let text_rect =
+                    Rect::new(r.x + layout.text_x, r.y, r.width - layout.text_x, r.height);
+                let shown = text.ellipsize(title, text_rect.width, true, size);
+                text.draw(
+                    canvas,
+                    text_rect,
+                    &shown,
+                    true,
+                    cs.menu_text,
+                    Align::Left,
+                    size,
+                );
+                let x0 = text_rect.x + text.measure(&shown, true, size) + HEADING_GAP * g;
+                let x1 = r.right() - layout.separator_x;
+                let y = r.y + (r.height / s / 2) * s;
+                if x0 < x1 {
+                    if flat {
+                        canvas.fill_rect(Rect::new(x0, y, x1 - x0, s), cs.button_shadow);
+                    } else {
+                        canvas.etched_hline_t(x0, x1, y, cs, s);
+                    }
                 }
             }
             MenuItem::Entry {
@@ -426,6 +454,27 @@ fn draw_gutter_menu(
     let past_divider = layout.gutter + 2 * s;
     for (i, (item, r)) in items.iter().zip(&layout.rows).enumerate() {
         let r = Rect::new(r.x + ox, r.y + oy, r.width, r.height);
+        if let MenuItem::Heading(title) = item {
+            let text_rect = Rect::new(r.x + layout.text_x, r.y, r.width - layout.text_x, r.height);
+            let shown = text.ellipsize(title, text_rect.width, false, size);
+            text.draw(
+                canvas,
+                text_rect,
+                &shown,
+                false,
+                m.heading,
+                Align::Left,
+                size,
+            );
+            let x0 = text_rect.x + text.measure(&shown, false, size) + HEADING_GAP * g;
+            let x1 = r.right() - m.shortcut_end * s;
+            if x0 < x1 {
+                let y = r.y + (r.height / s / 2) * s;
+                canvas.fill_rect(Rect::new(x0, y, x1 - x0, s), m.rule.0);
+                canvas.fill_rect(Rect::new(x0, y + s, x1 - x0, s), m.rule.1);
+            }
+            continue;
+        }
         let MenuItem::Entry {
             label,
             icon,

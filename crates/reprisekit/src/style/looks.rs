@@ -125,6 +125,8 @@ pub struct MenuLook {
     pub arrow_inset: i32,
     pub arrow: Color,
     pub greyed: Color,
+    /// A `MenuItem::Heading`'s title.
+    pub heading: Color,
     pub check_at: (i32, i32),
     pub radio_at: (i32, i32),
     /// None: the menu casts no shadow.

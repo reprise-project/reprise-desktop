@@ -90,7 +90,7 @@ mod tests {
             .iter()
             .map(|i| match i {
                 MenuItem::Entry { label, .. } => label.clone(),
-                MenuItem::Separator => "-".into(),
+                MenuItem::Separator | MenuItem::Heading(_) => "-".into(),
             })
             .collect()
     }

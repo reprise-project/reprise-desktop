@@ -89,7 +89,7 @@ fn render_window_list() {
     let theme = Theme::default();
     let text = TextRenderer::load(&FontConfig::default());
     let titles = ["~/projects - foot", "~/notes - foot", "htop - foot"].map(String::from);
-    let (items, _) = window_list(&titles, 4);
+    let (items, _) = window_list(&titles, 4, false);
     let style = MenuStyle::submenu(&theme).fit(&text, &items, theme.fonts.size_px, i32::MAX);
     let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
     let mut c = Canvas::new(layout.width as u32, layout.height as u32);
@@ -1166,20 +1166,29 @@ fn jump_lists_follow_what_the_button_stands_for() {
             .iter()
             .map(|i| match i {
                 MenuItem::Entry { label, .. } => label.clone(),
-                _ => "-".into(),
+                MenuItem::Heading(t) => format!("[{t}]"),
+                MenuItem::Separator => "-".into(),
             })
             .collect()
     };
     let recent = [PathBuf::from("/h/b.txt"), PathBuf::from("/h/a.txt")];
     let titles = |n: usize| (1..=n).map(|k| format!("w{k}")).collect::<Vec<_>>();
-    let tasks = ["New Window", "New Tab"];
-    let (items, rows) = jump_list("Terminal", &recent, &tasks, true, true, &titles(3), 1);
+    let task = |name: &str| reprisefs::apps::DesktopAction {
+        id: name.into(),
+        name: name.into(),
+        icon: None,
+        exec_line: String::new(),
+    };
+    let tasks = [task("New Window"), task("New Tab")];
+    let sections = jump_sections(&recent, &tasks);
+    let (items, rows) = jump_list(&sections, "Terminal", true, true, &titles(3), 1);
     assert_eq!(
         labels(&items),
         [
+            "[Recent]",
             "b.txt",
             "a.txt",
-            "-",
+            "[Tasks]",
             "New Window",
             "New Tab",
             "-",
@@ -1192,14 +1201,21 @@ fn jump_lists_follow_what_the_button_stands_for() {
             "Close all windows"
         ]
     );
-    assert_eq!(rows[0], Some(JumpRow::Recent(recent[0].clone())));
-    assert_eq!(rows[2], None);
     assert_eq!(
-        rows[3..],
+        rows[..7],
         [
+            None,
+            Some(JumpRow::Recent(recent[0].clone())),
+            Some(JumpRow::Recent(recent[1].clone())),
+            None,
             Some(JumpRow::Task(0)),
             Some(JumpRow::Task(1)),
             None,
+        ]
+    );
+    assert_eq!(
+        rows[7..],
+        [
             Some(JumpRow::Window(0)),
             Some(JumpRow::Window(1)),
             Some(JumpRow::Window(2)),
@@ -1209,22 +1225,34 @@ fn jump_lists_follow_what_the_button_stands_for() {
             Some(JumpRow::Close)
         ]
     );
-    let (items, rows) = jump_list("Terminal", &[], &[], true, true, &[], 4);
+    let none = jump_sections(&[], &[]);
+    let (items, _) = jump_list(&none[..], "Terminal", true, true, &[], 1);
+    assert_eq!(
+        labels(&items),
+        ["Terminal", "Unpin this program from taskbar"],
+        "no sections, no headings"
+    );
+    let (items, _) = jump_list(&jump_sections(&[], &tasks), "Terminal", true, true, &[], 1);
+    assert_eq!(
+        labels(&items)[..4],
+        ["[Tasks]", "New Window", "New Tab", "-"]
+    );
+    let (items, rows) = jump_list(&none[..], "Terminal", true, true, &[], 4);
     assert_eq!(
         labels(&items),
         ["Terminal", "Unpin this program from taskbar"]
     );
     assert_eq!(rows, [Some(JumpRow::Launch), Some(JumpRow::Unpin)]);
-    let (items, rows) = jump_list("Editor", &[], &[], false, true, &titles(1), 1);
+    let (items, rows) = jump_list(&none[..], "Editor", false, true, &titles(1), 1);
     assert_eq!(
         labels(&items),
         ["Editor", "Pin this program to taskbar", "Close window"]
     );
     assert_eq!(rows[1], Some(JumpRow::Pin));
     assert!(matches!(items[1], MenuItem::Entry { enabled: true, .. }));
-    let (items, _) = jump_list("Editor", &[], &[], false, false, &titles(1), 1);
+    let (items, _) = jump_list(&none[..], "Editor", false, false, &titles(1), 1);
     assert!(matches!(items[1], MenuItem::Entry { enabled: false, .. }));
-    let (items, rows) = jump_list("Editor", &[], &[], false, true, &titles(2), 4);
+    let (items, rows) = jump_list(&none[..], "Editor", false, true, &titles(2), 4);
     assert_eq!(
         labels(&items)[4..],
         [
@@ -1241,7 +1269,7 @@ fn jump_lists_follow_what_the_button_stands_for() {
 fn a_window_list_moves_the_group_only_with_several_desktops() {
     use WindowListRow::*;
     let titles = ["a", "b"].map(String::from);
-    let (items, rows) = window_list(&titles, 4);
+    let (items, rows) = window_list(&titles, 4, false);
     assert_eq!(
         rows,
         [
@@ -1256,7 +1284,7 @@ fn a_window_list_moves_the_group_only_with_several_desktops() {
     assert!(
         matches!(&items[4], MenuItem::Entry { submenu: true, label, .. } if label == "Move to desktop")
     );
-    let (_, rows) = window_list(&titles, 1);
+    let (_, rows) = window_list(&titles, 1, false);
     assert_eq!(rows[3..], [Some(Minimize), Some(Close)]);
 }
 

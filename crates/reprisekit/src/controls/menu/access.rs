@@ -6,6 +6,11 @@ use crate::raster::Rect;
 use accesskit::{Node, NodeId, Role};
 
 pub fn access_row(item: &MenuItem, r: Rect, open: bool) -> Option<Node> {
+    if let MenuItem::Heading(title) = item {
+        let mut n = access::node(Role::Heading, r);
+        n.set_label(title.as_str());
+        return Some(n);
+    }
     let MenuItem::Entry {
         label,
         enabled,

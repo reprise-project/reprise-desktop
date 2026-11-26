@@ -28,6 +28,8 @@ pub enum WindowMenuRow {
     TabsOf(crate::window::WindowId),
     LeaveTabs,
     Close,
+    /// Opens the program's recent files (`State::recent_menu`), does nothing itself.
+    RecentMenu,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +191,26 @@ pub fn window_menu(
     (items, actions)
 }
 
+/// A task button's window menu `items` and `rows` with Recent Files, the submenu of the
+/// program's recent files, on top.
+pub fn with_recent(
+    (items, rows): (Vec<MenuItem>, Vec<Option<WindowMenuRow>>),
+) -> (Vec<MenuItem>, Vec<Option<WindowMenuRow>>) {
+    let head = [
+        MenuItem::item(RECENT_FILES).submenu(true),
+        MenuItem::Separator,
+    ];
+    let items = head.into_iter().chain(items).collect();
+    let rows = [Some(WindowMenuRow::RecentMenu), None]
+        .into_iter()
+        .chain(rows)
+        .collect();
+    (items, rows)
+}
+
+/// The window menu's and a group's window list's row of the program's recent files.
+pub const RECENT_FILES: &str = "Recent &Files";
+
 /// The Move to Desktop submenu of windows on desktop `own`: every other of
 /// the `count` desktops by its name in `names`, each doing `row(n)`. Shared with the jump list.
 pub fn move_to_menu<R>(
@@ -252,7 +274,7 @@ mod tests {
                 bold,
                 ..
             } => (label, *enabled, *bold),
-            MenuItem::Separator => ("-", false, false),
+            MenuItem::Separator | MenuItem::Heading(_) => ("-", false, false),
         }
     }
 

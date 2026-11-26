@@ -857,7 +857,7 @@ mod tests {
     fn label_at(t: usize, r: usize) -> String {
         match &menus(false)[t].1[r] {
             MenuItem::Entry { label, .. } => label.clone(),
-            MenuItem::Separator => String::new(),
+            MenuItem::Separator | MenuItem::Heading(_) => String::new(),
         }
     }
 

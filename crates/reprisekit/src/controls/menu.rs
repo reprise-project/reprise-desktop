@@ -44,6 +44,8 @@ pub enum MenuItem {
         glyph: Option<MenuGlyph>,
     },
     Separator,
+    /// A section's title over its rows, with a rule to the menu's edge; never lit or picked.
+    Heading(String),
 }
 
 pub use crate::art::glyph::Glyph as MenuGlyph;
@@ -62,6 +64,10 @@ impl MenuItem {
             bold: false,
             glyph: None,
         }
+    }
+
+    pub fn heading(title: impl Into<String>) -> MenuItem {
+        MenuItem::Heading(title.into())
     }
 
     pub fn item(label: &str) -> MenuItem {

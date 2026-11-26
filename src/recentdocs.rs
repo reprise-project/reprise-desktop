@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use crate::compositor::State;
 use crate::fsjobs::Reads;
-use crate::menuview::{MenuKind, RowIcons, jump_relisted};
+use crate::menuview::MenuKind;
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, MenuLayout};
 
@@ -359,23 +359,28 @@ impl State {
                 MenuKind::Documents { dirs, icon_px, .. } => {
                     Some(self.documents_rows(*icon_px, *dirs))
                 }
-                MenuKind::JumpList {
-                    rows,
-                    target,
-                    button,
-                } => {
-                    let (rows, target, button) = (rows.clone(), target.clone(), *button);
-                    let recent = self.jump_recent(&target);
-                    let (items, rows) = jump_relisted(&self.menus[depth].items, &rows, &recent);
-                    Some((
-                        items,
-                        MenuKind::JumpList {
+                MenuKind::JumpList { target, button, .. } => {
+                    let (target, button, output) = (target.clone(), *button, m.output.clone());
+                    let under_window = depth > 0
+                        && matches!(
+                            self.menus[depth - 1].kind,
+                            MenuKind::Window { .. } | MenuKind::WindowList { .. }
+                        );
+                    let built = if depth == 0 {
+                        Some(self.jump_menu(&target, &output))
+                    } else if under_window {
+                        Some(self.recent_menu(&target, &output))
+                    } else {
+                        None
+                    };
+                    built.map(|(items, rows, icons)| {
+                        let kind = MenuKind::JumpList {
                             rows,
                             target,
                             button,
-                        },
-                        RowIcons::default(),
-                    ))
+                        };
+                        (items, kind, icons)
+                    })
                 }
                 _ => None,
             };
@@ -428,6 +433,7 @@ fn keep_bottom(y: i32, old_h: i32, new_h: i32, usable: Rect) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::menuview::RowIcons;
     use crate::startmenu::MenuStyle;
     use std::time::{Duration, Instant};
 
@@ -805,36 +811,6 @@ mod tests {
         assert_eq!(menu.items.len(), 3);
         assert_eq!(menu.hovered, Some(0), "(Empty) takes no hover");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_relisted_jump_list_swaps_only_its_recent_files() {
-        use crate::taskbar::JumpRow;
-        let (a, c) = (PathBuf::from("/srv/a.txt"), PathBuf::from("/srv/c.txt"));
-        let tail = || {
-            (
-                vec![MenuItem::entry("Notepad"), MenuItem::entry("Pin")],
-                vec![Some(JumpRow::Launch), Some(JumpRow::Pin)],
-            )
-        };
-        let (items, rows) = tail();
-        let (items, rows) = jump_relisted(&items, &rows, std::slice::from_ref(&a));
-        assert_eq!(
-            rows,
-            [
-                Some(JumpRow::Recent(a.clone())),
-                None,
-                Some(JumpRow::Launch),
-                Some(JumpRow::Pin)
-            ]
-        );
-        let (items, rows) = jump_relisted(&items, &rows, &[c.clone(), a.clone()]);
-        assert_eq!(
-            rows[..3],
-            [Some(JumpRow::Recent(c)), Some(JumpRow::Recent(a)), None]
-        );
-        assert_eq!(items[3..], tail().0);
-        assert_eq!(jump_relisted(&items, &rows, &[]), tail());
     }
 
     #[test]

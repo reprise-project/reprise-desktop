@@ -294,7 +294,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Entry { enabled, .. } => Some(*enabled),
-                MenuItem::Separator => None,
+                MenuItem::Separator | MenuItem::Heading(_) => None,
             })
             .collect()
     }

@@ -49,6 +49,7 @@ pub fn look(s: &Scheme) -> MenuLook {
         arrow_inset: 9,
         arrow: s.system.menu_text,
         greyed: s.system.gray_text,
+        heading: s.system.hot_light,
         check_at: (0, 0),
         radio_at: (0, 0),
         shadow: Some(&SHADOW),

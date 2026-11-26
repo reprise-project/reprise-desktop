@@ -38,7 +38,8 @@ impl State {
             .iter()
             .map(|&w| self.win(w).map(|x| x.title()).unwrap_or_default())
             .collect();
-        let (items, rows) = crate::taskbar::window_list(&titles, self.desktops.count);
+        let recent = self.has_recent(wins[0]);
+        let (items, rows) = crate::taskbar::window_list(&titles, self.desktops.count, recent);
         let mut waits = RowIcons::default();
         let items: Vec<MenuItem> = (items.into_iter().zip(&rows).enumerate())
             .map(|(n, (item, row))| match row {
@@ -180,7 +181,7 @@ impl State {
                     self.close(w);
                 }
             }
-            WindowListRow::MoveToMenu => {}
+            WindowListRow::MoveToMenu | WindowListRow::RecentMenu => {}
             WindowListRow::MoveTo(n) => self.move_to_desktop(&live, n),
         }
     }

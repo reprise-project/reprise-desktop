@@ -412,10 +412,10 @@ pub fn render_glass_ranges(theme: &Theme) -> Canvas {
     c
 }
 
-/// Glass's menus on white: the menu bars and context menu of `gallery_p3::menu`, a desktop menu with its View submenu open, and the Start panel's Shut down options with Restart lit.
+/// Glass's menus on white: the menu bars and context menu of `gallery_p3::menu`, a desktop menu with its View submenu open, the Start panel's Shut down options with Restart lit, and a task button's jump list with its Recent and Tasks headings.
 pub fn render_glass_menus(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let mut c = Canvas::new(950, 290);
+    let mut c = Canvas::new(950, 520);
     c.fill_rect(c.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
     gallery_p3::menu::draw(&mut c, theme, &text, Rect::new(0, 0, 520, 250));
     let mut icon = Canvas::new(16, 16);
@@ -475,6 +475,37 @@ pub fn render_glass_menus(theme: &Theme) -> Canvas {
         chain.key(&shut, MenuKey::Down, &cx);
     }
     chain.draw(&mut c, &options, &text, true);
+
+    let mut file = Canvas::new(16, 16);
+    file.fill_rect(Rect::new(3, 1, 10, 14), Color::rgb(250, 250, 250));
+    file.ring_t(
+        Rect::new(3, 1, 10, 14),
+        Color::rgb(120, 120, 120),
+        Color::rgb(120, 120, 120),
+        1,
+    );
+    let mut jump = MenuTree::new();
+    for item in [
+        MenuItem::heading("Recent"),
+        MenuItem::entry("notes.txt").icon(Some(file.clone())),
+        MenuItem::entry("todo.txt").icon(Some(file)),
+        MenuItem::heading("Tasks"),
+        MenuItem::entry("New Window"),
+        MenuItem::Separator,
+        MenuItem::entry("Notepad"),
+        MenuItem::entry("Unpin this program from taskbar"),
+        MenuItem::entry("Close window"),
+    ] {
+        jump.push(item);
+    }
+    let cx = MenuCtx {
+        theme,
+        within: Rect::new(0, 250, 400, 250),
+        ..cx
+    };
+    let mut chain = PopupMenu::open(&jump, (10, 260), &cx, false);
+    chain.key(&jump, MenuKey::Down, &cx);
+    chain.draw(&mut c, theme, &text, true);
     c
 }
 

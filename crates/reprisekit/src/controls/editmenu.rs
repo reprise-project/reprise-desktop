@@ -283,7 +283,7 @@ mod tests {
         t.iter()
             .map(|item| match item {
                 MenuItem::Entry { enabled, .. } => Some(*enabled),
-                MenuItem::Separator => None,
+                MenuItem::Separator | MenuItem::Heading(_) => None,
             })
             .collect()
     }
@@ -333,7 +333,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Entry { label, .. } => Some(label.as_str()),
-                MenuItem::Separator => None,
+                MenuItem::Separator | MenuItem::Heading(_) => None,
             })
             .collect();
         assert_eq!(
