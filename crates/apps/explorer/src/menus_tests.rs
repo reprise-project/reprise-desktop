@@ -638,6 +638,16 @@ fn an_ampersand_in_a_program_or_target_name_shows_and_is_no_access_key() {
             "{want}: the first letter, not D"
         );
     }
+    let s = MenuState {
+        extract: Some("R&D/".into()),
+        ..s
+    };
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
+    let row = (m.items().iter())
+        .find(|r| matches!(r, MenuItem::Entry { label, .. } if label.starts_with("Extract to")))
+        .expect("an Extract to row");
+    assert!(matches!(row, MenuItem::Entry { label, .. } if label == "Extract to R&D/"));
+    assert_eq!(row.access_key(), Some('a'), "Extract to's own key");
 }
 
 /// Eject sits alone between Sharing and Security... and Copy, on access key j.
