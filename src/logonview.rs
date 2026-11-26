@@ -6,7 +6,7 @@ use std::time::Instant;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{
     Drawn, Transition, draw_logon, draw_spinner, logon_changed, logon_column, logon_fit_media,
-    logon_layout, logon_region, redraw_logon_within, spin_elapsed, spin_step, spinner_rect,
+    logon_region, redraw_logon_within, spin_elapsed, spin_step, spinner_rect,
 };
 use reprisekit::logon::{self, Logon, LogonAction, LogonKey, LogonLayout, Motion, Moves, Part};
 use reprisekit::pointer::Interaction;
@@ -561,8 +561,7 @@ fn draw(state: &mut State, host: &Host) -> bool {
         panic!("draw_logon");
     }
     v.model.column = logon_column(&v.model, &theme, b);
-    logon_fit_media(&mut v.model, &theme, text, b);
-    let l = logon_layout(&v.model, &theme, text, b);
+    let l = logon_fit_media(&mut v.model, &theme, text, b);
     let canvas = play(v, &l, (&theme, text, scale), now());
     v.layout = Some(l);
     v.painted = Some((v.model.drawn(), theme.clone(), v.hidden));
@@ -585,7 +584,7 @@ fn draw_touched(state: &mut State, host: &Host) -> bool {
         return false;
     };
     v.model.column = logon_column(&v.model, &theme, b);
-    logon_fit_media(&mut v.model, &theme, text, b);
+    let l = logon_fit_media(&mut v.model, &theme, text, b);
     let hidden = v.hidden;
     let Some(painted) = (v.painted.as_ref()).filter(|p| p.1 == theme && p.2 == hidden) else {
         return false;
@@ -604,7 +603,6 @@ fn draw_touched(state: &mut State, host: &Host) -> bool {
     if playing == Some(false) {
         return false;
     }
-    let l = logon_layout(&v.model, &theme, text, b);
     let rects = v.layout.as_ref().and_then(|was| match v.model.motion {
         None => logon_changed(&v.model, &l, &painted.0, was, &theme),
         Some(_) => logon_region(&v.model, &l, &painted.0, was, &theme),
@@ -861,8 +859,7 @@ pub fn screen(
     scale: i32,
 ) -> (LogonLayout, Canvas) {
     m.column = logon_column(m, theme, output);
-    logon_fit_media(m, theme, text, output);
-    let l = logon_layout(m, theme, text, output);
+    let l = logon_fit_media(m, theme, text, output);
     let c = paint(m, &l, theme, text, scale);
     (l, c)
 }

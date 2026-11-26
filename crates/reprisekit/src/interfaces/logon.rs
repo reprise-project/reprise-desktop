@@ -27,12 +27,21 @@ pub fn logon_layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect)
     l
 }
 
-/// Drops `m`'s player when its strip does not fit `output`, so Tab and a reader skip the buttons
-/// that don't show. A host calls it before each layout, after giving the model its player.
-pub fn logon_fit_media(m: &mut Logon, theme: &Theme, text: &TextRenderer, output: Rect) {
-    if m.media.is_some() && logon_layout(m, theme, text, output).media.is_none() {
-        m.set_media(None);
+/// [`logon_layout`] after dropping `m`'s player when its strip does not fit `output`, so Tab and
+/// a reader skip the buttons that don't show. A host lays out with it, after giving the model its
+/// player.
+pub fn logon_fit_media(
+    m: &mut Logon,
+    theme: &Theme,
+    text: &TextRenderer,
+    output: Rect,
+) -> LogonLayout {
+    let l = logon_layout(m, theme, text, output);
+    if m.media.is_none() || l.media.is_some() {
+        return l;
     }
+    m.set_media(None);
+    logon_layout(m, theme, text, output)
 }
 
 pub fn draw_logon(
