@@ -703,6 +703,40 @@ fn a_shell_row_highlight_ends_one_px_past_its_label_at_scale_2() {
 }
 
 #[test]
+fn a_greyed_shell_row_draws_its_icon_at_half() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&FontConfig::default());
+    let red = Color::rgb(0xFF, 0, 0);
+    let mut icon = Canvas::new(16, 16);
+    icon.fill_rect(Rect::new(0, 0, 16, 16), red);
+    let items = [
+        ListItem::shell("Desktop", Some(icon.clone()), 0),
+        ListItem {
+            greyed: true,
+            ..ListItem::shell("Gone", Some(icon), 0)
+        },
+    ];
+    let list = Rect::new(0, 0, 200, 2 * SHELL_ROW_H + 2);
+    let mut c = Canvas::new(200, list.height as u32);
+    let p = classic_paint(&theme.colors, 1);
+    let px = theme.fonts.size_px;
+    draw_list(&mut c, &text, &p, &items, None, 0, 2, list, None, None, px);
+    let x = 1 + LIST_ICON_X + 8;
+    let (live, greyed) = (c.get(x, 1 + 8), c.get(x, 1 + SHELL_ROW_H + 8));
+    assert_eq!(live, red.argb(), "a live row's icon as it is");
+    let mut dot = Canvas::new(1, 1);
+    dot.fill_rect(dot.bounds(), red);
+    let mut half = Canvas::new(1, 1);
+    half.fill_rect(half.bounds(), theme.colors.window);
+    half.blit_over_faded(0, 0, &dot, 1, 2);
+    assert_eq!(
+        greyed,
+        half.get(0, 0),
+        "a greyed row's icon at half over the window"
+    );
+}
+
+#[test]
 fn grown_shell_rows_grow_and_centre_their_icons() {
     let text = TextRenderer::load(&FontConfig::default());
     let red = Color::rgb(0xFF, 0, 0);

@@ -230,7 +230,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
                 let icon = shrunk.as_ref().unwrap_or(icon);
                 let ix = content_x + (content_w - icon.width as i32) / 2;
                 let iy = tile_y + pm.icon_top * s;
-                c.blit_over(ix, iy, icon);
+                if place.enabled {
+                    c.blit_over(ix, iy, icon);
+                } else {
+                    c.blit_over_faded(ix, iy, icon, 1, 2);
+                }
             }
             let max_w = content_w - 4 * s;
             let lines = wrap_label(text, &place.label, max_w, px);
