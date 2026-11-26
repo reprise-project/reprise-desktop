@@ -8,12 +8,21 @@ use serde::{Deserialize, Serialize};
 
 pub fn path() -> std::path::PathBuf {
     #[cfg(test)]
-    return crate::harness::scratch().join("widgets.toml");
+    return OWN_PATH
+        .with_borrow(Clone::clone)
+        .unwrap_or_else(|| crate::harness::scratch().join("widgets.toml"));
     #[cfg(not(test))]
     reprisexdg::state_home()
         .unwrap_or_default()
         .join("reprise")
         .join("widgets.toml")
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A store of this test thread's own, for a test that reads back what other tests write.
+    pub(crate) static OWN_PATH: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -136,8 +145,8 @@ impl Store {
     /// Write the store on the state writer thread.
     pub fn save(&self) {
         let text = self.render();
+        let path = path();
         crate::state::run_in_order(move || {
-            let path = path();
             if let Err(e) =
                 repriseconf::edit_or_reset(&path, |_| Ok::<_, std::convert::Infallible>(text))
             {
