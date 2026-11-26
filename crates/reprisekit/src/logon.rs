@@ -4,11 +4,13 @@
 use crate::access::accesskit::{Live, NodeId, Role};
 use crate::access::{self as ax, ROOT, Tree};
 use crate::interface::Interface;
+use crate::media::{NowPlaying, Transport};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::textedit::{EditKey, TextEdit};
 
+pub mod media;
 mod motion;
 pub use motion::{Change, Motion, Moves, Plan, Slice, Was, Window};
 
@@ -207,6 +209,8 @@ pub enum Part {
     PowerMenu,
     Layout,
     MessageOk,
+    /// A button of the lock's now-playing strip.
+    Media(Transport),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -222,6 +226,8 @@ pub enum LogonAction {
     NextLayout,
     /// Leave the lock for the login screen; the session stays locked.
     SwitchUser,
+    /// Press the lock's player's button: the host calls its Previous, PlayPause or Next.
+    Media(Transport),
 }
 
 /// A question the login conversation asks after the password; `echo` shows the answer as typed.
@@ -293,6 +299,8 @@ pub struct Logon {
     pub over_picture: bool,
     /// The busy ring's step, which the host advances while the screen is busy.
     pub spin: u32,
+    /// The lock's player, which the now-playing strip shows; set through [`Logon::set_media`].
+    pub media: Option<NowPlaying>,
     /// The host's say in whether changes are noted in `motion`.
     pub moves: Moves,
     /// The last change the host has not taken yet.
@@ -348,6 +356,7 @@ impl Logon {
             column: COLUMN,
             over_picture: false,
             spin: 0,
+            media: None,
             moves: Moves::Off,
             motion: None,
             starting: false,
@@ -399,6 +408,7 @@ impl Logon {
             message: self.message.clone(),
             hint: self.hint.clone(),
             layout: self.layout.clone(),
+            media: self.media.clone(),
             motion: self.motion.clone(),
             ..*self
         }
@@ -428,6 +438,31 @@ impl Logon {
 
     pub fn unlocking(&self) -> bool {
         matches!(self.purpose, Purpose::Unlock { .. })
+    }
+
+    /// The lock's player now, or none; a login screen never shows one. A button the focus or the
+    /// pointer was on that goes or greys gives the focus back to the password.
+    pub fn set_media(&mut self, media: Option<NowPlaying>) {
+        self.media = media.filter(|_| self.unlocking()).map(|np| NowPlaying {
+            title: media::clean(&np.title),
+            artist: media::clean(&np.artist),
+            ..np
+        });
+        if !self.media_live(self.focus) {
+            self.focus = self.home();
+        }
+        if self.lit.is_some_and(|(p, _)| !self.media_live(p)) {
+            self.lit = None;
+        }
+    }
+
+    /// False for a media button the player can't press now, or with no player.
+    fn media_live(&self, part: Part) -> bool {
+        match (part, &self.media) {
+            (Part::Media(t), Some(np)) => np.can(t),
+            (Part::Media(_), None) => false,
+            _ => true,
+        }
     }
 
     /// Whether the screen shows Switch User: the lock's when its host offers it, the login
@@ -511,15 +546,24 @@ impl Logon {
         if !self.offers_power() {
             stops.retain(|p| !matches!(p, Power | PowerMenu));
         }
+        if let Some(np) = &self.media {
+            stops.extend(
+                (Transport::ALL.into_iter())
+                    .filter(|&t| np.can(t))
+                    .map(Media),
+            );
+        }
         stops
     }
 
-    /// While busy only Tab and Enter on a focused Power do anything.
+    /// While busy only Tab and Enter on a focused Power or media button do anything.
     pub fn key(&mut self, key: LogonKey) -> Option<LogonAction> {
         if self.busy {
             return match key {
                 LogonKey::Tab { back } => self.tab(back),
-                LogonKey::Enter if self.focus == Part::Power => self.press(Part::Power),
+                LogonKey::Enter if matches!(self.focus, Part::Power | Part::Media(_)) => {
+                    self.press(self.focus)
+                }
                 _ => None,
             };
         }
@@ -565,9 +609,9 @@ impl Logon {
     }
 
     /// A click on `part`: a field takes the focus, anything else is pressed. While busy only
-    /// Power answers.
+    /// Power and the media buttons answer.
     pub fn click(&mut self, part: Part) -> Option<LogonAction> {
-        if self.busy && part != Part::Power {
+        if self.busy && !matches!(part, Part::Power | Part::Media(_)) {
             return None;
         }
         match part {
@@ -595,6 +639,9 @@ impl Logon {
             Part::Power => Some(LogonAction::Power),
             Part::PowerMenu => Some(LogonAction::PowerMenu),
             Part::Layout => Some(LogonAction::NextLayout),
+            Part::Media(t) => (self.media.as_ref())
+                .filter(|np| np.can(t))
+                .map(|_| LogonAction::Media(t)),
             Part::MessageOk => {
                 self.note(Change::MessageOk);
                 self.message = None;
@@ -922,17 +969,22 @@ impl Logon {
             },
             Part::PowerMenu => text::power_options(),
             Part::Layout => self.layout.clone().unwrap_or_default(),
+            Part::Media(t) => (self.media.as_ref())
+                .map(|np| np.glyph(t).1.to_owned())
+                .unwrap_or_default(),
         }
     }
 }
 
 /// Where an interface put the screen's parts, in design px within `output`. `dialog` is the
-/// dialog's frame when the parts sit in one.
+/// dialog's frame when the parts sit in one; `media` is all the now-playing strip paints, its
+/// buttons among the parts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogonLayout {
     pub output: Rect,
     pub parts: Vec<(Part, Rect)>,
     pub dialog: Option<Rect>,
+    pub media: Option<Rect>,
 }
 
 impl LogonLayout {
@@ -983,7 +1035,10 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
         Some(r) => tree.push(ROOT, "dialog", ax::titled(Role::Dialog, r, &m.title())),
         None => ROOT,
     };
-    let live = |p: Part| !m.busy || p == Part::Power;
+    let live = |p: Part| match p {
+        Part::Media(_) => m.media_live(p),
+        _ => !m.busy || p == Part::Power,
+    };
     let mut focus: Option<NodeId> = None;
     for &(part, r) in &l.parts {
         let label = m.name_of(part);
@@ -1028,6 +1083,9 @@ pub fn access(m: &Logon, l: &LogonLayout, tree: &mut Tree) {
         let mut n = ax::label(r, &said.join(" "), true);
         n.set_live(Live::Polite);
         tree.push(parent, ("message", m.failures), n);
+    }
+    if let (Some(np), Some(r)) = (&m.media, l.media) {
+        tree.push(parent, "media", ax::static_text(r, &media::label(np), true));
     }
     if let Some(id) = focus {
         tree.set_focus(id);

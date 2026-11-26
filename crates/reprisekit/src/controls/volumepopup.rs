@@ -9,7 +9,7 @@
 use crate::classic::widgets::ScrollHit;
 use crate::controls::columns::{self, Bar, Hover, Remap, Strip};
 use crate::controls::combo::Combo;
-use crate::look::widgets::MediaGlyph;
+pub use crate::media::{NowPlaying, Transport};
 use crate::pointer::Pointer;
 use crate::raster::Canvas;
 use crate::trackbar::TrackBar;
@@ -85,53 +85,6 @@ pub const NOW_PLAYING: &str = "Now Playing";
 pub const DEFAULT: &str = "Default";
 /// What a device combo shows, greyed, with no device to pick.
 pub const NO_DEVICE: &str = "No audio device";
-
-/// The track a media player has on, and what it can do.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct NowPlaying {
-    pub title: String,
-    /// Empty when the player names none: the title stands alone.
-    pub artist: String,
-    /// Playing rather than paused: the middle button pauses.
-    pub playing: bool,
-    pub can_previous: bool,
-    pub can_next: bool,
-    pub can_play: bool,
-    pub can_pause: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Transport {
-    Previous,
-    PlayPause,
-    Next,
-}
-
-impl Transport {
-    pub const ALL: [Transport; 3] = [Transport::Previous, Transport::PlayPause, Transport::Next];
-}
-
-impl NowPlaying {
-    /// Whether button `t` acts: Play / Pause by what the middle button
-    /// would do now.
-    pub fn can(&self, t: Transport) -> bool {
-        match t {
-            Transport::Previous => self.can_previous,
-            Transport::Next => self.can_next,
-            Transport::PlayPause if self.playing => self.can_pause,
-            Transport::PlayPause => self.can_play,
-        }
-    }
-
-    pub fn glyph(&self, t: Transport) -> (MediaGlyph, &'static str) {
-        match t {
-            Transport::Previous => (MediaGlyph::Previous, "Previous"),
-            Transport::Next => (MediaGlyph::Next, "Next"),
-            Transport::PlayPause if self.playing => (MediaGlyph::Pause, "Pause"),
-            Transport::PlayPause => (MediaGlyph::Play, "Play"),
-        }
-    }
-}
 
 /// A device's volume and mute as trackbar positions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

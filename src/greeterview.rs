@@ -248,7 +248,7 @@ fn act(state: &mut State, action: LogonAction) {
         LogonAction::Power => state.open_dialog(crate::dialog::Dialog::greeter_turn_off()),
         LogonAction::PowerMenu => open_power_menu(state),
         LogonAction::NextLayout => state.next_layout(),
-        LogonAction::SwitchUser => {}
+        LogonAction::SwitchUser | LogonAction::Media(_) => {}
     }
 }
 

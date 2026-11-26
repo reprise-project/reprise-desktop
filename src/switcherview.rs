@@ -1,5 +1,6 @@
 //! The Alt+Tab switcher panel on the scene; `reprisekit::controls::switcher` orders, lays out and draws it.
 //! Minimized windows and open dialogs are entries after the shown ones; a closing dialog leaves the open panel (`switcher_forget`).
+//! The selected window, when its program's player plays or is paused, wears a badge saying which; the media keys press it.
 
 use reprisekit::controls::switcher::{self, SwitcherLayout, ThumbCell};
 use reprisekit::interfaces;
@@ -669,6 +670,10 @@ impl State {
             sw.hot,
             well_icon.as_ref(),
         );
+        let cell = (sw.selected.checked_sub(layout.first)).and_then(|k| layout.cells.get(k));
+        if let (Some(&cell), Some(playing)) = (cell, self.switcher_media(selected)) {
+            switcher::draw_media(&mut canvas, &theme, cell, playing);
+        }
         upload_scaled(&mut self.scene, buffer, &canvas, scale);
     }
 
@@ -775,6 +780,19 @@ impl State {
         let mut over = Canvas::new(w, h);
         interfaces::draw_switcher_badges(&mut over, &theme, &layout, &cells);
         let (buffer, badges) = (sw.buffer, sw.badges);
+        let k = sw.selected.checked_sub(layout.first);
+        let on = k.and_then(|k| cells.get(k)?.picture.or(layout.wells.get(k).copied()));
+        // The canvas starts at the look's shadow, up and left of the panel the rects are in.
+        let on = on.map(|r| Rect::new(r.x - area.x, r.y - area.y, r.width, r.height));
+        let selected = sw.entries.get(sw.selected).copied();
+        if let (Some(on), Some(playing)) = (on, self.switcher_media(selected)) {
+            let c = if badges.is_some() {
+                &mut over
+            } else {
+                &mut canvas
+            };
+            switcher::draw_media(c, &theme, on, playing);
+        }
         self.scene.set_position(buffer, at.x, at.y);
         upload_scaled(&mut self.scene, buffer, &canvas, scale);
         if let Some(badges) = badges {
@@ -846,8 +864,25 @@ impl State {
         let titles: Vec<String> = sw.entries.iter().map(|&e| self.entry_title(e)).collect();
         let mut tree = crate::access::root(Role::Window, "Task Switcher", sw.layout.rect);
         let focus = switcher::access(&titles, sw.selected, &sw.layout, &mut tree, ROOT);
+        let media = self.switcher_media(sw.entries.get(sw.selected).copied());
+        if let (Some(playing), Some(n)) = (media, tree.get_mut(focus)) {
+            n.set_description(if playing { "Playing" } else { "Paused" });
+        }
         tree.set_focus(focus);
         Some(tree)
+    }
+
+    /// Whether entry `e`'s player is playing (true) or paused (false); None for an entry without
+    /// a player or with one stopped.
+    fn switcher_media(&self, e: Option<Entry>) -> Option<bool> {
+        let Some(Entry::Window(w)) = e else {
+            return None;
+        };
+        match crate::previewmedia::status_of(self, w)? {
+            reprisebus::mpris::Status::Playing => Some(true),
+            reprisebus::mpris::Status::Paused => Some(false),
+            reprisebus::mpris::Status::Stopped => None,
+        }
     }
 
     fn switcher_icon(&mut self, e: Entry, px: i32) -> Option<Canvas> {
@@ -1126,5 +1161,41 @@ mod tests {
         h.state.focus_window(term);
         alt_grave(&mut h, 1, false);
         assert_eq!(h.state.focused, Some(term));
+    }
+
+    #[test]
+    fn the_selected_window_whose_player_plays_or_pauses_says_which() {
+        const PID: i32 = 5_000_201;
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect_as(PID);
+        let player = h.map_toplevel(&mut c, "player", 300, 200);
+        let mut o = h.connect();
+        let other = h.map_toplevel(&mut o, "other", 300, 200);
+        h.state.focus_window(other.id);
+        let said = |h: &mut Harness, status: &str| {
+            let mut p = reprisebus::mpris::Players::default();
+            let about = reprisebus::mpris::About {
+                pid: Some(PID as u32),
+                ..Default::default()
+            };
+            let props = crate::previewmedia::tests::status(status, true);
+            p.add("org.mpris.MediaPlayer2.mpv", &props, about);
+            h.state.preview_players.players = p;
+            h.state.redraw_switcher();
+            let tree = h.state.switcher_access().expect("the switcher's tree");
+            let sw = h.state.switcher.panel.as_ref().expect("open");
+            assert_eq!(sw.entries[sw.selected], super::Entry::Window(player.id));
+            let n = tree.get(tree.focus()).expect("the selected entry");
+            n.description().map(str::to_string)
+        };
+        h.state.open_switcher(crate::keys::MOD_ALT);
+        assert_eq!(said(&mut h, "Playing").as_deref(), Some("Playing"));
+        assert_eq!(said(&mut h, "Paused").as_deref(), Some("Paused"));
+        assert_eq!(
+            said(&mut h, "Stopped"),
+            None,
+            "a stopped player says nothing"
+        );
     }
 }

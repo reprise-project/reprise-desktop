@@ -737,3 +737,24 @@ fn a_flying_frame_draws_as_its_glow_box_and_picture_laid_in_turn() {
         }
     }
 }
+
+#[test]
+fn glass_lock_now_playing_pins_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for (name, m) in crate::logon::media::tests::states(Interface::Glass) {
+        for s in [1, 2] {
+            let (mut c, l) = drawn(&m, s);
+            let g = crate::glass::Settings {
+                mode: crate::glass::Mode::Light,
+                ..Default::default()
+            };
+            let theme =
+                crate::interfaces::theme_with(Interface::Glass, Default::default(), &g).scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            crate::interfaces::logon::draw_media(&mut c, &m, &l, &theme, text.for_output(s), s);
+            got.push((format!("{name} @{s}"), fnv(&c)));
+        }
+    }
+    crate::pins::check("glass/logon-locked-media", &got);
+}

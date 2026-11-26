@@ -489,6 +489,7 @@ fn the_power_menu_arrow_is_named_for_its_options() {
         output: Rect::new(0, 0, 1024, 768),
         parts: vec![(Part::PowerMenu, Rect::new(990, 730, 20, 24))],
         dialog: None,
+        media: None,
     };
     let mut tree = Tree::new(ax::node(Role::Window, l.output));
     access(&m, &l, &mut tree);
@@ -645,6 +646,7 @@ fn a_remote_note_reads_connected_remotely() {
             (Part::Tile(1), Rect::new(300, 100, 100, 100)),
         ],
         dialog: None,
+        media: None,
     };
     let mut tree = Tree::new(ax::node(Role::Window, l.output));
     access(&m, &l, &mut tree);

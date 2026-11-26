@@ -2,6 +2,7 @@
 //! The thumbnail style gives every entry a [`CLASSIC`] cell: the window's picture with its icon at the bottom-right, under a title band. The model and both layouts are the root [`crate::switcher`], re-exported here; this module draws Classic's panels. The host owns the scene and the keys.
 
 use crate::access::{self, Tree, accesskit};
+use crate::look::widgets::{MediaGlyph, draw_media_badge};
 use crate::raster::{Canvas, EdgeStyle, Insets, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Theme;
@@ -10,6 +11,10 @@ use accesskit::{Node, NodeId, Role};
 pub use crate::switcher::*;
 
 const ICON_INSET: i32 = 5;
+/// The selected window's media badge: its side, and its inset from the top-left of the picture,
+/// well or cell it sits on.
+const MEDIA_BADGE: i32 = 13;
+const MEDIA_INSET: i32 = 3;
 
 /// Classic's thumbnail panel: a cell of 144x85 abutting across, 8 px
 /// between rows, 8 px of edge round the cells and a 45 px title band on
@@ -154,6 +159,23 @@ pub fn draw_badges(
         let (x, y) = badge(&grid, r, ICON_PX * s, s);
         canvas.blit_over(x, y, icon);
     }
+}
+
+/// The badge of a selected window whose player is playing (a Play mark) or paused (a Pause
+/// mark), at the top-left of `on`, the window's picture, well or cell on the panel's canvas.
+pub fn draw_media(canvas: &mut Canvas, theme: &Theme, on: Rect, playing: bool) {
+    let s = theme.scale.max(1);
+    let r = Rect::new(
+        on.x + MEDIA_INSET * s,
+        on.y + MEDIA_INSET * s,
+        MEDIA_BADGE * s,
+        MEDIA_BADGE * s,
+    );
+    let glyph = match playing {
+        true => MediaGlyph::Play,
+        false => MediaGlyph::Pause,
+    };
+    draw_media_badge(canvas, &theme.paint(), r, glyph);
 }
 
 fn frame(canvas: &mut Canvas, theme: &Theme, cell: Rect, t: i32) {
@@ -531,5 +553,33 @@ mod tests {
         assert_eq!(c.get(w.x + 20, w.y + 20), cs.button_shadow.argb());
         assert_eq!(c.get(w.x + 200, w.y + 125), red.argb());
         assert_eq!(c.get(w.x + 200 - 17, w.y + 125), cs.button_shadow.argb());
+    }
+
+    /// The badge on a 40x30 picture, playing and paused, in each look at scale 1 and 2.
+    #[test]
+    fn the_media_badge_pins_in_each_look_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(look).scaled(s);
+                let mut pair = Vec::new();
+                for playing in [true, false] {
+                    let mut c = Canvas::new(40 * s as u32, 30 * s as u32);
+                    draw_media(&mut c, &theme, Rect::new(0, 0, 40 * s, 30 * s), playing);
+                    let at = |x: i32, y: i32| c.pixels[(y * c.width as i32 + x) as usize];
+                    assert_eq!(at(2 * s, 2 * s), 0, "{look:?}: clear outside the badge");
+                    assert_eq!(
+                        at(3 * s, 3 * s),
+                        theme.colors.hilight.argb(),
+                        "{look:?}: the badge starts 3 px in"
+                    );
+                    got.push((format!("{look:?} {playing} @{s}"), crate::pins::fnv(&c)));
+                    pair.push(c.pixels.clone());
+                }
+                assert_ne!(pair[0], pair[1], "{look:?}: playing and paused differ");
+            }
+        }
+        crate::pins::check("controls/switcher_media_badge", &got);
     }
 }

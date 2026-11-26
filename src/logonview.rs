@@ -125,14 +125,19 @@ impl LogonView {
         Some(tree)
     }
 
-    /// Whether `pos` lies on the screen's dialog or one of its parts; never while hidden.
+    /// Whether `pos` lies on the screen's dialog, its now-playing strip or one of its parts; never
+    /// while hidden.
     pub fn covers_point(&self, pos: Point<f64, Logical>) -> bool {
         let (x, y) = (pos.x.floor() as i32, pos.y.floor() as i32);
         self.part_at(pos).is_some()
             || (self.layout.as_ref())
                 .filter(|_| !self.hidden)
-                .and_then(|l| l.dialog)
-                .is_some_and(|d| d.contains(x, y))
+                .is_some_and(|l| {
+                    [l.dialog, l.media]
+                        .iter()
+                        .flatten()
+                        .any(|d| d.contains(x, y))
+                })
     }
 }
 

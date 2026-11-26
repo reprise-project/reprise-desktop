@@ -2,6 +2,9 @@
 
 use crate::interface::Interface;
 use crate::logon::{COLUMN, Logon, LogonLayout, Part, Touched};
+use crate::look::Paint;
+use crate::look::widgets::draw_media_button;
+use crate::pointer::lit_of;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::theme::Theme;
@@ -30,6 +33,37 @@ pub fn draw_logon(
         Interface::Classic => classic::logon::draw(c, m, l, theme, text, s),
         Interface::Blue => blue::logon::draw(c, m, l, theme, text, s),
         Interface::Glass => glass::logon::draw(c, m, l, theme, text, s),
+    }
+    draw_media(c, m, l, theme, text, s);
+}
+
+/// The now-playing strip's buttons in the look's push buttons, greyed where the player can't do
+/// what they do; the interface's painter drew the strip's text.
+pub(crate) fn draw_media(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    text: &TextRenderer,
+    s: i32,
+) {
+    let Some(np) = &m.media else {
+        return;
+    };
+    let o = l.output;
+    let p = Paint { s, ..theme.paint() };
+    let px = theme.fonts.size_px * s as u32 / theme.scale.max(1) as u32;
+    for &(part, r) in &l.parts {
+        let Part::Media(t) = part else {
+            continue;
+        };
+        let at = Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
+        if !c.reaches(at) {
+            continue;
+        }
+        let ptr = lit_of(m.lit, part);
+        let focus = m.focus == part;
+        draw_media_button(c, text, &p, at, np.glyph(t).0, np.can(t), ptr, focus, px);
     }
 }
 
