@@ -114,7 +114,7 @@ impl PropSheet {
         Frame {
             inside: Rect::new(x, top, right - x, bottom - top),
             reach: self.reach(),
-            bar: self.bar_len(),
+            bar: self.page_bar_len(),
             edge: 2 * PAGE_EDGE,
         }
     }
@@ -131,8 +131,9 @@ impl PropSheet {
         (w - MARGIN - PAGE_EDGE, h - PAGE_BOTTOM - PAGE_EDGE)
     }
 
-    /// The page's scrollbars' width at 100%: the look's, as the layout reserves it.
-    fn bar_len(&self) -> i32 {
+    /// The page's scrollbars' width at 100%: the look's at the text size of the last draw, as the
+    /// layout reserves it.
+    pub fn page_bar_len(&self) -> i32 {
         self.pages
             .get(self.tabs.open)
             .map_or(0, |p| p.units().design(p.controls().scroll))
