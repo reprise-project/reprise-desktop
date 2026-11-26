@@ -693,6 +693,7 @@ impl State {
                 self.pointer_motion(None, pos, time);
                 self.set_cursor("default");
                 self.menu_hover(depth, row);
+                self.menu_arrow_hover(depth, pos.x, pos.y);
             }
             Hit::Dialog { index, button } => {
                 self.pointer_motion(None, pos, time);

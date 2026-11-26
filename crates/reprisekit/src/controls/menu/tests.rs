@@ -2225,7 +2225,7 @@ fn folders(icon: i32) -> Vec<MenuItem> {
     ic.pixels.fill(INK);
     (0..24)
         .map(|i| {
-            MenuItem::entry(format!("Program folder {i}"))
+            MenuItem::entry(format!("Folder {i}"))
                 .icon(Some(ic.clone()))
                 .submenu(i % 3 == 0)
                 .enabled(i != 1)
@@ -2389,7 +2389,7 @@ fn a_menu_in_columns_gives_each_row_its_place_to_a_reader() {
         }
         let (a, c) = (b(rows[2]), b(rows[hot]));
         assert!(c.x0 >= a.x1 && c.y0 == a.y0, "{name}: {c:?} beside {a:?}");
-        let label = format!("Program folder {hot}");
+        let label = format!("Folder {hot}");
         assert_eq!(t.get(rows[hot]).unwrap().label(), Some(label.as_str()));
     }
 }
@@ -2544,4 +2544,199 @@ fn a_heading_sets_its_title_before_a_rule_and_takes_no_hover_or_key() {
         }
     }
     crate::pins::check("controls/menu_headings", &hashes);
+}
+
+fn long_programs(n: usize) -> Vec<MenuItem> {
+    (1..=n)
+        .map(|i| MenuItem::entry(format!("Test Program Number {i:02} With A Long Name")))
+        .collect()
+}
+
+/// Thirty long labels in a 300x200 room: too wide for columns, so one column that scrolls.
+fn scrolling(theme: &Theme, text: &TextRenderer) -> MenuLayout {
+    let items = long_programs(30);
+    MenuStyle::submenu(theme).layout_within(text, &items, theme.fonts.size_px, (300, 200))
+}
+
+#[test]
+fn a_folder_too_wide_for_columns_scrolls_in_one_column_with_every_label_whole() {
+    let theme = Theme::default().with_text_size(200);
+    let text = TextRenderer::load(&theme.fonts);
+    let style = MenuStyle::submenu(&theme);
+    let size = theme.fonts.size_px;
+    let items = long_programs(60);
+    let l = style.layout_within(&text, &items, size, (720, 450));
+    assert_eq!((l.columns, l.height), (1, 450));
+    assert_eq!(l.scroll.map(|sc| sc.first), Some(0));
+    assert!(l.shown(0) && !l.shown(59));
+    assert_eq!(l.width, style.fit(&text, &items, size, 720).width);
+    let short: Vec<_> = (0..60).map(|i| MenuItem::entry(format!("P{i}"))).collect();
+    let l = style.layout_within(&text, &short, size, (720, 450));
+    assert!(l.columns > 1, "short labels still wrap into columns");
+    assert_eq!(l.scroll, None);
+}
+
+#[test]
+fn a_scrolling_menu_moves_a_row_at_a_time_and_brings_a_row_into_view() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let mut l = scrolling(&theme, &text);
+    let first = |l: &MenuLayout| l.scroll.unwrap().first;
+    let last_shown = |l: &MenuLayout| (0..30).rfind(|&i| l.shown(i)).unwrap();
+    assert!(!l.can_scroll(ScrollArrow::Up) && l.can_scroll(ScrollArrow::Down));
+    assert!(l.scroll_by(1));
+    assert_eq!(first(&l), 1);
+    assert!(!l.shown(0) && l.shown(1));
+    let r = l.rows[0];
+    assert_eq!(
+        l.hit(r.x + 2, r.y + 2),
+        None,
+        "a row scrolled away takes no pointer"
+    );
+    assert!(l.scroll_by(-5));
+    assert_eq!(first(&l), 0);
+    assert!(!l.scroll_by(-1), "nothing above the first row");
+    assert!(l.scroll_by(1000));
+    assert!(l.shown(29) && !l.can_scroll(ScrollArrow::Down));
+    assert!(l.scroll_to_show(0));
+    assert_eq!(first(&l), 0);
+    let below = last_shown(&l) + 3;
+    assert!(l.scroll_to_show(below));
+    assert_eq!(
+        last_shown(&l),
+        below,
+        "it scrolls as little as shows the row"
+    );
+    assert!(!l.scroll_to_show(below));
+    assert_eq!(l.arrow_at(10, 1), Some(ScrollArrow::Up));
+    assert_eq!(l.arrow_at(10, l.height - 1), Some(ScrollArrow::Down));
+    assert_eq!(l.arrow_at(10, l.height / 2), None);
+    let doubled = l.scaled(2);
+    assert!(
+        (0..30).all(|i| doubled.shown(i) == l.shown(i)),
+        "scale 2 shows the same rows"
+    );
+}
+
+#[test]
+fn a_relisted_scrolling_menu_keeps_its_height_and_top_row() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let mut items = long_programs(30);
+    let mut l = scrolling(&theme, &text);
+    l.scroll_to(4);
+    let (height, width) = (l.height, l.column_width);
+    let keys: Vec<usize> = (0..30).collect();
+    let more: Vec<usize> = (0..31).collect();
+    let mut hovered = None;
+    relist(
+        &mut items,
+        &mut l,
+        &mut hovered,
+        &keys,
+        &more,
+        long_programs(31),
+        width,
+    );
+    assert_eq!((l.height, l.scroll.map(|sc| sc.first)), (height, Some(4)));
+}
+
+/// A scrolled menu in each look at scale 1 and 2: both arrows inked, the top one greyed once
+/// the menu is back at its first row, and only whole rows between them.
+#[test]
+fn a_scrolling_menu_pins_in_each_look_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let glass = crate::interfaces::theme_with(
+        crate::interface::Interface::Glass,
+        Default::default(),
+        &Default::default(),
+    );
+    let looks = [
+        ("Classic", Theme::default()),
+        (
+            "Blue",
+            crate::interfaces::blue_theme(crate::blue::Variant::Blue),
+        ),
+        ("Glass", glass),
+    ];
+    let items = long_programs(30);
+    let mut got = Vec::new();
+    for (look, base) in looks {
+        let text = TextRenderer::load(&base.fonts);
+        for s in [1, 2] {
+            let theme = base.scaled(s);
+            let draw = |first: usize| {
+                let mut l = scrolling(&base, &text);
+                l.scroll_to(first);
+                let l = l.scaled(s);
+                let mut c = Canvas::new(l.width as u32, l.height as u32);
+                draw_menu(
+                    &mut c,
+                    &theme,
+                    &text,
+                    &l,
+                    &items,
+                    Some(first + 1),
+                    "",
+                    false,
+                );
+                (l, c)
+            };
+            let (l, c) = draw(5);
+            let band = |c: &Canvas, a| c.copy_rect(l.arrow_rect(a).unwrap());
+            for a in [ScrollArrow::Up, ScrollArrow::Down] {
+                let b = band(&c, a);
+                assert!(
+                    b.pixels.iter().any(|&p| p != b.pixels[0]),
+                    "{look} {s}: the {a:?} arrow is drawn"
+                );
+            }
+            let (_, top) = draw(0);
+            assert_ne!(
+                band(&c, ScrollArrow::Up).pixels,
+                band(&top, ScrollArrow::Up).pixels,
+                "{look} {s}: the up arrow greys at the first row"
+            );
+            got.push((format!("{look} {s}"), fnv(&c)));
+        }
+    }
+    crate::pins::check("menu_scroll", &got);
+}
+
+#[test]
+fn a_popup_scrolls_under_its_arrows_by_the_wheel_and_to_a_key_picked_row() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let tree = MenuTree::flat(long_programs(30));
+    let cx = MenuCtx {
+        text: &text,
+        theme: &theme,
+        px: theme.fonts.size_px,
+        within: Rect::new(0, 0, 300, 200),
+    };
+    let mut p = PopupMenu::open(&tree, (0, 0), &cx, false);
+    let first = |p: &PopupMenu| p.levels()[0].layout.scroll.expect("it scrolls").first;
+    let (ox, oy) = p.levels()[0].origin;
+    let h = p.levels()[0].layout.height;
+    let t0 = std::time::Instant::now();
+    assert!(p.motion_at(&tree, ox + 20, oy + h - 2, &cx, t0));
+    assert_eq!(
+        first(&p),
+        1,
+        "resting on the down arrow scrolls a row at once"
+    );
+    assert_eq!(p.due(), Some(t0 + SCROLL_REPEAT));
+    assert!(p.settle(t0 + SCROLL_REPEAT));
+    assert_eq!(first(&p), 2, "and a row each repeat");
+    p.motion_at(&tree, ox + 20, oy + h / 2, &cx, t0 + SCROLL_REPEAT);
+    assert_eq!(p.due(), None, "off the arrow it stops");
+    assert!(p.wheel(ox + 20, oy + h / 2, -3));
+    assert_eq!(first(&p), 0);
+    p.key(&tree, MenuKey::End, &cx);
+    let l = &p.levels()[0];
+    assert_eq!(l.hovered, Some(29));
+    assert!(
+        l.layout.shown(29),
+        "End lights the last row and scrolls it into view"
+    );
 }

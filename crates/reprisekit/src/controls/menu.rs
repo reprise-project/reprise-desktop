@@ -16,10 +16,10 @@ pub use access::{access_menu, access_row};
 pub use draw::{BULLET_D, draw_menu, draw_menu_at};
 pub use keys::{KeyAct, MenuKey, key_act, key_act_in, row_has_submenu};
 pub use layout::{
-    ARROW_RIGHT_INSET, BULLET_X, CHECK_X, ContextBitmaps, MenuLayout, MenuStyle, place_popup,
-    place_submenu, place_submenu_beside, place_submenu_inset, relist,
+    ARROW_RIGHT_INSET, BULLET_X, CHECK_X, ContextBitmaps, MenuLayout, MenuScroll, MenuStyle,
+    ScrollArrow, place_popup, place_submenu, place_submenu_beside, place_submenu_inset, relist,
 };
-pub use popup::{Level, MenuAction, MenuCtx, MenuTree, PopupMenu, submenu_anchor};
+pub use popup::{Level, MenuAction, MenuCtx, MenuTree, PopupMenu, SCROLL_REPEAT, submenu_anchor};
 pub use shadow::{
     draw_menu_shadow, draw_shadow, draw_shadow_above, draws_own_shadow, level_shadow, shadow_reach,
 };

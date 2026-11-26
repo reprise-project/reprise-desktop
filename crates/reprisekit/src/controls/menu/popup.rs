@@ -2,7 +2,7 @@
 
 use super::draw::draw_menu_at;
 use super::keys::{KeyAct, MenuKey, key_act_in};
-use super::layout::{BORDER, INSET, MenuLayout, MenuStyle, place_submenu};
+use super::layout::{BORDER, INSET, MenuLayout, MenuStyle, ScrollArrow, place_submenu};
 use super::shadow::menu_look;
 use super::{KeyStops, MenuItem, step_selection};
 use crate::controls::hosted::{Anchor, Chain, Spot};
@@ -140,8 +140,12 @@ impl Level {
     }
 }
 
-/// The open chain. Hovering a row opens or closes a submenu after `[metrics] menu_hover_ms`:
-/// the host calls [`PopupMenu::settle`] once [`PopupMenu::due`] passes.
+/// How often a scroll arrow the pointer rests on scrolls its menu a row.
+pub const SCROLL_REPEAT: Duration = Duration::from_millis(60);
+
+/// The open chain. Hovering a row opens or closes a submenu after `[metrics] menu_hover_ms`,
+/// and resting on a scroll arrow scrolls every [`SCROLL_REPEAT`]: the host calls
+/// [`PopupMenu::settle`] once [`PopupMenu::due`] passes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PopupMenu {
     pub(super) levels: Vec<Level>,
@@ -154,6 +158,8 @@ pub struct PopupMenu {
     pub(crate) anchor: Anchor,
     /// Shown on popups by a host ([`Hosted`]): [`PopupMenu::draw`] leaves it out.
     hosted: bool,
+    /// The scroll arrow the pointer rests on: its level and when it scrolls next.
+    scrolling: Option<(usize, ScrollArrow, Instant)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -197,6 +203,7 @@ impl PopupMenu {
             keys: by_keyboard,
             anchor: Anchor::Point(at.0, at.1),
             hosted: false,
+            scrolling: None,
         }
     }
 
@@ -319,9 +326,12 @@ impl PopupMenu {
         now: Instant,
     ) -> bool {
         let Some((level, row)) = self.hit(x, y) else {
+            self.scrolling = None;
             return false;
         };
-        let mut dirty = false;
+        let (ox, oy) = self.levels[level].origin;
+        let arrow = self.levels[level].layout.arrow_at(x - ox, y - oy);
+        let mut dirty = self.rest_on_arrow(level, arrow, now);
         if self.levels[level].hovered != row {
             self.levels[level].hovered = row;
             dirty = true;
@@ -356,14 +366,73 @@ impl PopupMenu {
         dirty | self.settle(now)
     }
 
-    /// When the hovered row's submenu opens or closes; none while nothing waits.
-    pub fn due(&self) -> Option<Instant> {
-        self.pending.as_ref().map(|p| p.at)
+    /// The pointer rests on `arrow` (or none) of `level`: a new arrow scrolls a row at once and
+    /// again every [`SCROLL_REPEAT`]. `true` when it scrolled.
+    fn rest_on_arrow(&mut self, level: usize, arrow: Option<ScrollArrow>, now: Instant) -> bool {
+        let Some(arrow) = arrow else {
+            self.scrolling = None;
+            return false;
+        };
+        if self
+            .scrolling
+            .is_some_and(|(l, a, _)| (l, a) == (level, arrow))
+        {
+            return false;
+        }
+        self.scrolling = Some((level, arrow, now + SCROLL_REPEAT));
+        self.scroll_level(level, arrow_step(arrow))
     }
 
-    /// Opens or closes the submenu the pointer rests on once its delay has passed by `now`;
-    /// `true` when the chain changed.
+    /// Scrolls `level` `rows` rows, closing what it had open; `true` when it moved.
+    fn scroll_level(&mut self, level: usize, rows: i32) -> bool {
+        let moved = self.levels[level].layout.scroll_by(rows);
+        if moved {
+            self.levels.truncate(level + 1);
+            self.pending = None;
+        }
+        moved
+    }
+
+    /// The wheel turned `rows` rows over (x, y): the menu under it scrolls, and the row under the
+    /// pointer lights. `true` when it scrolled.
+    pub fn wheel(&mut self, x: i32, y: i32, rows: i32) -> bool {
+        let Some((level, _)) = self.hit(x, y) else {
+            return false;
+        };
+        if !self.scroll_level(level, rows) {
+            return false;
+        }
+        let (ox, oy) = self.levels[level].origin;
+        self.levels[level].hovered = self.levels[level].layout.hit(x - ox, y - oy);
+        true
+    }
+
+    /// When the hovered row's submenu opens or closes, or a scroll arrow scrolls; none while
+    /// nothing waits.
+    pub fn due(&self) -> Option<Instant> {
+        let scroll = self.scrolling.map(|(_, _, at)| at);
+        self.pending
+            .as_ref()
+            .map(|p| p.at)
+            .into_iter()
+            .chain(scroll)
+            .min()
+    }
+
+    /// Opens or closes the submenu the pointer rests on once its delay has passed by `now`, and
+    /// scrolls under a scroll arrow; `true` when the chain changed.
     pub fn settle(&mut self, now: Instant) -> bool {
+        let mut scrolled = false;
+        if let Some((level, arrow, at)) = self.scrolling
+            && at <= now
+        {
+            scrolled = level < self.levels.len() && self.scroll_level(level, arrow_step(arrow));
+            self.scrolling = scrolled.then_some((level, arrow, now + SCROLL_REPEAT));
+        }
+        scrolled | self.settle_pending(now)
+    }
+
+    fn settle_pending(&mut self, now: Instant) -> bool {
         if self.pending.as_ref().is_none_or(|p| p.at > now) {
             return false;
         }
@@ -397,11 +466,11 @@ impl PopupMenu {
             // Not the menu's: the host decides (Right off a plain row walks to the next title).
             KeyAct::Nothing => MenuAction::None,
             KeyAct::Select(row) => {
-                self.levels[last].hovered = row;
+                self.select(last, row);
                 MenuAction::Redraw
             }
             KeyAct::SelectAnd(row, then) => {
-                self.levels[last].hovered = Some(row);
+                self.select(last, Some(row));
                 self.apply_key(tree, last, *then, cx)
             }
             KeyAct::CloseTopmost if last == 0 => MenuAction::Close,
@@ -415,6 +484,15 @@ impl PopupMenu {
                 MenuAction::Redraw
             }
             KeyAct::Activate(row) => self.pick(tree, last, Some(row), cx),
+        }
+    }
+
+    /// Lights `row` of `level`, scrolled into view.
+    fn select(&mut self, level: usize, row: Option<usize>) {
+        let l = &mut self.levels[level];
+        l.hovered = row;
+        if let Some(r) = row {
+            l.layout.scroll_to_show(r);
         }
     }
 
@@ -558,6 +636,13 @@ pub fn submenu_anchor(parent: &MenuLayout, row: usize) -> Option<(Rect, i32)> {
     let overlap = BORDER + INSET.left;
     let w = (parent.width - 2 * overlap).max(1);
     Some((Rect::new(overlap, row.y, w, row.height), -INSET.top))
+}
+
+fn arrow_step(arrow: ScrollArrow) -> i32 {
+    match arrow {
+        ScrollArrow::Up => -1,
+        ScrollArrow::Down => 1,
+    }
 }
 
 impl Chain for PopupMenu {

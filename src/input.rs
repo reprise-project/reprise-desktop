@@ -526,9 +526,9 @@ impl State {
     }
 
     /// Whether the shell takes `frame`: a tray icon's, the notification history's
-    /// (`tray_axis`), a dialog's, the emoji picker's, the clipboard history's, the launcher's or
-    /// the displays panel's when the pointer is over one, the pager's (and the desktop's with
-    /// `wheel_on_desktop`).
+    /// (`tray_axis`), a dialog's, a scrolling menu's, the emoji picker's, the clipboard history's,
+    /// the launcher's or the displays panel's when the pointer is over one, the pager's (and the
+    /// desktop's with `wheel_on_desktop`).
     fn shell_axis(&mut self, frame: &AxisFrame) -> bool {
         // The wheel rolls the 3D switcher; the Alt+Tab panel and region
         // overlay own the pointer and ignore it.
@@ -550,6 +550,11 @@ impl State {
         }
         if matches!(hit, Hit::ClipView { .. }) {
             self.clipview_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+            return true;
+        }
+        if let Hit::Menu { depth, .. } = hit
+            && self.menu_wheel(depth, frame.v120.map_or(0, |v| v.1), frame.axis.1)
+        {
             return true;
         }
         if matches!(hit, Hit::Launcher { .. }) {

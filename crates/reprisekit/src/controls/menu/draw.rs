@@ -1,7 +1,7 @@
 use super::MenuItem;
 use super::layout::{
     ARROW_RIGHT_INSET, ARROW_SPACE, BANNER_OVER, BANNER_PAD, BULLET_X, CHECK_DY, CHECK_X,
-    MenuLayout,
+    MenuLayout, ScrollArrow,
 };
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
@@ -36,6 +36,43 @@ fn draw_arrow(canvas: &mut Canvas, x: i32, y: i32, s: i32, color: crate::theme::
     for col in 0..4 {
         let h = 7 - 2 * col;
         canvas.fill_rect(Rect::new(x + col * s, y + col * s, s, h * s), color);
+    }
+}
+
+/// A scrolling menu's arrow bands in `bg`, each with its 7x4 arrow in `ink`, or in `greyed` once
+/// the menu can scroll no further that way.
+#[allow(clippy::too_many_arguments)]
+fn draw_scroll_arrows(
+    canvas: &mut Canvas,
+    (ox, oy): (i32, i32),
+    layout: &MenuLayout,
+    bg: crate::theme::Color,
+    ink: crate::theme::Color,
+    greyed: crate::theme::Color,
+    k: i32,
+    s: i32,
+) {
+    let g = k * s;
+    for arrow in [ScrollArrow::Up, ScrollArrow::Down] {
+        let Some(r) = layout.arrow_rect(arrow) else {
+            return;
+        };
+        let r = Rect::new(r.x + ox, r.y + oy, r.width, r.height);
+        canvas.fill_rect(r, bg);
+        let color = if layout.can_scroll(arrow) {
+            ink
+        } else {
+            greyed
+        };
+        let x = r.x + (r.width / s - 7 * k) / 2 * s;
+        let y = centred(&r, 4 * k, s);
+        for i in 0..4 {
+            let (dx, w) = match arrow {
+                ScrollArrow::Up => (3 - i, 2 * i + 1),
+                ScrollArrow::Down => (i, 7 - 2 * i),
+            };
+            canvas.fill_rect(Rect::new(x + dx * g, y + i * g, w * g, g), color);
+        }
     }
 }
 
@@ -208,7 +245,12 @@ pub fn draw_menu_at(
             canvas.etched_vline_t(x, oy + s, oy + layout.height - s, cs, s);
         }
     }
+    let greyed = cs.gray_text;
+    draw_scroll_arrows(canvas, at, layout, cs.menu, cs.menu_text, greyed, k, s);
     for (i, (item, r)) in items.iter().zip(&layout.rows).enumerate() {
+        if !layout.shown(i) {
+            continue;
+        }
         let r = &Rect::new(r.x + ox, r.y + oy, r.width, r.height);
         match item {
             MenuItem::Separator => {
@@ -451,8 +493,12 @@ fn draw_gutter_menu(
             canvas.fill_rect(line(x), m.rule.1);
         }
     }
+    draw_scroll_arrows(canvas, (ox, oy), layout, cs.menu, m.arrow, m.greyed, k, s);
     let past_divider = layout.gutter + 2 * s;
     for (i, (item, r)) in items.iter().zip(&layout.rows).enumerate() {
+        if !layout.shown(i) {
+            continue;
+        }
         let r = Rect::new(r.x + ox, r.y + oy, r.width, r.height);
         if let MenuItem::Heading(title) = item {
             let text_rect = Rect::new(r.x + layout.text_x, r.y, r.width - layout.text_x, r.height);
