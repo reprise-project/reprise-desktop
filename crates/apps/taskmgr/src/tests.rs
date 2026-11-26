@@ -1285,3 +1285,35 @@ fn the_process_tip_comes_up_under_the_pointer_at_scale_2() {
         "the tip is drawn at its logical size plus its shadow, got {drawn:?} for {r:?}"
     );
 }
+
+#[test]
+fn the_process_tip_closes_when_another_process_sorts_under_the_pointer() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    open(&mut t, &mut ctx, Page::Processes);
+    let at = row_point(&t, &ctx, 0);
+    t.event(
+        MAIN,
+        Event::Pointer(PointerInput::Motion { x: at.0, y: at.1 }),
+        &mut ctx,
+    );
+    t.tip.as_mut().expect("a tip rests on ark's row").shown = true;
+    let tip = |t: &mut TaskMgr, ctx: &mut Ctx| {
+        let (w, h) = ctx.size;
+        let mut c = Canvas::new(w as u32, h as u32);
+        t.draw(MAIN, &mut c, ctx);
+        c.take_tip().map(|tip| tip.text)
+    };
+    t.take(snapshot(), &mut ctx);
+    assert_eq!(
+        tip(&mut t, &mut ctx).as_deref(),
+        Some("/usr/bin/ark --flag"),
+        "ark still under the pointer keeps its tip"
+    );
+    let mut s = snapshot();
+    s.procs[1].cpu = 20.0;
+    t.take(s, &mut ctx);
+    assert_eq!(t.proc_rows[0].name, "notepad", "notepad sorts first");
+    assert_eq!(tip(&mut t, &mut ctx), None, "ark's tip closes");
+    assert!(t.tip.is_none(), "and does not come back over notepad");
+}
