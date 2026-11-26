@@ -161,6 +161,13 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
                 rows: vec![row("Notepad"), row("Sticky Notes"), row("Web Browser")],
             },
             ResultGroup {
+                title: "Settings (1)".into(),
+                rows: vec![ResultRow {
+                    detail: "Hold balloons during quiet hours".into(),
+                    ..row("Notifications")
+                }],
+            },
+            ResultGroup {
                 title: "Files (3)".into(),
                 rows: vec![
                     ResultRow {

@@ -79,6 +79,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   `[privacy] recent_files = false` hides them and records none.
 - **Launcher.** Super+Space finds programs, settings ("repeat delay" opens
   its page on that control), files in your home folder and open windows.
+  Glass Start's search finds the same; a settings row found by a search
+  word greys that word after the page's name ("Advanced  low disk space").
 - **Sums and units.** Type `2+3*4` or `5 km in mi` in the launcher and Enter
   copies the result.
 - **File search** uses plocate's database, or `fd` without one, so nothing

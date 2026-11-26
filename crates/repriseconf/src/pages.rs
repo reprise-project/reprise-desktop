@@ -598,6 +598,18 @@ impl Page {
             .map(|&(id, _)| Hit::Control(id))
     }
 
+    /// The keyword `query` found the page by: the first holding every word the label lacks, else
+    /// the first holding one; None when the label holds them all.
+    pub fn keyword_for(self, query: &str) -> Option<&'static str> {
+        keyword_for(query, self.label(), self.keywords())
+    }
+
+    /// Control `id`'s label as shown, without a trailing ":" or "...".
+    pub fn control_label(self, id: &str) -> Option<&'static str> {
+        let &(_, label) = self.terms().iter().find(|&&(i, _)| i == id)?;
+        Some(label.trim_end_matches("...").trim_end_matches(':'))
+    }
+
     /// The one control whose label holds every word of `query` the page label lacks; `None`
     /// when no control or several do ("mouse speed" names three speeds).
     fn sole_control(self, query: &str) -> Option<&'static str> {
@@ -655,6 +667,24 @@ impl Program {
     pub fn find(&self, query: &str, name: &str) -> Option<Hit> {
         find_by_name(query, name, self.keywords)
     }
+
+    /// [`Page::keyword_for`], `name` its desktop-entry name.
+    pub fn keyword_for(&self, query: &str, name: &str) -> Option<&'static str> {
+        keyword_for(query, name, self.keywords)
+    }
+}
+
+fn keyword_for(query: &str, name: &str, keywords: &[&'static str]) -> Option<&'static str> {
+    let rest: Vec<&str> = (query.split_whitespace())
+        .filter(|w| !word_starts(w, name))
+        .collect();
+    if rest.is_empty() {
+        return None;
+    }
+    let joined = rest.join(" ");
+    (keywords.iter().copied())
+        .find(|k| all_words(&joined, &[k]))
+        .or_else(|| (keywords.iter().copied()).find(|k| rest.iter().any(|w| word_starts(w, k))))
 }
 
 fn find_by_name(query: &str, name: &str, keywords: &[&str]) -> Option<Hit> {
@@ -856,6 +886,39 @@ mod tests {
         );
         assert_eq!(Hit::Control("repeat_delay").focus(), Some("repeat_delay"));
         assert_eq!(Hit::Label.focus(), None);
+    }
+
+    #[test]
+    fn a_keyword_hit_names_the_keyword_holding_the_words_the_label_lacks() {
+        assert_eq!(Page::Advanced.keyword_for("disk"), Some("low disk space"));
+        assert_eq!(Page::Advanced.keyword_for("advanced"), None, "a label hit");
+        assert_eq!(
+            Page::FontsAndIcons.keyword_for("fonts antialias"),
+            Some("antialias"),
+            "the word the label lacks"
+        );
+        assert_eq!(
+            Page::Notifications.keyword_for("quiet hours"),
+            Some("quiet hours"),
+            "the keyword holding both words before one holding either"
+        );
+        let network = program("reprise-network.desktop").unwrap();
+        assert_eq!(
+            network.keyword_for("wifi", "Network Connections"),
+            Some("wifi")
+        );
+        assert_eq!(network.keyword_for("network", "Network Connections"), None);
+    }
+
+    #[test]
+    fn a_control_label_drops_its_colon_and_dots() {
+        assert_eq!(Page::Keyboard.control_label("repeat_delay"), Some("Delay"));
+        assert_eq!(Page::Background.control_label("browse"), Some("Browse"));
+        assert_eq!(
+            Page::Notifications.control_label("quiet_hours"),
+            Some("Hold balloons during quiet hours")
+        );
+        assert_eq!(Page::Keyboard.control_label("nothing"), None);
     }
 
     #[test]

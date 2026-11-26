@@ -104,6 +104,18 @@ impl Setting {
             Setting::App(i) => apps[i].icon.clone(),
         }
     }
+
+    /// What `query` found it by beyond its name, for the row's grey detail: the label of the
+    /// control it focuses, else the keyword.
+    pub fn detail(self, query: &str, apps: &[AppEntry]) -> Option<&'static str> {
+        match self {
+            Setting::Page(p) => p.keyword_for(query),
+            Setting::Control(p, id) => p.control_label(id),
+            Setting::App(i) => {
+                repriseconf::pages::program(apps[i].id.as_str())?.keyword_for(query, &apps[i].name)
+            }
+        }
+    }
 }
 
 /// The settings pages and programs `query` finds, at most `max`: label, then keyword, then
@@ -1019,6 +1031,29 @@ mod tests {
             Some(Setting::Page(Page::Mouse)),
             "three speeds: the page opens unfocused"
         );
+    }
+
+    #[test]
+    fn a_settings_row_names_the_keyword_or_control_it_was_found_by() {
+        let apps = [installed("reprise-network.desktop", "Network Connections")];
+        let first = |q: &str| {
+            let s = rank_settings(q, &apps, &[], 8)[0];
+            (s, s.detail(q, &apps))
+        };
+        assert_eq!(
+            first("disk"),
+            (Setting::Page(Page::Advanced), Some("low disk space"))
+        );
+        assert_eq!(first("keyboard"), (Setting::Page(Page::Keyboard), None));
+        assert_eq!(
+            first("quiet hours"),
+            (
+                Setting::Control(Page::Notifications, "quiet_hours"),
+                Some("Hold balloons during quiet hours")
+            ),
+            "the control the page opens on"
+        );
+        assert_eq!(first("wifi"), (Setting::App(0), Some("wifi")));
     }
 
     #[test]

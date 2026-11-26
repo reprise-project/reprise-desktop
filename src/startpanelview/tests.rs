@@ -204,7 +204,10 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
     let (groups, kinds) = result_groups(
         Some("= 14"),
         &["Notepad".into()],
-        &["Mouse".into(), "Pointers".into()],
+        &[
+            ("Advanced".into(), "low disk space".into()),
+            ("Mouse".into(), String::new()),
+        ],
         [
             ("Files", &notes[..]),
             ("Contents", &minutes[..]),
@@ -258,14 +261,27 @@ fn search_groups_the_answer_programs_settings_then_each_found_section_with_count
         "same-named files say their folders"
     );
     assert_eq!(groups[4].rows[0].name, "minutes.pdf");
-    assert_eq!(groups[2].rows[0].detail, "", "a setting has no detail");
+    let settings: Vec<(&str, &str)> = (groups[2].rows.iter())
+        .map(|r| (r.name.as_str(), r.detail.as_str()))
+        .collect();
+    assert_eq!(
+        settings,
+        [("Advanced", "low disk space"), ("Mouse", "")],
+        "a setting says the keyword it was found by"
+    );
     let (groups, kinds) = result_groups(None, &[], &[], found.into_iter(), None);
     assert_eq!(
         (groups.len(), kinds),
         (1, vec![ResultKind::Found(1)]),
         "an empty section shows no group and keeps the next one's number"
     );
-    let (groups, kinds) = result_groups(None, &[], &["Mouse".into()], std::iter::empty(), None);
+    let (groups, kinds) = result_groups(
+        None,
+        &[],
+        &[("Mouse".into(), String::new())],
+        std::iter::empty(),
+        None,
+    );
     assert_eq!((groups.len(), kinds), (1, vec![ResultKind::Settings]));
     assert!(
         result_groups(None, &[], &[], std::iter::empty(), None)
