@@ -84,6 +84,22 @@ fn a_window_shorter_than_the_sheet_keeps_the_open_page_in_the_list() {
     );
 }
 
+#[test]
+fn an_end_from_outside_keeps_the_size_and_page_like_a_close() {
+    let mut app = app("emergency");
+    let min = app.min_size(MAIN).unwrap();
+    let state = tmp("emergency-state").join("settings.toml");
+    app.state_path = Some(state.clone());
+    let mut ctx = test_ctx();
+    ctx.size = (900, 700);
+    app.event(MAIN, Event::Resized, &mut ctx);
+    app.sheet.tabs.open = Page::Startup.index();
+    assert!(!state.exists());
+    app.emergency();
+    assert_eq!(winstate::load(&state, min, 100), (900, 700));
+    assert_eq!(winstate::page(&state), Some(Page::Startup));
+}
+
 /// At 200% on a 1080-line screen the window opens at its pick held to the work area; that
 /// size is not kept, so the size left at 100% stands. A size the user gives it is kept.
 #[test]
