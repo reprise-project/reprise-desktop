@@ -952,6 +952,26 @@ impl Mixer {
         )
     }
 
+    /// [`Mixer::size`]'s height with the volume trackbars at their shortest: a body shorter
+    /// than this scrolls down.
+    pub fn min_height(&self, u: TextUnits) -> i32 {
+        let d = Dims::new(u);
+        self.size(u).1 - (d.track_h - d.min_track_h)
+    }
+
+    /// The focused control's rect in `lay`, None for one scrolled out of view or not shown.
+    pub fn focus_rect(&self, lay: &Layout) -> Option<Rect> {
+        let lay = self.current(lay);
+        let col = |i: usize| lay.columns.get(i).and_then(Option::as_ref);
+        match self.focus {
+            Focus::Balance(i) => Some(balance_ring(&col(i)?.balance)),
+            Focus::Volume(i) => Some(volume_ring(&col(i)?.volume)),
+            Focus::Check(i) => Some(check_ring(col(i)?.check_label)),
+            Focus::Output(i) => Some(col(i)?.output.as_ref()?.field),
+            Focus::Advanced => lay.advanced,
+        }
+    }
+
     /// Column `i`'s output combo, when it has one.
     fn output(&self, i: usize) -> Option<&Combo> {
         self.columns.get(i)?.output.as_ref()
