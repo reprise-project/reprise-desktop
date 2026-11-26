@@ -248,7 +248,9 @@ pub fn land_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconCach
         }
         !done
     });
-    walk_icons(&mut tree.roots, places, icons, &mut |p| landed.remove(p))
+    walk_icons(&mut tree.roots, places, icons, &mut |p| {
+        landed.get(p).cloned()
+    })
 }
 
 /// Gives each node whose place `own` answers for the icons it wears with that: true when one
@@ -929,5 +931,26 @@ mod tests {
             tree.node(&a_path).is_some_and(|n| n.expanded),
             "the folder's ancestor is expanded"
         );
+    }
+
+    /// A place the tree lists twice (Documents under the Desktop and under Home) wears its icon
+    /// in both nodes once the icon lands.
+    #[test]
+    fn a_place_listed_twice_wears_its_landed_icon_in_both_nodes() {
+        let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+        let mut places = Places::default();
+        let art = "/nowhere/documents.png";
+        let own = Own::Named(vec![art.into()]);
+        let roots = ["Documents", "Documents"]
+            .map(|l| tree_node(&mut places, l, Place::Documents, false, &own, &mut icons));
+        let mut tree = TreeView::new(roots.into(), Default::default());
+        let mut c = Canvas::new(16, 16);
+        c.pixels.fill(0xff10_2030);
+        icons.put_file(art, places.px, Some(c));
+        assert!(land_icons(&mut tree, &mut places, &mut icons));
+        let worn: Vec<_> = (tree.roots.iter())
+            .map(|n| n.icon.as_ref().map(|c| c.get(8, 8)))
+            .collect();
+        assert_eq!(worn, [Some(0xff10_2030); 2]);
     }
 }
