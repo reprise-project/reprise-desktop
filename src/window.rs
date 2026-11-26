@@ -200,6 +200,9 @@ pub struct Window {
     /// Opened maximized or fullscreen with no normal size known: leaving that state lets the
     /// client pick its size.
     pub own_size: bool,
+    /// Its last normal client size and the `[accessibility] text_size` it took that size at: a
+    /// text size change alone resizes no window, so the kept size is stamped with this one.
+    pub sized_at: Option<((i32, i32), u32)>,
     pub snapped: Option<Rect>,
     /// What a smaller work area took from its size ([`place::Shrunk`]).
     pub shrunk: Option<place::Shrunk>,
@@ -280,6 +283,11 @@ impl Window {
 
     pub fn frame_rect(&self) -> Rect {
         Rect::new(self.x, self.y, self.geom.total.0, self.geom.total.1)
+    }
+
+    /// The text size its normal size was taken at ([`Window::sized_at`]), else `now`.
+    pub fn sized_text_size(&self, now: u32) -> u32 {
+        self.sized_at.map_or(now, |(_, t)| t)
     }
 
     /// The frame it restores to; a snapped window's is its zone.

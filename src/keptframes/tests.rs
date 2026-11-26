@@ -649,3 +649,39 @@ fn a_frame_size_from_an_older_file_opens_as_that_frame_once_and_is_kept_as_the_c
         "the file says the size is the client's"
     );
 }
+
+fn text_size(h: &mut Harness, size: u32) {
+    let text = format!("[accessibility]\ntext_size = {size}\n");
+    crate::configwatch::reload(&mut h.state, crate::config::Config::parse(&text).unwrap());
+}
+
+/// The client size and text size `APP`'s kept frame holds.
+fn kept_size(h: &Harness) -> (i32, i32, u32) {
+    let f = h.state.wm.kept.get(&h.state.output_set(), APP).unwrap();
+    (f.width, f.height, f.text_size)
+}
+
+#[test]
+fn a_size_is_kept_at_the_text_size_it_was_set_at_not_the_one_it_closed_at() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    text_size(&mut h, 200);
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    h.resize_self(&mut c, t, 1136, 656);
+    text_size(&mut h, 100);
+    close(&mut h, &mut c, t);
+    assert_eq!(
+        kept_size(&h),
+        (1136, 656, 200),
+        "a size set at 200 and closed under 100 is kept at 200"
+    );
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    h.resize_self(&mut c, t, 600, 400);
+    text_size(&mut h, 200);
+    close(&mut h, &mut c, t);
+    assert_eq!(
+        kept_size(&h),
+        (600, 400, 100),
+        "a size set at 100 and closed under 200 is kept at 100"
+    );
+}
