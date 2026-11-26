@@ -1,10 +1,12 @@
 //! The lock screen's now-playing strip. The console's lock shows the player the media keys go to
-//! (`Players::target`) while it plays or is paused, by its title and artist alone, and its
-//! buttons call that player's Previous, PlayPause or Next and nothing else: no window opens or
-//! rises, and no art or other property of the player is read. A press goes to the player the
-//! strip showed, by the unique bus name it had then. The remote side's lock shows none, and
-//! neither does the console's in lock mode: the session and its player are the remote user's.
+//! (`Players::target`) while it plays or is paused, by its title and artist alone (`[lock] media`
+//! leaves those out, or the strip), and its buttons call that player's Previous, PlayPause or Next
+//! and nothing else: no window opens or rises, and no art or other property of the player is
+//! read. A press goes to the player the strip showed, by the unique bus name it had then. The
+//! remote side's lock shows none, and neither does the console's in lock mode: the session and
+//! its player are the remote user's.
 
+use crate::config::LockMedia;
 use reprisebus::mpris::Status;
 use reprisekit::media::{NowPlaying, Transport};
 
@@ -20,14 +22,20 @@ pub struct Shown {
 
 /// What `side`'s lock shows now: the console's player outside lock mode, or none.
 pub fn shown(state: &State, side: Side) -> Option<Shown> {
-    if side != Side::Console || crate::console::remote_side(state) {
+    let media = state.config.lock.media;
+    if side != Side::Console || crate::console::remote_side(state) || media == LockMedia::Off {
         return None;
     }
     let (_, p) = state.preview_players.players.newest()?;
     debug_assert!(matches!(p.status, Status::Playing | Status::Paused));
+    let mut np = crate::previewmedia::now_playing(p);
+    if media == LockMedia::Controls {
+        np.title.clear();
+        np.artist.clear();
+    }
     Some(Shown {
         owner: p.owner.clone(),
-        np: crate::previewmedia::now_playing(p),
+        np,
     })
 }
 
@@ -66,6 +74,7 @@ mod tests {
     use reprisekit::media::Transport;
     use zbus::Variant;
 
+    use crate::config::LockMedia;
     use crate::console::Side;
     use crate::harness::Harness;
     use crate::lockview::{Helpers, Lock};
@@ -287,6 +296,35 @@ mod tests {
                 "{hidden} in {said:?}"
             );
         }
+    }
+
+    #[test]
+    fn lock_media_controls_shows_the_buttons_without_the_track_and_off_no_strip() {
+        let at = |media| {
+            let mut h = Harness::new();
+            h.state.config.lock.media = media;
+            h.output("TEST-1", 1024, 768);
+            h.state.preview_players.players = players("Playing", true);
+            crate::lockview::lock(&mut h.state);
+            h
+        };
+        let mut h = at(LockMedia::Controls);
+        let np = lock(&h).view.model.media.clone().expect("a strip");
+        assert_eq!((np.title.as_str(), np.artist.as_str()), ("", ""));
+        let tree = crate::lockview::access(&h.state).expect("the lock's tree");
+        let said = (tree.nodes())
+            .flat_map(|(_, n)| [n.label(), n.value()])
+            .flatten()
+            .any(|t| t.contains("Song") || t.contains("Band"));
+        assert!(!said, "neither the title nor the artist is said");
+        click(&mut h, Part::Media(Transport::PlayPause));
+        assert_eq!(sent(&h), [(OWNER.to_string(), "PlayPause")]);
+
+        let mut h = at(LockMedia::Off);
+        assert_eq!(lock(&h).view.model.media, None);
+        assert_eq!(lock(&h).view.layout.as_ref().and_then(|l| l.media), None);
+        super::press(&mut h.state, Side::Console, Transport::PlayPause);
+        assert_eq!(sent(&h), [], "off sends nothing");
     }
 
     #[test]

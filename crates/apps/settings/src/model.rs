@@ -379,6 +379,8 @@ pub struct Settings {
     /// `[lock] away_device`, an address or object path; empty is off.
     pub away_device: String,
     pub away_after_s: i64,
+    /// `[lock] media`: one of [`LOCK_MEDIA`]'s names.
+    pub lock_media: String,
 
     /// libinput's -1..1 speed in tenths, -10..=10, so the trackbar's steps
     /// and `Eq` both work.
@@ -761,6 +763,7 @@ impl Settings {
             lock_fade: c.idle.lock_fade.into(),
             away_device: c.lock.away_device.clone(),
             away_after_s: c.lock.away_after_s.into(),
+            lock_media: c.lock.media.name().into(),
 
             mouse_speed: tenths(c.mouse.speed),
             mouse_accel: c.mouse.acceleration,

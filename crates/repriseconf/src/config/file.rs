@@ -161,6 +161,7 @@ pub struct FileIdleBattery {
 pub struct FileLock {
     pub away_device: Option<String>,
     pub away_after_s: Option<i64>,
+    pub media: Option<toml::Value>,
 }
 
 #[derive(Deserialize)]

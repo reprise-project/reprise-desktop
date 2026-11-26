@@ -12,8 +12,8 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::saver::{self, Kind, Options, Saver};
 use reprisekit::text::TextRenderer;
 
-use crate::model::Settings;
-use crate::pages::{Area, GX, X, button, spin};
+use crate::model::{LOCK_MEDIA, Settings};
+use crate::pages::{Area, GX, X, button, choice, spin};
 
 pub const MONITOR: &str = "saver_monitor";
 pub const SAVER: &str = "saver";
@@ -22,6 +22,7 @@ pub const PREVIEW: &str = "saver_preview";
 pub const WAIT: &str = "saver_wait";
 pub const AWAY: &str = "away_device";
 pub const AWAY_AFTER: &str = "away_after_s";
+pub const LOCK_MEDIA_ID: &str = "lock_media";
 const AWAY_ROWS: usize = 8;
 /// The monitor, at the page's left; the saver's controls stand in the column right of it.
 const MONITOR_RECT: Rect = Rect::new(X, 44, 191, 168);
@@ -54,7 +55,7 @@ pub fn page(a: Area) -> Form {
 
     items.push(Item::group(
         "lock_group",
-        Rect::new(X, 222, a.w, 138),
+        Rect::new(X, 222, a.w, 166),
         "Lock",
     ));
     let gw = a.gw();
@@ -103,6 +104,14 @@ pub fn page(a: Area) -> Form {
         (0, 3600),
     ));
     items.push(Item::label_at("away_units", GX + 260, 332, 60, "seconds"));
+    items.push(Item::label_at(
+        "lock_media_label",
+        GX,
+        360,
+        90,
+        "&Now playing:",
+    ));
+    items.push(choice(LOCK_MEDIA_ID, GX + 90, 356, 170, LOCK_MEDIA));
     Form::new(items)
 }
 

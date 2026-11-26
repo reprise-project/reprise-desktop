@@ -82,13 +82,15 @@ impl Default for PowerConfig {
     }
 }
 
-/// `[lock]`: the paired Bluetooth device whose going away locks the session.
+/// `[lock]`: the paired Bluetooth device whose going away locks the session, and what the lock
+/// shows of the media playing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LockConfig {
     /// A Bluetooth address (upper case) or a BlueZ device object path; empty is off.
     pub away_device: String,
     /// Seconds the device stays disconnected before the lock.
     pub away_after_s: u32,
+    pub media: LockMedia,
 }
 
 impl Default for LockConfig {
@@ -96,7 +98,34 @@ impl Default for LockConfig {
         LockConfig {
             away_device: String::new(),
             away_after_s: 30,
+            media: LockMedia::default(),
         }
+    }
+}
+
+/// `[lock] media`: the lock's now-playing strip with the track's title and artist, its buttons
+/// alone, or no strip.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LockMedia {
+    #[default]
+    Title,
+    Controls,
+    Off,
+}
+
+impl LockMedia {
+    pub const ALL: [LockMedia; 3] = [LockMedia::Title, LockMedia::Controls, LockMedia::Off];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LockMedia::Title => "title",
+            LockMedia::Controls => "controls",
+            LockMedia::Off => "off",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<LockMedia> {
+        LockMedia::ALL.into_iter().find(|v| v.name() == s)
     }
 }
 

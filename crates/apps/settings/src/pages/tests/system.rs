@@ -806,7 +806,7 @@ fn the_saver_stands_beside_the_monitor_and_the_lock_group_under_them() {
         Rect::new(263, 122, 50, 20)
     );
     assert_eq!(rect(&s, p, "wait_units"), Rect::new(319, 126, 59, 13));
-    assert_eq!(rect(&s, p, "lock_group"), Rect::new(20, 222, 358, 138));
+    assert_eq!(rect(&s, p, "lock_group"), Rect::new(20, 222, 358, 166));
     assert_eq!(rect(&s, p, "lock_after"), Rect::new(150, 240, 50, 20));
     assert_eq!(rect(&s, p, "lock_units"), Rect::new(206, 244, 160, 13));
     assert_eq!(rect(&s, p, "lock_fade"), Rect::new(150, 264, 50, 20));
@@ -814,6 +814,8 @@ fn the_saver_stands_beside_the_monitor_and_the_lock_group_under_them() {
     assert_eq!(rect(&s, p, "away_label"), Rect::new(32, 312, 334, 13));
     assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 328, 150, 21));
     assert_eq!(rect(&s, p, "away_after_s"), Rect::new(236, 328, 50, 20));
+    assert_eq!(rect(&s, p, "lock_media_label"), Rect::new(32, 360, 90, 13));
+    assert_eq!(rect(&s, p, "lock_media"), Rect::new(122, 356, 170, 21));
     assert_eq!(rect(&s, p, "away_units"), Rect::new(292, 332, 60, 13));
     inside_page(&s, p);
 }

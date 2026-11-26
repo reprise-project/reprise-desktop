@@ -308,6 +308,9 @@ suspend_after = 0            # run [power] standby
 #                            # Seen connected, then disconnected away_after_s seconds, it locks the
 #                            # session; it never unlocks. It must stay connected while near (docs/configuration.md)
 # away_after_s = 30          # 0 locks at once
+# media = "title"            # the lock's now-playing strip: title (the track's title and artist with
+#                            # Previous, Play or Pause and Next), controls (the buttons alone) or off
+#                            # (any other value reads as off)
 
 # [screensaver]              # what [idle] blank_after starts; Reprise Settings' Screen Saver & Lock page edits it
 # name = "blank"             # blank | starfield | mystify | logo | photos

@@ -39,11 +39,11 @@ use reprisekit::theme::Color;
 use crate::model::{
     AUDIO_CODECS, CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT,
     ENCODERS, FONT_SMOOTHINGS, FRAME_RATES, GESTURE_FINGERS, HOT_CORNERS, INTERFACES, LOCK_GRACES,
-    MENU_ANIMATIONS, PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS, QT_PLATFORM_THEMES, RATE_MODES,
-    RECORD_FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES, SHOT_FORMATS, STARTMENU_STYLES,
-    SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS,
-    TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS, VISUAL_BELLS, WATER_STYLES,
-    XkbPick, keys_for, remote_quality_row,
+    LOCK_MEDIA, MENU_ANIMATIONS, PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS, QT_PLATFORM_THEMES,
+    RATE_MODES, RECORD_FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES, SHOT_FORMATS,
+    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut,
+    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS,
+    VISUAL_BELLS, WATER_STYLES, XkbPick, keys_for, remote_quality_row,
 };
 
 pub(super) enum Bind {
@@ -351,6 +351,11 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("lock_after", lens!(lock_after)),
         Bind::Num("lock_fade", lens!(lock_fade)),
         Bind::Num(crate::saverpage::AWAY_AFTER, lens!(away_after_s)),
+        Bind::Named(
+            crate::saverpage::LOCK_MEDIA_ID,
+            lens!(lock_media),
+            LOCK_MEDIA,
+        ),
         Bind::Num("low_space_percent", lens!(low_space_percent)),
         Bind::Num(REMOTE_PORT, lens!(remote_port)),
         Bind::Quality(REMOTE_QUALITY, lens!(remote_quality)),

@@ -1451,6 +1451,19 @@ fn partner_keys_are_tried_together_and_dropped_together() {
 }
 
 #[test]
+fn lock_media_is_title_controls_or_off() {
+    assert_eq!(Config::default().lock.media, LockMedia::Title);
+    for m in LockMedia::ALL {
+        let c = Config::parse(&format!("[lock]\nmedia = \"{}\"\n", m.name())).unwrap();
+        assert_eq!(c.lock.media, m);
+    }
+    for bad in ["\"none\"", "\"Title\"", "false", "1"] {
+        let (c, _) = Config::parse_lenient(&format!("[lock]\nmedia = {bad}\n")).unwrap();
+        assert_eq!(c.lock.media, LockMedia::Off, "media = {bad} reads as off");
+    }
+}
+
+#[test]
 fn lock_away_device_takes_an_address_or_a_path() {
     let d = Config::default().lock;
     assert_eq!((d.away_device.as_str(), d.away_after_s), ("", 30));
