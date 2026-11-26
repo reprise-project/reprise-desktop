@@ -266,6 +266,7 @@ impl State {
     /// on, then encode it in `[screenshot] format` on a job of its own (`shotfile::plan`) and
     /// write it to a new file on a file job.
     fn deliver(&mut self, picture: impl FnOnce() -> Canvas + Send + 'static) {
+        self.event_sound(repriseaudio::sounds::Event::ScreenCapture);
         let shot = self.config.screenshot.clone();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

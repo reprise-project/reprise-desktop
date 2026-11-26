@@ -431,10 +431,15 @@ suspend_after = 0            # run [power] standby
 
 # [sounds]                   # Settings > Sound also sets these
 # theme = "freedesktop"      # an XDG sound theme under /usr/share/sounds or
-#                            # ~/.local/share/sounds, for balloons and the bell; a name
-#                            # it lacks comes from freedesktop
+#                            # ~/.local/share/sounds, for balloons, the bell and events; a
+#                            # name it lacks comes from freedesktop
 # bell = true                # a program's system bell plays the theme's bell; false keeps
 #                            # it silent, and an unfocused window's task button still flashes
+# events = true              # log on and off, error and warning boxes, a USB device plugged
+#                            # in or out, emptying the Recycle Bin, a screenshot and the
+#                            # charger plugged in or out each play their theme sound, an
+#                            # event repeated within 2 s once; the screen reader's own
+#                            # on and off sounds stay
 # allow_boost = false        # true lets the volume sliders, the tray wheel and the volume
 #                            # keys go past 100 % up to 150 %; turned off, louder outputs
 #                            # and programs come back to 100 %

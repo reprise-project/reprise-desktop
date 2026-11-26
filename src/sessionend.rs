@@ -605,6 +605,7 @@ fn go_on(
 ) {
     crate::crash::ending();
     state.powering.give_up_lingering();
+    state.event_sound(repriseaudio::sounds::Event::Logout);
     let how = Run {
         override_inhibitors,
         unattended: critical,
@@ -643,7 +644,11 @@ fn wind_down(state: &mut State, goal: Goal, end: OnLoop) {
     // A deferring session's Turn Off also ends the other session's clients.
     let server_ours = state.standby.rdp_on() || (powers_off && state.env.defers_user_units);
     let tells = crate::console::remote_side(state) || server_ours;
-    let wait = fade_out(state, !tells, SAVE_SHOTS, end);
+    let sounding = repriseaudio::sounds::playing();
+    let wait = fade_out(state, !tells, !sounding, SAVE_SHOTS, end);
+    if sounding {
+        hear_out(state, &wait);
+    }
     if !tells {
         return;
     }
@@ -670,11 +675,18 @@ fn wind_down(state: &mut State, goal: Goal, end: OnLoop) {
 }
 
 /// Wait for screenshot files under way (`saves` at most) with the desktop up, then fade out; `end`
-/// runs once the screen is black and the clients are `told`.
-fn fade_out(state: &mut State, told: bool, saves: Duration, end: OnLoop) -> Arc<Mutex<Wait>> {
+/// runs once the screen is black, the clients are `told` and the log off sound is `heard`.
+fn fade_out(
+    state: &mut State,
+    told: bool,
+    heard: bool,
+    saves: Duration,
+    end: OnLoop,
+) -> Arc<Mutex<Wait>> {
     let wait = Arc::new(Mutex::new(Wait {
         faded: false,
         told,
+        heard,
         end: Some(end),
     }));
     let faded = Arc::clone(&wait);
@@ -691,11 +703,28 @@ fn fade_out(state: &mut State, told: bool, saves: Duration, end: OnLoop) -> Arc<
     wait
 }
 
-/// A session end waiting for its fade and for the remote clients to hear of it.
+/// A session end waiting for its fade, for the remote clients to hear of it and for the log off
+/// sound to end.
 struct Wait {
     faded: bool,
     told: bool,
+    heard: bool,
     end: Option<OnLoop>,
+}
+
+/// The longest a session end waits for the log off sound once the screen is black.
+const LOG_OFF_SOUND: Duration = Duration::from_secs(3);
+
+/// Mark `wait` heard once the sound playing now ends.
+fn hear_out(state: &mut State, wait: &Arc<Mutex<Wait>>) {
+    let heard = Arc::clone(wait);
+    let spawned = state.spawn_job(move || {
+        repriseaudio::sounds::wait_quiet(LOG_OFF_SOUND);
+        Box::new(move |state| arrive(&heard, state, |w| w.heard = true))
+    });
+    if !spawned {
+        arrive(wait, state, |w| w.heard = true);
+    }
 }
 
 /// Mark what arrived, then end once everything has.
@@ -703,7 +732,7 @@ fn arrive(wait: &Mutex<Wait>, state: &mut State, mark: impl FnOnce(&mut Wait)) {
     let end = {
         let mut w = wait.lock().unwrap_or_else(|e| e.into_inner());
         mark(&mut w);
-        if w.faded && w.told {
+        if w.faded && w.told && w.heard {
             w.end.take()
         } else {
             None
@@ -720,6 +749,7 @@ pub fn quit(state: &mut State) {
     crate::crash::ending();
     fade_out(
         state,
+        true,
         true,
         SAVE_SHOTS,
         Box::new(|state| {
@@ -3455,25 +3485,32 @@ mod tests {
     }
 
     #[test]
-    fn the_end_runs_once_after_both_the_fade_and_the_answer() {
+    fn the_end_runs_once_after_the_fade_the_answer_and_the_sound() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let mut h = crate::harness::Harness::new();
         let faded: fn(&mut Wait) = |w| w.faded = true;
         let told: fn(&mut Wait) = |w| w.told = true;
-        for (first, second) in [(faded, told), (told, faded)] {
+        let heard: fn(&mut Wait) = |w| w.heard = true;
+        for marks in [
+            [faded, told, heard],
+            [told, heard, faded],
+            [heard, faded, told],
+        ] {
             let ends = Arc::new(AtomicUsize::new(0));
             let counted = Arc::clone(&ends);
             let wait = Mutex::new(Wait {
                 faded: false,
                 told: false,
+                heard: false,
                 end: Some(Box::new(move |_| {
                     counted.fetch_add(1, Ordering::Relaxed);
                 })),
             });
-            arrive(&wait, &mut h.state, first);
-            assert_eq!(ends.load(Ordering::Relaxed), 0, "one of the two arrived");
-            arrive(&wait, &mut h.state, second);
-            assert_eq!(ends.load(Ordering::Relaxed), 1, "both arrived");
+            arrive(&wait, &mut h.state, marks[0]);
+            arrive(&wait, &mut h.state, marks[1]);
+            assert_eq!(ends.load(Ordering::Relaxed), 0, "two of the three arrived");
+            arrive(&wait, &mut h.state, marks[2]);
+            assert_eq!(ends.load(Ordering::Relaxed), 1, "all three arrived");
             arrive(&wait, &mut h.state, told);
             assert_eq!(
                 ends.load(Ordering::Relaxed),
@@ -3496,7 +3533,7 @@ mod tests {
         let end: OnLoop = Box::new(move |_| {
             counted.fetch_add(1, Ordering::Relaxed);
         });
-        fade_out(&mut h.state, true, SAVE_SHOTS, end);
+        fade_out(&mut h.state, true, true, SAVE_SHOTS, end);
         h.run_for(300);
         assert!(
             !h.state.session_fade.fading_out(),

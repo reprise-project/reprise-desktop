@@ -126,6 +126,8 @@ impl SessionHints {
 #[derive(Default)]
 pub struct PowerState {
     pub on_battery: bool,
+    /// UPower has reported `on_battery` once: a change after that is a charger plugged in or out.
+    battery_heard: bool,
     _inhibitor: Option<OwnedFd>,
     sleep_delay: Option<OwnedFd>,
     cover_wait: Option<CoverWait<Output>>,
@@ -610,10 +612,19 @@ pub(crate) fn report(state: &mut State, r: Report) {
             send_hints(state);
         }
         Report::OnBattery(v) => {
+            let heard = std::mem::replace(&mut state.power.battery_heard, true);
             if state.power.on_battery != v {
                 log::info!("power: {}", if v { "on battery" } else { "plugged in" });
                 state.power.on_battery = v;
                 crate::idle::arm(state);
+                if heard {
+                    use repriseaudio::sounds::Event;
+                    state.event_sound(if v {
+                        Event::PowerUnplug
+                    } else {
+                        Event::PowerPlug
+                    });
+                }
             }
         }
     }
@@ -1179,6 +1190,18 @@ fn remote_lid(state: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_charger_change_after_the_first_report_sounds() {
+        use repriseaudio::sounds::Event;
+        let mut h = crate::harness::Harness::new();
+        report(&mut h.state, Report::OnBattery(true));
+        assert!(h.state.event_sounds.is_empty(), "starting on battery");
+        report(&mut h.state, Report::OnBattery(true));
+        report(&mut h.state, Report::OnBattery(false));
+        report(&mut h.state, Report::OnBattery(true));
+        assert_eq!(h.state.event_sounds, [Event::PowerPlug, Event::PowerUnplug]);
+    }
 
     #[test]
     fn going_to_sleep_locks_without_a_delay_inhibitor_and_waits_only_with_one() {

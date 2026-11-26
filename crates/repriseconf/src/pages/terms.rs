@@ -362,6 +362,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("audio_devices", "Audio Devices..."),
             ("sound_theme", "Sound theme:"),
             ("bell", "Play a sound when a program rings the bell"),
+            ("sound_events", "Play sounds for desktop events"),
             ("allow_boost", "Allow volume above 100%"),
         ],
         Page::ScreenCapture => &[

@@ -14,7 +14,7 @@ use super::system::{
     REMOTE_BORDER, REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE,
     REMOTE_PORT, REMOTE_QUALITY, REMOTE_SCREEN_LOCK, REMOTE_SCREEN_NOTE, REMOTE_SCREEN_SHOW,
     REMOTE_SECOND_JOIN, REMOTE_SECOND_REPLACE, REMOTE_SOUND, SESSION_EXCLUDE, SOUND_CONTROLS,
-    TERMINAL_APPS, clipboard_label, follow_lock, follow_screen,
+    SOUND_EVENTS, TERMINAL_APPS, clipboard_label, follow_lock, follow_screen,
 };
 use super::{
     BOUNCE_DELAY, CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN,
@@ -277,6 +277,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag(AUTO_DND, lens!(auto_dnd)),
         Bind::Choice(SOUND_CONTROLS[1], lens!(sound_theme)),
         Bind::Flag(BELL, lens!(bell)),
+        Bind::Flag(SOUND_EVENTS, lens!(sound_events)),
         Bind::Flag(ALLOW_BOOST, lens!(allow_boost)),
         Bind::Flag("taskbar_auto_hide", lens!(taskbar_auto_hide)),
         Bind::Flag("taskbar_reveal_on_edge", lens!(taskbar_reveal_on_edge)),

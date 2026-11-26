@@ -476,6 +476,8 @@ pub struct SoundsConfig {
     /// An XDG sound theme name.
     pub theme: String,
     pub bell: bool,
+    /// Log on and off, error and warning boxes, devices, the Recycle Bin, screenshots, the charger.
+    pub events: bool,
     pub allow_boost: bool,
     pub on_connect: OnConnect,
 }
@@ -485,6 +487,7 @@ impl Default for SoundsConfig {
         SoundsConfig {
             theme: "freedesktop".into(),
             bell: true,
+            events: true,
             allow_boost: false,
             on_connect: OnConnect::default(),
         }

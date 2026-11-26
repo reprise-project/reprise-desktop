@@ -392,7 +392,7 @@ desktop and stays out of the way when it's missing.
 - WirePlumber, for the volume applet, Volume Control, the volume keys and
   sound on a Remote Desktop client
 - pipewire-pulse, for desktop and microphone audio in OBS and browsers
-- sound-theme-freedesktop, for the notification balloons' sound
+- sound-theme-freedesktop, for the notification balloons' and desktop events' sounds
 - UPower, for the battery icon, power alarms and battery idle timeouts, and
   from 1.90 the battery charge limit
 - power-profiles-daemon, for the power profile in Power Options and the

@@ -110,7 +110,8 @@ They hold no image files and share the project's license. Beside them the
 Background page lists pictures from `/usr/share/backgrounds`,
 `/usr/share/wallpapers` and your Pictures folder (its Screenshots folder left
 out), and Browse... adds any other bmp, jpg, png, dib, jxl or avif file.
-Reprise ships no picture files and plays no event sounds.
+Reprise ships no picture or sound files: balloons, the bell and desktop events
+play from the installed XDG sound theme (Settings > Sound).
 
 ## Data
 

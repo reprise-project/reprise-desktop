@@ -293,12 +293,22 @@ fn notification_sounds_default_on() {
 }
 
 #[test]
-fn sounds_play_from_the_freedesktop_theme_and_the_bell_rings_by_default() {
+fn sounds_play_from_the_freedesktop_theme_and_the_bell_and_events_sound_by_default() {
     let d = Config::default().sounds;
-    assert_eq!((d.theme.as_str(), d.bell), ("freedesktop", true));
+    assert_eq!(
+        (d.theme.as_str(), d.bell, d.events),
+        ("freedesktop", true, true)
+    );
     assert_eq!(Config::parse("[sounds]\n").unwrap().sounds, d);
     let c = Config::parse("[sounds]\ntheme = \"ocean\"\nbell = false\n").unwrap();
     assert_eq!((c.sounds.theme.as_str(), c.sounds.bell), ("ocean", false));
+    assert!(c.sounds.events, "the bell has a key of its own");
+    assert!(
+        !Config::parse("[sounds]\nevents = false\n")
+            .unwrap()
+            .sounds
+            .events
+    );
     assert!(!d.allow_boost, "volumes stop at 100 % by default");
     assert!(
         Config::parse("[sounds]\nallow_boost = true\n")

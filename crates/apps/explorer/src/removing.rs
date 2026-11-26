@@ -290,6 +290,9 @@ impl Explorer {
         self.publish_task_progress();
         let emptied =
             r.purpose == Purpose::Empty && r.failed.is_none() && !r.progress.meter.cancelled();
+        if emptied {
+            crate::dialogs::event_sound(repriseaudio::sounds::Event::TrashEmpty);
+        }
         let undo = r.undo.take();
         let mut restored = Vec::new();
         if let Some(u) = &undo {

@@ -125,9 +125,100 @@ pub fn resolve(dirs: &[PathBuf], theme: &str, name: &str) -> Option<PathBuf> {
     }
 }
 
+/// A desktop moment with a sound of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    Login,
+    Logout,
+    Error,
+    Warning,
+    DeviceAdded,
+    DeviceRemoved,
+    TrashEmpty,
+    ScreenCapture,
+    PowerPlug,
+    PowerUnplug,
+}
+
+impl Event {
+    /// Sound naming spec ids, tried in order: the later ones are what the freedesktop theme
+    /// ships for a moment whose own id it lacks.
+    pub fn names(self) -> &'static [&'static str] {
+        match self {
+            Event::Login => &["desktop-login", "service-login"],
+            Event::Logout => &["desktop-logout", "service-logout"],
+            Event::Error => &["dialog-error", "dialog-warning"],
+            Event::Warning => &["dialog-warning"],
+            Event::DeviceAdded => &["device-added"],
+            Event::DeviceRemoved => &["device-removed"],
+            Event::TrashEmpty => &["trash-empty"],
+            Event::ScreenCapture => &["screen-capture", "camera-shutter"],
+            Event::PowerPlug => &["power-plug"],
+            Event::PowerUnplug => &["power-unplug"],
+        }
+    }
+}
+
+/// The number of [`Event`]s: the last one's index plus one.
+const EVENTS: usize = Event::PowerUnplug as usize + 1;
+
+/// An event comes again within this of its last sound silently, so a burst (a hub's devices, a
+/// run of errors) sounds once.
+pub const EVENT_GAP: Duration = Duration::from_secs(2);
+
+/// When each [`Event`] last sounded.
+#[derive(Debug, Default)]
+pub struct Gaps([Option<Instant>; EVENTS]);
+
+impl Gaps {
+    /// Whether `event` at `now` sounds, recording it if so.
+    pub fn due(&mut self, event: Event, now: Instant) -> bool {
+        let last = &mut self.0[event as usize];
+        if last.is_some_and(|t| now.saturating_duration_since(t) < EVENT_GAP) {
+            return false;
+        }
+        *last = Some(now);
+        true
+    }
+}
+
+static GAPS: Mutex<Gaps> = Mutex::new(Gaps([None; EVENTS]));
+
 /// Play `sound` from `theme` on a thread of its own; one plays at a time and a sound asked for while
 /// another plays is skipped.
 pub fn play(sound: Sound, theme: String) {
+    spawn_player(move || match &sound {
+        Sound::Name(name) => resolve(&sound_dirs(), &theme, name),
+        Sound::File(path) => (path.is_absolute() && path.is_file()).then(|| path.clone()),
+    });
+}
+
+/// [`play`] `event`'s sound from `theme`, unless it sounded within [`EVENT_GAP`].
+pub fn play_event(event: Event, theme: String) {
+    let due = (GAPS.lock().unwrap_or_else(|e| e.into_inner())).due(event, Instant::now());
+    if due {
+        spawn_player(move || {
+            let dirs = sound_dirs();
+            (event.names().iter()).find_map(|name| resolve(&dirs, &theme, name))
+        });
+    }
+}
+
+/// Whether a sound is playing, or about to.
+pub fn playing() -> bool {
+    PLAYING.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
+/// Wait up to `max` for the sound playing now to end, so a session or program about to end is
+/// heard to the end.
+pub fn wait_quiet(max: Duration) {
+    let until = Instant::now() + max;
+    while playing() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn spawn_player(find: impl FnOnce() -> Option<PathBuf> + Send + 'static) {
     let started = Instant::now();
     if !take_slot(
         &mut PLAYING.lock().unwrap_or_else(|e| e.into_inner()),
@@ -138,11 +229,7 @@ pub fn play(sound: Sound, theme: String) {
     let spawned = std::thread::Builder::new()
         .name("reprise-sound".into())
         .spawn(move || {
-            let path = match &sound {
-                Sound::Name(name) => resolve(&sound_dirs(), &theme, name),
-                Sound::File(path) => (path.is_absolute() && path.is_file()).then(|| path.clone()),
-            };
-            if let Some(path) = path {
+            if let Some(path) = find() {
                 run(&path);
             }
             free_slot(started);
@@ -225,6 +312,52 @@ mod tests {
         let stuck = t0 + MAX_PLAY + STUCK_GRACE + Duration::from_millis(1);
         assert!(take_slot(&mut busy, stuck));
         assert_eq!(busy, Some(stuck));
+    }
+
+    #[test]
+    fn an_event_within_the_gap_of_its_last_sound_is_silent() {
+        let t0 = Instant::now();
+        let mut gaps = Gaps::default();
+        assert!(gaps.due(Event::DeviceAdded, t0));
+        assert!(!gaps.due(Event::DeviceAdded, t0 + EVENT_GAP / 2));
+        assert!(
+            gaps.due(Event::DeviceRemoved, t0 + EVENT_GAP / 2),
+            "another event has a gap of its own"
+        );
+        assert!(gaps.due(Event::DeviceAdded, t0 + EVENT_GAP));
+        assert!(
+            !gaps.due(Event::DeviceAdded, t0 + EVENT_GAP + EVENT_GAP / 2),
+            "the gap runs from the last sound"
+        );
+    }
+
+    #[test]
+    fn an_event_takes_its_next_name_when_no_theme_has_the_first() {
+        let root = tree(&[
+            "sys/ocean/stereo/desktop-login.oga",
+            "sys/freedesktop/stereo/service-login.oga",
+            "sys/freedesktop/stereo/dialog-warning.oga",
+        ]);
+        let dirs = [root.join("sys")];
+        let got = |theme: &str, event: Event| {
+            (event.names().iter())
+                .find_map(|n| resolve(&dirs, theme, n))
+                .map(|p| p.strip_prefix(&root).unwrap().to_path_buf())
+        };
+        assert_eq!(
+            got("ocean", Event::Login),
+            Some("sys/ocean/stereo/desktop-login.oga".into())
+        );
+        assert_eq!(
+            got("freedesktop", Event::Login),
+            Some("sys/freedesktop/stereo/service-login.oga".into())
+        );
+        assert_eq!(
+            got("ocean", Event::Error),
+            Some("sys/freedesktop/stereo/dialog-warning.oga".into())
+        );
+        assert_eq!(got("ocean", Event::TrashEmpty), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

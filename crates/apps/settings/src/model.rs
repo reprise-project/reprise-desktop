@@ -218,9 +218,10 @@ pub struct Settings {
     pub quiet_hours: Vec<String>,
     /// `[notifications] auto_dnd`.
     pub auto_dnd: bool,
-    /// `[sounds] theme`, `bell` and `allow_boost`.
+    /// `[sounds] theme`, `bell`, `events` and `allow_boost`.
     pub sound_theme: String,
     pub bell: bool,
+    pub sound_events: bool,
     pub allow_boost: bool,
     /// `[taskbar] position`: one of [`TASKBAR_POSITIONS`]' values, the
     /// bottom under every interface.
@@ -649,6 +650,7 @@ impl Settings {
             auto_dnd: c.notifications.auto_dnd,
             sound_theme: c.sounds.theme.clone(),
             bell: c.sounds.bell,
+            sound_events: c.sounds.events,
             allow_boost: c.sounds.allow_boost,
             taskbar_position: c.taskbar.position.name().into(),
             taskbar_auto_hide: c.taskbar.auto_hide,
