@@ -12,6 +12,9 @@ pub const PREFIX: &str = "reprise-task-";
 pub const MARKER: &str = "# Written by Reprise Scheduled Tasks, whose Delete removes this file.";
 /// How long a slug runs, so a unit name stays well under systemd's 255 bytes.
 const SLUG_MAX: usize = 40;
+/// What systemd refuses in an `ExecStart=` executable path ("contains special characters"):
+/// quotes and `\`, and in newer releases the glob characters.
+const SPECIAL: [char; 6] = ['\\', '"', '\'', '*', '?', '['];
 
 /// When a new task runs. Times are (hour, minute) in local time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +84,8 @@ pub enum Problem {
     Program,
     /// The arguments open a quote they never close, or end in a lone `\`.
     Quote,
+    /// The program's path holds a character systemd refuses in an executable ([`SPECIAL`]).
+    Special,
 }
 
 /// The user's own unit folder in the manager's search path `search` (its `UnitPath`): the first
@@ -257,7 +262,11 @@ fn quote(arg: &str) -> Result<String, Problem> {
 pub fn exec_start(program: &Path, args: &[String]) -> Result<String, Problem> {
     let normal = normal(program).filter(|n| n.as_os_str() == program.as_os_str());
     let program = normal.as_deref().and_then(Path::to_str);
-    let words = std::iter::once(program.ok_or(Problem::Program)?)
+    let program = program.ok_or(Problem::Program)?;
+    if program.contains(SPECIAL) {
+        return Err(Problem::Special);
+    }
+    let words = std::iter::once(program)
         .chain(args.iter().map(String::as_str))
         .map(quote);
     Ok(format!(
