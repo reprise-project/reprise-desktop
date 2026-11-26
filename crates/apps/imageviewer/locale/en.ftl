@@ -7,6 +7,8 @@ window-title = { $name } - Image Viewer
 ## The menu bar
 menu-file = &File
 menu-open = &Open...
+menu-edit-picture = &Edit
+menu-show-in-folder = Show in &Folder
 menu-set-background = Set as Desktop &Background
 menu-exit = E&xit
 menu-edit = &Edit

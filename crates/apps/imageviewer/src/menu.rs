@@ -1,6 +1,11 @@
 //! The menu bar's rows and what each does.
 
 use super::*;
+use std::ffi::OsString;
+
+fn paint_argv(path: &Path) -> Vec<OsString> {
+    vec!["reprise-paint".into(), path.into()]
+}
 
 fn mi(label: &str, shortcut: Option<&str>) -> MenuItem {
     MenuItem::item(label).shortcut(shortcut.map(str::to_string))
@@ -15,8 +20,10 @@ pub(crate) mod title {
 
 pub(crate) mod row {
     pub const OPEN: usize = 0;
-    pub const BACKGROUND: usize = 2;
-    pub const EXIT: usize = 4;
+    pub const EDIT_PICTURE: usize = 2;
+    pub const SHOW_IN_FOLDER: usize = 3;
+    pub const BACKGROUND: usize = 4;
+    pub const EXIT: usize = 6;
     pub const COPY: usize = 0;
     pub const DELETE: usize = 1;
     pub const PREVIOUS: usize = 0;
@@ -41,6 +48,8 @@ pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
             vec![
                 mi(&tr!("menu-open"), Some("Ctrl+O")),
                 MenuItem::Separator,
+                mi(&tr!("menu-edit-picture"), None),
+                mi(&tr!("menu-show-in-folder"), None),
                 mi(&tr!("menu-set-background"), None),
                 MenuItem::Separator,
                 mi(&tr!("menu-exit"), None),
@@ -94,6 +103,10 @@ impl Viewer {
         let at = None;
         match (title, row) {
             (title::FILE, row::OPEN) => self.open_dialog(),
+            (title::FILE, row::EDIT_PICTURE) => return self.spawn_on_current(paint_argv),
+            (title::FILE, row::SHOW_IN_FOLDER) => {
+                return self.spawn_on_current(reprisefs::apps::open_location_argv);
+            }
             (title::FILE, row::BACKGROUND) => return self.set_background(),
             (title::FILE, row::EXIT) => {
                 return Reply {
@@ -131,6 +144,40 @@ impl Viewer {
         Reply::redraw()
     }
 
+    /// The program `argv` makes for the picture shown, started.
+    fn spawn_on_current(&self, argv: fn(&Path) -> Vec<OsString>) -> Reply {
+        let Some(path) = self.folder.current() else {
+            return Reply::none();
+        };
+        Reply {
+            spawn: vec![argv(path)],
+            ..Reply::none()
+        }
+    }
+
+    /// The context menu's rows: the menu bar's, greyed alike.
+    pub(crate) fn context_rows(&self) -> Vec<(MenuItem, Option<(usize, usize)>)> {
+        let rows = [
+            Some((title::FILE, row::EDIT_PICTURE)),
+            Some((title::FILE, row::SHOW_IN_FOLDER)),
+            None,
+            Some((title::EDIT, row::COPY)),
+            Some((title::EDIT, row::DELETE)),
+            None,
+            Some((title::FILE, row::BACKGROUND)),
+        ];
+        rows.into_iter()
+            .map(|at| match at {
+                Some((t, r)) => {
+                    let item = self.bar.menus[t][r].clone();
+                    let live = matches!(item, MenuItem::Entry { enabled: true, .. });
+                    (item, live.then_some((t, r)))
+                }
+                None => (MenuItem::Separator, None),
+            })
+            .collect()
+    }
+
     /// Grey the rows that cannot act on what shows.
     pub(crate) fn sync_menus(&mut self) {
         let file = self.folder.current().is_some();
@@ -141,6 +188,8 @@ impl Viewer {
             .current()
             .is_some_and(reprisefs::pictures::is_picture);
         let live = [
+            (title::FILE, row::EDIT_PICTURE, file && shown),
+            (title::FILE, row::SHOW_IN_FOLDER, file),
             (title::FILE, row::BACKGROUND, shown && background),
             (title::EDIT, row::COPY, file),
             (title::EDIT, row::DELETE, file && self.delete.is_empty()),
