@@ -257,7 +257,16 @@ fn free_slot(started: Instant) {
     }
 }
 
-fn run(path: &Path) {
+/// Set in every process cargo starts (`cargo test`, nextest, `cargo run`): such a process plays
+/// nothing, so a test never sounds on the desktop running it.
+const UNDER_CARGO: &str = "CARGO_MANIFEST_DIR";
+
+/// Play `path` to its end or [`MAX_PLAY`]; whether the player started.
+fn run(path: &Path) -> bool {
+    if std::env::var_os(UNDER_CARGO).is_some() {
+        log::debug!("not playing {} under cargo", path.display());
+        return false;
+    }
     let child = Command::new(PLAYER)
         .arg("--")
         .arg(path)
@@ -269,18 +278,19 @@ fn run(path: &Path) {
         Ok(child) => child,
         Err(err) => {
             warn!("could not run {PLAYER}: {err}");
-            return;
+            return false;
         }
     };
     let until = Instant::now() + MAX_PLAY;
     while Instant::now() < until {
         match child.try_wait() {
-            Ok(Some(_)) | Err(_) => return,
+            Ok(Some(_)) | Err(_) => return true,
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
         }
     }
     let _ = child.kill();
     let _ = child.wait();
+    true
 }
 
 #[cfg(test)]
@@ -301,6 +311,13 @@ mod tests {
             std::fs::write(&path, "").unwrap();
         }
         root
+    }
+
+    #[test]
+    fn a_test_build_never_starts_the_player() {
+        // The file is empty, so a player this does start is still silent.
+        let file = tree(&["x.oga"]).join("x.oga");
+        assert!(!run(&file), "under cargo, {PLAYER} never starts");
     }
 
     #[test]
