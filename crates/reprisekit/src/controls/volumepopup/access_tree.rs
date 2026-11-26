@@ -6,10 +6,12 @@ use accesskit::{NodeId, Role};
 
 use super::draw::level_text;
 use super::layout::Layout;
-use super::{Dir, Focus, MUTE, NOW_PLAYING, Pick, Transport, VOLUME, VolumePopup, combo_focus};
+use super::{
+    Dir, Focus, MUTE, NOW_PLAYING, Pick, SETTINGS, Transport, VOLUME, VolumePopup, combo_focus,
+};
 
 impl VolumePopup {
-    /// The popup's `access` part: the Output and Input combos, a group per shown column (label, slider, Mute, a program's Output combo), and with a player a "Now Playing" group. Returns the focused node.
+    /// The popup's `access` part: the Output and Input combos, a group per shown column (label, slider, Mute, a program's Output combo), with a player a "Now Playing" group, and the settings link. Returns the focused node.
     pub fn access(
         &self,
         lay: &Layout,
@@ -101,6 +103,13 @@ impl VolumePopup {
                     focus = b;
                 }
             }
+        }
+        let mut link = access::named(Role::Link, lay.settings, SETTINGS);
+        access::focusable(&mut link, true);
+        link.add_action(accesskit::Action::Click);
+        let link = tree.push(win, "settings", link);
+        if self.focus == Focus::Settings {
+            focus = link;
         }
         focus
     }

@@ -199,7 +199,7 @@ pub fn page_shell(mut c: Canvas, theme: &Theme, text: &TextRenderer, with_blue: 
         })
         .collect();
         let m = ClipHistory::new(rows);
-        c.blit_canvas(540, 5800, &cliphistory::draw(theme, text, &m, true, None));
+        c.blit_canvas(540, 5830, &cliphistory::draw(theme, text, &m, true, None));
     }
 
     {
@@ -864,6 +864,7 @@ pub fn page_desk(
             px,
         );
         cal.day = None;
+        cal.date = vec!["Thursday, September 3, 2026".into(), "09/03/2026".into()];
         c.blit_canvas(
             530,
             5610,

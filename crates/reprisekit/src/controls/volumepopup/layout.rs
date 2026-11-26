@@ -11,9 +11,10 @@ use crate::trackbar;
 
 use super::{
     BAR_GAP, COL_GAP, COL_H, COL_W, COMBO_GAP, COMBO_H, Column, DEVICE_GAP, DEVICE_INSET,
-    DIVIDER_GAP, Dir, FIELD_W, ICON, INPUT, LABEL_GAP, LABEL_W, LEVEL_Y, MARGIN, MAX_SHOWN,
-    MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H, MUTE_W, MUTE_Y, NAME_Y, NowPlaying, OUTPUT, Pick, ROW_H,
-    SEP_GAP, SEP_H, STRIP_H, THUMB_H, THUMB_WIDER, TRACK_H, TRACK_Y, Transport, VolumePopup,
+    DIVIDER_GAP, Dir, FIELD_W, ICON, INPUT, LABEL_GAP, LABEL_W, LEVEL_Y, LINK_GAP, MARGIN,
+    MAX_SHOWN, MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H, MUTE_W, MUTE_Y, NAME_Y, NowPlaying, OUTPUT,
+    Pick, ROW_H, SEP_GAP, SEP_H, SETTINGS, STRIP_H, THUMB_H, THUMB_WIDER, TRACK_H, TRACK_Y,
+    Transport, VolumePopup,
 };
 
 #[derive(Clone, Debug)]
@@ -47,6 +48,8 @@ pub struct Layout {
     /// The look's shortest scrollbar thumb, for the bar's parts.
     pub bar_thumb_min: i32,
     pub strip: Option<StripLayout>,
+    /// The [`SETTINGS`] link, as wide as its text, at the panel's foot on the right.
+    pub settings: Rect,
 }
 
 /// Where the now-playing strip's parts go.
@@ -73,6 +76,7 @@ pub enum Hit {
     Column(usize),
     Bar(ScrollHit),
     Media(Transport),
+    Settings,
     Panel,
     Outside,
 }
@@ -173,6 +177,7 @@ pub fn layout(
     } else {
         0
     };
+    let link_h = l(LINK_GAP) + l(ROW_H);
     let h = margin
         + l(COMBO_H)
         + l(COMBO_GAP)
@@ -183,6 +188,7 @@ pub fn layout(
         + col_h
         + bar_h
         + strip_h
+        + link_h
         + margin;
     // Across the bar the near edge is on the anchor; along it the panel is
     // centred on the anchor, kept inside `bounds`.
@@ -220,6 +226,9 @@ pub fn layout(
         .collect();
     let field = |fy: i32| Rect::new(fx, fy, l(FIELD_W), combo_h);
     let foot = cy + col_h + bar_h;
+    let lw = text.measure(SETTINGS, false, px);
+    let ly = foot + strip_h + l(LINK_GAP);
+    let settings = Rect::new(x + w - margin - lw, ly, lw, l(ROW_H));
     Layout {
         panel: Rect::new(x, y, w, h),
         output_label: row(oy),
@@ -235,6 +244,7 @@ pub fn layout(
             .playing
             .as_ref()
             .map(|np| strip_layout(np, u, x + margin, foot + l(SEP_GAP), w - 2 * margin)),
+        settings,
     }
 }
 
@@ -297,6 +307,9 @@ pub fn hit(vp: &VolumePopup, lay: &Layout, x: i32, y: i32) -> Hit {
             .find(|&t| st.button(t).contains(x, y))
     {
         return Hit::Media(t);
+    }
+    if lay.settings.contains(x, y) {
+        return Hit::Settings;
     }
     for (i, cl) in lay.columns.iter().enumerate() {
         let Some(cl) = cl else { continue };

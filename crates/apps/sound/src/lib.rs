@@ -36,6 +36,8 @@ use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
 const VOLUME_CONTROL: &str = "reprise-volume";
+/// What the popup's settings link starts.
+const SOUND_SETTINGS: [&str; 3] = ["reprise-settings", "--page", "sound"];
 const FLYOUT_WIN: WinId = WinId::named("flyout");
 /// Master's icon in the popup, as the Volume Control window shows it.
 const SPEAKER: &str = "audio-volume-high";
@@ -490,6 +492,13 @@ impl Sound {
                     w.send(bus, mpris::method(t));
                 }
                 Reply::redraw()
+            }
+            E::Settings => {
+                self.flyout = None;
+                Reply {
+                    spawn: vec![SOUND_SETTINGS.iter().map(|&a| a.into()).collect()],
+                    ..Reply::redraw()
+                }
             }
         }
     }
@@ -1200,6 +1209,17 @@ mod tests {
         tx.send(reprisetray::Msg::Activate(0, 0)).unwrap();
         assert_eq!(app.wake(&mut ctx).activate, None);
         assert_eq!(app.tray.as_ref().unwrap().take_handoff(), None);
+    }
+
+    #[test]
+    fn the_popups_settings_link_opens_the_sound_page() {
+        let mut s = Sound::default();
+        let r = s.flyout_outcome(volumepopup::Event::Settings);
+        let want: Vec<std::ffi::OsString> = ["reprise-settings", "--page", "sound"]
+            .iter()
+            .map(|&a| a.into())
+            .collect();
+        assert_eq!(r.spawn, [want]);
     }
 
     #[test]

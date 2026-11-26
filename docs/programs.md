@@ -325,7 +325,8 @@ Backup page's work without a window.
 - **The speaker icon.** One click for a popup with the master volume, a
   slider and mute button for each program, the default devices and the track
   playing. With two outputs or more, a combo moves a program to another one.
-  With no device, the device combos read "No audio device".
+  With no device, the device combos read "No audio device". Its Sound
+  settings... link opens the Sound page of the settings.
 - **Sounds and Audio Devices.** Set the default devices, disable one you
   never use, and give each program its own volume and output. "When an audio
   device connects" picks what a headset, USB device or monitor plugged in

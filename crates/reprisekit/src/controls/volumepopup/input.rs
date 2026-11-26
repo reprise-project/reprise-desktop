@@ -74,12 +74,13 @@ impl Strip for VolumePopup {
             Hit::Combo(p, _) if self.pick(p).is_some_and(|c| c.enabled) => Some(Part::Combo(p)),
             Hit::Bar(h) => Some(Part::Bar(h)),
             Hit::Media(t) if self.can(t) => Some(Part::Media(t)),
+            Hit::Settings => Some(Part::Settings),
             _ => None,
         }
     }
 
     fn pressed(p: Part) -> bool {
-        matches!(p, Part::Bar(_) | Part::Media(_))
+        matches!(p, Part::Bar(_) | Part::Media(_) | Part::Settings)
     }
 
     fn picks(&self) -> impl Iterator<Item = Pick> {
@@ -134,7 +135,8 @@ impl Strip for VolumePopup {
         }
     }
 
-    /// Output, Input, each column's thumb, Mute and output combo, then the transport buttons.
+    /// Output, Input, each column's thumb, Mute and output combo, the transport buttons, then the
+    /// settings link.
     fn focus_order(&self) -> Vec<Focus> {
         let mut v = Vec::new();
         for (f, c) in [(Focus::Output, &self.output), (Focus::Input, &self.input)] {
@@ -156,13 +158,14 @@ impl Strip for VolumePopup {
                 .filter(|&t| self.can(t))
                 .map(Focus::Media),
         );
+        v.push(Focus::Settings);
         v
     }
 
     fn focus_column(f: Focus) -> Option<usize> {
         match f {
             Focus::Thumb(i) | Focus::Mute(i) | Focus::Device(i) => Some(i),
-            Focus::Output | Focus::Input | Focus::Media(_) => None,
+            Focus::Output | Focus::Input | Focus::Media(_) | Focus::Settings => None,
         }
     }
 
@@ -211,6 +214,7 @@ impl VolumePopup {
             Hit::Track(i, _) => Focus::Thumb(i),
             Hit::Mute(i) => Focus::Mute(i),
             Hit::Media(t) => Focus::Media(t),
+            Hit::Settings => Focus::Settings,
             Hit::Combo(p, combo::Hit::Field | combo::Hit::Drop) => combo_focus(p),
             _ => return Event::None,
         };
@@ -245,6 +249,10 @@ impl VolumePopup {
             }
             Hit::Media(t) if self.can(t) => {
                 self.focus = Focus::Media(t);
+                Event::Redraw
+            }
+            Hit::Settings => {
+                self.focus = Focus::Settings;
                 Event::Redraw
             }
             Hit::Bar(h) => self.press_bar(lay, h, x),
@@ -283,12 +291,13 @@ impl VolumePopup {
     }
 
     /// The button came up: on the Mute box it held, the box flips; on the
-    /// transport button it held, that button acts.
+    /// transport button or the link it held, that one acts.
     pub fn release(&mut self) -> Event {
         let before = self.ptr.lit();
         match self.ptr.release() {
             Some(Part::Mute(i)) => self.flip(i),
             Some(Part::Media(t)) => Event::Media(t),
+            Some(Part::Settings) => Event::Settings,
             _ => self.lit_from(before),
         }
     }
@@ -318,7 +327,7 @@ impl VolumePopup {
         }
     }
 
-    /// Up / Down, Page Up / Page Down, Home and End move the focused thumb (Up is louder) or pick on the focused combo; Tab and Shift+Tab walk the focus order; Space flips Mute or clicks a transport button (so does Enter); Esc closes. With a list open every key goes to the list. A key on a program scrolled out of view scrolls it back first.
+    /// Up / Down, Page Up / Page Down, Home and End move the focused thumb (Up is louder) or pick on the focused combo; Tab and Shift+Tab walk the focus order; Space flips Mute or clicks a transport button or the link (so does Enter); Esc closes. With a list open every key goes to the list. A key on a program scrolled out of view scrolls it back first.
     pub fn key(&mut self, lay: &Layout, key: form::Key) -> Event {
         use form::Key as K;
         let reveal = !matches!(key, K::Tab { .. } | K::Escape);
@@ -330,6 +339,7 @@ impl VolumePopup {
             (K::Escape, _) => Event::Close,
             (K::Space, Focus::Mute(i)) => vp.flip(i),
             (K::Space | K::Enter, Focus::Media(t)) if vp.can(t) => Event::Media(t),
+            (K::Space | K::Enter, Focus::Settings) => Event::Settings,
             (k, Focus::Output) => vp.on_combo(Pick::Device(Dir::Output), |c| c.key(k)),
             (k, Focus::Input) => vp.on_combo(Pick::Device(Dir::Input), |c| c.key(k)),
             (k, Focus::Device(i)) => vp.on_combo(Pick::App(i), |c| c.key(k)),
