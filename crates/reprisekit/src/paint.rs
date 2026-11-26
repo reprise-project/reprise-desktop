@@ -381,6 +381,22 @@ impl Theme {
         }
     }
 
+    /// [`Theme::with_text_size`] for a bar at the look's own height: a bar that sets the clock on
+    /// two lines at 100% text grows to hold both grown lines. A `[metrics] taskbar_height` takes
+    /// plain [`Theme::with_text_size`].
+    pub fn with_text_size_own_bar(&self, pct: u32) -> Theme {
+        let mut t = self.with_text_size(pct);
+        let two_lines = (self.taskbar_shape())
+            .clock_baselines(self.metrics.taskbar_height)
+            .is_some();
+        let shape = t.taskbar_shape();
+        if two_lines && let Some(b) = shape.two_line_clock {
+            let need = shape.grown_lines(b).height;
+            t.metrics.taskbar_height = t.metrics.taskbar_height.max(need);
+        }
+        t
+    }
+
     /// This theme's colours and look, at its own scale, never below 1,
     /// for a window as active as [`Theme::active`] says.
     pub fn paint(&self) -> Paint<'_> {

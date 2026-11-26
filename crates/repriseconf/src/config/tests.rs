@@ -1541,3 +1541,33 @@ fn folders_open_in_place_by_double_click_with_hidden_files_left_out_and_extensio
         "the desktop keeps its own key"
     );
 }
+
+#[test]
+fn the_default_glass_bar_keeps_the_clock_on_two_lines_at_every_text_size() {
+    for pct in [100, 125, 150, 175, 200] {
+        let t = Config::parse(&format!(
+            "[appearance]\ninterface = \"glass\"\n[accessibility]\ntext_size = {pct}\n"
+        ))
+        .unwrap()
+        .theme;
+        let h = t.metrics.taskbar_height;
+        assert!(
+            t.taskbar_shape().clock_baselines(h).is_some(),
+            "{pct}%: a {h} px bar holds the time over the date"
+        );
+    }
+    let set = |pct: u32| {
+        Config::parse(&format!(
+            "[appearance]\ninterface = \"glass\"\n[accessibility]\ntext_size = {pct}\n\
+             [metrics]\ntaskbar_height = 28\n"
+        ))
+        .unwrap()
+        .theme
+    };
+    let grow = set(200).line_growth();
+    assert_eq!(
+        set(200).metrics.taskbar_height,
+        28 + grow,
+        "a set height grows one line"
+    );
+}

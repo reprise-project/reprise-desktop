@@ -201,6 +201,38 @@ fn a_clock_whose_two_lines_outgrow_the_bar_keeps_to_one() {
 }
 
 #[test]
+fn the_default_glass_bar_sets_the_time_over_the_date_at_150_and_200_percent() {
+    let mut got = Vec::new();
+    for pct in [150, 200] {
+        let base = theme_for(Interface::Glass).with_text_size_own_bar(pct);
+        let shape = base.taskbar_shape();
+        let h = base.metrics.taskbar_height;
+        let clock = "12:34\n27.09.2026";
+        let face = TextRenderer::load(&base.fonts);
+        let wide = face.measure("27.09.2026", false, base.fonts.size_px);
+        let counts = TaskbarCounts {
+            tasks: 2,
+            ..TaskbarCounts::default()
+        };
+        let l = TaskbarLayout::compute(&base.metrics, &shape, 800, true, counts, wide);
+        assert!(l.clock_lines.is_some(), "{pct}%: two lines on {h} px");
+        for d in [1, 2] {
+            let theme = base.scaled(d);
+            let s = theme.look.style().unwrap();
+            let text = TextRenderer::load(&theme.fonts);
+            let start = TextRenderer::load(&s.start_text.font());
+            let mut st = state_with_tasks(&["Notepad", "Paint"]);
+            st.tasks[0].active = true;
+            st.clock = clock.into();
+            let mut c = Canvas::new(800 * d as u32, (h * d) as u32);
+            draw_taskbar(&mut c, s, &theme, &text, &start, &l.scaled(d), &st);
+            got.push((format!("{pct} {d}"), crate::pins::fnv(&c)));
+        }
+    }
+    crate::pins::check("glass/taskbar_grown", &got);
+}
+
+#[test]
 fn an_unlocked_glass_bars_grips_stand_out_from_the_bar_beside_them() {
     use crate::taskbar::{Bands, BarSpan, ClockText};
     let text = TextRenderer::load(&FontConfig::default());

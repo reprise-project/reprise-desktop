@@ -92,7 +92,7 @@ pub fn theme(s: &Settings) -> Theme {
         FontConfig::SIZE_PX_MAX as i64,
     ) as u32;
     t.fonts.antialias = s.font_antialias;
-    t.with_text_size(s.text_size.clamp(100, 200) as u32)
+    t.with_text_size_own_bar(s.text_size.clamp(100, 200) as u32)
 }
 
 /// The Classic scheme an absent `color_scheme` stands for.
