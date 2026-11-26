@@ -1482,3 +1482,178 @@ fn every_page_combo_picks_the_row_under_the_pointer() {
     }
     assert!(picked > 10, "only {picked} combos tried");
 }
+
+#[test]
+fn a_window_rule_added_and_removed_on_its_page_is_written_around_the_files_comments() {
+    use crate::{ruledlg, rulespage};
+    let dir = tmp("window-rules");
+    let path = dir.join("config.toml");
+    let file = "terminal = \"foot\"  # mine\n\n# shells\n[[window_rules]]\napp_id = \"foot\"\nsize = [800, 600]  # big\n";
+    std::fs::write(&path, file).unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let mut ctx = test_ctx();
+    let p = Page::WindowRules.index();
+    let press = |a: &mut SettingsApp, id| {
+        a.sheet_event(propsheet::Event::Page(p, form::Event::Pressed(id)));
+    };
+    press(&mut a, rulespage::ADD);
+    assert!(a.children().iter().any(|c| c.id == RULE_WIN));
+    let enter = || Event::Key(key_input(keysym::RETURN, Mods::default(), None));
+    a.event(RULE_WIN, enter(), &mut ctx);
+    assert!(
+        a.rule_dlg.is_some(),
+        "Enter with no app id leaves the dialog up"
+    );
+    for ch in "kitty".chars() {
+        let text = ch.to_string();
+        let key = key_input(ch as u32, Mods::default(), Some(&text));
+        a.event(RULE_WIN, Event::Key(key), &mut ctx);
+    }
+    a.rule_dlg
+        .as_mut()
+        .unwrap()
+        .0
+        .form
+        .set_check(ruledlg::ON_TOP, true);
+    a.event(RULE_WIN, enter(), &mut ctx);
+    assert!(a.rule_dlg.is_none(), "Enter is OK");
+    assert_eq!(
+        rulespage::picked(&a.sheet.pages[p]),
+        Some(1),
+        "the new rule is picked"
+    );
+    assert!(a.apply());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        text,
+        format!("{file}\n[[window_rules]]\napp_id = \"kitty\"\nalways_on_top = true\n")
+    );
+
+    press(&mut a, rulespage::REMOVE);
+    assert!(a.apply());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
+    press(&mut a, rulespage::REMOVE);
+    assert!(a.want.window_rules.is_empty());
+    assert!(a.apply());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "terminal = \"foot\"  # mine\n\n# shells\n",
+        "the comment above the list stays"
+    );
+}
+
+#[test]
+fn a_rule_always_open_here_adds_or_removes_under_a_pending_edit_stays_so_after_apply() {
+    use crate::{ruledlg, rulespage};
+    let dir = tmp("window-rules-merge");
+    let path = dir.join("config.toml");
+    let file =
+        "[[window_rules]]\napp_id = \"foot\"\n\n[[window_rules]]\napp_id = \"reprise.notepad\"\n";
+    std::fs::write(&path, file).unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let mut ctx = test_ctx();
+    let p = Page::WindowRules.index();
+    let mut edit_first = |a: &mut SettingsApp, check| {
+        let rules = a.want.window_rules.clone();
+        rulespage::fill(&mut a.sheet.pages[p], &rules, Some(0));
+        a.sheet_event(propsheet::Event::Page(
+            p,
+            form::Event::Pressed(rulespage::EDIT),
+        ));
+        let d = &mut a.rule_dlg.as_mut().expect("Edit opens the dialog").0;
+        d.form.set_check(check, true);
+        let enter = Event::Key(key_input(keysym::RETURN, Mods::default(), None));
+        a.event(RULE_WIN, enter, &mut ctx);
+        assert!(a.rule_dlg.is_none(), "Enter is OK");
+    };
+    let rules = |path: &std::path::Path| {
+        let doc = std::fs::read_to_string(path).unwrap().parse().unwrap();
+        (crate::windowrules::read(&doc).into_iter())
+            .map(|r| (r.app_id, r.desktop, r.always_on_top))
+            .collect::<Vec<_>>()
+    };
+    let foot = |desktop, on_top| ("foot".to_string(), desktop, on_top);
+    let notepad = || ("reprise.notepad".to_string(), None, None);
+
+    edit_first(&mut a, ruledlg::DESKTOP);
+    let menu = "\n[[window_rules]]\napp_id = \"firefox\"\nfrom_menu = true\n";
+    std::fs::write(&path, format!("{file}{menu}")).unwrap();
+    assert!(a.config_changed());
+    assert!(a.apply());
+    assert_eq!(
+        rules(&path),
+        [
+            foot(Some(1), None),
+            notepad(),
+            ("firefox".into(), None, None)
+        ]
+    );
+
+    edit_first(&mut a, ruledlg::ON_TOP);
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, text.replace(menu, "")).unwrap();
+    assert!(a.config_changed());
+    assert!(a.apply());
+    assert_eq!(
+        rules(&path),
+        [foot(Some(1), Some(true)), notepad()],
+        "the rule unticked meanwhile stays gone"
+    );
+}
+
+#[test]
+fn the_rule_dialog_writes_the_rule_it_opened_on_after_the_list_moves_under_it() {
+    use crate::{ruledlg, rulespage};
+    let dir = tmp("window-rules-moved");
+    let path = dir.join("config.toml");
+    let menu = "[[window_rules]]\napp_id = \"firefox\"\nfrom_menu = true\n\n";
+    let rest =
+        "[[window_rules]]\napp_id = \"foot\"\n\n[[window_rules]]\napp_id = \"reprise.notepad\"\n";
+    std::fs::write(&path, format!("{menu}{rest}")).unwrap();
+    let mut a = SettingsApp::open(path.clone(), "us".into());
+    let mut ctx = test_ctx();
+    let p = Page::WindowRules.index();
+    let open_on = |a: &mut SettingsApp, row, edit: bool| {
+        let rules = a.want.window_rules.clone();
+        rulespage::fill(&mut a.sheet.pages[p], &rules, Some(row));
+        a.sheet_event(propsheet::Event::Page(
+            p,
+            form::Event::Pressed(rulespage::EDIT),
+        ));
+        let d = &mut a.rule_dlg.as_mut().expect("Edit opens the dialog").0;
+        if edit {
+            d.form.set_check(ruledlg::STICKY, true);
+        }
+    };
+    let mut ok = |a: &mut SettingsApp| {
+        let enter = Event::Key(key_input(keysym::RETURN, Mods::default(), None));
+        a.event(RULE_WIN, enter, &mut ctx);
+        assert!(a.rule_dlg.is_none(), "Enter is OK");
+    };
+    let rules = |a: &SettingsApp| {
+        (a.want.window_rules.iter())
+            .map(|r| (r.app_id.clone(), r.sticky))
+            .collect::<Vec<_>>()
+    };
+    let after = [
+        ("foot".to_string(), None),
+        ("reprise.notepad".into(), Some(true)),
+    ];
+
+    open_on(&mut a, 2, true);
+    std::fs::write(&path, rest).unwrap();
+    assert!(a.config_changed());
+    ok(&mut a);
+    assert_eq!(rules(&a), after, "the edit lands on its rule, a row up now");
+
+    assert!(a.apply());
+    open_on(&mut a, 1, false);
+    std::fs::write(&path, "[[window_rules]]\napp_id = \"foot\"\n").unwrap();
+    assert!(a.config_changed());
+    ok(&mut a);
+    assert_eq!(
+        rules(&a),
+        [("foot".to_string(), None)],
+        "OK on an unedited rule removed meanwhile does not bring it back"
+    );
+}

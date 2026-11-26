@@ -1005,3 +1005,60 @@ fn the_program_results_list_pins_its_pixels_in_every_look() {
         &pins,
     );
 }
+
+/// The Window Rules page empty and listing two rules with the second picked, and the rule dialog
+/// adding one and editing one with the open windows offered, at scale 1 and 2.
+#[test]
+fn the_window_rules_page_and_dialog_pin_their_pixels_in_every_look_at_both_scales() {
+    use crate::ruledlg::{CLIENT, RuleDialog};
+    use crate::rulespage;
+    use crate::windowrules::Rule;
+    let rules = [
+        Rule {
+            app_id: "foot".into(),
+            size: Some([800, 600]),
+            state: Some("maximized".into()),
+            ..Rule::default()
+        },
+        Rule {
+            app_id: "reprise.notepad".into(),
+            title: Some("*.txt*".into()),
+            desktop: Some(2),
+            always_on_top: Some(true),
+            ..Rule::default()
+        },
+    ];
+    let both = |f: &Form, r: Rect| [row_pins_at(f, r, 1), row_pins_at(f, r, 2)];
+    let page_rect = Rect::new(20, 40, 358, 392);
+    let mut f = rulespage::page(Area::MIN);
+    rulespage::fill(&mut f, &[], None);
+    let mut rows = both(&f, page_rect).to_vec();
+    rulespage::fill(&mut f, &rules, Some(1));
+    rows.extend(both(&f, page_rect));
+    let dialog = Rect::new(0, 0, CLIENT.0, CLIENT.1);
+    rows.extend(both(&RuleDialog::new(None, Vec::new()).form, dialog));
+    let mut d = RuleDialog::new(Some(&rules[1]), vec!["DP-1".into(), "HDMI-A-1".into()]);
+    d.offer_windows(vec!["foot".into(), "reprise.notepad".into()]);
+    rows.extend(both(&d.form, dialog));
+    let x1: Vec<_> = rows.iter().step_by(2).collect();
+    for (i, r) in x1.iter().enumerate() {
+        assert!(
+            !x1[..i].contains(r),
+            "state {i} draws apart from the ones before"
+        );
+    }
+    check_rows(
+        "window_rules",
+        &[
+            "page empty x1",
+            "page empty x2",
+            "page listing x1",
+            "page listing x2",
+            "add dialog x1",
+            "add dialog x2",
+            "edit dialog x1",
+            "edit dialog x2",
+        ],
+        &rows,
+    );
+}

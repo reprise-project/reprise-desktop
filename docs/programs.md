@@ -250,7 +250,7 @@ Super+I starts it.
 - **Personalize:** Appearance, Background, Screen Saver & Lock, Fonts & Icons,
   Effects.
 - **Taskbar & Windows:** Taskbar, Start Menu, Search, Window Switcher, Virtual
-  Desktops, Window Behavior.
+  Desktops, Window Behavior, Window Rules.
 - **Display & Sound:** Display, Night Light, Sound, Screen Capture,
   Notifications.
 - **Devices:** Keyboard, Mouse, Touchpad, Cursor, Tablet, Thunderbolt,

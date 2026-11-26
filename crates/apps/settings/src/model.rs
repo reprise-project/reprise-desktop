@@ -470,6 +470,9 @@ pub struct Settings {
 
     /// `[[tablet_pads]]`' own keys, in file order; none by default.
     pub tablet_pads: Vec<crate::tabletpage::PadEntry>,
+
+    /// `[[window_rules]]` in file order; none by default.
+    pub window_rules: Vec<crate::windowrules::Rule>,
 }
 
 impl Default for Settings {
@@ -815,6 +818,7 @@ impl Settings {
             denied: Vec::new(),
             startmenu: crate::startmenu::default_menu(),
             tablet_pads: Vec::new(),
+            window_rules: Vec::new(),
         }
     }
 

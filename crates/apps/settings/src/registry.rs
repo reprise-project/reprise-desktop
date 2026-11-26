@@ -51,6 +51,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Switcher => pages::switcher(a),
         Page::VirtualDesktops => pages::virtual_desktops(a),
         Page::WindowBehavior => pages::window_behavior(a),
+        Page::WindowRules => crate::rulespage::page(a),
         Page::Keyboard => pages::keyboard(a),
         Page::Mouse => pages::mouse(a),
         Page::Touchpad => pages::touchpad(a),
@@ -155,6 +156,7 @@ mod tests {
                 "Window Switcher",
                 "Virtual Desktops",
                 "Window Behavior",
+                "Window Rules",
                 "Display",
                 "Night Light",
                 "Sound",
@@ -258,16 +260,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 48, "seven headings, 34 pages, seven links");
-        assert_eq!((list.total, list.inner.height), (840, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 384 px");
-        sheet.size.1 += 384;
+        assert_eq!(list.rows.len(), 49, "seven headings, 35 pages, seven links");
+        assert_eq!((list.total, list.inner.height), (857, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 401 px");
+        sheet.size.1 += 401;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 440;
+        sheet.size.1 -= 457;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (840, 400));
+        assert_eq!((list.total, list.inner.height), (857, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();

@@ -1002,6 +1002,11 @@ fn save_round_trips_every_field() {
             ring_up: "ctrl+plus".into(),
             ..Default::default()
         }],
+        window_rules: vec![crate::windowrules::Rule {
+            app_id: "foot".into(),
+            desktop: Some(2),
+            ..Default::default()
+        }],
     };
     let out = saved(SAMPLE, &s);
     assert_eq!(load(&out), s);
@@ -1957,4 +1962,22 @@ fn an_output_without_an_entry_gets_none_for_a_key_it_drops() {
         ..base.clone()
     };
     assert_eq!(save("", &want, &base).unwrap(), "");
+}
+
+#[test]
+fn validate_names_the_window_rule_without_an_app_id() {
+    use crate::windowrules::Rule;
+    let rule = |app_id: &str| Rule {
+        app_id: app_id.into(),
+        ..Rule::default()
+    };
+    let s = Settings {
+        window_rules: vec![rule("foot"), rule("  ")],
+        ..Settings::default()
+    };
+    assert_eq!(
+        validate(&s, &Settings::default()),
+        Err("Window rule 2 needs an app ID.".to_string())
+    );
+    assert_eq!(validate(&s, &s), Ok(()), "a rule as loaded is left alone");
 }

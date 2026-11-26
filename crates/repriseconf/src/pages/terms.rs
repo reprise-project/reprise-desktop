@@ -237,6 +237,14 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("dim_inactive", "Dim windows that don't have the focus:"),
             ("hidden_frame_rate", "Frame rate of hidden windows:"),
         ],
+        Page::WindowRules => &[
+            ("window_rules", "Window rules"),
+            ("wr_add", "Add..."),
+            ("wr_edit", "Edit..."),
+            ("wr_remove", "Remove"),
+            ("wr_up", "Move Up"),
+            ("wr_down", "Move Down"),
+        ],
         Page::Keyboard => &[
             ("kb_layouts", "Layouts:"),
             ("kb_add", "Add..."),

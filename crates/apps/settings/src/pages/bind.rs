@@ -652,6 +652,11 @@ fn nudged_keys(form: &Form) -> Vec<Key> {
 pub fn write(sheet: &mut PropSheet, s: &Settings, reg: &[Layout], system: &str) {
     fill_layouts(sheet, s, reg, system, None);
     crate::menupage::fill(&mut sheet.pages[Page::StartMenu.index()], &s.startmenu);
+    crate::rulespage::fill(
+        &mut sheet.pages[Page::WindowRules.index()],
+        &s.window_rules,
+        None,
+    );
     write_forms(sheet, s);
     follow(sheet, s);
 }
