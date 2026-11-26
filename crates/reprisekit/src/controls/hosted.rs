@@ -76,6 +76,11 @@ pub trait Hosted {
     fn settle(&mut self, _now: Instant) -> bool {
         false
     }
+    /// The wheel turned `rows` rows over (x, y), owner's coordinates ([`PopupMenu::wheel`]);
+    /// `true` when a level scrolled.
+    fn wheel(&mut self, _x: i32, _y: i32, _rows: i32) -> bool {
+        false
+    }
 }
 
 impl<T: Hosted + ?Sized> Hosted for &mut T {
@@ -109,6 +114,9 @@ impl<T: Hosted + ?Sized> Hosted for &mut T {
     }
     fn settle(&mut self, now: Instant) -> bool {
         (**self).settle(now)
+    }
+    fn wheel(&mut self, x: i32, y: i32, rows: i32) -> bool {
+        (**self).wheel(x, y, rows)
     }
 }
 
@@ -157,5 +165,9 @@ impl<T: Chain> Hosted for Option<T> {
     }
     fn settle(&mut self, now: Instant) -> bool {
         self.as_mut().is_some_and(|t| t.chain_mut().settle(now))
+    }
+    fn wheel(&mut self, x: i32, y: i32, rows: i32) -> bool {
+        self.as_mut()
+            .is_some_and(|t| t.chain_mut().wheel(x, y, rows))
     }
 }

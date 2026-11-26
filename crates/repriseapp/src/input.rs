@@ -527,7 +527,7 @@ impl PointerHandler for Host {
                     if cols != 0 {
                         self.pointer(id, PointerInput::ScrollAcross { x, y, cols });
                     }
-                    if rows == 0 {
+                    if rows == 0 || !own && self.menu_wheel(x, y, rows) {
                         continue;
                     }
                     PointerInput::Scroll { x, y, rows }
