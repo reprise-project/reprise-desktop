@@ -503,6 +503,8 @@ pub enum ErrorKind {
 pub struct Error {
     pub kind: ErrorKind,
     pub message: String,
+    /// The volumes a removal had unmounted before it stopped, by [`Volume::name`].
+    pub came_off: Vec<String>,
 }
 
 impl std::fmt::Display for Error {
@@ -523,6 +525,7 @@ pub fn classify(name: &str, message: &str) -> Error {
     Error {
         kind,
         message: message.trim().to_string(),
+        came_off: Vec::new(),
     }
 }
 
@@ -534,6 +537,7 @@ impl From<zbus::Error> for Error {
             return Error {
                 kind: ErrorKind::Other,
                 message: reprisebus::polkit::TIMED_OUT.into(),
+                came_off: Vec::new(),
             };
         }
         match reprisebus::error::name(&e) {
@@ -541,6 +545,7 @@ impl From<zbus::Error> for Error {
             None => Error {
                 kind: ErrorKind::Other,
                 message: e.to_string(),
+                came_off: Vec::new(),
             },
         }
     }
@@ -550,6 +555,7 @@ fn io_error(e: std::io::Error) -> Error {
     Error {
         kind: ErrorKind::Other,
         message: e.to_string(),
+        came_off: Vec::new(),
     }
 }
 
@@ -781,6 +787,7 @@ impl Udisks {
                     "{} holds no file system that can be opened.",
                     file.file_name().unwrap_or_default().to_string_lossy()
                 ),
+                came_off: Vec::new(),
             },
         };
         if let Err(e) = self.delete_loop(&loop_path) {
@@ -850,6 +857,7 @@ impl Udisks {
         let refused = |message: &str| Error {
             kind: ErrorKind::Other,
             message: message.into(),
+            came_off: Vec::new(),
         };
         let Some(d) = snap.disk(disk).filter(|d| d.removable) else {
             return Err(refused(NOT_REMOVABLE));
@@ -870,14 +878,20 @@ impl Udisks {
         }
         let (clear, plain): (Vec<&&Volume>, Vec<&&Volume>) =
             on.iter().partition(|v| v.backing.is_some());
+        let mut came_off = Vec::new();
+        let stopped = |mut e: Error, came_off: &[String]| {
+            e.came_off = came_off.to_vec();
+            e
+        };
         for v in clear.iter().chain(plain.iter()) {
             if !v.mounts.is_empty() {
-                self.unmount(&v.path)?;
+                self.unmount(&v.path).map_err(|e| stopped(e, &came_off))?;
+                came_off.push(v.name(Some(d)));
             }
         }
         for v in &on {
             if v.cleartext.is_some() {
-                self.lock(&v.path)?;
+                self.lock(&v.path).map_err(|e| stopped(e, &came_off))?;
             }
         }
         // A USB optical drive can power off too; Eject is what brings its disc out.
@@ -895,6 +909,7 @@ impl Udisks {
                 ErrorKind::Other => Error {
                     kind: ErrorKind::Other,
                     message: format!("{NOT_STOPPED} {}", e.message).trim_end().into(),
+                    came_off: Vec::new(),
                 },
                 _ => e,
             }
@@ -917,10 +932,10 @@ fn holders(sys: &Path, name: &std::ffi::OsStr) -> Vec<std::ffi::OsString> {
     entries.map(|e| e.file_name()).collect()
 }
 
-/// Why `volume` stayed in after Eject or Safely Remove Hardware, in words; `None` when the user
-/// dismissed the prompt.
+/// Why `volume` stayed in after Eject or Safely Remove Hardware, in words, naming the volumes
+/// that had already come off; `None` when the user dismissed the prompt.
 pub fn eject_failed_text(volume: &str, e: &Error) -> Option<String> {
-    Some(match e.kind {
+    let why = match e.kind {
         ErrorKind::Cancelled => return None,
         ErrorKind::Busy => format!(
             "'{volume}' is in use: a program is using a file on it. Close any program or window \
@@ -929,7 +944,18 @@ pub fn eject_failed_text(volume: &str, e: &Error) -> Option<String> {
         ErrorKind::NotAuthorized => format!("You do not have permission to eject '{volume}'."),
         ErrorKind::Other if e.message.is_empty() => format!("'{volume}' could not be ejected."),
         ErrorKind::Other => e.message.clone(),
-    })
+    };
+    Some(why + &already_off(&e.came_off))
+}
+
+/// " 'A' was already unmounted.", " 'A' and 'B' were ...", or nothing for no volumes.
+fn already_off(names: &[String]) -> String {
+    let quoted: Vec<String> = names.iter().map(|n| format!("'{n}'")).collect();
+    match quoted.as_slice() {
+        [] => String::new(),
+        [one] => format!(" {one} was already unmounted."),
+        [rest @ .., last] => format!(" {} and {last} were already unmounted.", rest.join(", ")),
+    }
 }
 
 #[cfg(test)]
@@ -1477,6 +1503,7 @@ pub(crate) mod tests {
             let e = Error {
                 kind,
                 message: message.into(),
+                came_off: Vec::new(),
             };
             eject_failed_text("STICK", &e)
         };
@@ -1509,6 +1536,25 @@ pub(crate) mod tests {
             text(ErrorKind::Other, "").as_deref(),
             Some("'STICK' could not be ejected."),
             "UDisks2 gave no reason"
+        );
+        let after = |came_off: &[&str]| {
+            let e = Error {
+                kind: ErrorKind::Busy,
+                message: String::new(),
+                came_off: came_off.iter().map(|n| n.to_string()).collect(),
+            };
+            let text = eject_failed_text("STICK", &e).unwrap();
+            text.strip_prefix(
+                "'STICK' is in use: a program is using a file on it. Close any program or window \
+                 using it, and then try again.",
+            )
+            .unwrap()
+            .to_string()
+        };
+        assert_eq!(after(&["DATA"]), " 'DATA' was already unmounted.");
+        assert_eq!(
+            after(&["DATA", "MUSIC", "BACKUP"]),
+            " 'DATA', 'MUSIC' and 'BACKUP' were already unmounted."
         );
     }
 
@@ -2248,6 +2294,7 @@ pub(crate) mod tests {
             let e = f.remove("Stick").expect_err("busy");
             assert_eq!(e.kind, ErrorKind::Busy);
             assert_eq!(e.message, "Error unmounting /dev/sdb2: target is busy");
+            assert_eq!(e.came_off, ["Removable Disk"], "sdb1 came off first");
             assert_eq!(f.calls(), ["Unmount sdb1"], "the stick stays powered");
         }
 
