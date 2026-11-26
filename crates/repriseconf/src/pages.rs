@@ -406,6 +406,7 @@ impl Page {
                 "visual bell",
                 "visual alerts",
                 "flash",
+                "attention",
                 "deaf",
                 "hearing",
             ],

@@ -157,6 +157,10 @@ pub fn advanced(a: Area) -> Form {
 }
 
 pub(super) const CLIPBOARD_HISTORY: &str = "clipboard_history";
+/// The label and edit of `[clipboard] terminal_apps`, greyed with the history off.
+pub(super) const TERMINAL_APPS: [&str; 2] = ["terminal_apps_label", "clipboard_terminal_apps"];
+/// The label and edit of `[session] exclude`, greyed with session restore off.
+pub(super) const SESSION_EXCLUDE: [&str; 2] = ["session_exclude_label", "session_exclude"];
 
 /// The clipboard history check's label, naming the keys that open the history.
 pub(super) fn clipboard_label(binds: &[Shortcut]) -> String {
@@ -218,7 +222,7 @@ pub fn privacy(a: Area) -> Form {
             },
         )
         .named("Clipboard Access"),
-        group(a, "history_group", y, 70, "History"),
+        group(a, "history_group", y, 88, "History"),
         Item::check(
             "recent_files",
             GX,
@@ -226,11 +230,20 @@ pub fn privacy(a: Area) -> Form {
             "Show recently used &files in menus and file dialogs",
         ),
         Item::check(CLIPBOARD_HISTORY, GX, y + 44, &clipboard_label(&[])),
-        group(a, "sharing_group", y + 80, 48, "Screen Sharing"),
+        Item::label_at(
+            TERMINAL_APPS[0],
+            GX,
+            y + 64,
+            158,
+            "Paste with Ctrl+Shift+V &into:",
+        )
+        .under_check(),
+        edit(TERMINAL_APPS[1], GX + 162, y + 60, a.gw() - 180).under_check(),
+        group(a, "sharing_group", y + 98, 48, "Screen Sharing"),
         Item::check(
             "capture_border",
             GX,
-            y + 102,
+            y + 120,
             "Show a red &border around what is being shared",
         ),
     ])
@@ -433,17 +446,19 @@ pub fn startup(a: Area) -> Form {
     Form::new(vec![
         button(ADD, list.right() - 2 * BUTTON_W - BUTTON_GAP, y, "&Add..."),
         button(REMOVE, list.right() - BUTTON_W, y, "&Remove"),
-        group(a, "session_group", 343 + dh, 66, "Session"),
+        group(a, "session_group", 343 + dh, 92, "Session"),
         Item::check(
             "session_restore",
             GX,
             365 + dh,
             "Re&open the programs that were open at the last log off",
         ),
+        Item::label_at(SESSION_EXCLUDE[0], GX, 389 + dh, 90, "E&xcept app ids:").under_check(),
+        edit(SESSION_EXCLUDE[1], GX + 94, 385 + dh, a.gw() - 112).under_check(),
         Item::check(
             "session_end_processes",
             GX,
-            387 + dh,
+            413 + dh,
             "&End the programs still running when I log off",
         ),
     ])

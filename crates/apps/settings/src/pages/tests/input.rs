@@ -55,8 +55,12 @@ fn the_pointer_and_alerts_page_geometry() {
     );
     assert_eq!(rect(&s, p, "locate_group"), Rect::new(20, 148, 358, 62));
     assert_eq!(rect(&s, p, "locate_pointer"), Rect::new(32, 166, 13, 13));
-    assert_eq!(rect(&s, p, "visual_group"), Rect::new(20, 216, 358, 82));
+    assert_eq!(rect(&s, p, "visual_group"), Rect::new(20, 216, 358, 134));
     assert_eq!(rect(&s, p, "visual_bell"), Rect::new(146, 252, 150, 21));
+    assert_eq!(
+        rect(&s, p, "taskbar_attention_flash"),
+        Rect::new(242, 302, 50, 20)
+    );
     inside_page(&s, p);
 }
 
