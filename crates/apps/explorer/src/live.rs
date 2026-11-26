@@ -167,7 +167,7 @@ impl Explorer {
         let menu = match self.popup.take() {
             Some(mut p) => {
                 let px = crate::fileops::menu_icon_px(&ctx.theme);
-                let landed = p.land_icons(&mut ctx.icons, px, |cmd| self.row_icon(cmd));
+                let landed = p.land_icons(&mut ctx.icons, px, |cmd| self.row_icons(cmd));
                 self.popup = Some(p);
                 landed
             }

@@ -16,7 +16,7 @@ fn send_to_zip_packs_the_set_into_one_zip_named_after_the_folder() {
     ex.sv.selection.set.insert(b);
     ex.send_to = vec![SendToRow {
         label: "Compressed (zipped) Folder".into(),
-        icon: "application-zip",
+        icons: &["application-zip"],
         dest: SendTo::Zip,
         enabled: true,
     }];
@@ -54,7 +54,7 @@ fn send_to_a_folder_copies_on_a_job() {
     ex.sv.selection.set.insert(1);
     ex.send_to = vec![SendToRow {
         label: "Docs".into(),
-        icon: "folder-documents",
+        icons: &["folder-documents"],
         dest: SendTo::Folder(dest.path().to_path_buf()),
         enabled: true,
     }];

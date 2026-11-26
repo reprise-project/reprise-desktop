@@ -274,6 +274,43 @@ fn at_200_percent_text_the_item_menus_row_icons_are_32_px() {
     assert_eq!(editor(&ex), Some((32, 32, Some(DRAWN))));
 }
 
+/// On a theme with neither `mail-send` nor `mail-message-new`, E-mail this file and Send To's Mail
+/// Recipient wear the next mail name it carries, ahead of `internet-mail`.
+#[test]
+fn the_mail_rows_wear_the_first_mail_icon_the_theme_carries() {
+    let (art, dir) = (tempfile::tempdir(), tempfile::tempdir());
+    let (art, dir) = (art.expect("a temp dir"), dir.expect("a temp dir"));
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let drawn = [("mail-forward", DRAWN), ("internet-mail", OTHER)];
+    ctx.icons = svg_theme(art.path(), &drawn, &[]);
+    let mut ex = explorer_in(dir.path(), &mut ctx);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| !ex.items.is_empty());
+    ex.sv.selection.set_only(Some(0));
+    ex.refresh_chrome(&mut ctx);
+    ex.entry_menu_at(0, (10, 10), &mut ctx, false);
+    let worn = |ex: &Explorer| -> (Option<u32>, Option<u32>) {
+        let pane = (ex.taskpane.sections.iter())
+            .filter_map(|s| match &s.body {
+                reprisekit::controls::taskpane::Body::Links(rows) => Some(rows),
+                reprisekit::controls::taskpane::Body::Lines(_) => None,
+            })
+            .flatten()
+            .find(|r| r.text == "E-mail this file")
+            .expect("the pane's mail row");
+        let t = ex.popup.as_ref().expect("the menu is up").tree();
+        let subs = (0..t.items().len()).filter_map(|r| t.child(r));
+        let menu = (subs.flat_map(|sub| sub.items().iter())).find_map(|i| match i {
+            MenuItem::Entry { label, icon, .. } if label == "Mail Recipient" => Some(mid(icon)),
+            _ => None,
+        });
+        (mid(&pane.icon), menu.expect("the Mail Recipient row"))
+    };
+    let want = (Some(DRAWN), Some(DRAWN));
+    land_until(&mut ex, &mut ctx, |ex| worn(ex) == want);
+    assert_eq!(worn(&ex), want, "mail-forward on both rows");
+}
+
 /// The Open With and Send To rows [`the_item_menus_rows_wear_their_cold_icons_once_they_land`]
 /// looks at, in the menu's order.
 const ROWS: [&str; 4] = [
