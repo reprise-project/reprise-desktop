@@ -95,20 +95,23 @@ fn draw_panel(
     let s = theme.scale.max(1);
     let mut c = Canvas::new(layout.width.max(1) as u32, layout.height.max(1) as u32);
     let all = Rect::new(0, 0, layout.width, layout.height);
-    match (layout.frame, theme.look.style()) {
+    let ink = match (layout.frame, theme.look.style()) {
         (Some(f), Some(style)) => {
             crate::flyout::draw_border(&mut c, style, all, f, s);
             c.fill_rect(all.inset(f), cs.window);
+            cs.window_text
         }
         _ => {
             c.fill_rect(all, cs.menu);
             c.edge_t(all, EdgeStyle::WindowRaised, cs, s);
+            cs.menu_text
         }
-    }
+    };
     let px = ICON_SIZE * s;
     for (r, icon) in layout.cells.iter().zip(icons) {
         if let Some(ic) = icon {
-            c.blit_canvas(r.x + (r.width - px) / 2, r.y + (r.height - px) / 2, ic);
+            let (x, y) = (r.x + (r.width - px) / 2, r.y + (r.height - px) / 2);
+            crate::taskbar::draw_tray_icon(&mut c, x, y, ic, ink);
         }
     }
     if let (Some(l), Some(f)) = (layout.link, layout.frame) {
@@ -245,6 +248,57 @@ mod tests {
             assert_eq!(c.get(x0 + 15, 33), 0xFFFF_0000);
             assert_eq!((c.get(x0 - 1, 18), c.get(x0 + 16, 33)), (window, window));
         }
+    }
+
+    #[test]
+    fn a_one_grey_icon_takes_the_panels_text_ink_and_a_colour_one_keeps_its_own() {
+        crate::pins::fonts();
+        let white = |px: u32| {
+            Some(Canvas::from_pixels(
+                px,
+                px,
+                vec![0xFFFF_FFFF; (px * px) as usize],
+            ))
+        };
+        let red = |px: u32| {
+            Some(Canvas::from_pixels(
+                px,
+                px,
+                vec![0xFFFF_0000; (px * px) as usize],
+            ))
+        };
+        let classic = Theme::default();
+        let l = FlyoutLayout::compute(&classic, 2);
+        let c = draw_panel(&classic, &text(), &l, &[white(16), red(16)], false);
+        let mid = |c: &Canvas, l: &FlyoutLayout, i: usize| {
+            let r = l.cells[i];
+            c.get(r.x + r.width / 2, r.y + r.height / 2)
+        };
+        let ink = classic.colors.menu_text.argb();
+        assert_eq!(mid(&c, &l, 0), ink, "the menu panel's text ink");
+        assert_eq!(mid(&c, &l, 1), 0xFFFF_0000, "the colour icon");
+        let mut got = Vec::new();
+        for mode in [glass::Mode::Light, glass::Mode::Dark] {
+            let g = glass::Settings {
+                mode,
+                transparency: false,
+                ..glass::Settings::default()
+            };
+            let base = theme_with(Interface::Glass, crate::blue::Variant::Blue, &g);
+            let l = FlyoutLayout::compute(&base, 2);
+            for s in [1, 2] {
+                let theme = base.scaled(s);
+                let px = 16 * s as u32;
+                let l = l.scaled(s);
+                let c = draw_panel(&theme, &text(), &l, &[white(px), red(px)], false);
+                let ink = theme.colors.window_text.argb();
+                assert_eq!(mid(&c, &l, 0), ink, "{mode:?} {s}: the window text ink");
+                let colour = mid(&c, &l, 1);
+                assert_eq!(colour, 0xFFFF_0000, "{mode:?} {s}: the colour icon");
+                got.push((format!("{mode:?} {s}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("trayflyout/one_grey_icons", &got);
     }
 
     #[test]
