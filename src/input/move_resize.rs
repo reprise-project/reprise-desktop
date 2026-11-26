@@ -145,6 +145,7 @@ impl State {
             return;
         };
         let start = win.frame_rect();
+        win.rescued = None;
         win.resize_anchor = Some(ResizeAnchor {
             edges,
             right: start.right(),
