@@ -1185,23 +1185,35 @@ pub fn render_glass_launcher_dark(n: i32) -> Canvas {
 pub fn render_launchers(pct: u32) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let l = launcher_sample();
+    let mut none = launcher::Launcher::new();
+    none.key(launcher::Key::Char(EditKey::Insert("zzqx".into())));
+    none.set_rows(Vec::new());
     let mut icon = Canvas::new(32, 32);
     icon.fill_rect(Rect::new(4, 6, 24, 20), Color::rgb(80, 193, 255));
-    let panels: Vec<Canvas> = [Interface::Classic, Interface::Blue]
-        .iter()
-        .map(|&i| {
-            let theme = cued(interfaces::theme_for(i)).with_text_size(pct);
-            launcher::draw(&theme, &text, &l, Some(&icon), true, None)
-        })
-        .collect();
-    let w = panels.iter().map(|p| p.width as i32 + 30).sum::<i32>() + 30;
-    let h = panels.iter().map(|p| p.height as i32).max().unwrap_or(0) + 60;
+    let draw = |i: Interface, l: &launcher::Launcher| {
+        let theme = cued(interfaces::theme_for(i)).with_text_size(pct);
+        launcher::draw(&theme, &text, l, Some(&icon), true, None)
+    };
+    let rows: [Vec<Canvas>; 2] = [
+        vec![draw(Interface::Classic, &l), draw(Interface::Blue, &l)],
+        [Interface::Classic, Interface::Blue, Interface::Glass]
+            .map(|i| draw(i, &none))
+            .into(),
+    ];
+    let row_w = |r: &[Canvas]| r.iter().map(|p| p.width as i32 + 30).sum::<i32>() + 30;
+    let row_h = |r: &[Canvas]| r.iter().map(|p| p.height as i32).max().unwrap_or(0) + 30;
+    let w = rows.iter().map(|r| row_w(r)).max().unwrap_or(0);
+    let h = rows.iter().map(|r| row_h(r)).sum::<i32>() + 30;
     let mut c = Canvas::new(w as u32, h as u32);
     c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
-    let mut x = 30;
-    for p in &panels {
-        c.blit_over(x, 30, p);
-        x += p.width as i32 + 30;
+    let mut y = 30;
+    for r in &rows {
+        let mut x = 30;
+        for p in r {
+            c.blit_over(x, y, p);
+            x += p.width as i32 + 30;
+        }
+        y += row_h(r);
     }
     c
 }
