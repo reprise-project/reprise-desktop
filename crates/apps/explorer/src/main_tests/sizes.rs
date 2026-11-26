@@ -30,7 +30,7 @@ fn a_splitter_drag_at_200_percent_saves_half_the_px() {
     ctx.theme = Theme::default().with_text_size(200);
     ctx.size = (1600, 900);
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.dragging = true;
+    ex.dragging = Some(reprisekit::controls::explorerbar::SPLITTER_W / 2);
     let x = 300 + reprisekit::controls::explorerbar::SPLITTER_W / 2;
     ex.pointer(repriseapp::PointerInput::Motion { x, y: 200 }, &mut ctx);
     assert_eq!(ex.explorer_bar.width, 150);
@@ -363,4 +363,39 @@ fn the_dialogs_take_the_renderer_a_font_change_loads() {
     .into();
     ex.follow_forms(&ctx);
     assert!(Rc::ptr_eq(&ex.dialog_text, &ctx.text));
+}
+
+/// The bar's ring columns left of the splitter take it too, and the drag moves it from where
+/// it was pressed.
+#[test]
+fn a_press_beside_the_splitter_grabs_it_where_it_lies() {
+    use reprisekit::interface::Interface;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for size in [100, 200] {
+            let mut ctx = test_ctx();
+            ctx.theme = reprisekit::interfaces::theme_for(look).with_text_size(size);
+            ctx.size = (1600, 900);
+            let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+            let bar = ex.layout(&ctx).bar.expect("the Folders bar");
+            let (x, y) = (bar.body.right(), bar.body.y + 50);
+            ex.pointer(
+                repriseapp::PointerInput::Press {
+                    x,
+                    y,
+                    button: crate::BTN_LEFT,
+                    time: 0,
+                    mods: repriseapp::Mods::default(),
+                },
+                &mut ctx,
+            );
+            ex.pointer(repriseapp::PointerInput::Motion { x: x + 40, y }, &mut ctx);
+            let moved = ex.layout(&ctx).bar.expect("the Folders bar");
+            assert_eq!(
+                moved.splitter.x,
+                bar.splitter.x + 40,
+                "{look:?} at {size}%: the splitter follows the press"
+            );
+        }
+    }
 }
