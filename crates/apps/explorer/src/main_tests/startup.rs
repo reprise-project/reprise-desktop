@@ -65,7 +65,8 @@ fn select_opens_the_folder_on_the_entry() {
 }
 
 /// A command-line folder whose check has not answered opens the window there at once; a late
-/// "missing" sends it Home with nothing to go back to.
+/// "missing" sends it Home with nothing to go back to, even when the folder's watch finds it
+/// missing first.
 #[test]
 fn a_start_folder_answering_late_opens_the_window_at_once() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -89,7 +90,17 @@ fn a_start_folder_answering_late_opens_the_window_at_once() {
         opened.elapsed() < std::time::Duration::from_secs(10),
         "the window opens before the folder answers"
     );
-    assert_eq!(ex.place, Place::Folder(gone));
+    assert_eq!(ex.place, Place::Folder(gone.clone()));
+
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.watch.as_ref().is_some_and(|w| w.added())
+    });
+    let _ = ex.wake(&mut ctx);
+    assert_eq!(
+        ex.place,
+        Place::Folder(gone),
+        "the watch finding it missing waits for the check"
+    );
 
     answer.send(()).expect("send");
     wake_until(&mut ex, &mut ctx, |ex| ex.place == Place::Home);

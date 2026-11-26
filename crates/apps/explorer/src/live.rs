@@ -266,7 +266,9 @@ impl Explorer {
             true => Some(put.unwrap_or_default().and(Reply::redraw_all())),
             false => put,
         };
-        if let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
+        // A missing start folder opens Home: its gone report waits for the check to answer.
+        let checking_here = (self.checking.as_ref()).is_some_and(|c| c.place == self.place);
+        if !checking_here && let Some(from) = self.watch.as_mut().and_then(|w| w.take_gone()) {
             let r = self.follow_gone(&from, ctx);
             return put.unwrap_or_default().and(r);
         }
