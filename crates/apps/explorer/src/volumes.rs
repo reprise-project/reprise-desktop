@@ -13,7 +13,7 @@ use repriseapp::{Ctx, Event, Reply};
 use reprisefs::listing::Item;
 use reprisefs::netshare::Unmount;
 use reprisefs::portable::{self, Device};
-use reprisefs::udisks::{Error, ErrorKind, Snapshot, Volume};
+use reprisefs::udisks::{BadLabelChar, Error, ErrorKind, Snapshot, Volume};
 
 impl Explorer {
     /// Take UDisks2's snapshots as it changes, so Computer gains and loses a
@@ -435,6 +435,9 @@ impl Explorer {
         if label.starts_with('-') {
             return self.message_box("Rename", LEADING_HYPHEN.into(), ctx);
         }
+        if let Some(bad) = reprisefs::udisks::label_refuses(&picked.fs_type, &label) {
+            return self.message_box("Rename", bad_char_text(bad), ctx);
+        }
         if let Some(limit) =
             reprisefs::udisks::label_limit(&picked.fs_type).filter(|l| !l.fits(&label))
         {
@@ -485,6 +488,21 @@ pub(crate) fn label_text(v: &Volume) -> String {
     match v.full_label.is_empty() {
         true => v.label.clone().unwrap_or_default(),
         false => v.full_label.clone(),
+    }
+}
+
+/// Why a name with `bad` in it is refused before UDisks2 is asked: polkit would prompt first.
+pub(crate) fn bad_char_text(bad: BadLabelChar) -> String {
+    match bad {
+        BadLabelChar::Control => "A drive's name cannot contain control characters.".into(),
+        BadLabelChar::Space => "This drive's name cannot contain spaces.".into(),
+        BadLabelChar::Listed(chars) => {
+            let spaced: Vec<String> = chars.chars().map(String::from).collect();
+            format!(
+                "A drive's name cannot contain any of the following characters:\n{}",
+                spaced.join(" ")
+            )
+        }
     }
 }
 
