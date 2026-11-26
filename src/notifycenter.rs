@@ -454,12 +454,9 @@ fn open_program_menu(state: &mut State, key: String, at: (i32, i32)) {
         return;
     };
     let usable = state.usable_area(Some(&output));
-    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
-        &state.config.theme,
-        &state.text,
-        &items,
-        usable,
-    );
+    let layout = MenuStyle::context_for(&state.config.theme, &items)
+        .at_scale(state.draw_scale_at(Some(&output)))
+        .layout_in(&state.config.theme, &state.text, &items, usable);
     let pos = place_popup(at, (layout.width, layout.height), usable);
     let kind = MenuKind::NotifyProgram(key);
     state.push_menu(0, pos, layout, items, output, kind, MenuFrom::Elsewhere);
@@ -514,12 +511,14 @@ pub fn open_actions_menu(
         return;
     };
     let usable = state.usable_area(Some(&output));
-    let style = MenuStyle::context_for(&state.config.theme, &items).fit(
-        &state.text,
-        &items,
-        state.config.theme.fonts.size_px,
-        usable.width,
-    );
+    let style = MenuStyle::context_for(&state.config.theme, &items)
+        .at_scale(state.draw_scale_at(Some(&output)))
+        .fit(
+            &state.text,
+            &items,
+            state.config.theme.fonts.size_px,
+            usable.width,
+        );
     let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
     let x = if left_of { at.0 - layout.width } else { at.0 };
     let pos = place_popup((x, at.1), (layout.width, layout.height), usable);

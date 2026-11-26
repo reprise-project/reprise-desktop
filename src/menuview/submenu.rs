@@ -446,7 +446,8 @@ impl State {
             MenuStyle::context_for(&theme, &items)
         } else {
             MenuStyle::submenu(&theme)
-        };
+        }
+        .at_scale(self.draw_scale_at(Some(&output)));
         let layout = style.layout_in(&theme, &self.text, &items, usable);
         let size = (layout.width, layout.height);
         let (x, y) = match skin {

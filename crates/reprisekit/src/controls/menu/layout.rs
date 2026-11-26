@@ -61,6 +61,8 @@ pub struct MenuStyle {
     pub gutter: i32,
     /// The least height the menu takes whatever its rows (logical px): see [`MenuStyle::hold_banner`].
     pub min_height: i32,
+    /// The output scale the menu draws at: [`MenuStyle::fit`] measures labels there.
+    pub scale: i32,
 }
 
 impl MenuStyle {
@@ -92,6 +94,7 @@ impl MenuStyle {
             shortcut_pad: RIGHT_PAD,
             gutter: 0,
             min_height: 0,
+            scale: 1,
         }
     }
 
@@ -128,6 +131,7 @@ impl MenuStyle {
                 shortcut_pad: ml.shortcut_end,
                 gutter: ml.gutter,
                 min_height: 0,
+                scale: 1,
             };
         }
         let (row_height, icon_x, text_x, right_pad) = match bitmaps {
@@ -150,6 +154,7 @@ impl MenuStyle {
             shortcut_pad: right_pad,
             gutter: 0,
             min_height: 0,
+            scale: 1,
         }
     }
 
@@ -185,6 +190,7 @@ impl MenuStyle {
             shortcut_pad: ROOT_RIGHT_PAD,
             gutter: 0,
             min_height: 0,
+            scale: 1,
         }
     }
 
@@ -241,6 +247,14 @@ impl MenuStyle {
         self.icon
     }
 
+    /// This style for a menu drawn at output scale `scale`.
+    pub fn at_scale(self, scale: i32) -> MenuStyle {
+        MenuStyle {
+            scale: scale.max(1),
+            ..self
+        }
+    }
+
     /// Widens to fit the longest label in `items` up to `max_width` (longer ones are ellipsized); `width` is a minimum.
     pub fn fit(
         self,
@@ -249,7 +263,14 @@ impl MenuStyle {
         size_px: u32,
         max_width: i32,
     ) -> MenuStyle {
-        let longest = longest_row(text, items, size_px, self.right_pad, self.shortcut_pad);
+        let longest = longest_row(
+            text,
+            items,
+            size_px,
+            self.scale,
+            self.right_pad,
+            self.shortcut_pad,
+        );
         let needed = self.band + self.inset.left + self.text_x + longest + self.inset.right;
         MenuStyle {
             width: needed.min(max_width).max(self.width),
@@ -299,14 +320,22 @@ impl MenuStyle {
     }
 }
 
-/// The widest row of `items` from its text's start to the menu's inner right edge.
+/// The widest row of `items` from its text's start to the menu's inner right edge, logical px.
+/// Text is measured as it draws at `scale`, whose hinted glyphs may run longer than `scale`
+/// times scale 1's, and rounded up.
 fn longest_row(
     text: &TextRenderer,
     items: &[MenuItem],
     size_px: u32,
+    scale: i32,
     right_pad: i32,
     shortcut_pad: i32,
 ) -> i32 {
+    let device = text.for_output(scale);
+    let measure = |t: &str, bold: bool| {
+        let w = device.measure(t, bold, size_px * scale as u32);
+        (w + scale - 1) / scale
+    };
     items
         .iter()
         .map(|it| match it {
@@ -318,11 +347,11 @@ fn longest_row(
             } => {
                 let sc = shortcut
                     .as_deref()
-                    .map(|sc| text.measure(sc, false, size_px) + SHORTCUT_GAP + shortcut_pad)
+                    .map(|sc| measure(sc, false) + SHORTCUT_GAP + shortcut_pad)
                     .unwrap_or(right_pad);
-                text.measure(label, *bold, size_px) + sc
+                measure(label, *bold) + sc
             }
-            MenuItem::Heading(title) => text.measure(title, true, size_px) + right_pad,
+            MenuItem::Heading(title) => measure(title, true) + right_pad,
             MenuItem::Separator => right_pad,
         })
         .max()
@@ -356,6 +385,8 @@ pub struct MenuLayout {
     pub right_pad: i32,
     pub shortcut_pad: i32,
     pub min_height: i32,
+    /// The output scale its labels were fitted for ([`MenuStyle::scale`]).
+    pub scale: i32,
     /// Set on a menu too tall for its room: one column between two scroll arrows. `rows` hold
     /// where each row stands now; only the rows wholly between the arrows show
     /// ([`MenuLayout::shown`]).
@@ -434,6 +465,7 @@ impl MenuLayout {
             right_pad: style.right_pad,
             shortcut_pad: style.shortcut_pad,
             min_height: style.min_height,
+            scale: style.scale,
             scroll: None,
         }
     }
@@ -610,6 +642,7 @@ impl MenuLayout {
             shortcut_pad: self.shortcut_pad,
             gutter: self.gutter,
             min_height: self.min_height,
+            scale: self.scale,
         }
     }
 
@@ -645,6 +678,7 @@ impl MenuLayout {
             right_pad: self.right_pad * n,
             shortcut_pad: self.shortcut_pad * n,
             min_height: self.min_height * n,
+            scale: self.scale,
             scroll: self.scroll.map(|sc| MenuScroll {
                 arrow: sc.arrow * n,
                 ..sc

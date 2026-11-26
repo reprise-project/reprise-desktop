@@ -165,12 +165,9 @@ impl State {
             .map(|(i, d)| MenuItem::entry(&d.description).checked(i as u32 == layouts.current))
             .collect();
         let usable = self.usable_area(Some(output));
-        let layout = MenuStyle::context_for(&self.config.theme, &items).layout_in(
-            &self.config.theme,
-            &self.text,
-            &items,
-            usable,
-        );
+        let layout = MenuStyle::context_for(&self.config.theme, &items)
+            .at_scale(self.draw_scale_at(Some(output)))
+            .layout_in(&self.config.theme, &self.text, &items, usable);
         let (x, y) = crate::barplace::bar_popup(
             &self.bar_placement(output),
             cell,

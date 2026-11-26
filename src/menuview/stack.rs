@@ -341,8 +341,8 @@ impl State {
             return;
         }
         let entries = self.config.startmenu.clone();
-        let style = MenuStyle::root(&self.config.theme);
         let scale = self.draw_scale_at(Some(&output)).max(1);
+        let style = MenuStyle::root(&self.config.theme).at_scale(scale);
         let px = style.icon_px() * scale;
         let (items, waits) = self.entry_items(&entries, px);
         let area = self.usable_area(Some(&output));

@@ -2740,3 +2740,46 @@ fn a_popup_scrolls_under_its_arrows_by_the_wheel_and_to_a_key_picked_row() {
         "End lights the last row and scrolls it into view"
     );
 }
+
+/// DejaVu Sans' hinted glyphs at 44 px run wider than twice its 22 px ones, so a menu fitted at
+/// 200% text for scale 2 measures its labels there.
+#[test]
+fn a_menu_fitted_for_scale_2_draws_every_label_whole_there() {
+    let items = vec![
+        MenuItem::entry("Sound and Video").submenu(true),
+        MenuItem::entry("Test Program Number 01 With A Long Name"),
+        MenuItem::entry("Properties").shortcut(Some("Alt+Enter".into())),
+    ];
+    crate::pins::without_tahoma(|| {
+        crate::pins::fonts();
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let base = crate::interfaces::theme_for(interface).with_text_size(200);
+            let text = TextRenderer::load(&base.fonts);
+            let size = base.fonts.size_px;
+            for (name, style) in [
+                ("submenu", MenuStyle::submenu(&base)),
+                ("context", MenuStyle::context_for(&base, &items)),
+            ] {
+                let l = style
+                    .at_scale(2)
+                    .layout_within(&text, &items, size, (1920, 1080))
+                    .scaled(2);
+                let theme = base.scaled(2);
+                let mut c = Canvas::new(l.width as u32, l.height as u32);
+                let ((), cut) = crate::pins::shortened_text(|| {
+                    draw_menu(
+                        &mut c,
+                        &theme,
+                        text.for_output(2),
+                        &l,
+                        &items,
+                        None,
+                        "",
+                        false,
+                    )
+                });
+                assert_eq!(cut, vec![], "{interface:?} {name}: no label ellipsized");
+            }
+        }
+    });
+}
