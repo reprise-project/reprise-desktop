@@ -67,11 +67,11 @@ sticky 16 4 3634b4f052fabcb4
 sticky 16 8 15616669c1c828b4
 sticky 16 64 0822844b49135434
 sticky 16 77 00312b56a50fb4f4
-mousekeys 16 Left false a7d4c484cce6d749
+mousekeys 16 Left false 045e2adb36a68e3b
 mousekeys 16 Left true 0bb38363368e1ec9
-mousekeys 16 Middle false 1dcad7a562eb3064
+mousekeys 16 Middle false 81ff4c38434506c4
 mousekeys 16 Middle true ef341f8b368b0a64
-mousekeys 16 Right false 4561633e78ba2299
+mousekeys 16 Right false 77f881320269dcab
 mousekeys 16 Right true bdf44b260e730919
 sun 16 false 7ca5e6f5a0a6a184
 sun 16 true 45b48983a154d1e4
@@ -88,11 +88,11 @@ sticky 32 4 1d7ad6444b8bb884
 sticky 32 8 671684b57b4fb284
 sticky 32 64 24046159f6d79d04
 sticky 32 77 72c3afd8c4967784
-mousekeys 32 Left false 911e0479952ba8e4
+mousekeys 32 Left false 36be303748fc6464
 mousekeys 32 Left true 135d54c7d4b8f7e4
-mousekeys 32 Middle false ea5cd91ff5453104
+mousekeys 32 Middle false 71160f1d67b6ac84
 mousekeys 32 Middle true b410a9d9094f8504
-mousekeys 32 Right false 7da66c700c456be4
+mousekeys 32 Right false 59c4bf47a9b280e4
 mousekeys 32 Right true c3207565fe2589e4
 sun 32 false 8cfc53a094d27784
 sun 32 true 026b8a71b6b5f704

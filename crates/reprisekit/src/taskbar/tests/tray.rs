@@ -774,3 +774,56 @@ fn a_one_grey_tray_icon_at_any_coverage_takes_the_ink_and_a_coloured_one_keeps_i
         "two greys are a picture"
     );
 }
+
+#[test]
+fn the_mouse_keys_indicator_takes_the_bar_ink_on_a_light_bar_and_a_dark_one() {
+    use crate::classic::indicator::{MouseButton, draw_mouse_keys};
+    let bars = [
+        ("light", Color::rgb(0xC0, 0xC0, 0xC0), Color::rgb(0, 0, 0)),
+        (
+            "dark",
+            Color::rgb(0x1C, 0x24, 0x30),
+            Color::rgb(0xFF, 0xFF, 0xFF),
+        ),
+    ];
+    let mut got = Vec::new();
+    for (name, bar, ink) in bars {
+        for scale in [1, 2] {
+            for (pick, held) in [(MouseButton::Left, false), (MouseButton::Right, true)] {
+                let px = 16 * scale;
+                let icon = draw_mouse_keys(px, pick, held);
+                let mut c = Canvas::new(px as u32, px as u32);
+                c.fill_rect(Rect::new(0, 0, px, px), bar);
+                draw_tray_icon(&mut c, 0, 0, &icon, ink);
+                let (outline, button) = ((3 * scale, scale), (3 * scale, 4 * scale));
+                assert_eq!(
+                    c.get(outline.0, outline.1),
+                    ink.argb(),
+                    "{name} s{scale}: the outline is the ink"
+                );
+                let shade = |b: u8, i: u8| ((b as u32 * 170 + i as u32 * 85 + 127) / 255) as u8;
+                let want = match (pick, held) {
+                    (MouseButton::Left, false) => Color::rgb(
+                        shade(bar.r, ink.r),
+                        shade(bar.g, ink.g),
+                        shade(bar.b, ink.b),
+                    ),
+                    _ => bar,
+                };
+                let got_px = c.get(button.0, button.1);
+                for (sh, w) in [(16, want.r), (8, want.g), (0, want.b)] {
+                    let g = ((got_px >> sh) & 0xFF) as i32;
+                    assert!(
+                        (g - w as i32).abs() <= 1,
+                        "{name} s{scale} {pick:?}: the picked button is a third of the ink over the bar, got {got_px:08x}"
+                    );
+                }
+                got.push((
+                    format!("{name} s{scale} {pick:?} held={held}"),
+                    crate::pins::fnv(&c),
+                ));
+            }
+        }
+    }
+    crate::pins::check("tray_mouse_keys", &got);
+}
