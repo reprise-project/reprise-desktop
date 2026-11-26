@@ -213,7 +213,7 @@ pub(super) fn draw_slot_light(
         draw_slot_band(canvas, style, r, s, edge);
     }
     draw_slot_edges(canvas, style, r, state, s, edge);
-    draw_slot_light_foot(canvas, style, r, state, s, edge);
+    draw_slot_light_foot(canvas, style, Part::SlotLight, r, state, s, edge);
     true
 }
 
@@ -246,15 +246,17 @@ fn slot_art(edge: Edge) -> Edge {
     if edge.is_side() { edge } else { Edge::Bottom }
 }
 
+/// `light` (a [`Part::SlotLight`] or [`Part::PagerLight`]) centred along `r`'s foot.
 pub(super) fn draw_slot_light_foot(
     canvas: &mut Canvas,
     style: &Style,
+    light: Part,
     r: Rect,
     state: State,
     s: i32,
     edge: Edge,
 ) {
-    let Some(p) = style.part(Part::SlotLight) else {
+    let Some(p) = style.part(light) else {
         return;
     };
     let (fw, fh) = design_size(p, state);
@@ -263,7 +265,7 @@ pub(super) fn draw_slot_light_foot(
         edge.draw_art(c, r, |c, slot| {
             let x = slot.x + s * (slot.width / s / 2 - fw / 2);
             let at = Rect::new(x, slot.bottom() - h, w, h);
-            style.draw(c, at, Part::SlotLight, state, s)
+            style.draw(c, at, light, state, s)
         })
     });
 }
