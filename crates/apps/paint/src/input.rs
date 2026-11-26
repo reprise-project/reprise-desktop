@@ -14,6 +14,8 @@ use reprisekit::pointer::Shape;
 use reprisekit::textedit::{EditKey, keysym};
 use std::time::Instant;
 
+/// The most a sizing drag past the view's edge scrolls it a tick, in window px.
+const SIZING_STEP: i32 = 32;
 const SHIFT_L: u32 = 0xffe1;
 const SHIFT_R: u32 = 0xffe2;
 
@@ -68,6 +70,9 @@ impl Paint {
     }
 
     fn tick(&mut self, ctx: &Ctx) -> Reply {
+        if self.sizing.is_some() {
+            return self.sizing_tick(ctx);
+        }
         if self.doc.spraying() {
             self.doc.tick();
             return Reply {
@@ -118,7 +123,10 @@ impl Paint {
             return r;
         }
         match k.sym {
-            keysym::ESCAPE if self.sizing.take().is_some() => Reply::redraw(),
+            keysym::ESCAPE if self.sizing.take().is_some() => {
+                self.hold_scroll(ctx);
+                Reply::redraw()
+            }
             keysym::ESCAPE => {
                 self.doc.cancel();
                 Reply::redraw()
@@ -318,6 +326,53 @@ impl Paint {
         sizehandles::hit(&self.handles(&l), x, y).map_or(Shape::Default, |h| h.shape())
     }
 
+    /// A sizing drag's motion to (`x`, `y`): the size and the pointer's place follow, and past the
+    /// view's edge the view starts following it ([`Paint::sizing_tick`]).
+    fn sizing_motion(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
+        let l = self.lay(ctx);
+        let at = Some(self.to_picture(&l, x, y));
+        let moved = std::mem::replace(&mut self.hover, at) != at;
+        let Some(d) = &mut self.sizing else {
+            return Reply::none();
+        };
+        let changed = d.motion((x, y), self.zoom, dialogs::MAX_SIDE);
+        Reply {
+            redraw: changed || moved,
+            tick: d.past(l.view) != (0, 0),
+            ..Reply::none()
+        }
+    }
+
+    /// While a sizing drag rests past the view's edge the view scrolls toward it, at most
+    /// [`SIZING_STEP`] px a tick, and the size grows with what scrolled under the pointer.
+    fn sizing_tick(&mut self, ctx: &Ctx) -> Reply {
+        let l = self.lay(ctx);
+        let Some(d) = self.sizing else {
+            return Reply::none();
+        };
+        let (dx, dy) = d.past(l.view);
+        let step = |d: i32| d.clamp(-SIZING_STEP, SIZING_STEP);
+        let before = (self.hscroll.top, self.vscroll.top);
+        self.hscroll.top += step(dx);
+        self.vscroll.top += step(dy);
+        self.hold_scroll(ctx);
+        let by = (self.hscroll.top - before.0, self.vscroll.top - before.1);
+        if by == (0, 0) {
+            return Reply::none();
+        }
+        let zoom = self.zoom;
+        if let Some(d) = &mut self.sizing {
+            d.scrolled(by, zoom, dialogs::MAX_SIDE);
+        }
+        let l = self.lay(ctx);
+        self.hover = Some(self.to_picture(&l, d.at.0, d.at.1));
+        Reply {
+            redraw: true,
+            tick: true,
+            ..Reply::none()
+        }
+    }
+
     fn pointer_input(&mut self, p: PointerInput, ctx: &Ctx) -> Reply {
         if matches!(p, PointerInput::Press { .. }) {
             self.alt_arm.interrupt();
@@ -462,13 +517,8 @@ impl Paint {
                     return Reply::redraw();
                 }
                 let title = self.bar.hover(x, y, &lay);
-                if let Some(d) = &mut self.sizing {
-                    let changed = d.motion((x, y), self.zoom, dialogs::MAX_SIDE);
-                    return if changed {
-                        Reply::redraw()
-                    } else {
-                        Reply::none()
-                    };
+                if self.sizing.is_some() {
+                    return self.sizing_motion(x, y, ctx);
                 }
                 if self.hscroll.holding()
                     && let Some(b) = l.hbar

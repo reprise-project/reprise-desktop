@@ -458,6 +458,58 @@ fn a_sizing_handle_shows_its_arrow_over_it_and_through_its_drag() {
 }
 
 #[test]
+fn the_pointer_s_place_follows_a_sizing_drag() {
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(40, 30, WHITE);
+    let (x, y) = handle_point(&p, &ctx, sizehandles::Handle::Bottom);
+    p.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    p.event(MAIN, motion(x + 30, y + 12), &mut ctx);
+    let l = p.lay(&ctx);
+    let (px, py) = p.to_picture(&l, x + 30, y + 12);
+    assert_eq!(
+        p.status(&l, &ctx).unwrap().0.panels[1].text,
+        format!("{px},{py}")
+    );
+}
+
+#[test]
+fn a_sizing_drag_resting_past_the_view_scrolls_it_and_grows_the_picture_past_the_window() {
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(40, 30, WHITE);
+    let (x, y) = handle_point(&p, &ctx, sizehandles::Handle::Right);
+    p.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    let edge = p.lay(&ctx).view.right();
+    let reply = p.event(MAIN, motion(edge + 10, y), &mut ctx);
+    assert!(reply.tick, "past the edge the view starts following");
+    let reached = p.sizing.unwrap().size.0;
+    let under = p.lay(&ctx).origin.0 + reached - (edge + 10);
+    let mut ticks = 0;
+    while p.sizing.unwrap().size.0 <= ctx.size.0 && p.event(MAIN, Event::Tick, &mut ctx).tick {
+        ticks += 1;
+    }
+    let grown = p.sizing.unwrap().size.0;
+    assert!(
+        grown > ctx.size.0,
+        "{grown} past the {} px window",
+        ctx.size.0
+    );
+    assert_eq!(
+        grown,
+        reached + 11 * ticks,
+        "a tick scrolls as far as the pointer rests past the edge"
+    );
+    assert_eq!(
+        p.lay(&ctx).origin.0 + grown - (edge + 10),
+        under,
+        "the outline's edge stays where it was under the pointer"
+    );
+    p.event(MAIN, release(edge + 10, y, BTN_LEFT), &mut ctx);
+    assert_eq!(p.doc.img.w, grown);
+}
+
+#[test]
 fn resize_and_flip_change_the_whole_picture() {
     let mut ctx = test_ctx();
     let mut p = Paint::new(None);
