@@ -841,6 +841,7 @@ impl State {
             Action::Notifications => crate::notifycenter::toggle_answering(self),
             Action::NightLight => crate::nightlight::toggle_pause(self),
             Action::Snap(dir) => self.key_snap(*dir),
+            Action::MoveToOutput(next) => self.key_move_output(*next),
             Action::Desktop(step) => self.step_desktop(*step, false),
             Action::CarryToDesktop(step) => self.step_desktop(*step, true),
             Action::AllDesktops => {

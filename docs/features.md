@@ -155,6 +155,9 @@ shake, the dim, the hidden frame rate and window memory.
   resize. Each desktop keeps its own layout.
 - **From the keyboard.** Super and the arrows step a window through the
   zones and on to the next screen.
+- **To another screen.** Super+Shift+Left or Right moves a window to the
+  screen before or after its own, keeping its place and size in proportion;
+  a maximized or snapped window stays maximized or snapped there.
 
 ![Snap assist offering Explorer for the free half after Notepad snapped left](screenshots/snap-assist.png)
 

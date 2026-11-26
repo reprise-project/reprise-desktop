@@ -1181,3 +1181,134 @@ fn a_rolled_up_snapped_window_stays_rolled_up_as_its_work_area_moves() {
     assert!(w.shaded, "still rolled up");
     assert_ne!(w.frame_rect().y, before.y, "moved with the work area");
 }
+
+const KEY_LEFTSHIFT: u32 = 42;
+
+/// Super+Shift and the arrow `key`, then the client's answer.
+fn super_shift_arrow(
+    h: &mut crate::harness::Harness,
+    c: &mut crate::harness::TestClient,
+    key: u32,
+) {
+    h.key(KEY_LEFTMETA, true);
+    h.key(KEY_LEFTSHIFT, true);
+    h.key(key, true);
+    h.key(key, false);
+    h.key(KEY_LEFTSHIFT, false);
+    h.key(KEY_LEFTMETA, false);
+    h.roundtrip(c);
+}
+
+/// A 1024x768 output and a 2048x1536 one right of it, with a window mapped on the first.
+fn two_sizes() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    WindowId,
+    Output,
+    Output,
+) {
+    let mut h = crate::harness::Harness::new();
+    let small = h.add_output("TEST-1", 1024, 768, Some((0, 0)));
+    let big = h.add_output("TEST-2", 2048, 1536, Some((1024, 0)));
+    h.dispatch();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    assert!(
+        h.state.layout_box(Some(&small)).contains(
+            h.state.win(t.id).expect("window").frame_rect().x,
+            h.state.win(t.id).expect("window").frame_rect().y
+        ),
+        "the window maps on the small output"
+    );
+    (h, c, t.id, small, big)
+}
+
+#[test]
+fn super_shift_arrows_carry_a_window_to_the_other_output_in_proportion() {
+    let (mut h, mut c, w, small, big) = two_sizes();
+    h.state.move_to(w, 100, 120);
+    h.roundtrip(&mut c);
+    let frame = |h: &crate::harness::Harness| h.state.win(w).expect("window").frame_rect();
+    let before = frame(&h);
+    let (sw, bw) = (
+        h.state.usable_area(Some(&small)),
+        h.state.usable_area(Some(&big)),
+    );
+    super_shift_arrow(&mut h, &mut c, KEY_RIGHT);
+    let r = frame(&h);
+    assert_eq!(r, crate::snap::carried(before, sw, bw));
+    assert_eq!(
+        (r.x, r.width),
+        (1024 + 200, 2 * before.width),
+        "twice as far in and as wide"
+    );
+    assert!(
+        bw.contains(r.x, r.y) && r.bottom() <= bw.bottom(),
+        "inside the big work area"
+    );
+    super_shift_arrow(&mut h, &mut c, KEY_RIGHT);
+    let back = frame(&h);
+    assert_eq!(
+        (back.x, back.width),
+        (before.x, before.width),
+        "Right wraps to the first"
+    );
+    assert!((back.y - before.y).abs() <= 1 && (back.height - before.height).abs() <= 1);
+    super_shift_arrow(&mut h, &mut c, KEY_LEFT);
+    assert_eq!(frame(&h).x, 1024 + 200, "Left wraps to the last");
+}
+
+#[test]
+fn a_maximized_window_carried_to_the_other_output_stays_maximized_there() {
+    let (mut h, mut c, w, small, big) = two_sizes();
+    let normal = h.state.win(w).expect("window").frame_rect();
+    h.state.set_maximized(w, true);
+    h.roundtrip(&mut c);
+    super_shift_arrow(&mut h, &mut c, KEY_RIGHT);
+    let win = h.state.win(w).expect("window");
+    assert!(win.maximized, "still maximized");
+    assert_eq!(win.frame_rect(), h.state.usable_area(Some(&big)));
+    h.state.set_maximized(w, false);
+    h.roundtrip(&mut c);
+    let r = h.state.win(w).expect("window").frame_rect();
+    let (sw, bw) = (
+        h.state.usable_area(Some(&small)),
+        h.state.usable_area(Some(&big)),
+    );
+    assert_eq!(
+        r,
+        crate::snap::carried(normal, sw, bw),
+        "it restores to its size in proportion on the big output"
+    );
+}
+
+#[test]
+fn a_snapped_window_carried_to_the_other_output_takes_the_same_zone_there() {
+    let (mut h, mut c, w, _, big) = two_sizes();
+    super_arrow(&mut h, &mut c, KEY_LEFT);
+    assert!(h.state.wm.snap.group_of(w).is_some(), "snapped left");
+    super_shift_arrow(&mut h, &mut c, KEY_RIGHT);
+    let bw = h.state.usable_area(Some(&big));
+    let win = h.state.win(w).expect("window");
+    assert!(win.snapped.is_some(), "still snapped");
+    assert_eq!(
+        win.frame_rect(),
+        Rect::new(bw.x, bw.y, bw.width / 2, bw.height)
+    );
+    let live = h.state.snap_live();
+    assert_eq!(
+        h.state
+            .wm
+            .snap
+            .member_zone(w, &big.name(), &|m| live.contains(&m)),
+        Some(0),
+        "a member of the big output's group"
+    );
+    assert!(!h.state.snap_assist_open(), "no snap assist for a carry");
+    super_arrow(&mut h, &mut c, KEY_DOWN);
+    let r = h.state.win(w).expect("window").frame_rect();
+    assert!(
+        bw.contains(r.x, r.y),
+        "unsnapped, it stays on the big output"
+    );
+}
