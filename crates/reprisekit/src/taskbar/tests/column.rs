@@ -165,6 +165,21 @@ fn along_down_a_side_bar_is_along_y() {
 }
 
 #[test]
+fn along_tasks_names_the_button_across_the_bar_or_the_gap_between_two() {
+    let l = classic_column(Edge::Left, 60, counts(0, 2, 0), true);
+    let [a, b] = [l.tasks[0], l.tasks[1]];
+    assert!(b.y > a.bottom(), "a gap between the buttons");
+    assert_eq!(l.along_tasks(0, a.y), Some(AlongTasks::Button(0)));
+    assert_eq!(
+        l.along_tasks(59, b.bottom() - 1),
+        Some(AlongTasks::Button(1))
+    );
+    assert_eq!(l.along_tasks(30, a.bottom()), Some(AlongTasks::Gap));
+    assert_eq!(l.along_tasks(30, a.y - 1), None);
+    assert_eq!(l.along_tasks(30, b.bottom()), None);
+}
+
+#[test]
 fn a_column_labels_its_buttons_once_it_is_wide_enough() {
     let glass = crate::interfaces::theme_for(crate::interface::Interface::Glass);
     let shape = glass.taskbar_shape();
