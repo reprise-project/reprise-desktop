@@ -1252,6 +1252,12 @@ impl TextRenderer {
         Some(rect.y + (rect.height - (ascent - descent)) / 2 + ascent)
     }
 
+    /// Where a line's descent ends in `rect` at `size_px`, under [`TextRenderer::baseline`].
+    pub fn line_bottom(&self, rect: Rect, bold: bool, size_px: u32) -> Option<i32> {
+        let (_, descent, _) = self.line_metrics(bold, size_px)?;
+        Some(self.baseline(rect, bold, size_px)? - descent)
+    }
+
     /// `rect` grown to a line's ascent and descent at `size_px` where it is shorter, its baseline
     /// kept: a row shorter than the font's line (a 13 px row rounded at 125%, a radio's row at
     /// scale 2) draws its text without cutting the ink.
