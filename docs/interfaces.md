@@ -1,192 +1,83 @@
 # Interfaces
 
-Reprise has three looks. `[appearance] interface` picks one: `"classic"`
-(the default), `"blue"` or `"glass"`. The Appearance page of Reprise Settings
-sets the same key, and the switch happens live. Your windows stay where they
-are; only their clothes change.
-
-Each interface brings its own window frames, taskbar, controls, menus and
-popups. Reprise's own programs follow along, property sheets included. Dialog
-layouts and sizes are the same in all three, so a sheet you learned under
-Classic has its buttons in the same places under Glass.
+Set `[appearance] interface` to `"classic"` (default), `"blue"` or `"glass"`, or switch live in Settings > Appearance. Window frames, the taskbar, controls, menus, popups and bundled programs update together while keeping the same dialog layouts.
 
 ## Reprise Classic
 
-Grey bevelled frames with a gradient caption, a 28 px grey taskbar and the
-cascading Start menu with a band down its side. No shadows, no glass, no
-nonsense.
+Grey bevelled frames, a gradient title bar, a 28 px grey taskbar and a cascading Start menu.
 
 ![Reprise Classic in the Tokyo Night scheme](screenshots/classic-dark.png)
 
-Colour schemes (`[appearance] color_scheme`):
+Choose a palette with `[appearance] color_scheme`:
 
-- **Reprise Standard** (the default): navy fading to sky blue on a warm grey
-  face.
-- **Reprise Classic**: the older, cooler grey with a navy-to-blue caption.
-- **Period schemes**: Brick, Desert, Eggplant, Lilac, Maple, Marine, Plum,
-  Pumpkin, Rainy Day, "Red, White, and Blue", Rose, Slate, Spruce, Storm,
-  Teal and Wheat.
-- **High contrast**: High Contrast #1, High Contrast #2, High Contrast Black
-  and High Contrast White. These also tell programs to raise their contrast.
-- **Dark schemes**: Ayu Dark, Catppuccin Mocha, Dracula, GitHub Dark, Gruvbox
-  Dark, Monokai, Night Owl, Nord, One Dark and Tokyo Night. They tell GTK, Qt
-  and browser programs to go dark too.
+- Default: Reprise Standard (warm grey, navy-to-sky caption) and Reprise Classic (cooler grey).
+- Period: Brick, Desert, Eggplant, Lilac, Maple, Marine, Plum, Pumpkin, Rainy Day, "Red, White, and Blue", Rose, Slate, Spruce, Storm, Teal and Wheat.
+- High contrast: High Contrast #1, High Contrast #2, High Contrast Black and High Contrast White (signals apps to raise contrast).
+- Dark: Ayu Dark, Catppuccin Mocha, Dracula, GitHub Dark, Gruvbox Dark, Monokai, Night Owl, Nord, One Dark and Tokyo Night (signals GTK, Qt and browsers to use dark mode).
 
-`[colors]` overrides any single colour of the scheme, and `[metrics]` any
-size: frame width, caption height, taskbar height and so on. Both work under
-every interface.
-
-The lock screen is the Log On dialog titled Unlock Reprise, on the desktop
-colour, with your name fixed; under reprise-login, Switch User starts
-the button row.
+`[colors]` overrides individual colours and `[metrics]` overrides sizes across all interfaces. The lock screen shows the Unlock Reprise dialog (with Switch User under `reprise-login`).
 
 ## Reprise Blue
 
-Glossy skinned frames with a 26 px caption, a bold white title with a drop
-shadow, and square caption buttons with a little gap between them. The
-taskbar is a 30 px gradient with a rounded "start" button, rounded task
-buttons and a recessed notification area. Buttons, check boxes, scrollbars,
-tabs, trackbars and the rest have their own Blue art.
+Glossy frames with a 26 px caption, bold shadowed white titles, a 30 px gradient taskbar with a rounded "start" button, and Blue controls.
 
 ![Reprise Blue in the Blue scheme](screenshots/blue.png)
 
-Blue opens a two-column Start menu under a band with your picture and name.
-The left side has pinned and frequent programs and All Programs, which opens
-the program folders as cascading menus. The right side has Documents, Recent
-Items, Pictures, Music, Computer, Control Panel, Printers, Help and Support
-and Run. Log Off and Turn Off Computer sit in the bottom band. Type a letter
-to jump to the row it starts. Every colour comes from the scheme.
+Blue's two-column Start menu shows your user picture at the top, pinned/frequent apps and All Programs on the left, folders and system items on the right, and Log Off / Turn Off Computer at the bottom. Type a letter to jump to a row. The lock screen shows your user tile open for a password.
 
-The lock screen is the welcome screen with only your tile, open for the
-password; under reprise-login, Switch User sits at the right end of the
-bottom band. On the login and lock screens the column crossfades as a tile
-opens or closes and as a message comes or goes.
+Blue has ten light schemes: Blue (default), Olive Green, Silver, Slate, Sapphire, Obsidian, Ember, Cobalt, Carbon and Steel.
 
-Colour schemes: **Blue** (the default), Olive Green, Silver, Slate, Sapphire,
-Obsidian, Ember, Cobalt, Carbon and Steel. Each brings its own art. None of
-them is dark; Blue is a daytime look.
-
-The caption title wants Trebuchet MS and the Start button Franklin Gothic
-Medium. Reprise doesn't ship either; see [assets.md](assets.md#fonts).
+Caption titles use Trebuchet MS and the Start button uses Franklin Gothic Medium ([assets.md](assets.md#fonts)).
 
 ## Reprise Glass
 
-Translucent frames over a live blur of what's behind them, with rounded
-corners, reflection streaks and soft window shadows. The taskbar is a 40 px
-glass bar with a Start orb, icon-only task buttons, a two-line clock and a
-Show desktop strip at the end. Task buttons glow in their icon's colour when
-you point at them.
+Translucent frames over a live GPU blur, rounded corners, reflection streaks and soft shadows. The 40 px taskbar has a Start orb, icon-only task buttons that glow in their icon's colour on hover, a two-line clock and a Show desktop strip.
 
 ![Reprise Glass in Sky, with the Start menu open](screenshots/glass.png)
 
-Glass is more than the frames. The Start menu, Alt+Tab, the window overview,
-snap layouts, the launcher, the calendar, notification history, the volume
-panel, clipboard history, the emoji picker and the tray's hidden icons are all
-glass too.
-
-The blur runs on the GPU, only when something near the glass changes, and
-only over the part that changed. A still desktop does no blur work at all.
-Typing in the middle of a window doesn't either. At output scale 2 and
-up it blurs a quarter-resolution copy of the desktop: the same spread for
-a quarter of the work.
-
-The lock screen is the login screen's picture tile, yours alone and marked
-Locked, over your own wallpaper and water. On the login and lock screens a
-picked tile's picture flies into place, the tiles rise in one after another
-when the screen comes forward, and a ring turns while your password is
-checked.
+Glass also styles the Start menu, Alt+Tab, window overview, snap layouts, launcher, calendar, notification history, volume panel, clipboard history, emoji picker and tray overflow. Blur updates only when pixels behind glass change. The lock screen shows your user tile marked Locked over your wallpaper.
 
 ### Colour and material
 
-Glass has no colour schemes. It has a `[glass]` section instead, with its
-colour, intensity, light or dark mode and its schedule, material, frame,
-notification style, blur and the Start button's glow; config.example.toml
-documents each key.
+Glass uses `[glass]` instead of colour schemes (see `config.example.toml`). Configure it on Settings > Appearance (except `blur_rate`), `orb_glow` on Taskbar, and `notification_style` on Notifications.
 
-- **Dark mode** turns controls, dialogs, menus and titles dark and tells
-  programs to go dark through the portal. The glass keeps its colour,
-  but with transparency off the opaque frames and taskbar turn dark too.
-  Under `night` or `hours` the look and the portal switch at each edge as
-  if you had changed `mode` yourself. Picking Light or Dark ends the
-  schedule.
-- **Transparency off** in light mode gives the taskbar black labels and
-  clock over its pale opaque glass; Smoked keeps them white.
-- **Smoked** glass lets less through, with white titles in either mode.
-- **Molten** glass blurs less, shows richer colours and bends what lies just
-  past its edges, with a faint colour fringe and a light catching its rims.
-- **Square** frames have square corners, a centred title and flat, separate
-  caption buttons.
-
-Frosted and Molten glass under white text (the taskbar, and windows in dark
-mode) dims a bright wallpaper seen through it, so the text reads over any
-picture.
-
-The Appearance page of Reprise Settings sets all of these except `blur_rate`;
-`orb_glow` is on the Taskbar page and `notification_style` on the Notifications
-page.
+- Dark mode switches controls, dialogs, menus, titles and the portal to dark. Scheduled `night` or `hours` modes switch automatically, and picking Light or Dark ends the schedule.
+- Disabling transparency uses opaque frames and taskbar (black taskbar labels in light mode, white in Smoked or dark mode).
+- Smoked glass reduces transparency and uses white titles.
+- Molten glass blurs less, boosts colour and refracts edges.
+- Square frames use square corners, centred titles and flat caption buttons.
 
 ![Reprise Glass in dark mode, Ruby and Molten, with the calendar open](screenshots/glass-dark.png)
 
-Window titles want Segoe UI; without it they fall back to Noto Sans, then
-DejaVu Sans.
+Window titles use Segoe UI, falling back to Noto Sans then DejaVu Sans.
 
 ### The Start menu
 
-Glass opens a two-column Start menu. The left side has pinned and frequent
-programs, All Programs and a search box that finds programs, settings pages
-and files, and does sums and unit conversions. The right side has your home
-folder, Documents, Pictures, Music, Recent Items, Computer, Control Panel,
-Printers and Run.
-Hover a program, or click the arrow at its right, for its jump list: its
-recent files, then its tasks. The Shut down button turns the computer off,
-and the arrow next to it offers Log off,
-Lock, Restart, Restart into (where logind offers boot entries), Sleep and
-Hibernate, with Switch user first under
-reprise-login. Where the session offers Disconnect, it comes first instead,
-and Sleep and Hibernate are left out
-([remote-desktop.md](remote-desktop.md#disconnecting)). While PackageKit has an
-offline update prepared, Install updates and shut down and Install updates and
-restart head the list ([features.md](features.md#lock-power-and-session)).
+Glass opens a two-column Start menu with pinned/frequent apps, All Programs and search (apps, settings, files, maths, unit conversions) on the left, and folders and system shortcuts on the right. Hover a program or click its arrow for its jump list.
+
+The Shut down arrow lists Log off, Lock, Restart, Restart into (if logind provides boot entries), Sleep and Hibernate, with Switch user first under `reprise-login`. Remote sessions show Disconnect first and omit Sleep and Hibernate ([remote-desktop.md](remote-desktop.md#disconnecting)). Prepared offline updates appear at the top ([features.md](features.md#lock-power-and-session)).
 
 ### Glass only
 
-- **The 3D switcher.** Super+Tab tilts every window into a stack over the
-  dimmed desktop. Tab or the wheel rolls it, releasing Super switches, a click
-  picks a card, Esc backs out. With several screens the stack opens on the
-  one under the pointer, its desktop card shows that screen, and the other
-  screens keep their windows. `[switcher] flip = false` turns it off, and
-  Super+Tab acts like Alt+Tab.
+`Super+Tab` opens the 3D switcher on the screen under the pointer. Roll with Tab or the mouse wheel, release Super or click to switch, or press Esc to cancel. Set `[switcher] flip = false` to make `Super+Tab` behave like `Alt+Tab`.
 
-  ![The 3D switcher](screenshots/flip.png)
+![The 3D switcher](screenshots/flip.png)
 
-- **Small icons.** `[taskbar] small_icons` shrinks the bar to 30 px.
-- **Pager marks.** `[workspaces] pager = "light"` or `"tile"` marks the
-  current desktop with a light under its number or a tile behind it.
+`[taskbar] small_icons` shrinks the taskbar to 30 px. `[workspaces] pager = "light"` or `"tile"` highlights the active desktop.
 
 ## Defaults by interface
 
-A key you leave out follows the interface, so switching interface switches
-every default you haven't set.
+Unset keys follow the active interface when you switch.
 
 | Key | Classic and Blue | Glass |
 | --- | --- | --- |
 | `[taskbar] buttons` | `when_full` | `combine` |
 | `[taskbar] pinned`, `show_desktop_button`, `peek` | off | on |
-| `startmenu_style` | Classic `classic`, Blue `blue` | `glass` |
+| `startmenu_style` | `classic` / `blue` | `glass` |
 | `[switcher] style` | `icons` | `thumbnails` |
 | `[switcher] desktop`, `peek`, `flip` | off | on |
 | `[effects] window_animation`, `hover_fade`, `taskbar_slide` | off | on |
 | `[windows] shake` | off | on |
-| `[wallpaper] image` | Classic none (the colour alone), Blue `reprise:tarn/blue` | `reprise:flow/glass` |
+| `[wallpaper] image` | none / `reprise:tarn/blue` | `reprise:flow/glass` |
 
-Most of what Glass turns on, the other looks can have too. Set the key and
-Classic gets pinned programs, jump lists, Peek, a Show desktop strip,
-thumbnails in Alt+Tab, window animations, or the two-column Start menu
-(`startmenu_style = "glass"`, drawn as opaque glass). It works the other way
-as well: Glass can have the Classic Start menu and labelled task buttons.
-`startmenu_style = "blue"` gives any interface the Blue Start menu, in the
-Blue scheme outside Blue.
-
-Tray overflow, auto-hide, taskbar position, live previews, the overview,
-snapping, virtual desktops, the wallpaper, water and the screen savers work
-the same under every interface.
+You can override any default across interfaces, including `startmenu_style = "classic"`, `"blue"` or `"glass"`. Tray overflow, auto-hide, taskbar position, live previews, overview, snapping, virtual desktops, wallpapers, water and screen savers work identically in all three interfaces.

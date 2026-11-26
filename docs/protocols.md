@@ -1,269 +1,67 @@
 # Protocols and portals
 
-Reprise is built on Smithay and draws with OpenGL ES. It follows the
-freedesktop conventions for the tray, notifications, screen saver
-inhibition, autostart, the trash and `.desktop` files, and it speaks the
-usual `wlr` and `ext` protocols, so third-party tools work.
+Reprise is built on Smithay and renders with OpenGL ES. It follows freedesktop conventions for the tray, notifications, screen saver inhibition, autostart, trash and `.desktop` files, and serves standard `wlr` and `ext` Wayland protocols.
 
-A minimized window, and a tab behind another in its group, is told it is
-suspended (xdg-shell's `suspended` state), so it can stop drawing and
-polling until it comes back. A window a live picture shows (Mini View, a
-task button's panel, Alt+Tab, the 3D switcher) is not suspended while the
-picture is up.
+Minimized windows and hidden tabs receive the xdg-shell `suspended` state unless shown in a live preview. Windows requesting server-side decorations (or drawing to buffer edges with no shadow) receive Reprise frames. Client-decorated windows with their own shadows (such as GTK4 or libadwaita header bars) keep their own title bars.
 
-Windows that ask for server-side decorations get Reprise's frames in the
-current interface, and so does a window that asks for nothing and draws to
-its buffer's edges. A window that asks for nothing but draws a shadow
-around itself (libadwaita, GTK4 with a header bar) keeps its own title bar
-and gets no frame. Programs that draw their own title bars may look
-different. They've brought their own furniture.
+## Third-party tools that work
 
-## Tools that work
-
-| Tool | Through |
+| Tool | Protocol |
 | --- | --- |
-| Panels and docks | layer-shell, foreign-toplevel, ext-workspace |
-| Lockers (swaylock, hyprlock, gtklock) | ext-session-lock; `[power] locker` runs one |
-| Idle daemons (swayidle) | ext-idle-notify |
-| Display configurators (wlr-randr, kanshi) | wlr-output-management |
-| wlopm | wlr-output-power-management |
-| Gamma tools (wlsunset, gammastep) | wlr-gamma-control; they take precedence over the night light |
-| Clipboard managers | ext-data-control, wlr-data-control |
-| Screenshot tools (grim) | wlr-screencopy, ext-image-copy-capture |
-| Virtual input (wtype, wlrctl) | virtual-keyboard, wlr-virtual-pointer |
-| Input methods (fcitx5, ibus) | input-method-v2, text-input-v3 |
+| Panels and docks | `layer-shell`, `foreign-toplevel`, `ext-workspace` |
+| Lockers (swaylock, hyprlock, gtklock) | `ext-session-lock` (set `[power] locker`) |
+| Idle daemons (swayidle) | `ext-idle-notify` |
+| Display tools (wlr-randr, kanshi) | `wlr-output-management` |
+| Output power (wlopm) | `wlr-output-power-management` |
+| Gamma tools (wlsunset, gammastep) | `wlr-gamma-control` (overrides night light) |
+| Clipboard managers | `ext-data-control`, `wlr-data-control` |
+| Screenshot tools (grim) | `wlr-screencopy`, `ext-image-copy-capture` |
+| Virtual input (wtype, wlrctl) | `virtual-keyboard`, `wlr-virtual-pointer` |
+| Input methods (fcitx5, ibus) | `input-method-v2`, `text-input-v3` |
 
-Sandboxed programs, identified through `security-context-v1` or as Flatpaks,
-don't see the privileged protocols: layer-shell, session lock,
-foreign-toplevel, workspaces, output management, gamma, screen capture,
-data control, virtual input and input methods. A Flatpak you trust can be
-given the clipboard protocols with `[clipboard] trusted_apps`; see
-[flatpak-clipboard.md](flatpak-clipboard.md). [security.md](security.md)
-says what each privileged protocol lets a program do.
+Sandboxed apps (via `security-context-v1` or Flatpak) do not see privileged protocols: layer-shell, session lock, foreign-toplevel, workspaces, output management, gamma, screen capture, data control, virtual input and input methods. To grant clipboard protocols to a Flatpak, see [flatpak-clipboard.md](flatpak-clipboard.md). See [security.md](security.md) for what each protocol allows.
 
-A virtual keyboard's keys go where the keyboard's would: they fire key
-binds, open and drive menus and dialogs, and a screen saver Preview takes
-them. At the lock screen and while an input capture holds the keyboard, the
-compositor drops them.
-
-A client hears pointer and drag motion at most once per refresh of the
-screen the pointer is on, at the latest position, with `zwp_relative_pointer_v1` deltas
-summed since the last one. A button, wheel, gesture, key or focus change
-always reaches it after the motion it happened at. While a pointer lock or
-confinement holds, every motion goes through as it comes.
+Virtual keyboard input acts like hardware keys, including key binds and menus, except at the lock screen or during input capture.
 
 ## Wayland globals
 
-- **Core and shell:** `wl_compositor`, `wl_subcompositor`, `wl_shm`,
-  `wl_seat`, `wl_output`, `zxdg_output_manager_v1`, `wl_data_device_manager`,
-  `zwp_linux_dmabuf_v1`, `xdg_wm_base`, `zxdg_decoration_manager_v1`,
-  `org_kde_kwin_server_decoration_manager`, `xdg_activation_v1`,
-  `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1` (a toplevel tagged
-  `file-dialog` opens at the size its app's last file dialog was left at,
-  its owner's app for a dialog with an owner, and at the place one was last
-  dragged to while that is on its owner's output), `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
-  `zxdg_exporter_v2`/`zxdg_importer_v2`, `xdg_toplevel_drag_manager_v1` (a
-  window a program attaches to its own drag moves with the pointer and lets
-  the drop targets beneath it see the drag, so a browser tab torn out of its
-  strip follows as a window and drops into another window's strip),
-  `xwayland_shell_v1`,
-  `xdg_system_bell_v1` (a ring plays the `[sounds] theme`'s bell unless
-  `[sounds] bell` is off, at most one per 100 ms, and flashes the task button of
-  an unfocused window it names)
-- **Selection:** `zwp_primary_selection_device_manager_v1`,
-  `ext_data_control_manager_v1`, `zwlr_data_control_manager_v1`
-- **Surfaces:** `wp_viewporter`, `wp_fractional_scale_manager_v1`,
-  `wp_single_pixel_buffer_manager_v1`, `wp_content_type_manager_v1`,
-  `wp_alpha_modifier_v1`, `wp_presentation`, `wp_linux_drm_syncobj_manager_v1`
-  (when the GPU supports it), `wp_fifo_manager_v1` and
-  `wp_commit_timing_manager_v1` (a window no display shows, minimised or on
-  another desktop, has its fifo and timed commits applied at the refresh rate,
-  or at most `[windows] hidden_frame_rate` times a second when that is set,
-  so a vsynced Vulkan program keeps running), `ext_background_effect_manager_v1`
-  (under Glass, a framed window's blur region gets the frame's glass, blurred
-  and tinted, and a region across the window's top runs the frame down into it
-  unbroken)
-- **Input:** `zwp_pointer_constraints_v1`, `zwp_relative_pointer_manager_v1`,
-  `zwp_pointer_gestures_v1`, `wp_cursor_shape_manager_v1`,
-  `zwp_tablet_manager_v2`, `zwp_keyboard_shortcuts_inhibit_manager_v1`,
-  `zwp_xwayland_keyboard_grab_manager_v1` (Xwayland only),
-  `zwp_text_input_manager_v3`, `zwp_input_method_manager_v2`,
-  `zwp_virtual_keyboard_manager_v1`, `zwlr_virtual_pointer_manager_v1`,
-  `wp_pointer_warp_v1` (within the window under the pointer, while no grab
-  but a button's own holds it)
-- **Desktop tools:** `zwlr_layer_shell_v1`, `ext_session_lock_manager_v1`,
-  `ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_manager_v1`,
-  `ext_workspace_manager_v1`, `zwlr_output_manager_v1`,
-  `zwlr_output_power_manager_v1`, `zwlr_gamma_control_manager_v1`
-- **Idle:** `ext_idle_notifier_v1`, `zwp_idle_inhibit_manager_v1`
-- **Capture:** `zwlr_screencopy_manager_v1`, `ext_image_copy_capture_manager_v1`,
-  `ext_output_image_capture_source_manager_v1`,
-  `ext_foreign_toplevel_image_capture_source_manager_v1`
-- **Security:** `wp_security_context_manager_v1`
-- **Reprise's own:** `reprise_input_v1`, for the installed reprise-portal
-  only ([security.md](security.md)): libei sockets, input capture barriers,
-  global shortcuts, RemoteDesktop keys, the sandboxed apps with a window, the
-  colour picker, the remote desktop server's capture connection, since
-  version 9 lock mode (`lock_screen`: virtual screens laid out as the remote
-  client's monitors while the session stays locked on the computer's own),
-  since version 10 the app a libei sender or keys object serves, and since
-  version 13 the Screenshot portal's region select (`pick_area`) and the
-  focused window (`active_window`)
-  (`connect_app_sender`, `create_app_keys`), which the screen-sharing dot
-  names; from version 10 `create_keys` is the remote desktop server's alone;
-  since version 12 a keys object drives the pointer too (NotifyPointer);
-  `reprise_tabs_v1`, for any program: puts a new window of the program's
-  into the caption tab group of another of its windows
-  ([protocols/reprise-tabs-v1.xml](../protocols/reprise-tabs-v1.xml));
-  `reprise_on_top_v1`, hidden from sandboxed programs: keeps one of the
-  program's windows on top, as Always on Top does
-  ([protocols/reprise-on-top-v1.xml](../protocols/reprise-on-top-v1.xml));
-  `reprise_reopen_v1`, hidden from sandboxed programs: names the argument
-  each of the program's windows starts again with at session restore
-  ([protocols/reprise-reopen-v1.xml](../protocols/reprise-reopen-v1.xml));
-  `reprise_output_trial_v1`, offered where `zwlr_output_manager_v1` is: a
-  display change on trial for 1 to 60 seconds, which Reprise puts back
-  unless the program keeps it in time, and also when the program goes; a
-  configuration the program covers with its trial is applied only while
-  that trial is held
-  ([protocols/reprise-output-trial-v1.xml](../protocols/reprise-output-trial-v1.xml))
+- **Core and shell.** `wl_compositor`, `wl_subcompositor`, `wl_shm`, `wl_seat`, `wl_output`, `zxdg_output_manager_v1`, `wl_data_device_manager`, `zwp_linux_dmabuf_v1`, `xdg_wm_base`, `zxdg_decoration_manager_v1`, `org_kde_kwin_server_decoration_manager`, `xdg_activation_v1`, `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1` (remembers `file-dialog` size and position per app), `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`, `zxdg_exporter_v2`/`zxdg_importer_v2`, `xdg_toplevel_drag_manager_v1`, `xwayland_shell_v1`, `xdg_system_bell_v1` (plays `[sounds] theme` bell unless `[sounds] bell` is off and flashes unfocused task buttons).
+- **Selection.** `zwp_primary_selection_device_manager_v1`, `ext_data_control_manager_v1`, `zwlr_data_control_manager_v1`.
+- **Surfaces.** `wp_viewporter`, `wp_fractional_scale_manager_v1`, `wp_single_pixel_buffer_manager_v1`, `wp_content_type_manager_v1`, `wp_alpha_modifier_v1`, `wp_presentation`, `wp_linux_drm_syncobj_manager_v1` (if GPU supports it), `wp_fifo_manager_v1` and `wp_commit_timing_manager_v1` (hidden windows commit at refresh rate or `[windows] hidden_frame_rate`), `ext_background_effect_manager_v1` (extends Glass blur into framed windows).
+- **Input.** `zwp_pointer_constraints_v1`, `zwp_relative_pointer_manager_v1`, `zwp_pointer_gestures_v1`, `wp_cursor_shape_manager_v1`, `zwp_tablet_manager_v2`, `zwp_keyboard_shortcuts_inhibit_manager_v1`, `zwp_xwayland_keyboard_grab_manager_v1` (Xwayland only), `zwp_text_input_manager_v3`, `zwp_input_method_manager_v2`, `zwp_virtual_keyboard_manager_v1`, `zwlr_virtual_pointer_manager_v1`, `wp_pointer_warp_v1`.
+- **Desktop tools.** `zwlr_layer_shell_v1`, `ext_session_lock_manager_v1`, `ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_manager_v1`, `ext_workspace_manager_v1`, `zwlr_output_manager_v1`, `zwlr_output_power_manager_v1`, `zwlr_gamma_control_manager_v1`.
+- **Idle.** `ext_idle_notifier_v1`, `zwp_idle_inhibit_manager_v1`.
+- **Capture.** `zwlr_screencopy_manager_v1`, `ext_image_copy_capture_manager_v1`, `ext_output_image_capture_source_manager_v1`, `ext_foreign_toplevel_image_capture_source_manager_v1`.
+- **Security.** `wp_security_context_manager_v1`.
+- **Reprise protocols.** `reprise_input_v1` (installed `reprise-portal` only: libei, input capture, global shortcuts, RemoteDesktop input, colour picker, RDP capture, lock mode since v9, per-app sender/keys since v10, pointer keys since v12, Screenshot `pick_area`/`active_window` since v13), `reprise_tabs_v1` ([spec](../protocols/reprise-tabs-v1.xml)), `reprise_on_top_v1` (unsandboxed only, [spec](../protocols/reprise-on-top-v1.xml)), `reprise_reopen_v1` (unsandboxed only, [spec](../protocols/reprise-reopen-v1.xml)) and `reprise_output_trial_v1` (1 to 60 s display trial with automatic revert, [spec](../protocols/reprise-output-trial-v1.xml)).
 
-## Portals
+## Portals and D-Bus services
 
-`reprise-portal` is the xdg-desktop-portal backend:
+`reprise-portal` implements these xdg-desktop-portal interfaces:
 
-- **ScreenCast:** a screen or a single window, zero-copy where the GPU
-  allows, with an optional Remember
-- **Screenshot:** every screen in one picture at its place in the layout, or
-  for an interactive call the screen or window picked in the share dialog;
-  the `target` option's Screen lists only screens there, its Window always
-  opens the dialog on windows, its Area opens the Shift+PrtSc region select
-  naming the app (V does not switch to a recording), and its Active Window
-  takes the focused window; the files are a hand-over in `$XDG_RUNTIME_DIR/reprise-portal/screenshots`,
-  deleted after an hour. PickColor opens the compositor's colour picker
-- **RemoteDesktop:** keyboard and pointer
-- **InputCapture**, for Deskflow
-- **GlobalShortcuts**
-- **Access**, the generic permission prompt
-- **FileChooser** and **AppChooser:** Reprise's own Open, Save and Open With
-  dialogs. Their Tiles and Thumbnails views show pictures as Explorer does,
-  from the same thumbnail cache, and they open in the folder, view, sort,
-  size and place the requesting app's last Open or Save As dialog was left
-  in; a `current_folder` or `current_file` the app passes wins over the
-  folder
-- **Notification**
-- **Inhibit:** idle, suspend and log off
-- **Background:** which apps run without a window and the prompt asking
-  whether one may. xdg-desktop-portal writes the autostart entries Flatpak
-  apps ask for itself
-- **Wallpaper:** after a prompt showing the picture (skipped for an app
-  allowed before, see [security](security.md)), a copy of it in
-  `~/.local/share/reprise/wallpapers` becomes `[wallpaper] image`; `set-on`
-  both does the same, as the Glass lock screen shows the desktop's picture.
-  The lock screen alone is refused, since it has no picture of its own
-- **Email:** the message opens unsent in the mail program Default Programs
-  names: Thunderbird through `-compose`, Evolution through a `mailto:` with
-  `attach=`, any other through `xdg-email` (or the `mailto:` alone without
-  xdg-utils; a terminal mail program then runs under the configured
-  `terminal`). With no mail program, or one that fails to start, the call
-  fails and a balloon says why
-- **Account:** the Access prompt shows your name, login and AccountsService
-  picture with the app's reason; Share returns them (the picture as a
-  `file://` URI), Cancel nothing. Without AccountsService the passwd entry
-  gives the name and no picture is shared
-- **DynamicLauncher:** PrepareInstall shows the Access prompt with the
-  launcher's icon, its name in an edit field (a label when the app says it
-  can't change) and a web app's address; Install answers the name and the
-  icon as sent, and xdg-desktop-portal writes the desktop file under
-  `~/.local/share/xdg-desktop-portal/applications` with a link in
-  `~/.local/share/applications`. RequestInstallToken is allowed only for
-  Reprise's own programs
+- **ScreenCast.** Screen or single window, zero-copy where supported, with optional Remember.
+- **Screenshot.** Full layout, or interactive Screen, Window, Area (`Shift+PrtSc` style) and Active Window. Files save to `$XDG_RUNTIME_DIR/reprise-portal/screenshots` and expire after an hour. `PickColor` opens the colour picker.
+- **RemoteDesktop.** Keyboard and pointer control.
+- **InputCapture.** Barrier-based pointer and keyboard capture (for Deskflow).
+- **GlobalShortcuts.** App-registered global shortcuts.
+- **Access.** Generic permission prompt.
+- **FileChooser and AppChooser.** Reprise Open, Save and Open With dialogs with thumbnail views and per-app folder, view, sort, size and position memory.
+- **Notification.** Desktop notifications.
+- **Inhibit.** Idle, suspend and log off inhibition.
+- **Background.** Background app status and permission prompts (xdg-desktop-portal writes Flatpak autostart entries).
+- **Wallpaper.** Prompts with a preview (unless previously allowed, see [security.md](security.md)) and saves to `~/.local/share/reprise/wallpapers` as `[wallpaper] image`. Lock-screen-only requests are refused.
+- **Email.** Opens an unsent message in your Default Programs mail client (Thunderbird `-compose`, Evolution `mailto:` with `attach=`, or `xdg-email`).
+- **Account.** Prompts to share your name, login and AccountsService picture (`file://` URI).
+- **DynamicLauncher.** Prompts with icon, editable name and web app URL, then writes to `~/.local/share/xdg-desktop-portal/applications` and links into `~/.local/share/applications`. `RequestInstallToken` is restricted to Reprise programs.
 
-The compositor serves **Settings** (the light or dark look, contrast, fonts
-and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,
-**Print** to the GTK backend, and falls back to the wlr backend for screen
-sharing. It names no **Lockdown** backend, so GNOME's lockdown keys (location,
-camera, microphone, printing) don't apply and `[privacy] location` alone turns location off.
+The compositor serves **Settings** (light/dark, contrast, fonts, icons). `reprise-portals.conf` delegates **Secret** to `gnome-keyring`, **Print** to GTK, falls back to `wlr` for screen sharing, and sets no **Lockdown** backend (`[privacy] location` controls location).
 
-Reprise also hosts `org.freedesktop.Notifications`, the StatusNotifierWatcher
-for the tray, `org.freedesktop.ScreenSaver` and the GeoClue2 agent, and
-Explorer's `reprise-file-manager.service` hosts `org.freedesktop.FileManager1`
-(`ShowFolders`, `ShowItems`, `ShowItemProperties`). A tray
-item's `IconThemePath` is searched as the base of a `hicolor` tree
-(`hicolor/<size>/<context>/`), then as a flat folder. `ActionInvoked`,
-`ActivationToken`, `NotificationReplied` and
-`NotificationClosed` go only to the connection that sent or last replaced the
-notification, as KDE Plasma sends them, so a client that waits for them on a
-connection of its own (notify-rust's `handle_action`) never hears them.
-`org.freedesktop.ScreenSaver` takes inhibits, and its `GetActive` and
-`ActiveChanged` report the desktop's lock: this computer's, or the remote
-side's in lock mode. The Inhibit portal's `screensaver-active` reports the
-same lock once the bus confirms that the name's owner is the compositor the
-portal serves. Until then, and while nothing owns the name, another process
-owns it, the bus gives no process fds or `GetActive` fails, it reports
-logind's `LockedHint` for the compositor's session, which in lock mode is this
-computer's lock, and true while that can't be read either. Reprise follows
-`com.canonical.Unity.LauncherEntry`'s `Update` signal: `progress` and
-`progress-visible` draw on the task buttons of the windows whose app id or
-desktop file matches the entry's `application://<id>.desktop`, and Reprise's
-own `progress-paused` key shows the progress as paused. `count` and
-`count-visible` badge every task button of the app, pinned ones included, and
-`urgent` turning on asks for attention on the app's unfocused windows.
+Reprise also hosts `org.freedesktop.Notifications`, `StatusNotifierWatcher`, `org.freedesktop.ScreenSaver` and the GeoClue2 agent. Explorer's `reprise-file-manager.service` hosts `org.freedesktop.FileManager1` (`ShowFolders`, `ShowItems`, `ShowItemProperties`). Reprise supports `com.canonical.Unity.LauncherEntry` (`progress`, `progress-visible`, `progress-paused`, `count`, `count-visible`, `urgent`) on matching task buttons.
 
 ## The session
 
-Reprise publishes its session to the systemd user manager and the D-Bus
-activation environment, and takes it back out when it exits, so the next
-desktop you log into starts clean. Once the variables are published it starts
-`reprise-session.target`, which binds `graphical-session.target`, so user units
-wanted by or `PartOf` that target run with the session; Log Off and exit stop
-it. `loginctl lock-session` locks the screen.
+Reprise exports its environment to the systemd user manager and D-Bus activation environment, starts `reprise-session.target` (bound to `graphical-session.target`), and cleans up on exit. `loginctl lock-session` locks the screen.
 
-Two sessions of one user share one user manager and one session bus. A
-Reprise started from a text login while another Reprise session of the user
-runs publishes nothing, leaves the target and portals to that session and
-replaces none of its bus names (notifications, the tray, the screensaver and
-the settings portal). The programs it launches still get its display, while
-D-Bus-activated services, the portals, balloons and the Remote Desktop server
-stay with the other session, and its Log Off tells neither the portal nor the
-Remote Desktop server. Whichever session started first, a Log Off while the
-other runs leaves the shared portal's inhibitors and monitors alone, and the
-Remote Desktop server ends its clients only when the compositor it serves
-logs off. A Turn Off or Restart from either session asks the portal and ends
-the server's clients as logged off, since it ends both. reprise-login's
-hand-over server takes the display of the session reprise-login opened and
-waits until that session's portals serve it, so a remote login that starts a
-session beside a text-login Reprise shares the new session on its first
-connection. A tray applet's autostart (`--tray`) finds the other
-session's copy running and leaves its window alone. A session started by a
-login manager always publishes, starts the target and takes the bus names
-over, and a text-login Reprise started before it publishes no more while it
-runs, so a later look change or Xwayland start there leaves the variables
-alone. After a text-login Reprise, it takes `org.freedesktop.ScreenSaver` too,
-so inhibits and the lock are its own, and the text-login session gets that
-name back when it ends. Once that session's compositor exits, or logind
-removes a session, the text-login Reprise asks again for the bus names nobody
-holds, replacing no holder, unless a Reprise session it gives way to runs or
-the user manager names another display that still accepts connections (a
-desktop of the user that is not Reprise). When the user manager still names
-the display of the session it gave way to and that display is gone, it also
-unsets the variables it doesn't publish, publishes its own, and restarts the
-target and so the portals on its own display; a login manager's session
-started meanwhile keeps its names and the target. When the login manager's
-session runs first, a later text-login Reprise takes only names nobody holds,
-so its programs' `org.freedesktop.ScreenSaver` inhibits hold off the first
-session's idle timer, and it takes the user manager and the names back the
-same way. Of two text-login sessions that gave way to one, the one logind
-opened first takes back and the other goes on giving way to it. A session
-that ends while the other runs leaves that session's units and app scopes
-running. Reprise asks for its bus names only once it holds the seat, so a
-second `reprise` that cannot open one takes none, and a name another process
-takes from a running session comes back to it once that process lets go.
+A login-manager session owns the shared user manager, portals and D-Bus names. If you start a second Reprise session from a TTY while another Reprise session runs, the second session leaves those shared services with the primary session until the primary session exits.
 
-XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`.
-An entry marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true`
-whose program a user unit of the session runs (one `reprise-session.target`
-pulls in, such as `spice-vdagent.service`) is left to that unit and not listed
-on the Startup page; with no such unit it starts like any other entry.
-The Start menu and Open With honour `OnlyShowIn`, `NotShowIn` and `TryExec`
-the same way, matching every name in `XDG_CURRENT_DESKTOP`.
+XDG autostart honours `OnlyShowIn`, `NotShowIn`, `Hidden` and `TryExec`, and skips entries marked `X-systemd-skip=true` or `X-GNOME-HiddenUnderSystemd=true` when a systemd user unit under `reprise-session.target` runs the program. The Start menu and Open With honour `OnlyShowIn`, `NotShowIn` and `TryExec` against `XDG_CURRENT_DESKTOP`.

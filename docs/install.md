@@ -1,559 +1,229 @@
 # Install
 
-Reprise targets a current desktop Linux: systemd and logind, PipeWire with
-WirePlumber, NetworkManager. There's no period-correct driver CD to lose.
+Reprise targets current desktop Linux: systemd and logind, PipeWire with WirePlumber, and NetworkManager.
 
 ## Build and run
 
+Build every component (compositor, programs, portal, and Remote Desktop server):
+
     cargo build --release --workspace
 
-The workspace's root package is the compositor alone, so without
-`--workspace` the programs, the portal and the Remote Desktop server aren't
-built.
-
-To try it without committing your afternoon, log in on a free TTY
-(Ctrl+Alt+F3) and run:
+To try a build, log in on a free TTY (Ctrl+Alt+F3) and run:
 
     PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty
 
-Reprise opens the seat's display and input through logind, so it doesn't run
-nested inside another session: started from a terminal there, it exits with
-an error and leaves that session as it was.
+Reprise opens display and input through logind, so it does not run nested inside another session. Keep `target/release` on `PATH` because Reprise starts its programs by name. Reprise's programs appear in the Start menu once you [install](#install-by-hand) their desktop entries under `applications` in `XDG_DATA_DIRS`.
 
-Reprise starts its programs by name, so without `target/release` on `PATH`
-Computer and Documents on the desktop open nothing. The Start menu lists the
-desktop entries installed under `applications` in `XDG_DATA_DIRS`, so
-Reprise's own programs show there once [installed](#install-by-hand).
+### Read the logs
 
-### Logs
-
-A session started from a login manager logs to the user journal under
-`reprise`, with each log level as its journal priority:
+Under a login manager, Reprise logs to the user journal under `reprise` with matching journal priorities:
 
     journalctl --user -b -t reprise
     journalctl --user -b -t reprise -p warning
 
-Each program Reprise starts (the tray helpers, autostart entries, launches)
-logs under its desktop entry id, such as `reprise-sound`, or under its
-program name when it has no entry. Each runs in an `app-reprise-*.scope` of
-the user manager, so a program that floods its log uses up journald's rate
-limit for `user@<uid>.service` and leaves the compositor's session lines
-alone. Reprise's own programs mark their lines
-with the same priorities, so `-t reprise-sound -p warning` lists that
-program's warnings and errors. The apps and tray helpers log their own info
-lines and their libraries' warnings (`warn,reprise=info`) unless `RUST_LOG`
-says otherwise.
-Started from a terminal, Reprise logs to the terminal and its programs
-inherit it; `REPRISE_LOG_STDERR=1` keeps the log on stderr anywhere.
-`RUST_LOG` sets the level, as in `RUST_LOG=reprise=debug`.
+Launched programs log under their desktop entry id (such as `reprise-sound`) or program name. Reprise's programs use the same priorities and default to `warn,reprise=info`.
 
-A panic logs its backtrace at error priority, so
-`journalctl --user -b -t reprise -p err` shows why Reprise restarted (see
-Crash recovery in [features](features.md)); `-b -1` reads the boot before.
+From a terminal, Reprise and its programs log to stderr. Set `REPRISE_LOG_STDERR=1` to log to stderr anywhere, and set `RUST_LOG` (such as `RUST_LOG=reprise=debug`) to change the level.
 
-The log names windows and programs by app id, window id and pid. It does
-not record window titles, notification text, clipboard contents, what is
-typed or what is playing.
+Panics log backtraces at error priority. Run `journalctl --user -b -t reprise -p err` to inspect a crash, or add `-b -1` for the previous boot. See [features](features.md).
 
-## Packages
+Logs record app id, window id, and pid. They omit window titles, notification text, clipboard contents, typed text, and what is playing.
 
-Once installed, "Reprise" is a session in your login manager, or run
-`reprise` from a TTY.
+## Install a package
 
-On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
-session file, the PAM files, the portal backend and the login manager
-([below](#login-manager)). The programs are one
-binary, `/usr/bin/reprise-apps`, and `reprise-notepad` and the other program
-names are symlinks to it. The Remote Desktop server is a binary of its own,
-`/usr/bin/reprise-rdp`, run by the user unit
-`app-org.reprise.RemoteDesktop.service` with the desktop entry
-`org.reprise.RemoteDesktop.desktop` beside it; the unit is installed but
-not enabled.
+Once installed, pick "Reprise" in your login manager or run `reprise` from a TTY.
 
-The PAM files are `reprise` (the lock screen's password),
-`reprise-fingerprint` (its fingerprint) and `reprise-rdp` (Remote Desktop
-logins and lock mode's remote lock screen). `reprise-rdp` runs `pam_unix` alone, without `system-auth`, so wrong
-Remote Desktop passwords never reach pam_faillock and never lock the account
-locally. The Remote Desktop server throttles them instead: a growing back-off
-per address after three failures, during which its connections are refused, and a 10 minute pause of every login after 10
-failures within 10 minutes (see [security](security.md#remote-desktop)).
-
-Every push to main also publishes a package as the
-[Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly).
-The package is unsigned, and pacman refuses an unsigned package given as a
-URL, so download it first and install the local file:
+On Arch, `packaging/arch/PKGBUILD` packages the compositor, programs, session file, PAM files, portal backend, and [login manager](#use-the-login-manager). Every push to `main` publishes an unsigned Arch package to the [Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly). Download it first because `pacman` rejects unsigned URLs:
 
     curl -LO https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-x86_64.pkg.tar.zst
     sudo pacman -U ./reprise-nightly-x86_64.pkg.tar.zst
 
-### Ubuntu 26.04
+Programs share `/usr/bin/reprise-apps` via symlinks such as `reprise-notepad`. Remote Desktop runs `/usr/bin/reprise-rdp` via `app-org.reprise.RemoteDesktop.service` (disabled by default) and `org.reprise.RemoteDesktop.desktop`.
 
-The Nightly release also carries a .deb for Ubuntu 26.04, built on 26.04
-against its own libraries. apt installs the unsigned file from a local path:
+The package installs three session PAM files: `reprise` (lock password), `reprise-fingerprint` (fingerprint), and `reprise-rdp` (Remote Desktop). `reprise-rdp` uses `pam_unix` alone so failed remote logins never trigger `pam_faillock`. See [security](security.md#remote-desktop).
+
+### Install on Ubuntu 26.04
+
+Download and install the unsigned Nightly `.deb`:
 
     curl -LO https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-ubuntu26.04-amd64.deb
     sudo apt install ./reprise-nightly-ubuntu26.04-amd64.deb
 
-To build one from a checkout, on Ubuntu 26.04:
+To build the `.deb` from a checkout on Ubuntu 26.04:
 
     xargs -a packaging/deb/build-depends sudo apt-get install -y --no-install-recommends
     rustup default stable
     packaging/deb/build.sh
 
-The package lands in `~/.cache/reprise-deb/`. `build.sh` runs the local
-PKGBUILD's `build()` and `package()`, so both packages install the same
-files, with one change to the PAM files. Ubuntu has no `system-auth` or
-`system-login`. Each `include system-login` line points at
-`reprise-system-login`, a login stack the package adds. Each `include
-system-auth` line becomes the `common-*` stack of its type, such as
-`common-account`, except `auth`: that one, and `reprise-system-login`'s own,
-include `reprise-password-auth`. Once the fingerprint profile is enabled in
-`pam-auth-update`, `common-auth` waits for a finger before it asks for the
-password. `reprise-password-auth` holds `common-auth`'s default modules,
-pam_unix and pam_cap; a site that authenticates through other modules (sss,
-krb5) adds them there.
+Use `rustup` because Ubuntu's `rustc` is older than the workspace's `rust-version`. The built package lands in `~/.cache/reprise-deb/`.
 
-Ubuntu's `rustc` is older than the workspace's `rust-version`, hence
-`rustup`.
-
-What Reprise needs, and what each release ships:
+Ubuntu lacks `system-auth` and `system-login`, so the `.deb` adds `reprise-system-login` and `reprise-password-auth` (`pam_unix` and `pam_cap`). This stops `common-auth` from waiting for a fingerprint before asking for a password. Add extra auth modules such as `sss` or `krb5` to `reprise-password-auth`.
 
 | | Reprise needs | Ubuntu 26.04 | Ubuntu 24.04 |
 |---|---|---|---|
-| libinput | 1.26, for tablet pad dials | 1.31 | 1.25 |
+| libinput | 1.26 (tablet pad dials) | 1.31 | 1.25 |
 | PipeWire | 1.4 | 1.6 | 1.0 |
-| FFmpeg | 8, for Remote Desktop's colour conversion | 8.0 | 6.1 |
-| libjxl | 0.11.1, for JPEG XL screenshots | 0.11.1 | 0.7 |
-| dbus-daemon | 1.15, for peer credentials with a process fd | 1.16 | 1.14 |
-| Linux | 6.14 for remote logins, 6.16 for libei input | 7.0 | 6.8, or 7.0 with HWE |
-| Rust | 1.99 | 1.93, so rustup | 1.75, so rustup |
+| FFmpeg | 8 (Remote Desktop colour conversion) | 8.0 | 6.1 |
+| libjxl | 0.11.1 (JPEG XL screenshots) | 0.11.1 | 0.7 |
+| dbus-daemon | 1.15 (peer credentials with process fd) | 1.16 | 1.14 |
+| Linux | 6.14 (remote logins), 6.16 (libei input) | 7.0 | 6.8 (7.0 with HWE) |
+| Rust | 1.99 | 1.93 (use rustup) | 1.75 (use rustup) |
 
-Ubuntu 24.04 is older than Reprise needs in libinput, PipeWire, FFmpeg, libjxl and
-D-Bus. A package for it would have to ship its own copy of all five, so
-there isn't one. The 26.04 package won't install there either. Built on
-26.04, it needs glibc 2.43 and libavcodec 62, and 24.04 has 2.39 and 60.
+Ubuntu 24.04 has no package because those five libraries are too old. The 26.04 `.deb` also requires glibc 2.43 and libavcodec 62 (24.04 ships 2.39 and 60).
 
-Debian 13 comes closer. Its FFmpeg is 7.1, so everything builds except
-Remote Desktop. Its 6.12 kernel also rules out remote logins and libei
-input. It gets no package for now.
+Debian 13 has no package yet: FFmpeg 7.1 blocks Remote Desktop, and Linux 6.12 blocks remote logins and libei input.
 
 ### Install by hand
 
-On another distribution, build as above and install the files `package()`
-in `packaging/arch/local/PKGBUILD` installs, from `target/release/` and
-`data/`, to the same paths. Keep the prefix `/usr`: the units, the polkit
-action and the portal name those paths, and Remote Desktop checks passwords
-with the `reprise` beside `reprise-rdp`. Then run what a package's install
-runs:
+On other distributions, build the workspace and copy the files from `package()` in `packaging/arch/local/PKGBUILD` out of `target/release/` and `data/` to the same paths. Keep the `/usr` prefix because the units, polkit action, portal, and `reprise-rdp` expect those paths.
+
+Then run the post-install commands:
 
     sudo systemd-sysusers reprise-login.conf
     sudo systemd-tmpfiles --create reprise-login.conf
     sudo update-mime-database /usr/share/mime
     sudo systemctl daemon-reload
 
-A missing PAM file isn't an error: PAM falls back to the `other` service,
-which on Arch refuses every login and elsewhere may run the full system
-stack. Leave `reprise-login-rdp.socket` disabled; reprise-login enables and
-disables it.
+Install every PAM file, or PAM falls back silently to its `other` service. Leave `reprise-login-rdp.socket` disabled because `reprise-login` manages it.
 
-## Login manager
+## Use the login manager
 
-The package also installs Reprise's own login manager, `reprise-login`,
-disabled. SDDM, or whichever display manager you have, stays in charge
-until you switch:
+The package installs `reprise-login` disabled. Switch to it and reboot:
 
     sudo systemctl enable reprise-login --force
 
-then reboot. `--force` moves the `display-manager.service` link over from
-the old display manager. To go back:
+To switch back (for example, to SDDM), run this and reboot:
 
     sudo systemctl enable sddm --force
 
-(or another display manager), then reboot. If remote logins are on, turn
-them off first, or run `sudo systemctl disable --now
-reprise-login-rdp.socket`: reprise-login enables that socket, and nothing
-else disables it, so it would hold the Remote Desktop port at every boot.
-The same goes before removing the package.
+Before switching away or removing the package, turn off remote logins or run `sudo systemctl disable --now reprise-login-rdp.socket` to free the Remote Desktop port.
 
-reprise-login shows the login screen on VT 1 in Classic, Blue or Glass
-([features](features.md#login-screen)) and starts each user's Reprise
-session on a VT of its own, from VT 7 up, through the user's login shell.
-`/etc/reprise/login.toml` picks the interface, whether the screen lists
-users, a user to log in automatically, the picture behind the screen, each
-screen's resolution, scale, rotation and place
-([configuration](configuration.md#login-manager)), and whether users may log
-in from another computer ([Remote logins](#remote-logins)). Without
-`[[outputs]]` there every screen runs its preferred mode at 100%; Settings >
-Login Manager > Use My Display Settings copies the screens as your session
-runs them. A picture picked there is copied to
-`/var/lib/reprise-login/background`, so the login screen never reads a
-user's home.
+`reprise-login` shows the login screen on VT 1 and starts sessions from VT 7 upward through the user's login shell. Configure it in `/etc/reprise/login.toml`. See [features](features.md#login-screen) and [configuration](configuration.md#login-manager). Settings > Login Manager > Use My Display Settings copies your display layout to `login.toml` and any chosen background picture to `/var/lib/reprise-login/background`.
 
-Ctrl+Alt+F1 brings the login screen back whenever none is showing, for
-another user to log in. Ctrl+Alt+F2 reaches a text login on tty2 at any
-time, and reprise-login
-switches to it when the login screen fails three times in a row. systemd
-restarts reprise-login itself when it exits, but starts it at most twice in
-30 s, manual restarts included. Past that it leaves it stopped and starts a
-text login on tty1. Once the cause is fixed, log in on the Ctrl+Alt+F2 text
-login and run `sudo systemctl reset-failed reprise-login` and `sudo
-systemctl start reprise-login` to bring the login screen back. Not on tty1:
-starting reprise-login stops the text login there, and the shell in it.
+Press Ctrl+Alt+F1 for the login screen, or Ctrl+Alt+F2 for a text login on tty2. After three login screen failures in a row, `reprise-login` switches to tty2. If systemd stops `reprise-login` after repeated restarts, log in on tty2 (not tty1) and run:
 
-The logs:
+    sudo systemctl reset-failed reprise-login
+    sudo systemctl start reprise-login
+
+Read the daemon and login screen logs with:
 
     journalctl -b -u reprise-login
     journalctl -b _UID=$(id -u reprise-greeter)
 
-The first holds reprise-login and its PAM workers, the second the login
-screen itself. In a session reprise-login starts, the compositor logs
-under `reprise` as it does under any login manager (`journalctl --user -b
--t reprise`); output written before its log opens goes under
-`reprise-session`.
+Early startup output goes under `reprise-session`.
 
-After upgrading the package, reboot, or run `sudo systemctl restart
-reprise-login` and have each remote user reconnect; until then each
-session's Software Updates shows a restart notice. The login manager, the
-login screen, Settings, User Accounts and each session's `reprise-rdp
---hand-over` talk over sockets whose messages can change between versions,
-so log each session off once after upgrading and reopen a Settings window
-left open across it. Update `reprise`, `reprise-portal` and `reprise-apps`
-together.
+Update `reprise`, `reprise-portal`, and `reprise-apps` together. After upgrading, reboot, or run `sudo systemctl restart reprise-login` and reconnect remote users. Log out of each session once and reopen Settings.
 
-### Remote logins
+### Turn on remote logins
 
-reprise-login can take RDP connections itself and log users in from another
-computer, into the session they left running or a new one in the
-background, several users at once ([remote desktop](remote-desktop.md#remote-logins)).
-It ships off. To turn it on:
+`reprise-login` accepts multi-user RDP logins into existing or new sessions (off by default). See [remote desktop](remote-desktop.md#remote-logins).
 
-1. Add each user who may log in remotely to the `reprise-remote` group:
-   `sudo usermod -aG reprise-remote USER`.
-2. Tick Allow remote logins to this computer on Settings > Login Manager,
-   or set `[remote_desktop] enabled = true` in `/etc/reprise/login.toml`
-   ([configuration](configuration.md#remote-logins)) and run `sudo
-   systemctl reload reprise-login`.
-3. Open the port, 3389/tcp unless `port` says otherwise, in your firewall:
-   `sudo ufw allow 3389/tcp`, or `sudo firewall-cmd --permanent
-   --add-port=3389/tcp` and `sudo firewall-cmd --reload`. Reprise opens no
-   firewall port and sets up no forwarding.
+1. Add each allowed user to `reprise-remote`: `sudo usermod -aG reprise-remote USER`.
+2. Tick Allow remote logins to this computer in Settings > Login Manager. Or set `[remote_desktop] enabled = true` in `/etc/reprise/login.toml` and run `sudo systemctl reload reprise-login`. See [configuration](configuration.md#remote-logins).
+3. Open port 3389/tcp (or your configured `port`) in your firewall: `sudo ufw allow 3389/tcp`, or `sudo firewall-cmd --permanent --add-port=3389/tcp` and `sudo firewall-cmd --reload`.
 
-A user logged in while the package installs has no
-`reprise-rdp-handover.socket` until their systemd user manager restarts, and
-their remote logins are refused (`uid N's hand-over socket: No such file or
-directory` in reprise-login's log). Log that user out and back in, or run
-`systemctl --user start reprise-rdp-handover.socket` as that user.
+If a user was logged in during installation, log them out and back in or run `systemctl --user start reprise-rdp-handover.socket` as that user.
 
-Users log in with their login password over TLS, or with NLA once they set
-a Remote Desktop password in User Accounts
-([security](security.md#remote-desktop-password)).
+Users sign in with their login password over TLS, or NLA after setting a Remote Desktop password in User Accounts. See [security](security.md#remote-desktop-password).
 
-To turn it off, clear the check box, or set `enabled = false` and reload.
-The front and its socket stop, the port is free, and every login not yet
-in its session is refused. Taking
-a user out of `reprise-remote` (`sudo gpasswd -d USER reprise-remote`)
-stops that user's remote logins alone.
+To turn remote logins off, clear the check box or set `enabled = false` and reload. Remove one user with `sudo gpasswd -d USER reprise-remote`.
 
-The logs:
+Read remote login logs with:
 
     journalctl -b -u reprise-login -u reprise-login-rdp -u reprise-login-rdp.socket
     journalctl --user -b -u reprise-rdp-handover
-
-The first holds the daemon's verdict on each login, with the reason for a
-refusal, and the front's connections; the second, run as the user, that
-user's server.
 
 ## Requirements
 
 ### To build
 
-- Rust, clang, pkg-config and git
-- nasm 2.14 or later, which assembles the AV1 decoder's (`rav1d`) x86-64
-  assembly at build time
-- cargo-nextest 0.9.149 or later, to run the tests (`cargo test` works
-  without it)
-- A process cargo starts (the tests, `cargo run`) plays no sounds: `pw-play`
-  never starts with `CARGO_MANIFEST_DIR` set
-- Reprise Terminal's emulation comes from the `alacritty_terminal` crate,
-  built in; it needs no runtime library
-- Python 3, for the tests' string id check (`scripts/i18n-check`) and the
-  packages' third-party notices (`packaging/third-party-notices`)
-- For the tests, besides Python: `bsdtar` (libarchive), `dbus-daemon`,
-  shared-mime-info and DejaVu fonts, and curl for `scripts/test-fonts.sh`.
-  `.github/ci-image/packages` lists CI's full set (Arch package names)
-- Translated strings come from the Fluent crates (`fluent-bundle`,
-  `fluent-langneg`, `unic-langid`), built in; they need no runtime library
-- Text fields find grapheme clusters with the `unicode-segmentation` crate,
-  built in; it needs no runtime library
-- Character Map names characters and groups them by block with the
-  `unicode_names2` and `unicode-blocks` crates, built in; they need no runtime
-  library
-- A stuck main loop's backtrace is walked and named with the `backtrace`
-  crate, built in; it needs no runtime library
-- SVG icons are drawn with the `resvg` crate, whose PNG and JPEG pictures
-  inside an icon are read out with `data-url` and decoded by the `png` and
-  `zune-jpeg` crates (`gif` and `image-webp` are built with them), built in;
-  they need no runtime library
-- The Remote Desktop server (`reprise-rdp`) is built on the IronRDP crates,
-  Tokio, rustls and rcgen, built in. rustls's aws-lc-rs compiles its C library
-  with the C compiler. IronRDP turns on flate2's zlib backend, which every
-  program shares, so zlib is a runtime requirement
-- `reprise-rdp` and the screen recorder `reprise-record` encode video
-  through FFmpeg 8 or later (libavcodec, libavfilter, libavutil, libswscale,
-  and libavformat for the recorder's MP4 files, with FFmpeg's own AAC and
-  FLAC encoders for their sound) with the `ffmpeg-the-third` crate, whose
-  bindings are generated from FFmpeg's headers at build time (clang). Its
-  colour conversion sets the scaler's options on `SwsContext` directly, which
-  FFmpeg 7 doesn't allow
-- `reprise-rdp` draws the full-colour (AVC444) views, and NVENC's input, on
-  the GPU with OpenGL ES through the `khronos-egl` and `glow` crates, built
-  in; it loads libEGL at run time, from the Mesa and libglvnd listed below,
-  and on NVIDIA libcuda from `nvidia-utils` to copy the drawn pictures into
-  CUDA
-- JPEG XL screenshots are written through libjxl 0.11.1 or later (libjxl and
-  libjxl_threads) with the `jpegxl-rs` and `jpegxl-sys` crates. Only
-  `libreprise_encode_jxl.so` links them; `.jxl` pictures open without libjxl,
-  through `reprise-decode` and the pure-Rust `jxl` crate
-- AVIF pictures open through `reprise-decode` with the `rav1d` crate, a Rust
-  port of the dav1d AV1 decoder, built in with dav1d's x86-64 assembly; AVIF
-  needs no runtime library
+- Rust 1.99, clang (with a C compiler), pkg-config, git, and nasm 2.14 or later.
+- FFmpeg 8 or later headers (libavcodec, libavfilter, libavutil, libswscale, libavformat), libjxl 0.11.1 or later headers (libjxl, libjxl_threads), and zlib.
+- Python 3, for `scripts/i18n-check` and `packaging/third-party-notices`.
+- For tests: cargo-nextest 0.9.149 or later (`cargo test` works without it), `bsdtar` (libarchive), `dbus-daemon`, shared-mime-info, DejaVu fonts, and curl for `scripts/test-fonts.sh`. `.github/ci-image/packages` lists the Arch set.
 
 ### To run
 
-- systemd (logind and pam_systemd, the user manager, timedated, localed, and
-  sysusers and tmpfiles for the login manager) and libseat (from seatd; it
-  talks to logind)
-- For the login manager: the PAM files `reprise-login` (logins typed at the
-  login screen), `reprise-login-greeter` (the login screen's own session),
-  `reprise-login-autologin` (`[login] autologin_user`) and
-  `reprise-login-check` (the login screen's administrator password for Shut
-  Down and Restart, and Remote Desktop password changes), and the system
-  user `reprise-greeter` with its home `/var/lib/reprise-greeter`, which the
-  package's sysusers and tmpfiles files create
-- For remote logins at the login manager: the PAM files
-  `reprise-login-remote` (logins with the login password) and
-  `reprise-login-remote-nla` (logins with a Remote Desktop password), the
-  system user
-  `reprise-login-rdp` and the group `reprise-remote` (sysusers), and Linux
-  6.14 or later, whose kernel TLS follows TLS 1.3 key updates: on an older
-  kernel a TLS 1.3 connection ends at its first key update
-- For remote logins, the kernel's `tls` module (`CONFIG_TLS`): each
-  connection reaches the user's `reprise-rdp` in kernel TLS. The front's unit
-  loads it; without it a login passes its check and then fails to reach its
-  session, and the journal says the module isn't loaded
-- Optional, for remote logins: Landlock (`CONFIG_SECURITY_LANDLOCK`, with
-  `landlock` in the kernel's active LSMs), which stops the front connecting
-  out over TCP. Without it the front runs and logs a warning
-- libudev, libinput 1.26 or later, libdrm, Mesa (GBM and the EGL and OpenGL ES
-  drivers), libglvnd and libdisplay-info
-- libxkbcommon and xkeyboard-config, whose registry names the keyboard
-  layouts in the tray and in Reprise Settings
-- freetype2, fontconfig, PAM, libxcrypt, dbus, PipeWire 1.4 or later, zlib
-  and FFmpeg 8 or later (with libx264, which Remote Desktop and screen recordings
-  encode H.264 on when the GPU cannot, and libopus, which Remote Desktop sends
-  sound to the client in and recordings code Opus sound with). FFmpeg's libx265
-  and libsvtav1 code H.265 and AV1 recordings on the CPU; without them those
-  codecs record only on a GPU encoder
-- libjxl, for JPEG XL screenshots only. `reprise-encode` loads it through
-  `/usr/lib/reprise/libreprise_encode_jxl.so`; when that fails, a JPEG XL
-  screenshot is saved as PNG with a notice, the session log says why, and
-  the rest of Reprise is unaffected
-- dbus-broker, or dbus-daemon 1.15 or later, whose peer credentials carry a
-  process fd: Remote Desktop and the Inhibit portal check by it which process
-  owns a name. On an older bus Settings reads Remote Desktop as off, its
-  clipboard stays cut, the portal's `screensaver-active` follows logind's
-  `LockedHint`, which in lock mode stays true while the remote side is
-  unlocked, and logging off lists no app that holds logout off through the
-  portal
-- Xwayland, for X11 programs. Reprise starts it on the first X11 connection
-  and stops it when X11 programs have gone quiet. When it fails at its start
-  three times in ten minutes, X11 stays off until you log on again, and a
-  notice says so.
-- A UI font: Wine's Tahoma is recommended (`ttf-tahoma` on Arch, from the
-  AUR); without it, Reprise falls back to DejaVu Sans. The other period
-  faces are picked up when installed ([assets](assets.md#fonts)).
-- An icon theme. A classic, early-2000s theme will look most at home; see
-  [assets.md](assets.md#icons). Ubuntu's Adwaita has only symbolic icons, so
-  the .deb recommends `adwaita-icon-theme-legacy` for the full-colour ones.
-- A desktop folder on a file system with `user.` extended attributes, such
-  as ext4, btrfs, xfs or tmpfs. A `.desktop` file runs from the desktop only
-  when it's executable and carries Reprise's `user.reprise.trusted` marker,
-  which Create Shortcut and Allow Launching set.
-- Linux 6.16 or later for Deskflow and remote desktop input through libei,
-  whose sockets use `SO_PASSRIGHTS` to refuse file descriptors.
-- Linux 6.6 or later and a GPU driver with DRM syncobj timelines, for
-  explicit sync, which NVIDIA's driver relies on.
+- **systemd and libseat:** systemd (logind, `pam_systemd`, user manager, timedated, localed, sysusers, tmpfiles) and libseat (from seatd).
+- **Login manager:** PAM files `reprise-login`, `reprise-login-greeter`, `reprise-login-autologin`, and `reprise-login-check`, plus user `reprise-greeter` (`/var/lib/reprise-greeter`).
+- **Remote logins:** PAM files `reprise-login-remote` and `reprise-login-remote-nla`, user `reprise-login-rdp`, group `reprise-remote`, Linux 6.14 or later, and the `tls` module (`CONFIG_TLS`). Landlock (`CONFIG_SECURITY_LANDLOCK`) is optional and blocks outbound TCP from the front.
+- **Graphics and input:** libudev, libinput 1.26 or later, libdrm, Mesa (GBM, EGL, OpenGL ES), libglvnd, libdisplay-info, libxkbcommon, and xkeyboard-config.
+- **Core libraries:** freetype2, fontconfig, PAM, libxcrypt, dbus, PipeWire 1.4 or later, zlib, and FFmpeg 8 or later (with libx264 and libopus). libx265 and libsvtav1 add CPU H.265 and AV1 recording.
+- **libjxl:** Needed for JPEG XL screenshots via `/usr/lib/reprise/libreprise_encode_jxl.so`. Without it, they save as PNG.
+- **D-Bus:** dbus-broker, or dbus-daemon 1.15 or later, for peer credentials with a process fd (Remote Desktop and Inhibit portal).
+- **Xwayland:** Needed for X11 programs.
+- **Fonts and icons:** A UI font (`ttf-tahoma` from Arch AUR recommended, fallback DejaVu Sans) and an icon theme. See [assets](assets.md#fonts) and [assets](assets.md#icons). Ubuntu's `.deb` recommends `adwaita-icon-theme-legacy`.
+- **Desktop file system:** A file system with `user.` extended attributes (ext4, btrfs, xfs, or tmpfs) for desktop `.desktop` files marked `user.reprise.trusted`.
+- **Kernel features:** Linux 6.6 or later with DRM syncobj timelines for explicit sync (NVIDIA). Linux 6.16 or later for Deskflow and libei input (`SO_PASSRIGHTS`).
 
 ### Optional
 
-Install what you want working. Everything below lights up a part of the
-desktop and stays out of the way when it's missing.
+Missing packages disable only their feature.
 
 **Sound, power and hardware**
 
-- WirePlumber, for the volume applet, Volume Control, the volume keys and
-  sound on a Remote Desktop client
-- pipewire-pulse, for desktop and microphone audio in OBS and browsers
-- sound-theme-freedesktop, for the notification balloons' and desktop events' sounds
-- UPower, for the battery icon, power alarms and battery idle timeouts, and
-  from 1.90 the battery charge limit
-- power-profiles-daemon, for the power profile in Power Options and the
-  battery menu, and the power saver on low battery
-- BlueZ, for the Bluetooth icon, Bluetooth Devices and `[lock] away_device`
-- BlueZ's OBEX service (`bluez-obex` on Arch, `bluez-obexd` on Ubuntu), for
-  receiving files a paired device sends over Bluetooth
-- KDE Connect (`kdeconnect`), for the phone icon (battery, Ring phone, Send
-  files) and phones in Send To
-- UDisks2, for mounting drives as they're plugged in, Safely Remove
-  Hardware, unmounted drives and Eject in Computer, and mounting disk images
-- gvfs's MTP and PTP backends (gvfs-mtp and gvfs-gphoto2 on Arch, part of
-  gvfs-backends on Ubuntu), for phones, media players and cameras plugged in
-  by USB: Computer lists them under Portable Devices, opening one mounts it,
-  and Eject or Safely Remove Hardware unmounts it
-- bolt, for the balloon asking to authorize a new Thunderbolt or USB4 device
-  and Settings > Thunderbolt; without it the page is greyed
-- iio-sensor-proxy, for the built-in screen turning with a convertible or
-  tablet (`[display] auto_rotate`)
-- colord, for the profiles it keeps outside the ICC folders in the Display
-  page's Color profile list; Reprise only reads them, and only while colord
-  runs
-- ddcutil and the i2c-dev module, for external monitors' brightness over
-  DDC/CI (the keys and the displays icon). Load i2c-dev at boot with
-  `echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf`; ddcutil's udev
-  rule gives the logged-in user the monitors' I2C buses.
-- hwdata, whose `pci.ids` names the graphics card in About Reprise and Task
-  Manager
-- tzdata, whose `zone1970.tab` places your time zone's city, for the night
-  light's sunset and sunrise without a set location, and whose `zone.tab`
-  picks the zone nearest your location for the automatic time zone
-- A VA-API driver with a video encoder, for hardware encoding in Remote
-  Desktop (H.264) and screen recordings (H.264, H.265 and AV1 where the GPU
-  codes them): `intel-media-driver` on Intel graphics, `libva-mesa-driver`
-  on AMD (Arch's `mesa` package provides it). On NVIDIA, `nvidia-utils`
-  (CUDA and NVENC), tried on a GeForce RTX 4080 SUPER with driver 615.78.
-  Without a hardware encoder, both encode on the CPU with FFmpeg's libx264,
-  libx265 and libsvtav1, which Arch's `ffmpeg` links; a Remote Desktop
-  client without H.264 gets RemoteFX bitmaps.
+- **WirePlumber:** Volume applet, Volume Control, volume keys, and Remote Desktop sound.
+- **pipewire-pulse:** Desktop and microphone audio in OBS and browsers.
+- **sound-theme-freedesktop:** Notification balloon and desktop event sounds.
+- **UPower:** Battery icon, power alarms, battery idle timeouts, and charge limit (UPower 1.90 or later).
+- **power-profiles-daemon:** Power profiles in Power Options and battery menu, plus low-battery power saver.
+- **BlueZ:** Bluetooth icon, Bluetooth Devices, and `[lock] away_device`.
+- **BlueZ OBEX:** `bluez-obex` on Arch or `bluez-obexd` on Ubuntu, for receiving Bluetooth files.
+- **KDE Connect (`kdeconnect`):** Phone icon (battery, Ring phone, Send files) and phones in Send To.
+- **UDisks2:** Auto-mounting drives, Safely Remove Hardware, Eject in Computer, and disk image mounting.
+- **gvfs MTP and PTP:** `gvfs-mtp` and `gvfs-gphoto2` on Arch (`gvfs-backends` on Ubuntu) for USB devices in Computer > Portable Devices.
+- **bolt:** Thunderbolt and USB4 authorization prompts and Settings > Thunderbolt.
+- **iio-sensor-proxy:** Screen auto-rotation (`[display] auto_rotate`).
+- **colord:** Extra ICC profiles in Display > Color profile while colord runs.
+- **ddcutil and i2c-dev:** External monitor brightness over DDC/CI. Load `i2c-dev` at boot with `echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf`.
+- **hwdata:** Graphics card names (`pci.ids`) in About Reprise and Task Manager.
+- **tzdata:** City coordinates (`zone1970.tab`) for night light times and `zone.tab` for automatic time zone.
+- **Hardware video encoders:** VA-API (`intel-media-driver` on Intel, `libva-mesa-driver` or `mesa` on AMD) or `nvidia-utils` (CUDA and NVENC) for H.264, H.265, and AV1 encoding. Without one, FFmpeg encodes on CPU (`libx264`, `libx265`, `libsvtav1`), or Remote Desktop uses RemoteFX bitmaps.
 
 **Network**
 
-- NetworkManager, for the network icon and Network Connections
-- gvfs (with `gio` from GLib and gvfsd-fuse), for Connect to Server, the
-  shares under Computer's Network Locations and the Network place; its SMB
-  backend (gvfs-smb) for SMB shares. Without `gio`, Connect to Server
-  is greyed.
-- dnsmasq, which NetworkManager runs to share a connection from a hotspot
-- NetworkManager's VPN plugins (networkmanager-openvpn and the like), for
-  importing and running those VPNs. WireGuard needs none.
+- NetworkManager, for the network icon and Network Connections.
+- gvfs (with `gio` from GLib and `gvfsd-fuse`), for Connect to Server, Network Locations, and the Network place, plus `gvfs-smb` for SMB shares.
+- dnsmasq, for NetworkManager hotspot sharing.
+- NetworkManager VPN plugins (such as `networkmanager-openvpn`), for importing and running VPNs. WireGuard needs no plugin.
 
 **Printing, updates and accounts**
 
-- CUPS with `cups.socket` enabled, for Printers, the queues and the printing
-  tray icon. An account in CUPS's admin group (`SystemGroup` in
-  `/etc/cups/cups-files.conf`, `wheel` on most systems) manages printers
-  without a password, since Reprise talks to CUPS over its local socket.
-  Reprise follows CUPS through its D-Bus events, so cupsd may exit when idle,
-  even with Printers open; it does so only with `WebInterface No` in
-  `/etc/cups/cupsd.conf`.
-- cups-filters, for driverless IPP Everywhere and AirPrint printers
-- cups-pk-helper, so accounts outside CUPS's admin group can manage printers
-  after the admin password prompt
-- avahi-daemon, so the Add Printer wizard lists network printers for accounts
-  outside CUPS's admin group without the admin password prompt, and the
-  Network place lists the SMB and SFTP servers on the local network
-- PackageKit, Flatpak and fwupd, for system, Flatpak and firmware updates in
-  Software Updates. PackageKit also installs downloaded packages and
-  uninstalls programs from the Start menu (an Arch package installs through
-  pkexec and pacman instead), and installs a prepared offline update on the
-  way out of Turn Off and Restart; Flatpak installs `.flatpakref` and
-  `.flatpak` files
-- AccountsService, for User Accounts, the user pictures on the login
-  screen, the picture a program asks for through the Account portal and
-  the language Settings > Region & Language hands other login managers
+- **CUPS:** Printers, queues, and tray icon (enable `cups.socket`). Members of `SystemGroup` (`/etc/cups/cups-files.conf`, usually `wheel`) manage printers without a password.
+- **cups-filters:** Driverless IPP Everywhere and AirPrint printers.
+- **cups-pk-helper:** Admin-prompted printer management outside CUPS's admin group.
+- **avahi-daemon:** Passwordless printer discovery in Add Printer, plus SMB and SFTP discovery in the Network place.
+- **PackageKit, Flatpak, and fwupd:** System, Flatpak, and firmware updates in Software Updates. PackageKit handles downloaded packages, offline updates, and Start menu uninstalls (Arch uses `pkexec` and `pacman`). Flatpak installs `.flatpakref` and `.flatpak` files.
+- **AccountsService:** User Accounts, login screen pictures, Account portal pictures, and language sharing with other login managers.
 
 **Security**
 
-- polkit, for the admin password prompt, for saving Settings > Login Manager
-  (pkexec) and Region & Language's Apply to the System (localed), for User Accounts' Ask for a new password at the next login
-  (`pkexec chage`), and for the login manager's rule that keeps every session not
-  on screen, Switch User's and background ones alike, from switching the
-  console. The package's `50-reprise-timezone.rules` lets a local, active
-  administrator (group `wheel`, `sudo` or `admin`) set the time zone without a
-  password, for the automatic time zone
-- gnome-keyring, for saved passwords, the Secret portal and a network
-  share's remembered password. The login
-  manager's PAM file (SDDM's or `reprise-login`) unlocks it at login, and the
-  lock screen's password unlocks it when it was left locked. Under
-  autologin PAM has no password, so no login keyring
-  is created and the Secret portal fails until one exists: create it once by
-  running `gnome-keyring-daemon --unlock`, typing the new password and
-  Ctrl+D, or by one password login. Each autologin session then asks for
-  that password the first time a program reads a secret.
-- kwallet-pam, for a KWallet that opens at login. The login manager's PAM
-  file (SDDM's or `reprise-login`) hands the login password to
-  pam_kwallet5, and autostart runs `pam_kwallet_init`. The wallet must be
-  named `kdewallet` and use the login password with classic (Blowfish)
-  encryption. The lock screen does not open a wallet left closed.
-- fprintd, for a fingerprint at the lock screen (add fingers on User
-  Accounts' Fingerprints tab, greyed without it) through the
-  `reprise-fingerprint` PAM service, which
-  keeps an account pam_faillock locked locked. The admin prompt takes one
-  when `/etc/pam.d/polkit-1` has `pam_fprintd`.
-- geoclue, for programs that ask for your location and for the automatic
-  time zone. Reprise is its agent (the package's
-  `/etc/geoclue/conf.d/90-reprise.conf` lets it); without an agent geoclue
-  refuses everyone.
-- dconf (`dconf-cli` on Ubuntu), for reading GNOME's settings in Import from
-  Another Desktop; without it only Plasma's are found.
+- **polkit:** Admin prompts, Settings > Login Manager (`pkexec`), Region & Language (`localed`), password expiry (`pkexec chage`), and background-session rules. `50-reprise-timezone.rules` lets local admins (`wheel`, `sudo`, or `admin`) set the time zone without a password.
+- **gnome-keyring:** Saved passwords, Secret portal, and share passwords. Password logins and the lock screen unlock it. Under autologin, create the keyring once with `gnome-keyring-daemon --unlock` (type password, press Ctrl+D) or one password login.
+- **kwallet-pam:** KWallet unlock at login via `pam_kwallet5` and `pam_kwallet_init`. Name the wallet `kdewallet`, use the login password, and use Blowfish encryption.
+- **fprintd:** Lock screen fingerprints via `reprise-fingerprint` (User Accounts > Fingerprints). Add `pam_fprintd` to `/etc/pam.d/polkit-1` for admin prompts.
+- **geoclue:** Location access and automatic time zone. `/etc/geoclue/conf.d/90-reprise.conf` registers Reprise as its agent.
+- **dconf (`dconf-cli` on Ubuntu):** GNOME settings in Import from Another Desktop.
 
 **Portals and toolkits**
 
-- xdg-desktop-portal 1.19 or newer, which routes screen sharing,
-  screenshots, remote desktop, Deskflow, global shortcuts, file dialogs,
-  permission prompts and the light or dark look to Reprise's portal backend,
-  and lets files dragged between Explorer and Flatpak programs open on the
-  other side. Older releases ask the backend to write the autostart entries
-  Flatpak programs request, which Reprise leaves to the portal
-- xdg-desktop-portal-wlr, the screen sharing and screenshot fallback
-- xdg-desktop-portal-gtk, for printing from GTK3 programs
-- gnome-themes-extra, for GTK3 programs' dark theme under a dark look
-- qt6ct or qt5ct, so Qt programs Reprise starts take the look's colours
-  (`[toolkits] qt_platform_theme = "reprise"`)
+- xdg-desktop-portal 1.19 or newer, for screen sharing, screenshots, remote desktop, Deskflow, global shortcuts, file dialogs, permissions, light or dark preference, and Flatpak drag-and-drop.
+- xdg-desktop-portal-wlr, for screen sharing and screenshot fallback.
+- xdg-desktop-portal-gtk, for GTK3 printing.
+- gnome-themes-extra, for the GTK3 dark theme.
+- qt6ct or qt5ct, for Qt colours (`[toolkits] qt_platform_theme = "reprise"`).
 
 **Input, text and files**
 
-- fcitx5 or ibus with its Wayland frontend, for input methods
-- libx11's Compose files, for dead keys and the Compose key in the lock
-  screen's password field
-- at-spi2-core, for screen readers. Orca is the one Reprise is tested with,
-  and the one Super+Alt+S and Settings start and stop. At reprise-login's
-  login screen Super+Alt+S starts `/usr/bin/orca` as `reprise-greeter`.
-- A CJK font such as Noto Sans CJK, for Chinese, Japanese and Korean text,
-  and a bitmap one such as WenQuanYi Bitmap Song for crisp Chinese with
-  `antialias = false`
-- A colour emoji font such as Noto Color Emoji, for emoji in colour in text and
-  the emoji picker
-- shared-mime-info, for file types and icons
-- xdg-utils and libarchive, for opening web links, zipping and extracting
-  archives in Explorer, opening a network's sign-in page, Send To > Mail
-  Recipient (xdg-email), and attachments from a program's Send by Email in
-  mail programs other than Thunderbird and Evolution
-- plocate with its database, or fd, for files in the launcher and Explorer's Search;
-  with both, fd adds the files modified since plocate's last `updatedb`
-- localsearch, for files found by their contents in the launcher and the Start
-  menu's search once Settings > Search turns it on (it says when localsearch is
-  missing)
-- evolution-data-server, for the day's events under the clock's calendar, from
-  the calendars GNOME Calendar, Evolution or GNOME Online Accounts set up
-  (Settings > Taskbar says when it is missing)
-- Freedesktop thumbnailers, for thumbnails of files Reprise does not decode
-  itself (`[thumbnail_cache] external_thumbnailers`): papers or evince for
-  PDF, PostScript, DjVu and comic books, ffmpegthumbnailer for videos,
-  gnome-font-viewer for fonts, libgsf for OpenDocument and Office files.
-  Any package that installs a `.thumbnailer` file works. They run only
-  with bubblewrap installed.
-- bubblewrap, for the freedesktop thumbnailers, JPEG XL thumbnails and
-  Explorer's Space preview of a font or a JPEG XL: each runs in a bubblewrap
-  jail with no network and only `/usr`, its input file and its output folder
-  visible. Without bubblewrap only pictures other than JPEG XL get
-  thumbnails or previews, and a font shows no sample.
+- **fcitx5 or ibus:** Input methods (with their Wayland frontend).
+- **libx11 Compose files:** Dead keys and the Compose key in the lock screen password field.
+- **at-spi2-core and Orca:** Screen reader support. Super+Alt+S and Settings start and stop Orca (including `/usr/bin/orca` as `reprise-greeter` on the login screen).
+- **CJK fonts:** Noto Sans CJK (or similar) for CJK text. Add WenQuanYi Bitmap Song for crisp Chinese with `antialias = false`.
+- **Colour emoji font:** Noto Color Emoji (or similar) for colour emoji in text and the emoji picker.
+- **shared-mime-info:** File types and icons.
+- **xdg-utils and libarchive:** Web links, Explorer archives, network sign-in pages, and Send To > Mail Recipient (`xdg-email`). Also handles Send by Email attachments outside Thunderbird and Evolution.
+- **plocate or fd:** File search in the launcher and Explorer. With both, `fd` adds files changed since the last `updatedb`.
+- **localsearch:** Full-text search in the launcher and Start menu (enable in Settings > Search).
+- **evolution-data-server:** Calendar events under the clock from GNOME Calendar, Evolution, or GNOME Online Accounts.
+- **Freedesktop thumbnailers:** Extra thumbnails (`[thumbnail_cache] external_thumbnailers`): `papers` or `evince` (PDF, PostScript, DjVu, comics), `ffmpegthumbnailer` (videos), `gnome-font-viewer` (fonts), `libgsf` (OpenDocument and Office). Requires `bubblewrap`.
+- **bubblewrap:** Sandboxes freedesktop thumbnailers, JPEG XL thumbnails, and Explorer Space previews for fonts and JPEG XL.

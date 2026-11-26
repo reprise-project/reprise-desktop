@@ -1,32 +1,16 @@
 # reprisekit
 
-Reprise's controls come from `reprisekit`, a Rust toolkit you can use in your
-own programs. Explorer, Notepad and Reprise Settings use it too, so your app
-can look like it belongs on the same machine, in whichever interface the
-user picked.
+`reprisekit` is the Rust UI toolkit behind Reprise's bundled apps.
 
-There are two parts:
+`reprisekit` draws controls (buttons, check boxes, inputs, menus, list and tree views, property sheets, dialogs and status bars) in Classic, Blue and Glass. Each control provides a model, layout, `draw` into a pixel buffer, hit test and accessibility node, with no display server dependency.
 
-- **`reprisekit`** draws the controls: buttons, check boxes, edit fields,
-  menus, list and tree views, tabbed property sheets, file dialogs, message
-  boxes, status bars and more, in Classic, Blue and Glass. Each control is a
-  plain model with a layout, a `draw` into a pixel buffer, a mouse hit test
-  and an accessibility node. There's no display server code in it, which
-  makes it straightforward to test down to the pixel. A bevel is either
-  right or it isn't.
-- **`repriseapp`** runs a `reprisekit` program as a normal Wayland window.
-  Implement the `App` trait (`title`, `app_id`, `initial_size`, `event`,
-  `draw`), add an empty `impl Extended` for the optional hooks, and call
-  `repriseapp::run`; `examples/hello.rs` is the smallest such program. It handles keyboard and mouse input, the clipboard,
-  caret blinking, extra dialog windows, HiDPI and screen readers. It follows
-  the desktop's interface and colour scheme, dark ones included.
+`repriseapp` runs a `reprisekit` program as a Wayland window. Implement `App` (`title`, `app_id`, `initial_size`, `event`, `draw`), add an empty `impl Extended` and call `repriseapp::run` (see `examples/hello.rs`). It handles input, clipboard, caret blinking, dialogs, HiDPI, screen readers and live theme changes.
 
-To have a look:
+## Run the examples
 
-    cargo run -p reprisekit --example gallery      # every control, drawn to a PNG in target/
-    cargo run -p repriseapp --example hello        # one window, a form with a label and a button
-    cargo run -p repriseapp --example controls     # a live window with a form
-    cargo run -p repriseapp --example twowin       # a main window that opens a dialog
+    cargo run -p reprisekit --example gallery      # draw controls to a PNG in target/
+    cargo run -p repriseapp --example hello        # label and button window
+    cargo run -p repriseapp --example controls     # live form window
+    cargo run -p repriseapp --example twowin       # main window with dialog
 
-The `repriseapp` examples need a running Wayland session. Any compositor
-will do, though I am obviously going to recommend this one.
+The `repriseapp` examples run on any Wayland compositor.

@@ -5,183 +5,82 @@
   </picture>
 </h1>
 
-A Linux desktop for people who miss grey buttons and would like the computer
-to stop making suggestions.
+A Linux desktop for people who miss grey buttons and would like the computer to stop making suggestions.
 
 [![Reprise Classic, Blue and Glass, and the 3D window switcher](docs/screenshots/mosaic.png)](docs/showcase.md)
 
-More in the [showcase](docs/showcase.md).
+Reprise is a Wayland desktop with three interfaces, in the style of Windows 95, XP and 7. Switch between them without logging out.
 
-I wanted my taskbar back. This got out of hand.
+- Reprise Classic: grey bevels, navy title bars and 32 colour schemes, including dark ones.
+- Reprise Blue: glossy caption buttons, a rounded Start button, a gradient taskbar and ten schemes.
+- Reprise Glass: Aero-style blurred translucent frames, a Start orb, window shadows, a 3D switcher and a dark mode.
 
-Reprise is a Wayland desktop from back when computers were fun to use. It
-comes in three looks, in the style of Windows 95, XP and 7, and you can
-switch between them without logging out:
-
-- **Reprise Classic.** Grey bevels, navy title bars, and buttons that go in
-  when you press them. Thirty-two colour schemes, from Brick to Tokyo Night,
-  because even nostalgia deserves a dark mode.
-- **Reprise Blue.** Glossy caption buttons, a rounded Start button and a
-  taskbar with a gradient on it. Ten schemes, from Blue to Steel. The
-  computer looks like it's about to tell you it's ready to use.
-- **Reprise Glass.** Aero-style translucent frames over a blur of whatever's
-  behind them, a Start orb, window shadows, a 3D window switcher and a dark
-  mode. Finally, windows you can actually see through.
-
-You can tell which window has focus. You can tell what's clickable. The
-scrollbar is still there, even when you're not looking directly at it.
-Apparently these are features now.
-
-There's some selective memory involved. Reprise also has a searchable
-launcher, snap layouts, clipboard history, screen sharing, a remote desktop
-server, fractional scaling and support for hardware made this decade. I miss
-the desktop, not the afternoon spent getting a sound card to work.
+It also includes a searchable launcher, snap layouts, clipboard history, screen sharing, a remote desktop server and fractional scaling. I miss the desktop, not the afternoon spent getting a sound card to work.
 
 ## Why
 
-At some point, everyone agreed that buttons were embarrassing and should
-disguise themselves as text. Scrollbars went into hiding. Settings got
-rearranged again. A perfectly good rectangle became an invitation to explore.
-
-I liked the rectangles.
-
-The old desktops had their faults, but you could usually work out what to do
-by looking at them. Buttons had edges. Dialogs had OK, Cancel and Apply.
-Right-click gave you a menu. You could learn where things were and reasonably
-expect them to be there next week.
-
-That's the desktop I want to use, so that's what I'm building. Three times,
-apparently.
+Buttons had edges. Dialogs had OK, Cancel and Apply. Right-click opened a menu. You could learn where things lived and expect them to stay there next week.
 
 ## What you get
 
-- **A real taskbar.** Start menu, Quick Launch, a tray, and a clock that
-  shows the month when you click it. Put it on any edge of the screen, hide
-  it, pin programs to it, group them or don't. It's your taskbar.
-- **Windows you can find.** Alt+Tab with live pictures, a window overview,
-  virtual desktops, window tabs, and snap layouts that drop down when you
-  drag a window toward the top of the screen.
-- **Programs that match.** Explorer, Notepad, Volume Control, Printers,
-  Network Connections, Power Options, Bluetooth, User Accounts, Software
-  Updates and a 34-page Reprise Settings. Having built all those property
-  sheets, I do expect someone to use them.
-- **The good bits of this century.** A launcher that does sums, clipboard
-  history, an emoji picker, notification history with Do Not Disturb, night
-  light, a magnifier, colour filters and screen reader support.
-- **A modern Linux underneath.** PipeWire, NetworkManager, BlueZ, UPower,
-  systemd-logind and the desktop portals. Screen sharing works in your
-  browser, Flatpaks ask before they get anything, and GTK, Qt and X11
-  programs run alongside the built-in ones.
-- **About boxes** that report your memory in kilobytes, with thousands
-  separators. You paid for all that RAM. You should get a long number.
+- **Taskbar.** Start menu, Quick Launch, tray and clock calendar. Place it on any edge, auto-hide it, pin apps or group windows.
+- **Windows.** Alt+Tab previews, window overview, virtual desktops, window tabs and snap layouts.
+- **Bundled apps.** Explorer, Notepad, Volume Control, Printers, Network Connections, Power Options, Bluetooth, User Accounts, Software Updates and Reprise Settings.
+- **Desktop tools.** Launcher with maths, clipboard history, emoji picker, Do Not Disturb, night light, magnifier, colour filters and screen reader support.
+- **Modern Linux.** PipeWire, NetworkManager, BlueZ, UPower, systemd-logind and desktop portals. Runs GTK, Qt, Flatpak and X11 apps.
+- **About boxes.** Reports memory in kilobytes with thousands separators. You paid for all that RAM. You should get a long number.
 
-Nothing installs, syncs or recommends itself without asking. There is no news
-feed in the Start menu, and there never will be.
+Nothing installs, syncs or recommends itself without asking. There is no news feed in the Start menu.
 
-The long version: [every feature](docs/features.md), [the three
-interfaces](docs/interfaces.md) and [the bundled programs](docs/programs.md).
+See [features](docs/features.md), [interfaces](docs/interfaces.md) and [programs](docs/programs.md).
 
 ## Remote Desktop
 
-Reprise has its own RDP server, built on
-[IronRDP](https://github.com/Devolutions/IronRDP), so the desktop at your
-desk is also the one you reach from the couch.
+Reprise includes an RDP server built on [IronRDP](https://github.com/Devolutions/IronRDP). Connect remotely and the local screen locks while your windows move to the client's monitors. Unlock locally to take them back. Disconnecting leaves your session running.
 
-- **One session, two places.** Connect from another computer and this
-  screen locks while your windows move over to the client's monitors.
-  Unlock here and they come back, and the client is let go. Disconnect and
-  the session keeps running until you're back.
-- **Several people at once.** With Reprise's login manager, everyone in the
-  remote group can log in from another computer, into the session they left
-  running or a new one in the background, while someone else uses the
-  screen.
-- **Video on the GPU.** H.264 through VA-API on Intel and AMD or NVENC on
-  NVIDIA, with x264 on the CPU when there's no hardware encoder. The
-  default quality sends full colour, so small text stays sharp. Two
-  encoders per screen merge into one stream, which at 1080p on VA-API is
-  about a sixth of the bytes of one encoder.
-- **The usual extras.** Several monitors, the clipboard, sound, and a
-  standby screen for a computer with no monitor plugged in.
+With Reprise's login manager, users in the remote group can log into existing or new background sessions while someone else uses the local screen.
 
-Nothing listens until you turn it on. It has had no formal security review,
-so keep it on your home network or behind a VPN such as Tailscale, never open
-to the internet. [docs/remote-desktop.md](docs/remote-desktop.md) has the
-rest.
+Video encodes H.264 on VA-API, NVENC or x264, with full-colour sharp text, multi-monitor, clipboard, sound and headless standby support. Nothing listens until you turn it on. Keep it on a home network or VPN such as Tailscale. See [docs/remote-desktop.md](docs/remote-desktop.md).
 
 ## Try it
 
-Install the [requirements](docs/install.md#requirements), then:
+Install the [requirements](docs/install.md#requirements), then build and run from a TTY (not nested):
 
     cargo build --release --workspace
-    PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty   # from a TTY
+    PATH="$PWD/target/release:$PATH" ./target/release/reprise --startup alacritty
 
-Reprise drives the display itself, so it runs from a TTY or a login manager,
-not nested in another session.
+Use `packaging/arch/PKGBUILD` on Arch, or download the Nightly Arch package or Ubuntu 26.04 .deb. Elsewhere, [install by hand](docs/install.md#install-by-hand) and pick "Reprise" in your login manager.
 
-On Arch, `packaging/arch/PKGBUILD` packages the whole thing, and the Nightly
-release carries a package for Arch and a .deb for Ubuntu 26.04. Elsewhere,
-[install by hand](docs/install.md#install-by-hand). Once it's installed, pick
-"Reprise" in your login manager. [docs/install.md](docs/install.md) has the
-details.
-
-Reprise reads `~/.config/reprise/config.toml` and applies an edit the moment
-you save. Most of it is also in Reprise Settings, which writes your changes
-back without eating your comments. See
-[docs/configuration.md](docs/configuration.md).
+Edit `~/.config/reprise/config.toml` (reloads on save) or use Reprise Settings. See [docs/configuration.md](docs/configuration.md).
 
 ## Docs
 
-- [Showcase](docs/showcase.md): what it looks like
-- [Features](docs/features.md): the full list
-- [Interfaces](docs/interfaces.md): Classic, Blue and Glass, their colour
-  schemes and what each one turns on
-- [Programs](docs/programs.md): Explorer, Notepad, Reprise Settings and the
-  rest
-- [Remote Desktop](docs/remote-desktop.md): your session from another
-  computer, and remote logins for several users
-- [Configuration](docs/configuration.md): the main sections of the config
-  file
-- [Install](docs/install.md): requirements, building, packaging
-- [Protocols and portals](docs/protocols.md): for the panels, lockers and
-  pagers you might want to bolt on
-- [reprisekit](docs/reprisekit.md): build your own period-correct apps
-- [Clipboard access for Flatpak apps](docs/flatpak-clipboard.md)
-- [Translations](docs/i18n.md): adding a string or a language
-- [Security model](docs/security.md): what a program in your session can
-  and can't do
-- [Assets](docs/assets.md): fonts, icons and what Reprise leaves out on purpose
-- [Contributing](CONTRIBUTING.md): building, tests and how the code is laid
-  out
-- [Security](SECURITY.md): how to report a vulnerability privately
+- [Showcase](docs/showcase.md)
+- [Features](docs/features.md)
+- [Interfaces](docs/interfaces.md)
+- [Programs](docs/programs.md)
+- [Remote Desktop](docs/remote-desktop.md)
+- [Configuration](docs/configuration.md)
+- [Install](docs/install.md)
+- [Protocols and portals](docs/protocols.md)
+- [reprisekit](docs/reprisekit.md)
+- [Flatpak clipboard access](docs/flatpak-clipboard.md)
+- [Translations](docs/i18n.md)
+- [Security model](docs/security.md)
+- [Assets](docs/assets.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
 ## Status
 
-Early. I use it as my daily desktop. Please take that as a statement about my
-tolerance for inconvenience, not a stability guarantee.
-
-Expect rough edges, greyed-out menu items waiting for an implementation, and
-the occasional pixel I haven't noticed yet.
+Early. I use it as my daily desktop. Take that as a statement about my tolerance for inconvenience, not a stability guarantee. Expect rough edges and unfinished menus.
 
 ## Made with AI
 
-AI coding agents wrote most of the code. I decide what to build, how it
-should look and behave, and whether it's done. The agents do most of the
-typing, including the tests that check whether a button's bevel is right.
-
-If that puts you off, fair enough. I'd rather you knew before installing it.
-
-There is something funny about using all this technology to get back to a
-grey property sheet with an Apply button. There is also a bug tracker.
-If something breaks, open an issue.
+AI coding agents wrote most of the code. I decide what to build, how it behaves and when it is done. If something breaks, open an issue.
 
 ## License and assets
 
-Reprise's source code is licensed under the
-[GNU General Public License v3.0 or later](LICENSE).
+Code is licensed under [GNU GPL v3.0 or later](LICENSE). Third-party assets keep their own licenses. See [docs/assets.md](docs/assets.md).
 
-Fonts, icons and other third-party assets retain their own licenses. See
-[docs/assets.md](docs/assets.md) for sources, licenses and installation details.
-
-Windows and Aero are trademarks of the Microsoft group of companies. Reprise is
-an independent project and is not affiliated with, sponsored by or endorsed by
-Microsoft.
+Windows and Aero are trademarks of the Microsoft group of companies. Reprise is an independent project and is not affiliated with, sponsored by or endorsed by Microsoft.
