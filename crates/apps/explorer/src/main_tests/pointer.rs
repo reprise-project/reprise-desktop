@@ -278,6 +278,139 @@ fn a_details_column_lights_under_the_pointer() {
     assert_eq!(ex.sv.header.lit(), None);
 }
 
+/// A left press at `at`, a motion to `to` and the release there.
+fn click_from(ex: &mut Explorer, ctx: &mut Ctx, at: (i32, i32), to: (i32, i32)) {
+    use repriseapp::PointerInput;
+    let mods = repriseapp::Mods::default();
+    let (x, y) = at;
+    ex.pointer(
+        PointerInput::Press {
+            x,
+            y,
+            button: crate::BTN_LEFT,
+            time: 0,
+            mods,
+        },
+        ctx,
+    );
+    let (x, y) = to;
+    ex.pointer(PointerInput::Motion { x, y }, ctx);
+    ex.pointer(
+        PointerInput::Release {
+            x,
+            y,
+            button: crate::BTN_LEFT,
+            mods,
+        },
+        ctx,
+    );
+}
+
+/// The first point of Details' view where `want` hits.
+fn details_point(ex: &Explorer, ctx: &Ctx, want: shellview::Hit) -> (i32, i32) {
+    let view = ex.layout(ctx).view;
+    let sl = ex.view_layout(view, ctx);
+    (view.y..view.bottom())
+        .flat_map(|y| (view.x..view.right()).map(move |x| (x, y)))
+        .find(|&(x, y)| shellview::hit(&ex.sv, &sl, x, y) == want)
+        .expect("the point in Details")
+}
+
+#[test]
+fn a_column_title_sorts_on_the_click_not_the_press_in_every_look() {
+    use reprisekit::interface::Interface;
+    use reprisekit::pointer::Interaction;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut ctx = test_ctx();
+        ctx.theme = reprisekit::interfaces::theme_for(i);
+        let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.sv.set_mode(shellview::Mode::Details);
+        let before = ex.sv.sort;
+        let (x, y) = details_point(&ex, &ctx, shellview::Hit::Header(1));
+        let press = repriseapp::PointerInput::Press {
+            x,
+            y,
+            button: crate::BTN_LEFT,
+            time: 0,
+            mods: repriseapp::Mods::default(),
+        };
+        assert!(
+            ex.pointer(press, &mut ctx).redraw,
+            "{i:?}: the held title draws"
+        );
+        assert_eq!(ex.sv.header.of(1), Interaction::Pressed, "{i:?}");
+        assert_eq!(ex.sv.sort, before, "{i:?}: the press alone sorts nothing");
+        let release = repriseapp::PointerInput::Release {
+            x,
+            y,
+            button: crate::BTN_LEFT,
+            mods: repriseapp::Mods::default(),
+        };
+        ex.pointer(release, &mut ctx);
+        assert_eq!(
+            ex.sv.sort.map(|s| s.0),
+            Some(1),
+            "{i:?}: the click sorts by Size"
+        );
+        assert_ne!(
+            ex.sv.header.of(1),
+            Interaction::Pressed,
+            "{i:?}: the title lets go"
+        );
+    }
+}
+
+#[test]
+fn a_title_released_off_it_or_a_divider_drag_sorts_nothing() {
+    use reprisekit::pointer::Interaction;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.set_mode(shellview::Mode::Details);
+    let before = ex.sv.sort;
+    let title = details_point(&ex, &ctx, shellview::Hit::Header(1));
+    let view = ex.layout(&ctx).view;
+    let below = (title.0, view.bottom() - 30);
+    let mods = repriseapp::Mods::default();
+    let (x, y) = title;
+    ex.pointer(
+        repriseapp::PointerInput::Press {
+            x,
+            y,
+            button: crate::BTN_LEFT,
+            time: 0,
+            mods,
+        },
+        &mut ctx,
+    );
+    let (x, y) = below;
+    assert!(
+        ex.pointer(repriseapp::PointerInput::Motion { x, y }, &mut ctx)
+            .redraw,
+        "the title lifts as the pointer leaves it"
+    );
+    assert_eq!(ex.sv.header.of(1), Interaction::Idle);
+    ex.pointer(
+        repriseapp::PointerInput::Release {
+            x,
+            y,
+            button: crate::BTN_LEFT,
+            mods,
+        },
+        &mut ctx,
+    );
+    assert_eq!(ex.sv.sort, before, "released off the title");
+
+    let edge = details_point(&ex, &ctx, shellview::Hit::Divider(0));
+    let width = ex.sv.columns[0].width;
+    click_from(&mut ex, &mut ctx, edge, (edge.0 + 30, edge.1));
+    assert!(ex.sv.columns[0].width > width, "the drag widens Name");
+    assert_eq!(ex.sv.sort, before, "a divider drag");
+}
+
 #[test]
 fn thumb_buttons_step_back_and_forward() {
     let dir = tempfile::tempdir().expect("a temp dir");

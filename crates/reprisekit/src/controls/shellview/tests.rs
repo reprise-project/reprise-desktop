@@ -1763,3 +1763,36 @@ fn computer_drive_views_pin_in_each_interface() {
     }
     crate::pins::check("shellview/drives", &got);
 }
+
+/// Details' header with Name sorted, at rest and with Size's title held, per interface at scale
+/// 1 and 2; a held title draws apart from the one at rest in every look.
+#[test]
+fn a_details_header_draws_a_held_title_in_each_interface() {
+    use crate::interface::Interface;
+    let mut got = Vec::new();
+    for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut theme = crate::interfaces::theme_for(look);
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let mut sv = drives_sample(Mode::Details);
+        sv.sort = Some((0, true));
+        let r = Rect::new(0, 0, 520, 200);
+        let lay = layout(&sv, r, &theme.controls());
+        for s in [1, 2] {
+            theme.scale = s;
+            let draw_at = |sv: &ShellView| {
+                let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+                draw(&mut c, &text, &theme.paint(), sv, &lay, None, px * s as u32);
+                c
+            };
+            sv.header.clear();
+            let rest = draw_at(&sv);
+            sv.header.press(Some(1), false);
+            let held = draw_at(&sv);
+            assert!(held != rest, "{look:?} x{s}: the held title draws apart");
+            got.push((format!("{look:?} rest {s}"), canvas_fnv(&rest)));
+            got.push((format!("{look:?} held {s}"), canvas_fnv(&held)));
+        }
+    }
+    crate::pins::check("shellview/details_held_header", &got);
+}
