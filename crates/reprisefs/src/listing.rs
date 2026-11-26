@@ -550,7 +550,7 @@ pub struct Row {
 
 /// `dir` as a file dialog lists it: [`read_dir`]'s order, hidden entries
 /// dropped unless `hidden`, and only the entries `keep` accepts, plus the links listed
-/// unfollowed, which may yet open as folders. The My Recent Documents
+/// unfollowed, which may yet open as folders. The Recent Items
 /// place ([`places::RECENT`]) lists the recently used files instead.
 pub fn dialog_rows(
     dir: &Path,
@@ -578,7 +578,7 @@ fn dialog_rows_with(
 
 const RECENT_LIMIT: usize = 50;
 
-/// `files` (newest first) as My Recent Documents lists them: each row's
+/// `files` (newest first) as Recent Items lists them: each row's
 /// `path` is the file's own, and a name already listed (the same name in
 /// another folder) is left out, so a name picks one file.
 fn recent_rows(

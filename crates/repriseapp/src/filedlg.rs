@@ -206,7 +206,7 @@ impl Icons {
 
 struct Listing {
     folder: Folder,
-    /// Names shown for paths they don't spell: non-UTF-8 names and My Recent Documents' files.
+    /// Names shown for paths they don't spell: non-UTF-8 names and Recent Items' files.
     aliases: Vec<(String, OsString)>,
     /// The paths of files with thumbnails ([`Item::thumbnailable`]); file `i`'s entry has id `i + 1`.
     pictures: Vec<PathBuf>,
