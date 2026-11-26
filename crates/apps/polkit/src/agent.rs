@@ -2,7 +2,8 @@
 //! `AuthenticationAgent` at `/reprise/polkit/Agent`. `BeginAuthentication` stays
 //! pending until the dialog is done; zbus runs each call on its own task so
 //! `CancelAuthentication` gets through. Dismissed prompts are kept for
-//! [`reprisebus::polkit::dismissed`] on the session bus.
+//! [`reprisebus::polkit::dismissed`] on the session bus, where a program also
+//! withdraws its own open prompts ([`reprisebus::polkit::withdraw`]).
 
 use reprisebus::mutex::lock;
 use std::collections::HashMap;
@@ -21,8 +22,8 @@ pub enum Outcome {
     Success,
     /// Cancel or Esc in the prompt.
     Cancelled,
-    /// polkitd's `CancelAuthentication`: the service stopped waiting, so
-    /// nobody dismissed anything.
+    /// polkitd's `CancelAuthentication` (the service stopped waiting), or
+    /// the program the prompt is for withdrew it: nobody dismissed anything.
     Withdrawn,
     Failed,
 }
@@ -159,9 +160,83 @@ impl Dismissed {
 
 type Dismissals = Arc<Mutex<Dismissed>>;
 
+/// How long a withdrawal also withdraws a request polkitd sends for the same pid: one already on
+/// its way from the service when the program withdrew.
+const WITHDRAWN_FOR: Duration = Duration::from_secs(3);
+
+/// The requests under way, each cookie with the pid polkitd names as its subject, and the pids
+/// that withdrew their prompts, with when.
+#[derive(Default)]
+struct Requests {
+    open: Vec<(String, u32)>,
+    withdrawn: Vec<(u32, Instant)>,
+}
+
+#[derive(Clone, Default)]
+struct Open(Arc<Mutex<Requests>>);
+
+impl Open {
+    /// Registers request `cookie` for `pid` from its start, before its prompt opens; None when
+    /// `pid` withdrew its prompts within [`WITHDRAWN_FOR`] of `now`.
+    fn add(&self, cookie: &str, pid: u32, now: Instant) -> Option<Entry> {
+        let mut r = lock(&self.0);
+        r.withdrawn
+            .retain(|(_, at)| now.saturating_duration_since(*at) < WITHDRAWN_FOR);
+        if r.withdrawn.iter().any(|(p, _)| *p == pid) {
+            return None;
+        }
+        r.open.push((cookie.to_string(), pid));
+        Some(Entry {
+            open: self.clone(),
+            cookie: cookie.to_string(),
+        })
+    }
+
+    /// Runs `post`, which opens the prompt, unless request `cookie` was withdrawn meanwhile.
+    /// Under the lock, so a withdrawal's cancel never overtakes the prompt it cancels.
+    fn post_unless_withdrawn(&self, cookie: &str, post: impl FnOnce()) -> bool {
+        let r = lock(&self.0);
+        let open = r.open.iter().any(|(c, _)| c == cookie);
+        if open {
+            post();
+        }
+        open
+    }
+
+    /// Withdraws `pid`'s requests, running `cancel` on each open one's cookie, and marks `pid` for
+    /// [`WITHDRAWN_FOR`]. The number withdrawn.
+    fn withdraw(&self, pid: u32, now: Instant, cancel: impl Fn(String)) -> usize {
+        let mut r = lock(&self.0);
+        r.withdrawn.push((pid, now));
+        let mut n = 0;
+        r.open.retain(|(c, p)| {
+            let mine = *p == pid;
+            if mine {
+                cancel(c.clone());
+                n += 1;
+            }
+            !mine
+        });
+        n
+    }
+}
+
+/// A request's place in [`Open`], left when the request ends.
+struct Entry {
+    open: Open,
+    cookie: String,
+}
+
+impl Drop for Entry {
+    fn drop(&mut self) {
+        lock(&self.open.0).open.retain(|(c, _)| *c != self.cookie);
+    }
+}
+
 struct Agent {
     poster: repriseapp::Poster<Msg>,
     dismissed: Dismissals,
+    open: Open,
     session: String,
 }
 
@@ -183,6 +258,13 @@ impl Agent {
         let pid: Option<u32> = details
             .get("polkit.subject-pid")
             .and_then(|p| p.parse().ok());
+        let entry = match pid.map(|pid| self.open.add(cookie, pid, Instant::now())) {
+            Some(None) => {
+                log::info!("{action_id}: its program withdrew its prompts");
+                return Err(Error::Cancelled("withdrawn".into()));
+            }
+            entry => entry.flatten(),
+        };
         // polkitd names the subject by pid alone, so there is no start time to pin it with.
         let cgroup =
             pid.and_then(|pid| std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok());
@@ -204,14 +286,27 @@ impl Agent {
         }
         let selected = preselect(&users, me.as_deref());
         let (done, wait) = async_channel::bounded(1);
-        self.poster.post(Msg::Begin(Request {
+        let request = Request {
             cookie: cookie.to_string(),
             message: message.to_string(),
             users,
             selected,
             done,
-        }));
-        match wait.recv().await {
+        };
+        let begin = || self.poster.post(Msg::Begin(request));
+        let posted = match entry {
+            Some(_) => self.open.post_unless_withdrawn(cookie, begin),
+            None => {
+                begin();
+                true
+            }
+        };
+        if !posted {
+            return Err(Error::Cancelled("withdrawn".into()));
+        }
+        let outcome = wait.recv().await;
+        drop(entry);
+        match outcome {
             Ok(Outcome::Success) => Ok(()),
             Ok(Outcome::Cancelled) => {
                 if let Some(pid) = pid {
@@ -219,7 +314,7 @@ impl Agent {
                 }
                 Err(Error::Cancelled("cancelled by the user".into()))
             }
-            Ok(Outcome::Withdrawn) => Err(Error::Cancelled("withdrawn by polkitd".into())),
+            Ok(Outcome::Withdrawn) => Err(Error::Cancelled("withdrawn".into())),
             Ok(Outcome::Failed) | Err(_) => Err(Error::Failed("authentication failed".into())),
         }
     }
@@ -236,8 +331,23 @@ impl Agent {
     }
 }
 
-/// Answers [`reprisebus::polkit::dismissed`] for the calling process.
-struct DismissalsIface(Dismissals);
+/// Answers [`reprisebus::polkit::dismissed`] and [`reprisebus::polkit::withdraw`] for the calling
+/// process.
+struct DismissalsIface {
+    dismissed: Dismissals,
+    open: Open,
+    poster: repriseapp::Poster<Msg>,
+}
+
+async fn caller_pid(conn: &zbus::Connection, hdr: &Header<'_>) -> zbus::fdo::Result<u32> {
+    let sender = hdr
+        .sender()
+        .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?;
+    zbus::fdo::DBusProxy::new(conn)
+        .await?
+        .get_connection_unix_process_id(sender.clone().into())
+        .await
+}
 
 #[zbus::interface(name = "reprise.polkit.Dismissals")]
 impl DismissalsIface {
@@ -246,14 +356,22 @@ impl DismissalsIface {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] hdr: Header<'_>,
     ) -> zbus::fdo::Result<bool> {
-        let sender = hdr
-            .sender()
-            .ok_or_else(|| zbus::fdo::Error::Failed("no sender".into()))?;
-        let pid = zbus::fdo::DBusProxy::new(conn)
-            .await?
-            .get_connection_unix_process_id(sender.clone().into())
-            .await?;
-        Ok(lock(&self.0).take(pid, Instant::now()))
+        let pid = caller_pid(conn, &hdr).await?;
+        Ok(lock(&self.dismissed).take(pid, Instant::now()))
+    }
+
+    /// Withdraws the caller's prompts, open or on their way ([`WITHDRAWN_FOR`]), the number
+    /// withdrawn. A program withdraws only its own, so no other program's prompt goes.
+    async fn withdraw(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<u32> {
+        let pid = caller_pid(conn, &hdr).await?;
+        let cancel = |cookie| self.poster.post(Msg::Cancel(cookie));
+        let n = self.open.withdraw(pid, Instant::now(), cancel);
+        log::info!("pid {pid} withdraws {n} prompt(s)");
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 }
 
@@ -293,14 +411,13 @@ fn foreign_session<'a>(cgroup: &'a str, session: &str) -> Option<&'a str> {
 }
 
 /// Takes the served session's agent name, exiting when another reprise-polkit holds it.
-async fn single_instance(served: &Served, dismissed: Dismissals) {
+async fn single_instance(served: &Served, iface: DismissalsIface) {
     let name = &served.name;
     let Ok(conn) = zbus::Connection::session().await else {
         return;
     };
     // Served before the name is taken, so no call to the name finds it
     // missing; a second instance exits before anyone calls it.
-    let iface = DismissalsIface(dismissed);
     if let Err(e) = conn
         .object_server()
         .at(reprisebus::polkit::PATH, iface)
@@ -331,8 +448,13 @@ async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
             return;
         }
     };
-    let dismissed = Dismissals::default();
-    single_instance(&served, dismissed.clone()).await;
+    let (dismissed, open) = (Dismissals::default(), Open::default());
+    let iface = DismissalsIface {
+        dismissed: dismissed.clone(),
+        open: open.clone(),
+        poster: poster.clone(),
+    };
+    single_instance(&served, iface).await;
     let session = served.session;
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
@@ -345,6 +467,7 @@ async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
     let agent = Agent {
         poster: poster.clone(),
         dismissed,
+        open,
         session: session.clone(),
     };
     if let Err(e) = conn.object_server().at(PATH, agent).await {
@@ -465,6 +588,37 @@ mod tests {
         assert!(
             !d.take(20, t0 + DISMISSAL_TTL),
             "a dismissal nobody asked about lapses"
+        );
+    }
+
+    #[test]
+    fn a_request_withdrawn_before_its_prompt_opens_never_opens() {
+        let open = Open::default();
+        let t0 = Instant::now();
+        let entry = open.add("c", 10, t0).expect("nothing withdrawn yet");
+        let cancelled = std::cell::RefCell::new(Vec::new());
+        let n = open.withdraw(10, t0, |c| cancelled.borrow_mut().push(c));
+        assert_eq!((n, cancelled.take()), (1, vec!["c".to_string()]));
+        let mut opened = false;
+        assert!(!open.post_unless_withdrawn("c", || opened = true));
+        assert!(!opened, "the prompt does not open after its user lookup");
+        drop(entry);
+    }
+
+    #[test]
+    fn a_request_on_its_way_when_its_program_withdrew_is_withdrawn_too() {
+        let open = Open::default();
+        let t0 = Instant::now();
+        assert_eq!(open.withdraw(10, t0, |_| ()), 0, "nothing open yet");
+        assert!(open.add("late", 10, t0 + Duration::from_secs(1)).is_none());
+        assert!(open.add("other", 20, t0).is_some(), "another program's");
+        let after = t0 + WITHDRAWN_FOR;
+        let entry = open.add("next", 10, after).expect("a later request opens");
+        assert!(open.post_unless_withdrawn("next", || ()));
+        drop(entry);
+        assert!(
+            !open.post_unless_withdrawn("next", || ()),
+            "ended requests leave"
         );
     }
 
@@ -661,6 +815,53 @@ mod tests {
             assert!(
                 seen.recv_timeout(Duration::from_millis(200)).is_err(),
                 "one registration per owner"
+            );
+        }
+
+        #[test]
+        fn a_program_withdraws_its_own_open_prompts_and_no_other_programs() {
+            let Some(bus) = bus() else {
+                return;
+            };
+            let (poster, msgs) = repriseapp::Poster::channel(repriseapp::Waker::noop());
+            let open = super::super::Open::default();
+            let me = std::process::id();
+            let now = std::time::Instant::now();
+            let _mine = open.add("mine", me, now);
+            let _theirs = open.add("theirs", me + 1, now);
+            let iface = super::super::DismissalsIface {
+                dismissed: Default::default(),
+                open: open.clone(),
+                poster,
+            };
+            let withdrawn: u32 = zbus::block_on(async {
+                let agent = connect(&bus.1).await;
+                reprisebus::testbus::serve(&agent, reprisebus::polkit::PATH, iface).await;
+                let program = connect(&bus.1).await;
+                let reply = program
+                    .call_method(
+                        agent.unique_name().map(|n| n.as_str()),
+                        reprisebus::polkit::PATH,
+                        Some(reprisebus::polkit::INTERFACE),
+                        "Withdraw",
+                        &(),
+                    )
+                    .await
+                    .unwrap();
+                reply.body().deserialize().unwrap()
+            });
+            assert_eq!(withdrawn, 1);
+            let cancelled: Vec<String> = msgs
+                .try_iter()
+                .filter_map(|m| match m {
+                    super::super::Msg::Cancel(cookie) => Some(cookie),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(cancelled, ["mine"]);
+            assert!(
+                open.post_unless_withdrawn("theirs", || ()),
+                "another program's prompt stays"
             );
         }
     }

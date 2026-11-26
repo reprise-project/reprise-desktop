@@ -119,13 +119,16 @@ pub fn refused(name: &str) -> bool {
             .is_some_and(|code| code == "0" || code == "2")
 }
 
-/// How long a Trigger or Cancel may take: polkit gives up on a password prompt after 25 s.
+/// How long a Trigger or Cancel may take. PackageKit waits on its password prompt for as long as
+/// the prompt stays up, so a call that runs out withdraws it.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// [`trigger`] on a system bus connection of its own, waiting [`CALL_TIMEOUT`] at most. The error
 /// is what to tell the user; None when the prompt was dismissed.
 pub fn trigger_now(after: After, interactive: bool) -> Result<(), Option<String>> {
-    zbus::block_on(async { trigger(&timed().await?, after, interactive).await }).map_err(|e| {
+    let call = async { trigger(&timed().await?, after, interactive).await };
+    let answer = zbus::block_on(within(CALL_TIMEOUT, call));
+    settled(answer, interactive, |s| s.triggered).map_err(|e| {
         log::warn!("offline update: Trigger({}): {e}", after.action());
         to_tell(&e)
     })
@@ -133,10 +136,44 @@ pub fn trigger_now(after: After, interactive: bool) -> Result<(), Option<String>
 
 /// [`cancel`], as [`trigger_now`] calls.
 pub fn cancel_now(interactive: bool) -> Result<(), Option<String>> {
-    zbus::block_on(async { cancel(&timed().await?, interactive).await }).map_err(|e| {
+    let call = async { cancel(&timed().await?, interactive).await };
+    let answer = zbus::block_on(within(CALL_TIMEOUT, call));
+    settled(answer, interactive, |s| !s.triggered).map_err(|e| {
         log::warn!("offline update: Cancel: {e}");
         to_tell(&e)
     })
+}
+
+/// A Trigger or Cancel's `answer`. One that timed out withdraws its prompt, and stands as done
+/// when PackageKit's state then shows it `done`: a password typed just before went through.
+fn settled(
+    answer: zbus::Result<()>,
+    interactive: bool,
+    done: impl FnOnce(Status) -> bool,
+) -> zbus::Result<()> {
+    let Err(e) = answer else {
+        return Ok(());
+    };
+    crate::polkit::withdraw_timed_out(&e, interactive);
+    if interactive && crate::error::timed_out(&e) && read().is_some_and(done) {
+        log::info!("offline update: done as its prompt was withdrawn: {e}");
+        return Ok(());
+    }
+    Err(e)
+}
+
+/// `call`, or a timeout error once `limit` passes: zbus applies a connection's method timeout to
+/// plain calls only, not to `call_with_flags`.
+async fn within<T>(
+    limit: Duration,
+    call: impl Future<Output = zbus::Result<T>>,
+) -> zbus::Result<T> {
+    let late = async {
+        async_io::Timer::after(limit).await;
+        let e = std::io::Error::from(std::io::ErrorKind::TimedOut);
+        Err(zbus::Error::InputOutput(std::sync::Arc::new(e)))
+    };
+    futures_lite::future::or(call, late).await
 }
 
 async fn timed() -> zbus::Result<Connection> {
@@ -255,6 +292,17 @@ mod tests {
             let e = trigger(&conn, After::Reboot, false).await.unwrap_err();
             assert!(crate::error::name(&e).is_some_and(|n| refused(&n)));
         });
+    }
+
+    #[test]
+    fn a_call_past_its_limit_fails_as_timed_out() {
+        let call = futures_lite::future::pending::<zbus::Result<()>>();
+        let e = zbus::block_on(within(Duration::from_millis(20), call)).unwrap_err();
+        assert!(crate::error::timed_out(&e), "{e}");
+        assert_eq!(
+            zbus::block_on(within(Duration::from_secs(60), async { Ok(7) })).unwrap(),
+            7
+        );
     }
 
     #[test]
