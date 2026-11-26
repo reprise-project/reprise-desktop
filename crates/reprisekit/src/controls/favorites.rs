@@ -102,7 +102,7 @@ pub fn organize(rows: &[Row], selected: Option<usize>) -> Form {
         Item::button(
             RENAME,
             Rect::new(BUTTON_X, NAME_Y - 1, BUTTON_W, BUTTON_H),
-            "Re&name",
+            "&Rename",
             false,
             false,
         ),

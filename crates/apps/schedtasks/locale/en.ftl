@@ -13,14 +13,14 @@ column-status = Status
 run = &Run Now
 enable = &Enable
 disable = &Disable
-properties = P&roperties
+properties = &Properties
 new-task = &New Task...
 
 ## A task's shortcut menu
 menu-run = &Run Now
 menu-enable = &Enable
 menu-disable = &Disable
-menu-properties = P&roperties
+menu-properties = &Properties
 
 ## The line over the list
 status-count = { $count ->
