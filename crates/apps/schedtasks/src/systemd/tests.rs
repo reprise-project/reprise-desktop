@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::NEVER;
 use reprisebus::testbus;
 use zbus::fdo;
 
@@ -19,6 +20,9 @@ struct Spec {
     next_realtime: u64,
     next_monotonic: u64,
     last: u64,
+    /// A service's `ExecMainStartTimestamp` and a unit's `InactiveExitTimestamp`.
+    main_start: u64,
+    inactive_exit: u64,
     exec: Vec<Exec>,
     result: &'static str,
     code: i32,
@@ -153,6 +157,10 @@ impl Unit {
         self.0.description.into()
     }
     #[zbus(property)]
+    fn inactive_exit_timestamp(&self) -> u64 {
+        self.0.inactive_exit
+    }
+    #[zbus(property)]
     fn fragment_path(&self) -> String {
         format!("{HOME}/{}", self.0.description)
     }
@@ -195,6 +203,10 @@ impl Service {
     #[zbus(property)]
     fn exec_start(&self) -> Vec<Exec> {
         self.0.exec.clone()
+    }
+    #[zbus(property)]
+    fn exec_main_start_timestamp(&self) -> u64 {
+        self.0.main_start
     }
     #[zbus(property)]
     fn result(&self) -> String {
@@ -240,6 +252,8 @@ fn units() -> Vec<(&'static str, Spec)> {
                 active: "inactive",
                 description: "Copy the photos",
                 exec: vec![exec(&["/usr/bin/rsync", "-a", "/home/u/My Photos", "/mnt"])],
+                main_start: 1_940_000 * S,
+                inactive_exit: 1_940_000 * S,
                 result: "exit-code",
                 code: libc::CLD_EXITED,
                 status: 23,
@@ -331,7 +345,11 @@ fn the_timers_read_from_the_manager_loaded_and_unit_files_alike() {
             [("OnCalendar".to_string(), "*-*-* 03:00:00".to_string())]
         );
         assert_eq!(backup.next, Some(2_000_000 * S));
-        assert_eq!(backup.last, Some(1_900_000 * S));
+        assert_eq!(
+            backup.last,
+            Some(1_940_000 * S),
+            "Run Now after the timer last fired"
+        );
         assert_eq!(
             backup.command,
             "/usr/bin/rsync -a \"/home/u/My Photos\" /mnt"

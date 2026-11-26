@@ -471,7 +471,7 @@ from the low disk space balloon, or as `reprise-diskusage FOLDER`.
 
 The tasks your systemd user manager runs on a schedule: each user timer with
 its schedule in words ("Every day at 3:00", "15 min after startup"), when it
-runs next, when the timer last fired and its status (Ready, Running, Failed or
+runs next, when it last ran (on its schedule or by Run Now) and its status (Ready, Running, Failed or
 Disabled). Run Now
 starts the task's service at once. Enable and Disable turn the timer on or off
 for good, as `systemctl --user enable --now` and `disable --now` do; a timer

@@ -266,6 +266,13 @@ fn calendar_words(spec: &str, is_12h: bool) -> Option<String> {
     }
 }
 
+/// The latest of the timer's `LastTriggerUSec` and its service's `ExecMainStartTimestamp` and
+/// `InactiveExitTimestamp`, wall-clock µs: Run Now starts the service without touching the timer,
+/// and a service the manager unloaded and loaded again has lost its own times.
+pub fn last_run(stamps: [u64; 3]) -> Option<u64> {
+    stamps.into_iter().filter(|&t| t != 0 && t != NEVER).max()
+}
+
 /// The wall-clock µs a timer elapses next, from its `NextElapseUSecRealtime` and
 /// `NextElapseUSecMonotonic`, the sooner of the two as `systemctl list-timers` takes it. `now`
 /// is the wall clock and `CLOCK_MONOTONIC` in µs.
@@ -404,6 +411,24 @@ mod tests {
             next_elapse(1_000_100 * S, 800 * S, now),
             Some(1_000_100 * S)
         );
+    }
+
+    #[test]
+    fn the_last_run_is_the_later_of_the_timers_and_the_services_start() {
+        assert_eq!(last_run([0, 0, 0]), None);
+        assert_eq!(last_run([NEVER, 0, NEVER]), None);
+        assert_eq!(last_run([100 * S, 0, 0]), Some(100 * S), "the timer fired");
+        assert_eq!(
+            last_run([100 * S, 300 * S, 300 * S]),
+            Some(300 * S),
+            "Run Now after the timer fired"
+        );
+        assert_eq!(
+            last_run([0, 0, 200 * S]),
+            Some(200 * S),
+            "a service with no main process start"
+        );
+        assert_eq!(last_run([500 * S, 300 * S, 300 * S]), Some(500 * S));
     }
 
     #[test]
