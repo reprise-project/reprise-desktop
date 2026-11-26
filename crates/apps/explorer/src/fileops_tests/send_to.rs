@@ -150,3 +150,33 @@ fn a_send_to_drive_whose_stat_is_out_greys_its_row_and_a_send_past_the_deadline_
         "a send to STICK answering copies"
     );
 }
+
+#[test]
+fn a_selected_folder_greys_mail_recipient_and_sends_no_mail() {
+    let tmp = tempfile::tempdir().expect("a temp dir");
+    let d = tmp.path();
+    std::fs::write(d.join("a.txt"), "1").expect("write");
+    std::fs::create_dir(d.join("Sub")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(d.to_path_buf()), &mut ctx);
+    let mail = |ex: &mut crate::Explorer, ctx: &mut Ctx| {
+        let rows = ex.send_rows(ctx);
+        rows.iter()
+            .find(|r| r.dest == SendTo::Mail)
+            .unwrap()
+            .enabled
+    };
+    ex.sv.selection.set_only(ex.index_of(&d.join("a.txt")));
+    assert!(mail(&mut ex, &mut ctx), "a file sends");
+    ex.sv.selection.set.extend(ex.index_of(&d.join("Sub")));
+    assert!(
+        !mail(&mut ex, &mut ctx),
+        "a folder among them greys the row"
+    );
+    let paths = ex.selected_paths();
+    let reply = ex.mail(paths, &mut ctx);
+    assert!(
+        reply.spawn.is_empty() && ex.dialog().is_none(),
+        "nothing sent"
+    );
+}

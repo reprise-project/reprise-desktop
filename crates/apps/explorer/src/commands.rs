@@ -51,6 +51,8 @@ pub enum Command {
     NewFrom(std::path::PathBuf),
     CreateShortcut,
     SendTo(usize),
+    /// Send To > Mail Recipient on the selection, the task pane's E-mail row.
+    Mail,
     /// Extract Here (`here`) or Extract to on the selected archives.
     Extract {
         here: bool,
@@ -536,6 +538,7 @@ impl Explorer {
             Command::NewFrom(template) => self.new_from_template(template, ctx),
             Command::CreateShortcut => self.create_shortcut(ctx),
             Command::SendTo(i) => self.send_to(i, ctx),
+            Command::Mail => self.mail(self.selected_paths(), ctx),
             Command::Extract { here } => self.extract(here, ctx),
             Command::Compress => self.compress(ctx),
             Command::MoveTo => self.open_browse(true, ctx),

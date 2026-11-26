@@ -1347,12 +1347,7 @@ impl Explorer {
         }
         let (dir, op) = match dest {
             SendTo::Zip => return self.compress(ctx),
-            SendTo::Mail => {
-                return Reply {
-                    spawn: vec![sendto::mail_argv(&paths)],
-                    ..Reply::none()
-                };
-            }
+            SendTo::Mail => return self.mail(paths, ctx),
             SendTo::DesktopShortcut => match reprisefs::places::user_dir("DESKTOP", "Desktop") {
                 Some(d) => (d, DropOp::Shortcut),
                 None => return Reply::none(),
@@ -1364,6 +1359,21 @@ impl Explorer {
             }
         };
         self.put_all(&paths, &dir, &|_| Some(op), false, ctx)
+    }
+
+    /// Mail Recipient: a new mail with `paths` attached, or the box saying xdg-email is missing.
+    /// A folder sends nothing, as its rows are greyed.
+    pub fn mail(&mut self, paths: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
+        if paths.is_empty() || self.picked().any(|(_, it)| it.is_folder()) {
+            return Reply::none();
+        }
+        match sendto::mail_argv(&paths) {
+            Some(argv) => Reply {
+                spawn: vec![argv],
+                ..Reply::none()
+            },
+            None => self.message_box(sendto::NO_MAIL_TITLE, sendto::NO_MAIL_TEXT.into(), ctx),
+        }
     }
 
     /// How a launcher or web link shortcut opens.
