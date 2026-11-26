@@ -849,6 +849,7 @@ impl Explorer {
     }
 
     fn menu_state(&self) -> MenuState {
+        let single = self.sv.selection.single();
         MenuState {
             mode: self.sv.mode,
             sort: self.sv.sort.unwrap_or(self.settings.sort),
@@ -873,7 +874,8 @@ impl Explorer {
             disk_image: false,
             relabel: (self.sv.selection.single()).is_some_and(|i| self.relabel_target(i).is_some()),
             pinned: None,
-            share: false,
+            eject: single.is_some_and(|i| self.ejectable(i) || self.share_selected(i)),
+            share: single.is_some_and(|i| self.share_selected(i)),
             can_connect: self.shares.gio,
             templates: self.templates.clone(),
             can_add_favorite: self.favorite_dir().is_some(),
