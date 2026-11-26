@@ -1822,6 +1822,31 @@ fn on_short_screens_classics_programs_cascades_wrap_into_columns() {
     }
 }
 
+/// At 200% text on a 720x450 screen, scale 1 and 2, Classic's Start menu stays one column while
+/// it fits under the work area's top; with four more rows it wraps into a second column there.
+#[test]
+fn on_a_short_screen_classics_start_menu_wraps_once_it_outgrows_the_work_area() {
+    let columns = |h: &crate::harness::Harness, at: &str| {
+        let m = &h.state.menus[0];
+        let usable = h.state.usable_area(None);
+        assert!(m.y >= usable.y, "{at}: its top at {} in {usable:?}", m.y);
+        assert!(m.x + m.layout.width <= usable.right(), "{at}: its width");
+        m.layout.columns
+    };
+    for scale in [1, 2] {
+        let at = format!("@{scale}");
+        let mut h = short_screen("classic", (720, 450), scale);
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        assert_eq!(columns(&h, &at), 1, "{at}: the default rows");
+        h.state.close_menu();
+        let more = h.state.config.startmenu[..4].to_vec();
+        h.state.config.startmenu.extend(more);
+        h.state.toggle_start(bar);
+        assert_eq!(columns(&h, &at), 2, "{at}: four more rows");
+    }
+}
+
 /// A recently-used list of fifteen files in a scratch folder `name`.
 fn fifteen_recent(name: &str) -> std::path::PathBuf {
     let dir = crate::harness::scratch().join(name);
