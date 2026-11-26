@@ -1255,6 +1255,12 @@ impl repriseapp::Extended for SettingsApp {
         self.closing
     }
 
+    /// Ended from outside (SIGTERM, a lost connection): the window's size and page are kept as a
+    /// close keeps them; unapplied changes are not written.
+    fn emergency(&mut self) {
+        self.save_window();
+    }
+
     /// Browse... covers the chooser it came from. An error covers the dialog that was up when
     /// it was raised, or once that dialog has closed, the window that dialog covered.
     fn parent(&self, win: WinId) -> Option<WinId> {
