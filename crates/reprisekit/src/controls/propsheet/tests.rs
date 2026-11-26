@@ -5,6 +5,7 @@ use crate::controls::{pagelist, tabstrip};
 use crate::look::Paint;
 use crate::look::classic_paint;
 use crate::look::widgets::draw_page;
+use crate::pointer::Shape;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::textedit::EditKey;

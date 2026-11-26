@@ -11,7 +11,7 @@ use crate::controls::scrollbar::ThumbDrag;
 use crate::controls::timefield;
 use crate::controls::treeview;
 use crate::controls::updown;
-use crate::pointer::{Interaction, Lit, WHEEL_ROWS};
+use crate::pointer::{Interaction, Lit, Shape, WHEEL_ROWS};
 use crate::text::TextRenderer;
 use crate::trackbar;
 
@@ -448,6 +448,27 @@ impl Form {
             _ => {}
         }
         Event::Redraw
+    }
+
+    /// The pointer over `over`: the I-beam on a live edit, memo or editable combo field, and
+    /// through a sweep started in an edit; the hand on a live link.
+    pub fn shape(&self, over: Option<Hit>) -> Shape {
+        if let Some(Drag::Edit(_)) = self.drag {
+            return Shape::Text;
+        }
+        let Some(h) = over.filter(|&h| !self.off_popup(Some(h))) else {
+            return Shape::Default;
+        };
+        let Some(it) = self.items.get(h.item) else {
+            return Shape::Default;
+        };
+        match (&it.control, h.part) {
+            (Control::Edit { enabled: true, .. }, Part::Edit(_)) => Shape::Text,
+            (Control::Memo(m), Part::Memo(_)) if m.enabled => Shape::Text,
+            (Control::Combo(c), Part::Combo(ch)) => c.shape(Some(ch)),
+            (Control::Link { enabled: true, .. }, Part::Body) => Shape::Hand,
+            _ => Shape::Default,
+        }
     }
 
     /// Whether a combo's list or a colour popup is open and `hit` is off that control. A press

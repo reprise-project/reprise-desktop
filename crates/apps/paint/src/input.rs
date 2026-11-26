@@ -10,6 +10,7 @@ use reprisekit::controls::multiedit::MultiKey;
 use reprisekit::controls::palette;
 use reprisekit::controls::statusbar;
 use reprisekit::controls::toolbox::{self, Hit};
+use reprisekit::pointer::Shape;
 use reprisekit::textedit::{EditKey, keysym};
 use std::time::Instant;
 
@@ -292,6 +293,32 @@ impl Paint {
     }
 
     pub(crate) fn pointer(&mut self, p: PointerInput, ctx: &Ctx) -> Reply {
+        let reply = self.pointer_input(p, ctx);
+        match p {
+            PointerInput::Motion { x, y } => Reply {
+                pointer: self.shape_at(x, y, ctx),
+                ..reply
+            },
+            _ => reply,
+        }
+    }
+
+    /// The pointer's shape at (`x`, `y`): a sizing handle's arrow over it and through its drag.
+    fn shape_at(&self, x: i32, y: i32, ctx: &Ctx) -> Shape {
+        if let Some(d) = self.sizing {
+            return d.handle.shape();
+        }
+        if self.bar.open.is_some() || self.held.is_some() {
+            return Shape::Default;
+        }
+        let l = self.lay(ctx);
+        if !l.view.contains(x, y) || self.bar_at(&l, x, y, ctx).is_some() {
+            return Shape::Default;
+        }
+        sizehandles::hit(&self.handles(&l), x, y).map_or(Shape::Default, |h| h.shape())
+    }
+
+    fn pointer_input(&mut self, p: PointerInput, ctx: &Ctx) -> Reply {
         if matches!(p, PointerInput::Press { .. }) {
             self.alt_arm.interrupt();
         }

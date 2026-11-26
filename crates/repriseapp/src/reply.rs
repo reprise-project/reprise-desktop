@@ -3,6 +3,7 @@
 use crate::{Accept, DragAction, DragOut, FileClip, WinId};
 use reprisebus::instance::Handoff;
 use reprisefs::apps::AppId;
+use reprisekit::pointer::Shape;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -159,6 +160,10 @@ pub struct Reply {
     /// Ring the system bell for this program's window (`xdg_system_bell_v1`); nothing when the
     /// compositor has no bell. The caller limits how often.
     pub bell: Option<WinId>,
+    /// The pointer's shape over the window, read from a reply to pointer motion: each motion
+    /// shows the shape its reply asks for, the arrow when it asks none. A frameless window's
+    /// grip keeps its resize arrow.
+    pub pointer: Shape,
 }
 
 impl Reply {
@@ -259,6 +264,7 @@ impl Reply {
             raise,
             fullscreen,
             bell,
+            pointer,
         } = then;
         let scoped = |argvs: Vec<Vec<OsString>>, app: Option<AppId>| {
             argvs
@@ -326,6 +332,7 @@ impl Reply {
             raise: self.raise.or(raise),
             fullscreen: self.fullscreen.or(fullscreen),
             bell: self.bell.or(bell),
+            pointer: self.pointer.or(pointer),
         }
     }
 }

@@ -437,6 +437,27 @@ fn the_edge_handles_move_one_side_at_the_zoom_and_escape_drops_the_drag() {
 }
 
 #[test]
+fn a_sizing_handle_shows_its_arrow_over_it_and_through_its_drag() {
+    use reprisekit::pointer::Shape;
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(40, 30, WHITE);
+    let (x, y) = handle_point(&p, &ctx, sizehandles::Handle::Bottom);
+    assert_eq!(
+        p.event(MAIN, motion(x, y), &mut ctx).pointer,
+        Shape::SResize
+    );
+    assert_eq!(
+        p.event(MAIN, motion(x - 5, y - 10), &mut ctx).pointer,
+        Shape::Default,
+        "on the picture"
+    );
+    p.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    let reply = p.event(MAIN, motion(x + 30, y + 12), &mut ctx);
+    assert_eq!(reply.pointer, Shape::SResize, "off the handle");
+}
+
+#[test]
 fn resize_and_flip_change_the_whole_picture() {
     let mut ctx = test_ctx();
     let mut p = Paint::new(None);

@@ -29,7 +29,7 @@ use crate::look::widgets::{
     draw_checkbox, draw_checkbox_disabled, draw_edit_text, draw_field_frame, draw_hscrollbar,
     draw_progress, draw_scrollbar,
 };
-use crate::pointer::{Click, DoubleClick, Interaction, Lit, Pointer};
+use crate::pointer::{Click, DoubleClick, Interaction, Lit, Pointer, Shape};
 use crate::raster::{Canvas, Rect};
 use crate::selection::{Mods, Selection, step_index};
 use crate::text::{Align, TextRenderer};
@@ -313,6 +313,13 @@ pub enum Hit {
 }
 
 impl Hit {
+    pub fn shape(self) -> Shape {
+        match self {
+            Hit::Divider(_) => Shape::ColResize,
+            _ => Shape::Default,
+        }
+    }
+
     /// The header column this lands on ([`ListView::header`]): a title, not the divider beside it.
     pub fn column(self) -> Option<usize> {
         match self {

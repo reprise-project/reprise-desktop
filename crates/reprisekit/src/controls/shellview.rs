@@ -21,7 +21,7 @@ use crate::controls::listview;
 use crate::controls::metrics::ControlMetrics;
 use crate::icontheme::ListingSizes;
 use crate::look::widgets::item::Mark;
-use crate::pointer::Pointer;
+use crate::pointer::{Pointer, Shape};
 use crate::raster::{Canvas, Rect};
 use crate::selection::Selection;
 use crate::textedit::TextEdit;
@@ -292,6 +292,15 @@ pub enum Hit {
     VBar(BarHit),
     HBar(BarHit),
     Nothing,
+}
+
+impl Hit {
+    pub fn shape(self) -> Shape {
+        match self {
+            Hit::Divider(_) => Shape::ColResize,
+            _ => Shape::Default,
+        }
+    }
 }
 
 /// Tiles' lines under `e`'s name: its kind and [`size_text`]; none for a folder. A drive with its

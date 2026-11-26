@@ -5,6 +5,7 @@
 use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::hotkey;
 use reprisekit::controls::propsheet::{self, PropSheet};
+use reprisekit::pointer::Shape;
 use reprisekit::textedit::EditKey;
 
 use crate::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply};
@@ -105,6 +106,17 @@ thread_local! {
     /// A form or sheet fed the event being handled waits to show a label tip
     /// ([`Form::tip_waiting`]): its window keeps getting blinks.
     static TIP_WAITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The pointer's shape a form or sheet fed a motion asks for; the runtime adds it to the
+    /// program's reply ([`take_pointer`]).
+    static POINTER: std::cell::Cell<Shape> = const { std::cell::Cell::new(Shape::Default) };
+}
+
+pub(crate) fn note_pointer(shape: Shape) {
+    POINTER.set(POINTER.get().or(shape));
+}
+
+pub(crate) fn take_pointer() -> Shape {
+    POINTER.take()
 }
 
 pub(crate) fn note_tip(waits: bool) {
@@ -187,6 +199,7 @@ fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet
         }
         Event::Pointer(PointerInput::Motion { x, y }) => {
             let hit = sheet.hit(*x, *y, &ctx.text, px);
+            note_pointer(sheet.shape(hit));
             sheet.motion(*x, *y, hit)
         }
         Event::Pointer(PointerInput::Scroll { x, y, rows }) => {
@@ -276,6 +289,7 @@ fn form_event(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
         }
         Event::Pointer(PointerInput::Motion { x, y }) => {
             let hit = form.hit(*x, *y, &ctx.text, px);
+            note_pointer(form.shape(hit));
             form.motion(*x, *y, hit)
         }
         Event::Pointer(PointerInput::Scroll { x, y, rows }) => {
@@ -505,15 +519,8 @@ mod tests {
         assert_eq!(h.keys(), "Ctrl+t");
     }
 
-    /// A Blue form window's pointer: a motion over its button lights it,
-    /// the pointer leaving the window clears it, and a held button dragged
-    /// off asks for a redraw. The sheet does the same through its page.
-    #[test]
-    fn form_and_sheet_input_light_the_control_and_clear_it_on_leave() {
-        use reprisekit::controls::form::{Item, Light};
-        use reprisekit::pointer::Interaction;
-        use reprisekit::raster::{Canvas, Rect};
-        let ctx = Ctx {
+    fn blue_ctx() -> Ctx {
+        Ctx {
             theme: reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue),
             text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
                 &reprisekit::theme::FontConfig::default(),
@@ -532,7 +539,18 @@ mod tests {
             output_size: None,
             at_pick: false,
             text_size: 100,
-        };
+        }
+    }
+
+    /// A Blue form window's pointer: a motion over its button lights it,
+    /// the pointer leaving the window clears it, and a held button dragged
+    /// off asks for a redraw. The sheet does the same through its page.
+    #[test]
+    fn form_and_sheet_input_light_the_control_and_clear_it_on_leave() {
+        use reprisekit::controls::form::{Item, Light};
+        use reprisekit::pointer::Interaction;
+        use reprisekit::raster::{Canvas, Rect};
+        let ctx = blue_ctx();
         let px = ctx.theme.fonts.size_px;
         let mut form = Form::new(vec![Item::button(
             "ok",
@@ -927,5 +945,31 @@ mod tests {
             None,
             "the keyboard back: Enter is ignored again"
         );
+    }
+    /// A motion fed to a form or a sheet asks for the shape its control declares, taken once.
+    #[test]
+    fn form_and_sheet_motion_ask_for_the_shape_of_the_control_under_the_pointer() {
+        use reprisekit::controls::form::Item;
+        use reprisekit::raster::{Canvas, Rect};
+        let ctx = blue_ctx();
+        let px = ctx.theme.fonts.size_px;
+        let motion = |x, y| Event::Pointer(PointerInput::Motion { x, y });
+        let mut form = Form::new(vec![Item::edit("e", Rect::new(10, 10, 100, 21), "x", true)]);
+        let mut c = Canvas::new(200, 100);
+        form::draw(&mut c, &ctx.text, &ctx.theme.paint(), &form, false, px);
+        take_pointer();
+        form_input(&mut form, &motion(30, 20), &ctx);
+        assert_eq!(take_pointer(), Shape::Text);
+        assert_eq!(take_pointer(), Shape::Default, "taken once");
+        form_input(&mut form, &motion(150, 80), &ctx);
+        assert_eq!(take_pointer(), Shape::Default, "off the field");
+
+        let page = Form::new(vec![Item::edit("e", Rect::new(20, 50, 100, 21), "x", true)]);
+        let mut sheet = PropSheet::new(&["General"], vec![page], (398, 424));
+        let mut c = Canvas::new(398, 424);
+        propsheet::draw(&mut c, &ctx.text, &ctx.theme.paint(), &sheet, false, px);
+        let r = sheet.open().rect("e").expect("the page's edit");
+        sheet_input(&mut sheet, &motion(r.x + 10, r.y + 8), &ctx);
+        assert_eq!(take_pointer(), Shape::Text);
     }
 }

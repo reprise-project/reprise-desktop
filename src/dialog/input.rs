@@ -3,7 +3,7 @@ use crate::text::{access_key, split_mnemonic};
 use crate::textedit::EditKey;
 use reprisekit::controls::combo;
 use reprisekit::controls::form::{FocusedEdit, Key};
-use reprisekit::pointer::Lit;
+use reprisekit::pointer::{Lit, Shape};
 
 impl Dialog {
     /// A key. A form takes it first. Otherwise Enter presses the default button,
@@ -780,6 +780,19 @@ impl Dialog {
             redraw |= f.form.motion(x, y, control) != reprisekit::controls::form::Event::None;
         }
         redraw
+    }
+
+    /// The pointer over `over`: the field's and the form's own ([`combo::Combo::shape`],
+    /// [`Form::shape`](reprisekit::controls::form::Form::shape)).
+    pub fn shape(&self, over: Option<DialogHit>) -> Shape {
+        let form = |h| self.form().map_or(Shape::Default, |f| f.form.shape(h));
+        match over {
+            Some(DialogHit::Field(_)) => (self.field.as_ref())
+                .filter(|f| f.combo.open.is_none())
+                .map_or(Shape::Default, |f| f.combo.shape(Some(combo::Hit::Field))),
+            Some(DialogHit::Control(h)) => form(Some(h)),
+            _ => form(None),
+        }
     }
 
     pub fn leave(&mut self, styled: bool) -> bool {

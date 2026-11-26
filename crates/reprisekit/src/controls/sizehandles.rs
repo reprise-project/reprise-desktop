@@ -6,6 +6,7 @@
 use crate::access::{self, Tree, accesskit};
 use crate::look::Paint;
 use crate::look::widgets::draw_focus_ring;
+use crate::pointer::Shape;
 use crate::raster::{Canvas, Rect};
 use accesskit::{NodeId, Role};
 
@@ -23,6 +24,15 @@ pub enum Handle {
 
 impl Handle {
     pub const ALL: [Handle; 3] = [Handle::Right, Handle::Bottom, Handle::Corner];
+
+    /// The pointer over the handle and through its drag.
+    pub fn shape(self) -> Shape {
+        match self {
+            Handle::Right => Shape::EResize,
+            Handle::Bottom => Shape::SResize,
+            Handle::Corner => Shape::SeResize,
+        }
+    }
 
     fn moves(self) -> (bool, bool) {
         match self {
@@ -243,6 +253,13 @@ mod tests {
         assert!(d.resized());
         d.motion((45, 25), 1, 100);
         assert!(!d.resized(), "back where it started");
+    }
+
+    #[test]
+    fn each_handle_shows_the_resize_arrow_of_the_sides_it_moves() {
+        assert_eq!(Handle::Right.shape(), Shape::EResize);
+        assert_eq!(Handle::Bottom.shape(), Shape::SResize);
+        assert_eq!(Handle::Corner.shape(), Shape::SeResize);
     }
 
     #[test]

@@ -1172,7 +1172,10 @@ impl Host {
                 button: crate::BTN_LEFT,
                 ..
             }) => dlg.release(),
-            Event::Pointer(PointerInput::Motion { x, y }) => dlg.motion(text, px, r, *x, *y),
+            Event::Pointer(PointerInput::Motion { x, y }) => {
+                crate::keys::note_pointer(dlg.shape(dlg.hit(text, px, r, *x, *y)));
+                dlg.motion(text, px, r, *x, *y)
+            }
             Event::Pointer(PointerInput::Leave) => dlg.leave(),
             Event::Pointer(PointerInput::Scroll { x, y, rows }) => {
                 let hit = dlg.hit(text, px, r, *x, *y);

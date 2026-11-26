@@ -38,6 +38,23 @@ fn a_press_on_a_link_row_comes_back_as_its_link() {
     assert_eq!(cursor(&s), Some(0));
 }
 
+#[test]
+fn the_pointer_is_a_hand_on_a_live_link_row_and_an_i_beam_in_the_search_field() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = Theme::default().fonts.size_px;
+    let mut s = link_sheet();
+    grey(&mut s, 1);
+    assert_eq!(s.shape(Some(Hit::Link(0))), Shape::Hand);
+    assert_eq!(s.shape(Some(Hit::Link(1))), Shape::Default, "a greyed link");
+    assert_eq!(s.shape(Some(Hit::Search(0))), Shape::Text);
+    assert_eq!(s.shape(Some(Hit::Tab(0))), Shape::Default);
+    let row = s.layout(&text, px).list.unwrap().rows[0];
+    assert_eq!(
+        s.shape(s.hit(row.x + 20, row.y + 5, &text, px)),
+        Shape::Default
+    );
+}
+
 /// The filter hides the open page's row: the page stays open with its title, the panel has
 /// no list item to name it, and Down from the list opens the first shown page.
 #[test]

@@ -21,6 +21,7 @@ use crate::look::widgets::{
 use crate::pointer::Axis;
 use crate::pointer::Interaction;
 use crate::pointer::Lit;
+use crate::pointer::Shape;
 use crate::raster::{Canvas, Rect};
 use crate::selection::scroll_into_view;
 use crate::style::Part;
@@ -644,6 +645,14 @@ impl Hit {
 }
 
 impl Combo {
+    /// The pointer over part `hit`: the I-beam on an enabled editable field.
+    pub fn shape(&self, hit: Option<Hit>) -> Shape {
+        match hit {
+            Some(Hit::Field) if self.enabled && self.edit.is_some() => Shape::Text,
+            _ => Shape::Default,
+        }
+    }
+
     /// A drag at (`x`, `y`): over an enabled editable field with its list closed the field shows
     /// a drop caret there and takes the drag (`true`); anywhere else the drop caret goes.
     pub fn drag_over(&mut self, lay: &Layout, x: i32, y: i32) -> bool {

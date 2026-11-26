@@ -486,3 +486,53 @@ fn carry_pointer_drops_a_held_item_the_rebuild_no_longer_has() {
     assert!(!rebuilt.holding(), "the held button no longer exists");
     assert_eq!(rebuilt.pointer.hot(), None);
 }
+
+#[test]
+fn the_pointer_is_an_i_beam_on_live_text_fields_and_a_hand_on_a_live_link() {
+    let mut editable = Combo::new(&["a"], 0, 4);
+    editable.edit = Some(TextEdit::new("text", false));
+    let link = |enabled| Control::Link {
+        label: "More".into(),
+        enabled,
+    };
+    let mut f = Form::new(vec![
+        Item::edit("edit", Rect::new(10, 10, 100, 21), "x", true),
+        Item::edit("greyed", Rect::new(10, 40, 100, 21), "x", false),
+        Item::new(
+            "combo",
+            Rect::new(10, 70, 140, combo::COMBO_H),
+            Control::Combo(editable),
+        ),
+        Item::new(
+            "list",
+            Rect::new(10, 100, 140, combo::COMBO_H),
+            Control::Combo(Combo::new(&["a"], 0, 4)),
+        ),
+        Item::new("link", Rect::new(10, 130, 60, 13), link(true)),
+        Item::new("dead", Rect::new(80, 130, 60, 13), link(false)),
+    ]);
+    drawn(&f, &Theme::default());
+    let shape_on = |f: &Form, id: &str| {
+        let r = f.items[f.index_of(id).unwrap()].rect;
+        f.shape(at(f, r.x + 20, r.y + 6))
+    };
+    for (id, want) in [
+        ("edit", Shape::Text),
+        ("greyed", Shape::Default),
+        ("combo", Shape::Text),
+        ("list", Shape::Default),
+        ("link", Shape::Hand),
+        ("dead", Shape::Default),
+    ] {
+        assert_eq!(shape_on(&f, id), want, "{id}");
+    }
+    assert_eq!(f.shape(None), Shape::Default);
+    let (x, y) = (30, 16);
+    f.click(at(&f, x, y));
+    f.motion(150, 190, at(&f, 150, 190));
+    assert_eq!(
+        f.shape(at(&f, 150, 190)),
+        Shape::Text,
+        "a sweep through the edit keeps the I-beam off it"
+    );
+}
