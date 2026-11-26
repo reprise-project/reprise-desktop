@@ -162,12 +162,9 @@ pub(super) fn open_layout(state: &mut State, id: String, parent: i32, nodes: Vec
             return;
         }
         let usable = state.usable_area(Some(&output));
-        let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
-            &state.config.theme,
-            &state.text,
-            &items,
-            usable,
-        );
+        let layout = MenuStyle::context_for(&state.config.theme, &items)
+            .at_scale(state.draw_scale_at(Some(&output)))
+            .layout_in(&state.config.theme, &state.text, &items, usable);
         let (x, y) = crate::barplace::bar_popup(
             &state.bar_placement(&output),
             icon,
@@ -217,12 +214,9 @@ pub(super) fn open_layout(state: &mut State, id: String, parent: i32, nodes: Vec
     );
     let output = parent_menu.output.clone();
     let usable = state.usable_area(Some(&output));
-    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
-        &state.config.theme,
-        &state.text,
-        &items,
-        usable,
-    );
+    let layout = MenuStyle::context_for(&state.config.theme, &items)
+        .at_scale(state.draw_scale_at(Some(&output)))
+        .layout_in(&state.config.theme, &state.text, &items, usable);
     let (x, y) = place_submenu(parent_rect, row_rect, (layout.width, layout.height), usable);
     state.close_menus_above(depth);
     state.push_menu(

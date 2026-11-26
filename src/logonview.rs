@@ -347,12 +347,9 @@ pub fn open_power_menu(state: &mut State, host: &Host, items: Vec<MenuItem>, kin
     let anchor = (v.layout.as_ref()).and_then(|l| l.rect(Part::PowerMenu).or(l.rect(Part::Power)));
     let usable = state.layout_box(Some(&output));
     let anchor = anchor.unwrap_or(usable);
-    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
-        &state.config.theme,
-        &state.text,
-        &items,
-        usable,
-    );
+    let layout = MenuStyle::context_for(&state.config.theme, &items)
+        .at_scale(state.draw_scale_at(Some(&output)))
+        .layout_in(&state.config.theme, &state.text, &items, usable);
     let x = (anchor.right() - layout.width).max(usable.x);
     let y = (anchor.y - layout.height).max(usable.y);
     state.push_menu(0, (x, y), layout, items, output, kind, MenuFrom::Elsewhere);

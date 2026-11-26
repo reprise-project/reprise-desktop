@@ -101,12 +101,9 @@ pub fn open_from_bell(state: &mut State, output: &Output, cell: Rect) {
     }
     let (items, rows) = rows_now(state);
     let usable = state.usable_area(Some(output));
-    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
-        &state.config.theme,
-        &state.text,
-        &items,
-        usable,
-    );
+    let layout = MenuStyle::context_for(&state.config.theme, &items)
+        .at_scale(state.draw_scale_at(Some(output)))
+        .layout_in(&state.config.theme, &state.text, &items, usable);
     let (x, y) = crate::barplace::bar_popup(
         &state.bar_placement(output),
         cell,
@@ -134,12 +131,14 @@ pub fn open_at(state: &mut State, at: (i32, i32)) {
     };
     let (items, rows) = rows_now(state);
     let usable = state.usable_area(Some(&output));
-    let style = MenuStyle::context_for(&state.config.theme, &items).fit(
-        &state.text,
-        &items,
-        state.config.theme.fonts.size_px,
-        usable.width,
-    );
+    let style = MenuStyle::context_for(&state.config.theme, &items)
+        .at_scale(state.draw_scale_at(Some(&output)))
+        .fit(
+            &state.text,
+            &items,
+            state.config.theme.fonts.size_px,
+            usable.width,
+        );
     let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
     let pos = place_popup(at, (layout.width, layout.height), usable);
     let kind = MenuKind::Dnd(rows);

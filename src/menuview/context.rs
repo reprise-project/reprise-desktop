@@ -63,12 +63,14 @@ impl State {
         };
         let usable = self.usable_area(Some(&output));
         let theme = self.menu_theme(skin, 1);
-        let layout = MenuStyle::context_for(&theme, &items).layout_within(
-            &self.text,
-            &items,
-            self.config.theme.fonts.size_px,
-            (kind.widest(usable), usable.height),
-        );
+        let layout = MenuStyle::context_for(&theme, &items)
+            .at_scale(self.draw_scale_at(Some(&output)))
+            .layout_within(
+                &self.text,
+                &items,
+                self.config.theme.fonts.size_px,
+                (kind.widest(usable), usable.height),
+            );
         let pos = place(at, (layout.width, layout.height), usable);
         self.push_menu(0, pos, layout, items, output, kind, from);
         if let Some(m) = self.menus.last_mut() {

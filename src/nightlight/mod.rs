@@ -613,12 +613,9 @@ pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
     }
     let (items, rows) = menu(state.night.cfg.enabled, state.night.paused_until);
     let usable = state.usable_area(Some(output));
-    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
-        &state.config.theme,
-        &state.text,
-        &items,
-        usable,
-    );
+    let layout = MenuStyle::context_for(&state.config.theme, &items)
+        .at_scale(state.draw_scale_at(Some(output)))
+        .layout_in(&state.config.theme, &state.text, &items, usable);
     let (x, y) = crate::barplace::bar_popup(
         &state.bar_placement(output),
         cell,
