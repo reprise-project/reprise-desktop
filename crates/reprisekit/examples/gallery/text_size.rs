@@ -403,7 +403,7 @@ pub fn render_menu_columns(pct: u32) -> Canvas {
         folder.fill_rect(Rect::new(1, 1, px - 2, px - 2), Color::rgb(230, 200, 90));
         let items: Vec<MenuItem> = (0..20)
             .map(|i| {
-                MenuItem::entry(format!("Program folder {i}"))
+                MenuItem::entry(format!("Folder {i}"))
                     .icon(Some(folder.clone()))
                     .submenu(true)
             })
@@ -412,6 +412,42 @@ pub fn render_menu_columns(pct: u32) -> Canvas {
         let lit = Some((l.rows_per_column + 3).min(items.len() - 1));
         let at = (10, row as i32 * (room.1 + 10) + 10);
         draw_menu_at(&mut c, at, &theme, &text, &l, &items, lit, "", false);
+    }
+    c
+}
+
+/// Sixty long-named programs in a Start submenu too wide for columns in a 720x410 work area, so
+/// it scrolls in one column, in each look, a look a column, at `pct` text and at scale 1: scrolled
+/// to its twentieth row, the row under the top arrow lit.
+pub fn render_menu_scroll(pct: u32) -> Canvas {
+    use reprisekit::controls::menu::{MenuStyle, draw_menu_at};
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let room = (720, 410);
+    let mut x = 10;
+    let mut drawn = Vec::new();
+    for &look in &looks {
+        let theme = interfaces::theme_for(look).with_text_size(pct);
+        let text = TextRenderer::load(&theme.fonts);
+        let style = MenuStyle::submenu(&theme);
+        let px = style.icon_px();
+        let mut icon = Canvas::new(px as u32, px as u32);
+        icon.fill_rect(Rect::new(1, 1, px - 2, px - 2), Color::rgb(60, 60, 60));
+        let items: Vec<MenuItem> = (1..=60)
+            .map(|i| {
+                MenuItem::entry(format!("Test Program Number {i:02} With A Long Name"))
+                    .icon(Some(icon.clone()))
+            })
+            .collect();
+        let mut l = style.layout_within(&text, &items, theme.fonts.size_px, room);
+        l.scroll_to(20);
+        let lit = l.scroll.map(|sc| sc.first);
+        drawn.push((x, theme, text, l, items, lit));
+        x += drawn.last().map_or(0, |d| d.3.width) + 10;
+    }
+    let mut c = Canvas::new(x as u32, (room.1 + 20) as u32);
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (x, theme, text, l, items, lit) in &drawn {
+        draw_menu_at(&mut c, (*x, 10), theme, text, l, items, *lit, "", false);
     }
     c
 }

@@ -270,7 +270,9 @@ impl MenuStyle {
     }
 
     /// `items` in a menu at most `room` (width, height) big: too tall, it wraps into columns,
-    /// each fitted ([`MenuStyle::fit`]) to its share of the width.
+    /// each fitted ([`MenuStyle::fit`]) to its share of the width. When a label would not fit
+    /// its column's share, the menu stays one column `height` tall that scrolls
+    /// ([`MenuLayout::scroll`]).
     pub fn layout_within(
         self,
         text: &TextRenderer,
@@ -282,6 +284,10 @@ impl MenuStyle {
         let columns = items.len().div_ceil(rows).max(1) as i32;
         let share = (width - self.band) / columns + self.band;
         let style = self.fit(text, items, size_px, share);
+        let whole = self.fit(text, items, size_px, width);
+        if columns > 1 && style.width < whole.width {
+            return MenuLayout::compute_styled(&whole, items, usize::MAX).scrolled_within(height);
+        }
         MenuLayout::compute_styled(&style, items, rows)
     }
 
@@ -350,6 +356,24 @@ pub struct MenuLayout {
     pub right_pad: i32,
     pub shortcut_pad: i32,
     pub min_height: i32,
+    /// Set on a menu too tall for its room: one column between two scroll arrows. `rows` hold
+    /// where each row stands now; only the rows wholly between the arrows show
+    /// ([`MenuLayout::shown`]).
+    pub scroll: Option<MenuScroll>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuScroll {
+    /// The row at the top, under the up arrow.
+    pub first: usize,
+    /// Each arrow band's height.
+    pub arrow: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollArrow {
+    Up,
+    Down,
 }
 
 impl MenuLayout {
@@ -410,6 +434,126 @@ impl MenuLayout {
             right_pad: style.right_pad,
             shortcut_pad: style.shortcut_pad,
             min_height: style.min_height,
+            scroll: None,
+        }
+    }
+
+    /// This one-column layout cut to `height`, between scroll arrows half a row tall, when its
+    /// rows need more.
+    fn scrolled_within(mut self, height: i32) -> MenuLayout {
+        if self.height <= height {
+            return self;
+        }
+        let arrow = (self.row_height / 2).max(1);
+        self.height = height;
+        for r in &mut self.rows {
+            r.y += arrow;
+        }
+        self.scroll = Some(MenuScroll { first: 0, arrow });
+        self
+    }
+
+    /// The span between the scroll arrows, top and bottom; None when the menu does not scroll.
+    fn view(&self) -> Option<(i32, i32)> {
+        let sc = self.scroll?;
+        let top = self.inset.top + sc.arrow;
+        Some((top, self.height - self.inset.bottom - sc.arrow))
+    }
+
+    /// Whether row `row` stands wholly in view: every row of a menu that does not scroll.
+    pub fn shown(&self, row: usize) -> bool {
+        match (self.view(), self.rows.get(row)) {
+            (Some((top, bottom)), Some(r)) => r.y >= top && r.bottom() <= bottom,
+            (None, r) => r.is_some(),
+            (_, None) => false,
+        }
+    }
+
+    /// The last row that can stand at the top: the one past which the rest fit in view.
+    fn last_first(&self) -> usize {
+        let Some((top, bottom)) = self.view() else {
+            return 0;
+        };
+        let Some(end) = self.rows.last().map(Rect::bottom) else {
+            return 0;
+        };
+        (0..self.rows.len())
+            .find(|&i| end - self.rows[i].y <= bottom - top)
+            .unwrap_or(0)
+    }
+
+    /// Scrolls so row `first` (held to the rows that can) stands at the top; true when it moved.
+    pub fn scroll_to(&mut self, first: usize) -> bool {
+        let Some(sc) = self.scroll else {
+            return false;
+        };
+        let first = first.min(self.last_first());
+        if first == sc.first {
+            return false;
+        }
+        let dy = self.rows[sc.first].y - self.rows[first].y;
+        for r in &mut self.rows {
+            r.y += dy;
+        }
+        self.scroll = Some(MenuScroll { first, ..sc });
+        true
+    }
+
+    /// Scrolls `rows` rows down (up when negative); true when it moved.
+    pub fn scroll_by(&mut self, rows: i32) -> bool {
+        let first = self.scroll.map_or(0, |sc| sc.first as i32);
+        self.scroll_to((first + rows).max(0) as usize)
+    }
+
+    /// Scrolls as little as brings row `row` wholly into view; true when it moved.
+    pub fn scroll_to_show(&mut self, row: usize) -> bool {
+        let (Some(sc), Some((top, bottom))) = (self.scroll, self.view()) else {
+            return false;
+        };
+        if row >= self.rows.len() || self.shown(row) {
+            return false;
+        }
+        if row < sc.first {
+            return self.scroll_to(row);
+        }
+        let end = self.rows[row].bottom();
+        let first = (sc.first..=row)
+            .find(|&i| end - self.rows[i].y <= bottom - top)
+            .unwrap_or(row);
+        self.scroll_to(first)
+    }
+
+    /// Whether the menu can scroll on toward `arrow`.
+    pub fn can_scroll(&self, arrow: ScrollArrow) -> bool {
+        self.scroll.is_some_and(|sc| match arrow {
+            ScrollArrow::Up => sc.first > 0,
+            ScrollArrow::Down => sc.first < self.last_first(),
+        })
+    }
+
+    /// The band `arrow` is drawn in, inside the border.
+    pub fn arrow_rect(&self, arrow: ScrollArrow) -> Option<Rect> {
+        let sc = self.scroll?;
+        let ins = self.inset;
+        let x = self.band + ins.left;
+        let w = self.width - x - ins.right;
+        let y = match arrow {
+            ScrollArrow::Up => ins.top,
+            ScrollArrow::Down => self.height - ins.bottom - sc.arrow,
+        };
+        Some(Rect::new(x, y, w, sc.arrow))
+    }
+
+    /// The scroll arrow under (x, y): its band and the border beyond it.
+    pub fn arrow_at(&self, x: i32, y: i32) -> Option<ScrollArrow> {
+        let (top, bottom) = self.view()?;
+        if x < 0 || x >= self.width {
+            return None;
+        }
+        match y {
+            y if (0..top).contains(&y) => Some(ScrollArrow::Up),
+            y if (bottom..self.height).contains(&y) => Some(ScrollArrow::Down),
+            _ => None,
         }
     }
 
@@ -474,10 +618,8 @@ impl MenuLayout {
     /// configured `menu_item_height` equal to the separator height still
     /// hit-tests correctly.
     pub fn hit(&self, x: i32, y: i32) -> Option<usize> {
-        self.rows
-            .iter()
-            .zip(&self.selectable)
-            .position(|(r, sel)| *sel && r.contains(x, y))
+        (0..self.rows.len())
+            .find(|&i| self.selectable[i] && self.shown(i) && self.rows[i].contains(x, y))
     }
 
     pub fn scaled(&self, n: i32) -> MenuLayout {
@@ -503,14 +645,18 @@ impl MenuLayout {
             right_pad: self.right_pad * n,
             shortcut_pad: self.shortcut_pad * n,
             min_height: self.min_height * n,
+            scroll: self.scroll.map(|sc| MenuScroll {
+                arrow: sc.arrow * n,
+                ..sc
+            }),
         }
     }
 }
 
 /// Relists an open menu as `new_items` in columns `column_width` wide (normally
 /// [`MenuLayout::fit_column`]): a row whose key `old_keys` holds keeps its item (and icon); the
-/// rows a column holds stay, so a longer list wraps into another column; the hover follows its
-/// entry (`selection::follow`).
+/// rows a column holds stay, so a longer list wraps into another column; a scrolling menu keeps
+/// its height and top row; the hover follows its entry (`selection::follow`).
 pub fn relist<K: PartialEq>(
     items: &mut Vec<MenuItem>,
     layout: &mut MenuLayout,
@@ -535,7 +681,15 @@ pub fn relist<K: PartialEq>(
     *hovered = hovered
         .and_then(|h| crate::selection::follow(old_keys, new_keys, h, |j| items[j].selectable()));
     layout.column_width = column_width;
-    *layout = MenuLayout::compute_styled(&layout.style(), items, layout.rows_per_column);
+    let fresh = MenuLayout::compute_styled(&layout.style(), items, layout.rows_per_column);
+    *layout = match layout.scroll {
+        Some(sc) => {
+            let mut l = fresh.scrolled_within(layout.height);
+            l.scroll_to(sc.first);
+            l
+        }
+        None => fresh,
+    };
 }
 
 pub fn place_popup(at: (i32, i32), size: (i32, i32), usable: Rect) -> (i32, i32) {

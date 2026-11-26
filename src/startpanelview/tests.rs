@@ -1857,7 +1857,7 @@ fn fifteen_recent(name: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let marks: String = (0..15)
         .map(|i| {
-            let p = dir.join(format!("notes {i}.txt"));
+            let p = dir.join(format!("n{i}.txt"));
             std::fs::write(&p, "").unwrap();
             format!(
                 "<bookmark href=\"file://{}\" modified=\"2026-01-01T00:00:{i:02}Z\"></bookmark>\n",
@@ -1914,7 +1914,9 @@ fn left_in_a_flyouts_first_column_closes_it_back_to_its_row() {
     use crate::keys::{KEY_Left, KEY_Right};
     let xbel = fifteen_recent("recent-items-left-key");
     for interface in ["glass", "blue"] {
-        let mut h = short_screen(interface, (720, 450), 1);
+        // At 720 px Blue's room beside the row holds one column, which scrolls instead.
+        let width = if interface == "blue" { 960 } else { 720 };
+        let mut h = short_screen(interface, (width, 450), 1);
         h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
         let bar = h.state.bars[0].tree;
         h.state.toggle_start(bar);

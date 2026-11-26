@@ -378,6 +378,9 @@ pub struct State {
     /// something is pending.
     pub menu_pending: Option<MenuPending>,
     pub menu_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// The scroll arrow the pointer rests on (menu depth and arrow), and the timer scrolling on.
+    pub menu_scrolling: Option<(usize, reprisekit::controls::menu::ScrollArrow)>,
+    pub menu_scroll_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     /// The open stack was driven from the keyboard: access keys show.
     pub menu_keys: bool,
     /// Where the desktop's menu was opened, for what New and Paste make.
@@ -836,6 +839,8 @@ impl State {
             icon_jobs: Default::default(),
             menu_pending: None,
             menu_timer: None,
+            menu_scrolling: None,
+            menu_scroll_timer: None,
             menu_keys: false,
             desktop_menu_at: None,
             desktop: None,

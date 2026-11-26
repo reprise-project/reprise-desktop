@@ -718,3 +718,49 @@ fn a_menu_fading_in_from_nothing_asks_its_first_frame_on_the_next_turn() {
     h.dispatch();
     assert_eq!(crate::backend::take_asked_outputs(), ["TEST-1"]);
 }
+
+#[test]
+fn a_start_folder_too_wide_for_columns_scrolls_by_keys_wheel_and_arrows() {
+    let programs = (1..=60)
+        .map(|i| {
+            let label = format!("Test Program Number {i:02} With A Long Name");
+            MenuEntry::spawn(&label, "utilities-terminal", "true")
+        })
+        .collect();
+    let config = crate::config::Config {
+        startmenu: vec![MenuEntry::item(
+            "Folder",
+            "folder",
+            MenuTarget::Submenu(programs),
+        )],
+        ..Default::default()
+    };
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 800, 300);
+    let bar = h.state.bars[0].tree;
+    h.state.open_start_menu(bar);
+    h.state.open_submenu(0, 0);
+    let first = |h: &crate::harness::Harness| h.state.menus[1].layout.scroll.map(|sc| sc.first);
+    assert_eq!(first(&h), Some(0), "the folder scrolls in one column");
+    h.state.menu_key(crate::keys::KEY_Up);
+    let m = &h.state.menus[1];
+    assert_eq!(m.hovered, Some(59));
+    assert!(
+        m.layout.shown(59),
+        "Up wraps to the last row and scrolls it into view"
+    );
+    let bottom = first(&h).unwrap();
+    let (x, y) = (m.x + 20, m.y + m.layout.height / 2);
+    h.pointer_to(f64::from(x), f64::from(y));
+    assert!(h.state.menu_wheel(1, -120, 0.0));
+    assert!(first(&h).unwrap() < bottom, "the wheel scrolls it back up");
+    let after_wheel = first(&h).unwrap();
+    let m = &h.state.menus[1];
+    let (x, y) = (m.x + 20, m.y + 1);
+    h.state.menu_arrow_hover(1, f64::from(x), f64::from(y));
+    assert_eq!(
+        first(&h),
+        Some(after_wheel - 1),
+        "the up arrow scrolls a row"
+    );
+}
