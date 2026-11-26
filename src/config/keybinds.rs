@@ -15,6 +15,8 @@ pub enum Action {
     Terminal,
     /// Open Explorer on the home folder.
     Explorer,
+    /// Open Reprise Settings.
+    Settings,
     Close,
     Cycle,
     /// The switcher over the focused window's app's windows alone.
@@ -139,6 +141,7 @@ impl Action {
 pub(crate) const NAMED_ACTIONS: &[(&str, Action)] = &[
     ("terminal", Action::Terminal),
     ("explorer", Action::Explorer),
+    ("settings", Action::Settings),
     ("close", Action::Close),
     ("cycle", Action::Cycle),
     ("cycle-app", Action::CycleApp),

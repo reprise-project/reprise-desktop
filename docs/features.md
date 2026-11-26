@@ -231,7 +231,8 @@ shake, the dim, the hidden frame rate and window memory.
 - **Edit menu.** A right-click, Shift+F10 or the Menu key in Reprise's text
   fields opens Undo, Redo, Cut, Copy, Paste, Delete and Select All.
 - **Screenshots.** PrtSc for the screen, Alt+PrtSc for the window,
-  Ctrl+Alt+PrtSc for its content, Shift+PrtSc for a region or a window.
+  Ctrl+Alt+PrtSc for its content, Shift+PrtSc or Super+Shift+S for a region
+  or a window.
 - **Screenshot delay.** `[screenshot] delay` (0 to 10 seconds, Settings >
   Screen Capture) waits before the picture, so a menu or a tooltip can be
   opened first; Shift+PrtSc waits after the pick. A screenshot key pressed
