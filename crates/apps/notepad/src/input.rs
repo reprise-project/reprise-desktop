@@ -27,7 +27,7 @@ impl Notepad {
             match self.bar.key(bk, &lay, &ctx.text, m, px) {
                 Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
                 Action::Redraw => return Reply::redraw(),
-                Action::Ignored => {}
+                Action::Ignored | Action::Passed => {}
             }
         }
         if let Some(r) = self.accel(&k, ctx) {
@@ -122,6 +122,12 @@ impl Notepad {
                 match self.bar.press(x, y, &lay, &ctx.text, m, px) {
                     Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
                     Action::Redraw => return Reply::redraw(),
+                    Action::Passed => {
+                        return Reply {
+                            redraw: true,
+                            ..self.pointer(p, ctx)
+                        };
+                    }
                     Action::Ignored => {}
                 }
                 if let Some((bar, r)) = self.status(ctx)
@@ -323,6 +329,7 @@ impl Notepad {
             Event::Focus(false) => {
                 self.focused = false;
                 self.alt_arm.interrupt();
+                self.bar.close();
                 self.context = None;
                 Reply::redraw()
             }

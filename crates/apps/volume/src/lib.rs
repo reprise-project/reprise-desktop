@@ -410,7 +410,7 @@ impl Volume {
             match self.bar.key(bk, &lay, &ctx.text, m, px) {
                 Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
                 Action::Redraw => return Reply::redraw(),
-                Action::Ignored => {}
+                Action::Ignored | Action::Passed => {}
             }
         }
         let Some(key) = repriseapp::keys::dialog_key(&k) else {
@@ -465,6 +465,12 @@ impl Volume {
                 match self.bar.press(x, y, &lay, &ctx.text, m, px) {
                     Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
                     Action::Redraw => return Reply::redraw(),
+                    Action::Passed => {
+                        return Reply {
+                            redraw: true,
+                            ..self.pointer(p, ctx)
+                        };
+                    }
                     Action::Ignored => {}
                 }
                 let (sb, r) = self.status(ctx);
@@ -716,6 +722,7 @@ impl App for Volume {
                 }
                 Event::Focus(false) => {
                     self.alt_arm.interrupt();
+                    self.bar.close();
                     Reply::redraw()
                 }
                 Event::CloseRequest => Reply {

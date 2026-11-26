@@ -916,6 +916,12 @@ impl TaskMgr {
                     };
                 }
                 Action::Redraw => return Reply::redraw(),
+                Action::Passed => {
+                    return Reply {
+                        redraw: true,
+                        ..self.press(at, button, ctx)
+                    };
+                }
                 Action::Ignored => {}
             }
             if let Some(i) = reprisekit::controls::tabstrip::hit(&lay.tabs, x, y) {
@@ -1019,7 +1025,7 @@ impl TaskMgr {
                     };
                 }
                 Action::Redraw => return Reply::redraw(),
-                Action::Ignored => {}
+                Action::Ignored | Action::Passed => {}
             }
         }
         if k.mods.ctrl && matches!(k.sym, keysym::TAB | keysym::ISO_LEFT_TAB) {
@@ -1167,6 +1173,11 @@ impl TaskMgr {
                     (Some(r), Some(l)) if r.contains(x, y) => redraw(l.wheel_across(cols, r, ctx)),
                     _ => Reply::none(),
                 }
+            }
+            Event::Focus(false) => {
+                let lit = self.bar.is_active();
+                self.bar.close();
+                redraw(lit)
             }
             _ => Reply::none(),
         }

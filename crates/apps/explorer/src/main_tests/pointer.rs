@@ -393,3 +393,37 @@ fn a_press_off_a_menu_closes_it_and_selects_the_entry_under_it() {
         Some("a.txt Properties".to_string())
     );
 }
+
+#[test]
+fn a_click_after_esc_leaves_the_menu_bar_and_selects_the_entry_under_it() {
+    use reprisekit::textedit::keysym;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.clear();
+    press(&mut ex, keysym::F10, &mut ctx);
+    press(&mut ex, keysym::DOWN, &mut ctx);
+    press(&mut ex, keysym::ESCAPE, &mut ctx);
+    assert_eq!(ex.bar.active, Some(0), "Esc leaves File lit");
+    let lay = ex.layout(&ctx);
+    let cell = ex.view_layout(lay.view, &ctx).cells[0];
+    let (x, y) = (cell.x + cell.width / 2, cell.y + cell.height / 2);
+    let reply = ex.event(crate::MAIN, press_at(x, y, 5000), &mut ctx);
+    ex.event(crate::MAIN, release_at(x, y), &mut ctx);
+    assert!(reply.redraw, "the bar's title is repainted");
+    assert!(!ex.bar.is_active(), "the click left keyboard mode");
+    assert_eq!(ex.sv.selection.single(), Some(0), "and selected the entry");
+}
+
+#[test]
+fn a_focus_loss_leaves_the_menu_bar_s_keyboard_mode() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    press(&mut ex, reprisekit::textedit::keysym::F10, &mut ctx);
+    assert!(ex.bar.is_active());
+    let reply = ex.event(crate::MAIN, Event::Focus(false), &mut ctx);
+    assert!(!ex.bar.is_active(), "the bar's title unlights");
+    assert!(reply.redraw);
+}

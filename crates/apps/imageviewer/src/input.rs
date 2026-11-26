@@ -99,7 +99,7 @@ impl Viewer {
         match self.bar.key(bar_key, &lay, &ctx.text, &ctx.theme, px) {
             Action::Chosen { title, row, .. } => Some(self.command(title, row, ctx)),
             Action::Redraw => Some(Reply::redraw()),
-            Action::Ignored => None,
+            Action::Ignored | Action::Passed => None,
         }
     }
 
@@ -148,6 +148,12 @@ impl Viewer {
                     match self.bar.press(x, y, &blay, &ctx.text, m, px) {
                         Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
                         Action::Redraw => return Reply::redraw(),
+                        Action::Passed => {
+                            return Reply {
+                                redraw: true,
+                                ..self.pointer(p, ctx)
+                            };
+                        }
                         Action::Ignored => {}
                     }
                     if let Some((bar, r)) = self.status(ctx)
@@ -235,6 +241,7 @@ impl Viewer {
             },
             Event::Focus(false) => {
                 self.alt_arm.interrupt();
+                self.bar.close();
                 self.ctrl = false;
                 Reply::redraw()
             }

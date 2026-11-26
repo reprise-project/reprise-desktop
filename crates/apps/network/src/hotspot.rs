@@ -107,7 +107,7 @@ impl HotspotDialog {
             ssid_field,
             label("password_l", 1, "&Password:"),
             password_field,
-            label("security_l", 2, "&Security:"),
+            label("security_l", 2, "Se&curity:"),
             Item::combo("security", FIELD_X, ROW_Y[2], FIELD_W, &SECURITY, 2),
             label("band_l", 3, "&Band:"),
             Item::combo("band", FIELD_X, ROW_Y[3], FIELD_W, &BANDS, 3),

@@ -871,7 +871,7 @@ impl Sheet {
             item.control = Control::ListBox { list, icons };
         }
         if let Some(item) = page.item_mut(ids.set_default) {
-            item.control = button("Set &Default", can_default);
+            item.control = button("&Set Default", can_default);
         }
         if let Some(item) = page.item_mut(ids.toggle) {
             item.control = button(toggle_label, can_toggle);
@@ -1160,7 +1160,7 @@ fn row_items(ids: &Row, y: i32, title: &str, icon: Option<Canvas>) -> Vec<Item> 
         Item::new(
             ids.set_default,
             Rect::new(70, y + 96, 74, 23),
-            button("Set &Default", false),
+            button("&Set Default", false),
         ),
         Item::new(
             ids.toggle,
@@ -1391,7 +1391,7 @@ mod tests {
         );
         assert_eq!(
             button_state(&s, SINK.set_default),
-            ("Set &Default".into(), false),
+            ("&Set Default".into(), false),
             "already the default"
         );
         assert_eq!(button_state(&s, SINK.toggle), ("&Disable".into(), true));

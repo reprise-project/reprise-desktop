@@ -206,7 +206,7 @@ impl Calculator {
             match self.bar.key(bk, &lay, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, row, .. } => return self.command(title, row),
                 Action::Redraw => return Reply::redraw(),
-                Action::Ignored => {}
+                Action::Ignored | Action::Passed => {}
             }
         }
         match &k.edit {
@@ -254,6 +254,12 @@ impl Calculator {
                 match self.bar.press(x, y, &lay, &ctx.text, &ctx.theme, px) {
                     Action::Chosen { title, row, .. } => return self.command(title, row),
                     Action::Redraw => return Reply::redraw(),
+                    Action::Passed => {
+                        return Reply {
+                            redraw: true,
+                            ..self.pointer(p, ev, ctx)
+                        };
+                    }
                     Action::Ignored => {}
                 }
             }

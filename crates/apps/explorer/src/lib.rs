@@ -1990,11 +1990,16 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         Event::Focus(false) => {
             ex.keyboard = false;
             ex.alt_arm.interrupt();
+            let lit = ex.bar.is_active();
+            ex.bar.close();
             let closed = ex.close_drop_menu();
             let tipped = ex.hide_tip();
             ex.flush_settings();
             Reply {
-                redraw: closed || tipped || matches!(ex.focus, Focus::Address | Focus::Search),
+                redraw: lit
+                    || closed
+                    || tipped
+                    || matches!(ex.focus, Focus::Address | Focus::Search),
                 ..Reply::none()
             }
         }

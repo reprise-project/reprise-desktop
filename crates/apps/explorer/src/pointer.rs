@@ -228,6 +228,12 @@ impl Explorer {
                 return self.run(cmd, ctx);
             }
             Action::Redraw => return Reply::redraw(),
+            Action::Passed => {
+                return Reply {
+                    redraw: true,
+                    ..self.press(x, y, time, mods, ctx)
+                };
+            }
             Action::Ignored => {}
         }
 

@@ -396,9 +396,9 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
         Command::ToggleHidden,
     );
     view.sep();
-    view.row(row("C&hoose Details...", false), Command::Nothing);
+    view.row(row("Ch&oose Details...", false), Command::Nothing);
     view.sub(row("&Go To", true), go_to_menu(state));
-    view.row(row("R&efresh", true), Command::Refresh);
+    view.row(row("&Refresh", true), Command::Refresh);
 
     let mut favorites = Menu::default();
     favorites.row(
