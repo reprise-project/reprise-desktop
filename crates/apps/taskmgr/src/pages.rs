@@ -233,17 +233,10 @@ pub fn draw(t: &mut TaskMgr, c: &mut Canvas, ctx: &Ctx) {
         && let Some(row) = t.proc_rows.iter().find(|r| r.pid == tip.rest.on)
         && !row.cmdline.is_empty()
     {
-        let tc = reprisekit::controls::tooltip::draw_tip_at(
-            &ctx.theme,
-            &ctx.text,
-            &row.cmdline,
-            c.scale(),
-        );
-        let s = c.scale();
-        let size = (tc.width as i32 / s, tc.height as i32 / s);
-        let client = Rect::new(0, 0, ctx.size.0, ctx.size.1);
-        let (x, y) = reprisekit::controls::tooltip::place(tip.rest.at, size, client, true);
-        c.blit_over(x * s, y * s, &tc);
+        c.report_tip(reprisekit::raster::ReportedTip {
+            text: row.cmdline.clone(),
+            at: tip.rest.at,
+        });
     }
 }
 

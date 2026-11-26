@@ -1249,3 +1249,39 @@ fn at_200_percent_text_the_page_buttons_and_the_performance_heading_land_inside_
         }
     }
 }
+
+#[test]
+fn the_process_tip_comes_up_under_the_pointer_at_scale_2() {
+    use reprisekit::controls::tooltip::INFO_BELOW_POINTER;
+    let mut ctx = themed_ctx(reprisekit::interfaces::theme_for(Interface::Glass));
+    let mut t = loaded(&mut ctx);
+    open(&mut t, &mut ctx, Page::Processes);
+    let at = row_point(&t, &ctx, 1);
+    t.event(
+        MAIN,
+        Event::Pointer(PointerInput::Motion { x: at.0, y: at.1 }),
+        &mut ctx,
+    );
+    t.tip.as_mut().expect("a tip rests on the row").shown = true;
+    t.follow_scale(MAIN, 2, &mut ctx);
+    let (w, h) = ctx.size;
+    let mut c = Canvas::with_scale(w as u32, h as u32, 2);
+    ctx.at_scale(2, |ctx| t.draw(MAIN, &mut c, ctx));
+    let bare = c.clone();
+    let r = form::draw_tip(&mut c, &ctx.text, &ctx.forms()).expect("the tip is reported");
+    assert_eq!(
+        (r.x, r.y),
+        (at.0 - 1, at.1 + INFO_BELOW_POINTER),
+        "the tip's corner sits under the pointer in logical px"
+    );
+    let drawn = bare.differing_rect(&c);
+    assert_eq!(
+        (drawn.x, drawn.y),
+        (r.x, r.y),
+        "the tip's pixels start at its corner"
+    );
+    assert!(
+        drawn.width < r.width + 10 && drawn.height < r.height + 10,
+        "the tip is drawn at its logical size plus its shadow, got {drawn:?} for {r:?}"
+    );
+}
