@@ -1043,3 +1043,97 @@ fn properties_greys_while_the_selected_rows_have_no_sheet() {
         "Properties"
     ));
 }
+
+/// Adds to `out` each access key rows of one level of `tree` share, under `path`.
+fn shared_keys(tree: &reprisekit::controls::menu::MenuTree, path: &str, out: &mut Vec<String>) {
+    let mut keys: std::collections::BTreeMap<char, Vec<&str>> = Default::default();
+    for (i, item) in tree.items().iter().enumerate() {
+        let MenuItem::Entry { label, .. } = item else {
+            continue;
+        };
+        if let Some(key) = item.access_key() {
+            let same = keys.entry(key).or_default();
+            if !same.contains(&label.as_str()) {
+                same.push(label);
+            }
+        }
+        if let Some(child) = tree.child(i) {
+            shared_keys(child, &format!("{path} > {label}"), out);
+        }
+    }
+    for (key, same) in keys.into_iter().filter(|(_, s)| s.len() > 1) {
+        out.push(format!("{path}: '{key}' on {same:?}"));
+    }
+}
+
+#[test]
+fn no_two_rows_of_a_menu_share_an_access_key() {
+    let states = [
+        MenuState::default(),
+        MenuState {
+            selection: 1,
+            can_paste: true,
+            can_undo: Some("Delete"),
+            extract: Some("photos".into()),
+            compress: Some("photos.zip".into()),
+            local_paths: true,
+            disk_image: true,
+            relabel: true,
+            pinned: Some(false),
+            eject: true,
+            can_connect: true,
+            can_add_favorite: true,
+            ..MenuState::default()
+        },
+        MenuState {
+            selection: 1,
+            eject: true,
+            share: true,
+            pinned: Some(true),
+            ..MenuState::default()
+        },
+        MenuState {
+            bin: Some(2),
+            selection: 1,
+            ..MenuState::default()
+        },
+    ];
+    let apps = [("Notepad".to_string(), None)];
+    let targets = [("Desktop".to_string(), true, None)];
+    let mut found = Vec::new();
+    for (n, s) in states.iter().enumerate() {
+        for (title, menu) in bar_menus(s) {
+            shared_keys(&menu.tree(), &format!("{n} {title}"), &mut found);
+        }
+        shared_keys(
+            &background_menu(s).tree(),
+            &format!("{n} background"),
+            &mut found,
+        );
+        let kinds = [
+            ItemKind::Folder,
+            ItemKind::File,
+            ItemKind::Script(ScriptOpen::Run),
+            ItemKind::Script(ScriptOpen::Terminal),
+            ItemKind::Launcher,
+        ];
+        for kind in kinds {
+            let m = item_menu(s, kind, &apps, &targets);
+            shared_keys(&m.tree(), &format!("{n} {kind:?}"), &mut found);
+        }
+    }
+    for bin in [false, true] {
+        for pinned in [None, Some(false), Some(true)] {
+            let m = tree_menu(true, true, true, bin, pinned);
+            shared_keys(&m.tree(), &format!("tree {bin} {pinned:?}"), &mut found);
+        }
+    }
+    shared_keys(&views_menu(Mode::Icons).tree(), "views", &mut found);
+    let drop = drop_menu(DropOp::Move, repriseapp::Actions::ALL);
+    shared_keys(&drop.tree(), "drop", &mut found);
+    assert!(
+        found.is_empty(),
+        "rows sharing an access key:\n{}",
+        found.join("\n")
+    );
+}

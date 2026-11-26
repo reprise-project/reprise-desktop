@@ -527,7 +527,7 @@ pub fn item_menu(
         _ => m.row(bold("&Open", true), Command::Open),
     }
     if kind == ItemKind::Folder {
-        m.row(row("Open in New &Tab", true), Command::OpenInNewTab);
+        m.row(row("Open in New Ta&b", true), Command::OpenInNewTab);
     }
     if kind == ItemKind::Folder {
         m.row(row("E&xplore", true), Command::Explore);
@@ -544,9 +544,9 @@ pub fn item_menu(
             m.sub(row("Open Wit&h", true), open_with_menu(open_with));
         }
         if let Some(to) = &state.extract {
-            m.row(row("Extract &Here", true), Command::Extract { here: true });
+            m.row(row("E&xtract Here", true), Command::Extract { here: true });
             m.row(
-                row(&format!("Extract &to {to}"), true),
+                row(&format!("Extr&act to {to}"), true),
                 Command::Extract { here: false },
             );
         }
@@ -595,7 +595,7 @@ pub fn shell_row_menu(place: &Place) -> Menu {
     let sheet = row_has_sheet(place);
     let mut m = Menu::default();
     m.row(bold("&Open", true), Command::Open);
-    m.row(row("Open in New &Tab", true), Command::OpenInNewTab);
+    m.row(row("Open in New Ta&b", true), Command::OpenInNewTab);
     m.row(row("E&xplore", true), Command::Explore);
     m.sep();
     m.row(row("P&roperties", sheet), Command::Properties);
@@ -653,8 +653,8 @@ pub fn background_menu(state: &MenuState) -> Menu {
 /// no row with `pinned` None.
 fn pin_row(m: &mut Menu, pinned: Option<bool>, cmd: fn(bool) -> Command) {
     match pinned {
-        Some(false) => m.row(row("P&in to Places", true), cmd(true)),
-        Some(true) => m.row(row("Unp&in from Places", true), cmd(false)),
+        Some(false) => m.row(row("Pin to Pl&aces", true), cmd(true)),
+        Some(true) => m.row(row("Unpin from Pl&aces", true), cmd(false)),
         None => {}
     }
 }
@@ -671,7 +671,7 @@ pub fn tree_menu(
     pinned: Option<bool>,
 ) -> Menu {
     let mut m = Menu::default();
-    let label = if expanded { "&Collapse" } else { "&Expand" };
+    let label = if expanded { "Co&llapse" } else { "&Expand" };
     m.row(bold(label, has_children), Command::ToggleNode);
     m.row(row("E&xplore", true), Command::OpenNode);
     m.row(row("&Open", true), Command::OpenNode);
@@ -723,7 +723,7 @@ pub fn drop_menu(default: DropOp, source: repriseapp::Actions) -> Menu {
         Command::Drop(DropOp::Shortcut),
     );
     m.sep();
-    m.row(row("Cancel", true), Command::DropCancel);
+    m.row(row("C&ancel", true), Command::DropCancel);
     m
 }
 
