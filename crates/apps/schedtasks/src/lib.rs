@@ -210,8 +210,13 @@ impl SchedTasks {
         self.list.selected().and_then(|i| self.tasks.get(i))
     }
 
-    /// Shows `tasks`, keeping the timer picked and the open sheet's.
-    fn show(&mut self, tasks: Vec<Task>) {
+    /// Shows `tasks`, keeping the timer picked, the open sheet's, and the latest run seen of each.
+    fn show(&mut self, mut tasks: Vec<Task>) {
+        for t in &mut tasks {
+            if let Some(was) = self.tasks.iter().find(|w| w.timer == t.timer) {
+                t.keep_run(was);
+            }
+        }
         let picked = self.picked().map(|t| t.timer.clone());
         self.tasks = tasks;
         self.unanswered = None;
