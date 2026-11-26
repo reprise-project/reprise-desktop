@@ -232,7 +232,11 @@ fn hoist(state: &mut State) {
             .filter(|x| x.id == t || goes_with(state, x.id, t))
             .map(|x| NodeId::from(x.tree))
             .collect();
-        for layer in [state.layers.windows, state.layers.on_top] {
+        for layer in [
+            state.layers.windows,
+            state.layers.on_top,
+            state.layers.popups,
+        ] {
             nodes.extend((state.scene.children(layer).iter()).filter(|n| wanted.contains(n)));
         }
     }

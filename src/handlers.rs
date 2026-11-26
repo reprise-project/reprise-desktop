@@ -473,13 +473,18 @@ impl XdgToplevelTagHandler for State {
 }
 
 impl XdgDialogHandler for State {
-    /// Unsetting modal changes nothing until the next focus change.
+    /// The focused window restacks ([`State::restack`]); a window the hint makes modal over the
+    /// focused one takes the focus. Otherwise unsetting modal changes nothing until the next
+    /// focus change.
     fn dialog_hint_changed(&mut self, toplevel: ToplevelSurface, hint: ToplevelDialogHint) {
         let modal = hint == ToplevelDialogHint::Modal;
         if let Some(w) = self.window_for_surface(toplevel.wl_surface())
             && let Some(win) = self.win_mut(w)
         {
             win.modal = modal;
+            if self.focused == Some(w) {
+                self.restack();
+            }
         }
         if modal
             && !self.desktop_locked()

@@ -5,7 +5,7 @@ use smithay::utils::SERIAL_COUNTER;
 
 use crate::compositor::State;
 use crate::mapfocus;
-use crate::window::WindowId;
+use crate::window::{Kind, WindowId};
 
 impl State {
     /// Focus the top-most mapped, non-minimized window on the current desktop. A
@@ -75,7 +75,6 @@ impl State {
         if self.focused.is_some() {
             self.redraw_changed(|s| {
                 s.unfocus();
-                s.restack();
                 s.redraw_taskbars();
                 crate::dim::frame(s);
             });
@@ -83,23 +82,28 @@ impl State {
     }
 
     /// No window is focused any more: the one that was goes inactive and its frame draws so,
-    /// since nothing else redraws it while no window takes the focus.
+    /// since nothing else redraws it while no window takes the focus, and a modal dialog lifted
+    /// for the focus drops back ([`State::restack`]).
     pub(crate) fn unfocus(&mut self) {
         if let Some(w) = self.focused.take() {
             self.toplevels.dirty = true;
             self.set_activated(w, false);
             self.redraw_frame(w);
+            self.restack();
         }
     }
 
     /// Put each window's tree in its layer: `layers.fullscreen` (the fullscreen
     /// `bind_window`), `layers.menu` (over the dialogs, `Window::over_dialog`), `layers.prompts`
-    /// (consent prompts), `layers.on_top` (also X11 menus and
-    /// tooltips) or `layers.windows`. Walks all windows: one that just left fullscreen or on top
-    /// has its flag cleared and still has to come down. Reparenting lands a tree on
-    /// top of its new parent, so this runs before the focused window is raised.
+    /// (consent prompts), `layers.popups` (X11 menus and tooltips of the focused client),
+    /// `layers.on_top` (also the
+    /// focused modal dialog with what it owns) or `layers.windows`. Walks all
+    /// windows: one that just left fullscreen or on top has its flag cleared and still has to come
+    /// down. Reparenting lands a tree on top of its new parent, so this runs before the focused
+    /// window is raised.
     pub fn restack(&mut self) {
         let top = self.bind_window();
+        let modal = self.focused_modal();
         let all: Vec<WindowId> = self.windows.iter().map(|w| w.id).collect();
         for w in all {
             let Some(win) = self.win(w) else {
@@ -112,7 +116,11 @@ impl State {
                 self.layers.menu
             } else if win.consent {
                 self.layers.prompts
-            } else if win.override_redirect || self.stays_on_top(w) {
+            } else if win.override_redirect && self.serves_focus(w) {
+                self.layers.popups
+            } else if self.stays_on_top(w)
+                || modal.is_some_and(|m| m == w || self.is_owner_of(m, w))
+            {
                 self.layers.on_top
             } else {
                 self.layers.windows
@@ -125,6 +133,47 @@ impl State {
         crate::autohideview::poke(self);
         crate::notifyview::suppress_changed(self);
         self.sync_vrr();
+    }
+
+    /// Whether `w` is in the focused window's family or from its client: its override-redirect
+    /// windows stack over the focused one even when that one is kept on top or a lifted modal.
+    fn serves_focus(&self, w: WindowId) -> bool {
+        let Some(f) = self.focused else {
+            return false;
+        };
+        if self.home(w) == self.home(f) {
+            return true;
+        }
+        let (Some(a), Some(b)) = (self.win(w), self.win(f)) else {
+            return false;
+        };
+        match (&a.kind, &b.kind) {
+            (Kind::Xdg(x), Kind::Xdg(y)) => {
+                use smithay::reexports::wayland_server::Resource;
+                let x = x.wl_surface().client().map(|c| c.id());
+                x.is_some() && x == y.wl_surface().client().map(|c| c.id())
+            }
+            (Kind::X11(_), Kind::X11(_)) => a.x11_pid.is_some() && a.x11_pid == b.x11_pid,
+            _ => false,
+        }
+    }
+
+    /// The outermost owned modal dialog the focused window is or sits over: while it has the
+    /// focus no on-top window hides it.
+    fn focused_modal(&self) -> Option<WindowId> {
+        let mut at = self.focused?;
+        let mut modal = None;
+        for _ in 0..=self.windows.len() {
+            let owner = self.owner(at);
+            if owner.is_some() && self.win(at).is_some_and(|x| x.is_modal()) {
+                modal = Some(at);
+            }
+            match owner {
+                Some(o) => at = o,
+                None => break,
+            }
+        }
+        modal
     }
 
     /// Focus and raise `w`, showing its desktop first. A window a modal dialog covers
