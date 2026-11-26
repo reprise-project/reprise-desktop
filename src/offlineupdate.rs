@@ -311,6 +311,9 @@ pub enum Held<F> {
     StillSet,
     /// The power action failed so, and the trigger made for it could not be taken back.
     Stays(F),
+    /// The attempt was given up on once its trigger was made, and the trigger could not be taken
+    /// back.
+    GivenUpStays,
 }
 
 /// Run `power`, attempt `id`'s logind call or `[power]` command, on its thread with the update as
@@ -387,8 +390,10 @@ fn install<F>(
     *held = Some(id);
     drop(held);
     if !still() {
-        take_own(made, bus, id);
-        return Err(Held::Dismissed);
+        return Err(match take_own(made, bus, id) {
+            true => Held::Dismissed,
+            false => Held::GivenUpStays,
+        });
     }
     match power() {
         None => {
