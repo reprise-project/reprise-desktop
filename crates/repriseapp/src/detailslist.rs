@@ -2,7 +2,7 @@
 //! it (selection, scrollbars, their lit parts, the wheel, a column title, a divider drag), so each
 //! window keeps only what its rows mean.
 
-use crate::{BTN_LEFT, Ctx};
+use crate::{BTN_LEFT, Ctx, PointerInput};
 use reprisekit::classic::widgets::{Axis, ScrollHit};
 use reprisekit::controls::listview::{self, Column, ListView, Row, Rows};
 use reprisekit::look::Paint;
@@ -177,6 +177,23 @@ impl<R: Rows + Default> List<R> {
         (self.view.bars.leave() | self.view.header.leave()) && ctx.styled()
     }
 
+    /// A motion, left release or leave that the window's form sees too: the list follows it
+    /// wherever the pointer is. A left release reports the column title it clicked.
+    pub fn follow_pointer(&mut self, ev: &PointerInput, r: Rect, ctx: &Ctx) -> Released {
+        let redraw = match *ev {
+            PointerInput::Motion { x, y } => self.motion(x, y, r, ctx),
+            PointerInput::Release {
+                button: BTN_LEFT, ..
+            } => return self.release(ctx),
+            PointerInput::Leave => self.leave(ctx),
+            _ => false,
+        };
+        Released {
+            redraw,
+            column: None,
+        }
+    }
+
     pub fn wheel(&mut self, rows: i32, r: Rect, ctx: &Ctx) -> bool {
         let lay = self.layout(r, ctx);
         self.view.scroll(rows as i64, &lay)
@@ -299,7 +316,21 @@ mod tests {
         );
         let end = l.view.top;
         assert_eq!(end, 40 - lay.rows);
-        l.release(&ctx);
+        let right = PointerInput::Release {
+            x,
+            y,
+            button: BTN_RIGHT,
+            mods: Default::default(),
+        };
+        l.follow_pointer(&right, r, &ctx);
+        assert!(l.view.thumb.holding(), "a right release holds on");
+        let left = PointerInput::Release {
+            x,
+            y,
+            button: BTN_LEFT,
+            mods: Default::default(),
+        };
+        l.follow_pointer(&left, r, &ctx);
         assert!(!l.motion(x, sb.y, r, &ctx), "the release lets go");
         assert_eq!(l.view.top, end);
 

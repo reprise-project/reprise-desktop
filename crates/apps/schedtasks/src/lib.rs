@@ -21,9 +21,7 @@ use repriseapp::ctxmenu::{Popup, Step, item};
 use repriseapp::detailslist::{List, Press};
 use repriseapp::filedlg::{Driven, Host};
 use repriseapp::oneshot::{self, ErrorBox, MsgBox};
-use repriseapp::{
-    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, KeyInput, MAIN, PointerInput, Reply, WinId,
-};
+use repriseapp::{App, BTN_RIGHT, Child, Ctx, Event, KeyInput, MAIN, PointerInput, Reply, WinId};
 use reprisekit::access::{ROOT as ACCESS_ROOT, Tree};
 use reprisekit::classic::widgets::BUTTON_H;
 use reprisekit::controls::filedlg::{self, DlgMode, FileDlg};
@@ -573,21 +571,15 @@ impl SchedTasks {
         }
         // The list follows every motion, release and leave, and the form sees them too: a press
         // on one of its buttons acts on the release, and only while the pointer is still on it.
-        let lit = match ev {
-            Event::Pointer(PointerInput::Motion { x, y }) => {
+        let lit = match &ev {
+            Event::Pointer(p) => {
                 let r = self.list_rect(ctx);
-                self.list.motion(x, y, r, ctx)
-            }
-            Event::Pointer(PointerInput::Release {
-                button: BTN_LEFT, ..
-            }) => {
-                let released = self.list.release(ctx);
+                let released = self.list.follow_pointer(p, r, ctx);
                 if let Some(col) = released.column {
                     self.sort_by(col);
                 }
                 released.redraw
             }
-            Event::Pointer(PointerInput::Leave) => self.list.leave(ctx),
             _ => false,
         };
         match repriseapp::keys::form_input(&mut self.form, &ev, ctx) {

@@ -534,15 +534,11 @@ impl DiskUsage {
         }
         // The list follows every motion, release and leave, and the form sees them too: a press
         // on one of its buttons acts on the release, and only while the pointer is still on it.
-        let lit = match ev {
-            Event::Pointer(PointerInput::Motion { x, y }) => {
+        let lit = match &ev {
+            Event::Pointer(p) => {
                 let r = self.list_rect(ctx);
-                self.list.motion(x, y, r, ctx)
+                self.list.follow_pointer(p, r, ctx).redraw
             }
-            Event::Pointer(PointerInput::Release {
-                button: BTN_LEFT, ..
-            }) => self.list.release(ctx).redraw,
-            Event::Pointer(PointerInput::Leave) => self.list.leave(ctx),
             _ => false,
         };
         match repriseapp::keys::form_input(&mut self.form, &ev, ctx) {
