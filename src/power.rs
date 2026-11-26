@@ -1469,6 +1469,12 @@ mod tests {
                 Some(false),
                 "a stop job is no shutdown"
             );
+            if let Some(empty) = bus() {
+                let alone = zbus::block_on(async {
+                    shutdown_queued(&reprisebus::testbus::connect(&empty.1).await).await
+                });
+                assert!(!alone, "no systemd on the bus");
+            }
         }
 
         /// Refuses `Inhibit` while `refusals` lasts, then hands out /dev/null.

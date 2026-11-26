@@ -10,7 +10,7 @@ use reprisekit::controls::endsession::Goal;
 use reprisekit::powerpanel::UpdatesBox;
 
 /// A PackageKit that records its calls, answers its status with `status`, Trigger with `answer`
-/// and Cancel with `cancel`, and a logind shutting the computer down while `down`.
+/// and Cancel with `cancel`, and the computer going down (logind or systemd) while `down`.
 struct Fake {
     status: Option<Status>,
     answer: Answer,
@@ -62,7 +62,7 @@ impl Bus for Fake {
         self.cancel.clone()
     }
     fn shutting_down(&self) -> bool {
-        self.call("logind");
+        self.call("down");
         self.down.load(Ordering::SeqCst)
     }
 }
@@ -111,7 +111,7 @@ fn install_triggers_just_before_the_power_action_and_takes_it_back_when_that_fai
     let fake = Fake::new(false, Ok(()));
     let failed = run(&fake, Updates::Install, &|| true, true);
     assert_eq!(failed, (Ok(Some("refused")), true));
-    assert_eq!(fake.calls(), ["status", "reboot", "logind", "cancel"]);
+    assert_eq!(fake.calls(), ["status", "reboot", "down", "cancel"]);
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn a_trigger_that_will_not_come_back_after_a_failed_action_is_told() {
     let fake = Fake::with(ready, Ok(()), Err(Some("Not allowed.".into())));
     let failed = run(&fake, Updates::Install, &|| true, true);
     assert_eq!(failed, (Err(Held::Stays("refused")), true));
-    assert_eq!(fake.calls(), ["status", "reboot", "logind", "cancel"]);
+    assert_eq!(fake.calls(), ["status", "reboot", "down", "cancel"]);
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn an_attempt_given_up_on_triggers_nothing_or_takes_its_trigger_back() {
         (Err(Held::Dismissed), false),
         "given up during Trigger"
     );
-    assert_eq!(fake.calls(), ["status", "reboot", "logind", "cancel"]);
+    assert_eq!(fake.calls(), ["status", "reboot", "down", "cancel"]);
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn a_trigger_left_while_its_action_runs_is_taken_back_by_the_next_attempt_or_the
     assert_eq!(first, (Ok(Some("given up")), true));
     assert_eq!(
         fake.calls(),
-        ["status", "reboot", "logind", "cancel"],
+        ["status", "reboot", "down", "cancel"],
         "taken back once, by attempt 2"
     );
     let fake = Fake::new(false, Ok(()));
@@ -211,7 +211,7 @@ fn a_trigger_left_while_its_action_runs_is_taken_back_by_the_next_attempt_or_the
     assert_eq!(first, (Ok(Some("given up")), true));
     assert_eq!(
         fake.calls(),
-        ["status", "reboot", "logind", "cancel"],
+        ["status", "reboot", "down", "cancel"],
         "Log Off took it back"
     );
 }
@@ -270,14 +270,14 @@ fn the_session_ending_during_a_shutdown_keeps_a_trigger_an_attempt_left() {
     assert!(fake.calls().is_empty(), "no trigger left, nothing asked");
     *made.lock() = Some(1);
     made.take_back(&*fake, None);
-    assert_eq!(fake.calls(), ["logind", "cancel"], "taken back outside one");
+    assert_eq!(fake.calls(), ["down", "cancel"], "taken back outside one");
     let fake = Fake::new(false, Ok(()));
     fake.down.store(true, Ordering::SeqCst);
     *made.lock() = Some(1);
     made.take_back(&*fake, None);
     assert_eq!(
         fake.calls(),
-        ["logind"],
+        ["down"],
         "the update installs at this restart"
     );
     assert_eq!(made.by(), None);
@@ -292,7 +292,7 @@ fn a_power_command_the_shutdown_kills_keeps_its_trigger() {
     };
     let failed = run_on(&fake, &Made::default(), Updates::Install, &|| true, killed);
     assert_eq!(failed, (Err(Held::Stays("signal 15")), true));
-    assert_eq!(fake.calls(), ["status", "reboot", "logind"]);
+    assert_eq!(fake.calls(), ["status", "reboot", "down"]);
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn a_turn_off_that_installs_triggers_at_its_power_action_and_runs_the_poweroff_c
     answered(&mut h);
     assert_eq!(
         fake.calls(),
-        ["status", "reboot", "logind", "cancel"],
+        ["status", "reboot", "down", "cancel"],
         "taken back"
     );
     let d = &h.state.dialogs.views.last().unwrap().dialog;
@@ -482,6 +482,6 @@ fn log_off_takes_back_a_trigger_an_attempt_it_gave_up_on_left() {
     let mut h = harness(&fake);
     *h.state.offline.made.lock() = Some(7);
     crate::sessionend::begin(&mut h.state, Goal::LogOff, None, Origin::Desktop);
-    h.until("the take-back", |_| fake.calls() == ["logind", "cancel"]);
+    h.until("the take-back", |_| fake.calls() == ["down", "cancel"]);
     assert_eq!(h.state.offline.made.by(), None);
 }
