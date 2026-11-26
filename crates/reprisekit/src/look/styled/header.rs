@@ -116,14 +116,14 @@ mod tests {
     }
 
     #[test]
-    fn a_classic_column_is_a_raised_button_whatever_the_pointer_does() {
+    fn a_classic_column_is_a_raised_button_at_rest_and_under_the_pointer() {
         let theme = theme_for(Interface::Classic);
         let p = theme.paint();
         let r = Rect::new(0, 0, 60, 17);
         let mut want = Canvas::new(60, 17);
         want.fill_rect(r, p.cs.button_face);
         want.edge_t(r, EdgeStyle::ButtonRaised, p.cs, 1);
-        for ptr in [Interaction::Idle, Interaction::Hot, Interaction::Pressed] {
+        for ptr in [Interaction::Idle, Interaction::Hot] {
             let mut c = Canvas::new(60, 17);
             assert_eq!(draw_item(&mut c, &p, r, ptr, true), r, "the title's box");
             assert!(c == want, "{ptr:?} draws the raised button");

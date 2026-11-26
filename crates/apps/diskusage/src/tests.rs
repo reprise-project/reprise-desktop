@@ -1,4 +1,5 @@
 use super::*;
+use reprisekit::pointer::Interaction;
 use std::fs;
 use std::time::Duration;
 
@@ -157,22 +158,84 @@ fn a_top_button_acts_on_its_release_and_not_when_let_go_off_it() {
     assert_eq!(d.at, r, "Back clicked goes back");
 }
 
+fn motion(d: &mut DiskUsage, ctx: &mut Ctx, (x, y): (i32, i32)) -> Reply {
+    d.event(MAIN, Event::Pointer(PointerInput::Motion { x, y }), ctx)
+}
+
 #[test]
-fn a_pointer_click_on_a_column_title_sorts_by_it() {
+fn a_pointer_click_on_a_column_title_sorts_by_it_and_a_second_flips_in_every_look() {
+    use reprisekit::interface::Interface;
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let t = tempfile::tempdir().unwrap();
+        files(t.path());
+        let mut d = counted(t.path());
+        let mut ctx = test_ctx(reprisekit::interfaces::theme_for(i));
+        let r = d.list_rect(&ctx);
+        let lay = d.list.layout(r, &ctx);
+        let title = (lay.header.x + 4, lay.header.y + lay.header.height / 2);
+        assert_eq!(
+            d.list.view.hit(&lay, title.0, title.1).column(),
+            Some(model::NAME)
+        );
+        press(&mut d, &mut ctx, title);
+        assert_eq!(
+            d.list.view.header.of(model::NAME),
+            Interaction::Pressed,
+            "{i:?}: the pressed title is held"
+        );
+        assert_eq!(
+            names(&d),
+            ["video.mkv", "photo.jpg", "notes.txt"],
+            "{i:?}: the press alone sorts nothing"
+        );
+        assert!(release(&mut d, &mut ctx, title).redraw, "{i:?}");
+        assert_eq!(names(&d), ["notes.txt", "photo.jpg", "video.mkv"], "{i:?}");
+        assert_eq!(d.list.view.sort, Some((model::NAME, false)), "{i:?}");
+        press(&mut d, &mut ctx, title);
+        release(&mut d, &mut ctx, title);
+        assert_eq!(
+            names(&d),
+            ["video.mkv", "photo.jpg", "notes.txt"],
+            "{i:?}: a second click flips"
+        );
+        assert_eq!(d.list.view.sort, Some((model::NAME, true)), "{i:?}");
+    }
+}
+
+#[test]
+fn a_classic_title_released_off_it_or_a_divider_drag_sorts_nothing() {
     let t = tempfile::tempdir().unwrap();
     files(t.path());
     let mut d = counted(t.path());
-    let mut ctx = test_ctx(reprisekit::interfaces::theme_for(
-        reprisekit::interface::Interface::Glass,
-    ));
+    let mut ctx = test_ctx(reprisekit::theme::Theme::default());
     let r = d.list_rect(&ctx);
     let lay = d.list.layout(r, &ctx);
-    let title = (lay.header.x + 4, lay.header.y + lay.header.height / 2);
-    let hit = d.list.view.hit(&lay, title.0, title.1).column();
-    assert_eq!(hit, Some(model::NAME));
+    let y = lay.header.y + lay.header.height / 2;
+    let title = (lay.header.x + 4, y);
+    let below = (title.0, lay.body.y + lay.body.height - 2);
     press(&mut d, &mut ctx, title);
-    release(&mut d, &mut ctx, title);
-    assert_eq!(names(&d), ["notes.txt", "photo.jpg", "video.mkv"]);
+    assert!(motion(&mut d, &mut ctx, below).redraw, "the title lifts");
+    release(&mut d, &mut ctx, below);
+    assert_eq!(names(&d), ["video.mkv", "photo.jpg", "notes.txt"]);
+
+    let width = d.list.view.columns[model::NAME].width;
+    let edge = (
+        lay.header.x + lay.col_w(&d.list.view.columns[model::NAME]),
+        y,
+    );
+    assert_eq!(
+        d.list.view.hit(&lay, edge.0, edge.1),
+        reprisekit::controls::listview::Hit::Divider(model::NAME)
+    );
+    press(&mut d, &mut ctx, edge);
+    motion(&mut d, &mut ctx, (edge.0 + 30, y));
+    release(&mut d, &mut ctx, (edge.0 + 30, y));
+    assert!(
+        d.list.view.columns[model::NAME].width > width,
+        "the drag widens Name"
+    );
+    assert_eq!(names(&d), ["video.mkv", "photo.jpg", "notes.txt"]);
+    assert_eq!(d.list.view.sort, Some((model::SIZE, false)));
 }
 
 #[test]

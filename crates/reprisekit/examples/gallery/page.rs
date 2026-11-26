@@ -843,7 +843,10 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
         );
     }
 
-    let lv = listview::sample();
+    // Sorted by its first column, with the second's title held.
+    let mut lv = listview::sample();
+    lv.sort = Some((0, true));
+    lv.header.press(Some(1), false);
     let lv_r = Rect::new(570, 1240, 320, 130);
     let lv_lay = listview::layout(&lv, lv_r, &theme.look.controls_at_100());
     listview::draw(

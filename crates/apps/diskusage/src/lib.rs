@@ -480,12 +480,12 @@ impl DiskUsage {
                     _ => Reply::redraw(),
                 }
             }
-            PointerInput::Release { x, y, button, .. } if button == BTN_LEFT => {
-                let lay = self.list.layout(r, ctx);
-                let over = self.list.view.hit(&lay, x, y).column();
-                let held = self.list.view.header.held();
-                let by = held.filter(|&c| Some(c) == over).and_then(model::sort_of)?;
-                self.list.release(ctx);
+            PointerInput::Release { button, .. } if button == BTN_LEFT => {
+                let by = model::sort_of(self.list.view.header.held()?)?;
+                let released = self.list.release(ctx);
+                if released.column.is_none() {
+                    return Some(redraw(released.redraw));
+                }
                 let flipped = self.sort.0 == by && !self.sort.1;
                 self.sort = (by, flipped);
                 self.list.view.sort = Some((model::col_of(by), flipped));
@@ -541,7 +541,7 @@ impl DiskUsage {
             }
             Event::Pointer(PointerInput::Release {
                 button: BTN_LEFT, ..
-            }) => self.list.release(ctx),
+            }) => self.list.release(ctx).redraw,
             Event::Pointer(PointerInput::Leave) => self.list.leave(ctx),
             _ => false,
         };

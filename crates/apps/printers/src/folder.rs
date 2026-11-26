@@ -543,7 +543,7 @@ impl Folder {
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> Outcome {
-        redraw(self.list.release(ctx))
+        redraw(self.list.release(ctx).redraw)
     }
 
     pub fn leave(&mut self, ctx: &Ctx) -> Outcome {
