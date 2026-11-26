@@ -1,80 +1,80 @@
 Blue none @1 cbde81eea8c68757
 Blue none @2 d030cd33e8b16329
-Blue playing @1 d46efa4951205320
-Blue playing @2 f58a04b85da77968
-Blue paused play focused next hot @1 37f318253e11ec94
-Blue paused play focused next hot @2 8da3a660b5a9d9e5
-Blue title alone @1 8b2e19f97abee366
-Blue title alone @2 7a85eb25a229a7f4
+Blue playing @1 3819caf9116befb0
+Blue playing @2 1e790e453ba0fc40
+Blue paused play focused next hot @1 bd6eae0a29e03284
+Blue paused play focused next hot @2 8ad2527bedc1fedd
+Blue title alone @1 e00df35e7cae5b9e
+Blue title alone @2 648cd07553f3eabc
 Olive none @1 8b7e1148bbd295c4
 Olive none @2 9e1b505ab5185656
-Olive playing @1 af4a1aa2298799db
-Olive playing @2 529ed96659201e20
-Olive paused play focused next hot @1 47bb412888beb8ee
-Olive paused play focused next hot @2 17fafc95d9afd217
-Olive title alone @1 b6ecd12398841496
-Olive title alone @2 e84ebb59d2006344
+Olive playing @1 49294a2a1341eb13
+Olive playing @2 303ac0e308370550
+Olive paused play focused next hot @1 028c46deef3191fe
+Olive paused play focused next hot @2 0e6d54bd7c930e8f
+Olive title alone @1 80bcf63fdc16abb2
+Olive title alone @2 d9d5f9c02b714664
 Silver none @1 3d74303beea25b87
 Silver none @2 e951b7543b02c82f
-Silver playing @1 f2177a9e4d19d5a2
-Silver playing @2 1315bc6b8885dbef
-Silver paused play focused next hot @1 55b93447d6e0f657
-Silver paused play focused next hot @2 502562f9284e7cda
-Silver title alone @1 8843d4f244af3c07
-Silver title alone @2 9ec6b25e3e76cb03
+Silver playing @1 dcdde84514b1619a
+Silver playing @2 afbdc57c49417c7f
+Silver paused play focused next hot @1 acf87326fc574727
+Silver paused play focused next hot @2 ed10977e4bbb40d2
+Silver title alone @1 d89c2bf8be19526f
+Silver title alone @2 50b5cf95d7248a93
 Slate none @1 e23ad434e7cfb8a8
 Slate none @2 f2e933f6a5c102b7
-Slate playing @1 c7978574c697ca00
-Slate playing @2 fb0a761e5db24ee3
-Slate paused play focused next hot @1 fe8e492826e69d79
-Slate paused play focused next hot @2 743d41d369d30a83
-Slate title alone @1 c77fc0fb4c7df600
-Slate title alone @2 9d46a46015c9293b
+Slate playing @1 1d8f330fd0691e10
+Slate playing @2 be9a748fa3f5cca3
+Slate paused play focused next hot @1 31d67e54ae011021
+Slate paused play focused next hot @2 f7cbcd3e2d141233
+Slate title alone @1 8d5c1de4046a0e28
+Slate title alone @2 8075ae0d6865150b
 Sapphire none @1 8d712e8398743c27
 Sapphire none @2 b01a8798e57a8221
-Sapphire playing @1 d9cb79dd1617637b
-Sapphire playing @2 54a1b4aefcd96ef9
-Sapphire paused play focused next hot @1 a8d393847cf0870d
-Sapphire paused play focused next hot @2 b782e94c8d4d8b35
-Sapphire title alone @1 5d86e7aed392c4df
-Sapphire title alone @2 a927f0ca3529afc1
+Sapphire playing @1 973220d7078c8bcb
+Sapphire playing @2 d92170b714d83021
+Sapphire paused play focused next hot @1 9fc0407444d83f05
+Sapphire paused play focused next hot @2 15b4abcd780f4e0d
+Sapphire title alone @1 c2459b63137f88bf
+Sapphire title alone @2 4d63bce104a329e9
 Obsidian none @1 963629b02013b539
 Obsidian none @2 f42192399443a080
-Obsidian playing @1 cc00d52000713f7c
-Obsidian playing @2 b60bf502478802a4
-Obsidian paused play focused next hot @1 779417353c13dbce
-Obsidian paused play focused next hot @2 2622e0412f441618
-Obsidian title alone @1 0d20e914274d12d9
-Obsidian title alone @2 a6e013f433877a84
+Obsidian playing @1 48fa8f5dbb8e8e64
+Obsidian playing @2 91dbf80efb6ad85c
+Obsidian paused play focused next hot @1 95ba3c0e9e5b6726
+Obsidian paused play focused next hot @2 a906bc8177c86fd0
+Obsidian title alone @1 4fd2c3e6ced7a859
+Obsidian title alone @2 4f172356f0847eac
 Ember none @1 13563287e58f8184
 Ember none @2 e87d6142a17e08bb
-Ember playing @1 93f127d6cfbc69d3
-Ember playing @2 8f5d3c8dbd90f71f
-Ember paused play focused next hot @1 b8330e59019ed57e
-Ember paused play focused next hot @2 4ddb6c3a53e9cdf3
-Ember title alone @1 6577e82cd18d6104
-Ember title alone @2 18d0ec6ddf3d585b
+Ember playing @1 00058141f73780b3
+Ember playing @2 79278fdadc819a8f
+Ember paused play focused next hot @1 a0d0ad734b693656
+Ember paused play focused next hot @2 41ae16473dbbbe73
+Ember title alone @1 0dfed054f9d81f14
+Ember title alone @2 f7f1460cebca5fbb
 Cobalt none @1 e2fcb64c0a0eed9d
 Cobalt none @2 177210f3349ededc
-Cobalt playing @1 4ea2d633395acd49
-Cobalt playing @2 6be666bffcc8408c
-Cobalt paused play focused next hot @1 20881a97cca48357
-Cobalt paused play focused next hot @2 28f60595c20b9b64
-Cobalt title alone @1 92d03ec15a8cdfd5
-Cobalt title alone @2 ccd09eed9b10ac28
+Cobalt playing @1 559c3d8893dea8e9
+Cobalt playing @2 ca5b983deb05f34c
+Cobalt paused play focused next hot @1 7b8ef54a9e7c694b
+Cobalt paused play focused next hot @2 ecea9a626f81ed24
+Cobalt title alone @1 8e943e6fd34b7e95
+Cobalt title alone @2 bf076a6775e0ae08
 Carbon none @1 96fe7122584efafd
 Carbon none @2 94e426dc9cffed84
-Carbon playing @1 eb4f00d972ac26c7
-Carbon playing @2 cda84f65179af148
-Carbon paused play focused next hot @1 181af1ddc09e8a6d
-Carbon paused play focused next hot @2 255cbef5b45da658
-Carbon title alone @1 034069fd2c17f65d
-Carbon title alone @2 647eeedd9d79b54c
+Carbon playing @1 c381d85c91be3237
+Carbon playing @2 2371c7e07056db58
+Carbon paused play focused next hot @1 f47073edb605ee85
+Carbon paused play focused next hot @2 ffaea7c6038d2b38
+Carbon title alone @1 9ccb44a471ea6e0d
+Carbon title alone @2 e283c765e24144dc
 Steel none @1 b6a4aaa6158ccc6d
 Steel none @2 8ab2209f91baa6ba
-Steel playing @1 4c2184dc8b0d6ab9
-Steel playing @2 60172f77d19f5ec2
-Steel paused play focused next hot @1 72c959f7f3607030
-Steel paused play focused next hot @2 869d95788f456f13
-Steel title alone @1 066c57f1a54f9565
-Steel title alone @2 82b5216b6a0a1816
+Steel playing @1 899a3f29bb424df1
+Steel playing @2 d330d94c80efc8e2
+Steel paused play focused next hot @1 1589eff4d2fdca14
+Steel paused play focused next hot @2 70cb536209bf5183
+Steel title alone @1 70d8db200e41e325
+Steel title alone @2 09ed6136dd8bf056

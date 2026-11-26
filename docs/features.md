@@ -303,7 +303,8 @@ are.
 - **Music at the lock.** While a media player plays or is paused, the lock
   shows its title and artist with Previous, Play or Pause and Next, by
   pointer or by Tab after the password. Nothing else of the player shows,
-  and the media keys keep working.
+  and the media keys keep working on the same player. A screen too small
+  for it, or a remote user's session in lock mode, shows none.
 - **Lock and unlock in motion.** On Blue and Glass the lock comes in and
   fades out (`[effects] logon_animation`).
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
@@ -458,7 +459,9 @@ the screen takes the interface of the last session used at this computer.
 - **Global shortcuts for programs.** A voice chat's push-to-talk works while
   another window has focus. Change its keys on the Keyboard page.
 - **Media keys** for volume, brightness, playback, Wi-Fi, airplane mode, the
-  touchpad and the rotation lock, with an on-screen panel.
+  touchpad and the rotation lock, with an on-screen panel. Playback keys go
+  to the player that started playing last, else the paused one that played
+  last, else a stopped one.
 - **Caps Lock and Num Lock** show "On" or "Off" in the same panel
   (`[osd]`, Settings > Keyboard).
 

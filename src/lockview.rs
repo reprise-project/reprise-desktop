@@ -165,6 +165,8 @@ pub struct Lock {
     pub client: Option<ClientLock>,
     /// `[power] locker` was started for this lock and has yet to take over or time out; the screen is hidden and ignores input.
     pub awaiting: bool,
+    /// The player the now-playing strip shows, as `prepare` last gave it to the screen.
+    pub media: Option<crate::lockmedia::Shown>,
 }
 
 impl Lock {
@@ -658,6 +660,7 @@ fn raise(state: &mut State, side: Side) {
         prev_desktop,
         client: None,
         awaiting: false,
+        media: None,
     });
     crate::lockback::read(state);
 }
@@ -1181,7 +1184,7 @@ fn prepare(state: &mut State, side: Side) {
     let interface = state.config.interface;
     let over_picture = state.lock.back.shows();
     let note = note(state, side);
-    let media = crate::lockmedia::media(state, side);
+    let media = crate::lockmedia::shown(state, side);
     let Some(l) = state.lock.on_mut(side) else {
         return;
     };
@@ -1192,7 +1195,8 @@ fn prepare(state: &mut State, side: Side) {
     l.view.model.purpose = Purpose::Unlock { switch_user, power };
     l.view.model.users[0].note = Some(note);
     l.view.model.over_picture = over_picture;
-    l.view.model.set_media(media);
+    l.view.model.set_media(media.as_ref().map(|m| m.np.clone()));
+    l.media = media;
     l.view.hidden = !l.screen_shown();
     if side == Side::Console && (!power || l.view.hidden) {
         crate::lockpower::close(state);

@@ -54,7 +54,9 @@ fn changed(state: &mut State) {
     };
     state.preview_players.players = players;
     crate::taskpreview::players_changed(state);
-    crate::lockview::update(state);
+    if crate::lockmedia::moved(state) {
+        crate::lockview::update(state);
+    }
     if state.switcher.panel.is_some() {
         state.redraw_switcher();
     }

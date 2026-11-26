@@ -1,6 +1,6 @@
 //! Glass's login screen over the host's wallpaper: a picture tile with a password field and round
 //! arrow, the user tiles, the error screen, the busy spinner, the mark and the power button. The
-//! lock's now-playing strip sits centred over the mark.
+//! lock's now-playing strip sits in a dark box centred over the mark.
 
 use super::Settings;
 use super::panel::{self, Fade, LightBox};
@@ -123,6 +123,9 @@ const SHEEN: [(f64, Px); 4] = [
 const CELL_FOCUS: LightBox = cell(150, (Color::rgb(0xFF, 0xFF, 0xFF), 60));
 const CELL_HOT: LightBox = cell(90, (Color::rgb(0xFF, 0xFF, 0xFF), 34));
 const CELL_PRESSED: LightBox = cell(150, (Color::rgb(0x33, 0x59, 0x8C), 40));
+/// The now-playing strip's box: a faint white outline round a dark wash, so its text reads as
+/// the player's.
+const MEDIA_BOX: LightBox = cell(90, (Color::rgb(0x00, 0x00, 0x00), 80));
 
 const RIM: Px = grey(230.0);
 const RIM_FOCUS: Px = grey(255.0);
@@ -207,7 +210,7 @@ struct Geometry {
     /// The spinner and the busy text, centred together across this row.
     busy: Option<Rect>,
     mark: Rect,
-    /// The now-playing strip.
+    /// The now-playing strip's box.
     media: Option<Rect>,
 }
 
@@ -328,9 +331,11 @@ fn geometry(m: &Logon, theme: &Theme, output: Rect, button_w: i32) -> Geometry {
     g.mark = Rect::new(output.x, bottom - mark_h, output.width, mark_h);
     if m.media.is_some() {
         let (w, h) = media::size(u);
-        let strip = centred(w, g.mark.y - u.len(MEDIA_GAP) - h, h);
-        g.parts.extend(media::buttons(u, strip));
-        g.media = Some(strip);
+        let pad = u.len(media::PAD);
+        let (w, h) = (w + 2 * pad, h + 2 * pad);
+        let frame = centred(w, g.mark.y - u.len(MEDIA_GAP) - h, h);
+        g.parts.extend(media::buttons(u, frame.inset(pad)));
+        g.media = Some(frame);
     }
     g
 }
@@ -421,7 +426,13 @@ pub fn draw_shown(
     let o = l.output;
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
     let ui = ui_px(theme) * s as u32;
-    if let (Some(np), Some(strip), true) = (&m.media, l.media, show != Show::Chrome) {
+    if let (Some(np), Some(frame), true) = (&m.media, l.media, show != Show::Chrome) {
+        let box_at = at(frame);
+        if c.reaches(box_at) {
+            let b = panel::light_box(&MEDIA_BOX, frame.width, frame.height, s);
+            c.blit_over(box_at.x, box_at.y, &b);
+        }
+        let strip = frame.inset(theme.text.len(media::PAD));
         for (r, words) in media::lines(np, theme.text, strip) {
             left_label(c, text, at(r), words, ui, INK, s);
         }

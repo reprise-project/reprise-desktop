@@ -33,9 +33,8 @@ const MESSAGE_MAX: usize = 5;
 const BADGE_GAP: i32 = 6;
 /// The band's wordmark: the product's name, never translated.
 const MARK: &str = "Reprise";
-/// The now-playing panel: its gap under the dialog and its padding round the strip.
+/// The now-playing panel's gap under the dialog.
 const MEDIA_GAP: i32 = 8;
-const MEDIA_PAD: i32 = 6;
 
 /// Every rect of the dialog, design px in the output's space.
 struct Geometry {
@@ -159,7 +158,7 @@ fn laid_out(m: &Logon, theme: &Theme, output: Rect, rows: usize) -> LogonLayout 
     let media = m.media.as_ref().map(|_| {
         let (_, h) = media::size(u);
         let d = g.dialog;
-        let pad = u.len(MEDIA_PAD);
+        let pad = u.len(media::PAD);
         let panel = Rect::new(d.x, d.bottom() + u.len(MEDIA_GAP), d.width, h + 2 * pad);
         parts.extend(media::buttons(u, panel.inset(pad)));
         panel
@@ -344,7 +343,7 @@ pub fn draw(
         let r = at(panel);
         c.fill_rect(r, cs.button_face);
         c.edge_t(r, EdgeStyle::WindowRaised, cs, s);
-        let strip = panel.inset(theme.text.len(MEDIA_PAD));
+        let strip = panel.inset(theme.text.len(media::PAD));
         for (line, words) in media::lines(np, theme.text, strip) {
             let r = text.line_box(at(line), false, px);
             let words = text.ellipsize(words, r.width, false, px);

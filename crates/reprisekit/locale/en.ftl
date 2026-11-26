@@ -140,6 +140,7 @@ logon-logged-on = Logged on
 logon-password-cue = Password
 logon-incorrect = The user name or password is incorrect.
 logon-caps-lock = Caps Lock is on.
+logon-now-playing = Now playing
 logon-power-refused = Other people are logged on to this computer. Shut it down from your own session.
 logon-power-failed = The computer could not be shut down or restarted.
 logon-failed = Reprise could not log you on. The reason is in the system journal.

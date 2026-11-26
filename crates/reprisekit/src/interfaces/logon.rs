@@ -1,7 +1,7 @@
 //! The login screen in the interface in force.
 
 use crate::interface::Interface;
-use crate::logon::{COLUMN, Logon, LogonLayout, Part, Touched};
+use crate::logon::{COLUMN, Logon, LogonLayout, Part, Touched, media};
 use crate::look::Paint;
 use crate::look::widgets::draw_media_button;
 use crate::pointer::lit_of;
@@ -13,11 +13,25 @@ use crate::{blue, classic, glass};
 mod transition;
 pub use transition::{Drawn, Transition};
 
+/// `m` laid out over `output`, without a now-playing strip that does not [fit](media::fits).
 pub fn logon_layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> LogonLayout {
-    match m.interface {
+    let mut l = match m.interface {
         Interface::Classic => classic::logon::layout(m, theme, text, output),
         Interface::Blue => blue::logon::layout(m, theme, text, output),
         Interface::Glass => glass::logon::layout(m, theme, text, output),
+    };
+    if !media::fits(&l) {
+        l.media = None;
+        l.parts.retain(|(p, _)| !matches!(p, Part::Media(_)));
+    }
+    l
+}
+
+/// Drops `m`'s player when its strip does not fit `output`, so Tab and a reader skip the buttons
+/// that don't show. A host calls it before each layout, after giving the model its player.
+pub fn logon_fit_media(m: &mut Logon, theme: &Theme, text: &TextRenderer, output: Rect) {
+    if m.media.is_some() && logon_layout(m, theme, text, output).media.is_none() {
+        m.set_media(None);
     }
 }
 

@@ -1,6 +1,6 @@
 //! The Alt+Tab switcher panel on the scene; `reprisekit::controls::switcher` orders, lays out and draws it.
 //! Minimized windows and open dialogs are entries after the shown ones; a closing dialog leaves the open panel (`switcher_forget`).
-//! The selected window, when its program's player plays or is paused, wears a badge saying which; the media keys press it.
+//! The selected window, when its program's player plays or is paused, wears a badge saying which.
 
 use reprisekit::controls::switcher::{self, SwitcherLayout, ThumbCell};
 use reprisekit::interfaces;
