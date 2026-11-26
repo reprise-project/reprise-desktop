@@ -162,9 +162,10 @@ impl Made {
         left_behind(&mut self.lock(), bus, but)
     }
 
-    /// Whether attempt `id`'s trigger stands; false while a Trigger or Cancel holds the lock.
-    pub fn stands(&self, id: u64) -> bool {
-        self.0.try_lock().is_ok_and(|made| *made == Some(id))
+    /// Whether attempt `id`'s trigger stands, leaving it to stay as another program's would: nothing
+    /// takes it back after this. False while a Trigger or Cancel holds the lock.
+    pub fn hand_over(&self, id: u64) -> bool {
+        (self.0.try_lock()).is_ok_and(|mut made| made.take_if(|n| *n == id).is_some())
     }
 
     #[cfg(test)]

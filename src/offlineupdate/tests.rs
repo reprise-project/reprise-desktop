@@ -248,6 +248,21 @@ fn a_left_trigger_that_will_not_come_back_is_told_when_the_next_action_fails() {
 }
 
 #[test]
+fn a_trigger_handed_over_after_a_late_action_is_taken_back_by_nothing() {
+    let fake = Fake::new(true, Ok(()));
+    let made = Made::default();
+    made.set(Some(1));
+    assert!(!made.hand_over(2), "not attempt 2's");
+    assert!(made.hand_over(1));
+    assert!(made.take_back(&*fake, None), "Log Off");
+    let next = around(&*fake, &made, 2, Updates::Leave, false, &|| true, || {
+        None::<()>
+    });
+    assert_eq!(next, Ok(None));
+    assert!(fake.calls().is_empty(), "asked nothing, cancelled nothing");
+}
+
+#[test]
 fn the_session_ending_during_a_shutdown_keeps_a_trigger_an_attempt_left() {
     let fake = Fake::new(false, Ok(()));
     let made = Made::default();
