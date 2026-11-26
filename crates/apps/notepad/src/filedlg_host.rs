@@ -37,9 +37,17 @@ fn encoding_row(format: Format) -> Form {
     ])
 }
 
-/// Where a fresh dialog starts when there is no current path: the process's working directory, or `/` if that fails.
+/// Where a fresh dialog starts when there is no current path: the Documents folder.
 pub(crate) fn default_dir() -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    start_in(reprisefs::places::user_dir("DOCUMENTS", "Documents"), home)
+}
+
+/// `documents` when it is a folder, else `home`, else `/`.
+pub(crate) fn start_in(documents: Option<PathBuf>, home: Option<PathBuf>) -> PathBuf {
+    (documents.filter(|d| d.is_dir()))
+        .or(home)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 impl Notepad {

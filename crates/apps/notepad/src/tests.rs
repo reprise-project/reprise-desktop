@@ -1692,6 +1692,17 @@ fn save_as_adds_the_text_types_extension_unless_all_files_or_quoted() {
 }
 
 #[test]
+fn an_untitled_documents_dialogs_start_in_documents_else_home() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().to_path_buf();
+    let documents = home.join("Documents");
+    let start = || filedlg_host::start_in(Some(documents.clone()), Some(home.clone()));
+    assert_eq!(start(), home, "no Documents folder yet");
+    std::fs::create_dir(&documents).expect("mkdir");
+    assert_eq!(start(), documents);
+}
+
+#[test]
 fn save_as_onto_an_existing_file_asks_before_replacing() {
     let dir = std::env::temp_dir();
     let taken = dir.join(format!("reprise-replace-{}.txt", std::process::id()));

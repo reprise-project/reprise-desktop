@@ -111,7 +111,8 @@ bar. A right-click on the text (or Shift+F10) opens the edit commands.
 Ctrl+Z steps back through up to 1000 edits, Ctrl+Y redoes. It opens UTF-8
 files, with or without a byte order mark, and UTF-16 LE and BE files with
 one, and saves each back in its encoding and line endings; Save As has an
-Encoding box, and adds `.txt` to a name without an extension while Text
+Encoding box. For an Untitled document Open and Save As start in Documents.
+Save As adds `.txt` to a name without an extension while Text
 Documents is the type (put the name in quotes to save it as typed). A save
 never leaves a file half written. Print is greyed out for now. Notepad has
 always had its priorities.
