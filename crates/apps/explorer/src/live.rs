@@ -129,6 +129,15 @@ impl Explorer {
         }
     }
 
+    /// The view drawn in mode `m`, its icons and thumbnails asked for at that mode's sizes.
+    pub(crate) fn show_mode(&mut self, m: Mode, ctx: &mut Ctx) {
+        self.sv.set_mode(m);
+        self.draw_list_icons(ctx);
+        // Thumbnails and Tiles are the modes that show one, so switching into either is when
+        // the decode is asked for.
+        self.request_thumbs(ctx.icons.scale());
+    }
+
     /// The entries wear their theme icons at every size the view now draws.
     pub(crate) fn draw_list_icons(&mut self, ctx: &mut Ctx) {
         let drawn = shellview::drawn_sizes(self.sv.mode, shellview::list_icon_px(ctx.theme.text));

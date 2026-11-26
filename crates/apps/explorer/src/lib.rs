@@ -1006,9 +1006,13 @@ impl Explorer {
             connect,
             alone,
             search,
+            tabs,
         } = start;
         let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
         let mut ex = build(place.clone(), ctx);
+        if let Some(tabs) = tabs {
+            ex.restore_tabs(tabs, ctx);
+        }
         ex.alone = alone.is_some();
         ex.selecting = (!select.is_empty()).then(|| (place.clone(), select));
         if let Some(job) = check {
@@ -2169,16 +2173,17 @@ impl App for Lazy {
 }
 
 impl repriseapp::Extended for Lazy {
-    /// The folder window's place; a file job or sheet started alone has none.
+    /// The folder window's tabs, or its place when it has one tab; a file job or sheet started
+    /// alone has none.
     fn reopen(&self, win: WinId) -> Option<String> {
         if win != MAIN || self.start.alone.is_some() {
             return None;
         }
-        reopen_arg(
-            self.inner
-                .as_ref()
-                .map_or(&self.start.place, |ex| &ex.place),
-        )
+        match (&self.inner, &self.start.tabs) {
+            (Some(ex), _) => ex.restored().arg(),
+            (None, Some(tabs)) => tabs.arg(),
+            (None, None) => reopen_arg(&self.start.place),
+        }
     }
 
     fn hidden(&self) -> bool {
@@ -2335,6 +2340,8 @@ struct Start {
     alone: Option<Alone>,
     /// `--search`: the keyboard starts in the Search field.
     search: bool,
+    /// `--tabs=`: the window's tabs at session restore, `place` the shown one's.
+    tabs: Option<tabs::Restored>,
 }
 
 /// A start that shows one box, or runs one file job, without a folder window.
@@ -2395,6 +2402,21 @@ fn put_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<Alone>
 fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     let mut args = args.into_iter();
     let first = args.next();
+    if let Some(tabs) = first
+        .as_ref()
+        .and_then(|a| tabs::Restored::parse(a.to_str()?))
+    {
+        let place = tabs.list[tabs.open].0.clone();
+        return Start {
+            dir: place.path(),
+            place,
+            select: Vec::new(),
+            connect: None,
+            alone: None,
+            search: false,
+            tabs: Some(tabs),
+        };
+    }
     if first.as_deref() == Some("--search".as_ref()) {
         return Start {
             search: true,
@@ -2413,6 +2435,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             connect: Some(addr.uri()),
             alone: None,
             search: false,
+            tabs: None,
         };
     }
     let alone = match first.as_ref().and_then(|a| a.to_str()) {
@@ -2458,6 +2481,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             connect: None,
             alone: Some(alone),
             search: false,
+            tabs: None,
         };
     }
     let (place, dir, select) = if first.as_deref() == Some("--select".as_ref()) {
@@ -2492,12 +2516,13 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
         connect: None,
         alone: None,
         search: false,
+        tabs: None,
     }
 }
 
 /// The PLACE [`parse_args`] opens `p` again from: a network server opens the Network list, as
 /// connecting at login could ask for a password. None for a folder whose path is not UTF-8.
-fn reopen_arg(p: &Place) -> Option<String> {
+pub(crate) fn reopen_arg(p: &Place) -> Option<String> {
     match p {
         Place::Computer => Some("Computer".into()),
         Place::RecycleBin => Some("Recycle Bin".into()),

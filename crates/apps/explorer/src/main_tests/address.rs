@@ -101,6 +101,7 @@ fn a_blink_redraws_only_while_the_address_field_has_the_caret() {
             alone: None,
             connect: None,
             search: false,
+            tabs: None,
         },
         inner: Some(ex),
         units: TextUnits::ONE,

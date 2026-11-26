@@ -397,13 +397,9 @@ impl Explorer {
                 _ => Reply::none(),
             },
             Command::Mode(m) => {
-                self.sv.set_mode(m);
-                self.draw_list_icons(ctx);
+                self.show_mode(m, ctx);
                 self.settings.mode = mode_name(m).to_string();
                 self.settings_dirty = true;
-                // Thumbnails and Tiles are the modes that show one, so
-                // switching into either is when the decode is asked for.
-                self.request_thumbs(ctx.icons.scale());
                 Reply::redraw()
             }
             Command::Sort(col) => {

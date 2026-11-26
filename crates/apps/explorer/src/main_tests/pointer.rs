@@ -317,6 +317,7 @@ fn a_covered_window_lets_go_of_its_marquee_and_column_divider() {
             alone: None,
             connect: None,
             search: false,
+            tabs: None,
         },
         inner: Some(ex),
         units: TextUnits::ONE,
