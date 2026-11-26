@@ -439,7 +439,6 @@ impl State {
             start_panel,
             app_index,
             icons,
-            start_pictures,
             ..
         } = self;
         let Some(v) = start_panel.as_mut() else {
@@ -476,9 +475,11 @@ impl State {
             let px = v.model.icon_px(SMALL_ICON, scale);
             v.model.jump = jump_sections(icons, a, files, px);
         }
-        let px = PICTURE * scale;
-        v.model.user_picture =
-            (start_pictures.shown(px)).or_else(|| unread(icons, "avatar-default", px));
+        let picture = self.start_user_picture(PICTURE * scale);
+        let Some(v) = self.start_panel.as_mut() else {
+            return;
+        };
+        v.model.user_picture = picture;
         let mut results = (v.model.results.iter()).flat_map(|g| &g.rows);
         if v.model.mode() == Mode::Search && (file || results.any(|r| blank(&r.icon))) {
             self.start_panel_show_results();
