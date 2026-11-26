@@ -180,8 +180,8 @@ radiobutton radio:checked:disabled, radiobutton radio:indeterminate:disabled,
 checkbutton check:active, radiobutton radio:active,
 checkbutton check:checked:active, checkbutton check:indeterminate:active,
 radiobutton radio:checked:active, radiobutton radio:indeterminate:active {
-  min-width: 13px;
-  min-height: 13px;
+  min-width: %check_px%;
+  min-height: %check_px%;
   border: none;
   border-radius: 0;
   padding: 0;
@@ -205,23 +205,23 @@ checkbutton check:disabled { background-image: %check_off_greyed%; }
 checkbutton check:checked:disabled { background-image: %check_on_greyed%; }
 checkbutton check:indeterminate:disabled { background-image: %check_mixed%; }
 radiobutton radio, radiobutton radio:hover, radiobutton radio:backdrop, radiobutton radio:active {
-  min-width: 12px;
-  min-height: 12px;
+  min-width: %radio_px%;
+  min-height: %radio_px%;
   background-image: %radio_off%;
 }
 radiobutton radio:checked, radiobutton radio:checked:hover, radiobutton radio:checked:backdrop,
 radiobutton radio:checked:active, radiobutton radio:indeterminate, radiobutton radio:indeterminate:hover,
 radiobutton radio:indeterminate:backdrop, radiobutton radio:indeterminate:active {
-  min-width: 12px;
-  min-height: 12px;
+  min-width: %radio_px%;
+  min-height: %radio_px%;
   background-image: %radio_on%;
 }
 radiobutton radio:disabled { background-image: %radio_off_greyed%; }
 radiobutton radio:checked:disabled, radiobutton radio:indeterminate:disabled { background-image: %radio_on_greyed%; }
 treeview.view check { background-image: %list_check_off%; }
 treeview.view check:checked { background-image: %list_check_on%; }
-treeview.view radio { min-width: 12px; min-height: 12px; background-image: %radio_off%; }
-treeview.view radio:checked { min-width: 12px; min-height: 12px; background-image: %radio_on%; }
+treeview.view radio { min-width: %radio_px%; min-height: %radio_px%; background-image: %radio_off%; }
+treeview.view radio:checked { min-width: %radio_px%; min-height: %radio_px%; background-image: %radio_on%; }
 checkbutton.text-button, radiobutton.text-button { outline-color: @theme_fg_color; outline-offset: 0; }
 
 scrollbar, scrollbar:backdrop {

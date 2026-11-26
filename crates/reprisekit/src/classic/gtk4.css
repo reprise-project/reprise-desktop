@@ -179,8 +179,8 @@ popover.menu check:checked, popover.menu radio:checked, popover.menu check:activ
 check:backdrop, radio:backdrop, check:checked:backdrop, radio:checked:backdrop,
 check:indeterminate:backdrop, radio:indeterminate:backdrop, check:backdrop:disabled, radio:backdrop:disabled,
 check:checked:backdrop:disabled, radio:checked:backdrop:disabled {
-  min-width: 13px;
-  min-height: 13px;
+  min-width: %check_px%;
+  min-height: %check_px%;
   border: none;
   border-radius: 0;
   padding: 0;
@@ -206,8 +206,8 @@ radio, radio:hover, radio:active, radio:checked, radio:checked:hover, radio:chec
 radio:disabled, radio:checked:disabled, popover.menu radio, popover.menu radio:checked,
 radio:backdrop, radio:checked:backdrop, radio:indeterminate:backdrop, radio:backdrop:disabled,
 radio:checked:backdrop:disabled {
-  min-width: 12px;
-  min-height: 12px;
+  min-width: %radio_px%;
+  min-height: %radio_px%;
 }
 radio, radio:hover, radio:active, radio:backdrop { background-image: %radio_off%; }
 radio:checked, radio:checked:hover, radio:checked:active,
