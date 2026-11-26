@@ -8,6 +8,7 @@ pub mod icons;
 pub mod lockkey;
 pub mod logo;
 pub mod neticon;
+pub mod noteicon;
 pub mod powericon;
 pub mod printbadge;
 pub mod signalbars;
