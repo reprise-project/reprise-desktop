@@ -42,6 +42,7 @@ status-ready = Ready
 status-running = Running
 status-disabled = Disabled
 status-failed = Failed
+status-stopped = Stopped
 
 ## A schedule in words; $time is a clock time, $days weekday names
 schedule-daily = Every day at { $time }
