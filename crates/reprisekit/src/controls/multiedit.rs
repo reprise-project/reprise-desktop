@@ -47,7 +47,8 @@ pub struct FindOpts {
 }
 
 /// Byte length of `needle` if it matches at byte `i` of `hay`; compared per char because case
-/// folding can change byte lengths.
+/// folding can change byte lengths. A match that starts or ends inside a grapheme cluster is no
+/// match, so a plain thumb is not found in a skin-toned one.
 fn match_at(hay: &str, i: usize, needle: &str, match_case: bool) -> Option<usize> {
     let mut h = hay[i..].chars();
     let mut used = 0;
@@ -63,7 +64,8 @@ fn match_at(hay: &str, i: usize, needle: &str, match_case: bool) -> Option<usize
         }
         used += hc.len_utf8();
     }
-    Some(used)
+    (words::is_cluster_boundary(hay, i) && words::is_cluster_boundary(hay, i + used))
+        .then_some(used)
 }
 
 /// The first match at or after `from` when `o.down`, else the last one before it. `None` is a miss.
@@ -555,10 +557,7 @@ impl MultiEdit {
     fn clamp(&self, p: Pos) -> Pos {
         let line = p.line.min(self.lines.len() - 1);
         let text = &self.lines[line];
-        let mut col = p.col.min(text.len());
-        while !text.is_char_boundary(col) {
-            col -= 1;
-        }
+        let col = words::cluster_floor(text, p.col);
         Pos { line, col }
     }
 
