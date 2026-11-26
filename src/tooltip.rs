@@ -6,7 +6,8 @@ use std::time::Duration;
 use reprisekit::classic::frame::{CaptionButton, FrameHit};
 use reprisekit::controls::tooltip::{
     INFO_BELOW_POINTER, INFO_BELOW_ROW, SHOW_MS, balloon_size, draw_balloon_tip, draw_info_tip,
-    draw_tip, info_size, place, place_balloon, place_below, place_beside, task_tip, tip_size,
+    draw_tip, info_size, place, place_balloon, place_below, place_beside, shadow_room, task_tip,
+    tip_size,
 };
 use reprisekit::startpanel::Spot;
 use reprisescene::{Input, TreeId};
@@ -376,16 +377,17 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
         Target::Caption(w, b) => caption_button_rect(state, w, b),
         _ => None,
     };
+    let room = shadow_room(base, screen);
     let (canvas, (x, y)) = match tip {
         Tip::Label(label) => {
             let size = tip_size(text, base, label);
             let at = if let Some(button) = caption {
-                place_caption(cursor, size, screen, button, state.snap_picker.is_shown())
+                place_caption(cursor, size, room, button, state.snap_picker.is_shown())
             } else if beside {
                 let right = p.edge == reprisekit::taskbar::Edge::Left;
-                place_beside(cursor, p.screen_side(), right, size, screen)
+                place_beside(cursor, p.screen_side(), right, size, room)
             } else {
-                place(cursor, size, screen, below)
+                place(cursor, size, room, below)
             };
             (draw_tip(&theme, text.for_output(theme.scale), label), at)
         }
@@ -408,14 +410,14 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
             };
             (
                 draw_info_tip(&theme, text.for_output(theme.scale), body),
-                place_below(anchor, info_size(text, base, body), screen),
+                place_below(anchor, info_size(text, base, body), room),
             )
         }
         Tip::Icon(lines) => {
             use reprisekit::controls::infotip;
             (
                 infotip::draw(&theme, text.for_output(theme.scale), lines, scale),
-                infotip::place(cursor, infotip::size(text, base, lines), screen),
+                infotip::place(cursor, infotip::size(text, base, lines), room),
             )
         }
     };

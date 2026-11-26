@@ -1532,3 +1532,24 @@ fn balloon_picture_pins() {
     }
     crate::pins::check("controls/balloon_pictures", &got);
 }
+
+#[test]
+fn a_form_tip_at_the_window_corner_keeps_its_shadow_inside() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let base = crate::interfaces::theme_for(Interface::Glass);
+    let text = TextRenderer::load(&base.fonts);
+    for s in [1, 2] {
+        let mut c = Canvas::with_scale(400, 200, s);
+        c.report_tip(crate::raster::ReportedTip {
+            text: "A tip that runs into the window's right edge".into(),
+            at: (395, 190),
+        });
+        let r = crate::controls::form::draw_tip(&mut c, &text, &base).expect("the tip is reported");
+        assert_eq!(
+            (r.right(), r.bottom()),
+            (399, 200),
+            "x{s}: the shadow ends a pixel clear of the right edge, on the bottom edge"
+        );
+    }
+}

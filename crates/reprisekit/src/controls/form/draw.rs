@@ -576,8 +576,8 @@ pub(super) fn ellipsized<'a>(
     out.into()
 }
 
-/// The tip a form drawn into `c` reported ([`Canvas::report_tip`]), kept inside `c` and wrapped
-/// to its width; the rect it covers, its shadow included. `theme` is the one the form draws in.
+/// The tip a form drawn into `c` reported ([`Canvas::report_tip`]), kept inside `c` with its
+/// shadow and wrapped to its width; the rect it covers, its shadow included. `theme` is the one the form draws in.
 /// The program runtime and the compositor's dialogs call it after the window's draw, so it lands
 /// over everything.
 pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme) -> Option<Rect> {
@@ -586,12 +586,12 @@ pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme) -> Option<Re
         at: (x, y),
     } = c.take_tip()?;
     let s = theme.scale.max(1);
-    let bounds = c.bounds();
+    let room = tooltip::shadow_room(theme, c.bounds());
     let frame = tooltip::tip_size(text, theme, "").0;
-    let lines = crate::text::wrap(text, &full, bounds.width - 2 - frame, theme.fonts.size_px);
+    let lines = crate::text::wrap(text, &full, room.width - 2 - frame, theme.fonts.size_px);
     let label = lines.join("\n");
     let size = tooltip::tip_size(text, theme, &label);
-    let at = tooltip::place((x * s, y * s), size, bounds, true);
+    let at = tooltip::place((x * s, y * s), size, room, true);
     let tip = tooltip::draw_tip_at(theme, text, &label, c.scale());
     c.blit_over(at.0, at.1, &tip);
     Some(Rect::new(at.0, at.1, tip.width as i32, tip.height as i32))

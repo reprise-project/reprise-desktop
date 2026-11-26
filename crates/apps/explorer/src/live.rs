@@ -507,7 +507,8 @@ impl Explorer {
         } else {
             reprisekit::controls::infotip::size(&ctx.text, &ctx.theme, &lines)
         };
-        let at = reprisekit::controls::infotip::place(h.at, size, self.layout(ctx).client);
+        let room = reprisekit::controls::tooltip::shadow_room(&ctx.theme, self.layout(ctx).client);
+        let at = reprisekit::controls::infotip::place(h.at, size, room);
         self.tip = Some(Tip { at, lines, plain });
     }
 
