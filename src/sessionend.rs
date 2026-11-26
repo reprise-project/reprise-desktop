@@ -253,12 +253,11 @@ fn check(
     }
 }
 
-/// [`refuse`] a session end [`check`] stopped, or only tell when it `joins` one under way, which
-/// goes on. Once that end went on (the screen may be fading out) no box opens: the refusal is told
-/// when the session comes back ([`back`]).
+/// [`refuse`] a session end [`check`] stopped, or only tell when it `joins` one under way; once
+/// that end went on, the box waits for the session to come back ([`back`]).
 fn turned_down(state: &mut State, goal: Goal, joins: bool, why: &Refused) {
     match joins {
-        true if state.ending.is_none() && crate::crash::is_ending() => {
+        true if state.ending.is_none() && state.powering.went_on => {
             log::warn!("session end: {goal:?} refused after the end it joined went on: {why:?}");
             state.powering.untold = Some((Act::of(goal), why.clone()));
         }
@@ -395,6 +394,7 @@ fn start(
         if critical { " (critical battery)" } else { "" }
     );
     state.session.kept = false;
+    state.powering.went_on = false;
     crate::session::end(state);
     state.session.kept = true;
     if state.locked_for(origin) {
@@ -551,6 +551,7 @@ fn cancel(state: &mut State) {
         return;
     };
     log::info!("session end: cancelled");
+    state.powering.went_on = false;
     if let Some(stop) = e.stop.take() {
         let _ = stop.try_send(());
     }
@@ -609,6 +610,7 @@ fn go_on(
     critical: bool,
 ) {
     crate::crash::ending();
+    state.powering.went_on = true;
     state.powering.give_up_lingering();
     state.event_sound(repriseaudio::sounds::Event::Logout);
     let how = Run {
@@ -859,6 +861,8 @@ pub struct Powering {
     lingering: Vec<u64>,
     /// A refusal held back while the session ended ([`turned_down`]).
     untold: Option<(Act, Refused)>,
+    /// A session end went on past its programs ([`go_on`]) and the desktop has not come back.
+    went_on: bool,
 }
 
 impl Powering {
@@ -1339,6 +1343,7 @@ fn resume(state: &mut State, act: Act) {
 
 /// Bring the desktop back, with the refusal of an end that joined one gone on ([`turned_down`]).
 fn back(state: &mut State) {
+    state.powering.went_on = false;
     crate::sessionfade::restore(state);
     if let Some((act, why)) = state.powering.untold.take() {
         tell(state, act, &why);
@@ -2527,7 +2532,7 @@ mod tests {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         let open = dialogs(&h);
-        crate::crash::ending();
+        h.state.powering.went_on = true;
         turned_down(&mut h.state, Goal::TurnOff, true, &Refused::NotAllowed);
         assert_eq!(dialogs(&h), open, "no box over the fade");
         resume(&mut h.state, Act::Restart);
@@ -2541,6 +2546,34 @@ mod tests {
         );
         resume(&mut h.state, Act::Restart);
         assert_eq!(dialogs(&h), open + 1, "told once");
+    }
+
+    #[test]
+    fn a_refusal_for_an_end_joining_one_that_was_cancelled_shows_at_once() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.ending = Some(Ending {
+            goal: Goal::LogOff,
+            cmd: None,
+            aim: Aim::Clear,
+            updates: Updates::Leave,
+            holders: None,
+            stop: None,
+            asked_portal: false,
+            timer: None,
+            reports: None,
+            mode: Mode::Waiting,
+            password: Password::No,
+            unasked: Vec::new(),
+        });
+        let open = dialogs(&h);
+        // A late refusal brings the desktop back with the crash flag still set.
+        crate::crash::ending();
+        cancel(&mut h.state);
+        turned_down(&mut h.state, Goal::TurnOff, true, &Refused::NotAllowed);
+        crate::crash::not_ending();
+        assert_eq!(dialogs(&h), open + 1, "the refusal's box");
+        assert!(h.state.powering.untold.is_none());
     }
 
     #[test]
