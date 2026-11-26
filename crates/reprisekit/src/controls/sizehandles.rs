@@ -43,11 +43,13 @@ impl Handle {
     }
 }
 
-/// A drag on a handle: where it started and the sheet's size then and now, in sheet px.
+/// A drag on a handle: where it started and where the pointer is now, in window px, and the
+/// sheet's size then and now, in sheet px.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Drag {
     pub handle: Handle,
     pub start: (i32, i32),
+    pub at: (i32, i32),
     pub from: (i32, i32),
     pub size: (i32, i32),
 }
@@ -57,14 +59,50 @@ impl Drag {
         Drag {
             handle,
             start,
+            at: start,
             from,
             size: from,
         }
     }
 
+    /// How far the pointer lies past `view`'s edges, in window px, along the axes the handle
+    /// moves: negative past the left or top, 0 inside.
+    pub fn past(&self, view: Rect) -> (i32, i32) {
+        let out = |at: i32, lo: i32, hi: i32| {
+            if at < lo {
+                at - lo
+            } else if at >= hi {
+                at - hi + 1
+            } else {
+                0
+            }
+        };
+        let (mx, my) = self.handle.moves();
+        (
+            if mx {
+                out(self.at.0, view.x, view.right())
+            } else {
+                0
+            },
+            if my {
+                out(self.at.1, view.y, view.bottom())
+            } else {
+                0
+            },
+        )
+    }
+
+    /// The sheet scrolled `by` window px under the resting pointer, as when the view follows a
+    /// drag past its edge: the size follows as [`Drag::motion`] does; true when it changed.
+    pub fn scrolled(&mut self, by: (i32, i32), unit: i32, max: i32) -> bool {
+        self.start = (self.start.0 - by.0, self.start.1 - by.1);
+        self.motion(self.at, unit, max)
+    }
+
     /// Follows the pointer to `at`, a sheet px every `unit` window px, each side held to
     /// `1..=max`; true when the size changed.
     pub fn motion(&mut self, at: (i32, i32), unit: i32, max: i32) -> bool {
+        self.at = at;
         let unit = unit.max(1);
         let side = |from: i32, d: i32| (from + (2 * d + unit).div_euclid(2 * unit)).clamp(1, max);
         let (mx, my) = self.handle.moves();
@@ -253,6 +291,25 @@ mod tests {
         assert!(d.resized());
         d.motion((45, 25), 1, 100);
         assert!(!d.resized(), "back where it started");
+    }
+
+    #[test]
+    fn a_drag_past_the_view_reads_how_far_along_its_axes_and_follows_a_scroll() {
+        let view = Rect::new(10, 10, 100, 80);
+        let mut d = Drag::new(Handle::Right, (60, 40), (50, 30));
+        d.motion((130, 200), 1, 1000);
+        assert_eq!(d.past(view), (21, 0), "the right handle ignores the height");
+        let mut c = Drag::new(Handle::Corner, (60, 40), (50, 30));
+        c.motion((5, 95), 1, 1000);
+        assert_eq!(c.past(view), (-5, 6));
+        c.motion((50, 50), 1, 1000);
+        assert_eq!(c.past(view), (0, 0));
+        assert!(d.scrolled((16, 0), 2, 1000));
+        assert_eq!(
+            d.size,
+            (50 + (130 + 16 - 60) / 2, 30),
+            "16 px scrolled under a resting pointer count as 16 px moved"
+        );
     }
 
     #[test]

@@ -197,12 +197,13 @@ impl Paint {
         }
     }
 
-    /// The scrolled extent: the zoomed picture with its margin on each side.
+    /// The scrolled extent: the zoomed picture, or the size a sizing drag would give it where that
+    /// is larger, with its margin on each side.
     pub(crate) fn extent(&self) -> (i32, i32) {
-        (
-            self.doc.img.w * self.zoom + 2 * MARGIN,
-            self.doc.img.h * self.zoom + 2 * MARGIN,
-        )
+        let (w, h) = self.sizing.map_or((self.doc.img.w, self.doc.img.h), |d| {
+            (d.size.0.max(self.doc.img.w), d.size.1.max(self.doc.img.h))
+        });
+        (w * self.zoom + 2 * MARGIN, h * self.zoom + 2 * MARGIN)
     }
 
     /// The picture pixel under window point `(x, y)`, off the picture too.
