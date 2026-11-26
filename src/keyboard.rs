@@ -249,6 +249,7 @@ impl State {
             self.stop_field_repeat();
         } else {
             self.media_key_up(keycode);
+            crate::peek::key_up(self);
             if (self.key_input.field_repeat.as_ref()).is_some_and(|r| r.code == code) {
                 self.stop_field_repeat();
             }
@@ -790,6 +791,7 @@ impl State {
                 }
             }
             Action::ShowDesktop => self.toggle_show_desktop(),
+            Action::PeekDesktop => crate::peek::key_down(self),
             Action::TaskItem(n) => self.task_item_key(*n),
             Action::AlwaysOnTop => {
                 if let Some(w) = self.focused

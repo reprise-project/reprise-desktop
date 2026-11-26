@@ -32,6 +32,8 @@ pub enum Action {
     TurnOff,
     WindowMenu,
     ShowDesktop,
+    /// Look through every window while the bind is held (`peek::key_down`).
+    PeekDesktop,
     /// Task button `n` (from 0) of the row on the pointer's output, as a click on it.
     TaskItem(usize),
     /// Hide or show the focused window's border and caption; it keeps its outer rect.
@@ -158,6 +160,7 @@ pub(crate) const NAMED_ACTIONS: &[(&str, Action)] = &[
     ("turnoff", Action::TurnOff),
     ("windowmenu", Action::WindowMenu),
     ("showdesktop", Action::ShowDesktop),
+    ("peek-desktop", Action::PeekDesktop),
     ("toggleframe", Action::ToggleFrame),
     ("alwaysontop", Action::AlwaysOnTop),
     ("mini-view", Action::MiniView),
