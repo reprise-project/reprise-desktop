@@ -190,7 +190,11 @@ fn a_pointer_click_on_a_column_title_sorts_by_it_and_a_second_flips_in_every_loo
         );
         assert!(release(&mut d, &mut ctx, title).redraw, "{i:?}");
         assert_eq!(names(&d), ["notes.txt", "photo.jpg", "video.mkv"], "{i:?}");
-        assert_eq!(d.list.view.sort, Some((model::NAME, false)), "{i:?}");
+        assert_eq!(
+            d.list.view.sort,
+            Some((model::NAME, true)),
+            "{i:?}: Name A to Z draws the rising arrow"
+        );
         press(&mut d, &mut ctx, title);
         release(&mut d, &mut ctx, title);
         assert_eq!(
@@ -198,7 +202,7 @@ fn a_pointer_click_on_a_column_title_sorts_by_it_and_a_second_flips_in_every_loo
             ["video.mkv", "photo.jpg", "notes.txt"],
             "{i:?}: a second click flips"
         );
-        assert_eq!(d.list.view.sort, Some((model::NAME, true)), "{i:?}");
+        assert_eq!(d.list.view.sort, Some((model::NAME, false)), "{i:?}");
     }
 }
 
@@ -253,7 +257,7 @@ fn a_header_click_sorts_and_a_second_flips() {
     let shares: Vec<f64> = d.list.view.rows.lines.iter().map(|l| l.share).collect();
     assert_eq!(shares, [8.0 / 104.0, 32.0 / 104.0, 64.0 / 104.0]);
     assert_eq!(d.list.view.rows.bar(2, SHARE), Some(64.0 / 104.0));
-    assert_eq!(d.list.view.rows.bar(2, SIZE), None);
+    assert_eq!(d.list.view.rows.bar(2, model::SIZE), None);
 }
 
 /// Move to Recycle Bin, with the confirmation off, lands in a throwaway home trash and takes

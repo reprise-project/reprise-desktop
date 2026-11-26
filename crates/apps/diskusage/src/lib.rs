@@ -8,7 +8,7 @@ reprisekit::strings!("diskusage");
 
 mod model;
 
-use model::{Line, SHARE, SIZE};
+use model::{Line, SHARE};
 use repriseapp::asks::{Answer, Asks};
 use repriseapp::ctxmenu::{Popup, Step, item};
 use repriseapp::detailslist::{List, Press};
@@ -154,7 +154,7 @@ impl DiskUsage {
             .collect();
         let mut list = List::new(columns);
         list.view.frame = true;
-        list.view.sort = Some((SIZE, false));
+        list.view.sort = Some(model::arrow(Sort::Size, false));
         let mut form = Form::new(buttons());
         form.set_focus(None);
         DiskUsage {
@@ -488,7 +488,7 @@ impl DiskUsage {
                 }
                 let flipped = self.sort.0 == by && !self.sort.1;
                 self.sort = (by, flipped);
-                self.list.view.sort = Some((model::col_of(by), flipped));
+                self.list.view.sort = Some(model::arrow(by, flipped));
                 self.sync();
                 Reply::redraw()
             }
