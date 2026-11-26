@@ -1472,8 +1472,8 @@ mod tests {
 
     const KEY_BACKSPACE: u32 = 14;
 
-    fn run_box_text(h: &crate::harness::Harness) -> String {
-        let d = &h.state.dialogs.views[0].dialog;
+    fn run_box_text(s: &State) -> String {
+        let d = &s.dialogs.views[0].dialog;
         d.field
             .as_ref()
             .expect("the Run field")
@@ -1490,18 +1490,11 @@ mod tests {
         });
     }
 
-    /// Hold `code` until `done` holds (or 5 s pass), then release it.
-    fn hold(
-        h: &mut crate::harness::Harness,
-        code: u32,
-        done: impl Fn(&crate::harness::Harness) -> bool,
-    ) {
+    /// Hold `code` until `done` holds, then release it. A turn fires the repeat timer at most
+    /// once and `done` is checked after each, so no repeat lands past the one that reached it.
+    fn hold(h: &mut crate::harness::Harness, code: u32, done: impl Fn(&State) -> bool) {
         h.key(code, true);
-        let end = std::time::Instant::now() + Duration::from_secs(5);
-        while !done(h) {
-            assert!(std::time::Instant::now() < end, "the key repeats");
-            h.run_for(5);
-        }
+        h.until("the key repeats", done);
         h.key(code, false);
     }
 
@@ -1515,10 +1508,10 @@ mod tests {
         for _ in 0..6 {
             tap(&mut h, KEY_A);
         }
-        assert_eq!(run_box_text(&h), "aaaaaa");
-        hold(&mut h, KEY_BACKSPACE, |h| run_box_text(h).len() <= 2);
+        assert_eq!(run_box_text(&h.state), "aaaaaa");
+        hold(&mut h, KEY_BACKSPACE, |s| run_box_text(s).len() <= 2);
         assert_eq!(
-            run_box_text(&h),
+            run_box_text(&h.state),
             "aa",
             "the press and three repeats take four"
         );
@@ -1527,7 +1520,7 @@ mod tests {
             "the release ends it"
         );
         h.run_for(200);
-        assert_eq!(run_box_text(&h), "aa");
+        assert_eq!(run_box_text(&h.state), "aa");
     }
 
     #[test]
@@ -1548,7 +1541,7 @@ mod tests {
         });
         assert!(h.state.key_input.field_repeat.is_none());
         h.run_for(500);
-        assert_eq!(run_box_text(&h), "aaa", "only the press deletes");
+        assert_eq!(run_box_text(&h.state), "aaa", "only the press deletes");
     }
 
     #[test]
@@ -1598,10 +1591,9 @@ mod tests {
         h.state.config.keyboard.repeat_rate = 25;
         h.state.lock.helpers.finger = |_| None;
         crate::lockview::lock(&mut h.state);
-        let field =
-            |h: &crate::harness::Harness| h.state.lock.console.as_ref().unwrap().input().to_owned();
+        let field = |s: &State| s.lock.console.as_ref().unwrap().input().to_owned();
         h.state.lock.console.as_mut().unwrap().set_input("secret");
-        hold(&mut h, KEY_BACKSPACE, |h| field(h).is_empty());
+        hold(&mut h, KEY_BACKSPACE, |s| field(s).is_empty());
         assert!(h.state.console_locked());
         h.key(KEY_A, true);
         assert!(
