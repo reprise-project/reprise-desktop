@@ -29,17 +29,28 @@ pub(crate) fn bounded(size: (i32, i32), bounds: Option<(i32, i32)>) -> (i32, i32
     }
 }
 
-/// The size a window of `now` takes for limits `min` and `max`: a fixed window (`max`) its
-/// size; a resizable one at its program's pick the size the program picks now (`natural`),
-/// else its own size; either no smaller than `min`.
+/// The size a window of `now` takes for limits `min` and `max`, and the size it was given that
+/// `min` holds it above: a fixed window (`max`) its size; a resizable one at its program's pick
+/// the size the program picks now (`natural`); any other the size the user or the compositor
+/// gave it (`given`, else `now`). Each is no smaller than `min`, and a given size `min` outgrew
+/// comes back once `min` drops.
 pub(crate) fn regrown(
     now: (i32, i32),
+    given: Option<(i32, i32)>,
     min: (i32, i32),
     max: Option<(i32, i32)>,
     natural: Option<(i32, i32)>,
-) -> (i32, i32) {
-    let size = natural.unwrap_or(now);
-    max.unwrap_or((size.0.max(min.0), size.1.max(min.1)))
+) -> ((i32, i32), Option<(i32, i32)>) {
+    let grown = |(w, h): (i32, i32)| (w.max(min.0), h.max(min.1));
+    match (max, natural) {
+        (Some(max), _) => (max, None),
+        (None, Some(natural)) => (grown(natural), None),
+        (None, None) => {
+            let given = given.unwrap_or(now);
+            let size = grown(given);
+            (size, (size != given).then_some(given))
+        }
+    }
 }
 
 /// Whether a window of `size` is at the size its program picked (`picked`), held inside
@@ -100,8 +111,9 @@ pub(crate) fn configured_size(
 }
 
 /// What a window's configures leave it at: its size, the program's pick, the compositor's
-/// last bounds and asked size, whether the size is the program's (`own`), and the size the
-/// program last sized the window away from (`left`).
+/// last bounds and asked size, whether the size is the program's (`own`), the size the
+/// program last sized the window away from (`left`), and the size the user gave it that its
+/// minimum holds it above (`given`, see [`regrown`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Fit {
     pub size: (i32, i32),
@@ -110,13 +122,14 @@ pub(crate) struct Fit {
     pub asked: (Option<i32>, Option<i32>),
     pub own: bool,
     pub left: Option<(i32, i32)>,
+    pub given: Option<(i32, i32)>,
 }
 
 impl Fit {
     /// The fit after a configure asking `asked` with `bounds`. A size new bounds alone give
     /// ([`rebounded`]) is the window's own, so configures that repeat the old ask leave it. A
     /// configure the compositor sent before it saw the program's own size asks for `left`,
-    /// which leaves the window's own size too.
+    /// which leaves the window's own size too. Only a size the compositor gives drops `given`.
     pub(crate) fn configured(
         self,
         asked: (Option<i32>, Option<i32>),
@@ -136,13 +149,48 @@ impl Fit {
             false => size,
         };
         let bounds = bounds.or(self.bounds);
+        let size = held_size(size, asked, bounds);
         Fit {
-            size: held_size(size, asked, bounds),
+            size,
             bounds,
             asked,
             own,
             left: self.left.filter(|_| own),
+            given: self.given.filter(|_| own || size == self.size),
             ..self
+        }
+    }
+
+    /// The fit after the program's limits `min` and `max` or its pick `natural` changed: a
+    /// fixed window takes its size; a resizable one still at its program's pick takes the size
+    /// the program picks now, one the user sized the size they gave it ([`regrown`]); both at
+    /// least `min`. A new size is the program's own, sized away from the old one (`left`).
+    pub(crate) fn refitted(
+        self,
+        min: (i32, i32),
+        max: Option<(i32, i32)>,
+        natural: Option<(i32, i32)>,
+    ) -> Fit {
+        let natural = natural.filter(|_| at_pick(self.size, self.picked, self.bounds));
+        let (size, given) = regrown(self.size, self.given, min, max, natural);
+        let size = bounded(size, self.bounds);
+        let picked = match max {
+            Some(_) => size,
+            None => natural.unwrap_or(self.picked),
+        };
+        let fit = Fit {
+            picked,
+            given,
+            ..self
+        };
+        match size == self.size {
+            true => fit,
+            false => Fit {
+                size,
+                own: true,
+                left: Some(self.size),
+                ..fit
+            },
         }
     }
 }

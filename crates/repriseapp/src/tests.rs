@@ -1008,21 +1008,77 @@ fn a_size_the_program_picked_outlasts_a_repeated_configure() {
 #[test]
 fn an_open_window_takes_what_its_program_asks() {
     assert_eq!(
-        regrown((398, 424), (398, 424), Some((597, 636)), None),
-        (597, 636)
+        regrown((398, 424), None, (398, 424), Some((597, 636)), None),
+        ((597, 636), None)
     );
-    assert_eq!(regrown((900, 700), (816, 792), None, None), (900, 792));
-    assert_eq!(regrown((900, 900), (816, 792), None, None), (900, 900));
     assert_eq!(
-        regrown((1088, 1000), (544, 528), None, Some((760, 680))),
-        (760, 680),
+        regrown((900, 700), None, (816, 792), None, None),
+        ((900, 792), Some((900, 700)))
+    );
+    assert_eq!(
+        regrown((900, 900), None, (816, 792), None, None),
+        ((900, 900), None)
+    );
+    assert_eq!(
+        regrown((1088, 1000), None, (544, 528), None, Some((760, 680))),
+        ((760, 680), None),
         "a picked size shrinks back"
     );
     assert_eq!(
-        regrown((760, 680), (1088, 1056), None, Some((1088, 1056))),
-        (1088, 1056),
+        regrown((760, 680), None, (1088, 1056), None, Some((1088, 1056))),
+        ((1088, 1056), None),
         "and grows"
     );
+}
+
+/// Settings on a 1920x1080 screen, sized by hand to 996x576. It picks 948x532 at 100% and
+/// 1088x1056 at 200%, where the taller taskbar lowers its bounds to 976.
+#[test]
+fn a_size_the_user_gave_comes_back_when_the_text_size_does() {
+    let (min100, min150, min200) = ((544, 528), (816, 764), (1088, 1002));
+    let ask = |w, h| (Some(w), Some(h));
+    let at100 = Fit {
+        size: (996, 576),
+        picked: (948, 532),
+        bounds: Some((1904, 1002)),
+        asked: ask(996, 576),
+        own: false,
+        left: None,
+        given: None,
+    };
+    let at200 = at100.refitted(min200, None, Some((1088, 1056)));
+    assert_eq!(at200.size, (1088, 1002));
+    let at200 = at200.configured(ask(996, 576), Some((1904, 976)), false);
+    assert_eq!(
+        at200.size,
+        (1088, 976),
+        "the taller taskbar's bounds hold it"
+    );
+    let at200 = at200.configured(ask(1088, 976), None, false);
+    assert_eq!(at200.size, (1088, 976));
+
+    let back = at200.refitted(min100, None, Some((948, 532)));
+    assert_eq!(
+        back.size,
+        (996, 576),
+        "100% gives back the size the user gave"
+    );
+    let back = back.configured(ask(1088, 976), Some((1904, 1002)), false);
+    assert_eq!(back.size, (996, 576));
+    assert_eq!(back.given, None);
+
+    let at150 = at100.refitted(min150, None, Some((948, 532)));
+    assert_eq!(at150.size, (996, 764));
+    let at200 = at150.refitted(min200, None, None);
+    assert_eq!(at200.refitted(min150, None, None).size, (996, 764));
+    assert_eq!(at200.refitted(min100, None, None).size, (996, 576));
+
+    let dragged = at200.configured(ask(1200, 990), None, true);
+    assert_eq!(
+        dragged.given, None,
+        "a resize drag gives the window a new size"
+    );
+    assert_eq!(dragged.refitted(min100, None, None).size, (1200, 990));
 }
 
 /// A window is at its program's pick while its size is that pick held inside the bounds;
@@ -1073,6 +1129,7 @@ fn a_configure_asking_the_size_the_window_left_keeps_its_new_size() {
         asked: (Some(952), Some(486)),
         own: true,
         left: Some((960, 500)),
+        given: None,
     };
     let fit = grown.configured((Some(960), Some(500)), Some((1912, 1000)), false);
     assert_eq!(fit.size, (1912, 1000), "200% keeps its grown size");
@@ -1087,6 +1144,7 @@ fn a_configure_asking_the_size_the_window_left_keeps_its_new_size() {
         asked: (Some(952), Some(460)),
         own: true,
         left: Some((1912, 1000)),
+        given: None,
     };
     let fit = shrunk.configured((Some(1912), Some(1000)), Some((1912, 1026)), false);
     assert_eq!(fit.size, (960, 500), "100% keeps its shrunk size");
@@ -1116,6 +1174,7 @@ fn settings_opened(bounds: (i32, i32)) -> Fit {
         asked: (None, None),
         own: false,
         left: None,
+        given: None,
     };
     fit.configured((Some(568), Some(bounds.1)), Some(bounds), false)
 }
@@ -1165,6 +1224,7 @@ fn an_interface_switch_leaves_a_window_inside_its_bounds_at_its_size() {
         asked: (None, None),
         own: false,
         left: None,
+        given: None,
     }
     .configured((None, None), Some(classic), false);
     assert_eq!(

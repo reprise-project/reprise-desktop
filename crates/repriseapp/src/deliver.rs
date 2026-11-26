@@ -376,6 +376,7 @@ impl Host {
                 }
             }
             s.own = true;
+            s.given = None;
         }
         if resized {
             self.send(MAIN, Event::Resized);

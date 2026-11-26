@@ -3,7 +3,7 @@
 use crate::hands::LIFE;
 use crate::reply::spawn_handing;
 use crate::runloop::NoEvents;
-use crate::sizing::{Fit, at_pick, bounded, opening_size, regrown, sane_side, sane_size};
+use crate::sizing::{Fit, bounded, opening_size, sane_side, sane_size};
 use crate::wire;
 use crate::{
     Caption, Child, Event, Flyout, Host, MAIN, MIN_SIZE, Scaling, Shell, Slot, WinId, access,
@@ -202,6 +202,7 @@ impl Host {
             asked: (None, None),
             own: false,
             left: None,
+            given: None,
             bounds: None,
             wanted: size,
             picked: size,
@@ -319,10 +320,8 @@ impl Host {
     }
 
     /// Fit window `id` to what its program asks now, after that changed (the text size, a
-    /// child's size): a fixed window takes its size; a resizable one still at its program's
-    /// pick takes the size the program picks now, one the user sized keeps its size; both at
-    /// least the minimum. The compositor keeps its top-left; a maximized window keeps the
-    /// screen's size. A window that changed size hears `Event::Resized`.
+    /// child's size), by [`Fit::refitted`]. The compositor keeps its top-left; a maximized
+    /// window keeps the screen's size. A window that changed size hears `Event::Resized`.
     pub(crate) fn refit(&mut self, id: WinId) {
         let Some((min, max)) = self.limits(id) else {
             return;
@@ -335,23 +334,15 @@ impl Host {
         if s.maximized {
             return;
         }
-        let natural = natural.filter(|_| at_pick(s.size, s.picked, s.bounds));
-        if let Some(n) = natural {
-            s.picked = n;
-        }
-        let size = bounded(regrown(s.size, min, max, natural), s.bounds);
-        if max.is_some() {
-            s.picked = size;
-        }
-        if size == s.size {
+        let fit = s.fit().refitted(min, max, natural);
+        let resized = fit.size != s.size;
+        s.set_fit(fit);
+        if !resized {
             return;
         }
-        s.left = Some(s.size);
-        s.size = size;
         s.buffers = [None, None];
         s.pool = None;
         s.dirty = true;
-        s.own = true;
         self.send(id, Event::Resized);
     }
 
@@ -817,20 +808,12 @@ impl WindowHandler for Host {
             .map(|(w, h)| sane_size((w as i32, h as i32)));
         let s = self.slot_mut(id).expect("slot");
         let moved_bounds = bounds.is_some() && bounds != s.bounds;
-        let fit = Fit {
-            size: s.size,
-            picked: s.picked,
-            bounds: s.bounds,
-            asked: s.asked,
-            own: s.own,
-            left: s.left,
-        }
-        .configured(asked, bounds, configure.is_resizing());
+        let fit = s.fit().configured(asked, bounds, configure.is_resizing());
         let size = fit.size;
-        s.bounds = fit.bounds;
-        s.asked = fit.asked;
-        s.own = fit.own;
-        s.left = fit.left;
+        s.set_fit(Fit {
+            size: s.size,
+            ..fit
+        });
         if s.mapped {
             s.activated = configure.is_activated();
         }
