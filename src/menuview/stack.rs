@@ -346,19 +346,20 @@ impl State {
         let px = style.icon_px() * scale;
         let (items, waits) = self.entry_items(&entries, px);
         let area = self.usable_area(Some(&output));
-        let style = style
-            .fit(
-                &self.text,
-                &items,
-                self.config.theme.fonts.size_px,
-                area.width,
-            )
-            .hold_banner(
-                &self.config.theme.scaled(scale),
-                self.text.for_output(scale),
-                &self.config.startmenu_banner,
-            );
-        let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
+        let style = style.hold_banner(
+            &self.config.theme.scaled(scale),
+            self.text.for_output(scale),
+            &self.config.startmenu_banner,
+        );
+        let size_px = self.config.theme.fonts.size_px;
+        let one = style.fit(&self.text, &items, size_px, area.width);
+        let one = MenuLayout::compute_styled(&one, &items, usize::MAX);
+        // `layout_in` wraps by the tallest row, so a column with separators that fits stays one.
+        let layout = if one.height <= area.height {
+            one
+        } else {
+            style.layout_in(&self.config.theme, &self.text, &items, area)
+        };
         let dock = self.config.theme.taskbar_shape().start_menu;
         let p = self.bar_placement(&output);
         let start = Rect::new(
