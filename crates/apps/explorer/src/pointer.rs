@@ -98,13 +98,12 @@ impl Explorer {
                 mods,
             } => match button {
                 BTN_LEFT => {
-                    // The scrollbar part under the press stays held until the release.
+                    // The scrollbar part or column title under the press stays held until the
+                    // release; every look draws a held title, only a styled one a lit bar part.
                     let (tree, view) = self.bars_at(x, y, ctx);
                     let column = self.header_at(x, y, ctx);
-                    let lit = (self.tree.bars.press_bar(tree)
-                        | self.sv.bars.press_bar(view)
-                        | self.sv.header.press(column, false))
-                        && ctx.styled();
+                    let bars = self.tree.bars.press_bar(tree) | self.sv.bars.press_bar(view);
+                    let lit = (bars && ctx.styled()) | self.sv.header.press(column, false);
                     let reply = self.press(x, y, time, mods, ctx);
                     Reply {
                         redraw: reply.redraw || lit,
@@ -132,8 +131,14 @@ impl Explorer {
                 // A drag owns the release: it drops, or acts on what the press meant.
                 let opens = self.click_open.take();
                 let dropped = self.drag.is_some().then(|| self.drag_release(x, y, ctx));
+                // A press and a release on one column title is the click that sorts by it.
+                let sort = self.sv.header.release();
                 self.let_go();
                 let reply = dropped.unwrap_or_else(Reply::redraw);
+                let reply = match sort {
+                    Some(i) => reply.and(self.run(Command::Sort(i), ctx)),
+                    None => reply,
+                };
                 match opens {
                     Some(i) => {
                         self.sv.selection.set_only(Some(i));
@@ -377,7 +382,7 @@ impl Explorer {
                     ));
                     self.clicks.reset();
                 }
-                shellview::Hit::Header(i) => return self.run(Command::Sort(i), ctx),
+                shellview::Hit::Header(_) => return Reply::redraw(),
                 shellview::Hit::Divider(i) => {
                     let width = self.sv.columns.get(i).map_or(0, |c| c.width);
                     self.resizing = Some((i, x, width));
@@ -662,8 +667,10 @@ impl Explorer {
         let tree_lit = (free || self.tree.bars.holding()) && self.tree.bars.motion(tree);
         let view_lit = (free || self.sv.bars.holding()) && self.sv.bars.motion(view);
         let column = self.header_at(x, y, ctx);
-        let head_lit = (free || self.sv.header.holding()) && self.sv.header.motion(column);
-        let bars = (tree_lit || view_lit || head_lit) && ctx.styled();
+        let head_held = self.sv.header.holding();
+        let head_lit = (free || head_held) && self.sv.header.motion(column);
+        let bars =
+            ((tree_lit || view_lit) && ctx.styled()) || (head_lit && (head_held || ctx.styled()));
         let hot = self.tree_hover(free, x, y, ctx);
         let view_hot = self.view_hover(free, x, y, ctx);
         let mut reply = self.hover_motion(x, y, ctx);
@@ -728,11 +735,10 @@ impl Explorer {
         (tree, view.flatten())
     }
 
-    /// The Details header column under (`x`, `y`), which lights under the
-    /// pointer in a look that draws it lit; `None` elsewhere, in Classic
-    /// or with a menu open.
+    /// The Details header column under (`x`, `y`), which a press holds in every look and the
+    /// pointer lights in a styled one; `None` elsewhere or with a menu open.
     fn header_at(&self, x: i32, y: i32, ctx: &Ctx) -> Option<usize> {
-        if self.popup.is_some() || !ctx.styled() || self.sv.mode != shellview::Mode::Details {
+        if self.popup.is_some() || self.sv.mode != shellview::Mode::Details {
             return None;
         }
         let lay = self.layout(ctx);
