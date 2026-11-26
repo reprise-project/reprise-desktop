@@ -1008,7 +1008,11 @@ pub fn draw_list_rows(
                 dx = (slot * s - icon.width as i32).max(0) / 2;
                 dy = (rh - icon.height as i32).max(0) / 2;
             }
-            c.blit_over(ix + dx, r.y + dy, icon);
+            if items[i].greyed {
+                c.blit_over_faded(ix + dx, r.y + dy, icon, 1, 2);
+            } else {
+                c.blit_over(ix + dx, r.y + dy, icon);
+            }
         }
         let tx = ix + (slot + ICON_GAP) * s;
         let label = fitted(
