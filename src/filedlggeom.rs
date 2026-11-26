@@ -203,7 +203,8 @@ impl State {
             true => Some((frame.x, frame.y)),
             false => self.wm.file_dialog.geometry.get(&app).and_then(|g| g.at),
         };
-        let g = Geometry::kept(at, client, self.config.accessibility.text_size);
+        let text_size = win.sized_text_size(self.config.accessibility.text_size);
+        let g = Geometry::kept(at, client, text_size);
         self.wm.file_dialog.store(app, g);
     }
 }

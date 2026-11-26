@@ -460,7 +460,7 @@ impl State {
             width: normal.width,
             height: normal.height,
             maximized: win.maximized,
-            text_size: self.config.accessibility.text_size,
+            text_size: win.sized_text_size(self.config.accessibility.text_size),
             client: false,
         })
     }

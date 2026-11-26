@@ -30,12 +30,16 @@ impl State {
         self.session.owe();
         let m = self.config.theme.metrics.clone();
         let opens = reprisekit::look::client_glass(&self.config.theme, true).is_some();
+        let text_size = self.config.accessibility.text_size;
         let Some(win) = self.win_mut(w) else {
             return;
         };
         let (cw, ch) = win.client_size();
         win.client_w = cw;
         win.client_h = ch;
+        if !win.maximized && !win.fullscreen && win.sized_at.is_none_or(|(s, _)| s != (cw, ch)) {
+            win.sized_at = Some(((cw, ch), text_size));
+        }
         let glass_top = match opens {
             true => crate::clientglass::glass_top(&win.blur, cw),
             false => 0,

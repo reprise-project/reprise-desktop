@@ -190,7 +190,7 @@ pub struct Remembered {
     pub height: i32,
     #[serde(default)]
     pub maximized: bool,
-    /// `[accessibility] text_size` when the frame was kept.
+    /// `[accessibility] text_size` when the frame took its size.
     #[serde(default = "full_size")]
     pub text_size: u32,
     /// `width` and `height` are the client area's, the frame left out, so the window opens at
