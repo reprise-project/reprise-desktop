@@ -40,7 +40,18 @@ impl Notepad {
         // not keep finding the match already selected.
         let (start, end) = self.edit.selection();
         let from = if opts.down { end } else { start };
-        match multiedit::find(self.edit.lines(), &query, from, &opts) {
+        let lines = self.edit.lines();
+        // Past the last match the search goes on from the other end of the text.
+        let around = match opts.down {
+            true => multiedit::Pos { line: 0, col: 0 },
+            false => multiedit::Pos {
+                line: lines.len().saturating_sub(1),
+                col: lines.last().map_or(0, String::len),
+            },
+        };
+        let hit = multiedit::find(lines, &query, from, &opts)
+            .or_else(|| multiedit::find(lines, &query, around, &opts));
+        match hit {
             Some((s, e)) => {
                 self.edit.place(s, false);
                 self.edit.place(e, true);

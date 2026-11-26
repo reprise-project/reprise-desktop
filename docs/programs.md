@@ -105,8 +105,8 @@ The file manager, and the default for folders.
 
 ## Notepad
 
-The default for plain text. New, Open, Save, Find (F3 for the next one),
-Replace, Go To, Time/Date (F5) and Word Wrap, with Ln and Col in the status
+The default for plain text. New, Open, Save, Find (F3 for the next one; past
+the last match it goes on from the other end), Replace, Go To, Time/Date (F5) and Word Wrap, with Ln and Col in the status
 bar. A right-click on the text (or Shift+F10) opens the edit commands.
 Ctrl+Z steps back through up to 1000 edits, Ctrl+Y redoes. It opens UTF-8
 files, with or without a byte order mark, and UTF-16 LE and BE files with
