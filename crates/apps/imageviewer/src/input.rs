@@ -2,7 +2,9 @@
 
 use super::*;
 use menu::{row, title};
-use repriseapp::{BTN_LEFT, KeyInput, PointerInput};
+use repriseapp::ctxmenu::Step as MenuStep;
+use repriseapp::{BTN_LEFT, BTN_RIGHT, KeyInput, PointerInput};
+use reprisekit::controls::editmenu;
 use reprisekit::controls::imageview::LINE;
 use reprisekit::controls::menubar::{Action, Key};
 use reprisekit::controls::statusbar;
@@ -58,6 +60,11 @@ impl Viewer {
             return Reply::none();
         }
         self.alt_arm.interrupt();
+        if editmenu::opens(k.sym, k.mods.shift) {
+            self.bar.close();
+            let v = self.view_layout(ctx).view;
+            return self.open_context(v.x + v.width / 2, v.y + v.height / 2, true, ctx);
+        }
         if !self.full
             && let Some(r) = self.bar_key(&k, ctx)
         {
@@ -175,6 +182,15 @@ impl Viewer {
                     false => Reply::none(),
                 }
             }
+            PointerInput::Press {
+                x,
+                y,
+                button: BTN_RIGHT,
+                ..
+            } if lay.view.contains(x, y) && self.view.bar_at(&lay, x, y).is_none() => {
+                self.view.release();
+                self.open_context(x, y, false, ctx)
+            }
             PointerInput::Press { button, .. } => match nav_button(button) {
                 Some(Nav::Back) => self.go(Step::Previous),
                 Some(Nav::Forward) => self.go(Step::Next),
@@ -226,7 +242,48 @@ impl Viewer {
         self.go(if back { Step::Previous } else { Step::Next })
     }
 
+    fn open_context(&mut self, x: i32, y: i32, by_keyboard: bool, ctx: &Ctx) -> Reply {
+        self.context = Popup::open(self.context_rows(), x, y, ctx, by_keyboard);
+        Reply::redraw()
+    }
+
+    /// An event while the context menu is open: it takes the pointer and the keys.
+    fn context_event(&mut self, ev: &Event, ctx: &Ctx) -> Option<Reply> {
+        let menu = self.context.as_mut()?;
+        let step = match ev {
+            Event::Pointer(PointerInput::Press { x, y, .. }) => menu.press(*x, *y, ctx),
+            Event::Pointer(PointerInput::Motion { x, y }) => {
+                return Some(match menu.motion(*x, *y, ctx) {
+                    true => Reply::redraw(),
+                    false => Reply::none(),
+                });
+            }
+            Event::Key(k) => menu.key(k, ctx),
+            Event::Focus(false) => MenuStep::Closed,
+            Event::Pointer(_) | Event::KeyUp(_) => return Some(Reply::none()),
+            _ => return None,
+        };
+        Some(match step {
+            MenuStep::Chosen(row) => {
+                self.context = None;
+                match row {
+                    Some((t, r)) => self.command(t, r, ctx),
+                    None => Reply::redraw(),
+                }
+            }
+            MenuStep::Closed => {
+                self.context = None;
+                Reply::redraw()
+            }
+            MenuStep::Redraw => Reply::redraw(),
+            MenuStep::None => Reply::none(),
+        })
+    }
+
     pub(crate) fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        if let Some(r) = self.context_event(&ev, ctx) {
+            return r;
+        }
         match ev {
             Event::Key(k) => self.key(k, ctx),
             Event::KeyUp(k) => self.key_up(k, ctx),

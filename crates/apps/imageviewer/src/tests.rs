@@ -376,6 +376,80 @@ fn a_format_the_desktop_cannot_show_greys_set_as_background() {
 }
 
 #[test]
+fn edit_opens_the_picture_in_paint_and_show_in_folder_selects_it_in_explorer() {
+    let dir = folder(&[("dunes.bmp", 4, 4)]);
+    let path = dir.path().join("dunes.bmp");
+    let mut v = opened(path.clone());
+    let ctx = test_ctx();
+    let edit = v.command(menu::title::FILE, menu::row::EDIT_PICTURE, &ctx);
+    assert_eq!(
+        edit.spawn,
+        [vec![
+            std::ffi::OsString::from("reprise-paint"),
+            path.clone().into()
+        ]]
+    );
+    let shown = v.command(menu::title::FILE, menu::row::SHOW_IN_FOLDER, &ctx);
+    assert_eq!(
+        shown.spawn,
+        [reprisefs::apps::open_location_argv(&path)],
+        "Explorer opens on the folder with the picture selected"
+    );
+}
+
+#[test]
+fn edit_and_show_in_folder_grey_without_a_picture() {
+    let mut v = Viewer::new(None);
+    v.sync_menus();
+    for row in [menu::row::EDIT_PICTURE, menu::row::SHOW_IN_FOLDER] {
+        let item = &v.bar.menus[menu::title::FILE][row];
+        assert!(matches!(item, MenuItem::Entry { enabled: false, .. }));
+    }
+}
+
+#[test]
+fn the_context_menu_opens_on_a_right_click_and_the_menu_key_and_takes_access_keys() {
+    let dir = folder(&[("dunes.bmp", 4, 4)]);
+    let path = dir.path().join("dunes.bmp");
+    let mut v = opened(path.clone());
+    let mut ctx = test_ctx();
+    let right = Event::Pointer(PointerInput::Press {
+        x: 160,
+        y: 120,
+        button: repriseapp::BTN_RIGHT,
+        time: 0,
+        mods: Mods::default(),
+    });
+    v.event(MAIN, right, &mut ctx);
+    assert!(
+        v.popup(MAIN, &ctx).is_some(),
+        "a right-click opens the menu"
+    );
+    let f = Event::Key(KeyInput {
+        sym: u32::from(b'f'),
+        utf8: Some("f".into()),
+        mods: Mods::default(),
+        edit: None,
+    });
+    let shown = v.event(MAIN, f, &mut ctx);
+    assert_eq!(shown.spawn, [reprisefs::apps::open_location_argv(&path)]);
+    assert!(v.popup(MAIN, &ctx).is_none(), "choosing a row closes it");
+    press(&mut v, keysym::MENU, &mut ctx);
+    assert!(v.popup(MAIN, &ctx).is_some(), "the Menu key opens it");
+    let e = Event::Key(KeyInput {
+        sym: u32::from(b'e'),
+        utf8: Some("e".into()),
+        mods: Mods::default(),
+        edit: None,
+    });
+    let edit = v.event(MAIN, e, &mut ctx);
+    assert_eq!(
+        edit.spawn,
+        [vec![std::ffi::OsString::from("reprise-paint"), path.into()]]
+    );
+}
+
+#[test]
 fn a_file_that_is_no_picture_says_so_in_the_box() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("broken.png");

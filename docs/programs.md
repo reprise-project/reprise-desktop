@@ -148,6 +148,10 @@ memory, or 512 MiB, says it is too large to show.
   does not draw (anything but PNG, JPEG, BMP, JPEG XL and AVIF).
 - **Copy** (Ctrl+C) puts the file on the clipboard, and **Open** (Ctrl+O)
   picks another picture.
+- **Edit** (File menu) opens the picture in Paint, and **Show in Folder**
+  opens its folder in Explorer with the picture selected. A right-click on
+  the picture (or Shift+F10) offers both, with Copy, Delete and Set as
+  Desktop Background.
 
 The status bar shows the name, the place in the folder, the size in pixels,
 the file size and the zoom.

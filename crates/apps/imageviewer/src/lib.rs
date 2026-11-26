@@ -17,6 +17,7 @@ use folder::{Folder, Step};
 use load::{Job, Msg, Picture, RenderKey, Timer};
 use menu::menus;
 use repriseapp::asks::Asks;
+use repriseapp::ctxmenu::Popup;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{ErrorBox, MsgBox};
@@ -72,6 +73,8 @@ struct Viewer {
     msgs: Option<Receiver<Msg>>,
     timer: Option<Timer>,
     bar: Bar,
+    /// The picture's context menu, each row the menu bar row it stands for.
+    context: Option<Popup<(usize, usize)>>,
     status_bar: bool,
     /// Full screen as asked of the compositor: no menu bar or status bar, a black ground.
     full: bool,
@@ -118,6 +121,7 @@ impl Viewer {
             msgs: None,
             timer: None,
             bar: Bar::new(menus()),
+            context: None,
             status_bar: true,
             full: false,
             scale: 1,
@@ -473,7 +477,8 @@ impl Extended for Viewer {
         if self.bar.open.is_some() {
             return Some(Box::new(&mut self.bar));
         }
-        None
+        self.context.as_ref()?;
+        Some(Box::new(&mut self.context))
     }
 
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
