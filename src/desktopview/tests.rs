@@ -66,7 +66,7 @@ fn render_desktop_menu() {
         c
     };
     write_preview(
-        &draw(&desktop_menu(false, true, None, false).0, false),
+        &draw(&desktop_menu(Pastable::Nothing, true, None, false).0, false),
         "desktopmenu-preview.png",
     );
     let places = [
@@ -730,7 +730,7 @@ fn recycle_bin_menu_greys_empty_and_entry_cannot_be_trashed() {
 
 #[test]
 fn a_slideshow_adds_next_desktop_background_after_refresh() {
-    let (items, commands) = desktop_menu(false, true, None, true);
+    let (items, commands) = desktop_menu(Pastable::Nothing, true, None, true);
     assert_eq!(items.len(), 13);
     assert_eq!(commands[2], Some(DesktopCommand::Refresh));
     assert_eq!(commands[3], Some(DesktopCommand::NextBackground));
@@ -741,12 +741,15 @@ fn a_slideshow_adds_next_desktop_background_after_refresh() {
             if label == "Next desktop background"
     ));
     assert!(matches!(items[5], MenuItem::Separator));
-    assert_eq!(desktop_menu(false, true, None, false).0.len(), 12);
+    assert_eq!(
+        desktop_menu(Pastable::Nothing, true, None, false).0.len(),
+        12
+    );
 }
 
 #[test]
 fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
-    let (items, commands) = desktop_menu(true, false, None, false);
+    let (items, commands) = desktop_menu(Pastable::Files, false, None, false);
     for i in [5, 6, 8] {
         assert!(
             matches!(items[i], MenuItem::Entry { enabled: false, .. }),
@@ -767,7 +770,7 @@ fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
 
 #[test]
 fn desktop_menu_lists_its_commands_with_separators() {
-    let (items, commands) = desktop_menu(false, true, None, false);
+    let (items, commands) = desktop_menu(Pastable::Nothing, true, None, false);
     assert_eq!(items.len(), 12);
     assert_eq!(commands[0], Some(DesktopCommand::ArrangeIcons));
     assert!(matches!(items[0], MenuItem::Entry { submenu: true, .. }));
@@ -822,11 +825,11 @@ fn desktop_menu_lists_its_commands_with_separators() {
         MenuItem::Entry { checked: false, .. }
     ));
     // With something on the clipboard the Paste pair comes alive.
-    let (items, commands) = desktop_menu(true, true, None, false);
+    let (items, commands) = desktop_menu(Pastable::Files, true, None, false);
     assert!(matches!(items[5], MenuItem::Entry { enabled: true, .. }));
     assert_eq!(commands[5], Some(DesktopCommand::Paste));
     assert_eq!(commands[6], Some(DesktopCommand::PasteShortcut));
-    let (items, _) = desktop_menu(false, true, None, false);
+    let (items, _) = desktop_menu(Pastable::Nothing, true, None, false);
     for i in [0, 1, 2, 3, 5, 6, 8, 10, 11] {
         assert!(matches!(
             items[i],
@@ -1589,7 +1592,12 @@ fn a_new_folder_is_selected_in_rename_and_ctrl_z_undoes_the_rename_then_the_fold
     h.state.commit_rename();
     assert!(desk.join("Plans").is_dir());
     let head = h.state.desktop.as_ref().unwrap().undos.head();
-    let menu = desktop_menu(false, true, head.map(|(id, l)| (id, l, true)), false);
+    let menu = desktop_menu(
+        Pastable::Nothing,
+        true,
+        head.map(|(id, l)| (id, l, true)),
+        false,
+    );
     assert_eq!(menu.1[7], head.map(|(id, _)| DesktopCommand::Undo(id)));
     assert!(matches!(
         &menu.0[7],
@@ -1783,7 +1791,7 @@ fn undo_is_greyed_and_ctrl_z_inert_while_the_files_are_off_or_an_undo_runs() {
     for (show_files, live) in [(false, true), (true, false)] {
         let entry = "1:1".parse().unwrap();
         let undo = Some((entry, "Undo New", live));
-        let (items, commands) = desktop_menu(false, show_files, undo, false);
+        let (items, commands) = desktop_menu(Pastable::Nothing, show_files, undo, false);
         assert!(matches!(items[7], MenuItem::Entry { enabled: false, .. }));
         assert_eq!(commands[7], None);
     }
@@ -2453,4 +2461,50 @@ fn an_undone_move_or_delete_selects_the_icon_explorer_puts_back_and_f2_renames_i
         assert_eq!(view.selection.focus, Some(i), "{name}: x.txt has the focus");
         assert_eq!(f2(&mut h), Some(i), "{name}: F2 renames x.txt");
     }
+}
+
+#[test]
+fn a_picture_alone_lights_paste_but_not_paste_shortcut() {
+    let (items, _) = desktop_menu(Pastable::Picture, true, None, false);
+    let live = |label: &str| {
+        items
+            .iter()
+            .any(|i| matches!(i, MenuItem::Entry { label: l, enabled: true, .. } if l == label))
+    };
+    assert!(live("Paste"));
+    assert!(!live("Paste Shortcut"), "it links files only");
+}
+
+#[test]
+fn a_pasted_picture_lands_as_a_new_file_in_its_rename() {
+    use reprisefs::stillfile::{PngLevel, Still};
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let desk = crate::harness::scratch().join("desktop-paste-picture");
+    let _ = std::fs::remove_dir_all(&desk);
+    std::fs::create_dir_all(&desk).unwrap();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+    h.state.config.screenshot.format = repriseconf::config::ShotFormat::Jpg;
+    let png = reprisefs::stillfile::encode(&[0, 128, 255], 1, 1, &Still::Png(PngLevel::Fast));
+    let png: std::sync::Arc<[u8]> = png.unwrap().into();
+    h.state
+        .clip_offer_each(vec![("image/png".to_string(), png)]);
+    assert!(h.state.clip_has_image() && !h.state.clip_has_files());
+
+    h.state.desktop_command(DesktopCommand::Paste, None);
+
+    let names: Vec<String> = std::fs::read_dir(&desk)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    let [name] = &names[..] else {
+        panic!("one file: {names:?}")
+    };
+    assert!(
+        name.starts_with("Pasted image ") && name.ends_with(".jpg"),
+        "{name}"
+    );
+    let view = h.state.desktop.as_ref().unwrap();
+    let (i, _) = view.rename.as_ref().expect("its rename begins");
+    assert_eq!(&view.entries[*i].name, name);
 }

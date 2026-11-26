@@ -37,6 +37,7 @@ use crate::notifyview::OwnAction;
 use crate::raster::{Canvas, Rect};
 use crate::shotfile::{Failed, Plan};
 use crate::window::WindowId;
+use reprisefs::stillfile::write_into;
 
 pub struct Shot {
     pub layout: Rect,
@@ -494,24 +495,6 @@ fn write_file(bytes: &[u8], secs: i64, ext: &str) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot make {}: {e}", dir.display()))?;
     let name = file_name(&reprisefs::locale::localtime(secs), ext);
     write_into(&dir.join(name), |f| f.write_all(bytes))
-}
-
-/// A new file at the first free numbering of `path`, written by `write` to a hidden temp file
-/// beside it, synced and renamed into place, so no half-written file ever has the name.
-fn write_into(
-    path: &std::path::Path,
-    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
-) -> Result<PathBuf, String> {
-    let dir = path.parent().unwrap_or(std::path::Path::new("."));
-    let (mut file, tmp) = reprisefs::ops::create_temp_beside(path, None)
-        .map_err(|e| format!("Cannot write in {}: {e}", dir.display()))?;
-    let landed = write(&mut file)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| reprisefs::ops::rename_numbered(&tmp, path));
-    landed.map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("Cannot write {}: {e}", path.display())
-    })
 }
 
 /// Remove the temp files a session that ended mid-write left in the Screenshots folder, off the

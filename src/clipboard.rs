@@ -156,6 +156,18 @@ fn take_paste(slot: &mut Option<(u64, FilesDone)>, serial: u64) -> Option<FilesD
     slot.take_if(|(s, _)| *s == serial).map(|(_, done)| done)
 }
 
+/// The largest picture a paste reads.
+const MAX_IMAGE_BYTES: usize = 256 << 20;
+
+/// The picture type a paste reads out of `offered`.
+fn image_mime(offered: &[String]) -> Option<&'static str> {
+    (reprisefs::stillfile::PASTE_MIMES.into_iter()).find(|m| offered.iter().any(|o| o == m))
+}
+
+fn own_image(offers: &[Offer]) -> Option<&Arc<[u8]>> {
+    (reprisefs::stillfile::PASTE_MIMES.into_iter()).find_map(|m| answer(offers, m))
+}
+
 pub fn own_files(offers: &[Offer]) -> Option<FileClip> {
     answer(offers, GNOME_FILES).map(|b| fileclip::decode(GNOME_FILES, b))
 }
@@ -362,6 +374,31 @@ impl State {
         }
     }
 
+    /// Whether the clipboard holds a picture a paste saves ([`reprisefs::stillfile::PASTE_MIMES`]).
+    pub fn clip_has_image(&self) -> bool {
+        match self.own_offers() {
+            Some(offers) => own_image(&offers).is_some(),
+            None => image_mime(self.clip_offered()).is_some(),
+        }
+    }
+
+    /// Hand the clipboard's picture to `done`: Reprise's own at once, a client's once read. Nothing
+    /// without one.
+    pub fn clip_image(&mut self, done: impl FnOnce(&mut State, Vec<u8>) + 'static) {
+        if let Some(offers) = self.own_offers() {
+            if let Some(bytes) = own_image(&offers) {
+                done(self, bytes.to_vec());
+            }
+            return;
+        }
+        let Some(mime) = image_mime(self.clip_offered()) else {
+            return;
+        };
+        self.clip_read_capped(mime, MAX_IMAGE_BYTES, move |state, buf| {
+            done(state, buf.bytes().to_vec())
+        });
+    }
+
     /// Read the files on the clipboard and hand them to `done` once all arrived. A cut marked
     /// in [`KDE_CUT`] is read first, then the files.
     pub fn clip_files(&mut self, done: impl FnOnce(&mut State, FileClip) + 'static) {
@@ -469,6 +506,16 @@ impl State {
     }
 
     fn clip_read(&mut self, mime: &str, done: impl FnOnce(&mut State, PasteBuf) + 'static) {
+        self.clip_read_capped(mime, reprisefs::pipe::MAX_PASTE_BYTES, done);
+    }
+
+    /// [`Self::clip_read`] of at most `cap` bytes.
+    fn clip_read_capped(
+        &mut self,
+        mime: &str,
+        cap: usize,
+        done: impl FnOnce(&mut State, PasteBuf) + 'static,
+    ) {
         self.abandon_paste();
         let (read, write) = match std::io::pipe() {
             Ok(p) => p,
@@ -481,7 +528,7 @@ impl State {
             log::debug!("paste: {e}");
             return;
         }
-        let mut buf = PasteBuf::default();
+        let mut buf = PasteBuf::capped(cap);
         let mut done = Some(done);
         let pipe = self.handle.insert_source(
             Generic::new(read, Interest::READ, Mode::Level),

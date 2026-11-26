@@ -27,7 +27,10 @@ pub struct MenuState {
     pub shell_rows: usize,
     /// The selection is only Desktop rows and Properties has no sheet for it.
     pub sheetless: bool,
+    /// The clipboard holds files.
     pub can_paste: bool,
+    /// It holds a picture alone, which Paste saves as a file and Paste Shortcut cannot link.
+    pub can_paste_image: bool,
     /// The verb of the undoable action ("Delete", "Move"), for Edit's first row;
     /// `None` greys it.
     pub can_undo: Option<&'static str>,
@@ -79,6 +82,7 @@ impl Default for MenuState {
             shell_rows: 0,
             sheetless: false,
             can_paste: false,
+            can_paste_image: false,
             can_undo: None,
             folders: true,
             status_bar: true,
@@ -381,9 +385,13 @@ fn bar_menus(state: &MenuState) -> Vec<(&'static str, Menu)> {
         keyed("&Copy", files && state.bin.is_none(), "Ctrl+C"),
         Command::Copy,
     );
-    let pasteable = state.can_paste && !state.read_only;
+    let writable = !state.read_only;
+    let pasteable = (state.can_paste || state.can_paste_image) && writable;
     edit.row(keyed("&Paste", pasteable, "Ctrl+V"), Command::Paste);
-    edit.row(row("Paste &Shortcut", pasteable), Command::PasteShortcut);
+    edit.row(
+        row("Paste &Shortcut", state.can_paste && writable),
+        Command::PasteShortcut,
+    );
     edit.sep();
     edit.row(row("Copy To Folder...", false), Command::Nothing);
     edit.row(row("Move To Folder...", false), Command::Nothing);
@@ -568,7 +576,10 @@ pub fn item_menu(
     m.row(row("&Copy", true), Command::Copy);
     match kind {
         ItemKind::Folder => m.row(
-            row("&Paste", state.can_paste && writable),
+            row(
+                "&Paste",
+                (state.can_paste || state.can_paste_image) && writable,
+            ),
             Command::PasteOnItem,
         ),
         ItemKind::Launcher => m.row(row("&Paste", state.can_paste), Command::PasteOnItem),
@@ -619,7 +630,7 @@ fn bin_item_menu() -> Menu {
 
 pub fn background_menu(state: &MenuState) -> Menu {
     let writable = !state.read_only;
-    let pasteable = state.can_paste && writable;
+    let pasteable = (state.can_paste || state.can_paste_image) && writable;
     let mut m = Menu::default();
     m.sub(row("&View", true), modes_menu(state.mode));
     m.sep();
@@ -632,7 +643,10 @@ pub fn background_menu(state: &MenuState) -> Menu {
     m.row(row("C&ustomize This Folder...", false), Command::Nothing);
     m.sep();
     m.row(row("&Paste", pasteable), Command::Paste);
-    m.row(row("Paste &Shortcut", pasteable), Command::PasteShortcut);
+    m.row(
+        row("Paste &Shortcut", state.can_paste && writable),
+        Command::PasteShortcut,
+    );
     m.row(undo_row(state), Command::Undo);
     m.sep();
     m.sub(row("Ne&w", writable), new_menu(writable, &state.templates));

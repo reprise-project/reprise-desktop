@@ -196,7 +196,13 @@ impl State {
     pub fn open_desktop_menu(&mut self, at: (i32, i32)) {
         self.close_menu();
         let (items, commands) = crate::desktopview::desktop_menu(
-            self.clip_has_files(),
+            if self.clip_has_files() {
+                crate::desktopview::Pastable::Files
+            } else if self.clip_has_image() {
+                crate::desktopview::Pastable::Picture
+            } else {
+                crate::desktopview::Pastable::Nothing
+            },
             self.config.desktop_icons,
             (self.desktop.as_ref()).and_then(|v| {
                 let (id, label) = v.undos.head()?;

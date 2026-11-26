@@ -121,3 +121,46 @@ fn a_refresh_keeps_an_open_rename_box() {
     let (i, _) = ex.sv.edit.as_ref().expect("the rename box is still up");
     assert_eq!(ex.items[*i].name, "New Folder");
 }
+
+/// A picture alone on the clipboard pastes as a new file in `[screenshot] format` (PNG by
+/// default), selected with its rename begun and undone as a New.
+#[test]
+fn a_pasted_picture_saves_as_a_new_file_and_starts_a_rename() {
+    use reprisefs::stillfile::{PngLevel, Still};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    repriseapp::fake_clipboard_files(false);
+    repriseapp::fake_clipboard_image(true);
+
+    let reply = ex.begin_paste(false);
+    assert!(
+        reply.paste_image && !reply.paste_files,
+        "the picture is read"
+    );
+    let png = reprisefs::stillfile::encode(&[255, 0, 0], 1, 1, &Still::Png(PngLevel::Fast))
+        .expect("a PNG");
+    ex.pasted_image(png, &mut ctx);
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !ex.reads.is_empty() && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        ex.take_reads(&mut ctx);
+    }
+
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .expect("list")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    let [name] = &names[..] else {
+        panic!("one file: {names:?}")
+    };
+    assert!(
+        name.starts_with("Pasted image ") && name.ends_with(".png"),
+        "{name}"
+    );
+    let i = ex.index_of(&dir.path().join(name)).expect("listed");
+    assert_eq!(ex.sv.edit.as_ref().map(|(j, _)| *j), Some(i));
+    ex.finish_puts(&mut ctx);
+    assert_eq!(ex.undo, Some("New"));
+    repriseapp::fake_clipboard_image(false);
+}

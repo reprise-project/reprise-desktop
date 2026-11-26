@@ -176,6 +176,9 @@ impl State {
         if self.desktop_locked() {
             return;
         }
+        if !shortcut && !self.clip_has_files() && self.clip_has_image() {
+            return self.paste_image(target);
+        }
         self.clip_files(move |state, clip| state.paste_clip(clip, &target, shortcut));
     }
 

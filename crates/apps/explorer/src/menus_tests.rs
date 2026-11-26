@@ -191,6 +191,17 @@ fn paste_greys_without_a_clipboard_and_in_a_read_only_place() {
 }
 
 #[test]
+fn a_picture_alone_lights_paste_but_not_paste_shortcut() {
+    let s = MenuState {
+        can_paste_image: true,
+        ..Default::default()
+    };
+    let edit = bar_rows(&s, 1);
+    assert!(enabled(&edit, 4), "Paste");
+    assert!(!enabled(&edit, 5), "Paste Shortcut links files only");
+}
+
+#[test]
 fn the_status_bar_row_checks_itself() {
     let on = bar_rows(&MenuState::default(), 2);
     let MenuItem::Entry { checked, .. } = &on[1] else {

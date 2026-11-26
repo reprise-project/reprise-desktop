@@ -860,6 +860,7 @@ impl Explorer {
                 .count(),
             sheetless: self.sheetless(),
             can_paste: repriseapp::clipboard_has_files(),
+            can_paste_image: repriseapp::clipboard_has_image(),
             can_undo: self.undo,
             folders: self.settings.folders,
             status_bar: self.settings.status_bar,
@@ -1974,6 +1975,7 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         }
         Event::Pointer(p) => ex.pointer(p, ctx),
         Event::PastedFiles(clip) => ex.pasted(clip, ctx),
+        Event::PastedImage(bytes) => ex.pasted_image(bytes, ctx),
         Event::Pasted(text) => ex.paste_text(&text),
         Event::Wake => ex.wake(ctx),
         Event::Handoff(handoff) => ex.launch(handoff, ctx),

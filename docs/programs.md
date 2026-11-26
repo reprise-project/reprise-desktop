@@ -69,6 +69,10 @@ The file manager, and the default for folders.
   or numbering dialog for several items) and Copy as Path. Ctrl+Z undoes the
   last file operation of any Explorer window or the desktop, which Edit > Undo
   names. While an undo runs in one window, Undo is greyed in the others.
+- **Pasting a picture** (Ctrl+V or Paste with a picture and no files on the
+  clipboard, as after Print Screen) saves it as a new "Pasted image" file
+  named for the date and time, in `[screenshot] format`, as PNG when that
+  format cannot be written. Undo removes it.
 - **Send To > Mail Recipient** and the task pane's E-mail rows attach the
   selected files to a new mail through `xdg-email`; a folder greys them.
 - **Archives:** Extract Here and Extract to for zip, 7z and tar, Compress to

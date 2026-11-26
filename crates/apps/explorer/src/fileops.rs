@@ -17,6 +17,7 @@ use reprisefs::names;
 use reprisefs::ops::DropOp;
 use reprisefs::replace::{self, Answer, Asker, Clash, Step, Verdict};
 use reprisefs::sendto::{self, SendTo};
+use reprisefs::stillfile;
 use reprisefs::undo::{Hold, Undoable};
 use reprisekit::controls::menu::{ContextBitmaps, MenuStyle};
 use reprisekit::controls::openwith::{Check, OpenWith, Program};
@@ -230,10 +231,56 @@ impl Explorer {
             return Reply::none();
         };
         self.paste = Some(PasteTo::Place { dir, shortcut });
+        // A picture alone on the clipboard saves as a file of its own.
+        let image =
+            !shortcut && !repriseapp::clipboard_has_files() && repriseapp::clipboard_has_image();
         Reply {
-            paste_files: true,
+            paste_files: !image,
+            paste_image: image,
             ..Default::default()
         }
+    }
+
+    /// The clipboard's picture for a Paste into the place on view or a folder's item, saved there
+    /// in `[screenshot] format` ([`stillfile::pasted_file`]), then selected and renamed as a new
+    /// file is. The
+    /// encode runs on a read job: a JPEG XL takes seconds, past the listing wait.
+    pub fn pasted_image(&mut self, bytes: Vec<u8>, ctx: &mut Ctx) -> Reply {
+        let dir = match self.paste.take() {
+            Some(PasteTo::Place { dir, .. }) if self.place.path() == Some(dir.clone()) => dir,
+            Some(PasteTo::Folder(dir)) => dir,
+            _ => return Reply::none(),
+        };
+        if bytes.is_empty() {
+            return Reply::none();
+        }
+        let how = repriseconf::current().screenshot.still();
+        self.spawn_read_job(ctx, move || {
+            let file = stillfile::pasted_file(&bytes, &how);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| ex.write_pasted(dir, file, ctx))
+        });
+        Reply::none()
+    }
+
+    fn write_pasted(
+        &mut self,
+        dir: PathBuf,
+        file: std::io::Result<(Vec<u8>, &'static str)>,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let secs = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
+            .map_or(0, |d| d.as_secs() as i64);
+        let work = move |gate: &Gate| {
+            let (file, ext) = file?;
+            if !gate.change(&dir) {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            let path = stillfile::write_pasted(&dir, &file, ext, secs)?;
+            Ok((reprisefs::undo::file_id(&path), path))
+        };
+        self.act(ctx, Action::changes("Paste"), work, move |ex, made, ctx| {
+            ex.item_made("the pasted picture", made, ctx)
+        })
     }
 
     /// Paste on the folder or launcher the item menu was opened on.
@@ -242,8 +289,12 @@ impl Explorer {
             return Reply::none();
         }
         self.paste = self.menu_paste.clone();
+        let image = matches!(self.paste, Some(PasteTo::Folder(_)))
+            && !repriseapp::clipboard_has_files()
+            && repriseapp::clipboard_has_image();
         Reply {
-            paste_files: true,
+            paste_files: !image,
+            paste_image: image,
             ..Default::default()
         }
     }

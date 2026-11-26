@@ -122,6 +122,26 @@ pub struct ScreenshotConfig {
     pub delay: u8,
 }
 
+impl ScreenshotConfig {
+    /// The saved file's format with its settings, for [`reprisefs::stillfile::encode`].
+    pub fn still(&self) -> reprisefs::stillfile::Still {
+        use reprisefs::stillfile::{PngLevel, Still};
+        match self.format {
+            ShotFormat::Png => Still::Png(match self.png_compression {
+                PngCompression::Fast => PngLevel::Fast,
+                PngCompression::Default => PngLevel::Default,
+                PngCompression::Best => PngLevel::Best,
+            }),
+            ShotFormat::Jpg => Still::Jpg(self.jpg_quality),
+            ShotFormat::Jxl => Still::Jxl(reprisefs::stillfile::Jxl {
+                lossless: self.jxl_lossless,
+                quality: self.jxl_quality,
+                effort: self.jxl_effort,
+            }),
+        }
+    }
+}
+
 /// The longest `[screenshot] delay`, in seconds; a longer one is cut to it.
 pub const SHOT_DELAY_MAX: u8 = 10;
 
