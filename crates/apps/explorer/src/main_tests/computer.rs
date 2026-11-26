@@ -801,8 +801,8 @@ fn box_text(ex: &mut Explorer, ctx: &mut repriseapp::Ctx) -> String {
 /// F2 on a mounted FAT stick edits its label alone and sets it through UDisks2; a refusal
 /// raises a box in words. Rename is greyed on the system's own drive, which F2 says, and on a
 /// drive UDisks2 has no tools for. The box opens on the whole label, stops at the file system's
-/// longest, and a longer name is refused before UDisks2 is asked. A stick swapped while the box
-/// is up keeps its label.
+/// longest, and a longer name or one with a character FAT refuses is refused before UDisks2 is
+/// asked. A stick swapped while the box is up keeps its label.
 #[test]
 fn rename_sets_a_drives_label_through_udisks() {
     use reprisefs::udisks::{Snapshot, Udisks, Volume};
@@ -937,6 +937,14 @@ fn rename_sets_a_drives_label_through_udisks() {
     assert_eq!(
         box_text(&mut ex, &mut ctx),
         "A drive's name cannot start with a hyphen (-)."
+    );
+
+    rename(&mut ex, &mut ctx, "A:B");
+    assert_eq!(
+        box_text(&mut ex, &mut ctx),
+        "A drive's name cannot contain any of the following characters:\n\
+         * ? . , ; : / \\ | + = < > [ ] \"",
+        "refused before UDisks2 is asked"
     );
 
     rename(&mut ex, &mut ctx, "HOLIDAY 2026");

@@ -222,6 +222,37 @@ pub fn label_limit(fs_type: &str) -> Option<Limit> {
     })
 }
 
+/// A character the label tool UDisks2 runs for a file system refuses, whatever the length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadLabelChar {
+    /// A control character, which no file system's label takes.
+    Control,
+    /// One of the characters listed, which a FAT or exFAT label cannot hold.
+    Listed(&'static str),
+    /// A space, which an XFS label cannot hold.
+    Space,
+}
+
+/// libblockdev's `"*/:<>?\|` and fatlabel's own `.,;+=[]`.
+const FAT_REFUSES: &str = "*?.,;:/\\|+=<>[]\"";
+const EXFAT_REFUSES: &str = "\"*/:<>?\\|";
+
+/// The first kind of character in `label` that an `fs_type` file system refuses, if any.
+pub fn label_refuses(fs_type: &str, label: &str) -> Option<BadLabelChar> {
+    if label.chars().any(char::is_control) {
+        return Some(BadLabelChar::Control);
+    }
+    let listed = match fs_type {
+        "vfat" => FAT_REFUSES,
+        "exfat" => EXFAT_REFUSES,
+        "xfs" => return label.contains(' ').then_some(BadLabelChar::Space),
+        _ => return None,
+    };
+    label
+        .contains(|c| listed.contains(c))
+        .then_some(BadLabelChar::Listed(listed))
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
     /// By path.
@@ -1533,6 +1564,30 @@ pub(crate) mod tests {
             ..stick(&snap)
         };
         assert!(!snap.can_label(&xfs), "a type UDisks2 does not list");
+    }
+
+    #[test]
+    fn a_label_is_refused_for_the_characters_its_file_system_refuses() {
+        let fat = Some(BadLabelChar::Listed(FAT_REFUSES));
+        assert_eq!(label_refuses("vfat", "PHOTOS 2026"), None);
+        for bad in ["A:B", "MY.DISK", "A+B", "[X]", "Q?", "\"Q\""] {
+            assert_eq!(label_refuses("vfat", bad), fat, "{bad}");
+        }
+        assert_eq!(
+            label_refuses("exfat", "A*B"),
+            Some(BadLabelChar::Listed(EXFAT_REFUSES))
+        );
+        assert_eq!(label_refuses("exfat", "Photos 2026.1"), None);
+        assert_eq!(label_refuses("xfs", "DATA 2"), Some(BadLabelChar::Space));
+        assert_eq!(label_refuses("xfs", "DATA:2"), None);
+        assert_eq!(label_refuses("ext4", "a:b*c?"), None, "ext takes any byte");
+        for fs in ["ext4", "btrfs", "vfat"] {
+            assert_eq!(
+                label_refuses(fs, "A\nB"),
+                Some(BadLabelChar::Control),
+                "{fs}"
+            );
+        }
     }
 
     #[test]
