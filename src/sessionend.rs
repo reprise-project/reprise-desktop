@@ -751,9 +751,13 @@ fn arrive(wait: &Mutex<Wait>, state: &mut State, mark: impl FnOnce(&mut Wait)) {
 }
 
 /// End the session now, whatever is open (a SIGTERM, a GPU gone): once screenshot files under way
-/// are written, fade out, then stop the loop.
+/// are written, fade out, then stop the loop. The power action under way is given up, so neither
+/// its answer nor its deadline brings the desktop back.
 pub fn quit(state: &mut State) {
     crate::crash::ending();
+    if state.powering.give_up_all() {
+        log::info!("session end: quitting gives up the power action under way");
+    }
     fade_out(
         state,
         true,
@@ -2784,6 +2788,24 @@ mod tests {
         );
         assert_eq!(dialogs(&h), open, "the given-up Stand By refuses nothing");
         assert!(h.state.ending.is_some());
+    }
+
+    #[test]
+    fn quitting_gives_up_the_power_action_under_way_so_its_dismissal_keeps_the_screen_black() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let id = h.state.powering.begin();
+        quit(&mut h.state);
+        assert!(!h.state.powering.busy());
+        h.until("the fade", |s| s.session_fade.darkens());
+        answered(
+            &mut h.state,
+            id,
+            again(Act::TurnOff),
+            Some(Failed::Dismissed),
+            Some(Goal::TurnOff),
+        );
+        assert!(h.state.session_fade.darkens(), "the screen stays black");
     }
 
     #[test]
