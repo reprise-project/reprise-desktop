@@ -947,10 +947,6 @@ impl TaskMgr {
             let list = self.list().expect("a page with a list");
             let press = list.press(at, button, r, ctx);
             return match press {
-                Press::Column(c) if page == Page::Processes => {
-                    self.sort_by(c);
-                    Reply::redraw()
-                }
                 Press::Activate(_) if page == Page::Applications => self.switch_to(),
                 Press::None => Reply::none(),
                 _ => Reply::redraw(),
@@ -1146,7 +1142,12 @@ impl TaskMgr {
             }
             Event::Pointer(PointerInput::Motion { x, y }) => self.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => {
-                let list = self.let_go_lists(ctx.styled());
+                let held = [&mut self.apps, &mut self.procs, &mut self.perf.sensors]
+                    .map(|l| l.release(ctx));
+                if let Some(c) = held[1].column {
+                    self.sort_by(c);
+                }
+                let list = self.let_go_lists(ctx.styled()) | held.iter().any(|h| h.redraw);
                 let ev = self.form.release();
                 let r = self.form_event(ev, ctx);
                 Reply {

@@ -1653,3 +1653,79 @@ fn icon_rows_grow_their_icons_with_the_text_and_names_clear_them() {
     assert_eq!(cut, Vec::new(), "(list, line)");
     crate::pins::check("controls/listview_icons_200", &hashes);
 }
+
+/// A held Classic title is flat in a shadow outline with its title a pixel down and right, sorted
+/// or not; the arrow follows the title. Pinned at rest, sorted, held and held sorted, at scale 1 and 2.
+#[test]
+fn a_classic_header_draws_its_held_and_sorted_titles_at_both_scales() {
+    crate::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let cs = &theme.colors;
+    let r = Rect::new(0, 0, 200, 40);
+    let lay = layout(&view(1), r, &ControlMetrics::CLASSIC);
+    let mut pins = Vec::new();
+    for s in [1, 2] {
+        let draw_at = |lv: &ListView| {
+            let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+            draw(
+                &mut c,
+                &text,
+                &classic_paint(cs, s),
+                lv,
+                &lay,
+                None,
+                theme.fonts.size_px,
+            );
+            c
+        };
+        let head = lay.header.scaled(s);
+        // Name's title button: its top-left corner and the first title ink column.
+        let ink = |c: &Canvas| {
+            (head.x..head.x + 60 * s)
+                .find(|&x| (head.y..head.bottom()).any(|y| c.get(x, y) == cs.button_text.argb()))
+        };
+        let mut lv = view(1);
+        let rest = draw_at(&lv);
+        assert_eq!(rest.get(head.x, head.y), cs.button_hilight.argb(), "x{s}");
+        lv.sort = Some((0, true));
+        let sorted = draw_at(&lv);
+        lv.header.press(Some(0), false);
+        let held_sorted = draw_at(&lv);
+        lv.sort = None;
+        let held = draw_at(&lv);
+        for c in [&held, &held_sorted] {
+            assert_eq!(c.get(head.x, head.y), cs.button_shadow.argb(), "x{s}");
+            let bottom = head.bottom() - 1;
+            assert_eq!(
+                c.get(head.x + 4 * s, bottom),
+                cs.button_shadow.argb(),
+                "x{s}"
+            );
+        }
+        assert_eq!(
+            ink(&held).unwrap(),
+            ink(&rest).unwrap() + s,
+            "x{s}: the held title moves right a pixel"
+        );
+        let arrow = |c: &Canvas| {
+            (head.x + 2 * s..head.x + 110 * s)
+                .rev()
+                .find(|&x| c.get(x, head.y + 9 * s) == cs.button_shadow.argb())
+        };
+        assert_eq!(
+            arrow(&held_sorted).unwrap(),
+            arrow(&sorted).unwrap() + s,
+            "x{s}: the arrow follows the held title"
+        );
+        for (name, c) in [
+            ("rest", &rest),
+            ("sorted", &sorted),
+            ("held", &held),
+            ("held sorted", &held_sorted),
+        ] {
+            pins.push((format!("{name} @{s}"), hash(c)));
+        }
+    }
+    crate::pins::check("controls/listview_classic_header", &pins);
+}

@@ -453,7 +453,7 @@ impl Folder {
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> Outcome {
-        redraw(self.list.release(ctx))
+        redraw(self.list.release(ctx).redraw)
     }
 
     /// A key. An open menu takes the menu keys; otherwise the arrows, Home, End and the page keys

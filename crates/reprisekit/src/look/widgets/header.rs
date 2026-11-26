@@ -2,8 +2,9 @@
 //! [`Part::HeaderItem`], [`Part::HeaderFiller`] and
 //! [`Part::HeaderSortArrow`] when it has them, Classic's drawing
 //! otherwise. Classic's header is a raised strip of raised buttons, with
-//! no look under the pointer or held, and a solid `button_shadow` sort
-//! arrow.
+//! no look under the pointer; a held one is flat in a `button_shadow`
+//! outline with its title a pixel down and right, and the sort arrow is
+//! a solid `button_shadow` triangle.
 //!
 //! Rects are device px (already scaled by `p.s`).
 
@@ -33,8 +34,8 @@ pub fn draw_strip(c: &mut Canvas, p: &Paint, r: Rect) {
 
 /// One column's title button in `r`, lit for `ptr`, `sorted` when it
 /// carries the sort arrow; the rect its title goes in, which the caller
-/// insets by its own text margin. Classic's button looks the same
-/// whatever the pointer does, and its title sits the same sorted or not.
+/// insets by its own text margin. Classic's title sits the same sorted
+/// or not.
 pub fn draw_item(c: &mut Canvas, p: &Paint, r: Rect, ptr: Interaction, sorted: bool) -> Rect {
     if let Some(st) = p.look.style()
         && let Some(t) = styled::header::draw_item(st, c, p, r, ptr, sorted)
@@ -42,8 +43,20 @@ pub fn draw_item(c: &mut Canvas, p: &Paint, r: Rect, ptr: Interaction, sorted: b
         return t;
     }
     c.fill_rect(r, p.cs.button_face);
-    c.edge_t(r, EdgeStyle::ButtonRaised, p.cs, p.s);
-    r
+    if ptr == Interaction::Pressed {
+        let s = p.s;
+        for side in [
+            Rect::new(r.x, r.y, r.width, s),
+            Rect::new(r.x, r.bottom() - s, r.width, s),
+            Rect::new(r.x, r.y, s, r.height),
+            Rect::new(r.right() - s, r.y, s, r.height),
+        ] {
+            c.fill_rect(side, p.cs.button_shadow);
+        }
+    } else {
+        c.edge_t(r, EdgeStyle::ButtonRaised, p.cs, p.s);
+    }
+    classic_title_rect(p, r, ptr)
 }
 
 /// The rect [`draw_item`] returns, without drawing.
@@ -51,7 +64,14 @@ pub fn item_title_rect(p: &Paint, r: Rect, ptr: Interaction, sorted: bool) -> Re
     p.look
         .style()
         .and_then(|st| styled::header::title_rect(st, p, r, ptr, sorted))
-        .unwrap_or(r)
+        .unwrap_or_else(|| classic_title_rect(p, r, ptr))
+}
+
+fn classic_title_rect(p: &Paint, r: Rect, ptr: Interaction) -> Rect {
+    match ptr {
+        Interaction::Pressed => Rect::new(r.x + p.s, r.y + p.s, r.width, r.height),
+        _ => r,
+    }
 }
 
 /// One column's title button in a dialog's list (the tray's Customize

@@ -23,10 +23,18 @@ pub enum Press {
     /// A left double click on the row (Enter's twin).
     Activate(usize),
     Background,
-    /// A left press on column `n`'s title.
+    /// A left press on column `n`'s title, which holds it; the release on it is the click.
     Column(usize),
     Redraw,
     None,
+}
+
+/// What a left release did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Released {
+    pub redraw: bool,
+    /// The column whose title the press and the release were both on: a click that sorts by it.
+    pub column: Option<usize>,
 }
 
 impl<R: Rows + Default> List<R> {
@@ -73,7 +81,7 @@ impl<R: Rows + Default> List<R> {
     }
 
     fn column_at(&self, x: i32, y: i32, r: Rect, ctx: &Ctx) -> Option<usize> {
-        if !ctx.styled() || !r.contains(x, y) {
+        if !r.contains(x, y) {
             return None;
         }
         self.view.hit(&self.layout(r, ctx), x, y).column()
@@ -82,13 +90,12 @@ impl<R: Rows + Default> List<R> {
     /// A press `at` inside `r`: any button selects the row under it; the left one also works the scrollbars.
     pub fn press(&mut self, at: Click, button: u32, r: Rect, ctx: &Ctx) -> Press {
         let (x, y) = (at.x, at.y);
-        let lit = button == BTN_LEFT
-            && {
-                let over = self.bar_at(x, y, r, ctx);
-                let column = self.column_at(x, y, r, ctx);
-                self.view.bars.press_bar(over) | self.view.header.press(column, false)
-            }
-            && ctx.styled();
+        // Every look draws a held title; only a styled one draws a lit bar part.
+        let lit = button == BTN_LEFT && {
+            let over = self.bar_at(x, y, r, ctx);
+            let column = self.column_at(x, y, r, ctx);
+            (self.view.bars.press_bar(over) && ctx.styled()) | self.view.header.press(column, false)
+        };
         let lay = self.layout(r, ctx);
         let moved = |b: bool| if b || lit { Press::Redraw } else { Press::None };
         let hit = self.view.hit(&lay, x, y);
@@ -134,7 +141,9 @@ impl<R: Rows + Default> List<R> {
         }
         let over = self.bar_at(x, y, r, ctx);
         let column = self.column_at(x, y, r, ctx);
-        let lit = (self.view.bars.motion(over) | self.view.header.motion(column)) && ctx.styled();
+        let held = self.view.header.holding();
+        let lit = (self.view.bars.motion(over) && ctx.styled())
+            | (self.view.header.motion(column) && (held || ctx.styled()));
         if !self.view.thumb.holding() {
             return lit;
         }
@@ -143,8 +152,15 @@ impl<R: Rows + Default> List<R> {
         self.view.pointer(drag, &lay, r, false) == Some(listview::Took::Moved) || lit
     }
 
-    pub fn release(&mut self, ctx: &Ctx) -> bool {
-        self.let_go() && ctx.styled()
+    /// The left release: everything held lets go where it is.
+    pub fn release(&mut self, ctx: &Ctx) -> Released {
+        let held = self.view.header.holding();
+        let column = self.view.header.release();
+        let bars = self.let_go();
+        Released {
+            redraw: held || (bars && ctx.styled()),
+            column,
+        }
     }
 
     /// The release without its pointer, for a window that will not see it: the thumb, a divider

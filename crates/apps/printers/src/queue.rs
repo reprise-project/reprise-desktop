@@ -338,7 +338,7 @@ impl Queue {
     }
 
     pub fn release(&mut self, ctx: &Ctx) -> Outcome {
-        redraw(self.list.release(ctx))
+        redraw(self.list.release(ctx).redraw)
     }
 
     /// The window lost the keyboard: the menu bar leaves keyboard mode.
