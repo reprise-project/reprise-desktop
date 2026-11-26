@@ -1732,6 +1732,50 @@ mod tests {
         );
     }
 
+    /// The Audio page at 200% in a window 400 tall, under each interface: widened by the
+    /// page's scrollbar it scrolls down only, the groups beside the bar.
+    #[test]
+    fn at_200_percent_the_audio_page_cut_short_scrolls_down_only() {
+        use reprisekit::interface::Interface;
+        use reprisekit::interfaces::theme_for;
+        reprisekit::pins::fonts();
+        let mut got = Vec::new();
+        for (name, i) in [
+            ("classic", Interface::Classic),
+            ("blue", Interface::Blue),
+            ("glass", Interface::Glass),
+        ] {
+            let theme = theme_for(i).with_form_text(200);
+            let (u, px) = (theme.text, theme.fonts.size_px);
+            let text = TextRenderer::load(&theme.fonts);
+            let mut s = sheet(&fixture());
+            s.sheet.drawn_with(&theme.paint());
+            assert!(s.sheet.fit_bar_room(400), "{name}");
+            let shown = (s.sheet.size.0, 400);
+            s.sheet.fit(shown);
+            let l = s.sheet.layout(&text, px);
+            let bar = l.bar.expect("the page scrolls down");
+            assert_eq!(l.hbar, None, "{name}: and not sideways");
+            for id in [SINK.group, SOURCE.group] {
+                let r = s.sheet.open().rect(id).unwrap();
+                assert!(r.right() <= bar.x, "{name}: {id} {r:?} beside {bar:?}");
+            }
+            let (w, h) = u.size(shown);
+            let mut c = Canvas::new(w as u32, h as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, true, px);
+            let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
+                (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
+            });
+            got.push((name.to_string(), hash));
+        }
+        reprisekit::pins::check_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/pins/audio_page_cut_short.txt"),
+            &got,
+        );
+    }
+
     fn app(key: &str, label: &str, streams: &[u32], volume: f64, mute: bool) -> App {
         App {
             key: key.into(),

@@ -109,6 +109,9 @@ thread_local! {
     /// The pointer's shape a form or sheet fed a motion asks for; the runtime adds it to the
     /// program's reply ([`take_pointer`]).
     static POINTER: std::cell::Cell<Shape> = const { std::cell::Cell::new(Shape::Default) };
+    /// The client size a sheet fed the event being handled asks its window for
+    /// ([`PropSheet::fit_bar_room`]).
+    static SHEET_SIZE: std::cell::Cell<Option<(i32, i32)>> = const { std::cell::Cell::new(None) };
 }
 
 pub(crate) fn note_pointer(shape: Shape) {
@@ -117,6 +120,11 @@ pub(crate) fn note_pointer(shape: Shape) {
 
 pub(crate) fn take_pointer() -> Shape {
     POINTER.take()
+}
+
+/// The client size a sheet asked its window for while the program handled an event, taken.
+pub(crate) fn take_sheet_size() -> Option<(i32, i32)> {
+    SHEET_SIZE.take()
 }
 
 pub(crate) fn note_tip(waits: bool) {
@@ -148,7 +156,9 @@ pub(crate) fn take_clipboard() -> Reply {
 /// label ([`Form::tip_tick`]), clipboard keys for the focused field ([`form_clipboard`]) and
 /// `Event::Pasted` for the field Ctrl+V was pressed in. `None` is an event the host answers
 /// itself. First the sheet fits the window ([`PropSheet::fit`], [`PropSheet::fit_tabs`]): a
-/// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
+/// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. A main
+/// window at its program's pick that the compositor cut short grows by the page's scrollbar
+/// ([`PropSheet::fit_bar_room`]). While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let out = sheet_event(sheet, ev, ctx);
     if sheet.ticking() {
@@ -161,7 +171,12 @@ pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<props
 fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
     let u = ctx.form_units();
     let (ox, oy) = sheet.origin();
-    sheet.fit((u.within(ctx.size.0 - ox), u.within(ctx.size.1 - oy)));
+    let h = u.within(ctx.size.1 - oy);
+    if ctx.at_pick && sheet.fit_bar_room(h) {
+        let (w, full) = u.size(sheet.size);
+        SHEET_SIZE.set(Some((ox + w, oy + full)));
+    }
+    sheet.fit((u.within(ctx.size.0 - ox), h));
     let px = sheet.open().units().px(ctx.base_px());
     sheet.fit_tabs(&ctx.text, px);
     Some(match ev {
@@ -400,6 +415,59 @@ mod tests {
         });
         let _ = sheet_input(&mut sheet, &release, &ctx);
         assert!(!ctx.want_tick.take(), "the release stops it");
+    }
+
+    /// A main window at its pick cut short at 200% asks to grow by the page's scrollbar, and
+    /// back once it is tall enough; a window the user sized asks nothing.
+    #[test]
+    fn a_sheet_cut_short_asks_its_window_for_its_bar() {
+        use reprisekit::controls::form::Item;
+        use reprisekit::controls::propsheet::PropSheet;
+        use reprisekit::raster::Rect;
+        let mut ctx = Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (722, 800),
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 200,
+        };
+        let page = Form::new(vec![
+            Item::group("group", Rect::new(21, 40, 320, 100), "Group"),
+            Item::check("low", 20, 420, "Low"),
+        ]);
+        let mut sheet = PropSheet::new(&["General"], vec![page], (361, 482));
+        sheet.drawn_with(&ctx.forms().paint());
+        let leave = Event::Pointer(PointerInput::Leave);
+        let _ = sheet_input(&mut sheet, &leave, &ctx);
+        assert_eq!(take_sheet_size(), None, "not at its pick");
+
+        ctx.at_pick = true;
+        let bar = ctx.forms().controls().scroll;
+        let _ = sheet_input(&mut sheet, &leave, &ctx);
+        assert_eq!(take_sheet_size(), Some((722 + bar, 964)));
+        ctx.size = (722 + bar, 800);
+        let _ = sheet_input(&mut sheet, &leave, &ctx);
+        assert_eq!(take_sheet_size(), None, "asked once");
+        let px = sheet.open().units().px(ctx.base_px());
+        let l = sheet.layout(&ctx.text, px);
+        assert!(l.bar.is_some() && l.hbar.is_none(), "scrolls down only");
+
+        ctx.size = (722 + bar, 964);
+        let _ = sheet_input(&mut sheet, &leave, &ctx);
+        assert_eq!(take_sheet_size(), Some((722, 964)), "whole again");
     }
 
     /// The window losing the keyboard blurs a focused hot-key field: the

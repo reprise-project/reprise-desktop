@@ -67,6 +67,30 @@ impl PropSheet {
         moved || (dx, dy) != (0, 0)
     }
 
+    /// Widen the sheet by its page's scrollbar while a client `h` tall at 100% cuts it short,
+    /// and narrow it back once the client is as tall as the sheet, so a window that asks for
+    /// [`PropSheet::size`] again shows a page cut short scrolling down only. True when the
+    /// width changed.
+    pub fn fit_bar_room(&mut self, h: i32) -> bool {
+        let want = if h < self.size.1 {
+            self.page_bar_len()
+        } else {
+            0
+        };
+        let dx = want - self.bar_room;
+        if dx == 0 {
+            return false;
+        }
+        self.bar_room = want;
+        self.resize((self.size.0 + dx, self.size.1));
+        true
+    }
+
+    /// How much wider than built [`PropSheet::fit_bar_room`] made the sheet, at 100%.
+    pub fn bar_room(&self) -> i32 {
+        self.bar_room
+    }
+
     /// Widen the page list until every row's text, set by `text` at `px`, fits beside its
     /// scrollbar at scale 1 and 2, no narrower than [`pagelist::WIDTH`]; the sheet widens
     /// with it and the pages move over. Run after [`PropSheet::drawn_with`], which gives the
