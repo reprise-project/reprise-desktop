@@ -1126,14 +1126,10 @@ mod tests {
             !crate::notifyview::balloon_up(&h.state),
             "held while shared"
         );
+        let before = std::time::Instant::now();
         c.ext_end(&mut h, s);
-        let ended = std::time::Instant::now();
-        assert!(
-            h.state.privacy.sharing_shown(),
-            "the dot outlasts the capture"
-        );
-        run_until(&mut h, ended, 1.1);
-        assert!(!h.state.privacy.sharing_shown());
+        let after = std::time::Instant::now();
+        dot_goes_hold_after(&mut h, (before, after));
         assert!(
             crate::notifyview::balloon_up(&h.state),
             "the held balloon shows once sharing ends"
@@ -1157,8 +1153,11 @@ mod tests {
         assert_eq!(h.state.notify.log.held.len(), 1);
     }
 
-    /// A screen cast with a balloon held under its dot, ended: when it ended.
-    fn cast_with_held_balloon(h: &mut crate::harness::Harness) -> std::time::Instant {
+    /// A screen cast with a balloon held under its dot, ended: the instants just before and
+    /// after it ended.
+    fn cast_with_held_balloon(
+        h: &mut crate::harness::Harness,
+    ) -> (std::time::Instant, std::time::Instant) {
         let mut c = h.connect_capture(SIZE);
         let mut s = c.ext_session(h);
         c.ext_frame(h, &mut s);
@@ -1168,8 +1167,9 @@ mod tests {
             !crate::notifyview::balloon_up(&h.state),
             "held while shared"
         );
+        let before = std::time::Instant::now();
         c.ext_end(h, s);
-        std::time::Instant::now()
+        (before, std::time::Instant::now())
     }
 
     /// A screenshot through a one-frame ext session, as grim and the portal take it, and one
@@ -1187,6 +1187,29 @@ mod tests {
         let left =
             (from + HOLD.mul_f32(holds)).saturating_duration_since(std::time::Instant::now());
         h.run_for(left.as_millis() as u64);
+    }
+
+    /// Turns of the loop until the sharing dot goes, its last capture having ended between
+    /// `before` and `after`. A stalled turn can overshoot any sample time, so every turn checks
+    /// that the dot is never gone before `HOLD` past `before` and goes within 3 s past `HOLD`,
+    /// which no stall reaches; the hold must have run from that end.
+    fn dot_goes_hold_after(
+        h: &mut crate::harness::Harness,
+        (before, after): (std::time::Instant, std::time::Instant),
+    ) {
+        let late = after + HOLD + std::time::Duration::from_secs(3);
+        h.until("the dot goes", |s| {
+            let now = std::time::Instant::now();
+            let gone = !s.privacy.sharing_shown();
+            assert!(!gone || now >= before + HOLD, "the dot lingers HOLD");
+            assert!(gone || now < late, "the dot goes within 3 s past HOLD");
+            gone
+        });
+        let from = h.state.privacy.live_at.expect("a live capture was seen");
+        assert!(
+            (before..=after).contains(&from),
+            "the dot goes HOLD after the capture ends"
+        );
     }
 
     #[test]
@@ -1210,14 +1233,9 @@ mod tests {
     fn a_screenshot_during_the_linger_does_not_extend_it() {
         let mut h = capturing();
         let ended = cast_with_held_balloon(&mut h);
-        run_until(&mut h, ended, 0.4);
+        run_until(&mut h, ended.1, 0.4);
         screenshot(&mut h);
-        assert!(h.state.privacy.sharing_shown(), "the dot lingers");
-        run_until(&mut h, ended, 1.2);
-        assert!(
-            !h.state.privacy.sharing_shown(),
-            "the dot goes HOLD after the cast ends"
-        );
+        dot_goes_hold_after(&mut h, ended);
         assert!(
             crate::notifyview::balloon_up(&h.state),
             "the held balloon shows once the dot goes"
@@ -1249,22 +1267,7 @@ mod tests {
         c.wlr_shot(&mut h);
         let after = std::time::Instant::now();
         assert!(h.state.privacy.sharing_shown(), "a recording");
-        // A stalled turn can overshoot any sample time, so the dot is checked at every turn until
-        // it goes: never gone before HOLD after the last frame was sent, and gone well within
-        // 3 s past it, which no stall reaches.
-        let late = after + HOLD + std::time::Duration::from_secs(3);
-        h.until("the dot goes", |s| {
-            let now = std::time::Instant::now();
-            let gone = !s.privacy.sharing_shown();
-            assert!(!gone || now >= before + HOLD, "the dot lingers HOLD");
-            assert!(gone || now < late, "the dot goes within 3 s past HOLD");
-            gone
-        });
-        let from = h.state.privacy.live_at.expect("a live capture was seen");
-        assert!(
-            (before..=after).contains(&from),
-            "the dot goes HOLD after the last frame"
-        );
+        dot_goes_hold_after(&mut h, (before, after));
     }
 
     fn dot(h: &crate::harness::Harness) -> Option<String> {
@@ -1426,7 +1429,7 @@ mod tests {
     #[test]
     fn screenshots_every_few_seconds_after_a_cast_do_not_hold_balloons() {
         let mut h = capturing();
-        let ended = cast_with_held_balloon(&mut h);
+        let (_, ended) = cast_with_held_balloon(&mut h);
         for k in 1..=5 {
             run_until(&mut h, ended, 0.4 * k as f32);
             screenshot(&mut h);
