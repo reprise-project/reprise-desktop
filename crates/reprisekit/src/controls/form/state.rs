@@ -5,6 +5,7 @@ use crate::raster::{Canvas, Rect};
 
 use super::item::Item;
 use super::{Control, Form};
+use crate::controls::listbox;
 
 impl Form {
     /// Take over `old`'s hot or held item when the host rebuilds this page under the pointer.
@@ -199,6 +200,26 @@ impl Form {
     pub fn select_edit_text(&mut self, id: &str) {
         if let Some(Control::Edit { edit, .. }) = self.item_mut(id).map(|i| &mut i.control) {
             edit.select_all();
+        }
+    }
+
+    /// Pick row `row` of list `id`, `None` for none, scrolled to the top row where the list
+    /// runs that far.
+    pub fn select_list(&mut self, id: &str, row: Option<usize>) {
+        let Some(i) = self.index_of(id) else {
+            return;
+        };
+        let rect = self.at(&self.items[i]);
+        let cm = self.rendered.controls.get();
+        if let Control::ListBox { list, .. } = &mut self.items[i].control {
+            match row.filter(|&r| r < list.items.len()) {
+                Some(r) => {
+                    let visible = listbox::layout(list, rect, &cm).visible;
+                    list.selected = Some(r);
+                    list.top = r.min(list.items.len().saturating_sub(visible));
+                }
+                None => list.selected = None,
+            }
         }
     }
 

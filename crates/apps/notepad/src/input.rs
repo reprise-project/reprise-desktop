@@ -25,7 +25,7 @@ impl Notepad {
         let bar_key = Key::from_input(k.sym, k.utf8.as_deref(), k.mods.shift, k.mods.alt);
         if let Some(bk) = bar_key {
             match self.bar.key(bk, &lay, &ctx.text, m, px) {
-                Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
+                Action::Chosen { title, path, .. } => return self.chosen(title, &path, ctx),
                 Action::Redraw => return Reply::redraw(),
                 Action::Ignored | Action::Passed => {}
             }
@@ -120,7 +120,7 @@ impl Notepad {
                 ..
             } => {
                 match self.bar.press(x, y, &lay, &ctx.text, m, px) {
-                    Action::Chosen { title, row, .. } => return self.command(title, row, ctx),
+                    Action::Chosen { title, path, .. } => return self.chosen(title, &path, ctx),
                     Action::Redraw => return Reply::redraw(),
                     Action::Passed => {
                         return Reply {
@@ -140,7 +140,7 @@ impl Notepad {
                 let lit = self.view.bars.press_bar(over) && ctx.styled();
                 if el.inner.contains(x, y) {
                     let pos = multiedit::pos_at(
-                        &self.mono,
+                        self.mono.get(),
                         &self.metrics,
                         &self.edit,
                         &el,
@@ -157,13 +157,24 @@ impl Notepad {
                     }
                     return Reply::redraw();
                 }
-                if let Some((bar, hit)) =
-                    multiedit::bar_hit(&self.mono, &self.metrics, &self.edit, &el, self.view, x, y)
-                {
+                if let Some((bar, hit)) = multiedit::bar_hit(
+                    self.mono.get(),
+                    &self.metrics,
+                    &self.edit,
+                    &el,
+                    self.view,
+                    x,
+                    y,
+                ) {
                     self.thumb.press(bar.axis(), hit);
-                    self.view =
-                        self.view
-                            .press_bar(&self.mono, &self.metrics, &self.edit, &el, bar, hit);
+                    self.view = self.view.press_bar(
+                        self.mono.get(),
+                        &self.metrics,
+                        &self.edit,
+                        &el,
+                        bar,
+                        hit,
+                    );
                     return Reply::redraw();
                 }
                 if lit { Reply::redraw() } else { Reply::none() }
@@ -180,7 +191,7 @@ impl Notepad {
                 }
                 self.bar.close();
                 let pos = multiedit::pos_at(
-                    &self.mono,
+                    self.mono.get(),
                     &self.metrics,
                     &self.edit,
                     &el,
@@ -241,7 +252,7 @@ impl Notepad {
             }
             PointerInput::ScrollAcross { cols, .. } => {
                 let el = self.edit_layout(ctx);
-                let (mono, m, edit) = (&self.mono, &self.metrics, &self.edit);
+                let (mono, m, edit) = (self.mono.get(), &self.metrics, &self.edit);
                 if self.view.scroll_across(cols, mono, m, edit, &el) {
                     Reply::redraw()
                 } else {
@@ -262,15 +273,23 @@ impl Notepad {
         if !ctx.styled() {
             return None;
         }
-        multiedit::bar_hit(&self.mono, &self.metrics, &self.edit, el, self.view, x, y)
-            .and_then(|(bar, hit)| Some((bar.axis(), hit.part()?)))
+        multiedit::bar_hit(
+            self.mono.get(),
+            &self.metrics,
+            &self.edit,
+            el,
+            self.view,
+            x,
+            y,
+        )
+        .and_then(|(bar, hit)| Some((bar.axis(), hit.part()?)))
     }
 
     fn drag_motion(&mut self, x: i32, y: i32, ctx: &Ctx) -> Reply {
         if self.thumb.holding() {
             let el = self.edit_layout(ctx);
             let to = multiedit::drag_bar(
-                &self.mono,
+                self.mono.get(),
                 &self.metrics,
                 &self.edit,
                 &el,
@@ -296,7 +315,7 @@ impl Notepad {
         };
         let el = self.edit_layout(ctx);
         let step = multiedit::select_drag(
-            &self.mono,
+            self.mono.get(),
             &self.metrics,
             &mut self.edit,
             &el,

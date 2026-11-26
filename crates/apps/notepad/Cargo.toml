@@ -17,6 +17,9 @@ reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }
 log.workspace = true
 reprisebus = { path = "../../reprisebus" }
+reprisexdg = { path = "../../reprisexdg" }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
 
 [dev-dependencies]
 libc.workspace = true

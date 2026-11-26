@@ -107,7 +107,9 @@ The file manager, and the default for folders.
 
 The default for plain text. New, Open, Save, Find (F3 for the next one; past
 the last match it goes on from the other end), Replace, Go To, Time/Date (F5) and Word Wrap, with Ln and Col in the status
-bar. A right-click on the text (or Shift+F10) opens the edit commands.
+bar. View > Zoom (Ctrl+Plus, Ctrl+Minus, Ctrl+0 for 100%) sizes the text from
+10% to 500%, shown beside Ln and Col. Format > Font picks the text's family,
+style and size from the installed fonts, with a sample. A right-click on the text (or Shift+F10) opens the edit commands.
 Ctrl+Z steps back through up to 1000 edits, Ctrl+Y redoes. It opens UTF-8
 files, with or without a byte order mark, and UTF-16 LE and BE files with
 one, and saves each back in its encoding and line endings; Save As has an
@@ -116,6 +118,9 @@ Save As adds `.txt` to a name without an extension while Text
 Documents is the type (put the name in quotes to save it as typed). A save
 never leaves a file half written. Print is greyed out for now. Notepad has
 always had its priorities.
+
+The font, Word Wrap and the status bar are kept in
+`$XDG_CONFIG_HOME/reprise/notepad.toml`.
 
 When Notepad loses the desktop or crashes with unsaved text, it writes the
 text to `~/.local/state/reprise/notepad/` and offers it at the next start,

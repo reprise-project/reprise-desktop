@@ -45,6 +45,17 @@ find-direction = Direction
 find-up = &Up
 find-down = &Down
 
+## The Font dialog
+fontdlg-title = Font
+fontdlg-font = &Font:
+fontdlg-style = Font st&yle:
+fontdlg-size = &Size:
+fontdlg-sample = Sample
+fontdlg-regular = Regular
+fontdlg-italic = Italic
+fontdlg-bold = Bold
+fontdlg-bold-italic = Bold Italic
+
 ## The file dialog
 filedlg-look-in = Look &in:
 filedlg-file-name = File &name:

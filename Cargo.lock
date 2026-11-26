@@ -5053,7 +5053,10 @@ dependencies = [
  "reprisebus",
  "reprisefs",
  "reprisekit",
+ "reprisexdg",
+ "serde",
  "tempfile",
+ "toml",
 ]
 
 [[package]]

@@ -96,9 +96,9 @@ mod views;
 mod windowing;
 use dialogs::{
     render_about_system, render_bin_sheet, render_copy_progress, render_end_session,
-    render_favorites, render_file_dialog, render_folder_sheet, render_form_scroll,
-    render_import_sheet, render_install_sheet, render_label_ellipsis, render_location_prompt,
-    render_monitors, render_stats_panel, render_windowed_dialog,
+    render_favorites, render_file_dialog, render_folder_sheet, render_font_dialog,
+    render_form_scroll, render_import_sheet, render_install_sheet, render_label_ellipsis,
+    render_location_prompt, render_monitors, render_stats_panel, render_windowed_dialog,
 };
 use glass::{render_glass, render_glass_dark, render_glass_scale2};
 use glass_shell::{render_glass_preview, render_glass_switcher};
@@ -481,6 +481,14 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
     write_preview(
         || render_location_prompt(with_blue),
         "reprisekit-gallery-location-prompt.png",
+    );
+    write_preview(
+        || render_font_dialog(with_blue, 1),
+        "reprisekit-gallery-font-dialog.png",
+    );
+    write_preview(
+        || render_font_dialog(with_blue, 2),
+        "reprisekit-gallery-font-dialog-2x.png",
     );
     write_preview(
         || render_favorites(with_blue),
