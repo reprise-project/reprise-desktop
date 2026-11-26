@@ -1,57 +1,30 @@
 # Security policy
 
-## Reporting a vulnerability
+## How to report a vulnerability
 
-Please report security problems privately, not in a public issue. Use
-GitHub's private vulnerability reporting: open the
-[Security tab](https://github.com/reprise-project/reprise-desktop/security)
-of reprise-project/reprise-desktop and click "Report a vulnerability".
+Report security issues privately via the [Security tab](https://github.com/reprise-project/reprise-desktop/security) on `reprise-project/reprise-desktop` using "Report a vulnerability". Do not open a public issue.
 
-## Scope
+## What is in scope
 
-Anything in this repository, in particular:
+Everything in this repository is in scope: `reprise` (protocols, input, XWayland, clipboard, capture), the lock screen and PAM, `reprise-login`, `reprise-rdp`, `reprise-login-rdp`, `reprise-portal`, the polkit agent and bundled programs.
 
-- the compositor (`reprise`): the Wayland protocols it serves, input
-  handling, XWayland, the clipboard and screen capture
-- the lock screen and its PAM authentication
-- the login manager (`reprise-login`): its daemon, PAM workers, sockets and
-  login screen
-- the two network listeners: the Remote Desktop server (`reprise-rdp`) and
-  the login manager's remote login front (`reprise-login-rdp`)
-- the xdg-desktop-portal backend (`reprise-portal`): screen sharing,
-  screenshots, the access prompts Flatpak apps go through
-- the polkit agent and the bundled programs (Explorer, Notepad, Settings,
-  Network Connections, User Accounts, Software Updates and the rest)
+Report bugs in Smithay, PipeWire, NetworkManager, PAM or other dependencies upstream unless Reprise's use creates the flaw.
 
-Bugs in Smithay, PipeWire, NetworkManager, PAM or other dependencies belong
-upstream. If Reprise uses one of them in a way that opens a hole, that's
-in scope.
+## What counts as a vulnerability
 
-## What is and is not a vulnerability
-
-[docs/security.md](docs/security.md) describes the boundaries Reprise draws:
-what an unsandboxed program, a Flatpak and an X11 program can each reach,
-the lock screen, the login manager, focus and the portal's consent prompts.
-A way across one of those boundaries is a vulnerability. What that page
-lists as trusted or as a known gap (an unsandboxed program capturing the
-screen, X11 programs reading each other's keys, code running as you
-tampering with Reprise's processes) is not, though a proposal to close a gap
-is welcome as an issue.
+Crossing any boundary in [docs/security.md](docs/security.md) is a vulnerability. Items listed there as trusted or known gaps are not, though issues proposing fixes are welcome.
 
 ## What to include
 
-- the commit or package version you tested
-- your distribution and how you start Reprise (login manager or nested)
-- steps to reproduce, and a proof of concept if you have one
-- what an attacker gains: who they need to be to start with, and what they
-  can do afterwards
+- Commit or package version tested
+- Distribution and startup method (login manager or nested)
+- Steps to reproduce and any proof of concept
+- Attacker starting position and impact
 
-## What to expect
+## What happens next
 
-I maintain Reprise on my own, so answers are best effort. I'll acknowledge
-the report, tell you whether I consider it a vulnerability, and credit you
-in the fix unless you'd rather I didn't.
+Reprise has one maintainer, so responses are best effort. I acknowledge reports, state whether the issue is a vulnerability and credit you unless asked not to.
 
 ## Supported versions
 
-Only the latest release and the current `main` get fixes.
+Only the latest release and `main` receive fixes.

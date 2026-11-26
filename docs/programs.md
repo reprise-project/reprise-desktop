@@ -1,641 +1,187 @@
 # Programs
 
-Reprise comes with its own programs, drawn with the same controls as the
-desktop and dressed in whichever [interface](interfaces.md) you picked. GTK,
-Qt and X11 programs run alongside them, of course. These are just the ones
-that match the furniture.
+Reprise bundles built-in programs that match your active [interface](interfaces.md). GTK, Qt and X11 apps run alongside them.
 
 ## Explorer
 
-The file manager, and the default for folders.
+Explorer is the default file manager.
 
-- **Five views:** Thumbnails, Tiles, Icons, List and Details, sorted by name,
-  size, type or date. A folder tree or a task pane down the side, Back,
-  Forward, Up and an address bar (Alt+D or Ctrl+L). It remembers your view.
-- **Hidden items** (View > Hidden Items, Ctrl+H) shows dot names and the
-  names a folder's `.hidden` lists, their icons faded, in every Explorer
-  window and on the desktop.
-- **Folder Options** (Tools menu) picks whether a folder opens in the same
-  window or its own, single- or double-click opening (for the desktop too),
-  hidden items, hidden extensions of known file types (shown by default, and
-  only in Explorer: the desktop has `desktop_extensions`), item descriptions
-  and the thumbnail cache. Apply reaches every open Explorer window and the
-  desktop at once. Its File Types tab opens Default Programs.
-- **Tabs:** Ctrl+T opens the folder in a new tab, Ctrl+W closes one, Ctrl+Tab
-  goes round them, and a middle click on a folder opens it in a tab behind.
-  Each tab keeps its own folder, history, view and selection.
-- **Search** (Ctrl+F or F3) finds files by name anywhere under the folder
-  shown, through plocate or fd, and lists them with an In Folder column.
-  Escape in the field empties it, a second Escape (or Escape or Back over the
-  results) returns to the folder.
-- **Open in Terminal** on a folder's right-click menu starts your `terminal`
-  there. **Pin to Places** adds the folder to the task pane and to every file
-  dialog's places bar. **Disk Usage** opens [Disk Usage](#disk-usage) on it.
-- **Favorites** are GTK's bookmarks (`$XDG_CONFIG_HOME/gtk-3.0/bookmarks`),
-  the same list Pin to Places writes, so GTK programs' and the portal's file
-  dialogs show them too. Add to Favorites... names the folder shown;
-  Organize Favorites... renames, deletes and reorders them. The menu lists
-  each one: a server address (`sftp://`, `smb://`, ...) connects as Connect to
-  Server does, and an address of another kind or a folder that is not there
-  is greyed. A change another program makes shows at once.
-- **Places:** Desktop, Documents, Home, Computer, Network and the Recycle Bin.
-  Computer lists your drives, locked ones included, the shares gvfs mounted
-  and phones or cameras on USB; open one to mount it, Eject (on its menu or
-  File) to remove it: every file system on the drive is unmounted, then an
-  optical drive's disc comes out and any other drive powers off. A drive
-  holding part of the system (`/`, `/boot`, `/home`, `/var` and the like,
-  mounted or in fstab), swap or an LVM or RAID volume stays in, with a box
-  that says why.
-  Details shows each drive's Total Size and Free Space, Tiles a usage bar
-  and "free of" line; a drive that does not answer stays blank. F2 or Rename
-  on a drive sets its file system's label through UDisks2, which asks for a
-  password through polkit when the drive is not yours; it is greyed for a file
-  system UDisks2 cannot relabel and for the system's own drives (UDisks2's
-  system hint, or mounted at `/`, `/boot`, `/efi`, `/boot/efi` or `/usr`),
-  whose labels `fstab`, `crypttab` or the boot loader may name. A name may not
-  start with `-`, and a drive swapped while the box is up keeps its label.
-  Explorer does not format drives.
-  The address bar writes a folder on a share, phone or camera under its name
-  ("Test Phone/DCIM"), and takes that text typed back.
-- **Disk images** (`.iso`, raw `.img`) open by mounting them read-only, after
-  asking Mount / Cancel, and stay in Computer until Eject.
-- **Connect to Server** (File menu, or the address bar) mounts an `smb://`,
-  `sftp://`, `ftp://`, `ftps://`, `dav://`, `davs://`, `nfs://` or `afp://`
-  address or a `\\server\share` path through gvfs, and can keep its password.
-- **Network** lists the servers gvfs and Avahi find; open one to see an SMB
-  server's shares or to connect to an SFTP server.
-- **File operations** run in the background, with progress, Pause and Cancel:
-  copy, move, delete, Move To, Copy To, Send To, F2 rename (a find-and-replace
-  or numbering dialog for several items) and Copy as Path. Ctrl+Z undoes the
-  last file operation of any Explorer window or the desktop, which Edit > Undo
-  names. While an undo runs in one window, Undo is greyed in the others.
-- **New > Shortcut...** (File > New, the folder's right-click New and the
-  desktop's) asks what the shortcut opens: a program from the list, a file
-  Browse... picks, a folder, a command line or a web address. Then it asks a
-  name and writes a launcher the desktop runs. Undo removes it.
-- **Pasting a picture** (Ctrl+V or Paste with a picture and no files on the
-  clipboard, as after Print Screen) saves it as a new "Pasted image" file
-  named for the date and time, in `[screenshot] format`, as PNG when that
-  format cannot be written. Undo removes it.
-- **Send To > Mail Recipient** and the task pane's E-mail rows attach the
-  selected files to a new mail through `xdg-email`; a folder greys them.
-- **Archives:** Extract Here and Extract to for zip, 7z and tar, Compress to
-  'name.zip' for the selection. An archive that would land outside its folder
-  or fill the disk is refused ([limits](security.md#programs-and-files)).
-- **Preview** (Space) shows the selected picture, text file, font or cached
-  thumbnail over Explorer; the arrows step through the view and Enter opens it.
-- **Drag and drop** between Explorer windows, the desktop and other
-  programs, Flatpaks included. A right-drag asks whether to copy, move or
-  make a shortcut.
-- **Recycle Bin** on the freedesktop trash, shared with other programs, with
-  Restore. Recycle Bin Properties (Properties in the Recycle Bin with nothing
-  selected, or on the desktop's Recycle Bin) sets each drive's bin size and can
-  empty items older than a number of days.
-- **Properties** (Alt+Enter): size, dates, Read-only, Hidden and Executable, a
-  Summary tab, a Checksums tab (SHA-256 and MD5, with Compare with) and a
-  Shortcut tab for launchers. Several files share one sheet. The desktop's,
-  the Start menu's and search results' Properties and Open With, and Recycle
-  Bin Properties, are Explorer's too, each in a process of its own without a
-  folder window.
-- **The desktop's file work** runs in Explorer the same way: a drop or paste
-  onto the desktop or one of its folders, Delete and Shift+Delete, Empty
-  Recycle Bin, Send To > Compressed (zipped) Folder and New > Shortcut... each
-  start a process that asks, shows the progress dialog and ends with its job.
-- **Log Off waits for file work.** While a copy, move, delete, Empty Recycle
-  Bin, extraction or zip runs, in a folder window or a process of its own,
-  Explorer holds off log off through the Inhibit portal, as other file
-  managers do. Log Off, Turn Off and Restart leave its windows open and list
-  it with what it's doing ("Copying files"), and once the job ends they go on.
-- **Show in folder** from other programs: Explorer answers
-  `org.freedesktop.FileManager1`, so a browser's "Show in folder" opens the
-  file's folder with the file selected.
-- **Thumbnails** go to the freedesktop cache, shared with other file managers.
-  PDFs, videos and fonts get theirs from the installed thumbnailers, each in a
-  bubblewrap jail. Folders update by themselves, no F5 needed.
+### Browse and search
+
+Switch between five views (Thumbnails, Tiles, Icons, List, Details) and sort by name, size, type or date. Navigate with the folder tree, task pane, Back, Forward, Up and the address bar (`Alt+D` or `Ctrl+L`).
+
+Press `Ctrl+H` to toggle dotfiles and `.hidden` entries across Explorer and the desktop. Open `Tools > Folder Options` to set click mode, window reuse, hidden items, known file extensions (shown by default in Explorer, while the desktop uses `desktop_extensions`), infotips, the thumbnail cache and Default Programs (`File Types` tab).
+
+Use `Ctrl+T` for a new tab, `Ctrl+W` to close, `Ctrl+Tab` to switch, and middle-click to open folders in a background tab. Press `Ctrl+F` or `F3` to search by name using `plocate` or `fd` (`Escape` clears).
+
+Right-click a folder for `Open in Terminal` (`terminal`), `Pin to Places` or [Disk Usage](#disk-usage). Favorites share `$XDG_CONFIG_HOME/gtk-3.0/bookmarks` with GTK apps and portal dialogs.
+
+### Connect drives and network shares
+
+Places lists Desktop, Documents, Home, Computer, Network and Recycle Bin. Computer shows drives, `gvfs` mounts and USB phones or cameras. Open a drive to mount it, press `F2` to relabel via `UDisks2`, or choose `Eject` (blocked for system, swap, LVM and RAID volumes). Opening `.iso` or `.img` files prompts to mount them read-only.
+
+Use `File > Connect to Server` or the address bar for `smb://`, `sftp://`, `ftp://`, `ftps://`, `dav://`, `davs://`, `nfs://`, `afp://` or `\\server\share` via `gvfs`. Network lists SMB and SFTP servers discovered via `gvfs` and Avahi.
+
+### Manage files and archives
+
+Copy, move, delete, `F2` rename (including bulk find-and-replace or numbering), Move To, Copy To, Send To and Copy as Path run in the background with Pause, Cancel and `Ctrl+Z` undo (shared with the desktop). While file jobs run, Explorer inhibits log off and shutdown.
+
+`New > Shortcut...` creates a launcher. `Ctrl+V` saves clipboard images in `[screenshot] format` (falling back to PNG). `Send To > Mail Recipient` attaches files via `xdg-email`. Extract `zip`, `7z` and `tar` archives (`Extract Here` or `Extract to`) within safety [limits](security.md#programs-and-files), or compress to `.zip`.
+
+Press `Space` to preview pictures, text, fonts or thumbnails (arrows step, `Enter` opens). Drag-and-drop works with the desktop and Flatpaks (right-drag picks copy, move or shortcut). Recycle Bin uses freedesktop trash with per-drive size and age limits. `Alt+Enter` (`Properties`) shows permissions, Summary, `SHA-256`/`MD5` Checksums and Shortcut tabs.
+
+Explorer serves `org.freedesktop.FileManager1`, updates folders live, uses the freedesktop thumbnail cache and runs external PDF, video and font thumbnailers inside `bubblewrap`.
 
 ## Notepad
 
-The default for plain text. New, Open, Save, Find (F3 for the next one; past
-the last match it goes on from the other end), Replace, Go To, Time/Date (F5) and Word Wrap, with Ln and Col in the status
-bar. View > Zoom (Ctrl+Plus, Ctrl+Minus, Ctrl+0 for 100%) sizes the text from
-10% to 500%, shown beside Ln and Col. Format > Font picks the text's family,
-style and size from the installed fonts, with a sample. A right-click on the text (or Shift+F10) opens the edit commands.
-Ctrl+Z steps back through up to 1000 edits, Ctrl+Y redoes. It opens UTF-8
-files, with or without a byte order mark, and UTF-16 LE and BE files with
-one, and saves each back in its encoding and line endings; Save As has an
-Encoding box. For an Untitled document Open and Save As start in Documents.
-Save As adds `.txt` to a name without an extension while Text
-Documents is the type (put the name in quotes to save it as typed). A save
-never leaves a file half written. Print is greyed out for now. Notepad has
-always had its priorities.
+Notepad edits plain text with Find (`F3`), Replace, Go To, Time/Date (`F5`), Word Wrap, status bar (`Ln`, `Col`), zoom from 10% to 500% (`Ctrl+Plus`, `Ctrl+Minus`, `Ctrl+0`), `Format > Font` and 1000-step `Ctrl+Z`/`Ctrl+Y` undo.
 
-The font, Word Wrap and the status bar are kept in
-`$XDG_CONFIG_HOME/reprise/notepad.toml`.
-
-When Notepad loses the desktop or crashes with unsaved text, it writes the
-text to `~/.local/state/reprise/notepad/` and offers it at the next start,
-one prompt per document naming it ("1 of 2"). No sends that text to the
-Recycle Bin as "notes (recovered).txt", or for an Untitled document
-"Untitled" with the date and time it was kept.
+It opens UTF-8 (with or without BOM) and UTF-16 LE/BE (with BOM), preserving encoding and line endings unless changed in `Save As` (which appends `.txt` unless quoted). Saves are atomic, and `Print` is disabled. Settings save in `$XDG_CONFIG_HOME/reprise/notepad.toml`, and crash recovery files save in `~/.local/state/reprise/notepad/`.
 
 ## Sticky Notes
 
-Small coloured notes, each a window of its own with no frame. The strip along
-a note's top has + for a new note (Ctrl+N too) and x to delete it; drag the
-strip to move the note and its edges to resize it. Right-click the text for
-the edit commands and the six colours.
+Sticky Notes opens frameless coloured notes. Click `+` (`Ctrl+N`) to add, `x` to delete, drag the top strip to move, drag edges to resize and right-click for edit commands and six colours.
 
-Every change is saved a moment after you stop typing, to
-`~/.local/share/reprise/notes/`. Closing a note's window closes all of them
-and keeps them; they come back at the next login from the `reprise-notes
---restore` autostart entry, which the Startup page of Settings turns off.
+Notes auto-save in `~/.local/share/reprise/notes/` and reopen at login via `reprise-notes --restore` (toggle in Settings > Startup).
 
 ## Image Viewer
 
-The default for pictures, in any format Explorer's thumbnails read (PNG, JPEG,
-GIF, BMP, WebP, TIFF, ICO, QOI, PNM, HDR, OpenEXR, JPEG XL and AVIF). It opens fitted
-to the window, never past 100%. A picture past an eighth of the machine's
-memory, or 512 MiB, says it is too large to show.
+Image Viewer opens PNG, JPEG, GIF, BMP, WebP, TIFF, ICO, QOI, PNM, HDR, OpenEXR, JPEG XL and AVIF files (including animated GIF, PNG and WebP), refusing images over one-eighth of RAM or 512 MiB.
 
-- **Walk the folder:** Left and Right (or Page Up and Page Down, or the
-  wheel) go to the previous and next picture, sorted by name with numbers in
-  order ("img9" before "img10"); Home and End go to the first and last.
-- **Zoom:** + and - (or Ctrl and the wheel) step the zoom, Ctrl+0 fits the
-  window and Ctrl+1 shows 100%. A larger picture pans by dragging.
-- **Rotate:** Ctrl+R and Ctrl+L turn the view; the file is not changed.
-- **Full Screen and Slide Show:** F11 or a double-click shows the picture
-  over the whole screen; F5 starts a slide show, a picture every 3 seconds.
-- **Moving pictures:** animated GIF, PNG and WebP play.
-- **Delete** sends the picture to the Recycle Bin, asking first as Explorer
-  does, and the next picture shows.
-- **Set as Desktop Background** (File menu), greyed for formats the desktop
-  does not draw (anything but PNG, JPEG, BMP, JPEG XL and AVIF).
-- **Copy** (Ctrl+C) puts the file on the clipboard, and **Open** (Ctrl+O)
-  picks another picture.
-- **Edit** (File menu) opens the picture in Paint, and **Show in Folder**
-  opens its folder in Explorer with the picture selected. A right-click on
-  the picture (or Shift+F10) offers both, with Copy, Delete and Set as
-  Desktop Background.
-
-The toolbar under the menu bar has Previous, Next, Zoom In, Zoom Out, Fit to
-Window, Actual Size, the two turns, Slide Show and Delete; each greys with its
-menu row, and resting the pointer on one names it and its key. The status bar
-shows the name, the place in the folder, the size in pixels, the file size and
-the zoom.
+Step through folders with `Left`/`Right`, `Page Up`/`Page Down`, scroll wheel, `Home` or `End`. Zoom with `+`, `-`, `Ctrl`+wheel, `Ctrl+0` (fit) or `Ctrl+1` (100%). Rotate view with `Ctrl+R`/`Ctrl+L`, toggle fullscreen with `F11` and run a 3-second slideshow with `F5`. Use `Ctrl+O`, `Ctrl+C`, `Delete`, `Edit` (Paint), `Show in Folder` and `Set as Desktop Background` (PNG, JPEG, BMP, JPEG XL, AVIF).
 
 ## Paint
 
-A picture editor for quick drawings and touch-ups. The tool box holds select,
-eraser, fill, pick color, magnifier, pencil, brush, airbrush, text, line,
-curve and the shapes; the well under it sets the width, tip or fill. The left
-button draws in the first color and the right in the second. Colors > Edit
-Colors... opens the Color dialog, with 48 basic and 16 custom colors.
+Paint provides select, eraser, fill, colour picker, magnifier, pencil, brush, airbrush, text, line, curve and shape tools (left-click draws primary colour, right-click draws secondary). `Colors > Edit Colors...` offers 48 basic and 16 custom colours.
 
-A selection moves with the pointer, and Cut, Copy and Paste carry pictures
-as PNG. The Image menu flips,
-rotates, resizes, skews, inverts and crops; View zooms from 1x to 8x with a
-pixel grid. Ctrl+Z steps back through the last 50 changes. Paint opens the
-formats Reprise reads and saves PNG, JPEG and BMP. A save never leaves the
-file half written. Paint is offered for pictures in Open With without becoming
-their default.
-
-When Paint loses the desktop, crashes or is ended with an unsaved picture, it
-writes the picture as a PNG to `~/.local/state/reprise/paint/` and offers it
-at the next start.
+Move selections, Cut/Copy/Paste PNG data, flip, rotate, resize, skew, invert, crop, zoom 1x to 8x with pixel grid and undo up to 50 steps (`Ctrl+Z`). Paint reads all Reprise image formats, saves PNG, JPEG and BMP atomically, and stores crash recovery PNGs in `~/.local/state/reprise/paint/`.
 
 ## Calculator
 
-Standard and Scientific, picked on the View menu. Standard works each
-operator as you press it, so 2 + 3 × 4 = is 20; Scientific works the whole
-expression with precedence and parentheses, so the same keys give 14.
+Switch between Standard (immediate execution: `2 + 3 * 4 = 20`) and Scientific (operator precedence and parentheses: `14`) in `View`, displaying 12 significant digits.
 
-- **Keys:** digits, `.`, `+ - * /`, Enter or `=`, Escape (C), Delete (CE),
-  Backspace, and in Scientific a key for each function (`^`, `!`, `s`, `n`,
-  `p`). Ctrl+L, Ctrl+R, Ctrl+M, Ctrl+P and Ctrl+Q are MC, MR, MS, M+ and M−.
-- **Clipboard:** Ctrl+C copies the number shown; Ctrl+V pastes a number, or
-  in Scientific works out a pasted expression.
-- **History** (View > History, Ctrl+H): every answer, with what was asked.
-
-Answers are shown to 12 significant digits.
+Keys: digits, `.`, `+ - * /`, `Enter`/`=`, `Escape` (C), `Delete` (CE), `Backspace`, Scientific keys (`^`, `!`, `s`, `n`, `p`), memory (`Ctrl+L` MC, `Ctrl+R` MR, `Ctrl+M` MS, `Ctrl+P` M+, `Ctrl+Q` M-), `Ctrl+C`/`Ctrl+V` and `Ctrl+H` history.
 
 ## Character Map
 
-Every character a font has, in a grid. Pick the font, narrow the grid to one
-Unicode block, or search by name ("left arrow") or code (`U+20AC`). Click a
-character to see it large with its name and code; double-click it to add it
-to Characters to copy, and Copy puts that line on the clipboard.
+Browse every glyph in any installed font, filter by Unicode block, search by name or code point (`U+20AC`), double-click to collect characters and click `Copy`.
 
 ## Terminal
 
-A tabbed terminal, `reprise-terminal`. It opens in the directory it was
-started from; `reprise-terminal -e program args...` runs a program instead of
-your login shell. Closing a tab or the window while something other than the
-shell runs there asks first, and the window closes when its last tab's
-program exits. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
+`reprise-terminal` is a tabbed terminal (`TERM=xterm-256color`, `COLORTERM=truecolor`). Pass `-e program args...` to run a command directly.
 
-- **Tabs:** + opens your shell in the open tab's directory; the arrow beside
-  it lists the shell, your profiles and the `Host` entries of `~/.ssh/config`.
-  Drag a tab to reorder it, middle-click it to close it.
-- **Tabs in the title bar:** Options > General > Tabs (new windows) set to
-  In the title bar makes each tab a window of its own in one caption tab
-  group. Without Reprise's tab groups the tabs stay below the toolbar.
-- **Scrollback:** the bar down the right edge, the wheel and Shift+Page Up
-  and Shift+Page Down scroll back through it; a key goes back to the newest
-  output. The bar greys while there is nothing to scroll back to.
-- **Find** on the toolbar searches the scrollback, with Match case.
-- **Mouse:** a selection goes to the primary selection and a middle click
-  pastes it. Hold Shift to select in a program that takes the mouse.
-- **Paste:** control characters other than tab and line ends are dropped. A
-  paste holding a line end asks first unless the program turned on bracketed
-  paste.
-- **From programs:** a title (OSC 0 and 2) names the tab and window, OSC 52
-  copies to the clipboard (up to 1 MiB, never read back), and BEL rings the
-  desktop's bell.
-- **Links:** OSC 8 links (`ls --hyperlink`, gcc, systemd tools) are dotted
-  underneath, solid under the pointer, whose rest shows the address.
-  Ctrl+click opens a link, or an address in the text, with `xdg-open`; the
-  right-click menu has Open Link and Copy Link Address. Only http, https,
-  mailto and this computer's `file://` links open. An address past 2083
-  bytes leaves its text unlinked; a tab keeps at least its newest 4096 links,
-  and older ones in the scrollback lose theirs.
-- **Drop:** dropped files type their paths and web links their address,
-  quoted for the shell.
-- **Options** (Settings): shell, cursor, scrollback (10000 lines by default),
-  font, size, colour scheme, a see-through background under Glass, and named
-  profiles for the new-tab menu.
-- **Shortcuts:** Ctrl+Shift+T new tab, Ctrl+Shift+W close tab, Ctrl+Shift+N
-  new window, Ctrl+Shift+C and Ctrl+Shift+V copy and paste, Ctrl+Shift+F
-  find, Ctrl+Tab next tab, Ctrl+= and Ctrl+- zoom.
-- **Files:** the options live in `$XDG_CONFIG_HOME/reprise/terminal.toml`,
-  the window size in `$XDG_STATE_HOME/reprise/terminal.toml`.
+Click `+` for a shell in the current directory, or its arrow for profiles and `~/.ssh/config` hosts. Drag tabs to reorder, middle-click to close, or set `Options > General > Tabs (new windows)` to `In the title bar` for Reprise window tab groups.
+
+Scroll with the bar, wheel or `Shift+Page Up`/`Page Down`, and search scrollback with `Ctrl+Shift+F`. Selection copies to primary selection (hold `Shift` in mouse-aware apps). Paste strips control characters (prompting on multiline unless bracketed paste is on), and dropped files insert shell-quoted paths. Supports OSC 0/2 titles, write-only OSC 52 clipboard (up to 1 MiB), BEL alerts and OSC 8 links (`Ctrl+click` opens `http`, `https`, `mailto` and local `file://` via `xdg-open`).
+
+Configure shell, cursor, scrollback (default 10000 lines), font, colours, Glass transparency and profiles in Settings (`$XDG_CONFIG_HOME/reprise/terminal.toml`, with window size in `$XDG_STATE_HOME/reprise/terminal.toml`).
+
+Shortcuts: `Ctrl+Shift+T` (new tab), `Ctrl+Shift+W` (close tab), `Ctrl+Shift+N` (new window), `Ctrl+Shift+C`/`V` (copy/paste), `Ctrl+Shift+F` (find), `Ctrl+Tab` (next tab), `Ctrl+=`/`-` (zoom).
 
 ## Reprise Settings
 
-One window, 34 pages under seven headings, with link rows ending in "..." that
-start the separate settings programs. Login Manager shows only where
-`reprise-login` is installed. It opens on the page it was last left on;
-Super+I starts it.
+Press `Super+I` to open Reprise Settings (34 pages across seven groups). Rows ending in `...` open standalone tools. `Login Manager` appears only when `reprise-login` is installed.
 
-- **Personalize:** Appearance, Background, Screen Saver & Lock, Fonts & Icons,
-  Effects.
-- **Taskbar & Windows:** Taskbar, Start Menu, Search, Window Switcher, Virtual
-  Desktops, Window Behavior, Window Rules.
-- **Display & Sound:** Display, Night Light, Sound, Screen Capture,
-  Notifications.
-- **Devices:** Keyboard, Mouse, Touchpad, Cursor, Tablet, Thunderbolt,
-  Bluetooth..., Printers....
-- **Accessibility:** Text & Keys, Pointer & Alerts, Magnifier & Filters.
-- **Network:** Connections... (Network Connections), Network (airplane mode
-  and proxy), Remote Desktop.
-- **System:** Power Options..., Startup, Default Programs, Privacy, Date and
-  Time..., Region & Language, User Accounts..., Login Manager, Software
-  Updates..., Advanced, Backup.
+- **Personalize.** Appearance, Background, Screen Saver & Lock, Fonts & Icons, Effects.
+- **Taskbar & Windows.** Taskbar, Start Menu, Search, Window Switcher, Virtual Desktops, Window Behavior, Window Rules.
+- **Display & Sound.** Display, Night Light, Sound, Screen Capture, Notifications.
+- **Devices.** Keyboard, Mouse, Touchpad, Cursor, Tablet, Thunderbolt, Bluetooth..., Printers....
+- **Accessibility.** Text & Keys, Pointer & Alerts, Magnifier & Filters.
+- **Network.** Connections..., Network (airplane mode and proxy), Remote Desktop.
+- **System.** Power Options..., Startup, Default Programs, Privacy, Date and Time..., Region & Language, User Accounts..., Login Manager, Software Updates..., Advanced, Backup.
 
-The search field above the list (Ctrl+F) leaves only the pages and link rows
-whose name, search words or a control's label hold every word typed: "repeat
-delay" leaves Keyboard. Start's search and the launcher find the same pages.
+Press `Ctrl+F` to search pages and controls. `Restore Defaults` clears the current page's keys from `config.toml`. Display changes revert after 15 s unless confirmed. `Login Manager` saves `/etc/reprise/login.toml` via `pkexec`. `Backup` exports settings to `reprise-settings-YYYY-MM-DD.toml` and backs up prior state to `~/.config/reprise/reprise-settings-before-import.toml` on import.
 
-Restore Defaults, on every page whose controls write `config.toml` keys,
-takes the page's keys that are off their defaults out of `config.toml`. When
-`config.toml` changes while Settings is open, the controls you haven't
-touched show the new values. A display change asks whether to keep it and
-reverts after 15 seconds without an answer. Reprise holds the old settings:
-they come back after the 15 seconds even when Settings stops responding, and
-at once when Settings is closed or killed during the question.
-
-Login Manager sets the login screen and remote logins for the whole computer,
-in `/etc/reprise/login.toml`. OK and Apply save through `pkexec`, which asks
-for an administrator's password on each save.
-
-Backup's Export... saves your settings and remembered places in one file
-(`reprise-settings-YYYY-MM-DD.toml`), and Import... puts them back, on this
-computer or another: `config.toml` with your shortcuts, Terminal's options,
-the Quick Launch buttons, where windows open, display arrangements, the file
-dialogs' folders and views, and Explorer's view settings. Import keeps the
-files it replaces in `~/.config/reprise/reprise-settings-before-import.toml`,
-which Import takes back.
-
-`reprise-settings --page display` opens on a page: its name in lower case,
-spaces as hyphens and `&` as `and` (`fonts-and-icons`); `--focus mouse_keys`
-puts the keyboard on a control. `--export FILE` and `--import FILE` do the
-Backup page's work without a window.
+CLI options: `reprise-settings --page <slug>` (such as `display` or `fonts-and-icons`), `--focus <control>`, `--export FILE` and `--import FILE`.
 
 ## Volume and sound
 
-- **The speaker icon.** One click for a popup with the master volume, a
-  slider and mute button for each program, the default devices and the track
-  playing. With two outputs or more, a combo moves a program to another one.
-  With no device, the device combos read "No audio device". Its Sound
-  settings... link opens the Sound page of the settings.
-- **Sounds and Audio Devices.** Set the default devices, disable one you
-  never use, and give each program its own volume and output. "When an audio
-  device connects" picks what a headset, USB device or monitor plugged in
-  later does: it becomes the default output (the default), the default output
-  and input, or the defaults stay as they are (`[sounds] on_connect`). A
-  Bluetooth headset that takes the input too switches to its headset profile,
-  with lower sound quality, whenever a program records. One that only plays
-  stays on its playback profile.
-- **Volume Control.** A mixer with balance, volume and Mute for the speakers
-  and each program, a Recording view, and Advanced Controls for bass, treble
-  and whatever else the card offers.
-- **Louder than 100 %.** With `[sounds] allow_boost = true` (Settings >
-  Sound) the playback sliders and the volume keys go on to 150 %. Turning it
-  off brings everything louder than 100 % back to it.
+Click the tray speaker icon for master volume, per-app sliders and mutes, output switching, default devices and media controls. Sounds and Audio Devices configures defaults, disables unused devices and sets `[sounds] on_connect` (`playback`, `playback_and_recording` or `keep`). Volume Control adds balance, Recording view and hardware Advanced Controls. `[sounds] allow_boost = true` raises sliders and volume keys up to 150%.
 
 ## Network Connections
 
-The tray icon shows the link, a "limited" badge when the internet isn't
-there, and a balloon to sign in when a café wants you to. The folder lists
-your adapters and VPNs, each with Status and Repair. Pick a Wi-Fi network,
-join a hidden one, create a hotspot, write a WireGuard tunnel with its own key
-generator, or import a VPN file. Enterprise (802.1X) networks take PEAP, TTLS
-or TLS logins, saved in the network's NetworkManager profile. With a CA
-certificate the Domain row is required, so a stranger holding another
-certificate from the same CA is refused. WEP networks still need
-NetworkManager's own editor.
-
-Reprise runs no secret agent, so a network or VPN whose profile leaves its key
-to one can't be connected from here, and says so. A join that NetworkManager
-gives up on says why in a balloon. The tray icon's Airplane Mode row turns
-Wi-Fi, mobile broadband and Bluetooth off, and unticking it turns back on the
-radios that were on. It is greyed while a hardware switch holds every radio
-off.
+The tray icon shows link status, captive portal balloons and `Airplane Mode` (toggles Wi-Fi, mobile broadband and Bluetooth). Network Connections manages adapters, Wi-Fi (including hidden networks and hotspots), WireGuard (with key generation), OpenVPN imports and 802.1X Enterprise (`PEAP`, `TTLS`, `TLS`, requiring `Domain` with a CA certificate). WEP and secret-agent profiles are unsupported.
 
 ## Bluetooth Devices
 
-Pair with the Add Bluetooth Device Wizard, connect and disconnect, rename a
-device, see its battery, and turn Bluetooth or discoverability on and off.
-Pairing requests from a device show as a prompt naming it; one you didn't
-start begins on "Do not allow it". With more than one adapter, the first one
-that is on is used, and turning Bluetooth on or off switches every adapter.
-
-The tray icon's menu and tooltip list the connected devices with their
-battery, as BlueZ reports it. A balloon warns once when a device's battery
-drops to `[bluetooth] battery_warning` (15 % by default, 0 turns it off).
-
-With "Receive files from paired devices" ticked on the Options tab
-(`[bluetooth] receive_files`, off by default), a paired device can send files
-with Object Push. Each file asks Accept or Decline first and goes to
-Downloads. The check box is greyed when obexd (`bluez-obex`) isn't installed.
+Pair, connect, rename and monitor devices through BlueZ, with low-battery balloons at `[bluetooth] battery_warning` (default 15%, `0` off). Enable `[bluetooth] receive_files` (off by default, requires `bluez-obex`) on `Options` to accept Object Push transfers into `Downloads` after confirmation.
 
 ## Power Options
 
-Power profile, monitor and standby timeouts on mains and on battery, low and
-critical battery alarms, a Power Meter for each battery, the battery charge
-limit, and what the lid, power button and sleep button do. The battery icon's
-menu switches profile. Keep Awake, a check on that menu and on the Power
-Schemes tab, holds off the screen saver, the lock, screen off and idle standby
-until you clear either check or Power Options exits; the two checks are one
-setting. While it is on the icon shows, on a machine without a battery too,
-and its tooltip says "Keep Awake is on". While the charge limit holds a plugged-in
-battery, the icon's tooltip and the Power Meter say "Charging limited to 80%"
-(or wherever the limit stops).
+Configure power profiles, AC/battery timeouts, battery alarms, charge limits, lid/button actions and `Keep Awake` (blocks screen saver, lock, screen off and idle suspend while checked). The battery tray menu switches profiles and toggles `Keep Awake`.
 
 ## Printers
 
-The printer folder, a queue for each printer, and the Add Printer Wizard,
-which finds printers on USB and the network or takes an address, and picks a
-driver by maker and model. Properties covers sharing, ports, paper size,
-two-sided and colour. A tray icon shows while something prints and says when
-it's done or failed; a failed document stays in its queue until you restart
-or cancel it.
+View printers and queues, add USB or network printers with the Add Printer Wizard, and configure sharing, ports, paper size, duplex and colour under `Properties`. A tray icon tracks active print jobs.
 
 ## Task Manager
 
-Ctrl+Shift+Escape, or Task Manager on the taskbar's menu, opens it
-(`task_manager` picks another program).
+Open with `Ctrl+Shift+Escape` or the taskbar menu (override with `task_manager`).
 
-- **Applications:** each program started from Start, the launcher or a
-  desktop icon, while it shows a window; tray programs with no window open
-  are left out. End Task closes its windows as their X button does and
-  ends the program only when it shows none, so a tray program whose prompt
-  it closed keeps running; End Now is offered for a program still showing a
-  window 5 seconds later. Status reads Not Responding while a window doesn't
-  answer.
-- **Processes:** your processes, or every user's, with PID, CPU and memory;
-  View > Select Columns... adds Threads, Disk, GPU and Command Line. End
-  Process asks first.
-- **Performance:** a list of devices on the left, each with a small history
-  and its figure now; the one picked fills the right.
-  - **CPU** and **Memory:** load and memory in use over the last hundred
-    samples, swap drawn over memory. View > CPU History picks one graph or
-    one per core. Temperature and fan show where the sensor chip gives them.
-  - **Disk:** busy time, read and write rates, capacity and totals since
-    startup, one per whole disk.
-  - **Network:** what each adapter that is up receives and sends.
-  - **GPU:** usage, video memory, temperature and fan per card. NVIDIA cards
-    need the driver's NVML library; a card with no usage source shows "No
-    usage data".
-  - **Sensors:** every hardware sensor chip, with its temperatures, fans,
-    voltages and power.
-- **Updates** every second; View > Update Speed sets High, Normal, Low or
-  Paused, and nothing is sampled while the window is minimized.
-- **Options > Always On Top** keeps the window above the others.
-- Always On Top, the update speed, the CPU graph and the Processes columns
-  are kept in `~/.local/state/reprise/taskmgr.toml`.
+- `Applications` lists open apps, flags `Not Responding` windows and offers `End Task` (`End Now` after 5 s).
+- `Processes` lists PID, CPU, memory and optional `Threads`, `Disk`, `GPU` and `Command Line` columns, with confirmed `End Process`.
+- `Performance` graphs CPU (combined or per core), Memory/swap, Disk, Network, GPU (NVIDIA needs NVML) and Sensors.
+
+Updates every second (configurable under `View > Update Speed`, paused while minimized) and saves preferences in `~/.local/state/reprise/taskmgr.toml`.
 
 ## User Accounts
 
-Change your name, picture and password. With admin rights, add and remove
-accounts, choosing what happens to their files. An account that is logged on
-can't be deleted, and the only administrator can't be made standard or
-deleted. Add Account, and the Password tab of another
-account, can ask for a new password at the next login
-([security.md](security.md#programs-and-files)). While reprise-login is
-installed, your account's Password tab also sets your Remote Desktop password
-([remote-desktop.md](remote-desktop.md#remote-logins));
-`reprise-accounts --remote-password` opens it there.
-
-The Fingerprints tab adds and deletes your fingers on the fingerprint reader,
-through fprintd, which asks for your password first. Without fprintd or a
-reader the tab greys and says which is missing.
+Change your name, picture, password and `fprintd` fingerprints (`Fingerprints` tab). Admins can add or remove accounts and require a password change at next login ([security.md](security.md#programs-and-files)). Under `reprise-login`, the `Password` tab also sets your Remote Desktop password (`reprise-accounts --remote-password`, [remote-desktop.md](remote-desktop.md#remote-logins)).
 
 ## Software Updates
 
-Checks for system, Flatpak and firmware updates after login and every six
-hours, and when a Flatpak installation changes or a firmware device is plugged
-in. Lists them by source, all ticked; untick what you'd rather skip and click
-Install. When a device asks for something mid-update (unplug it, press a
-button), the window says what, or a balloon with the window closed. Nothing
-installs on its own, and closing the window doesn't stop an install halfway.
-While PackageKit has an offline update prepared, checks, Check Now included,
-list updates without downloading new package lists, as new lists would
-discard the prepared update.
+Checks system, Flatpak and firmware updates at login, every six hours and on device or Flatpak changes. Nothing installs automatically. Detects external kernel updates or `/run/reboot-required` to prompt for restart (or log off if `/run/reboot-required.pkgs` lists only Reprise), toggled via `[updates] restart_notice`.
 
-It also notices a system updated from elsewhere, such as `pacman -Syu` in a
-terminal, once the running kernel's modules are gone or a package leaves
-`/run/reboot-required`, and says "Restart to finish updating" with Restart
-Now and Later. When `/run/reboot-required.pkgs` names only Reprise (its
-packages write it on an upgrade), it says logging off and back on is enough. Restart Now goes the way Start's Restart does: programs are
-asked to close first. Settings > Advanced turns it
-off (`[updates] restart_notice`).
-
-### Install and uninstall
-
-Opening a `.flatpakref`, a `.flatpak` bundle, an Arch package (`.pkg.tar.zst`
-or `.pkg.tar.xz`) or a Debian package (`.deb`) opens Install Software, and
-Uninstall... on a program's menu in Start or the launcher opens Uninstall
-Software (`reprise-updates --install FILE`, `reprise-updates --uninstall
-DESKTOP-FILE`). The sheet shows the name, version, size and who built it, and
-lists any other package that comes along or goes too. A change that would
-remove one of Reprise's own packages or one the system marks essential is
-refused, and so is an Arch package that conflicts with an installed one
-(pacman would have to remove it). Nothing changes until you click Install or Uninstall; polkit asks
-for an administrator's password where the system's rules want one. A
-packager reads "(unverified)" unless pacman will check a `.sig` beside the
-package. Cancel stops a Flatpak run at any point, and a PackageKit run while
-it is still downloading.
+Opening `.flatpakref`, `.flatpak`, `.pkg.tar.zst`, `.pkg.tar.xz` or `.deb` launches `reprise-updates --install FILE`. `Uninstall...` in Start or the launcher runs `reprise-updates --uninstall DESKTOP-FILE`. Essential packages and Reprise itself cannot be removed.
 
 ## Disk Usage
 
-What takes a folder's or a drive's space: its folders and files, largest
-first, each with its size, a bar for its share of the folder and how many
-files it holds. Sizes fill in as the count runs in the background; they are
-what the files take on disk, a hard-linked file counted once. Links are not
-followed and other drives mounted inside are not entered. Double-click a
-folder to go into it; Back, Up and Refresh do what they say, and an entry's
-menu adds Open in Explorer and Move to Recycle Bin. Open it from Explorer,
-from the low disk space balloon, or as `reprise-diskusage FOLDER`.
+Open from Explorer, low-disk-space balloons or `reprise-diskusage FOLDER` to scan largest files and folders on the same mount (counting hard links once, skipping symlinks). Right-click for `Open in Explorer` or `Move to Recycle Bin`.
 
 ## Scheduled Tasks
 
-The tasks your systemd user manager runs on a schedule: each user timer with
-its schedule in words ("Every day at 3:00", "15 min after startup"), when it
-runs next, when it last ran (on its schedule or by Run Now) and its status
-(Ready, Running, Failed, Stopped or Disabled; Stopped when a signal ended the
-last run, as Stop does). The manager forgets a service's last run once it
-unloads the service, as after Disable; the window keeps showing the last run
-it saw until it closes. Run Now starts the task's service at once, and Stop
-stops it while it runs. Enable and Disable turn the timer on or off for good,
-as `systemctl --user enable --now` and `disable --now` do; a timer without an
-`[Install]` section is only started or stopped. Properties shows the schedule
-as the unit file writes it, the command, how the last run ended and the unit
-file. View Output shows the last 200 journal lines of the task's service, as
-`journalctl --user-unit` prints them; Refresh reads them again. The list
-follows the manager, so a timer added, changed or fired elsewhere shows at
-once. It's in Start > All Programs > System Tools.
+Open from `Start > All Programs > System Tools` to manage systemd user timers with live status (`Ready`, `Running`, `Failed`, `Stopped`, `Disabled`), `Run Now`, `Stop`, `Enable`, `Disable`, `Properties` and `View Output` (last 200 `journalctl --user-unit` lines).
 
-New Task... makes a task: a name, the program to run (typed, found on `PATH`,
-or picked with Browse...), its arguments as a shell splits them, and when it
-runs: daily, weekly or monthly at a time, once at a date and time, or at log
-on. The arguments reach the program as typed: `$HOME`, `~` and `*` are not
-expanded. The program's path cannot hold `\`, `"`, `'`, `*`, `?` or `[`, which
-systemd refuses in a command. The box shows the timer setting the schedule
-writes, such as `OnCalendar=Mon *-*-* 09:00:00`. Create writes
-`reprise-task-NAME.timer` and `.service` into the user manager's own folder
-(`~/.config/systemd/user`, or `systemd/user` under the manager's
-`$XDG_CONFIG_HOME`), enables the timer, reloads the user manager and starts
-the timer, as `systemctl --user enable`, `daemon-reload` and `start` do. When
-a step after writing fails, the two files are removed again.
-
-A task runs only while the user manager does, that is while you are logged on
-(or always, after `loginctl enable-linger`). A run whose time passes while the
-machine is off or asleep, or while you are logged off, is skipped and not made
-up later. An at log on task runs 30 s after the user manager starts, at a log
-on while no other session of yours is open; it also runs once when it is made,
-and each time it is enabled again.
-
-Delete (after a question) disables and stops a task New Task made, removes its
-two files and reloads the user manager. It is greyed for every other timer: a
-task is New Task's only when its timer is `reprise-task-*.timer` in that
-folder, the manager loaded it from there, and both files still open with the
-comment New Task wrote. A new task never takes the name of one whose drop-in
-folder (`reprise-task-NAME.service.d`) is still there. Properties stays read
-only for every task.
+`New Task...` writes `reprise-task-NAME.timer` and `.service` in `~/.config/systemd/user` (`$XDG_CONFIG_HOME/systemd/user`) for daily, weekly, monthly, one-time or at-log-on (30 s delay) schedules, passing arguments literally. Tasks run while logged in unless `loginctl enable-linger` is set, skip missed runs, and can be deleted only if created via `New Task...`.
 
 ## Font Viewer
 
-The default for font files (`.ttf`, `.otf`, `.ttc`, `.woff`, `.woff2`). It
-shows the face's name, version and copyright, the alphabet, and a pangram at
-sizes from 12 to 72 px. Install copies the file into your fonts folder
-(`~/.local/share/fonts`) and runs `fc-cache` on it; a face already there says
-Installed.
+Default viewer for `.ttf`, `.otf`, `.ttc`, `.woff` and `.woff2` files, showing metadata and 12 to 72 px samples. `Install` copies to `~/.local/share/fonts` and runs `fc-cache`.
 
 ## Date and Time Properties
 
-Double-click the clock. A month grid, an analog clock, the time zone and
-network time.
-
-"Set time zone automatically" on the Time Zone tab (`[time_zone] automatic`,
-off by default) sets the zone of the nearest town of 15,000 people or more,
-from where geoclue finds the machine. It looks when you turn it on and at
-login, then after a resume or a new network connection, at most once an
-hour. It is greyed with a note when geoclue is missing, when location is off
-in Settings > Privacy, or when polkit wants a password to change the zone;
-the package's polkit rule lets a local, active administrator (group `wheel`
-or `sudo`) change it without one.
+Double-click the clock for calendar, clock, time zone and NTP settings. `Set time zone automatically` (`[time_zone] automatic`, off by default) updates via `geoclue` (at most hourly) when location is enabled and passwordless polkit permission is granted.
 
 ## Welcome
 
-Shows at a new user's first login and steps through three pages: the
-interface (Classic, Blue or Glass, with a sample of each), light or dark and
-the text size, then the keys worth knowing with a button for Settings. Each
-pick applies as you make it, and each lives in Settings too. Skip closes it.
-Start > Programs > Accessories > Welcome runs it again. A user who already ran
-Reprise never sees it on an upgrade. The last page names the launcher and
-clipboard history keys as your `[[keybinds]]` have them. Blue comes in light
-colours only, so Dark is greyed under it.
+Runs on first login (`Start > Programs > Accessories > Welcome`) to pick interface, light/dark mode (no dark mode in Blue), text size and review active `[[keybinds]]`.
 
 ## Import from Another Desktop
 
-Brings settings over from GNOME or Plasma used in the same account. It reads
-GNOME's through `dconf dump /` (so only what you changed from GNOME's
-defaults) and Plasma's from its files in `~/.config`. It never writes either.
+Open from Accessories, Settings > Backup or Welcome to read GNOME (`dconf dump /`) or Plasma (`~/.config`) settings read-only and write checked entries into `config.toml`.
 
-The list shows each setting that would change, with its value now and the one
-it would take, each with a check box. Nothing is written until you click
-Import, and then only the checked rows, into `config.toml` with its comments
-kept. When both desktops left settings, a box picks which one to import from.
-
-| Found | Becomes |
+| Source setting | Reprise target |
 | --- | --- |
-| Wallpaper (the dark one under a dark style) | `[wallpaper] image` and `position`; JPEG, PNG, BMP, JPEG XL and AVIF only |
-| Dark style | Glass `mode = "dark"`, Classic's One Dark scheme; greyed under Blue |
-| Keyboard layouts, variants, model, options, layout per window | `[keyboard]` |
-| Key repeat rate and delay | `[keyboard] repeat_rate`, `repeat_delay` |
-| Mouse and touchpad speed, acceleration, natural scrolling, left-handed buttons | `[mouse]`, `[touchpad]` |
-| Tap to click, two-finger scrolling and tap, off while typing, click method, off with a mouse | `[touchpad]` |
-| Text scaling (GNOME), forced font DPI (Plasma) | `[accessibility] text_size`, the nearest step |
-| Night light on, warmth, schedule | `[night_light]` |
+| Wallpaper (with dark variant) | `[wallpaper] image`, `position` |
+| Dark style | Glass `mode = "dark"`, Classic One Dark |
+| Keyboard layouts, model, options, repeat | `[keyboard]` |
+| Mouse and touchpad speed, gestures, buttons | `[mouse]`, `[touchpad]` |
+| Text scaling / forced font DPI | `[accessibility] text_size` |
+| Night light state, warmth, schedule | `[night_light]` |
 | Pointer theme and size | `[cursor]` |
-| Double-click time, fixed number of workspaces, hot corner | `double_click_ms`, `[workspaces] count`, `hot_corner` |
-| Favourite apps (GNOME), task manager launchers (Plasma) | Quick Launch buttons, and `[taskbar] pinned` |
+| Double-click time, workspaces, hot corner | `double_click_ms`, `[workspaces] count`, `hot_corner` |
+| Favorites / pinned launchers | Quick Launch, `[taskbar] pinned` |
 
-What has no Reprise setting is listed greyed at the end with why: the 12 or
-24 hour clock (Reprise's follows the formats locale), input methods, the GTK
-and icon themes and fonts (Reprise's look sets them), key repeat turned off
-and title bar buttons. Start >
-Programs > Accessories, the Backup page in Settings and Welcome's last page
-all open it. Reading GNOME's settings needs the `dconf` command.
+Settings without a Reprise equivalent (12/24-hour clock, input methods, GTK/icon themes, fonts, disabled key repeat, title bar buttons) appear greyed out.
 
-## Smaller things
+## Other system tools
 
-- **Safely Remove Hardware.** Shows a tray icon while there's a drive, phone
-  or camera to eject. What a plugged-in drive does is `[drives] on_insert`,
-  set on Settings > Default Programs:
-  - `"ask"` (the default): a "New drive" balloon with Mount and Open and Mount.
-  - `"mount"` mounts it, `"open"` mounts it and opens a window on it.
-  - `"nothing"` leaves it in Computer.
-- **Phone.** With KDE Connect installed, a phone icon lists each paired phone
-  in reach with its battery; its menu rings one, sends it files and opens KDE
-  Connect, where pairing happens.
-- **Low disk space.** A balloon says when your home folder's disk or `/` has
-  less free than `[storage] low_space_percent` (5 % by default) or 1 GiB, with
-  Open, Show Usage and Empty Recycle Bin.
-- **Thunderbolt devices.** A Thunderbolt or USB4 device that connects
-  unauthorized gets a balloon with Authorize Once, Always Authorize and
-  Ignore. Settings > Thunderbolt lists and forgets enrolled devices.
-- **Run As.** The admin password prompt, which takes a fingerprint too when
-  polkit is set up for one. Cancelling it leaves things as they were.
-- **Remote Desktop server.** `reprise-rdp`, the user unit
-  `app-org.reprise.RemoteDesktop`, lets RDP clients use the session
-  ([remote-desktop.md](remote-desktop.md), [security.md](security.md#remote-desktop)).
-- **Screen recorder.** `reprise-record` records a screen or an area, with sound
-  and the microphone if asked, into an MP4 under Videos/Screencasts as [`[recording]`](configuration.md#recording)
-  says. It reads the screen through the portal ([security.md](security.md#sandboxed-programs)).
-- **Remote logins.** Under `reprise-login` with remote logins on,
-  `reprise-login-rdp` listens on the port instead and hands each login to the
-  user's session ([security.md](security.md#remote-logins)).
-- **About Reprise.** Version, operating system, kernel, model, processor,
-  graphics, memory, disk, displays and uptime, with a Copy button for bug
-  reports.
+- **Safely Remove Hardware.** Ejects drives, phones and cameras. `[drives] on_insert` sets plug-in action (`"ask"`, `"mount"`, `"open"`, `"nothing"`).
+- **Phone.** KDE Connect tray battery, ring and file send.
+- **Low disk space.** Warns below `[storage] low_space_percent` (default 5%) or 1 GiB.
+- **Thunderbolt devices.** Prompts to Authorize Once, Always Authorize or Ignore (manage in Settings > Thunderbolt).
+- **Run As.** Polkit password and fingerprint prompt.
+- **Remote Desktop server.** `reprise-rdp` (`app-org.reprise.RemoteDesktop`) serves RDP sessions ([remote-desktop.md](remote-desktop.md), [security.md](security.md#remote-desktop)).
+- **Screen recorder.** `reprise-record` writes MP4s to `Videos/Screencasts` via [`[recording]`](configuration.md#recording) and the portal ([security.md](security.md#sandboxed-programs)).
+- **Remote logins.** `reprise-login-rdp` handles incoming RDP logins under `reprise-login` ([security.md](security.md#remote-logins)).
+- **About Reprise.** Hardware, display and uptime summary with `Copy`.

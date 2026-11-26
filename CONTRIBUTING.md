@@ -1,176 +1,64 @@
 # Contributing
 
-Issues and pull requests are welcome. For anything bigger than a fix, open
-an issue first so we can agree on the shape before you write it.
+Issues and pull requests are welcome. Open an issue first for anything larger than a bug fix.
 
 ## Build
 
-[docs/install.md](docs/install.md) lists the requirements and how to build
-and run Reprise, from a TTY or a login manager.
+See [docs/install.md](docs/install.md) for requirements and how to build and run Reprise.
 
-## Before you open a pull request
+## Run checks before opening a pull request
 
     cargo fmt --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo nextest run --workspace
 
-`cargo nextest` ([cargo-nextest](https://nexte.st), 0.9.149 or newer) runs
-every test in its own process across all test binaries at once and reads
-`.config/nextest.toml`. Without it, `cargo test --workspace` runs the same
-tests.
-`scripts/affected-tests [BASE]` builds and runs only the tests of the crates
-changed since BASE (default `origin/main`) and the crates that depend on them,
-plus the tests that read the whole tree (string ids, window ids, licence
-citations, packaging), which run on any crate or `packaging/` change.
+`cargo nextest` ([cargo-nextest](https://nexte.st) 0.9.149+) reads `.config/nextest.toml` and runs each test in its own process. `cargo test --workspace` runs the same tests without it.
 
-CI runs the same three commands as an unprivileged user in an Arch Linux
-image built from `.github/ci-image/` (`packages` lists what it installs). On
-a pull request it tests through `scripts/affected-tests`; main tests the
-whole workspace. Run
-the tests as a normal user too: some check that a read-only directory
-refuses a write, which root ignores.
+Run `scripts/affected-tests [BASE]` (default `origin/main`) to test only changed crates, their dependents and whole-tree checks.
 
-A change under `.github/ci-image/` or to `.github/pacman.sh` needs a new image
-tag: put the output of `.github/ci-image/tag.sh` in the workflows. Pushing the
-branch builds the image; rerun the pull request's checks once that finishes.
+CI runs these checks as a non-root user in an Arch image from `.github/ci-image/`. Run tests as a normal user too, because root bypasses read-only directory checks. If you edit `.github/ci-image/` or `.github/pacman.sh`, update the image tag in the workflows using `.github/ci-image/tag.sh`.
 
-A crate's tests never see your session: `#[cfg(test)]
-reprisebus::test_session!();` at its root gives the test binary an empty
-HOME, XDG folders and runtime folder of its own and no session bus, system
-bus or display. A new crate whose tests touch any of them adds that line.
-reprisekit, which links no bus, sets up its HOME and XDG folders the same
-way in `src/testsession.rs`.
+New crates whose tests touch HOME, XDG folders, D-Bus or a display add `#[cfg(test)] reprisebus::test_session!();` at the crate root. `reprisekit` isolates its environment in `src/testsession.rs`.
 
-Pixel tests are pinned to Wine 9.0's Tahoma, Noto Color Emoji 2.051 and
-DejaVu, the CI image's one system font. `scripts/pin-env` runs a command in
-CI's font environment. It sets `REPRISE_TEST_FONTS` to the fonts that
-`scripts/test-fonts.sh` downloads into your cache and `REPRISE_TEST_STRICT=1`, under a fontconfig
-that sees only DejaVu. It drops your session's `REPRISE_*` variables and
-keeps the test and gallery ones such as `REPRISE_BLESS`:
+## Run pixel and UI checks
+
+Pixel tests pin Wine 9.0 Tahoma, Noto Color Emoji 2.051 and DejaVu. Run them through `scripts/pin-env`:
 
     scripts/pin-env cargo nextest run --workspace
 
-A pixel test without `REPRISE_TEST_FONTS` fails, as does one that draws a
-glyph from a font outside that set; a painter that asks for another family
-takes its font as a parameter so its test can pass Tahoma. Under
-`REPRISE_TEST_STRICT=1` a test that skips for want of `dbus-daemon`, an EGL
-device or a font of the set fails instead (`reprisebus::testbus::skipped`,
-`reprisekit::pins::skipped`). Still skipping under it: the tests for
-Trebuchet MS, Franklin Gothic Medium, Segoe UI and Wine's `sserife.fon`
-where those fonts aren't installed, dma-buf uploads with no render node,
-kernel TLS without `REPRISE_KTLS_TESTS=1`, the icon theme check with no icon
-theme installed, and the zombie test when another test's reaper wins.
+`scripts/pin-env` sets `REPRISE_TEST_FONTS` (using `scripts/test-fonts.sh`) and `REPRISE_TEST_STRICT=1` under a DejaVu-only fontconfig. Pixel tests fail without `REPRISE_TEST_FONTS` or if they load an unlisted font. Painters that request another family take the font as a parameter so tests can pass Tahoma.
 
-- **D-Bus fakes.** A test serves a fake service with `Builder::serve_at` or
-  `reprisebus::testbus::serve`, which returns once the connection answers
-  calls; zbus drops a call that reaches an interface added with
-  `ObjectServer::at` before its object server is up. Callers connect with
-  `testbus::connect`, whose calls give up after 10 s.
-  `crates/reprisebus/tests/served.rs` fails on `ObjectServer::at` in tests.
-- **Pixel-neutral changes.** If a change shouldn't move a pixel, prove it
-  with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the
-  gallery and the preview tests on BASE and on your tree and lists every
-  PNG that differs.
-- **Pinned hashes.** Tests keep their image hashes in the crate's
-  `tests/pins/`, one `key hash` line per image, through `pins::check` (in
-  reprisekit) or `pins::check_file`, never written in the test:
-  `tests/inline_pins.rs` fails on a 64-bit literal in a source that hashes
-  pixels. After a deliberate drawing change, or a new Blue scheme,
-  `REPRISE_BLESS=1 scripts/pin-env cargo test -p <crate>` rewrites those
-  files; review their diff like code.
-- **Text at 200%.** The gallery's `clip_test` draws every gallery page with
-  its themes at 200% text and lists each line whose rect cuts its ink in
-  `crates/reprisekit/tests/pins/text_clip_200.txt`. A line that newly clips
-  fails it: lay its row out from `theme.controls()` or `theme.text` instead
-  of a 100% size. Bless the list as above once a fix takes a line off it.
-- **Text without Tahoma.** Debian and Ubuntu have no Tahoma, so the UI text
-  falls back to DejaVu Sans Book, which is wider. The gallery's `fit_test`
-  and the Settings, Network Status and Explorer `text_fit` tests draw their
-  surfaces with Tahoma and again under `pins::without_tahoma`, and list each
-  line DejaVu cuts or ellipsizes more often than Tahoma in the crate's
-  `tests/pins/text_fit_without_tahoma.txt` (a line may end in `  # why`). A
-  new line fails: size the control from its measured text (a form item
-  gets room from `Form`'s fit, a list column from `ListView::fit_titles`).
-  A program's property sheets get the same test through
-  `interfaces::sheets_unfit_without_tahoma`.
-- **UI strings.** A string a user reads goes through `tr!("id")` with its
-  English text in the crate's `locale/en.ftl`; `cargo test -p reprisekit`
-  runs `scripts/i18n-check`, which fails on an id missing from English or
-  never used. See [docs/i18n.md](docs/i18n.md).
-- **Dependency changes.** After changing a dependency or a feature in any
-  `Cargo.toml`, run `scripts/kit-units`. It must report one reprisekit,
-  zbus and reprisebus unit; otherwise add the missing features to
-  `crates/reprisekit-pins`, or to `crates/repriseapp-pins` when the crate
-  is outside reprisekit's own dependency graph. `scripts/feature-drift`,
-  which takes seconds, must print nothing: it lists the features
-  `-p reprise`, `-p reprise-apps`, `-p reprise-portal` and the programs
-  resolve differently from `--workspace`, each a second build of a unit.
-  A new dependency also goes into the Requirements section of
-  docs/install.md, the PKGBUILDs under `packaging/arch/`, and
-  `packaging/deb`: its Ubuntu `-dev` package into `build-depends` when the
-  build links it, its runtime package into `Depends` in `build.sh` (or
-  `Recommends`, for an optional one) when it's used without linking (a
-  daemon, a program, a library loaded at run time). Pull requests build
-  only the Arch package, so a missing `.deb` entry shows first in the
-  Nightly build.
+- **D-Bus fakes.** Serve fakes with `Builder::serve_at` or `reprisebus::testbus::serve` instead of `ObjectServer::at` (`crates/reprisebus/tests/served.rs` enforces this). Connect with `testbus::connect` (10 s timeout).
+- **Pixel-neutral changes.** Run `scripts/pixels-unchanged.sh [--with-blue] BASE` to confirm no gallery or preview PNG changed.
+- **Pinned hashes.** Store hashes in `tests/pins/` via `pins::check` or `pins::check_file`, never inline (`tests/inline_pins.rs` rejects inline 64-bit literals). Run `REPRISE_BLESS=1 scripts/pin-env cargo test -p <crate>` after intentional visual changes and review the diff.
+- **Text at 200%.** `clip_test` checks gallery pages at 200% text against `crates/reprisekit/tests/pins/text_clip_200.txt`. Size rows from `theme.controls()` or `theme.text`.
+- **Text without Tahoma.** `fit_test` and app `text_fit` tests compare Tahoma against DejaVu Sans Book (`pins::without_tahoma`) using `tests/pins/text_fit_without_tahoma.txt`. Size controls from measured text (`Form` fit or `ListView::fit_titles`).
+- **UI strings.** Wrap user-visible text in `tr!("id")` with English in `locale/en.ftl`. `cargo test -p reprisekit` runs `scripts/i18n-check`. See [docs/i18n.md](docs/i18n.md).
+- **Dependency changes.** Run `scripts/kit-units` (must report one `reprisekit`, `zbus` and `reprisebus` unit, fixing splits in `crates/reprisekit-pins` or `crates/repriseapp-pins`) and `scripts/feature-drift` (must print nothing). Update `docs/install.md`, `packaging/arch/` PKGBUILDs and `packaging/deb` (`build-depends` for linked `-dev` libs, `Depends` or `Recommends` in `build.sh` for runtime deps).
 
-## Debugging
+## Debug stalls
 
-A main-loop turn that runs for 2 s writes the main thread's backtrace,
-state and system call to the journal, again at 10 s and every 30 s after,
-and how long it took once it ends. Nothing is stopped or restarted. Two
-variables in Reprise's environment provoke a stall to try it:
+A main-loop turn over 2 s logs the main thread's backtrace, state and syscall to the journal, repeating at 10 s and every 30 s. Test it with two env vars:
 
-- `REPRISE_STALL_ON_RELOAD=<ms>` holds the main loop `ms` each time a file
-  in the config folder is written (`touch` one).
-- `REPRISE_COMMIT_DELAY=<connector>:<ms>` makes every commit on that
-  connector wait `ms` first; `HDMI-A-1:5000:modeset` delays only its
-  modesets. Each monitor commits from its own thread, so input, programs,
-  the lock screen and VT switches carry on while one is held.
+- `REPRISE_STALL_ON_RELOAD=<ms>`: blocks the main loop for `ms` when a file in the config directory changes.
+- `REPRISE_COMMIT_DELAY=<connector>:<ms>`: delays commits on that connector (append `:modeset`, such as `HDMI-A-1:5000:modeset`, to delay only modesets).
 
-## How the code is laid out
+## Understand the code layout
 
-Everything drawn or interactive is a control in `crates/reprisekit`, in five
-parts that each take the rect they fill:
+Every UI element is a control in `crates/reprisekit` with five parts that each take their rect: a pure model (state and keys), a layout, `draw` into a `Canvas`, `hit` for pointer input and `access` for accessibility nodes.
 
-- a pure model: state and keys
-- a layout
-- `draw`, into a `Canvas`
-- `hit`, for the pointer
-- `access`, which adds its nodes to the accessibility tree
+`reprisekit` has no Smithay, seat, timer, clipboard or filesystem code. Hosts (`src/*view.rs` and `crates/repriseapp`) are glue only. Shared behaviour belongs in `reprisekit`, and you should extend existing controls before adding new ones.
 
-reprisekit knows nothing of Smithay, seats, timers, the clipboard or the
-file system. The hosts are glue: `src/*view.rs` in the compositor and
-`crates/repriseapp` for the programs. When both hosts need something, it
-goes into reprisekit. Extend an existing control before writing a new one.
-Code for one look lives in its interface module (`classic`, `blue`,
-`glass`); `crates/reprisekit/tests/layers.rs` checks which modules may
-reach which. Controls and hosts draw buttons, edges and scrollbars through
-`reprisekit::look::widgets` with the `look::Paint` from `theme.paint()`, so
-each interface draws its own; only Classic's painters call
-`classic::widgets` directly. layers.rs doesn't catch that one: a control
-calling `classic::widgets` passes and draws Classic bevels under Blue and
-Glass.
+Interface-specific code lives in `classic`, `blue` or `glass` (`crates/reprisekit/tests/layers.rs` enforces module boundaries). Controls and hosts draw shared widgets via `reprisekit::look::widgets` with `theme.paint()`. Only Classic painters call `classic::widgets` directly.
 
-Each program in `crates/apps` is a library, and one binary, `reprise-apps`,
-holds them all. It runs the program named by the symlink it was started
-through or by its first argument, so
-`cargo run -p reprise-apps -- reprise-notepad` runs one alone. Packages
-install `reprise-apps` with a symlink per program.
+Programs in `crates/apps` are libraries compiled into one `reprise-apps` binary, selected by symlink name or first argument (`cargo run -p reprise-apps -- reprise-notepad`).
 
-A control is done when a unit test pins its pixels,
-`cargo run -p reprisekit --example gallery` draws it on a page of one of the
-`crates/reprisekit/examples/gallery_*` modules, and one host (a
-`src/*view.rs` or a program) shows it.
+A control is done when a unit test pins its pixels, `cargo run -p reprisekit --example gallery` draws it (`crates/reprisekit/examples/gallery_*`), and one host displays it.
 
-## Art
+## Draw art
 
-Art is drawn in code from shapes and named colours, so it follows the
-colour scheme. The exception is the small icons, which are
-PNGs in `crates/reprisekit/src/art/icons`.
+Draw art in code from shapes and named colours so it follows colour schemes. Only small icons are PNGs, stored in `crates/reprisekit/src/art/icons`.
 
-## Commits
+## Write commits
 
-[Conventional commits](https://www.conventionalcommits.org/):
-`fix(settings): ...`, `feat(glass): ...`, `chore: ...`. Say what changed
-and which tests pin it. One change per commit.
+Use [Conventional Commits](https://www.conventionalcommits.org/): `fix(settings): ...`, `feat(glass): ...`, `chore: ...`. Put one change per commit and state which tests pin it.
