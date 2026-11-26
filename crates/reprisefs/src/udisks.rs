@@ -146,15 +146,34 @@ pub struct Image {
     pub loop_path: String,
 }
 
-/// Where the system's own file systems are mounted.
-const SYSTEM_MOUNTS: [&str; 5] = ["/", "/boot", "/efi", "/boot/efi", "/usr"];
+/// Where the system's own file systems are mounted: the root, boot and `/usr`, an image-based
+/// system's physical root, and a live system's boot medium and the space its changes persist in.
+const SYSTEM_MOUNTS: [&str; 11] = [
+    "/",
+    "/boot",
+    "/efi",
+    "/boot/efi",
+    "/usr",
+    "/sysroot",
+    "/cdrom",
+    "/run/live/medium",
+    "/run/initramfs/live",
+    "/run/archiso/bootmnt",
+    "/run/archiso/cowspace",
+];
+/// Under which a live system mounts each persistence volume, one directory per volume.
+const PERSISTENCE: &str = "/run/live/persistence";
 /// Where the running system keeps its users' and its own changing files.
 const SYSTEM_DATA: [&str; 2] = ["/home", "/var"];
 
 impl Volume {
     /// Part of the system: UDisks2's `HintSystem`, or mounted where the system boots from.
     pub fn holds_system(&self) -> bool {
-        self.system || (self.mounts.iter()).any(|m| SYSTEM_MOUNTS.iter().any(|s| m == Path::new(s)))
+        let system = |m: &PathBuf| {
+            SYSTEM_MOUNTS.iter().any(|s| m == Path::new(s))
+                || (m.parent()).is_some_and(|p| p == Path::new(PERSISTENCE))
+        };
+        self.system || self.mounts.iter().any(system)
     }
 
     /// The running system needs it, so its drive is not safely removed: it holds the system, or
@@ -1474,6 +1493,11 @@ pub(crate) mod tests {
             };
             assert!(v.holds_system(), "mounted at {at}");
         }
+        let persistence = Volume {
+            mounts: vec!["/run/live/persistence/sdb3".into()],
+            ..stick.clone()
+        };
+        assert!(persistence.holds_system(), "a live system's persistence");
         let home = Volume {
             mounts: vec!["/home".into()],
             ..stick.clone()
