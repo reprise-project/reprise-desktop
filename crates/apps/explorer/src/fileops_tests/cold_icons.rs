@@ -275,12 +275,19 @@ fn at_200_percent_text_the_item_menus_row_icons_are_32_px() {
 }
 
 /// On a theme with neither `mail-send` nor `mail-message-new`, E-mail this file and Send To's Mail
-/// Recipient wear the next mail name it carries, ahead of `internet-mail`.
+/// Recipient wear the next mail name it carries, ahead of `internet-mail` and of breeze's
+/// `mail-send`.
 #[test]
 fn the_mail_rows_wear_the_first_mail_icon_the_theme_carries() {
     let (art, dir) = (tempfile::tempdir(), tempfile::tempdir());
     let (art, dir) = (art.expect("a temp dir"), dir.expect("a temp dir"));
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let breeze = art.path().join("breeze/scalable/places");
+    std::fs::create_dir_all(&breeze).expect("mkdir");
+    let index = "[Icon Theme]\nName=breeze\nDirectories=scalable/places\n\n[scalable/places]\nSize=48\nMinSize=8\nMaxSize=512\nType=Scalable\n";
+    std::fs::write(art.path().join("breeze/index.theme"), index).expect("write");
+    let rect = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\"><rect width=\"48\" height=\"48\" fill=\"#00ff00\"/></svg>";
+    std::fs::write(breeze.join("mail-send.svg"), rect).expect("write");
     let mut ctx = test_ctx();
     let drawn = [("mail-forward", DRAWN), ("internet-mail", OTHER)];
     ctx.icons = svg_theme(art.path(), &drawn, &[]);

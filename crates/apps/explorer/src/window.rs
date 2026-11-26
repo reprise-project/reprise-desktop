@@ -518,7 +518,8 @@ impl Popup {
     }
 
     /// Theme icons landed: the rows that waited wear theirs at `px`, `names` giving each row's icon
-    /// names by its command (none leaves the row alone). True when they did.
+    /// names by its command, alternatives tried in [`IconCache::rank`]'s order (none leaves the row
+    /// alone). True when they did.
     pub fn land_icons(
         &mut self,
         icons: &mut IconCache,
@@ -532,6 +533,7 @@ impl Popup {
         (self.menu).wear_icons(&mut |cmd| {
             let names = names(cmd);
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let names = icons.rank(&names);
             (!names.is_empty()).then(|| waits.first(icons, &names, px))
         });
         self.waits = waits;

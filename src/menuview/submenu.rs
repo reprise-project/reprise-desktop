@@ -397,7 +397,13 @@ impl State {
                 let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
                 let has = |n: &&str| self.icons.has_unread(n);
                 let names: Vec<&'static str> = (rows.iter())
-                    .map(|r| r.icons.iter().copied().find(has).unwrap_or(r.icons[0]))
+                    .map(|r| {
+                        self.icons
+                            .rank(r.icons)
+                            .into_iter()
+                            .find(has)
+                            .unwrap_or(r.icons[0])
+                    })
                     .collect();
                 view.send_to = rows;
                 for (row, (item, name)) in items.iter_mut().zip(names).enumerate() {

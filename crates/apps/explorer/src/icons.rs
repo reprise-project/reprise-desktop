@@ -6,10 +6,22 @@ use reprisekit::icontheme::IconCache;
 use reprisekit::raster::Canvas;
 use std::path::{Path, PathBuf};
 
-/// A chrome icon: the first of `names` the theme carries, else the magenta placeholder; a blank
-/// stand-in noted in `waits` while a name decodes off the loop. Only the window's own buttons,
-/// links and boxes go through this; a file's icon falls back down its MIME chain instead.
+/// A chrome icon: the first of `names`, alternatives for one icon, the theme carries in
+/// [`IconCache::rank`]'s order, else the magenta placeholder; a blank stand-in noted in `waits`
+/// while a name decodes off the loop. Only the window's own buttons and links go through this; a
+/// file's icon falls back down its MIME chain instead.
 pub fn chrome_icon_unread(
+    waits: &mut IconWaits,
+    icons: &mut IconCache,
+    names: &[&str],
+    px: i32,
+) -> Option<Canvas> {
+    let names = icons.rank(names);
+    first_or_placeholder(waits, icons, &names, px)
+}
+
+/// The first of `names` the theme carries, in list order, else the magenta placeholder.
+fn first_or_placeholder(
     waits: &mut IconWaits,
     icons: &mut IconCache,
     names: &[&str],
@@ -57,7 +69,8 @@ pub fn picked_icon(
 /// Where an [`IconSlot`] finds its icon.
 #[derive(Debug)]
 pub enum Pick {
-    /// [`chrome_icon_unread`] of these names.
+    /// The first of these names the theme carries, in list order, else the magenta placeholder:
+    /// a box's names differ in meaning, or lead with the file's own icon.
     Chrome(Vec<String>),
     /// The icon a file of `mime` at `path` wears, or the folder's.
     File {
@@ -109,7 +122,7 @@ impl IconSlot {
         self.icon = match &self.pick {
             Pick::Chrome(names) => {
                 let names: Vec<&str> = names.iter().map(String::as_str).collect();
-                chrome_icon_unread(waits, icons, &names, px)
+                first_or_placeholder(waits, icons, &names, px)
             }
             Pick::File { is_dir: true, .. } => waits.first(icons, &["folder"], px),
             Pick::File { path, mime, .. } => picked_icon(waits, icons, px, |has| {

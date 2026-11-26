@@ -101,9 +101,7 @@ pub struct Layout {
 /// caption, New Tab and its menu first.
 pub fn toolbar_items(ctx: &mut Ctx, caption: bool) -> Vec<Item> {
     let mut icon = |icons: &[&str]| {
-        icons
-            .iter()
-            .find_map(|n| ctx.icons.get(n, toolbar::BIG_ICON))
+        (ctx.icons.rank(icons).into_iter()).find_map(|n| ctx.icons.get(n, toolbar::BIG_ICON))
     };
     let new = Item::DropButton {
         id: NEW,

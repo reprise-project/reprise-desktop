@@ -2871,3 +2871,48 @@ fn a_name_the_theme_lacks_wears_its_stand_in_and_an_own_icon_wins() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_list_tries_every_name_in_the_configured_theme_before_a_fallback() {
+    let root = fixture("test", INDEX, &["32x32/apps/mail-forward.png"]);
+    for (theme, file) in [("breeze", "mail-send"), ("hicolor", "mail-message-new")] {
+        let dir = root.join(theme).join("32x32/apps");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(root.join(theme).join("index.theme"), INDEX).unwrap();
+        fs::write(dir.join(format!("{file}.png")), b"").unwrap();
+    }
+    let names = [
+        "mail-send",
+        "mail-message-new",
+        "mail-forward",
+        "internet-mail",
+    ];
+    let t = IconTheme::load("test", std::slice::from_ref(&root));
+    assert_eq!(
+        t.rank(&names),
+        [
+            "mail-forward",
+            "mail-send",
+            "mail-message-new",
+            "internet-mail"
+        ],
+        "the configured theme's mail-forward first, the rest in list order"
+    );
+    assert_eq!(
+        t.lookup("mail-send", 32, 1),
+        Some(root.join("breeze/32x32/apps/mail-send.png")),
+        "one name still falls back to breeze"
+    );
+    let t = IconTheme::load("hicolor", std::slice::from_ref(&root));
+    assert_eq!(
+        t.rank(&names),
+        [
+            "mail-message-new",
+            "mail-send",
+            "mail-forward",
+            "internet-mail"
+        ],
+        "a configured hicolor is the configured theme"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}

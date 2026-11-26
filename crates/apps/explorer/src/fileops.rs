@@ -1377,7 +1377,8 @@ impl Explorer {
         let px = menu_icon_px(&ctx.theme);
         (self.send_to.iter())
             .map(|r| {
-                let icon = waits.first(&mut ctx.icons, r.icons, px);
+                let names = ctx.icons.rank(r.icons);
+                let icon = waits.first(&mut ctx.icons, &names, px);
                 (r.label.clone(), r.enabled, icon)
             })
             .collect()

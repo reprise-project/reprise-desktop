@@ -101,8 +101,7 @@ impl Viewer {
             .map(|b| match b {
                 Some((id, (t, r), icons)) => Item::Button {
                     id,
-                    icon: icons
-                        .iter()
+                    icon: (ctx.icons.rank(icons).into_iter())
                         .find_map(|n| ctx.icons.get(n, toolbar::BIG_ICON)),
                     label: None,
                     enabled: self.row_live(*t, *r),

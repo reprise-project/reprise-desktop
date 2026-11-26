@@ -48,6 +48,9 @@ pub struct IconTheme {
     /// How many of `dirs` belong to the configured theme, its inherits and `hicolor`: a stand-in
     /// there beats the name in breeze or Adwaita.
     own: usize,
+    /// The `dirs` of the configured theme and its inherits, `hicolor` aside unless configured:
+    /// [`IconTheme::rank`] puts the names they carry first.
+    mine: Vec<std::ops::Range<usize>>,
     roots: Vec<PathBuf>,
     /// Each theme's directory under each root that has it, and the one each entry of `dirs` is in.
     homes: Vec<Home>,
@@ -229,6 +232,7 @@ impl IconTheme {
             dirs: Vec::new(),
             groups: Vec::new(),
             own: 0,
+            mine: Vec::new(),
             roots: roots.to_vec(),
             homes: Vec::new(),
             dir_home: Vec::new(),
@@ -236,6 +240,11 @@ impl IconTheme {
             orders: Mutex::default(),
         };
         theme.walk(name);
+        theme.mine = (theme.chain.iter().zip(&theme.groups))
+            .enumerate()
+            .filter(|(k, (t, _))| *k == 0 || t.as_str() != "hicolor")
+            .map(|(_, (_, g))| g.clone())
+            .collect();
         // Fallbacks beyond `hicolor` so standard names (`system-run`, ...) resolve with a bare
         // `hicolor`; only added when a root has their index, with their parents.
         for fallback in ["hicolor", "breeze", "Adwaita"] {
@@ -409,6 +418,31 @@ impl IconTheme {
             .find_map(|n| self.find_named(n, size, scale, extra, true, &mut take))
             .or_else(|| {
                 names().find_map(|n| self.find_named(n, size, scale, &[], false, &mut take))
+            })
+    }
+
+    /// `names`, alternatives for one icon, in the order to try them: those the configured theme
+    /// or its inherits carry (a name or its [`STAND_INS`], at any size) first, then the rest,
+    /// each in list order. So a fallback theme's first name never beats the configured theme's
+    /// second; `hicolor`, breeze and Adwaita come last.
+    pub fn rank<'a>(&self, names: &[&'a str]) -> Vec<&'a str> {
+        let (mut mine, rest): (Vec<&str>, Vec<&str>) =
+            names.iter().copied().partition(|n| self.mine_carries(n));
+        mine.extend(rest);
+        mine
+    }
+
+    fn mine_carries(&self, name: &str) -> bool {
+        let stand_ins = (STAND_INS.iter().find(|(n, _)| *n == name)).map_or(&[][..], |(_, s)| s);
+        std::iter::once(name)
+            .chain(stand_ins.iter().copied())
+            .any(|n| {
+                let files = EXTENSIONS.map(|ext| OsString::from(format!("{n}.{ext}")));
+                (self.mine.iter().flat_map(Clone::clone)).any(|i| {
+                    !self
+                        .files_listed(i, &self.dirs[i].path, n, &files)
+                        .is_empty()
+                })
             })
     }
 
