@@ -295,12 +295,30 @@ pub(crate) mod words {
             .unwrap_or(text.len())
     }
 
+    /// Whether `i` is a char boundary that no grapheme cluster straddles.
+    pub fn is_cluster_boundary(text: &str, i: usize) -> bool {
+        text.is_char_boundary(i)
+            && !matches!(
+                GraphemeCursor::new(i, text.len(), true).is_boundary(text, 0),
+                Ok(false)
+            )
+    }
+
     /// `i` moved back to the start of the cluster it falls inside.
     pub fn cluster_floor(text: &str, i: usize) -> usize {
         let i = text.floor_char_boundary(i);
-        match GraphemeCursor::new(i, text.len(), true).is_boundary(text, 0) {
-            Ok(false) => prev_cluster(text, i),
-            _ => i,
+        match is_cluster_boundary(text, i) {
+            false => prev_cluster(text, i),
+            true => i,
+        }
+    }
+
+    /// `i` moved on to the end of the cluster it falls inside.
+    pub fn cluster_ceil(text: &str, i: usize) -> usize {
+        let i = text.floor_char_boundary(i);
+        match is_cluster_boundary(text, i) {
+            false => next_cluster(text, i),
+            true => i,
         }
     }
 
@@ -686,9 +704,15 @@ impl TextEdit {
         self.anchor
     }
 
+    /// Select `anchor..caret`, widened out to whole grapheme clusters; a bare caret inside a
+    /// cluster moves to its start.
     pub fn set_selection(&mut self, anchor: usize, caret: usize) {
-        self.anchor = self.text.floor_char_boundary(anchor);
-        self.caret = self.text.floor_char_boundary(caret);
+        let text = &self.text;
+        let snap = |i: usize, far: bool| match far {
+            true => words::cluster_ceil(text, i),
+            false => words::cluster_floor(text, i),
+        };
+        (self.anchor, self.caret) = (snap(anchor, anchor > caret), snap(caret, caret > anchor));
     }
 
     fn checkpoint(&mut self, kind: Edit) {
@@ -936,7 +960,7 @@ impl TextEdit {
 
     pub fn place(&mut self, index: usize, extend: bool) -> bool {
         let (caret, anchor) = (self.caret, self.anchor);
-        let index = self.text.floor_char_boundary(index);
+        let index = words::cluster_floor(&self.text, index);
         self.move_to(index, extend);
         (self.caret, self.anchor) != (caret, anchor)
     }
@@ -961,7 +985,7 @@ impl TextEdit {
     /// A drop, taken as [`TextEdit::paste`] takes it, put in at byte `at` and selected; the selection there was is let go.
     /// Paths get a space on each side that touches a non-space char, which stays unselected.
     pub fn drop_text(&mut self, at: usize, line: &DropLine) -> bool {
-        let at = self.text.floor_char_boundary(at);
+        let at = words::cluster_floor(&self.text, at);
         let text = line.text();
         let (lead, trail) = match line {
             DropLine::Paths(p) if !p.is_empty() => {
@@ -1364,13 +1388,13 @@ mod tests {
             let end = 1 + seq.len();
             for at in (2..end).filter(|&i| text.is_char_boundary(i)) {
                 let mut e = TextEdit::new(text.clone(), false);
-                e.set_selection(at, at);
+                (e.caret, e.anchor) = (at, at);
                 e.key(EditKey::Left {
                     select: false,
                     word: false,
                 });
                 assert_eq!(e.caret(), 1, "{seq} byte {at}: Left to its start");
-                e.set_selection(at, at);
+                (e.caret, e.anchor) = (at, at);
                 e.key(EditKey::Right {
                     select: true,
                     word: false,
@@ -1687,6 +1711,36 @@ mod tests {
         t.set_selection(2, 99);
         assert_eq!((t.anchor(), t.caret()), (1, 3));
         assert_eq!(t.selected_text(), "é");
+    }
+
+    const THUMB: &str = "\u{1F44D}\u{1F3FD}";
+
+    #[test]
+    fn place_inside_a_cluster_snaps_to_its_start() {
+        let mut t = e(&format!("a{THUMB}{FAMILY}"));
+        t.place(5, false);
+        assert_eq!(t.caret, 1, "the skin tone belongs to the thumb at 1");
+        t.place(9 + 7, true);
+        assert_eq!((t.anchor, t.caret), (1, 9), "the family starts at 9");
+    }
+
+    #[test]
+    fn set_selection_widens_to_whole_clusters() {
+        let mut t = e(&format!("{THUMB} {FAMILY}"));
+        t.set_selection(0, 4);
+        assert_eq!(t.selected_text(), THUMB);
+        t.set_selection(16, 4);
+        assert_eq!(
+            (t.anchor(), t.caret()),
+            (27, 0),
+            "anchor at the family's end"
+        );
+        t.set_selection(13, 13);
+        assert_eq!(
+            (t.anchor(), t.caret()),
+            (9, 9),
+            "a bare caret goes to the family's start"
+        );
     }
 
     #[test]

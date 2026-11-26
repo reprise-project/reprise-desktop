@@ -807,6 +807,32 @@ fn find_returns_byte_offsets_on_a_multibyte_line() {
     assert_eq!(&lines[0][s.col..e.col], "wörld");
 }
 
+#[test]
+fn find_and_replace_all_skip_a_match_inside_a_cluster() {
+    let thumb = "\u{1F44D}";
+    let toned = format!("{thumb}\u{1F3FD}");
+    let mut lines = vec![format!("{toned} {thumb}")];
+    let o = FindOpts {
+        match_case: true,
+        down: true,
+    };
+    assert_eq!(
+        find(&lines, thumb, Pos::default(), &o),
+        Some((Pos { line: 0, col: 9 }, Pos { line: 0, col: 13 })),
+        "only the lone thumb after the space"
+    );
+    assert_eq!(find(&lines, "\u{1F3FD}", Pos::default(), &o), None);
+    assert_eq!(replace_all(&mut lines, thumb, "x", &o), 1);
+    assert_eq!(lines, vec![format!("{toned} x")]);
+}
+
+#[test]
+fn place_inside_a_zwj_sequence_snaps_to_its_start() {
+    let mut t = e("a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}");
+    t.place(p(0, 8), false);
+    assert_eq!(t.caret(), p(0, 1));
+}
+
 /// Replace All rewrites the whole document and must not run over its own output: replacing "a"
 /// with "aa" terminates and reports 3.
 #[test]
