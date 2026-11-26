@@ -194,6 +194,7 @@ impl Icons {
     fn dialog_with(&self, fields: Fields, places: &[DialogPlace]) -> FileDlg {
         let mut dlg = FileDlg::new(fields, self.places_for(places));
         self.set_toolbar(&mut dlg);
+        dlg.set_folder_icon(self.folder.clone());
         dlg
     }
 
@@ -998,7 +999,7 @@ impl Host {
     fn wear_chrome(&mut self, dlg: &mut FileDlg) {
         dlg.set_place_icons(self.icons.place_icons(&self.tiles()));
         self.icons.set_toolbar(dlg);
-        dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
+        dlg.set_folder_icon(self.icons.folder.clone());
         self.icons.landed = false;
     }
 

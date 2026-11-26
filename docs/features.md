@@ -194,8 +194,9 @@ shake, the dim, the hidden frame rate and window memory.
 - **File dialog keys and menu.** F5, Ctrl+H, Alt+arrows, Ctrl+Shift+N, F2
   and Delete, and a right-click menu with Pin to Places, Rename and Delete.
 - **Pinned folders.** Pin to Places on a folder's menu adds it to every file
-  dialog's places bar. They are GTK's bookmarks, so GTK programs share them,
-  and Explorer's Favorites menu lists them.
+  dialog's places bar and Look in list, greyed while the folder is not there.
+  They are GTK's bookmarks, so GTK programs share them, and Explorer's
+  Favorites menu lists them.
 - **Band select.** In an Open dialog that takes several files, drag from the
   background to select the entries a band touches.
 - **Wallpaper** filled, fitted, stretched, tiled or centred, or a slideshow

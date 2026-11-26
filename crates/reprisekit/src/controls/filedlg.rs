@@ -417,6 +417,8 @@ pub struct FileDlg {
     folder: Option<FolderId>,
     parent: Option<FolderId>,
     crumbs: Vec<Crumb>,
+    /// The folder icon Look in's rows wear ([`FileDlg::set_folder_icon`]).
+    folder_icon: Option<Canvas>,
     history: Vec<FolderId>,
     /// The folders Back left, newest last; a folder entered any other
     /// way clears them.
@@ -581,6 +583,7 @@ impl FileDlg {
             folder: None,
             parent: None,
             crumbs: vec![],
+            folder_icon: None,
             history: vec![],
             forward: vec![],
             pending: None,
@@ -629,14 +632,9 @@ impl FileDlg {
         }
         self.pending = None;
         self.parent = folder.parent;
-        let items: Vec<combo::ListItem> = folder
-            .crumbs
-            .iter()
-            .map(|c| combo::ListItem::shell(&c.label, c.icon.clone(), c.depth as i32))
-            .collect();
         let selected = folder.crumbs.len().saturating_sub(1);
-        self.lookin = Combo::with_items(items, selected, 8);
         self.crumbs = folder.crumbs;
+        self.lookin = Combo::with_items(self.lookin_items(), selected, 8);
         self.folder = Some(folder.id);
         self.light_place();
         self.shell.entries = folder.entries;
@@ -954,6 +952,48 @@ impl FileDlg {
     pub fn set_place_folders(&mut self, folders: Vec<Option<FolderId>>) {
         self.place_folders = folders;
         self.light_place();
+        self.relist_lookin();
+    }
+
+    /// The pinned tiles and their folders, `None` for one that is not there.
+    fn pinned_places(&self) -> impl Iterator<Item = (&Place, Option<FolderId>)> {
+        let folders = self
+            .place_folders
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(None));
+        (self.places.places.iter().zip(folders)).filter(|(p, _)| p.pinned)
+    }
+
+    /// Look in's rows: the shown folder's crumbs, then each pinned folder, greyed where it is
+    /// not there.
+    fn lookin_items(&self) -> Vec<combo::ListItem> {
+        let crumbs = (self.crumbs.iter())
+            .map(|c| combo::ListItem::shell(&c.label, c.icon.clone(), c.depth as i32));
+        let pins = self.pinned_places().map(|(p, folder)| combo::ListItem {
+            greyed: folder.is_none(),
+            ..combo::ListItem::shell(&p.label, self.folder_icon.clone(), 0)
+        });
+        crumbs.chain(pins).collect()
+    }
+
+    /// Lists Look in's rows again, its pick and open list kept on the rows still there.
+    fn relist_lookin(&mut self) {
+        let items = self.lookin_items();
+        let last = items.len().saturating_sub(1);
+        let l = &mut self.lookin;
+        l.items = items;
+        l.selected = l.selected.min(last);
+        l.open = l.open.map(|o| o.min(last));
+        l.top = l.top.min(last);
+    }
+
+    /// The folder Look in's row `i` lists: a crumb's, or a pinned folder that is there.
+    fn lookin_target(&self, i: usize) -> Option<FolderId> {
+        match self.crumbs.get(i) {
+            Some(c) => Some(c.id),
+            None => self.pinned_places().nth(i - self.crumbs.len())?.1,
+        }
     }
 
     /// Replaces the tiles (the pinned folders changed) and names their folders as
@@ -999,17 +1039,13 @@ impl FileDlg {
         }
     }
 
-    /// Replace the Look in folders' icons, in the listing's crumb order.
-    pub fn set_crumb_icons(&mut self, icons: Vec<Option<Canvas>>) {
-        for ((crumb, item), icon) in self
-            .crumbs
-            .iter_mut()
-            .zip(self.lookin.items.iter_mut())
-            .zip(icons)
-        {
-            item.icon = icon.clone();
-            crumb.icon = icon;
+    /// The 16 px folder icon every Look in row wears, the shown folder's and the pinned ones'.
+    pub fn set_folder_icon(&mut self, icon: Option<Canvas>) {
+        for crumb in &mut self.crumbs {
+            crumb.icon = icon.clone();
         }
+        self.folder_icon = icon;
+        self.relist_lookin();
     }
 
     fn sync_toolbar(&mut self) {
@@ -1178,7 +1214,7 @@ impl FileDlg {
     }
 
     fn crumb_icon(&self) -> Option<&Canvas> {
-        self.crumbs.get(self.lookin.selected)?.icon.as_ref()
+        self.lookin.items.get(self.lookin.selected)?.icon.as_ref()
     }
 
     pub fn set_file_name(&mut self, name: &str) {

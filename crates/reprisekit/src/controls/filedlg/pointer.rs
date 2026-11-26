@@ -340,8 +340,8 @@ impl FileDlg {
         self.focus = Focus::LookIn;
         if let combo::Hit::Row(i) = h {
             combo_click(&mut self.lookin, h);
-            if let Some(c) = self.crumbs.get(i) {
-                return Event::NeedListing(c.id);
+            if let Some(id) = self.lookin_target(i) {
+                return Event::NeedListing(id);
             }
         } else {
             combo_click(&mut self.lookin, h);
@@ -488,8 +488,8 @@ impl FileDlg {
                 if !step(&mut self.lookin) {
                     return Event::None;
                 }
-                match self.crumbs.get(self.lookin.selected) {
-                    Some(c) => Event::NeedListing(c.id),
+                match self.lookin_target(self.lookin.selected) {
+                    Some(id) => Event::NeedListing(id),
                     None => Event::Redraw,
                 }
             }
