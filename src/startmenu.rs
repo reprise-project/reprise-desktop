@@ -46,11 +46,14 @@ impl State {
         let pinned_start = self.launches.is_pinned(&entry.id);
         let pinned_taskbar = self.quick_file_of(&entry.id).is_some();
         let uninstall = (self.app_uninstall.get(&entry.id).copied()).unwrap_or(Uninstall::Absent);
+        let on_desktop = (self.desktop.as_ref())
+            .is_some_and(|d| d.entries.iter().any(|e| e.name == entry.id.as_str()));
         Some(program_menu(
             entry.id.as_str(),
             pinned_start,
             pinned_taskbar,
             in_frequent,
+            on_desktop,
             uninstall,
         ))
     }
@@ -179,6 +182,10 @@ pub enum StartRow {
     PinStart(String),
     UnpinStart(String),
     Forget(String),
+    OpenFileLocation(String),
+    AddToDesktop(String),
+    /// A greyed Add to desktop: the desktop holds a copy.
+    OnDesktop,
     Uninstall(String),
     /// A greyed Uninstall: its infotip says why.
     CannotUninstall(&'static str),
@@ -254,6 +261,8 @@ pub enum Uninstall {
     Absent,
 }
 
+pub(crate) const ON_DESKTOP: &str = "The desktop already holds a copy of this program.";
+
 const NO_PACKAGEKIT: &str = "Uninstalling a program from the system's packages needs PackageKit.";
 
 impl Uninstall {
@@ -288,21 +297,26 @@ pub fn uninstall_offers(
         .collect()
 }
 
-/// The context menu of program `app`: Open (bold), Pin to or Unpin from
-/// the taskbar and the Start menu, Remove from this list for a frequent
-/// row (`in_frequent`), Uninstall as `uninstall` has it, and Properties. Returns the rows and,
-/// parallel to them, what each does (None at a separator).
+/// The context menu of program `app`: Open (bold), Open file location, Pin to or Unpin from
+/// the taskbar and the Start menu, Add to desktop (greyed when `on_desktop`), Remove from this
+/// list for a frequent row (`in_frequent`), Uninstall as `uninstall` has it, and Properties.
+/// Returns the rows and, parallel to them, what each does (None at a separator).
 pub fn program_menu(
     app: &str,
     pinned_start: bool,
     pinned_taskbar: bool,
     in_frequent: bool,
+    on_desktop: bool,
     uninstall: Uninstall,
 ) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let mut v = vec![
         (
             MenuItem::item("&Open").bold(true),
             Some(StartRow::Open(app.into())),
+        ),
+        (
+            MenuItem::item("Open f&ile location"),
+            Some(StartRow::OpenFileLocation(app.into())),
         ),
         (MenuItem::Separator, None),
         if pinned_taskbar {
@@ -325,6 +339,17 @@ pub fn program_menu(
             (
                 MenuItem::item("Pin to Start Men&u"),
                 Some(StartRow::PinStart(app.into())),
+            )
+        },
+        if on_desktop {
+            (
+                MenuItem::item("Add to &desktop").enabled(false),
+                Some(StartRow::OnDesktop),
+            )
+        } else {
+            (
+                MenuItem::item("Add to &desktop"),
+                Some(StartRow::AddToDesktop(app.into())),
             )
         },
     ];
@@ -605,21 +630,23 @@ mod tests {
 
     #[test]
     fn the_program_menu_offers_what_applies() {
-        let (items, _) = program_menu("a", false, true, true, Uninstall::Absent);
+        let (items, _) = program_menu("a", false, true, true, false, Uninstall::Absent);
         assert_eq!(
             labels(&items),
             [
                 "&Open",
+                "Open f&ile location",
                 "",
                 "Unpin from Tas&kbar",
                 "Pin to Start Men&u",
+                "Add to &desktop",
                 "",
                 "Remove from this &list",
                 "",
                 "P&roperties"
             ]
         );
-        let (_, rows2) = program_menu("a", true, false, false, Uninstall::Absent);
+        let (_, rows2) = program_menu("a", true, false, false, false, Uninstall::Absent);
         assert!(
             rows2
                 .iter()
@@ -635,14 +662,132 @@ mod tests {
     }
 
     #[test]
+    fn the_program_menu_opens_the_file_location_and_adds_to_the_desktop() {
+        let row = |items: &[MenuItem], label: &str| {
+            labels(items).iter().position(|l| l == label).expect(label)
+        };
+        let (items, rows) =
+            program_menu("c.desktop", false, false, false, false, Uninstall::Absent);
+        let at = row(&items, "Open f&ile location");
+        assert_eq!(
+            rows[at],
+            Some(StartRow::OpenFileLocation("c.desktop".into()))
+        );
+        let at = row(&items, "Add to &desktop");
+        assert_eq!(rows[at], Some(StartRow::AddToDesktop("c.desktop".into())));
+        assert!(items[at].selectable());
+
+        let (items, rows) = program_menu("c.desktop", false, false, false, true, Uninstall::Absent);
+        let at = row(&items, "Add to &desktop");
+        assert!(
+            !items[at].selectable(),
+            "greyed while the desktop holds a copy"
+        );
+        assert_eq!(rows[at], Some(StartRow::OnDesktop));
+        let kind = crate::menuview::MenuKind::StartPanel { rows };
+        assert_eq!(kind.tip(at).as_deref(), Some(ON_DESKTOP));
+    }
+
+    #[test]
+    fn add_to_desktop_greys_while_the_desktop_lists_the_programs_file() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::desktopview::create(&mut h.state, "/d".into(), Default::default(), None);
+        h.state.app_index = vec![AppEntry {
+            name: "Zoom".into(),
+            exec_line: "zoom".into(),
+            terminal: false,
+            id: "Zoom.desktop".parse().unwrap(),
+            icon: None,
+            startup_wm_class: None,
+            categories: Vec::new(),
+            mime_types: Vec::new(),
+            shown: true,
+            path: None,
+            actions: Vec::new(),
+        }];
+        let offered = |h: &crate::harness::Harness| {
+            let (_, rows) = h.state.program_menu_of(0, false).unwrap();
+            rows.contains(&Some(StartRow::AddToDesktop("Zoom.desktop".into())))
+        };
+        assert!(offered(&h));
+        let path = std::path::PathBuf::from("/d/Zoom.desktop");
+        h.state.desktop.as_mut().unwrap().entries = vec![crate::desktop::DesktopEntry {
+            name: "Zoom.desktop".into(),
+            label: "Zoom".into(),
+            icon: String::new(),
+            target: crate::desktop::Target::Open(path.clone()),
+            path,
+            shortcut: false,
+            kind: crate::desktop::Kind::File,
+            is_dir: false,
+            allow_launching: true,
+        }];
+        assert!(!offered(&h), "a copy on the desktop greys the row");
+    }
+
+    #[test]
+    fn the_program_menu_pins_in_every_look_at_scale_1_and_2() {
+        use reprisekit::interface::Interface;
+        reprisekit::pins::fonts();
+        fn fnv(c: &reprisekit::raster::Canvas) -> u64 {
+            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                (h ^ *p as u64).wrapping_mul(0x100000001b3)
+            })
+        }
+        let mut got = Vec::new();
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let base = reprisekit::interfaces::theme_for(interface);
+            let text = reprisekit::text::TextRenderer::load(&base.fonts);
+            for (name, on_desktop) in [("add to desktop", false), ("on the desktop", true)] {
+                let (items, _) =
+                    program_menu("a", false, false, true, on_desktop, Uninstall::Offered);
+                let room = (i32::MAX, i32::MAX);
+                let layout = MenuStyle::context_for(&base, &items).layout_within(
+                    &text,
+                    &items,
+                    base.fonts.size_px,
+                    room,
+                );
+                for s in [1, 2] {
+                    let l = layout.scaled(s);
+                    let mut c = reprisekit::raster::Canvas::new(l.width as u32, l.height as u32);
+                    let (theme, text) = (base.scaled(s), text.for_output(s));
+                    draw_menu(&mut c, &theme, text, &l, &items, Some(1), "", true);
+                    got.push((format!("{interface:?} {name} {s}"), fnv(&c)));
+                }
+            }
+        }
+        let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/program_menu.txt");
+        reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+    }
+
+    #[test]
+    fn every_program_menu_row_has_its_own_access_key() {
+        let (items, _) = program_menu("a", false, false, true, false, Uninstall::Offered);
+        let keys: Vec<char> = labels(&items)
+            .iter()
+            .filter_map(|l| {
+                let at = l.find('&')?;
+                l[at + 1..].chars().next().map(|c| c.to_ascii_lowercase())
+            })
+            .collect();
+        let mut unique = keys.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(keys.len(), unique.len(), "{:?}", labels(&items));
+        assert_eq!(keys.len(), 8, "every row but the separators");
+    }
+
+    #[test]
     fn uninstall_sits_above_properties_and_greys_with_its_reason() {
-        let (items, rows) = program_menu("c", false, false, false, Uninstall::Offered);
+        let (items, rows) = program_menu("c", false, false, false, false, Uninstall::Offered);
         let at = labels(&items).iter().position(|l| l == "U&ninstall...");
         assert_eq!(at, Some(items.len() - 2), "{:?}", labels(&items));
         assert_eq!(rows[items.len() - 2], Some(StartRow::Uninstall("c".into())));
         assert!(items[items.len() - 2].selectable());
 
-        let (items, rows) = program_menu("c", false, false, false, Uninstall::Greyed("why"));
+        let (items, rows) = program_menu("c", false, false, false, false, Uninstall::Greyed("why"));
         assert!(!items[items.len() - 2].selectable(), "greyed");
         assert_eq!(
             rows[items.len() - 2],
