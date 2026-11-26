@@ -1125,6 +1125,9 @@ impl Hosted for Bar {
     fn settle(&mut self, now: std::time::Instant) -> bool {
         self.popup.as_mut().is_some_and(|p| p.settle(now))
     }
+    fn wheel(&mut self, x: i32, y: i32, rows: i32) -> bool {
+        self.popup.as_mut().is_some_and(|p| p.wheel(x, y, rows))
+    }
 }
 
 impl Bar {
@@ -1225,6 +1228,45 @@ mod bar_tests {
         assert_eq!((b.spots()[0].rect.x, b.spots()[0].rect.y), (500, -90));
         b.dismiss();
         assert!(!b.is_active() && b.spots().is_empty());
+    }
+
+    #[test]
+    fn a_hosted_bar_menu_too_tall_for_its_room_scrolls_by_the_wheel() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let px = theme.fonts.size_px;
+        let rows: Vec<_> = (1..=30)
+            .map(|i| MenuItem::item(&format!("Test Program Number {i:02} With A Long Name")))
+            .collect();
+        let mut b = Bar::new(vec![("&File", rows)]);
+        let lay = Layout::compute(
+            &text,
+            px,
+            Rect::new(0, 0, 300, 40),
+            &b.titles,
+            &MenuTitles::CLASSIC,
+        )
+        .reaching(Rect::new(0, 0, 300, 200));
+        b.open_title(0, &lay, &text, &theme, px, false);
+        b.host();
+        let first = |b: &Bar| {
+            b.popup.as_ref().unwrap().levels()[0]
+                .layout
+                .scroll
+                .map(|s| s.first)
+        };
+        assert_eq!(first(&b), Some(0));
+        let r = b.spots()[0].rect;
+        let (x, y) = (r.x + 20, r.y + r.height / 2);
+        assert!(!b.wheel(x, y, -3), "the first row is already at the top");
+        assert!(b.wheel(x, y, 3));
+        assert_eq!(first(&b), Some(3));
+        assert!(
+            !b.wheel(r.right() + 20, y, 3),
+            "off the menu nothing scrolls"
+        );
+        let mut none: Option<crate::controls::menu::PopupMenu> = None;
+        assert!(!none.wheel(x, y, 3));
     }
 
     #[test]

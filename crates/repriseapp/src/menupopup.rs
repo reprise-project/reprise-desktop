@@ -297,6 +297,30 @@ impl Host {
         }
     }
 
+    /// The wheel turned `rows` rows over a menu popup at (x, y), owner's coordinates: the level
+    /// under it scrolls ([`Hosted::wheel`]). `false` when nothing scrolled, so the owner hears it.
+    pub(crate) fn menu_wheel(&mut self, x: i32, y: i32, rows: i32) -> bool {
+        let ids = self.shown_ids();
+        let Some((owner, mut h)) = hosted(
+            &mut self.edit_menu,
+            &mut *self.app,
+            &mut self.ctx,
+            &self.slots,
+            &ids,
+        ) else {
+            return false;
+        };
+        let scrolled = h.wheel(x, y, rows);
+        drop(h);
+        if scrolled {
+            if let Some(s) = self.slot_mut(owner) {
+                s.dirty = true;
+            }
+            self.menu_changed(owner);
+        }
+        scrolled
+    }
+
     /// Brings the popups in line with the open menu: a popup per level, each placed and drawn.
     pub(crate) fn sync_menu(&mut self) {
         let Some((owner, spots)) = self.place_menu() else {
