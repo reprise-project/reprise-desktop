@@ -409,3 +409,31 @@ fn a_press_off_the_address_field_while_its_folder_reads_keeps_the_late_list_shut
         "the next key opens the list"
     );
 }
+
+/// Ctrl+L, like Alt+D, takes the focus from the view to the Address field with its text selected,
+/// so typing replaces the path.
+#[test]
+fn ctrl_l_focuses_the_address_with_its_text_selected() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = browse_fixture(&mut ctx);
+    ex.focus = Focus::View;
+    ex.key(
+        repriseapp::KeyInput {
+            sym: 'l' as u32,
+            utf8: None,
+            mods: repriseapp::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            edit: reprisekit::textedit::key_for('l' as u32, true, false, None),
+        },
+        &mut ctx,
+    );
+    assert_eq!(ex.focus, Focus::Address);
+    let edit = ex.address.combo.edit.as_ref().expect("the field's edit");
+    assert_eq!(
+        edit.selection(),
+        0..ex.address.text().len(),
+        "the whole path"
+    );
+}
