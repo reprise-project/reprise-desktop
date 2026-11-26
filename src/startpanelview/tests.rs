@@ -1187,6 +1187,11 @@ fn blue_start_shows_the_stock_picture_its_lock_gives_a_user_without_one() {
         shown(&h) == Some(draw(ALL[0], px)),
         "the first stock picture"
     );
+    h.state.refill_start_icons(1, false);
+    assert!(
+        shown(&h) == Some(draw(ALL[0], px)),
+        "a refill of the icons keeps it"
+    );
     crate::lockview::listed(&mut h.state, 3);
     assert!(
         shown(&h) == Some(draw(ALL[3], px)),
