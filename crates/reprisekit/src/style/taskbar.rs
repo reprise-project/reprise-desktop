@@ -14,6 +14,9 @@ use crate::theme::Theme;
 mod buttons;
 mod start;
 
+/// Where a Start pill's label starts, design px in from the pill's left.
+pub(crate) const START_LABEL_X: i32 = 35;
+
 pub use buttons::{
     EDGE_LEFT, EDGE_NEXT_LEFT, EDGE_PREV_RIGHT, EDGE_RIGHT, EDGE_ROW_END, EDGE_ROW_START,
     task_draws_spot,
@@ -75,7 +78,7 @@ pub(crate) fn draw_taskbar_on(
         }
     } else {
         style.draw(canvas, st, Part::StartButton, start_state(state), s);
-        draw_start_pill(canvas, style, start_text, st, state, s);
+        draw_start_pill(canvas, style, start_text, st, state, theme.line_growth(), s);
     }
     if let Some(bar) = style.part(Part::Taskbar) {
         let f = bar.frame(State::Normal);

@@ -18,16 +18,19 @@ fn draw_start_mark(canvas: &mut Canvas, x: i32, top: i32, box_px: i32, s: i32, i
     logo::draw(canvas, x + off, top + off, 16 * s, ink);
 }
 
+/// The pill's flag and label in `st`, a pill `grow` design px taller than at 100% text: the flag
+/// keeps its size and stays centred down the pill, the label grows with the text.
 pub(super) fn draw_start_pill(
     canvas: &mut Canvas,
     style: &Style,
     start_text: &TextRenderer,
     st: Rect,
     state: &TaskbarState,
+    grow: i32,
     s: i32,
 ) {
     let flag = style.taskbar.start_icon * s;
-    let (flag_x, flag_y) = (st.x + 10 * s, st.y + 5 * s);
+    let (flag_x, flag_y) = (st.x + 10 * s, st.y + (5 + grow / 2) * s);
     match &state.start_icon {
         Some(ic) => canvas.blit_canvas(
             flag_x + (flag - ic.width as i32) / 2,
@@ -36,7 +39,8 @@ pub(super) fn draw_start_pill(
         ),
         None => draw_start_mark(canvas, flag_x, flag_y, flag, s, style.start_text.color),
     }
-    let label = Rect::new(st.x + 35 * s, st.y, (st.width - 35 * s).max(0), st.height);
+    let x = super::START_LABEL_X * s;
+    let label = Rect::new(st.x + x, st.y, (st.width - x).max(0), st.height);
     let spec = &style.start_text;
     let start_size = spec.size_in(start_text) * s as u32;
     let reach = spec.shadow.map_or(0, |sh| {

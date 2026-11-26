@@ -747,3 +747,90 @@ fn a_glass_bar_at_scale_2_draws_its_parts_painted_at_2_where_scale_1_puts_them()
         }
     }
 }
+
+/// A Blue bar 400 px wide at `pct` text and scale `d` with its layout and style, each at `d`.
+fn blue_bar_at(pct: u32, d: i32) -> (Canvas, TaskbarLayout, Style) {
+    let base = theme_for(Interface::Blue).with_text_size(pct);
+    let counts = TaskbarCounts::default();
+    let l = TaskbarLayout::compute(&base.metrics, &base.taskbar_shape(), 400, true, counts, 48);
+    let theme = base.scaled(d);
+    let s = theme.look.style().unwrap().clone();
+    let text = TextRenderer::load(&theme.fonts);
+    let start = TextRenderer::load(&s.start_text.font());
+    let l = l.scaled(d);
+    let mut c = Canvas::new(l.width as u32, l.height as u32);
+    draw_taskbar(
+        &mut c,
+        &s,
+        &theme,
+        &text,
+        &start,
+        &l,
+        &state_with_tasks(&[]),
+    );
+    (c, l, s)
+}
+
+#[test]
+fn the_blue_start_pill_fills_a_grown_bar_and_holds_its_grown_label() {
+    let mut label_w = Vec::new();
+    for pct in [100, 150, 200] {
+        for d in [1, 2] {
+            let (c, l, s) = blue_bar_at(pct, d);
+            let st = l.start;
+            assert_eq!(
+                st.height, l.height,
+                "{pct}% s{d}: the pill is as tall as the bar"
+            );
+            let pill = s.part(Part::StartButton).unwrap();
+            let f = pill.frame(State::Normal);
+            assert_eq!(
+                (f.width, f.height),
+                (st.width, st.height),
+                "{pct}% s{d}: the pill is drawn at its own size, not stretched"
+            );
+            let bottom = f.y + f.height - 1;
+            let x = st.width / 2;
+            assert_eq!(
+                c.get(st.x + x, st.bottom() - 1),
+                pill.atlas.get(f.x + x, bottom),
+                "{pct}% s{d}: the pill's rim runs along the bar's last row"
+            );
+            let inked: Vec<i32> = (st.x + 35 * d..st.right())
+                .filter(|&x| {
+                    (st.y..st.bottom()).any(|y| {
+                        let face = pill.atlas.get(f.x + x - st.x, f.y + y);
+                        face >> 24 == 0xFF && c.get(x, y) != face
+                    })
+                })
+                .collect();
+            let (lo, hi) = (inked[0], *inked.last().unwrap());
+            assert!(
+                hi < st.right() - 6 * l.height / 30,
+                "{pct}% s{d}: the label ends at {hi}, clear of the round end of a pill ending at {}",
+                st.right()
+            );
+            if d == 1 {
+                label_w.push(hi - lo);
+            }
+        }
+    }
+    assert!(
+        label_w[0] < label_w[1] && label_w[1] < label_w[2],
+        "the label grows with the text: {label_w:?}"
+    );
+}
+
+#[test]
+fn blue_start_pill_grown_pins() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for pct in [100, 150, 200] {
+        for d in [1, 2] {
+            let (c, l, _) = blue_bar_at(pct, d);
+            let pill = c.copy_rect(Rect::new(0, 0, l.start.right() + 4 * d, l.height));
+            got.push((format!("{pct}% s{d}"), crate::pins::fnv(&pill)));
+        }
+    }
+    crate::pins::check("blue/start_grown", &got);
+}

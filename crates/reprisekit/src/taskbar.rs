@@ -440,7 +440,8 @@ pub struct TaskbarCounts {
 /// How a look lays its bar out; describes a Bottom bar, other edges turn it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskbarShape {
-    /// Start's x, y and height (0: as tall as the other buttons). Width comes from `start_button_width`.
+    /// Start's x, y and height at 100% text, growing by `line_growth` (0: as tall as the other
+    /// buttons). Width comes from `start_button_width`.
     pub start: Rect,
     pub button_top: i32,
     pub button_bottom: i32,
@@ -467,7 +468,7 @@ pub struct TaskbarShape {
     /// 100% text; None: one line.
     pub two_line_clock: Option<[i32; 2]>,
     /// How far a line of the bar's text outgrows its 100% line ([`crate::theme::Theme::line_growth`]):
-    /// a two-line clock's box and lines grow by it per line.
+    /// a two-line clock's box and lines grow by it per line, a Start of its own height by it once.
     pub line_growth: i32,
     pub start_menu: StartMenuDock,
     pub labelled: LabelledButton,
@@ -620,7 +621,7 @@ impl TaskbarShape {
         let h = if self.start.height == 0 {
             btn
         } else {
-            self.start.height.min(m.taskbar_height - self.start.y)
+            (self.start.height + self.line_growth).min(m.taskbar_height - self.start.y)
         };
         ((m.taskbar_height - self.start.y - h).max(0), h)
     }

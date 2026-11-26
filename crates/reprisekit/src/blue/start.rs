@@ -32,8 +32,16 @@ const STATES: [State; 3] = [State::Normal, State::Hot, State::Pressed];
 /// face varies only down the pill, stretches to fit a wider or narrower
 /// "start".
 pub fn start_button(s: &Scheme, d: i32) -> PartImage {
+    start_button_sized(s, d, s.metrics.start_width(), s.metrics.taskbar_height)
+}
+
+/// [`start_button`] drawn `w` x `h` design px, for a bar and label grown with the text: the
+/// middle takes the extra width, and the rounded end and the shading grow with the height.
+pub fn start_button_sized(s: &Scheme, d: i32, w: i32, h: i32) -> PartImage {
     let m = s.metrics;
-    let (w, h) = (m.start_width(), m.taskbar_height);
+    let (rx, ry) = end(&m);
+    let k = f64::from(h) / f64::from(m.taskbar_height);
+    let end = (rx * k, ry * k);
     let faces = [
         &s.start_button.normal,
         &s.start_button.hot,
@@ -41,28 +49,29 @@ pub fn start_button(s: &Scheme, d: i32) -> PartImage {
     ];
     let mut a = Canvas::new((w * d) as u32, (h * d) as u32 * faces.len() as u32);
     for (i, f) in faces.into_iter().enumerate() {
-        a.blit_over(0, i as i32 * h * d, &frame(f, &m, d));
+        a.blit_over(0, i as i32 * h * d, &frame(f, &m, (w, h), end, d));
     }
     PartImage::new(a, &STATES, Layout::Vertical)
         .sizing(Insets::new(m.start_left, 0, m.start_right, 0))
         .at_scale(d)
 }
 
-/// One state's frame: the rim where the outline and the face inset 1 px
-/// from the top, the end and the bottom part, the face inside.
-fn frame(f: &Face, m: &Metrics, d: i32) -> Canvas {
-    let (w, h) = (m.start_width(), m.taskbar_height);
-    let (rx, ry) = end(m);
+/// One state's frame `w` x `h` design px: the rim where the outline and the face inset 1 px
+/// from the top, the end and the bottom part, the face inside. `(rx, ry)` is the end's curve.
+/// The caps shade across as they do at `m`'s own width, the extra width going to the middle.
+fn frame(f: &Face, m: &Metrics, (w, h): (i32, i32), (rx, ry): (f64, f64), d: i32) -> Canvas {
+    let w0 = f64::from(m.start_width());
+    let extra = f64::from(w) - w0;
     let k = f64::from(d);
     let (down, across) = (stops(f.down), stops(f.across));
     let (down, across) = (Stops(&down), Stops(&across));
     // The face's colour across the stretchable middle: `across` shades the
     // face relative to it, so the middle stays `down` alone.
     let mid = f64::from(m.start_left + m.start_middle / 2) + 0.5;
-    let level = across.at(mid / f64::from(w));
+    let level = across.at(mid / w0);
     let (left, right) = (
         f64::from(m.start_left),
-        f64::from(m.start_left + m.start_middle),
+        f64::from(m.start_left + m.start_middle) + extra,
     );
     let rim = shape::premul(f.rim, 255);
     let (fw, fh) = (f64::from(w) * k, f64::from(h) * k);
@@ -86,7 +95,8 @@ fn frame(f: &Face, m: &Metrics, d: i32) -> Canvas {
         let side = if (left..=right).contains(&cx) {
             level
         } else {
-            across.at(cx.min(f64::from(w) - 1.5) / f64::from(w))
+            let x = if cx < left { cx } else { cx - extra };
+            across.at(x.min(w0 - 1.5) / w0)
         };
         let fill = shade(down.at(cy / f64::from(h)), side, level);
         shape::shares(&[(rim, outer - inner), (fill, inner)])

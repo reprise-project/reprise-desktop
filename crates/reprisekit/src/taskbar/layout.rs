@@ -192,7 +192,7 @@ impl TaskbarLayout {
         let start_h = if shape.start.height == 0 {
             btn_h
         } else {
-            shape.start.height.min(height - shape.start.y)
+            (shape.start.height + shape.line_growth).min(height - shape.start.y)
         };
         let start = Rect::new(shape.start.x, shape.start.y, m.start_button_width, start_h);
         let mut grips = Vec::new();

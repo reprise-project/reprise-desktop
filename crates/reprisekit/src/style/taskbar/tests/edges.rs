@@ -125,7 +125,7 @@ fn a_top_blue_bar_turns_its_bar_and_tray_over_under_upright_buttons() {
         s.draw(w, l.notification, Part::TrayArea, State::Normal, 1);
     });
     s.draw(&mut want, l.start, Part::StartButton, State::Normal, 1);
-    draw_start_pill(&mut want, s, &start, l.start, &st, 1);
+    draw_start_pill(&mut want, s, &start, l.start, &st, 0, 1);
     for r in &l.tasks {
         s.draw(&mut want, *r, Part::TaskButton, State::Normal, 1);
         want.blit_canvas(r.x + 10 + (16 - px) / 2, r.y + (r.height - px) / 2, &icon);
