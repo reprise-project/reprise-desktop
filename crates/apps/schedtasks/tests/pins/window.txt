@@ -1,6 +1,9 @@
-window Classic 7e595e029abaacbc
+window Classic f870a21699c8581d
 properties Classic 84f0fc7581cf463c
-window Blue fa18806a9502da9c
+output Classic 2ea511c5722b2d05
+window Blue 0587613425b39e3b
 properties Blue c8c5ebbef2f4d475
-window Glass 2dd4a936371e81b4
+output Blue ea728a4a0ac5e5ff
+window Glass 29140e71fbe7cb6c
 properties Glass ff9985ba886d3369
+output Glass e30165f944050328

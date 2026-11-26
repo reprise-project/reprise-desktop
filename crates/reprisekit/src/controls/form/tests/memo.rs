@@ -63,6 +63,36 @@ fn a_memo_edits_lines_and_keeps_its_scrollbar() {
     assert_eq!(greyed.key(Key::Char('a')), Event::None);
 }
 
+#[test]
+fn a_read_only_memo_moves_and_selects_but_keeps_its_text() {
+    let mut f = Form::new(vec![
+        Item::memo("m", Rect::new(0, 0, 263, 80), "one\ntwo", true).read_only(),
+    ]);
+    let memo = |f: &Form| match &f.items[0].control {
+        Control::Memo(m) => (m.edit.text(), m.edit.caret()),
+        _ => unreachable!(),
+    };
+    for key in [
+        Key::Char('a'),
+        Key::Space,
+        Key::NewLine,
+        Key::Edit(EditKey::Backspace { word: false }),
+        Key::Edit(EditKey::Cut),
+    ] {
+        assert_ne!(f.key(key), Event::Changed("m"));
+    }
+    assert_ne!(f.paste("x".into()), Event::Changed("m"));
+    f.key(Key::Down);
+    f.key(Key::Edit(EditKey::SelectAll));
+    let (text, caret) = memo(&f);
+    assert_eq!(text, "one\ntwo");
+    assert_eq!(caret.line, 1, "the caret still moves");
+    assert!(
+        f.focused_edit()
+            .is_some_and(|e| e.copy_text().as_deref() == Some("one\ntwo"))
+    );
+}
+
 /// At scale 2 a memo's selection ends where its text does, at the
 /// width the device font measures; a line scrolled sideways to its
 /// caret shows its end, and a click on a character lands on it.

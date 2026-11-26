@@ -35,6 +35,10 @@ pub enum Cmd {
     Refresh,
     /// Start the unit a timer runs, `backup.service`.
     Run(String),
+    /// Stop that unit.
+    Stop(String),
+    /// Read that unit's lines from the journal ([`crate::output::journal`]).
+    Output(String),
     /// Enable and start a timer (`on`), or disable and stop it. `file_state` is its
     /// `UnitFileState`: only an enabled or disabled file is changed, a static or transient timer
     /// is only started or stopped.
@@ -51,6 +55,8 @@ pub enum Update {
     Tasks(Result<Vec<Task>, String>),
     /// The manager refused a command; its message.
     Refused(Cmd, String),
+    /// A unit's journal lines, or why they could not be read.
+    Output(String, Result<String, String>),
 }
 
 /// The window's end of the threads.
@@ -87,6 +93,20 @@ fn serve(rx: Receiver<Cmd>, post: Poster<Update>, shown: Arc<Mutex<HashSet<Strin
             std::thread::sleep(SETTLE);
         }
         let batch: Vec<Cmd> = std::iter::once(first).chain(rx.try_iter()).collect();
+        let (outputs, batch): (Vec<Cmd>, Vec<Cmd>) =
+            batch.into_iter().partition(|c| matches!(c, Cmd::Output(_)));
+        for cmd in outputs {
+            if let Cmd::Output(unit) = cmd {
+                let post = post.clone();
+                spawn("reprise-schedtasks-journal", move || {
+                    let read = crate::output::journal(&unit);
+                    post.post(Update::Output(unit, read));
+                });
+            }
+        }
+        if batch.is_empty() {
+            continue;
+        }
         let conn = match reprisebus::session() {
             Ok(c) => c,
             Err(e) => {
@@ -291,12 +311,15 @@ fn command(exec: &Props) -> String {
         .join("\n")
 }
 
-/// Runs `cmd` as `systemctl --user start`, `enable --now` or `disable --now` would.
+/// Runs `cmd` as `systemctl --user start`, `stop`, `enable --now` or `disable --now` would.
 pub async fn act(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
     match cmd {
-        Cmd::Refresh => {}
+        Cmd::Refresh | Cmd::Output(_) => {}
         Cmd::Run(service) => {
             call(conn, "StartUnit", &(service, "replace")).await?;
+        }
+        Cmd::Stop(service) => {
+            call(conn, "StopUnit", &(service, "replace")).await?;
         }
         Cmd::Turn {
             timer,

@@ -11,15 +11,19 @@ column-status = Status
 
 ## The buttons
 run = &Run Now
+stop = &Stop
 enable = &Enable
 disable = &Disable
 properties = &Properties
+view-output = View &Output
 new-task = &New Task...
 
 ## A task's shortcut menu
 menu-run = &Run Now
+menu-stop = &Stop
 menu-enable = &Enable
 menu-disable = &Disable
+menu-output = View &Output
 menu-properties = &Properties
 
 ## The line over the list
@@ -70,6 +74,7 @@ result-timeout = Timed out
 
 ## What the service manager refused; $unit is a unit name, $why its message
 refused-run = { $unit } did not start: { $why }
+refused-stop = { $unit } did not stop: { $why }
 refused-enable = { $unit } was not enabled: { $why }
 refused-disable = { $unit } was not disabled: { $why }
 
@@ -85,3 +90,12 @@ props-status = Status:
 props-runs = Runs:
 props-command = Command:
 props-file = Unit file:
+
+## View Output; $name is the task's name
+output-title = { $name } Output
+output-reading = Reading the journal...
+output-none = The journal holds no lines for this task yet.
+# $why is what journalctl said.
+output-unread = The journal could not be read: { $why }
+output-refresh = Re&fresh
+output-close = Close

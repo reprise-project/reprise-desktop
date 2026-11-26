@@ -280,11 +280,14 @@ impl Item {
         )
     }
 
-    /// An edit field that refuses edits ([`TextEdit::set_read_only`]); other controls are
-    /// returned unchanged.
+    /// An edit field or memo that refuses edits ([`TextEdit::set_read_only`],
+    /// [`MultiEdit::set_read_only`](crate::controls::multiedit::MultiEdit::set_read_only)); other
+    /// controls are returned unchanged.
     pub fn read_only(mut self) -> Item {
-        if let Control::Edit { edit, .. } = &mut self.control {
-            edit.set_read_only(true);
+        match &mut self.control {
+            Control::Edit { edit, .. } => edit.set_read_only(true),
+            Control::Memo(m) => m.edit.set_read_only(true),
+            _ => {}
         }
         self
     }
