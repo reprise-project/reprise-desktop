@@ -14,7 +14,9 @@
 //! (`open_keys`): they move the hot cell, Enter brings its window up, Delete closes it, Escape goes back to the button.
 //! A window with a media player (`previewmedia`) gets Previous, Play or Pause, and Next under its picture, greyed where
 //! the player can't; a click presses the player and the panel stays. With the arrows, Tab steps through the hot
-//! cell's buttons, Enter and Space press the one focused and Escape goes back to the cell. The buttons follow the
+//! cell's buttons, Enter and Space press the one focused and Escape goes back to the cell. On a one-window panel shown
+//! for the bar's focus, Tab from the button steps onto its buttons (`tab_in`), and Tab past the last goes on along the
+//! bar. The buttons follow the
 //! players while the panel is up, and a window gaining its first player or losing its last lays the panel out again.
 
 use std::{sync::Arc, time::Duration};
@@ -88,6 +90,9 @@ struct Panel {
     hot: Option<usize>,
     /// The panel has the arrows (`open_keys`), `hot` the keyboard's cell.
     keys: bool,
+    /// The keyboard reached the one window's media buttons with Tab from its task button (`tab_in`):
+    /// keys past them go back to the bar.
+    media_only: bool,
     /// Each window's player by bus name, and what its buttons show.
     players: Vec<Option<(String, NowPlaying)>>,
     /// The media button the pointer is on or holds, by cell.
@@ -355,7 +360,7 @@ fn reshow(state: &mut State) {
     let Some(p) = state.task_preview.shown.as_ref() else {
         return;
     };
-    let (bar, button, hot, keys) = (p.bar, p.button, p.hot, p.keys);
+    let (bar, button, hot, keys) = (p.bar, p.button, p.hot, p.keys && !p.media_only);
     hold(state);
     show(state, bar, button);
     if let Some(p) = state.task_preview.shown.as_mut() {
@@ -404,11 +409,48 @@ pub fn has_keys(state: &State) -> bool {
     (state.task_preview.shown.as_ref()).is_some_and(|p| p.keys)
 }
 
+/// Tab from the taskbar's focus on a task button whose shown panel holds one window with a player: the
+/// keyboard steps onto the first media button it can press. False when there is none.
+pub fn tab_in(state: &mut State) -> bool {
+    let v = &state.task_preview;
+    let Some(p) = (v.shown.as_ref()).filter(|p| v.keyed && !p.keys && p.windows.len() == 1) else {
+        return false;
+    };
+    let Some(t) = (p.players.first().and_then(Option::as_ref))
+        .and_then(|(_, np)| taskpreview::media_step(np, None, false))
+    else {
+        return false;
+    };
+    if let Some(p) = state.task_preview.shown.as_mut() {
+        p.keys = true;
+        p.media_only = true;
+    }
+    hover_panel(state, Some(0));
+    set_media_focus(state, Some(t));
+    crate::access::touch(state);
+    true
+}
+
+/// The keyboard leaves the media buttons `tab_in` reached for their task button.
+fn tab_out(state: &mut State) {
+    if let Some(p) = state.task_preview.shown.as_mut() {
+        p.keys = false;
+        p.media_only = false;
+        p.media_focus = None;
+    }
+    hover_panel(state, None);
+    redraw(state);
+    crate::access::touch(state);
+}
+
 /// Key `sym` for the panel with the arrows; false when it has none, and the taskbar takes the key.
 pub fn key(state: &mut State, sym: u32) -> bool {
     let Some(p) = state.task_preview.shown.as_ref().filter(|p| p.keys) else {
         return false;
     };
+    if p.media_only {
+        return media_key(state, sym);
+    }
     let at = p.hot.unwrap_or(0);
     let w = p.windows.get(at).copied();
     let player = p.players.get(at).cloned().flatten();
@@ -437,6 +479,46 @@ pub fn key(state: &mut State, sym: u32) -> bool {
         }
     }
     true
+}
+
+/// Key `sym` on the media buttons `tab_in` reached: Enter and Space press the one focused, Tab and
+/// Shift+Tab step, Escape or Shift+Tab before the first goes back to the button. Tab past the last
+/// and any other key go back to the bar, which takes the key (false).
+fn media_key(state: &mut State, sym: u32) -> bool {
+    let Some(p) = state.task_preview.shown.as_ref() else {
+        return false;
+    };
+    let player = p.players.first().cloned().flatten();
+    let (Some(focus), Some((bus, np))) = (p.media_focus, player) else {
+        tab_out(state);
+        return false;
+    };
+    match taskpreview::key(&p.layout, 0, sym) {
+        Some(PanelKey::Activate) => {
+            if np.can(focus) {
+                crate::previewmedia::send(state, &bus, focus);
+            }
+            true
+        }
+        Some(PanelKey::Tab { back }) => match taskpreview::media_step(&np, Some(focus), back) {
+            Some(t) => {
+                set_media_focus(state, Some(t));
+                true
+            }
+            None => {
+                tab_out(state);
+                back
+            }
+        },
+        Some(PanelKey::Back) => {
+            tab_out(state);
+            true
+        }
+        _ => {
+            tab_out(state);
+            false
+        }
+    }
 }
 
 fn set_media_focus(state: &mut State, t: Option<Transport>) {
@@ -647,6 +729,7 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
         thumbs,
         hot: None,
         keys: false,
+        media_only: false,
         players,
         ptr: Pointer::new(),
         media_focus: None,
@@ -1461,6 +1544,51 @@ mod tests {
 
     const KEY_TAB: u32 = 15;
     const KEY_SPACE: u32 = 57;
+
+    #[test]
+    fn tab_from_a_one_window_button_steps_through_its_media_buttons_and_on_along_the_bar() {
+        let (mut h, _c, _, i) = group_with_keys(true);
+        h.state.preview_players.players = player(
+            reprisebus::mpris::About {
+                pid: Some(5_000_105),
+                desktop_entry: "test.other".into(),
+                ..Default::default()
+            },
+            "Playing",
+            false,
+        );
+        tap(&mut h, KEY_RIGHT);
+        h.until("the one window's panel", |s| on(s, i + 1));
+        let focus = |h: &crate::harness::Harness| {
+            (h.state.task_preview.shown.as_ref()).and_then(|p| p.media_focus)
+        };
+        let at = |h: &crate::harness::Harness| h.state.bar_shared.keys.map(|k| k.at);
+        tap(&mut h, KEY_TAB);
+        assert_eq!(focus(&h), Some(Transport::PlayPause), "Previous is greyed");
+        assert!(has_keys(&h.state), "the panel draws the focus");
+        tap(&mut h, KEY_SPACE);
+        assert_eq!(sent(&h), [(PLAYER.to_string(), "PlayPause")]);
+        tap(&mut h, KEY_ESC);
+        assert_eq!(focus(&h), None);
+        assert!(on(&h.state, i + 1), "Escape went back to the button");
+        assert_eq!(at(&h), Some(TaskbarHit::Task(i + 1)));
+        tap(&mut h, KEY_TAB);
+        tap(&mut h, KEY_TAB);
+        assert_eq!(focus(&h), Some(Transport::Next));
+        let tree = access(&h.state).expect("the panel's tree");
+        let focused = tree
+            .get(tree.focus())
+            .and_then(|n| n.label().map(str::to_string));
+        assert_eq!(focused.as_deref(), Some("Next"), "a reader follows");
+        tap(&mut h, KEY_TAB);
+        assert_eq!(focus(&h), None);
+        assert_ne!(
+            at(&h),
+            Some(TaskbarHit::Task(i + 1)),
+            "past the last, the bar's focus moves on"
+        );
+        assert_eq!(h.state.focused, None, "no window came up");
+    }
 
     #[test]
     fn tab_takes_the_keyboard_to_the_hot_windows_media_buttons_and_escape_back() {
