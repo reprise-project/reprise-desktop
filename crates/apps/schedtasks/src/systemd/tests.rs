@@ -27,6 +27,8 @@ struct Spec {
     result: &'static str,
     code: i32,
     status: i32,
+    /// The unit's `FragmentPath`; empty for `HOME/<description>`.
+    fragment: String,
 }
 
 fn object(name: &str) -> String {
@@ -99,8 +101,17 @@ impl Manager {
         Ok(path(&name))
     }
 
+    #[zbus(property)]
+    fn unit_path(&self) -> Vec<String> {
+        vec![
+            format!("{HOME}.control"),
+            HOME.into(),
+            "/etc/systemd/user".into(),
+        ]
+    }
+
     fn start_unit(&self, name: String, mode: String) -> fdo::Result<OwnedObjectPath> {
-        if name == "refused.service" {
+        if name == "refused.service" || name.contains("start-refused") {
             return Err(fdo::Error::AccessDenied(
                 "Interactive authentication required.".into(),
             ));
@@ -114,12 +125,20 @@ impl Manager {
         path("job")
     }
 
-    fn enable_unit_files(&self, files: Vec<String>, runtime: bool, force: bool) -> bool {
+    fn enable_unit_files(
+        &self,
+        files: Vec<String>,
+        runtime: bool,
+        force: bool,
+    ) -> fdo::Result<bool> {
+        if files.iter().any(|f| f.contains("enable-refused")) {
+            return Err(fdo::Error::FileNotFound("Unit file does not exist.".into()));
+        }
         self.note(format!(
             "EnableUnitFiles {} {runtime} {force}",
             files.join(",")
         ));
-        true
+        Ok(true)
     }
 
     fn disable_unit_files(
@@ -133,6 +152,10 @@ impl Manager {
 
     fn reload(&self) {
         self.note("Reload".into());
+    }
+
+    fn reset_failed_unit(&self, name: String) {
+        self.note(format!("ResetFailedUnit {name}"));
     }
 }
 
@@ -162,7 +185,10 @@ impl Unit {
     }
     #[zbus(property)]
     fn fragment_path(&self) -> String {
-        format!("{HOME}/{}", self.0.description)
+        match self.0.fragment.as_str() {
+            "" => format!("{HOME}/{}", self.0.description),
+            f => f.into(),
+        }
     }
 }
 
@@ -295,9 +321,18 @@ fn units() -> Vec<(&'static str, Spec)> {
 
 /// A bus with the fake manager on it, a connection to it and the manager's call log.
 async fn manager(bus: &testbus::Bus) -> (Connection, Connection, Calls) {
+    manager_with(bus, Vec::new()).await
+}
+
+/// [`manager`] with `more` units loaded besides [`units`].
+async fn manager_with(
+    bus: &testbus::Bus,
+    more: Vec<(&'static str, Spec)>,
+) -> (Connection, Connection, Calls) {
     let fake = testbus::connect(&bus.1).await;
     let calls = Calls::default();
-    let units = units();
+    let mut units = units();
+    units.extend(more);
     for (name, spec) in &units {
         let at = object(name);
         testbus::serve(&fake, at.as_str(), Unit(spec.clone())).await;
@@ -327,7 +362,8 @@ fn the_timers_read_from_the_manager_loaded_and_unit_files_alike() {
     zbus::block_on(async move {
         let (_fake, conn, _) = manager(&bus).await;
         let now = (1_950_000 * S, 100 * S);
-        let (tasks, paths) = read(&conn, now).await.unwrap();
+        assert_eq!(unit_dir(&conn).await, Some(PathBuf::from(HOME)));
+        let (tasks, paths) = read(&conn, now, None).await.unwrap();
         let names: Vec<&str> = tasks.iter().map(|t| t.timer.as_str()).collect();
         assert_eq!(
             names,
@@ -495,4 +531,167 @@ fn a_read_follows_timers_shown_units_unit_files_and_finished_reloads() {
         !relevant(&signal(PATH, MANAGER, "Reloading", &true), &shown),
         "a reload starting"
     );
+}
+
+fn new_task() -> NewTask {
+    NewTask {
+        name: "Back up".into(),
+        program: "/bin/true".into(),
+        args: Vec::new(),
+        schedule: units::Schedule::Daily { at: (3, 0) },
+    }
+}
+
+#[test]
+fn new_task_writes_reloads_and_enables_its_timer() {
+    let Some(bus) = testbus::bus_with_no_services() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    zbus::block_on(async move {
+        let (_fake, conn, calls) = manager(&bus).await;
+        let taken = ["reprise-task-back-up.timer".to_string()];
+        let timer = create(&conn, Some(&dir), &new_task(), &taken)
+            .await
+            .unwrap();
+        assert_eq!(timer, "reprise-task-back-up-2.timer");
+        assert!(dir.join("reprise-task-back-up-2.service").is_file());
+        assert_eq!(
+            *lock(&calls),
+            [
+                "EnableUnitFiles reprise-task-back-up-2.timer false false",
+                "Reload",
+                "StartUnit reprise-task-back-up-2.timer replace",
+            ]
+        );
+        let none = create(&conn, None, &new_task(), &[]).await;
+        assert_eq!(
+            none.map_err(|e| told(&e)),
+            Err("the user manager lists no folder for your own unit files".into())
+        );
+    });
+}
+
+/// Every name in `dir` and its `timers.target.wants`.
+fn left(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = walk(dir)
+        .chain(walk(&dir.join("timers.target.wants")))
+        .collect();
+    v.sort();
+    v
+}
+
+fn walk(dir: &Path) -> impl Iterator<Item = String> {
+    let read = std::fs::read_dir(dir).into_iter().flatten();
+    read.map(|e| e.unwrap().file_name().into_string().unwrap())
+}
+
+#[test]
+fn a_create_the_manager_refuses_after_writing_leaves_nothing() {
+    let Some(bus) = testbus::bus_with_no_services() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    zbus::block_on(async move {
+        let (_fake, conn, calls) = manager(&bus).await;
+        let task = |name: &str| NewTask {
+            name: name.into(),
+            ..new_task()
+        };
+        let refused = create(&conn, Some(&dir), &task("enable refused"), &[]).await;
+        assert_eq!(
+            refused.map_err(|e| told(&e)),
+            Err("Unit file does not exist.".into())
+        );
+        assert_eq!(left(&dir), Vec::<String>::new());
+        let timer = "reprise-task-start-refused.timer";
+        let wants = dir.join("timers.target.wants");
+        std::fs::create_dir(&wants).unwrap();
+        std::os::unix::fs::symlink(dir.join(timer), wants.join(timer)).unwrap();
+        let refused = create(&conn, Some(&dir), &task("start refused"), &[]).await;
+        assert_eq!(
+            refused.map_err(|e| told(&e)),
+            Err("Interactive authentication required.".into())
+        );
+        assert_eq!(
+            left(&dir),
+            ["timers.target.wants"],
+            "the files and the enable link are gone"
+        );
+        assert_eq!(
+            *lock(&calls),
+            [
+                "DisableUnitFiles reprise-task-enable-refused.timer false",
+                "Reload",
+                &format!("EnableUnitFiles {timer} false false"),
+                "Reload",
+                &format!("DisableUnitFiles {timer} false"),
+                "Reload",
+            ]
+        );
+    });
+}
+
+#[test]
+fn delete_removes_only_a_pair_new_task_wrote() {
+    let Some(bus) = testbus::bus_with_no_services() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let timer = units::write(&dir, &new_task(), &[]).unwrap();
+    assert_eq!(timer, "reprise-task-back-up.timer");
+    let made = Spec {
+        load: "loaded",
+        runs: Some("other.service"),
+        fragment: dir.join(&timer).to_string_lossy().into_owned(),
+        ..Spec::default()
+    };
+    let theirs = dir.join("backup.timer");
+    std::fs::write(&theirs, format!("{}\n", units::MARKER)).unwrap();
+    std::fs::write(dir.join("backup.service"), format!("{}\n", units::MARKER)).unwrap();
+    zbus::block_on(async move {
+        let (_fake, conn, calls) =
+            manager_with(&bus, vec![("reprise-task-back-up.timer", made)]).await;
+        let refused = delete(&conn, Some(&dir), "backup.timer").await;
+        assert_eq!(
+            refused.map_err(|e| told(&e)),
+            Err("Scheduled Tasks did not make this task".into())
+        );
+        assert!(
+            theirs.exists() && lock(&calls).is_empty(),
+            "nothing touched"
+        );
+        let service = timer.replace(".timer", ".service");
+        delete(&conn, Some(&dir), &timer).await.unwrap();
+        assert_eq!(
+            *lock(&calls),
+            [
+                format!("DisableUnitFiles {timer} false"),
+                format!("StopUnit {timer} replace"),
+                format!("StopUnit {service} replace"),
+                "Reload".to_string(),
+                format!("ResetFailedUnit {service}"),
+            ]
+        );
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            ["backup.service", "backup.timer"],
+            "the service named by the unit, not the timer's Unit="
+        );
+        units::write(&dir, &new_task(), &[]).unwrap();
+        std::fs::remove_file(dir.join(&service)).unwrap();
+        delete(&conn, Some(&dir), &timer).await.unwrap();
+        assert!(
+            !dir.join(&timer).exists(),
+            "a half-done Delete is done again"
+        );
+    });
 }

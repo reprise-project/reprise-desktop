@@ -17,6 +17,7 @@ disable = &Disable
 properties = &Properties
 view-output = View &Output
 new-task = &New Task...
+delete = De&lete
 
 ## A task's shortcut menu
 menu-run = &Run Now
@@ -24,6 +25,7 @@ menu-stop = &Stop
 menu-enable = &Enable
 menu-disable = &Disable
 menu-output = View &Output
+menu-delete = De&lete
 menu-properties = &Properties
 
 ## The line over the list
@@ -75,6 +77,8 @@ result-timeout = Timed out
 ## What the service manager refused; $unit is a unit name, $why its message
 refused-run = { $unit } did not start: { $why }
 refused-stop = { $unit } did not stop: { $why }
+refused-create = The task was not made: { $why }
+refused-delete = { $unit } was not deleted: { $why }
 refused-enable = { $unit } was not enabled: { $why }
 refused-disable = { $unit } was not disabled: { $why }
 
@@ -99,3 +103,40 @@ output-none = The journal holds no lines for this task yet.
 output-unread = The journal could not be read: { $why }
 output-refresh = Re&fresh
 output-close = Close
+
+## New Task
+new-title = New Task
+new-name = &Name:
+new-program = &Program:
+new-browse = &Browse...
+new-args = &Arguments:
+new-kind = &Run:
+new-day = &Day:
+new-date = Da&te:
+new-time = T&ime:
+new-setting = Timer:
+new-create = &Create
+new-cancel = Cancel
+kind-daily = Daily
+kind-weekly = Weekly
+kind-monthly = Monthly
+kind-once = Once
+kind-logon = At log on
+new-no-name = Type a name for the task.
+new-no-program = Type the program to run, or Browse for it.
+# $program is what was typed.
+new-no-such-program = Cannot find the program { $program }.
+new-quote = An argument opens a quote it never closes, or ends in \.
+new-control = The name, program and arguments cannot hold control characters.
+new-bad-date = Type the date as 2026-12-31.
+new-past = That time has passed.
+new-logon-now = The task also runs once now, when it is made.
+browse-title = Browse
+browse-open = Open
+browse-all = All Files (*.*)
+
+## Delete; $name is the task's name, $unit its timer
+delete-title = Delete Task
+delete-text = Delete the task { $name }? Its timer and service ({ $unit }) are stopped and their files removed.
+delete-yes = &Delete
+delete-no = Cancel
