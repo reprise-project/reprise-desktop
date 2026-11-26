@@ -500,19 +500,31 @@ mod tests {
     }
 
     /// Spawns `sleep 30` from a private copy named `name` in `dir`, so no other test's child
-    /// runs the same program.
+    /// runs the same program. Returns once the child's `/proc/<pid>/exe` names the copy.
     fn sleep_as(dir: &std::path::Path, name: &str) -> impl Fn() -> std::process::Child + use<> {
         std::fs::create_dir_all(dir).unwrap();
         let exe = dir.join(name);
         std::fs::copy("/bin/sleep", &exe).unwrap();
-        // Another test's fork may still hold the copy's write fd for a moment.
-        move || loop {
-            match std::process::Command::new(&exe).arg("30").spawn() {
-                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
-                    std::thread::sleep(std::time::Duration::from_millis(10))
+        let exe = exe.canonicalize().unwrap();
+        move || {
+            // Another test's fork may still hold the copy's write fd for a moment.
+            let child = loop {
+                match std::process::Command::new(&exe).arg("30").spawn() {
+                    Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    r => break r.unwrap(),
                 }
-                r => break r.unwrap(),
+            };
+            // The kernel wakes a vfork parent before the child's exec swaps in its new mm, so
+            // for a moment `/proc/<pid>/exe` still names this test binary.
+            let link = format!("/proc/{}/exe", child.id());
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while std::fs::read_link(&link).ok().as_ref() != Some(&exe) {
+                assert!(Instant::now() < deadline, "expected {link} to name {exe:?}");
+                std::thread::sleep(Duration::from_millis(1));
             }
+            child
         }
     }
 
