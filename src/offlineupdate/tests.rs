@@ -183,6 +183,18 @@ fn an_attempt_given_up_on_triggers_nothing_or_takes_its_trigger_back() {
         "given up during Trigger"
     );
     assert_eq!(fake.calls(), ["status", "reboot", "down", "cancel"]);
+    let prepared = Some(Status {
+        prepared: true,
+        triggered: false,
+    });
+    let stuck = Fake::with(prepared, Ok(()), Err(Some("no".into())));
+    asked.set(0);
+    let stays = run(&stuck, Updates::Install, &still, false);
+    assert_eq!(
+        stays,
+        (Err(Held::GivenUpStays), false),
+        "a trigger that would not come back is told"
+    );
 }
 
 #[test]

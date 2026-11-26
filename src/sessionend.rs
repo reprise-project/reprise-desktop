@@ -1080,6 +1080,7 @@ fn updating(
         Err(Held::Dismissed) => Some(Failed::Dismissed),
         Err(Held::NotSet(why)) => Some(Failed::Refused(Refused::Failed(not_set(&why)))),
         Err(Held::StillSet) => Some(Failed::Updates(None)),
+        Err(Held::GivenUpStays) => Some(Failed::Refused(Refused::Stays(None))),
         Err(Held::Stays(failed)) => Some(Failed::Refused(Refused::Stays(match failed {
             Failed::Refused(why) => Some(Box::new(why)),
             _ => None,
