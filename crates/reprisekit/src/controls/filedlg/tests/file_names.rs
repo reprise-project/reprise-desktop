@@ -290,3 +290,17 @@ fn the_file_name_field_hides_its_selection_without_the_focus() {
     assert!(lit(&d) > 0, "the selection comes back with the focus");
     assert!(d.filename.all_selected(), "the selection itself is kept");
 }
+
+#[test]
+fn the_pointer_is_an_i_beam_on_file_name_and_the_rename_box_only() {
+    let text = text();
+    let d = multi(DlgMode::Open, false);
+    let lay = d.layout(&text, 11, R, &ControlMetrics::CLASSIC);
+    let f = lay.filename;
+    let on_name = d.hit(&text, 11, R, f.x + 4, f.y + f.height / 2);
+    assert!(matches!(on_name, Some(Hit::FileName)), "{on_name:?}");
+    assert_eq!(d.shape(on_name), Shape::Text);
+    assert_eq!(d.shape(Some(Hit::Rename(0))), Shape::Text);
+    assert_eq!(d.shape(entry_hit(1)), Shape::Default);
+    assert_eq!(d.shape(Some(Hit::Places(0))), Shape::Default);
+}

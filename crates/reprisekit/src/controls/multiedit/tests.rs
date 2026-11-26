@@ -11,6 +11,21 @@ fn k(edit: &mut MultiEdit, key: MultiKey) -> Took {
 }
 
 #[test]
+fn the_pointer_is_an_i_beam_in_the_text_box_and_an_arrow_on_its_edge() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let lay = layout(
+        &text,
+        &Metrics::default(),
+        &e("a"),
+        Rect::new(0, 0, 200, 60),
+        1,
+    );
+    let r = lay.inner;
+    assert_eq!(shape(&lay, r.x, r.y), Shape::Text);
+    assert_eq!(shape(&lay, r.x - 1, r.y), Shape::Default, "the sunken edge");
+}
+
+#[test]
 fn changes_are_counted_and_the_widest_line_follows_them() {
     let text = TextRenderer::load(&FontConfig::default());
     let m = Metrics::default();

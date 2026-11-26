@@ -15,7 +15,7 @@ use crate::controls::treeview::{self, TreeView};
 use crate::controls::updown::{self, UpDown};
 use crate::look::classic_paint;
 use crate::look::{Look, Paint};
-use crate::pointer::{Interaction, WHEEL_ROWS};
+use crate::pointer::{Interaction, Shape, WHEEL_ROWS};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
 use crate::textedit::{EditKey, TextEdit};

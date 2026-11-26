@@ -674,7 +674,8 @@ impl State {
             }
             Hit::Dialog { index, button } => {
                 self.pointer_motion(None, pos, time);
-                self.set_cursor("default");
+                let shape = (self.dialogs.views.get(index)).map(|v| v.dialog.shape(button));
+                self.set_cursor(shape.unwrap_or_default().name());
                 let b = match button {
                     Some(crate::dialog::DialogHit::Button(i)) => Some(i),
                     _ => None,

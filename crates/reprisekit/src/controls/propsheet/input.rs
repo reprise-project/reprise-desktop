@@ -3,6 +3,7 @@ use crate::controls::hosted::Hosted;
 use crate::controls::pagelist::{self, PageList, Pick};
 use crate::controls::scrollview;
 use crate::controls::{searchfield, tabstrip};
+use crate::pointer::Shape;
 use crate::text::TextRenderer;
 use crate::textedit::EditKey;
 
@@ -526,6 +527,21 @@ impl PropSheet {
         }
         self.land(Pick::Link(k));
         Event::Link(k)
+    }
+
+    /// The pointer over `hit`: the page's own ([`form::Form::shape`]), the I-beam on the search
+    /// field and the hand on a live link row.
+    pub fn shape(&self, hit: Option<Hit>) -> Shape {
+        match self.past_popup(hit) {
+            Some(Hit::Control(h)) => self.open().shape(Some(h)),
+            None => self.open().shape(None),
+            Some(Hit::Search(_)) => Shape::Text,
+            Some(Hit::Link(k)) => match &self.nav {
+                Nav::List(list) if list.links.get(k).is_some_and(|l| l.enabled) => Shape::Hand,
+                _ => Shape::Default,
+            },
+            _ => Shape::Default,
+        }
     }
 
     /// The pointer moved to (`x`, `y`) over `hit`: the closed tab under it lights,

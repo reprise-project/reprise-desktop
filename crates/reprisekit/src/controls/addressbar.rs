@@ -9,6 +9,7 @@ use crate::controls::metrics::ControlMetrics;
 use crate::controls::pathcomplete::{self, PathComplete, Scope};
 use crate::look::Paint;
 use crate::look::widgets::toolbar;
+use crate::pointer::Shape;
 use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State};
 use crate::text::{Align, TextRenderer};
@@ -274,6 +275,15 @@ pub enum Hit {
     Completion(usize),
     Go,
     Nothing,
+}
+
+impl Hit {
+    pub fn shape(self, ab: &AddressBar) -> Shape {
+        match self {
+            Hit::Combo(h) => ab.combo.shape(Some(h)),
+            Hit::Completion(_) | Hit::Go | Hit::Nothing => Shape::Default,
+        }
+    }
 }
 
 pub fn hit(ab: &AddressBar, lay: &Layout, x: i32, y: i32) -> Hit {

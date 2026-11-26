@@ -3,7 +3,7 @@ use crate::classic::widgets::{self, BarHit};
 use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::controls::shellview::Field;
 use crate::look::{Paint, classic_paint};
-use crate::pointer::WHEEL_ROWS;
+use crate::pointer::{Shape, WHEEL_ROWS};
 use crate::text::TextRenderer;
 use crate::textedit::EditKey;
 use crate::theme::{ColorScheme, Theme};

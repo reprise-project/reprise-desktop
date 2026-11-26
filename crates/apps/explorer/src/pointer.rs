@@ -20,7 +20,7 @@ use reprisekit::controls::taskpane;
 use reprisekit::controls::toolbar;
 use reprisekit::controls::treeview;
 use reprisekit::look::widgets::item;
-use reprisekit::pointer::{COLUMN_PX, Nav};
+use reprisekit::pointer::{COLUMN_PX, Nav, Shape};
 use reprisekit::raster::Rect;
 
 type BarPart = (Axis, ScrollHit);
@@ -589,15 +589,56 @@ impl Explorer {
     }
 
     fn motion(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
+        let pointer = self.shape_at(x, y, ctx);
         let lit = match self.tab_strip_motion(x, y, ctx) {
-            Ok(reply) => return reply,
+            Ok(reply) => return Reply { pointer, ..reply },
             Err(lit) => lit,
         };
         let reply = self.motion_off_strip(x, y, ctx);
         Reply {
             redraw: reply.redraw || lit,
+            pointer,
             ..reply
         }
+    }
+
+    /// The pointer's shape at (`x`, `y`), from the control under it as `press` finds it; a held
+    /// splitter or column edge keeps its arrow through the drag.
+    fn shape_at(&self, x: i32, y: i32, ctx: &Ctx) -> Shape {
+        if self.dragging || self.resizing.is_some() {
+            return Shape::ColResize;
+        }
+        if self.popup.is_some() || self.bar.open.is_some() || self.drag.is_some() {
+            return Shape::Default;
+        }
+        let px = ctx.theme.fonts.size_px;
+        if crate::window::search_field(self, ctx).is_some_and(|f| searchfield::hit(f, x, y)) {
+            return Shape::Text;
+        }
+        let lay = self.layout(ctx);
+        if let Some(r) = lay.address.filter(|r| r.contains(x, y)) {
+            let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
+            return addressbar::hit(&self.address, &al, x, y).shape(&self.address);
+        }
+        if let Some(bl) = &lay.bar {
+            let hit = explorerbar::hit(bl, x, y);
+            if hit != explorerbar::Hit::Nothing {
+                return hit.shape();
+            }
+        }
+        if !lay.view.contains(x, y) {
+            return Shape::Default;
+        }
+        let sl = self.view_layout(lay.view, ctx);
+        let renaming = self
+            .sv
+            .edit
+            .as_ref()
+            .and_then(|(i, _)| shellview::rename_rect(&self.sv, &sl, *i, &ctx.text, px));
+        if renaming.is_some_and(|r| r.contains(x, y)) {
+            return Shape::Text;
+        }
+        shellview::hit(&self.sv, &sl, x, y).shape()
     }
 
     fn motion_off_strip(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {

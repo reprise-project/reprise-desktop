@@ -468,6 +468,7 @@ impl PointerHandler for Host {
                 self.shape.entered(serial);
             }
             let own = self.slot_of(&event.surface).is_some();
+            self.shape.on_window = own;
             let Some((id, (x, y))) = self
                 .slot_of(&event.surface)
                 .map(|id| (id, local))

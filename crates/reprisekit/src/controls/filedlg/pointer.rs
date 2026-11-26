@@ -11,7 +11,7 @@ use crate::controls::pathcomplete;
 use crate::controls::placesbar;
 use crate::controls::shellview;
 use crate::controls::toolbar;
-use crate::pointer::{Nav, WHEEL_ROWS};
+use crate::pointer::{Nav, Shape, WHEEL_ROWS};
 use crate::raster::Rect;
 use crate::selection::Mods;
 use crate::text::TextRenderer;
@@ -25,6 +25,20 @@ fn combo_click(combo: &mut Combo, h: combo::Hit) {
 }
 
 impl FileDlg {
+    /// The pointer over `hit`: the I-beam on File name and the rename box, and the extra
+    /// controls' own ([`form::Form::shape`]).
+    pub fn shape(&self, hit: Option<Hit>) -> Shape {
+        match hit {
+            _ if self.context.is_some() => Shape::Default,
+            Some(Hit::FileName | Hit::Rename(_)) => Shape::Text,
+            Some(Hit::Extra(h)) => self
+                .extra
+                .as_ref()
+                .map_or(Shape::Default, |(f, _)| f.shape(Some(h))),
+            _ => Shape::Default,
+        }
+    }
+
     pub fn hit(&self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> Option<Hit> {
         let lay_cm = self.drawn.0.get();
         let levels = self.context_levels(text, px, r, lay_cm.text);

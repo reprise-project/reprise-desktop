@@ -5,7 +5,7 @@ use crate::classic::widgets::{
 use crate::controls::scrollbar::{Press, ThumbDrag};
 use crate::look::Paint;
 use crate::look::widgets::{draw_edit_frame, draw_hscrollbar, draw_scroll_corner, draw_scrollbar};
-use crate::pointer::Pointer;
+use crate::pointer::{Pointer, Shape};
 use crate::raster::{Canvas, Rect};
 use crate::text::{CaretBar, TextRenderer};
 use crate::textedit::{
@@ -1241,6 +1241,15 @@ pub fn bar_parts(
                 m.thumb_min,
             ))
         }
+    }
+}
+
+/// The pointer at `(x, y)`: the I-beam over the text box.
+pub fn shape(lay: &Layout, x: i32, y: i32) -> Shape {
+    if lay.inner.contains(x, y) {
+        Shape::Text
+    } else {
+        Shape::Default
     }
 }
 

@@ -26,7 +26,7 @@ use crate::access::{self, Tree};
 use crate::controls::metrics::{BarMetrics, ControlMetrics};
 use crate::look::Paint;
 use crate::look::widgets::explorerbar as look;
-use crate::pointer::Interaction;
+use crate::pointer::{Interaction, Shape};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 
@@ -79,6 +79,15 @@ pub enum Hit {
     Splitter,
     Body,
     Nothing,
+}
+
+impl Hit {
+    pub fn shape(self) -> Shape {
+        match self {
+            Hit::Splitter => Shape::ColResize,
+            Hit::Close | Hit::Body | Hit::Nothing => Shape::Default,
+        }
+    }
 }
 
 /// The bar's pieces inside `r`, which spans the bar *and* its splitter,
@@ -304,6 +313,14 @@ mod tests {
         assert_eq!(hit(&lay, 100, 200), Hit::Body);
         assert_eq!(hit(&lay, 10, 92), Hit::Nothing);
         assert_eq!(hit(&lay, lay.close.x - 1, 92), Hit::Nothing);
+    }
+
+    #[test]
+    fn only_the_splitter_shows_the_sideways_arrow() {
+        assert_eq!(Hit::Splitter.shape(), Shape::ColResize);
+        for h in [Hit::Close, Hit::Body, Hit::Nothing] {
+            assert_eq!(h.shape(), Shape::Default, "{h:?}");
+        }
     }
 
     #[test]

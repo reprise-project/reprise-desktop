@@ -1,6 +1,7 @@
 //! Keys and the pointer in the main window.
 
 use super::*;
+use reprisekit::pointer::Shape;
 
 impl Notepad {
     fn key(&mut self, k: KeyInput, ctx: &Ctx) -> Reply {
@@ -238,9 +239,16 @@ impl Notepad {
                 let el = self.edit_layout(ctx);
                 let over = self.bar_at(&el, x, y, ctx);
                 let lit = (self.view.bars.motion(over) || title) && ctx.styled();
-                match self.drag_motion(x, y, ctx) {
-                    r if lit => Reply { redraw: true, ..r },
-                    r => r,
+                let pointer = match self.dragging {
+                    Some(_) => Shape::Text,
+                    None if self.thumb.holding() => Shape::Default,
+                    None => multiedit::shape(&el, x, y),
+                };
+                let r = self.drag_motion(x, y, ctx);
+                Reply {
+                    redraw: r.redraw || lit,
+                    pointer,
+                    ..r
                 }
             }
             PointerInput::Scroll { rows, .. } => {

@@ -70,6 +70,46 @@ pub fn nav_button(button: u32) -> Option<Nav> {
     }
 }
 
+/// The pointer's picture over a part: a control's hit declares it, a host shows it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Shape {
+    #[default]
+    Default,
+    /// Over a link.
+    Hand,
+    /// Over text the pointer selects.
+    Text,
+    /// Over a divider that moves sideways: a splitter, a column's edge.
+    ColResize,
+    /// Over a divider that moves up and down.
+    RowResize,
+    EResize,
+    SResize,
+    SeResize,
+}
+
+impl Shape {
+    /// The cursor's name in the cursor theme, as cursor-shape-v1 and CSS name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Shape::Default => "default",
+            Shape::Hand => "pointer",
+            Shape::Text => "text",
+            Shape::ColResize => "col-resize",
+            Shape::RowResize => "row-resize",
+            Shape::EResize => "e-resize",
+            Shape::SResize => "s-resize",
+            Shape::SeResize => "se-resize",
+        }
+    }
+
+    /// `self` unless it is the default arrow, else `then`: the first part that asks for a shape
+    /// wins.
+    pub fn or(self, then: Shape) -> Shape {
+        if self == Shape::Default { then } else { self }
+    }
+}
+
 /// What the pointer does to one widget: nothing, rests on it, or holds it down while over it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Interaction {

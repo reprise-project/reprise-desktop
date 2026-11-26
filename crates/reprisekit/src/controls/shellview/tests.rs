@@ -881,6 +881,8 @@ fn details_columns_draw_grown_by_the_text_size() {
             Hit::Divider(0),
             "{pct}%"
         );
+        assert_eq!(Hit::Divider(0).shape(), Shape::ColResize);
+        assert_eq!(Hit::Header(0).shape(), Shape::Default);
     }
     assert_eq!(sv.columns[0].width, 178, "laying out keeps the saved width");
 }

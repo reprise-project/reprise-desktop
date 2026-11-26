@@ -222,6 +222,20 @@ fn reply_merge_keeps_every_token_asked_for() {
     assert_eq!(asks(1).and(Reply::redraw()).handoffs, 1);
 }
 
+#[test]
+fn reply_merge_keeps_the_first_shape_asked_for() {
+    use reprisekit::pointer::Shape;
+    let asks = |pointer| Reply {
+        pointer,
+        ..Default::default()
+    };
+    assert_eq!(
+        asks(Shape::Text).and(asks(Shape::Hand)).pointer,
+        Shape::Text
+    );
+    assert_eq!(Reply::redraw().and(asks(Shape::Hand)).pointer, Shape::Hand);
+}
+
 struct Picker {
     dlg: reprisekit::controls::filedlg::FileDlg,
     host: filedlg::Host,

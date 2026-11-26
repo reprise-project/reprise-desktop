@@ -424,6 +424,11 @@ fn the_divider_wins_either_side_of_a_column_edge() {
     }
     assert_eq!(lv.hit(&lay, edge - DIVIDER_GRAB - 1, 5), Hit::Header(0));
     assert_eq!(lv.hit(&lay, edge + DIVIDER_GRAB + 1, 5), Hit::Header(1));
+    assert_eq!(lv.hit(&lay, edge, 5).shape(), Shape::ColResize);
+    assert_eq!(
+        lv.hit(&lay, edge + DIVIDER_GRAB + 1, 5).shape(),
+        Shape::Default
+    );
 }
 
 #[test]

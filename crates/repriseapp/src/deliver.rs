@@ -72,6 +72,8 @@ impl Host {
 
     /// `ev` to `win` past the modal gate, for an event the host raises itself.
     pub(crate) fn deliver(&mut self, win: WinId, ev: Event) {
+        let motion = matches!(ev, Event::Pointer(crate::PointerInput::Motion { .. }));
+        self.shape.motion_for = motion.then_some(win);
         match self.slots.iter().find(|s| s.id == win) {
             Some(s) => self.ctx.aim(s),
             // A hidden main window still takes events the host has no
@@ -242,6 +244,13 @@ impl Host {
     }
 
     pub(crate) fn apply(&mut self, win: WinId, reply: Reply) {
+        let shape = reply.pointer.or(keys::take_pointer());
+        if self.shape.motion_for.take() == Some(win)
+            && self.shape.on_window
+            && self.pointer_in == Some(win)
+        {
+            self.shape.ask(shape);
+        }
         if reply.redraw
             && let Some(s) = self.slot_mut(win)
         {
