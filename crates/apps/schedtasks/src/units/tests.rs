@@ -234,6 +234,17 @@ fn a_drop_in_folder_takes_its_units_name() {
 }
 
 #[test]
+fn a_dangling_enable_link_takes_its_timers_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let wants = dir.join("timers.target.wants");
+    std::fs::create_dir(&wants).unwrap();
+    let link = wants.join("reprise-task-x.timer");
+    std::os::unix::fs::symlink(dir.join("reprise-task-x.timer"), link).unwrap();
+    assert_eq!(free_stem(dir, "x", &[]), "reprise-task-x-2");
+}
+
+#[test]
 fn remove_takes_the_pair_and_its_enable_link_and_skips_what_is_gone() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
