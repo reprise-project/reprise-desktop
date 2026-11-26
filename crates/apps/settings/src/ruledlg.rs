@@ -1,8 +1,11 @@
 //! The Add Window Rule and Edit Window Rule dialog: which windows the rule matches (a program's app
 //! id, picked from the open windows or typed, and an optional title), then what it sets. A ticked
 //! row sets its key and an unticked one leaves it out; OK greys while the app id is empty. Screen
-//! offers the running outputs, and the rule's own when it is not one of them.
+//! offers each running output by connector and by the monitor on it, and the rule's own when it
+//! is not one of them.
 
+use repriseapp::heads::Head;
+use repriseconf::displays::{Monitor, monitor_ids};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::updown::{self, UpDown};
@@ -10,7 +13,7 @@ use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
 
 use crate::model::DESKTOPS_MAX;
-use crate::rulespage::STATES;
+use crate::rulespage::{STATES, screen};
 use crate::windowrules::Rule;
 
 const W: i32 = 360;
@@ -72,13 +75,38 @@ pub struct RuleDialog {
     was: Rule,
     /// The open windows' app ids, in the combo after [`NO_WINDOW`].
     windows: Vec<String>,
-    /// The Screen combo's rows.
+    /// The Screen combo's rows, as `output` values.
     outputs: Vec<String>,
 }
 
+/// The Screen values for `heads`: each connector, then the monitor id Always Open Here writes for
+/// the monitor on it when that is not the connector. Ids are told apart among the enabled heads,
+/// the ones the compositor lays out.
+pub fn screens(heads: &[Head]) -> Vec<String> {
+    let enabled: Vec<&Head> = heads.iter().filter(|h| h.enabled).collect();
+    let monitors: Vec<Monitor> = (enabled.iter())
+        .map(|h| Monitor {
+            connector: &h.name,
+            make: &h.make,
+            model: &h.model,
+            serial: &h.serial,
+        })
+        .collect();
+    let ids = monitor_ids(&monitors);
+    let mut out = Vec::new();
+    for h in heads {
+        out.push(h.name.clone());
+        let id = (enabled.iter().position(|e| e.name == h.name)).map(|i| &ids[i]);
+        if let Some(id) = id.filter(|id| **id != h.name) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
 impl RuleDialog {
-    /// The dialog over `rule`, or for a new rule when `None`; `outputs` are the running outputs'
-    /// connector names.
+    /// The dialog over `rule`, or for a new rule when `None`; `outputs` are the Screen values
+    /// ([`screens`]).
     pub fn new(rule: Option<&Rule>, mut outputs: Vec<String>) -> RuleDialog {
         let (title, r) = match rule {
             Some(r) => ("Edit Window Rule", r.clone()),
@@ -119,7 +147,8 @@ impl RuleDialog {
         let output = (r.output.as_ref())
             .and_then(|o| outputs.iter().position(|n| n == o))
             .unwrap_or(0);
-        let screens: Vec<&str> = outputs.iter().map(String::as_str).collect();
+        let labels: Vec<String> = outputs.iter().map(|o| screen(o)).collect();
+        let screens: Vec<&str> = labels.iter().map(String::as_str).collect();
         let mut items = vec![
             Item::group(
                 "wr_match",
@@ -481,6 +510,64 @@ mod tests {
                 Some(Control::Check { enabled: false, .. })
             ),
             "no outputs, no Screen"
+        );
+    }
+
+    #[test]
+    fn screen_offers_each_monitor_by_the_id_always_open_here_writes() {
+        use crate::displaypage::test_head;
+        let serial = |name: &str, serial: &str| {
+            let mut h = test_head(name);
+            h.serial = serial.into();
+            h
+        };
+        let mut bare = test_head("eDP-1");
+        (bare.make, bare.model) = (String::new(), String::new());
+        let mut off = serial("HDMI-A-1", "XYZ");
+        off.enabled = false;
+        let heads = [serial("DP-1", "ABC"), bare, off];
+        assert_eq!(
+            screens(&heads),
+            ["DP-1", "Dell Inc.|DELL U2412M|ABC", "eDP-1", "HDMI-A-1"],
+            "a monitor without an EDID and a disabled one are offered by connector only"
+        );
+        let twins = [test_head("DP-1"), test_head("DP-2")];
+        assert_eq!(
+            screens(&twins),
+            [
+                "DP-1",
+                "Dell Inc.|DELL U2412M||DP-1",
+                "DP-2",
+                "Dell Inc.|DELL U2412M||DP-2"
+            ]
+        );
+
+        let mut d = RuleDialog::new(None, screens(&heads));
+        let shown = match d.form.item(OUTPUT_NAME).map(|i| &i.control) {
+            Some(Control::Combo(c)) => c.items.iter().map(|i| i.text.clone()).collect::<Vec<_>>(),
+            _ => panic!("Screen is a combo"),
+        };
+        assert_eq!(
+            shown,
+            ["DP-1", "Dell Inc. DELL U2412M (ABC)", "eDP-1", "HDMI-A-1"]
+        );
+        d.form.set_check(OUTPUT, true);
+        d.form.set_combo(OUTPUT_NAME, 1);
+        type_into(&mut d, APP_ID, "foot");
+        assert_eq!(
+            d.value().output.as_deref(),
+            Some("Dell Inc.|DELL U2412M|ABC")
+        );
+        let menu = Rule {
+            output: Some("Dell Inc.|DELL U2412M|ABC".into()),
+            ..full()
+        };
+        let d = RuleDialog::new(Some(&menu), screens(&heads));
+        assert_eq!(d.form.combo_selected(OUTPUT_NAME), Some(1));
+        assert_eq!(
+            d.value(),
+            menu,
+            "an Always Open Here rule stays on its monitor"
         );
     }
 
