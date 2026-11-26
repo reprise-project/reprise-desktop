@@ -10,8 +10,10 @@
 //! render only); focus and stacking keep the real order. A minimized target is
 //! shown in place for the peek and goes again when it moves or ends. The Alt+Tab
 //! switcher arms a peek with [`arm`] (which checks `[switcher] peek`) and ends
-//! it with [`leave`]. A peek at a window keeps its X11 menus and tooltips
-//! (override-redirect windows of the same client) on screen (`goes_with`).
+//! it with [`leave`]. The `peek-desktop` bind starts a desktop peek at once
+//! ([`key_down`]) that the next key release ends ([`key_up`]). A peek at a
+//! window keeps its X11 menus and tooltips (override-redirect windows of the
+//! same client) on screen (`goes_with`).
 
 use std::time::Duration;
 
@@ -55,6 +57,8 @@ pub struct Peek {
     shown: Option<WindowId>,
     /// The trees `hoist` drew above every window.
     hoisted: Vec<NodeId>,
+    /// The `peek-desktop` bind started the running peek.
+    held: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -103,6 +107,20 @@ impl Peek {
         }
     }
 
+    /// Run a peek at `t` now, with no timer: the undo of whatever ran or
+    /// waited before, or None when `t` already runs.
+    fn started(&mut self, t: PeekTarget) -> Option<Undo> {
+        if self.running == Some(t) {
+            return None;
+        }
+        self.running = Some(t);
+        Some(Undo {
+            disarm: self.pending.take().is_some(),
+            restore: std::mem::take(&mut self.hidden),
+            shown: self.shown.take(),
+        })
+    }
+
     fn fired(&mut self) -> Option<PeekTarget> {
         let t = self.pending.take()?;
         self.running = Some(t);
@@ -125,6 +143,7 @@ impl Peek {
 
     fn left(&mut self) -> Undo {
         self.running = None;
+        self.held = false;
         Undo {
             disarm: self.pending.take().is_some(),
             restore: std::mem::take(&mut self.hidden),
@@ -185,6 +204,26 @@ pub fn arm(state: &mut State, target: PeekTarget) {
             apply(state, undo);
             hide_all(state);
         }
+    }
+}
+
+/// The `peek-desktop` bind went down: peek at the desktop at once while
+/// `[taskbar] peek` is on.
+pub fn key_down(state: &mut State) {
+    if !peek_enabled(&state.config) {
+        return;
+    }
+    if let Some(undo) = state.peek.started(PeekTarget::Desktop) {
+        apply(state, undo);
+        hide_all(state);
+    }
+    state.peek.held = true;
+}
+
+/// A key came up: a peek the bind started ends.
+pub fn key_up(state: &mut State) {
+    if state.peek.held {
+        leave(state);
     }
 }
 
@@ -448,6 +487,34 @@ mod tests {
         ));
         assert!(!on(""), "off under Classic");
         assert!(on("[taskbar]\npeek = true\n"), "turned on under Classic");
+    }
+
+    #[test]
+    fn holding_the_peek_bind_hides_every_window_until_a_key_comes_up() {
+        const SUPER: u32 = 125;
+        const COMMA: u32 = 51;
+        for (text, peeks) in [
+            ("[appearance]\ninterface = \"glass\"\n", true),
+            ("[taskbar]\npeek = true\n", true),
+            ("", false),
+        ] {
+            let mut h = crate::harness::Harness::with_config(Config::parse(text).unwrap());
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let a = h.map_toplevel(&mut c, "a", 300, 200);
+            let content = h.state.win(a.id).expect("the window").content;
+            h.key(SUPER, true);
+            h.key(COMMA, true);
+            assert_eq!(h.state.peek.active(), peeks, "{text:?}: peeks at once");
+            assert_eq!(h.state.scene.enabled(content), !peeks, "{text:?}");
+            h.key(COMMA, false);
+            assert!(!h.state.peek.active(), "{text:?}: the release ends it");
+            assert!(
+                h.state.scene.enabled(content),
+                "{text:?}: the window is back"
+            );
+            h.key(SUPER, false);
+        }
     }
 
     #[test]

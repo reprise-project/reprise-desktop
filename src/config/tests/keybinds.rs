@@ -180,6 +180,7 @@ fn super_digits_d_and_e_are_bound_by_default() {
         "Super+0 stays the magnifier's"
     );
     assert_eq!(on("Super+d"), [Action::ShowDesktop]);
+    assert_eq!(on("Super+comma"), [Action::PeekDesktop]);
     assert_eq!(on("Super+e"), [Action::Explorer]);
     assert_eq!(on("Super+Shift+e"), [Action::Exit]);
 }

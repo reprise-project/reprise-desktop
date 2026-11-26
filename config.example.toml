@@ -164,7 +164,8 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 # small_icons = false        # a 30 px Glass bar with 44 px task buttons
 # show_desktop_button = true # a Show desktop strip at the bar's right end
 # peek = true                # hovering the strip or a window picture shows
-#                            # the desktop or that window alone
+#                            # the desktop or that window alone; so does
+#                            # holding Super+comma (peek-desktop), at once
 # tray_overflow = true       # Passive tray items wait behind an arrow (a ^
 #                            # flyout in Glass); Customize... sets single items apart
 # badges = true              # a program's unread count (LauncherEntry count)
@@ -793,7 +794,8 @@ suspend_after = 0            # run [power] standby
 #
 # Every other action is one of these names:
 #   Windows: close cycle cycle-app flip maximize minimize windowmenu
-#     showdesktop toggleframe alwaysontop mini-view center tab-next tab-prev
+#     showdesktop peek-desktop toggleframe alwaysontop mini-view center
+#     tab-next tab-prev
 #     snap-left snap-right snap-up snap-down snap-layouts overview
 #     move-output-prev move-output-next
 #   Desktops: desktop-prev desktop-next desktop-carry-prev desktop-carry-next
@@ -870,6 +872,10 @@ action = "launcher"
 [[keybinds]]                 # every window down, or back up; the Show Desktop button does the same
 keys = "Super+d"
 action = "showdesktop"
+
+[[keybinds]]                 # held, every window goes see-through as on the Show desktop
+keys = "Super+comma"         # strip; letting go brings them back ([taskbar] peek)
+action = "peek-desktop"
 
 [[keybinds]]                 # an Explorer window on the home folder
 keys = "Super+e"
