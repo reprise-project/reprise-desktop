@@ -1185,6 +1185,70 @@ mod tests {
         assert!(hidden > 100, "{hidden} nodes scrolled out");
     }
 
+    /// The narrow client moves Share to where Cancel was.
+    #[test]
+    fn a_readers_cancel_between_a_resize_and_its_draw_cancels() {
+        use reprisekit::access::{Act, Gesture, Request, Route, accesskit::Role, gesture};
+        use reprisekit::interface::Interface;
+        let mut ctx = crate::dialog::test_ctx(100);
+        let i = Interface::Classic;
+        let full = fitted(&mut ctx, i, CLIENT, Purpose::Share, "", Arc::default());
+        let centre = |id| full.form.rect(id).map(|r| r.x + r.width / 2).unwrap();
+        let dx = centre("cancel") - centre("share");
+        let narrow = (CLIENT.0 - dx, CLIENT.1);
+        let chosen = Arc::new(Mutex::new(None));
+        let mut p = fitted(&mut ctx, i, narrow, Purpose::Share, "", chosen.clone());
+        let (tree, before) = published(&mut p, &ctx);
+        let cancel = tree.find(Role::DefaultButton, "Cancel").unwrap();
+        let click = |published: &reprisekit::access::Published| {
+            let req = Request {
+                node: cancel,
+                act: Act::Click,
+            };
+            match published.route(req) {
+                Route::Act(t) => match gesture(Act::Click, t) {
+                    Some(Gesture::Click((x, y))) => (x as i32, y as i32),
+                    g => panic!("a click on a button clicks, not {g:?}"),
+                },
+                r => panic!("a click on a button acts, not {r:?}"),
+            }
+        };
+
+        ctx.size = CLIENT;
+        repriseapp::App::event(
+            &mut p,
+            repriseapp::MAIN,
+            repriseapp::Event::Resized,
+            &mut ctx,
+        );
+        let px = p.form.units().px(ctx.base_px());
+        let hit =
+            |p: &Prompt, (x, y)| (p.form.hit(x, y, &ctx.text, px)).map(|h| p.form.items[h.item].id);
+        assert_eq!(
+            hit(&p, click(&before)),
+            Some("share"),
+            "the tree from before the resize aims Cancel's click at Share"
+        );
+        let (x, y) = click(&published(&mut p, &ctx).1);
+        assert_eq!(hit(&p, (x, y)), Some("cancel"));
+        let (button, mods) = (repriseapp::BTN_LEFT, repriseapp::Mods::default());
+        let press = repriseapp::PointerInput::Press {
+            x,
+            y,
+            button,
+            time: 1,
+            mods,
+        };
+        let release = repriseapp::PointerInput::Release { x, y, button, mods };
+        let mut event = |input| {
+            let ev = repriseapp::Event::Pointer(input);
+            repriseapp::App::event(&mut p, repriseapp::MAIN, ev, &mut ctx)
+        };
+        event(press);
+        assert!(event(release).quit, "the click closes the dialog");
+        assert!(chosen.lock().unwrap().is_none(), "and shares nothing");
+    }
+
     fn wheel(rows: i32) -> repriseapp::Event {
         repriseapp::Event::Pointer(repriseapp::PointerInput::Scroll { x: 4, y: 4, rows })
     }
