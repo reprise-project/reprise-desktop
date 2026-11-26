@@ -177,3 +177,29 @@ fn extra_rows_pixels() {
         "combo edge 20 px lower"
     );
 }
+
+#[test]
+fn a_blue_extra_check_box_lights_under_the_pointer_and_cools_when_it_leaves() {
+    let mut d = with_extra();
+    let blue = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
+    let p = blue.paint();
+    let big = Rect::new(0, 0, CLIENT.0, CLIENT.1 + EXTRA_H);
+    let t = text();
+    let shot = |d: &FileDlg| {
+        let mut c = Canvas::new(big.width as u32, big.height as u32);
+        d.draw(&mut c, &t, &p, big, 11);
+        c
+    };
+    let cold = shot(&d);
+    let (ox, oy) = d.extra_origin(big);
+    let check = d.extra().unwrap().item("extra-check").unwrap().rect;
+    let (x, y) = (ox + check.x + 6, oy + check.y + check.height / 2);
+    assert!(matches!(d.hit(&t, 11, big, x, y), Some(Hit::Extra(_))));
+    assert!(matches!(d.motion(&t, 11, big, x, y), Event::Redraw));
+    assert!(shot(&d).pixels != cold.pixels, "the check box draws lit");
+    assert!(matches!(d.leave(), Event::Redraw));
+    assert!(
+        shot(&d).pixels == cold.pixels,
+        "cold again once the pointer left"
+    );
+}

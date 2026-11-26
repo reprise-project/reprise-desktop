@@ -613,18 +613,28 @@ impl FileDlg {
     /// The pointer moved to (`x`, `y`) in `r`: the Details column title or the place
     /// under it lights, or the held title follows it. A redraw only when
     /// that changed and the look draws it lit.
-    /// The pointer resting on a cut label of the extra rows times its tip ([`FileDlg::blink`]).
-    /// While a list is open only that list lights, and no label tips.
+    /// The extra rows light their own control under it, and a cut label there times its tip
+    /// ([`FileDlg::blink`]). While a list is open only that list lights, and no label tips.
     pub fn motion(&mut self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> Event {
         if self.marquee.is_some() {
             return self.marquee_motion(r, (x, y));
         }
         let hit = self.hit(text, px, r, x, y);
         let listed = self.lookin.open.is_some() || self.filetype.open.is_some();
-        let at = (!listed).then_some(self.extra_point(r, x, y));
-        let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.rest_pointer(at));
+        let (ex, ey) = self.extra_point(r, x, y);
+        let extra = match hit {
+            Some(Hit::Extra(h)) => Some(h),
+            _ => None,
+        };
+        let lit = self.extra.as_mut().map(|(f, _)| {
+            if listed {
+                f.leave()
+            } else {
+                f.motion(ex, ey, extra)
+            }
+        });
         match self.hover(hit) {
-            Event::None if hid => Event::Redraw,
+            Event::None if lit.is_some_and(|e| e != form::Event::None) => Event::Redraw,
             e => e,
         }
     }
@@ -730,7 +740,7 @@ impl FileDlg {
     }
 
     pub fn leave(&mut self) -> Event {
-        let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.rest_pointer(None));
+        let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.leave() != form::Event::None);
         let changed = self.shell.header.leave() | self.places.hover(None);
         match self.lit(changed) {
             Event::None if hid => Event::Redraw,
