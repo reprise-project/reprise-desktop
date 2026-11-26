@@ -291,10 +291,15 @@ impl Explorer {
         let emptied =
             r.purpose == Purpose::Empty && r.failed.is_none() && !r.progress.meter.cancelled();
         let undo = r.undo.take();
+        let mut restored = Vec::new();
         if let Some(u) = &undo {
             for d in &u.dirs {
                 self.refill_tree_node(&Place::from_path(d), ctx);
             }
+            let steps = &u.undo.steps()[..r.done.min(u.undo.steps().len())];
+            restored = (steps.iter().flat_map(Undoable::restores))
+                .map(PathBuf::from)
+                .collect();
         }
         let (batch, gone, done) = (r.batch, r.gone, r.done);
         self.edit_undos(ctx, move |undos| {
@@ -327,6 +332,9 @@ impl Explorer {
             })
         });
         let mut reply = self.refresh(ctx);
+        if !restored.is_empty() {
+            self.select_once_listed(self.place.clone(), restored, ctx);
+        }
         if let Some((title, text)) = r.failed {
             reply = self.message_box(title, text, ctx);
         }

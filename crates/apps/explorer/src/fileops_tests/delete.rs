@@ -171,6 +171,7 @@ fn delete_trashes_the_selection_and_undo_restores_it() {
         "1"
     );
     assert_eq!(ex.items.len(), 1, "the view re-listed with it back");
+    assert_eq!(ex.sv.selection.set, [0].into(), "a.txt is the selection");
     assert_eq!(ex.undo, None);
 }
 
