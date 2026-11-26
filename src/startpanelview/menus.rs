@@ -19,21 +19,28 @@ use reprisekit::controls::endsession::Goal;
 pub(super) const RECENT_LEAST: i32 = 160;
 
 /// Where a flyout `size` from the panel's row `row` stands, its top at `y`: right of the row
-/// when it fits there, else left of `panel`, else as `place_popup` puts it from the row.
+/// when it fits there, else left of `panel`, else left of the row over the panel's other
+/// column, held in `usable` by `place_popup`.
 fn beside_panel(row: Rect, panel: Rect, y: i32, size: (i32, i32), usable: Rect) -> (i32, i32) {
-    let right = row.right() + size.0 <= usable.right();
-    let left = panel.x - size.0 >= usable.x;
-    let x = match (right, left) {
-        (false, true) => panel.x - size.0,
-        _ => row.right(),
+    let x = if row.right() + size.0 <= usable.right() {
+        row.right()
+    } else if panel.x - size.0 >= usable.x {
+        panel.x - size.0
+    } else {
+        row.x - size.0
     };
     place_popup((x, y), size, usable)
 }
 
-/// The room a flyout from `row` has clear of `panel`: right of the row or left of the panel,
-/// whichever is wider.
-fn room_beside(row: Rect, panel: Rect, usable: Rect) -> i32 {
-    (usable.right() - row.right()).max(panel.x - usable.x)
+/// The room a flyout from `row` has beside it: right of the row or left of `panel`, whichever
+/// is wider, or with less than `least` there, the wider of that and the room left of the row.
+fn room_beside(row: Rect, panel: Rect, usable: Rect, least: i32) -> i32 {
+    let clear = (usable.right() - row.right()).max(panel.x - usable.x);
+    if clear >= least {
+        clear
+    } else {
+        clear.max(row.x - usable.x)
+    }
 }
 
 pub(super) fn shutdown_options_at(
@@ -142,7 +149,8 @@ impl State {
 
     /// Recent Items beside its row, else left of the panel (a panel by the screen's right edge).
     /// Too wide for the wider of those rooms, it narrows to it and cuts long names with an
-    /// ellipsis; a room under [`RECENT_LEAST`] leaves it to `place_popup`.
+    /// ellipsis; with less than [`RECENT_LEAST`] in both it stands left of its row over the
+    /// panel's other column.
     pub(super) fn open_recent_items(&mut self, i: usize) {
         if !self.config.recent_files {
             return;
@@ -165,17 +173,17 @@ impl State {
         self.refresh_recent();
         let (items, mut kind, icons) = self.documents_rows(px, false);
         let skin = self.start_flyout_skin();
-        let room = room_beside(row, panel, self.usable_area(Some(&output)));
         let least = self.config.theme.text.len(RECENT_LEAST);
+        let room = room_beside(row, panel, self.usable_area(Some(&output)), least);
         if let MenuKind::Documents { widest, .. } = &mut kind {
-            *widest = (room >= least).then_some(room);
+            *widest = Some(room);
         }
         let place = |_, size, usable| beside_panel(row, panel, row.y, size, usable);
         self.push_start_popup((row.right(), row.y), items, kind, place, skin);
         if let Some(m) = self.menus.first_mut()
             && let MenuKind::Documents { grows_left, .. } = &mut m.kind
         {
-            *grows_left = m.x + m.layout.width <= panel.x;
+            *grows_left = m.x + m.layout.width <= row.x;
         }
         self.set_row_icons(0, icons);
         self.light_flyout_from_keys(Spot::Place(i));

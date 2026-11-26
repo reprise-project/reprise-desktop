@@ -1461,7 +1461,8 @@ fn the_glass_menu_on_a_short_screen_shows_every_place() {
 
 /// At 200% text on a short screen Recent Items is wider than the room beside its row: it narrows
 /// to that room, cutting a long name, and keeps clear of the panel, also once a longer name is
-/// listed while it is open. With less room than its least width it is left to `place_popup`.
+/// listed while it is open. With less room than its least width there it stands left of its
+/// row over the program list, and keeps that edge when a longer name is listed.
 #[test]
 fn recent_items_narrows_to_the_room_beside_its_row() {
     let dir = crate::harness::scratch().join("recent-items-room");
@@ -1535,11 +1536,14 @@ fn recent_items_narrows_to_the_room_beside_its_row() {
             assert_eq!(r2.x, row.right(), "{at}: still beside its row");
             assert_eq!(r2.width, r.width, "{at}: no wider than the room");
         } else {
-            assert!(r.x < row.right(), "{at}: no room beside, {r:?}");
-            assert!(
-                r.x >= usable.x && r.right() <= usable.right(),
-                "{at}: on screen"
-            );
+            assert_eq!(r.right(), row.x, "{at}: left of its row, {r:?}");
+            assert!(r.x >= usable.x, "{at}: on screen");
+            write(&[&longer, &short, &long]);
+            h.state.refresh_recent();
+            let (r2, labels) = menu(&h);
+            assert_eq!(labels.len(), 3, "{at}: relisted {labels:?}");
+            assert_eq!(r2.right(), row.x, "{at}: still left of its row");
+            assert!(r2.x >= usable.x, "{at}: still on screen");
         }
     }
 }
@@ -1867,7 +1871,7 @@ fn fifteen_recent(name: &str) -> std::path::PathBuf {
 }
 
 /// At 200% text on short screens, scale 1 and 2, Glass's Recent Items with fifteen files stays in
-/// the work area in columns, and the keys cross them.
+/// the work area in columns clear of its row, and the keys cross them.
 #[test]
 fn on_short_screens_glass_recent_items_wraps_into_columns() {
     let xbel = fifteen_recent("recent-items-columns");
@@ -1887,6 +1891,13 @@ fn on_short_screens_glass_recent_items_wraps_into_columns() {
             assert!(
                 menu_in_work_area(&h, 0, &at) > 1,
                 "{at}: fifteen files wrap"
+            );
+            let row = h.state.start_spot_rect(Spot::Place(i)).unwrap();
+            let m = &h.state.menus[0];
+            let r = Rect::new(m.x, m.y, m.layout.width, m.layout.height);
+            assert!(
+                r.right() <= row.x || r.x >= row.right(),
+                "{at}: {r:?} clear of its row {row:?}"
             );
             keys_cross_columns(&mut h, 0, &at);
         }
