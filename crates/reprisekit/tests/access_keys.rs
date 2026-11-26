@@ -1,9 +1,10 @@
 //! No two labels side by side in a form, a menu or a button row share an access key.
 //!
 //! The test reads every prod source in the workspace. A label is a string literal with an `&`
-//! access key, or a `tr!`/`kit_tr!` id, read through its crate's `locale/en.ftl`. Labels side by
-//! side are those in one array or `vec![]`; outside one, those a function adds to one receiver
-//! (`menu.row(..)`, `items.push(..)`) or builds in its own statements. Each `if`/`else` branch
+//! access key, or a `tr!`/`kit_tr!` id, read through its crate's `locale/en.ftl` and through
+//! each shipped `data/locale/<lang>` over it. Labels side by side are those in one array or
+//! `vec![]`; outside one, those a function adds to one receiver (`menu.row(..)`,
+//! `items.push(..)`) or builds in its own statements. Each `if`/`else` branch
 //! is apart, and `match` arms are left out: a branch's label replaces another's. Labels with the
 //! same text are one, and a menu's rows may share a letter with another menu's.
 
@@ -15,20 +16,37 @@ use reprisekit::text::access_key;
 #[test]
 fn no_two_labels_side_by_side_share_an_access_key() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let kit = strings(&root.join("crates/reprisekit/locale/en.ftl"));
     let mut files = Vec::new();
     sources(&root.join("crates"), &mut files);
     sources(&root.join("src"), &mut files);
-    let (mut labels, mut clashes) = (0, Vec::new());
-    for file in &files {
-        let text = std::fs::read_to_string(file).unwrap();
-        let own = strings(&crate_dir(file).join("locale/en.ftl"));
-        let (n, found) = shared_keys(&text, &own, &kit);
-        labels += n;
-        let rel = file.strip_prefix(&root).unwrap_or(file).display();
-        clashes.extend(found.into_iter().map(|c| format!("{rel}: {c}")));
+    let mut langs = vec![None];
+    for entry in std::fs::read_dir(root.join("data/locale"))
+        .unwrap()
+        .flatten()
+    {
+        langs.push(Some(entry.file_name().to_string_lossy().into_owned()));
     }
-    assert!(labels > 1000, "the scan finds the labels: {labels}");
+    let mut clashes = Vec::new();
+    for lang in &langs {
+        let at = |dir: &Path| locale_strings(&root, dir, lang.as_deref());
+        let kit = at(&root.join("crates/reprisekit"));
+        let mut own = BTreeMap::new();
+        let mut labels = 0;
+        for file in &files {
+            let text = std::fs::read_to_string(file).unwrap();
+            let dir = crate_dir(file);
+            let own = own.entry(dir.clone()).or_insert_with(|| at(&dir));
+            let (n, found) = shared_keys(&text, own, &kit);
+            labels += n;
+            let rel = file.strip_prefix(&root).unwrap_or(file).display();
+            let lang = lang.as_deref().unwrap_or("en");
+            clashes.extend(found.into_iter().map(|c| format!("{lang} {rel}: {c}")));
+        }
+        assert!(
+            labels > 1000,
+            "the scan finds the labels in {lang:?}: {labels}"
+        );
+    }
     assert!(
         clashes.is_empty(),
         "labels side by side share an access key:\n{}",
@@ -118,6 +136,30 @@ fn crate_dir(file: &Path) -> PathBuf {
         dir = dir.parent().unwrap();
     }
     dir.to_path_buf()
+}
+
+/// The strings of the crate at `dir` in `lang`: its English `locale/en.ftl` with the shipped
+/// `data/locale/<lang>/<domain>.ftl` over it, as a missing id falls back to English.
+fn locale_strings(root: &Path, dir: &Path, lang: Option<&str>) -> BTreeMap<String, String> {
+    let mut all = strings(&dir.join("locale/en.ftl"));
+    if let Some(lang) = lang
+        && let Some(domain) = domain(dir)
+    {
+        all.extend(strings(
+            &root.join(format!("data/locale/{lang}/{domain}.ftl")),
+        ));
+    }
+    all
+}
+
+/// The domain a crate's `strings!("..")` names; reprisekit's own is `reprisekit`.
+fn domain(dir: &Path) -> Option<String> {
+    if dir.ends_with("reprisekit") {
+        return Some("reprisekit".into());
+    }
+    let lib = std::fs::read_to_string(dir.join("src/lib.rs")).ok()?;
+    let rest = &lib[lib.find("strings!(\"")? + "strings!(\"".len()..];
+    Some(rest[..rest.find('"')?].to_string())
 }
 
 /// The `id = value` lines of a Fluent file.
