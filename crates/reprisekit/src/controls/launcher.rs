@@ -9,7 +9,8 @@
 //! over the settings rows, and each section of found rows the host fills (files by name,
 //! by contents, a program's results) under its own heading the same way, the detail dimmed
 //! after each name.
-//! Arrows step over headings.
+//! Arrows step over headings. A query nothing matches shows the Start menu search's greyed
+//! [`NO_RESULTS`] line, which takes no highlight.
 //! The panel grows with the text size; the bevels and the 32 px icon keep their size, and a row's
 //! 16 px icon grows with the text ([`row_icon_px`]). In a work area narrower than the panel the
 //! field and list narrow to it; in a shorter one the list shows the lines that fit and scrolls
@@ -34,6 +35,7 @@ use crate::controls::scrollbar::{RowBar, RowScroll};
 use crate::look::panel;
 use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text, draw_scrollbar};
 use crate::raster::{Canvas, EdgeStyle, Rect};
+use crate::startpanel::NO_RESULTS;
 use crate::startpanel::layout::{GROUP_GAP, HEADER_H, RESULT_H};
 use crate::startpanel::search;
 use crate::style::{Part, State, Style};
@@ -107,6 +109,8 @@ enum Group {
 enum Line {
     Row(Pick),
     Heading(Group),
+    /// [`NO_RESULTS`], alone under a query nothing matches.
+    NoMatch,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -251,6 +255,9 @@ impl Launcher {
                 v.extend((0..section.rows.len()).map(|i| Line::Row(Pick::Found(s, i))));
             }
         }
+        if v.is_empty() && !self.query().is_empty() {
+            v.push(Line::NoMatch);
+        }
         v
     }
 
@@ -306,7 +313,7 @@ impl Launcher {
         let n = self.list.items.len();
         let before = self.list.selected;
         self.list.step(delta, n);
-        let on_heading = |l: &Self| l.list.selected.is_some_and(|i| l.heading(i).is_some());
+        let on_heading = |l: &Self| l.list.selected.is_some_and(|i| l.pick(i).is_none());
         if on_heading(self) {
             self.list.step(delta, n);
             if on_heading(self) {
@@ -324,6 +331,7 @@ impl Launcher {
         for line in &lines {
             let (name, icon, dim) = match *line {
                 Line::Heading(g) => (self.title(g).to_string(), None, String::new()),
+                Line::NoMatch => (NO_RESULTS.to_string(), None, String::new()),
                 Line::Row(Pick::Calc) => {
                     let r = self.calc.as_ref().expect("a calc line has its row");
                     (r.name.clone(), r.icon.clone(), String::new())
@@ -347,7 +355,7 @@ impl Launcher {
             };
             items.push(name);
             icons.push(icon);
-            greyed.push(matches!(line, Line::Heading(_)));
+            greyed.push(!matches!(line, Line::Row(_)));
             detail.push(dim);
         }
         let first = lines.iter().position(|l| matches!(l, Line::Row(_)));
@@ -981,6 +989,13 @@ fn glass_body(
             search::header(c, style, &face, r, pane, &title, g);
             continue;
         }
+        if l.pick(i).is_none() {
+            let size = g.px(search::TEXT_PX);
+            let x = r.x + (r.width - face.measure(NO_RESULTS, false, size)) / 2;
+            let y = r.y + g.len(search::at::RESULT_BASE);
+            search::line(c, &face, x, y, r, NO_RESULTS, style.pane_inks.greyed, size);
+            continue;
+        }
         let (name, lit) = (&l.list.items[i], l.list.selected == Some(i));
         let icon = l.icons.get(i).and_then(Option::as_ref);
         let detail = l.list.detail.get(i).map_or("", String::as_str);
@@ -1062,9 +1077,9 @@ fn body(
     }
 }
 
-/// The panel's `access` part: field and rows (see `listbox::access_filtered`),
-/// headings greyed; under glass each row takes its own rect. Returns the focused
-/// node: the highlighted row, else the field.
+/// The panel's `access` part: field and rows (see `listbox::access_filtered`), headings and the
+/// no-match line greyed; under glass each row takes its own rect. Returns the focused node: the
+/// highlighted row, else the field.
 pub fn access(
     l: &Launcher,
     text: &TextRenderer,
@@ -1098,7 +1113,7 @@ pub fn access(
         }
     }
     for (i, &id) in rows.iter().enumerate() {
-        if l.heading(i).is_some()
+        if l.pick(i).is_none()
             && let Some(n) = tree.get_mut(id)
         {
             n.set_disabled();
@@ -1534,6 +1549,74 @@ mod tests {
         l.set_rows(rows(&["Notepad", "Notion"]));
         l.key(Key::Down);
         assert_eq!(l.key(Key::Enter), Event::Launch(Pick::App(1)));
+    }
+
+    /// What the host hands back for a query nothing matches.
+    fn nothing_found(l: &mut Launcher) {
+        l.set_calc(None);
+        l.set_windows(Vec::new(), false);
+        l.set_settings(Vec::new());
+        l.set_rows(Vec::new());
+        l.set_found(Vec::new());
+    }
+
+    #[test]
+    fn a_query_with_no_match_shows_a_greyed_line_that_takes_no_highlight() {
+        let mut l = Launcher::new();
+        nothing_found(&mut l);
+        assert!(l.list.items.is_empty(), "an empty field shows no list");
+        typed(&mut l, "zzqx");
+        nothing_found(&mut l);
+        assert_eq!(l.list.items, [NO_RESULTS]);
+        assert_eq!(l.list.greyed, [true]);
+        assert_eq!(l.list.selected, None);
+        l.key(Key::Down);
+        assert_eq!(l.list.selected, None, "the arrows skip it");
+        assert_eq!(l.pick(0), None);
+        assert_eq!(l.key(Key::Menu), Event::None);
+        assert_eq!(l.key(Key::Enter), Event::Close);
+        l.set_found(vec![Section {
+            heading: "Files".into(),
+            rows: vec![FoundRow {
+                name: "zzqx.txt".into(),
+                detail: "~".into(),
+                icon: None,
+            }],
+        }]);
+        assert_eq!(l.list.items, ["Files", "zzqx.txt"], "found rows replace it");
+    }
+
+    #[test]
+    fn the_no_match_line_pins_in_each_interface_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut l = Launcher::new();
+        typed(&mut l, "zzqx");
+        nothing_found(&mut l);
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = Theme {
+                    scale,
+                    ..crate::interfaces::theme_for(i)
+                };
+                assert!(layout(&l, &theme).list.is_some(), "{i:?} shows the list");
+                assert_eq!(hit_rows(&l, &theme), 0, "{i:?}: the line is not a row");
+                let c = draw(&theme, &text, &l, None, false, None);
+                got.push((format!("{i:?} {scale}"), fnv(&c)));
+            }
+        }
+        crate::pins::check("controls/launcher_no_match", &got);
+    }
+
+    /// How many points down the list's middle hit a row.
+    fn hit_rows(l: &Launcher, theme: &Theme) -> usize {
+        let lay = layout(l, theme);
+        let list = lay.list.expect("a list");
+        (list.y..list.bottom())
+            .filter(|&y| matches!(hit(l, list.x + list.width / 2, y, theme), Hit::Row(_)))
+            .count()
     }
 
     #[test]
@@ -2241,7 +2324,7 @@ mod tests {
             "nothing above but the heading"
         );
         set_files(&mut l, Vec::new());
-        assert!(l.list.items.is_empty(), "no files, no heading");
+        assert_eq!(l.list.items, [NO_RESULTS], "no files, no heading");
         assert_eq!(l.key(Key::Enter), Event::Close);
     }
 
