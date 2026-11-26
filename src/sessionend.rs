@@ -1012,13 +1012,14 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
             let still = || ticket.still();
             let go = || updating(&*bus, &made, id, how.updates, interactive, &still, power);
             match aim {
-                Aim::Into(boot) => match zbus::block_on(zbus::Connection::system()) {
-                    Ok(conn) => {
-                        let go = || elsewhere(&*bus, &made, id, how.updates, go);
-                        restart_into(&conn, &boot, interactive, &ticket, go)
-                    }
-                    Err(e) => Some(Failed::Refused(Refused::Failed(e.to_string()))),
-                },
+                Aim::Into(boot) => {
+                    elsewhere(&*bus, &made, id, how.updates, &boot).or_else(
+                        || match zbus::block_on(zbus::Connection::system()) {
+                            Ok(conn) => restart_into(&conn, &boot, interactive, &ticket, go),
+                            Err(e) => Some(Failed::Refused(Refused::Failed(e.to_string()))),
+                        },
+                    )
+                }
                 Aim::Clear => match clear_set(interactive && !how.unattended, how.unattended) {
                     Some(title) => Some(Failed::Aimed(title)),
                     None => go(),
@@ -1038,19 +1039,28 @@ fn attempt(state: &mut State, act: Act, cmd: String, aim: Aim, how: Run) {
     }
 }
 
-/// A Restart Into's `go`, after taking back a trigger an earlier attempt left: an update must not
-/// install into a boot that goes elsewhere, so one that stays holds the restart back.
+/// Before a Restart Into aims at `boot`, take back a trigger an earlier attempt left: an update
+/// must not install into a boot that goes elsewhere, so one that stays holds the restart back. One
+/// kept for a shutdown under way stops the restart, as that shutdown installs it.
 fn elsewhere(
     bus: &dyn crate::offlineupdate::Bus,
     made: &crate::offlineupdate::Made,
     id: u64,
     updates: Updates,
-    go: impl FnOnce() -> Option<Failed>,
+    boot: &BootTarget,
 ) -> Option<Failed> {
-    if updates == Updates::Leave && !made.take_back(bus, Some(id)) {
-        return Some(Failed::Updates(None));
+    use crate::offlineupdate::Left;
+    if updates != Updates::Leave {
+        return None;
     }
-    go()
+    match made.take_back(bus, Some(id)) {
+        Left::Nothing => None,
+        Left::Stays => Some(Failed::Updates(Some(Pick {
+            title: boot.title.clone(),
+            cleared: true,
+        }))),
+        Left::Down => Some(Failed::Down),
+    }
 }
 
 /// [`crate::offlineupdate::around`] attempt `id`'s `power` with the prepared update as `updates`
@@ -1260,6 +1270,11 @@ fn answered(
             hold_back(state, &updates_set(into.as_ref()), again);
         }
         Some(Failed::Refused(why)) => refuse(state, act, &why),
+        // No box over the shutdown, and the session an earlier end saved stays saved.
+        Some(Failed::Down) => {
+            log::info!("session end: {act:?} stops: the computer is going down");
+            back(state);
+        }
     }
 }
 
@@ -1365,6 +1380,8 @@ enum Failed {
     /// An update set to install would not cancel: one the user unticked, or one an earlier attempt
     /// left before a Restart Into. The Restart Into's target, if any.
     Updates(Option<Pick>),
+    /// The computer is going down, and a trigger an earlier attempt left stays for it.
+    Down,
 }
 
 /// A Restart Into's target after its reboot did not happen, and whether it was cleared again.
@@ -2761,19 +2778,63 @@ mod tests {
         }
         let made = crate::offlineupdate::Made::default();
         made.set(Some(1));
-        let failed = elsewhere(&Stuck, &made, 2, Updates::Leave, || panic!("no restart"));
-        assert_eq!(failed, Some(Failed::Updates(None)));
+        let failed = elsewhere(&Stuck, &made, 2, Updates::Leave, &target_b());
         assert_eq!(
-            elsewhere(&Stuck, &made, 2, Updates::Leave, || None),
+            failed,
+            Some(Failed::Updates(Some(pick_b(true)))),
+            "B not set"
+        );
+        assert_eq!(
+            elsewhere(&Stuck, &made, 2, Updates::Leave, &target_b()),
             None,
             "none left"
         );
         made.set(Some(1));
         assert_eq!(
-            elsewhere(&Stuck, &made, 2, Updates::Skip, || None),
+            elsewhere(&Stuck, &made, 2, Updates::Skip, &target_b()),
             None,
             "Skip asks for itself"
         );
+    }
+
+    #[test]
+    fn a_restart_into_while_the_computer_goes_down_with_a_left_trigger_opens_no_box() {
+        struct Down;
+        impl crate::offlineupdate::Bus for Down {
+            fn status(&self) -> Option<reprisebus::offline::Status> {
+                None
+            }
+            fn trigger(
+                &self,
+                _: reprisebus::offline::After,
+                _: bool,
+            ) -> crate::offlineupdate::Answer {
+                panic!("nothing to trigger");
+            }
+            fn cancel(&self, _: bool) -> crate::offlineupdate::Answer {
+                panic!("a trigger kept for the shutdown is not cancelled");
+            }
+            fn shutting_down(&self) -> bool {
+                true
+            }
+        }
+        let made = crate::offlineupdate::Made::default();
+        made.set(Some(1));
+        let failed = elsewhere(&Down, &made, 2, Updates::Leave, &target_b());
+        assert_eq!(failed, Some(Failed::Down), "stopped before B is set");
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let open = dialogs(&h);
+        crate::crash::ending();
+        h.state.session.kept = true;
+        let id = h.state.powering.begin();
+        answered(&mut h.state, id, again(Act::Restart), failed, None);
+        assert_eq!(dialogs(&h), open, "no box over the shutdown");
+        assert!(
+            crate::crash::is_ending() && h.state.session.kept,
+            "the session an earlier end saved stays saved"
+        );
+        crate::crash::not_ending();
     }
 
     fn pick_b(cleared: bool) -> Pick {
