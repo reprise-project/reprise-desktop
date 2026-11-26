@@ -135,13 +135,14 @@ fn arm_fallback(state: &mut State) {
     }
 }
 
-/// Asserts that `a` runs, that a frame now asks the next one on exactly the outputs named `on`,
-/// and that a frame at `end` settles it, leaving nothing to ask on the frame after.
+/// Asserts that `a` runs, that a frame at `from`, a time before its end, asks the next one on
+/// exactly the outputs named `on`, and that a frame at `end` settles it, leaving nothing to ask on
+/// the frame after. `from` is a time the test took, so a slow host cannot step past the end.
 #[cfg(test)]
-pub fn assert_steps_until(state: &mut State, a: Anim, on: &[&str], end: Instant) {
+pub fn assert_steps_until(state: &mut State, a: Anim, on: &[&str], from: Instant, end: Instant) {
     assert!(state.anim_clock.running(a), "{a:?} runs");
     crate::backend::take_asks();
-    step(state, Instant::now());
+    step(state, from);
     assert_eq!(
         crate::backend::take_asked_outputs(),
         on,

@@ -248,9 +248,10 @@ mod tests {
         h.pointer_to(f64::from(x + 200), 768.0 - 15.0);
         h.state.slide_follow(tree, key, 0);
         assert!(h.state.bar(tree).unwrap().task_float.is_some(), "it floats");
+        let from = Instant::now();
         h.state.slide_release(tree);
         let end = Instant::now() + std::time::Duration::from_millis(u64::from(GLIDE_MS));
-        crate::animclock::assert_steps_until(&mut h.state, Anim::TaskSlide, &[&output], end);
+        crate::animclock::assert_steps_until(&mut h.state, Anim::TaskSlide, &[&output], from, end);
         assert!(h.state.bar(tree).unwrap().task_float.is_none(), "it landed");
     }
 }

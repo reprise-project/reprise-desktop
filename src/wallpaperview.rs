@@ -1489,6 +1489,7 @@ mod tests {
             &mut h.state,
             crate::animclock::Anim::Wallpaper,
             &["A-1"],
+            start + DESKTOP_FADE / 2,
             start + DESKTOP_FADE,
         );
         assert_eq!(shown(&h), Some(1.0), "shown whole at its end");

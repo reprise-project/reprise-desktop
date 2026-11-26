@@ -99,13 +99,14 @@ mod tests {
         let mut c = h.connect();
         let t = h.map_toplevel(&mut c, "test.app", 300, 200);
         h.state.win_mut(t.id).unwrap().hot = Some(reprisekit::frame::CaptionButton::Close);
+        let from = std::time::Instant::now();
         h.state.glow_to_hot(t.id);
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
         crate::animclock::assert_steps_until(
             &mut h.state,
             crate::animclock::Anim::Hover,
             &["TEST-1"],
-            end,
+            from,
+            from + std::time::Duration::from_secs(5),
         );
     }
 }

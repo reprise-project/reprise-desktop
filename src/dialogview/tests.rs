@@ -373,6 +373,7 @@ fn a_welcome_panels_still_fades_in_on_its_outputs_frames_over_its_time() {
         &mut h.state,
         crate::animclock::Anim::DialogFade,
         &["TEST-1"],
+        start + super::FADE / 2,
         start + super::FADE,
     );
     assert_eq!(
