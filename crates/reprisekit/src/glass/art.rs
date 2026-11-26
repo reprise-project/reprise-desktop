@@ -49,6 +49,10 @@ pub const SHEEN: [u32; 2] = [
 /// off: active (a pale sky blue), then inactive (a light grey).
 pub const OPAQUE_UNDER: [[u8; 3]; 2] = [[232, 243, 255], [217, 218, 221]];
 
+/// [`OPAQUE_UNDER`] in Dark mode: a dark slate blue, then a near-black grey,
+/// the light ones as Dark Glass turns a light face dark.
+pub const OPAQUE_UNDER_DARK: [[u8; 3]; 2] = [[36, 44, 53], [27, 28, 30]];
+
 #[cfg(test)]
 mod tests {
     use super::*;

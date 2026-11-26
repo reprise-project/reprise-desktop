@@ -10,18 +10,19 @@
 //! 4x7 triangles, near black shading darker down the glyph, 0066CC under
 //! the pointer.
 
-use super::art;
+use super::Mode;
 use super::panel::{self, Fade, LightBox};
 use super::shadow;
+use super::tint::Surface;
 use crate::raster::{Canvas, Insets, Rect};
 use crate::style::{FlyoutLook, Layout, Part, PartImage, State};
 use crate::theme::Color;
 
 pub const SHADOW: Insets = shadow::ACTIVE_DESIGN.margins;
 
-/// The flyout look, the same light or dark: the glass keeps its colour.
-pub fn look() -> FlyoutLook {
-    let [r, g, b] = art::OPAQUE_UNDER[0];
+/// The flyout look in `mode`: its border lies over the active frame's opaque colour where nothing blurs.
+pub fn look(mode: Mode) -> FlyoutLook {
+    let [r, g, b] = Surface::Active.opaque_under(mode);
     FlyoutLook {
         shadow: SHADOW,
         opaque_under: Color::rgb(r, g, b),

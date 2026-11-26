@@ -1409,6 +1409,24 @@ mod tests {
     }
 
     #[test]
+    fn opaque_frames_keep_their_pixels_light_and_dark() {
+        let mut got = Vec::new();
+        for mode in Mode::ALL {
+            let s = Settings {
+                mode,
+                transparency: false,
+                ..Settings::default()
+            };
+            for d in [1, 2] {
+                for (name, img) in parts_at(&s, d) {
+                    got.push((format!("{mode:?} {name} at {d}"), fnv(&img)));
+                }
+            }
+        }
+        crate::pins::check("glass/frame_opaque", &got);
+    }
+
+    #[test]
     fn the_frames_parts_at_scale_2_keep_their_pixels_at_sky() {
         let mut got = Vec::new();
         for frame in [Frame::Rounded, Frame::Square] {

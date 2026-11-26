@@ -62,7 +62,7 @@ use crate::taskbar::{ClockBox, LabelledButton, OrbRise, StartMenuDock, TaskbarSh
 use crate::theme::{CaptionGroup, Color, ColorScheme, GroupPlace, Metrics};
 
 /// `[glass] mode`: the controls, dialogs, menus and text under the glass in their
-/// light or dark faces. The glass itself keeps its colour either way.
+/// light or dark faces. The glass itself keeps its colour either way, but opaque glass lies over a dark colour in Dark.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Mode {
     #[default]
@@ -569,7 +569,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         .with_caption_tabs(caption_tabs(title_ink))
         .with_balloon(balloon::look(s.mode, fields::drop_list(s.mode).shadow))
         .with_notify(notify::look(s.mode))
-        .with_flyout(flyouts::look())
+        .with_flyout(flyouts::look(s.mode))
         .with_painted(Part::DesktopItem, move || items::desktop_part(scale))
 }
 

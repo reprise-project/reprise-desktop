@@ -104,7 +104,8 @@ notification style, blur and the Start button's glow; config.example.toml
 documents each key.
 
 - **Dark mode** turns controls, dialogs, menus and titles dark and tells
-  programs to go dark through the portal. The glass keeps its colour.
+  programs to go dark through the portal. The glass keeps its colour,
+  but with transparency off the opaque frames and taskbar turn dark too.
   Under `night` or `hours` the look and the portal switch at each edge as
   if you had changed `mode` yourself. Picking Light or Dark ends the
   schedule.

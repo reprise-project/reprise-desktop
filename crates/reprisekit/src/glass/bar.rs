@@ -30,6 +30,9 @@ pub const BAR_PLAIN: u32 = glass(Color::rgb(0, 66, 153), 60);
 /// sky white.
 pub const BAR_OPAQUE_UNDER: [u8; 3] = [233, 246, 255];
 
+/// [`BAR_OPAQUE_UNDER`] in Dark mode: a dark slate blue.
+pub const BAR_OPAQUE_UNDER_DARK: [u8; 3] = [36, 46, 53];
+
 /// A layer of grey `ink` (0..255) at `share` (0..1) of full alpha.
 fn ink(share: f64, ink: f64) -> Px {
     let share = share.clamp(0.0, 1.0);
@@ -832,6 +835,27 @@ mod tests {
                     (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
                 })
             })
+    }
+
+    #[test]
+    fn the_opaque_bar_and_strip_keep_their_pixels_light_and_dark() {
+        let mut got = Vec::new();
+        for mode in crate::glass::Mode::ALL {
+            let s = Settings {
+                mode,
+                transparency: false,
+                ..Settings::default()
+            };
+            for d in [1, 2] {
+                for (name, img) in [
+                    ("taskbar", taskbar(&s, 40, d)),
+                    ("strip", show_desktop(&s, 40, d)),
+                ] {
+                    got.push((format!("{mode:?} {name} at {d}"), fnv(&img)));
+                }
+            }
+        }
+        crate::pins::check("glass/bar_opaque", &got);
     }
 
     #[test]
