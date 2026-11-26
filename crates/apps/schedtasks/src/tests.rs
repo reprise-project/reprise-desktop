@@ -334,6 +334,25 @@ fn the_window_opens_wide_enough_for_every_column() {
 }
 
 #[test]
+fn a_kept_size_too_narrow_for_the_columns_opens_at_the_width_that_fits_them() {
+    for pct in [100, 200] {
+        let theme = reprisekit::theme::Theme::default().with_text_size(pct);
+        let mut ctx = test_ctx(theme, (600, 300));
+        ctx.text_size = pct;
+        let fit = ctx.forms().text.size(CLIENT).0;
+        let mut w = window();
+        let first = w.app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(first.size, Some((fit, 300)), "at {pct}%");
+        ctx.size = (500, 300);
+        let later = w.app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(later.size, None, "a later resize is the user's");
+    }
+    let mut ctx = test_ctx(reprisekit::theme::Theme::default(), (1200, 700));
+    let wide = window().app.event(MAIN, Event::Resized, &mut ctx);
+    assert_eq!(wide.size, None, "a wider kept size stays");
+}
+
+#[test]
 fn stop_stops_a_running_task() {
     let mut w = window();
     let running = Task {

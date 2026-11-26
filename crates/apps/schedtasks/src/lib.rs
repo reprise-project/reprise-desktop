@@ -136,6 +136,8 @@ struct SchedTasks {
     want_pick: Option<String>,
     big_icon: Option<Canvas>,
     is_12h: bool,
+    /// The main window had its first configure ([`SchedTasks::widened`]).
+    configured: bool,
 }
 
 fn buttons() -> Vec<Item> {
@@ -194,6 +196,7 @@ impl SchedTasks {
             want_pick: None,
             big_icon: None,
             is_12h: reprisefs::locale::is_12h(),
+            configured: false,
         }
     }
 
@@ -263,6 +266,16 @@ impl SchedTasks {
         {
             *l = label;
         }
+    }
+
+    /// At the first configure, a size kept from an earlier session that is too narrow for every
+    /// column at this text size grows to the width that fits them; a wider one stays.
+    fn widened(&mut self, ctx: &Ctx) -> Option<(i32, i32)> {
+        if std::mem::replace(&mut self.configured, true) || ctx.maximized {
+            return None;
+        }
+        let fit = ctx.forms().text.size(CLIENT).0;
+        (ctx.size.0 < fit).then_some((fit, ctx.size.1))
     }
 
     fn list_rect(&self, ctx: &Ctx) -> Rect {
@@ -491,7 +504,10 @@ impl SchedTasks {
             Event::Resized => {
                 let r = self.list_rect(ctx);
                 self.list.follow(r, ctx);
-                return Reply::redraw();
+                return Reply {
+                    size: self.widened(ctx),
+                    ..Reply::redraw()
+                };
             }
             Event::Key(k) => {
                 if let Some(reply) = self.key(k, ctx) {
