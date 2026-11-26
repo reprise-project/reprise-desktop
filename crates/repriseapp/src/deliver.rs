@@ -414,8 +414,14 @@ impl Host {
             && let Some(s) = self.slots.iter_mut().find(|s| s.id == id)
         {
             s.dirty |= s.cues.reopen(handoff.by_key);
-            if let (Some(token), Some(activation)) = (handoff.token, &self.activation) {
-                activation.activate::<Host>(s.window.wl_surface(), token);
+            match (handoff.token, &self.activation) {
+                (Some(token), Some(activation)) => {
+                    activation.activate::<Host>(s.window.wl_surface(), token);
+                }
+                // A token of our own, minted while another client holds the keyboard, only
+                // flags the window's task button.
+                (None, Some(_)) => self.raise(id),
+                (_, None) => {}
             }
         }
         if let Some(id) = reply.raise {

@@ -114,8 +114,8 @@ pub struct Reply {
     pub paste_image: bool,
     /// What another process handed over with a request to show a window, and
     /// that window: its token is presented for it, so the compositor focuses
-    /// it, and a start by key brings out its cues. Dropped while that window
-    /// is not shown.
+    /// it (without one, the compositor flags its task button), and a start by
+    /// key brings out its cues. Dropped while that window is not shown.
     pub activate: Option<(WinId, Handoff)>,
     /// Start a drag of files from the window this reply is for. It must
     /// answer a pointer press still held (the host uses that press's
