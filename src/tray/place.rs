@@ -3,7 +3,50 @@
 use super::{Remembered, TrayItem};
 use crate::compositor::State;
 use reprisekit::controls::traycustomize::Behaviour;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+
+/// How many keys [`Order`] keeps; past it the oldest key no registered item has goes.
+const ORDER_KEYS: usize = 64;
+
+/// The tray's item order across sessions: item keys in the order the tray first saw them, kept as
+/// `tray_order` in the state file. Both lists sort by it, so an item's cell does not depend on
+/// which program registered first at login.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Order(Vec<String>);
+
+impl Order {
+    pub fn new(keys: Vec<String>) -> Self {
+        Order(keys)
+    }
+
+    pub fn keys(&self) -> &[String] {
+        &self.0
+    }
+
+    /// Where `key` sorts; an unknown key sorts last.
+    pub fn rank(&self, key: &str) -> usize {
+        self.0.iter().position(|k| k == key).unwrap_or(self.0.len())
+    }
+
+    /// Adds `key` at the end if new, dropping the oldest key `registered` says no item has once
+    /// over [`ORDER_KEYS`]. True if the order changed.
+    pub fn note(&mut self, key: &str, registered: impl Fn(&str) -> bool) -> bool {
+        if self.0.iter().any(|k| k == key) {
+            return false;
+        }
+        self.0.push(key.to_string());
+        if self.0.len() > ORDER_KEYS
+            && let Some(at) = self.0.iter().position(|k| k != key && !registered(k))
+        {
+            self.0.remove(at);
+        }
+        true
+    }
+
+    fn sort(&self, list: &mut [TrayItem]) {
+        list.sort_by_cached_key(|i| self.rank(&i.key));
+    }
+}
 
 /// Tray overflow is on: `[taskbar] tray_overflow`, on by default under
 /// Glass. Off, every item sits on the bar.
@@ -75,12 +118,12 @@ fn change(old: &TrayItem, new: &TrayItem) -> Change {
 }
 
 /// Put a fresh copy of an item at `place`, taking it out of the other list when it moved. A
-/// known item keeps its place in its list; one back in the hidden list goes where it left it
-/// (`left`, by item id); a new one goes last.
+/// known item keeps its cell; one entering a list goes after every item `order` ranks with or
+/// before it.
 pub(super) fn merge_item(
     items: &mut Vec<TrayItem>,
     hidden: &mut Vec<TrayItem>,
-    left: &mut HashMap<String, usize>,
+    order: &Order,
     item: TrayItem,
     place: Place,
 ) -> Change {
@@ -91,31 +134,33 @@ pub(super) fn merge_item(
         Place::Bar => (items, hidden),
         Place::Hidden => (hidden, items),
     };
-    if let Some(at) = from.iter().position(|i| i.id == item.id) {
-        from.remove(at);
-        if place == Place::Bar {
-            left.insert(item.id.clone(), at);
-        }
-    }
+    from.retain(|i| i.id != item.id);
     match to.iter().position(|i| i.id == item.id) {
         Some(i) => to[i] = item,
         None => {
-            let at = (place == Place::Hidden).then(|| left.remove(&item.id));
-            to.insert(at.flatten().map_or(to.len(), |at| at.min(to.len())), item);
+            let rank = order.rank(&item.key);
+            let at = to.partition_point(|i| order.rank(&i.key) <= rank);
+            to.insert(at, item);
         }
     }
     changed
 }
 
 /// Put every item back where its behaviour and tray overflow put it,
-/// after the choices or `[taskbar] tray_overflow` changed. Items keep
-/// their order within a list; one that moves goes last in the other.
+/// after the choices or `[taskbar] tray_overflow` changed, each list in
+/// the tray's [`Order`].
 pub fn replace_all(state: &mut State) {
     let overflow = overflow_enabled(&state.config);
     let Some(tray) = state.tray.as_mut() else {
         return;
     };
-    arrange(&mut tray.items, &mut tray.hidden, &tray.choices, overflow);
+    arrange(
+        &mut tray.items,
+        &mut tray.hidden,
+        &tray.choices,
+        &tray.order,
+        overflow,
+    );
     state.redraw_taskbars();
 }
 
@@ -123,6 +168,7 @@ pub(super) fn arrange(
     items: &mut Vec<TrayItem>,
     hidden: &mut Vec<TrayItem>,
     choices: &BTreeMap<String, Remembered>,
+    order: &Order,
     overflow: bool,
 ) {
     let at = |i: &TrayItem| placement(i, behaviour_of(choices, i), overflow);
@@ -130,6 +176,8 @@ pub(super) fn arrange(
     let (to_bar, keep): (Vec<_>, Vec<_>) = hidden.drain(..).partition(|i| at(i) == Place::Bar);
     items.extend(stay.into_iter().chain(to_bar));
     hidden.extend(keep.into_iter().chain(to_hide));
+    order.sort(items);
+    order.sort(hidden);
 }
 
 /// Whether a balloon from process `pid` is held back: tray overflow is on

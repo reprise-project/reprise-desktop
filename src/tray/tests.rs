@@ -2,7 +2,7 @@ use super::customize::{past_icon, refill_past, remember};
 use super::icons::icon_sizes;
 use super::icons::pixmap_to_source;
 use super::menu::{SubmenuRequest, menu_items, strip_mnemonic};
-use super::place::{Change, Place, arrange, merge_item, shows_chevron};
+use super::place::{Change, Order, Place, arrange, merge_item, shows_chevron};
 use super::pointer::click_command;
 use crate::icontheme::IconCache;
 use crate::input::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
@@ -10,7 +10,6 @@ use crate::raster::Canvas;
 use reprisekit::controls::shellview;
 use reprisekit::controls::traycustomize::{self, Behaviour, Entry, TrayCustomize};
 use reprisekit::icon::IconSource;
-use std::collections::HashMap;
 
 #[test]
 fn a_remembered_icon_file_is_never_read_on_the_loop() {
@@ -337,17 +336,23 @@ fn strip_mnemonic_drops_single_underscores_and_keeps_doubles() {
 }
 
 fn merge(bar: &mut Vec<TrayItem>, hidden: &mut Vec<TrayItem>, it: TrayItem) -> bool {
-    merge_left(bar, hidden, &mut HashMap::new(), it) != Change::None
+    merge_in(bar, hidden, &mut Order::default(), it) != Change::None
 }
 
-fn merge_left(
+/// What the tray does with a registration: note the key in `order`, then place the item.
+fn merge_in(
     bar: &mut Vec<TrayItem>,
     hidden: &mut Vec<TrayItem>,
-    left: &mut HashMap<String, usize>,
+    order: &mut Order,
     it: TrayItem,
 ) -> Change {
+    order.note(&it.key, |_| true);
     let place = placement(&it, Behaviour::Auto, true);
-    merge_item(bar, hidden, left, it, place)
+    merge_item(bar, hidden, order, it, place)
+}
+
+fn ids(l: &[TrayItem]) -> Vec<&str> {
+    l.iter().map(|i| i.id.as_str()).collect()
 }
 
 fn item(id: &str, passive: bool) -> TrayItem {
@@ -472,9 +477,7 @@ fn an_item_needing_attention_leaves_the_overflow_unless_muted() {
 
 #[test]
 fn new_choices_move_items_and_keep_the_order_in_each_list() {
-    fn ids(l: &[TrayItem]) -> Vec<&str> {
-        l.iter().map(|i| i.id.as_str()).collect()
-    }
+    let order = Order::new(["a", "b", "c", "p"].map(String::from).to_vec());
     let mut bar = vec![item("a", false), item("b", false), item("c", false)];
     let mut hidden = vec![item("p", true)];
     let mut choices = BTreeMap::new();
@@ -486,12 +489,12 @@ fn new_choices_move_items_and_keep_the_order_in_each_list() {
     };
     choices.insert("b".to_string(), keep(Behaviour::Hide));
     choices.insert("p".to_string(), keep(Behaviour::Show));
-    arrange(&mut bar, &mut hidden, &choices, true);
+    arrange(&mut bar, &mut hidden, &choices, &order, true);
     assert_eq!((ids(&bar), ids(&hidden)), (vec!["a", "c", "p"], vec!["b"]));
-    arrange(&mut bar, &mut hidden, &choices, false);
+    arrange(&mut bar, &mut hidden, &choices, &order, false);
     assert_eq!(
         (ids(&bar), ids(&hidden)),
-        (vec!["a", "c", "p", "b"], vec![])
+        (vec!["a", "b", "c", "p"], vec![])
     );
 }
 
@@ -661,44 +664,73 @@ fn tray_overflow_follows_its_taskbar_key_in_every_look() {
 
 #[test]
 fn an_item_changing_status_moves_between_the_bar_and_the_hidden_list() {
-    let ids = |l: &[TrayItem]| l.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
-    let (mut bar, mut hidden) = (Vec::new(), Vec::new());
-    merge(&mut bar, &mut hidden, item("a", true));
-    merge(&mut bar, &mut hidden, item("b", false));
-    merge(&mut bar, &mut hidden, item("c", false));
+    let (mut bar, mut hidden, mut order) = (Vec::new(), Vec::new(), Order::default());
+    merge_in(&mut bar, &mut hidden, &mut order, item("a", true));
+    merge_in(&mut bar, &mut hidden, &mut order, item("b", false));
+    merge_in(&mut bar, &mut hidden, &mut order, item("c", false));
+    assert_eq!((ids(&bar), ids(&hidden)), (vec!["b", "c"], vec!["a"]));
+    merge_in(&mut bar, &mut hidden, &mut order, item("b", true));
+    assert_eq!((ids(&bar), ids(&hidden)), (vec!["c"], vec!["a", "b"]));
+    merge_in(&mut bar, &mut hidden, &mut order, item("a", false));
     assert_eq!(
         (ids(&bar), ids(&hidden)),
-        (vec!["b".into(), "c".into()], vec!["a".into()])
-    );
-    merge(&mut bar, &mut hidden, item("b", true));
-    assert_eq!(
-        (ids(&bar), ids(&hidden)),
-        (vec!["c".into()], vec!["a".into(), "b".into()])
-    );
-    merge(&mut bar, &mut hidden, item("a", false));
-    assert_eq!(
-        (ids(&bar), ids(&hidden)),
-        (vec!["c".into(), "a".into()], vec!["b".into()])
+        (vec!["a", "c"], vec!["b"]),
+        "a takes its own cell, first"
     );
     let mut c = item("c", false);
     c.title = "new".into();
-    merge(&mut bar, &mut hidden, c);
-    assert_eq!(ids(&bar), vec!["c".to_string(), "a".into()]);
-    assert_eq!(bar[0].title, "new");
+    merge_in(&mut bar, &mut hidden, &mut order, c);
+    assert_eq!(ids(&bar), vec!["a", "c"]);
+    assert_eq!(bar[1].title, "new");
+}
+
+#[test]
+fn items_registering_in_another_order_take_the_cells_of_the_last_session() {
+    let mut order = Order::default();
+    let (mut bar, mut hidden) = (Vec::new(), Vec::new());
+    for key in ["network", "sound", "mail"] {
+        merge_in(&mut bar, &mut hidden, &mut order, item(key, false));
+    }
+    assert_eq!(ids(&bar), ["network", "sound", "mail"]);
+    let mut next = Order::new(order.keys().to_vec());
+    let (mut bar, mut hidden) = (Vec::new(), Vec::new());
+    for key in ["mail", "sound", "network"] {
+        merge_in(&mut bar, &mut hidden, &mut next, item(key, false));
+    }
+    assert_eq!(ids(&bar), ["network", "sound", "mail"]);
+    assert_eq!(next, order, "no key is added twice");
+    merge_in(&mut bar, &mut hidden, &mut next, item("chat", false));
+    assert_eq!(
+        ids(&bar),
+        ["network", "sound", "mail", "chat"],
+        "a new key goes last"
+    );
+}
+
+#[test]
+fn a_full_order_drops_its_oldest_unregistered_key() {
+    let keys: Vec<String> = (0..64).map(|i| format!("k{i}")).collect();
+    let mut order = Order::new(keys);
+    assert!(order.note("new", |k| k == "k0"));
+    assert_eq!(order.keys().len(), 64);
+    assert_eq!(order.keys()[0], "k0", "k0 is registered: it stays");
+    assert_eq!(order.keys()[1], "k2", "k1 went");
+    assert_eq!(order.keys().last().map(String::as_str), Some("new"));
+    assert!(!order.note("new", |_| false), "a known key changes nothing");
 }
 
 #[test]
 fn a_status_flip_keeps_the_hidden_order_and_the_icons() {
-    let ids = |l: &[TrayItem]| l.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
-    let (mut bar, mut left) = (Vec::new(), HashMap::new());
+    let mut bar = Vec::new();
+    let mut order = Order::new(["a", "b", "c"].map(String::from).to_vec());
     let mut hidden = vec![item("a", true), item("b", true), item("c", true)];
     for _ in 0..2 {
         let mut calling = item("a", true);
         calling.needs_attention = true;
-        let flip = merge_left(&mut bar, &mut hidden, &mut left, calling);
+        let flip = merge_in(&mut bar, &mut hidden, &mut order, calling);
         assert_eq!(flip, Change::Status, "the icons drawn stay cached");
         assert_eq!(ids(&bar), ["a"]);
-        let back = merge_left(&mut bar, &mut hidden, &mut left, item("a", true));
+        let back = merge_in(&mut bar, &mut hidden, &mut order, item("a", true));
         assert_eq!(back, Change::Status);
         assert_eq!(ids(&hidden), ["a", "b", "c"], "a goes back first");
     }

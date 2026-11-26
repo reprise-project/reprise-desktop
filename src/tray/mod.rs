@@ -29,7 +29,7 @@ pub use pointer::{bell_cell, click, click_item, is_displays_cell, scroll_item};
 
 use icons::drawn_sizes;
 use menu::{menu_open_for, open_layout};
-use place::{Change, merge_item};
+use place::{Change, Order, merge_item};
 
 use crate::compositor::State;
 use crate::raster::{Canvas, Rect};
@@ -405,11 +405,12 @@ impl Orientation {
 
 pub struct Tray {
     pub items: Vec<TrayItem>,
-    /// The items behind the ^ cell, in the order they went there: Passive
-    /// ones left to their status, and those set to hide. Empty while
-    /// overflow is off.
+    /// The items behind the ^ cell: Passive ones left to their status, and
+    /// those set to hide. Empty while overflow is off.
     pub hidden: Vec<TrayItem>,
     pub choices: BTreeMap<String, Remembered>,
+    /// What `items` and `hidden` are sorted by.
+    order: Order,
     pub flyout: Option<crate::trayflyout::FlyoutView>,
     pub events: Receiver<TrayEvent>,
     pub commands: async_channel::Sender<TrayCommand>,
@@ -429,8 +430,6 @@ pub struct Tray {
     /// `item_icon`'s answers by (item id, px, needs attention), dropped when an item's icons
     /// change: a redraw must not rescale every pixmap.
     icon_cache: HashMap<(String, i32, bool), Option<Arc<Canvas>>>,
-    /// Where in `hidden` each item that went to the bar left it, by id.
-    left_hidden: HashMap<String, usize>,
     /// The [`icons::icon_sizes`] the D-Bus thread decodes item icons at.
     icon_sizes: Vec<i32>,
     /// The desktop's lock as last sent, `None` before the first.
@@ -655,10 +654,12 @@ fn install(
             return;
         }
     };
+    let saved = crate::state::load();
     state.tray = Some(Tray {
         items: Vec::new(),
         hidden: Vec::new(),
-        choices: customize::trusted_icons(crate::state::load().tray_icons),
+        choices: customize::trusted_icons(saved.tray_icons),
+        order: Order::new(saved.tray_order),
         flyout: None,
         events,
         commands,
@@ -669,7 +670,6 @@ fn install(
         gone: false,
         wheel: None,
         icon_cache: HashMap::new(),
-        left_hidden: HashMap::new(),
         icon_sizes: drawn_sizes(state),
         locked: None,
     });
@@ -725,14 +725,13 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
                 return false;
             };
             let id = item.id.clone();
+            let items = (tray.items.iter()).chain(&tray.hidden);
+            let registered = |k: &str| items.clone().any(|i| i.key == k);
+            if tray.order.note(&item.key, registered) {
+                crate::state::save_tray_order(tray.order.keys());
+            }
             let place = placement(&item, behaviour_of(&tray.choices, &item), overflow);
-            let change = merge_item(
-                &mut tray.items,
-                &mut tray.hidden,
-                &mut tray.left_hidden,
-                item,
-                place,
-            );
+            let change = merge_item(&mut tray.items, &mut tray.hidden, &tray.order, item, place);
             match change {
                 Change::Icon => tray.icon_cache.retain(|(cached, ..), _| *cached != id),
                 Change::Status => {}
@@ -745,7 +744,6 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
                 return false;
             };
             tray.icon_cache.retain(|(cached, ..), _| *cached != id);
-            tray.left_hidden.remove(&id);
             tray.items.retain(|i| i.id != id);
             tray.hidden.retain(|i| i.id != id);
             // Also each item's end when the bus connection drops, which takes its menu request.
