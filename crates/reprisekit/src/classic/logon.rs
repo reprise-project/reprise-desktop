@@ -1,11 +1,12 @@
 //! Classic's login screen: the "Log On to Reprise" dialog centred on the desktop colour. The lock
-//! fixes the name and puts Switch User at the start of the button row.
+//! fixes the name and puts Switch User at the start of the button row; its now-playing strip sits
+//! in a raised panel the dialog's width under it.
 
 use crate::art::logo;
 use crate::classic::indicator;
 use crate::classic::widgets::{self, BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use crate::icon::ICON_SIZE;
-use crate::logon::{Logon, LogonLayout, Notes, Part, message_lines, text as strings};
+use crate::logon::{Logon, LogonLayout, Notes, Part, media, message_lines, text as strings};
 use crate::paint::Paint;
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -32,6 +33,9 @@ const MESSAGE_MAX: usize = 5;
 const BADGE_GAP: i32 = 6;
 /// The band's wordmark: the product's name, never translated.
 const MARK: &str = "Reprise";
+/// The now-playing panel: its gap under the dialog and its padding round the strip.
+const MEDIA_GAP: i32 = 8;
+const MEDIA_PAD: i32 = 6;
 
 /// Every rect of the dialog, design px in the output's space.
 struct Geometry {
@@ -151,10 +155,20 @@ fn laid_out(m: &Logon, theme: &Theme, output: Rect, rows: usize) -> LogonLayout 
     if m.layout.is_some() {
         parts.push((Part::Layout, g.badge));
     }
+    let u = theme.text;
+    let media = m.media.as_ref().map(|_| {
+        let (_, h) = media::size(u);
+        let d = g.dialog;
+        let pad = u.len(MEDIA_PAD);
+        let panel = Rect::new(d.x, d.bottom() + u.len(MEDIA_GAP), d.width, h + 2 * pad);
+        parts.extend(media::buttons(u, panel.inset(pad)));
+        panel
+    });
     LogonLayout {
         output,
         parts,
         dialog: Some(g.dialog),
+        media,
     }
 }
 
@@ -177,6 +191,7 @@ pub fn live(theme: &Theme, l: &LogonLayout) -> Vec<Rect> {
     [g.caption, row(g.name), row(g.password), g.message]
         .into_iter()
         .chain(parts)
+        .chain(l.media)
         .collect()
 }
 
@@ -324,6 +339,17 @@ pub fn draw(
             m.focus == part,
             px,
         );
+    }
+    if let (Some(np), Some(panel)) = (&m.media, l.media) {
+        let r = at(panel);
+        c.fill_rect(r, cs.button_face);
+        c.edge_t(r, EdgeStyle::WindowRaised, cs, s);
+        let strip = panel.inset(theme.text.len(MEDIA_PAD));
+        for (line, words) in media::lines(np, theme.text, strip) {
+            let r = text.line_box(at(line), false, px);
+            let words = text.ellipsize(words, r.width, false, px);
+            text.draw(c, r, &words, false, cs.button_text, Align::Left, px);
+        }
     }
 }
 

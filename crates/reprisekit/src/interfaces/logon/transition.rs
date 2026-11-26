@@ -75,6 +75,9 @@ impl Drawn<'_> {
             Interface::Blue => crate::blue::logon::draw_shown(c, m, l, theme, text, s, show),
             Interface::Glass => glass::draw_shown(c, m, l, theme, text, s, show),
         }
+        if show != Show::Chrome {
+            super::draw_media(c, m, l, theme, text, s);
+        }
     }
 
     fn canvas(&self, m: &Logon, l: &LogonLayout, show: Show) -> Canvas {

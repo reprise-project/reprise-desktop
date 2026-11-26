@@ -9,6 +9,7 @@ use crate::classic::widgets::{Arrow, CheckState, ScrollHit};
 pub use crate::flyout::draw_link;
 use crate::look::Paint;
 use crate::look::styled;
+pub use crate::media::MediaGlyph;
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::shape;
 use crate::style::{Part, State};
@@ -1053,14 +1054,6 @@ pub fn draw_spin_buttons(
     classic::widgets::draw_spin_buttons(c, p, up, down, enabled)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MediaGlyph {
-    Previous,
-    Play,
-    Pause,
-    Next,
-}
-
 /// A push button with a transport glyph instead of a label. The glyph is 7
 /// rows tall, centred: Play a triangle 4 columns wide pointing right; Pause
 /// two 2 px bars 2 px apart; Previous a 2 px bar then a left-pointing
@@ -1217,6 +1210,14 @@ fn ink_button_glyph(p: &Paint, enabled: bool, mut ink: impl FnMut(i32, Color)) {
         ink(p.s, p.cs.button_hilight);
         ink(0, p.cs.button_shadow);
     }
+}
+
+/// A state badge: `glyph` centred on box `r` in the selection colour, in its text colour.
+pub fn draw_media_badge(c: &mut Canvas, p: &Paint, r: Rect, glyph: MediaGlyph) {
+    c.fill_rect(r, p.cs.hilight);
+    let (s, w) = (p.s, if glyph == MediaGlyph::Play { 4 } else { 6 });
+    let (x, y) = (r.x + (r.width - w * s) / 2, r.y + (r.height - 7 * s) / 2);
+    draw_media_glyph(c, x, y, s, glyph, p.cs.hilight_text);
 }
 
 fn draw_media_glyph(c: &mut Canvas, x: i32, y: i32, s: i32, glyph: MediaGlyph, ink: Color) {

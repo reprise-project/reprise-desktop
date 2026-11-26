@@ -1,5 +1,5 @@
-//! The task preview's media buttons: the MPRIS players `reprisebus::mpris` follows, which window
-//! each plays for, and the calls the buttons make. A window's player is one its own process owns;
+//! The MPRIS players `reprisebus::mpris` follows, which window each plays for, and the calls the
+//! task preview's media buttons and the lock's strip (`lockmedia`) make. A window's player is one its own process owns;
 //! else, of the players whose process shows no window, one whose process runs as the window's app
 //! (its Flatpak or snap id, or the Reprise app scope it was started in), else one whose
 //! `DesktopEntry` names that app. Of several, Playing beats Paused beats Stopped, then the one
@@ -54,6 +54,10 @@ fn changed(state: &mut State) {
     };
     state.preview_players.players = players;
     crate::taskpreview::players_changed(state);
+    crate::lockview::update(state);
+    if state.switcher.panel.is_some() {
+        state.redraw_switcher();
+    }
 }
 
 /// The player for a window whose client is process `pid` and whose app goes by `keys`
@@ -94,6 +98,18 @@ pub fn pick<'a>(
 
 /// The bus name of each of `windows`' players and what its buttons show.
 pub fn players_of(state: &State, windows: &[WindowId]) -> Vec<Option<(String, NowPlaying)>> {
+    (picked(state, windows).into_iter())
+        .map(|p| p.map(|(name, p)| (name.to_string(), now_playing(p))))
+        .collect()
+}
+
+/// Window `w`'s player's state, if it has a player.
+pub fn status_of(state: &State, w: WindowId) -> Option<Status> {
+    picked(state, &[w])[0].map(|(_, p)| p.status)
+}
+
+/// Each of `windows`' players by the module's rule.
+fn picked<'a>(state: &'a State, windows: &[WindowId]) -> Vec<Option<(&'a str, &'a Player)>> {
     let players = &state.preview_players.players;
     if players.iter().next().is_none() {
         return vec![None; windows.len()];
@@ -103,20 +119,22 @@ pub fn players_of(state: &State, windows: &[WindowId]) -> Vec<Option<(String, No
     let player = |w: WindowId| {
         let app = state.win(w)?.app_id();
         let keys = crate::launcherentry::app_keys(&app, None, &state.app_index);
-        let (name, p) = pick(players, pid(w), &keys, |p| shown.contains(&p))?;
-        Some((name.to_string(), now_playing(p)))
+        pick(players, pid(w), &keys, |p| shown.contains(&p))
     };
     windows.iter().map(|&w| player(w)).collect()
 }
 
-fn now_playing(p: &Player) -> NowPlaying {
+/// What `p`'s buttons and strip show: its title and artist as it sent them, its state and what
+/// it can do.
+pub fn now_playing(p: &Player) -> NowPlaying {
     NowPlaying {
+        title: p.title.clone(),
+        artist: p.artist.clone(),
         playing: p.status == Status::Playing,
         can_previous: p.can_previous(),
         can_next: p.can_next(),
         can_play: p.can_play(),
         can_pause: p.can_pause(),
-        ..NowPlaying::default()
     }
 }
 

@@ -199,6 +199,7 @@ mod locatepointer;
 mod lock;
 mod lockback;
 mod lockfinger;
+mod lockmedia;
 mod lockpower;
 mod lockview;
 mod magnifier;

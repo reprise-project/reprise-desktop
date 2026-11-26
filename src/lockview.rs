@@ -1172,15 +1172,16 @@ fn note(state: &State, side: Side) -> UserNote {
     }
 }
 
-/// Bring `side`'s screen up to what it offers now (interface, Switch User, power, note), hidden
-/// while a locker holds the lock or starts to; the power menu closes with the power it offered. A
-/// new interface waits for a check in progress to end, as it rebuilds the screen.
+/// Bring `side`'s screen up to what it offers now (interface, Switch User, power, note, player),
+/// hidden while a locker holds the lock or starts to; the power menu closes with the power it
+/// offered. A new interface waits for a check in progress to end, as it rebuilds the screen.
 fn prepare(state: &mut State, side: Side) {
     let switch_user = crate::loginlink::offered(state, side);
     let power = crate::lockpower::offered(state, side);
     let interface = state.config.interface;
     let over_picture = state.lock.back.shows();
     let note = note(state, side);
+    let media = crate::lockmedia::media(state, side);
     let Some(l) = state.lock.on_mut(side) else {
         return;
     };
@@ -1191,6 +1192,7 @@ fn prepare(state: &mut State, side: Side) {
     l.view.model.purpose = Purpose::Unlock { switch_user, power };
     l.view.model.users[0].note = Some(note);
     l.view.model.over_picture = over_picture;
+    l.view.model.set_media(media);
     l.view.hidden = !l.screen_shown();
     if side == Side::Console && (!power || l.view.hidden) {
         crate::lockpower::close(state);
@@ -1389,6 +1391,7 @@ fn act(state: &mut State, side: Side, action: LogonAction) {
         LogonAction::SwitchUser => {}
         LogonAction::Power | LogonAction::PowerMenu => crate::lockpower::open(state, side),
         LogonAction::NextLayout => state.next_layout(),
+        LogonAction::Media(t) => crate::lockmedia::press(state, side, t),
     }
 }
 

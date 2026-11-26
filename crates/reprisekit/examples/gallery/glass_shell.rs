@@ -774,6 +774,9 @@ pub fn render_glass_switcher() -> Canvas {
                 hot,
             );
             interfaces::draw_switcher_badges(&mut p, &theme, &l, &cells);
+            if let Some(on) = cells.get(selected).and_then(|c| c.picture) {
+                switcher::draw_media(&mut p, &theme, on, selected % 2 == 1);
+            }
             c.blit_over(l.rect.x + a.x, l.rect.y + a.y, &p);
         };
     panel(6, Rect::new(0, 0, 1100, 260), 1, Some(3), grid);

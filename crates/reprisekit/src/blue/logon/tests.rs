@@ -735,3 +735,22 @@ fn the_admin_heading_shows_whole_in_a_wider_face_at_every_text_size() {
         }
     }
 }
+
+#[test]
+fn blue_lock_now_playing_pins_per_scheme_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for v in Variant::ALL {
+        for (name, m) in crate::logon::media::tests::states(Interface::Blue) {
+            for s in [1, 2] {
+                let (mut c, l) = drawn(&m, v, s);
+                let theme = blue_theme(v).scaled(s);
+                let text = TextRenderer::load(&theme.fonts);
+                let text = text.for_output(s);
+                crate::interfaces::logon::draw_media(&mut c, &m, &l, &theme, text, s);
+                got.push((format!("{v:?} {name} @{s}"), fnv(&c)));
+            }
+        }
+    }
+    crate::pins::check("blue/logon-locked-media", &got);
+}

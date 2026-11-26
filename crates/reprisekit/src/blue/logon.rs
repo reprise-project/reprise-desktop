@@ -1,5 +1,6 @@
 //! Blue's welcome screen: dark bands, the Reprise mark left of a middle rule and the user tiles
-//! right of it. The lock opens its one tile and puts Switch User at the bottom band's right end.
+//! right of it. The lock opens its one tile, puts Switch User at the bottom band's right end and
+//! its now-playing strip in the band's middle.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,7 +10,7 @@ use crate::blue::Variant;
 use crate::blue::powerpanel::{self, Glaze, Hue, Mark, RIM, TileState, glaze, title_text};
 use crate::blue::scheme::Scheme;
 use crate::logon::{
-    Change, Logon, LogonLayout, Notes, Part, Plan, Screen, Show, Slice, UserNote, Window,
+    Change, Logon, LogonLayout, Notes, Part, Plan, Screen, Show, Slice, UserNote, Window, media,
     message_lines, text as strings,
 };
 use crate::paint::{Paint, draw_edit};
@@ -252,10 +253,18 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
             },
         ));
     }
+    let media = m.media.as_ref().map(|_| {
+        let (w, h) = media::size(theme.text);
+        let b = f.bottom;
+        let strip = Rect::new(b.x + (b.width - w) / 2, b.y + (b.height - h) / 2, w, h);
+        parts.extend(media::buttons(theme.text, strip));
+        strip
+    });
     LogonLayout {
         output,
         parts,
         dialog: None,
+        media,
     }
 }
 
@@ -656,6 +665,11 @@ fn draw_titled(
     draw_mark(c, m, &f, k, &pen, block);
     if block {
         draw_column(c, m, l, theme, sc, k, &pen);
+        if let (Some(np), Some(strip)) = (&m.media, l.media) {
+            for (r, words) in media::lines(np, theme.text, strip) {
+                pen.line(c, r, words, false, px, Align::Left);
+            }
+        }
     }
     let Some(r) = l.rect(Part::Power) else {
         return;
@@ -812,7 +826,7 @@ pub fn live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
         ..r
     };
     let column = (l.parts.iter())
-        .filter(|(p, _)| !matches!(p, Part::Power | Part::SwitchUser))
+        .filter(|(p, _)| !matches!(p, Part::Power | Part::SwitchUser | Part::Media(_)))
         .map(|&(p, r)| match p {
             Part::Name | Part::Password => labelled(r),
             _ => r,
@@ -823,6 +837,7 @@ pub fn live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
     [Some(mark), column]
         .into_iter()
         .chain(buttons)
+        .chain([l.media])
         .flatten()
         .collect()
 }

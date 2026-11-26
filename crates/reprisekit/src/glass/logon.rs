@@ -1,5 +1,6 @@
 //! Glass's login screen over the host's wallpaper: a picture tile with a password field and round
-//! arrow, the user tiles, the error screen, the busy spinner, the mark and the power button.
+//! arrow, the user tiles, the error screen, the busy spinner, the mark and the power button. The
+//! lock's now-playing strip sits centred over the mark.
 
 use super::Settings;
 use super::panel::{self, Fade, LightBox};
@@ -7,7 +8,7 @@ use super::tint::{self, Surface};
 use crate::art::logo;
 use crate::logon::{
     Change, Logon, LogonLayout, LogonUser, Notes, Part, Plan, Screen, Show, Slice, UserNote,
-    Window, message_lines, text as strings,
+    Window, media, message_lines, text as strings,
 };
 use crate::paint::{self, Paint};
 use crate::pointer::Interaction;
@@ -65,6 +66,8 @@ const MARK_PX: u32 = 24;
 const MARK_GAP: i32 = 8;
 /// How far the block's middle sits above the screen's.
 const LIFT: i32 = 24;
+/// The now-playing strip's gap over the mark.
+const MEDIA_GAP: i32 = 16;
 /// The wordmark beside the mark: the product's name, never translated.
 const WORD: &str = "Reprise";
 /// The dark glow under white text on the wallpaper: its reach and its peak alpha.
@@ -204,6 +207,8 @@ struct Geometry {
     /// The spinner and the busy text, centred together across this row.
     busy: Option<Rect>,
     mark: Rect,
+    /// The now-playing strip.
+    media: Option<Rect>,
 }
 
 /// How many tiles fit across `output` at `theme`'s text size, Other user included: the host's
@@ -321,6 +326,12 @@ fn geometry(m: &Logon, theme: &Theme, output: Rect, button_w: i32) -> Geometry {
     }
     let mark_h = u.len(MARK);
     g.mark = Rect::new(output.x, bottom - mark_h, output.width, mark_h);
+    if m.media.is_some() {
+        let (w, h) = media::size(u);
+        let strip = centred(w, g.mark.y - u.len(MEDIA_GAP) - h, h);
+        g.parts.extend(media::buttons(u, strip));
+        g.media = Some(strip);
+    }
     g
 }
 
@@ -362,10 +373,12 @@ pub fn layout(m: &Logon, theme: &Theme, text: &TextRenderer, output: Rect) -> Lo
         let w = text.measure(&caption, false, ui_px(theme)) + 2 * BUTTON_PAD;
         w.max(theme.text.len(BUTTON_MIN_W))
     });
+    let g = geometry(m, theme, output, button_w);
     LogonLayout {
         output,
-        parts: geometry(m, theme, output, button_w).parts,
+        parts: g.parts,
         dialog: None,
+        media: g.media,
     }
 }
 
@@ -408,6 +421,11 @@ pub fn draw_shown(
     let o = l.output;
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height).scaled(s);
     let ui = ui_px(theme) * s as u32;
+    if let (Some(np), Some(strip), true) = (&m.media, l.media, show != Show::Chrome) {
+        for (r, words) in media::lines(np, theme.text, strip) {
+            left_label(c, text, at(r), words, ui, INK, s);
+        }
+    }
     if let Some(r) = l.rect(Part::Power) {
         power_button(c, at(r), face(m, Part::Power), face(m, Part::PowerMenu), s);
     }
@@ -445,6 +463,7 @@ pub fn notes(m: &Logon, l: &LogonLayout, theme: &Theme) -> Notes {
 pub fn live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
     let g = geometry(m, theme, l.output, button_width(l));
     let chrome = [Part::Power, Part::PowerMenu, Part::Layout];
+    let outside = |p: &Part| chrome.contains(p) || matches!(p, Part::Media(_));
     let doubled = |r: Rect| Rect {
         height: 2 * r.height,
         ..r
@@ -462,7 +481,7 @@ pub fn live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
         }),
     ];
     let block = (l.parts.iter())
-        .filter(|(p, _)| !chrome.contains(p))
+        .filter(|(p, _)| !outside(p))
         .map(|&(_, r)| r)
         .chain(g.frame.map(|(_, r)| r))
         .chain(rows.into_iter().flatten())
@@ -470,6 +489,7 @@ pub fn live(m: &Logon, l: &LogonLayout, theme: &Theme) -> Vec<Rect> {
     let chrome = chrome.into_iter().filter_map(|p| l.rect(p));
     (block.map(|b| b.inset(-GLOW)).into_iter())
         .chain(chrome.map(|r| r.inset(-HALO)))
+        .chain(l.media.map(|r| r.inset(-GLOW)))
         .collect()
 }
 

@@ -171,7 +171,9 @@ shake, the dim, the hidden frame rate and window memory.
 ## Switching
 
 - **Alt+Tab.** A grid of icons with a live picture of the selected window,
-  or live pictures of every window, in four sizes.
+  or live pictures of every window, in four sizes. A selected window whose
+  player plays or is paused wears a Play or Pause badge; the media keys work
+  while the switcher is up.
 - **Alt+\`** (the key above Tab on any layout) switches between the focused
   program's windows alone.
 - **3D switcher.** Glass only: Super+Tab tilts every window into a stack. See
@@ -298,6 +300,10 @@ are.
 - **The lock is the login screen, locked.** Your tile says Locked and takes
   your password. Its power button has Stand By, and Restart and Turn Off
   under reprise-login.
+- **Music at the lock.** While a media player plays or is paused, the lock
+  shows its title and artist with Previous, Play or Pause and Next, by
+  pointer or by Tab after the password. Nothing else of the player shows,
+  and the media keys keep working.
 - **Lock and unlock in motion.** On Blue and Glass the lock comes in and
   fades out (`[effects] logon_animation`).
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its

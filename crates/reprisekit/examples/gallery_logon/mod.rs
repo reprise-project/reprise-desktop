@@ -1,5 +1,5 @@
-//! The login screen's states and locks in each interface at 800x600, some over a picture,
-//! written to `target/reprisekit-gallery-logon@<scale>.png`.
+//! The login screen's states and locks in each interface at 800x600, some over a picture, the
+//! locks again with a player playing, written to `target/reprisekit-gallery-logon@<scale>.png`.
 
 mod glass;
 pub mod motion;
@@ -10,6 +10,7 @@ use reprisekit::blue::Variant;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{draw_logon, logon_layout};
 use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, PowerAction, UserNote, text};
+use reprisekit::media::{NowPlaying, Transport};
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -69,11 +70,25 @@ fn screens() -> Vec<(Logon, Variant, Option<&'static str>)> {
     });
     let locks = [Interface::Classic, Interface::Blue, Interface::Glass]
         .map(|i| Logon::locked(i, users().remove(0), true, true));
+    let playing = locks.clone().map(|mut m| {
+        m.set_media(Some(NowPlaying {
+            title: "Night Drive".into(),
+            artist: "The Examples".into(),
+            playing: true,
+            can_previous: true,
+            can_next: true,
+            can_play: true,
+            can_pause: true,
+        }));
+        m.lit = Some((Part::Media(Transport::Next), Interaction::Hot));
+        m
+    });
     [empty, filled, message, busy, caps, badge]
         .into_iter()
         .chain(starts)
         .chain(admins)
         .chain(locks)
+        .chain(playing)
         .map(|m| (m, Variant::Blue))
         .chain(blue_screens())
         .chain(glass::screens().into_iter().map(|m| (m, Variant::Blue)))

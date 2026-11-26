@@ -501,3 +501,18 @@ fn the_message_keeps_its_descenders_at_every_text_size_and_scale() {
     }
     assert_eq!(cut, Vec::new(), "(text size, scale, line, ink rows cut)");
 }
+
+#[test]
+fn classic_lock_now_playing_pins_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for (name, m) in crate::logon::media::tests::states(Interface::Classic) {
+        for s in [1, 2] {
+            let (mut c, l, theme) = drawn(&m, s);
+            let text = TextRenderer::load(&theme.fonts);
+            crate::interfaces::logon::draw_media(&mut c, &m, &l, &theme, text.for_output(s), s);
+            got.push((format!("{name} @{s}"), fnv(&c)));
+        }
+    }
+    crate::pins::check("classic/logon-locked-media", &got);
+}

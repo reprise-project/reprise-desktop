@@ -71,6 +71,7 @@ pub mod keycap;
 pub mod locate;
 pub mod logon;
 pub mod look;
+pub mod media;
 pub mod metrics;
 mod mutex;
 pub mod netmeter;
