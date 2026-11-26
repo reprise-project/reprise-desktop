@@ -177,9 +177,14 @@ impl Made {
     }
 
     /// Whether attempt `id`'s trigger stands, leaving it to stay as another program's would: nothing
-    /// takes it back after this. False while a Trigger or Cancel holds the lock.
-    pub fn hand_over(&self, id: u64) -> bool {
-        (self.0.try_lock()).is_ok_and(|mut made| made.take_if(|n| *n == id).is_some())
+    /// takes it back after this. None while a Trigger or Cancel holds the lock.
+    pub fn hand_over(&self, id: u64) -> Option<bool> {
+        let mut made = match self.0.try_lock() {
+            Ok(made) => made,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        Some(made.take_if(|n| *n == id).is_some())
     }
 
     #[cfg(test)]
@@ -190,6 +195,11 @@ impl Made {
     #[cfg(test)]
     pub(crate) fn set(&self, by: Option<u64>) {
         *self.lock() = by;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn locked(&self) -> MutexGuard<'_, Option<u64>> {
+        self.lock()
     }
 }
 

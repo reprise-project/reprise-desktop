@@ -256,8 +256,11 @@ fn a_trigger_handed_over_after_a_late_action_is_taken_back_by_nothing() {
     let fake = Fake::new(true, Ok(()));
     let made = Made::default();
     made.set(Some(1));
-    assert!(!made.hand_over(2), "not attempt 2's");
-    assert!(made.hand_over(1));
+    assert_eq!(made.hand_over(2), Some(false), "not attempt 2's");
+    let held = made.locked();
+    assert_eq!(made.hand_over(1), None, "a Cancel holds the lock");
+    drop(held);
+    assert_eq!(made.hand_over(1), Some(true));
     assert!(made.take_back(&*fake, None), "Log Off");
     let next = around(&*fake, &made, 2, Updates::Leave, false, &|| true, || {
         None::<()>
