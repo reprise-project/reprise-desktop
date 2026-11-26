@@ -1032,6 +1032,9 @@ impl Config {
             if let Some(v) = s.bell {
                 cfg.sounds.bell = v;
             }
+            if let Some(v) = s.events {
+                cfg.sounds.events = v;
+            }
             if let Some(v) = s.allow_boost {
                 cfg.sounds.allow_boost = v;
             }

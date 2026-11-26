@@ -4932,6 +4932,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "repriseapp",
+ "repriseaudio",
  "reprisebus",
  "repriseconf",
  "reprisefs",

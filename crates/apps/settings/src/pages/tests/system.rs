@@ -12,12 +12,13 @@ fn the_sound_page_geometry() {
     assert_eq!(rect(&s, p, "sound_theme"), Rect::new(116, 102, 200, 21));
     assert_eq!(
         rect(&s, p, "sound_events_group"),
-        Rect::new(20, 142, 358, 48)
+        Rect::new(20, 142, 358, 72)
     );
     assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 164, 13, 13));
-    assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 200, 358, 74));
-    assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 222, 13, 13));
-    assert_eq!(rect(&s, p, "allow_boost_note").y, 242);
+    assert_eq!(rect(&s, p, "sound_events"), Rect::new(GX, 188, 13, 13));
+    assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 224, 358, 74));
+    assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 246, 13, 13));
+    assert_eq!(rect(&s, p, "allow_boost_note").y, 266);
     inside_page(&s, p);
 }
 
@@ -92,7 +93,12 @@ fn notifications_gather_on_their_own_page() {
     }
     assert_eq!(
         keys_on(&built(), Page::Sound),
-        ["sounds.theme", "sounds.bell", "sounds.allow_boost"]
+        [
+            "sounds.theme",
+            "sounds.bell",
+            "sounds.events",
+            "sounds.allow_boost"
+        ]
     );
     for k in ["balloons", "do not disturb", "dnd", "quiet hours", "popups"] {
         assert!(Page::Notifications.keywords().contains(&k), "{k}");
@@ -279,12 +285,15 @@ fn the_bell_and_the_sound_theme_write_their_keys() {
         (vec!["deep".into(), "ocean".into(), "gone".into()], 2)
     );
     assert_eq!(s.pages[p.index()].checked("bell"), Some(true));
+    assert_eq!(s.pages[p.index()].checked("sound_events"), Some(true));
 
     let mut got = want.clone();
     pick(&mut s, &mut got, p, id, 1);
     assert_eq!(got.sound_theme, "ocean");
     tick(&mut s, &mut got, p, "bell", false);
     assert!(!got.bell);
+    tick(&mut s, &mut got, p, "sound_events", false);
+    assert!(!got.sound_events);
     tick(
         &mut s,
         &mut got,
@@ -302,6 +311,7 @@ fn the_bell_and_the_sound_theme_write_their_keys() {
             notification_sound: false,
             sound_theme: "ocean".into(),
             bell: false,
+            sound_events: false,
             ..want
         }
     );

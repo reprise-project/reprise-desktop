@@ -488,6 +488,10 @@ the screen takes the interface of the last session used at this computer.
 
 - **Sound.** A speaker icon with a volume per playing program, the default
   devices and the playing track. Volume Control adds balance, bass and treble.
+- **Event sounds.** Log on and off, error and warning boxes, a USB device
+  plugged in or out, emptying the Recycle Bin, a screenshot and the charger
+  play their sound from the XDG sound theme; Settings > Sound turns them off
+  (`[sounds] events`).
 - **Network.** Wi-Fi, wired and VPN through NetworkManager, with WireGuard
   and OpenVPN editors, Create Hotspot and a speed meter option.
 - **Airplane mode** from the network icon's menu, Settings > Network or the

@@ -45,6 +45,7 @@ mod dndsource;
 mod editmenuview;
 mod eis;
 mod emojiview;
+mod eventsound;
 mod fdlimit;
 mod flipview;
 mod focus;
@@ -486,6 +487,10 @@ fn run(
             .handle()
             .insert_idle(move |state| configwatch::announce(state, Some(notice)));
     }
+    if !after_crash {
+        state.event_sound(repriseaudio::sounds::Event::Login);
+    }
+    eventsound::watch_usb(&mut state);
     autostart::start(&mut state, session_begun, after_crash);
 
     let ran = event_loop.run(None, &mut state, State::turn_end);

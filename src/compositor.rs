@@ -325,6 +325,9 @@ pub struct State {
     /// What `console::end_clients` asked the remote desktop server for.
     #[cfg(test)]
     pub ended_clients: Vec<crate::console::ClientsEnd>,
+    /// The event sounds `event_sound` played.
+    #[cfg(test)]
+    pub event_sounds: Vec<repriseaudio::sounds::Event>,
     /// `[wallpaper] image` and its per-output buffers; None for the
     /// background colour alone.
     pub wallpaper: Option<Wallpaper>,
@@ -788,6 +791,8 @@ impl State {
             test_outputs_pending: false,
             #[cfg(test)]
             ended_clients: Vec::new(),
+            #[cfg(test)]
+            event_sounds: Vec::new(),
             // A slideshow picks its first picture once the loop runs.
             wallpaper: (config.wallpaper.slideshow.is_none())
                 .then(|| {

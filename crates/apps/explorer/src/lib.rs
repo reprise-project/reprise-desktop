@@ -2567,6 +2567,8 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         units: repriseapp::start_forms().text,
     }))
     .unwrap_or_else(|e| e.exit());
+    // A lone Empty Recycle Bin ends as it empties, before its sound has played.
+    repriseaudio::sounds::wait_quiet(std::time::Duration::from_secs(3));
 }
 
 /// A folder itself, or the folder a symlink to one points at; None for anything else.

@@ -312,8 +312,8 @@ pub fn backup(a: Area) -> Form {
 
 const FROM_DESKTOP_W: i32 = 150;
 
-/// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell
-/// and the volume's reach.
+/// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell,
+/// event sounds and the volume's reach.
 pub fn sound(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
         Item::new(
@@ -341,14 +341,15 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
             sound_themes,
             sound_themes.len().clamp(1, 8),
         ),
-        group(a, "sound_events_group", 142, 48, "Play Sounds"),
+        group(a, "sound_events_group", 142, 72, "Play Sounds"),
         Item::check(BELL, GX, 164, "Play a &sound when a program rings the bell"),
-        group(a, "volume_group", 200, 74, "Volume"),
-        Item::check(ALLOW_BOOST, GX, 222, "Allow volume &above 100%"),
+        Item::check(SOUND_EVENTS, GX, 188, "Play sounds for desktop e&vents"),
+        group(a, "volume_group", 224, 74, "Volume"),
+        Item::check(ALLOW_BOOST, GX, 246, "Allow volume &above 100%"),
         Item::label_at(
             "allow_boost_note",
             GX + 18,
-            242,
+            266,
             a.gw() - 18,
             "Sliders and the volume keys go on to 150%.",
         ),
@@ -431,6 +432,7 @@ pub fn notifications(a: Area) -> Form {
 
 pub(super) const NOTIFICATION_SOUND: &str = "notification_sound";
 pub(super) const BELL: &str = "bell";
+pub(super) const SOUND_EVENTS: &str = "sound_events";
 pub(super) const ALLOW_BOOST: &str = "allow_boost";
 
 /// The sound theme's label and combo.

@@ -120,6 +120,7 @@ impl State {
             }
         };
         let welcome = matches!(d.style, Style::Welcome(_));
+        let sound = crate::eventsound::of_box(d.icon.as_deref());
         let tree = self.scene.tree_create(self.layers.menu);
         self.scene
             .set_data(tree, Some(SceneOwner::Dialog(self.dialogs.views.len())));
@@ -157,6 +158,9 @@ impl State {
             fade: None,
         };
         self.dialogs.views.push(view);
+        if let Some(sound) = sound {
+            self.event_sound(sound);
+        }
         self.activate_dialogs();
         self.blur_dialogs_without_keyboard();
         self.restart_caret();

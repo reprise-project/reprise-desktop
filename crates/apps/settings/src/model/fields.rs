@@ -149,6 +149,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("notifications", "auto_dnd"), lens!(auto_dnd)),
         Field::Text(k("sounds", "theme"), lens!(sound_theme)),
         Field::Flag(k("sounds", "bell"), lens!(bell)),
+        Field::Flag(k("sounds", "events"), lens!(sound_events)),
         Field::Flag(k("sounds", "allow_boost"), lens!(allow_boost)),
         Field::Text(k("taskbar", "position"), lens!(taskbar_position)),
         Field::Flag(k("taskbar", "auto_hide"), lens!(taskbar_auto_hide)),

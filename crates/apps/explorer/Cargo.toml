@@ -17,6 +17,7 @@ reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }
 reprisebus = { path = "../../reprisebus" }
 repriseconf = { path = "../../repriseconf" }
+repriseaudio = { path = "../../repriseaudio" }
 serde = { workspace = true, features = ["derive"] }
 log.workspace = true
 
