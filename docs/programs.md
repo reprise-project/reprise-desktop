@@ -479,15 +479,16 @@ from the low disk space balloon, or as `reprise-diskusage FOLDER`.
 The tasks your systemd user manager runs on a schedule: each user timer with
 its schedule in words ("Every day at 3:00", "15 min after startup"), when it
 runs next, when it last ran (on its schedule or by Run Now) and its status
-(Ready, Running, Failed or Disabled). Run Now starts the task's service at
-once, and Stop stops it while it runs. Enable and Disable turn the timer on or
-off for good, as `systemctl --user enable --now` and `disable --now` do; a
-timer without an `[Install]` section is only started or stopped. Properties
-shows the schedule as the unit file writes it, the command, how the last run
-ended and the unit file. View Output shows the last 200 journal lines of the
-task's service, as `journalctl --user-unit` prints them; Refresh reads them
-again. The list follows the manager, so a timer added, changed or fired
-elsewhere shows at once. It's in Start > All Programs > System Tools.
+(Ready, Running, Failed, Stopped or Disabled; Stopped when a signal ended the
+last run, as Stop does). Run Now starts the task's service at once, and Stop
+stops it while it runs. Enable and Disable turn the timer on or off for good,
+as `systemctl --user enable --now` and `disable --now` do; a timer without an
+`[Install]` section is only started or stopped. Properties shows the schedule
+as the unit file writes it, the command, how the last run ended and the unit
+file. View Output shows the last 200 journal lines of the task's service, as
+`journalctl --user-unit` prints them; Refresh reads them again. The list
+follows the manager, so a timer added, changed or fired elsewhere shows at
+once. It's in Start > All Programs > System Tools.
 
 New Task... makes a task: a name, the program to run (typed, found on `PATH`,
 or picked with Browse...), its arguments as a shell splits them, and when it

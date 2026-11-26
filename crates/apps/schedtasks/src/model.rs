@@ -83,6 +83,8 @@ impl Task {
             tr!("status-disabled")
         } else if self.running() {
             tr!("status-running")
+        } else if self.service_state == "failed" && self.result == "signal" {
+            tr!("status-stopped")
         } else if self.service_state == "failed" {
             tr!("status-failed")
         } else {
@@ -454,6 +456,16 @@ mod tests {
         };
         assert_eq!(failed.status(), "Failed");
         assert!(failed.can_run());
+        let stopped = Task {
+            result: "signal".into(),
+            ..failed.clone()
+        };
+        assert_eq!(stopped.status(), "Stopped", "a run a signal ended");
+        let dumped = Task {
+            result: "core-dump".into(),
+            ..failed.clone()
+        };
+        assert_eq!(dumped.status(), "Failed", "a crash");
         let masked = Task {
             file_state: "masked".into(),
             ..task()
