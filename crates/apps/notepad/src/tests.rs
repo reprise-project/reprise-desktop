@@ -1661,6 +1661,37 @@ fn save_as_writes_adopts_the_path_and_runs_the_pending_action() {
 }
 
 #[test]
+fn save_as_adds_the_text_types_extension_unless_all_files_or_quoted() {
+    let saved = |filter: usize, field: &str| {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let mut np = Notepad::new(None);
+        np.edit = MultiEdit::new("hello");
+        np.saveas_dialog();
+        let dlg = np.saveas.as_mut().expect("Save As");
+        dlg.set_filter(filter);
+        dlg.set_file_name(field);
+        let id = np.host.folders.id(dir);
+        np.host.folder = Some(id);
+        np.saveas_accept("hc-notes", &mut test_icons());
+        let path = np.path.expect("saved");
+        assert!(path.exists());
+        path.strip_prefix(dir).expect("in the folder").to_path_buf()
+    };
+    assert_eq!(saved(0, "hc-notes"), Path::new("hc-notes.txt"));
+    assert_eq!(
+        saved(1, "hc-notes"),
+        Path::new("hc-notes"),
+        "All Files adds nothing"
+    );
+    assert_eq!(
+        saved(0, "\"hc-notes\""),
+        Path::new("hc-notes"),
+        "a quoted name is kept as typed"
+    );
+}
+
+#[test]
 fn save_as_onto_an_existing_file_asks_before_replacing() {
     let dir = std::env::temp_dir();
     let taken = dir.join(format!("reprise-replace-{}.txt", std::process::id()));

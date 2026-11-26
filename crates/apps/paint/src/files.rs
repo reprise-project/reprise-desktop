@@ -416,7 +416,8 @@ impl Paint {
             .as_ref()
             .and_then(|d| SAVE_KINDS.get(d.filter()).copied())
             .unwrap_or(Kind::Png);
-        let path = with_ext(path, kind);
+        let quoted = self.saveas.as_ref().is_some_and(FileDlg::name_quoted);
+        let path = if quoted { path } else { with_ext(path, kind) };
         let kind = Kind::of(&path).unwrap_or(kind);
         if taken(&path) && self.path.as_deref() != Some(&path) {
             self.ask(

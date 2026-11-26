@@ -72,6 +72,14 @@ pub fn pattern_keeps(pattern: &str, name: &str) -> bool {
         .any(|p| p == "*.*" || crate::glob::matches(p, name))
 }
 
+/// `txt` for `*.txt`: the extension of a pattern that is one `*.ext` glob. None for `*.*`, `*`
+/// and a pattern of several globs.
+pub fn pattern_ext(pattern: &str) -> Option<&str> {
+    let ext = pattern.trim().strip_prefix("*.")?;
+    let plain = !ext.is_empty() && !ext.contains(['*', '?', ';', '.', '[', ' ']);
+    plain.then_some(ext)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Crumb {
     pub id: FolderId,
@@ -1220,6 +1228,28 @@ impl FileDlg {
     pub fn set_file_name(&mut self, name: &str) {
         self.filename.set_selected(name);
         self.typed = name.to_string();
+    }
+
+    /// File name starts with a quote: Save keeps the name as typed, adding no extension.
+    pub fn name_quoted(&self) -> bool {
+        self.filename.text.trim_start().starts_with('"')
+    }
+
+    /// The path Save writes for `picked`, the file a typed name resolved to: with the picked
+    /// type's extension added when the name has none, File name is not quoted and the type has
+    /// one extension ([`pattern_ext`]).
+    pub fn with_type_ext(&self, picked: std::path::PathBuf) -> std::path::PathBuf {
+        let pattern = self.picked_pattern();
+        let ext = pattern.as_deref().and_then(pattern_ext);
+        match ext {
+            Some(ext) if picked.extension().is_none() && !self.name_quoted() => {
+                let mut s = picked.into_os_string();
+                s.push(".");
+                s.push(ext);
+                s.into()
+            }
+            _ => picked,
+        }
     }
 }
 
