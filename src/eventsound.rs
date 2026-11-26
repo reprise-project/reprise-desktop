@@ -28,15 +28,6 @@ impl State {
     }
 }
 
-/// The sound of an error or warning box with icon `icon`.
-pub fn of_box(icon: Option<&str>) -> Option<Event> {
-    match icon? {
-        "dialog-error" => Some(Event::Error),
-        "dialog-warning" => Some(Event::Warning),
-        _ => None,
-    }
-}
-
 /// Watch udev for USB devices plugged in and out. Only changes sound: the devices there at start
 /// add nothing.
 pub fn watch_usb(state: &mut State) {
@@ -86,13 +77,5 @@ mod tests {
             [Event::Error],
             "events = false is silent"
         );
-    }
-
-    #[test]
-    fn only_error_and_warning_icons_have_a_box_sound() {
-        assert_eq!(of_box(Some("dialog-error")), Some(Event::Error));
-        assert_eq!(of_box(Some("dialog-warning")), Some(Event::Warning));
-        assert_eq!(of_box(Some("dialog-question")), None);
-        assert_eq!(of_box(None), None);
     }
 }

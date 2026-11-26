@@ -229,7 +229,8 @@ impl Notepad {
     pub(crate) fn fail(&mut self, text: &str) {
         let shown = |(b, ask): (&MsgBox, &Ask)| matches!(ask, Ask::Error) && b.fields.text == text;
         if !self.asks.iter().any(shown) {
-            let b = ok_box(text.into(), self.warn_icon.clone());
+            let b = ok_box(text.into(), self.warn_icon.clone())
+                .sounding(repriseapp::sound::Event::Warning);
             self.ask(b, Ask::Error);
         }
     }

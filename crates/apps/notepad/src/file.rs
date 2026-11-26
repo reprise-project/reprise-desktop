@@ -39,6 +39,7 @@ impl Notepad {
                 max_w: repriseapp::dialog_max_w(),
             },
         )
+        .sounding(repriseapp::sound::Event::Warning)
     }
 
     /// Yes writes over the other program's change and runs the action waiting on the save; No
@@ -101,7 +102,8 @@ impl Notepad {
                     min_w: 0,
                     max_w: repriseapp::dialog_max_w(),
                 },
-            );
+            )
+            .sounding(repriseapp::sound::Event::Warning);
             self.ask(prompt, Ask::Lossy(text));
             return;
         }
@@ -173,6 +175,7 @@ impl Notepad {
                 max_w: repriseapp::dialog_max_w(),
             },
         )
+        .sounding(repriseapp::sound::Event::Warning)
     }
 
     /// Yes opens the text of `file` as an unsaved Untitled document and offers no more files; No
@@ -231,6 +234,7 @@ impl Notepad {
                 max_w: repriseapp::dialog_max_w(),
             },
         )
+        .sounding(repriseapp::sound::Event::Warning)
     }
 
     /// Runs `action` on a clean document; on a dirty one it waits on Save changes, which is

@@ -223,5 +223,6 @@ impl Notepad {
                 max_w: repriseapp::dialog_max_w(),
             },
         )
+        .sounding(repriseapp::sound::Event::Warning)
     }
 }

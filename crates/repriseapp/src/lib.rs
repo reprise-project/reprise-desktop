@@ -51,6 +51,7 @@ mod reopen;
 mod reply;
 mod runloop;
 mod sizing;
+pub mod sound;
 mod tabgroup;
 mod textinput;
 pub mod thumbs;

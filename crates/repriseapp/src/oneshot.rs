@@ -6,6 +6,7 @@
 use crate::asks::{Answer, Asks};
 use crate::keys::dialog_key;
 use crate::{BTN_LEFT, Child, Event, PointerInput, Reply, WinId};
+use repriseaudio::sounds::Event as SoundEvent;
 use reprisekit::access::{Tree, accesskit::NodeId};
 use reprisekit::controls::dlgtemplate::{self, Template};
 use reprisekit::controls::form::{self, Form};
@@ -15,7 +16,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
 pub enum Step {
@@ -186,6 +187,9 @@ pub struct MsgBox {
     /// A consent box's wait ([`MsgBox::consent`]), on a form of its own: the box's form is built
     /// again for every event.
     gate: Option<Form>,
+    /// Played on the box's first draw ([`MsgBox::sounding`]).
+    sound: Option<SoundEvent>,
+    sounded: Cell<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +210,8 @@ impl MsgBox {
             template: None,
             shown: Shown::default(),
             gate: None,
+            sound: None,
+            sounded: Cell::new(false),
         }
     }
 
@@ -218,6 +224,8 @@ impl MsgBox {
             template: Some(template),
             shown: Shown::default(),
             gate: None,
+            sound: None,
+            sounded: Cell::new(false),
         }
     }
 
@@ -231,6 +239,13 @@ impl MsgBox {
             fixed: true,
             modal: true,
         }
+    }
+
+    /// The box plays `event`'s sound when it first draws: [`SoundEvent::Error`] for an error icon,
+    /// [`SoundEvent::Warning`] for a warning one ([`SoundEvent::of_box_icon`]).
+    pub fn sounding(mut self, event: impl Into<Option<SoundEvent>>) -> MsgBox {
+        self.sound = event.into();
+        self
     }
 
     /// Make this a consent box ([`Form::set_consent`]), for a prompt that grants something: a
@@ -290,6 +305,9 @@ impl MsgBox {
     }
 
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer) {
+        if let Some(event) = self.sound.filter(|_| !self.sounded.replace(true)) {
+            crate::sound::event(event);
+        }
         let f = built(&self.fields, self.template, text, theme).1;
         self.shown.draw(c, theme, text, f);
     }
@@ -301,8 +319,8 @@ impl MsgBox {
     }
 }
 
-/// One-OK error boxes in a modal child window: a program's word that something failed. Errors
-/// wait their turn ([`crate::asks`]); the program routes the windows [`ErrorBox::owns`] here.
+/// One-OK error boxes in a modal child window: a program's word that something failed, with the
+/// error sound. Errors wait their turn ([`crate::asks`]); the program routes the windows [`ErrorBox::owns`] here.
 /// Each box carries the window [`ErrorBox::show_over`] named.
 pub struct ErrorBox(Asks<Option<WinId>>);
 
@@ -348,7 +366,7 @@ impl ErrorBox {
             min_w: 0,
             max_w: crate::dialog_max_w(),
         };
-        let b = MsgBox::new(title, fields);
+        let b = MsgBox::new(title, fields).sounding(SoundEvent::Error);
         match over {
             Some(parent) => self.0.ask_over(parent, b, over),
             None => self.0.ask(b, None),
@@ -455,6 +473,27 @@ mod tests {
                 max_w: 0,
             },
         )
+    }
+
+    #[test]
+    fn a_box_plays_its_sound_on_its_first_draw_only() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let quiet = two_buttons();
+        let warning = two_buttons().sounding(SoundEvent::Warning);
+        crate::sound::ASKED.take();
+        for _ in 0..2 {
+            quiet.draw(&mut Canvas::new(200, 100), &theme, &text);
+            warning.draw(&mut Canvas::new(200, 100), &theme, &text);
+        }
+        assert_eq!(crate::sound::ASKED.take(), [SoundEvent::Warning]);
+    }
+
+    #[test]
+    fn an_error_box_has_the_error_sound() {
+        let mut e = ErrorBox::default();
+        e.show("T", "Broken.".into(), None);
+        assert_eq!(e.shown().and_then(|b| b.sound), Some(SoundEvent::Error));
     }
 
     #[test]

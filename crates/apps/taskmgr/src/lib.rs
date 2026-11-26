@@ -812,7 +812,8 @@ impl TaskMgr {
                 min_w: 0,
                 max_w: repriseapp::dialog_max_w(),
             },
-        );
+        )
+        .sounding(repriseapp::sound::Event::Warning);
         self.asks.ask(
             b,
             Ask::EndProcess {

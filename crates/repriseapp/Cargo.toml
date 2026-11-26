@@ -31,6 +31,7 @@ reprise-decode-protocol = { path = "../reprisedecodeproto" }
 repriseconfine = { path = "../repriseconfine" }
 accesskit_unix.workspace = true
 reprisebus = { path = "../reprisebus" }
+repriseaudio = { path = "../repriseaudio" }
 
 [dev-dependencies]
 env_logger.workspace = true

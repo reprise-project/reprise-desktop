@@ -5404,6 +5404,7 @@ dependencies = [
  "png",
  "reprise-decode-protocol",
  "repriseapp-pins",
+ "repriseaudio",
  "reprisebus",
  "repriseconf",
  "repriseconfine",
