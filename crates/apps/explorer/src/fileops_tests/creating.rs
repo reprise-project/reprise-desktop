@@ -97,6 +97,13 @@ fn undo_reverses_a_rename() {
 
     assert!(dir.path().join("a.txt").is_file());
     assert!(!dir.path().join("b.txt").exists());
+    let a = ex.index_of(&dir.path().join("a.txt"));
+    assert_eq!(ex.sv.selection.focus, a, "a.txt has the focus");
+    assert_eq!(
+        ex.sv.selection.set,
+        a.into_iter().collect(),
+        "a.txt is the selection"
+    );
 }
 
 /// The folder watch fires as New > Folder writes its folder; that re-listing must not take the rename box away.
