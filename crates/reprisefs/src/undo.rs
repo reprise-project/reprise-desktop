@@ -66,6 +66,17 @@ impl Undoable {
         }
     }
 
+    /// The paths reversing it puts an item back at: a move's or rename's source, a deleted item's
+    /// place.
+    pub fn restores(&self) -> Vec<&Path> {
+        match self {
+            Undoable::Move { from, .. } | Undoable::Rename { from, .. } => vec![from],
+            Undoable::Trash(t) => vec![&t.original],
+            Undoable::Copied(..) | Undoable::New(..) => Vec::new(),
+            Undoable::Batch(items) => items.iter().flat_map(Undoable::restores).collect(),
+        }
+    }
+
     /// Add to `out` the folders reversing this adds an entry to or takes
     /// one from, each once.
     fn dirs(&self, out: &mut Vec<PathBuf>) {

@@ -171,11 +171,13 @@ impl State {
     }
 
     /// Undo of `entry` in Explorer, which shows its progress and can cancel it; nothing once
-    /// another entry is on top, or while one runs.
-    pub(crate) fn undo_in_explorer(&mut self, entry: EntryId) {
+    /// another entry is on top, or while one runs. The desktop icons named `restored` land
+    /// selected, as a put's do.
+    pub(crate) fn undo_in_explorer(&mut self, entry: EntryId, restored: Vec<String>) {
         if !self.undo_job_running() {
             let args = vec!["--undo".into(), entry.to_string().into()];
-            self.file_job(What::Undo, args, Vec::new(), Vec::new());
+            let landings = restored.into_iter().map(|n| (n, None)).collect();
+            self.file_job(What::Undo, args, landings, Vec::new());
         }
     }
 

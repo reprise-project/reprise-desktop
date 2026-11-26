@@ -526,17 +526,11 @@ impl State {
         self.relayout_desktop();
     }
 
-    /// A desktop file was renamed on disk by an inline rename: its dragged cell follows the new
-    /// name, then the desktop rescans. Its icon takes the new path first, so the rescan keeps
-    /// it selected.
+    /// A desktop file was renamed on disk by an inline rename: [`follow_rename`], then the desktop
+    /// rescans.
     pub fn renamed(&mut self, from: &Path, to: &Path) {
-        if let Some(view) = self.desktop.as_mut()
-            && let Some(i) = view.entries.iter().position(|e| e.path == from)
-        {
-            let name = file_name(to);
-            let old = std::mem::replace(&mut view.entries[i].name, name.clone());
-            view.entries[i].path = to.to_path_buf();
-            move_cell(view, &old, &name);
+        if let Some(view) = self.desktop.as_mut() {
+            follow_rename(view, from, to);
         }
         self.rescan_desktop();
     }
@@ -594,19 +588,21 @@ impl State {
         };
         // A give-up past `Gate::change` keeps Undo greyed: the work may still hold the history.
         let gave_up = |state: &mut State, changing: bool| {
+            state.desktop_rename_ended();
             if !changing {
                 state.undo_ended();
             }
         };
         let action = Action::changes("Undo", late).on_give_up(gave_up);
-        let spawned = self.spawn_fs_action(action, move |gate| {
+        let reverse = move |gate: &crate::fsjobs::Gate| -> crate::fsjobs::OnLoop {
             if !erase {
-                match history.top(|id, u| (id == entry, u.only_in(&dir))) {
-                    Some((true, true)) => {}
-                    Some((true, false)) => {
+                let top = history.top(|id, u| (id == entry, u.only_in(&dir), restored_in(u, &dir)));
+                match top {
+                    Some((true, true, _)) => {}
+                    Some((true, false, restored)) => {
                         return Box::new(move |state: &mut State| {
                             state.undo_ended();
-                            state.undo_in_explorer(entry);
+                            state.undo_in_explorer(entry, restored);
                         });
                     }
                     _ => return Box::new(State::undo_ended),
@@ -620,9 +616,9 @@ impl State {
             };
             let bins = reprisefs::trash::Bins::system();
             let (done, error, purged) = undo.reverse(bins.as_ref(), erase);
-            let renamed: Vec<(String, String)> = (undo.steps()[..done].iter())
+            let renamed: Vec<(PathBuf, PathBuf)> = (undo.steps()[..done].iter())
                 .filter_map(|step| match step {
-                    Undoable::Rename { from, to, .. } => Some((file_name(to), file_name(from))),
+                    Undoable::Rename { from, to, .. } => Some((to.clone(), from.clone())),
                     _ => None,
                 })
                 .collect();
@@ -635,7 +631,7 @@ impl State {
                 state.undo_ended();
                 if let Some(view) = state.desktop.as_mut() {
                     for (from, to) in &renamed {
-                        move_cell(view, from, to);
+                        follow_rename(view, from, to);
                     }
                 }
                 match (question.zip(left), error) {
@@ -650,9 +646,19 @@ impl State {
                 }
                 state.rescan_desktop();
             })
+        };
+        // An undone rename is one of the desktop's own renames: no read overlaps it.
+        self.desktop_rename_started();
+        let spawned = self.spawn_fs_action(action, move |gate| {
+            let done = reverse(gate);
+            Box::new(move |state: &mut State| {
+                done(state);
+                state.desktop_rename_ended();
+            })
         });
         if !spawned {
             self.undo_ended();
+            self.desktop_rename_ended();
         }
     }
 
@@ -662,6 +668,25 @@ impl State {
             view.undoing = false;
         }
     }
+}
+
+/// The icon at `from` takes the name and path `to` and its saved cell follows, so the next read,
+/// which matches icons by path, keeps it selected.
+fn follow_rename(view: &mut crate::desktopview::DesktopView, from: &Path, to: &Path) {
+    let (old, name) = (file_name(from), file_name(to));
+    if let Some(e) = view.entries.iter_mut().find(|e| e.path == from) {
+        e.name = name.clone();
+        e.path = to.to_path_buf();
+    }
+    move_cell(view, &old, &name);
+}
+
+/// The names of the items reversing `undo` puts back in the desktop folder `dir`.
+fn restored_in(undo: &Undoable, dir: &Path) -> Vec<String> {
+    (undo.restores().into_iter())
+        .filter(|p| p.parent() == Some(dir))
+        .map(file_name)
+        .collect()
 }
 
 /// The saved cell of the icon named `from` moves to the name `to`.
