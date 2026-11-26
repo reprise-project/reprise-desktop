@@ -95,11 +95,15 @@ fn draw_sample_scrollbar(c: &mut Canvas, p: &Paint, inner: Rect) {
     draw_scrollbar(c, p, sb, 0, w as usize, track, None);
 }
 
+/// The least gap between the message box's client area and its text, px: Classic's at 100%.
+const TEXT_GAP: i32 = 3;
+
 /// The sample's message box: a 3 px frame with a caption and X, the text and a plain OK. With
-/// `frames` the frame is the look's. The box grows by however much taller its frame's top is than
-/// Classic's 21 px at 100% text, so the text and OK keep their place under the caption. OK sits
-/// 12 px under the caption, or under the text's ink where that reaches further, the box growing to
-/// match.
+/// `frames` the frame is the look's, and the text keeps at least [`TEXT_GAP`] inside its client
+/// area. The box grows by however much taller its frame's top is than Classic's 21 px at 100% text, so
+/// the text and OK keep their place under the caption. OK sits 12 px under the caption, or under
+/// the text's ink where that reaches further, the box growing to match, and stays centred in a
+/// box widened for its title.
 pub fn draw_message_box(
     c: &mut Canvas,
     theme: &Theme,
@@ -113,8 +117,11 @@ pub fn draw_message_box(
     let m = &theme.metrics;
     let f = frame.scaled(s);
     let f = Rect::new(f.x, f.y, f.width, f.height + message_growth(theme, text));
-    let (f, top) = match frames {
-        Some(paint) => (f, paint(c, f, "Message Box", true, Chrome::DIALOG).y),
+    let (left, top) = match frames {
+        Some(paint) => {
+            let client = paint(c, f, MESSAGE_TITLE, true, Chrome::DIALOG);
+            (client.x, client.y)
+        }
         None => {
             c.fill_rect(f, cs.button_face);
             c.edge_t(f, EdgeStyle::WindowRaised, cs, s);
@@ -122,11 +129,20 @@ pub fn draw_message_box(
             let caption = Rect::new(f.x + b, f.y + b, f.width - 2 * b, m.caption_height);
             let close = caption_buttons(m, caption, 2 * s)[2];
             let buttons = [(close, Glyph::Close)];
-            draw_caption(c, text, cs, caption, "Message Box", true, &buttons, px, s);
-            (f, caption.bottom())
+            draw_caption(c, text, cs, caption, MESSAGE_TITLE, true, &buttons, px, s);
+            (caption.x, caption.bottom())
         }
     };
     let (body, ok) = message_parts(text, theme.text, px, s, f.x, top);
+    let body = Rect {
+        x: body.x.max(left + TEXT_GAP * s),
+        ..body
+    };
+    let wider = f.width - theme.text.len(MESSAGE_W) * s;
+    let ok = Rect {
+        x: ok.x + wider / 2,
+        ..ok
+    };
     text.draw(c, body, MESSAGE, false, cs.button_text, Align::Left, px);
     draw_button(
         c,
@@ -143,8 +159,8 @@ pub fn draw_message_box(
 }
 
 /// The message box's text row and OK button, device px, in a box whose left edge is `x` and
-/// whose caption ends at `top`: the row a line of the font tall (13 px at least), OK 12 px down
-/// or under the text's ink. The px are 100% px grown by `u`.
+/// whose caption ends at `top`: the row a line of the font tall (13 px at least), OK [`OK_X`] in
+/// and 12 px down or under the text's ink. The px are 100% px grown by `u`.
 fn message_parts(
     text: &TextRenderer,
     u: TextUnits,
@@ -160,7 +176,7 @@ fn message_parts(
     let body = Rect::new(x + u(6), top + u(3), u(201), line.max(u(13)));
     let ink = text.ink_box(body, MESSAGE, false, px, 1);
     let ok_y = (top + u(12)).max(ink.bottom());
-    (body, Rect::new(x + u(67), ok_y, u(72), u(24)))
+    (body, Rect::new(x + u(OK_X), ok_y, u(72), u(24)))
 }
 
 /// How much taller than its frame the message box draws, device px: its caption's growth past
@@ -174,15 +190,23 @@ fn message_growth(theme: &Theme, text: &TextRenderer) -> i32 {
 }
 
 const MESSAGE: &str = "Message Text";
+pub const MESSAGE_TITLE: &str = "Message Box";
+/// The message box's width at 100% text, and OK's left edge in it.
+const MESSAGE_W: i32 = 207;
+const OK_X: i32 = 67;
 
 pub const APPEARANCE_SIZE: (i32, i32) = (346, 184);
 pub const THEMES_SIZE: (i32, i32) = (346, 218);
 
+/// The Appearance sample at `size` (logical px, no smaller than its grown [`APPEARANCE_SIZE`]),
+/// its message box no narrower than `message_w`: the width at which `frames` show the box's title
+/// whole, 0 for Classic's.
 pub fn draw_appearance(
     theme: &Theme,
     text: &TextRenderer,
     frames: Option<Frames>,
     size: (i32, i32),
+    message_w: i32,
 ) -> Canvas {
     let (s, u) = (theme.scale.max(1), theme.text);
     let least = (u.len(APPEARANCE_SIZE.0), u.len(APPEARANCE_SIZE.1));
@@ -195,7 +219,11 @@ pub fn draw_appearance(
     let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), theme.colors.background);
     // The message box rises where it would run within 6 px of the bottom.
-    let message = grown(Rect::new(28, 110, 207, 63), 0, 0);
+    let message = grown(Rect::new(28, 110, MESSAGE_W, 63), 0, 0);
+    let message = Rect {
+        width: message.width.max(message_w),
+        ..message
+    };
     let message_h = message.height + (message_growth(theme, text) + s - 1) / s;
     draw_window(
         &mut c,
@@ -265,7 +293,7 @@ mod tests {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
-        let c = draw_appearance(&theme, &text, None, APPEARANCE_SIZE);
+        let c = draw_appearance(&theme, &text, None, APPEARANCE_SIZE, 0);
         assert_eq!(c.get(5, 5), cs.background.argb());
         assert_eq!(c.get(17, 9), cs.button_hilight.argb());
         assert_eq!(c.get(20, 16), cs.inactive_title.argb());
@@ -306,13 +334,42 @@ mod tests {
         }
     }
 
+    /// Inside a frame thicker than Classic's the message text keeps 3 px inside the client area,
+    /// and the box takes the width its title asks for.
+    #[test]
+    fn the_message_text_keeps_inside_a_thick_frames_client_area() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let face = theme.colors.button_face.argb();
+        let boxes = std::cell::RefCell::new(Vec::new());
+        let frames = |c: &mut Canvas, f: Rect, title: &str, _: bool, _: Chrome| {
+            c.fill_rect(f, theme.colors.button_face);
+            boxes.borrow_mut().push((title.to_string(), f));
+            Rect::new(f.x + 8, f.y + 30, f.width - 16, f.height - 38)
+        };
+        let c = draw_appearance(&theme, &text, Some(&frames), APPEARANCE_SIZE, 260);
+        let f = boxes
+            .borrow()
+            .iter()
+            .find(|(t, _)| t == MESSAGE_TITLE)
+            .map(|b| b.1)
+            .expect("the message box's frame");
+        assert_eq!((f.x, f.width), (28, 260), "the box takes its title's width");
+        let row = f.y + 33..f.y + 46;
+        let ink = (f.x..f.right()).find(|&x| row.clone().any(|y| c.get(x, y) != face));
+        assert!(
+            ink.is_some_and(|x| x >= f.x + 8 + TEXT_GAP),
+            "the text starts 3 px inside the client, at {ink:?}"
+        );
+    }
+
     #[test]
     fn at_200_percent_the_sample_shows_both_titles_and_the_whole_message_box() {
         let text = TextRenderer::load(&FontConfig::default());
         for s in [1, 2] {
             let theme = Theme::default().with_text_size(200).scaled(s);
             let cs = &theme.colors;
-            let c = draw_appearance(&theme, &text, None, APPEARANCE_SIZE);
+            let c = draw_appearance(&theme, &text, None, APPEARANCE_SIZE, 0);
             let (_, h) = c.device_size();
             let u = theme.text;
             let caption_x = u.len(16) * s + theme.metrics.frame_width;
@@ -420,7 +477,7 @@ mod tests {
         let theme = Theme::default().scaled(2);
         let text = TextRenderer::load(&FontConfig::default());
         let cs = &theme.colors;
-        let c = draw_appearance(&theme, &text, None, APPEARANCE_SIZE);
+        let c = draw_appearance(&theme, &text, None, APPEARANCE_SIZE, 0);
         assert_eq!(c.get(48, 70), cs.active_title.argb());
         assert_eq!(c.get(48, 105), cs.active_title.argb());
         assert_eq!(c.get(48, 106), cs.menu.argb());
