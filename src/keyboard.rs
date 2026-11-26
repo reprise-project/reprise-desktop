@@ -473,12 +473,25 @@ impl State {
             KeyRoute::IconUndo => self.undo_icons_head(),
             KeyRoute::IconRefresh => self.rescan_desktop(),
             KeyRoute::Binds(actions) => {
-                // A bind past an open menu closes it; Start's own toggles it, and a
-                // capture leaves it in the picture.
-                let keeps = actions.contains(&Action::StartMenu)
-                    || actions.iter().all(crate::keyroute::reads_screen);
-                if modes.menus_open && !keeps {
-                    self.close_menu();
+                // A bind past an open menu or key-taking popup closes it, as a click elsewhere
+                // would; the popup's own bind toggles it, and a capture leaves it in the picture.
+                use crate::popups::Popup;
+                let shot = actions.iter().all(crate::keyroute::reads_screen);
+                let past = [
+                    (modes.menus_open, Popup::Menu, Action::StartMenu),
+                    (modes.start_panel_open, Popup::StartPanel, Action::StartMenu),
+                    (modes.launcher_open, Popup::Launcher, Action::Launcher),
+                    (
+                        modes.clipview_open,
+                        Popup::ClipView,
+                        Action::ClipboardHistory,
+                    ),
+                    (modes.emojiview_open, Popup::EmojiView, Action::EmojiPicker),
+                ];
+                for (open, popup, own) in past {
+                    if open && !shot && !actions.contains(&own) {
+                        popup.close(self);
+                    }
                 }
                 for a in &actions {
                     self.run_action(a, k.mods);

@@ -2062,3 +2062,36 @@ fn a_right_click_on_a_folder_place_or_computer_opens_its_menu_and_on_run_none() 
     );
     assert!(h.state.start_panel.is_some());
 }
+
+#[test]
+fn a_super_bind_over_the_open_panel_closes_it_and_runs_while_plain_keys_search() {
+    const META: u32 = 125;
+    const E: u32 = 18;
+    const K: u32 = 37;
+    const R: u32 = 19;
+    let mut config = crate::config::Config::default();
+    config.startmenu_style = crate::config::StartMenuStyle::Glass;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.state.toggle_start_from_keys();
+    h.dispatch();
+    let tap = |h: &mut crate::harness::Harness, code| {
+        h.key(code, true);
+        h.key(code, false);
+    };
+    tap(&mut h, E);
+    let v = h.state.start_panel.as_ref().expect("the panel is open");
+    assert_eq!(v.model.query(), "e");
+    h.key(META, true);
+    tap(&mut h, K);
+    let v = h
+        .state
+        .start_panel
+        .as_ref()
+        .expect("an unbound Super chord leaves it open");
+    assert_eq!(v.model.query(), "e", "and types nothing");
+    tap(&mut h, R);
+    h.key(META, false);
+    assert!(h.state.start_panel.is_none(), "Super+R closes the panel");
+    assert_eq!(h.state.dialogs.views.len(), 1, "and opens Run");
+}

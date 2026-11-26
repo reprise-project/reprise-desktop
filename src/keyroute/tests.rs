@@ -562,9 +562,9 @@ fn the_switcher_binds_pass_an_open_start_menu_menu_or_popup() {
             "{m:?}"
         );
         assert_eq!(
-            matches!(r(&m, &press(KEY_r, MOD_LOGO)), KeyRoute::Binds(_)),
-            m.menus_open,
-            "other binds pass a menu but stay with a popup: {m:?}"
+            r(&m, &press(KEY_r, MOD_LOGO)),
+            KeyRoute::Binds(vec![Action::Run]),
+            "other binds pass too: {m:?}"
         );
     }
     let welcome = Modes {
@@ -1135,6 +1135,45 @@ fn an_open_start_panel_takes_every_press_but_a_menu_over_it_comes_first() {
 }
 
 #[test]
+fn binds_with_ctrl_alt_or_super_run_past_a_key_taking_popup_and_typing_stays_with_it() {
+    type Set = fn(&mut Modes);
+    let popups: [(Set, KeyRoute); 4] = [
+        (|m| m.start_panel_open = true, KeyRoute::StartPanel),
+        (|m| m.launcher_open = true, KeyRoute::Launcher),
+        (|m| m.clipview_open = true, KeyRoute::ClipView),
+        (|m| m.emojiview_open = true, KeyRoute::EmojiView),
+    ];
+    let mut binds = menu_binds();
+    binds.push(Keybind {
+        mods: 0,
+        keysym: KEY_F1,
+        action: Action::Run,
+    });
+    for (set, own) in popups {
+        let mut m = Modes::default();
+        set(&mut m);
+        let rp = |k: &KeyPress| route(&m, k, &binds, &[]).route;
+        assert_eq!(
+            rp(&press(KEY_l, MOD_LOGO)),
+            KeyRoute::Binds(vec![Action::Lock]),
+            "Super+L locks over {own:?}"
+        );
+        assert_eq!(
+            rp(&press(KEY_d, MOD_LOGO)),
+            KeyRoute::Binds(vec![Action::ShowDesktop])
+        );
+        assert_eq!(
+            rp(&press(KEY_F4, MOD_ALT)),
+            KeyRoute::Binds(vec![Action::Close])
+        );
+        assert_eq!(rp(&press(KEY_l, 0)), own, "a plain letter types");
+        assert_eq!(rp(&press(KEY_L, MOD_SHIFT)), own, "so does a capital");
+        assert_eq!(rp(&press(KEY_e, MOD_LOGO)), own, "an unbound chord stays");
+        assert_eq!(rp(&press(KEY_F1, 0)), own, "a bare-key bind stays");
+    }
+}
+
+#[test]
 fn the_super_tap_still_fires_over_an_open_start_panel() {
     let m = Modes {
         start_panel_open: true,
@@ -1187,7 +1226,10 @@ fn the_open_clipboard_history_takes_every_press_except_its_own_bind() {
     };
     assert_eq!(r(&m, &press(KEY_Return, 0)), KeyRoute::ClipView);
     assert_eq!(r(&m, &press(KEY_Delete, 0)), KeyRoute::ClipView);
-    assert_eq!(r(&m, &press(KEY_space, MOD_LOGO)), KeyRoute::ClipView);
+    assert_eq!(
+        r(&m, &press(KEY_space, MOD_LOGO)),
+        KeyRoute::Binds(vec![Action::Launcher])
+    );
     assert_eq!(
         r(&m, &press(KEY_v, MOD_LOGO)),
         KeyRoute::Binds(vec![Action::ClipboardHistory])
@@ -1244,7 +1286,10 @@ fn the_open_emoji_picker_takes_every_press_except_its_own_bind() {
     };
     assert_eq!(r(&m, &press(KEY_Return, 0)), KeyRoute::EmojiView);
     assert_eq!(r(&m, &press(KEY_Left, 0)), KeyRoute::EmojiView);
-    assert_eq!(r(&m, &press(KEY_v, MOD_LOGO)), KeyRoute::EmojiView);
+    assert_eq!(
+        r(&m, &press(KEY_v, MOD_LOGO)),
+        KeyRoute::Binds(vec![Action::ClipboardHistory])
+    );
     assert_eq!(
         r(&m, &press(KEY_period, MOD_LOGO)),
         KeyRoute::Binds(vec![Action::EmojiPicker])

@@ -461,8 +461,8 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
     }
     // The launcher, the Glass Start menu, the clipboard history popup and
     // the emoji picker each own every press while open, except their own
-    // bind, which toggles them shut the way it opened them, and the
-    // switchers' binds, as a menu.
+    // bind, which toggles them shut the way it opened them, and the other
+    // binds `popup_press` lets past, as a menu.
     let own = |action: Action| {
         k.keys().any(|key| {
             binds
@@ -511,7 +511,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return with(if own(Action::StartMenu) {
             KeyRoute::Binds(vec![Action::StartMenu])
         } else {
-            switch().unwrap_or(KeyRoute::StartPanel)
+            popup_press(modes, k, binds).unwrap_or(KeyRoute::StartPanel)
         });
     }
     // The clock's popup takes only Escape, which closes it; everything
@@ -541,21 +541,21 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         return with(if own(Action::Launcher) {
             KeyRoute::Binds(vec![Action::Launcher])
         } else {
-            switch().unwrap_or(KeyRoute::Launcher)
+            popup_press(modes, k, binds).unwrap_or(KeyRoute::Launcher)
         });
     }
     if modes.clipview_open && k.pressed {
         return with(if own(Action::ClipboardHistory) {
             KeyRoute::Binds(vec![Action::ClipboardHistory])
         } else {
-            switch().unwrap_or(KeyRoute::ClipView)
+            popup_press(modes, k, binds).unwrap_or(KeyRoute::ClipView)
         });
     }
     if modes.emojiview_open && k.pressed {
         return with(if own(Action::EmojiPicker) {
             KeyRoute::Binds(vec![Action::EmojiPicker])
         } else {
-            switch().unwrap_or(KeyRoute::EmojiView)
+            popup_press(modes, k, binds).unwrap_or(KeyRoute::EmojiView)
         });
     }
     // A balloon's reply field, once clicked, takes every press but the
@@ -737,6 +737,19 @@ fn switch_bind(modes: &Modes, k: &KeyPress, binds: &[Keybind]) -> Option<KeyRout
     }
     let a = bound(k, binds).into_iter().find(opens_switcher)?;
     Some(KeyRoute::Binds(vec![a]))
+}
+
+/// The bind a press runs past a key-taking popup (`keyboard` closes it first): a switcher's, or one
+/// with Ctrl, Alt or Super, as over a menu (`menu_press`).
+fn popup_press(modes: &Modes, k: &KeyPress, binds: &[Keybind]) -> Option<KeyRoute> {
+    let welcome = modes.dialog_has_keyboard && modes.dialog_modal;
+    if !welcome && k.mods & !MOD_SHIFT != 0 {
+        let actions = bound(k, binds);
+        if !actions.is_empty() {
+            return Some(KeyRoute::Binds(actions));
+        }
+    }
+    switch_bind(modes, k, binds)
 }
 
 /// A press over the open menu stack. A bind with Ctrl, Alt or Super runs
