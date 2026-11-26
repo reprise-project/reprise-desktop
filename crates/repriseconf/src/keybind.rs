@@ -47,6 +47,8 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("Super+Right", "snap-right"),
     ("Super+Up", "snap-up"),
     ("Super+Down", "snap-down"),
+    ("Super+Shift+Left", "move-output-prev"),
+    ("Super+Shift+Right", "move-output-next"),
     ("Super+Ctrl+Left", "desktop-prev"),
     ("Super+Ctrl+Right", "desktop-next"),
     ("Super+Ctrl+Shift+Left", "desktop-carry-prev"),
@@ -340,6 +342,8 @@ pub const ACTION_NAMES: &[(&str, &str, &str)] = &[
     ("snap-down", WINDOWS, "Snap down"),
     ("snap-layouts", WINDOWS, "Snap layouts"),
     ("overview", WINDOWS, "Window overview"),
+    ("move-output-prev", WINDOWS, "Move to the previous screen"),
+    ("move-output-next", WINDOWS, "Move to the next screen"),
     ("desktop-prev", DESKTOPS, "Previous desktop"),
     ("desktop-next", DESKTOPS, "Next desktop"),
     (

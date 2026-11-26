@@ -1063,7 +1063,7 @@ fn validate_refuses_a_snap_layout_the_compositor_would() {
 #[test]
 fn shortcuts_default_to_the_compositors_list() {
     let s = load("");
-    assert_eq!(s.shortcuts.len(), 60);
+    assert_eq!(s.shortcuts.len(), 62);
     assert_eq!(
         s.shortcuts[0],
         Shortcut::new("Super+Return", "terminal", "")
@@ -1082,11 +1082,11 @@ fn shortcuts_default_to_the_compositors_list() {
         Shortcut::new("Super+Down", "snap-down", "")
     );
     assert_eq!(
-        s.shortcuts[21],
+        s.shortcuts[23],
         Shortcut::new("Super+Ctrl+Shift+Right", "desktop-carry-next", "")
     );
     assert_eq!(
-        s.shortcuts[23],
+        s.shortcuts[25],
         Shortcut::new("Alt+Sys_Req", "screenshot-window", "")
     );
     assert_eq!(validate(&s, &Settings::default()), Ok(()));

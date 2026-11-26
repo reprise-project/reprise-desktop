@@ -708,6 +708,103 @@ impl State {
         }
     }
 
+    /// Carry the bind's window to the next (`next`) or previous output, maximized, snapped (with
+    /// no snap assist) or in proportion as it was ([`crate::snap::carried`]).
+    pub fn key_move_output(&mut self, next: bool) {
+        let Some(w) = self.bind_window() else {
+            return;
+        };
+        if self
+            .win(w)
+            .is_none_or(|x| x.fullscreen || x.override_redirect)
+        {
+            return;
+        }
+        let Some(from) = self.fit_output(w) else {
+            return;
+        };
+        let outs: Vec<Output> = (self.scene.outputs().iter())
+            .filter(|o| reprisescene::copied(o).is_none() && crate::console::on_desk(self, o))
+            .filter(|o| self.layout_box(Some(o)).width > 0)
+            .cloned()
+            .collect();
+        let boxes: Vec<Rect> = outs.iter().map(|o| self.layout_box(Some(o))).collect();
+        let Some(to) = (outs.iter().position(|o| *o == from))
+            .and_then(|i| crate::snap::output_step(&boxes, i, next))
+            .map(|j| outs[j].clone())
+        else {
+            return;
+        };
+        let (sw, tw) = (self.usable_area(Some(&from)), self.usable_area(Some(&to)));
+        if [sw, tw].iter().any(|a| a.width <= 0 || a.height <= 0) {
+            return;
+        }
+        self.cancel_interaction_for(w);
+        let Some(win) = self.win(w) else {
+            return;
+        };
+        let carry = |r: Rect| crate::snap::carried(r, sw, tw);
+        let snapped = win.snapped.map(carry);
+        if win.maximized {
+            let saved = win.saved.map(carry);
+            if let Some(win) = self.win_mut(w) {
+                win.saved = saved;
+                win.snapped = snapped;
+                (win.x, win.y) = (tw.x, tw.y);
+            }
+            self.fit_maximized(w);
+            return;
+        }
+        let r = win.frame_rect();
+        if let Some(zone) = self.carried_zone(w, &from, &to, r) {
+            let live = self.snap_live();
+            let landing =
+                (self.wm.snap).key_zone(w, &to.name(), tw, zone, false, |m| live.contains(&m));
+            if let Some(l) = landing {
+                self.snap_to_zone(w, l.zones[zone]);
+                if let Some(win) = self.win_mut(w) {
+                    win.snapped = snapped;
+                }
+                return;
+            }
+        }
+        self.wm.snap.leave_group(w);
+        let Some(win) = self.win_mut(w) else {
+            return;
+        };
+        win.snapped = snapped;
+        let keep = !win.is_resizable() || win.shaded;
+        let chrome = win.chrome();
+        let mut n = carry(r);
+        if keep {
+            n = crate::snap::carried(Rect::new(n.x, n.y, r.width, r.height), tw, tw);
+        }
+        self.move_to(w, n.x, n.y);
+        if (n.width, n.height) != (r.width, r.height) {
+            let m = &self.config.theme.metrics;
+            let (cw, ch) =
+                FrameGeometry::client_size_for_total(m, n.width, n.height, false, chrome);
+            if let Some(win) = self.win_mut(w) {
+                win.resize_anchor = None;
+            }
+            self.request_size(w, cw, ch);
+        }
+    }
+
+    /// The zone of `to`'s active layout that snapped window `w`'s zone on `from` carries to: the
+    /// one holding most of the carried zone. None for a window in no zone.
+    fn carried_zone(&self, w: WindowId, from: &Output, to: &Output, r: Rect) -> Option<usize> {
+        let win = self.win(w)?;
+        let grouped = win.snapped.is_some() || self.wm.snap.group_of(w).is_some();
+        let (zones, _) = self.active_zones(from);
+        let live = self.snap_live();
+        let member = (self.wm.snap).member_zone(w, &from.name(), &|m| live.contains(&m));
+        let at = member.or_else(|| grouped.then(|| crate::snap::zone_of(&zones, r)).flatten())?;
+        let (sw, tw) = (self.usable_area(Some(from)), self.usable_area(Some(to)));
+        let carried = crate::snap::carried(*zones.get(at)?, sw, tw);
+        crate::snap::zone_of(&self.active_zones(to).0, carried)
+    }
+
     /// `w` into zone `zone` of `out`'s active layout, in the group a drop there joins; a member
     /// it swaps with fills the zone `w` left. Zones the group leaves free get snap assist.
     fn key_into_zone(&mut self, out: &Output, w: WindowId, zone: usize, maximized: bool) {

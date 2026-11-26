@@ -780,6 +780,7 @@ suspend_after = 0            # run [power] standby
 #   Windows: close cycle cycle-app flip maximize minimize windowmenu
 #     showdesktop toggleframe alwaysontop mini-view center tab-next tab-prev
 #     snap-left snap-right snap-up snap-down snap-layouts overview
+#     move-output-prev move-output-next
 #   Desktops: desktop-prev desktop-next desktop-carry-prev desktop-carry-next
 #     all-desktops desktop-1 desktop-2 desktop-3 desktop-4 desktop-5
 #     desktop-6 desktop-7 desktop-8 desktop-9 desktop-carry-1 desktop-carry-2
@@ -892,6 +893,18 @@ action = "snap-up"
 [[keybinds]]
 keys = "Super+Down"
 action = "snap-down"
+
+# Super+Shift and Left or Right carry the focused window to the screen before
+# or after its own, left to right, wrapping past the ends. It keeps its place
+# and size in proportion to the work area; a maximized or snapped window stays
+# maximized or snapped there.
+[[keybinds]]
+keys = "Super+Shift+Left"
+action = "move-output-prev"
+
+[[keybinds]]
+keys = "Super+Shift+Right"
+action = "move-output-next"
 
 # Super+Ctrl and an arrow show the desktop before or after this one
 # ([workspaces]); there is nothing past the first or the last. With Shift

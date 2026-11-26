@@ -205,6 +205,38 @@ pub fn beside(out: Rect, boxes: &[Rect], right: bool, span: Rect, y: i32) -> Opt
         .map(|(i, _)| i)
 }
 
+/// `r` carried from work area `from` into `to`: its offset and size scaled by the areas' ratio on
+/// each axis, then cut to `to` and moved inside it.
+pub fn carried(r: Rect, from: Rect, to: Rect) -> Rect {
+    let along = |v: i32, a: i32, b: i32| {
+        let a = i64::from(a.max(1));
+        (i64::from(v) * i64::from(b) + a / 2).div_euclid(a) as i32
+    };
+    let w = along(r.width, from.width, to.width).clamp(1, to.width.max(1));
+    let h = along(r.height, from.height, to.height).clamp(1, to.height.max(1));
+    let x = to.x + along(r.x - from.x, from.width, to.width);
+    let y = to.y + along(r.y - from.y, from.height, to.height);
+    Rect::new(
+        x.min(to.right() - w).max(to.x),
+        y.min(to.bottom() - h).max(to.y),
+        w,
+        h,
+    )
+}
+
+/// The output box after (`next`) or before box `from` of `boxes`, left to right and then top to
+/// bottom, wrapping past either end; None for a lone output.
+pub fn output_step(boxes: &[Rect], from: usize, next: bool) -> Option<usize> {
+    let n = boxes.len();
+    if n < 2 || from >= n {
+        return None;
+    }
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| (boxes[i].x, boxes[i].y, i));
+    let at = order.iter().position(|&i| i == from)?;
+    Some(order[if next { (at + 1) % n } else { (at + n - 1) % n }])
+}
+
 /// Every side of an output, for a lone output.
 #[cfg(test)]
 pub const EVERY_SIDE: Edges = Edges(15);
@@ -609,6 +641,53 @@ impl Suggestion {
 mod tests {
     use super::*;
     use repriseconf::config::SNAP_DISTANCE_DEFAULT as BAND;
+
+    #[test]
+    fn a_carried_rect_keeps_its_place_and_size_in_proportion_and_stays_inside() {
+        let from = Rect::new(0, 0, 1000, 800);
+        let to = Rect::new(1000, 0, 2000, 1000);
+        assert_eq!(
+            carried(Rect::new(100, 200, 400, 300), from, to),
+            Rect::new(1200, 250, 800, 375)
+        );
+        assert_eq!(
+            carried(Rect::new(-50, 700, 400, 300), from, to),
+            Rect::new(1000, 625, 800, 375),
+            "a rect hanging off an edge lands inside"
+        );
+        assert_eq!(
+            carried(Rect::new(1000, 0, 1000, 800), to, from),
+            Rect::new(0, 0, 500, 640),
+            "and back to the smaller one"
+        );
+        assert_eq!(
+            carried(Rect::new(100, 100, 3000, 300), from, to),
+            Rect::new(1000, 125, 2000, 375),
+            "a size past the target's is cut to it"
+        );
+    }
+
+    #[test]
+    fn the_outputs_step_left_to_right_and_wrap() {
+        let boxes = [
+            Rect::new(1920, 0, 1280, 1024),
+            Rect::new(0, 0, 1920, 1080),
+            Rect::new(3200, 0, 1024, 768),
+        ];
+        assert_eq!(output_step(&boxes, 1, true), Some(0));
+        assert_eq!(output_step(&boxes, 0, true), Some(2));
+        assert_eq!(
+            output_step(&boxes, 2, true),
+            Some(1),
+            "past the last, the first"
+        );
+        assert_eq!(
+            output_step(&boxes, 1, false),
+            Some(2),
+            "before the first, the last"
+        );
+        assert_eq!(output_step(&boxes[..1], 0, true), None, "a lone output");
+    }
 
     #[test]
     fn a_drag_of_a_side_no_member_follows_takes_the_window_off_its_zone() {

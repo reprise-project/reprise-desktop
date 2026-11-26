@@ -49,6 +49,8 @@ pub enum Action {
     Notifications,
     NightLight,
     Snap(crate::snap::Dir),
+    /// Carry the focused window to the next screen (true) or the previous one.
+    MoveToOutput(bool),
     SnapLayouts,
     DisplaySwitcher,
     Zoom(crate::magnifier::ZoomStep),
@@ -181,6 +183,8 @@ pub(crate) const NAMED_ACTIONS: &[(&str, Action)] = &[
     ("snap-up", Action::Snap(crate::snap::Dir::Up)),
     ("snap-down", Action::Snap(crate::snap::Dir::Down)),
     ("snap-layouts", Action::SnapLayouts),
+    ("move-output-prev", Action::MoveToOutput(false)),
+    ("move-output-next", Action::MoveToOutput(true)),
     ("display-switcher", Action::DisplaySwitcher),
     ("zoom-in", Action::Zoom(crate::magnifier::ZoomStep::In)),
     ("zoom-out", Action::Zoom(crate::magnifier::ZoomStep::Out)),
