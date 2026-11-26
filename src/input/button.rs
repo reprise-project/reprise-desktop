@@ -112,11 +112,12 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
-        // A press the seat never saw (the Alt+Tab panel's) sends no
-        // release to a client either.
+        // A press the seat never saw (the Alt+Tab panel's), or one already let go
+        // (`release_all_buttons`), sends no release to a client either.
         let theirs = state == ButtonState::Released
             && (self.switcher_release(button) | self.overview_release(button));
-        if !theirs {
+        let let_go = state == ButtonState::Released && !self.seat_buttons.contains(&button);
+        if !theirs && !let_go {
             if state == ButtonState::Pressed {
                 self.seat_buttons.push(button);
             } else {
@@ -149,8 +150,8 @@ impl State {
     }
 
     /// Let go of every held button when the seat loses the device (a session
-    /// pause, the lock) or an overlay takes the pointer: the gesture they hold is
-    /// cancelled, not finished, and the client under the pointer hears each release.
+    /// pause, the lock), an overlay takes the pointer or a reader clicks: the gesture they hold is
+    /// cancelled, not finished, and the client under the pointer hears each release, once.
     pub(crate) fn release_all_buttons(&mut self, time: InputTime) {
         if self.interaction != Interaction::Idle {
             self.cancel_interaction();
