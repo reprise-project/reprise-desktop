@@ -11,7 +11,7 @@ The file manager, and the default for folders.
 
 - **Five views:** Thumbnails, Tiles, Icons, List and Details, sorted by name,
   size, type or date. A folder tree or a task pane down the side, Back,
-  Forward, Up and an address bar (Alt+D). It remembers your view.
+  Forward, Up and an address bar (Alt+D or Ctrl+L). It remembers your view.
 - **Hidden items** (View > Hidden Items, Ctrl+H) shows dot names and the
   names a folder's `.hidden` lists, their icons faded, in every Explorer
   window and on the desktop.

@@ -229,6 +229,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
             Some('z') => Command::Undo,
             Some('a') => Command::SelectAll,
             Some('f') => Command::SearchFocus,
+            Some('l') => Command::AddressFocus,
             Some('t') => Command::NewTab,
             Some('w') => Command::CloseTab,
             Some('h') => Command::ToggleHidden,
@@ -678,6 +679,8 @@ mod tests {
         assert_eq!(k('d' as u32, false, false, true), Command::AddressFocus);
         assert_eq!(k('D' as u32, false, false, true), Command::AddressFocus);
         assert_eq!(k('d' as u32, false, false, false), Command::Nothing);
+        assert_eq!(k('l' as u32, true, false, false), Command::AddressFocus);
+        assert_eq!(k('l' as u32, false, false, false), Command::Nothing);
         // The context menu: the Menu key, and Shift+F10. A bare F10
         // belongs to the menu bar and never reaches the table.
         assert_eq!(k(MENU, false, false, false), Command::ContextMenu);
@@ -730,6 +733,10 @@ mod tests {
         assert_eq!(in_address(F5, false, false, false), Command::Refresh);
         assert_eq!(
             in_address('d' as u32, false, false, true),
+            Command::AddressFocus
+        );
+        assert_eq!(
+            in_address('l' as u32, true, false, false),
             Command::AddressFocus
         );
 
