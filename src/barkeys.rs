@@ -102,10 +102,17 @@ impl State {
         let Some(at) = taskbarfocus::fit(&items, keys.at) else {
             return;
         };
+        let key = taskbarfocus::key(sym, shift);
+        if key == Some(BarKey::NextGroup)
+            && matches!(at, TaskbarHit::Task(_))
+            && crate::taskpreview::tab_in(self)
+        {
+            return;
+        }
         if crate::taskpreview::key(self, sym) {
             return;
         }
-        match taskbarfocus::key(sym, shift) {
+        match key {
             None => {}
             Some(BarKey::Leave) => self.leave_bar_keys(),
             Some(BarKey::Activate) => self.bar_item_act(keys.bar, at, BTN_LEFT),
