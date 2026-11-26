@@ -9,13 +9,13 @@
 //! lists a day's events under the month, today's until a click on a day
 //! picks another; read off the loop, a late answer dropped, and read again
 //! every [`REFRESH`] while the popup stays open. A click on an
-//! event opens the calendar program. Otherwise the days are read-only. A
-//! double click on the clock closes it and opens Date and Time Properties
-//! instead. Under a look that frames its flyouts as
-//! windows the arrow under the pointer lights, and the border has the
-//! blurred backdrop under it. A look with an analog clock beside the month
-//! ticks it each second while the popup is open, and redraws the time line
-//! under it when the minute turns.
+//! event opens the calendar program. Otherwise the days are read-only. Today's
+//! long date heads the popup; its Date and Time settings... link, or a
+//! double click on the clock, closes it and opens Date and Time Properties.
+//! Under a look that frames its flyouts as windows the arrow under the
+//! pointer lights, and the border has the blurred backdrop under it. A look
+//! with an analog clock beside the month ticks it each second while the popup
+//! is open, and redraws the time line under it when the minute turns.
 //!
 //! The lock closes it as it engages; an output going away closes the one
 //! it opened.
@@ -118,6 +118,16 @@ fn now() -> (u32, u32, u32) {
     )
 }
 
+/// The date line's wordings over the month: today's long date, then the locale's short one for a
+/// popup too narrow for it.
+fn date_line() -> Vec<String> {
+    let tm = reprisefs::locale::localtime(since_epoch().as_secs() as i64);
+    vec![
+        reprisefs::locale::long_date(&tm),
+        reprisefs::locale::short_date(&tm),
+    ]
+}
+
 /// The time line under the analog clock: hours and minutes as the bar's clock words them.
 fn time_line() -> String {
     crate::taskbar::time_text(since_epoch().as_secs() as i64)
@@ -198,6 +208,7 @@ fn open(state: &mut State, bar: TreeId) {
     let ticks = state.config.theme.controls().clock_face > 0;
     model.now = ticks.then(now);
     model.time = ticks.then(time_line);
+    model.date = date_line();
     let events = state.config.taskbar.calendar_events;
     model.agenda =
         (events && state.calendar.eds == Some(true)).then(|| Agenda::new((y, m, d), false));
@@ -420,6 +431,7 @@ fn arm_tick(state: &mut State) {
                 let time = Some(time_line());
                 if v.model.time != time {
                     v.model.time = time;
+                    v.model.date = date_line();
                     redraw(state);
                 } else {
                     tick(state);
@@ -450,7 +462,7 @@ pub fn close(state: &mut State) {
 }
 
 /// A press on the popup: the arrows step the month, a day lists its events, an event opens the
-/// calendar program and closes the popup.
+/// calendar program and the link Date and Time Properties, each closing the popup.
 pub fn clicked(state: &mut State, hit: PopupHit) {
     let Some(v) = state.calendar.view.as_mut() else {
         return;
@@ -467,6 +479,11 @@ pub fn clicked(state: &mut State, hit: PopupHit) {
             a.events = None;
             redraw(state);
             return read_day(state, day);
+        }
+        PopupHit::Settings => {
+            close(state);
+            state.spawn_activated(PROPERTIES);
+            return;
         }
         PopupHit::Event(_) => {
             let program = v.program.clone();
@@ -501,7 +518,7 @@ pub fn hover(state: &mut State, hit: Option<PopupHit>) {
         return;
     };
     let hot = match hit {
-        Some(h @ (PopupHit::Prev | PopupHit::Next | PopupHit::Event(_))) => h,
+        Some(h @ (PopupHit::Prev | PopupHit::Next | PopupHit::Event(_) | PopupHit::Settings)) => h,
         _ => PopupHit::Panel,
     };
     if std::mem::replace(&mut v.hot, hot) != hot {

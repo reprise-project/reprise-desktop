@@ -45,9 +45,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   opens Task Manager (also Ctrl+Shift+Escape) or locks the bar.
 - **Tray overflow.** Quiet tray icons wait behind an arrow, or a ^ flyout in
   Glass. Customize... sets each icon to show, hide or follow its status.
-- **Calendar.** Click the clock for the month and, with
-  evolution-data-server, today's events (`[taskbar] calendar_events`).
-  Double-click it for Date and Time Properties.
+- **Calendar.** Click the clock for today's date over the month and, with
+  evolution-data-server, today's events (`[taskbar] calendar_events`). Its
+  Date and Time settings... link, or a double click on the clock, opens Date
+  and Time Properties.
 - **From the keyboard.** Super+T lands on Start, Super+B on the tray. Super+1
   to Super+9 act on that task button; Super+D shows the desktop. With
   `[taskbar] peek` on, holding Super+comma looks through every window until

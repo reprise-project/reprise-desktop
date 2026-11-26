@@ -367,6 +367,7 @@ pub fn render_glass_clock_popup(pct: u32) -> Canvas {
     cal.today = Some((2026, 10, 16));
     cal.now = Some((10, 9, 30));
     cal.time = Some("10:09".into());
+    cal.date = vec!["Friday, October 16, 2026".into(), "10/16/2026".into()];
     let panel = calendar::draw_popup(&theme, &text, &cal, calendar::PopupHit::Panel);
     let mut c = blurred_stripes(panel.width as i32 + 40, panel.height as i32 + 40);
     c.blit_over(20, 20, &panel);
@@ -380,16 +381,18 @@ pub fn render_glass_flyouts(theme: &Theme) -> Canvas {
     use reprisekit::emoji::{EmojiFont, Entry, catalog};
     let text = TextRenderer::load(&FontConfig::default());
     let px = theme.fonts.size_px;
-    let mut c = blurred_stripes(950, 840);
+    let mut c = blurred_stripes(950, 880);
     let mut cal = calendar::Calendar::new(2026, 10, None, 0);
     cal.today = Some((2026, 10, 6));
+    cal.date = vec!["Tuesday, October 6, 2026".into(), "10/06/2026".into()];
     let m = reprisekit::flyout::margin(theme);
     let at =
         |c: &mut Canvas, x: i32, y: i32, panel: &Canvas| c.blit_over(x - m.left, y - m.top, panel);
-    // The clock popup at 10:09:30 with the previous-month arrow lit, and at 3:45:15 PM.
+    // The clock popup at 10:09:30 with the previous-month arrow lit, and at 3:45:15 PM with the
+    // settings link lit.
     for (x, now, time, hot) in [
         (20, (10, 9, 30), "10:09", calendar::PopupHit::Prev),
-        (420, (15, 45, 15), "3:45 PM", calendar::PopupHit::Panel),
+        (420, (15, 45, 15), "3:45 PM", calendar::PopupHit::Settings),
     ] {
         cal.now = Some(now);
         cal.time = Some(time.into());
@@ -673,13 +676,14 @@ pub fn render_calendar_events(scale: i32) -> Canvas {
         ),
     ];
     let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
-    let (cw, ch) = (380 * scale, 340 * scale);
+    let (cw, ch) = (380 * scale, 380 * scale);
     let mut c = blurred_stripes(3 * cw, 3 * ch);
     for (col, look) in looks.into_iter().enumerate() {
         let theme = interfaces::theme_for(look).scaled(scale);
         let text = TextRenderer::load(&FontConfig::default());
         let mut cal = calendar::Calendar::new(2026, 11, None, 0);
         cal.today = Some((2026, 11, 13));
+        cal.date = vec!["Friday, November 13, 2026".into(), "11/13/2026".into()];
         if look == Interface::Glass {
             cal.now = Some((10, 9, 30));
             cal.time = Some("10:09".into());
@@ -876,7 +880,7 @@ fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
         look: theme.look.at_scale(n),
         ..theme.clone()
     };
-    let mut c = Canvas::with_scale(950, 880, n);
+    let mut c = Canvas::with_scale(950, 930, n);
     c.fill_rect(c.bounds(), theme.colors.background);
     let edge = reprisekit::taskbar::Edge::Bottom;
     let mut seven = sample_mix(7);
@@ -891,7 +895,7 @@ fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
     });
     let mut vp = volumepopup::VolumePopup::new(&seven);
     vp.first = 1;
-    let lay = volumepopup::layout(&vp, theme, &text, (475, 465), edge, c.bounds());
+    let lay = volumepopup::layout(&vp, theme, &text, (475, 490), edge, c.bounds());
     volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     let mut boosted = sample_mix(2);
     boosted.boost = true;
@@ -902,13 +906,13 @@ fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
     if let Some(o) = &mut vp.columns[2].output {
         o.toggle();
     }
-    let lay = volumepopup::layout(&vp, theme, &text, (237, 870), edge, c.bounds());
+    let lay = volumepopup::layout(&vp, theme, &text, (237, 920), edge, c.bounds());
     volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     let mut m = sample_mix(2);
     m.outputs = (1..=10).map(|i| format!("Output {i}")).collect();
     let mut vp = volumepopup::VolumePopup::new(&m);
     vp.output.toggle();
-    let lay = volumepopup::layout(&vp, theme, &text, (712, 870), edge, c.bounds());
+    let lay = volumepopup::layout(&vp, theme, &text, (712, 920), edge, c.bounds());
     volumepopup::draw(&mut c, theme, &text, &vp, &lay);
     c
 }

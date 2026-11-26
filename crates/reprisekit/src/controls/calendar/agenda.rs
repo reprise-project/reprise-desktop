@@ -344,12 +344,17 @@ mod tests {
     #[test]
     fn the_list_grows_the_popup_under_the_month_and_its_rows_click() {
         let cm = ControlMetrics::CLASSIC;
-        assert_eq!(popup_size(&cm, true), (174, 162 + 4 + 16 + 4 * 16));
+        assert_eq!(popup_size(&cm, true), (174, 202 + 4 + 16 + 4 * 16));
         let lay = popup_layout(&cm, true);
         let list = lay.agenda.unwrap();
-        assert_eq!(list.heading, Rect::new(6, 160, 162, 16));
-        assert_eq!(list.rows[3], Rect::new(6, 224, 162, 16));
-        assert_eq!(list.rows[3].bottom() + 6, popup_size(&cm, true).1);
+        assert_eq!(list.heading, Rect::new(6, 180, 162, 16));
+        assert_eq!(list.rows[3], Rect::new(6, 244, 162, 16));
+        assert_eq!(
+            lay.settings,
+            Rect::new(6, 264, 162, 16),
+            "the link under the list"
+        );
+        assert_eq!(lay.settings.bottom() + 6, popup_size(&cm, true).1);
         let cal = popup(7);
         let mid = |r: Rect| (r.x + r.width / 2, r.y + r.height / 2);
         let (x, y) = mid(list.rows[3]);

@@ -4,8 +4,9 @@ use crate::flyout;
 use crate::look::Paint;
 use crate::look::widgets::{
     draw_disabled_label, draw_focus_ring, draw_glyph_button, draw_hscrollbar, draw_label,
-    draw_media_button, draw_vertical_trackbar,
+    draw_link, draw_media_button, draw_vertical_trackbar,
 };
+use crate::pointer::Interaction;
 use crate::raster::Canvas;
 use crate::shape::Glyph;
 use crate::text::{Align, DialogFont, TextRenderer};
@@ -14,11 +15,11 @@ use crate::theme::Theme;
 
 use super::layout::{ColumnLayout, Layout, StripLayout};
 use super::{
-    Column, Dir, Focus, INPUT, MAX_SHOWN, NAME_PAD, NowPlaying, OUTPUT, Part, Pick, SPEAKER, STEPS,
-    Transport, VolumePopup, combo_focus,
+    Column, Dir, Focus, INPUT, MAX_SHOWN, NAME_PAD, NowPlaying, OUTPUT, Part, Pick, SETTINGS,
+    SPEAKER, STEPS, Transport, VolumePopup, combo_focus,
 };
 
-/// The panel, top to bottom; the focus ring shows once a key was pressed, and an open device list draws last, over the columns.
+/// The panel, top to bottom; the focus ring shows once a key was pressed, the link underlines while lit, and an open device list draws last, over the columns.
 pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup, lay: &Layout) {
     let text = text.dialog(DialogFont::ShellDlg);
     vp.hover.styled.set(theme.look.lights_pointer());
@@ -74,6 +75,12 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
     }
     if let (Some(np), Some(st)) = (&vp.playing, &lay.strip) {
         draw_strip(c, text, p, vp, np, st, px);
+    }
+    let link = text.line_box(lay.settings, false, px);
+    let hot = vp.ptr.of(Part::Settings) != Interaction::Idle;
+    draw_link(c, text, p, link, SETTINGS, hot, px);
+    if vp.cues && vp.focus == Focus::Settings {
+        draw_focus_ring(c, p, lay.settings, cs.button_text);
     }
     if let Some(d) = vp.open_list()
         && let (Some(combo), Some(cl)) = (vp.pick(d), lay.pick(d))

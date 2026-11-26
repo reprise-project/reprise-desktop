@@ -10,7 +10,7 @@ use crate::flyout;
 use crate::look::Paint;
 use crate::look::widgets::{
     draw_calendar_arrow, draw_calendar_band, draw_calendar_frame, draw_calendar_today,
-    draw_clock_face,
+    draw_clock_face, draw_link,
 };
 use crate::metrics::ControlMetrics;
 use crate::raster::{Canvas, Rect};
@@ -76,6 +76,9 @@ pub struct Calendar {
     pub now: Option<(u32, u32, u32)>,
     /// The popup's time line under the clock, worded by the host in the locale's format.
     pub time: Option<String>,
+    /// The popup's date line over the month: today's date as the host words it, longest first.
+    /// The line shows the first wording that fits; none hides it.
+    pub date: Vec<String>,
     /// The popup's events under the month; none hides the list.
     pub agenda: Option<Agenda>,
     /// The column the week starts in: 0 Sunday .. 6 Saturday.
@@ -92,6 +95,7 @@ impl Calendar {
             today: None,
             now: None,
             time: None,
+            date: Vec::new(),
             agenda: None,
             first_weekday: first_weekday % 7,
             enabled: true,
@@ -323,8 +327,13 @@ pub fn draw(
 
 /// The gap inside the popup's border ([`crate::flyout`]).
 const PAD: i32 = 4;
+/// The date line's row over the title row, and the settings link's at the foot.
+const DATE_H: i32 = 16;
+const LINK_H: i32 = 16;
 /// The title row: two 16x16 arrow buttons and the month between them.
 const TITLE_H: i32 = 16;
+/// The link at the popup's foot, which opens Date and Time Properties.
+pub const SETTINGS: &str = "Date and Time settings...";
 const ARROW_W: i32 = 16;
 
 /// From the grid's right edge to the analog clock's.
@@ -342,11 +351,12 @@ fn clock_side(cm: &ControlMetrics) -> i32 {
     }
 }
 
-/// The popup panel's size in a look with controls `cm`: 174x162 inside
-/// Classic's 2 px edge, 12 px more each way inside an 8 px border, in a
-/// look with an analog clock wider by the clock and its gap and taller by the
-/// time line, and with an `agenda` taller by its heading and rows. Everything
-/// but the border grows with `cm.text`.
+/// The popup panel's size in a look with controls `cm`: 174x202 inside
+/// Classic's 2 px edge (the date line, the title row, the grid and the link),
+/// 12 px more each way inside an 8 px border, in a look with an analog clock
+/// wider by the clock and its gap and taller by the time line, and with an
+/// `agenda` taller by its heading and rows. Everything but the border grows
+/// with `cm.text`.
 pub fn popup_size(cm: &ControlMetrics, agenda: bool) -> (i32, i32) {
     let e = cm.flyout_border;
     let (w, h) = size(cm);
@@ -358,14 +368,17 @@ pub fn popup_size(cm: &ControlMetrics, agenda: bool) -> (i32, i32) {
         true => PAD + agenda::height(cm),
         false => 0,
     };
+    let rows = cm.text.len(DATE_H) + PAD + cm.text.len(TITLE_H) + PAD + cm.text.len(LINK_H);
     (
         w + clock + 2 * (e + PAD),
-        cm.text.len(TITLE_H) + h + time + list + 2 * (e + PAD) + PAD,
+        rows + h + time + list + 2 * (e + PAD) + PAD,
     )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PopupLayout {
+    /// Today's date across the panel's top.
+    pub date: Rect,
     pub prev: Rect,
     pub next: Rect,
     pub title: Rect,
@@ -374,13 +387,16 @@ pub struct PopupLayout {
     pub clock: Option<Rect>,
     /// The time line's row under the grid, as wide as the clock and centred under it.
     pub time: Option<Rect>,
-    /// The event list across the panel under everything else, when the popup has one.
+    /// The event list across the panel under the month, when the popup has one.
     pub agenda: Option<agenda::Layout>,
+    /// The [`SETTINGS`] link's row across the panel's foot.
+    pub settings: Rect,
 }
 
 pub fn popup_layout(cm: &ControlMetrics, with_agenda: bool) -> PopupLayout {
     let x = cm.flyout_border + PAD;
-    let y = x;
+    let date_h = cm.text.len(DATE_H);
+    let y = x + date_h + PAD;
     let (w, h) = size(cm);
     let title_h = cm.text.len(TITLE_H);
     let grid = Rect::new(x, y + title_h + PAD, w, h);
@@ -396,7 +412,12 @@ pub fn popup_layout(cm: &ControlMetrics, with_agenda: bool) -> PopupLayout {
     let time = clock.map(|r| Rect::new(r.x, grid.bottom() + PAD, r.width, cm.text.len(TIME_H)));
     let top = time.map_or(grid.bottom(), |t| t.bottom()) + PAD;
     let width = popup_size(cm, false).0 - 2 * x;
+    let foot = match with_agenda {
+        true => top + agenda::height(cm),
+        false => top - PAD,
+    };
     PopupLayout {
+        date: Rect::new(x, x, width, date_h),
         prev: Rect::new(x, y, ARROW_W, title_h),
         next: Rect::new(x + w - ARROW_W, y, ARROW_W, title_h),
         title: Rect::new(x + ARROW_W, y, w - 2 * ARROW_W, title_h),
@@ -404,6 +425,7 @@ pub fn popup_layout(cm: &ControlMetrics, with_agenda: bool) -> PopupLayout {
         clock,
         time,
         agenda: with_agenda.then(|| agenda::layout(Rect::new(x, top, width, 0), cm)),
+        settings: Rect::new(x, foot + PAD, width, cm.text.len(LINK_H)),
     }
 }
 
@@ -415,6 +437,8 @@ pub enum PopupHit {
     Day(u32),
     /// Row `n` of the event list, an event or its "more" row; only when a click opens them.
     Event(usize),
+    /// The [`SETTINGS`] link's row.
+    Settings,
     Panel,
 }
 
@@ -427,6 +451,9 @@ pub fn popup_hit(cm: &ControlMetrics, cal: &Calendar, x: i32, y: i32) -> PopupHi
     if lay.next.contains(x, y) {
         return PopupHit::Next;
     }
+    if lay.settings.contains(x, y) {
+        return PopupHit::Settings;
+    }
     let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) else {
         return PopupHit::Panel;
     };
@@ -437,13 +464,14 @@ pub fn popup_hit(cm: &ControlMetrics, cal: &Calendar, x: i32, y: i32) -> PopupHi
 }
 
 /// The popup panel at `theme`'s scale: the flyout's panel
-/// ([`crate::flyout`]) round the title row, the grid and, in a look with one,
-/// the analog clock at `cal.now` over the time line `cal.time`, then the event
-/// list of `cal.agenda`, with its shadow round it when the look has one. Today
-/// is outlined; a listed day other than today is picked. The arrow or event
-/// row `hot` names is drawn lit where the look lights it. Under a look that
-/// frames its flyouts as windows the title and the list's heading are regular
-/// weight.
+/// ([`crate::flyout`]) round the date line of `cal.date`, the title row, the grid
+/// and, in a look with one, the analog clock at `cal.now` over the time line
+/// `cal.time`, then the event list of `cal.agenda` and the centred
+/// [`SETTINGS`] link, with its shadow round it when the look has one. Today is
+/// outlined; a listed day other than today is picked. The arrow or event row
+/// `hot` names is drawn lit where the look lights it; the link underlines
+/// while hot. Under a look that frames its flyouts as windows the title and
+/// the list's heading are regular weight.
 pub fn draw_popup(theme: &Theme, text: &TextRenderer, cal: &Calendar, hot: PopupHit) -> Canvas {
     let mut c = draw_popup_base(theme, text, cal, hot);
     if let Some(now) = cal.now {
@@ -518,6 +546,29 @@ pub fn draw_popup_base(
         Align::Center,
         px,
     );
+    let date_row = lay.date.scaled(s);
+    let fits = |d: &&String| text.measure(d, false, px) <= date_row.width;
+    if let Some(date) = cal.date.iter().find(fits).or(cal.date.last()) {
+        let date = text.ellipsize(date, date_row.width, false, px);
+        text.draw(
+            &mut c,
+            date_row,
+            &date,
+            false,
+            cs.button_text,
+            Align::Center,
+            px,
+        );
+    }
+    let link = lay.settings.scaled(s);
+    let lw = text.measure(SETTINGS, false, px);
+    let at = Rect::new(
+        link.x + (link.width - lw).max(0) / 2,
+        link.y,
+        lw,
+        link.height,
+    );
+    draw_link(&mut c, text, p, at, SETTINGS, hot == PopupHit::Settings, px);
     draw(&mut c, text, p, &picked(cal), &lay.grid, false, px);
     if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
         let bold = flyout::look(theme).is_none();
@@ -575,10 +626,10 @@ pub fn access(
     id
 }
 
-/// The popup's `access` part, in popup coordinates: the two month
+/// The popup's `access` part, in popup coordinates: the date line, the two month
 /// buttons, which a reader can click, the analog clock where the look has one, the grid, which
-/// reads as the listed day's date (else today's) while it is in the month shown, and the event
-/// list. Returns the grid's node, which has the focus.
+/// reads as the listed day's date (else today's) while it is in the month shown, the event
+/// list and the [`SETTINGS`] link. Returns the grid's node, which has the focus.
 pub fn popup_access(
     cal: &Calendar,
     cm: &ControlMetrics,
@@ -588,6 +639,9 @@ pub fn popup_access(
     parent: NodeId,
 ) -> NodeId {
     let lay = popup_layout(cm, cal.agenda.is_some());
+    if let Some(date) = cal.date.first() {
+        tree.push(parent, "date", access::named(Role::Label, lay.date, date));
+    }
     for (key, r, name) in [
         ("prev", lay.prev, "Previous month"),
         ("next", lay.next, "Next month"),
@@ -612,6 +666,9 @@ pub fn popup_access(
     if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
         agenda::access(a, cal.today, list, tree, parent);
     }
+    let mut link = access::named(Role::Link, lay.settings, SETTINGS);
+    link.add_action(accesskit::Action::Click);
+    tree.push(parent, "settings", link);
     grid
 }
 
@@ -925,9 +982,14 @@ mod tests {
         let u = crate::theme::TextUnits::new(22, 11);
         let cm = ControlMetrics::CLASSIC.grown(u);
         let lay = popup_layout(&cm, false);
-        assert_eq!(popup_size(&cm, false), (2 * W + 12, 2 * 16 + 2 * H + 16));
-        assert_eq!(lay.prev, Rect::new(6, 6, 16, 32));
-        assert_eq!(lay.grid.frame, Rect::new(6, 42, 2 * W, 2 * H));
+        assert_eq!(
+            popup_size(&cm, false),
+            (2 * W + 12, 2 * 16 + 2 * H + 16 + 2 * (32 + 4))
+        );
+        assert_eq!(lay.date, Rect::new(6, 6, 2 * W, 32));
+        assert_eq!(lay.prev, Rect::new(6, 42, 16, 32));
+        assert_eq!(lay.grid.frame, Rect::new(6, 78, 2 * W, 2 * H));
+        assert_eq!(lay.settings.height, 32);
         assert_eq!(
             popup_hit(&cm, &bare(), lay.next.x + 2, lay.next.y + 30),
             PopupHit::Next
@@ -938,7 +1000,7 @@ mod tests {
     fn the_popup_steps_by_its_arrows() {
         let cm = ControlMetrics::CLASSIC;
         let lay = popup_layout(&cm, false);
-        assert_eq!(popup_size(&cm, false), (174, 162));
+        assert_eq!(popup_size(&cm, false), (174, 202));
         assert_eq!(
             popup_hit(&cm, &bare(), lay.prev.x + 2, lay.prev.y + 2),
             PopupHit::Prev
@@ -954,9 +1016,9 @@ mod tests {
             flyout_border: 8,
             ..cm
         };
-        assert_eq!(popup_size(&glass, false), (186, 174));
-        assert_eq!(popup_layout(&glass, false).prev, Rect::new(12, 12, 16, 16));
-        assert_eq!(popup_hit(&glass, &bare(), 13, 13), PopupHit::Prev);
+        assert_eq!(popup_size(&glass, false), (186, 214));
+        assert_eq!(popup_layout(&glass, false).prev, Rect::new(12, 32, 16, 16));
+        assert_eq!(popup_hit(&glass, &bare(), 13, 33), PopupHit::Prev);
         assert_eq!(Calendar::new(2026, 9, None, 0).title(), "September 2026");
     }
 
@@ -967,14 +1029,14 @@ mod tests {
         use crate::interface::Interface;
         let glass = crate::interfaces::theme_for(Interface::Glass);
         let cm = glass.controls();
-        assert_eq!(popup_size(&cm, false), (327, 174 + 28));
+        assert_eq!(popup_size(&cm, false), (327, 214 + 28));
         let lay = popup_layout(&cm, false);
-        assert_eq!(lay.clock, Some(Rect::new(186, 32, 129, 129)));
-        assert_eq!(lay.time, Some(Rect::new(186, 166, 129, 24)));
-        assert_eq!(lay.grid.frame.y, 32);
+        assert_eq!(lay.clock, Some(Rect::new(186, 52, 129, 129)));
+        assert_eq!(lay.time, Some(Rect::new(186, 186, 129, 24)));
+        assert_eq!(lay.grid.frame.y, 52);
         assert_eq!(popup_layout(&ControlMetrics::CLASSIC, false).clock, None);
         assert_eq!(popup_layout(&ControlMetrics::CLASSIC, false).time, None);
-        assert_eq!(popup_size(&ControlMetrics::CLASSIC, false), (174, 162));
+        assert_eq!(popup_size(&ControlMetrics::CLASSIC, false), (174, 202));
         let text = TextRenderer::load(&FontConfig::default());
         let mut cal = Calendar::new(2026, 10, None, 0);
         let m = crate::flyout::margin(&glass);
@@ -1066,7 +1128,10 @@ mod tests {
         );
         assert_eq!(
             popup_size(&cm, false),
-            (2 * W + 24 + 259 + 24, 2 * 16 + 2 * H + 48 + 4 + 28)
+            (
+                2 * W + 24 + 259 + 24,
+                2 * 16 + 2 * H + 48 + 4 + 28 + 2 * (32 + 4)
+            )
         );
         let text = TextRenderer::load(&FontConfig::default());
         let mut cal = Calendar::new(2026, 10, None, 0);
@@ -1105,7 +1170,7 @@ mod tests {
         let m = crate::flyout::margin(&glass);
         assert_eq!(
             popup_clock(&glass),
-            Some(Rect::new(m.left + 186, m.top + 32, 129, 129))
+            Some(Rect::new(m.left + 186, m.top + 52, 129, 129))
         );
         assert_eq!(popup_clock(&Theme::default()), None);
         let text = TextRenderer::load(&FontConfig::default());
@@ -1132,6 +1197,88 @@ mod tests {
                 "scale {s}: the same pixels as the popup drawn at 10:09:31"
             );
         }
+    }
+
+    /// Each look's popup with its date line and the link lit, at scale 1 and 2.
+    #[test]
+    fn the_popup_with_its_date_and_lit_link_pins_in_each_look_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut cal = Calendar::new(2026, 11, None, 0);
+        cal.today = Some((2026, 11, 26));
+        cal.date = vec!["Thursday, November 26, 2026".into(), "11/26/2026".into()];
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(i).scaled(s);
+                let c = draw_popup(&theme, &text, &cal, PopupHit::Settings);
+                got.push((format!("{i:?} {s}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("controls/calendar_popup", &got);
+    }
+
+    /// The date line heads the panel over the title row and the link ends it, centred, underlined
+    /// while hot; a click on its row and a reader's link both reach it.
+    #[test]
+    fn the_popup_heads_with_the_date_and_ends_with_the_settings_link() {
+        let cm = ControlMetrics::CLASSIC;
+        let lay = popup_layout(&cm, false);
+        assert_eq!(lay.date, Rect::new(6, 6, 162, 16));
+        assert_eq!(lay.prev.y, 26, "the title row sits under the date line");
+        assert_eq!(lay.settings, Rect::new(6, 180, 162, 16));
+        assert_eq!(lay.settings.bottom() + 6, popup_size(&cm, false).1);
+        assert_eq!(popup_hit(&cm, &bare(), 20, 185), PopupHit::Settings);
+        assert_eq!(popup_hit(&cm, &bare(), 20, 10), PopupHit::Panel);
+        let with_list = popup_layout(&cm, true);
+        assert_eq!(
+            with_list.settings.y,
+            with_list.agenda.unwrap().rows[AGENDA_ROWS - 1].bottom() + 4,
+            "under the event list"
+        );
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut cal = bare();
+        cal.date = vec!["Thursday, November 26, 2026".into(), "11/26/2026".into()];
+        let plain = draw_popup(&theme, &text, &cal, PopupHit::Panel);
+        let hot = draw_popup(&theme, &text, &cal, PopupHit::Settings);
+        let under = plain.differing_rect(&hot);
+        assert!(!under.is_empty(), "the hot link underlines");
+        assert_eq!(under.height, 1, "a one-row underline");
+        assert!(lay.settings.contains(under.x, under.y));
+        assert!(
+            under.x > lay.settings.x && under.right() < lay.settings.right(),
+            "centred in its row"
+        );
+        let wording = |date: &[&str]| {
+            let mut cal = bare();
+            cal.date = date.iter().map(|d| d.to_string()).collect();
+            draw_popup(&theme, &text, &cal, PopupHit::Panel).pixels
+        };
+        assert!(
+            wording(&[&"W".repeat(40), "11/26/2026"]) == wording(&["11/26/2026"]),
+            "a wording too wide gives way to the next"
+        );
+        let undated = draw_popup(&theme, &text, &bare(), PopupHit::Panel);
+        let date = plain.differing_rect(&undated);
+        assert!(
+            lay.date.contains(date.x, date.y),
+            "the date line draws in its row"
+        );
+        let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 174, 202)));
+        popup_access(&cal, &cm, &text, 11, &mut tree, crate::access::ROOT);
+        let link = tree.find(Role::Link, SETTINGS).expect("the link's node");
+        assert!(
+            tree.get(link)
+                .unwrap()
+                .supports_action(accesskit::Action::Click)
+        );
+        assert!(
+            tree.nodes()
+                .any(|(_, n)| n.label() == Some("Thursday, November 26, 2026")),
+            "the date line reads"
+        );
     }
 
     #[test]

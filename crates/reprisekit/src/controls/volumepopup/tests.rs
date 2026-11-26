@@ -112,8 +112,8 @@ fn a_readers_focus_shows_the_focus_ring() {
 fn with_no_programs_the_panel_is_444_wide() {
     let vp = VolumePopup::new(&mix(&[]));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(738, 711, 444, 341));
-    assert_eq!(col(&l, 0).rect, Rect::new(750, 793, 96, 247));
+    assert_eq!(l.panel, Rect::new(738, 690, 444, 362));
+    assert_eq!(col(&l, 0).rect, Rect::new(750, 772, 96, 247));
     assert_eq!(l.divider, None, "no programs, no line after master");
 }
 
@@ -133,7 +133,7 @@ fn from_a_top_bar_the_panel_hangs_under_the_anchor() {
     let text = TextRenderer::load(&theme.fonts);
     let screen = Rect::new(0, 0, 1920, 1080);
     let l = layout(&vp, &theme, &text, (960, 28), Edge::Top, screen);
-    assert_eq!(l.panel, Rect::new(738, 28, 444, 341));
+    assert_eq!(l.panel, Rect::new(738, 28, 444, 362));
     assert_eq!(col(&l, 0).rect, Rect::new(750, 110, 96, 247));
     let low = layout(&vp, &theme, &text, (960, 1000), Edge::Top, screen);
     assert_eq!(low.panel.bottom(), 1080, "kept inside the bounds");
@@ -143,9 +143,9 @@ fn from_a_top_bar_the_panel_hangs_under_the_anchor() {
 fn programs_stand_102_px_apart_past_an_etched_line_after_master() {
     let vp = VolumePopup::new(&one_output(&[app("firefox", 16), app("mpv", 8)]));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(738, 711, 444, 341), "the combos' width");
+    assert_eq!(l.panel, Rect::new(738, 690, 444, 362), "the combos' width");
     assert_eq!(col(&l, 0).rect.x, 750);
-    assert_eq!(l.divider, Some(Rect::new(852, 793, 2, 247)));
+    assert_eq!(l.divider, Some(Rect::new(852, 772, 2, 247)));
     assert_eq!(col(&l, 1).rect.x, 860);
     assert_eq!(col(&l, 2).rect.x, 962);
     assert_eq!(l.bar, None);
@@ -156,7 +156,7 @@ fn master_and_six_programs_fit_740_px() {
     let apps: Vec<_> = (0..6).map(|i| app(&format!("p{i}"), 10)).collect();
     let vp = VolumePopup::new(&one_output(&apps));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(590, 711, 740, 341));
+    assert_eq!(l.panel, Rect::new(590, 690, 740, 362));
     assert_eq!(col(&l, 6).rect.right(), l.panel.right() - 12);
     assert_eq!(l.bar, None, "six fit without a scrollbar");
 }
@@ -169,18 +169,22 @@ fn a_column_stacks_icon_name_level_trackbar_and_speaker() {
     let l = lay(&vp);
     let c = col(&l, 1);
     let x = c.rect.x;
-    assert_eq!(c.icon, Some(Rect::new(x + 32, 793, 32, 32)));
-    assert_eq!(c.label, Rect::new(x, 831, 96, 13));
-    assert_eq!(c.level, Rect::new(x, 845, 96, 13));
-    assert_eq!(c.track.bounds, Rect::new(x + 30, 866, 35, 140));
+    assert_eq!(c.icon, Some(Rect::new(x + 32, 772, 32, 32)));
+    assert_eq!(c.label, Rect::new(x, 810, 96, 13));
+    assert_eq!(c.level, Rect::new(x, 824, 96, 13));
+    assert_eq!(c.track.bounds, Rect::new(x + 30, 845, 35, 140));
     assert_eq!(
         (c.track.thumb.width, c.track.thumb.height),
         (25, 15),
         "a thumb 4 px wider than the look's and 15 tall"
     );
     assert!(c.track.ticks.len() == STEPS && !c.track.ticked, "no ticks");
-    assert_eq!(c.mute, Rect::new(x + 33, 1014, 30, 26));
-    assert_eq!(l.panel.bottom() - c.mute.bottom(), 12);
+    assert_eq!(c.mute, Rect::new(x + 33, 993, 30, 26));
+    assert_eq!(
+        l.panel.bottom() - c.mute.bottom(),
+        12 + LINK_GAP + ROW_H,
+        "the link's row under the speaker"
+    );
     assert_eq!(col(&l, 0).icon, None, "master without an icon has none");
 }
 
@@ -204,8 +208,8 @@ fn past_six_programs_a_scrollbar_runs_under_them() {
     let apps: Vec<_> = (0..7).map(|i| app(&format!("p{i}"), 10)).collect();
     let vp = VolumePopup::new(&one_output(&apps));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(590, 687, 740, 365));
-    assert_eq!(l.bar, Some(Rect::new(712, 769 + 247 + 8, 606, 16)));
+    assert_eq!(l.panel, Rect::new(590, 666, 740, 386));
+    assert_eq!(l.bar, Some(Rect::new(712, 748 + 247 + 8, 606, 16)));
     assert!(l.columns[1..=6].iter().all(Option::is_some));
     assert!(l.columns[7..].iter().all(Option::is_none));
 }
@@ -223,10 +227,10 @@ fn the_combos_are_360_wide_right_of_the_widest_label() {
         .max(52);
     assert_eq!(
         l.output.field,
-        Rect::new(738 + 12 + label_w + 8, 723, 360, 21)
+        Rect::new(738 + 12 + label_w + 8, 702, 360, 21)
     );
-    assert_eq!(l.input.field.y, 750);
-    assert_eq!(l.separator, Rect::new(750, 781, 420, 2));
+    assert_eq!(l.input.field.y, 729);
+    assert_eq!(l.separator, Rect::new(750, 760, 420, 2));
 }
 
 #[test]
@@ -788,7 +792,7 @@ fn tab_walks_the_combos_then_each_column() {
             Focus::Thumb(1),
             Focus::Mute(1),
             Focus::Device(1),
-            Focus::Output
+            Focus::Settings
         ]
     );
     vp.key(&l, form::Key::Tab { back: true });
@@ -1607,7 +1611,7 @@ fn the_middle_button_pauses_a_playing_track_and_plays_a_paused_one() {
 fn a_player_adds_the_strip_under_the_columns() {
     let vp = VolumePopup::new(&with_track(&[], track(true)));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(738, 655, 444, 397), "56 px taller");
+    assert_eq!(l.panel, Rect::new(738, 634, 444, 418), "56 px taller");
     let st = l.strip.as_ref().expect("a strip");
     let foot = col(&l, 0).rect.bottom();
     assert_eq!(st.separator, Rect::new(750, foot + 10, 420, 2));
@@ -1622,7 +1626,10 @@ fn a_player_adds_the_strip_under_the_columns() {
     );
     assert_eq!(st.title, Rect::new(750, foot + 26, 308, 13));
     assert_eq!(st.artist, Some(Rect::new(750, foot + 39, 308, 13)));
-    assert_eq!(st.rect.bottom() + MARGIN, l.panel.bottom());
+    assert_eq!(
+        st.rect.bottom() + LINK_GAP + ROW_H + MARGIN,
+        l.panel.bottom()
+    );
     let mut np = track(true);
     np.artist.clear();
     let vp = VolumePopup::new(&with_track(&[], np));
@@ -1639,7 +1646,51 @@ fn under_a_scrollbar_the_strip_follows_it() {
     let bar = l.bar.expect("a scrollbar");
     let st = l.strip.expect("a strip");
     assert_eq!(st.separator.y, bar.bottom() + 10);
-    assert_eq!(st.rect.bottom() + MARGIN, l.panel.bottom());
+    assert_eq!(
+        st.rect.bottom() + LINK_GAP + ROW_H + MARGIN,
+        l.panel.bottom()
+    );
+}
+
+#[test]
+fn the_settings_link_ends_the_panel_and_acts_on_release_enter_and_a_reader() {
+    let mut vp = VolumePopup::new(&mix(&[app("mpv", 8)]));
+    let l = lay(&vp);
+    let r = l.settings;
+    assert_eq!(r.bottom() + MARGIN, l.panel.bottom(), "the panel's foot");
+    assert_eq!(r.right() + MARGIN, l.panel.right(), "on the right");
+    let (x, y) = mid(r);
+    assert_eq!(hit(&vp, &l, x, y), Hit::Settings);
+    assert_eq!(vp.press(&l, x, y), Event::Redraw);
+    assert_eq!(vp.focus, Focus::Settings);
+    assert_eq!(vp.release(), Event::Settings);
+    vp.press(&l, x, y);
+    vp.motion(&l, x, y - 40);
+    assert_eq!(vp.release(), Event::None, "let go off the link");
+    for k in [form::Key::Enter, form::Key::Space] {
+        assert_eq!(vp.key(&l, k), Event::Settings);
+    }
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let draw_at = |vp: &VolumePopup| {
+        let mut c = Canvas::new(1920, 1080);
+        draw(&mut c, &theme, &text, vp, &l);
+        c
+    };
+    vp.leave();
+    let idle = draw_at(&vp);
+    vp.motion(&l, x, y);
+    let under = idle.differing_rect(&draw_at(&vp));
+    assert_eq!(under.height, 1, "a lit link underlines");
+    assert!(r.x <= under.x && under.right() <= r.right());
+    let mut tree = Tree::new(access::node(Role::Window, l.panel));
+    vp.access(&l, &text, theme.fonts.size_px, &mut tree, access::ROOT);
+    let link = tree.find(Role::Link, SETTINGS).expect("the link's node");
+    assert!(
+        tree.get(link)
+            .unwrap()
+            .supports_action(accesskit::Action::Click)
+    );
 }
 
 #[test]
@@ -1686,9 +1737,9 @@ fn tab_reaches_the_live_transport_buttons_and_enter_clicks() {
             Focus::Mute(0),
             Focus::Media(Transport::Previous),
             Focus::Media(Transport::PlayPause),
+            Focus::Settings,
             Focus::Output,
             Focus::Input,
-            Focus::Thumb(0),
         ],
         "Next is greyed and no stop"
     );
@@ -1721,7 +1772,7 @@ fn sync_follows_the_player_and_drops_a_button_that_greyed() {
     assert_eq!(vp.playing, None);
     assert_eq!(vp.focus, Focus::Thumb(0), "the strip went");
     assert!(lay(&vp).strip.is_none());
-    assert_eq!(lay(&vp).panel.height, 341, "back to the bare panel");
+    assert_eq!(lay(&vp).panel.height, 362, "back to the bare panel");
 }
 
 /// The strip in Classic: the etched separator, the title and artist,
@@ -2033,13 +2084,13 @@ fn beside_a_side_bar_the_panel_stands_off_its_edge_level_with_the_icon() {
     let left = layout(&vp, &theme, &text, (60, 500), Edge::Left, screen);
     assert_eq!(
         left.panel,
-        Rect::new(60, 500 - 170, 444, 341),
+        Rect::new(60, 500 - 181, 444, 362),
         "its left edge on the bar's, centred on the icon"
     );
     let right = layout(&vp, &theme, &text, (1860, 1050), Edge::Right, screen);
     assert_eq!(
         right.panel,
-        Rect::new(1860 - 444, 1080 - 341, 444, 341),
+        Rect::new(1860 - 444, 1080 - 362, 444, 362),
         "its right edge on the bar's, kept above the output's foot"
     );
 }

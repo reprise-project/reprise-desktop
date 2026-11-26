@@ -2,7 +2,7 @@
 //!
 //! Columns are 96 px wide: the 32 px icon, the name ("Volume" on master), the level in percent, a vertical trackbar (one position per 5 %, loudest on top, on to 150 % shaded past 100 with [`Mix::boost`]) and a 30x26 speaker button that mutes; a muted column greys its trackbar and level. With two outputs or more a program's column ends in a combo picking its output ("Default", then each output), whose list opens above it. Six programs fit side by side; past six a scrollbar under them scrolls them a column at a time while master stays. The device combos are 360 px wide. Lengths are at 100% text and grow with it; icons, glyphs, the thumb and the scrollbar keep their size.
 //!
-//! While a media player is active a strip under a second separator shows the title over the artist and Previous, Play or Pause and Next buttons (32x28, greyed when the player cannot act). Text is set in the second dialog font (`DialogFont::ShellDlg`).
+//! While a media player is active a strip under a second separator shows the title over the artist and Previous, Play or Pause and Next buttons (32x28, greyed when the player cannot act). A [`SETTINGS`] link ends the panel at its right, 8 px under the rest; it opens the Sound page of the settings. Text is set in the second dialog font (`DialogFont::ShellDlg`).
 //!
 //! The host owns the devices and the writes: it hands the popup a [`Mix`] with [`VolumePopup::sync`] and acts on the [`Event`]s at once; there is no Apply.
 
@@ -75,12 +75,14 @@ const STRIP_H: i32 = 34;
 const MEDIA_W: i32 = 32;
 const MEDIA_H: i32 = 28;
 const MEDIA_GAP: i32 = 4;
+const LINK_GAP: i32 = 8;
 
 pub const VOLUME: &str = "Volume";
 pub const MUTE: &str = "Mute";
 pub const OUTPUT: &str = "Output:";
 pub const INPUT: &str = "Input:";
 pub const NOW_PLAYING: &str = "Now Playing";
+pub const SETTINGS: &str = "Sound settings...";
 /// A program's output combo's first row: the program follows the default output.
 pub const DEFAULT: &str = "Default";
 /// What a device combo shows, greyed, with no device to pick.
@@ -152,6 +154,8 @@ pub enum Event {
     /// Program `.0` (its key) moves to output `.1`, an index into `Mix::outputs`; `None` follows the default.
     AppOutput(String, Option<usize>),
     Media(Transport),
+    /// The [`SETTINGS`] link: the host opens the Sound page.
+    Settings,
 }
 
 /// One column: master (`key: None`) or a program.
@@ -238,6 +242,7 @@ pub enum Focus {
     /// A program's output combo.
     Device(usize),
     Media(Transport),
+    Settings,
 }
 
 /// The parts the pointer can light or hold. Column parts carry the
@@ -249,6 +254,7 @@ pub enum Part {
     Combo(Pick),
     Bar(ScrollHit),
     Media(Transport),
+    Settings,
 }
 
 pub struct VolumePopup {
