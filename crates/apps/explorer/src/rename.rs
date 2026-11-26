@@ -106,8 +106,13 @@ impl Explorer {
     pub fn begin_rename(&mut self, ctx: &mut Ctx) -> Reply {
         if let Some(i) = self.sv.selection.single() {
             if let Some(v) = self.relabel_target(i) {
-                let label = v.label.clone().unwrap_or_default();
-                self.open_rename_box(i, &label, true, ctx);
+                self.open_rename_box(i, &crate::volumes::label_text(&v), true, ctx);
+                if let (Some(limit), Some((_, ed))) = (
+                    reprisefs::udisks::label_limit(&v.fs_type),
+                    self.sv.edit.as_mut(),
+                ) {
+                    ed.set_limit(limit);
+                }
                 self.relabeling = Some(v);
                 return Reply::redraw();
             }

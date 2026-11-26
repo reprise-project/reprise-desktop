@@ -800,7 +800,9 @@ fn box_text(ex: &mut Explorer, ctx: &mut repriseapp::Ctx) -> String {
 
 /// F2 on a mounted FAT stick edits its label alone and sets it through UDisks2; a refusal
 /// raises a box in words. Rename is greyed on the system's own drive, which F2 says, and on a
-/// drive UDisks2 has no tools for. A stick swapped while the box is up keeps its label.
+/// drive UDisks2 has no tools for. The box opens on the whole label, stops at the file system's
+/// longest, and a longer name is refused before UDisks2 is asked. A stick swapped while the box
+/// is up keeps its label.
 #[test]
 fn rename_sets_a_drives_label_through_udisks() {
     use reprisefs::udisks::{Snapshot, Udisks, Volume};
@@ -808,6 +810,7 @@ fn rename_sets_a_drives_label_through_udisks() {
         return;
     };
     const STICK: &str = "/org/freedesktop/UDisks2/block_devices/sdz1";
+    const LONG: &str = "Backups of the family photo library";
     let labels = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let (_service, client) = zbus::block_on(async {
         let service = zbus::connection::Builder::address(bus.1.as_str())
@@ -835,11 +838,13 @@ fn rename_sets_a_drives_label_through_udisks() {
         space_drive("/", "/dev/sda2", false),
         space_drive("/run/media/u/DATA", "/dev/sdy1", true),
         space_drive("/run/media/u/STICK", "/dev/sdz1", true),
+        space_drive("/run/media/u/BACKUP", "/dev/sdx1", true),
     ];
     let volume = |path: &str, device: &str, mount: &str, fs: &str, label: &str| Volume {
         path: path.into(),
         device: device.into(),
-        label: Some(label.into()),
+        label: Some(label.chars().take(32).collect()),
+        full_label: label.into(),
         fs_type: fs.into(),
         uuid: format!("uuid-{label}"),
         filesystem: true,
@@ -858,8 +863,15 @@ fn rename_sets_a_drives_label_through_udisks() {
                 "DATA",
             ),
             stick.clone(),
+            volume(
+                "/block/sdx1",
+                "/dev/sdx1",
+                "/run/media/u/BACKUP",
+                "btrfs",
+                LONG,
+            ),
         ],
-        filesystems: vec!["vfat".into(), "ext4".into()],
+        filesystems: vec!["vfat".into(), "ext4".into(), "btrfs".into()],
         ..Default::default()
     };
     ex.go(Place::Computer, &mut ctx);
@@ -886,6 +898,14 @@ fn rename_sets_a_drives_label_through_udisks() {
         ex.sv.edit.is_none() && ex.dialog().is_none(),
         "F2 does nothing"
     );
+
+    ex.sv
+        .selection
+        .set_only(Some(row(&ex, "/run/media/u/BACKUP")));
+    ex.begin_rename(&mut ctx);
+    let (_, edit) = ex.sv.edit.as_ref().expect("the rename box");
+    assert_eq!(edit.text, LONG, "the label whole, past the 32 shown");
+    ex.sv.edit = None;
 
     let rename = |ex: &mut Explorer, ctx: &mut repriseapp::Ctx, to: &str| {
         let at = row(ex, "/run/media/u/STICK");
@@ -918,6 +938,17 @@ fn rename_sets_a_drives_label_through_udisks() {
         box_text(&mut ex, &mut ctx),
         "A drive's name cannot start with a hyphen (-)."
     );
+
+    rename(&mut ex, &mut ctx, "HOLIDAY 2026");
+    assert_eq!(
+        box_text(&mut ex, &mut ctx),
+        "The name is too long for this drive (at most 11 characters)."
+    );
+    ex.begin_rename(&mut ctx);
+    let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+    edit.key(reprisekit::textedit::EditKey::Insert("HOLIDAY 2026".into()));
+    assert_eq!(edit.text, "HOLIDAY 202", "a FAT label holds 11 bytes");
+    ex.sv.edit = None;
 
     ex.begin_rename(&mut ctx);
     let swapped = Volume {

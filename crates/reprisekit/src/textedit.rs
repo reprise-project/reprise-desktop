@@ -9,6 +9,32 @@ const SECRET_CAPACITY: usize = 256;
 /// Most text a single-line edit holds, in bytes; a paste is cut on a char boundary to fit.
 pub const MAX_LEN: usize = 32_767;
 
+/// A field's cap below [`MAX_LEN`], in the unit its text is stored in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Limit {
+    Bytes(usize),
+    Utf16(usize),
+}
+
+impl Limit {
+    pub fn count(self, text: &str) -> usize {
+        match self {
+            Limit::Bytes(_) => text.len(),
+            Limit::Utf16(_) => text.encode_utf16().count(),
+        }
+    }
+
+    pub fn max(self) -> usize {
+        match self {
+            Limit::Bytes(n) | Limit::Utf16(n) => n,
+        }
+    }
+
+    pub fn fits(self, text: &str) -> bool {
+        self.count(text) <= self.max()
+    }
+}
+
 /// Text with a caret and a selection anchor, byte offsets on char boundaries; `caret == anchor` means nothing selected. A `secret` edit holds a password: no undo snapshot, no buffer freed without zeroizing, zeroized on drop, `Debug` redacted. A `read_only` edit refuses every key that would change its text; the caret, the selection and Copy work as ever.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct TextEdit {
@@ -19,8 +45,7 @@ pub struct TextEdit {
     secret: bool,
     read_only: bool,
     cue: String,
-    /// A cap below [`MAX_LEN`], in bytes.
-    limit: Option<usize>,
+    limit: Option<Limit>,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -666,13 +691,36 @@ impl TextEdit {
         }
     }
 
-    /// Typing and pastes stop at `bytes`, on a char boundary.
-    pub fn set_limit(&mut self, bytes: usize) {
-        self.limit = Some(bytes.min(MAX_LEN));
+    /// Typing and pastes stop at `limit` (and at [`MAX_LEN`] bytes), on a char boundary.
+    pub fn set_limit(&mut self, limit: Limit) {
+        self.limit = Some(limit);
     }
 
+    /// The most bytes the field holds: a UTF-16 unit is at most three bytes.
     fn max_len(&self) -> usize {
-        self.limit.unwrap_or(MAX_LEN)
+        match self.limit {
+            None => MAX_LEN,
+            Some(Limit::Bytes(n)) => n.min(MAX_LEN),
+            Some(Limit::Utf16(n)) => n.saturating_mul(3).min(MAX_LEN),
+        }
+    }
+
+    /// How many bytes of `s` fit in place of `sel` under the caps.
+    fn room_for(&self, s: &str, sel: std::ops::Range<usize>) -> usize {
+        let kept = self.text.len() - sel.len();
+        let cut = s.floor_char_boundary(self.max_len().saturating_sub(kept));
+        let Some(limit @ Limit::Utf16(n)) = self.limit else {
+            return cut;
+        };
+        let used = limit.count(&self.text[..sel.start]) + limit.count(&self.text[sel.end..]);
+        let mut room = n.saturating_sub(used);
+        for (i, c) in s[..cut].char_indices() {
+            let Some(left) = room.checked_sub(c.len_utf16()) else {
+                return i;
+            };
+            room = left;
+        }
+        cut
     }
 
     pub fn is_secret(&self) -> bool {
@@ -797,8 +845,7 @@ impl TextEdit {
         match key {
             EditKey::Insert(mut s) => {
                 let sel = self.selection();
-                let room = self.max_len().saturating_sub(self.text.len() - sel.len());
-                s.truncate(s.floor_char_boundary(room));
+                s.truncate(self.room_for(&s, sel.clone()));
                 if !s.is_empty() || !sel.is_empty() {
                     // A paste or replacing insert is its own undo step, but typed chars run together with the typing after them.
                     let mut chars = s.chars();
@@ -1668,6 +1715,29 @@ mod tests {
         assert_eq!(pasted("a\nb"), "a");
         assert_eq!(pasted("a\rb"), "a");
         assert_eq!(pasted("a\tb\x1b"), "ab");
+    }
+
+    #[test]
+    fn typing_and_pastes_stop_at_a_byte_or_utf16_limit() {
+        let mut t = e("");
+        t.set_limit(Limit::Bytes(4));
+        assert!(t.paste("aéb", &[]));
+        assert_eq!(t.text, "aéb", "four bytes");
+        assert!(!t.key(EditKey::Insert("c".into())).changed());
+
+        let mut t = e("");
+        t.set_limit(Limit::Utf16(3));
+        assert!(t.paste("éé😀", &[]));
+        assert_eq!(t.text, "éé", "the emoji takes two units, one is left");
+        assert!(t.key(EditKey::Insert("ü".into())).edited());
+        assert_eq!(t.text, "ééü");
+        assert!(!t.paste("x", &[]));
+        t.key(EditKey::Left {
+            select: true,
+            word: false,
+        });
+        assert!(t.paste("xy", &[]), "a selected unit makes room for one");
+        assert_eq!(t.text, "ééx");
     }
 
     #[test]
