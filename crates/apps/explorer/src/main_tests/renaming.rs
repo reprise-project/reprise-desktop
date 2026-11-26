@@ -60,6 +60,24 @@ fn a_rename_whose_relist_lands_late_keeps_the_renamed_item_selected() {
 }
 
 #[test]
+fn a_resort_under_the_rename_box_keeps_it_on_its_item() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "1234").expect("write");
+    std::fs::write(dir.path().join("b.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let a = dir.path().join("a.txt");
+    ex.sv.selection.set_only(ex.index_of(&a));
+    ex.run(Command::Rename, &mut ctx);
+
+    ex.sv.sort = Some((1, true));
+    ex.resort();
+    let (i, _) = ex.sv.edit.as_ref().expect("the box is up");
+    assert_eq!(Some(*i), ex.index_of(&a), "the box sits on a.txt");
+    assert_eq!(*i, 1, "by Size, a.txt moved below b.txt");
+}
+
+#[test]
 fn enter_on_a_rename_whose_write_is_out_takes_the_box_down_at_once() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("one.txt"), "1").expect("write");

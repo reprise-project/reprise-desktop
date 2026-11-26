@@ -1807,7 +1807,7 @@ impl Explorer {
 
     /// Re-order by the current sort column. Every mode shows the same order, so
     /// this runs on every listing and header click. A grouped listing sorts
-    /// within each group. The selection is kept by path.
+    /// within each group. The selection is kept by path, and a rename box moves with its item.
     pub fn resort(&mut self) {
         let Some((col, asc)) = self.sv.sort else {
             self.index_items();
@@ -1834,6 +1834,11 @@ impl Explorer {
             .iter()
             .map(|&i| entries[i].take().expect("each index once"))
             .collect();
+        if let Some((i, _)) = self.sv.edit.as_mut()
+            && let Some(j) = order.iter().position(|&o| o == *i)
+        {
+            *i = j;
+        }
         self.index_items();
         self.select_paths(&chosen);
     }
