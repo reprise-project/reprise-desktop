@@ -298,3 +298,28 @@ fn fnv(c: &Canvas) -> u64 {
             .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
     })
 }
+
+#[test]
+fn a_glass_tip_returns_the_rect_its_shadow_reaches() {
+    let text = tr();
+    let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
+    let mut c = Canvas::new(300, 120);
+    c.report_tip(crate::raster::ReportedTip {
+        text: "Model".into(),
+        at: (40, 40),
+    });
+    let r = draw_tip(&mut c, &text, &theme).expect("the host draws it");
+    let w = c.width as usize;
+    let (mut right, mut bottom) = (0, 0);
+    for (i, px) in c.pixels.iter().enumerate() {
+        if *px != 0 {
+            right = right.max(i % w + 1);
+            bottom = bottom.max(i / w + 1);
+        }
+    }
+    assert_eq!(
+        (r.right(), r.bottom()),
+        (right as i32, bottom as i32),
+        "the rect ends where the shadow ends"
+    );
+}
