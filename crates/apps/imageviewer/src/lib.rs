@@ -11,6 +11,7 @@ mod folder;
 mod input;
 mod load;
 mod menu;
+mod toolbar;
 mod window;
 
 use folder::{Folder, Step};
@@ -73,6 +74,9 @@ struct Viewer {
     msgs: Option<Receiver<Msg>>,
     timer: Option<Timer>,
     bar: Bar,
+    tools: toolbar::Tools,
+    /// The icons' scale, so a new one fetches them again.
+    icons_at: i32,
     /// The picture's context menu, each row the menu bar row it stands for.
     context: Option<Popup<(usize, usize)>>,
     status_bar: bool,
@@ -121,6 +125,8 @@ impl Viewer {
             msgs: None,
             timer: None,
             bar: Bar::new(menus()),
+            tools: toolbar::Tools::new(),
+            icons_at: 0,
             context: None,
             status_bar: true,
             full: false,
@@ -460,9 +466,13 @@ impl App for Viewer {
 }
 
 impl Extended for Viewer {
-    fn follow_scale(&mut self, win: WinId, scale: i32, _ctx: &mut Ctx) {
+    fn follow_scale(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) {
         if win == MAIN {
             self.scale = scale.max(1);
+            if self.icons_at != self.scale {
+                self.icons_at = self.scale;
+                self.build_toolbar(ctx);
+            }
         }
     }
 

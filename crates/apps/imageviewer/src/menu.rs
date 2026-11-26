@@ -210,5 +210,6 @@ impl Viewer {
                 *enabled = on;
             }
         }
+        self.sync_toolbar();
     }
 }

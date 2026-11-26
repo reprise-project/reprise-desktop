@@ -152,15 +152,15 @@ fn zoom_keys_step_fit_and_show_actual_size() {
     let mut ctx = test_ctx();
     let lay = v.view_layout(&ctx);
     let fitted = lay.scale;
-    assert!(fitted < 0.25 && fitted > 0.15, "{fitted}");
+    assert!(fitted < 0.2 && fitted > 0.15, "{fitted}");
     assert_eq!(
         v.status_texts(&ctx)[4],
         format!("{}%", (fitted * 100.0).round())
     );
     press(&mut v, u32::from(b'+'), &mut ctx);
-    assert_eq!(v.view.zoom, Zoom::Scale(0.25));
-    press(&mut v, keysym::KP_SUBTRACT, &mut ctx);
     assert_eq!(v.view.zoom, Zoom::Scale(0.2));
+    press(&mut v, keysym::KP_SUBTRACT, &mut ctx);
+    assert_eq!(v.view.zoom, Zoom::Scale(0.15));
     ctrl(&mut v, u32::from(b'1'), &mut ctx);
     assert_eq!(v.view.zoom, Zoom::Scale(1.0));
     assert_eq!(v.status_texts(&ctx)[4], "100%");
@@ -178,7 +178,7 @@ fn ctrl_and_the_wheel_zoom_at_the_pointer() {
     v.event(MAIN, key(keysym::CONTROL_L, Mods::default()), &mut ctx);
     let wheel = |rows| Event::Pointer(PointerInput::Scroll { x: 50, y: 60, rows });
     v.event(MAIN, wheel(-3), &mut ctx);
-    assert_eq!(v.view.zoom, Zoom::Scale(0.25));
+    assert_eq!(v.view.zoom, Zoom::Scale(0.2));
     assert_eq!(name(&v), "big.bmp", "the wheel zooms instead of stepping");
     v.event(
         MAIN,
@@ -488,6 +488,201 @@ fn the_main_window_is_pinned_per_interface_and_scale() {
         }
     }
     let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/main_window.txt");
+    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+}
+
+/// Toolbar buttons by their place in the strip.
+const PREVIOUS: usize = 0;
+const NEXT: usize = 1;
+const ZOOM_IN: usize = 3;
+const ROTATE_CW: usize = 9;
+const SLIDESHOW: usize = 11;
+const DELETE_BUTTON: usize = 13;
+
+fn button_at(v: &Viewer, i: usize, ctx: &Ctx) -> (i32, i32) {
+    let r = v.chrome(ctx).expect("a toolbar").buttons[i];
+    (r.x + r.width / 2, r.y + r.height / 2)
+}
+
+fn motion(v: &mut Viewer, (x, y): (i32, i32), ctx: &mut Ctx) -> Reply {
+    v.event(MAIN, Event::Pointer(PointerInput::Motion { x, y }), ctx)
+}
+
+/// A left click on toolbar button `i`.
+fn click(v: &mut Viewer, i: usize, ctx: &mut Ctx) -> Reply {
+    let (x, y) = button_at(v, i, ctx);
+    let (button, mods) = (repriseapp::BTN_LEFT, Mods::default());
+    let down = PointerInput::Press {
+        x,
+        y,
+        button,
+        time: 0,
+        mods,
+    };
+    v.event(MAIN, Event::Pointer(down), ctx);
+    let up = PointerInput::Release { x, y, button, mods };
+    v.event(MAIN, Event::Pointer(up), ctx)
+}
+
+/// The viewer on `path` in a window whose toolbar has its icons.
+fn tooled(path: PathBuf, ctx: &mut Ctx) -> Viewer {
+    let mut v = opened(path);
+    v.follow_scale(MAIN, 1, ctx);
+    v
+}
+
+#[test]
+fn the_toolbar_buttons_run_their_menu_rows() {
+    let dir = folder(&[("a.bmp", 60, 20), ("b.bmp", 4, 4)]);
+    let mut ctx = test_ctx();
+    let mut v = tooled(dir.path().join("a.bmp"), &mut ctx);
+    click(&mut v, NEXT, &mut ctx);
+    assert_eq!(name(&v), "b.bmp");
+    click(&mut v, PREVIOUS, &mut ctx);
+    assert_eq!(name(&v), "a.bmp");
+    click(&mut v, ROTATE_CW, &mut ctx);
+    assert_eq!(v.view.turns, 1);
+    let lay = v.view_layout(&ctx);
+    let before = lay.scale;
+    click(&mut v, ZOOM_IN, &mut ctx);
+    assert!(v.view_layout(&ctx).scale > before, "Zoom In zooms in");
+    click(&mut v, DELETE_BUTTON, &mut ctx);
+    assert!(v.delete.up().is_some(), "Delete asks first");
+}
+
+#[test]
+fn a_press_dragged_off_its_button_runs_nothing() {
+    let dir = folder(&[("a.bmp", 4, 4), ("b.bmp", 4, 4)]);
+    let mut ctx = test_ctx();
+    let mut v = tooled(dir.path().join("a.bmp"), &mut ctx);
+    let (x, y) = button_at(&v, NEXT, &ctx);
+    let (button, mods) = (repriseapp::BTN_LEFT, Mods::default());
+    let down = PointerInput::Press {
+        x,
+        y,
+        button,
+        time: 0,
+        mods,
+    };
+    v.event(MAIN, Event::Pointer(down), &mut ctx);
+    assert_eq!(v.tools.bar.pressed, Some(NEXT));
+    let up = PointerInput::Release {
+        x: 160,
+        y: 150,
+        button,
+        mods,
+    };
+    v.event(MAIN, Event::Pointer(up), &mut ctx);
+    assert_eq!((name(&v), v.tools.bar.pressed), ("a.bmp".into(), None));
+}
+
+#[test]
+fn a_button_greys_with_its_row_and_takes_no_press() {
+    let dir = folder(&[("only.bmp", 4, 4)]);
+    let mut ctx = test_ctx();
+    let mut v = tooled(dir.path().join("only.bmp"), &mut ctx);
+    let enabled = |v: &Viewer, i: usize| match &v.tools.bar.items[i] {
+        reprisekit::controls::toolbar::Item::Button { enabled, .. } => *enabled,
+        _ => panic!("button {i} is a separator"),
+    };
+    assert!(!enabled(&v, PREVIOUS) && !enabled(&v, NEXT), "one picture");
+    assert!(enabled(&v, ZOOM_IN) && enabled(&v, SLIDESHOW));
+    let mut tree = Tree::new(reprisekit::access::node(
+        reprisekit::access::accesskit::Role::Window,
+        Rect::new(0, 0, 320, 240),
+    ));
+    v.access(MAIN, &mut tree, &ctx);
+    let button = reprisekit::access::accesskit::Role::Button;
+    assert!(tree.find(button, "Rotate Clockwise").is_some());
+    assert!(tree.find(button, "Next Picture").is_some());
+    let r = click(&mut v, NEXT, &mut ctx);
+    assert_eq!((name(&v), v.tools.bar.pressed), ("only.bmp".into(), None));
+    assert!(!r.quit);
+    v.event(MAIN, key(keysym::F11, Mods::default()), &mut ctx);
+    assert!(v.chrome(&ctx).is_none(), "full screen shows no toolbar");
+}
+
+#[test]
+fn a_rest_on_a_button_brings_up_its_name_and_key_and_a_key_takes_it_down() {
+    let dir = folder(&[("a.bmp", 4, 4), ("b.bmp", 4, 4)]);
+    let mut ctx = test_ctx();
+    let mut v = tooled(dir.path().join("a.bmp"), &mut ctx);
+    let at = button_at(&v, ZOOM_IN, &ctx);
+    let r = motion(&mut v, at, &mut ctx);
+    assert!(r.tick, "the rest ticks until the tip is due");
+    assert_eq!(v.tools.bar.hot, Some(ZOOM_IN));
+    assert!(v.event(MAIN, Event::Tick, &mut ctx).tick, "not due yet");
+    let rest = v.tools.rest.as_mut().unwrap();
+    rest.since -= Duration::from_secs(1);
+    assert!(v.event(MAIN, Event::Tick, &mut ctx).redraw);
+    assert!(v.tools.tip_up);
+    assert_eq!(v.tip_text(ZOOM_IN).as_deref(), Some("Zoom In (+)"));
+    assert_eq!(v.tip_text(SLIDESHOW).as_deref(), Some("Slide Show (F5)"));
+    let r = motion(&mut v, (at.0 + 1, at.1), &mut ctx);
+    assert!(
+        v.tools.tip_up && !r.tick,
+        "the tip stays while the pointer stays"
+    );
+    v.event(MAIN, key(keysym::CONTROL_L, Mods::default()), &mut ctx);
+    assert!(!v.tools.tip_up && v.tools.rest.is_none());
+}
+
+#[test]
+fn the_tip_comes_up_under_the_pointer_at_scale_2() {
+    let dir = folder(&[("a.bmp", 4, 4), ("b.bmp", 4, 4)]);
+    let mut ctx = test_ctx();
+    let mut v = tooled(dir.path().join("a.bmp"), &mut ctx);
+    let at = button_at(&v, ZOOM_IN, &ctx);
+    motion(&mut v, at, &mut ctx);
+    let draw = |v: &mut Viewer, ctx: &mut Ctx| {
+        let mut c = Canvas::with_scale(320, 240, 2);
+        ctx.at_scale(2, |ctx| v.draw(MAIN, &mut c, ctx));
+        c
+    };
+    let bare = draw(&mut v, &mut ctx);
+    v.tools.tip_up = true;
+    let tipped = draw(&mut v, &mut ctx);
+    let w = bare.device_size().0 as usize;
+    let changed: Vec<(usize, usize)> = (bare.pixels.iter().zip(&tipped.pixels))
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .map(|(i, _)| (i % w, i / w))
+        .collect();
+    let left = changed.iter().map(|p| p.0).min().expect("the tip drew");
+    let top = changed.iter().map(|p| p.1).min().unwrap();
+    let below = reprisekit::controls::tooltip::INFO_BELOW_POINTER;
+    assert_eq!(
+        (left as i32, top as i32),
+        ((at.0 - 1) * 2, (at.1 + below) * 2),
+        "the tip's corner is under the pointer in device px"
+    );
+}
+
+#[test]
+fn the_toolbar_is_pinned_per_interface_and_scale() {
+    reprisekit::pins::fonts();
+    let dir = folder(&[("only.bmp", 200, 120)]);
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for s in [1, 2] {
+            let mut ctx = test_ctx();
+            ctx.theme = reprisekit::interfaces::theme_for(i);
+            let mut v = tooled(dir.path().join("only.bmp"), &mut ctx);
+            let icon = reprisekit::art::icons::VIEWS_24.canvas_at(s);
+            for item in &mut v.tools.bar.items {
+                if let reprisekit::controls::toolbar::Item::Button { icon: slot, .. } = item {
+                    *slot = Some(icon.clone());
+                }
+            }
+            v.tools.bar.hot = Some(ZOOM_IN);
+            let mut c = Canvas::with_scale(320, 240, s);
+            ctx.at_scale(s, |ctx| v.draw(MAIN, &mut c, ctx));
+            let ch = ctx.at_scale(s, |ctx| v.chrome(ctx)).unwrap();
+            let band = Rect::new(0, 0, 320, ch.bottom).scaled(s);
+            got.push((format!("{i:?}@{s}"), fnv(&c.copy_rect(band))));
+        }
+    }
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/toolbar.txt");
     reprisekit::pins::check_file(std::path::Path::new(file), &got);
 }
 
