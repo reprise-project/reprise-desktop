@@ -1,8 +1,9 @@
-//! A raster editor's tool box and colour box in Classic, Blue and Glass, written to
+//! A raster editor's tool box, colour box and sizing handles in Classic, Blue and Glass, written to
 //! `target/reprisekit-gallery-paint@<scale>.png`.
 
 use crate::interfaces::{self, theme_for};
 use reprisekit::controls::palette::{self, Palette};
+use reprisekit::controls::sizehandles;
 use reprisekit::controls::toolbox::{self, Choice, Tool, ToolBox};
 use reprisekit::interface::Interface;
 use reprisekit::raster::{Canvas, Rect};
@@ -11,6 +12,7 @@ use reprisekit::theme::{Color, Theme};
 
 const GAP: i32 = 12;
 const STRIP_W: i32 = 260;
+const VIEW_H: i32 = 80;
 
 /// A 16x16 white mask painted at `d` from `cover`, which takes a device pixel and `d`.
 fn mask(d: i32, cover: impl Fn(f64, f64, f64) -> f64) -> Canvas {
@@ -129,7 +131,8 @@ fn colours() -> Palette {
     }
 }
 
-/// Per look: the tool box with Brush current and Line hot, and the colour box beside it.
+/// Per look: the tool box with Brush current and Line hot, the colour box beside it, and below
+/// that a sheet with its sizing handles and the outline of a drag that grows it.
 pub fn render(scale: i32) -> Canvas {
     let looks: [Theme; 3] = [
         interfaces::classic(),
@@ -150,7 +153,7 @@ pub fn render(scale: i32) -> Canvas {
     let cell_w = toolbox::WIDTH + GAP + STRIP_W;
     let mut c = Canvas::new(
         ((GAP + looks.len() as i32 * (cell_w + GAP)) * scale) as u32,
-        ((box_h + 2 * GAP) * scale) as u32,
+        ((box_h.max(palette::HEIGHT + GAP + VIEW_H) + 2 * GAP) * scale) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(0x60, 0x60, 0x60));
     for (i, theme) in looks.iter().enumerate() {
@@ -162,6 +165,13 @@ pub fn render(scale: i32) -> Canvas {
         let strip = Rect::new(x + toolbox::WIDTH + GAP, GAP, STRIP_W, palette::HEIGHT);
         let lay = palette::layout(&pal, strip);
         palette::draw(&mut c, &p, &pal, &lay);
+        let view = Rect::new(strip.x, strip.bottom() + GAP, STRIP_W, VIEW_H);
+        c.fill_rect(view.scaled(scale), theme.colors.button_shadow);
+        let sheet = Rect::new(view.x + 4, view.y + 4, 120, 50);
+        c.fill_rect(sheet.scaled(scale), Color::rgb(0xFF, 0xFF, 0xFF));
+        sizehandles::draw(&mut c, &p, &sizehandles::layout(sheet));
+        let grown = Rect::new(sheet.x, sheet.y, 160, 66);
+        sizehandles::draw_outline(&mut c, &p, grown);
     }
     c
 }

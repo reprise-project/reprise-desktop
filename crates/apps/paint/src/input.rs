@@ -117,6 +117,7 @@ impl Paint {
             return r;
         }
         match k.sym {
+            keysym::ESCAPE if self.sizing.take().is_some() => Reply::redraw(),
             keysym::ESCAPE => {
                 self.doc.cancel();
                 Reply::redraw()
@@ -266,12 +267,27 @@ impl Paint {
     }
 
     /// A modal child covers the window, which will not see the release: the drag on the picture
-    /// ends where the pointer last took it, and the bars let go.
+    /// ends where the pointer last took it, the bars let go and a sizing drag is dropped.
     pub(crate) fn let_go(&mut self) {
         self.release_bars();
+        self.sizing = None;
         if let Some((_, at)) = self.held {
             let m = self.mods(repriseapp::Mods::default());
             self.release_held(at, m);
+        }
+    }
+
+    /// Gives the picture the size the handle's drag reached, as one step Undo takes back; the
+    /// new area takes the background colour.
+    fn finish_sizing(&mut self, ctx: &Ctx) {
+        let Some(d) = self.sizing.take() else {
+            return;
+        };
+        if d.resized() {
+            let (w, h) = d.size;
+            self.doc
+                .replace(self.doc.img.with_size(w, h, self.doc.secondary));
+            self.hold_scroll(ctx);
         }
     }
 
@@ -358,8 +374,17 @@ impl Paint {
                     }
                     return Reply::none();
                 }
-                if !l.view.contains(x, y) || self.held.is_some() {
+                if !l.view.contains(x, y) || self.held.is_some() || self.sizing.is_some() {
                     return Reply::none();
+                }
+                if button == BTN_LEFT
+                    && let Some(h) = sizehandles::hit(&self.handles(&l), x, y)
+                {
+                    self.commit_text();
+                    self.doc.finish();
+                    let size = (self.doc.img.w, self.doc.img.h);
+                    self.sizing = Some(sizehandles::Drag::new(h, (x, y), size));
+                    return Reply::redraw();
                 }
                 let at = self.to_picture(&l, x, y);
                 if self.doc.text_box.is_some() {
@@ -393,6 +418,10 @@ impl Paint {
                 x, y, button, mods, ..
             } => {
                 let bars = self.release_bars();
+                if button == BTN_LEFT && self.sizing.is_some() {
+                    self.finish_sizing(ctx);
+                    return Reply::redraw();
+                }
                 if self.held.map(|(b, _)| b) != Some(button) {
                     return if bars { Reply::redraw() } else { Reply::none() };
                 }
@@ -406,6 +435,14 @@ impl Paint {
                     return Reply::redraw();
                 }
                 let title = self.bar.hover(x, y, &lay);
+                if let Some(d) = &mut self.sizing {
+                    let changed = d.motion((x, y), self.zoom, dialogs::MAX_SIDE);
+                    return if changed {
+                        Reply::redraw()
+                    } else {
+                        Reply::none()
+                    };
+                }
                 if self.hscroll.holding()
                     && let Some(b) = l.hbar
                 {

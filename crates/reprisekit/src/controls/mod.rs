@@ -85,6 +85,7 @@ pub mod scrollview;
 pub mod searchfield;
 mod shellgrid;
 pub mod shellview;
+pub mod sizehandles;
 pub mod snapassist;
 pub mod snapbar;
 pub mod snappicker;

@@ -4,6 +4,7 @@ use crate::view::Lay;
 use repriseapp::filedlg::Driven;
 use repriseapp::{BTN_LEFT, BTN_RIGHT, KeyInput, Mods, PointerInput};
 use reprisekit::controls::palette;
+use reprisekit::controls::sizehandles;
 use reprisekit::controls::toolbox::{self, Hit};
 use reprisekit::interface::Interface;
 use std::path::Path;
@@ -360,6 +361,79 @@ fn attributes_size_the_canvas_and_refuse_a_bad_number() {
     p.event(DIALOG, key(0xff0d, false), &mut ctx);
     assert!(p.dialog.is_none());
     assert_eq!((p.doc.img.w, p.doc.img.h), (64, 32));
+}
+
+/// The window point in the middle of `h`, the picture's sizing handle.
+fn handle_point(p: &Paint, ctx: &Ctx, h: sizehandles::Handle) -> (i32, i32) {
+    let r = p.handles(&p.lay(ctx)).rect(h);
+    (r.x + r.width / 2, r.y + r.height / 2)
+}
+
+#[test]
+fn the_corner_handle_grows_the_picture_into_the_background_colour_and_undo_takes_it_back() {
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(40, 30, WHITE);
+    p.doc.img.set(0, 0, BLACK);
+    p.doc.img.set(39, 29, BLACK);
+    p.doc.secondary = 0xFFFF_0000;
+    let (x, y) = handle_point(&p, &ctx, sizehandles::Handle::Corner);
+    p.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    p.event(MAIN, motion(x + 20, y + 10), &mut ctx);
+    let l = p.lay(&ctx);
+    assert_eq!(p.status(&l, &ctx).unwrap().0.panels[2].text, "60x40");
+    assert_eq!(
+        (p.doc.img.w, p.doc.img.h),
+        (40, 30),
+        "the size waits for the release"
+    );
+    p.event(MAIN, release(x + 20, y + 10, BTN_LEFT), &mut ctx);
+    assert_eq!((p.doc.img.w, p.doc.img.h), (60, 40));
+    assert_eq!(
+        p.doc.img.get(0, 0),
+        Some(BLACK),
+        "the picture keeps its top-left"
+    );
+    assert_eq!(p.doc.img.get(39, 29), Some(BLACK));
+    assert_eq!(
+        p.doc.img.get(59, 39),
+        Some(0xFFFF_0000),
+        "new area is the background"
+    );
+    assert!(p.doc.dirty);
+    p.command(menu::title::EDIT, menu::row::UNDO, &ctx);
+    assert_eq!((p.doc.img.w, p.doc.img.h), (40, 30));
+    assert_eq!(p.doc.img.get(39, 29), Some(BLACK));
+}
+
+#[test]
+fn the_edge_handles_move_one_side_at_the_zoom_and_escape_drops_the_drag() {
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(40, 30, WHITE);
+    p.zoom = 2;
+    let (x, y) = handle_point(&p, &ctx, sizehandles::Handle::Right);
+    p.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    p.event(MAIN, motion(x - 20, y + 50), &mut ctx);
+    p.event(MAIN, release(x - 20, y + 50, BTN_LEFT), &mut ctx);
+    assert_eq!(
+        (p.doc.img.w, p.doc.img.h),
+        (30, 30),
+        "two window px a picture px"
+    );
+
+    let (x, y) = handle_point(&p, &ctx, sizehandles::Handle::Bottom);
+    p.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    p.event(MAIN, motion(x + 50, y + 10), &mut ctx);
+    p.event(MAIN, key(0xff1b, false), &mut ctx);
+    assert!(p.sizing.is_none());
+    p.event(MAIN, release(x + 50, y + 10, BTN_LEFT), &mut ctx);
+    assert_eq!(
+        (p.doc.img.w, p.doc.img.h),
+        (30, 30),
+        "Escape keeps the size"
+    );
+    assert_eq!(p.doc.hist.depth(), 1, "only the first drag is a step");
 }
 
 #[test]
