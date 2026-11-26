@@ -159,7 +159,8 @@ impl Made {
     /// Take back, blocking, a trigger an attempt other than `but` made and left; false when it
     /// stays.
     pub fn take_back(&self, bus: &dyn Bus, but: Option<u64>) -> bool {
-        left_behind(&mut self.lock(), bus, but)
+        let down = going_down(self, bus, |id| Some(id) != but);
+        left_behind(&mut self.lock(), bus, but, down)
     }
 
     /// Whether attempt `id`'s trigger stands, leaving it to stay as another program's would: nothing
@@ -179,23 +180,25 @@ impl Made {
     }
 }
 
-/// Whether a trigger an attempt made stays as the computer goes down: the SIGTERM a shutdown sends
-/// the session, or a `[power]` command it kills, must not take back the update it is to install.
-fn going_down(bus: &dyn Bus, id: u64) -> bool {
-    let down = bus.shutting_down();
-    if down {
-        log::info!("offline update: the computer is going down; attempt {id}'s trigger stays");
-    }
-    down
+/// Whether the computer is going down while `made` holds a trigger `of` picks, read off the lock:
+/// a shutdown's SIGTERM, or its kill of a `[power]` command, must not take back its update.
+fn going_down(made: &Made, bus: &dyn Bus, of: impl Fn(u64) -> bool) -> bool {
+    let held = made.lock().is_some_and(of);
+    held && bus.shutting_down()
 }
 
-/// [`Made::take_back`] with its lock held.
-fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>) -> bool {
+fn stays_down(id: u64) -> bool {
+    log::info!("offline update: the computer is going down; attempt {id}'s trigger stays");
+    false
+}
+
+/// [`Made::take_back`] with its lock held, `down` read before.
+fn left_behind(made: &mut Option<u64>, bus: &dyn Bus, but: Option<u64>, down: bool) -> bool {
     let Some(id) = made.take_if(|id| Some(*id) != but) else {
         return true;
     };
-    if going_down(bus, id) {
-        return false;
+    if down {
+        return stays_down(id);
     }
     match bus.cancel(false) {
         Ok(()) => {
@@ -273,8 +276,9 @@ fn install<F>(
     still: &dyn Fn() -> bool,
     power: impl FnOnce() -> Option<F>,
 ) -> Result<Option<F>, Held<F>> {
+    let down = going_down(made, bus, |n| n != id);
     let mut held = made.lock();
-    let left = !left_behind(&mut held, bus, Some(id));
+    let left = !left_behind(&mut held, bus, Some(id), down);
     if !still() {
         return Err(Held::Dismissed);
     }
@@ -327,12 +331,13 @@ fn stays_if<F>(left: bool, failed: Option<F>) -> Result<Option<F>, Held<F>> {
 
 /// Take back attempt `id`'s trigger unless something already did; false when it stays.
 fn take_own(made: &Made, bus: &dyn Bus, id: u64) -> bool {
+    let down = going_down(made, bus, |n| n == id);
     let mut held = made.lock();
     if held.take_if(|n| *n == id).is_none() {
         return true;
     }
-    if going_down(bus, id) {
-        return false;
+    if down {
+        return stays_down(id);
     }
     match bus.cancel(false) {
         Ok(()) => {

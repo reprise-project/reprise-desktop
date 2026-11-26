@@ -320,14 +320,15 @@ pub(crate) async fn session_path(login1: &Proxy<'_>) -> zbus::Result<OwnedObject
     reply.body().deserialize()
 }
 
-/// Whether a power off or reboot is under way, blocking: logind's `PreparingForShutdown`, or
-/// systemd's queued `shutdown.target`, which a `[power]` command going around logind starts too.
-/// False when neither answers.
+/// Whether a power off or reboot is under way, blocking: logind prepares one, or systemd queued
+/// `shutdown.target` (a `[power]` command going around logind). Both are read at once.
 #[cfg(not(test))]
 pub fn shutting_down() -> bool {
     match reprisebus::system() {
         Ok(conn) => {
-            reprisebus::wait(async { preparing(&conn).await || shutdown_queued(&conn).await })
+            let both = futures_lite::future::zip(preparing(&conn), shutdown_queued(&conn));
+            let (preparing, queued) = reprisebus::wait(both);
+            preparing || queued
         }
         Err(e) => {
             log::warn!("power: shutting down: {e}");
