@@ -111,12 +111,14 @@ pub struct Shrunk {
     pub to: (i32, i32),
 }
 
-/// A frame origin an output change took off the outputs (`from`) and the one the window was
-/// rescued to (`to`); it goes back to `from` once that is on again, unless it left `to` since.
+/// A frame origin an output change moved the window from (`from`) and the one it was put at
+/// (`to`); it goes back to `from` once that is on again, unless it left `to` since. One a shrink
+/// nudged inside, not rescued, keeps the xdg bounds it had before (`room`) and waits for them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rescued {
     pub from: (i32, i32),
     pub to: (i32, i32),
+    pub room: Option<(i32, i32)>,
 }
 
 /// The size a window of `size` is asked for when its bounds go from `was` to `now`: one still at

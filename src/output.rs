@@ -930,6 +930,7 @@ impl State {
                 win.rescued = Some(Rescued {
                     from,
                     to: (win.x, win.y),
+                    room: None,
                 });
             }
         }
@@ -941,6 +942,9 @@ impl State {
             let Some(k) = win.rescued else { continue };
             if (win.x, win.y) != k.to || win.maximized || win.fullscreen {
                 win.rescued = None;
+                continue;
+            }
+            if k.room.is_some() {
                 continue;
             }
             let r = win.frame_rect();
