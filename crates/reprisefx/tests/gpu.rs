@@ -9,7 +9,7 @@ use reprisefx::{
 };
 use reprisekit::flip::{self, Homography};
 use reprisekit::glass::tint::{self, Surface};
-use reprisekit::glass::{Material, Settings};
+use reprisekit::glass::{Material, Mode, Settings};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::texture::{TextureBuffer, TextureRenderElement};
@@ -220,7 +220,7 @@ fn near(got: [u8; 3], want: [f64; 3], within: f64) -> bool {
 
 #[test]
 fn the_glass_is_the_backdrop_through_the_cpu_lift() {
-    let Some(mut r) = rig(240, 80) else { return };
+    let Some(mut r) = rig(380, 80) else { return };
     let colour = |rgb: [u8; 3], intensity, material| Settings {
         color: reprisekit::theme::Color::rgb(rgb[0], rgb[1], rgb[2]),
         intensity,
@@ -237,6 +237,14 @@ fn the_glass_is_the_backdrop_through_the_cpu_lift() {
             Surface::Taskbar,
         ),
         (colour([11, 162, 0], 39, Material::Frosted), Surface::Active),
+        (
+            Settings {
+                mode: Mode::Dark,
+                ..plain(Material::Frosted)
+            },
+            Surface::Active,
+        ),
+        (plain(Material::Smoked), Surface::Inactive),
     ];
     let shapes: Vec<[Shape; 1]> = (0..cases.len() as i32)
         .map(|i| [Shape::rect(rect(10 + 60 * i, 10, 40, 60))])

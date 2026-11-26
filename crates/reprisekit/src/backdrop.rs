@@ -103,13 +103,49 @@ pub fn grow(r: Rect, by: i32) -> Rect {
 /// b' = b + gain·(colour·luma(b) - mean·b - (colour - mean)/2)
 /// ```
 ///
-/// clamped to 0..1. The chrome's one-alpha glass over `b'` shows its colour in step with the
-/// backdrop's brightness (`glass::tint::lift`). The compositor's glass shader runs the same sum.
+/// clamped to 0..1, then dimmed ([`Dim`]). The chrome's one-alpha glass over `b'` shows its colour in
+/// step with the backdrop's brightness (`glass::tint::lift`). The compositor's glass shader runs the
+/// same sum.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Lift {
     pub colour: [f32; 3],
     pub mean: f32,
     pub gain: f32,
+    pub dim: Dim,
+}
+
+/// How the lifted backdrop dims under white labels: past luma `knee` it keeps `keep` of each further
+/// step, its channels scaled alike so its hue holds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dim {
+    pub knee: f32,
+    pub keep: f32,
+}
+
+impl Dim {
+    pub const NONE: Dim = Dim {
+        knee: 1.0,
+        keep: 1.0,
+    };
+
+    pub fn over(&self, b: [f32; 3]) -> [f32; 3] {
+        let l = luma(b);
+        if l <= self.knee {
+            return b;
+        }
+        let k = (self.knee + (l - self.knee) * self.keep) / l;
+        b.map(|v| v * k)
+    }
+}
+
+impl Default for Dim {
+    fn default() -> Dim {
+        Dim::NONE
+    }
+}
+
+fn luma(b: [f32; 3]) -> f32 {
+    0.299 * b[0] + 0.587 * b[1] + 0.114 * b[2]
 }
 
 impl Lift {
@@ -117,15 +153,16 @@ impl Lift {
         colour: [0.0; 3],
         mean: 0.0,
         gain: 0.0,
+        dim: Dim::NONE,
     };
 
     pub fn over(&self, b: [f32; 3]) -> [f32; 3] {
-        let l = 0.299 * b[0] + 0.587 * b[1] + 0.114 * b[2];
-        std::array::from_fn(|i| {
+        let l = luma(b);
+        self.dim.over(std::array::from_fn(|i| {
             let c = self.colour[i];
             let d = c * l - self.mean * b[i] - (c - self.mean) * 0.5;
             (b[i] + self.gain * d).clamp(0.0, 1.0)
-        })
+        }))
     }
 
     /// An opaque `0xAARRGGBB` backdrop pixel, lifted and rounded.
@@ -140,7 +177,7 @@ impl Lift {
     /// Lifts the pixels of `c` that `art`, about to be laid at (`x`, `y`), covers with any alpha:
     /// the backdrop a CPU-drawn preview lays its glass art over. Both canvases at scale 1.
     pub fn under(&self, c: &mut Canvas, x: i32, y: i32, art: &Canvas) {
-        if self.gain == 0.0 {
+        if self.gain == 0.0 && self.dim == Dim::NONE {
             return;
         }
         let a = art.bounds();
@@ -158,6 +195,34 @@ impl Lift {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dim_keeps_dark_backdrops_and_hue_and_never_jumps() {
+        let dim = Dim {
+            knee: 0.4,
+            keep: 0.25,
+        };
+        let b = [0.2, 0.3, 0.5];
+        assert_eq!(dim.over(b), b, "under the knee");
+        assert_eq!(Dim::NONE.over([1.0; 3]), [1.0; 3], "no dim");
+        let white = dim.over([1.0; 3]);
+        assert!(white.iter().all(|v| (v - 0.55).abs() < 1e-6), "{white:?}");
+        let sky = dim.over([0.6, 0.8, 1.0]);
+        assert!(
+            (sky[0] / sky[2] - 0.6).abs() < 1e-6 && (sky[1] / sky[2] - 0.8).abs() < 1e-6,
+            "the same hue: {sky:?}"
+        );
+        let mut last = 0.0;
+        for i in 0..=1000 {
+            let g = i as f32 / 1000.0;
+            let l = luma(dim.over([g; 3]));
+            assert!(
+                l >= last && l - last <= 0.001 + 1e-6,
+                "grey {g}: {l} after {last}"
+            );
+            last = l;
+        }
+    }
 
     #[test]
     fn corner_radius_fits_the_glass_corner() {

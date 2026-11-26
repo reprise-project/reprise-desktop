@@ -502,7 +502,9 @@ fn key(
         local(*r).hash(&mut h);
     }
     lift.colour.map(f32::to_bits).hash(&mut h);
-    [lift.mean, lift.gain].map(f32::to_bits).hash(&mut h);
+    [lift.mean, lift.gain, lift.dim.knee, lift.dim.keep]
+        .map(f32::to_bits)
+        .hash(&mut h);
     (plan.factor, plan.sigma.to_bits(), plan.pairs.to_bits()).hash(&mut h);
     let s = f.settings;
     (
@@ -750,6 +752,7 @@ impl RenderElement<GlesRenderer> for GlassElement {
                 Uniform::new("radii", radii),
                 Uniform::new("colour", self.lift.colour),
                 Uniform::new("lift", [self.lift.mean, self.lift.gain]),
+                Uniform::new("dim", [self.lift.dim.knee, self.lift.dim.keep]),
                 Uniform::new("material", material),
                 Uniform::new(
                     "lens",

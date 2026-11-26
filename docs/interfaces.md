@@ -114,6 +114,10 @@ documents each key.
 - **Square** frames have square corners, a centred title and flat, separate
   caption buttons.
 
+Frosted and Molten glass under white text (the taskbar, and windows in dark
+mode) dims a bright wallpaper seen through it, so the text reads over any
+picture.
+
 The Appearance page of Reprise Settings sets all of these except `blur_rate`;
 `orb_glow` is on the Taskbar page and `notification_style` on the Notifications
 page.

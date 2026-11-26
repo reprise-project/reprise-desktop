@@ -22,7 +22,7 @@
 
 use super::art;
 use super::{Material, Settings, Swatch, bar};
-use crate::backdrop::Lift;
+use crate::backdrop::{Dim, Lift};
 use crate::theme::Color;
 
 /// How a glass colour splits between the colour itself, the colour lit by the backdrop's brightness
@@ -272,10 +272,18 @@ pub fn plain(s: &Settings, surface: Surface) -> (f64, [f64; 3]) {
 /// glass, `P + (1 - a)·B`, misses `afterglow·(C·luma(B) - mean(C)·B - (C - mean(C))/2)` of the
 /// formula: nothing over mid grey, more colour over light backdrops and less over dark, a grey
 /// glass's afterglow greying a coloured backdrop. The lift adds that, at the surface's colour scale, through what the plain glass lets pass.
+/// Pale glass under white labels then dims the lifted backdrop by [`LABEL_DIM`].
 pub fn lift(s: &Settings, surface: Surface) -> Lift {
+    if !s.transparency {
+        return Lift::NONE;
+    }
+    let dim = match pale_under_white(s, surface) {
+        true => LABEL_DIM,
+        false => Dim::NONE,
+    };
     let (c, [_, afterglow, _]) = material_glass(s);
     let pass = 1.0 - plain(s, surface).0 / 255.0;
-    if !s.transparency || afterglow == 0.0 || pass <= 0.0 {
+    if afterglow == 0.0 || pass <= 0.0 {
         return Lift::NONE;
     }
     let c = c.map(|v| v / 255.0);
@@ -283,7 +291,21 @@ pub fn lift(s: &Settings, surface: Surface) -> Lift {
         colour: c.map(|v| v as f32),
         mean: ((c[0] + c[1] + c[2]) / 3.0) as f32,
         gain: (surface.fit(s.material).colour.0 * afterglow / pass) as f32,
+        dim,
     }
+}
+
+/// How glass under white labels dims a light backdrop, so a white wallpaper shows through as a
+/// mid-tone the labels and their dark halo read over.
+pub const LABEL_DIM: Dim = Dim {
+    knee: 0.35,
+    keep: 0.2,
+};
+
+/// Whether `surface` lays white labels over glass that lets a bright backdrop through: the taskbar
+/// always and a frame in dark mode ([`super::caption_ink`]), but never Smoked, whose glass is dark.
+fn pale_under_white(s: &Settings, surface: Surface) -> bool {
+    s.material != Material::Smoked && (surface == Surface::Taskbar || s.mode == super::Mode::Dark)
 }
 
 /// Recolours art drawn in Sky at the default intensity to a glass colour and intensity on one surface,
@@ -596,11 +618,15 @@ mod tests {
     }
 
     /// `s`'s plain glass on `surface` over the backdrop `b` (0..1), in levels: as the art blends over the
-    /// lifted backdrop, and as it blends over `b` itself.
+    /// lifted backdrop (undimmed), and as it blends over `b` itself.
     fn lifted_and_linear(s: &Settings, surface: Surface, b: [f32; 3]) -> ([f64; 3], [f64; 3]) {
         let (a, p) = plain(s, surface);
         let over = |b: [f32; 3]| std::array::from_fn(|i| p[i] + (255.0 - a) * f64::from(b[i]));
-        (over(lift(s, surface).over(b)), over(b))
+        let lift = Lift {
+            dim: Dim::NONE,
+            ..lift(s, surface)
+        };
+        (over(lift.over(b)), over(b))
     }
 
     #[test]
@@ -688,6 +714,37 @@ mod tests {
             molten > 0.0 && molten < frosted,
             "Molten lifts less: {molten} {frosted}"
         );
+    }
+
+    #[test]
+    fn pale_glass_under_white_labels_dims_and_other_glass_does_not() {
+        use crate::glass::Mode;
+        let mode = |mode, material| Settings {
+            mode,
+            ..sky_in(material, 42)
+        };
+        for (s, surface, dims) in [
+            (mode(Mode::Light, Material::Frosted), Surface::Active, false),
+            (
+                mode(Mode::Light, Material::Molten),
+                Surface::Inactive,
+                false,
+            ),
+            (mode(Mode::Light, Material::Frosted), Surface::Taskbar, true),
+            (mode(Mode::Light, Material::Smoked), Surface::Active, false),
+            (mode(Mode::Dark, Material::Smoked), Surface::Taskbar, false),
+            (mode(Mode::Dark, Material::Frosted), Surface::Active, true),
+            (mode(Mode::Dark, Material::Molten), Surface::Inactive, true),
+            (mode(Mode::Dark, Material::Frosted), Surface::Taskbar, true),
+        ] {
+            let want = if dims { LABEL_DIM } else { Dim::NONE };
+            assert_eq!(lift(&s, surface).dim, want, "{s:?} {surface:?}");
+        }
+        let opaque = Settings {
+            transparency: false,
+            ..mode(Mode::Dark, Material::Frosted)
+        };
+        assert_eq!(lift(&opaque, Surface::Active), Lift::NONE, "opaque glass");
     }
 
     #[test]
