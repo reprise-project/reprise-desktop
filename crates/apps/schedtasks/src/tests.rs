@@ -118,6 +118,27 @@ fn cleanup() -> Task {
     }
 }
 
+/// A task New Task made.
+fn made() -> Task {
+    Task {
+        timer: "reprise-task-back-up.timer".into(),
+        service: "reprise-task-back-up.service".into(),
+        description: "Back up".into(),
+        file: "/home/u/.config/systemd/user/reprise-task-back-up.timer".into(),
+        ours: true,
+        ..backup()
+    }
+}
+
+fn key(sym: u32, text: Option<&str>) -> Event {
+    Event::Key(KeyInput {
+        sym,
+        utf8: text.map(String::from),
+        mods: Default::default(),
+        edit: text.map(|t| reprisekit::textedit::EditKey::Insert(t.into())),
+    })
+}
+
 fn enabled(app: &SchedTasks, id: &str) -> bool {
     match app.form.item(id).map(|i| &i.control) {
         Some(Control::Button { enabled, .. }) => *enabled,
@@ -378,6 +399,105 @@ fn view_output_shows_the_services_journal_read_only() {
 }
 
 #[test]
+fn new_task_sends_the_task_and_picks_it_once_listed() {
+    let mut w = window();
+    w.tell(Update::Tasks(Ok(vec![backup()])));
+    assert!(enabled(&w.app, NEW));
+    w.app.open_new();
+    let titles: Vec<String> = w.app.children().into_iter().map(|c| c.title).collect();
+    assert_eq!(titles, ["New Task"]);
+    let d = w.app.new_task.as_mut().unwrap();
+    d.form.show_edit_text(newtask::NAME, "Back up");
+    d.form.show_edit_text(newtask::PROGRAM, "/bin/sh");
+    w.app.event(NEW_TASK, key(keysym::RETURN, None), &mut ctx());
+    assert!(w.app.new_task.is_none(), "Enter is Create");
+    assert_eq!(
+        w.sent(),
+        [Cmd::Create {
+            task: units::NewTask {
+                name: "Back up".into(),
+                program: "/bin/sh".into(),
+                args: Vec::new(),
+                schedule: units::Schedule::Daily { at: (9, 0) },
+            },
+            taken: vec!["backup.timer".into()],
+        }]
+    );
+    w.tell(Update::Created("reprise-task-back-up.timer".into()));
+    w.tell(Update::Tasks(Ok(vec![backup(), made()])));
+    assert_eq!(
+        w.app.picked().map(|t| t.timer.as_str()),
+        Some("reprise-task-back-up.timer"),
+        "the new task is picked"
+    );
+}
+
+#[test]
+fn browse_covers_new_task() {
+    let mut w = window();
+    w.app.open_new();
+    let d = w.app.new_task.as_mut().unwrap();
+    let out = d.event(form::Event::Pressed(newtask::BROWSE));
+    assert_eq!(out, newtask::Outcome::Browse);
+    w.app
+        .event(NEW_TASK, Event::Pointer(PointerInput::Leave), &mut ctx());
+    let r = w
+        .app
+        .new_task
+        .as_ref()
+        .unwrap()
+        .form
+        .item(newtask::BROWSE)
+        .unwrap()
+        .rect;
+    let mut ctx = ctx();
+    for ev in [
+        PointerInput::Press {
+            x: r.x + 4,
+            y: r.y + 4,
+            button: BTN_LEFT,
+            time: 0,
+            mods: Default::default(),
+        },
+        PointerInput::Release {
+            x: r.x + 4,
+            y: r.y + 4,
+            button: BTN_LEFT,
+            mods: Default::default(),
+        },
+    ] {
+        w.app.event(NEW_TASK, Event::Pointer(ev), &mut ctx);
+    }
+    assert!(w.app.browse.is_some());
+    use repriseapp::Extended;
+    assert_eq!(w.app.parent(BROWSE), Some(NEW_TASK));
+    w.app.event(NEW_TASK, Event::CloseRequest, &mut ctx);
+    assert!(w.app.browse.is_none(), "Browse leaves with New Task");
+}
+
+#[test]
+fn delete_asks_first_and_only_for_a_task_new_task_made() {
+    let mut w = window();
+    w.tell(Update::Tasks(Ok(vec![backup(), made()])));
+    w.pick("backup.timer");
+    assert!(!enabled(&w.app, DELETE), "a timer New Task did not make");
+    w.app.act(Act::Delete);
+    assert!(w.app.asking.win().is_none());
+    w.pick("reprise-task-back-up.timer");
+    assert!(enabled(&w.app, DELETE));
+    w.press(DELETE);
+    let question = w.app.asking.win().expect("Delete asks");
+    assert_eq!(w.sent(), [], "nothing before the answer");
+    w.app.event(question, key(keysym::RETURN, None), &mut ctx());
+    assert_eq!(w.sent(), [], "Enter is Cancel");
+    w.press(DELETE);
+    let question = w.app.asking.win().unwrap();
+    w.app
+        .event(question, key('d' as u32, Some("d")), &mut ctx());
+    assert_eq!(w.sent(), [Cmd::Delete("reprise-task-back-up.timer".into())]);
+}
+
+#[test]
 fn a_refusal_is_told_in_a_box() {
     let mut w = window();
     w.tell(Update::Refused(
@@ -396,6 +516,7 @@ fn drawn() -> Vec<(String, Canvas)> {
     w.pick("backup.timer");
     w.app.act(Act::Properties);
     w.app.act(Act::Output);
+    w.app.new_task = Some(newtask::NewTaskBox::new(|| (2026, 11, 26, 10, 30), false));
     w.tell(Update::Output(
         "backup.service".into(),
         Ok("Nov 26 03:00:01 rsync[12]: sent 4 files\nNov 26 03:00:02 systemd[1]: Finished.".into()),
@@ -412,8 +533,13 @@ fn drawn() -> Vec<(String, Canvas)> {
             .draw_props(&mut c, &test_ctx(theme.clone(), props::CLIENT));
         out.push((format!("properties {i:?}"), c));
         let mut c = Canvas::new(output::CLIENT.0 as u32, output::CLIENT.1 as u32);
-        w.app.draw_output(&mut c, &test_ctx(theme, output::CLIENT));
+        w.app
+            .draw_output(&mut c, &test_ctx(theme.clone(), output::CLIENT));
         out.push((format!("output {i:?}"), c));
+        let mut c = Canvas::new(newtask::CLIENT.0 as u32, newtask::CLIENT.1 as u32);
+        w.app
+            .draw_new_task(&mut c, &test_ctx(theme, newtask::CLIENT));
+        out.push((format!("new task {i:?}"), c));
     }
     out
 }

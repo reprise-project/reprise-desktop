@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
-description = "Scheduled Tasks: the systemd user timers, run one now, turn one on or off, and see its schedule and command"
+description = "Scheduled Tasks: the systemd user timers, run or stop one, turn one on or off, see its schedule, command and output, and make or delete a task of its own"
 
 [lints]
 workspace = true
@@ -16,8 +16,12 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisefs = { path = "../../reprisefs" }
 reprisebus = { path = "../../reprisebus" }
+reprisexdg = { path = "../../reprisexdg" }
 zbus.workspace = true
 futures-util.workspace = true
 serde.workspace = true
 libc.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

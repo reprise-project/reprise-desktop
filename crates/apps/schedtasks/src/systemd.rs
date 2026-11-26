@@ -4,12 +4,13 @@
 //! the manager reloads. The window never waits on the bus.
 
 use crate::model::{self, Task};
+use crate::units::{self, NewTask};
 use futures_util::StreamExt;
 use repriseapp::Poster;
 use reprisebus::mutex::lock;
 use reprisebus::{Props, Signal, prop};
 use std::collections::{BTreeSet, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -39,6 +40,14 @@ pub enum Cmd {
     Stop(String),
     /// Read that unit's lines from the journal ([`crate::output::journal`]).
     Output(String),
+    /// Write `task`'s unit files ([`units::write`]), reload, and enable and start its timer.
+    /// `taken` are the timers shown, whose names the new one keeps clear of.
+    Create {
+        task: NewTask,
+        taken: Vec<String>,
+    },
+    /// Disable and stop a timer New Task wrote and its service, remove both files and reload.
+    Delete(String),
     /// Enable and start a timer (`on`), or disable and stop it. `file_state` is its
     /// `UnitFileState`: only an enabled or disabled file is changed, a static or transient timer
     /// is only started or stopped.
@@ -57,6 +66,8 @@ pub enum Update {
     Refused(Cmd, String),
     /// A unit's journal lines, or why they could not be read.
     Output(String, Result<String, String>),
+    /// New Task made this timer.
+    Created(String),
 }
 
 /// The window's end of the threads.
@@ -115,13 +126,22 @@ fn serve(rx: Receiver<Cmd>, post: Poster<Update>, shown: Arc<Mutex<HashSet<Strin
                 continue;
             }
         };
+        let dir = reprisebus::wait(unit_dir(&conn));
         for cmd in batch.iter().filter(|c| **c != Cmd::Refresh) {
-            if let Err(e) = reprisebus::wait(act(&conn, cmd)) {
+            let done = match cmd {
+                Cmd::Create { task, taken } => {
+                    reprisebus::wait(create(&conn, dir.as_deref(), task, taken))
+                        .map(|timer| post.post(Update::Created(timer)))
+                }
+                Cmd::Delete(timer) => reprisebus::wait(delete(&conn, dir.as_deref(), timer)),
+                cmd => reprisebus::wait(act(&conn, cmd)),
+            };
+            if let Err(e) = done {
                 log::warn!("{cmd:?}: {e}");
                 post.post(Update::Refused(cmd.clone(), told(&e)));
             }
         }
-        match reprisebus::wait(read(&conn, clocks())) {
+        match reprisebus::wait(read(&conn, clocks(), dir.as_deref())) {
             Ok((tasks, paths)) => {
                 *lock(&shown) = paths;
                 post.post(Update::Tasks(Ok(tasks)));
@@ -173,6 +193,24 @@ async fn load(conn: &Connection, name: &str) -> zbus::Result<OwnedObjectPath> {
     call(conn, "LoadUnit", &(name,)).await?.body().deserialize()
 }
 
+/// The folder New Task writes in: [`units::config_dir`] of the manager's own search path, which
+/// can differ from this program's `$XDG_CONFIG_HOME`.
+async fn unit_dir(conn: &Connection) -> Option<PathBuf> {
+    let reply = conn
+        .call_method(
+            Some(DEST),
+            PATH,
+            Some(PROPERTIES),
+            "Get",
+            &(MANAGER, "UnitPath"),
+        )
+        .await
+        .inspect_err(|e| log::info!("systemd UnitPath: {e}"))
+        .ok()?;
+    let search: zbus::OwnedVariant = reply.body().deserialize().ok()?;
+    units::config_dir(&Vec::<String>::try_from(search).ok()?)
+}
+
 /// A `ListUnitsByPatterns` row: name, description, load, active and sub state, followed unit,
 /// object path, job id, type and path.
 type Listed = (
@@ -210,15 +248,16 @@ async fn timer_names(conn: &Connection) -> zbus::Result<BTreeSet<String>> {
 }
 
 /// Every loaded timer, sorted by name, and the object paths of the timers and their units.
-/// `now` is [`clocks`]. A timer that does not read is left out.
+/// `now` is [`clocks`], `dir` [`unit_dir`]. A timer that does not read is left out.
 pub async fn read(
     conn: &Connection,
     now: (u64, u64),
+    dir: Option<&Path>,
 ) -> zbus::Result<(Vec<Task>, HashSet<String>)> {
     let mut tasks = Vec::new();
     let mut paths = HashSet::new();
     for name in timer_names(conn).await? {
-        match task(conn, &name, now).await {
+        match task(conn, &name, now, dir).await {
             Ok(Some((t, timer, service))) => {
                 tasks.push(t);
                 paths.insert(timer.to_string());
@@ -237,6 +276,7 @@ async fn task(
     conn: &Connection,
     name: &str,
     now: (u64, u64),
+    dir: Option<&Path>,
 ) -> zbus::Result<Option<(Task, OwnedObjectPath, OwnedObjectPath)>> {
     let text = |p: &Props, k: &str| prop::<String>(p, k).unwrap_or_default();
     let path = load(conn, name).await?;
@@ -258,7 +298,9 @@ async fn task(
     let time = |k: &str| prop::<u64>(&timer, k).unwrap_or(0);
     let calendar = prop::<Vec<(String, String, u64)>>(&timer, "TimersCalendar").unwrap_or_default();
     let monotonic = prop::<Vec<(String, u64, u64)>>(&timer, "TimersMonotonic").unwrap_or_default();
+    let file = text(&unit, "FragmentPath");
     let t = Task {
+        ours: dir.is_some_and(|d| units::ours(d, name, &file)),
         timer: name.to_string(),
         description: if loaded {
             text(&started, "Description")
@@ -289,7 +331,7 @@ async fn task(
         exit_code: prop(&exec, "ExecMainCode").unwrap_or(0),
         exit_status: prop(&exec, "ExecMainStatus").unwrap_or(0),
         command: command(&exec),
-        file: text(&unit, "FragmentPath"),
+        file,
     };
     Ok(Some((t, path, service_path)))
 }
@@ -314,7 +356,7 @@ fn command(exec: &Props) -> String {
 /// Runs `cmd` as `systemctl --user start`, `stop`, `enable --now` or `disable --now` would.
 pub async fn act(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
     match cmd {
-        Cmd::Refresh | Cmd::Output(_) => {}
+        Cmd::Refresh | Cmd::Output(_) | Cmd::Create { .. } | Cmd::Delete(_) => {}
         Cmd::Run(service) => {
             call(conn, "StartUnit", &(service, "replace")).await?;
         }
@@ -340,6 +382,75 @@ pub async fn act(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Writes `task` in `dir` ([`unit_dir`]), enables it, reloads and starts its timer, as
+/// `systemctl --user enable` and `daemon-reload` and `start` would; returns the timer. A step
+/// that fails after the files are written takes them away again.
+async fn create(
+    conn: &Connection,
+    dir: Option<&Path>,
+    task: &NewTask,
+    taken: &[String],
+) -> zbus::Result<String> {
+    let dir = dir.ok_or_else(no_folder)?;
+    let timer = units::write(dir, task, taken).map_err(|e| failed(&e.to_string()))?;
+    let units = [timer.as_str()];
+    let started = async {
+        call(conn, "EnableUnitFiles", &(&units[..], false, false)).await?;
+        call(conn, "Reload", &()).await?;
+        call(conn, "StartUnit", &(&timer, "replace")).await
+    };
+    let Err(e) = started.await else {
+        return Ok(timer);
+    };
+    let _ = call(conn, "DisableUnitFiles", &(&units[..], false)).await;
+    let removed = units::remove(dir, &timer);
+    let _ = call(conn, "Reload", &()).await;
+    match removed {
+        Ok(()) => Err(e),
+        Err(left) => Err(failed(&format!(
+            "{}; {timer} and its service stay in {}: {left}",
+            told(&e),
+            dir.display()
+        ))),
+    }
+}
+
+/// Disables and stops timer `timer` and stops its service, removes their files from `dir` and
+/// reloads, when the pair is ours ([`units::ours`]) by the manager's current `FragmentPath`;
+/// anything else is refused untouched. The service goes first, so a Delete that stops between
+/// the two can be done again.
+async fn delete(conn: &Connection, dir: Option<&Path>, timer: &str) -> zbus::Result<()> {
+    let dir = dir.ok_or_else(no_folder)?;
+    let not_ours = || failed("Scheduled Tasks did not make this task");
+    let stem = timer
+        .strip_suffix(".timer")
+        .filter(|s| units::is_our_stem(s));
+    let stem = stem.ok_or_else(not_ours)?;
+    let service = format!("{stem}.service");
+    let fragment = get_all(conn, &load(conn, timer).await?, UNIT).await?;
+    let fragment = prop::<String>(&fragment, "FragmentPath").unwrap_or_default();
+    if !units::ours(dir, timer, &fragment) {
+        return Err(not_ours());
+    }
+    call(conn, "DisableUnitFiles", &(&[timer][..], false)).await?;
+    call(conn, "StopUnit", &(timer, "replace")).await?;
+    call(conn, "StopUnit", &(&service, "replace")).await?;
+    units::remove(dir, timer).map_err(|e| failed(&e.to_string()))?;
+    call(conn, "Reload", &()).await?;
+    // A failed service stays loaded, with no file, until its failure is reset.
+    let _ = call(conn, "ResetFailedUnit", &(&service,)).await;
+    Ok(())
+}
+
+fn no_folder() -> zbus::Error {
+    failed("the user manager lists no folder for your own unit files")
+}
+
+/// An error of this program's own, read as `why` by [`told`].
+fn failed(why: &str) -> zbus::Error {
+    zbus::Error::FDO(Box::new(zbus::fdo::Error::Failed(why.into())))
 }
 
 /// Asks `tx` for a read on every change the manager signals, connecting again after the bus or

@@ -1,5 +1,6 @@
 //! reprise-schedtasks: the systemd user manager's timers with their schedule, next and last run
-//! and status; Run Now, Stop, Enable or Disable, Properties and View Output on the one picked.
+//! and status; Run Now, Stop, Enable or Disable, Properties and View Output on the one picked;
+//! New Task writes a timer of its own, and Delete removes one it wrote ([`units`]).
 //! docs/programs.md covers what the window does.
 
 #[cfg(test)]
@@ -8,23 +9,29 @@ reprisebus::test_session!();
 reprisekit::strings!("schedtasks");
 
 mod model;
+mod newtask;
 mod output;
 mod props;
 mod systemd;
+mod units;
 
 use model::Task;
+use repriseapp::asks::{self, Asks};
 use repriseapp::ctxmenu::{Popup, Step, item};
 use repriseapp::detailslist::{List, Press};
-use repriseapp::oneshot::{self, ErrorBox};
+use repriseapp::filedlg::{Driven, Host};
+use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, KeyInput, MAIN, PointerInput, Reply, WinId,
 };
 use reprisekit::access::{ROOT as ACCESS_ROOT, Tree};
 use reprisekit::classic::widgets::BUTTON_H;
+use reprisekit::controls::filedlg::{self, DlgMode, FileDlg};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::listview::{Column, Rows};
 use reprisekit::controls::menu::MenuItem;
+use reprisekit::controls::msgbox::Fields;
 use reprisekit::controls::propsheet;
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
@@ -44,14 +51,16 @@ const LIST_Y: i32 = 60;
 
 const PROPS: WinId = WinId::named("props");
 const OUTPUT: WinId = WinId::named("output");
+const NEW_TASK: WinId = WinId::named("new");
+const BROWSE: WinId = WinId::named("browse");
 
 const RUN: &str = "run";
 const STOP: &str = "stop";
 const TOGGLE: &str = "toggle";
 const PROPERTIES: &str = "properties";
 const VIEW_OUTPUT: &str = "output";
-/// New Task..., greyed: docs/programs.md says how to add a task.
 const NEW: &str = "new";
+const DELETE: &str = "delete";
 const STATUS: &str = "status";
 
 fn columns() -> [(String, i32); 5] {
@@ -101,7 +110,12 @@ enum Act {
     Toggle,
     Properties,
     Output,
+    Delete,
 }
+
+/// What a question box asks: whether to delete this timer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DeleteAsk(String);
 
 struct SchedTasks {
     bus: Option<Bus>,
@@ -114,6 +128,12 @@ struct SchedTasks {
     note: ErrorBox,
     props: Option<props::Props>,
     output: Option<output::Output>,
+    new_task: Option<newtask::NewTaskBox>,
+    browse: Option<FileDlg>,
+    browse_host: Host,
+    asking: Asks<DeleteAsk>,
+    /// The timer New Task just made, picked once the list shows it.
+    want_pick: Option<String>,
     big_icon: Option<Canvas>,
     is_12h: bool,
 }
@@ -128,6 +148,7 @@ fn buttons() -> Vec<Item> {
         (PROPERTIES, tr!("properties"), 85),
         (VIEW_OUTPUT, tr!("view-output"), 90),
         (NEW, tr!("new-task"), 85),
+        (DELETE, tr!("delete"), 75),
     ] {
         items.push(Item::button(
             id,
@@ -166,6 +187,11 @@ impl SchedTasks {
             note: ErrorBox::default(),
             props: None,
             output: None,
+            new_task: None,
+            browse: None,
+            browse_host: Host::default(),
+            asking: Asks::default(),
+            want_pick: None,
             big_icon: None,
             is_12h: reprisefs::locale::is_12h(),
         }
@@ -186,7 +212,15 @@ impl SchedTasks {
         let picked = self.picked().map(|t| t.timer.clone());
         self.tasks = tasks;
         self.unanswered = None;
-        let keep = picked.and_then(|p| self.tasks.iter().position(|t| t.timer == p));
+        let made = self
+            .want_pick
+            .as_ref()
+            .and_then(|w| self.tasks.iter().position(|t| t.timer == *w));
+        if made.is_some() {
+            self.want_pick = None;
+        }
+        let keep =
+            made.or_else(|| picked.and_then(|p| self.tasks.iter().position(|t| t.timer == p)));
         self.list.view.selection = Default::default();
         self.list.view.selection.set_only(keep);
         if let Some(p) = &mut self.props {
@@ -214,6 +248,9 @@ impl SchedTasks {
         self.form
             .set_enabled(STOP, picked.as_ref().is_some_and(Task::running));
         self.form.set_enabled(VIEW_OUTPUT, picked.is_some());
+        self.form.set_enabled(NEW, self.bus.is_some());
+        self.form
+            .set_enabled(DELETE, picked.as_ref().is_some_and(|t| t.ours));
         self.form
             .set_enabled(TOGGLE, picked.as_ref().is_some_and(Task::can_toggle));
         self.form.set_enabled(PROPERTIES, picked.is_some());
@@ -255,9 +292,35 @@ impl SchedTasks {
                 self.send(Cmd::Output(t.service));
                 return Reply::redraw_all();
             }
+            Act::Delete if t.ours => {
+                self.ask_delete(&t);
+                return Reply::redraw_all();
+            }
             _ => {}
         }
         Reply::redraw()
+    }
+
+    fn ask_delete(&mut self, t: &Task) {
+        let b = MsgBox::new(
+            tr!("delete-title"),
+            Fields {
+                text: tr!("delete-text", name = t.name(), unit = t.timer.as_str()),
+                icon: None,
+                buttons: vec![tr!("delete-yes"), tr!("delete-no")],
+                default: 1,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        );
+        self.asking.ask(b, DeleteAsk(t.timer.clone()));
+    }
+
+    fn open_new(&mut self) {
+        if self.new_task.is_none() {
+            self.new_task = Some(newtask::NewTaskBox::new(newtask::now, self.is_12h));
+        }
     }
 
     fn wake(&mut self) -> Reply {
@@ -272,6 +335,7 @@ impl SchedTasks {
                     self.unanswered = Some(why);
                     self.sync();
                 }
+                Update::Created(timer) => self.want_pick = Some(timer),
                 Update::Output(unit, read) => {
                     if let Some(o) = self.output.as_mut().filter(|o| o.service == unit) {
                         o.show(read);
@@ -287,6 +351,8 @@ impl SchedTasks {
                             tr!("refused-enable", unit = timer, why = why)
                         }
                         Cmd::Turn { timer, .. } => tr!("refused-disable", unit = timer, why = why),
+                        Cmd::Create { .. } => tr!("refused-create", why = why),
+                        Cmd::Delete(timer) => tr!("refused-delete", unit = timer, why = why),
                         Cmd::Refresh | Cmd::Output(_) => continue,
                     };
                     self.note.show(&tr!("name"), text, None);
@@ -310,6 +376,8 @@ impl SchedTasks {
             (item(&toggle, t.can_toggle()), Some(Act::Toggle)),
             (MenuItem::Separator, None),
             (item(&tr!("menu-output"), true), Some(Act::Output)),
+            (item(&tr!("menu-delete"), t.ours), Some(Act::Delete)),
+            (MenuItem::Separator, None),
             (item(&tr!("menu-properties"), true), Some(Act::Properties)),
         ];
         self.popup = Popup::open(rows, x, y, ctx, by_keyboard);
@@ -454,6 +522,11 @@ impl SchedTasks {
             Some(form::Event::Pressed(RUN)) => self.act(Act::Run),
             Some(form::Event::Pressed(STOP)) => self.act(Act::Stop),
             Some(form::Event::Pressed(VIEW_OUTPUT)) => self.act(Act::Output),
+            Some(form::Event::Pressed(DELETE)) => self.act(Act::Delete),
+            Some(form::Event::Pressed(NEW)) => {
+                self.open_new();
+                Reply::redraw_all()
+            }
             Some(form::Event::Pressed(TOGGLE)) => self.act(Act::Toggle),
             Some(form::Event::Pressed(PROPERTIES)) => self.act(Act::Properties),
             Some(form::Event::None) | None if !lit => Reply::none(),
@@ -481,6 +554,83 @@ impl SchedTasks {
             self.props = None;
         }
         Reply::redraw_all()
+    }
+
+    fn new_task_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+        let Some(d) = self.new_task.as_mut() else {
+            return Reply::none();
+        };
+        let out = match ev {
+            Event::CloseRequest => newtask::Outcome::Cancel,
+            Event::Blink => {
+                d.form.blink(ctx.caret_on);
+                return Reply::redraw();
+            }
+            ev => match repriseapp::keys::form_input(&mut d.form, &ev, ctx) {
+                Some(e) => d.event(e),
+                None => return Reply::none(),
+            },
+        };
+        match out {
+            newtask::Outcome::None => Reply::none(),
+            newtask::Outcome::Redraw => Reply::redraw(),
+            newtask::Outcome::Browse => {
+                let fields = filedlg::Fields {
+                    title: tr!("browse-title"),
+                    accept_label: tr!("browse-open"),
+                    mode: DlgMode::Open,
+                    multiple: false,
+                    filters: vec![tr!("browse-all")],
+                };
+                let dir = d.browse_dir();
+                self.browse = Some(self.browse_host.open_last(&dir, fields, ctx.forms().text));
+                Reply::redraw_all()
+            }
+            newtask::Outcome::Create(task) => {
+                let taken = self.tasks.iter().map(|t| t.timer.clone()).collect();
+                self.send(Cmd::Create { task, taken });
+                self.new_task = None;
+                self.browse = None;
+                Reply::redraw_all()
+            }
+            newtask::Outcome::Cancel => {
+                self.new_task = None;
+                self.browse = None;
+                Reply::redraw_all()
+            }
+        }
+    }
+
+    fn browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        let Some(d) = &mut self.browse else {
+            return Reply::none();
+        };
+        let (text, forms) = (ctx.text.clone(), ctx.forms());
+        let picked = match self.browse_host.drive(d, &ev, &text, &forms, ctx) {
+            Driven::Reply(r) => return *r,
+            Driven::Cancelled => None,
+            Driven::Picked(path) => Some(path),
+        };
+        if let (Some(path), Some(n)) = (picked, self.new_task.as_mut()) {
+            n.browsed(&path);
+        }
+        self.browse = None;
+        Reply::redraw_all()
+    }
+
+    fn question_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
+        let forms = ctx.forms();
+        match self.asking.event(win, &ev, &ctx.text, &forms) {
+            asks::Answer::None => Reply::none(),
+            asks::Answer::Redraw => Reply::redraw(),
+            asks::Answer::Closed(DeleteAsk(timer), Some(0)) => {
+                if self.tasks.iter().any(|t| t.timer == timer && t.ours) {
+                    self.send(Cmd::Delete(timer));
+                }
+                Reply::redraw_all()
+            }
+            asks::Answer::Closed(..) => Reply::redraw_all(),
+        }
     }
 
     fn output_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
@@ -517,6 +667,7 @@ impl SchedTasks {
         if self.list.view.rows.icon.is_none() {
             self.list.view.rows.icon = ctx.icons.get(ICON, 16);
             self.big_icon = ctx.icons.get(ICON, 32);
+            self.browse_host.icons.prime(&mut ctx.icons);
         }
     }
 
@@ -531,6 +682,30 @@ impl SchedTasks {
         self.list.draw(c, self.list_rect(ctx), ctx);
         if let Some(p) = &self.popup {
             p.draw(c, ctx);
+        }
+    }
+
+    fn draw_new_task(&self, c: &mut Canvas, ctx: &Ctx) {
+        let forms = ctx.forms();
+        c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+        if let Some(d) = &self.new_task {
+            let paint = Paint {
+                s: 1,
+                ..forms.paint()
+            };
+            form::draw(c, &ctx.text, &paint, &d.form, true, forms.fonts.size_px);
+        }
+    }
+
+    fn draw_browse(&self, c: &mut Canvas, ctx: &Ctx) {
+        let forms = ctx.forms();
+        if let Some(d) = &self.browse {
+            let paint = Paint {
+                s: 1,
+                ..forms.paint()
+            };
+            let r = Rect::new(0, 0, d.client().0, d.client().1);
+            d.draw(c, &ctx.text, &paint, r, forms.fonts.size_px);
         }
     }
 
@@ -588,6 +763,25 @@ impl App for SchedTasks {
                 modal: false,
             });
         }
+        if self.new_task.is_some() {
+            out.push(Child {
+                id: NEW_TASK,
+                title: tr!("new-title"),
+                size: forms.text.size(newtask::CLIENT),
+                fixed: true,
+                modal: true,
+            });
+        }
+        if let Some(d) = &self.browse {
+            out.push(Child {
+                id: BROWSE,
+                title: tr!("browse-title"),
+                size: d.client(),
+                fixed: false,
+                modal: true,
+            });
+        }
+        out.extend(self.asking.child(&text, &forms));
         if let Some(o) = &self.output {
             out.push(Child {
                 id: OUTPUT,
@@ -615,6 +809,9 @@ impl App for SchedTasks {
         match win {
             PROPS => self.props_event(ev, ctx),
             OUTPUT => self.output_event(ev, ctx),
+            NEW_TASK => self.new_task_event(ev, ctx),
+            BROWSE => self.browse_event(ev, ctx),
+            w if self.asking.owns(w) => self.question_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
             _ => self.main_event(ev, ctx),
         }
@@ -625,6 +822,9 @@ impl App for SchedTasks {
         match win {
             PROPS => self.draw_props(c, ctx),
             OUTPUT => self.draw_output(c, ctx),
+            NEW_TASK => self.draw_new_task(c, ctx),
+            BROWSE => self.draw_browse(c, ctx),
+            w if self.asking.owns(w) => self.asking.draw(c, &forms, &ctx.text),
             w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
             _ => self.draw_main(c, ctx),
         }
@@ -633,12 +833,45 @@ impl App for SchedTasks {
 
 impl repriseapp::Extended for SchedTasks {
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        (win == MAIN).then_some((420, 200))
+        match (win, &self.browse) {
+            (MAIN, _) => Some((420, 200)),
+            (BROWSE, Some(d)) => Some(d.min_client()),
+            _ => None,
+        }
     }
 
-    fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+    /// Browse covers New Task; a question covers the window it was raised over.
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        if self.note.owns(win) {
+            return self.note.parent(win);
+        }
+        if self.asking.owns(win) {
+            return self.asking.parent(win);
+        }
+        Some(match win {
+            BROWSE if self.new_task.is_some() => NEW_TASK,
+            _ => MAIN,
+        })
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<repriseapp::DropForm<'_>> {
+        let form = match win {
+            NEW_TASK => &mut self.new_task.as_mut()?.form,
+            _ => return None,
+        };
+        Some(repriseapp::DropForm { form, px: None })
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<repriseapp::FileDrop<'_>> {
+        (win == BROWSE).then_some(repriseapp::FileDrop {
+            dlg: self.browse.as_mut()?,
+            host: &mut self.browse_host,
+        })
+    }
+
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win != MAIN {
-            return None;
+            return repriseapp::reader_popup(self, win, ctx);
         }
         self.popup.as_ref()?;
         Some(Box::new(&mut self.popup))
@@ -657,6 +890,18 @@ impl repriseapp::Extended for SchedTasks {
                     oneshot::access_form(&o.form, tree, &ctx.text, forms.fonts.size_px);
                 }
             }
+            NEW_TASK => {
+                if let Some(d) = &self.new_task {
+                    oneshot::access_form(&d.form, tree, &ctx.text, forms.fonts.size_px);
+                }
+            }
+            BROWSE => {
+                if let Some(d) = &self.browse {
+                    let r = Rect::new(0, 0, d.client().0, d.client().1);
+                    d.access(tree, r, &ctx.text, forms.fonts.size_px);
+                }
+            }
+            w if self.asking.owns(w) => self.asking.access(tree, &ctx.text, &forms),
             w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
             _ => {
                 let focus = self

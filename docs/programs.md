@@ -482,9 +482,32 @@ task's service, as `journalctl --user-unit` prints them; Refresh reads them
 again. The list follows the manager, so a timer added, changed or fired
 elsewhere shows at once. It's in Start > All Programs > System Tools.
 
-New Task... is greyed: to add a task, put a `.timer` and a `.service` of the
-same name in `~/.config/systemd/user` and run `systemctl --user daemon-reload`;
-the list picks it up.
+New Task... makes a task: a name, the program to run (typed, found on `PATH`,
+or picked with Browse...), its arguments as a shell splits them, and when it
+runs: daily, weekly or monthly at a time, once at a date and time, or at log on.
+The arguments reach the program as typed: `$HOME`, `~` and `*` are not
+expanded. The box shows the timer setting the schedule writes, such as
+`OnCalendar=Mon *-*-* 09:00:00`. Create writes `reprise-task-NAME.timer` and
+`.service` into the user manager's own folder (`~/.config/systemd/user`, or
+`systemd/user` under the manager's `$XDG_CONFIG_HOME`), enables the timer,
+reloads the user manager and starts the timer, as `systemctl --user enable`,
+`daemon-reload` and `start` do. When a step after writing fails, the two files
+are removed again.
+
+A task runs only while the user manager does, that is while you are logged on
+(or always, after `loginctl enable-linger`). A run whose time passes while the
+machine is off or asleep, or while you are logged off, is skipped and not made
+up later. An at log on task runs 30 s after the user manager starts, at a log
+on while no other session of yours is open; it also runs once when it is made,
+and each time it is enabled again.
+
+Delete (after a question) disables and stops a task New Task made, removes its
+two files and reloads the user manager. It is greyed for every other timer: a
+task is New Task's only when its timer is `reprise-task-*.timer` in that
+folder, the manager loaded it from there, and both files still open with the
+comment New Task wrote. A new task never takes the name of one whose drop-in
+folder (`reprise-task-NAME.service.d`) is still there. Properties stays read
+only for every task.
 
 ## Font Viewer
 

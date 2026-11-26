@@ -35,6 +35,8 @@ pub struct Task {
     pub command: String,
     /// The timer's unit file.
     pub file: String,
+    /// New Task wrote the timer and its service, so Delete may remove them ([`crate::units::ours`]).
+    pub ours: bool,
 }
 
 impl Task {
@@ -191,7 +193,7 @@ fn after(base: &str, us: u64) -> String {
 const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /// The weekday systemd abbreviates as `abbr`, named in the LC_TIME locale.
-fn day_name(abbr: &str) -> Option<String> {
+pub fn day_name(abbr: &str) -> Option<String> {
     let wday = DAYS.iter().position(|d| *d == abbr)?;
     // SAFETY: `libc::tm` is plain data; strftime's `%A` reads only `tm_wday`.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
