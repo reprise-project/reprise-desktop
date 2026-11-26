@@ -523,10 +523,14 @@ fn balance_positions_map_to_minus_one_through_one() {
 }
 
 fn drawn(theme: &Theme, m: &Mixer) -> (Canvas, Layout) {
+    drawn_at(theme, m, 1)
+}
+
+fn drawn_at(theme: &Theme, m: &Mixer, s: i32) -> (Canvas, Layout) {
     let (w, h) = m.size(theme.text);
     let l = lay_in(m, theme, Rect::new(0, 0, w, h));
     let text = TextRenderer::load(&theme.fonts);
-    let mut c = Canvas::new(w as u32, h as u32);
+    let mut c = Canvas::with_scale(w as u32, h as u32, s);
     draw(&mut c, theme, &text, m, &l);
     (c, l)
 }
@@ -539,8 +543,8 @@ fn inked(c: &Canvas, r: Rect, ink: u32) -> usize {
 }
 
 /// At 150% and 200% the columns, their text rows, the channels and the Advanced button grow
-/// with the text and the thumbs by its whole multiple; the check box, the speakers and the slots
-/// keep their size, and every label is inked inside its grown row.
+/// with the text, and the thumbs and the check box by its whole multiple; the speakers and the
+/// slots keep their size, and every label is inked inside its grown row.
 #[test]
 fn a_grown_text_size_grows_the_columns_and_keeps_the_glyphs() {
     for (pct, px) in [(150, 17), (200, 22)] {
@@ -573,10 +577,10 @@ fn a_grown_text_size_grows_the_columns_and_keeps_the_glyphs() {
         );
         assert_eq!(d.balance.channel.width, u.len(BALANCE_W), "{pct}%");
         assert_eq!(d.speakers[0].width, SPEAKER, "{pct}%");
-        assert_eq!((d.check.width, d.check.height), (13, 13), "{pct}%");
+        assert_eq!(d.check.width, u.small() * 13, "{pct}%");
         assert_eq!(
             d.check.y - d.check_label.y,
-            (u.len(ROW_H) - ROW_H) / 2,
+            (u.len(ROW_H) - d.check.height) / 2,
             "{pct}%: the box centred down its row"
         );
         assert_eq!(col(&l, 1).rect.x, u.len(DEVICE_W) + SLOT, "{pct}%");
@@ -999,6 +1003,71 @@ fn the_output_combos_are_pinned_in_each_look() {
         }
     }
     crate::pins::check("controls/mixer_outputs", &got);
+}
+
+/// The smallest rect in `r` holding every pixel that is not `face`, in logical pixels.
+fn ink_box(c: &Canvas, r: Rect, face: u32) -> Option<Rect> {
+    let (s, dw) = (c.scale(), c.device_size().0 as i32);
+    let mut found: Option<(i32, i32, i32, i32)> = None;
+    for y in r.y * s..r.bottom() * s {
+        for x in r.x * s..r.right() * s {
+            if c.pixels[(y * dw + x) as usize] != face {
+                let (x0, y0, x1, y1) = found.unwrap_or((x, y, x, y));
+                found = Some((x0.min(x), y0.min(y), x1.max(x), y1.max(y)));
+            }
+        }
+    }
+    found.map(|(x0, y0, x1, y1)| {
+        let (x0, y0) = (x0.div_euclid(s), y0.div_euclid(s));
+        Rect::new(x0, y0, x1.div_euclid(s) + 1 - x0, y1.div_euclid(s) + 1 - y0)
+    })
+}
+
+/// At 200% text each column's check box is laid out at twice its 100% size, draws in that
+/// rect left of its label and takes the pointer there, in every look at scale 1 and 2.
+#[test]
+fn at_200_percent_the_check_boxes_draw_where_they_are_laid_out_and_hit() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for s in [1, 2] {
+            let theme = theme_for(look).with_text_size(200);
+            let mut m = Mixer::new(&lines(), true);
+            m.columns[1].checked = true;
+            let (c, l) = drawn_at(&theme, &m, s);
+            let side = 2 * theme.look.controls_at_100().check;
+            let face = theme.colors.button_face.argb();
+            for i in 0..m.columns.len() {
+                let cl = col(&l, i);
+                assert_eq!(
+                    (cl.check.width, cl.check.height),
+                    (side, side),
+                    "{look:?}@{s} column {i}: the box is twice its 100% side"
+                );
+                let left_of_label = Rect::new(
+                    cl.rect.x,
+                    cl.check_label.y - 4,
+                    cl.check_label.x - cl.rect.x,
+                    cl.check_label.height + 8,
+                );
+                assert_eq!(
+                    ink_box(&c, left_of_label, face),
+                    Some(cl.check),
+                    "{look:?}@{s} column {i}: the box draws in its rect, clear of its label"
+                );
+                let r = cl.check;
+                for (x, y) in [(r.x, r.y), (r.right() - 1, r.y), (r.x, r.bottom() - 1)] {
+                    assert_eq!(
+                        hit(&m, &l, x, y),
+                        Hit::Check(i),
+                        "{look:?}@{s} column {i}: ({x}, {y}) takes the press"
+                    );
+                }
+            }
+            got.push((format!("{look:?}@{s}"), fnv(&c)));
+        }
+    }
+    crate::pins::check("controls/mixer_checks_200", &got);
 }
 
 /// Each line's title keeps every descender at 100%, 125%, 150% and 200% text.
