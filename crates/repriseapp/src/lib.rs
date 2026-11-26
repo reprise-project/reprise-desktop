@@ -160,6 +160,9 @@ struct Slot {
     own: bool,
     /// The size the program last sized the window away from ([`sizing::Fit::left`]).
     left: Option<(i32, i32)>,
+    /// The size the user or the compositor gave the window while its minimum holds it larger
+    /// ([`sizing::regrown`]).
+    given: Option<(i32, i32)>,
     /// The largest client size the compositor suggests (xdg-toplevel `configure_bounds`): its
     /// work area less the frame. The window, its own sizes and its minimum stay inside it.
     bounds: Option<(i32, i32)>,
@@ -210,6 +213,28 @@ impl Slot {
     /// ([`deliver::takes_blinks`]).
     fn blinks(&self, focus: Option<WinId>) -> bool {
         deliver::takes_blinks(self.id, self.spot.is_some(), self.tip_waits, focus)
+    }
+
+    fn fit(&self) -> sizing::Fit {
+        sizing::Fit {
+            size: self.size,
+            picked: self.picked,
+            bounds: self.bounds,
+            asked: self.asked,
+            own: self.own,
+            left: self.left,
+            given: self.given,
+        }
+    }
+
+    fn set_fit(&mut self, fit: sizing::Fit) {
+        self.size = fit.size;
+        self.picked = fit.picked;
+        self.bounds = fit.bounds;
+        self.asked = fit.asked;
+        self.own = fit.own;
+        self.left = fit.left;
+        self.given = fit.given;
     }
 }
 
