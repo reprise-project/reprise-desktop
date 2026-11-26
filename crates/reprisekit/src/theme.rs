@@ -425,8 +425,8 @@ impl TextUnits {
     }
 
     /// The whole multiple of their 100% size the small controls draw at (check boxes, radio
-    /// buttons, scrollbars, drop and spin arrows, tree expanders, menu marks): the text's growth
-    /// rounded down, so twice at 200% and their own size below.
+    /// buttons, scrollbars, trackbars, drop and spin arrows, tree expanders, menu marks): the
+    /// text's growth rounded down, so twice at 200% and their own size below.
     pub fn small(self) -> i32 {
         (self.px / self.base).max(1) as i32
     }

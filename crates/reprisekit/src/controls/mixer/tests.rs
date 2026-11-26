@@ -539,8 +539,8 @@ fn inked(c: &Canvas, r: Rect, ink: u32) -> usize {
 }
 
 /// At 150% and 200% the columns, their text rows, the channels and the Advanced button grow
-/// with the text; the check box, the speakers, the thumbs and the slots keep their size, and
-/// every label is inked inside its grown row.
+/// with the text and the thumbs by its whole multiple; the check box, the speakers and the slots
+/// keep their size, and every label is inked inside its grown row.
 #[test]
 fn a_grown_text_size_grows_the_columns_and_keeps_the_glyphs() {
     for (pct, px) in [(150, 17), (200, 22)] {
@@ -568,7 +568,7 @@ fn a_grown_text_size_grows_the_columns_and_keeps_the_glyphs() {
         assert_eq!(d.volume.bounds.height, u.len(TRACK_H), "{pct}%");
         assert_eq!(
             d.volume.thumb.width,
-            crate::metrics::ControlMetrics::CLASSIC.vtrack_thumb,
+            u.small() * crate::metrics::ControlMetrics::CLASSIC.vtrack_thumb,
             "{pct}%"
         );
         assert_eq!(d.balance.channel.width, u.len(BALANCE_W), "{pct}%");

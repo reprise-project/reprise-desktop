@@ -1,5 +1,6 @@
 //! The trackbar through the style's track and thumb parts, with flat ticks placed by
-//! [`TrackMarks`](crate::style::TrackMarks); the vertical trackbar uses the `V` parts.
+//! [`TrackMarks`](crate::style::TrackMarks); the vertical trackbar uses the `V` parts. `st` is the
+//! style built at the layout's grown scale; marks and parts grow by [`Layout::grow`].
 
 use crate::look::Paint;
 use crate::pointer::Interaction;
@@ -20,7 +21,8 @@ pub fn draw_trackbar(
     if !st.has_parts(&[Part::TrackbarTrack, Part::TrackbarThumb]) {
         return false;
     }
-    let s = p.s;
+    let (s, k) = (p.s, lay.grow);
+    let g = s * k;
     let m = st.track_marks;
     let state = if enabled {
         State::Normal
@@ -28,19 +30,19 @@ pub fn draw_trackbar(
         State::Disabled
     };
     let ch = lay.channel;
-    let track = Rect::new(ch.x, ch.y + m.drop, ch.width, ch.height);
-    st.draw(c, track.scaled(s), Part::TrackbarTrack, state, p.s);
-    let base = lay.bounds.y + m.tick_y;
+    let track = Rect::new(ch.x, ch.y + k * m.drop, ch.width, ch.height);
+    st.draw(c, track.scaled(s), Part::TrackbarTrack, state, g);
+    let base = lay.bounds.y + k * m.tick_y;
     for (i, &tx) in lay.ticks.iter().enumerate() {
         let end = i == 0 || i + 1 == lay.ticks.len();
         if !lay.ticked || (m.sparse && i % lay.tick_every != 0 && !end) {
             continue;
         }
         let len = if end { m.end_len } else { m.tick_len };
-        c.fill_rect(Rect::new(tx * s, base * s, s, len * s), m.ink);
+        c.fill_rect(Rect::new(tx * s, base * s, g, len * g), m.ink);
     }
     let thumb = thumb_state(p, enabled, focused, thumb);
-    st.draw(c, lay.thumb.scaled(s), Part::TrackbarThumb, thumb, p.s);
+    st.draw(c, lay.thumb.scaled(s), Part::TrackbarThumb, thumb, g);
     true
 }
 
@@ -56,14 +58,14 @@ pub fn draw_vertical_trackbar(
     if !st.has_parts(&[Part::TrackbarTrackV, Part::TrackbarThumbV]) {
         return false;
     }
-    let s = p.s;
+    let (s, g) = (p.s, p.s * lay.grow);
     let m = st.track_marks;
     let state = if enabled {
         State::Normal
     } else {
         State::Disabled
     };
-    st.draw(c, lay.channel.scaled(s), Part::TrackbarTrackV, state, s);
+    st.draw(c, lay.channel.scaled(s), Part::TrackbarTrackV, state, g);
     let every = if m.sparse { lay.tick_every } else { 1 };
     for tick in vertical_ticks(lay, every, m.tick_len, m.end_len_v) {
         c.fill_rect(tick.scaled(s), m.ink);
@@ -75,7 +77,7 @@ pub fn draw_vertical_trackbar(
         }
     }
     let thumb = thumb_state(p, enabled, focused, thumb);
-    st.draw(c, lay.thumb.scaled(s), Part::TrackbarThumbV, thumb, s);
+    st.draw(c, lay.thumb.scaled(s), Part::TrackbarThumbV, thumb, g);
     true
 }
 
@@ -389,7 +391,7 @@ mod tests {
     fn blues_upright_end_ticks_are_4_px() {
         use crate::look::widgets::draw_vertical_trackbar;
         let theme = theme_for(Interface::Blue);
-        let lay = trackbar::layout_vertical_with(&trackbar::TrackBar::new(4, 3), 4, 4, 81, 22);
+        let lay = trackbar::layout_vertical_with(&trackbar::TrackBar::new(4, 3), 4, 4, 81, 22, 1);
         let mut c = Canvas::new(60, 100);
         c.fill_rect(c.bounds(), SENTINEL);
         draw_vertical_trackbar(&mut c, &theme.paint(), &lay, true, false, Interaction::Idle);

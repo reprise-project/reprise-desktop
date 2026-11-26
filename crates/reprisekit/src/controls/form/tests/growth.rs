@@ -741,3 +741,62 @@ fn classic_draws_its_check_box_and_scrollbar_doubled_at_200_percent() {
         "the up arrow's button is 32 px square"
     );
 }
+
+/// At 200% text a form's trackbars, ticked and plain, enabled and greyed, draw their thumbs,
+/// channels and ticks twice their 100% size in every look, at scale 1 and 2, and the click on the
+/// grown thumb's far corner grabs it.
+#[test]
+fn a_forms_trackbars_grow_twice_at_200_percent_in_every_look() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for s in [1, 2] {
+            let theme = crate::interfaces::theme_for(i)
+                .with_text_size(200)
+                .scaled(s);
+            let text = TextRenderer::load(&theme.fonts);
+            let track = |id, y, tb| {
+                Item::new(
+                    id,
+                    Rect::new(10, y, 120, trackbar::HEIGHT),
+                    Control::TrackBar(tb),
+                )
+            };
+            let f = Form::new(vec![
+                track("ticked", 10, TrackBar::new(3, 11)),
+                track("plain", 40, TrackBar::new(10, 11).untick()),
+                track("greyed", 70, TrackBar::new(0, 11)).enabled(false),
+            ]);
+            let mut c = Canvas::new(280 * s as u32, 200 * s as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &f,
+                false,
+                theme.fonts.size_px,
+            );
+            let r = f.rect("ticked").unwrap();
+            let Some(Control::TrackBar(t)) = f.item("ticked").map(|it| &it.control) else {
+                unreachable!()
+            };
+            let lay = f.track_layout(t, r);
+            assert_eq!(
+                (lay.thumb.width, lay.thumb.height, lay.bounds.height),
+                (22, 42, r.height),
+                "{i:?}: the thumb is twice its 100% size and the trackbar fills its row"
+            );
+            let corner = (lay.thumb.right() - 1, lay.thumb.bottom() - 1);
+            assert_eq!(
+                f.hit(corner.0, corner.1, &text, theme.fonts.size_px)
+                    .map(|h| (h.item, h.part)),
+                Some((0, Part::TrackBar(trackbar::Hit::Thumb))),
+                "{i:?}: the grown thumb's far corner"
+            );
+            got.push((format!("{i:?}@{s}"), crate::pins::fnv(&c)));
+        }
+    }
+    crate::pins::check("form/trackbars_200", &got);
+}

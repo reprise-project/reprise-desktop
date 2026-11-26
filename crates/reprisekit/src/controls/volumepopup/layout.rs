@@ -96,13 +96,14 @@ pub(super) fn column_layout(
 ) -> ColumnLayout {
     let l = |v| u.len(v);
     let w = l(COL_W);
-    let thumb = (cm.vtrack_thumb + THUMB_WIDER, THUMB_H);
+    let (thumb, k) = ((cm.vtrack_thumb + THUMB_WIDER, THUMB_H), u.small());
     let track = trackbar::layout_vertical_sized(
         &col.volume,
-        x + (w - trackbar::vertical_width(thumb.0)) / 2,
+        x + (w - k * trackbar::vertical_width(thumb.0)) / 2,
         y + l(TRACK_Y),
         l(TRACK_H),
         thumb,
+        k,
     );
     let (mw, mh) = (l(MUTE_W), l(MUTE_H));
     let output = col.output.as_ref().map(|c| {

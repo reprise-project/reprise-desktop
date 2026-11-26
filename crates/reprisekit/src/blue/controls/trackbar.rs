@@ -469,7 +469,7 @@ mod tests {
             .controls_at_100();
         assert_eq!(cm.vtrack_thumb, 22);
         let tb = TrackBar::new(4, 11);
-        let lay = layout_vertical_with(&tb, 10, 10, 81, cm.vtrack_thumb);
+        let lay = layout_vertical_with(&tb, 10, 10, 81, cm.vtrack_thumb, 1);
         assert_eq!(lay.bounds.width, 32, "the trackbar is 32 wide");
         assert_eq!(lay.thumb.x, 15, "the thumb starts 5 px in");
         assert_eq!(lay.thumb.width, 22, "the thumb is 22 wide");

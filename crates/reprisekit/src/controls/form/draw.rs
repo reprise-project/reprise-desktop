@@ -26,7 +26,6 @@ use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::Caret;
 use crate::theme::{Color, ColorScheme, Theme};
-use crate::trackbar;
 
 use super::field::visible_from;
 use super::item::Screen;
@@ -349,7 +348,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             }
             Control::TrackBar(t) => {
                 let at = placed;
-                let lay = trackbar::layout(t, at.x, at.y, at.width);
+                let lay = form.track_layout(t, at);
                 draw_trackbar(
                     c,
                     p,

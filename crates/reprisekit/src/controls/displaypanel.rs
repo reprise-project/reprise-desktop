@@ -328,7 +328,7 @@ pub fn layout(cm: &ControlMetrics, panel: &DisplayPanel, text: &TextRenderer, px
             let h = if fixed {
                 ABOVE + line + BELOW
             } else {
-                ABOVE + line + SLIDER_GAP + trackbar::HEIGHT + BELOW
+                ABOVE + line + SLIDER_GAP + u.small() * trackbar::HEIGHT + BELOW
             };
             let block = Rect::new(0, y, w, h);
             let ly = y + ABOVE;
@@ -343,11 +343,12 @@ pub fn layout(cm: &ControlMetrics, panel: &DisplayPanel, text: &TextRenderer, px
             let lx = icon.right() + u.len(ICON_GAP);
             let label = Rect::new(lx, ly, (percent.x - u.len(LABEL_GAP) - lx).max(0), line);
             let slider = match row.level {
-                Level::At(v) => Some(trackbar::layout(
+                Level::At(v) => Some(trackbar::layout_grown(
                     &track(v),
                     lx,
                     label.bottom() + SLIDER_GAP,
                     right - lx,
+                    u.small(),
                 )),
                 _ => None,
             };
@@ -774,14 +775,16 @@ mod tests {
     }
 
     #[test]
-    fn a_grown_panel_grows_its_lines_and_width() {
+    fn a_grown_panel_grows_its_lines_width_and_sliders() {
         let text = text();
         let cm = ControlMetrics::CLASSIC.grown(TextUnits::new(22, 11));
         let lay = layout(&cm, &three(), &text, 22);
-        assert_eq!(lay.size, (644, 338));
+        assert_eq!(lay.size, (644, 416));
         assert_eq!(lay.rows[0].label.height, 26);
         assert_eq!(lay.rows[0].percent.width, 68);
-        assert_eq!(lay.rows[0].slider.as_ref().unwrap().bounds.height, 26);
+        let slider = lay.rows[0].slider.as_ref().unwrap();
+        assert_eq!(slider.bounds.height, 52);
+        assert_eq!((slider.thumb.width, slider.thumb.height), (22, 42));
     }
 
     #[test]

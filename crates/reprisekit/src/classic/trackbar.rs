@@ -1,4 +1,5 @@
-//! Classic's trackbar paint, over the model and layout in [`crate::trackbar`].
+//! Classic's trackbar paint, over the model and layout in [`crate::trackbar`]. A layout grown with
+//! the text draws each pixel of the 100% pattern as a [`Layout::grow`] square.
 
 use crate::paint::Paint;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -20,27 +21,31 @@ pub fn draw_held(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool, held: b
         return draw_vertical(c, p, lay, !speckled, enabled);
     }
     let Paint { cs, s, .. } = *p;
+    let k = lay.grow;
+    let g = s * k;
     let ch = lay.channel.scaled(s);
     c.fill_rect(ch, cs.button_face);
-    c.edge_t(ch, EdgeStyle::ButtonSunken, cs, s);
-    let base = lay.bounds.y + TICK_Y;
+    c.edge_t(ch, EdgeStyle::ButtonSunken, cs, g);
+    let base = lay.bounds.y + k * TICK_Y;
     for (i, &tx) in lay.ticks.iter().enumerate() {
         let last = i + 1 == lay.ticks.len();
         if !lay.ticked || (i % lay.tick_every != 0 && !last) {
             continue;
         }
         let tall = if i == 0 || last { 4 } else { 3 };
-        c.fill_rect(Rect::new(tx * s, base * s, s, tall * s), cs.button_text);
+        c.fill_rect(Rect::new(tx * s, base * s, g, tall * g), cs.button_text);
     }
-    draw_thumb(c, cs, lay.thumb, !speckled, s);
+    draw_thumb(c, cs, lay.thumb, !speckled, s, k);
 }
 
 /// `live` is whether the trackbar takes input; a held thumb is drawn speckled all the same.
 fn draw_vertical(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool, live: bool) {
     let Paint { cs, s, .. } = *p;
+    let k = lay.grow;
+    let g = s * k;
     let ch = lay.channel.scaled(s);
     c.fill_rect(ch, cs.button_face);
-    c.edge_t(ch, EdgeStyle::ButtonSunken, cs, s);
+    c.edge_t(ch, EdgeStyle::ButtonSunken, cs, g);
     for tick in vertical_ticks(lay, lay.tick_every, 3, 4) {
         c.fill_rect(tick.scaled(s), cs.button_text);
     }
@@ -52,13 +57,13 @@ fn draw_vertical(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool, live: b
     }
     let t = lay.thumb;
     c.fill_rect(t.scaled(s), cs.button_face);
-    c.edge_t(t.scaled(s), EdgeStyle::ButtonRaised, cs, s);
+    c.edge_t(t.scaled(s), EdgeStyle::ButtonRaised, cs, g);
     if !enabled {
-        for y in 2..t.height - 2 {
-            for x in 2..t.width - 2 {
+        for y in 2..t.height / k - 2 {
+            for x in 2..t.width / k - 2 {
                 if (x + y) % 2 == 1 {
                     c.fill_rect(
-                        Rect::new((t.x + x) * s, (t.y + y) * s, s, s),
+                        Rect::new((t.x + k * x) * s, (t.y + k * y) * s, g, g),
                         cs.button_hilight,
                     );
                 }
@@ -67,10 +72,12 @@ fn draw_vertical(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool, live: b
     }
 }
 
-fn draw_thumb(c: &mut Canvas, cs: &ColorScheme, t: Rect, enabled: bool, s: i32) {
+/// The pointed thumb's 100% pattern at `t`, each pixel `k` 100% px square.
+fn draw_thumb(c: &mut Canvas, cs: &ColorScheme, t: Rect, enabled: bool, s: i32, k: i32) {
     let body = 16;
+    let g = s * k;
     let px = |c: &mut Canvas, x: i32, y: i32, col| {
-        c.fill_rect(Rect::new((t.x + x) * s, (t.y + y) * s, s, s), col)
+        c.fill_rect(Rect::new((t.x + k * x) * s, (t.y + k * y) * s, g, g), col)
     };
     for y in 0..THUMB_H {
         let inset = (y - body + 1).max(0);

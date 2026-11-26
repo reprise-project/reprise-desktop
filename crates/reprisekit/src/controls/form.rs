@@ -552,6 +552,11 @@ impl Form {
         self.rendered.controls.get()
     }
 
+    /// Trackbar `t`'s layout in its rect `r`, grown with the text of the last draw.
+    pub(crate) fn track_layout(&self, t: &TrackBar, r: Rect) -> trackbar::Layout {
+        trackbar::layout_grown(t, r.x, r.y, r.width, self.units().small())
+    }
+
     /// The text size the form was last drawn at ([`Paint::text`]). A host feeding it input
     /// measures at `units().px` of its 100% font size, as the draw did.
     pub fn units(&self) -> TextUnits {

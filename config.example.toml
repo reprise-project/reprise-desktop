@@ -660,10 +660,10 @@ suspend_after = 0            # run [power] standby
 #                            # The desktop's labels grow and its grid with them; icons keep
 #                            # 32 px, and one placed by hand keeps its place on the wider grid.
 #                            # Other programs' lists and bars keep their size.
-#                            # Check boxes, radio buttons, scrollbars, drop-down and spin
-#                            # arrows, tree expanders and menu check marks and arrows grow
-#                            # by whole steps wherever Reprise draws them: twice their size
-#                            # at 200%, their own size below.
+#                            # Check boxes, radio buttons, scrollbars, sliders, drop-down and
+#                            # spin arrows, tree expanders and menu check marks and arrows
+#                            # grow by whole steps wherever Reprise draws them: twice their
+#                            # size at 200%, their own size below.
 #                            # When it changes, an open window at its program's own size
 #                            # takes the program's size at the new text size, larger or
 #                            # smaller; one the user resized keeps its size, grown to its new
