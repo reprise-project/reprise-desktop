@@ -1,8 +1,10 @@
 //! The toolbar and tab strip over the grid: over the frame's glass in a look that has it, plain
 //! bars otherwise. A window with its tabs in the caption has no strip; its toolbar leads with
-//! the new-tab split button. The pointer on them, and the new-tab menu.
+//! the new-tab split button. The pointer on them, the new-tab menu and the link menu.
 
-use repriseapp::ctxmenu::{Popup, Step};
+use std::ffi::OsString;
+
+use repriseapp::ctxmenu::{self, Popup, Step};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput, PointerInput, Reply};
 use reprisekit::controls::rebar;
 use reprisekit::controls::tabstrip::{self, AdderPart, DocHit, DocLayout, Drag, TabStrip};
@@ -14,7 +16,7 @@ use reprisekit::theme::Theme;
 
 use crate::Terminal;
 use crate::newtab::{self, Choice};
-use crate::sshhosts;
+use crate::{cwd, links, pointer, sshhosts};
 
 pub const NEW: &str = "new";
 pub const COPY: &str = "copy";
@@ -31,8 +33,8 @@ pub const GRID_GAP: i32 = 4;
 pub struct Chrome {
     pub bar: ToolBar,
     pub press: Option<Press>,
-    /// The new-tab menu, open.
-    pub menu: Option<Popup<Choice>>,
+    /// The new-tab menu or the link menu, open.
+    pub menu: Option<Popup<Pick>>,
     /// The chrome is drawn again next frame.
     pub dirty: bool,
     /// The theme and active state the chrome was last drawn in.
@@ -55,6 +57,16 @@ impl Chrome {
             drawn: None,
         }
     }
+}
+
+/// What a row of [`Chrome::menu`] does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Tab(Choice),
+    /// Hand this to xdg-open.
+    Open(OsString),
+    /// Put this URI on the clipboard.
+    Copy(String),
 }
 
 /// What a left press is holding.
@@ -386,9 +398,30 @@ impl Terminal {
             .map(|h| sshhosts::read(&std::path::Path::new(&h).join(".ssh")))
             .unwrap_or_default();
         let (items, choices) = newtab::menu(&self.settings, &hosts);
-        let rows = items.into_iter().zip(choices).collect();
+        let rows = items
+            .into_iter()
+            .zip(choices.into_iter().map(|c| c.map(Pick::Tab)))
+            .collect();
         self.w.chrome.menu = Popup::open(rows, at.0, at.1, ctx, false);
         self.w.full = true;
+    }
+
+    /// Open the link menu for `uri` at `at`; Open Link greys for a link a click does not open.
+    pub(crate) fn open_link_menu(&mut self, uri: String, at: (i32, i32), ctx: &Ctx) -> Reply {
+        let target = links::target(&uri, &cwd::hostname());
+        let rows = vec![
+            (
+                ctxmenu::item("&Open Link", target.is_some()),
+                target.map(Pick::Open),
+            ),
+            (
+                ctxmenu::item("Copy &Link Address", true),
+                Some(Pick::Copy(uri)),
+            ),
+        ];
+        self.w.chrome.menu = Popup::open(rows, at.0, at.1, ctx, false);
+        self.w.full = true;
+        Reply::redraw()
     }
 
     fn menu_pointer(&mut self, p: PointerInput, ctx: &Ctx) -> Reply {
@@ -411,15 +444,20 @@ impl Terminal {
         self.menu_step(step)
     }
 
-    fn menu_step(&mut self, step: Step<Choice>) -> Reply {
+    fn menu_step(&mut self, step: Step<Pick>) -> Reply {
         match step {
             Step::None => Reply::none(),
             Step::Redraw => Reply::redraw(),
             Step::Closed => self.close_menu(),
-            Step::Chosen(choice) => {
+            Step::Chosen(pick) => {
                 let closed = self.close_menu();
-                match choice {
-                    Some(c) => closed.and(self.new_tab(&c)),
+                match pick {
+                    Some(Pick::Tab(c)) => closed.and(self.new_tab(&c)),
+                    Some(Pick::Open(target)) => closed.and(pointer::open_with(target)),
+                    Some(Pick::Copy(uri)) => Reply {
+                        copy: Some(uri),
+                        ..closed
+                    },
                     None => closed,
                 }
             }

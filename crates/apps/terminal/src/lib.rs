@@ -11,6 +11,7 @@ mod drop;
 mod escapes;
 mod find;
 mod keys;
+mod links;
 mod newtab;
 mod options;
 mod pointer;
@@ -797,6 +798,7 @@ impl Terminal {
     }
 
     fn key(&mut self, k: &KeyInput, ctx: &mut Ctx) -> Reply {
+        self.drop_link_tip();
         if self.w.chrome.menu.is_some() {
             return self.menu_key(k, ctx);
         }
@@ -925,7 +927,7 @@ impl Terminal {
         }
         let scheme = self.scheme(theme);
         if let Some(tab) = self.w.tabs.current() {
-            tab.snapshot(&scheme, &mut self.w.snap);
+            tab.snapshot(&scheme, self.w.mouse.link.as_ref(), &mut self.w.snap);
         }
         if full {
             self.w.snap.dirty.fill(true);
@@ -958,6 +960,9 @@ impl Terminal {
             termgrid::draw_bar(c, &paint, lay.bar, bar.0, bar.1);
             rects.push(lay.bar);
         }
+        if let Some(r) = self.draw_link_tip(c, ctx) {
+            rects.push(r);
+        }
         self.draw_menu(c, ctx);
         // No report damages the whole canvas, so an unchanged frame reports an empty rect.
         if !full {
@@ -989,6 +994,21 @@ impl Terminal {
             read_only: false,
             digits: false,
         });
+    }
+}
+
+impl Terminal {
+    /// Draw the hovered link's tip under the pointer, again each frame since the rows under it
+    /// may have drawn over it; its rect, logical px.
+    fn draw_link_tip(&self, c: &mut Canvas, ctx: &Ctx) -> Option<Rect> {
+        let (uri, at) = self.link_tip()?;
+        let s = c.scale();
+        let tip = reprisekit::controls::tooltip::draw_tip_at(&ctx.theme, &ctx.text, uri, s);
+        let size = (tip.width as i32 / s, tip.height as i32 / s);
+        let client = Rect::new(0, 0, ctx.size.0, ctx.size.1);
+        let (x, y) = reprisekit::controls::tooltip::place(at, size, client, true);
+        c.blit_over(x * s, y * s, &tip);
+        Some(Rect::new(x, y, size.0, size.1))
     }
 }
 
@@ -1234,7 +1254,7 @@ impl Terminal {
                 self.chrome_changed()
             }
             Event::Blink if self.w.focused && self.settings.blink => Reply::redraw(),
-            Event::Tick => self.bar_tick(),
+            Event::Tick => self.bar_tick().and(self.link_tick()),
             Event::CloseRequest => self.close_window(ctx),
             Event::Resized => {
                 if !ctx.maximized && !ctx.at_pick {

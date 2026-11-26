@@ -1,0 +1,12 @@
+Classic 1 43420ce8d24b3011
+Classic hover 1 2de9a31ca22e3011
+Classic 2 1b5135271a2d29ae
+Classic hover 2 100cbed136a929ae
+Blue 1 44d1c91fb2fef410
+Blue hover 1 9a7020beaa7d7410
+Blue 2 91be004148943d96
+Blue hover 2 8ee4623f18153d96
+Glass 1 7a1609d8c3f2351b
+Glass hover 1 8ce1a74e660497bb
+Glass 2 50cd7aca6e8fa492
+Glass hover 2 975776332185da12

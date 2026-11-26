@@ -1,5 +1,11 @@
 //! The PTY's output on its way to vte 0.15's parser, whose states it follows as far as needed:
-//! overlong OSCs and title pushes past [`DEPTH_MAX`] are dropped, OSC 7 is picked out.
+//! overlong OSCs and title pushes past [`DEPTH_MAX`] are dropped, OSC 7 is picked out, and an
+//! OSC 8 link past [`links::URI_MAX`] or [`links::LINKS_MAX`] turns into the link's end.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::links::{self, Osc8};
 
 /// The longest OSC payload passed on, in bytes; a longer one is dropped whole.
 pub const OSC_MAX: usize = 64 << 10;
@@ -17,6 +23,8 @@ const ESC: u8 = 0x1b;
 /// What a dropped escape is replaced with: its ESC ends any string the parser is in (DCS, APC)
 /// as the dropped one would have, and ST does nothing else.
 const ST: &[u8] = b"\x1b\\";
+/// What a dropped OSC 8 is replaced with: the end of any link, as ST does to other strings.
+const LINK_END: &[u8] = b"\x1b]8;;\x1b\\";
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
@@ -95,12 +103,19 @@ pub struct Filter {
     held: Vec<u8>,
     /// The title stack depth as vte keeps it, counted from the pushes and pops passed on.
     depth: usize,
+    /// The OSC 8 links passed on since the tab's last [`links::sweep`].
+    links: Arc<AtomicUsize>,
     /// Takes every escape byte through [`Self::byte`], for tests that check the runs against it.
     #[cfg(test)]
     byte_path: bool,
 }
 
 impl Filter {
+    /// The count of OSC 8 links passed on, which [`links::sweep`] brings down.
+    pub fn opened(&self) -> Arc<AtomicUsize> {
+        self.links.clone()
+    }
+
     /// Pass `input` on into `out`, which grows by at most `input.len()` and the bytes held
     /// before. Returns the URI of the last OSC 7 that `input` ends.
     pub fn feed(&mut self, input: &[u8], out: &mut Vec<u8>) -> Option<String> {
@@ -227,6 +242,7 @@ impl Filter {
                     let uri = self.held[2..]
                         .strip_prefix(b"7;")
                         .map(|u| String::from_utf8_lossy(u).into_owned());
+                    self.link();
                     out.append(&mut self.held);
                     self.end_osc(b, out);
                     return uri;
@@ -239,8 +255,9 @@ impl Filter {
                     self.state = State::Osc52(OSC_MAX + 1);
                 }
                 _ => {
+                    let link = self.held[2..].starts_with(b"8;");
                     self.held.clear();
-                    out.extend_from_slice(ST);
+                    out.extend_from_slice(if link { LINK_END } else { ST });
                     self.state = State::OscDrop;
                 }
             },
@@ -315,6 +332,26 @@ impl Filter {
             },
         }
         None
+    }
+
+    /// Count the OSC 8 open held whole, or make it the link's end when it is past a cap.
+    fn link(&mut self) {
+        let end = match links::osc8(&self.held[2..]) {
+            Osc8::Open => {
+                let passed = self
+                    .links
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                        (n < links::LINKS_MAX).then_some(n + 1)
+                    });
+                passed.is_err()
+            }
+            Osc8::Long => true,
+            Osc8::End | Osc8::Other => false,
+        };
+        if end {
+            self.held.truncate(2);
+            self.held.extend_from_slice(b"8;;");
+        }
     }
 
     /// Hold an ESC.
@@ -431,6 +468,21 @@ mod tests {
         long.extend_from_slice(b"\x07after");
         assert_eq!(filtered(&[&long]), [ST, b"after"].concat());
         assert!(titles(&events(&long)).is_empty(), "no title is set");
+    }
+
+    #[test]
+    fn a_link_past_the_osc_cap_ends_the_link_before_it() {
+        use alacritty_terminal::index::{Column, Line, Point};
+        let mut long = b"\x1b]8;;https://x\x07a\x1b]8;;https://y/".to_vec();
+        long.resize(long.len() + OSC_MAX, b'z');
+        long.extend_from_slice(b"\x07b");
+        let (term, _) = parsed(&long);
+        let uri = |c| term.grid()[Point::new(Line(0), Column(c))].hyperlink();
+        assert_eq!(
+            uri(0).map(|l| l.uri().to_owned()).as_deref(),
+            Some("https://x")
+        );
+        assert_eq!(uri(1), None, "the dropped open ends the link");
     }
 
     #[test]

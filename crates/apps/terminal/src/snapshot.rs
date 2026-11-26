@@ -3,7 +3,7 @@
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::Term;
-use alacritty_terminal::term::cell::Flags as TermFlags;
+use alacritty_terminal::term::cell::{Flags as TermFlags, Hyperlink};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape as TermCursor, NamedColor};
 use reprisekit::controls::termgrid::{Cell, CursorShape, Flags, Rgb, Scrollback, Snapshot};
@@ -17,14 +17,16 @@ use crate::schemes::Scheme;
 /// dirty (every row on a new size or default colours); [`move_cursor`] dirties the cursor's rows.
 #[cfg(test)]
 pub fn fill<T: EventListener>(term: &Term<T>, scheme: &Scheme, out: &mut Snapshot) {
-    fill_marked(term, scheme, &Marks::default(), out);
+    fill_marked(term, scheme, &Marks::default(), None, out);
 }
 
-/// [`fill`] with Find's `marks` flagged on the cells they cover.
+/// [`fill`] with Find's `marks` flagged on the cells they cover, and the cells of link `hover`
+/// underlined over their dots.
 pub fn fill_marked<T: EventListener>(
     term: &Term<T>,
     scheme: &Scheme,
     marks: &Marks,
+    hover: Option<&Hyperlink>,
     out: &mut Snapshot,
 ) {
     let content = term.renderable_content();
@@ -53,6 +55,12 @@ pub fn fill_marked<T: EventListener>(
             continue;
         }
         let mut cell = convert(indexed.cell, colors, scheme, fg, bg);
+        if let Some(link) = indexed.cell.hyperlink() {
+            cell.flags |= Flags::LINK;
+            if hover == Some(&link) {
+                cell.flags |= Flags::UNDERLINE;
+            }
+        }
         if selection.is_some_and(|s| s.contains(indexed.point)) {
             cell.flags |= Flags::SELECTED;
         }
@@ -286,6 +294,41 @@ mod tests {
         assert_eq!(snap.row_text(0), "hi");
         assert_eq!(snap.row_text(1), "  there");
         assert_eq!(snap.cursor, (1, 7, CursorShape::Block));
+    }
+
+    #[test]
+    fn a_linked_cell_is_dotted_and_the_hovered_link_underlined_across_lines() {
+        use alacritty_terminal::index::{Column, Line, Point};
+        let mut t = term(4, 3);
+        feed(
+            &mut t,
+            b"\x1b]8;id=a;https://x\x1b\\abcdef\x1b]8;;https://y\x1b\\g\x1b]8;;\x1b\\h",
+        );
+        let flags = |snap: &Snapshot, row: usize, col: usize| {
+            let f = snap.row(row)[col].flags;
+            (f.contains(Flags::LINK), f.contains(Flags::UNDERLINE))
+        };
+        let snap = filled(&t);
+        assert_eq!(
+            flags(&snap, 0, 0),
+            (true, false),
+            "dotted while not hovered"
+        );
+        assert_eq!(flags(&snap, 1, 3), (false, false), "past the link");
+        let hover = t.grid()[Point::new(Line(1), Column(1))].hyperlink();
+        let mut snap = filled(&t);
+        fill_marked(&t, &scheme(), &Marks::default(), hover.as_ref(), &mut snap);
+        let row = |r| (0..4).map(|c| flags(&snap, r, c)).collect::<Vec<_>>();
+        assert_eq!(row(0), [(true, true); 4], "the link's first line");
+        assert_eq!(
+            row(1),
+            [(true, true), (true, true), (true, false), (false, false)],
+            "its wrapped part, then another link and plain text"
+        );
+        assert!(
+            snap.dirty[0] && snap.dirty[1],
+            "the hover dirties the rows it changed"
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use super::*;
 use alacritty_terminal::term::TermMode;
-use repriseapp::{BTN_LEFT, Extended, Mods, PointerInput};
+use repriseapp::{BTN_LEFT, BTN_RIGHT, Extended, Mods, PointerInput};
 use reprisebus::testbus::until;
 use reprisekit::textedit::keysym;
 use std::path::Path;
@@ -635,7 +635,7 @@ fn apply_updates_open_tabs() {
     for tab in &t.w.tabs.list {
         assert_eq!(tab.history(), 20, "every open tab keeps the new scrollback");
         let mut snap = Snapshot::new(0, 0, scheme.fg, scheme.bg);
-        tab.snapshot(&scheme, &mut snap);
+        tab.snapshot(&scheme, None, &mut snap);
         assert_eq!(snap.bg, schemes::scheme("light", Interface::Classic).bg);
     }
     assert_eq!(
@@ -782,7 +782,10 @@ fn cell_point(t: &mut Terminal, ctx: &Ctx, col: i32, row: i32, right: bool) -> (
 fn row_text(t: &Terminal, row: usize) -> String {
     let mut snap = Snapshot::new(0, 0, Color::rgb(0, 0, 0), Color::rgb(0, 0, 0));
     let scheme = schemes::scheme("reprise", Interface::Classic);
-    t.w.tabs.current().unwrap().snapshot(&scheme, &mut snap);
+    t.w.tabs
+        .current()
+        .unwrap()
+        .snapshot(&scheme, None, &mut snap);
     snap.row_text(row)
 }
 
@@ -1973,4 +1976,206 @@ fn bel_rings_the_window_s_bell_once_per_gap() {
         None,
         "a bell inside the gap stays quiet"
     );
+}
+
+/// A terminal at scale 1 showing `see `, then `text` linked to `uri`, then ` now`.
+fn linked(settings: Settings, uri: &str, text: &str, ctx: &mut Ctx) -> Terminal {
+    let script =
+        format!("printf 'see \\033]8;;{uri}\\033\\\\{text}\\033]8;;\\033\\\\ now'; exec cat");
+    let mut t = terminal_with(settings, &["sh", "-c", &script]);
+    t.follow_scale(MAIN, 1, ctx);
+    let line = format!("see {text} now");
+    until("the linked line shows", || row_text(&t, 0) == line);
+    t
+}
+
+fn ctrl_click(t: &mut Terminal, ctx: &mut Ctx, col: i32) -> Reply {
+    let (x, y) = cell_point(t, ctx, col, 0, false);
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: ctrl,
+    };
+    let reply = pointer(t, ctx, press);
+    let release = PointerInput::Release {
+        x,
+        y,
+        button: BTN_LEFT,
+        mods: ctrl,
+    };
+    pointer(t, ctx, release);
+    reply
+}
+
+#[test]
+fn ctrl_click_opens_a_link_whose_scheme_opens_and_ignores_any_other() {
+    let mut ctx = test_ctx();
+    let mut t = linked(
+        Settings::default(),
+        "https://example.org/a",
+        "here",
+        &mut ctx,
+    );
+    t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
+    let r = ctrl_click(&mut t, &mut ctx, 5);
+    assert_eq!(r.spawn, [argv(&["xdg-open", "https://example.org/a"])]);
+    assert!(
+        ctrl_click(&mut t, &mut ctx, 1).spawn.is_empty(),
+        "the text before it"
+    );
+
+    let mut t = linked(
+        Settings::default(),
+        "ftp://x/y",
+        "https://shown.example",
+        &mut ctx,
+    );
+    t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
+    let r = ctrl_click(&mut t, &mut ctx, 8);
+    assert!(
+        r.spawn.is_empty(),
+        "the link's scheme opens nothing, nor its text"
+    );
+}
+
+#[test]
+fn the_right_click_menu_over_a_link_copies_its_address() {
+    let mut ctx = test_ctx();
+    let mut t = linked(
+        Settings::default(),
+        "https://example.org/a",
+        "here",
+        &mut ctx,
+    );
+    t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
+    let (x, y) = cell_point(&mut t, &ctx, 1, 0, false);
+    t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
+    assert!(t.w.chrome.menu.is_none(), "plain text has no menu");
+    let (x, y) = cell_point(&mut t, &ctx, 6, 0, false);
+    t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
+    assert!(t.w.chrome.menu.is_some(), "a link has one");
+    let mut tree = Tree::window("Terminal", ctx.size);
+    t.access(MAIN, &mut tree, &ctx);
+    use reprisekit::access::accesskit::Role;
+    for row in ["Open Link", "Copy Link Address"] {
+        assert!(tree.find(Role::MenuItem, row).is_some(), "{row}");
+    }
+    for k in [keysym::DOWN, keysym::DOWN] {
+        t.event(MAIN, key(k, false, false), &mut ctx);
+    }
+    let r = t.event(MAIN, key(keysym::RETURN, false, false), &mut ctx);
+    assert_eq!(r.copy.as_deref(), Some("https://example.org/a"));
+    assert!(r.spawn.is_empty());
+    assert!(t.w.chrome.menu.is_none());
+}
+
+#[test]
+fn hovering_a_link_underlines_it_and_a_rest_shows_its_uri() {
+    let mut ctx = test_ctx();
+    let mut t = linked(
+        Settings::default(),
+        "https://example.org/a",
+        "here",
+        &mut ctx,
+    );
+    let mut c = Canvas::new(640, 400);
+    t.draw(MAIN, &mut c, &ctx);
+    let underlined = |t: &Terminal| -> Vec<bool> {
+        let row = t.w.snap.row(0);
+        (0..12)
+            .map(|i| row[i].flags.contains(termgrid::Flags::UNDERLINE))
+            .collect()
+    };
+    let linked: Vec<bool> = (0..12).map(|i| (4..8).contains(&i)).collect();
+    let row = t.w.snap.row(0);
+    let dotted: Vec<bool> = (0..12)
+        .map(|i| row[i].flags.contains(termgrid::Flags::LINK))
+        .collect();
+    assert_eq!(dotted, linked);
+    assert_eq!(underlined(&t), [false; 12]);
+
+    let (x, y) = cell_point(&mut t, &ctx, 5, 0, false);
+    let r = pointer(&mut t, &mut ctx, PointerInput::Motion { x, y });
+    assert!(r.redraw && r.tick, "the link lights and its tip waits");
+    t.draw(MAIN, &mut c, &ctx);
+    assert_eq!(underlined(&t), linked);
+    assert_eq!(t.link_tip(), None, "not before the rest");
+    if let Some(tip) = &mut t.w.mouse.tip {
+        tip.rest.since -= std::time::Duration::from_millis(600);
+    }
+    assert!(t.event(MAIN, Event::Tick, &mut ctx).redraw);
+    assert_eq!(t.link_tip(), Some(("https://example.org/a", (x, y))));
+    t.event(MAIN, key(keysym::LEFT, false, false), &mut ctx);
+    assert_eq!(t.link_tip(), None, "a key takes the tip down");
+    pointer(&mut t, &mut ctx, PointerInput::Motion { x: x + 1, y });
+    if let Some(tip) = &mut t.w.mouse.tip {
+        tip.rest.since -= std::time::Duration::from_millis(600);
+    }
+    t.event(MAIN, Event::Tick, &mut ctx);
+    assert!(t.link_tip().is_some(), "a rest brings it back");
+    t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
+    assert_eq!(t.link_tip(), None, "so does a press");
+    t.event(MAIN, key(keysym::ESCAPE, false, false), &mut ctx);
+
+    let (x, y) = cell_point(&mut t, &ctx, 1, 0, false);
+    let r = pointer(&mut t, &mut ctx, PointerInput::Motion { x, y });
+    assert!(r.redraw && !r.tick);
+    assert_eq!(t.link_tip(), None, "off the link the tip goes");
+    t.draw(MAIN, &mut c, &ctx);
+    assert_eq!(underlined(&t), [false; 12]);
+}
+
+/// FNV-1a of device rows `rows` of `c`.
+fn fnv_rows(c: &Canvas, rows: std::ops::Range<i32>) -> u64 {
+    let w = c.device_size().0 as usize;
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for y in rows {
+        let y = y as usize;
+        for v in &c.pixels[y * w..(y + 1) * w] {
+            for b in v.to_le_bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+    }
+    h
+}
+
+#[test]
+fn a_linked_line_pins_plain_and_hovered_in_every_interface() {
+    reprisekit::pins::fonts();
+    let mono = Settings {
+        font: "DejaVu Sans Mono".into(),
+        ..Settings::default()
+    };
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut ctx = themed_ctx(reprisekit::interfaces::theme_for(i));
+        let mut t = linked(mono.clone(), "https://example.org/a", "here", &mut ctx);
+        for s in [1, 2] {
+            t.follow_scale(MAIN, s, &mut ctx);
+            let mut c = Canvas::with_scale(640, 400, s);
+            t.draw(MAIN, &mut c, &ctx);
+            let m = t.metrics(s);
+            let top = chrome::grid_rect(&ctx, false).y * s;
+            let rows = top..top + m.cell_h;
+            got.push((format!("{i:?} {s}"), fnv_rows(&c, rows.clone())));
+            let g = chrome::grid_rect(&ctx, false);
+            let (x, y) = (
+                g.x + (5 * m.cell_w + m.cell_w / 2) / s,
+                g.y + m.cell_h / 2 / s,
+            );
+            pointer(&mut t, &mut ctx, PointerInput::Motion { x, y });
+            t.draw(MAIN, &mut c, &ctx);
+            got.push((format!("{i:?} hover {s}"), fnv_rows(&c, rows)));
+            pointer(&mut t, &mut ctx, PointerInput::Leave);
+        }
+    }
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/linked_line.txt");
+    reprisekit::pins::check_file(std::path::Path::new(file), &got);
 }

@@ -229,6 +229,13 @@ program exits. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 - **From programs:** a title (OSC 0 and 2) names the tab and window, OSC 52
   copies to the clipboard (up to 1 MiB, never read back), and BEL rings the
   desktop's bell.
+- **Links:** OSC 8 links (`ls --hyperlink`, gcc, systemd tools) are dotted
+  underneath, solid under the pointer, whose rest shows the address.
+  Ctrl+click opens a link, or an address in the text, with `xdg-open`; the
+  right-click menu has Open Link and Copy Link Address. Only http, https,
+  mailto and this computer's `file://` links open. An address past 2083
+  bytes leaves its text unlinked; a tab keeps at least its newest 4096 links,
+  and older ones in the scrollback lose theirs.
 - **Drop:** dropped files type their paths and web links their address,
   quoted for the shell.
 - **Options** (Settings): shell, cursor, scrollback (10000 lines by default),
