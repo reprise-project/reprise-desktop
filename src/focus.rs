@@ -160,7 +160,7 @@ impl State {
 
     /// The outermost owned modal dialog the focused window is or sits over: while it has the
     /// focus no on-top window hides it.
-    fn focused_modal(&self) -> Option<WindowId> {
+    pub(crate) fn focused_modal(&self) -> Option<WindowId> {
         let mut at = self.focused?;
         let mut modal = None;
         for _ in 0..=self.windows.len() {

@@ -259,6 +259,29 @@ fn a_focused_full_screen_window_holds_balloons_unless_auto_dnd_is_off() {
 }
 
 #[test]
+fn a_balloon_arriving_over_a_focused_modal_dialog_waits_until_it_loses_the_focus() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let paint = h.map_toplevel(&mut c, "paint", 400, 300);
+    let other = h.map_toplevel(&mut c, "notepad", 300, 200);
+    let save = h.map_modal(&mut c, "paint", paint, (300, 200));
+    assert_eq!(h.state.focused, Some(save.id));
+    show(&mut h.state, note(1, "Updates"));
+    assert!(!balloon_up(&h.state), "no balloon over the dialog");
+    assert_eq!(h.state.notify.log.held.len(), 1, "it waits");
+    let mut urgent = note(2, "Power");
+    urgent.urgency = crate::tray::notify::Urgency::Critical;
+    show(&mut h.state, urgent);
+    assert!(balloon_up(&h.state), "a critical one shows at once");
+    h.state.focus_window(other.id);
+    assert!(
+        h.state.notify.log.held.is_empty(),
+        "the waiting one shows once the dialog loses the focus"
+    );
+}
+
+#[test]
 fn the_queue_drops_its_oldest_past_the_cap() {
     let mut q = VecDeque::new();
     let mut dropped = Vec::new();
