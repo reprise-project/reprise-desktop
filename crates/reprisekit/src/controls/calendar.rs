@@ -725,6 +725,26 @@ pub fn access(
     id
 }
 
+/// [`access`] for a form's calendar, whose arrow keys step the picked day: while enabled a reader
+/// finds a date input it can change.
+pub fn field_access(
+    cal: &Calendar,
+    lay: &Layout,
+    text: &TextRenderer,
+    px: u32,
+    tree: &mut Tree,
+    parent: NodeId,
+    key: impl std::hash::Hash,
+) -> NodeId {
+    let id = access(cal, lay, text, px, tree, parent, key);
+    if cal.enabled
+        && let Some(n) = tree.get_mut(id)
+    {
+        n.clear_read_only();
+    }
+    id
+}
+
 /// The popup's `access` part, in popup coordinates: the date line, the two month
 /// buttons, which a reader can click, the analog clock where the look has one, the grid, which
 /// reads as the listed day's date (else today's) while it is in the month shown, the event
@@ -905,6 +925,40 @@ mod tests {
             assert_eq!(top, Some(b.y + 6), "the letters' top row, {enabled}");
             assert_eq!(left, Some(b.x + 5), "the Sunday S's left edge, {enabled}");
         }
+    }
+
+    /// A reader takes a read-only date input for one that cannot change; a form's calendar steps
+    /// its day with the arrow keys, and the desk widget's only shows the month.
+    #[test]
+    fn a_forms_enabled_calendar_reads_as_changeable_and_a_greyed_one_as_disabled() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let lay = layout(Rect::new(0, 0, 200, 150), &ControlMetrics::CLASSIC);
+        let mut cal = Calendar::new(2026, 9, Some(25), 0);
+        let mut got = Vec::new();
+        for enabled in [true, false] {
+            cal.enabled = enabled;
+            let mut t = Tree::window("Date and Time", (300, 200));
+            let field = field_access(&cal, &lay, &text, 11, &mut t, access::ROOT, "field");
+            let shown = access(&cal, &lay, &text, 11, &mut t, access::ROOT, "shown");
+            for (how, id) in [("field", field), ("shown", shown)] {
+                let n = t.get(id).unwrap();
+                assert_eq!(n.role(), Role::DateInput);
+                got.push((how, enabled, n.is_read_only(), n.is_disabled()));
+                if enabled {
+                    assert!(n.supports_action(accesskit::Action::Focus), "{how}");
+                }
+            }
+        }
+        assert_eq!(
+            got,
+            [
+                ("field", true, false, false),
+                ("shown", true, true, false),
+                ("field", false, true, true),
+                ("shown", false, true, true),
+            ],
+            "(drawn as, enabled, read-only, disabled)"
+        );
     }
 
     #[test]
