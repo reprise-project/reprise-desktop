@@ -38,8 +38,10 @@ pub enum Error {
     Unreachable(String),
     /// 401 or 403.
     Denied,
-    /// The connection broke or timed out mid-request.
+    /// The connection broke mid-request.
     Io(String),
+    /// A read or write waited past its timeout.
+    TimedOut(String),
     /// Any other status but 2xx.
     Status(u16),
     /// A reply that is not HTTP, or longer than [`MAX_REPLY`].
@@ -134,7 +136,12 @@ pub fn post_parts(
 }
 
 fn io(e: std::io::Error) -> Error {
-    Error::Io(e.to_string())
+    match e.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+            Error::TimedOut(e.to_string())
+        }
+        _ => Error::Io(e.to_string()),
+    }
 }
 
 pub fn get(server: &Server, resource: &str, user: &str) -> Result<Reply, Error> {
@@ -416,6 +423,21 @@ mod tests {
         ours.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         assert_eq!(read_reply(&mut ours).err(), Some(Error::Denied));
         drop(cupsd);
+    }
+
+    #[test]
+    fn a_reply_that_never_comes_is_a_timeout_and_a_cut_one_a_break() {
+        let (mut ours, cupsd) = UnixStream::pair().unwrap();
+        ours.set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        assert!(matches!(read_reply(&mut ours), Err(Error::TimedOut(_))));
+        drop(cupsd);
+        let (mut ours, cupsd) = UnixStream::pair().unwrap();
+        cupsd.shutdown(std::net::Shutdown::Both).unwrap();
+        assert!(
+            matches!(read_reply(&mut ours), Err(Error::BadReply(_))),
+            "a closed socket with no reply reads as no reply"
+        );
     }
 
     #[test]

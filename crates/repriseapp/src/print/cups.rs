@@ -21,12 +21,17 @@ const CUPS_GET_DEFAULT: u16 = 0x4001;
 const CUPS_GET_PRINTERS: u16 = 0x4002;
 const CUPS_CREATE_LOCAL_PRINTER: u16 = 0x4028;
 const NOT_FOUND: u16 = 0x0406;
+/// server-error-device-error: cupsd could not resolve or reach a printer.
+const DEVICE_ERROR: u16 = 0x0504;
 /// `printer-state` of a queue that is stopped.
 const STOPPED: i32 = 5;
 /// How long a temporary queue may take to read its printer and get ready.
 const READY_WAIT: Duration = Duration::from_secs(30);
 /// How long the queue listing may stall: it decides what the Print dialog shows.
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long CUPS-Create-Local-Printer may take: cupsd answers only once it has resolved the
+/// printer's DNS-SD name (up to 90 s) and connected to it (up to 30 s).
+const CREATE_TIMEOUT: Duration = Duration::from_secs(125);
 /// The longest job-name and requesting-user-name cupsd takes, in bytes.
 const MAX_NAME: usize = 255;
 
@@ -56,8 +61,12 @@ pub enum Error {
     Http(u16),
     /// A reply that does not read as HTTP or IPP.
     BadReply,
-    /// The connection broke or timed out.
+    /// The connection broke.
     Broken,
+    /// cupsd did not answer in time.
+    TimedOut,
+    /// The driverless printer with this name did not answer cupsd.
+    Unreachable(String),
     /// A temporary queue stayed stopped, with cupsd's message, which may be empty.
     NotReady(String),
     /// cupsd answered a temporary queue with this destination, which prints elsewhere.
@@ -74,6 +83,8 @@ impl Error {
             Error::Http(code) => tr!("print-http-status", status = *code),
             Error::BadReply => tr!("print-bad-reply"),
             Error::Broken => tr!("print-broken"),
+            Error::TimedOut => tr!("print-timed-out"),
+            Error::Unreachable(name) => tr!("print-unreachable", name = name.as_str()),
             Error::NotReady(m) if m.is_empty() => tr!("print-not-ready"),
             Error::NotReady(m) => tr!("print-not-ready-why", why = m.as_str()),
             Error::Taken(name) => tr!("print-name-taken", name = name.as_str()),
@@ -88,6 +99,7 @@ impl From<http::Error> for Error {
             http::Error::Unreachable(_) => Error::NotRunning,
             http::Error::Denied => Error::Denied,
             http::Error::Io(_) => Error::Broken,
+            http::Error::TimedOut(_) => Error::TimedOut,
             http::Error::Status(code) => Error::Http(code),
             http::Error::BadReply(_) => Error::BadReply,
         }
@@ -357,7 +369,7 @@ pub fn create_local(
         .printer_attr("printer-name", Value::name(&ipp_name(name)))
         .printer_attr("device-uri", Value::uri(&printer.uri))
         .printer_attr("printer-info", Value::text(&ipp_name(&printer.info)));
-    let r = call(server, user, "/", req, &[], LIST_TIMEOUT)?;
+    let r = call(server, user, "/", req, &[], CREATE_TIMEOUT).map_err(|e| unreachable(e, name))?;
     let queue = r
         .first(PRINTER)
         .and_then(|g| g.str("printer-uri-supported"))
@@ -377,6 +389,21 @@ pub fn create_local(
             return Err(Error::NotReady(g.string("printer-state-message")));
         }
         std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// What a failed CUPS-Create-Local-Printer for the printer `name` means: cupsd answers
+/// device-error when it cannot resolve or reach the printer, and outlasting [`CREATE_TIMEOUT`]
+/// is cupsd still waiting on it.
+fn unreachable(e: Error, name: &str) -> Error {
+    match e {
+        Error::TimedOut
+        | Error::Status(DEVICE_ERROR)
+        | Error::Server {
+            status: DEVICE_ERROR,
+            ..
+        } => Error::Unreachable(name.into()),
+        e => e,
     }
 }
 
@@ -522,6 +549,38 @@ pub fn lpoptions_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_driverless_printer_that_cupsd_cannot_reach_is_named_unreachable() {
+        let unreachable_as = |e| unreachable(e, "Office Jet");
+        let gone = Error::Unreachable("Office Jet".into());
+        assert_eq!(
+            unreachable_as(Error::TimedOut),
+            gone,
+            "cupsd still waiting on it"
+        );
+        let device = Error::Server {
+            status: DEVICE_ERROR,
+            why: "Unable to connect to officejet.local:631".into(),
+        };
+        assert_eq!(unreachable_as(device), gone);
+        assert_eq!(unreachable_as(Error::Status(DEVICE_ERROR)), gone);
+        assert_eq!(
+            unreachable_as(Error::Broken),
+            Error::Broken,
+            "cupsd itself broke off"
+        );
+        assert_eq!(unreachable_as(Error::Denied), Error::Denied);
+        assert!(
+            gone.text().starts_with("Office Jet cannot be reached."),
+            "{}",
+            gone.text()
+        );
+        assert_eq!(
+            Error::from(http::Error::TimedOut("os error 11".into())),
+            Error::TimedOut
+        );
+    }
 
     #[test]
     fn a_name_loses_its_control_characters_and_stops_at_255_bytes_on_a_character() {
