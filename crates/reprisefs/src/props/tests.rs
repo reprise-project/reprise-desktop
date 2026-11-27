@@ -996,32 +996,12 @@ fn the_task_panes_date_names_yesterday_and_drops_the_seconds() {
     }
 }
 
-/// Runs the test `name` again with `env` set, in a process of its own in a new user and mount
-/// namespace (as root there); skipped where the host allows none.
-fn in_own_namespace(name: &str, env: &str) {
-    let probe = std::process::Command::new("unshare")
-        .args(["--user", "--map-root-user", "--mount", "true"])
-        .status();
-    if !probe.is_ok_and(|s| s.success()) {
-        eprintln!("skipped: no user and mount namespace here");
-        return;
-    }
-    let status = std::process::Command::new("unshare")
-        .args(["--user", "--map-root-user", "--mount"])
-        .arg(std::env::current_exe().unwrap())
-        .args(["--exact", name, "--quiet"])
-        .env(env, "1")
-        .status()
-        .unwrap();
-    assert!(status.success(), "{name} passes in its own namespace");
-}
-
 #[test]
 fn applying_to_subfolders_leaves_a_drive_mounted_inside_alone() {
     use std::os::unix::fs::PermissionsExt;
     const INSIDE: &str = "REPRISE_PROPS_MOUNT_TEST";
     if std::env::var_os(INSIDE).is_none() {
-        in_own_namespace(
+        crate::testfs::in_own_namespace(
             "props::tests::applying_to_subfolders_leaves_a_drive_mounted_inside_alone",
             INSIDE,
         );

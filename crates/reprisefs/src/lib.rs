@@ -98,6 +98,26 @@ pub(crate) mod testfs {
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
     }
 
+    /// Runs the test `name` again with `env` set, in a process of its own in a new user and mount
+    /// namespace (as root there); skipped where the host allows none.
+    pub fn in_own_namespace(name: &str, env: &str) {
+        let probe = std::process::Command::new("unshare")
+            .args(["--user", "--map-root-user", "--mount", "true"])
+            .status();
+        if !probe.is_ok_and(|s| s.success()) {
+            eprintln!("skipped: no user and mount namespace here");
+            return;
+        }
+        let status = std::process::Command::new("unshare")
+            .args(["--user", "--map-root-user", "--mount"])
+            .arg(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--quiet"])
+            .env(env, "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name} passes in its own namespace");
+    }
+
     /// `f`'s answer, run on a thread of its own; panics when it takes over five seconds, as a read blocked on a FIFO does.
     pub fn within<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
         let (tx, rx) = std::sync::mpsc::channel();

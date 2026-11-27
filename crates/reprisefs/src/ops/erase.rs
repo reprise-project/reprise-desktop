@@ -168,14 +168,14 @@ struct Level {
 /// without following a link or entering another file system. Iterative, so depth costs no stack.
 /// An entry that fails is named by its path under `name` ([`in_tree`]) and stops the walk, or
 /// with `failed` joins it ([`settle`]).
-fn remove_tree_at(
+pub(super) fn remove_tree_at(
     parent: BorrowedFd,
     name: &CStr,
     meter: Option<&Meter>,
     mut failed: Option<&mut Failures>,
 ) -> io::Result<()> {
     let keep_going = failed.is_some();
-    let dev = stat_fd(parent)?.st_dev;
+    let dev = Mount::of(parent)?;
     let mut stack = vec![level(parent, name, dev)?];
     while !stack.is_empty() {
         let top = stack.len() - 1;
@@ -268,11 +268,45 @@ fn under(levels: &[Level], name: &CStr) -> PathBuf {
         .collect()
 }
 
-/// Open folder `name` in `at` and list it; another device than `dev` is refused.
-fn level(at: BorrowedFd, name: &CStr, dev: libc::dev_t) -> io::Result<Level> {
+/// The mount a folder lies on: its device, and the mount's id where statx gives one, which also
+/// tells apart a bind mount of the same file system.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Mount {
+    dev: libc::dev_t,
+    id: Option<u64>,
+}
+
+impl Mount {
+    fn of(fd: BorrowedFd) -> io::Result<Mount> {
+        Ok(Mount::with(fd, &stat_fd(fd)?))
+    }
+
+    /// The mount of `fd`, whose `stat` is `st`.
+    fn with(fd: BorrowedFd, st: &libc::stat) -> Mount {
+        let mut stx = std::mem::MaybeUninit::<libc::statx>::zeroed();
+        // SAFETY: the empty path is NUL-terminated, `fd` is open and `stx` is a writable statx
+        // buffer.
+        let r = unsafe {
+            libc::statx(
+                fd.as_raw_fd(),
+                c"".as_ptr(),
+                libc::AT_EMPTY_PATH,
+                libc::STATX_MNT_ID,
+                stx.as_mut_ptr(),
+            )
+        };
+        // SAFETY: statx filled `stx` on success, and the zeroed buffer is a valid value otherwise.
+        let stx = unsafe { stx.assume_init() };
+        let id = (r == 0 && stx.stx_mask & libc::STATX_MNT_ID != 0).then_some(stx.stx_mnt_id);
+        Mount { dev: st.st_dev, id }
+    }
+}
+
+/// Open folder `name` in `at` and list it; one on another mount than `dev` is refused.
+fn level(at: BorrowedFd, name: &CStr, dev: Mount) -> io::Result<Level> {
     let fd = open_dir(at, name, false)?;
     let st = stat_fd(fd.as_fd())?;
-    if st.st_dev != dev {
+    if Mount::with(fd.as_fd(), &st) != dev {
         return Err(io::Error::new(
             io::ErrorKind::ResourceBusy,
             "a folder in it is a mounted drive",
@@ -292,7 +326,7 @@ fn level(at: BorrowedFd, name: &CStr, dev: libc::dev_t) -> io::Result<Level> {
 fn reopen<'a>(
     parent: BorrowedFd<'a>,
     stack: &'a mut [Level],
-    dev: libc::dev_t,
+    dev: Mount,
 ) -> io::Result<BorrowedFd<'a>> {
     let top = stack.len() - 1;
     let first = stack
@@ -307,7 +341,7 @@ fn reopen<'a>(
         };
         let fd = open_dir(at, &stack[i].name, false).map_err(named)?;
         let st = stat_fd(fd.as_fd()).map_err(named)?;
-        if st.st_dev != dev || st.st_ino != stack[i].ino {
+        if Mount::with(fd.as_fd(), &st) != dev || st.st_ino != stack[i].ino {
             return Err(io::Error::other(
                 "a folder in it was replaced while it was removed",
             ));
