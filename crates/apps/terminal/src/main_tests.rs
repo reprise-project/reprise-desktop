@@ -2064,18 +2064,22 @@ fn the_right_click_menu_over_a_link_copies_its_address() {
         &mut ctx,
     );
     t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
-    let (x, y) = cell_point(&mut t, &ctx, 1, 0, false);
-    t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
-    assert!(t.w.chrome.menu.is_none(), "plain text has no menu");
     let (x, y) = cell_point(&mut t, &ctx, 6, 0, false);
     t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
-    assert!(t.w.chrome.menu.is_some(), "a link has one");
-    let mut tree = Tree::window("Terminal", ctx.size);
-    t.access(MAIN, &mut tree, &ctx);
-    use reprisekit::access::accesskit::Role;
-    for row in ["Open Link", "Copy Link Address"] {
-        assert!(tree.find(Role::MenuItem, row).is_some(), "{row}");
-    }
+    let rows: Vec<String> = menu_rows(&mut t, &ctx).into_iter().map(|r| r.0).collect();
+    assert_eq!(
+        rows,
+        [
+            "Open Link",
+            "Copy Link Address",
+            "Copy",
+            "Paste",
+            "Select All",
+            "Find...",
+            "New Tab"
+        ],
+        "the link's rows lead"
+    );
     for k in [keysym::DOWN, keysym::DOWN] {
         t.event(MAIN, key(k, false, false), &mut ctx);
     }
@@ -2083,6 +2087,65 @@ fn the_right_click_menu_over_a_link_copies_its_address() {
     assert_eq!(r.copy.as_deref(), Some("https://example.org/a"));
     assert!(r.spawn.is_empty());
     assert!(t.w.chrome.menu.is_none());
+}
+
+/// The open menu's rows: label and whether it is live.
+fn menu_rows(t: &mut Terminal, ctx: &Ctx) -> Vec<(String, bool)> {
+    use reprisekit::access::accesskit::Role;
+    let mut tree = Tree::window("Terminal", ctx.size);
+    t.access(MAIN, &mut tree, ctx);
+    tree.nodes()
+        .filter(|(_, n)| n.role() == Role::MenuItem)
+        .map(|(_, n)| (n.label().unwrap_or_default().to_owned(), !n.is_disabled()))
+        .collect()
+}
+
+fn letter(c: char) -> Event {
+    let mut e = key(c as u32, false, false);
+    if let Event::Key(k) = &mut e {
+        k.utf8 = Some(c.to_string());
+    }
+    e
+}
+
+#[test]
+fn the_right_click_menu_off_a_link_copies_pastes_and_selects_all() {
+    let mut ctx = test_ctx();
+    let mut t = linked(
+        Settings::default(),
+        "https://example.org/a",
+        "here",
+        &mut ctx,
+    );
+    t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
+    let (x, y) = cell_point(&mut t, &ctx, 1, 0, false);
+    t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
+    let row = |l: &str, on| (l.to_owned(), on);
+    assert_eq!(
+        menu_rows(&mut t, &ctx),
+        [
+            row("Copy", false),
+            row("Paste", true),
+            row("Select All", true),
+            row("Find...", true),
+            row("New Tab", true),
+        ],
+        "Copy greys without a selection"
+    );
+    let r = t.event(MAIN, letter('a'), &mut ctx);
+    assert!(t.w.chrome.menu.is_none());
+    let all = r
+        .copy_primary
+        .expect("Select All offers the primary selection");
+    assert_eq!(all.trim_end(), "see here now");
+
+    t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
+    assert_eq!(menu_rows(&mut t, &ctx)[0], row("Copy", true));
+    let r = t.event(MAIN, letter('c'), &mut ctx);
+    assert_eq!(r.copy.as_deref().map(str::trim_end), Some("see here now"));
+
+    t.event(MAIN, press(x, y, BTN_RIGHT), &mut ctx);
+    assert!(t.event(MAIN, letter('p'), &mut ctx).paste);
 }
 
 #[test]
