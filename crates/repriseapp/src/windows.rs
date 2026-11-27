@@ -721,10 +721,11 @@ impl Host {
             s.pool = None;
         }
         s.configured = true;
+        let toplevel = matches!(s.window, Shell::Toplevel(_));
         if first
-            && id == MAIN
+            && toplevel
             && let (Some(token), Some(activation)) = (self.start_token.take(), &self.activation)
-            && let Some(s) = self.slots.iter().find(|s| s.id == MAIN)
+            && let Some(s) = self.slots.iter().find(|s| s.id == id)
         {
             activation.activate::<Host>(s.window.wl_surface(), token);
         }

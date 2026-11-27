@@ -3,6 +3,7 @@ Type=Application
 Name=Reprise Settings
 Comment=Change the look, the taskbar, the displays, the keyboard and mouse, power and which programs start at login.
 Exec=reprise-settings
+StartupNotify=true
 Icon=preferences-system
 Categories=Settings;
 StartupWMClass=reprise.settings

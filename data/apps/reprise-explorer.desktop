@@ -3,6 +3,7 @@ Type=Application
 Name=Explorer
 Comment=Displays the files and folders on your computer.
 Exec=reprise-explorer %f
+StartupNotify=true
 Icon=system-file-manager
 Categories=Utility;FileManager;
 MimeType=inode/directory;

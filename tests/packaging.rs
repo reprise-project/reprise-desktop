@@ -3,7 +3,8 @@
 //! .deb's postinst applies every sysusers and tmpfiles file, an upgrade of either package raises
 //! the restart notice, the .deb's password stacks never reach a fingerprint reader, the time zone
 //! polkit rule allows one action only, the desktop entries file only programs with a settings
-//! window under Settings, and both packages ship the third-party notices.
+//! window under Settings, every entry with a window at start asks for startup notification, and
+//! both packages ship the third-party notices.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -151,6 +152,48 @@ fn only_programs_with_a_settings_window_are_filed_under_settings() {
         .map(String::from)
         .into(),
     );
+}
+
+/// The entries whose program opens no window when started, so a launcher's activation token would
+/// never be used and its busy cursor never end: a server, a tray icon and the polkit agent.
+const NO_WINDOW_AT_START: [&str; 4] = [
+    "org.reprise.RemoteDesktop",
+    "reprise-drives",
+    "reprise-phone",
+    "reprise-polkit",
+];
+
+/// Every other entry asks for startup notification, and its program runs on repriseapp, which
+/// presents `XDG_ACTIVATION_TOKEN` for its first window.
+#[test]
+fn every_entry_with_a_window_at_start_asks_for_startup_notification() {
+    for e in desktop_entries() {
+        let text = std::fs::read_to_string(root().join(format!("data/apps/{e}.desktop"))).unwrap();
+        let notify = text.lines().any(|l| l == "StartupNotify=true");
+        assert_eq!(
+            notify,
+            !NO_WINDOW_AT_START.contains(&e.as_str()),
+            "{e}: StartupNotify=true exactly when its program opens a window at start"
+        );
+        if !notify {
+            continue;
+        }
+        let program = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Exec="))
+            .and_then(|x| x.split(' ').next())
+            .unwrap_or_else(|| panic!("{e} has an Exec line"));
+        let manifest = std::fs::read_dir(root().join("crates/apps"))
+            .unwrap()
+            .map(|d| d.unwrap().path().join("Cargo.toml"))
+            .filter_map(|p| std::fs::read_to_string(p).ok())
+            .find(|t| t.lines().any(|l| l == format!("name = \"{program}\"")))
+            .unwrap_or_else(|| panic!("{e}: {program} is a crate under crates/apps"));
+        assert!(
+            manifest.lines().any(|l| l.starts_with("repriseapp")),
+            "{e}: {program} depends on repriseapp"
+        );
+    }
 }
 
 /// The entries of the PKGBUILD array `key` (`depends`, `backup`), version bounds left off.

@@ -3,6 +3,7 @@ Type=Application
 Name=Scheduled Tasks
 Comment=See the tasks that run on a schedule, run one now, and turn one on or off.
 Exec=reprise-schedtasks
+StartupNotify=true
 Icon=appointment-soon
 Categories=System;
 Keywords=timer;systemd;cron;schedule;

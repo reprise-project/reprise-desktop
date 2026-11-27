@@ -3,6 +3,7 @@ Type=Application
 Name=User Accounts
 Comment=Change your name, picture and password, and manage the accounts on this computer.
 Exec=reprise-accounts
+StartupNotify=true
 Icon=system-users
 Categories=Settings;
 StartupWMClass=reprise.accounts

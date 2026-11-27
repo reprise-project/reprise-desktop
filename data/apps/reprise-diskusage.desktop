@@ -3,6 +3,7 @@ Type=Application
 Name=Disk Usage
 Comment=See which folders and files take up space on a drive.
 Exec=reprise-diskusage %f
+StartupNotify=true
 Icon=drive-harddisk
 Categories=System;Filesystem;
 StartupWMClass=reprise.diskusage
