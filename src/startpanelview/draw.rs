@@ -1,3 +1,4 @@
+use reprisekit::tr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -414,7 +415,7 @@ impl State {
         let v = self.start_panel.as_ref()?;
         let lay = layout::layout(&v.model);
         let rect = Rect::new(v.at.0, v.at.1, lay.panel.width, lay.panel.height);
-        let mut tree = crate::access::root(Role::Window, "Start menu", rect);
+        let mut tree = crate::access::root(Role::Window, &tr!("start-panel-name"), rect);
         let focus = startpanel::access::access(&v.model, &lay, &mut tree, ROOT);
         tree.set_focus(focus);
         Some(tree)

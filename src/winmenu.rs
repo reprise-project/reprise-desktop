@@ -4,6 +4,7 @@
 
 use crate::startmenu::{MenuGlyph, MenuItem};
 use crate::text::split_mnemonic;
+use reprisekit::tr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowMenuRow {
@@ -96,63 +97,85 @@ pub fn window_menu(
     let rows = [
         (
             Restore,
-            "&Restore",
+            tr!("start-win-restore"),
             !normal && !state.owned,
             Some(MenuGlyph::Restore),
         ),
-        (Move, "&Move", normal, None),
+        (Move, tr!("start-win-move"), normal, None),
         (
             Size,
-            "&Size",
+            tr!("start-win-size"),
             normal && state.resizable && !state.owned && state.shade != Some(true),
             None,
         ),
         (
             Minimize,
-            "Mi&nimize",
+            tr!("start-win-minimize"),
             !state.minimized && !state.owned,
             Some(MenuGlyph::Minimize),
         ),
         (
             Maximize,
-            "Ma&ximize",
+            tr!("start-win-maximize"),
             !state.maximized && !state.owned && state.resizable,
             Some(MenuGlyph::Maximize),
         ),
     ];
     let shade = state.shade.map(|shaded| {
-        let label = if shaded { "Roll Do&wn" } else { "Roll &Up" };
+        let label = if shaded {
+            tr!("start-win-roll-down")
+        } else {
+            tr!("start-win-roll-up")
+        };
         (Shade, label, shaded || normal, None, None)
     });
-    let mut group = vec![(AlwaysOnTop, "Always on &Top", !state.owned, None, None)];
+    let mut group = vec![(
+        AlwaysOnTop,
+        tr!("start-win-always-on-top"),
+        !state.owned,
+        None,
+        None,
+    )];
     if state.open_here != OpenHereState::Absent {
         let enabled = state.open_here != OpenHereState::Greyed;
-        group.push((OpenHere, "Always &Open Here", enabled, None, None));
+        group.push((OpenHere, tr!("start-win-open-here"), enabled, None, None));
     }
-    group.push((MiniView, "M&ini View", true, None, None));
+    group.push((MiniView, tr!("start-win-mini-view"), true, None, None));
     if state.desktops > 1 {
         group.push((
             AllDesktops,
-            "Show on &All Desktops",
+            tr!("start-win-all-desktops"),
             !state.owned,
             None,
             None,
         ));
         group.push((
             MoveToMenu,
-            "Move to &Desktop",
+            tr!("start-win-move-to-desktop"),
             !state.owned && !state.sticky,
             None,
             None,
         ));
     }
     if let Some(t) = state.tabs {
-        group.push((TabsOfMenu, "Add to Ta&bs of", t.targets, None, None));
-        group.push((LeaveTabs, "Remove from Tab &Group", t.grouped, None, None));
+        group.push((
+            TabsOfMenu,
+            tr!("start-win-add-to-tabs"),
+            t.targets,
+            None,
+            None,
+        ));
+        group.push((
+            LeaveTabs,
+            tr!("start-win-leave-tabs"),
+            t.grouped,
+            None,
+            None,
+        ));
     }
     let close = (
         Close,
-        "&Close",
+        tr!("start-win-close"),
         true,
         Some(MenuGlyph::Close),
         close_keys.map(str::to_string),
@@ -170,7 +193,7 @@ pub fn window_menu(
             items.push(MenuItem::Separator);
             actions.push(None);
         }
-        let (label, mnemonic) = split_mnemonic(label);
+        let (label, mnemonic) = split_mnemonic(&label);
         items.push(
             MenuItem::entry(label)
                 .enabled(enabled)
@@ -197,7 +220,7 @@ pub fn with_recent(
     (items, rows): (Vec<MenuItem>, Vec<Option<WindowMenuRow>>),
 ) -> (Vec<MenuItem>, Vec<Option<WindowMenuRow>>) {
     let head = [
-        MenuItem::item(RECENT_FILES).submenu(true),
+        MenuItem::item(&recent_files()).submenu(true),
         MenuItem::Separator,
     ];
     let items = head.into_iter().chain(items).collect();
@@ -209,7 +232,9 @@ pub fn with_recent(
 }
 
 /// The window menu's and a group's window list's row of the program's recent files.
-pub const RECENT_FILES: &str = "Recent &Files";
+pub fn recent_files() -> String {
+    tr!("start-win-recent-files")
+}
 
 /// The Move to Desktop submenu of windows on desktop `own`: every other of
 /// the `count` desktops by its name in `names`, each doing `row(n)`. Shared with the jump list.
@@ -226,10 +251,11 @@ pub fn move_to_menu<R>(
             let item = if named {
                 MenuItem::entry(crate::config::desktop_name(names, n))
             } else {
+                let number = (n + 1).to_string();
                 let label = if n < 9 {
-                    format!("Desktop &{}", n + 1)
+                    tr!("start-win-desktop-keyed", number = number)
                 } else {
-                    format!("Desktop {}", n + 1)
+                    tr!("start-win-desktop", number = number)
                 };
                 let (label, mnemonic) = split_mnemonic(&label);
                 MenuItem::entry(label).mnemonic(mnemonic)

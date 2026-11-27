@@ -7,6 +7,7 @@ use crate::compositor::State;
 use crate::config::{MenuEntry, StartMenuStyle};
 use reprisefs::apps::AppEntry;
 use reprisekit::powerpanel::{Choice, Leave};
+use reprisekit::tr;
 use reprisescene::TreeId;
 
 impl State {
@@ -123,7 +124,7 @@ fn document_row(dirs: &[(std::path::PathBuf, &str)], icon: &str) -> Option<MenuE
     let cmd = format!("reprise-explorer {}", reprisefs::ops::shell_quote(path));
     let row = MenuEntry::spawn(&name.to_string_lossy(), icon, &cmd);
     Some(match crate::desktop::document_tip(icon) {
-        Some(tip) => row.tipped(tip),
+        Some(tip) => row.tipped(&tip),
         None => row,
     })
 }
@@ -131,47 +132,54 @@ fn document_row(dirs: &[(std::path::PathBuf, &str)], icon: &str) -> Option<MenuE
 fn recent_row() -> MenuEntry {
     use crate::config::MenuTarget;
     MenuEntry::item(
-        "Recent Items",
+        &tr!("start-recent-items"),
         "document-open-recent",
         MenuTarget::Documents,
     )
-    .tipped(RECENT_TIP)
+    .tipped(&tr!("start-tip-recent"))
 }
 
 fn computer_row() -> MenuEntry {
-    MenuEntry::spawn("Computer", "computer", "reprise-explorer Computer")
-        .tipped(reprisefs::places::ShellPlace::Computer.tip())
+    MenuEntry::spawn(
+        &tr!("start-computer"),
+        "computer",
+        "reprise-explorer Computer",
+    )
+    .tipped(reprisefs::places::ShellPlace::Computer.tip())
 }
 
 fn control_panel_row() -> MenuEntry {
-    MenuEntry::spawn("Control Panel", "preferences-system", "reprise-settings")
-        .tipped(crate::config::CONTROL_PANEL_TIP)
+    MenuEntry::spawn(
+        &tr!("start-control-panel"),
+        "preferences-system",
+        "reprise-settings",
+    )
+    .tipped(crate::config::CONTROL_PANEL_TIP)
 }
 
 fn printers_row() -> MenuEntry {
     use crate::config::{PRINTERS, PRINTERS_TIP};
-    MenuEntry::spawn("Printers", "printer", PRINTERS).tipped(PRINTERS_TIP)
+    MenuEntry::spawn(&tr!("start-printers"), "printer", PRINTERS).tipped(PRINTERS_TIP)
 }
 
 fn run_row() -> MenuEntry {
     use crate::config::MenuTarget;
     MenuEntry::item(
-        "Run...",
+        &tr!("start-run"),
         "system-run",
         MenuTarget::Action(crate::config::Action::Run),
     )
-    .tipped(RUN_TIP)
+    .tipped(&tr!("start-tip-run"))
 }
 
 fn help_row() -> MenuEntry {
-    MenuEntry::spawn("Help and Support", "help-browser", crate::config::HELP).tipped(HELP_TIP)
+    MenuEntry::spawn(
+        &tr!("start-help-support"),
+        "help-browser",
+        crate::config::HELP,
+    )
+    .tipped(&tr!("start-tip-help"))
 }
-
-/// The infotips of the two-column Start menus' places that have no Classic
-/// counterpart's.
-const RECENT_TIP: &str = "Lists the files you opened most recently.";
-const RUN_TIP: &str = "Opens a program, folder, document or web site by its name.";
-const HELP_TIP: &str = "Opens the Reprise project page.";
 
 /// A row of a Glass Start menu popup: a program row's or a place's context menu or the
 /// Shut down options. The `String` is the program's desktop entry id, so a
@@ -190,7 +198,7 @@ pub enum StartRow {
     OnDesktop,
     Uninstall(String),
     /// A greyed Uninstall: its infotip says why.
-    CannotUninstall(&'static str),
+    CannotUninstall,
     Properties(String),
     /// Open or Explore on a place: what a click on it does.
     OpenPlace(MenuEntry),
@@ -241,16 +249,22 @@ impl PlaceMenu {
 /// Properties, the folder's sheet or Computer's About Reprise. Rows as in [`program_menu`].
 pub fn place_menu(entry: &MenuEntry, kind: &PlaceMenu) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let open = StartRow::OpenPlace(entry.clone());
-    let mut v = vec![(MenuItem::item("&Open").bold(true), Some(open.clone()))];
+    let mut v = vec![(
+        MenuItem::item(&tr!("start-place-open")).bold(true),
+        Some(open.clone()),
+    )];
     let properties = match kind {
         PlaceMenu::Folder(dir) => {
-            v.push((MenuItem::item("E&xplore"), Some(open)));
+            v.push((MenuItem::item(&tr!("start-place-explore")), Some(open)));
             StartRow::FolderProperties(dir.clone())
         }
         PlaceMenu::Computer => StartRow::ComputerProperties,
     };
     v.push((MenuItem::Separator, None));
-    v.push((MenuItem::item("P&roperties"), Some(properties)));
+    v.push((
+        MenuItem::item(&tr!("start-place-properties")),
+        Some(properties),
+    ));
     v.into_iter().unzip()
 }
 
@@ -259,7 +273,7 @@ pub fn place_menu(entry: &MenuEntry, kind: &PlaceMenu) -> (Vec<MenuItem>, Vec<Op
 pub enum Uninstall {
     Offered,
     /// Shown greyed, with an infotip saying why.
-    Greyed(&'static str),
+    Greyed,
     Absent,
 }
 
@@ -271,9 +285,13 @@ fn copied_name(id: &reprisefs::apps::DesktopId, dirs: &[std::path::PathBuf]) -> 
         .map_or_else(|| id.as_str().into(), |n| n.to_string_lossy().into_owned())
 }
 
-pub(crate) const ON_DESKTOP: &str = "The desktop already holds a copy of this program.";
+pub(crate) fn on_desktop_tip() -> String {
+    tr!("start-tip-on-desktop")
+}
 
-const NO_PACKAGEKIT: &str = "Uninstalling a program from the system's packages needs PackageKit.";
+pub(crate) fn no_packagekit_tip() -> String {
+    tr!("start-tip-no-packagekit")
+}
 
 impl Uninstall {
     /// What the menu of a program `remover` removes offers (None: no desktop file): a Flatpak
@@ -290,7 +308,7 @@ impl Uninstall {
             Some(Remover::Flatpak(_)) => Uninstall::Absent,
             Some(Remover::Launcher) => Uninstall::Offered,
             Some(Remover::Package) if packagekit => Uninstall::Offered,
-            Some(Remover::Package) => Uninstall::Greyed(NO_PACKAGEKIT),
+            Some(Remover::Package) => Uninstall::Greyed,
             Some(Remover::None) | None => Uninstall::Absent,
         }
     }
@@ -327,44 +345,44 @@ pub fn program_menu(
 ) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
     let mut v = vec![
         (
-            MenuItem::item("&Open").bold(true),
+            MenuItem::item(&tr!("start-open")).bold(true),
             Some(StartRow::Open(app.into())),
         ),
         (
-            MenuItem::item("Open f&ile location"),
+            MenuItem::item(&tr!("start-open-location")),
             Some(StartRow::OpenFileLocation(app.into())),
         ),
         (MenuItem::Separator, None),
         if pinned_taskbar {
             (
-                MenuItem::item("Unpin from Tas&kbar"),
+                MenuItem::item(&tr!("start-unpin-taskbar")),
                 Some(StartRow::UnpinTaskbar(app.into())),
             )
         } else {
             (
-                MenuItem::item("Pin to Tas&kbar"),
+                MenuItem::item(&tr!("start-pin-taskbar")),
                 Some(StartRow::PinTaskbar(app.into())),
             )
         },
         if pinned_start {
             (
-                MenuItem::item("Unpin from Start Men&u"),
+                MenuItem::item(&tr!("start-unpin-start")),
                 Some(StartRow::UnpinStart(app.into())),
             )
         } else {
             (
-                MenuItem::item("Pin to Start Men&u"),
+                MenuItem::item(&tr!("start-pin-start")),
                 Some(StartRow::PinStart(app.into())),
             )
         },
         if on_desktop {
             (
-                MenuItem::item("Add to &desktop").enabled(false),
+                MenuItem::item(&tr!("start-add-to-desktop")).enabled(false),
                 Some(StartRow::OnDesktop),
             )
         } else {
             (
-                MenuItem::item("Add to &desktop"),
+                MenuItem::item(&tr!("start-add-to-desktop")),
                 Some(StartRow::AddToDesktop(app.into())),
             )
         },
@@ -372,24 +390,24 @@ pub fn program_menu(
     if in_frequent {
         v.push((MenuItem::Separator, None));
         v.push((
-            MenuItem::item("Remove from this &list"),
+            MenuItem::item(&tr!("start-remove-from-list")),
             Some(StartRow::Forget(app.into())),
         ));
     }
     v.push((MenuItem::Separator, None));
     match uninstall {
         Uninstall::Offered => v.push((
-            MenuItem::item("U&ninstall..."),
+            MenuItem::item(&tr!("start-uninstall")),
             Some(StartRow::Uninstall(app.into())),
         )),
-        Uninstall::Greyed(why) => v.push((
-            MenuItem::item("U&ninstall...").enabled(false),
-            Some(StartRow::CannotUninstall(why)),
+        Uninstall::Greyed => v.push((
+            MenuItem::item(&tr!("start-uninstall")).enabled(false),
+            Some(StartRow::CannotUninstall),
         )),
         Uninstall::Absent => {}
     }
     v.push((
-        MenuItem::item("P&roperties"),
+        MenuItem::item(&tr!("start-properties")),
         Some(StartRow::Properties(app.into())),
     ));
     v.into_iter().unzip()
@@ -411,11 +429,11 @@ pub fn shutdown_menu(
     if updates {
         v.extend([
             (
-                MenuItem::item("Install &updates and shut down"),
+                MenuItem::item(&tr!("start-install-shut-down")),
                 Some(StartRow::InstallUpdates(Goal::TurnOff)),
             ),
             (
-                MenuItem::item("Install updates and r&estart"),
+                MenuItem::item(&tr!("start-install-restart")),
                 Some(StartRow::InstallUpdates(Goal::Restart)),
             ),
             (MenuItem::Separator, None),
@@ -426,30 +444,40 @@ pub fn shutdown_menu(
             MenuItem::item(&Choice::Disconnect.label()),
             Some(StartRow::Disconnect),
         )),
-        Leave::SwitchUser { live: true } => {
-            v.push((MenuItem::item("S&witch user"), Some(StartRow::SwitchUser)))
-        }
+        Leave::SwitchUser { live: true } => v.push((
+            MenuItem::item(&tr!("start-switch-user")),
+            Some(StartRow::SwitchUser),
+        )),
         Leave::SwitchUser { live: false } => {}
     }
     v.extend([
-        (MenuItem::item("&Log off"), Some(StartRow::LogOff)),
-        (MenuItem::item("L&ock"), Some(StartRow::Lock)),
+        (
+            MenuItem::item(&tr!("start-log-off")),
+            Some(StartRow::LogOff),
+        ),
+        (MenuItem::item(&tr!("start-lock")), Some(StartRow::Lock)),
         (MenuItem::Separator, None),
-        (MenuItem::item("&Restart"), Some(StartRow::Restart)),
+        (
+            MenuItem::item(&tr!("start-restart")),
+            Some(StartRow::Restart),
+        ),
     ]);
     if restart_into {
         v.push((
-            MenuItem::item("Restart &into").submenu(true),
+            MenuItem::item(&tr!("start-restart-into")).submenu(true),
             Some(StartRow::RestartInto),
         ));
     }
     if !remote {
         v.extend([
             (MenuItem::Separator, None),
-            (MenuItem::item("&Sleep"), Some(StartRow::Sleep)),
+            (MenuItem::item(&tr!("start-sleep")), Some(StartRow::Sleep)),
         ]);
         if hibernate {
-            v.push((MenuItem::item("&Hibernate"), Some(StartRow::Hibernate)));
+            v.push((
+                MenuItem::item(&tr!("start-hibernate")),
+                Some(StartRow::Hibernate),
+            ));
         }
     }
     v.into_iter().unzip()
@@ -639,7 +667,7 @@ mod tests {
         );
         assert_eq!(
             Uninstall::of(Some(Remover::Package), false, true),
-            Uninstall::Greyed(NO_PACKAGEKIT)
+            Uninstall::Greyed
         );
         assert_eq!(
             Uninstall::of(Some(Remover::None), true, true),
@@ -709,7 +737,7 @@ mod tests {
         );
         assert_eq!(rows[at], Some(StartRow::OnDesktop));
         let kind = crate::menuview::MenuKind::StartPanel { rows };
-        assert_eq!(kind.tip(at).as_deref(), Some(ON_DESKTOP));
+        assert_eq!(kind.tip(at).as_deref(), Some(on_desktop_tip().as_str()));
     }
 
     #[test]
@@ -829,12 +857,9 @@ mod tests {
         assert_eq!(rows[items.len() - 2], Some(StartRow::Uninstall("c".into())));
         assert!(items[items.len() - 2].selectable());
 
-        let (items, rows) = program_menu("c", false, false, false, false, Uninstall::Greyed("why"));
+        let (items, rows) = program_menu("c", false, false, false, false, Uninstall::Greyed);
         assert!(!items[items.len() - 2].selectable(), "greyed");
-        assert_eq!(
-            rows[items.len() - 2],
-            Some(StartRow::CannotUninstall("why"))
-        );
+        assert_eq!(rows[items.len() - 2], Some(StartRow::CannotUninstall));
     }
 
     #[test]

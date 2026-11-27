@@ -5,6 +5,7 @@
 //! A right press or the menu key on a program or file row opens its context menu (`open_launcher_context`); picking a row of it closes the panel.
 //! `Action::Launcher` (Super+Space by default) opens it and its own bind closes it; `KeyRoute::Launcher` hands it every other press. Locking closes it.
 
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 use reprisekit::controls::launcher::{self, Event, Hit, Key, Launcher, Pick, Row, Section};
@@ -685,7 +686,7 @@ impl State {
         let v = self.launcher.as_ref()?;
         let lay = launcher::layout(&v.model, &self.config.theme);
         let rect = Rect::new(v.at.0, v.at.1, lay.width, lay.height);
-        let mut tree = crate::access::root(Role::Window, "Launcher", rect);
+        let mut tree = crate::access::root(Role::Window, &tr!("start-launcher-name"), rect);
         let px = self.config.theme.fonts.size_px;
         let theme = &self.config.theme;
         let focus = launcher::access(&v.model, &self.text, px, &mut tree, ROOT, theme);
