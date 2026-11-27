@@ -6,8 +6,8 @@
 
 use crate::Explorer;
 use repriseapp::{Child, Ctx, Event, PointerInput, Reply, WinId};
-use reprisefs::progress::{Meter, Phase as JobPhase, Snapshot};
-use reprisekit::controls::copyprogress::{CopyProgress, Kind, Outcome, Phase, SHOW_AFTER, Status};
+use reprisefs::progress::Meter;
+use reprisekit::controls::copyprogress::{CopyProgress, Kind, Outcome, Phase, SHOW_AFTER};
 use reprisekit::look::Paint;
 use reprisekit::theme::Color;
 use reprisekit::tr;
@@ -40,23 +40,7 @@ pub(crate) struct Progress {
     parked: bool,
 }
 
-pub(crate) fn status(s: Snapshot, waiting: usize) -> Status {
-    Status {
-        phase: match s.phase {
-            JobPhase::Preparing => Phase::Preparing,
-            JobPhase::Copying => Phase::Copying,
-            JobPhase::Finishing => Phase::Finishing,
-        },
-        paused: s.paused,
-        asking: s.asking,
-        bytes: s.bytes,
-        total_bytes: s.total_bytes,
-        items: s.items,
-        total_items: s.total_items,
-        current: s.current,
-        waiting,
-    }
-}
+pub(crate) use repriseapp::jobbox::status;
 
 /// The glass colour `[glass] color` names, for the graph.
 fn accent() -> Color {

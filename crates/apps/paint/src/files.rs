@@ -196,10 +196,11 @@ impl Paint {
                 self.name_saveas();
                 Reply::redraw_all()
             }
-            (Prompt::Update(then), Some(0)) => match self.update_zip() {
-                true => then.map_or_else(Reply::redraw_all, |then| self.run(then)),
-                false => Reply::redraw_all(),
-            },
+            (Prompt::Update(then), Some(0)) => {
+                let started = self.update_zip();
+                self.zip_then = then.filter(|_| started);
+                Reply::redraw_all()
+            }
             (Prompt::Recovered(file), answer) => self.recovered_answered(file, answer),
             _ => Reply::redraw_all(),
         }
@@ -222,9 +223,9 @@ impl Paint {
     }
 
     /// Whether `path` takes no writes, in which case a box says so and its OK opens Save As,
-    /// with `then` waiting on that. A copy out of a zip asks to update the zip instead.
+    /// with `then` waiting on that. A copy out of a zip always asks to update the zip instead.
     fn refuses(&mut self, path: &Path, then: Option<Then>) -> bool {
-        if !reprisefs::ops::is_read_only(path) {
+        if self.zip_entry.is_none() && !reprisefs::ops::is_read_only(path) {
             return false;
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -281,31 +282,64 @@ impl Paint {
         Kind::of(&path).map(|kind| (path, kind))
     }
 
-    /// Writes the picture into the zip it came out of, then over its read-only copy, so the copy
-    /// keeps matching what the zip holds. A zip that cannot be written raises a box.
+    /// Starts the job writing the picture into the zip it came out of, and then over its copy.
+    /// The window takes no input until it ends ([`Paint::zip_saved`]). A picture that does not
+    /// encode raises a box.
     fn update_zip(&mut self) -> bool {
         let (Some((path, kind)), Some((zip, inner))) = (self.writable(), self.zip_entry.clone())
         else {
             return false;
         };
         self.doc.finish();
-        let written = file::encode(&self.doc.img, kind, self.quality).and_then(|bytes| {
-            reprisefs::zipwrite::update_entry(&zip, &inner, &bytes).map(|()| bytes)
-        });
-        let bytes = match written {
+        let bytes = match file::encode(&self.doc.img, kind, self.quality) {
             Ok(bytes) => bytes,
             Err(why) => {
-                log::warn!("update {} in {}: {why}", inner.display(), zip.display());
                 self.error(reprisefs::zipwrite::failure(&zip, &why));
                 return false;
             }
         };
-        if let Err(e) = reprisefs::ops::write_document(&path, &bytes) {
-            log::warn!("update the copy {}: {e}", path.display());
-        }
-        self.doc.dirty = false;
-        self.forget_rescued();
+        let name = |p: &Path| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        };
+        let names = (name(&path), name(&zip));
+        let wake = self.waker.clone();
+        let job = reprisefs::extract::ArchiveJob::update_entry(
+            zip,
+            inner,
+            bytes,
+            Some(path),
+            move || {
+                if let Some(w) = &wake {
+                    w.wake();
+                }
+            },
+        );
+        let kind = reprisekit::controls::copyprogress::Kind::Compress;
+        self.zip_save.start(job, kind, names, self.waker.as_ref());
         true
+    }
+
+    /// The save into a zip ended: once it landed the picture is saved and what waited on the save
+    /// runs; a failure raises its box, and it and a Cancel drop what waited.
+    pub(crate) fn zip_saved(&mut self, ended: repriseapp::jobbox::Ended) -> Reply {
+        use repriseapp::jobbox::Ended;
+        let then = self.zip_then.take();
+        match ended {
+            Ended::Done => {
+                self.doc.dirty = false;
+                self.forget_rescued();
+                then.map_or_else(Reply::redraw_all, |then| self.run(then))
+            }
+            Ended::Failed(text) => {
+                log::warn!("update a zip: {text}");
+                self.error(text);
+                Reply::redraw_all()
+            }
+            Ended::Cancelled => Reply::redraw_all(),
+        }
     }
 
     /// Writes the picture as shown: a paste that landed under the box that asked is laid down

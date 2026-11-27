@@ -70,8 +70,7 @@ impl Notepad {
         let Some(p) = self.path.clone() else {
             return false;
         };
-        let read_only = reprisefs::ops::is_read_only(&p);
-        if read_only && self.zip_entry.is_none() {
+        if self.zip_entry.is_none() && reprisefs::ops::is_read_only(&p) {
             let b = self.read_only_box(&p);
             self.ask(b, Ask::ReadOnly);
             return false;
@@ -81,7 +80,7 @@ impl Notepad {
             self.ask(b, Ask::Unheld(None));
             return false;
         }
-        if read_only {
+        if self.zip_entry.is_some() {
             self.format = format;
             let b = self.update_box(&p);
             self.ask(b, Ask::Update);
@@ -143,8 +142,8 @@ impl Notepad {
         .sounding(repriseapp::sound::Event::Warning)
     }
 
-    /// Yes writes the document into its zip and over the copy, then runs the action waiting on
-    /// the save; No opens Save As as a read-only file's OK does; Cancel, Escape and the close box
+    /// Yes starts writing the document into its zip, and the action waiting on the save waits on
+    /// that; No opens Save As as a read-only file's OK does; Cancel, Escape and the close box
     /// drop the action.
     pub(crate) fn update_answered(&mut self, answer: Option<usize>) -> Reply {
         match answer {
@@ -155,15 +154,14 @@ impl Notepad {
                 return Reply::redraw_all();
             }
         }
-        let ok = self.update_zip();
-        match self.pending.saved(ok) {
-            Some(action) => self.run_pending(action),
-            None => Reply::redraw_all(),
+        if !self.update_zip() {
+            self.pending.cancelled();
         }
+        Reply::redraw_all()
     }
 
-    /// Writes the document into the zip it came out of, then over its read-only copy, so the
-    /// copy keeps matching what the zip holds. A zip that cannot be written raises a box.
+    /// Starts the job writing the document into the zip it came out of, and then over its copy.
+    /// The window takes no input until it ends ([`Notepad::zip_saved`]).
     fn update_zip(&mut self) -> bool {
         let (Some(p), Some((zip, inner))) = (self.path.clone(), self.zip_entry.clone()) else {
             return false;
@@ -171,18 +169,50 @@ impl Notepad {
         let Some(bytes) = encode(self.edit.lines(), self.format) else {
             return false;
         };
-        if let Err(why) = reprisefs::zipwrite::update_entry(&zip, &inner, &bytes) {
-            log::warn!("update {} in {}: {why}", inner.display(), zip.display());
-            self.fail(&reprisefs::zipwrite::failure(&zip, &why));
-            return false;
-        }
-        if let Err(e) = reprisefs::ops::write_document(&p, &bytes) {
-            log::warn!("update the copy {}: {e}", p.display());
-        }
-        self.stamp = Stamp::of(&p);
-        self.edit.mark_saved();
-        self.forget_rescued();
+        let name = |p: &Path| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        };
+        let names = (name(&p), name(&zip));
+        let wake = self.waker.clone();
+        let job =
+            reprisefs::extract::ArchiveJob::update_entry(zip, inner, bytes, Some(p), move || {
+                if let Some(w) = &wake {
+                    w.wake();
+                }
+            });
+        let kind = reprisekit::controls::copyprogress::Kind::Compress;
+        self.zip_save.start(job, kind, names, self.waker.as_ref());
         true
+    }
+
+    /// The save into a zip ended: once it landed the document is saved and the action waiting
+    /// on the save runs; a failure raises its box, and it and a Cancel drop the action.
+    pub(crate) fn zip_saved(&mut self, ended: repriseapp::jobbox::Ended) -> Reply {
+        use repriseapp::jobbox::Ended;
+        match ended {
+            Ended::Done => {
+                self.stamp = self.path.as_deref().and_then(Stamp::of);
+                self.edit.mark_saved();
+                self.forget_rescued();
+                match self.pending.saved(true) {
+                    Some(action) => self.run_pending(action),
+                    None => Reply::redraw_all(),
+                }
+            }
+            Ended::Failed(text) => {
+                log::warn!("update a zip: {text}");
+                self.fail(&text);
+                self.pending.cancelled();
+                Reply::redraw_all()
+            }
+            Ended::Cancelled => {
+                self.pending.cancelled();
+                Reply::redraw_all()
+            }
+        }
     }
 
     pub(crate) fn read_only_box(&self, path: &Path) -> MsgBox {
