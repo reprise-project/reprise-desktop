@@ -161,6 +161,17 @@ impl Shell {
         Ok(())
     }
 
+    /// Opens the Run box, as Start's Run... does.
+    async fn show_run(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.host_only.check(conn, &hdr).await?;
+        emit(&self.events, self.eventfd, TrayEvent::ShowRun);
+        Ok(())
+    }
+
     async fn identify(
         &self,
         #[zbus(connection)] conn: &Connection,

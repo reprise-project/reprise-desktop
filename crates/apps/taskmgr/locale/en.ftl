@@ -18,6 +18,7 @@ status-not-responding = Not Responding
 menu-file = &File
 menu-options = &Options
 menu-view = &View
+menu-new-task = &New Task (Run...)
 menu-exit = E&xit Task Manager
 menu-always-on-top = &Always On Top
 menu-refresh = &Refresh Now
@@ -34,6 +35,7 @@ history-per-cpu = One Graph &Per CPU
 ## Page buttons and status bar
 end-task = &End Task
 switch-to = &Switch To
+new-task = &New Task...
 all-users = &Show processes from all users
 end-process = &End Process
 status-processes = Processes: { $count }

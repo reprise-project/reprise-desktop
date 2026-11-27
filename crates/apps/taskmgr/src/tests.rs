@@ -1242,6 +1242,25 @@ fn shift_f10_opens_the_graph_menu_and_f10_still_opens_the_menu_bar() {
     assert!(t.popup.is_none(), "only on the Performance page");
 }
 
+thread_local! {
+    static RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn new_task_opens_the_run_box_from_the_file_menu_and_the_applications_page() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.new_task = || RUNS.set(RUNS.get() + 1);
+    let act = t.menu_act(0, &[0]).expect("File > New Task (Run...)");
+    t.act(act);
+    pages::follow_form(&mut t, &ctx);
+    assert!(enabled(&t, pages::NEW_TASK), "with nothing selected too");
+    let b = t.form.rect(pages::NEW_TASK).unwrap();
+    click(&mut t, &mut ctx, centre(b));
+    assert_eq!(RUNS.get(), 2);
+    assert_eq!(t.menu_act(0, &[2]), Some(Act::Quit), "Exit stays last");
+}
+
 /// Task Manager on the Processes page with more rows than fit, the point on its thumb and the
 /// scrollbar's rect.
 fn overflowing_processes(ctx: &mut Ctx) -> (TaskMgr, (i32, i32), reprisekit::raster::Rect) {

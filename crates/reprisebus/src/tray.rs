@@ -27,6 +27,14 @@ pub fn restart() -> zbus::Result<()> {
     Ok(())
 }
 
+/// Ask the compositor to open the Run box, as Start's Run... does: Task Manager's New Task....
+/// Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn show_run() -> zbus::Result<()> {
+    let conn = crate::session()?;
+    crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "ShowRun", &()))?;
+    Ok(())
+}
+
 /// Ask the compositor to empty the Recycle Bin, with its usual question first. Blocks for at most
 /// [`crate::METHOD_TIMEOUT`].
 pub fn empty_recycle_bin() -> zbus::Result<()> {

@@ -130,6 +130,8 @@ pub enum TrayEvent {
     Restart,
     /// `org.reprise.Tray.EmptyRecycleBin`: the low disk space warning's button.
     EmptyRecycleBin,
+    /// `org.reprise.Tray.ShowRun`: Task Manager's New Task...
+    ShowRun,
     Identify(Vec<String>),
     /// `org.reprise.Tray.SetPrimary`: Settings' "Use as the primary display", answered on
     /// `reply` once saved.
@@ -811,6 +813,14 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         }
         TrayEvent::EmptyRecycleBin => {
             state.empty_bin();
+            false
+        }
+        TrayEvent::ShowRun => {
+            if state.desktop_locked() {
+                log::info!("Run asked for while locked; ignored");
+            } else {
+                state.run_action(&crate::config::Action::Run, 0);
+            }
             false
         }
         TrayEvent::Identify(names) => {
