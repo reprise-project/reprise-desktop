@@ -1,4 +1,4 @@
-use super::{Canvas, Rect, fade_px, over_px, screen_px};
+use super::{Canvas, Rect, fade_px, grey_px, over_px, screen_px};
 use crate::theme::Color;
 
 impl Canvas {
@@ -169,6 +169,14 @@ impl Canvas {
     pub fn blit_over_faded(&mut self, x: i32, y: i32, src: &Canvas, num: u32, den: u32) {
         let clip = self.bounds();
         self.blit_rows(x, y, src, clip, |s, d| over_px(fade_px(s, num, den), d));
+    }
+
+    /// [`Canvas::blit_over_faded`] of `src` in greys: a disabled toolbar button's icon.
+    pub fn blit_over_greyed(&mut self, x: i32, y: i32, src: &Canvas, num: u32, den: u32) {
+        let clip = self.bounds();
+        self.blit_rows(x, y, src, clip, |s, d| {
+            over_px(fade_px(grey_px(s), num, den), d)
+        });
     }
 
     /// Blend a coverage mask in `color` at device pixel (x, y); `clip` is

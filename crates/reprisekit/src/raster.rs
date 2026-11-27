@@ -54,6 +54,13 @@ fn fade_px(p: u32, num: u32, den: u32) -> u32 {
     (ch(24) << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)
 }
 
+/// One premultiplied pixel with its colour channels set to their luminance (BT.601 weights).
+fn grey_px(p: u32) -> u32 {
+    let ch = |shift: u32| (p >> shift) & 0xFF;
+    let y = (ch(16) * 77 + ch(8) * 150 + ch(0) * 29) >> 8;
+    (p & 0xFF00_0000) | (y << 16) | (y << 8) | y
+}
+
 /// Premultiplied `s` over `d`, alpha included: `s + d * (255 - sa) / 255`
 /// per channel.
 fn over_px(s: u32, d: u32) -> u32 {

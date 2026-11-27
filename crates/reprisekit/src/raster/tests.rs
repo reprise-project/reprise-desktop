@@ -568,6 +568,19 @@ fn blit_over_faded_matches_a_faded_copy_blitted_over() {
 }
 
 #[test]
+fn a_greyed_blit_draws_equal_channels_at_the_faded_alpha() {
+    let mut src = Canvas::new(1, 1);
+    src.pixels[0] = 0xFF4E_9A06;
+    let mut dst = Canvas::new(1, 1);
+    dst.blit_over_greyed(0, 0, &src, 1, 2);
+    let p = dst.pixels[0];
+    let (a, r, g, b) = (p >> 24, (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+    assert_eq!(a, 0x7F, "faded to half");
+    assert!(r == g && g == b, "grey, not green: {p:08X}");
+    assert_eq!(r, (0x4E * 77 + 0x9A * 150 + 0x06 * 29) / 256 / 2);
+}
+
+#[test]
 fn over_px_of_an_opaque_or_clear_source_or_onto_a_clear_pixel_is_the_blend() {
     let blend = |s: u32, d: u32| {
         let sa = s >> 24;
