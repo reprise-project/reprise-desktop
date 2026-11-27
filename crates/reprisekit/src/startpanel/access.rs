@@ -4,7 +4,7 @@
 use super::layout::Layout;
 use super::{
     Mode, Shape, Spot, StartPanel, TreeRow, all_programs, back, clear, log_off, search_cue,
-    shut_down, shut_down_options, turn_off, user_accounts,
+    shut_down_options, turn_off, user_accounts,
 };
 use crate::access::accesskit::{HasPopup, Node, NodeId, Role};
 use crate::access::{self, Tree};
@@ -135,7 +135,7 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
         }
         Spot::Clear => access::button(r, &clear(), true, false),
         Spot::Shutdown if p.shape == Shape::Blue => access::button(r, &turn_off(), true, false),
-        Spot::Shutdown => access::button(r, &shut_down(), true, false),
+        Spot::Shutdown => access::button(r, &p.power.label(), true, false),
         Spot::LogOff => access::button(r, &log_off(), true, false),
         Spot::ShutdownArrow => {
             let mut n = access::button(r, &shut_down_options(), true, false);
@@ -152,7 +152,7 @@ mod tests {
     use crate::access::accesskit::Action;
     use crate::startpanel::layout::layout;
     use crate::startpanel::tests::{place, prow, row, section};
-    use crate::startpanel::{Key, ResultGroup};
+    use crate::startpanel::{Key, PowerButton, ResultGroup, shut_down};
     use crate::textedit::EditKey;
 
     fn build(p: &StartPanel) -> (Tree, NodeId) {
@@ -183,6 +183,15 @@ mod tests {
         p.key(Key::Down);
         let (_, focus) = build(&p);
         assert_eq!(focus, notepad, "the lit row has the focus");
+    }
+
+    #[test]
+    fn the_power_button_is_named_by_its_action() {
+        let mut p = StartPanel::new();
+        p.power = PowerButton::Lock;
+        let (t, _) = build(&p);
+        assert!(t.find(Role::Button, "Lock").is_some());
+        assert!(t.find(Role::Button, &shut_down()).is_none());
     }
 
     #[test]

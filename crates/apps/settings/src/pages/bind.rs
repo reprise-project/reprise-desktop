@@ -41,9 +41,10 @@ use crate::model::{
     ENCODERS, FONT_SMOOTHINGS, FRAME_RATES, GESTURE_FINGERS, HOT_CORNERS, INTERFACES, LOCK_GRACES,
     LOCK_MEDIA, Label, MENU_ANIMATIONS, PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS,
     QT_PLATFORM_THEMES, RATE_MODES, RECORD_FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES,
-    SHOT_FORMATS, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings,
-    Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS,
-    VISUAL_BELLS, WATER_STYLES, XkbPick, keys_for, remote_quality_row,
+    SHOT_FORMATS, STARTMENU_POWERS, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES,
+    SWITCHER_STYLES, Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES,
+    TITLE_DOUBLE_CLICKS, VIDEO_CODECS, VISUAL_BELLS, WATER_STYLES, XkbPick, keys_for,
+    remote_quality_row,
 };
 use reprisekit::tr;
 
@@ -226,6 +227,23 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Member("widget_clock", lens!(desktop_widgets), "clock"),
         Bind::Member("widget_calendar", lens!(desktop_widgets), "calendar"),
         Bind::Member("widget_meter", lens!(desktop_widgets), "meter"),
+        Bind::Member("sm_place_documents", lens!(startmenu_places), "documents"),
+        Bind::Member("sm_place_pictures", lens!(startmenu_places), "pictures"),
+        Bind::Member("sm_place_music", lens!(startmenu_places), "music"),
+        Bind::Member("sm_place_computer", lens!(startmenu_places), "computer"),
+        Bind::Member(
+            "sm_place_control_panel",
+            lens!(startmenu_places),
+            "control-panel",
+        ),
+        Bind::Member("sm_place_printers", lens!(startmenu_places), "printers"),
+        Bind::Member("sm_place_run", lens!(startmenu_places), "run"),
+        Bind::Named(
+            crate::menupage::POWER,
+            lens!(startmenu_power),
+            STARTMENU_POWERS,
+        ),
+        Bind::Num(crate::menupage::PROGRAMS, lens!(startmenu_programs)),
         Bind::UseDesktops("use_desktops", lens!(desktops)),
         Bind::Desktops("desktops", lens!(desktops)),
         Bind::Named(
@@ -960,10 +978,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in SESSION_EXCLUDE {
         sheet.pages[Page::Startup.index()].set_enabled(id, s.session_restore);
     }
-    let sm = &mut sheet.pages[Page::StartMenu.index()];
-    for id in ["banner_label", "startmenu_banner"] {
-        sm.set_enabled(id, s.startmenu_style == "classic");
-    }
+    crate::menupage::follow(sheet, s);
     let quality = (REMOTE_QUALITIES[remote_quality_row(&s.remote_quality)].1)();
     let rd = &mut sheet.pages[Page::RemoteDesktop.index()];
     rd.set_text(QUALITY_VALUE, &quality);

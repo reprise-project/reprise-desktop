@@ -1,0 +1,8 @@
+shut_down 1 baf7351c72fd8c6d
+log_off 1 143b12eb1044dc71
+lock 1 b711f660f5dcd8d1
+restart 1 10337b996bba3b53
+shut_down 2 5e1b4d26d08fbfde
+log_off 2 52f25a6a7e03e16e
+lock 2 dc023b7521e8c4d6
+restart 2 b4d6dd09538b7d2b

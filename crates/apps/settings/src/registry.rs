@@ -46,7 +46,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         }
         Page::Effects => pages::effects(a),
         Page::Taskbar => pages::taskbar(a),
-        Page::StartMenu => crate::menupage::page(a),
+        Page::StartMenu => crate::menupage::page(a, true),
         Page::Search => pages::search(a),
         Page::Switcher => pages::switcher(a),
         Page::VirtualDesktops => pages::virtual_desktops(a),
@@ -752,7 +752,12 @@ mod tests {
             Page::all().map(|p| (p, Vec::new())).collect();
         use reprisekit::controls::form::Control as C;
         let mut titles: Vec<(Page, String)> = Vec::new();
-        for (p, f) in every_page(Area::MIN).into_iter().chain(appearance) {
+        let panel = (Page::StartMenu, crate::menupage::page(Area::MIN, false));
+        for (p, f) in every_page(Area::MIN)
+            .into_iter()
+            .chain(appearance)
+            .chain([panel])
+        {
             let (_, terms) = built.iter_mut().find(|(q, _)| *q == p).unwrap();
             for t in control_labels(&f) {
                 if !unlisted(p, t.0) && !terms.contains(&t) {

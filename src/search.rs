@@ -975,7 +975,11 @@ mod tests {
             ],
             "the Cursor page by name, then Magnifier & Filters by its text cursor check"
         );
-        assert_eq!(rank("power"), [Setting::App(1)], "Power Options by name");
+        assert_eq!(
+            rank("power"),
+            [Setting::App(1), Setting::Page(Page::StartMenu)],
+            "Power Options by name, then the Start menu's power button"
+        );
         assert_eq!(
             rank("dis")[..2],
             [

@@ -2,16 +2,16 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reprisekit::startpanel::layout;
-use reprisekit::startpanel::{Button, Event, Key, Mode, Shape, Spot, StartPanel};
+use reprisekit::startpanel::{Button, Event, Key, Mode, PowerButton, Shape, Spot, StartPanel};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::State;
-use crate::config::{Action, PowerAction};
+use crate::config::Action;
 use crate::dialogview::DialogKey;
 use crate::input::{BTN_LEFT, BTN_RIGHT};
 use crate::keys;
-use crate::lockview::Origin;
 use crate::raster::Rect;
+use crate::startmenu::StartRow;
 
 use super::lists::{jump_file, jump_task};
 use super::search::ResultKind;
@@ -321,10 +321,12 @@ impl State {
                 self.close_start_panel();
                 self.blue_turn_off();
             }
-            Spot::Shutdown => {
-                self.close_start_panel();
-                crate::power::run_action(self, PowerAction::TurnOff, Origin::Desktop);
-            }
+            Spot::Shutdown => self.start_row(match v.model.power {
+                PowerButton::ShutDown => StartRow::ShutDown,
+                PowerButton::LogOff => StartRow::LogOff,
+                PowerButton::Lock => StartRow::Lock,
+                PowerButton::Restart => StartRow::Restart,
+            }),
             Spot::LogOff => {
                 self.close_start_panel();
                 self.blue_log_off();

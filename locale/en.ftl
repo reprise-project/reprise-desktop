@@ -183,6 +183,7 @@ start-install-restart = Install updates and r&estart
 start-switch-user = S&witch user
 start-log-off = &Log off
 start-lock = L&ock
+start-shut-down = Shu&t down
 start-restart = &Restart
 start-restart-into = Restart &into
 start-sleep = &Sleep

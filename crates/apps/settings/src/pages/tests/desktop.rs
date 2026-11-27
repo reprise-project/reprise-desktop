@@ -30,12 +30,8 @@ fn start_menu_holds_its_style_banner_and_quick_launch_check() {
     assert_eq!(rect(&s, p, "startmenu_style"), Rect::new(134, 44, 244, 21));
     assert_eq!(rect(&s, p, "startmenu_banner"), Rect::new(134, 70, 244, 20));
     assert_eq!(
-        rect(&s, p, crate::menupage::STYLE_NOTE),
-        Rect::new(20, 94, 358, 13)
-    );
-    assert_eq!(
         crate::menupage::tree_rect(Area::MIN),
-        Rect::new(20, 116, 275, 152)
+        Rect::new(20, 100, 275, 168)
     );
     assert_eq!(rect(&s, p, "ql_group"), Rect::new(20, 284, 358, 156));
     assert_eq!(rect(&s, p, "taskbar_pinned"), Rect::new(32, 304, 13, 13));
@@ -47,23 +43,76 @@ fn start_menu_holds_its_style_banner_and_quick_launch_check() {
 }
 
 #[test]
-fn the_banner_greys_and_the_note_names_the_classic_style() {
-    let mut s = built();
-    let mut want = Settings {
-        startmenu_style: "glass".into(),
-        ..Settings::default()
-    };
-    follow(&mut s, &want);
-    assert!(!enabled_on(&s, Page::StartMenu, "startmenu_banner"));
-    assert!(!enabled_on(&s, Page::StartMenu, "banner_label"));
+fn the_blue_and_glass_styles_show_their_menus_options_in_the_trees_place() {
+    use crate::menupage::{CLEAR_RECENT, PLACES, POWER, PROGRAMS, TREE};
+    let s = under("glass");
+    let p = Page::StartMenu;
+    let page = &s.pages[p.index()];
+    assert!(page.item(TREE).is_none() && page.item("startmenu_banner").is_none());
     assert_eq!(
-        lines(&s, Page::StartMenu, crate::menupage::STYLE_NOTE),
-        ["Only the Classic style shows the banner and menu below."]
+        keys_on(&s, p),
+        [
+            ".startmenu_style",
+            ".startmenu_places",
+            ".startmenu_power",
+            ".startmenu_programs",
+            "taskbar.pinned"
+        ]
     );
-    want.startmenu_style = "classic".into();
-    follow(&mut s, &want);
-    assert!(enabled_on(&s, Page::StartMenu, "startmenu_banner"));
-    assert!(enabled_on(&s, Page::StartMenu, "banner_label"));
+    assert_eq!(rect(&s, p, "sm_places"), Rect::new(20, 70, 358, 104));
+    let tops: Vec<(i32, i32)> = PLACES
+        .iter()
+        .map(|(id, _)| (rect(&s, p, id).x, rect(&s, p, id).y))
+        .collect();
+    assert_eq!(
+        tops,
+        [
+            (32, 90),
+            (32, 110),
+            (32, 130),
+            (32, 150),
+            (199, 90),
+            (199, 110),
+            (199, 130)
+        ]
+    );
+    assert_eq!(rect(&s, p, POWER), Rect::new(134, 186, 120, 21));
+    assert_eq!(rect(&s, p, PROGRAMS).y, 212);
+    assert_eq!(rect(&s, p, CLEAR_RECENT), Rect::new(20, 242, 125, 23));
+    assert!(rect(&s, p, CLEAR_RECENT).bottom() < rect(&s, p, "ql_group").y);
+    inside_page(&s, p);
+}
+
+#[test]
+fn the_start_menu_page_swaps_with_the_style_and_keeps_quick_launch() {
+    use crate::menupage::{PLACES, POWER, TREE};
+    let mut s = built();
+    let p = Page::StartMenu;
+    let quick = vec![crate::quickpage::Launcher {
+        file: "a.desktop".into(),
+        name: "Alpha".into(),
+        icon: None,
+    }];
+    crate::quickpage::fill(&mut s.pages[p.index()], &quick, Some(0));
+    let mut want = Settings::default();
+    pick(&mut s, &mut want, p, "startmenu_style", 0);
+    assert_eq!(want.startmenu_style, "glass");
+    assert!(s.pages[p.index()].item(TREE).is_none());
+    assert!(enabled_on(&s, p, POWER), "Glass has a power button");
+    assert!(
+        enabled_on(&s, p, crate::quickpage::REMOVE),
+        "the pick stays"
+    );
+    tick(&mut s, &mut want, p, PLACES[1].0, false);
+    assert!(!want.startmenu_places.contains(&"pictures".to_string()));
+    pick(&mut s, &mut want, p, POWER, 2);
+    assert_eq!(want.startmenu_power, "lock");
+    pick(&mut s, &mut want, p, "startmenu_style", 1);
+    assert!(!enabled_on(&s, p, POWER), "Blue has no power button");
+    pick(&mut s, &mut want, p, "startmenu_style", 2);
+    assert!(s.pages[p.index()].item(TREE).is_some());
+    assert!(crate::menupage::selected(&s.pages[p.index()]).is_none());
+    assert!(enabled_on(&s, p, crate::quickpage::REMOVE));
 }
 
 #[test]

@@ -2,11 +2,11 @@
 
 use std::ffi::OsStr;
 
-use reprisekit::startpanel::{Shape, Spot};
+use reprisekit::startpanel::{PowerButton, Shape, Spot};
 use reprisekit::taskbar::Edge;
 
 use crate::compositor::State;
-use crate::config::Action;
+use crate::config::{Action, PowerAction};
 use crate::dragview::DropOp;
 use crate::lockview::Origin;
 use crate::menuview::{MenuKind, Skin};
@@ -133,12 +133,16 @@ impl State {
             return;
         };
         let edge = self.bar_placement(&output).edge;
-        let (items, rows) = crate::startmenu::shutdown_menu(
+        let menu = crate::startmenu::shutdown_menu(
             !self.config.power.hibernate.is_empty(),
             crate::console::leave_offered(self),
             !self.boot_targets.is_empty(),
             self.offline.known.prepared,
         );
+        let (items, rows) = match self.config.startmenu_power {
+            PowerButton::ShutDown => menu,
+            _ => crate::startmenu::with_shut_down(menu),
+        };
         crate::restartinto::refresh(self);
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         let at = (arrow.right(), arrow.y);
@@ -410,6 +414,10 @@ impl State {
             StartRow::Lock => {
                 self.close_start_panel();
                 self.run_action(&Action::Lock, 0);
+            }
+            StartRow::ShutDown => {
+                self.close_start_panel();
+                crate::power::run_action(self, PowerAction::TurnOff, Origin::Desktop);
             }
             StartRow::Restart => {
                 self.close_start_panel();

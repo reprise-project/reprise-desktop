@@ -1,17 +1,22 @@
-//! The Start Menu page: the menu's style and banner, then the menu as a tree with Add, Rename,
-//! Remove and Move buttons. Buttons edit the pending menu and the tree in step; Apply writes it
-//! as [`crate::startmenu::write`] does.
+//! The Start Menu page: the menu's style, then what that style lets you change. The Classic
+//! style shows its banner and the menu as a tree with Add, Rename, Remove and Move buttons;
+//! buttons edit the pending menu and the tree in step, and Apply writes it as
+//! [`crate::startmenu::write`] does. The Blue and Glass styles show their places, the power
+//! button, the number of frequent programs and Clear Recent Items. The page is rebuilt when the
+//! style crosses between them ([`follow`]); the Quick Launch group under it stays.
 
-use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
+use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::menu::expand_label;
 use reprisekit::controls::metrics::ControlMetrics;
+use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::controls::treeview::{self, Node, Style, TreeView};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{escape_mnemonic, split_mnemonic};
 
-use crate::model::STARTMENU_STYLES;
-use crate::pages::{Area, X, choice, edit};
+use crate::model::{STARTMENU_POWERS, STARTMENU_STYLES, Settings};
+use crate::pages::{Area, GX, X, choice, edit, spin};
+use crate::registry::Page;
 use crate::startmenu::{self, Entry, Target};
 use reprisekit::tr;
 
@@ -22,12 +27,25 @@ pub const RENAME: &str = "sm_rename";
 pub const REMOVE: &str = "sm_remove";
 pub const UP: &str = "sm_up";
 pub const DOWN: &str = "sm_down";
-pub const STYLE_NOTE: &str = "startmenu_style_note";
+pub const POWER: &str = "startmenu_power";
+pub const PROGRAMS: &str = "startmenu_programs";
+pub const CLEAR_RECENT: &str = "sm_clear_recent";
+/// The Blue and Glass places' check boxes, each with the `startmenu_places` name it stands for.
+pub const PLACES: [(&str, &str); 7] = [
+    ("sm_place_documents", "documents"),
+    ("sm_place_pictures", "pictures"),
+    ("sm_place_music", "music"),
+    ("sm_place_computer", "computer"),
+    ("sm_place_control_panel", "control-panel"),
+    ("sm_place_printers", "printers"),
+    ("sm_place_run", "run"),
+];
 
 pub fn tree_rect(a: Area) -> Rect {
-    Rect::new(X, 116, a.w - BUTTON_W - 8, 152 + a.dh)
+    Rect::new(X, 100, a.w - BUTTON_W - 8, 168 + a.dh)
 }
 const BUTTON_STEP: i32 = BUTTON_H + 4;
+const PLACE_PITCH: i32 = 20;
 
 pub fn new_folder_text() -> String {
     tr!("menupage-new-folder")
@@ -39,8 +57,20 @@ fn root() -> String {
     tr!("menupage-start-menu")
 }
 
-pub fn page(a: Area) -> Form {
-    let tree_rect = tree_rect(a);
+fn place_label(name: &str) -> String {
+    match name {
+        "documents" => tr!("menupage-place-documents"),
+        "pictures" => tr!("menupage-place-pictures"),
+        "music" => tr!("menupage-place-music"),
+        "computer" => tr!("menupage-place-computer"),
+        "control-panel" => tr!("menupage-place-control-panel"),
+        "printers" => tr!("menupage-place-printers"),
+        _ => tr!("menupage-place-run"),
+    }
+}
+
+/// The page for the Classic style's menu (`classic`) or the Blue and Glass menus'.
+pub fn page(a: Area, classic: bool) -> Form {
     let mut items = vec![
         Item::label_at(
             "startmenu_style_label",
@@ -56,13 +86,21 @@ pub fn page(a: Area) -> Form {
             a.combo(Area::MIN.w - 114),
             STARTMENU_STYLES,
         ),
+    ];
+    if classic {
+        items.extend(classic_items(a));
+    } else {
+        items.extend(panel_items(a));
+    }
+    items.extend(crate::quickpage::items(a));
+    Form::new(items)
+}
+
+fn classic_items(a: Area) -> Vec<Item> {
+    let tree_rect = tree_rect(a);
+    let mut items = vec![
         Item::label_at("banner_label", X, 74, 110, &tr!("menupage-banner")),
         edit("startmenu_banner", X + 114, 70, a.w - 114),
-        Item::new(
-            STYLE_NOTE,
-            Rect::new(X, 94, a.w, LINE_H),
-            Control::Lines(vec![tr!("menupage-only-the-classic-style-shows-the")]),
-        ),
         Item::new(TREE, tree_rect, Control::Tree(tree(&[]))).named(tr!("menupage-start-menu-2")),
     ];
     let buttons = [
@@ -82,8 +120,97 @@ pub fn page(a: Area) -> Form {
         );
         items.push(Item::button(id, r, text, true, false));
     }
-    items.extend(crate::quickpage::items(a));
-    Form::new(items)
+    items
+}
+
+/// The places group in two columns, then the power button, the program count and Clear Recent
+/// Items, all above the Quick Launch group.
+fn panel_items(a: Area) -> Vec<Item> {
+    let rows = PLACES.len().div_ceil(2) as i32;
+    let mut items = vec![Item::group(
+        "sm_places",
+        Rect::new(X, 70, a.w, 24 + rows * PLACE_PITCH),
+        &tr!("menupage-places"),
+    )];
+    for (i, (id, name)) in PLACES.into_iter().enumerate() {
+        let (col, row) = (i as i32 / rows, i as i32 % rows);
+        let x = GX + col * a.gw() / 2;
+        items.push(Item::check(
+            id,
+            x,
+            90 + row * PLACE_PITCH,
+            &place_label(name),
+        ));
+    }
+    let y = 90 + rows * PLACE_PITCH + 16;
+    items.extend([
+        Item::label_at(
+            "startmenu_power_label",
+            X,
+            y + 4,
+            110,
+            &tr!("menupage-power-button"),
+        ),
+        choice(POWER, X + 114, y, 120, STARTMENU_POWERS),
+    ]);
+    items.extend(spin(
+        "startmenu_programs_label",
+        PROGRAMS,
+        X,
+        y + 30,
+        200,
+        &tr!("menupage-frequent-programs"),
+        (0, repriseconf::config::STARTMENU_PROGRAMS_MAX as i32),
+    ));
+    let w = BUTTON_W + 50;
+    items.push(Item::button(
+        CLEAR_RECENT,
+        Rect::new(X, y + 56, w, BUTTON_H),
+        &tr!("menupage-clear-recent-items"),
+        true,
+        false,
+    ));
+    items
+}
+
+/// Rebuild the page when it was built for the other kind of Start menu than `s`'s style, keeping
+/// the Quick Launch list and the focus; then grey the power button under Blue, which has none.
+pub fn follow(sheet: &mut PropSheet, s: &Settings) {
+    let at = Page::StartMenu.index();
+    let classic = s.startmenu_style == "classic";
+    if sheet.pages[at].item(TREE).is_some() != classic {
+        let mut new = page(Area::of(sheet), classic);
+        let old = &sheet.pages[at];
+        for it in &mut new.items {
+            let kept = [
+                crate::quickpage::LIST,
+                crate::quickpage::ADD,
+                crate::quickpage::REMOVE,
+                crate::quickpage::UP,
+                crate::quickpage::DOWN,
+            ];
+            if let Some(o) = kept.contains(&it.id).then(|| old.item(it.id)).flatten() {
+                it.control = o.control.clone();
+            }
+        }
+        let focused = old.focus().and_then(|f| old.items.get(f)).map(|i| i.id);
+        sheet.set_page(at, new);
+        let form = &mut sheet.pages[at];
+        crate::pages::write_form(form, s);
+        fill(form, &s.startmenu);
+        if let Some(f) = focused.filter(|f| form.item(f).is_some()) {
+            form.focus_id(f);
+        }
+    }
+    let form = &mut sheet.pages[at];
+    for id in ["startmenu_power_label", POWER] {
+        form.set_enabled(id, s.startmenu_style == "glass");
+    }
+}
+
+/// Whether the page shows the Classic menu's tree.
+pub fn has_tree(form: &Form) -> bool {
+    form.item(TREE).is_some()
 }
 
 pub fn shown(e: &Entry) -> String {
@@ -333,7 +460,7 @@ mod tests {
     }
 
     fn open(menu: &[Entry]) -> Form {
-        let mut f = page(Area::MIN);
+        let mut f = page(Area::MIN, true);
         fill(&mut f, menu);
         f
     }
@@ -488,8 +615,8 @@ mod tests {
 
     #[test]
     fn the_tree_runs_beside_a_column_of_six_buttons() {
-        let f = page(Area::MIN);
-        assert_eq!(tree_rect(Area::MIN), Rect::new(20, 116, 275, 152));
+        let f = page(Area::MIN, true);
+        assert_eq!(tree_rect(Area::MIN), Rect::new(20, 100, 275, 168));
         let tops: Vec<(i32, i32)> = [ADD, FOLDER, RENAME, REMOVE, UP, DOWN]
             .iter()
             .map(|id| {
@@ -500,12 +627,12 @@ mod tests {
         assert_eq!(
             tops,
             [
-                (303, 116),
-                (303, 143),
-                (303, 170),
-                (303, 197),
-                (303, 224),
-                (303, 251)
+                (303, 100),
+                (303, 127),
+                (303, 154),
+                (303, 181),
+                (303, 208),
+                (303, 235)
             ]
         );
     }

@@ -36,15 +36,18 @@ pub(super) fn tree_rows(apps: &[AppEntry], groups: &[Group]) -> (Vec<TreeRow>, V
     (rows, map)
 }
 
+/// The `count` frequent rows: the most launched, topped up with the starters not pinned. Returns
+/// them and how many of them were launched.
 pub(super) fn frequent_rows(
     launched: Vec<usize>,
     starters: &[usize],
     pinned: &[usize],
+    count: usize,
 ) -> (Vec<usize>, usize) {
     let n = launched.len();
     let mut rows = launched;
     for &i in starters {
-        if rows.len() >= crate::launches::FREQUENT {
+        if rows.len() >= count {
             break;
         }
         if !pinned.contains(&i) && !rows.contains(&i) {
@@ -187,9 +190,10 @@ impl State {
     ) -> (Vec<PlaceRow>, Vec<MenuEntry>) {
         let dirs = self.recent.document_dirs();
         let recent = self.config.recent_files;
+        let shown = &self.config.startmenu_places;
         let entries = match shape {
-            Shape::Glass => crate::startmenu::places(recent, &dirs),
-            Shape::Blue => crate::startmenu::blue_places(recent, &dirs),
+            Shape::Glass => crate::startmenu::places(recent, &dirs, shown),
+            Shape::Blue => crate::startmenu::blue_places(recent, &dirs, shown),
         };
         let mut rows = Vec::new();
         let mut places = Vec::new();
@@ -202,7 +206,7 @@ impl State {
             rows.push(PlaceRow {
                 label: crate::startmenu::expand_label(label, user),
                 picture: icon.as_deref().and_then(|n| unread(&mut self.icons, n, px)),
-                rule_before: rule,
+                rule_before: rule && !rows.is_empty(),
                 submenu: e.opens_submenu(),
                 context: crate::startmenu::PlaceMenu::of(&e, &dirs).is_some(),
             });
@@ -273,10 +277,12 @@ impl State {
             return;
         };
         let pinned = launches.pinned(app_index);
+        let count = config.startmenu_programs as usize;
         let (frequent, launched) = frequent_rows(
-            launches.frequent(app_index, crate::launches::FREQUENT),
+            launches.frequent(app_index, count),
             &crate::launches::starters(app_index),
             &pinned,
+            count,
         );
         let programs: Vec<usize> = pinned.iter().chain(&frequent).copied().collect();
         let blue = v.model.shape == Shape::Blue;

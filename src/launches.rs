@@ -5,7 +5,6 @@ use reprisefs::apps::{AppEntry, DesktopId};
 use std::collections::HashMap;
 
 pub const HISTORY: usize = 100;
-pub const FREQUENT: usize = 10;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Launches {

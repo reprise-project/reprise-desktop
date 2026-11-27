@@ -4,7 +4,7 @@
 pub use reprisekit::controls::menu::*;
 
 use crate::compositor::State;
-use crate::config::{MenuEntry, StartMenuStyle};
+use crate::config::{MenuEntry, StartMenuStyle, StartPlace};
 use reprisefs::apps::AppEntry;
 use reprisekit::powerpanel::{Choice, Leave};
 use reprisekit::tr;
@@ -86,46 +86,87 @@ impl State {
 /// (labelled with the user's name), the Documents, Pictures and Music
 /// folders of `dirs` (the document folders that exist), a rule, Recent Items (with `recent`, `[privacy]
 /// recent_files`), Computer, a rule, Control Panel, Printers, Run... and
-/// Help and Support. Each row has an icon and an infotip.
-pub fn places(recent: bool, dirs: &[(std::path::PathBuf, &str)]) -> Vec<MenuEntry> {
+/// Help and Support. Each row has an icon and an infotip. Of the places `startmenu_places` names,
+/// only those in `shown` are listed.
+pub fn places(
+    recent: bool,
+    dirs: &[(std::path::PathBuf, &str)],
+    shown: &[StartPlace],
+) -> Vec<MenuEntry> {
     use reprisefs::places::ShellPlace;
     let mut v = vec![
         MenuEntry::spawn("{user}", "user-home", "reprise-explorer \"$HOME\"")
             .tipped(&ShellPlace::Home.tip()),
     ];
+    let has = |p| shown.contains(&p);
     v.extend(
-        ["folder-documents", "folder-pictures", "folder-music"]
-            .iter()
-            .filter_map(|icon| document_row(dirs, icon)),
+        [
+            StartPlace::Documents,
+            StartPlace::Pictures,
+            StartPlace::Music,
+        ]
+        .into_iter()
+        .filter_map(|p| document_place(dirs, shown, p)),
     );
     v.push(MenuEntry::Separator);
     if recent {
         v.push(recent_row());
     }
-    v.push(computer_row());
+    v.extend(has(StartPlace::Computer).then(computer_row));
     v.push(MenuEntry::Separator);
-    v.extend([control_panel_row(), printers_row(), run_row(), help_row()]);
+    v.extend(has(StartPlace::ControlPanel).then(control_panel_row));
+    v.extend(has(StartPlace::Printers).then(printers_row));
+    v.extend(has(StartPlace::Run).then(run_row));
+    v.push(help_row());
     v
 }
 
 /// The Blue Start menu's right column: Documents, Recent Items (with `recent`), Pictures, Music,
-/// Computer, a rule, Control Panel, Printers, a rule, Help and Support, Run.... Rows as in [`places`].
-pub fn blue_places(recent: bool, dirs: &[(std::path::PathBuf, &str)]) -> Vec<MenuEntry> {
-    let mut v: Vec<MenuEntry> = document_row(dirs, "folder-documents").into_iter().collect();
+/// Computer, a rule, Control Panel, Printers, a rule, Help and Support, Run.... Rows and `shown`
+/// as in [`places`].
+pub fn blue_places(
+    recent: bool,
+    dirs: &[(std::path::PathBuf, &str)],
+    shown: &[StartPlace],
+) -> Vec<MenuEntry> {
+    let has = |p| shown.contains(&p);
+    let mut v: Vec<MenuEntry> = document_place(dirs, shown, StartPlace::Documents)
+        .into_iter()
+        .collect();
     if recent {
         v.push(recent_row());
     }
     v.extend(
-        ["folder-pictures", "folder-music"]
-            .iter()
-            .filter_map(|icon| document_row(dirs, icon)),
+        [StartPlace::Pictures, StartPlace::Music]
+            .into_iter()
+            .filter_map(|p| document_place(dirs, shown, p)),
     );
-    v.push(computer_row());
+    v.extend(has(StartPlace::Computer).then(computer_row));
     v.push(MenuEntry::Separator);
-    v.extend([control_panel_row(), printers_row()]);
+    v.extend(has(StartPlace::ControlPanel).then(control_panel_row));
+    v.extend(has(StartPlace::Printers).then(printers_row));
     v.push(MenuEntry::Separator);
-    v.extend([help_row(), run_row()]);
+    v.push(help_row());
+    v.extend(has(StartPlace::Run).then(run_row));
     v
+}
+
+/// The row of document place `p` when `shown` holds it and its folder is one of `dirs`.
+fn document_place(
+    dirs: &[(std::path::PathBuf, &str)],
+    shown: &[StartPlace],
+    p: StartPlace,
+) -> Option<MenuEntry> {
+    let icon = match p {
+        StartPlace::Documents => "folder-documents",
+        StartPlace::Pictures => "folder-pictures",
+        StartPlace::Music => "folder-music",
+        _ => return None,
+    };
+    if !shown.contains(&p) {
+        return None;
+    }
+    document_row(dirs, icon)
 }
 
 /// The row opening the document folder of `dirs` whose icon is `icon`, if it exists.
@@ -220,6 +261,7 @@ pub enum StartRow {
     Disconnect,
     LogOff,
     Lock,
+    ShutDown,
     Restart,
     /// Opens the targets to restart into as a submenu.
     RestartInto,
@@ -424,6 +466,18 @@ pub fn program_menu(
     v.into_iter().unzip()
 }
 
+/// `menu` ([`shutdown_menu`]) with a Shut down row before Restart, for a power button that does
+/// something else.
+pub fn with_shut_down(
+    menu: (Vec<MenuItem>, Vec<Option<StartRow>>),
+) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+    let (mut items, mut rows) = menu;
+    let at = (rows.iter().position(|r| *r == Some(StartRow::Restart))).unwrap_or(items.len());
+    items.insert(at, MenuItem::item(&tr!("start-shut-down")));
+    rows.insert(at, Some(StartRow::ShutDown));
+    (items, rows)
+}
+
 /// The Shut down options: Install updates and shut down and Install updates and restart while an
 /// offline update is prepared (`updates`), Disconnect or a live Switch user (`leave`), Log off,
 /// Lock, Restart, Restart into with `restart_into`, then, unless Disconnect is offered, Sleep, and
@@ -626,7 +680,7 @@ mod tests {
     /// The rows of `places`, the folders left out (which exist depends on
     /// the machine), a rule as "-".
     fn rows(recent: bool) -> Vec<String> {
-        places(recent, &[])
+        places(recent, &[], &StartPlace::ALL)
             .iter()
             .filter_map(|e| match e {
                 MenuEntry::Separator => Some("-".to_string()),
@@ -887,6 +941,29 @@ mod tests {
     }
 
     #[test]
+    fn a_power_button_doing_something_else_puts_shut_down_before_restart() {
+        let (items, rows) = with_shut_down(shutdown_menu(
+            false,
+            Leave::SwitchUser { live: false },
+            false,
+            false,
+        ));
+        assert_eq!(
+            labels(&items),
+            [
+                "&Log off",
+                "L&ock",
+                "",
+                "Shu&t down",
+                "&Restart",
+                "",
+                "&Sleep"
+            ]
+        );
+        assert_eq!(rows[3], Some(StartRow::ShutDown));
+    }
+
+    #[test]
     fn the_shutdown_menu_offers_switch_user_first_under_reprise_login() {
         let (items, rows) = shutdown_menu(false, Leave::SwitchUser { live: true }, false, false);
         assert_eq!(labels(&items)[..2], ["S&witch user", "&Log off"]);
@@ -943,7 +1020,11 @@ mod tests {
 
     #[test]
     fn every_place_has_a_tip_and_a_picture() {
-        for e in places(true, &reprisefs::places::document_dir_paths()) {
+        for e in places(
+            true,
+            &reprisefs::places::document_dir_paths(),
+            &StartPlace::ALL,
+        ) {
             if let MenuEntry::Item {
                 label, tip, icon, ..
             } = e
@@ -972,7 +1053,7 @@ mod tests {
         );
         assert!(!rows(false).iter().any(|r| r == "Recent Items"));
         assert!(
-            places(true, &[])
+            places(true, &[], &StartPlace::ALL)
                 .iter()
                 .filter(|e| e.opens_submenu())
                 .all(|e| matches!(e, MenuEntry::Item { label, .. } if label == "Recent Items")),
@@ -988,7 +1069,7 @@ mod tests {
             (std::path::PathBuf::from("/h/Pictures"), "folder-pictures"),
         ];
         let labels = |recent| -> Vec<String> {
-            blue_places(recent, &dirs)
+            blue_places(recent, &dirs, &StartPlace::ALL)
                 .iter()
                 .map(|e| match e {
                     MenuEntry::Separator => "-".to_string(),
@@ -1013,5 +1094,39 @@ mod tests {
             ]
         );
         assert!(!labels(false).iter().any(|r| r == "Recent Items"));
+    }
+
+    #[test]
+    fn a_place_left_out_of_the_shown_list_is_not_listed() {
+        let dirs = [
+            (std::path::PathBuf::from("/h/Documents"), "folder-documents"),
+            (std::path::PathBuf::from("/h/Music"), "folder-music"),
+        ];
+        let shown = [StartPlace::Music, StartPlace::Run];
+        let labels = |v: Vec<MenuEntry>| -> Vec<String> {
+            v.iter()
+                .map(|e| match e {
+                    MenuEntry::Separator => "-".to_string(),
+                    MenuEntry::Item { label, .. } => label.clone(),
+                })
+                .collect()
+        };
+        assert_eq!(
+            labels(places(true, &dirs, &shown)),
+            [
+                "{user}",
+                "Music",
+                "-",
+                "Recent Items",
+                "-",
+                "Run...",
+                "Help and Support"
+            ]
+        );
+        assert_eq!(
+            labels(blue_places(false, &dirs, &shown)),
+            ["Music", "-", "-", "Help and Support", "Run..."],
+            "the panel draws two rules in a row as one"
+        );
     }
 }

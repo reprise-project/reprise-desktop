@@ -195,6 +195,50 @@ impl StartMenuStyle {
     }
 }
 
+/// A right-column place the Glass and Blue Start menus show or leave out (`startmenu_places`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartPlace {
+    Documents,
+    Pictures,
+    Music,
+    Computer,
+    ControlPanel,
+    Printers,
+    Run,
+}
+
+impl StartPlace {
+    pub const ALL: [StartPlace; 7] = [
+        StartPlace::Documents,
+        StartPlace::Pictures,
+        StartPlace::Music,
+        StartPlace::Computer,
+        StartPlace::ControlPanel,
+        StartPlace::Printers,
+        StartPlace::Run,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            StartPlace::Documents => "documents",
+            StartPlace::Pictures => "pictures",
+            StartPlace::Music => "music",
+            StartPlace::Computer => "computer",
+            StartPlace::ControlPanel => "control-panel",
+            StartPlace::Printers => "printers",
+            StartPlace::Run => "run",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<StartPlace> {
+        StartPlace::ALL.into_iter().find(|p| p.name() == s)
+    }
+}
+
+/// The most frequent programs the Glass and Blue Start menus list (`startmenu_programs`): as many
+/// as the panel holds.
+pub const STARTMENU_PROGRAMS_MAX: u32 = 10;
+
 /// `[taskbar] attention_flash`'s default, in seconds, and its largest value.
 pub const ATTENTION_FLASH: u32 = 30;
 pub const ATTENTION_FLASH_MAX: u32 = 3600;

@@ -43,6 +43,13 @@ pub struct Config {
     pub theme: Theme,
     pub startmenu_banner: String,
     pub startmenu_style: StartMenuStyle,
+    /// The places the Glass and Blue Start menus' right column shows, besides the home folder,
+    /// Recent Items and Help and Support.
+    pub startmenu_places: Vec<StartPlace>,
+    pub startmenu_power: reprisekit::startpanel::PowerButton,
+    /// How many frequent programs the Glass and Blue Start menus list, 0 to
+    /// [`STARTMENU_PROGRAMS_MAX`].
+    pub startmenu_programs: u32,
     pub keyboard: KeyboardConfig,
     pub mouse: PointerConfig,
     pub touchpad: TouchpadConfig,
@@ -157,6 +164,9 @@ impl Default for Config {
             theme: Theme::default(),
             startmenu_banner: "Reprise Desktop".into(),
             startmenu_style: StartMenuStyle::Classic,
+            startmenu_places: StartPlace::ALL.to_vec(),
+            startmenu_power: reprisekit::startpanel::PowerButton::ShutDown,
+            startmenu_programs: STARTMENU_PROGRAMS_MAX,
             keyboard: KeyboardConfig::default(),
             mouse: PointerConfig::default(),
             touchpad: TouchpadConfig::default(),

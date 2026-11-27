@@ -5,9 +5,10 @@ use super::{
     CURSOR_SIZE_MAX, ClickMethod, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig,
     FontSmoothing, HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation,
     OnConnect, OutputConfig, OutputMode, PREVIEW_FPS_MAX, PointerConfig, PowerAction,
-    REPEAT_RATE_MAX, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle,
-    SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick,
-    Transform, VrrPolicy, WORKSPACES_MAX, quarter_scale, switcher_size,
+    REPEAT_RATE_MAX, SNAP_DISTANCE_MAX, STARTMENU_PROGRAMS_MAX, SWITCH_MS_MAX, ShortcutOverlay,
+    StartMenuStyle, StartPlace, SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons,
+    TaskbarConfig, TitleDoubleClick, Transform, VrrPolicy, WORKSPACES_MAX, quarter_scale,
+    switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -602,6 +603,34 @@ impl Config {
         }
         if let Some(b) = file.startmenu_banner {
             cfg.startmenu_banner = b;
+        }
+        if let Some(v) = file.startmenu_places {
+            cfg.startmenu_places = Vec::new();
+            for name in v {
+                let place = StartPlace::from_name(&name).ok_or_else(|| {
+                    format!(
+                        "startmenu_places: {name:?} is not documents, pictures, music, computer, \
+                         control-panel, printers or run"
+                    )
+                })?;
+                if !cfg.startmenu_places.contains(&place) {
+                    cfg.startmenu_places.push(place);
+                }
+            }
+        }
+        if let Some(v) = file.startmenu_power {
+            cfg.startmenu_power =
+                reprisekit::startpanel::PowerButton::from_name(&v).ok_or_else(|| {
+                    format!("startmenu_power = {v:?} is not shut_down, log_off, lock or restart")
+                })?;
+        }
+        if let Some(n) = file.startmenu_programs {
+            if n > STARTMENU_PROGRAMS_MAX {
+                return Err(format!(
+                    "startmenu_programs must be 0 to {STARTMENU_PROGRAMS_MAX}, got {n}"
+                ));
+            }
+            cfg.startmenu_programs = n;
         }
         if let Some(v) = file.desktop_icons {
             cfg.desktop_icons = v;

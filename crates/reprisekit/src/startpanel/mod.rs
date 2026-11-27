@@ -20,6 +20,48 @@ pub fn back() -> String {
 pub fn shut_down() -> String {
     tr!("startpanel-shut-down")
 }
+/// What the Glass panel's power button does and says; its arrow's menu holds the rest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PowerButton {
+    #[default]
+    ShutDown,
+    LogOff,
+    Lock,
+    Restart,
+}
+
+impl PowerButton {
+    pub const ALL: [PowerButton; 4] = [
+        PowerButton::ShutDown,
+        PowerButton::LogOff,
+        PowerButton::Lock,
+        PowerButton::Restart,
+    ];
+
+    /// The config's word for it (`startmenu_power`).
+    pub fn name(self) -> &'static str {
+        match self {
+            PowerButton::ShutDown => "shut_down",
+            PowerButton::LogOff => "log_off",
+            PowerButton::Lock => "lock",
+            PowerButton::Restart => "restart",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<PowerButton> {
+        PowerButton::ALL.into_iter().find(|b| b.name() == s)
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            PowerButton::ShutDown => shut_down(),
+            PowerButton::LogOff => tr!("startpanel-power-log-off"),
+            PowerButton::Lock => tr!("startpanel-power-lock"),
+            PowerButton::Restart => tr!("startpanel-power-restart"),
+        }
+    }
+}
+
 pub fn shut_down_options() -> String {
     tr!("startpanel-shut-down-options")
 }
@@ -204,6 +246,8 @@ pub struct StartPanel {
     /// The Blue menu opened from the keyboard: each row underlines the first letter of its label,
     /// the letter that jumps to it.
     pub keys: bool,
+    /// The Glass power button's action and label.
+    pub power: PowerButton,
     /// Private so every write goes through `key` or `paste`, which keep
     /// the mode in step with the query.
     edit: TextEdit,
@@ -245,6 +289,7 @@ impl StartPanel {
             room: None,
             foot_labels: [0; 2],
             keys: false,
+            power: PowerButton::ShutDown,
             edit: TextEdit::new("", false),
             mode: Mode::Home,
             before_search: Mode::Home,
