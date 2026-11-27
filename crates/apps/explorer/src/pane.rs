@@ -16,7 +16,7 @@ pub struct PaneRow {
     /// [`Command::Nothing`] on a greyed row: `taskpane::click` refuses it.
     pub cmd: Command,
     pub enabled: bool,
-    pub tip: Option<&'static str>,
+    pub tip: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -377,7 +377,7 @@ impl Explorer {
                     enabled: r.enabled,
                 })
                 .collect();
-            tips.push(s.rows.iter().map(|r| r.tip).collect());
+            tips.push(s.rows.iter().map(|r| r.tip.clone()).collect());
             cmds.push(s.rows.into_iter().map(|r| r.cmd).collect());
             let mut section = Section::links(s.title, rows);
             section.open = self.pane_open(&section.title);

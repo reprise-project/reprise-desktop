@@ -234,7 +234,7 @@ fn desktop_entry_named(entries: &[desktop::DesktopEntry], name: &str) -> Option<
 /// or with auto-arrange) and the place a shortcut to a system icon opens.
 pub(crate) type Put = (DragSource, Option<(i32, i32)>, Option<PlaceLink>);
 
-pub(crate) type Failure = (&'static str, String);
+pub(crate) type Failure = (String, String);
 
 /// The launcher text of a shortcut named `name` to `source`; a shortcut to a system icon opens
 /// `link`'s place.
@@ -1130,7 +1130,7 @@ impl State {
     pub(crate) fn show_drop_failure(&mut self, failed: Option<Failure>) {
         if let Some((title, text)) = failed {
             log::warn!("{title}: {text}");
-            self.open_dialog(crate::dialog::Dialog::error(title, text));
+            self.open_dialog(crate::dialog::Dialog::error(&title, text));
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Places: the freedesktop trash, the user's home-relative directories and
 //! mounted removable drives.
 
+use reprisekit::tr;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
@@ -451,12 +452,12 @@ pub enum ShellPlace {
 }
 
 impl ShellPlace {
-    pub fn tip(self) -> &'static str {
+    pub fn tip(self) -> String {
         match self {
-            ShellPlace::Documents => "Keeps your documents, pictures and other files together.",
-            ShellPlace::Computer => "Shows the drives and devices attached to this computer.",
-            ShellPlace::Home => "Holds your own files and settings.",
-            ShellPlace::RecycleBin => "Holds what you have deleted until you empty it.",
+            ShellPlace::Documents => tr!("place-tip-documents"),
+            ShellPlace::Computer => tr!("place-tip-computer"),
+            ShellPlace::Home => tr!("place-tip-home"),
+            ShellPlace::RecycleBin => tr!("place-tip-recycle-bin"),
         }
     }
 }

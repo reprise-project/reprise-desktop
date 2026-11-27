@@ -175,10 +175,11 @@ impl Asked {
     }
 
     /// The buttons, Run first and the default.
-    pub fn buttons(self) -> &'static [&'static str] {
+    pub fn buttons(self) -> Vec<String> {
+        let cancel = reprisekit::kit_tr!("cancel");
         match self {
-            Asked::Script => &["&Run", "Open in &Notepad", "Cancel"],
-            Asked::Binary | Asked::Typed => &["&Run", "Cancel"],
+            Asked::Script => vec![tr!("ask-run"), tr!("ask-open-in-notepad"), cancel],
+            Asked::Binary | Asked::Typed => vec![tr!("ask-run"), cancel],
         }
     }
 
@@ -186,14 +187,8 @@ impl Asked {
     pub fn text(self, name: &str) -> String {
         let name = crate::names::shown_line(name, usize::MAX);
         match self {
-            Asked::Script => format!(
-                "\"{name}\" is a script. Running it can change or delete your files.\n\n\
-                 Do you want to run it, or open it in Notepad to read it first?"
-            ),
-            Asked::Binary | Asked::Typed => format!(
-                "\"{name}\" is a program. Running it can change or delete your files.\n\n\
-                 Do you want to run it?"
-            ),
+            Asked::Script => tr!("ask-script-text", name = &*name),
+            Asked::Binary | Asked::Typed => tr!("ask-program-text", name = &*name),
         }
     }
 }

@@ -86,3 +86,49 @@ rename-bad-characters =
 rename-invalid = Cannot rename { $old }: The file name you specified is not valid or too long.
 rename-taken = Cannot rename { $old }: A file with the name you specified already exists. Specify a different file name.
 rename-failed = Cannot rename { $old }: { $why }
+
+## The question before running a script or program
+ask-run = &Run
+ask-open-in-notepad = Open in &Notepad
+ask-script-text =
+    "{ $name }" is a script. Running it can change or delete your files.
+
+    Do you want to run it, or open it in Notepad to read it first?
+ask-program-text =
+    "{ $name }" is a program. Running it can change or delete your files.
+
+    Do you want to run it?
+
+## Other errors
+exec-refused = Reprise cannot run '{ $name }' safely: its command line has a field code inside quotes.
+link-no-program = Reprise cannot find the program '{ $name }'.
+link-no-target = Reprise cannot find '{ $name }'.
+no-executable-bit = This file system cannot mark files as executable.
+
+## The infotips of the shell folders
+place-tip-documents = Keeps your documents, pictures and other files together.
+place-tip-computer = Shows the drives and devices attached to this computer.
+place-tip-home = Holds your own files and settings.
+place-tip-recycle-bin = Holds what you have deleted until you empty it.
+
+## Ejecting a drive
+eject-not-removable = This drive cannot be removed safely.
+eject-holds-system = This drive holds part of the system, so it cannot be removed safely.
+eject-held = Part of this drive is in use as swap space or by an LVM or RAID volume, so it cannot be removed safely.
+eject-not-stopped = Its volumes were unmounted, but the drive could not be stopped and may still be in use.
+eject-busy = '{ $volume }' is in use: a program is using a file on it. Close any program or window using it, and then try again.
+eject-denied = You do not have permission to eject '{ $volume }'.
+eject-failed = '{ $volume }' could not be ejected.
+already-unmounted-one = '{ $name }' was already unmounted.
+already-unmounted-many = { $rest } and '{ $last }' were already unmounted.
+
+## File search
+search-no-tool = File search needs plocate or fd.
+
+## The proxy form
+proxy-no-server = Type the address of at least one proxy server.
+proxy-bad-ignore = The ignored hosts can't hold quotes, $ or \.
+proxy-no-script = Type the address of the configuration script.
+proxy-bad-script = The configuration script's address can't hold spaces, quotes, $ or \.
+proxy-bad-address = The { $label } proxy's address can't hold spaces, quotes, $ or \.
+proxy-bad-port = Type the { $label } proxy's port, a number from 1 to 65535.

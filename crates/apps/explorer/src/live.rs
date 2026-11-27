@@ -512,8 +512,8 @@ impl Explorer {
         self.tip = Some(Tip { at, lines, plain });
     }
 
-    fn pane_tip(&self, i: usize, j: usize) -> Option<&'static str> {
-        self.pane_tips.get(i)?.get(j).copied().flatten()
+    fn pane_tip(&self, i: usize, j: usize) -> Option<&str> {
+        self.pane_tips.get(i)?.get(j).and_then(Option::as_deref)
     }
 
     /// Starts reading entry `i`'s folder tip on a thread unless a walk for

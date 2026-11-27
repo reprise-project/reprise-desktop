@@ -367,7 +367,7 @@ fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
 }
 
 /// The error box's title for a drop given up before its op was settled.
-fn give_up_title(plan: Plan) -> &'static str {
+fn give_up_title(plan: Plan) -> String {
     match plan {
         Plan::Put(Some(op)) | Plan::Ask(Some(op)) => op.failure_title(),
         Plan::Link => DropOp::Shortcut.failure_title(),
@@ -563,7 +563,7 @@ impl State {
         let title = give_up_title(r.answer.plan);
         end(r, None);
         let text = reprisefs::deadline::not_responding(true, false);
-        self.open_dialog(crate::dialog::Dialog::error(title, text));
+        self.open_dialog(crate::dialog::Dialog::error(&title, text));
     }
 
     /// The source hears the drop is done (or cancelled) with the action taken,

@@ -19,6 +19,7 @@
 //!
 //! [`run`] blocks, so call it on a worker thread.
 
+use reprisekit::tr;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::os::fd::AsRawFd;
@@ -443,7 +444,9 @@ pub fn try_run(q: &Query, cancel: &AtomicBool) -> Option<Vec<PathBuf>> {
 }
 
 /// What the launcher and Explorer's Search say when [`try_run`] finds no tool.
-pub const NO_TOOL: &str = "File search needs plocate or fd.";
+pub fn no_tool() -> String {
+    tr!("search-no-tool")
+}
 
 /// [`try_run`] over `engines` in order. Each runs on what is left of the budget and the limit;
 /// once one finds something the search ends, except that plocate's hits send fd only after

@@ -192,9 +192,7 @@ mod tests {
                     let v = s.launcher.as_mut().expect("the launcher is up");
                     v.search.set(
                         0,
-                        vec![crate::search::Found::Note(
-                            reprisefs::search::NO_TOOL.into(),
-                        )],
+                        vec![crate::search::Found::Note(reprisefs::search::no_tool())],
                     );
                     s.show_launcher_found();
                     s.redraw_launcher();

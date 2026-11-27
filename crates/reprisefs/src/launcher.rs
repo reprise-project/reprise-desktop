@@ -1,4 +1,5 @@
 use crate::apps::{desktop_entry_kv, escape_value, exec_argv, label_value, read_desktop_file};
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,8 +165,8 @@ impl Launcher {
 
     pub fn not_found_text(&self, field: &str) -> String {
         match self.kind {
-            Kind::Program => format!("Reprise cannot find the program '{}'.", field.trim()),
-            _ => format!("Reprise cannot find '{}'.", field.trim()),
+            Kind::Program => tr!("link-no-program", name = field.trim()),
+            _ => tr!("link-no-target", name = field.trim()),
         }
     }
 

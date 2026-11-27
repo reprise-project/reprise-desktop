@@ -239,7 +239,7 @@ pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     let mut rows = match script {
         Some(runs) => runs
             .iter()
-            .map(|&(o, default)| (entry(o.label()).bold(default), Some(Run(o))))
+            .map(|&(o, default)| (entry(&o.label()).bold(default), Some(Run(o))))
             .collect(),
         None => vec![(entry(&tr!("desk-menu-open")).bold(true), Some(Open))],
     };

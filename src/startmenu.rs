@@ -80,7 +80,7 @@ pub fn places(recent: bool, dirs: &[(std::path::PathBuf, &str)]) -> Vec<MenuEntr
     use reprisefs::places::ShellPlace;
     let mut v = vec![
         MenuEntry::spawn("{user}", "user-home", "reprise-explorer \"$HOME\"")
-            .tipped(ShellPlace::Home.tip()),
+            .tipped(&ShellPlace::Home.tip()),
     ];
     v.extend(
         ["folder-documents", "folder-pictures", "folder-music"]
@@ -145,7 +145,7 @@ fn computer_row() -> MenuEntry {
         "computer",
         "reprise-explorer Computer",
     )
-    .tipped(reprisefs::places::ShellPlace::Computer.tip())
+    .tipped(&reprisefs::places::ShellPlace::Computer.tip())
 }
 
 fn control_panel_row() -> MenuEntry {

@@ -1,6 +1,7 @@
 //! The session proxy: `environment.d` variables the systemd user manager reads at login. Settings
 //! writes the file and the compositor hands its variables to every program it starts.
 
+use reprisekit::tr;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -156,10 +157,10 @@ impl Proxy {
                     }
                 }
                 if out.is_empty() {
-                    return Err("Type the address of at least one proxy server.".into());
+                    return Err(tr!("proxy-no-server"));
                 }
                 if ignore_entries(&self.ignore).any(|e| e.chars().any(unsafe_char)) {
-                    return Err("The ignored hosts can't hold quotes, $ or \\.".into());
+                    return Err(tr!("proxy-bad-ignore"));
                 }
                 let ignore: Vec<&str> = ignore_entries(&self.ignore).collect();
                 if !ignore.is_empty() {
@@ -171,13 +172,10 @@ impl Proxy {
             Mode::Auto => {
                 let pac = self.pac.trim();
                 if pac.is_empty() {
-                    return Err("Type the address of the configuration script.".into());
+                    return Err(tr!("proxy-no-script"));
                 }
                 if pac.chars().any(unsafe_char) {
-                    return Err(
-                        "The configuration script's address can't hold spaces, quotes, $ or \\."
-                            .into(),
-                    );
+                    return Err(tr!("proxy-bad-script"));
                 }
                 if !pac.contains("://") {
                     return Err("The configuration script's address starts with http://, https:// or file://.".into());
@@ -226,9 +224,7 @@ fn server_url(p: Protocol, s: &Server) -> Result<Option<String>, String> {
     }
     let label = p.label();
     if host.chars().any(unsafe_char) {
-        return Err(format!(
-            "The {label} proxy's address can't hold spaces, quotes, $ or \\."
-        ));
+        return Err(tr!("proxy-bad-address", label = label));
     }
     // A host typed with its port ("proxy:3128") and an empty Port field is taken as typed.
     let typed = split(host, p.scheme());
@@ -237,9 +233,7 @@ fn server_url(p: Protocol, s: &Server) -> Result<Option<String>, String> {
         _ => (host.to_string(), port.to_string()),
     };
     if !port.parse::<u16>().is_ok_and(|n| n > 0) {
-        return Err(format!(
-            "Type the {label} proxy's port, a number from 1 to 65535."
-        ));
+        return Err(tr!("proxy-bad-port", label = label));
     }
     let scheme = if host.contains("://") { "" } else { p.scheme() };
     Ok(Some(format!("{scheme}{host}:{port}")))

@@ -771,7 +771,7 @@ impl Explorer {
         let title = DropOp::Shortcut.failure_title();
         let acted = self.act(
             ctx,
-            crate::acting::Action::changes(title),
+            crate::acting::Action::changes(&title),
             work,
             move |ex, result, ctx| {
                 let reply = if ex.place.path().as_deref() == Some(&*dir) {
@@ -781,7 +781,7 @@ impl Explorer {
                 };
                 match result {
                     Ok(()) => reply,
-                    Err(text) => ex.message_box(title, text, ctx),
+                    Err(text) => ex.message_box(&title, text, ctx),
                 }
             },
         );
