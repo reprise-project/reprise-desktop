@@ -42,7 +42,7 @@ copy-failed = Cannot copy { $name }: { $why }
 shortcut-failed = Cannot create a shortcut to { $name }: { $why }
 copy-cancelled = The copy was cancelled.
 operation-cancelled = The operation was cancelled.
-folder-too-deep = The folder is more than { $depth } levels deep.
+folder-too-deep = The folder is more than { NUMBER($depth, useGrouping: "false") } levels deep.
 
 ## Delete prompts
 delete-file-title = Confirm File Delete
@@ -52,8 +52,8 @@ delete-file-recycle = Are you sure you want to send '{ $name }' to the Recycle B
 delete-file-erase = Are you sure you want to delete '{ $name }'?
 delete-folder-recycle = Are you sure you want to remove the folder '{ $name }' and move all its contents to the Recycle Bin?
 delete-folder-erase = Are you sure you want to remove the folder '{ $name }' and all its contents?
-delete-multiple-recycle = Are you sure you want to send these { $count } items to the Recycle Bin?
-delete-multiple-erase = Are you sure you want to delete these { $count } items?
+delete-multiple-recycle = Are you sure you want to send these { NUMBER($count, useGrouping: "false") } items to the Recycle Bin?
+delete-multiple-erase = Are you sure you want to delete these { NUMBER($count, useGrouping: "false") } items?
 delete-no-bin-one = This drive has no Recycle Bin.
 delete-no-bin-all = None of these items can go to the Recycle Bin.
 delete-no-bin-some = Some of these items cannot go to the Recycle Bin.
