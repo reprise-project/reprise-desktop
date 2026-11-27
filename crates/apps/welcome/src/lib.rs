@@ -4,6 +4,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("welcome");
+
 use reprise_settings::welcome as settings;
 use repriseapp::keys::form_input;
 use repriseapp::oneshot::ErrorBox;
@@ -19,8 +21,6 @@ use reprisekit::theme::Theme;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::rc::Rc;
-
-const TITLE: &str = "Welcome to Reprise";
 
 /// The last page's buttons and the desktop entries they start; a button shows only while its
 /// entry is installed and shown.
@@ -126,9 +126,10 @@ impl WelcomeApp {
             Ok(()) => self.picks = picks,
             Err(e) => {
                 log::warn!("{}: {e}", self.config.display());
-                self.failed(format!(
-                    "Your choice could not be written to {}.\n\n{e}",
-                    self.config.display()
+                self.failed(reprisekit::tr!(
+                    "write-failed",
+                    path = self.config.display().to_string(),
+                    error = e.to_string()
                 ));
             }
         }
@@ -137,7 +138,7 @@ impl WelcomeApp {
     }
 
     fn failed(&mut self, text: String) {
-        self.error.show(TITLE, text, None);
+        self.error.show(&reprisekit::tr!("title"), text, None);
     }
 
     fn open(&self, id: &str) -> Reply {
@@ -161,7 +162,7 @@ impl WelcomeApp {
 
 impl App for WelcomeApp {
     fn title(&self) -> String {
-        TITLE.into()
+        reprisekit::tr!("title")
     }
 
     fn app_id(&self) -> String {
@@ -297,6 +298,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn write_failure_text_keeps_its_paragraph_break() {
+        let text = reprisekit::tr!("write-failed", path = "/a/b", error = "denied");
+        assert_eq!(text, "Your choice could not be written to /a/b.\n\ndenied");
     }
 
     #[test]
