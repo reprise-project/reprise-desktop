@@ -840,7 +840,8 @@ impl State {
         self.open_snap_assist(w, free);
     }
 
-    fn unsnap(&mut self, w: WindowId) {
+    /// Give snapped `w` back its rect from before the snap: Super+Down and the window menu's Restore.
+    pub(crate) fn unsnap(&mut self, w: WindowId) {
         self.wm.snap.leave_group(w);
         let Some(prev) = self.win_mut(w).and_then(|x| x.snapped.take()) else {
             return;

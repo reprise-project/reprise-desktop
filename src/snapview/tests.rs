@@ -993,6 +993,37 @@ fn super_arrows_step_through_the_zones_to_the_next_output_and_back_out() {
 }
 
 #[test]
+fn the_window_menus_restore_takes_a_snapped_window_back_to_its_size_from_before() {
+    use reprisekit::controls::menu::MenuItem;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let before = h.state.win(t.id).expect("window").frame_rect();
+    super_arrow(&mut h, &mut c, KEY_LEFT);
+    assert!(
+        h.state.win(t.id).expect("window").snapped.is_some(),
+        "snapped"
+    );
+    h.state.open_window_menu(t.id, (100, 100), false);
+    let restore = (h.state.menus[0].items.iter())
+        .position(
+            |i| matches!(i, MenuItem::Entry { label, enabled: true, .. } if label == "Restore"),
+        )
+        .expect("a live Restore on a snapped window");
+    h.state.menu_activate(0, restore);
+    h.roundtrip(&mut c);
+    let w = h.state.win(t.id).expect("window");
+    assert!(w.snapped.is_none() && !w.maximized, "unsnapped");
+    assert!(h.state.wm.snap.group_of(t.id).is_none(), "out of its group");
+    assert_eq!(
+        (w.frame_rect().width, w.frame_rect().height),
+        (before.width, before.height),
+        "the size from before the snap, as Super+Down gives"
+    );
+}
+
+#[test]
 fn a_keyboard_size_of_a_snapped_windows_outer_edge_takes_it_out_of_its_group() {
     const KEY_ENTER: u32 = 28;
     let mut h = crate::harness::Harness::new();
