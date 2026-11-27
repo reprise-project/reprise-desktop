@@ -572,7 +572,7 @@ pub fn plain_error(name: &str, detail: &str) -> String {
     let short = name.rsplit('.').next().unwrap_or(name);
     let unreachable = ["timeout", "refused"].iter().any(|d| detail.contains(d))
         || short == "ConnectionAttemptFailed";
-    let words = match short {
+    match short {
         "AuthenticationFailed" | "AuthenticationRejected" | "AuthenticationTimeout" => {
             tr!("error-pairing-refused")
         }
@@ -584,10 +584,9 @@ pub fn plain_error(name: &str, detail: &str) -> String {
         "AlreadyExists" => tr!("error-already-added"),
         "DoesNotExist" => tr!("error-gone"),
         "Blocked" => tr!("error-blocked"),
-        _ if !detail.is_empty() => return detail.to_string(),
-        _ => return name.to_string(),
-    };
-    words
+        _ if !detail.is_empty() => detail.to_string(),
+        _ => name.to_string(),
+    }
 }
 
 #[cfg(test)]

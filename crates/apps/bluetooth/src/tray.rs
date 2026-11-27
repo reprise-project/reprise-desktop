@@ -87,9 +87,7 @@ pub fn tooltip(s: &Snapshot) -> String {
         Some(a) if !a.powered => tr!("tray-off"),
         Some(_) => {
             let devices = connected(s);
-            let head = match devices.len() {
-                n => tr!("tray-connected", count = n),
-            };
+            let head = tr!("tray-connected", count = devices.len());
             devices
                 .iter()
                 .fold(head, |tip, d| tip + "\n" + &bz::battery_row(d))

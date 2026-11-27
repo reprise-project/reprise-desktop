@@ -83,7 +83,7 @@ pub fn entries(rows: &[Device]) -> Vec<Entry> {
     for (i, d) in rows.iter().enumerate() {
         let g = d.kind.group();
         if last != Some(g) {
-            out.push(Entry::Header(g.title().into()));
+            out.push(Entry::Header(g.title()));
             last = Some(g);
         }
         out.push(Entry::Row(i));
