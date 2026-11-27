@@ -1,6 +1,7 @@
 use super::Settings;
 use repriseconf::{Key, key as k};
 use reprisekit::controls::hotkey::Chord;
+use reprisekit::tr;
 use toml_edit::{ArrayOfTables, Item, Table};
 
 /// One `[[keybinds]]` entry as the sheet edits it: the key string the
@@ -82,13 +83,16 @@ pub fn check_program_keys(keys: &str, shown: &str) -> Result<(), String> {
     }
     check_keys(keys)?;
     if repriseconf::keybind::modifier_only(keys) {
-        return Err("A program shortcut ends in a key that is not a modifier.".into());
+        return Err(tr!("model-shortcuts-a-program-shortcut-ends-in-a"));
     }
     if repriseconf::keybind::reserved(keys) {
-        return Err(format!("{shown} is kept by the desktop."));
+        return Err(tr!(
+            "model-shortcuts-kept-by-desktop",
+            shown = shown.to_string()
+        ));
     }
     if repriseconf::keybind::types_text(keys) {
-        return Err(format!("{shown} types text; add Ctrl, Alt or Super."));
+        return Err(tr!("model-shortcuts-types-text", shown = shown.to_string()));
     }
     Ok(())
 }
@@ -98,10 +102,10 @@ pub fn check_program_keys(keys: &str, shown: &str) -> Result<(), String> {
 pub fn action_text(action: &str, command: Option<&str>) -> String {
     match action {
         "spawn" => match command.filter(|c| !c.is_empty()) {
-            Some(c) => format!("Run {c}"),
-            None => "Run a command".into(),
+            Some(c) => tr!("model-shortcuts-run", command = c.to_string()),
+            None => tr!("model-shortcuts-run-a-command"),
         },
-        repriseconf::keybind::NONE => "Nothing".into(),
+        repriseconf::keybind::NONE => tr!("model-shortcuts-nothing"),
         a => repriseconf::keybind::describe(a).map_or_else(|| a.into(), |(_, what)| what.into()),
     }
 }
@@ -127,7 +131,11 @@ pub fn program_text(p: &ProgramShortcut, name: &str) -> String {
     } else {
         &p.description
     };
-    format!("{name}: {what}")
+    tr!(
+        "model-shortcuts-program-text",
+        name = name.to_string(),
+        what = what.to_string()
+    )
 }
 
 pub(super) const KEYBINDS: Key = k("", "keybinds");

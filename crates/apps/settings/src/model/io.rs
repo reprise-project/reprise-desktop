@@ -12,6 +12,7 @@ use super::{
 use repriseconf::config::parse_hhmm;
 use repriseconf::fields::words;
 use repriseconf::{Key, get, key as k, remove, remove_table_if_empty, set};
+use reprisekit::tr;
 use toml_edit::{Array, DocumentMut, Item, Value};
 
 /// Read for the Remote Desktop page and never written: no page sets it.
@@ -251,13 +252,15 @@ fn check_snap_layouts(text: &str) -> Result<(), String> {
     use reprisekit::snaplayouts::{ZONE_MAX, ZoneLayout};
     let specs: Vec<&str> = words(text).collect();
     if specs.len() > ZONE_MAX {
-        return Err(format!(
-            "Snap layouts: at most {ZONE_MAX} layouts, got {}.",
-            specs.len()
+        return Err(tr!(
+            "model-io-snap-layouts-too-many",
+            max = ZONE_MAX.to_string(),
+            got = specs.len().to_string()
         ));
     }
     for spec in specs {
-        ZoneLayout::parse(spec).map_err(|e| format!("Snap layouts: {e}."))?;
+        ZoneLayout::parse(spec)
+            .map_err(|e| tr!("model-io-snap-layouts-invalid", why = e.to_string()))?;
     }
     Ok(())
 }
@@ -265,12 +268,12 @@ fn check_snap_layouts(text: &str) -> Result<(), String> {
 /// What Apply refuses before writing: a bind's key that will not bind, or a program key changed from `base` that fails `check_program_keys`.
 pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
     if s.nl_from == s.nl_to {
-        return Err("The night light's From and To times must differ.".into());
+        return Err(tr!("model-io-the-night-lights-from-and-to"));
     }
     if let (Some(f), Some(t)) = (parse_hhmm(&s.glass_dark_from), parse_hhmm(&s.glass_dark_to))
         && f == t
     {
-        return Err("Glass's dark hours must start and end at different times.".into());
+        return Err(tr!("model-io-glasss-dark-hours-must-start-and"));
     }
     // A file already holding equal times still applies other changes; the compositor drops the key alone.
     if s.quiet_hours != base.quiet_hours
@@ -278,7 +281,7 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
         && let (Some(f), Some(t)) = (parse_hhmm(from), parse_hhmm(to))
         && f == t
     {
-        return Err("The quiet hours' From and To times must differ.".into());
+        return Err(tr!("model-io-the-quiet-hours-from-and-to"));
     }
     for sc in &s.shortcuts {
         check_keys(&sc.keys)?;
@@ -286,17 +289,20 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
             continue;
         }
         if !ACTIONS.contains(&sc.action.as_str()) {
-            return Err("A shortcut's action is not one the compositor knows.".into());
+            return Err(tr!("model-io-a-shortcuts-action-is-not-one"));
         }
         if sc.action == "spawn" && sc.command.trim().is_empty() {
-            return Err("A spawn shortcut needs a command.".into());
+            return Err(tr!("model-io-a-spawn-shortcut-needs-a-command"));
         }
     }
     check_snap_layouts(&s.snap_layouts)?;
     if s.window_rules != base.window_rules
         && let Some(i) = (s.window_rules.iter()).position(|r| r.app_id.trim().is_empty())
     {
-        return Err(format!("Window rule {} needs an app ID.", i + 1));
+        return Err(tr!(
+            "model-io-window-rule-needs-app-id",
+            n = (i + 1).to_string()
+        ));
     }
     let as_loaded = |p: &ProgramShortcut| {
         (base.programs.iter()).any(|b| b.app == p.app && b.id == p.id && b.keys == p.keys)
@@ -308,7 +314,11 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
             } else {
                 &p.description
             };
-            return Err(format!("{name}: {why}"));
+            return Err(tr!(
+                "model-io-program-keys-refused",
+                name = name.to_string(),
+                why = why
+            ));
         }
     }
     Ok(())
