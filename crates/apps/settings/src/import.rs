@@ -206,7 +206,7 @@ impl Setting {
             HotCorner(_) => tr!("import-hot-corner"),
             Favourite(_) => tr!("import-quick-launch"),
             Pinned(_) => tr!("import-quick-launch-as-task-buttons"),
-            Other { what, .. } => return what.clone(),
+            Other { what, .. } => what.clone(),
         }
     }
 
@@ -477,7 +477,7 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
                 let mut t = s.clone();
                 f.apply(&mut t);
                 let why = match f {
-                    Setting::Wallpaper { path, .. } => picture_refused(path, sys).map(String::from),
+                    Setting::Wallpaper { path, .. } => picture_refused(path, sys),
                     Setting::Dark(_) if crate::appearancepage::interface(&s) == Interface::Blue => {
                         Some(tr!("import-blue-comes-in-light-colours-only"))
                     }

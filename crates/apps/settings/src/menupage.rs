@@ -63,7 +63,7 @@ pub fn page(a: Area) -> Form {
             Rect::new(X, 94, a.w, LINE_H),
             Control::Lines(vec![tr!("menupage-only-the-classic-style-shows-the")]),
         ),
-        Item::new(TREE, tree_rect, Control::Tree(tree(&[]))).named(&tr!("menupage-start-menu-2")),
+        Item::new(TREE, tree_rect, Control::Tree(tree(&[]))).named(tr!("menupage-start-menu-2")),
     ];
     let buttons = [
         (ADD, &tr!("menupage-add")),
@@ -94,7 +94,7 @@ pub fn shown(e: &Entry) -> String {
 pub fn shown_as(e: &Entry, user: &str) -> String {
     match e.label() {
         Some(l) => split_mnemonic(&expand_label(l, &escape_mnemonic(user))).0,
-        None => separator().into(),
+        None => separator(),
     }
 }
 

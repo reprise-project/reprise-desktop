@@ -56,7 +56,7 @@ impl Prints {
     /// What the fields show while the front has no certificate to give.
     pub fn not_running() -> Prints {
         Prints {
-            fingerprint: not_running().into(),
+            fingerprint: not_running(),
             thumbprint: String::new(),
         }
     }

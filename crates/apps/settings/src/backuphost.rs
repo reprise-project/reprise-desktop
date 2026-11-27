@@ -53,7 +53,7 @@ impl SettingsApp {
     /// Asks `text` with OK and Cancel, once the questions before it are answered.
     pub(crate) fn ask(&mut self, text: String, then: Then) {
         let msg = MsgBox::new(
-            &tr!("backuphost-reprise-settings"),
+            tr!("backuphost-reprise-settings"),
             msgbox::Fields {
                 text,
                 icon: self.display.icon.clone(),

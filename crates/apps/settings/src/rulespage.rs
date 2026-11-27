@@ -60,7 +60,7 @@ pub fn page(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named(&tr!("rulespage-window-rules")),
+        .named(tr!("rulespage-window-rules")),
         Item::label_at(
             "window_rules_menu_note",
             X,

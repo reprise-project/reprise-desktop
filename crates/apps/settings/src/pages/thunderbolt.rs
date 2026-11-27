@@ -58,7 +58,7 @@ pub fn thunderbolt(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named(&tr!("pages-thunderbolt-devices")),
+        .named(tr!("pages-thunderbolt-devices")),
         button(
             TB_AUTHORIZE,
             list.right() - 2 * BUTTON_W - BUTTON_GAP,

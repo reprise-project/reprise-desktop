@@ -207,7 +207,8 @@ fn reader_note(binds: &[Shortcut]) -> String {
 /// The zoom note's lines: the keys bound to zoom-in, zoom-out and zoom-reset, then where to change
 /// them. A note too long for the group drops the pointer to the Keyboard page first.
 fn zoom_note(binds: &[Shortcut]) -> Vec<String> {
-    let keyed: [(&str, fn(String) -> String); 3] = [
+    type Note = fn(String) -> String;
+    let keyed: [(&str, Note); 3] = [
         ("zoom-in", |k| tr!("magnifierpage-keys-zoom-in", keys = k)),
         ("zoom-out", |k| tr!("magnifierpage-keys-zoom-out", keys = k)),
         ("zoom-reset", |k| {

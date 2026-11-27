@@ -159,7 +159,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
             &tr!("capturepage-delay"),
         ),
         updown(DELAY, DELAY_X, 62, 0, SHOT_DELAY_MAX.into())
-            .named(&tr!("capturepage-screenshot-delay")),
+            .named(tr!("capturepage-screenshot-delay")),
         Item::label_at(
             "delay_units",
             DELAY_X + reprisekit::controls::updown::WIDTH + 4,

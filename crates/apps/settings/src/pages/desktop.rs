@@ -560,7 +560,7 @@ pub fn search(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named(&tr!("pages-desktop-program-results")),
+        .named(tr!("pages-desktop-program-results")),
         button(providerpage::UP, bx, list_y, &tr!("pages-desktop-move-up")),
         button(
             providerpage::DOWN,
