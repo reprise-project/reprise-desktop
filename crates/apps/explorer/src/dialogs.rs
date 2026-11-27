@@ -539,6 +539,7 @@ impl Explorer {
     pub(crate) fn parent_of(&self, win: WinId) -> WinId {
         match win {
             crate::browse::ERROR | PROGRAM_BROWSE => self.dialog_win(),
+            crate::props_picture::PICTURE_BROWSE => crate::props_dialog::PROPS,
             w if is_dialog(w) => match self.dialog().and_then(Dialog::sheet) {
                 Some(sheet) if self.sheet_open(sheet) => sheet,
                 _ => repriseapp::MAIN,
@@ -949,6 +950,9 @@ impl Explorer {
             (PROGRAM_BROWSE, Some(d)) => {
                 crate::newshortcut::picker_of(d).map(|b| b.dlg.min_client())
             }
+            (crate::props_picture::PICTURE_BROWSE, _) => {
+                self.picture_browse().map(|b| b.dlg.min_client())
+            }
             _ => None,
         }
     }
@@ -1048,6 +1052,7 @@ impl Explorer {
             });
         }
         out.extend(self.props_child());
+        out.extend(self.picture_browse_child());
         out.extend(self.bin_props_child());
         out.extend(self.folder_opts_child());
         out.extend(self.preview_child());

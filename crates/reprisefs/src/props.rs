@@ -39,6 +39,8 @@ pub struct FileInfo {
     pub robots: Option<[bool; 2]>,
     pub summary: Option<[String; 6]>,
     pub own_icon: Option<String>,
+    /// A folder's picture ([`crate::meta::folder_picture`]).
+    pub own_picture: Option<std::path::PathBuf>,
     /// A shortcut's own keys, shown on its Shortcut tab (launcher, symlink) or Web Document tab (web link); None for anything else.
     pub launcher: Option<crate::launcher::Launcher>,
     /// A shortcut's "Description": its name, or what a symlink points at; a symlink to a file some program opens shows that program instead.
@@ -292,6 +294,7 @@ pub fn glance_in(
             .then(|| crate::meta::summary(path))
             .flatten(),
         own_icon: is_dir.then(|| crate::meta::folder_icon(path)).flatten(),
+        own_picture: is_dir.then(|| crate::meta::folder_picture(path)).flatten(),
         launcher,
         description,
     })

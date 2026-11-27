@@ -65,12 +65,15 @@ fn spawn_decode(
 }
 
 /// What a listing's thread reads for its rows' icons, beside the rows: each folder's own icon
-/// (`.directory`'s `Icon=`), and the icon files the rows name decoded at the listing's sizes. A
-/// subfolder may be a mount point, and an icon file may be anywhere, that never answers.
+/// and picture (`reprisefs::icons::own_look`), and the icon files the rows name decoded at the
+/// listing's sizes. A subfolder may be a mount point, and an icon file may be anywhere, that never
+/// answers.
 #[derive(Debug, Default)]
 pub struct ReadIcons {
     /// Row `i`'s own icon, for `reprisefs::icons::item_icon_with`.
     pub own: Vec<Option<String>>,
+    /// Row `i`'s picture, which Thumbnails view draws on a folder.
+    pub pictures: Vec<Option<std::path::PathBuf>>,
     art: Art,
     scale: i32,
 }
@@ -84,22 +87,27 @@ impl ReadIcons {
         scale: i32,
     ) -> ReadIcons {
         let mut files: Vec<String> = Vec::new();
-        let own = items
+        let (own, pictures) = items
             .into_iter()
             .map(|it| {
-                let own = reprisefs::icons::own_icon(it);
+                let (own, picture) = reprisefs::icons::own_look(it);
                 let named = match &it.shortcut {
                     Some(sc) => Some(sc.icon()),
                     None => own.as_deref(),
                 };
                 files.extend(named.filter(|n| n.starts_with('/')).map(str::to_string));
-                own
+                (own, picture)
             })
-            .collect();
+            .unzip();
         files.sort_unstable();
         files.dedup();
         let art = decode_art(files, &sizes, scale, None);
-        ReadIcons { own, art, scale }
+        ReadIcons {
+            own,
+            pictures,
+            art,
+            scale,
+        }
     }
 
     /// Hands `cache` the decoded icon files, so fetching the rows' icons reads none of them.
