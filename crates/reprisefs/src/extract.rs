@@ -372,7 +372,15 @@ fn run(
 }
 
 fn list(archive: &Path, m: &Meter) -> Result<Listed, Failure> {
-    listing(&list_argv(archive), m)
+    if crate::archive::zip_encrypted(archive) {
+        return Err(Failure::Refused(tr!("archive-locked")));
+    }
+    match listing(&list_argv(archive), m) {
+        Err(Failure::Tool(why)) if crate::archive::locked(why.as_bytes()) => {
+            Err(Failure::Refused(tr!("archive-locked")))
+        }
+        listed => listed,
+    }
 }
 
 /// Reads the `bsdtar -tv` listing `argv` prints, refusing an entry that lands outside, and
@@ -499,7 +507,9 @@ fn extract(
     let mut n = 0;
     let mut first = None;
     let mut others = 0;
+    let mut locked = false;
     let read = lines(&mut child, err, m, |line| {
+        locked |= crate::archive::locked(line);
         match line.strip_prefix(b"x ") {
             Some(entry) => {
                 n += 1;
@@ -530,6 +540,9 @@ fn extract(
         true
     });
     let ok = finish(child, &read).map_err(undo)?;
+    if !ok && locked {
+        return Err(undo(Failure::Refused(tr!("archive-locked"))));
+    }
     if !ok {
         let why = and_others(
             said(&first.unwrap_or_default(), UNREAD),
@@ -910,11 +923,24 @@ pub(crate) fn spawn_with(
     stdout: bool,
     env: impl FnOnce(&mut Command),
 ) -> Result<Child, Failure> {
+    use std::os::unix::process::CommandExt;
     let mut cmd = Command::new(&argv[0]);
     env(&mut cmd);
-    cmd.args(&argv[1..])
-        .stdin(Stdio::null())
-        .stderr(Stdio::piped());
+    // bsdtar asks for an encrypted entry's passphrase on the terminal, else on stdin, and asks
+    // again forever when stdin answers nothing. With no terminal and a stdin it cannot read,
+    // it fails at once.
+    let stdin = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/null")
+        .map_or_else(|_| Stdio::null(), Stdio::from);
+    // SAFETY: setsid is async-signal-safe.
+    unsafe {
+        cmd.pre_exec(|| match libc::setsid() {
+            -1 => Err(std::io::Error::last_os_error()),
+            _ => Ok(()),
+        });
+    }
+    cmd.args(&argv[1..]).stdin(stdin).stderr(Stdio::piped());
     cmd.stdout(match stdout {
         true => Stdio::piped(),
         false => Stdio::null(),
@@ -1158,6 +1184,45 @@ mod tests {
         );
         assert!(!t.path().join("evil").exists());
         assert!(!t.path().join("evil (2)").exists(), "no folder is made");
+    }
+
+    #[test]
+    fn an_encrypted_zip_is_refused_as_password_protected_without_a_prompt() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::write(d.join("a.txt"), "secret").unwrap();
+        let locked = [
+            "--options",
+            "zip:encryption=zipcrypt",
+            "--passphrase",
+            "pw",
+            "-a",
+            "-cf",
+            "locked.zip",
+            "a.txt",
+        ];
+        bsdtar(d, &locked);
+        // A self-extracting zip, its leading bytes not a zip's, gets past the directory check
+        // and is caught when bsdtar wants the passphrase.
+        let zip = std::fs::read(d.join("locked.zip")).unwrap();
+        std::fs::write(d.join("sfx.zip"), [b"MZ-stub-".as_slice(), &zip].concat()).unwrap();
+        std::fs::create_dir(d.join("out")).unwrap();
+        for name in ["locked.zip", "sfx.zip"] {
+            let got = run_job(
+                vec![Archive {
+                    src: d.join(name),
+                    here: false,
+                    to: Some(d.join("out")),
+                }],
+                Decision::Abort,
+            );
+            assert!(
+                matches!(&got[..], [ArchiveEvent::Failed { index: 0, text }, ArchiveEvent::Finished]
+                    if text.ends_with("it is password-protected.")),
+                "{name}: {got:?}"
+            );
+        }
+        assert!(!d.join("out/locked").exists() && !d.join("out/sfx").exists());
     }
 
     #[test]
