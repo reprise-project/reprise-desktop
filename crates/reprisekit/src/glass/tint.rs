@@ -351,24 +351,9 @@ impl Recolour {
     /// Sky's at the default intensity, so opaque glass pales toward light grey as the intensity falls.
     /// The rest of the art lies over the colour that puts the plain glass there.
     pub fn new(s: &Settings, surface: Surface) -> Recolour {
-        let art_under = surface.opaque_under(s.mode);
-        let (a0, p0) = split(surface.plain_px());
+        let (a0, _) = split(surface.plain_px());
         let (da, dp) = shift(s, surface);
-        let under = (!s.transparency).then(|| {
-            let d = sky();
-            let (a1, p1) = plain(s, surface);
-            let (c, [_, _, blur]) = material_glass(s);
-            let share = (1.0 - blur) / (1.0 - balance(d.intensity)[2]);
-            let c0 = [d.color.r, d.color.g, d.color.b].map(f64::from);
-            let keep = 1.0 - a0 / 255.0;
-            std::array::from_fn(|i| {
-                let dk =
-                    surface.fit(s.material).opaque * ((255.0 - c0[i]) - share * (255.0 - c[i]));
-                let v = (p0[i] - p1[i] + keep * f64::from(art_under[i]) + dk)
-                    / (1.0 - a1 / 255.0).max(1e-3);
-                v.clamp(0.0, 255.0).round() as u8
-            })
-        });
+        let under = (!s.transparency).then(|| backing(s, surface));
         Recolour { a0, da, dp, under }
     }
 
@@ -396,6 +381,26 @@ impl Recolour {
             None => px,
         }
     }
+}
+
+/// The colour `surface`'s glass for `s` lies over with transparency off ([`Recolour::new`]): the
+/// art drawn with transparency on, laid over it, is the art drawn with it off. A picture of a
+/// window, with no backdrop behind its glass, puts it there.
+pub fn backing(s: &Settings, surface: Surface) -> [u8; 3] {
+    let art_under = surface.opaque_under(s.mode);
+    let (a0, p0) = split(surface.plain_px());
+    let d = sky();
+    let (a1, p1) = plain(s, surface);
+    let (c, [_, _, blur]) = material_glass(s);
+    let share = (1.0 - blur) / (1.0 - balance(d.intensity)[2]);
+    let c0 = [d.color.r, d.color.g, d.color.b].map(f64::from);
+    let keep = 1.0 - a0 / 255.0;
+    std::array::from_fn(|i| {
+        let dk = surface.fit(s.material).opaque * ((255.0 - c0[i]) - share * (255.0 - c[i]));
+        let v =
+            (p0[i] - p1[i] + keep * f64::from(art_under[i]) + dk) / (1.0 - a1 / 255.0).max(1e-3);
+        v.clamp(0.0, 255.0).round() as u8
+    })
 }
 
 fn opaque(px: u32, under: [u8; 3]) -> u32 {
@@ -485,6 +490,27 @@ mod tests {
                 Some(surface.opaque_under(Mode::Light)),
                 "{surface:?}: the art's opaque colour"
             );
+        }
+    }
+
+    #[test]
+    fn translucent_glass_over_its_backing_is_the_opaque_glass() {
+        for w in SWATCHES {
+            let rgb = [w.color.r, w.color.g, w.color.b];
+            for surface in SURFACES {
+                let s = settings(rgb, w.intensity, true);
+                let off = Settings {
+                    transparency: false,
+                    ..s
+                };
+                let px = Recolour::new(&s, surface).px(surface.plain_px());
+                assert_eq!(
+                    opaque(px, backing(&s, surface)),
+                    Recolour::new(&off, surface).px(surface.plain_px()),
+                    "{} {surface:?}",
+                    w.name
+                );
+            }
         }
     }
 

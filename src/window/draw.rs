@@ -4,6 +4,7 @@ use reprisekit::classic::frame::{FrameGeometry, FrameHit, FrameState, frame_canv
 use reprisekit::controls::captiontabs::{self, CaptionTabs, TabEntry};
 use reprisekit::glass::{Material, shadow, tint};
 use reprisescene::{BufferId, Input, NodeId, TreeId};
+use smithay::backend::renderer::{Color32F, element::solid::SolidColorBuffer};
 use smithay::utils::{Logical, Rectangle};
 
 use crate::compositor::{DeskScene, State};
@@ -11,7 +12,7 @@ use crate::glass::{frame_pane, sheet_pane};
 use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
 
-use super::{Window, WindowId};
+use super::{ClientGlass, Window, WindowId};
 
 /// Glass shadow pieces per (scale, active, square corners), drawn once and shared; each window's
 /// nodes take their own pixel copy.
@@ -409,6 +410,12 @@ impl State {
             ..self.config.theme.scaled(scale)
         };
         let opens = reprisekit::look::client_glass(&theme, active).is_some();
+        let surface = match active {
+            true => tint::Surface::Active,
+            false => tint::Surface::Inactive,
+        };
+        let [r, g, b] = tint::backing(&self.config.glass, surface).map(|v| f32::from(v) / 255.0);
+        let fill = Color32F::new(r, g, b, 1.0);
         let layout = self.layout_box(None);
         let State { scene, windows, .. } = self;
         let Some(win) = windows.iter_mut().find(|x| x.id == w) else {
@@ -422,23 +429,25 @@ impl State {
             _ => Vec::new(),
         };
         while win.client_glass.len() > rects.len() {
-            if let Some(b) = win.client_glass.pop() {
-                scene.destroy(b);
+            if let Some(g) = win.client_glass.pop() {
+                scene.destroy(g.buffer);
             }
         }
         while win.client_glass.len() < rects.len() {
-            let b = scene.buffer_create(win.chrome);
-            scene.set_input(b, Input::Passthrough);
-            win.client_glass.push(b);
+            let buffer = scene.buffer_create(win.chrome);
+            scene.set_input(buffer, Input::Passthrough);
+            let backing = SolidColorBuffer::new((0, 0), fill);
+            win.client_glass.push(ClientGlass { buffer, backing });
         }
         let c = win.geom.client;
-        for (&b, r) in win.client_glass.iter().zip(&rects) {
+        for (g, r) in win.client_glass.iter_mut().zip(&rects) {
             let mut canvas = Canvas::new((r.width * scale) as u32, (r.height * scale) as u32);
             let band = Rect::new(-r.x, -r.y, c.width, r.bottom()).scaled(scale);
             let client_h = c.height * scale;
             reprisekit::look::draw_client_glass(&mut canvas, &theme, band, client_h, win.maximized);
-            upload_scaled(scene, b, &canvas, scale);
-            scene.set_position(b, c.x + r.x, c.y + r.y);
+            upload_scaled(scene, g.buffer, &canvas, scale);
+            scene.set_position(g.buffer, c.x + r.x, c.y + r.y);
+            g.backing.update((r.width, r.height), fill);
         }
         let leave_out = !rects.is_empty() && crate::glass::wanted(&self.config);
         scene.set_in_backdrop(win.content, !leave_out);
