@@ -101,6 +101,13 @@ impl Grow {
         (self.u.len(off + size / 2) - size / 2) * self.s
     }
 
+    /// Where a thing `size` design px long that grows by whole steps with the text
+    /// ([`TextUnits::small`]) starts, for one placed `off` in at 100%: its centre moves with the
+    /// text.
+    pub fn stepped(self, off: i32, size: i32) -> i32 {
+        (self.u.len(off + size / 2) - size * self.u.small() / 2) * self.s
+    }
+
     /// Where an icon `actual` device px long starts, for one `size` design px long placed `off` in
     /// at 100% that grows with the text: centred where that one's centre moves to.
     pub fn centred(self, off: i32, size: i32, actual: i32) -> i32 {
