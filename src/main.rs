@@ -190,6 +190,7 @@ mod hang;
 mod hotcorner;
 mod identifyview;
 mod inputproto;
+mod jumppins;
 mod keptframes;
 mod keyroute;
 mod keys;

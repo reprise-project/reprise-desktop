@@ -234,6 +234,8 @@ pub struct StartPanel {
     /// The jump list's titled sections (Recent, then Tasks). [`Spot::Jump`] counts its rows
     /// through them in order.
     pub jump: Vec<ResultGroup>,
+    /// How many of the jump list's first rows are files, which have a menu.
+    pub jump_files: usize,
     /// The text size the panel is laid out and drawn at: its layout and the rows' icons grow by it,
     /// glyphs and the user picture keep their size.
     pub text: TextUnits,
@@ -285,6 +287,7 @@ impl StartPanel {
             tree_top: 0,
             results: Vec::new(),
             jump: Vec::new(),
+            jump_files: 0,
             text: TextUnits::default(),
             room: None,
             foot_labels: [0; 2],
@@ -669,6 +672,7 @@ impl StartPanel {
             Spot::Program(_) | Spot::Result(..) => true,
             Spot::Tree(i) => matches!(self.tree.get(i), Some(TreeRow::App { .. })),
             Spot::Place(i) => self.places.get(i).is_some_and(|p| p.context),
+            Spot::Jump(k) => k < self.jump_files,
             _ => false,
         }
     }
@@ -1650,6 +1654,19 @@ pub(crate) mod tests {
         ] {
             assert_eq!(p.press(s, Button::Right), Event::None, "{s:?}");
         }
+        p.jump = vec![ResultGroup {
+            title: "Recent".into(),
+            rows: vec![row("a.txt"), row("New Window")],
+        }];
+        p.jump_files = 1;
+        p.set_mode(Mode::Jump(0));
+        assert_eq!(
+            p.press(Spot::Jump(0), Button::Right),
+            Event::Context(Spot::Jump(0)),
+            "a file"
+        );
+        assert_eq!(p.press(Spot::Jump(1), Button::Right), Event::None, "a task");
+        p.set_mode(Mode::Home);
         p.key(Key::Down);
         assert_eq!(p.key(Key::Menu), Event::Context(Spot::Program(0)));
         p.lit = Some(Spot::Place(0));

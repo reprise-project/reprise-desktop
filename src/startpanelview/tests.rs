@@ -594,11 +594,14 @@ fn the_panel_stays_inside_the_usable_area() {
 #[test]
 fn a_jump_rows_tip_is_its_files_path_and_the_rows_past_the_files_are_tasks() {
     let jumps = vec![
-        Vec::new(),
-        vec![
-            PathBuf::from("/home/u/Docs/notes.txt"),
-            PathBuf::from("/srv/share/plan.odt"),
-        ],
+        (Vec::new(), 0),
+        (
+            vec![
+                PathBuf::from("/home/u/Docs/notes.txt"),
+                PathBuf::from("/srv/share/plan.odt"),
+            ],
+            1,
+        ),
     ];
     let home = Some(Path::new("/home/u"));
     let tip = |mode, k| jump_file(&jumps, mode, k).map(|p| crate::search::tilde(p, home));
@@ -2048,6 +2051,7 @@ fn a_programs_tasks_list_in_its_start_jump_list_and_enter_runs_one() {
     assert_eq!(
         tasks,
         [
+            ("Pinned", vec![]),
             ("Recent", vec![]),
             ("Tasks", vec!["Write Message", "Address Book"])
         ]
@@ -2242,4 +2246,91 @@ fn the_start_menu_keys_pick_the_places_the_program_count_and_the_power_button() 
         at(StartRow::Restart),
         "Shut down joins the options, before Restart"
     );
+}
+
+/// Pin to this list moves a Start jump list file under Pinned, Unpin brings it back, and Remove
+/// takes it off the program's recent files.
+#[test]
+fn a_start_jump_list_file_pins_unpins_and_leaves_the_list_from_its_menu() {
+    use crate::input::BTN_RIGHT;
+    let dir = crate::harness::scratch().join("start-jump-file-menu");
+    std::fs::create_dir_all(&dir).unwrap();
+    let notes = dir.join("notes.txt");
+    std::fs::write(&notes, "x").unwrap();
+    let xbel = dir.join("recently-used.xbel");
+    std::fs::write(
+        &xbel,
+        format!(
+            "<xbel>\n  <bookmark href=\"file://{}\" modified=\"2026-01-01T00:00:00Z\">\n    \
+             <info><metadata><bookmark:applications>\n      <bookmark:application \
+             name=\"Mail\" exec=\"'mail %u'\" modified=\"2026-01-01T00:00:00Z\" count=\"1\"/>\n    \
+             </bookmark:applications></metadata></info>\n  </bookmark>\n</xbel>\n",
+            notes.display()
+        ),
+    )
+    .unwrap();
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1920, 1080);
+    let mail = reprisefs::apps::parse_desktop(MAIL, &"mail.desktop".parse().unwrap()).unwrap();
+    h.state.app_index = vec![mail.clone()];
+    h.state.launches.pin(&mail.id);
+    h.state.recent = crate::recentdocs::RecentDocs::reading(xbel.clone());
+    h.state.refresh_recent();
+    h.until("the recent files read", |s| {
+        !s.recent.current(10).is_empty()
+    });
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start(bar);
+    for sym in [keys::KEY_Down, keys::KEY_Right] {
+        h.state.start_panel_key(&press(sym, 0));
+    }
+    let groups = |h: &crate::harness::Harness| -> Vec<(String, Vec<String>)> {
+        let m = &h.state.start_panel.as_ref().expect("the menu open").model;
+        (m.jump.iter())
+            .map(|g| {
+                (
+                    g.title.clone(),
+                    g.rows.iter().map(|r| r.name.clone()).collect(),
+                )
+            })
+            .collect()
+    };
+    let files = |h: &crate::harness::Harness, title: &str| {
+        (groups(h).into_iter())
+            .find(|(t, _)| t == title)
+            .map(|(_, rows)| rows)
+            .unwrap_or_default()
+    };
+    assert_eq!(files(&h, "Recent"), ["notes.txt"]);
+    let pick = |h: &mut crate::harness::Harness, label: &str| {
+        use reprisekit::controls::menu::MenuItem;
+        h.state.start_panel_press(Some(Spot::Jump(0)), BTN_RIGHT);
+        let at = (h.state.menus[0].items.iter())
+            .position(|i| matches!(i, MenuItem::Entry { label: l, .. } if l == label));
+        let at = at.unwrap_or_else(|| panic!("{label} in {:?}", menu_labels(h)));
+        h.state.menu_activate(0, at);
+    };
+    pick(&mut h, "Pin to this list");
+    assert_eq!(
+        h.state.jump_pins.of("mail.desktop"),
+        std::slice::from_ref(&notes)
+    );
+    assert_eq!(files(&h, "Pinned"), ["notes.txt"]);
+    assert!(files(&h, "Recent").is_empty(), "listed once, as pinned");
+    pick(&mut h, "Unpin from this list");
+    assert!(h.state.jump_pins.of("mail.desktop").is_empty());
+    assert_eq!(files(&h, "Recent"), ["notes.txt"]);
+    pick(&mut h, "Remove from this list");
+    h.until("the file left the recent files", |s| {
+        s.recent.for_app(10, &mail).is_empty()
+    });
+    assert!(
+        !std::fs::read_to_string(&xbel)
+            .unwrap()
+            .contains("notes.txt"),
+        "the bookmark Mail alone used is gone"
+    );
+    assert!(notes.exists(), "the file itself stays");
+    let _ = std::fs::remove_dir_all(&dir);
 }

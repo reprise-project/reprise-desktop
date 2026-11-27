@@ -361,6 +361,7 @@ pub struct State {
     /// Every program's search provider file, rescanned with `app_index`.
     pub search_providers: Vec<reprisefs::searchproviders::Provider>,
     pub launches: crate::launches::Launches,
+    pub jump_pins: crate::jumppins::JumpPins,
     /// Keeps `app_index` current as programs come and go (`appindex`).
     pub apps_watch: crate::appindex::AppIndexWatch,
     /// Reloads `config.toml` when it changes (`configwatch`).
@@ -831,6 +832,7 @@ impl State {
                 &persisted.start_pins,
                 &persisted.launches,
             ),
+            jump_pins: crate::jumppins::JumpPins::from_saved(&persisted.jump_pins),
             apps_watch: Default::default(),
             config_watch: Default::default(),
             config_notice: None,

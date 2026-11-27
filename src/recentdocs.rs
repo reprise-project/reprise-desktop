@@ -260,6 +260,20 @@ impl State {
         });
     }
 
+    /// Takes `path` off the recent files of program `entry` in `recently-used.xbel` on a file
+    /// job, then reads them again.
+    pub fn forget_recent(&mut self, path: PathBuf, entry: AppEntry) {
+        let Some(xbel) = self.recent.xbel.clone() else {
+            return;
+        };
+        self.spawn_fs_job(move || {
+            if let Err(e) = reprisefs::recent::forget_at(&xbel, &path, &entry) {
+                log::warn!("recent files: could not forget {}: {e}", path.display());
+            }
+            Box::new(|s: &mut State| s.refresh_recent())
+        });
+    }
+
     /// Reads the recent files again, then checks them and the document folders, all off the
     /// loop; open lists are relisted as each answers.
     pub fn refresh_recent(&mut self) {

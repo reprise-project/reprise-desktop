@@ -1180,7 +1180,7 @@ fn jump_lists_follow_what_the_button_stands_for() {
         exec_line: String::new(),
     };
     let tasks = [task("New Window"), task("New Tab")];
-    let sections = jump_sections(&recent, &tasks);
+    let sections = jump_sections(&recent, 0, &tasks);
     let (items, rows) = jump_list(&sections, "Terminal", true, true, &titles(3), 1);
     assert_eq!(
         labels(&items),
@@ -1225,14 +1225,21 @@ fn jump_lists_follow_what_the_button_stands_for() {
             Some(JumpRow::Close)
         ]
     );
-    let none = jump_sections(&[], &[]);
+    let none = jump_sections(&[], 0, &[]);
     let (items, _) = jump_list(&none[..], "Terminal", true, true, &[], 1);
     assert_eq!(
         labels(&items),
         ["Terminal", "Unpin this program from taskbar"],
         "no sections, no headings"
     );
-    let (items, _) = jump_list(&jump_sections(&[], &tasks), "Terminal", true, true, &[], 1);
+    let (items, _) = jump_list(
+        &jump_sections(&[], 0, &tasks),
+        "Terminal",
+        true,
+        true,
+        &[],
+        1,
+    );
     assert_eq!(
         labels(&items)[..4],
         ["[Tasks]", "New Window", "New Tab", "-"]
@@ -1243,6 +1250,20 @@ fn jump_lists_follow_what_the_button_stands_for() {
         ["Terminal", "Unpin this program from taskbar"]
     );
     assert_eq!(rows, [Some(JumpRow::Launch), Some(JumpRow::Unpin)]);
+    let (items, rows) = jump_list(
+        &jump_sections(&recent, 1, &[]),
+        "Terminal",
+        true,
+        true,
+        &[],
+        1,
+    );
+    assert_eq!(
+        labels(&items)[..5],
+        ["[Pinned]", "b.txt", "[Recent]", "a.txt", "-"],
+        "the pinned files head the list under their own heading"
+    );
+    assert_eq!(rows[1], Some(JumpRow::Recent(recent[0].clone())));
     let (items, rows) = jump_list(&none[..], "Editor", false, true, &titles(1), 1);
     assert_eq!(
         labels(&items),

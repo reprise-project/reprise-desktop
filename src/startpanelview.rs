@@ -37,7 +37,8 @@ pub struct StartPanelView {
     programs: Vec<usize>,
     /// Leading `model.frequent` rows from launch history; the rest are starters.
     launched: usize,
-    jumps: Vec<Vec<PathBuf>>,
+    /// Parallel to `programs`: each one's jump list files, and how many lead as pinned.
+    jumps: Vec<(Vec<PathBuf>, usize)>,
     new_pins: Vec<reprisefs::apps::DesktopId>,
     /// Parallel to `model.tree`; None for a folder.
     tree_apps: Vec<Option<usize>>,
@@ -77,7 +78,7 @@ pub struct StartPanelView {
 impl StartPanelView {
     /// Every file the programs' jump lists show.
     pub(crate) fn jump_files(&self) -> impl Iterator<Item = &PathBuf> {
-        self.jumps.iter().flatten()
+        self.jumps.iter().flat_map(|(files, _)| files)
     }
 
     /// Global `(x, y)` in layout coordinates.

@@ -776,19 +776,26 @@ pub struct JumpSection {
     pub rows: Vec<(String, JumpRow)>,
 }
 
-/// A program's jump list sections, the Start panel's and a task button's: Recent with its
-/// `recent` files, then Tasks with its desktop `tasks` ([`jump_tasks`]).
+/// A program's jump list sections, the Start panel's and a task button's: Pinned with the first
+/// `pinned` of its `files` ([`crate::jumppins::jump_files`]), Recent with the rest, then Tasks
+/// with its desktop `tasks` ([`jump_tasks`]).
 pub fn jump_sections(
-    recent: &[std::path::PathBuf],
+    files: &[std::path::PathBuf],
+    pinned: usize,
     tasks: &[reprisefs::apps::DesktopAction],
-) -> [JumpSection; 2] {
+) -> [JumpSection; 3] {
     let file = |p: &std::path::PathBuf| {
         let name = p
             .file_name()
             .map_or_else(|| p.to_string_lossy(), |n| n.to_string_lossy());
         (name.into_owned(), JumpRow::Recent(p.clone()))
     };
+    let (pins, recent) = files.split_at(pinned.min(files.len()));
     [
+        JumpSection {
+            title: tr!("bar-jump-pinned"),
+            rows: pins.iter().map(file).collect(),
+        },
         JumpSection {
             title: tr!("bar-jump-recent"),
             rows: recent.iter().map(file).collect(),
