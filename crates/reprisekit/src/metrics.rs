@@ -153,11 +153,6 @@ impl PlacesMetrics {
         }
     }
 
-    /// How tall `n` tiles get at the least, by [`PlacesMetrics::fit`].
-    pub fn least_tiles(self, n: usize) -> i32 {
-        n as i32 * (self.tile - (self.icon - self.least_icon()))
-    }
-
     fn least_icon(self) -> i32 {
         self.icon.min(PlacesMetrics::CLASSIC.icon)
     }

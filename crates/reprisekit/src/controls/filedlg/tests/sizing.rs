@@ -11,14 +11,7 @@ fn set_size_keeps_the_opening_width_and_takes_the_height() {
     assert_eq!(d.client(), (min.0 + 168, min.1 + 55));
 }
 
-/// At 200% with six places and the extra rows, a window held 150 px shorter than the
-/// minimum: the shell view and places bar give the height, the rows under them stay inside.
-#[test]
-fn a_window_shorter_than_the_minimum_keeps_every_row_inside_it() {
-    let t = text();
-    let u = TextUnits::new(22, 11);
-    let cm = ControlMetrics::CLASSIC.grown(u);
-    let mut d = with_extra();
+fn six_places(d: &mut FileDlg) {
     d.places.places = (0..6)
         .map(|i| Place {
             label: format!("Place {i}"),
@@ -27,6 +20,18 @@ fn a_window_shorter_than_the_minimum_keeps_every_row_inside_it() {
             pinned: false,
         })
         .collect();
+}
+
+/// At 200% with six places and the extra rows, a window held 150 px shorter than the
+/// minimum: the shell view and places bar give the height, the rows under them stay inside.
+/// Held far shorter, the shell view stops at `SHELL_LEAST`.
+#[test]
+fn a_window_shorter_than_the_minimum_keeps_every_row_inside_it() {
+    let t = text();
+    let u = TextUnits::new(22, 11);
+    let cm = ControlMetrics::CLASSIC.grown(u);
+    let mut d = with_extra();
+    six_places(&mut d);
     d.set_text(u);
     let cs = ColorScheme::default();
     d.drawn_with(&Paint {
@@ -49,16 +54,76 @@ fn a_window_shorter_than_the_minimum_keeps_every_row_inside_it() {
         "got {hit:?}"
     );
 
-    let tiles = cm.places.least_tiles(6);
-    assert_eq!(tiles, 6 * (3 + 32 + 2 * 30), "tiles with 32 px icons");
     let lay = d.layout(&t, 22, Rect::new(0, 0, w, 100), &cm);
-    assert_eq!(lay.places.height, tiles, "the places bar keeps its tiles");
-    let squeezed = placesbar::layout(&d.places, lay.places, &cm);
-    assert_eq!(squeezed[5].bottom(), lay.places.bottom(), "all six fit");
     assert_eq!(
         lay.shell.frame.height,
-        base.shell.frame.height - (base.places.height - tiles)
+        base.shell.frame.height - 2 * (SHELL_H - SHELL_LEAST),
+        "the shell view keeps a header and three rows"
     );
+    assert!(
+        placesbar::bar_parts(&d.places, lay.places, &cm).is_some(),
+        "the places bar scrolls the tiles that no longer fit"
+    );
+}
+
+/// Save As with its extra rows on a screen whose work area leaves the client 396 px: the
+/// shell view takes the loss, the places bar scrolls its tiles, and Cancel, the grip and the
+/// extra rows stay inside the window.
+#[test]
+fn a_dialog_held_under_its_places_tiles_scrolls_them_and_fits_its_rows() {
+    let t = text();
+    let cm = ControlMetrics::CLASSIC;
+    let mut d = with_extra();
+    six_places(&mut d);
+    let (w, h) = d.min_client();
+    let base = d.layout(&t, 11, Rect::new(0, 0, w, h), &cm);
+    let fitted = Rect::new(0, 0, w, 396);
+    d.set_size((w, 396));
+    let lay = d.layout(&t, 11, fitted, &cm);
+    let dy = h - 396;
+    assert_eq!(lay.shell.frame.height, base.shell.frame.height - dy);
+    assert_eq!(lay.places.height, base.places.height - dy);
+    assert!(
+        placesbar::bar_parts(&d.places, lay.places, &cm).is_some(),
+        "six tiles overflow a {} px places bar",
+        lay.places.height
+    );
+    assert_eq!(lay.cancel.y, base.cancel.y - dy);
+    assert!(lay.grip.bottom() <= 396, "grip at {:?}", lay.grip);
+    let hit = d.hit(&t, 11, fitted, FIELD_X + 5, EXTRA_Y + 20 - dy + 5);
+    assert!(
+        matches!(hit, Some(Hit::Extra(h)) if h.item == 1),
+        "got {hit:?}"
+    );
+}
+
+/// The dialog of `a_dialog_held_under_its_places_tiles_scrolls_them_and_fits_its_rows`
+/// drawn under each interface at 1x and 2x, its places bar scrolled one tile down.
+#[test]
+fn a_dialog_held_under_its_places_tiles_draws_fitted_in_every_interface() {
+    use crate::interface::Interface;
+    use crate::theme::Color;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    for (i, s) in looks.into_iter().flat_map(|i| [(i, 1), (i, 2)]) {
+        let theme = crate::interfaces::theme_for(i).scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let mut d = with_extra();
+        six_places(&mut d);
+        let mut tile_icon = Canvas::new((32 * s) as u32, (32 * s) as u32);
+        tile_icon.fill_rect(tile_icon.bounds(), Color::rgb(0x40, 0x80, 0xC0));
+        d.set_place_icons(vec![Some(tile_icon); 6]);
+        let (w, _) = d.min_client();
+        let r = Rect::new(0, 0, w, 396);
+        d.set_size((w, 396));
+        d.places.top = 1;
+        let mut c = Canvas::new((w * s) as u32, (396 * s) as u32);
+        d.draw(&mut c, &text, &p, r, theme.fonts.size_px);
+        got.push((format!("{i:?} @{s}"), crate::pins::fnv(&c)));
+    }
+    crate::pins::check("filedlg_fitted", &got);
 }
 
 /// Grown by (168, 55): the places bar takes the height, the shell view

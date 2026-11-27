@@ -57,12 +57,12 @@ pub struct PlacesBar {
 }
 
 /// The tiles' metrics fitted to `r` ([`PlacesMetrics::fit`]), the scrollbar down its right side
-/// inside the border when pinned tiles make them overflow it, and the first tile in view:
+/// inside the border when the last tile's icon would end past it, and the first tile in view:
 /// [`PlacesBar::top`] held to the tiles there are now, 0 without a scrollbar.
 fn fitted(pb: &PlacesBar, r: Rect, cm: &ControlMetrics) -> (PlacesMetrics, Option<Rect>, usize) {
     let pm = cm.places.fit(pb.places.len(), r.height);
-    let pinned = pb.places.iter().any(|p| p.pinned);
-    let over = pinned && pb.places.len() as i32 * pm.tile > r.height;
+    let n = pb.places.len() as i32;
+    let over = n > 0 && (n - 1) * pm.tile + pm.icon_top + pm.icon > r.height;
     let bar = over.then(|| {
         Rect::new(
             r.right() - BORDER - cm.scroll,
@@ -766,7 +766,12 @@ mod tests {
         assert!(6 * blue.places.tile > 403);
         assert!(
             bar_parts(&pb, BAR, &blue).is_none(),
-            "the built-in tiles alone never scroll"
+            "Blue's sixth icon shows whole, so only its label runs past the bar"
+        );
+        let short = Rect::new(0, 0, WIDTH, 5 * 65);
+        assert!(
+            bar_parts(&pb, short, &cm).is_some(),
+            "built-in tiles whose last icon runs past the bar scroll too"
         );
         assert!(bar_parts(&pb, BAR, &cm).is_none());
         assert_eq!(layout(&pb, BAR, &cm)[0].width, WIDTH);
