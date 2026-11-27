@@ -135,9 +135,10 @@ pub trait Rows {
         let _ = u;
         ICON_PX
     }
-    /// Row `row`'s icon for an icon column `slot` px wide, centred in it when the slot is wider.
-    fn icon_in(&self, row: usize, slot: i32) -> Option<&Canvas> {
-        let _ = slot;
+    /// Row `row`'s icon for an icon column `slot` px wide at scale `s`, centred in it when the
+    /// slot is wider.
+    fn icon_in(&self, row: usize, slot: i32, s: i32) -> Option<&Canvas> {
+        let _ = (slot, s);
         self.icon(row)
     }
     /// A share from 0 to 1 that cell `col` of row `row` shows as a bar in place of its text.
@@ -1027,7 +1028,7 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
                     let tx = cr.right() + lay.text.small() * CHECK_TEXT_GAP * s;
                     (tx, cx + cw - tx - 2 * s)
                 } else {
-                    if let Some(ic) = lv.rows.icon_in(i, icon_w) {
+                    if let Some(ic) = lv.rows.icon_in(i, icon_w, s) {
                         let dx = match icon_w > ICON_PX {
                             true => (icon_w * s - ic.width as i32).max(0) / 2,
                             false => 0,

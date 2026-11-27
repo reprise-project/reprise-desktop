@@ -1330,7 +1330,7 @@ impl Explorer {
         let is_12h = reprisefs::locale::is_12h();
         let searched = self.search.shown().is_some();
         read_icons.put(&mut ctx.icons);
-        let drawn = shellview::drawn_sizes(self.sv.mode, sizes[0]);
+        let drawn = shellview::drawn_sizes(self.sv.mode);
         let first = drawn.iter().position(|&d| d).unwrap_or(0);
         let probe = ctx.icons.probe_px();
         // `has_unread` decodes each small PNG at the size the view draws, which the fetch below

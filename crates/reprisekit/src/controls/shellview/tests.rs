@@ -310,6 +310,96 @@ fn list_and_details_icons_grow_to_32_px_at_200_percent() {
     }
 }
 
+/// `sv`'s entries wearing a listing's icons at text `u` and scale `s` ([`listing_px`]): `icon`
+/// red at List and Details' size, `icon32` blue at Icons' grown one.
+fn listing_icons(sv: &mut ShellView, u: crate::theme::TextUnits, s: i32) {
+    let [list, grid, _] = listing_px(u);
+    for e in &mut sv.entries {
+        e.icon = Some(Rc::new(square((list * s) as u32, Color::rgb(255, 0, 0))));
+        e.icon32 = Some(Rc::new(square((grid * s) as u32, Color::rgb(0, 0, 255))));
+    }
+}
+
+#[test]
+fn list_and_details_draw_the_list_sized_icon_and_never_icons_grown_one() {
+    let (text, _) = rend();
+    let (red, blue) = (Color::rgb(255, 0, 0).argb(), Color::rgb(0, 0, 255).argb());
+    for mode in [Mode::List, Mode::Details] {
+        for pct in [100, 150, 200] {
+            for s in [1, 2] {
+                let theme = Theme::default().with_text_size(pct);
+                let cm = theme.controls();
+                let mut sv = view(1);
+                sv.mode = mode;
+                listing_icons(&mut sv, cm.text, s);
+                let r = Rect::new(0, 0, 400, 120);
+                let lay = layout(&sv, r, &cm);
+                let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+                let p = Paint {
+                    text: theme.text,
+                    ..classic_paint(&theme.colors, s)
+                };
+                draw(
+                    &mut c,
+                    &text,
+                    &p,
+                    &sv,
+                    &lay,
+                    None,
+                    theme.fonts.size_px * s as u32,
+                );
+                let px = |ink: u32| c.pixels.iter().filter(|&&v| v == ink).count();
+                let side = (list_icon_px(cm.text) * s) as usize;
+                assert_eq!(px(blue), 0, "{mode:?} {pct}% x{s}: Icons' icon stays out");
+                assert_eq!(
+                    px(red),
+                    side * side,
+                    "{mode:?} {pct}% x{s}: a {side} px icon"
+                );
+            }
+        }
+    }
+}
+
+/// List and Details with a listing's icons at text 100 and 200, in Classic and Glass at scale 1
+/// and 2: the icon fills the grown column and the name starts past it.
+#[test]
+fn list_and_details_icons_at_text_100_and_200_draw_their_pixels() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for look in [Interface::Classic, Interface::Glass] {
+        for pct in [100, 200] {
+            let mut theme = crate::interfaces::theme_for(look).with_text_size(pct);
+            let text = TextRenderer::load(&theme.fonts);
+            let px = theme.fonts.size_px;
+            let cm = theme.controls();
+            for mode in [Mode::List, Mode::Details] {
+                let sv0 = sample(mode, false);
+                let r = Rect::new(0, 0, 520, 260);
+                for s in [1, 2] {
+                    let mut sv = sv0.clone();
+                    listing_icons(&mut sv, cm.text, s);
+                    let lay = layout(&sv, r, &cm);
+                    theme.scale = s;
+                    let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+                    draw(
+                        &mut c,
+                        &text,
+                        &theme.paint(),
+                        &sv,
+                        &lay,
+                        None,
+                        px * s as u32,
+                    );
+                    got.push((format!("{look:?} {pct}% {mode:?} x{s}"), canvas_fnv(&c)));
+                }
+            }
+        }
+    }
+    crate::pins::check("shellview/list_icons_text", &got);
+}
+
 /// The selected entry's label is filled with the hilight colour and drawn in hilight text; nothing else is.
 #[test]
 fn the_selected_entry_is_filled_with_the_hilight() {

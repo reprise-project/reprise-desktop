@@ -319,11 +319,11 @@ impl Explorer {
             Mode::Thumbnails | Mode::Icons => iconview::grid_icon_px(sl.controls.text),
             Mode::List | Mode::Details => shellview::list_icon_px(sl.controls.text),
         };
-        let mode = self.sv.mode;
+        let (mode, worn_s) = (self.sv.mode, ctx.icons.scale());
         let icon_of = |e: &shellview::Entry| match mode {
             Mode::Tiles => e.icon48.clone(),
             Mode::Thumbnails | Mode::Icons => e.icon32.clone(),
-            Mode::List | Mode::Details => shellview::list_icon(e, px).cloned(),
+            Mode::List | Mode::Details => shellview::list_icon(e, px, worn_s).cloned(),
         };
         // A List or Details image holds only the rows on screen, so a large selection fetches no icons it won't draw.
         let shown: Vec<(usize, (i32, i32))> = d
