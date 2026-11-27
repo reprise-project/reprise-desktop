@@ -12,10 +12,9 @@ use crate::{
     output::upload_scaled,
     raster::{Canvas, Rect},
     startmenu::{MenuItem, MenuLayout, MenuStyle, draw_menu, draw_menu_shadow, shadow_reach},
-    taskbar::{JumpRow, TaskbarCommand, WindowListRow},
+    taskbar::{JumpRow, TaskbarCommand},
     text::split_mnemonic,
     window::WindowId,
-    winmenu::WindowMenuRow,
 };
 
 use super::*;
@@ -305,11 +304,9 @@ impl State {
                     command.opens_submenu()
                 }
                 MenuPick::Taskbar(c) => c == TaskbarCommand::Toolbars,
-                MenuPick::Window { row, .. } => {
-                    matches!(row, WindowMenuRow::MoveToMenu | WindowMenuRow::TabsOfMenu)
-                }
+                MenuPick::Window { row, .. } => row.opens_submenu(),
                 MenuPick::Jump { row, .. } => row == JumpRow::MoveToMenu,
-                MenuPick::WindowList { row, .. } => row == WindowListRow::MoveToMenu,
+                MenuPick::WindowList { row, .. } => row.opens_submenu(),
                 _ => false,
             },
             Some(kind @ MenuKind::StartPanel { .. }) => {

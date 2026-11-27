@@ -891,6 +891,12 @@ pub enum WindowListRow {
     RecentMenu,
 }
 
+impl WindowListRow {
+    pub fn opens_submenu(self) -> bool {
+        matches!(self, Self::MoveToMenu | Self::RecentMenu)
+    }
+}
+
 /// A grouped task button's window list: the windows' `titles`, then below a separator Recent Files
 /// (a submenu, when the program has `recent` files), Minimize Group, Move to desktop (a submenu with
 /// more than one of `desktops`) and Close Group. Returns the rows and, parallel to them, what each
