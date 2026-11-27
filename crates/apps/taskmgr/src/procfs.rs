@@ -115,11 +115,34 @@ pub fn parse_meminfo(s: &str) -> MemInfo {
     m
 }
 
-/// `/proc/<pid>/cmdline`: the arguments joined by spaces.
-pub fn parse_cmdline(b: &[u8]) -> String {
+/// `/proc/<pid>/cmdline`: the arguments joined by spaces, and the first alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Cmdline {
+    pub line: String,
+    pub argv0: String,
+}
+
+pub fn parse_cmdline(b: &[u8]) -> Cmdline {
     let s = String::from_utf8_lossy(b);
     let args: Vec<&str> = s.split('\0').filter(|a| !a.is_empty()).collect();
-    args.join(" ")
+    Cmdline {
+        line: args.join(" "),
+        argv0: args.first().map_or_else(String::new, |a| a.to_string()),
+    }
+}
+
+/// The bytes of a `comm` the kernel keeps (`TASK_COMM_LEN` less its NUL).
+const COMM_MAX: usize = 15;
+
+/// The name a process shows: its `comm`, or where the kernel cut that short, the longer file
+/// name of `argv0` it begins.
+pub fn image_name(comm: &str, argv0: &str) -> String {
+    let file = argv0.rsplit('/').next().unwrap_or_default();
+    if comm.len() == COMM_MAX && file.len() > COMM_MAX && file.starts_with(comm) {
+        file.to_string()
+    } else {
+        comm.to_string()
+    }
 }
 
 /// A process as read: its stat line and its owner.
@@ -146,7 +169,7 @@ pub fn read_process(root: &Path, pid: i32) -> Option<Process> {
     Some(Process { stat, uid })
 }
 
-pub fn read_cmdline(root: &Path, pid: i32) -> String {
+pub fn read_cmdline(root: &Path, pid: i32) -> Cmdline {
     std::fs::read(root.join(pid.to_string()).join("cmdline"))
         .map(|b| parse_cmdline(&b))
         .unwrap_or_default()
@@ -231,11 +254,33 @@ mod tests {
 
     #[test]
     fn a_command_line_joins_its_arguments() {
+        let c = parse_cmdline(b"/usr/bin/foo\0--bar\0x y\0");
+        assert_eq!(c.line, "/usr/bin/foo --bar x y");
+        assert_eq!(c.argv0, "/usr/bin/foo");
+        assert_eq!(parse_cmdline(b""), Cmdline::default());
+    }
+
+    #[test]
+    fn a_name_the_kernel_cut_at_15_bytes_reads_whole_from_argv0() {
+        let name = image_name("reprise-explore", "/usr/bin/reprise-explorer");
+        assert_eq!(name, "reprise-explorer");
+        let name = image_name("xdg-desktop-por", "/usr/lib/xdg-desktop-portal-gtk");
+        assert_eq!(name, "xdg-desktop-portal-gtk");
         assert_eq!(
-            parse_cmdline(b"/usr/bin/foo\0--bar\0x y\0"),
-            "/usr/bin/foo --bar x y"
+            image_name("Web Content", "/usr/lib/firefox/firefox"),
+            "Web Content",
+            "a name shorter than 15 bytes was not cut"
         );
-        assert_eq!(parse_cmdline(b""), "");
+        assert_eq!(
+            image_name("Isolated Web Co", "/usr/lib/firefox/firefox"),
+            "Isolated Web Co",
+            "a thread name argv0 does not begin keeps its comm"
+        );
+        assert_eq!(
+            image_name("kworker/u16:3-e", ""),
+            "kworker/u16:3-e",
+            "a kernel thread has no argv0"
+        );
     }
 
     #[test]
@@ -257,7 +302,7 @@ mod tests {
         assert_eq!(pids(root.path()), [4242]);
         let p = read_process(root.path(), 4242).unwrap();
         assert_eq!(p.stat.comm, "Web Content (x)");
-        assert_eq!(read_cmdline(root.path(), 4242), "firefox -contentproc");
+        assert_eq!(read_cmdline(root.path(), 4242).line, "firefox -contentproc");
         assert_eq!(read_process(root.path(), 1), None);
     }
 }

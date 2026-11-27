@@ -87,7 +87,7 @@ pub struct Sampler {
     slice: Option<PathBuf>,
     cpu: Option<(CpuTimes, Vec<CpuTimes>)>,
     ticks: HashMap<Key, u64>,
-    cmdlines: HashMap<Key, String>,
+    cmdlines: HashMap<Key, procfs::Cmdline>,
     /// The user names seen so far, by uid; a uid missing here is looked up through `lookup`.
     users: HashMap<u32, String>,
     lookup: fn(u32) -> Option<String>,
@@ -206,7 +206,7 @@ impl Sampler {
             procs.push(ProcRow {
                 pid,
                 start: p.stat.start,
-                name: p.stat.comm,
+                name: procfs::image_name(&p.stat.comm, &cmdline.argv0),
                 uid: p.uid,
                 user: self
                     .users
@@ -216,7 +216,7 @@ impl Sampler {
                 cpu: prev.map_or(0.0, |t| share(t, p.stat.ticks, machine)),
                 mem_kb: p.stat.rss_pages * self.page_kb,
                 threads: p.stat.threads,
-                cmdline,
+                cmdline: cmdline.line,
                 disk,
                 gpu: None,
             });
