@@ -26,6 +26,7 @@ use reprisekit::raster::Canvas;
 use reprisekit::theme::Theme;
 use reprisekit::tr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// The icon size of the Open With and Send To menus' rows: the menu's icon column at the text size.
 pub(crate) fn menu_icon_px(theme: &Theme) -> i32 {
@@ -49,6 +50,8 @@ pub enum PasteTo {
     Folder(PathBuf),
     /// A launcher's Paste: its program opens the clipboard's files.
     App(Box<apps::AppEntry>),
+    /// A zip's Paste: the clipboard's files go into it.
+    Zip(PathBuf),
 }
 
 pub(crate) struct Put {
@@ -86,15 +89,42 @@ pub(crate) fn wake_to_show(ctx: &Ctx) {
     });
 }
 
+/// What File > New makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum New {
+    Folder,
+    TextDocument,
+    /// An empty zip.
+    CompressedFolder,
+}
+
 pub struct PendingPut {
     pub(crate) items: Vec<PutItem>,
     /// Whether each of `items` is a folder, as [`Checked`] read it.
     folders: Vec<bool>,
     pub(crate) dir: PathBuf,
     select_landed: bool,
+    /// The listing of the zip `dir` names, when the items go into a zip
+    /// ([`Explorer::put_in_zip`]).
+    pub(crate) zip: Option<Arc<Vec<reprisefs::archive::Entry>>>,
 }
 
 impl PendingPut {
+    pub(crate) fn new(
+        items: Vec<PutItem>,
+        folders: Vec<bool>,
+        dir: PathBuf,
+        zip: Option<Arc<Vec<reprisefs::archive::Entry>>>,
+    ) -> PendingPut {
+        PendingPut {
+            items,
+            folders,
+            dir,
+            select_landed: true,
+            zip,
+        }
+    }
+
     fn ops(&self) -> Vec<ItemOp> {
         self.items
             .iter()
@@ -340,6 +370,7 @@ impl Explorer {
                 };
             }
             Some(PasteTo::Folder(dir)) => (dir, false),
+            Some(PasteTo::Zip(zip)) => return self.put_in_zip(&clip.paths, &zip, ctx),
             Some(PasteTo::Place { dir, shortcut }) => {
                 if self.place.read_only() || self.place.path() != Some(dir.clone()) {
                     log::info!("explorer: the paste's folder is gone, dropping it");
@@ -368,6 +399,9 @@ impl Explorer {
         select_landed: bool,
         ctx: &mut Ctx,
     ) -> Reply {
+        if self.is_zip_target(dir) {
+            return self.put_in_zip(paths, dir, ctx);
+        }
         let puts: Vec<(PathBuf, DropOp)> = paths
             .iter()
             .filter_map(|src| Some((src.clone(), plan(src)?)))
@@ -492,6 +526,7 @@ impl Explorer {
             folders,
             dir,
             select_landed,
+            zip: None,
         };
         self.ask_replace(pending, Asker::new(c.clashes), ctx)
     }
@@ -532,6 +567,7 @@ impl Explorer {
                 let folder = inside
                     .as_deref()
                     .map(|under| replace::merge_folder(item, under));
+                let held = pending.zip.clone();
                 let ask = Asking {
                     pending,
                     asker,
@@ -542,8 +578,21 @@ impl Explorer {
                 let dest = dir.join(src.file_name().unwrap_or_default());
                 let read = move || {
                     let is_12h = reprisefs::locale::is_12h();
-                    (clash == Clash::File)
-                        .then(|| [dest, src].map(|path| ReadSide::of(path, is_12h)))
+                    let existing = |path: PathBuf| match &held {
+                        Some(entries) => {
+                            let name = path.file_name().unwrap_or_default().to_owned();
+                            let (size, modified) =
+                                crate::intozip::held_facts(entries, &name, is_12h);
+                            ReadSide {
+                                path,
+                                size,
+                                modified,
+                                is_dir: false,
+                            }
+                        }
+                        None => ReadSide::of(path, is_12h),
+                    };
+                    (clash == Clash::File).then(|| [existing(dest), ReadSide::of(src, is_12h)])
                 };
                 match self.read_job(ctx, read) {
                     Ok(sides) => self.open_replace(ask, sides, ctx),
@@ -556,6 +605,12 @@ impl Explorer {
             }
             Step::Done(verdicts) => {
                 pending.apply(&verdicts);
+                if pending.zip.is_some() {
+                    if !pending.items.is_empty() {
+                        self.start_zip_add(pending, ctx);
+                    }
+                    return Reply::none();
+                }
                 if !pending.items.is_empty() {
                     if self.put.is_some() {
                         self.put_queue.push_back(pending);
@@ -1324,7 +1379,7 @@ impl Explorer {
         Reply::none()
     }
 
-    pub fn new_item(&mut self, folder: bool, ctx: &mut Ctx) -> Reply {
+    pub fn new_item(&mut self, kind: New, ctx: &mut Ctx) -> Reply {
         let Some(dir) = self.place.path() else {
             return Reply::none();
         };
@@ -1332,31 +1387,36 @@ impl Explorer {
             return Reply::none();
         }
         let existing: Vec<String> = self.items.iter().map(|it| it.name.clone()).collect();
-        let name = if folder {
-            names::new_folder_name(&existing)
-        } else {
-            names::new_text_document_name(&existing)
+        let (name, title) = match kind {
+            New::Folder => (names::new_folder_name(&existing), tr!("new-folder-name")),
+            New::TextDocument => (
+                names::new_text_document_name(&existing),
+                tr!("fileops-new-item-new-text-document"),
+            ),
+            New::CompressedFolder => (
+                names::new_compressed_folder_name(&existing),
+                tr!("fileops-new-item-new-compressed-folder"),
+            ),
         };
         let path = dir.join(&name);
-        let title = if folder {
-            tr!("new-folder-name")
-        } else {
-            tr!("fileops-new-item-new-text-document")
-        };
-        // The listing can be stale, so neither kind may land on an existing name: both fail with
+        // The listing can be stale, so no kind may land on an existing name: each fails with
         // `AlreadyExists`.
         let work = move |gate: &Gate| {
             if !gate.change(&dir) {
                 return Err(std::io::ErrorKind::Interrupted.into());
             }
-            let made = if folder {
-                std::fs::create_dir(&path)
-            } else {
+            let file = || {
                 std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
                     .open(&path)
-                    .map(drop)
+            };
+            let made = match kind {
+                New::Folder => std::fs::create_dir(&path),
+                New::TextDocument => file().map(drop),
+                New::CompressedFolder => file().and_then(|mut f| {
+                    std::io::Write::write_all(&mut f, &reprisefs::zipwrite::EMPTY_ZIP)
+                }),
             };
             made.map(|()| (reprisefs::undo::file_id(&path), path))
         };

@@ -96,6 +96,7 @@ fn a_close_after_a_put_gave_up_waits_for_its_stuck_call_to_return() {
         folders: vec![false],
         dir: dest.clone(),
         select_landed: false,
+        zip: None,
     };
     let ops = pending.ops();
     ex.start_put(pending, ops, &ctx);

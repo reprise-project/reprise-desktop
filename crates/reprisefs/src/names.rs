@@ -125,6 +125,10 @@ pub fn new_text_document_name(existing: &[String]) -> String {
     unique_name("New Text Document.txt", existing)
 }
 
+pub fn new_compressed_folder_name(existing: &[String]) -> String {
+    unique_name("New Compressed (zipped) Folder.zip", existing)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
     Cancel,

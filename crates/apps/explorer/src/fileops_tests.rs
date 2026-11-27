@@ -24,6 +24,8 @@ mod creating;
 mod delete;
 #[path = "fileops_tests/exits.rs"]
 mod exits;
+#[path = "fileops_tests/into_zip.rs"]
+mod into_zip;
 #[path = "fileops_tests/open_with.rs"]
 mod open_with;
 #[path = "fileops_tests/paste.rs"]

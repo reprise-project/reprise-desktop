@@ -321,7 +321,7 @@ mod tests {
         let _closed = gate.write().expect("lock");
         ex.held = Some(gate.clone());
         rename(&mut ex, "two.txt", &mut ctx);
-        ex.new_item(true, &mut ctx);
+        ex.new_item(crate::fileops::New::Folder, &mut ctx);
         wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
         assert_eq!(message(&ex).map(|m| m.0), Some("Rename"));
         ex.event(crate::DIALOG, repriseapp::Event::CloseRequest, &mut ctx);
