@@ -23,7 +23,9 @@ pub(crate) mod row {
     pub const EDIT_PICTURE: usize = 2;
     pub const SHOW_IN_FOLDER: usize = 3;
     pub const BACKGROUND: usize = 4;
-    pub const EXIT: usize = 6;
+    pub const PAGE_SETUP: usize = 6;
+    pub const PRINT: usize = 7;
+    pub const EXIT: usize = 9;
     pub const COPY: usize = 0;
     pub const DELETE: usize = 1;
     pub const PREVIOUS: usize = 0;
@@ -51,6 +53,9 @@ pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
                 mi(&tr!("menu-edit-picture"), None),
                 mi(&tr!("menu-show-in-folder"), None),
                 mi(&tr!("menu-set-background"), None),
+                MenuItem::Separator,
+                mi(&tr!("menu-page-setup"), None),
+                mi(&tr!("menu-print"), Some("Ctrl+P")),
                 MenuItem::Separator,
                 mi(&tr!("menu-exit"), None),
             ],
@@ -108,6 +113,8 @@ impl Viewer {
                 return self.spawn_on_current(reprisefs::apps::open_location_argv);
             }
             (title::FILE, row::BACKGROUND) => return self.set_background(),
+            (title::FILE, row::PAGE_SETUP) => self.printing.page_setup(ctx),
+            (title::FILE, row::PRINT) => self.open_print(ctx),
             (title::FILE, row::EXIT) => {
                 return Reply {
                     quit: true,
@@ -191,6 +198,7 @@ impl Viewer {
             (title::FILE, row::EDIT_PICTURE, file && shown),
             (title::FILE, row::SHOW_IN_FOLDER, file),
             (title::FILE, row::BACKGROUND, shown && background),
+            (title::FILE, row::PRINT, shown),
             (title::EDIT, row::COPY, file),
             (title::EDIT, row::DELETE, file && self.delete.is_empty()),
             (title::VIEW, row::PREVIOUS, many),

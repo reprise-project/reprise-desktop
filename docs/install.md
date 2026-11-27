@@ -190,7 +190,7 @@ Missing packages disable only their feature.
 
 **Printing, updates and accounts**
 
-- **CUPS:** Printers, queues, and tray icon, and printing from Notepad (enable `cups.socket`). Members of `SystemGroup` (`/etc/cups/cups-files.conf`, usually `wheel`) manage printers without a password.
+- **CUPS:** Printers, queues, and tray icon, and printing from Notepad, Image Viewer and Paint (enable `cups.socket`). Members of `SystemGroup` (`/etc/cups/cups-files.conf`, usually `wheel`) manage printers without a password.
 - **cups-filters:** Driverless IPP Everywhere and AirPrint printers.
 - **cups-pk-helper:** Admin-prompted printer management outside CUPS's admin group.
 - **avahi-daemon:** Passwordless printer discovery in Add Printer, plus SMB and SFTP discovery in the Network place.

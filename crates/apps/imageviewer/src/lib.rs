@@ -11,6 +11,7 @@ mod folder;
 mod input;
 mod load;
 mod menu;
+mod print;
 mod toolbar;
 mod window;
 
@@ -22,8 +23,11 @@ use repriseapp::ctxmenu::Popup;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{ErrorBox, MsgBox};
+use repriseapp::print::Printing;
 use repriseapp::recent::Recent;
-use repriseapp::{App, Child, Ctx, Event, Extended, FileDrop, MAIN, Poster, Reply, WinId};
+use repriseapp::{
+    App, Child, Ctx, DropForm, Event, Extended, FileDrop, MAIN, Poster, Reply, WinId,
+};
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{CLIENT, FileDlg};
 use reprisekit::controls::hosted::Hosted;
@@ -80,6 +84,8 @@ struct Viewer {
     icons_at: (i32, i32),
     /// The picture's context menu, each row the menu bar row it stands for.
     context: Option<Popup<(usize, usize)>>,
+    /// File > Page Setup and Print, and the job last sent.
+    printing: Printing,
     status_bar: bool,
     /// Full screen as asked of the compositor: no menu bar or status bar, a black ground.
     full: bool,
@@ -144,6 +150,7 @@ impl Viewer {
             tools: toolbar::Tools::new(),
             icons_at: (0, 0),
             context: None,
+            printing: Printing::new(&tr!("name")),
             status_bar: true,
             full: false,
             scale: 1,
@@ -436,6 +443,7 @@ impl App for Viewer {
         let mut kids = Vec::new();
         kids.extend(self.delete.child(&self.dialog_text, &self.forms));
         kids.extend(self.error.child(&self.dialog_text, &self.forms));
+        kids.extend(self.printing.children());
         if let Some(d) = &self.open {
             kids.push(Child {
                 id: OPEN,
@@ -453,7 +461,9 @@ impl App for Viewer {
         if win != MAIN {
             self.alt_arm.interrupt();
         }
+        let printed = win == MAIN && matches!(ev, Event::Wake) && self.printing.wake();
         let reply = match win {
+            w if self.printing.owns(w) => self.print_event(w, ev, ctx),
             w if self.delete.owns(w) => self.delete_event(w, ev),
             w if self.error.owns(w) => self.error.event(w, &ev, &self.dialog_text, &self.forms),
             OPEN => self.open_event(ev, ctx),
@@ -466,11 +476,15 @@ impl App for Viewer {
             }
         };
         self.sync_menus();
-        reply
+        Reply {
+            redraw_all: reply.redraw_all || printed,
+            ..reply
+        }
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         match win {
+            w if self.printing.owns(w) => self.printing.draw(w, c, ctx),
             w if self.delete.owns(w) => self.delete.draw(c, &self.forms, &self.dialog_text),
             w if self.error.owns(w) => self.error.draw(c, &self.forms, &self.dialog_text),
             OPEN => {
@@ -509,6 +523,17 @@ impl Extended for Viewer {
         }
     }
 
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        if self.printing.owns(win) {
+            return self.printing.parent(win);
+        }
+        Some(MAIN)
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        self.printing.drop_form(win)
+    }
+
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         (win == OPEN).then(|| self.open.as_ref().map_or(CLIENT, FileDlg::min_client))
     }
@@ -537,6 +562,7 @@ impl Extended for Viewer {
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let (dt, forms) = (&self.dialog_text, &self.forms);
         match win {
+            w if self.printing.owns(w) => self.printing.access(w, tree, ctx),
             w if self.delete.owns(w) => self.delete.access(tree, dt, forms),
             w if self.error.owns(w) => self.error.access(tree, dt, forms),
             OPEN => {

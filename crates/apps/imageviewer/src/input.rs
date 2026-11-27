@@ -16,6 +16,7 @@ pub(crate) fn accel(sym: u32, ctrl: bool) -> Option<(usize, usize)> {
     if ctrl {
         return Some(match sym | 0x20 {
             0x6f => (title::FILE, row::OPEN),
+            0x70 => (title::FILE, row::PRINT),
             0x63 => (title::EDIT, row::COPY),
             0x72 => (title::IMAGE, row::ROTATE_CW),
             0x6c => (title::IMAGE, row::ROTATE_CCW),

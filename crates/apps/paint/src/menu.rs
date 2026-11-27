@@ -31,7 +31,9 @@ pub(crate) mod row {
     pub const SAVE: usize = 2;
     pub const SAVE_AS: usize = 3;
     pub const BACKGROUND: usize = 5;
-    pub const EXIT: usize = 7;
+    pub const PAGE_SETUP: usize = 7;
+    pub const PRINT: usize = 8;
+    pub const EXIT: usize = 10;
 
     pub const UNDO: usize = 0;
     pub const REDO: usize = 1;
@@ -71,6 +73,9 @@ pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
                 mi(&tr!("menu-save-as"), None),
                 MenuItem::Separator,
                 mi(&tr!("menu-background"), None),
+                MenuItem::Separator,
+                mi(&tr!("menu-page-setup"), None),
+                mi(&tr!("menu-print"), Some("Ctrl+P")),
                 MenuItem::Separator,
                 mi(&tr!("menu-exit"), None),
             ],
@@ -132,6 +137,8 @@ impl Paint {
             (title::FILE, row::SAVE) => return self.save(),
             (title::FILE, row::SAVE_AS) => self.saveas_dialog(),
             (title::FILE, row::BACKGROUND) => return self.set_background(),
+            (title::FILE, row::PAGE_SETUP) => self.printing.page_setup(ctx),
+            (title::FILE, row::PRINT) => self.open_print(ctx),
             (title::FILE, row::EXIT) => return self.confirm(Then::Quit),
             (title::EDIT, row::UNDO) => {
                 self.commit_text();
@@ -250,6 +257,7 @@ impl Paint {
                 (0x6e, false) => (title::FILE, row::NEW),
                 (0x6f, _) => (title::FILE, row::OPEN),
                 (0x73, _) => (title::FILE, row::SAVE),
+                (0x70, _) => (title::FILE, row::PRINT),
                 (0x7a, _) => (title::EDIT, row::UNDO),
                 (0x79, _) => (title::EDIT, row::REDO),
                 (0x78, _) => (title::EDIT, row::CUT),
