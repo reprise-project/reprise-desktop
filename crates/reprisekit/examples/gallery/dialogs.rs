@@ -858,8 +858,19 @@ pub fn render_about_system(with_blue: bool, pct: u32) -> Canvas {
 
 /// The Open dialog enlarged, in Details, sorted by Size twice: files first, largest first, then folders Z to A.
 pub fn render_file_dialog() -> Canvas {
+    render_file_dialog_in(&cued(interfaces::classic()))
+}
+
+/// [`render_file_dialog`] in Blue's dark twin, its places bar sunk like the list beside it.
+pub fn render_file_dialog_blue_dark() -> Canvas {
+    render_file_dialog_in(&cued(interfaces::blue_theme_in(
+        reprisekit::blue::Variant::Blue,
+        true,
+    )))
+}
+
+fn render_file_dialog_in(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let theme = cued(interfaces::classic());
     let mut d = filedlg::FileDlg::new(
         filedlg::Fields {
             title: "Open".into(),

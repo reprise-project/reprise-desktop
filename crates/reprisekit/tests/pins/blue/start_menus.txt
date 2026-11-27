@@ -14,3 +14,11 @@ Olive 2 Rest 812f6c093054ab0d
 Olive 2 Row ab9dc6adbd8e6b0d
 Olive 2 FolderOpen b162ed3b49c9291d
 Olive 2 Greyed 7b28e47b31e9a40d
+Blue dark 1 Rest 99f6234c7a1c7dcd
+Blue dark 1 Row 51d2577acb12ff0d
+Blue dark 1 FolderOpen c4a227d689266824
+Blue dark 1 Greyed 837475141a9d0b7d
+Blue dark 2 Rest fa3ca5240f4e4e9d
+Blue dark 2 Row b5939c4a1ebd081d
+Blue dark 2 FolderOpen 096c1e5e3ccfe4e5
+Blue dark 2 Greyed b1a3d4f70a1c549d

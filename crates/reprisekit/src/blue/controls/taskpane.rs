@@ -22,7 +22,9 @@ const DISC_X: f64 = 9.5;
 const DISC_Y: f64 = 11.0;
 const DISC_R: f64 = 8.0;
 const DISC_RIM: f64 = 1.0;
+/// The disc's glint at its top-left, in a light scheme and in a twin.
 const DISC_LIGHT: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+const DARK_DISC_LIGHT: Color = Color::rgb(0x88, 0x91, 0xAE);
 /// The disc's shadow: offset down and right, its edge softened over `SHADOW_SOFT` px each way.
 const SHADOW_DX: f64 = 0.75;
 const SHADOW_DY: f64 = 1.25;
@@ -184,7 +186,19 @@ impl Band {
     }
 }
 
-fn disc(f: &Face, (shadow, alpha): (Color, u8), x: f64, y: f64, k: f64, under: Px) -> Px {
+fn disc_light(v: Tone) -> Color {
+    if v.dark { DARK_DISC_LIGHT } else { DISC_LIGHT }
+}
+
+fn disc(
+    f: &Face,
+    light: Color,
+    (shadow, alpha): (Color, u8),
+    x: f64,
+    y: f64,
+    k: f64,
+    under: Px,
+) -> Px {
     let (mx, my) = (mid_at(x, k), mid_at(y, k));
     let reach = ((mx - DISC_X - SHADOW_DX).hypot(my - DISC_Y - SHADOW_DY) - DISC_R) / SHADOW_SOFT;
     let shade = 1.0 - shape::smooth((reach + 1.0) / 2.0);
@@ -197,7 +211,7 @@ fn disc(f: &Face, (shadow, alpha): (Color, u8), x: f64, y: f64, k: f64, under: P
     let face_r = DISC_R - DISC_RIM;
     let inner = shape::ellipse(x, y, cx, cy, face_r * k, face_r * k);
     let u = ((mx - DISC_X) + (my - DISC_Y)) / (std::f64::consts::SQRT_2 * face_r);
-    let face = Stops(&[(0.0, solid(DISC_LIGHT)), (1.0, solid(f.inner))]).at(u);
+    let face = Stops(&[(0.0, solid(light)), (1.0, solid(f.inner))]).at(u);
     let top = shape::shares(&[(solid(f.rim), outer - inner), (face, inner)]);
     shape::over(top, under)
 }
@@ -213,7 +227,14 @@ fn chevrons(lines: &[[(f64, f64); 3]; 2], x: f64, y: f64, k: f64) -> f64 {
 }
 
 /// The fold button over its stretch of `band`, or over nothing when `backed` is false.
-fn button(band: &Band, f: &Face, lines: &[[(f64, f64); 3]; 2], backed: bool, d: i32) -> Canvas {
+fn button(
+    band: &Band,
+    f: &Face,
+    light: Color,
+    lines: &[[(f64, f64); 3]; 2],
+    backed: bool,
+    d: i32,
+) -> Canvas {
     let x0 = BAND_W - BUTTON_W;
     let ink = solid(f.mark.unwrap_or(f.rim));
     shape::draw(BUTTON_W, band.h as i32, d, |x, y| {
@@ -223,7 +244,7 @@ fn button(band: &Band, f: &Face, lines: &[[(f64, f64); 3]; 2], backed: bool, d: 
             shape::CLEAR
         };
         if let Some(halo) = f.halo {
-            p = disc(f, halo, x, y, f64::from(d), p);
+            p = disc(f, light, halo, x, y, f64::from(d), p);
         }
         shape::over(shape::scale(ink, chevrons(lines, x, y, f64::from(d))), p)
     })
@@ -231,14 +252,21 @@ fn button(band: &Band, f: &Face, lines: &[[(f64, f64); 3]; 2], backed: bool, d: 
 
 /// The fold button's disc and chevrons alone over a `h` px band, `g` times their design size and
 /// drawn afresh at it: the mark a band grown with the text carries.
-fn grown_mark(f: &Face, lines: &[[(f64, f64); 3]; 2], h: i32, g: f64, d: i32) -> Canvas {
+fn grown_mark(
+    f: &Face,
+    light: Color,
+    lines: &[[(f64, f64); 3]; 2],
+    h: i32,
+    g: f64,
+    d: i32,
+) -> Canvas {
     let k = f64::from(d) * g;
     let size = |n: i32| (f64::from(n) * g).round() as i32;
     let ink = solid(f.mark.unwrap_or(f.rim));
     shape::draw(size(BUTTON_W), size(h), d, |x, y| {
         let mut p = shape::CLEAR;
         if let Some(halo) = f.halo {
-            p = disc(f, halo, x, y, k, p);
+            p = disc(f, light, halo, x, y, k, p);
         }
         shape::over(shape::scale(ink, chevrons(lines, x, y, k)), p)
     })
@@ -248,14 +276,15 @@ fn grown_mark(f: &Face, lines: &[[(f64, f64); 3]; 2], h: i32, g: f64, d: i32) ->
 /// for a text size that grows the icons ([`crate::style::Style::with_task_marks`]).
 pub(crate) fn grown_marks(v: Tone, d: i32, g: f64) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
+    let light = disc_light(v);
     let h = band_h(v);
     let c = &s.task_collapse;
     let collapse = Canvas::stacked(&[
-        grown_mark(&c.normal, &UP, h, g, d),
-        grown_mark(&c.hot, &UP, h, g, d),
-        grown_mark(&c.pressed, &UP, h, g, d),
+        grown_mark(&c.normal, light, &UP, h, g, d),
+        grown_mark(&c.hot, light, &UP, h, g, d),
+        grown_mark(&c.pressed, light, &UP, h, g, d),
     ]);
-    let expand = grown_mark(&s.task_expand.normal, &DOWN, h, g, d);
+    let expand = grown_mark(&s.task_expand.normal, light, &DOWN, h, g, d);
     let image =
         |a: Canvas, states: &[State]| PartImage::new(a, states, Layout::Vertical).at_scale(d);
     vec![
@@ -271,6 +300,7 @@ pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let h = band_h(v);
     let band = Band::new(s, h);
+    let light = disc_light(v);
 
     let pane = Stops(&stops(s.task_pane.normal.down, f64::from(BACK_H)));
     let back = shape::draw(1, BACK_H, d, |_, y| pane.at(mid(y, d)));
@@ -291,12 +321,12 @@ pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let c = &s.task_collapse;
     let collapse = |backed| {
         Canvas::stacked(&[
-            button(&band, &c.normal, &UP, backed, d),
-            button(&band, &c.hot, &UP, backed, d),
-            button(&band, &c.pressed, &UP, backed, d),
+            button(&band, &c.normal, light, &UP, backed, d),
+            button(&band, &c.hot, light, &UP, backed, d),
+            button(&band, &c.pressed, light, &UP, backed, d),
         ])
     };
-    let expand = |backed| button(&band, &s.task_expand.normal, &DOWN, backed, d);
+    let expand = |backed| button(&band, &s.task_expand.normal, light, &DOWN, backed, d);
     let fold_states = [State::Normal, State::Hot, State::Pressed];
 
     let image =
@@ -568,9 +598,9 @@ mod tests {
     #[test]
     fn taskpane_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
-                for (p, img) in parts(v.into(), d) {
+                for (p, img) in parts(v, d) {
                     got.push((format!("{v:?} {d} {p:?}"), fnv(&img.atlas)));
                 }
             }

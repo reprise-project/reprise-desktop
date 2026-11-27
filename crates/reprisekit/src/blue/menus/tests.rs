@@ -1,4 +1,4 @@
-use crate::blue::Variant;
+use crate::blue::{Tone, Variant};
 use crate::controls::menu::{
     MenuItem, MenuLayout, MenuStyle, draw_menu_at, draw_menu_shadow, place_submenu_beside,
 };
@@ -77,10 +77,11 @@ fn draw_level(
 }
 
 /// The Start menu's menu in `v` at `d` over white, at `lit`; with its layout.
-fn scene(v: Variant, d: i32, lit: Lit) -> (Canvas, MenuLayout) {
+fn scene(v: impl Into<Tone>, d: i32, lit: Lit) -> (Canvas, MenuLayout) {
+    let v = v.into();
     let base = theme_for(Interface::Classic);
-    let one = blue_start_menus(&base, v.into());
-    let theme = blue_start_menus(&base.scaled(d), v.into());
+    let one = blue_start_menus(&base, v);
+    let theme = blue_start_menus(&base.scaled(d), v);
     let text = TextRenderer::load(&FontConfig::default());
     let items = rows();
     let layout = laid_out(&one, &text, &items);
@@ -123,14 +124,16 @@ fn fnv(c: &Canvas) -> u64 {
 }
 
 #[test]
-fn the_start_menus_pin_per_state_in_two_schemes_at_scale_1_and_2() {
-    let got: Vec<_> = [Variant::Blue, Variant::Olive]
-        .into_iter()
-        .flat_map(|v| [1, 2].map(move |d| (v, d)))
-        .flat_map(|(v, d)| {
-            STATES.map(|lit| (format!("{v:?} {d} {lit:?}"), fnv(&scene(v, d, lit).0)))
-        })
-        .collect();
+fn the_start_menus_pin_per_state_in_two_schemes_and_the_navy_twin_at_scale_1_and_2() {
+    let got: Vec<_> = [
+        Variant::Blue.into(),
+        Variant::Olive.into(),
+        Tone::new(Variant::Blue, true),
+    ]
+    .into_iter()
+    .flat_map(|v| [1, 2].map(move |d| (v, d)))
+    .flat_map(|(v, d)| STATES.map(|lit| (format!("{v:?} {d} {lit:?}"), fnv(&scene(v, d, lit).0))))
+    .collect();
     crate::pins::check("blue/start_menus", &got);
 }
 

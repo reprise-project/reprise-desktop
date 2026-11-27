@@ -9,6 +9,10 @@
 //!   part's [`Range`] in order, so gloss keeps its direction; darker outlines turn light through
 //!   [`OUTLINE`] and marks through [`INK`]. Saturated colours (the hover rim, the focus and
 //!   default rings, check marks, the progress fill) keep their lightness. Halos are kept.
+//! - Task panes ([`deep`]): every colour takes the light pane's hue at one low chroma, its
+//!   lightness through [`DEEP`], under light titles and links; fold discs stand lighter.
+//! - The Start menu's program column follows the window and menu inks; its bands and its
+//!   coloured places column are kept. The welcome screen's blues go deeper ([`relit`]).
 
 use std::sync::OnceLock;
 
@@ -72,6 +76,27 @@ const TRACK: Range = Range(0.19, 0.24);
 const PANE: Range = Range(0.25, 0.30);
 /// A group box's line, lighter than the dialog it divides.
 const LINE: Range = Range(0.42, 0.46);
+/// The file dialog's places bar, sunk below the dialog like a list.
+const SUNK: Range = Range(0.20, 0.24);
+
+/// Task pane lightness, light to dark, linear between knots: the pane sits under the dialog,
+/// its groups' bodies and title bands stand above it.
+const DEEP: [(f32, f32); 4] = [(0.55, 0.23), (0.70, 0.26), (0.86, 0.30), (1.00, 0.34)];
+/// The OKLab chroma of every deep colour, in the hue of the light pane.
+const DEEP_CHROMA: f32 = 0.045;
+/// A fold button's disc: its rim and its face, lighter than the title band.
+const DISC_RIM: f32 = 0.58;
+const DISC_FACE: f32 = 0.42;
+/// Task pane titles and links, and the fold chevrons, at rest and lit: (lightness, chroma).
+const TASK_INK: (f32, f32) = (0.86, 0.06);
+const TASK_INK_HOT: (f32, f32) = (0.98, 0.015);
+/// The welcome screen's bands, field, glow and lit tile band: (lightness, share of chroma kept).
+const WELCOME_BAND: (f32, f32) = (0.22, 0.6);
+const WELCOME_FIELD: (f32, f32) = (0.31, 0.6);
+const WELCOME_GLOW: (f32, f32) = (0.37, 0.6);
+const WELCOME_TILE_HOT: (f32, f32) = (0.44, 0.7);
+/// A tooltip's lightness: above the charcoal windows it pops over.
+const INFO_BK: f32 = 0.31;
 
 /// `c` as a dark client ink.
 pub(super) fn ink(c: Color) -> Color {
@@ -81,6 +106,51 @@ pub(super) fn ink(c: Color) -> Color {
         a * INK_CHROMA + WARM[0],
         b * INK_CHROMA + WARM[1],
     ])
+}
+
+/// `c` at lightness `l`, keeping share `k` of its chroma.
+fn relit(c: Color, (l, k): (f32, f32)) -> Color {
+    let [_, a, b] = lab_of(c);
+    color_of([l, a * k, b * k])
+}
+
+/// The unit OKLab hue of `c`.
+fn hue(c: Color) -> [f32; 2] {
+    let [_, a, b] = lab_of(c);
+    let n = a.hypot(b).max(f32::EPSILON);
+    [a / n, b / n]
+}
+
+/// A colour of hue `h` at lightness `l` and chroma `c`.
+fn tinted_at(h: [f32; 2], (l, c): (f32, f32)) -> Color {
+    color_of([l, h[0] * c, h[1] * c])
+}
+
+/// A task pane colour in the twin: lightness through [`DEEP`], in hue `h`.
+fn deep(c: Color, h: [f32; 2]) -> Color {
+    tinted_at(h, (curve(&DEEP, lab_of(c)[0]), DEEP_CHROMA))
+}
+
+fn deep_face(f: &Face, h: [f32; 2]) -> Face {
+    let grad = |g: Grad| leak(g.iter().map(|&(t, c)| (t, deep(c, h))).collect());
+    Face {
+        rim: deep(f.rim, h),
+        inner: deep(f.inner, h),
+        halo: f.halo,
+        down: grad(f.down),
+        across: grad(f.across),
+        mark: f.mark,
+    }
+}
+
+/// A fold button in the twin: a disc lighter than its band, its chevron `mark`.
+fn disc(f: &Face, h: [f32; 2], mark: (f32, f32)) -> Face {
+    Face {
+        rim: tinted_at(h, (DISC_RIM, DEEP_CHROMA)),
+        inner: tinted_at(h, (DISC_FACE, DEEP_CHROMA)),
+        mark: Some(tinted_at(h, mark)),
+        ..deep_face(f, h)
+    }
 }
 
 /// How far `lab` is a saturated colour that keeps its lightness.
@@ -186,6 +256,8 @@ impl<T: Darken> Darken for Option<T> {
 fn darken(s: &Scheme) -> Scheme {
     let sys = &s.system;
     let i = &s.inks;
+    let h = hue(s.task_pane.normal.inner);
+    let (c, x) = (&s.task_collapse, &s.task_expand);
     Scheme {
         system: System {
             button_face: ink(sys.button_face),
@@ -199,7 +271,7 @@ fn darken(s: &Scheme) -> Scheme {
             gray_text: ink(sys.gray_text),
             menu: ink(sys.menu),
             menu_text: ink(sys.menu_text),
-            info_bk: ink(sys.info_bk),
+            info_bk: relit(ink(sys.info_bk), (INFO_BK, 1.0)),
             info_text: ink(sys.info_text),
             menu_bar: ink(sys.menu_bar),
             hot_light: ink(sys.hot_light),
@@ -212,6 +284,10 @@ fn darken(s: &Scheme) -> Scheme {
             toolbar_drop_disabled: ink(i.toolbar_drop_disabled),
             rebar_label: ink(i.rebar_label),
             track_tick: ink(i.track_tick),
+            task_title: tinted_at(h, TASK_INK),
+            task_title_hot: tinted_at(h, TASK_INK_HOT),
+            task_link: tinted_at(h, TASK_INK),
+            task_link_hot: tinted_at(h, TASK_INK_HOT),
             ..*i
         },
         push_button: s.push_button.darken(RAISED),
@@ -258,6 +334,32 @@ fn darken(s: &Scheme) -> Scheme {
         status_pane: s.status_pane.darken(PANE),
         explorer_bar_header: s.explorer_bar_header.darken(PANE),
         explorer_bar_close: s.explorer_bar_close.darken(RAISED),
+        task_pane: RestFaces {
+            normal: deep_face(&s.task_pane.normal, h),
+        },
+        task_group_header: RestFaces {
+            normal: deep_face(&s.task_group_header.normal, h),
+        },
+        task_group_body: RestFaces {
+            normal: deep_face(&s.task_group_body.normal, h),
+        },
+        task_collapse: LitFaces {
+            normal: disc(&c.normal, h, TASK_INK),
+            hot: disc(&c.hot, h, TASK_INK_HOT),
+            pressed: disc(&c.pressed, h, TASK_INK_HOT),
+        },
+        task_expand: RestFaces {
+            normal: disc(&x.normal, h, TASK_INK),
+        },
+        places_bar: s.places_bar.darken(SUNK),
+        start_menu: StartMenu {
+            rule: ink(s.start_menu.rule),
+            ..s.start_menu
+        },
+        welcome_band: relit(s.welcome_band, WELCOME_BAND),
+        welcome_field: relit(s.welcome_field, WELCOME_FIELD),
+        welcome_glow: relit(s.welcome_glow, WELCOME_GLOW),
+        welcome_tile_hot: relit(s.welcome_tile_hot, WELCOME_TILE_HOT),
         ..*s
     }
 }
@@ -289,7 +391,6 @@ mod tests {
             ("button_face", s.button_face),
             ("menu", s.menu),
             ("menu_bar", s.menu_bar),
-            ("info_bk", s.info_bk),
         ] {
             assert!((0.2..0.3).contains(&l(c)), "{what} is charcoal, got {c:?}");
         }
@@ -428,5 +529,113 @@ mod tests {
         let thumb = l(d.scroll_thumb_v.normal.inner);
         assert!(track < thumb, "track {track} under thumb {thumb}");
         assert!(track < face, "the track is sunk into the dialog");
+    }
+
+    /// The OKLab hue angle of `c`, in radians.
+    fn angle(c: Color) -> f32 {
+        let [_, a, b] = lab_of(c);
+        b.atan2(a)
+    }
+
+    #[test]
+    fn task_panes_go_deep_in_the_panes_hue_under_light_titles_and_links() {
+        let (light, d) = (&NAVY, navy());
+        let pane = d.task_pane.normal.down;
+        let header = &d.task_group_header.normal;
+        let body = &d.task_group_body.normal;
+        let hue = angle(light.task_pane.normal.inner);
+        let (top, bottom) = (pane[0].1, pane[pane.len() - 1].1);
+        assert!(l(top) > l(bottom), "the pane shades down");
+        for c in [top, bottom, header.across[0].1, body.inner] {
+            assert!(l(c) < 0.36, "{c:?} is deep");
+            assert!((angle(c) - hue).abs() < 0.05, "{c:?} keeps the pane's hue");
+        }
+        assert!(
+            l(header.across[0].1) > l(top),
+            "a title band stands above the pane"
+        );
+        assert!(
+            l(body.inner) > l(top),
+            "a group's body stands above the pane"
+        );
+        let i = &d.inks;
+        for bg in [header.across[0].1, header.across[2].1, body.inner] {
+            for (what, ink) in [("title", i.task_title), ("link", i.task_link)] {
+                assert!(ink.contrast(bg) >= 4.5, "the {what} reads on {bg:?}");
+            }
+        }
+        assert!(l(i.task_link_hot) > l(i.task_link), "a lit link brightens");
+        let c = &d.task_collapse;
+        assert!(
+            l(c.normal.inner) > l(header.across[0].1),
+            "the disc stands on its band"
+        );
+        assert!(l(c.normal.rim) > l(c.normal.inner), "the disc's rim is lit");
+        assert_eq!(c.normal.mark, Some(i.task_title));
+        assert_eq!(c.hot.mark, Some(i.task_title_hot));
+    }
+
+    #[test]
+    fn the_places_bar_sinks_like_a_list_and_the_start_menu_keeps_its_places_column() {
+        let (light, d) = (&NAVY, navy());
+        let face = l(d.system.button_face);
+        let p = &d.places_bar.normal;
+        for c in [p.rim, p.inner, p.down[2].1] {
+            assert!(l(c) < face, "{c:?} sits under the dialog");
+        }
+        assert!(
+            d.system.window_text.contrast(p.inner) >= 4.5,
+            "a place's label reads"
+        );
+        let (lm, dm) = (&light.start_menu, &d.start_menu);
+        assert_eq!(
+            (dm.places, dm.places_ink, dm.places_edge),
+            (lm.places, lm.places_ink, lm.places_edge)
+        );
+        assert_eq!((dm.band, dm.edge, dm.accent), (lm.band, lm.edge, lm.accent));
+        let rule = l(dm.rule);
+        assert!(
+            rule > l(d.system.window) && rule < l(d.system.gray_text),
+            "a faint rule"
+        );
+    }
+
+    #[test]
+    fn tips_stand_above_the_window_and_the_welcome_screen_goes_deeper() {
+        let (light, d) = (&NAVY, navy());
+        let s = &d.system;
+        assert!(
+            l(s.info_bk) > l(s.window) + 0.05,
+            "a tip stands off the window"
+        );
+        assert!(s.info_text.contrast(s.info_bk) >= 7.0);
+        for (what, a, b) in [
+            ("band", light.welcome_band, d.welcome_band),
+            ("field", light.welcome_field, d.welcome_field),
+            ("glow", light.welcome_glow, d.welcome_glow),
+            ("hot tile", light.welcome_tile_hot, d.welcome_tile_hot),
+        ] {
+            assert!(l(b) < l(a), "the {what} is deeper");
+            assert!(
+                (angle(a) - angle(b)).abs() < 0.05,
+                "the {what} keeps its hue"
+            );
+            assert!(
+                d.welcome_text.contrast(b) >= 4.5,
+                "text reads on the {what}"
+            );
+        }
+        assert!(
+            l(d.welcome_glow) > l(d.welcome_field),
+            "the glow still lights the field"
+        );
+        assert_eq!(
+            (d.welcome_text, d.welcome_rule, d.welcome_tile_frame),
+            (
+                light.welcome_text,
+                light.welcome_rule,
+                light.welcome_tile_frame
+            )
+        );
     }
 }

@@ -258,3 +258,29 @@ Steel admin shut down caps lock 125% @1 d61c8ce31017a6cc
 Steel admin shut down caps lock 125% @2 73f925bc196002a4
 Steel admin shut down caps lock 150% @1 88e78ce8727a15b2
 Steel admin shut down caps lock 150% @2 4670292bd75f60d2
+Blue dark tiles at rest @1 f20c5201fe9817b7
+Blue dark tiles at rest @2 8a54a5385cad9228
+Blue dark tile hot @1 66e871b6cd32ffb4
+Blue dark tile hot @2 f82ea459c404e096
+Blue dark tile open empty @1 ab12bb96dd96f69b
+Blue dark tile open empty @2 d0d0b7f05d2561e2
+Blue dark tile open with message @1 d599aa856de07fe8
+Blue dark tile open with message @2 81554f051b26eec5
+Blue dark busy @1 2b916a221cb70a86
+Blue dark busy @2 fd852d9f4d119171
+Blue dark typed @1 e85a4ef280bd8249
+Blue dark typed @2 bbef35698cf07605
+Blue dark admin shut down @1 ac97e47e779fa509
+Blue dark admin shut down @2 7aff86d52675c092
+Blue dark admin restart filled @1 67f2ebb84b860c73
+Blue dark admin restart filled @2 0779a3aad5aab066
+Blue dark shutting down @1 f7732bb8764de840
+Blue dark shutting down @2 54158d7c642e0b63
+Blue dark remote note @1 21891a07c66a2877
+Blue dark remote note @2 8c2a4f16b9b5107a
+Blue dark tiles over a picture @1 256a8cd10e7a4c5f
+Blue dark tiles over a picture @2 2b746743c4c79eda
+Blue dark admin shut down caps lock 125% @1 ec9f812b265d8bb3
+Blue dark admin shut down caps lock 125% @2 a33f86ff1f388b66
+Blue dark admin shut down caps lock 150% @1 79deb29eaa541111
+Blue dark admin shut down caps lock 150% @2 258103c8c3093b3b

@@ -350,8 +350,10 @@ fn drawn_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Canvas {
 /// between.
 const KEPT_BACKDROPS: usize = 4;
 
-type KeptBackdrops = Vec<((&'static str, i32, i32, i32, bool), Rc<Canvas>)>;
-type KeptBand = Option<((&'static str, i32, i32, i32), Rc<Canvas>)>;
+/// A kept canvas's scheme, by address: a light scheme and its dark twin share a name.
+type SchemeKey = *const Scheme;
+type KeptBackdrops = Vec<((SchemeKey, i32, i32, i32, bool), Rc<Canvas>)>;
+type KeptBand = Option<((SchemeKey, i32, i32, i32), Rc<Canvas>)>;
 
 thread_local! {
     static BACKDROPS: RefCell<KeptBackdrops> = const { RefCell::new(Vec::new()) };
@@ -373,7 +375,7 @@ pub fn kept_art() -> usize {
 /// [`backdrop`] for the last few schemes and sizes asked, kept since typing repaints the whole
 /// screen.
 fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Rc<Canvas> {
-    let key = (sc.name, w, h, d, field);
+    let key = (std::ptr::from_ref(sc), w, h, d, field);
     BACKDROPS.with_borrow_mut(|kept| {
         if let Some((_, c)) = kept.iter().find(|(k, _)| *k == key) {
             return Rc::clone(c);
@@ -390,7 +392,7 @@ fn cached_backdrop(sc: &Scheme, w: i32, h: i32, d: i32, field: bool) -> Rc<Canva
 /// [`band`] for the last scheme and size asked, kept since a key repaints the open tile's band
 /// under the password field.
 fn cached_band(sc: &Scheme, w: i32, h: i32, d: i32) -> Rc<Canvas> {
-    let key = (sc.name, w, h, d);
+    let key = (std::ptr::from_ref(sc), w, h, d);
     BAND.with_borrow_mut(|kept| match kept {
         Some((k, c)) if *k == key => Rc::clone(c),
         _ => Rc::clone(&kept.insert((key, Rc::new(band(sc, w, h, d)))).1),

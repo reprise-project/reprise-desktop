@@ -236,9 +236,9 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
 
 /// The Blue Start menu at scale `n` and `pct` text: Blue at rest, a lit pinned row, a lit place
 /// and a hot Log Off, then Olive Green with All Programs lit and Silver with Turn Off Computer
-/// pressed.
+/// pressed, then Blue's dark twin at rest, with a pinned row lit and with a place lit.
 pub fn render_blue_start_panel(n: i32, pct: u32) -> Canvas {
-    use reprisekit::blue::Variant;
+    use reprisekit::blue::{Tone, Variant};
     use reprisekit::startpanel::{self as sp, PlaceRow, ProgramRow, Shape, Spot, StartPanel};
     let u = reprisekit::theme::Theme::default().with_text_size(pct).text;
     let grown = |px: i32| u.len(px).max(px);
@@ -305,32 +305,33 @@ pub fn render_blue_start_panel(n: i32, pct: u32) -> Canvas {
         p
     };
     let text = TextRenderer::load(&FontConfig::default());
+    let dark = Tone::new(Variant::Blue, true);
     let panels = [
-        (base(), Variant::Blue, None),
-        (lit(Spot::Program(0)), Variant::Blue, None),
-        (lit(Spot::Place(1)), Variant::Blue, None),
-        (lit(Spot::LogOff), Variant::Blue, None),
-        (lit(Spot::AllPrograms), Variant::Olive, None),
-        (lit(Spot::Shutdown), Variant::Silver, Some(Spot::Shutdown)),
+        (base(), Variant::Blue.into(), None),
+        (lit(Spot::Program(0)), Variant::Blue.into(), None),
+        (lit(Spot::Place(1)), Variant::Blue.into(), None),
+        (lit(Spot::LogOff), Variant::Blue.into(), None),
+        (lit(Spot::AllPrograms), Variant::Olive.into(), None),
+        (
+            lit(Spot::Shutdown),
+            Variant::Silver.into(),
+            Some(Spot::Shutdown),
+        ),
+        (base(), dark, None),
+        (lit(Spot::Program(0)), dark, None),
+        (lit(Spot::Place(1)), dark, None),
     ];
     let (cell_w, cell_h) = (u.len(400) * n, u.len(500) * n);
-    let mut c = Canvas::new(3 * cell_w as u32, 2 * cell_h as u32);
+    let mut c = Canvas::new(3 * cell_w as u32, 3 * cell_h as u32);
     c.fill_rect(c.bounds(), Color::rgb(67, 149, 209));
-    for (k, (p, variant, pressed)) in panels.iter().enumerate() {
+    for (k, (p, tone, pressed)) in panels.iter().enumerate() {
         let mut p = p.clone();
         let g = sp::search::Grow { s: n, u };
         p.foot_labels = reprisekit::blue::startpanel::foot_labels(&text, g);
         let p = &p;
         let l = sp::layout::layout(p).scaled(n);
         let mut panel = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
-        interfaces::draw_blue_start_panel(
-            &mut panel,
-            reprisekit::blue::Tone::from(*variant),
-            &text,
-            p,
-            &l,
-            *pressed,
-        );
+        interfaces::draw_blue_start_panel(&mut panel, *tone, &text, p, &l, *pressed);
         let (x, y) = (
             (k % 3) as i32 * cell_w + 10 * n,
             (k / 3) as i32 * cell_h + 10 * n,
@@ -341,10 +342,10 @@ pub fn render_blue_start_panel(n: i32, pct: u32) -> Canvas {
 }
 
 /// The menus the Blue Start menu opens at scale `n`, a scheme a column (Blue, Olive Green,
-/// Silver): All Programs with a folder lit and open, All Programs with a program lit, and an empty
+/// Silver, Blue's dark twin): All Programs with a folder lit and open, All Programs with a program lit, and an empty
 /// Recent Items with its greyed row lit.
 pub fn render_blue_start_menus(n: i32) -> Canvas {
-    use reprisekit::blue::Variant;
+    use reprisekit::blue::{Tone, Variant};
     use reprisekit::controls::menu::{
         MenuLayout, MenuStyle, draw_menu_at, draw_menu_shadow, place_submenu_beside,
     };
@@ -383,16 +384,21 @@ pub fn render_blue_start_menus(n: i32) -> Canvas {
         (&empty[..], 0, none),
     ];
     let (cell_w, cell_h) = (440, 200);
-    let mut c = Canvas::new((3 * cell_w * n) as u32, (3 * cell_h * n) as u32);
+    let mut c = Canvas::new((4 * cell_w * n) as u32, (3 * cell_h * n) as u32);
     c.fill_rect(c.bounds(), Color::rgb(67, 149, 209));
     let base = interfaces::theme_for(Interface::Classic);
-    let usable = Rect::new(0, 0, 3 * cell_w, 3 * cell_h);
-    for (col, v) in [Variant::Blue, Variant::Olive, Variant::Silver]
-        .into_iter()
-        .enumerate()
+    let usable = Rect::new(0, 0, 4 * cell_w, 3 * cell_h);
+    for (col, v) in [
+        Variant::Blue.into(),
+        Variant::Olive.into(),
+        Variant::Silver.into(),
+        Tone::new(Variant::Blue, true),
+    ]
+    .into_iter()
+    .enumerate()
     {
-        let one = interfaces::blue_start_menus(&base, v.into());
-        let theme = interfaces::blue_start_menus(&base.scaled(n), v.into());
+        let one = interfaces::blue_start_menus(&base, v);
+        let theme = interfaces::blue_start_menus(&base.scaled(n), v);
         let laid_out = |items: &[MenuItem]| {
             let style =
                 MenuStyle::context_for(&one, items).fit(&text, items, one.fonts.size_px, 400);
