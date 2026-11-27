@@ -1653,3 +1653,15 @@ fn a_balloon_at_a_box_flips_over_it_when_the_window_ends_first() {
         "pulled in from the right edge"
     );
 }
+
+#[test]
+fn a_balloon_tip_is_a_polite_alert_reading_its_title_and_body() {
+    use crate::access::accesskit::{Live, Role};
+    let mut tree = crate::access::Tree::window("", (400, 300));
+    let r = Rect::new(40, 118, 200, 80);
+    let id = access_balloon_tip(0, r, "Name too long", "At most 11.", &mut tree, ROOT);
+    let n = tree.get(id).unwrap();
+    assert_eq!(n.role(), Role::Alert);
+    assert_eq!(n.label(), Some("Name too long. At most 11."));
+    assert_eq!(n.live(), Some(Live::Polite));
+}
