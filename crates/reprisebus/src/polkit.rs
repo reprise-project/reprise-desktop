@@ -71,7 +71,17 @@ pub fn dismissed() -> bool {
 /// polkit gets no password, so one typed later changes nothing. Blocks for at most
 /// [`crate::METHOD_TIMEOUT`].
 pub fn withdraw() {
-    let answer = ask_agent("Withdraw")
+    withdraw_with("Withdraw");
+}
+
+/// [`withdraw`] as this process's session ends: a prompt a service is about to open for it within
+/// the next seconds is withdrawn too.
+pub fn withdraw_ending() {
+    withdraw_with("WithdrawEnding");
+}
+
+fn withdraw_with(method: &str) {
+    let answer = ask_agent(method)
         .and_then(|reply| (reply.body().deserialize::<u32>()).map_err(|e| e.to_string()));
     match answer {
         Ok(0) => {}

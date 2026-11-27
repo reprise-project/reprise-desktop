@@ -66,8 +66,12 @@ impl Bus for Fake {
         self.call("down");
         self.down.load(Ordering::SeqCst)
     }
-    fn withdraw(&self) {
-        self.call("withdraw");
+    fn withdraw(&self, ending: bool) {
+        self.call(if ending {
+            "withdraw-ending"
+        } else {
+            "withdraw"
+        });
     }
 }
 
@@ -625,7 +629,7 @@ fn a_session_end_that_gives_up_the_power_action_withdraws_its_prompts_and_runs_n
         h.until("the attempt", |s| s.powering.busy());
         end(&mut h.state);
         h.until("the withdrawal", |_| {
-            fake.calls().iter().any(|c| c == "withdraw")
+            fake.calls().iter().any(|c| c == "withdraw-ending")
         });
         release.send(()).unwrap();
         trigger.join().unwrap();

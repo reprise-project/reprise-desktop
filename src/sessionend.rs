@@ -220,7 +220,7 @@ fn check(
     if critical || goal == Goal::LogOff {
         if state.powering.give_up_all() {
             log::info!("session end: {goal:?} gives up the power action under way");
-            withdraw_prompts(state);
+            withdraw_prompts(state, true);
         }
     } else if state.powering.busy() {
         log::info!("session end: {goal:?} while a power action is under way; ignored");
@@ -759,7 +759,7 @@ pub fn quit(state: &mut State) {
     crate::crash::ending();
     if state.powering.give_up_all() {
         log::info!("session end: quitting gives up the power action under way");
-        withdraw_prompts(state);
+        withdraw_prompts(state, true);
     }
     fade_out(
         state,
@@ -775,11 +775,12 @@ fn stop(state: &mut State) {
 }
 
 /// Withdraw, off the loop, the password prompts of a power action just given up on: one left open
-/// under the fade would still run the action on a password typed blind.
-fn withdraw_prompts(state: &mut State) {
+/// under the fade would still run the action on a password typed blind. As the session is
+/// `ending`, a prompt still on its way goes too; otherwise a retry's prompt must show.
+fn withdraw_prompts(state: &mut State, ending: bool) {
     let bus = Arc::clone(&state.offline.bus);
     let spawned = state.spawn_job(move || {
-        bus.withdraw();
+        bus.withdraw(ending);
         Box::new(|_: &mut State| {})
     });
     if !spawned {
@@ -1121,7 +1122,7 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
         return;
     }
     state.powering.give_up();
-    withdraw_prompts(state);
+    withdraw_prompts(state, false);
     let why = match state.offline.made.hand_over(id) {
         Some(true) => Refused::Stays(Some(Box::new(Refused::Late))),
         Some(false) => Refused::Late,
@@ -2665,7 +2666,7 @@ mod tests {
 
     #[test]
     fn a_power_action_with_no_answer_in_time_says_when_its_trigger_stands() {
-        struct Withdraws(std::sync::atomic::AtomicBool);
+        struct Withdraws(std::sync::atomic::AtomicU8);
         impl crate::offlineupdate::Bus for Withdraws {
             fn status(&self) -> Option<reprisebus::offline::Status> {
                 None
@@ -2683,8 +2684,8 @@ mod tests {
             fn shutting_down(&self) -> bool {
                 false
             }
-            fn withdraw(&self) {
-                self.0.store(true, Ordering::SeqCst);
+            fn withdraw(&self, ending: bool) {
+                self.0.store(if ending { 2 } else { 1 }, Ordering::SeqCst);
             }
         }
         let mut h = crate::harness::Harness::new();
@@ -2696,7 +2697,11 @@ mod tests {
         crate::crash::ending();
         h.state.session.kept = true;
         late(&mut h.state, id, Act::Restart, false);
-        assert!(bus.0.load(Ordering::SeqCst), "its prompts are withdrawn");
+        let withdrawn = bus.0.load(Ordering::SeqCst);
+        assert_eq!(
+            withdrawn, 1,
+            "its prompts are withdrawn, a retry's prompt is not"
+        );
         assert_eq!(h.state.offline.made.by(), None, "nothing takes it back now");
         let d = &h.state.dialogs.views.last().expect("the refusal").dialog;
         assert_eq!(
