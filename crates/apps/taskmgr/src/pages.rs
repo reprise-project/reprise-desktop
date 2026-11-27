@@ -1,4 +1,4 @@
-//! The main window's layout, drawing and access tree: the menu bar, the three pages on a tab
+//! The main window's layout, drawing and access tree: the menu bar, the four pages on a tab
 //! strip, and the status bar.
 
 use repriseapp::Ctx;
@@ -24,6 +24,10 @@ pub const SWITCH_TO: &str = "switch_to";
 pub const NEW_TASK: &str = "new_task";
 pub const END_PROCESS: &str = "end_process";
 pub const ALL_USERS: &str = "all_users";
+pub const SYSTEM: &str = "system_services";
+pub const START: &str = "start";
+pub const STOP: &str = "stop";
+pub const RESTART: &str = "restart";
 
 /// The window edge to the sheet, and the sheet's edge to what it holds.
 const MARGIN: i32 = 6;
@@ -40,7 +44,7 @@ pub struct Layout {
     pub list: Option<Rect>,
     /// Where either page's list sits.
     pub list_area: Rect,
-    /// The bottom row of buttons on the Applications and Processes pages.
+    /// The bottom row of buttons on the pages with a list.
     pub buttons_y: i32,
     pub inner: Rect,
     pub perf: Option<perf::Layout>,
@@ -150,6 +154,18 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
         Page::Performance => {
             perf::form_items(lay.perf.as_ref().expect("the Performance layout"), u)
         }
+        Page::Services => {
+            let button = |id, i: i32, label: &str| {
+                let x = inner.right() - (3 - i) * BUTTON_W - (2 - i) * GAP;
+                Item::button_at(id, x, by, BUTTON_W, label, true)
+            };
+            vec![
+                Item::check(SYSTEM, inner.x, by + 5, &tr!("system-services")),
+                button(START, 0, &tr!("start")),
+                button(STOP, 1, &tr!("stop")),
+                button(RESTART, 2, &tr!("restart")),
+            ]
+        }
     };
     Form::new(items)
 }
@@ -172,6 +188,14 @@ pub fn follow_form(t: &mut TaskMgr, ctx: &Ctx) {
     let app = t.selected_app().is_some();
     let own = t.selected_proc().is_some_and(|p| p.uid == t.uid);
     let all = t.all_users;
+    let svc = t.selected_service();
+    let may = |verb| svc.is_some_and(|s| t.service_may(s, verb));
+    let (start, stop, restart) = (
+        may(reprisebus::services::Verb::Start),
+        may(reprisebus::services::Verb::Stop),
+        may(reprisebus::services::Verb::Restart),
+    );
+    let system = t.svc.system;
     let f = &mut t.form;
     match key.0 {
         Page::Applications => {
@@ -186,6 +210,12 @@ pub fn follow_form(t: &mut TaskMgr, ctx: &Ctx) {
             for (id, v) in perf::shown(t).values {
                 t.form.set_text(id, &v);
             }
+        }
+        Page::Services => {
+            f.set_check(SYSTEM, system);
+            f.set_enabled(START, start);
+            f.set_enabled(STOP, stop);
+            f.set_enabled(RESTART, restart);
         }
     }
 }
@@ -235,6 +265,7 @@ pub fn draw(t: &mut TaskMgr, c: &mut Canvas, ctx: &Ctx) {
     if let Some(r) = lay.list {
         let list = match t.page() {
             Page::Applications => &t.apps,
+            Page::Services => &t.svc.list,
             _ => &t.procs,
         };
         c.fill_rect(r, ctx.theme.colors.window);
@@ -286,6 +317,7 @@ pub fn access(t: &mut TaskMgr, tree: &mut Tree, ctx: &Ctx) {
     if let Some(r) = lay.list {
         let (list, name) = match t.page() {
             Page::Applications => (&t.apps, "programs"),
+            Page::Services => (&t.svc.list, "services"),
             _ => (&t.procs, "processes"),
         };
         let l = list.layout(r, ctx);

@@ -121,6 +121,7 @@ Open with `Ctrl+Shift+Escape` or the taskbar menu (override with `task_manager`)
 - `Applications` lists each open window by its title, flags `Not Responding` ones and offers `End Task` (`End Now` after 5 s), `Switch To` and `New Task...` (the Run box, also `File > New Task (Run...)`). `End Task` closes the one window; on a program's last window it ends the program.
 - `Processes` lists PID, CPU, memory and optional `Threads`, `Disk`, `GPU` and `Command Line` columns, with confirmed `End Process`. Right-click a process for `Open File Location` and `Properties` of its program file.
 - `Performance` graphs CPU (combined or per core), Memory/swap, Disk, Network, GPU (NVIDIA needs NVML) and Sensors.
+- `Services` lists your systemd user services (and, with `Show system services`, the system's) with their status and startup. `Start`, `Stop` (confirmed) and `Restart` run on the selected one; a system service goes through polkit, which may ask for a password. Right-click for `Start at Login` on a user service and `Open Log` (also `Enter` or a double-click), its last 200 journal lines.
 
 Updates every second (configurable under `View > Update Speed`, paused while minimized) and saves preferences in `~/.local/state/reprise/taskmgr.toml`.
 

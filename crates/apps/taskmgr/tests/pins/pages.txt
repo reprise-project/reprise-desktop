@@ -1,42 +1,60 @@
-Classic Applications @1 d20938d8f36841ab
-Classic Applications @2 be8cca9348159c8f
-Classic Processes @1 b1751bc12d2160d6
-Classic Processes @2 805478b9641c973a
-Classic Performance @1 590961b4be75d1e7
-Classic Performance @2 3d06507987fb3d4c
-Classic Applications not responding @1 4b28ec3da20744fb
-Classic Applications not responding @2 7c043970eae8d0da
-Classic Applications windows @1 f42e31a5a9866a93
-Classic Applications windows @2 fb3470af48af128b
-Classic Processes menu @1 ce5e09b0ac23cd4e
-Classic Processes menu @2 ee80542102f36a92
+Classic Applications @1 97c5d2770364edab
+Classic Applications @2 72fb3ff748fb9c97
+Classic Processes @1 dc513c9ea1b5b246
+Classic Processes @2 f9732c3a62def342
+Classic Performance @1 d0497895f6e6106a
+Classic Performance @2 690322e31a7b47a4
+Classic Services @1 228e523b6419272a
+Classic Services @2 942fe12f4f71b2eb
+Classic Applications not responding @1 10e585dbb203f0fb
+Classic Applications not responding @2 f04e7962e88b7292
+Classic Applications windows @1 b9eacb43b9831693
+Classic Applications windows @2 83b92a54f6ceb893
+Classic Processes menu @1 ba2f089b5ad1bb3e
+Classic Processes menu @2 66bb906ec191a6ca
 Classic Select Columns @1 d56b1ff0606f1ad3
 Classic Select Columns @2 0d1387332a86fa07
-Blue Applications @1 10b1dd315891b87c
-Blue Applications @2 cfc5ce44b665fa2a
-Blue Processes @1 fbe59596bb4d27c3
-Blue Processes @2 6072029849fe5ad1
-Blue Performance @1 2cc809084f5adc06
-Blue Performance @2 d2fc3e91330e117f
-Blue Applications not responding @1 0461826f99358fa0
-Blue Applications not responding @2 cdd7cda6ce32246b
-Blue Applications windows @1 9f4212d31a57ee2c
-Blue Applications windows @2 9464627549185975
-Blue Processes menu @1 f9b3427abc8f3bfc
-Blue Processes menu @2 11ac7ec1a1d309a2
+Classic Services menu @1 fec5455a73b652ea
+Classic Services menu @2 95235567b930e122
+Classic Service log @1 b14a8ba7e27cdaac
+Classic Service log @2 c393f5426af3ffd8
+Blue Applications @1 0c18583acbc612d8
+Blue Applications @2 f5f7b3ae447f729a
+Blue Processes @1 a454226529a93ee7
+Blue Processes @2 515c21c1de2911b9
+Blue Performance @1 82544454460247f7
+Blue Performance @2 a29e7f66bca248b2
+Blue Services @1 43759922d0b5ccd8
+Blue Services @2 fe5adb31655050cd
+Blue Applications not responding @1 ee7f6111383236cc
+Blue Applications not responding @2 1888585cdbd5bd3b
+Blue Applications windows @1 27f09cc70b0329a8
+Blue Applications windows @2 a7eb940f7f84f865
+Blue Processes menu @1 f03c44271a615630
+Blue Processes menu @2 493cb3664588675a
 Blue Select Columns @1 8876df495451fc26
 Blue Select Columns @2 68e7787e91762889
-Glass Applications @1 86c7e1f16c0e371c
-Glass Applications @2 6893a68a6475d623
-Glass Processes @1 5017ab079f4f3e4b
-Glass Processes @2 0a1a651046c56cfa
-Glass Performance @1 c8146a455b29e653
-Glass Performance @2 8ee37009af4e5e66
-Glass Applications not responding @1 4d3344814ea231cc
-Glass Applications not responding @2 230d7f8e79658226
-Glass Applications windows @1 455cf9a660dc04b5
-Glass Applications windows @2 3ee17a725df86ad5
-Glass Processes menu @1 f4a9ddae328bc4cd
-Glass Processes menu @2 9ee2a3a669f4949d
+Blue Services menu @1 ee55c1b55cb27c28
+Blue Services menu @2 677fd477543a6572
+Blue Service log @1 7565fbf02dd74ec2
+Blue Service log @2 ba168919e149b02c
+Glass Applications @1 068450008a1fa1e5
+Glass Applications @2 b9c1dcf2523d6560
+Glass Processes @1 469c16c415af023a
+Glass Processes @2 7a73dfbb3791b261
+Glass Performance @1 db288205554a81fd
+Glass Performance @2 2a59b39439f74bf9
+Glass Services @1 d8057d75705aec04
+Glass Services @2 dca57d27d930cbf8
+Glass Applications not responding @1 4f85be1df44f2395
+Glass Applications not responding @2 7d764fd3ee76c689
+Glass Applications windows @1 b49d352bcce8d6b8
+Glass Applications windows @2 dbcc5792001014ba
+Glass Processes menu @1 d1cdc4840e9fc2ec
+Glass Processes menu @2 e66b736fef274c26
 Glass Select Columns @1 ea389194d1d1da39
 Glass Select Columns @2 cce296e03819bd0e
+Glass Services menu @1 10fb91b7c8896a50
+Glass Services menu @2 67a22170de7ab2e0
+Glass Service log @1 563ec54b42d64641
+Glass Service log @2 d5f54350bc109793

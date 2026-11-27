@@ -1,4 +1,4 @@
-# Task Manager: the three pages, the Performance panes and their dialogs.
+# Task Manager: the four pages, the Performance panes and their dialogs.
 
 ## Window
 title = Task Manager
@@ -9,6 +9,7 @@ select-columns-title = Select Columns
 tab-applications = Applications
 tab-processes = Processes
 tab-performance = Performance
+tab-services = Services
 column-task = Task
 column-status = Status
 status-running = Running
@@ -177,3 +178,80 @@ group-throughput = Throughput
 group-net-totals = Since Connected
 group-gpu = GPU
 group-vram = Video Memory (MB)
+
+## Services page
+col-svc-name = Name
+col-svc-description = Description
+col-svc-startup = Startup
+col-svc-group = Group
+svc-running = Running
+svc-finished = Finished
+svc-starting = Starting
+svc-stopping = Stopping
+svc-stopped = Stopped
+svc-failed = Failed
+startup-automatic = Automatic
+startup-manual = Manual
+startup-disabled = Disabled
+startup-on-demand = On demand
+group-user = User
+group-system = System
+system-services = Show s&ystem services
+start = &Start
+stop = S&top
+restart = &Restart
+
+## Service menu
+menu-start = &Start
+menu-stop = S&top
+menu-restart = &Restart
+menu-start-at-login = Start at &Login
+menu-open-log = Open Lo&g
+
+## Stop box and failures
+stop-text =
+    Stopping { $name } also stops the services that need it, and programs that use it may stop working.
+
+    Are you sure you want to stop this service?
+start-failed =
+    { $name } could not be started.
+
+    { $why }
+stop-failed =
+    { $name } could not be stopped.
+
+    { $why }
+restart-failed =
+    { $name } could not be restarted.
+
+    { $why }
+enable-failed =
+    { $name } could not be set to start at login.
+
+    { $why }
+disable-failed =
+    { $name } could not be kept from starting at login.
+
+    { $why }
+disable-unchanged =
+    { $name } could not be kept from starting at login.
+
+    It starts at login for every user of this computer, by a setting outside your own, so it can't be turned off here.
+enable-unchanged =
+    { $name } could not be set to start at login.
+
+    systemd made no change for it.
+job-not-sent = It is not a service Task Manager can change.
+
+## Service log
+log-title = { $name } - Log
+log-refresh = &Refresh
+log-close = Close
+log-reading = Reading the journal...
+log-none = The journal holds no lines for this service that you may read.
+log-not-a-service = The journal could not be read: it is not a service's name.
+log-not-started = The journal could not be read: journalctl did not start.
+log-too-long = The journal could not be read: journalctl took too long and was stopped.
+log-exited = The journal could not be read: journalctl ended with code { $code }.
+log-killed = The journal could not be read: journalctl was stopped by a signal.
+log-unwatched = The journal could not be read: journalctl's end could not be waited for, so it was stopped.
