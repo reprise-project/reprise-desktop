@@ -573,6 +573,7 @@ impl Explorer {
         let item = self.items.get(i);
         self.menu_paste = item.and_then(|it| match it.shortcut.as_deref() {
             _ if it.is_dir => Some(PasteTo::Folder(it.path.clone())),
+            _ if self.takes_into_zip(it) => Some(PasteTo::Zip(it.path.clone())),
             Some(reprisefs::apps::Shortcut::App(app)) => Some(PasteTo::App(Box::new(app.clone()))),
             _ => None,
         });
@@ -599,6 +600,7 @@ impl Explorer {
             extract: self.extract_label(),
             compress: self.compress_label(),
             disk_image: self.selected_disk_image().is_some(),
+            paste_into_zip: matches!(self.menu_paste, Some(PasteTo::Zip(_))),
             pinned,
             ..self.menu_state()
         };
@@ -686,6 +688,10 @@ impl Explorer {
         let dir = over.and_then(|t| self.target_dir(&t));
         let accept = dir.as_deref().map(|dir| {
             let files = paths.as_deref().unwrap_or(&[]);
+            if self.is_zip_target(dir) {
+                // A zip takes copies only.
+                return accept_for(offered, Some(&[]), false);
+            }
             accept_for(
                 offered,
                 paths.as_deref(),
@@ -1057,7 +1063,7 @@ impl Explorer {
             return writable_dir(&place);
         }
         let it = self.items.get(i)?;
-        (it.is_dir && !it.is_link).then(|| it.path.clone())
+        (it.is_dir && !it.is_link || self.takes_into_zip(it)).then(|| it.path.clone())
     }
 
     fn target_dir(&self, t: &Target) -> Option<PathBuf> {

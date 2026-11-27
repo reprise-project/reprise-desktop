@@ -57,6 +57,8 @@ pub struct MenuState {
     pub compress: Option<String>,
     /// The selection is one disk image: the item menu's default row mounts it.
     pub disk_image: bool,
+    /// The item is a zip that pasted files go into: its menu has Paste.
+    pub paste_into_zip: bool,
     /// The selection is one drive whose label Rename sets.
     pub relabel: bool,
     /// A lone folder under the item menu: whether it is pinned (Unpin from Places) or not (Pin
@@ -105,6 +107,7 @@ impl Default for MenuState {
             local_paths: false,
             compress: None,
             disk_image: false,
+            paste_into_zip: false,
             relabel: false,
             pinned: None,
             eject: false,
@@ -237,6 +240,10 @@ fn new_menu(writable: bool, templates: &[reprisefs::templates::Template]) -> Men
         let label = escape_mnemonic(&t.label);
         m.row(row(&label, writable), Command::NewFrom(t.path.clone()));
     }
+    m.row(
+        row(tr!("menu-new-compressed-folder"), writable),
+        Command::NewCompressedFolder,
+    );
     m
 }
 
@@ -740,6 +747,10 @@ pub fn item_menu(
         ),
         ItemKind::Launcher => m.row(
             row(tr!("menu-item-paste"), state.can_paste),
+            Command::PasteOnItem,
+        ),
+        ItemKind::File if state.paste_into_zip => m.row(
+            row(tr!("menu-item-paste"), state.can_paste && writable),
             Command::PasteOnItem,
         ),
         ItemKind::File | ItemKind::Script(_) => {}

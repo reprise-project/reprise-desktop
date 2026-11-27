@@ -26,6 +26,7 @@ mod foldertree;
 #[cfg(test)]
 mod i18n_tests;
 mod icons;
+mod intozip;
 mod keys;
 mod live;
 mod menus;
@@ -938,6 +939,7 @@ impl Explorer {
             local_paths: self.selected_local().is_some(),
             compress: None,
             disk_image: false,
+            paste_into_zip: false,
             relabel: (self.sv.selection.single()).is_some_and(|i| self.relabel_target(i).is_some()),
             pinned: None,
             eject: single.is_some_and(|i| self.ejectable(i) || self.share_selected(i)),

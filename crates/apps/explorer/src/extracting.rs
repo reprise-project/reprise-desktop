@@ -71,6 +71,11 @@ pub(crate) enum Batch {
         scratch: Scratch,
         then: Then,
     },
+    /// Files dropped or pasted into a zip.
+    AddToZip {
+        zip: PathBuf,
+        adds: Vec<reprisefs::zipwrite::Adding>,
+    },
 }
 
 /// What Extract to names after an archive, `name/`.
@@ -307,6 +312,16 @@ impl Explorer {
                 } = picks;
                 let job = archive::copy_job(archive, entries, picked, (scratch, dest), None, wake);
                 (job, Kind::Extract, from, to)
+            }
+            Batch::AddToZip { zip, adds } => {
+                let from = name(adds.first().map(|a| a.dir.as_path()));
+                let to = name(Some(&zip));
+                (
+                    ArchiveJob::add_to_zip(zip, adds, wake),
+                    Kind::Compress,
+                    from,
+                    to,
+                )
             }
         };
         let progress = Progress::new(job.meter().clone(), kind, from, to);

@@ -49,7 +49,7 @@ fn new_text_document_never_truncates_an_unlisted_file() {
     let taken = dir.path().join("New Text Document.txt");
     std::fs::write(&taken, "keep me").expect("write");
 
-    ex.new_item(false, &mut ctx);
+    ex.new_item(crate::fileops::New::TextDocument, &mut ctx);
 
     assert_eq!(std::fs::read_to_string(&taken).expect("read"), "keep me");
     assert!(
