@@ -281,10 +281,20 @@ impl State {
     /// started, snap included. Pointer focus and cursor are worked out
     /// again at once.
     pub fn cancel_interaction(&mut self) {
+        if self.abort_interaction() {
+            let pos = self.pointer_location();
+            self.repoint(pos, InputTime::now());
+        }
+    }
+
+    /// [`State::cancel_interaction`] leaving pointer focus where it is, for the lock's seal, which
+    /// takes it from every client next. Returns whether a gesture was under way. No branch may
+    /// repoint: the seal of lock mode's end runs it with the desktop unlocked.
+    pub(crate) fn abort_interaction(&mut self) -> bool {
         self.settle_moves();
         let was = std::mem::take(&mut self.interaction);
         match was {
-            Interaction::Idle => return,
+            Interaction::Idle => return false,
             Interaction::Move { .. } => {
                 self.end_tab_drop();
                 self.hide_snap_outline();
@@ -343,8 +353,7 @@ impl State {
         }
         self.restore_keyboard(was);
         self.set_cursor("default");
-        let pos = self.pointer_location();
-        self.repoint(pos, InputTime::now());
+        true
     }
 
     /// Escape during a pointer move undoes it: the window goes back to its

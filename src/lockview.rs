@@ -28,7 +28,7 @@ use zeroize::Zeroizing;
 use crate::compose::Compose;
 use crate::compositor::State;
 use crate::console::Side;
-use crate::input::{BTN_LEFT, Hit, Interaction};
+use crate::input::{BTN_LEFT, Hit};
 use crate::lock;
 use crate::lockfinger;
 use crate::logonview::{self, Fit, Host, LogonView};
@@ -592,7 +592,7 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.dnd.dismiss_held_popup();
     // Before the focus clearing below: the drag's end puts the pointer back on a client, which it takes away.
     state.cancel_drag();
-    cancel_interaction(state);
+    state.abort_interaction();
     state.release_all_buttons(InputTime::now());
     state.cancel_client_gesture();
     state.drop_kept_swipe();
@@ -663,35 +663,6 @@ fn raise(state: &mut State, side: Side) {
         media: None,
     });
     crate::lockback::read(state);
-}
-
-fn cancel_interaction(state: &mut State) {
-    match state.interaction {
-        Interaction::Drag { .. } => state.drag_view_cancel(),
-        Interaction::Marquee => state.end_marquee(),
-        Interaction::WidgetDrag(held) => state.widget_drag_cancel(held),
-        Interaction::Stir => {
-            state.end_marquee();
-            state.stir_cancel(reprisekit::fluid::Source::Pointer);
-        }
-        Interaction::BarMove { .. } | Interaction::BarWidth { .. } => state.cancel_bar_drag(),
-        _ => {}
-    }
-    if let Interaction::Move { window, .. }
-    | Interaction::Resize { window, .. }
-    | Interaction::PressButton { window, .. } = state.interaction
-    {
-        state.cancel_interaction_for(window);
-    }
-    // A held taskbar button lets go without acting and stops drawing held.
-    if let was @ (Interaction::TaskPress { .. }
-    | Interaction::QuickPress { .. }
-    | Interaction::ArrowPress { .. }
-    | Interaction::Band { .. }) = std::mem::take(&mut state.interaction)
-    {
-        state.cancel_taskbar_press(was);
-    }
-    state.interaction = Interaction::Idle;
 }
 
 /// What had the keyboard when a lock engaged: the window, the layer surface, whether the desktop.
@@ -1598,6 +1569,7 @@ impl Lock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::Interaction;
     use reprisekit::logon;
 
     #[test]
@@ -2338,5 +2310,75 @@ mod tests {
         check(&mut h, "hunter2");
         assert!(!h.state.console_locked());
         assert!(h.state.lock.leaving.is_empty());
+    }
+
+    #[test]
+    fn a_lock_during_a_keyboard_move_puts_the_window_back() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers.finger = |_| None;
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.state.move_to(t.id, 100, 100);
+        h.dispatch();
+        let start = h.state.win(t.id).expect("the window").frame_rect();
+        h.state.begin_key_move(t.id);
+        let p = h.state.pointer_location();
+        h.pointer_to(p.x + 80.0, p.y + 60.0);
+        h.state.settle_moves();
+        assert_ne!(
+            h.state.win(t.id).expect("the window").frame_rect(),
+            start,
+            "the window follows the pointer"
+        );
+        lock(&mut h.state);
+        h.state.settle_moves();
+        assert_eq!(h.state.interaction, Interaction::Idle, "the move ends");
+        assert_eq!(
+            h.state.win(t.id).expect("the window").frame_rect(),
+            start,
+            "the window is back where the move started"
+        );
+    }
+
+    #[test]
+    fn a_lock_during_a_caption_drag_ends_it_and_takes_the_pointer_from_the_windows() {
+        use crate::harness::LEFT;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers.finger = |_| None;
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let w = h.state.win(t.id).expect("the window");
+        let (px, py) = (
+            f64::from(w.x + w.geom.caption.x + w.geom.caption.width / 2),
+            f64::from(w.y + w.geom.caption.y + w.geom.caption.height / 2),
+        );
+        h.pointer_to(px, py);
+        h.button(LEFT, true);
+        h.pointer_to(px + 40.0, py + 30.0);
+        h.state.settle_moves();
+        assert!(
+            matches!(h.state.interaction, Interaction::Move { .. }),
+            "the caption drag moves the window"
+        );
+        let held = h.state.win(t.id).expect("the window").frame_rect();
+        lock(&mut h.state);
+        assert_eq!(h.state.interaction, Interaction::Idle, "the drag ends");
+        assert_eq!(h.state.buttons_down, 0, "no button counts as down");
+        let focus = h.state.seat.get_pointer().and_then(|p| p.current_focus());
+        assert!(
+            focus.is_none_or(|f| f.surface().is_none()),
+            "no client has the pointer"
+        );
+        h.button(LEFT, false);
+        h.state.settle_moves();
+        h.roundtrip(&mut c);
+        assert!(c.side.buttons.is_empty(), "the window hears no button");
+        assert_eq!(
+            h.state.win(t.id).expect("the window").frame_rect(),
+            held,
+            "the window stays where the drag left it"
+        );
     }
 }
