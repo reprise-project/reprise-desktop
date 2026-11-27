@@ -401,7 +401,8 @@ impl State {
 
     /// Lay the frame's glass under the client's blur region when the look has it and the window
     /// shows its frame; the client is then left out of what glass blurs, so its own glass reads
-    /// what lies behind the window.
+    /// what lies behind the window. A sheet hides it on screen and keeps it for pictures of the
+    /// client.
     fn place_client_glass(&mut self, w: WindowId, sheet: bool) {
         let active = self.win(w).is_some_and(|x| x.is_active(self.focused)) && !self.carded(w);
         let scale = self.draw_scale_for_window(w);
@@ -422,7 +423,7 @@ impl State {
             return;
         };
         let rects: Vec<Rect> = match opens {
-            true if win.has_frame() && !sheet => {
+            true if win.has_frame() => {
                 let size = (win.geom.client.width, win.geom.client.height);
                 client_glass_rects(size, &win.blur, (layout.width, layout.height))
             }
@@ -447,6 +448,7 @@ impl State {
             reprisekit::look::draw_client_glass(&mut canvas, &theme, band, client_h, win.maximized);
             upload_scaled(scene, g.buffer, &canvas, scale);
             scene.set_position(g.buffer, c.x + r.x, c.y + r.y);
+            scene.set_enabled(g.buffer, !sheet);
             g.backing.update((r.width, r.height), fill);
         }
         let leave_out = !rects.is_empty() && crate::glass::wanted(&self.config);

@@ -1113,20 +1113,16 @@ mod tests {
     }
 
     /// The frame's glass under a 300x200 window's 30-row blur band, as a picture of the
-    /// client shows it at scale 1, the client's own pixels left out.
-    fn band_picture(r: &mut GlesRenderer, transparency: bool) -> crate::raster::Canvas {
-        let text = format!(
-            "[appearance]\ninterface = \"glass\"\n[glass]\ntransparency = {transparency}\n"
-        );
-        let config = crate::config::Config::parse(&text).unwrap();
-        let mut h = crate::harness::Harness::with_config(config);
-        h.output("TEST-1", 1024, 768);
-        let mut c = h.connect();
-        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    /// client shows it at scale 1, the client's own pixels left out; with `peeked`, while a
+    /// desktop peek shows the window as a sheet.
+    fn band_picture(
+        r: &mut GlesRenderer,
+        transparency: bool,
+        peeked: bool,
+    ) -> crate::raster::Canvas {
+        let (mut h, _c, t) = band_window(transparency, peeked);
         let s = &mut h.state;
-        s.win_mut(t.id).unwrap().blur = vec![Rect::new(0, 0, 300, 30)];
-        s.redraw_frame(t.id);
-        let x = s.win(t.id).unwrap();
+        let x = s.win(t).unwrap();
         let glass: Vec<_> = (x.client_glass().iter())
             .map(|g| (g.buffer, g.backing.clone()))
             .collect();
@@ -1146,6 +1142,66 @@ mod tests {
         target.read(r).unwrap()
     }
 
+    /// A 300x200 window with a 30-row blur band under Glass, sheeted by a desktop peek when
+    /// `peeked`.
+    fn band_window(
+        transparency: bool,
+        peeked: bool,
+    ) -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        WindowId,
+    ) {
+        let text = format!(
+            "[appearance]\ninterface = \"glass\"\n[glass]\ntransparency = {transparency}\n"
+        );
+        let config = crate::config::Config::parse(&text).unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let s = &mut h.state;
+        s.win_mut(t.id).unwrap().blur = vec![Rect::new(0, 0, 300, 30)];
+        s.redraw_frame(t.id);
+        if peeked {
+            crate::peek::key_down(s);
+            assert!(s.is_sheet(t.id), "the peek shows the window as a sheet");
+        }
+        (h, c, t.id)
+    }
+
+    #[test]
+    fn a_sheet_keeps_its_client_glass_for_pictures_and_hides_it_on_screen() {
+        let (mut h, _c, w) = band_window(true, true);
+        let glass = |h: &crate::harness::Harness| {
+            let x = h.state.win(w).unwrap();
+            (x.client_glass().iter())
+                .map(|g| h.state.scene.enabled(g.buffer))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(glass(&h), [false], "kept for pictures, off on screen");
+        crate::peek::key_up(&mut h.state);
+        assert_eq!(glass(&h), [true], "back on screen once the peek ends");
+    }
+
+    #[test]
+    fn a_sheets_picture_draws_its_glass_band_as_it_does_unpeeked() {
+        let Some(mut r) = reprisefx::headless::renderer()
+            .map_err(|e| reprisekit::pins::skipped(&e))
+            .ok()
+        else {
+            return;
+        };
+        let (peeked, shown) = (
+            band_picture(&mut r, true, true),
+            band_picture(&mut r, true, false),
+        );
+        assert!(
+            peeked.pixels == shown.pixels,
+            "the sheet's band is the window's"
+        );
+    }
+
     #[test]
     fn a_pictures_glass_band_is_the_frames_glass_with_transparency_off() {
         let Some(mut r) = reprisefx::headless::renderer()
@@ -1154,7 +1210,10 @@ mod tests {
         else {
             return;
         };
-        let (on, off) = (band_picture(&mut r, true), band_picture(&mut r, false));
+        let (on, off) = (
+            band_picture(&mut r, true, false),
+            band_picture(&mut r, false, false),
+        );
         for (i, (&a, &b)) in on.pixels.iter().zip(&off.pixels).enumerate() {
             let (x, y) = (i % 300, i / 300);
             assert_eq!(a >> 24, 0xFF, "({x}, {y}) is opaque: {a:#010x}");
