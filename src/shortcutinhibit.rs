@@ -160,7 +160,10 @@ impl State {
         crate::notifyview::notice(
             self,
             &tr!("misc-shortcuts-taken-title", name = name),
-            &tr!("misc-shortcuts-taken-body"),
+            &tr!(
+                "misc-shortcuts-taken-body",
+                keys = reprisekit::keycap::shown_chord("Super+Shift+Escape")
+            ),
         );
     }
 

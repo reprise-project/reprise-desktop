@@ -81,7 +81,7 @@ struct Panel {
 pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     use reprisekit::access::{ROOT, accesskit::Role};
     let p = state.key_sheet.panel.as_ref()?;
-    let mut tree = crate::access::root(Role::Window, keysheet::TITLE, p.rect);
+    let mut tree = crate::access::root(Role::Window, &keysheet::title(), p.rect);
     let (w, h) = (p.rect.width, p.rect.height);
     keysheet::access(&p.sheet, &p.layout, Rect::new(0, 0, w, h), &mut tree, ROOT);
     Some(tree)
@@ -183,7 +183,7 @@ pub fn sheet(binds: &[Keybind], globals: &[(&GlobalShortcut, String)]) -> KeyShe
             let rows: Vec<Binding> = (rows.iter())
                 .filter(|r| r.0 == title)
                 .map(|r| Binding {
-                    keys: r.2.join(", "),
+                    keys: r.2.join(&tr!("dlg-keys-separator")),
                     what: r.1.clone(),
                 })
                 .collect();
@@ -520,7 +520,7 @@ mod tests {
         h.key(KEY_LEFTMETA, true);
         h.run_for(80);
         let t = access(&h.state).expect("the sheet's tree");
-        assert!(t.find(Role::Group, keysheet::TITLE).is_some());
+        assert!(t.find(Role::Group, &keysheet::title()).is_some());
         assert!(t.find(Role::Group, WINDOWS).is_some());
         let rect = h.state.key_sheet.panel.as_ref().unwrap().rect;
         let b = t.focus_bounds();
