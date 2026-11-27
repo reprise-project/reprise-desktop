@@ -80,11 +80,13 @@ pub fn pattern_ext(pattern: &str) -> Option<&str> {
     plain.then_some(ext)
 }
 
+/// A Look in row above the pinned folders; the one whose `id` is the folder shown is picked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Crumb {
     pub id: FolderId,
     pub label: String,
     pub depth: usize,
+    /// None wears the folder icon ([`FileDlg::set_folder_icon`]).
     pub icon: Option<Canvas>,
 }
 
@@ -640,7 +642,8 @@ impl FileDlg {
         }
         self.pending = None;
         self.parent = folder.parent;
-        let selected = folder.crumbs.len().saturating_sub(1);
+        let selected = (folder.crumbs.iter().position(|c| c.id == folder.id))
+            .unwrap_or(folder.crumbs.len().saturating_sub(1));
         self.crumbs = folder.crumbs;
         self.lookin = Combo::with_items(self.lookin_items(), selected, 8);
         self.folder = Some(folder.id);
@@ -976,8 +979,10 @@ impl FileDlg {
     /// Look in's rows: the shown folder's crumbs, then each pinned folder, greyed where it is
     /// not there.
     fn lookin_items(&self) -> Vec<combo::ListItem> {
-        let crumbs = (self.crumbs.iter())
-            .map(|c| combo::ListItem::shell(&c.label, c.icon.clone(), c.depth as i32));
+        let crumbs = self.crumbs.iter().map(|c| {
+            let icon = c.icon.clone().or_else(|| self.folder_icon.clone());
+            combo::ListItem::shell(&c.label, icon, c.depth as i32)
+        });
         let pins = self.pinned_places().map(|(p, folder)| combo::ListItem {
             greyed: folder.is_none(),
             ..combo::ListItem::shell(&p.label, self.folder_icon.clone(), 0)
@@ -1047,12 +1052,17 @@ impl FileDlg {
         }
     }
 
-    /// The 16 px folder icon every Look in row wears, the shown folder's and the pinned ones'.
+    /// The 16 px folder icon the pinned Look in rows and the crumbs without their own wear.
     pub fn set_folder_icon(&mut self, icon: Option<Canvas>) {
-        for crumb in &mut self.crumbs {
-            crumb.icon = icon.clone();
-        }
         self.folder_icon = icon;
+        self.relist_lookin();
+    }
+
+    /// Replaces the crumbs' own icons, in the order the listing gave the crumbs.
+    pub fn set_crumb_icons(&mut self, icons: Vec<Option<Canvas>>) {
+        for (crumb, icon) in self.crumbs.iter_mut().zip(icons) {
+            crumb.icon = icon;
+        }
         self.relist_lookin();
     }
 
