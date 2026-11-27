@@ -326,9 +326,13 @@ pub fn field(
     } else {
         (Part::StartClear, at::CLEAR)
     };
+    // The glyph grows by whole steps with the text, drawn afresh at the grown scale.
+    let k = g.u.small();
+    let grown = (k > 1).then(|| style.rebuilt_at(s * k)).flatten();
     let (w, h) = glyph_size(style, part);
-    let x = r.right() - g.kept(FIELD.0 - gx - w, w) - w * s;
-    glyph(canvas, style, (x, r.y + g.kept(gy, h)), part, s);
+    let x = r.right() - g.stepped(FIELD.0 - gx - w, w) - w * k * s;
+    let at = (x, r.y + g.stepped(gy, h));
+    glyph(canvas, grown.as_deref().unwrap_or(style), at, part, s * k);
 }
 
 /// A result row `r`: [`Part::StartLitResult`]'s 22 px box across it when `lit`, the `icon` and
@@ -411,6 +415,40 @@ pub fn header(
 mod tests {
     use super::*;
     use crate::textedit::Preedit;
+
+    /// The magnifier and the clear glyph grow by whole steps with the text: the pixels that tell
+    /// them apart span twice as far at 200% as at 100%, still right of the text.
+    #[test]
+    fn the_field_glyphs_grow_by_whole_steps_with_the_text() {
+        let st = crate::glass::style(&crate::glass::Settings::default());
+        let text = TextRenderer::load(&FontConfig::default());
+        let span = |u: TextUnits| {
+            let g = Grow { s: 1, u };
+            let r = Rect::new(4, 4, g.len(FIELD.0), g.len(FIELD.1));
+            let draw = |query: &str| {
+                let mut c = Canvas::new(480, 60);
+                let edit = TextEdit::new(query, false);
+                field(&mut c, &st, &text, &text, r, &edit, false, false, g);
+                c
+            };
+            let (magnifier, clear) = (draw(""), draw("ab"));
+            let left = r.x + r.width - g.len(FIELD.0 - at::TEXT_RIGHT);
+            let differ: Vec<(i32, i32)> = (r.y..r.bottom())
+                .flat_map(|y| (left..r.right()).map(move |x| (x, y)))
+                .filter(|&(x, y)| magnifier.get(x, y) != clear.get(x, y))
+                .collect();
+            let extent = |f: fn(&(i32, i32)) -> i32| {
+                differ.iter().map(f).max().unwrap() - differ.iter().map(f).min().unwrap() + 1
+            };
+            (extent(|p| p.0), extent(|p| p.1))
+        };
+        let (one, two) = (span(TextUnits::ONE), span(TextUnits::new(22, 11)));
+        assert!(one.0 > 4 && one.1 > 4, "the glyphs differ over {one:?}");
+        assert!(
+            (two.0 - 2 * one.0).abs() <= 1 && (two.1 - 2 * one.1).abs() <= 1,
+            "{two:?} at 200%, twice {one:?}"
+        );
+    }
 
     /// The Glass field composing "ni" after "ab": the preedit after the text, underlined a row under
     /// the baseline, the caret after it, and the spot reporting the field's own text.
