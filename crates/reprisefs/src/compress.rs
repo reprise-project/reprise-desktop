@@ -458,6 +458,38 @@ mod tests {
     }
 
     #[test]
+    fn an_item_named_at_a_sibling_zips_itself_and_not_the_archive_it_names() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::write(d.join("inner.txt"), "inner").unwrap();
+        let st = std::process::Command::new("bsdtar")
+            .arg("-cf")
+            .arg(d.join("x"))
+            .arg("-C")
+            .arg(d)
+            .arg("inner.txt")
+            .status()
+            .unwrap();
+        assert!(st.success(), "bsdtar made the tar");
+        std::fs::write(d.join("@x"), "at").unwrap();
+        let c = Compress {
+            paths: vec![d.join("@x")],
+            zip: d.join("@x.zip"),
+        };
+        let got = events(&c, &Meter::default(), None);
+        assert!(
+            matches!(
+                &got[..],
+                [ArchiveEvent::Landed { .. }, ArchiveEvent::Finished]
+            ),
+            "{got:?}"
+        );
+        let listed = crate::archive::list(&c.zip, &Meter::default()).unwrap();
+        let listed: Vec<_> = (listed.iter()).map(|e| (e.path.clone(), e.size)).collect();
+        assert_eq!(listed, [(PathBuf::from("@x"), 2)], "the zip holds @x alone");
+    }
+
+    #[test]
     fn a_failing_bsdtar_leaves_no_zip_and_says_why() {
         let delayed = "echo 'bsdtar: Error exit delayed from previous errors.' >&2";
         for (said, why) in [
