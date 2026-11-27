@@ -283,21 +283,21 @@ impl Notepad {
         .sounding(repriseapp::sound::Event::Warning)
     }
 
-    /// Yes opens the text of `file` as an unsaved Untitled document and offers no more files; No
+    /// Yes opens the text of `file` as an unsaved Untitled document and offers no more files: here
+    /// over an untouched Untitled, else in a Notepad of its own, so the document open stays. No
     /// sends the file to the Recycle Bin and the next is offered. Closing the prompt keeps the
     /// files for the next start.
     pub(crate) fn recovered_answered(&mut self, file: PathBuf, answer: Option<usize>) -> Reply {
         match answer {
             Some(0) => {
                 self.asks.withdraw(|ask| matches!(ask, Ask::Recovered(_)));
-                match read_text(&file) {
-                    Ok((text, format)) => {
-                        self.show_document(&text, format, None);
-                        self.edit.mark_unsaved();
-                        self.rescued = Some(file);
-                    }
-                    Err(e) => self.open_failed(&file, &e),
+                if self.path.is_some() || self.dirty() {
+                    return Reply {
+                        spawn: vec![recovered_argv(&file)],
+                        ..Reply::redraw_all()
+                    };
                 }
+                self.open_recovered(file);
             }
             Some(_) => recycle(&file),
             None => {
@@ -305,6 +305,18 @@ impl Notepad {
             }
         }
         Reply::redraw_all()
+    }
+
+    /// Opens the text of recovery file `file` as an unsaved Untitled document.
+    pub(crate) fn open_recovered(&mut self, file: PathBuf) {
+        match read_text(&file) {
+            Ok((text, format)) => {
+                self.show_document(&text, format, None);
+                self.edit.mark_unsaved();
+                self.rescued = Some(file);
+            }
+            Err(e) => self.open_failed(&file, &e),
+        }
     }
 
     /// The recovered document was saved or discarded: its recovery file goes.
@@ -424,6 +436,11 @@ impl Notepad {
             }
         }
     }
+}
+
+/// The command line of a Notepad that opens the text of recovery file `file` ([`RECOVERED`]).
+pub(crate) fn recovered_argv(file: &Path) -> Vec<std::ffi::OsString> {
+    vec!["reprise-notepad".into(), RECOVERED.into(), file.into()]
 }
 
 /// How a recovery prompt names the text kept in `file`: its document's name, and for an Untitled
