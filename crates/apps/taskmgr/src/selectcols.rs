@@ -3,6 +3,7 @@
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{Form, Item};
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 
 use crate::columns::{Column, SPECS};
 
@@ -22,12 +23,12 @@ pub fn form(shown: &[Column]) -> Form {
         EDGE,
         EDGE,
         w - 2 * EDGE,
-        "Pick the columns the Processes page shows.",
+        &tr!("intro"),
     )];
     for (i, s) in SPECS.iter().enumerate() {
         let y = FIRST + i as i32 * STEP;
         items.push(
-            Item::check(s.key, EDGE + 4, y, s.label)
+            Item::check(s.key, EDGE + 4, y, &(s.label)())
                 .checked(shown.contains(&s.col))
                 .enabled(s.col != Column::Name),
         );

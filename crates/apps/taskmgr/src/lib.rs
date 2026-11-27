@@ -4,6 +4,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("taskmgr");
+
 mod columns;
 mod devices;
 mod pages;
@@ -45,6 +47,7 @@ use reprisekit::controls::tabstrip::TabStrip;
 use reprisekit::pointer::Click;
 use reprisekit::raster::Canvas;
 use reprisekit::textedit::keysym;
+use reprisekit::tr;
 
 use columns::Column as ProcColumn;
 use sample::{ProcRow, Snapshot};
@@ -87,12 +90,12 @@ impl Speed {
         }
     }
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Speed::High => "&High",
-            Speed::Normal => "&Normal",
-            Speed::Low => "&Low",
-            Speed::Paused => "&Paused",
+            Speed::High => tr!("speed-high"),
+            Speed::Normal => tr!("speed-normal"),
+            Speed::Low => tr!("speed-low"),
+            Speed::Paused => tr!("speed-paused"),
         }
     }
 }
@@ -120,11 +123,11 @@ pub struct AppRow {
 }
 
 impl AppRow {
-    pub fn status(&self) -> &'static str {
+    pub fn status(&self) -> String {
         if self.hung {
-            "Not Responding"
+            tr!("status-not-responding")
         } else {
-            "Running"
+            tr!("status-running")
         }
     }
 }
@@ -279,8 +282,18 @@ impl TaskMgr {
             speed: Speed::Normal,
             suspended: false,
             snap: Snapshot::default(),
-            tabs: TabStrip::new(&["Applications", "Processes", "Performance"], 0),
-            apps: List::new(vec![Column::new("Task", 260), Column::new("Status", 100)]),
+            tabs: TabStrip::new(
+                &[
+                    &tr!("tab-applications"),
+                    &tr!("tab-processes"),
+                    &tr!("tab-performance"),
+                ],
+                0,
+            ),
+            apps: List::new(vec![
+                Column::new(&tr!("column-task"), 260),
+                Column::new(&tr!("column-status"), 100),
+            ]),
             app_rows: Vec::new(),
             hung: Vec::new(),
             hung_rx: None,
@@ -333,13 +346,13 @@ impl TaskMgr {
             return;
         }
         let mut file = MenuTree::new();
-        file.push(MenuItem::item("E&xit Task Manager"));
+        file.push(MenuItem::item(&tr!("menu-exit")));
         let mut options = MenuTree::new();
-        options.push(MenuItem::item("&Always On Top").checked(self.on_top));
+        options.push(MenuItem::item(&tr!("menu-always-on-top")).checked(self.on_top));
         let mut speed = MenuTree::new();
         for s in Speed::ALL {
             speed.push(
-                MenuItem::item(s.label())
+                MenuItem::item(&s.label())
                     .radio(true)
                     .checked(self.speed == s),
             );
@@ -349,16 +362,18 @@ impl TaskMgr {
             history.push(item);
         }
         let mut view = MenuTree::new();
-        view.push(MenuItem::item("&Refresh Now").shortcut(Some("F5".into())));
-        view.push_sub(MenuItem::item("&Update Speed"), speed);
+        view.push(MenuItem::item(&tr!("menu-refresh")).shortcut(Some("F5".into())));
+        view.push_sub(MenuItem::item(&tr!("menu-update-speed")), speed);
         view.push(MenuItem::Separator);
-        view.push_sub(MenuItem::item("&CPU History"), history);
-        view.push(MenuItem::item("&Select Columns...").enabled(self.page() == Page::Processes));
+        view.push_sub(MenuItem::item(&tr!("menu-cpu-history")), history);
+        view.push(
+            MenuItem::item(&tr!("menu-select-columns")).enabled(self.page() == Page::Processes),
+        );
         let keep = (self.bar.active, self.bar.underline, self.bar.hot);
         self.bar = Bar::with_trees(vec![
-            ("&File", file),
-            ("&Options", options),
-            ("&View", view),
+            (tr!("menu-file"), file),
+            (tr!("menu-options"), options),
+            (tr!("menu-view"), view),
         ]);
         (self.bar.active, self.bar.underline, self.bar.hot) = keep;
     }
@@ -367,13 +382,13 @@ impl TaskMgr {
     fn history_items(&self) -> [(MenuItem, Act); 2] {
         [
             (
-                MenuItem::item("&One Graph, All CPUs")
+                MenuItem::item(&tr!("history-one-graph"))
                     .radio(true)
                     .checked(!self.per_core),
                 Act::PerCore(false),
             ),
             (
-                MenuItem::item("One Graph &Per CPU")
+                MenuItem::item(&tr!("history-per-cpu"))
                     .radio(true)
                     .checked(self.per_core),
                 Act::PerCore(true),
@@ -501,7 +516,10 @@ impl TaskMgr {
                 let s = columns::spec(c);
                 Column {
                     right: s.right,
-                    ..Column::new(s.title, self.widths.get(&c).copied().unwrap_or(s.width))
+                    ..Column::new(
+                        &(s.title)(),
+                        self.widths.get(&c).copied().unwrap_or(s.width),
+                    )
                 }
             })
             .collect();
@@ -656,10 +674,7 @@ impl TaskMgr {
                 let icon = self.app_rows[i].icon.clone();
                 listview::Row {
                     icon: icon.and_then(|n| self.icon(&n, ctx)),
-                    cells: vec![
-                        self.app_rows[i].name.clone(),
-                        self.app_rows[i].status().into(),
-                    ],
+                    cells: vec![self.app_rows[i].name.clone(), self.app_rows[i].status()],
                 }
             })
             .collect();
@@ -801,15 +816,15 @@ impl TaskMgr {
             }
         };
         let b = MsgBox::new(
-            "Task Manager Warning",
+            tr!("warning-title"),
             Fields {
-                text: format!(
-                    "Ending {} (PID {}) can lose the data it holds, and a program that needs it \
-                     may stop working.\n\nAre you sure you want to end this process?",
-                    p.name, p.pid
+                text: tr!(
+                    "end-process-text",
+                    name = p.name.as_str(),
+                    pid = p.pid.to_string()
                 ),
                 icon: ctx.icons.get("dialog-warning", 32),
-                buttons: vec!["&Yes".into(), "&No".into()],
+                buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 default: 1,
                 min_text_h: None,
                 min_w: 0,
@@ -1257,20 +1272,17 @@ pub fn grouped(n: u64) -> String {
 
 /// End Now for `name`, which `asked` to end first, or found not responding.
 fn end_now_box(name: &str, asked: bool) -> MsgBox {
-    let why = if asked {
-        "is not responding to the request to end"
+    let text = if asked {
+        tr!("end-now-asked", name = name)
     } else {
-        "is not responding"
+        tr!("end-now-hung", name = name)
     };
     MsgBox::new(
-        format!("End Program - {name}"),
+        tr!("end-now-title", name = name),
         Fields {
-            text: format!(
-                "{name} {why}.\n\nTo end it now, click End Now. Anything it has not saved is \
-                 lost."
-            ),
+            text,
             icon: None,
-            buttons: vec!["&End Now".into(), "Cancel".into()],
+            buttons: vec![tr!("end-now"), reprisekit::kit_tr!("cancel")],
             default: 1,
             min_text_h: None,
             min_w: 0,
@@ -1296,7 +1308,7 @@ fn redraw(changed: bool) -> Reply {
 
 impl App for TaskMgr {
     fn title(&self) -> String {
-        "Task Manager".into()
+        tr!("title")
     }
 
     fn app_id(&self) -> String {
@@ -1312,7 +1324,7 @@ impl App for TaskMgr {
         if self.pick.is_some() {
             kids.push(Child {
                 id: PICK,
-                title: "Select Columns".into(),
+                title: tr!("select-columns-title"),
                 size: (self.forms.as_ref())
                     .map_or(selectcols::CLIENT, |t| t.text.size(selectcols::CLIENT)),
                 fixed: true,

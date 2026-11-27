@@ -10,11 +10,11 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Kind::Ethernet => "Ethernet",
-            Kind::WiFi => "Wi-Fi",
-            Kind::Other => "Network",
+            Kind::Ethernet => reprisekit::tr!("kind-ethernet"),
+            Kind::WiFi => reprisekit::tr!("kind-wifi"),
+            Kind::Other => reprisekit::tr!("kind-other"),
         }
     }
 }

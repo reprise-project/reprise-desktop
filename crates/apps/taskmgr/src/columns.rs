@@ -3,6 +3,8 @@
 
 use std::cmp::Ordering;
 
+use reprisekit::tr;
+
 use crate::sample::ProcRow;
 use crate::{grouped, kb_text};
 
@@ -23,9 +25,9 @@ pub struct Spec {
     pub col: Column,
     /// Its name in the state file.
     pub key: &'static str,
-    pub title: &'static str,
+    pub title: fn() -> String,
     /// Its check box in Select Columns.
-    pub label: &'static str,
+    pub label: fn() -> String,
     /// 100% px.
     pub width: i32,
     pub right: bool,
@@ -40,8 +42,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Name,
         key: "name",
-        title: "Image Name",
-        label: "&Image Name",
+        title: || tr!("col-name"),
+        label: || tr!("pick-name"),
         width: 112,
         right: false,
         shown: true,
@@ -50,8 +52,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Pid,
         key: "pid",
-        title: "PID",
-        label: "&PID (Process Identifier)",
+        title: || tr!("col-pid"),
+        label: || tr!("pick-pid"),
         width: 48,
         right: false,
         shown: true,
@@ -60,8 +62,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::User,
         key: "user",
-        title: "User Name",
-        label: "&User Name",
+        title: || tr!("col-user"),
+        label: || tr!("pick-user"),
         width: 72,
         right: false,
         shown: true,
@@ -70,8 +72,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Cpu,
         key: "cpu",
-        title: "CPU",
-        label: "&CPU Usage",
+        title: || tr!("col-cpu"),
+        label: || tr!("pick-cpu"),
         width: 56,
         right: true,
         shown: true,
@@ -80,8 +82,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Memory,
         key: "memory",
-        title: "Mem Usage",
-        label: "&Memory Usage",
+        title: || tr!("col-memory"),
+        label: || tr!("pick-memory"),
         width: 72,
         right: true,
         shown: true,
@@ -90,8 +92,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Threads,
         key: "threads",
-        title: "Threads",
-        label: "&Thread Count",
+        title: || tr!("col-threads"),
+        label: || tr!("pick-threads"),
         width: 56,
         right: true,
         shown: false,
@@ -100,8 +102,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Disk,
         key: "disk",
-        title: "Disk",
-        label: "&Disk Read and Write",
+        title: || tr!("col-disk"),
+        label: || tr!("pick-disk"),
         width: 72,
         right: true,
         shown: false,
@@ -110,8 +112,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Gpu,
         key: "gpu",
-        title: "GPU",
-        label: "&GPU Usage",
+        title: || tr!("col-gpu"),
+        label: || tr!("pick-gpu"),
         width: 48,
         right: true,
         shown: false,
@@ -120,8 +122,8 @@ pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::CommandLine,
         key: "command_line",
-        title: "Command Line",
-        label: "Command &Line",
+        title: || tr!("col-cmdline"),
+        label: || tr!("pick-cmdline"),
         width: 200,
         right: false,
         shown: false,

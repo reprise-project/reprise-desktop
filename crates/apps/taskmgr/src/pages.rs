@@ -12,6 +12,7 @@ use reprisekit::look::Paint;
 use reprisekit::look::widgets::draw_page;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 
 use crate::{Page, TaskMgr, perf};
 
@@ -114,7 +115,7 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
                 inner.right() - 2 * BUTTON_W - GAP,
                 by,
                 BUTTON_W,
-                "&End Task",
+                &tr!("end-task"),
                 true,
             ),
             Item::button_at(
@@ -122,18 +123,18 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
                 inner.right() - BUTTON_W,
                 by,
                 BUTTON_W,
-                "&Switch To",
+                &tr!("switch-to"),
                 true,
             ),
         ],
         Page::Processes => vec![
-            Item::check(ALL_USERS, inner.x, by + 5, "&Show processes from all users"),
+            Item::check(ALL_USERS, inner.x, by + 5, &tr!("all-users")),
             Item::button_at(
                 END_PROCESS,
                 inner.right() - BUTTON_W - 15,
                 by,
                 BUTTON_W + 15,
-                "&End Process",
+                &tr!("end-process"),
                 true,
             ),
         ],
@@ -192,9 +193,18 @@ fn status_bar(t: &TaskMgr) -> StatusBar {
     };
     StatusBar {
         panels: vec![
-            panel(format!("Processes: {}", s.procs.len()), 110),
-            panel(format!("CPU Usage: {cpu}%"), 110),
-            panel(format!("Memory: {}%", pct(s.mem.used(), s.mem.total)), 0),
+            panel(
+                tr!("status-processes", count = s.procs.len().to_string()),
+                110,
+            ),
+            panel(tr!("status-cpu", percent = cpu.to_string()), 110),
+            panel(
+                tr!(
+                    "status-memory",
+                    percent = pct(s.mem.used(), s.mem.total).to_string()
+                ),
+                0,
+            ),
         ],
         grip: true,
     }
