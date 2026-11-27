@@ -26,7 +26,7 @@ pub struct Item {
     pub control: Control,
     pub indent: Indent,
     /// What a reader calls a control no drawn label names ([`Item::named`]).
-    pub name: Option<&'static str>,
+    pub name: Option<String>,
     /// A framed picture or an icon list that grows with the text ([`Item::grows`]).
     pub grows: bool,
     /// Drawn on the window colour, not the face ([`Item::on_window`]).
@@ -64,9 +64,9 @@ impl Item {
         }
     }
 
-    pub fn named(self, name: &'static str) -> Item {
+    pub fn named(self, name: impl Into<String>) -> Item {
         Item {
-            name: Some(name),
+            name: Some(name.into()),
             ..self
         }
     }
