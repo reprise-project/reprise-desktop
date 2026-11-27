@@ -250,6 +250,8 @@ pub struct Explorer {
     pub(crate) udisks: Option<reprisefs::udisks::Udisks>,
     /// The drive the Rename box is up on, as it was when it opened.
     pub(crate) relabeling: Option<reprisefs::udisks::Volume>,
+    /// The balloon under the Rename box after a key the drive's name had no room for.
+    pub(crate) rename_balloon: Option<String>,
     /// Read with every drive scan and every Computer listing, and taken from
     /// `volume_changes`: a stick plugged in without being mounted doesn't change `/proc/mounts`.
     pub(crate) volumes: reprisefs::udisks::Snapshot,
@@ -638,6 +640,7 @@ impl Explorer {
             last_server: String::new(),
             udisks,
             relabeling: None,
+            rename_balloon: None,
             globs: Arc::new(reprisefs::apps::mime_globs()),
             specials: reprisefs::places::special_folders(),
             bar: menus::menu_bar(&MenuState::default()),
