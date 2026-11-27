@@ -29,10 +29,9 @@ use smithay::{
         DownEvent, GrabStartData, MotionEvent, OrientationEvent, ShapeEvent, TouchGrab,
         TouchInnerHandle, UpEvent,
     },
-    reexports::wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Transform},
 };
-use std::time::Instant;
 
 use crate::{
     compositor::State,
@@ -52,43 +51,11 @@ pub struct TouchState {
     stir_moves: Vec<(TouchSlot, Point<f64, Logical>)>,
     /// A client had touch events since the last frame.
     frame_due: bool,
-    /// The newest finger down, when a client heard it and no input went elsewhere since.
-    pub(crate) tapped: Option<Tap>,
-}
-
-/// A finger down sent to `client` on `serial` at `at`.
-pub(crate) struct Tap {
-    pub client: ClientId,
-    pub serial: Serial,
-    pub at: Instant,
-    /// Trusted activation tokens minted on it so far.
-    pub spent: u8,
 }
 
 impl TouchState {
     pub fn any_down(&self) -> bool {
         !self.points.is_empty()
-    }
-
-    /// Input went to `client`, or to Reprise itself for None: a tap on any other client is over.
-    pub(crate) fn input_to(&mut self, client: Option<&ClientId>) {
-        if self
-            .tapped
-            .as_ref()
-            .is_some_and(|t| Some(&t.client) != client)
-        {
-            self.tapped = None;
-        }
-    }
-
-    /// The grab sent the down `event` to `focus`.
-    fn heard(&mut self, focus: Option<&(WlSurface, Point<f64, Logical>)>, event: &DownEvent) {
-        self.tapped = (focus.and_then(|(s, _)| s.client())).map(|c| Tap {
-            client: c.id(),
-            serial: event.serial,
-            at: Instant::now(),
-            spent: 0,
-        });
     }
 }
 
@@ -174,7 +141,10 @@ impl TouchGrab<State> for EachFinger {
         event: &DownEvent,
     ) {
         handle.down(data, focus.clone(), event);
-        data.devices.touch.heard(focus.as_ref(), event);
+        data.last_press.heard(
+            focus.as_ref().and_then(|(s, _)| s.client()).map(|c| c.id()),
+            event.serial,
+        );
         let start = GrabStartData {
             focus,
             slot: event.slot,
@@ -243,7 +213,10 @@ impl TouchGrab<State> for FirstFinger {
         focus: Option<(WlSurface, Point<f64, Logical>)>,
         event: &DownEvent,
     ) {
-        data.devices.touch.heard(focus.as_ref(), event);
+        data.last_press.heard(
+            focus.as_ref().and_then(|(s, _)| s.client()).map(|c| c.id()),
+            event.serial,
+        );
         handle.down(data, focus, event);
     }
 
@@ -486,7 +459,7 @@ impl State {
         let pos = self.touch_point(ev);
         let time = Event::time(ev);
         let first = (self.devices.touch.points.iter()).all(|(_, r)| *r == Route::Stir);
-        self.devices.touch.tapped = None;
+        self.last_press.end();
         // Under a capture the input belongs to the other machine.
         let hit = if self.inputproto.gated() {
             Hit::Nothing

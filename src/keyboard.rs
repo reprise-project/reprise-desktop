@@ -363,7 +363,7 @@ impl State {
                 .filter(|_| forward)
                 .and_then(|f| f.client())
                 .map(|c| c.id());
-            self.devices.touch.input_to(to.as_ref());
+            self.last_press.input_to(to.as_ref());
         }
         if let Some(k) = field_key.as_mut() {
             k.edit = crate::editkeys::from_keyboard(&keyboard, self, code);
