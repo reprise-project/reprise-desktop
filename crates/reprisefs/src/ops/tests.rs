@@ -2251,3 +2251,41 @@ fn a_raced_openat2_is_retried_and_gives_up_after_its_tries() {
     assert_eq!(r.unwrap_err().raw_os_error(), Some(libc::EXDEV));
     assert_eq!(calls, 1, "any other error is returned at once");
 }
+
+#[test]
+fn removing_a_tree_refuses_a_bind_mount_of_its_own_file_system_made_after_the_mount_check() {
+    const INSIDE: &str = "REPRISE_ERASE_BIND_TEST";
+    if std::env::var_os(INSIDE).is_none() {
+        crate::testfs::in_own_namespace(
+            "ops::tests::removing_a_tree_refuses_a_bind_mount_of_its_own_file_system_made_after_the_mount_check",
+            INSIDE,
+        );
+        return;
+    }
+    let t = tempfile::tempdir().unwrap();
+    let (keep, tree) = (t.path().join("keep"), t.path().join("tree"));
+    std::fs::create_dir_all(tree.join("sub/bound")).unwrap();
+    std::fs::create_dir(&keep).unwrap();
+    std::fs::write(keep.join("mine"), "").unwrap();
+    let c = |p: &Path| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: NUL-terminated strings that outlive the call; the mount is this namespace's own.
+    let mounted = unsafe {
+        libc::mount(
+            c(&keep).as_ptr(),
+            c(&tree.join("sub/bound")).as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND,
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(mounted, 0, "{}", io::Error::last_os_error());
+    let parent = fs::File::open(t.path()).unwrap();
+    let removed =
+        super::erase::remove_tree_at(std::os::fd::AsFd::as_fd(&parent), c"tree", None, None);
+    assert_eq!(
+        removed.unwrap_err().kind(),
+        io::ErrorKind::ResourceBusy,
+        "the bind mount is refused"
+    );
+    assert!(keep.join("mine").exists(), "nothing under it is removed");
+}
