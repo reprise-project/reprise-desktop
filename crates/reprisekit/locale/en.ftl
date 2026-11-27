@@ -705,6 +705,8 @@ newshortcut-type-a-name-for-this-shortcut = &Type a name for this shortcut:
 newshortcut-click-finish-to-create-the-shortcut = Click Finish to create the shortcut.
 newshortcut-name-the-shortcut = Name the Shortcut
 newshortcut-what-do-you-want-to-call = What do you want to call it?
+newshortcut-name-has-a-slash = A name cannot contain a slash (/).
+newshortcut-name-is-dots = A name cannot be . or .. alone.
 
 
 ## openwith

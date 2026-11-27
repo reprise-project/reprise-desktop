@@ -61,22 +61,24 @@ fn read_typed_with(
 }
 
 impl Target {
-    /// The name the name page offers: the program's, the file's, or the command's program.
+    /// The name the name page offers: the program's, the file's, the command's program, or the
+    /// web address's host; never holding a `/`.
     pub fn default_name(&self) -> String {
         let file_name = |p: &Path| {
             p.file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| p.display().to_string())
         };
-        match self {
+        let name = match self {
             Target::App(app) => app.name.clone(),
             Target::Path { path, .. } => file_name(path),
-            Target::Web(url) => url.clone(),
+            Target::Web(url) => web_host(url).unwrap_or(url).to_string(),
             Target::Command(cmd) => apps::exec_argv(cmd)
                 .first()
                 .map(|p| file_name(Path::new(p)))
                 .unwrap_or_default(),
-        }
+        };
+        name.replace('/', "-")
     }
 
     /// The launcher's text, shown as `name`; None for a path or command a desktop entry cannot
@@ -100,6 +102,18 @@ impl Target {
         };
         apps::launcher_text(name, icon.as_deref(), Launch::Exec(&command))
     }
+}
+
+/// `url`'s host, past any user part and without the port; None when it names none.
+fn web_host(url: &str) -> Option<&str> {
+    let (_, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => host,
+    };
+    Some(host).filter(|h| !h.is_empty())
 }
 
 /// Writes launcher `text` into `dir` as `name.desktop`, numbered past a name taken, trusted
@@ -209,6 +223,28 @@ mod tests {
         let text = app.launcher("Notes").unwrap();
         assert!(text.contains("Name=Notes\n") && text.contains("Icon=notepad\n"));
         assert!(text.contains("Exec=reprise-notepad\n"), "{text}");
+    }
+
+    #[test]
+    fn a_web_address_offers_its_host_as_the_name() {
+        let name = |url: &str| Target::Web(url.into()).default_name();
+        assert_eq!(name("https://example.com"), "example.com");
+        assert_eq!(
+            name("https://www.example.com/a/b?q=1#top"),
+            "www.example.com"
+        );
+        assert_eq!(name("http://u:pw@example.com:8080/"), "example.com");
+        assert_eq!(name("http://[::1]:8080/x"), "[::1]");
+        assert_eq!(
+            name("ftp:///pub/x"),
+            "ftp:---pub-x",
+            "no host: the address, no /"
+        );
+        let root = Target::Path {
+            path: "/".into(),
+            is_dir: true,
+        };
+        assert_eq!(root.default_name(), "-");
     }
 
     #[test]
