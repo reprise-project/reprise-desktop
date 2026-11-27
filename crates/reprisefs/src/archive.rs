@@ -85,47 +85,54 @@ pub fn open_argv(archive: &Path, entry: &Path) -> Vec<OsString> {
 }
 
 /// The CPU seconds a child reading `bytes` of archive (and member) may take.
-fn cpu_secs(bytes: u64) -> u64 {
+pub(crate) fn cpu_secs(bytes: u64) -> u64 {
     BASE_CPU_SECS.saturating_add(bytes / CPU_BYTES_PER_SEC)
 }
 
-fn archive_bytes(archive: &Path) -> u64 {
+pub(crate) fn archive_bytes(archive: &Path) -> u64 {
     std::fs::metadata(archive).map_or(0, |m| m.len())
 }
 
 /// Whether bsdtar was stopped for running over its CPU limit (SIGXCPU, then SIGKILL at the hard
 /// limit), which a box words as taking too long.
-fn ran_out(status: &std::process::ExitStatus) -> bool {
+pub(crate) fn ran_out(status: &std::process::ExitStatus) -> bool {
     use std::os::unix::process::ExitStatusExt;
     matches!(status.signal(), Some(libc::SIGXCPU | libc::SIGKILL))
 }
 
-/// Starts `argv` with its output piped, in the C.UTF-8 locale and under `cpu_secs` of CPU and
-/// [`CHILD_MEMORY`], with no core file; it is killed when the thread that started it ends.
-fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failure> {
+/// Puts the child `cmd` starts under `cpu_secs` of CPU and [`CHILD_MEMORY`], with no core file,
+/// and when set no file it writes past `file_bytes` (SIGXFSZ).
+pub(crate) fn limit(cmd: &mut std::process::Command, cpu_secs: u64, file_bytes: Option<u64>) {
     use std::os::unix::process::CommandExt;
+    // SAFETY: the hook only makes async-signal-safe calls (setrlimit) in the child.
+    unsafe {
+        cmd.pre_exec(move || {
+            let limit = |res, n: u64| {
+                let r = libc::rlimit {
+                    rlim_cur: n as libc::rlim_t,
+                    rlim_max: n as libc::rlim_t,
+                };
+                match libc::setrlimit(res, &r) {
+                    0 => Ok(()),
+                    _ => Err(std::io::Error::last_os_error()),
+                }
+            };
+            limit(libc::RLIMIT_CPU, cpu_secs)?;
+            limit(libc::RLIMIT_AS, CHILD_MEMORY)?;
+            limit(libc::RLIMIT_CORE, 0)?;
+            if let Some(n) = file_bytes {
+                limit(libc::RLIMIT_FSIZE, n)?;
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Starts `argv` with its output piped, in the C.UTF-8 locale and under [`limit`]'s `cpu_secs`.
+fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failure> {
     extract::spawn_with(argv, true, |cmd| {
         cmd.env_remove("LANGUAGE").env("LC_ALL", "C.UTF-8");
-        // SAFETY: the hook only makes async-signal-safe calls (setrlimit, prctl) in the child.
-        unsafe {
-            cmd.pre_exec(move || {
-                let limit = |res, n: u64| {
-                    let r = libc::rlimit {
-                        rlim_cur: n as libc::rlim_t,
-                        rlim_max: n as libc::rlim_t,
-                    };
-                    match libc::setrlimit(res, &r) {
-                        0 => Ok(()),
-                        _ => Err(std::io::Error::last_os_error()),
-                    }
-                };
-                limit(libc::RLIMIT_CPU, cpu_secs)?;
-                limit(libc::RLIMIT_AS, CHILD_MEMORY)?;
-                limit(libc::RLIMIT_CORE, 0)?;
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                Ok(())
-            });
-        }
+        limit(cmd, cpu_secs, None);
     })
 }
 
