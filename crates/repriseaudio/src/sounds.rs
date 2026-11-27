@@ -306,7 +306,23 @@ fn run(path: &Path) -> bool {
 mod tests {
     use super::*;
 
-    fn tree(files: &[&str]) -> PathBuf {
+    /// A temp tree removed on drop, so a failing test leaves nothing behind.
+    struct Tree(PathBuf);
+
+    impl std::ops::Deref for Tree {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tree(files: &[&str]) -> Tree {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "repriseaudio-sounds-{}-{}",
@@ -319,7 +335,7 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "").unwrap();
         }
-        root
+        Tree(root)
     }
 
     #[test]
@@ -332,7 +348,8 @@ mod tests {
     #[test]
     fn a_test_build_never_starts_the_player() {
         // The file is empty, so a player this does start is still silent.
-        let file = tree(&["x.oga"]).join("x.oga");
+        let root = tree(&["x.oga"]);
+        let file = root.join("x.oga");
         assert!(!run(&file), "under cargo, {PLAYER} never starts");
     }
 
@@ -375,7 +392,7 @@ mod tests {
         let got = |theme: &str, event: Event| {
             (event.names().iter())
                 .find_map(|n| resolve(&dirs, theme, n))
-                .map(|p| p.strip_prefix(&root).unwrap().to_path_buf())
+                .map(|p| p.strip_prefix(&*root).unwrap().to_path_buf())
         };
         assert_eq!(
             got("ocean", Event::Login),
@@ -390,7 +407,6 @@ mod tests {
             Some("sys/freedesktop/stereo/dialog-warning.oga".into())
         );
         assert_eq!(got("ocean", Event::TrashEmpty), None);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -409,7 +425,7 @@ mod tests {
         .unwrap();
         let dirs = [root.join("user"), root.join("sys")];
         let got = |theme: &str, name: &str| {
-            resolve(&dirs, theme, name).map(|p| p.strip_prefix(&root).unwrap().to_path_buf())
+            resolve(&dirs, theme, name).map(|p| p.strip_prefix(&*root).unwrap().to_path_buf())
         };
         assert_eq!(
             got("ocean", "bell"),
@@ -440,7 +456,6 @@ mod tests {
             None,
             "a theme that climbs out is the fallback alone"
         );
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -465,7 +480,7 @@ mod tests {
         index("abyss", "ocean");
         let dirs = [root.join("sys")];
         let got = |name: &str| {
-            resolve(&dirs, "ocean", name).map(|p| p.strip_prefix(&root).unwrap().to_path_buf())
+            resolve(&dirs, "ocean", name).map(|p| p.strip_prefix(&*root).unwrap().to_path_buf())
         };
         assert_eq!(
             got("chime"),
@@ -483,7 +498,6 @@ mod tests {
             Some("sys/abyss/stereo/bell.oga".into()),
             "the grandparent, through a cycle back to the start"
         );
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -498,6 +512,5 @@ mod tests {
         ]);
         let dirs = [root.join("user"), root.join("sys"), root.join("none")];
         assert_eq!(themes(&dirs), ["deep", "ocean"]);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 }
