@@ -33,7 +33,7 @@ impl Viewer {
         let Some(path) = self.folder.current().map(Path::to_path_buf) else {
             return Reply::none();
         };
-        if !self.delete.is_empty() {
+        if !self.delete.is_empty() || self.walk.is_some() {
             return Reply::none();
         }
         self.send(Job::Fate { path, erase });

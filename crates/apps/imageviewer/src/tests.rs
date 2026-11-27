@@ -840,6 +840,20 @@ fn next_and_previous_walk_the_pictures_of_the_compressed_folder_a_copy_came_out_
 }
 
 #[test]
+fn a_picture_out_of_a_compressed_folder_offers_no_delete() {
+    let (_dir, _zip, copy) = zip_of_photos();
+    let mut v = opened(copy.clone());
+    v.sync_menus();
+    let enabled = match &v.bar.menus[menu::title::EDIT][menu::row::DELETE] {
+        MenuItem::Entry { enabled, .. } => *enabled,
+        _ => panic!("Delete is a row"),
+    };
+    assert!(!enabled, "Delete is greyed");
+    v.ask_delete(false);
+    assert!(v.delete.is_empty() && copy.exists(), "Delete does nothing");
+}
+
+#[test]
 fn a_compressed_folders_pictures_are_those_beside_it_by_name_in_name_order() {
     let entry = |p: &str| reprisefs::archive::Entry {
         path: p.into(),
