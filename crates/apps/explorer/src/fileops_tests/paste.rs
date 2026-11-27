@@ -970,6 +970,7 @@ fn a_skipped_item_takes_its_folder_flag_with_it() {
         folders: vec![true, false],
         dir: PathBuf::from("/srv/dest"),
         select_landed: false,
+        zip: None,
     };
     pending.apply(&[Verdict::Skip, Verdict::Put]);
     let ops = pending.ops();
@@ -1004,6 +1005,7 @@ fn a_failure_read_with_the_end_of_its_put_ends_the_put_and_says_why() {
         folders: vec![false],
         dir: dest.clone(),
         select_landed: false,
+        zip: None,
     };
     let ops = pending.ops();
     ex.start_put(pending, ops, &ctx);

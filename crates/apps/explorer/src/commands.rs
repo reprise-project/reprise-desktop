@@ -1,6 +1,7 @@
 //! Every input (menu bar, context menus, toolbar, task pane, keys) resolves to a [`Command`]; [`Explorer::run`] is the only place that acts on one.
 
 use crate::dialogs::ConfirmKind;
+use crate::fileops::New;
 use crate::place::Place;
 use crate::{Explorer, Focus};
 use repriseapp::{Ctx, Reply};
@@ -47,6 +48,7 @@ pub enum Command {
     EmptyRecycleBin,
     Restore,
     NewTextDocument,
+    NewCompressedFolder,
     NewShortcut,
     /// New > a template: a copy of this file from the Templates folder.
     NewFrom(std::path::PathBuf),
@@ -541,10 +543,11 @@ impl Explorer {
             Command::PasteShortcut => self.begin_paste(true),
             Command::PasteOnItem => self.begin_paste_on_item(),
             Command::Delete { erase } => self.confirm_delete(erase, ctx),
-            Command::NewFolder => self.new_item(true, ctx),
+            Command::NewFolder => self.new_item(New::Folder, ctx),
             Command::EmptyRecycleBin => self.confirm_empty_bin(ctx),
             Command::Restore => self.restore(ctx),
-            Command::NewTextDocument => self.new_item(false, ctx),
+            Command::NewTextDocument => self.new_item(New::TextDocument, ctx),
+            Command::NewCompressedFolder => self.new_item(New::CompressedFolder, ctx),
             Command::NewShortcut => self.new_shortcut(ctx),
             Command::NewFrom(template) => self.new_from_template(template, ctx),
             Command::CreateShortcut => self.create_shortcut(ctx),
