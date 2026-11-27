@@ -10,7 +10,7 @@ pub mod http;
 pub mod ipp;
 pub mod pdf;
 
-pub use doc::{Doc, TextFont, picture_size};
+pub use doc::{Doc, TextFont};
 
 use crate::keys::form_input;
 use crate::oneshot::{self, ErrorBox};

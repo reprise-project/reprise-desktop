@@ -105,3 +105,39 @@ fn a_large_picture_is_drawn_at_300_dpi_of_its_place_and_a_small_one_at_its_own_s
         "centred across"
     );
 }
+
+#[test]
+fn laying_out_a_large_picture_shrinks_it_and_lets_the_full_one_go() {
+    let full = Arc::new(Canvas::new(8000, 2000));
+    let laid = Laid::new(
+        Doc::Picture {
+            picture: full.clone(),
+            turns: 0,
+        },
+        a4(25 * MM),
+    );
+    assert_eq!(
+        Arc::strong_count(&full),
+        1,
+        "the laid page holds no reference"
+    );
+    let Doc::Picture { picture, .. } = &laid.doc else {
+        panic!("a picture");
+    };
+    assert_eq!((picture.width, picture.height), (1890, 472));
+    let small = Arc::new(Canvas::new(40, 10));
+    let laid = Laid::new(
+        Doc::Picture {
+            picture: small.clone(),
+            turns: 1,
+        },
+        a4(25 * MM),
+    );
+    let Doc::Picture { picture, .. } = &laid.doc else {
+        panic!("a picture");
+    };
+    assert!(
+        Arc::ptr_eq(picture, &small),
+        "a small picture is kept as it is"
+    );
+}

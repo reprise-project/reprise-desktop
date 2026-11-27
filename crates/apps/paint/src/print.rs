@@ -1,19 +1,14 @@
 //! File > Page Setup... and Print...: the picture fitted to the page.
 
 use super::*;
-use repriseapp::print::{Doc, Step, picture_size};
+use repriseapp::print::{Doc, Step};
 
 impl Paint {
-    /// Open Print for the picture, shrunk here to the size it prints at so a large one is not
-    /// copied whole.
+    /// Open Print for a copy of the picture; the print thread shrinks it while the dialog looks
+    /// for printers.
     pub(crate) fn open_print(&mut self, ctx: &Ctx) {
         let img = &self.doc.img;
-        let size = (img.w.max(0) as u32, img.h.max(0) as u32);
-        let (w, h) = picture_size(&self.printing.setup, size);
-        let stride = size.0 as usize;
-        let picture = Canvas::resample_box_from(size.0, size.1, w, h, |x, y| {
-            img.px[y as usize * stride + x as usize]
-        });
+        let picture = Canvas::from_pixels(img.w.max(0) as u32, img.h.max(0) as u32, img.px.clone());
         let doc = Doc::Picture {
             picture: std::sync::Arc::new(picture),
             turns: 0,
