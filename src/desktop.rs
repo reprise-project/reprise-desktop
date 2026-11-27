@@ -6,6 +6,7 @@ use reprisefs::apps::{self, AppEntry};
 use reprisefs::program::Program;
 use reprisefs::{icons, names, places};
 pub use reprisekit::controls::iconview::*;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 pub const DRAG_PX: i32 = 4;
@@ -57,6 +58,15 @@ impl Place {
     }
 
     pub fn label(self) -> String {
+        match self {
+            Place::Documents => tr!("desk-place-documents"),
+            Place::Computer => tr!("desk-place-computer"),
+            Place::Home => places::home_label(),
+        }
+    }
+
+    /// The icon's grid-position key: its English label, whatever the language.
+    fn key(self) -> String {
         match self {
             Place::Documents => "Documents".into(),
             Place::Computer => "Computer".into(),
@@ -210,7 +220,7 @@ pub fn find(entries: &[DesktopEntry], id: &IconId) -> Option<usize> {
 pub fn place(name: &str) -> Option<DesktopEntry> {
     let place = Place::from_config(name)?;
     let entry = |icon: &str, target: Target, path: PathBuf| DesktopEntry {
-        name: place.label(),
+        name: place.key(),
         label: place.label(),
         is_dir: matches!(target, Target::Open(_)),
         allow_launching: false,
@@ -262,7 +272,7 @@ pub fn place_command(entry: &DesktopEntry) -> Option<String> {
 pub fn recycle_bin(files: PathBuf, empty: bool) -> DesktopEntry {
     DesktopEntry {
         name: "Recycle Bin".into(),
-        label: "Recycle Bin".into(),
+        label: tr!("desk-recycle-bin"),
         icon: if empty {
             "user-trash".into()
         } else {
@@ -292,13 +302,13 @@ pub fn shell_place(kind: &Kind) -> Option<reprisefs::places::ShellPlace> {
     })
 }
 
-pub fn document_tip(icon: &str) -> Option<&'static str> {
+pub fn document_tip(icon: &str) -> Option<String> {
     Some(match icon {
-        "folder-documents" => "Contains letters, reports, and other documents and files.",
-        "folder-pictures" => "Contains digital photos, images, and graphic files.",
-        "folder-music" => "Contains music and other audio files.",
-        "folder-videos" => "Contains movies and other video files.",
-        "folder-download" => "Contains files downloaded from the Internet.",
+        "folder-documents" => tr!("desk-tip-documents"),
+        "folder-pictures" => tr!("desk-tip-pictures"),
+        "folder-music" => tr!("desk-tip-music"),
+        "folder-videos" => tr!("desk-tip-videos"),
+        "folder-download" => tr!("desk-tip-downloads"),
         _ => return None,
     })
 }

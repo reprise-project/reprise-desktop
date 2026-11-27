@@ -4,6 +4,7 @@ use reprisefs::apps::AppEntry;
 use reprisefs::program::{Confirm, Program, ScriptOpen};
 use reprisefs::undo::{SharedUndo, Undoable, file_id};
 use reprisefs::{apps, ops, udisks};
+use reprisekit::tr;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::{
@@ -115,7 +116,7 @@ impl State {
     fn send_to_not_responding(&mut self, dir: &Path) {
         log::warn!("send to: {} is not answering; nothing sent", dir.display());
         let text = crate::fsjobs::Action::reads("Send To").not_responding(false);
-        self.open_dialog(crate::dialog::Dialog::error("Send To", text));
+        self.open_dialog(crate::dialog::Dialog::error(&tr!("desk-send-to"), text));
     }
 
     /// Allow Launching on `paths`, the first failure in an error box.
@@ -139,8 +140,15 @@ impl State {
                         .file_name()
                         .unwrap_or(path.as_os_str())
                         .to_string_lossy();
-                    let text = format!("Cannot allow {name} to launch: {e}");
-                    state.open_dialog(crate::dialog::Dialog::error("Allow Launching", text));
+                    let text = tr!(
+                        "desk-allow-launching-failed",
+                        name = name.as_ref(),
+                        error = e.to_string()
+                    );
+                    state.open_dialog(crate::dialog::Dialog::error(
+                        &tr!("desk-allow-launching"),
+                        text,
+                    ));
                 }
                 state.rescan_desktop();
             })
@@ -255,7 +263,7 @@ impl State {
                 Some(udisks) => udisks.mount_image(&path).map_err(|e| (e.kind, e.message)),
                 None => Err((
                     reprisefs::udisks::ErrorKind::Other,
-                    "UDisks2 is not running.".into(),
+                    tr!("desk-udisks-not-running"),
                 )),
             };
             Box::new(move |state: &mut State| match mounted {
@@ -263,7 +271,7 @@ impl State {
                 Err((reprisefs::udisks::ErrorKind::Cancelled, _)) => {}
                 Err((_, text)) => {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
-                    let title = format!("Could not mount {name}");
+                    let title = tr!("desk-mount-failed-title", name = name.as_ref());
                     state.open_dialog(Dialog::error(&title, text));
                 }
             }) as crate::fsjobs::OnLoop
@@ -399,8 +407,8 @@ impl State {
                 Ok(path) => state.pasted_landed(&path, cell),
                 Err(e) => {
                     log::warn!("desktop: paste of a picture: {e}");
-                    let text = format!("Cannot save the pasted picture: {e}");
-                    state.open_dialog(Dialog::error("Paste", text));
+                    let text = tr!("desk-paste-picture-failed", error = e.to_string());
+                    state.open_dialog(Dialog::error(&tr!("desk-paste"), text));
                 }
             })
         });
@@ -447,7 +455,7 @@ impl State {
             }
             Box::new(move |state: &mut State| match made {
                 Ok(name) => state.created(&name, at),
-                Err(e) => state.create_failed("New Folder", e),
+                Err(e) => state.create_failed(&tr!("desk-new-folder"), e),
             })
         });
     }
@@ -478,7 +486,7 @@ impl State {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     state.created(&name, at)
                 }
-                Err(e) => state.create_failed("New Text Document", e),
+                Err(e) => state.create_failed(&tr!("desk-new-text-document"), e),
             })
         });
     }
@@ -518,7 +526,7 @@ impl State {
     /// A New the desktop's folder refused, in an error box.
     fn create_failed(&mut self, what: &str, e: std::io::Error) {
         log::warn!("desktop: could not create a {what}: {e}");
-        let text = format!("Cannot create {what}: {e}");
+        let text = tr!("desk-create-failed", what = what, error = e.to_string());
         self.open_dialog(crate::dialog::Dialog::error(what, text));
     }
 

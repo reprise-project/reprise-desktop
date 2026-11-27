@@ -46,3 +46,87 @@ pow-boot-entry-shared = { $title } ({ $id })
 
 ## After a crash
 pow-crash-notice = Reprise restarted after a crash; the log has the details
+
+
+## Desktop context menus
+desk-menu-new = Ne&w
+desk-menu-arrange-icons-by = Arrange &Icons By
+desk-menu-widgets = Wi&dgets
+desk-menu-refresh = R&efresh
+desk-menu-paste = &Paste
+desk-menu-paste-shortcut = Paste &Shortcut
+desk-menu-reprise-settings = &Reprise Settings
+desk-menu-about-reprise = &About Reprise
+desk-menu-next-desktop-background = Next desktop &background
+desk-menu-folder = &Folder
+desk-menu-shortcut = &Shortcut...
+desk-menu-text-document = &Text Document
+desk-menu-name = &Name
+desk-menu-auto-arrange = &Auto Arrange
+desk-menu-copy-here = &Copy Here
+desk-menu-move-here = &Move Here
+desk-menu-create-shortcuts-here = Create &Shortcuts Here
+desk-menu-cancel = C&ancel
+desk-menu-open = &Open
+desk-menu-explore = E&xplore
+desk-menu-sharing-and-security = S&haring and Security...
+desk-menu-run-as = Run &as...
+desk-menu-print = &Print
+desk-menu-edit = &Edit
+desk-menu-open-with = Open Wit&h
+desk-menu-allow-launching = Allow &Launching
+desk-menu-send-to = Se&nd To
+desk-menu-cut = Cu&t
+desk-menu-copy = &Copy
+desk-menu-create-shortcut = Create &Shortcut
+desk-menu-delete = &Delete
+desk-menu-rename = Rena&me
+desk-menu-properties = P&roperties
+desk-menu-choose-program = &Choose Program...
+desk-menu-empty-recycle-bin = Empt&y Recycle Bin
+desk-menu-open-in-terminal = Open in Termina&l
+desk-menu-pin-to-places = Pin to Pl&aces
+desk-menu-unpin-from-places = Unpin from Pl&aces
+
+## Desktop file actions
+desk-send-to = Send To
+desk-allow-launching = Allow Launching
+desk-allow-launching-failed = Cannot allow { $name } to launch: { $error }
+desk-udisks-not-running = UDisks2 is not running.
+desk-mount-failed-title = Could not mount { $name }
+desk-paste = Paste
+desk-paste-picture-failed = Cannot save the pasted picture: { $error }
+desk-new-folder = New Folder
+desk-new-text-document = New Text Document
+desk-create-failed = Cannot create { $what }: { $error }
+
+## Desktop system icons
+desk-place-documents = Documents
+desk-place-computer = Computer
+desk-recycle-bin = Recycle Bin
+desk-tip-documents = Contains letters, reports, and other documents and files.
+desk-tip-pictures = Contains digital photos, images, and graphic files.
+desk-tip-music = Contains music and other audio files.
+desk-tip-videos = Contains movies and other video files.
+desk-tip-downloads = Contains files downloaded from the Internet.
+
+## Displays
+desk-display-built-in = Built-in display
+# A display label two heads share, with each one's connector.
+desk-display-label-connector = { $label } ({ $connector })
+desk-display-brightness = { $label }: { $percent }%
+desk-display-not-adjustable = { $label }: not adjustable
+desk-displays-window = Displays
+desk-display-switcher-window = Display switcher
+
+## Desktop widgets
+desk-widget-analog = &Analog
+desk-widget-digital = &Digital
+desk-widget-show-seconds = Show &Seconds
+desk-widget-bars = &Bars
+desk-widget-graph = &Graph
+desk-widget-remove = &Remove
+desk-widgets-pane = Desktop widgets
+
+## Calendar
+desk-calendar-window = Calendar

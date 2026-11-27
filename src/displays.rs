@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use reprisekit::art::icons;
 use reprisekit::controls::osd::{self, Level};
+use reprisekit::tr;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -29,7 +30,7 @@ pub fn labels(heads: &[Head]) -> Vec<String> {
         .iter()
         .map(|h| {
             if is_internal(&h.connector) {
-                "Built-in display".to_owned()
+                tr!("desk-display-built-in")
             } else if known(&h.model) {
                 h.model.clone()
             } else if known(&h.make) {
@@ -43,7 +44,11 @@ pub fn labels(heads: &[Head]) -> Vec<String> {
         .zip(heads)
         .map(|(l, h)| {
             if base.iter().filter(|b| *b == l).count() > 1 {
-                format!("{l} ({})", h.connector)
+                tr!(
+                    "desk-display-label-connector",
+                    label = l.as_str(),
+                    connector = h.connector.as_str()
+                )
             } else {
                 l.clone()
             }
@@ -274,7 +279,7 @@ impl Displays {
 
     pub fn lines(&self, value: Value) -> osd::Lines {
         osd::Lines {
-            title: value.title().to_owned(),
+            title: value.title(),
             lines: self
                 .list
                 .iter()
@@ -295,8 +300,12 @@ impl Displays {
         self.list
             .iter()
             .map(|d| match d.level(value) {
-                Level::At(l) => format!("{}: {l}%", d.label),
-                Level::Fixed => format!("{}: not adjustable", d.label),
+                Level::At(l) => tr!(
+                    "desk-display-brightness",
+                    label = d.label.as_str(),
+                    percent = l.to_string()
+                ),
+                Level::Fixed => tr!("desk-display-not-adjustable", label = d.label.as_str()),
                 Level::Unread => d.label.clone(),
             })
             .collect()
