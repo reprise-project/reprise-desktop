@@ -15,8 +15,6 @@ const MANAGER: &str = "net.reactivated.Fprint.Manager";
 const DEVICE: &str = "net.reactivated.Fprint.Device";
 
 const TIMEOUT: Duration = Duration::from_secs(5);
-/// How long a claim, add or delete may wait, the password prompt fprintd may raise included.
-const ASKING: Duration = Duration::from_secs(600);
 
 /// [`enrolled`] on a system bus connection of its own, blocking, with each call cut off after 5 s
 /// (false).
@@ -164,10 +162,16 @@ pub enum Refusal {
     NotAuthorized,
     /// Another program holds the reader.
     InUse,
+    /// The password prompt was open too long ([`crate::polkit::gave_up`]).
+    TimedOut,
     Failed,
 }
 
 fn refusal(doing: &str, e: &zbus::Error) -> Refusal {
+    if crate::polkit::gave_up(e) {
+        log::warn!("fprint: {doing}: {e}");
+        return Refusal::TimedOut;
+    }
     match error_name(e).as_deref() {
         Some("net.reactivated.Fprint.Error.PermissionDenied") => Refusal::NotAuthorized,
         Some("net.reactivated.Fprint.Error.AlreadyInUse") => Refusal::InUse,
@@ -180,7 +184,7 @@ fn refusal(doing: &str, e: &zbus::Error) -> Refusal {
 
 async fn asking(work: impl AsyncFnOnce(Connection) -> Result<(), Refusal>) -> Result<(), Refusal> {
     let built = zbus::connection::Builder::system()
-        .method_timeout(ASKING)
+        .method_timeout(TIMEOUT)
         .build()
         .await;
     match built {
@@ -189,18 +193,23 @@ async fn asking(work: impl AsyncFnOnce(Connection) -> Result<(), Refusal>) -> Re
     }
 }
 
-/// A call fprintd may answer with a password prompt first.
+/// A call fprintd may answer with a password prompt first, given up on after
+/// [`crate::polkit::PROMPT_TIMEOUT`].
 async fn interactive(device: &Proxy<'_>, method: &str, arg: Option<&str>) -> zbus::Result<()> {
     let flags = MethodFlags::ALLOW_INTERACTIVE_AUTH;
-    match arg {
-        Some(a) => {
-            device
-                .call_with_flags::<_, _, ()>(method, flags, &(a,))
-                .await
+    let call = async {
+        match arg {
+            Some(a) => {
+                device
+                    .call_with_flags::<_, _, ()>(method, flags, &(a,))
+                    .await
+            }
+            None => device.call_with_flags::<_, _, ()>(method, flags, &()).await,
         }
-        None => device.call_with_flags::<_, _, ()>(method, flags, &()).await,
-    }
-    .map(drop)
+    };
+    crate::polkit::asking(crate::polkit::PROMPT_TIMEOUT, true, call)
+        .await
+        .map(drop)
 }
 
 /// Delete one of the caller's fingers by fprintd's name, or with `None` all of them, on its own
@@ -628,6 +637,14 @@ mod tests {
             ["Claim \"\"", "Claim \"\""],
             "nothing past the claim"
         );
+    }
+
+    #[test]
+    fn a_claim_that_gave_up_on_its_prompt_reads_as_timed_out() {
+        let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        assert_eq!(refusal("claim", &late), Refusal::TimedOut);
+        let quit = crate::error::reply("org.freedesktop.DBus.Error.NoReply", "disconnected");
+        assert_eq!(refusal("claim", &quit), Refusal::Failed);
     }
 
     #[test]
