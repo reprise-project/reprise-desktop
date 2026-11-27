@@ -15,6 +15,7 @@ use crate::compositor::State;
 use crate::dialog::Dialog;
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::startmenu::MenuItem;
+use reprisekit::tr;
 
 const LOGIND: &str = "org.freedesktop.login1";
 const LOGIND_PATH: &str = "/org/freedesktop/login1";
@@ -48,7 +49,7 @@ impl BootTarget {
     pub(crate) fn firmware(password: bool) -> BootTarget {
         BootTarget {
             entry: None,
-            title: "Firmware Setup".into(),
+            title: tr!("pow-firmware-setup"),
             password,
         }
     }
@@ -215,7 +216,11 @@ fn entries(ids: &[String], password: bool, roots: &[PathBuf]) -> Vec<BootTarget>
             BootTarget {
                 entry: Some(id.to_string()),
                 title: match shared {
-                    true => format!("{title} ({id})"),
+                    true => tr!(
+                        "pow-boot-entry-shared",
+                        title = title.as_str(),
+                        id = id.as_str()
+                    ),
                     false => title.clone(),
                 },
                 password,

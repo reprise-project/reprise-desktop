@@ -21,6 +21,7 @@ use std::time::Duration;
 use reprisebus::polkit::Verdict;
 use reprisekit::controls::endsession::{self, Choice, Goal, Row};
 use reprisekit::powerpanel::Updates;
+use reprisekit::tr;
 use smithay::reexports::calloop::{
     RegistrationToken, channel,
     timer::{TimeoutAction, Timer},
@@ -318,7 +319,7 @@ fn with_trigger(password: Password, verdict: Verdict) -> Result<Password, Refuse
 }
 
 fn not_set(why: &str) -> String {
-    format!("The updates could not be set to install. {why}")
+    tr!("pow-updates-not-set", why = why)
 }
 
 /// Whether logind on `conn` is known to hold a target other than one of kind `but`.
@@ -354,9 +355,9 @@ async fn target_now(conn: &zbus::Connection, mut boot: BootTarget) -> Result<Boo
     if let Some(id) = &boot.entry {
         match proxy.get_property::<Vec<String>>("BootLoaderEntries").await {
             Ok(ids) if !ids.contains(id) => {
-                return Err(Refused::Failed(format!(
-                    "\"{}\" is no longer a boot entry.",
-                    boot.title
+                return Err(Refused::Failed(tr!(
+                    "pow-boot-entry-gone",
+                    title = boot.title.as_str()
                 )));
             }
             Ok(_) => {}
@@ -1256,7 +1257,8 @@ fn answered(
             // An update must not install into a boot that goes elsewhere.
             let updates = match again.updates {
                 Updates::Install => {
-                    set.push_str(" The updates will install another time.");
+                    set.push(' ');
+                    set.push_str(&tr!("pow-updates-install-later"));
                     Updates::Skip
                 }
                 u => u,
@@ -1295,38 +1297,35 @@ fn hold_back(state: &mut State, set: &str, again: Again) {
     log::warn!("session end: {:?} held back: {set:?}", again.act);
     let act = again.act;
     resume(state, act);
-    let lock = format!("Reprise could not {}.\n\n{set}", act.on("the"));
+    let lock = format!("{}\n\n{set}", tr!("pow-could-not", action = act.on("the")));
     crate::lockview::refused(state, lock);
-    let text = format!("{set}\n\nDo you want to {} anyway?", act.on("the"));
-    let d = crate::dialog::Dialog::power_anyway(act.title(), text, act.anyway(), again);
+    let text = format!(
+        "{set}\n\n{}",
+        tr!("pow-do-you-want", action = act.on("the"))
+    );
+    let d = crate::dialog::Dialog::power_anyway(&act.title(), text, &act.anyway(), again);
     state.open_dialog(d);
 }
 
 /// A trigger another program made that the user unticked would not cancel. Going ahead anyway
 /// is a plain Restart, which starts the Restart Into's pick `into` only when it was not cleared.
 fn updates_set(into: Option<&Pick>) -> String {
-    let set = "Updates will install the next time the computer starts, and Reprise could not change \
-               that.";
+    let set = tr!("pow-updates-set");
     match into {
         Some(Pick {
             title,
             cleared: true,
-        }) => format!("{set} Restarting anyway does not start {title}."),
+        }) => tr!("pow-updates-set-cleared", set = set, title = title.as_str()),
         Some(Pick {
             title,
             cleared: false,
-        }) => format!(
-            "{set} The computer is also still set to start {title}, so restarting anyway starts it."
-        ),
-        None => set.to_string(),
+        }) => tr!("pow-updates-set-pending", set = set, title = title.as_str()),
+        None => set,
     }
 }
 
 fn aimed_text(title: &str) -> String {
-    format!(
-        "The computer is set to start {title} the next time it starts, and Reprise could not \
-         change that."
-    )
+    tr!("pow-aimed", title = title)
 }
 
 /// Whether polkit may ask for a password: not while the session is locked, where its prompt
@@ -1352,31 +1351,31 @@ impl Act {
         }
     }
 
-    fn title(self) -> &'static str {
+    fn title(self) -> String {
         match self {
-            Act::TurnOff => "Turn Off Computer",
-            Act::Restart => "Restart Computer",
-            Act::StandBy => "Stand By",
-            Act::Hibernate => "Hibernate",
+            Act::TurnOff => tr!("pow-act-title-turn-off"),
+            Act::Restart => tr!("pow-act-title-restart"),
+            Act::StandBy => tr!("pow-act-title-stand-by"),
+            Act::Hibernate => tr!("pow-act-title-hibernate"),
         }
     }
 
     /// The action done to `the` computer ("this", "the").
     fn on(self, the: &str) -> String {
         match self {
-            Act::TurnOff => format!("turn off {the} computer"),
-            Act::Restart => format!("restart {the} computer"),
-            Act::StandBy => format!("put {the} computer on stand by"),
-            Act::Hibernate => format!("hibernate {the} computer"),
+            Act::TurnOff => tr!("pow-act-on-turn-off", the = the),
+            Act::Restart => tr!("pow-act-on-restart", the = the),
+            Act::StandBy => tr!("pow-act-on-stand-by", the = the),
+            Act::Hibernate => tr!("pow-act-on-hibernate", the = the),
         }
     }
 
-    fn anyway(self) -> &'static str {
+    fn anyway(self) -> String {
         match self {
-            Act::TurnOff => "&Turn Off Anyway",
-            Act::Restart => "&Restart Anyway",
-            Act::StandBy => "&Stand By Anyway",
-            Act::Hibernate => "&Hibernate Anyway",
+            Act::TurnOff => tr!("pow-act-anyway-turn-off"),
+            Act::Restart => tr!("pow-act-anyway-restart"),
+            Act::StandBy => tr!("pow-act-anyway-stand-by"),
+            Act::Hibernate => tr!("pow-act-anyway-hibernate"),
         }
     }
 }
@@ -1451,7 +1450,7 @@ fn refuse(state: &mut State, act: Act, why: &Refused) {
 fn tell(state: &mut State, act: Act, why: &Refused) {
     crate::lockview::refused(state, refusal_text(act, &unnamed(why)));
     state.open_dialog(crate::dialog::Dialog::error(
-        act.title(),
+        &act.title(),
         refusal_text(act, why),
     ));
 }
@@ -1461,30 +1460,32 @@ fn tell(state: &mut State, act: Act, why: &Refused) {
 fn unnamed(why: &Refused) -> Refused {
     match why {
         Refused::Held(_) => Refused::Held(Vec::new()),
-        Refused::Failed(_) => Refused::Failed(LOCK_FAILED.into()),
+        Refused::Failed(_) => Refused::Failed(lock_failed()),
         Refused::Stays(why) => Refused::Stays(why.as_deref().map(|w| Box::new(unnamed(w)))),
         why => why.clone(),
     }
 }
 
 /// What the lock shows for a failed command or call; the dialog under it keeps the error.
-const LOCK_FAILED: &str = "An error stopped it.";
+fn lock_failed() -> String {
+    tr!("pow-lock-failed")
+}
 
 fn refusal_text(act: Act, why: &Refused) -> String {
     format!(
-        "Reprise could not {}.\n\n{}",
-        act.on("the"),
+        "{}\n\n{}",
+        tr!("pow-could-not", action = act.on("the")),
         reason(act, why)
     )
 }
 
 fn reason(act: Act, why: &Refused) -> String {
     match why {
-        Refused::NotAllowed => format!("You are not allowed to {}.", act.on("this")),
-        Refused::Unsupported => "This computer does not support it.".to_string(),
-        Refused::Held(holders) if holders.is_empty() => "A program is preventing it.".to_string(),
+        Refused::NotAllowed => tr!("pow-not-allowed", action = act.on("this")),
+        Refused::Unsupported => tr!("pow-unsupported"),
+        Refused::Held(holders) if holders.is_empty() => tr!("pow-held-unnamed"),
         Refused::Held(holders) => {
-            let mut text = "These programs are preventing it:".to_string();
+            let mut text = tr!("pow-held");
             for h in holders {
                 text.push('\n');
                 text.push_str(&h.who);
@@ -1496,17 +1497,15 @@ fn reason(act: Act, why: &Refused) -> String {
             text
         }
         Refused::Failed(m) => m.clone(),
-        Refused::Late => format!(
-            "It had not happened after {} minutes.",
-            ANSWER_WITHIN.as_secs() / 60
+        Refused::Late => tr!(
+            "pow-late",
+            minutes = (ANSWER_WITHIN.as_secs() / 60).to_string()
         ),
-        Refused::Internal => "An error in Reprise stopped it.".to_string(),
-        Refused::Stays(None) => UPDATES_STAY.to_string(),
-        Refused::Stays(Some(why)) => format!("{}\n\n{UPDATES_STAY}", reason(act, why)),
+        Refused::Internal => tr!("pow-internal"),
+        Refused::Stays(None) => tr!("pow-updates-stay"),
+        Refused::Stays(Some(why)) => format!("{}\n\n{}", reason(act, why), tr!("pow-updates-stay")),
     }
 }
-
-const UPDATES_STAY: &str = "Updates will install the next time the computer starts.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verb {
@@ -1765,7 +1764,7 @@ fn run(cmd: &str, env: &crate::spawn::SessionEnv) -> Option<Refused> {
         .stderr(std::process::Stdio::piped());
     let mut child = match c.spawn() {
         Ok(child) => child,
-        Err(e) => return Some(Refused::Failed(format!("\"{cmd}\" did not start: {e}"))),
+        Err(e) => return Some(Refused::Failed(not_started(cmd, &e))),
     };
     let said = Arc::new(Mutex::new(Vec::new()));
     let (closed, on_close) = std::sync::mpsc::channel();
@@ -1782,8 +1781,12 @@ fn run(cmd: &str, env: &crate::spawn::SessionEnv) -> Option<Refused> {
     match status {
         Ok(s) if s.success() => None,
         Ok(s) => Some(Refused::Failed(command_failure(cmd, &s, &said))),
-        Err(e) => Some(Refused::Failed(format!("\"{cmd}\" did not start: {e}"))),
+        Err(e) => Some(Refused::Failed(not_started(cmd, &e))),
     }
+}
+
+fn not_started(cmd: &str, e: &std::io::Error) -> String {
+    tr!("pow-command-not-started", cmd = cmd, error = e.to_string())
 }
 
 /// How long a command's last stderr lines may trail its exit.
@@ -1813,7 +1816,7 @@ fn command_failure(cmd: &str, status: &std::process::ExitStatus, stderr: &[u8]) 
     let text = String::from_utf8_lossy(stderr);
     match text.lines().map(str::trim).rfind(|l| !l.is_empty()) {
         Some(line) => line.to_string(),
-        None => format!("\"{cmd}\" failed ({status})."),
+        None => tr!("pow-command-failed", cmd = cmd, status = status.to_string()),
     }
 }
 
@@ -1982,7 +1985,7 @@ fn sync_prompt(state: &mut State) {
     let apps = &state.app_index;
     let name_of = |app_id: &str| {
         if app_id.is_empty() {
-            return "A program".to_string();
+            return tr!("pow-app-unnamed");
         }
         reprisefs::apps::AppId::new(app_id)
             .and_then(|a| reprisefs::apps::entry_for_app_id(apps, &a, |_| true))
@@ -1996,8 +1999,8 @@ fn sync_prompt(state: &mut State) {
     };
     if crate::screenrecord::finishing(state) {
         fields.rows.push(Row {
-            name: "Screen recording".into(),
-            reason: "Finishing the screen recording".into(),
+            name: tr!("pow-screen-recording"),
+            reason: tr!("pow-screen-recording-reason"),
         });
     }
     match prompt_index(state) {
@@ -2573,7 +2576,7 @@ mod tests {
             "Reprise could not restart the computer.\n\nexit status 1\n\nUpdates will install \
              the next time the computer starts."
         );
-        let lock = Refused::Stays(Some(Box::new(Refused::Failed(LOCK_FAILED.into()))));
+        let lock = Refused::Stays(Some(Box::new(Refused::Failed(lock_failed()))));
         assert_eq!(unnamed(&stays), lock, "the lock quotes no error");
         assert_eq!(
             reason(Act::TurnOff, &Refused::Stays(None)),
@@ -3982,7 +3985,7 @@ mod tests {
         refuse(&mut h.state, Act::TurnOff, &failed);
         let l = h.state.lock.console.as_ref().unwrap();
         let shown = l.message().unwrap_or_default();
-        assert!(shown.contains(LOCK_FAILED), "{shown}");
+        assert!(shown.contains(&lock_failed()), "{shown}");
         assert!(!shown.contains("my-poweroff"), "{shown}");
     }
 

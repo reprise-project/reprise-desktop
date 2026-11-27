@@ -7,6 +7,7 @@
 //! scope still runs, and the `--startup` command is not run again.
 
 use crate::compositor::State;
+use reprisekit::tr;
 use std::cell::Cell;
 use std::ffi::OsString;
 use std::os::unix::fs::MetadataExt;
@@ -72,7 +73,9 @@ pub fn restart_argv(
 }
 
 /// The notice a restarted session shows.
-pub const NOTICE: &str = "Reprise restarted after a crash; the log has the details";
+pub fn notice_text() -> String {
+    tr!("pow-crash-notice")
+}
 
 /// Whether this start engages the lock before its first frame: only a restart whose crashed
 /// session was locked.
@@ -94,7 +97,7 @@ pub fn on_start(state: &mut State, after_crash: bool, locked: bool, active: bool
     crate::loginlink::born(state, active);
     if after_crash {
         state.handle.insert_idle(|state| {
-            crate::notifyview::notice(state, "Reprise", NOTICE);
+            crate::notifyview::notice(state, "Reprise", &notice_text());
         });
     }
 }
@@ -301,7 +304,7 @@ mod tests {
             h.dispatch();
             h.state.notify.log.get(u32::MAX).map(|e| e.n.body.clone())
         };
-        assert_eq!(notice(true).as_deref(), Some(NOTICE));
+        assert_eq!(notice(true).as_deref(), Some(notice_text().as_str()));
         assert_eq!(notice(false), None);
     }
 

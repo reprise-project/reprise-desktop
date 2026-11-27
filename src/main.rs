@@ -1,5 +1,7 @@
 use reprisekit::{icontheme, raster, text, textedit, theme};
 
+reprisekit::strings!("reprise");
+
 mod access;
 mod activation;
 mod animclock;
