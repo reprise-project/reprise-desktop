@@ -82,6 +82,30 @@ impl State {
                 ));
             }
             MenuKind::Window { window, rows }
+                if rows.get(row).copied().flatten() == Some(WindowMenuRow::ScreenMenu) =>
+            {
+                let window = *window;
+                let own = self.fit_output(window);
+                let mut outs = self.carry_outputs();
+                outs.sort_by_key(|o| {
+                    let r = self.layout_box(Some(o));
+                    (r.x, r.y)
+                });
+                let heads: Vec<_> = outs.iter().map(crate::displays::Head::of).collect();
+                let all = self.scene.outputs();
+                let screens = (outs.iter().zip(crate::displays::labels(&heads)))
+                    .filter(|(o, _)| Some(*o) != own.as_ref())
+                    .filter_map(|(o, label)| Some((all.iter().position(|a| a == o)?, label)))
+                    .collect();
+                let (items, rows) = crate::winmenu::move_to_screen_menu(screens);
+                return Some((
+                    items,
+                    MenuKind::Window { window, rows },
+                    true,
+                    RowIcons::default(),
+                ));
+            }
+            MenuKind::Window { window, rows }
                 if rows.get(row).copied().flatten() == Some(WindowMenuRow::TabsOfMenu)
                     && matches!(
                         parent.items.get(row),

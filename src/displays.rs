@@ -23,6 +23,17 @@ pub struct Head {
     pub model: String,
 }
 
+impl Head {
+    pub fn of(o: &smithay::output::Output) -> Head {
+        let p = o.physical_properties();
+        Head {
+            connector: o.name(),
+            make: p.make,
+            model: p.model,
+        }
+    }
+}
+
 /// Each head's label: "Built-in display" for a laptop panel, else the model, the make or the connector; a label two heads share gets each one's connector.
 pub fn labels(heads: &[Head]) -> Vec<String> {
     let known = |s: &str| !s.is_empty() && s != "Unknown";
@@ -342,13 +353,7 @@ pub fn outputs_changed(state: &mut State) {
         .filter(|o| !crate::backend::is_virtual(o))
         .map(|o| {
             let r = state.layout_box(Some(o));
-            let p = o.physical_properties();
-            let head = Head {
-                connector: o.name(),
-                make: p.make,
-                model: p.model,
-            };
-            ((r.x, r.y), head)
+            ((r.x, r.y), Head::of(o))
         })
         .collect();
     placed.sort_by_key(|(at, _)| *at);

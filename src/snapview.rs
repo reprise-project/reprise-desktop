@@ -708,12 +708,37 @@ impl State {
         }
     }
 
-    /// Carry the bind's window to the next (`next`) or previous output, maximized, snapped (with
-    /// no snap assist) or in proportion as it was ([`crate::snap::carried`]).
+    /// The outputs a window can be carried to: shown on the desk, neither mirroring another nor
+    /// empty.
+    pub(crate) fn carry_outputs(&self) -> Vec<Output> {
+        (self.scene.outputs().iter())
+            .filter(|o| reprisescene::copied(o).is_none() && crate::console::on_desk(self, o))
+            .filter(|o| self.layout_box(Some(o)).width > 0)
+            .cloned()
+            .collect()
+    }
+
+    /// Carry the bind's window to the next (`next`) or previous output ([`State::move_to_output`]).
     pub fn key_move_output(&mut self, next: bool) {
         let Some(w) = self.bind_window() else {
             return;
         };
+        let Some(from) = self.fit_output(w) else {
+            return;
+        };
+        let outs = self.carry_outputs();
+        let boxes: Vec<Rect> = outs.iter().map(|o| self.layout_box(Some(o))).collect();
+        if let Some(to) = (outs.iter().position(|o| *o == from))
+            .and_then(|i| crate::snap::output_step(&boxes, i, next))
+            .map(|j| outs[j].clone())
+        {
+            self.move_to_output(w, &to);
+        }
+    }
+
+    /// Carry window `w` to output `to`, maximized, snapped (with no snap assist) or in proportion
+    /// as it was ([`crate::snap::carried`]).
+    pub fn move_to_output(&mut self, w: WindowId, to: &Output) {
         if self
             .win(w)
             .is_none_or(|x| x.fullscreen || x.override_redirect)
@@ -723,18 +748,10 @@ impl State {
         let Some(from) = self.fit_output(w) else {
             return;
         };
-        let outs: Vec<Output> = (self.scene.outputs().iter())
-            .filter(|o| reprisescene::copied(o).is_none() && crate::console::on_desk(self, o))
-            .filter(|o| self.layout_box(Some(o)).width > 0)
-            .cloned()
-            .collect();
-        let boxes: Vec<Rect> = outs.iter().map(|o| self.layout_box(Some(o))).collect();
-        let Some(to) = (outs.iter().position(|o| *o == from))
-            .and_then(|i| crate::snap::output_step(&boxes, i, next))
-            .map(|j| outs[j].clone())
-        else {
+        if from == *to || !self.carry_outputs().contains(to) {
             return;
-        };
+        }
+        let to = to.clone();
         let (sw, tw) = (self.usable_area(Some(&from)), self.usable_area(Some(&to)));
         if [sw, tw].iter().any(|a| a.width <= 0 || a.height <= 0) {
             return;

@@ -92,6 +92,7 @@ impl State {
             mini: self.mini_views.of(w).is_some(),
             desktops: self.desktops.count,
             sticky: self.win(self.home(w)).is_some_and(|h| h.sticky),
+            screens: self.carry_outputs().len(),
             tabs: self.tabbable(w).then(|| crate::winmenu::TabRows {
                 targets: !self.tab_targets(w).is_empty(),
                 grouped: self.tabs.groups.group_of(w).is_some(),
@@ -173,9 +174,17 @@ impl State {
                 self.set_all_desktops(w, on);
             }
             WindowMenuRow::MoveTo(n) => self.move_to_desktop(&[w], n),
+            WindowMenuRow::MoveToScreen(i) => {
+                if let Some(to) = self.scene.outputs().get(i).cloned() {
+                    self.move_to_output(w, &to);
+                }
+            }
             WindowMenuRow::TabsOf(target) => self.join_tabs(w, target, usize::MAX, false),
             WindowMenuRow::LeaveTabs => self.leave_tabs(w),
-            WindowMenuRow::MoveToMenu | WindowMenuRow::TabsOfMenu | WindowMenuRow::RecentMenu => {}
+            WindowMenuRow::MoveToMenu
+            | WindowMenuRow::ScreenMenu
+            | WindowMenuRow::TabsOfMenu
+            | WindowMenuRow::RecentMenu => {}
         }
     }
 

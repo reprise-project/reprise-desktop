@@ -24,7 +24,7 @@ Press `Super+Space` (or type in the Glass Start menu) to search programs, settin
 
 ## Windows
 
-Frames provide minimize, maximize, close, configurable caption double-click (`[windows] title_double_click`) and `Super+drag` move. Press `Alt+Space` or right-click a title bar for the window menu: Roll Up, Always on Top, Always Open Here, Mini View, Move to Desktop and tab actions. Always Open Here creates a window rule for the current screen, position and size. Mini View creates a small always-on-top live picture.
+Frames provide minimize, maximize, close, configurable caption double-click (`[windows] title_double_click`) and `Super+drag` move. Press `Alt+Space` or right-click a title bar for the window menu: Roll Up, Always on Top, Always Open Here, Mini View, Move to Desktop, Move to Screen (with two or more screens) and tab actions. Always Open Here creates a window rule for the current screen, position and size. Mini View creates a small always-on-top live picture.
 
 Drop one title bar onto another to group windows as tabs (`Super+\`` and `Super+Page Up`/`Page Down` cycle tabs). Shake a title bar to minimize other windows on that monitor (`[windows] shake`). Dim unfocused windows up to 40% (`[windows] dim_inactive`), cap hidden vsynced windows (`[windows] hidden_frame_rate`), and remember window positions per monitor set (`[windows] remember`). Configure these on Settings > Window Behavior.
 

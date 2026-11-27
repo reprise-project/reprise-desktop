@@ -24,6 +24,10 @@ pub enum WindowMenuRow {
     /// Opens `move_to_menu`, does nothing itself.
     MoveToMenu,
     MoveTo(usize),
+    /// Opens `move_to_screen_menu`, does nothing itself.
+    ScreenMenu,
+    /// Carries the window to the output at this index of the scene's outputs.
+    MoveToScreen(usize),
     /// Opens `tabs_of_menu`, does nothing itself.
     TabsOfMenu,
     TabsOf(crate::window::WindowId),
@@ -35,7 +39,10 @@ pub enum WindowMenuRow {
 
 impl WindowMenuRow {
     pub fn opens_submenu(self) -> bool {
-        matches!(self, Self::MoveToMenu | Self::TabsOfMenu | Self::RecentMenu)
+        matches!(
+            self,
+            Self::MoveToMenu | Self::ScreenMenu | Self::TabsOfMenu | Self::RecentMenu
+        )
     }
 }
 
@@ -78,6 +85,8 @@ pub struct WindowMenuState {
     pub desktops: usize,
     /// Show on All Desktops is checked and Move to Desktop greyed.
     pub sticky: bool,
+    /// The outputs a window can be carried to; Move to Screen shows with two or more.
+    pub screens: usize,
     /// The tab group rows, after the desktop rows; None for a window that cannot be a tab.
     pub tabs: Option<TabRows>,
     /// Whether the window is rolled up, for the Roll Up/Roll Down row after Maximize; None for a
@@ -159,6 +168,15 @@ pub fn window_menu(
             MoveToMenu,
             tr!("start-win-move-to-desktop"),
             !state.owned && !state.sticky,
+            None,
+            None,
+        ));
+    }
+    if state.screens > 1 {
+        group.push((
+            ScreenMenu,
+            tr!("start-win-move-to-screen"),
+            true,
             None,
             None,
         ));
@@ -271,6 +289,17 @@ pub fn move_to_menu<R>(
         .unzip()
 }
 
+/// The Move to Screen submenu: a row per output in `screens` (its index in the scene's outputs and
+/// its label), each carrying the window there.
+pub fn move_to_screen_menu(
+    screens: Vec<(usize, String)>,
+) -> (Vec<MenuItem>, Vec<Option<WindowMenuRow>>) {
+    screens
+        .into_iter()
+        .map(|(i, label)| (MenuItem::entry(label), Some(WindowMenuRow::MoveToScreen(i))))
+        .unzip()
+}
+
 /// A row per window in `targets`, titled (cut at 48 characters) with its icon, each joining that window's group.
 pub fn tabs_of_menu(
     targets: Vec<(
@@ -322,6 +351,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -372,6 +402,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -397,6 +428,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -419,6 +451,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -445,6 +478,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -472,6 +506,7 @@ mod tests {
             open_here: OpenHereState::Off,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -526,6 +561,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 4,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -557,6 +593,54 @@ mod tests {
     }
 
     #[test]
+    fn two_screens_add_move_to_screen_after_the_desktop_rows() {
+        let st = WindowMenuState {
+            maximized: false,
+            minimized: false,
+            from_taskbar: false,
+            owned: false,
+            resizable: true,
+            on_top: false,
+            open_here: OpenHereState::Absent,
+            mini: false,
+            desktops: 4,
+            sticky: false,
+            screens: 2,
+            tabs: None,
+            shade: None,
+        };
+        let (items, actions) = window_menu(st, None);
+        assert_eq!(row(&items, 9), ("Move to Desktop", true, false));
+        assert_eq!(row(&items, 10), ("Move to Screen", true, false));
+        assert_eq!(actions[10], Some(WindowMenuRow::ScreenMenu));
+        assert!(matches!(
+            &items[10],
+            MenuItem::Entry {
+                submenu: true,
+                mnemonic: Some(11),
+                ..
+            }
+        ));
+        let (one, _) = window_menu(WindowMenuState { screens: 1, ..st }, None);
+        assert_eq!(
+            one.len(),
+            items.len() - 1,
+            "one screen: no Move to Screen row"
+        );
+        let (items, rows) =
+            move_to_screen_menu(vec![(0, "DELL U2415".into()), (2, "HDMI-A-1".into())]);
+        assert_eq!(row(&items, 0), ("DELL U2415", true, false));
+        assert_eq!(row(&items, 1), ("HDMI-A-1", true, false));
+        assert_eq!(
+            rows,
+            [
+                Some(WindowMenuRow::MoveToScreen(0)),
+                Some(WindowMenuRow::MoveToScreen(2))
+            ]
+        );
+    }
+
+    #[test]
     fn a_window_that_takes_tabs_gets_the_tab_rows_before_close() {
         let st = WindowMenuState {
             maximized: false,
@@ -568,6 +652,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: Some(TabRows {
                 targets: true,
@@ -679,6 +764,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -709,6 +795,7 @@ mod tests {
             open_here: OpenHereState::Off,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: None,
@@ -738,6 +825,7 @@ mod tests {
             open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
+            screens: 1,
             sticky: false,
             tabs: None,
             shade: Some(false),
