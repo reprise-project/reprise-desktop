@@ -363,19 +363,20 @@ pub fn tree_subfolders(listed: &Listed, mounts: &[PathBuf]) -> Vec<(String, Plac
         .collect()
 }
 
-/// Computer's children in the Folders tree: the mounted drives, then the mounted phones and
-/// cameras and the network shares. An unmounted volume or device has no folder yet, and Home
-/// hangs off the Desktop ([`Place::chain_in`]), so neither is a node here.
-pub fn computer_tree_children(listed: &Listed) -> Vec<(String, Place)> {
-    let shares = (listed.items.iter())
-        .filter(|it| match it.drive {
-            Some(DriveKind::Network) => true,
-            Some(DriveKind::Portable(_)) => it.path.is_absolute(),
-            _ => false,
-        })
-        .map(|it| (it.name.clone(), Place::Folder(it.path.clone())));
+/// Computer's children in the Folders tree, with the kind whose icon each wears: the mounted
+/// drives, then the mounted phones and cameras and the network shares. An unmounted volume or
+/// device has no folder yet, and Home hangs off the Desktop ([`Place::chain_in`]), so neither is
+/// a node here.
+pub fn computer_tree_children(listed: &Listed) -> Vec<(String, Place, DriveKind)> {
+    let shares = (listed.items.iter()).filter_map(|it| match it.drive {
+        Some(k @ DriveKind::Network) => Some((it.name.clone(), Place::Folder(it.path.clone()), k)),
+        Some(k @ DriveKind::Portable(_)) if it.path.is_absolute() => {
+            Some((it.name.clone(), Place::Folder(it.path.clone()), k))
+        }
+        _ => None,
+    });
     (listed.drives.iter())
-        .map(|d| (d.name(), Place::Folder(d.mount.clone())))
+        .map(|d| (d.name(), Place::Folder(d.mount.clone()), d.kind()))
         .chain(shares)
         .collect()
 }
@@ -1040,13 +1041,19 @@ mod tests {
             vec![
                 (
                     "Local Disk (/)".to_string(),
-                    Place::Folder(PathBuf::from("/"))
+                    Place::Folder(PathBuf::from("/")),
+                    DriveKind::Local
                 ),
                 (
                     "CD Drive (/run/media/u/DVD)".to_string(),
-                    Place::Folder(PathBuf::from("/run/media/u/DVD"))
+                    Place::Folder(PathBuf::from("/run/media/u/DVD")),
+                    DriveKind::Optical
                 ),
-                ("public on nas".to_string(), Place::Folder(share().path)),
+                (
+                    "public on nas".to_string(),
+                    Place::Folder(share().path),
+                    DriveKind::Network
+                ),
             ],
             "the drives, named as the view names them, then the shares, and not the Home the view lists"
         );
@@ -1282,7 +1289,7 @@ mod tests {
         assert!(
             computer_tree_children(&listed)
                 .iter()
-                .all(|(name, _)| name != "KINGSTON (/dev/sdb1)"),
+                .all(|(name, ..)| name != "KINGSTON (/dev/sdb1)"),
             "the Folders tree leaves the unmounted volume out"
         );
     }
@@ -1408,7 +1415,7 @@ mod tests {
         assert!(
             computer_tree_children(&listed)
                 .iter()
-                .all(|(n, _)| n != "Pixel 7")
+                .all(|(n, ..)| n != "Pixel 7")
         );
     }
 
@@ -1427,7 +1434,11 @@ mod tests {
         );
         assert_eq!(
             computer_tree_children(&listed)[0],
-            ("Pixel 7".to_string(), Place::Folder(phone_mount().path))
+            (
+                "Pixel 7".to_string(),
+                Place::Folder(phone_mount().path),
+                DriveKind::Portable(reprisefs::places::Gadget::Phone)
+            )
         );
     }
 
