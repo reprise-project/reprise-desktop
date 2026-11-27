@@ -202,14 +202,13 @@ impl SettingsApp {
         }
     }
 
-    /// The defaults Restore Defaults puts back for `keys`: the file's interface's, Classic's
-    /// when the interface itself is among them.
+    /// The defaults Restore Defaults puts back for `keys`: the file's interface's and Glass
+    /// style's, Classic's when the interface itself is among them.
     fn defaults_for(&self, keys: &[Key]) -> &'static model::Settings {
-        let interface = match keys.contains(&model::INTERFACE) {
-            true => "",
-            false => &self.loaded.interface,
-        };
-        model::defaults(interface)
+        match keys.contains(&model::INTERFACE) {
+            true => model::defaults("", ""),
+            false => model::defaults(&self.loaded.interface, &self.loaded.glass_style),
+        }
     }
 
     /// The keys page `p`'s controls write that the file sets or the sheet holds off their
@@ -506,6 +505,14 @@ impl SettingsApp {
     pub(crate) fn interface_moved(&mut self, from: &str) {
         let text = std::fs::read_to_string(&self.path).unwrap_or_default();
         model::switch_interface(&mut self.want, from, &text, &self.loaded);
+        pages::write_forms(&mut self.sheet, &self.want);
+    }
+
+    /// The Style combo moved off `from`: the unset defaults follow the new style
+    /// ([`model::switch_style`]).
+    pub(crate) fn style_moved(&mut self, from: &str) {
+        let text = std::fs::read_to_string(&self.path).unwrap_or_default();
+        model::switch_style(&mut self.want, from, &text);
         pages::write_forms(&mut self.sheet, &self.want);
     }
 }

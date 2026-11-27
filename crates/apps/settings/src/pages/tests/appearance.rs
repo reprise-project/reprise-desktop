@@ -44,8 +44,10 @@ fn the_appearance_page_geometry() {
     let g = under("glass");
     assert_eq!(
         rect(&g, p, appearancepage::GLASS_COLOR),
-        Rect::new(20, 304, 196, 21)
+        Rect::new(20, 304, 90, 21)
     );
+    assert_eq!(rect(&g, p, "style_label"), Rect::new(126, 288, 90, 13));
+    assert_eq!(rect(&g, p, "glass_style"), Rect::new(126, 304, 90, 21));
     assert_eq!(rect(&g, p, "material_label"), Rect::new(20, 334, 90, 13));
     assert_eq!(rect(&g, p, "glass_material"), Rect::new(20, 350, 90, 21));
     assert_eq!(rect(&g, p, "frame_label"), Rect::new(126, 334, 90, 13));
@@ -211,6 +213,27 @@ fn glass_material_and_frame_combos_write_their_keys() {
 }
 
 #[test]
+fn the_style_combo_writes_glass_style() {
+    let p = Page::Appearance;
+    let mut got = Settings {
+        interface: "glass".into(),
+        ..Settings::default()
+    };
+    let mut s = with(&got);
+    assert_eq!(
+        rows(&s, p, "glass_style"),
+        (vec!["Glass".into(), "Glass: Onyx".into()], 0)
+    );
+    pick(&mut s, &mut got, p, "glass_style", 1);
+    assert_eq!(got.glass_style, "onyx");
+    assert_eq!(
+        appearancepage::glass(&got).style,
+        reprisekit::glass::Style::Onyx,
+        "the sample draws with it"
+    );
+}
+
+#[test]
 fn glass_notification_combo_writes_its_key() {
     let p = Page::Notifications;
     let mut got = Settings {
@@ -242,6 +265,7 @@ fn the_glass_rows_show_under_glass_only() {
         "glass_intensity",
         "glass_blur",
         "glass_streaks",
+        "glass_style",
     ];
     let p = Page::Appearance;
     for i in ["classic", "blue"] {

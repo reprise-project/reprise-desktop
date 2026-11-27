@@ -8,6 +8,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("mode", "Mode:"),
             ("glass_material", "Material:"),
             ("glass_frame", "Frame:"),
+            ("glass_style", "Style:"),
             ("glass_transparency", "Enable transparency"),
             ("glass_fast_drag", "Faster glass while dragging"),
             ("glass_blur_frames", "Show frames behind glass"),

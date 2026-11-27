@@ -270,6 +270,12 @@ pub const GLASS_FRAMES: &Choices = &[
     ("square", || tr!("choices-glass-frames-square")),
 ];
 
+/// `[glass] style`. Mirrors `glass::Style::as_str`.
+pub const GLASS_STYLES: &Choices = &[
+    ("glass", || tr!("choices-glass-styles-glass")),
+    ("onyx", || tr!("choices-glass-styles-onyx")),
+];
+
 /// The Interface combo's items. Mirrors `Interface::parse` in reprisekit.
 pub const INTERFACES: &Choices = &[
     ("classic", || tr!("choices-interfaces-classic")),

@@ -1,6 +1,6 @@
 //! Reading `config.toml` into [`Settings`] and writing it back.
 
-use super::fields::{INTERFACE, fields};
+use super::fields::{GLASS_STYLE, INTERFACE, fields};
 use super::shortcuts::{
     DENIED, GLOBALS, KEYBINDS, keybind_entries, merge_denied, merge_programs, program_tables,
     read_programs, read_shortcuts, shortcut_tables,
@@ -19,7 +19,8 @@ use toml_edit::{Array, DocumentMut, Item, Value};
 const LOCKER: Key = k("power", "locker");
 
 fn defaults_in(doc: &DocumentMut) -> Settings {
-    Settings::for_interface(get(doc, &INTERFACE).and_then(Item::as_str).unwrap_or(""))
+    let text = |key| get(doc, key).and_then(Item::as_str).unwrap_or("");
+    Settings::for_look(text(&INTERFACE), text(&GLASS_STYLE))
 }
 
 /// Read every key the sheet knows out of `text`, leaving the rest of the
@@ -117,14 +118,11 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     // What the file says today, with the defaults standing in for the
     // keys it leaves out.
     let have = load(text);
-    // The defaults of the interface the file names once this save lands:
-    // the sheet's when it moved it, else the one on disk.
-    let moved = want.interface != base.interface && want.interface != have.interface;
-    let def = Settings::for_interface(if moved {
-        &want.interface
-    } else {
-        &have.interface
-    });
+    // The defaults of the interface and style the file names once this save
+    // lands: the sheet's when it moved them, else the ones on disk.
+    let moved = |of: fn(&Settings) -> &String| of(want) != of(base) && of(want) != of(&have);
+    let pick = |of: fn(&Settings) -> &String| if moved(of) { of(want) } else { of(&have) };
+    let def = Settings::for_look(pick(|s| &s.interface), pick(|s| &s.glass_style));
     // Before the interface is written: the keys settle as the file read until now.
     let mode = (&want.mode, &want.dark_from, &want.dark_to);
     if mode != (&base.mode, &base.dark_from, &base.dark_to) || want.interface != base.interface {
@@ -260,23 +258,33 @@ pub fn copy_keys(keys: &[Key], from: &Settings, to: &mut Settings) {
 
 /// The sheet's interface moved from `from` to `s.interface`: the scheme goes back to the new interface's own, and every field `text` leaves unset that held `from`'s default takes the new one's. Moved back to `loaded`'s interface, the scheme and glass colour are `loaded`'s again.
 pub fn switch_interface(s: &mut Settings, from: &str, text: &str, loaded: &Settings) {
-    let doc = text
-        .parse::<DocumentMut>()
-        .unwrap_or_else(|_| DocumentMut::new());
-    let (old, new) = (
-        Settings::for_interface(from),
-        Settings::for_interface(&s.interface),
-    );
-    for f in fields() {
-        if get(&doc, f.key()).is_none() && f.same(s, &old) {
-            f.copy(&new, s);
-        }
-    }
+    let old = Settings::for_look(from, &s.glass_style);
+    follow_defaults(s, &old, text);
     if s.interface == loaded.interface {
         s.color_scheme = loaded.color_scheme.clone();
         s.glass_color = loaded.glass_color.clone();
     } else {
         s.color_scheme.clear();
+    }
+}
+
+/// The Style combo moved off `from`: every field `text` leaves unset that held `from`'s default
+/// takes the new style's.
+pub fn switch_style(s: &mut Settings, from: &str, text: &str) {
+    let old = Settings::for_look(&s.interface, from);
+    follow_defaults(s, &old, text);
+}
+
+/// Each field `text` leaves unset that holds `old`'s default takes `s`'s look's.
+fn follow_defaults(s: &mut Settings, old: &Settings, text: &str) {
+    let doc = text
+        .parse::<DocumentMut>()
+        .unwrap_or_else(|_| DocumentMut::new());
+    let new = Settings::for_look(&s.interface, &s.glass_style);
+    for f in fields() {
+        if get(&doc, f.key()).is_none() && f.same(s, old) {
+            f.copy(&new, s);
+        }
     }
 }
 

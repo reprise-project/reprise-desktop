@@ -272,20 +272,32 @@ pub struct TaskbarConfig {
 }
 
 impl TaskbarConfig {
-    /// `interface`'s taskbar defaults, kept in sync with `Settings::default` and
-    /// `Settings::for_interface` in reprise-settings.
+    /// `interface`'s taskbar defaults under the Glass style.
     pub fn default_for(interface: Interface) -> TaskbarConfig {
+        TaskbarConfig::default_for_style(interface, reprisekit::glass::Style::Glass)
+    }
+
+    /// `interface`'s taskbar defaults; `style` counts only under Glass. Onyx's
+    /// bar is the small one with a labelled button per window, without pinned
+    /// buttons or the Show desktop strip.
+    pub fn default_for_style(
+        interface: Interface,
+        style: reprisekit::glass::Style,
+    ) -> TaskbarConfig {
         let glass = interface == Interface::Glass;
+        let onyx = glass && style == reprisekit::glass::Style::Onyx;
         TaskbarConfig {
             position: reprisekit::taskbar::Edge::Bottom,
-            buttons: if glass {
+            buttons: if onyx {
+                TaskbarButtons::Never
+            } else if glass {
                 TaskbarButtons::Combine
             } else {
                 TaskbarButtons::WhenFull
             },
-            pinned: glass,
-            small_icons: false,
-            show_desktop_button: glass,
+            pinned: glass && !onyx,
+            small_icons: onyx,
+            show_desktop_button: glass && !onyx,
             peek: glass,
             tray_overflow: true,
             badges: true,

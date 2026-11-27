@@ -55,8 +55,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::metrics::{ControlMetrics, PlacesMetrics, RebarMetrics};
 use crate::raster::Rect;
 use crate::style::{
-    CaptionTitle, GlassSpec, PanelSpec, Part, PartImage, State, Style, TextSpec, TitleGlow,
-    TrackMarks,
+    CaptionTitle, GlassSpec, PanelSpec, Part, PartImage, State, TextSpec, TitleGlow, TrackMarks,
 };
 use crate::taskbar::{ClockBox, LabelledButton, OrbRise, StartMenuDock, TaskbarShape};
 use crate::theme::{CaptionGroup, Color, ColorScheme, GroupPlace, Metrics};
@@ -167,14 +166,40 @@ impl Frame {
     }
 }
 
+/// `[glass] style`: the look the glass is drawn in. Onyx has a near-black
+/// taskbar under labelled buttons and sets its own `[taskbar]` defaults
+/// (`repriseconf`'s `TaskbarConfig::default_for_style`). Frames are shared.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Style {
+    #[default]
+    Glass,
+    Onyx,
+}
+
+impl Style {
+    pub const ALL: [Style; 2] = [Style::Glass, Style::Onyx];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Style::Glass => "glass",
+            Style::Onyx => "onyx",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Style> {
+        Style::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+}
+
 /// The environment variable a compositor hands its clients `[glass] material` in.
 pub const MATERIAL_ENV: &str = "REPRISE_GLASS_MATERIAL";
 
 /// `[glass]`: the colour, its intensity (0..100), translucency, `blur`, the
 /// reflection streaks, `fast_drag`, `blur_frames`, `blur_rate`, `orb_glow`,
-/// `mode`, `material` and `frame`. Opaque glass needs no backdrop. Defaults: Sky
-/// at 42, translucent, blur 2 with streaks, fast drag, frames behind glass shown,
-/// 30 re-blurs a second, full orb glow, light, Frosted, Rounded.
+/// `mode`, `material`, `frame` and `style`. Opaque glass needs no backdrop.
+/// Defaults: Sky at 42, translucent, blur 2 with streaks, fast drag, frames
+/// behind glass shown, 30 re-blurs a second, full orb glow, light, Frosted,
+/// Rounded, Glass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Settings {
     pub color: Color,
@@ -202,6 +227,7 @@ pub struct Settings {
     pub material: Material,
     pub frame: Frame,
     pub notification: NotifyStyle,
+    pub style: Style,
 }
 
 pub const BLUR_MAX: u8 = 5;
@@ -253,29 +279,30 @@ impl Default for Settings {
             material: Material::Frosted,
             frame: Frame::Rounded,
             notification: NotifyStyle::default(),
+            style: Style::Glass,
         }
     }
 }
 
 /// Reprise Glass's style for `s`, built on first use and shared while among the
 /// last few asked for (`cached`).
-pub fn style(s: &Settings) -> Arc<Style> {
+pub fn style(s: &Settings) -> Arc<crate::style::Style> {
     cached(s, false)
 }
 
 /// The style for `s` under the small 30 px bar (`[taskbar] small_icons`); the
 /// bar's parts at its height ([`paint::small_bar`]).
-pub fn small_bar_style(s: &Settings) -> Arc<Style> {
+pub fn small_bar_style(s: &Settings) -> Arc<crate::style::Style> {
     cached(s, true)
 }
 
 /// How many styles `cached` keeps. A style holds about half a megabyte of art;
 /// the live theme holds its own, so a dropped one is only rebuilt when asked for.
-/// Styles built for a scaled output are kept with it ([`Style::at_scale`]).
+/// Styles built for a scaled output are kept with it ([`crate::style::Style::at_scale`]).
 const STYLES_KEPT: usize = 8;
 
-fn cached(s: &Settings, small_bar: bool) -> Arc<Style> {
-    type Styles = Kept<(Settings, bool), Arc<Style>>;
+fn cached(s: &Settings, small_bar: bool) -> Arc<crate::style::Style> {
+    type Styles = Kept<(Settings, bool), Arc<crate::style::Style>>;
     static STYLES: OnceLock<Mutex<Styles>> = OnceLock::new();
     let mut styles = lock(STYLES.get_or_init(|| Mutex::new(Kept::new(STYLES_KEPT))));
     let key = Settings {
@@ -293,7 +320,7 @@ fn cached(s: &Settings, small_bar: bool) -> Arc<Style> {
     })
 }
 
-fn made(s: &Settings, small_bar: bool, scale: i32) -> Style {
+fn made(s: &Settings, small_bar: bool, scale: i32) -> crate::style::Style {
     use std::hash::{Hash, Hasher};
     let mut key = std::hash::DefaultHasher::new();
     (s, small_bar).hash(&mut key);
@@ -344,7 +371,7 @@ impl<K: PartialEq, V: Clone> Kept<K, V> {
 /// orb standing above the bar. Its labelled buttons have no art of their
 /// own: they draw its task button, spaced as elsewhere. Its drawn parts
 /// are painted at `scale`, as [`build_at`]'s.
-fn small(full: Style, s: &Settings, scale: i32) -> Style {
+fn small(full: crate::style::Style, s: &Settings, scale: i32) -> crate::style::Style {
     let mut st = paint::small_bar(s, scale)
         .into_iter()
         .fold(full, |st, (part, img)| st.with_part(part, img))
@@ -364,7 +391,7 @@ fn small(full: Style, s: &Settings, scale: i32) -> Style {
 }
 
 #[cfg(test)]
-pub(crate) fn build(s: &Settings) -> Style {
+pub(crate) fn build(s: &Settings) -> crate::style::Style {
     build_at(s, 1)
 }
 
@@ -372,7 +399,7 @@ pub(crate) fn build(s: &Settings) -> Style {
 /// orb and its task buttons, the Start panel and the popups painted at
 /// `scale` device pixels per design pixel; every other part is drawn at
 /// the design's size and magnified by the draw.
-fn build_at(s: &Settings, scale: i32) -> Style {
+fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
     let is_dark = s.mode == Mode::Dark;
     let (title_ink, title) = caption_ink(s.material, s.mode);
     let lazy = |paint: fn(&Settings, i32) -> PartImage| {
@@ -386,7 +413,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
         let remap = is_dark && part != Part::ProgressChunk;
         (part, if remap { dark::remap_part(img) } else { img })
     };
-    let style = Style::new(
+    let style = crate::style::Style::new(
         if is_dark { "glass-dark" } else { "glass" },
         colors(s.mode),
         metrics(),
@@ -1666,7 +1693,7 @@ mod tests {
                 "{part:?} keeps its art"
             );
         }
-        let frame = |st: &Style, part| {
+        let frame = |st: &crate::style::Style, part| {
             let f = st.part(part).unwrap().frame(crate::style::State::Normal);
             (f.width, f.height)
         };

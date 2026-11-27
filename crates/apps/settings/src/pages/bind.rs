@@ -207,6 +207,11 @@ pub(super) fn binds() -> Vec<Bind> {
             crate::model::GLASS_FRAMES,
         ),
         Bind::Named(
+            "glass_style",
+            lens!(glass_style),
+            crate::model::GLASS_STYLES,
+        ),
+        Bind::Named(
             "glass_notification_style",
             lens!(glass_notification_style),
             crate::model::GLASS_NOTIFY_STYLES,
@@ -665,7 +670,7 @@ pub fn keys_of(form: &Form) -> Vec<Key> {
 }
 
 fn nudged_keys(form: &Form) -> Vec<Key> {
-    let base = crate::model::defaults("");
+    let base = crate::model::defaults("", "");
     let mut moved = base.clone();
     for b in binds().iter().filter(|b| form.item(b.id()).is_some()) {
         b.nudge(&mut moved);

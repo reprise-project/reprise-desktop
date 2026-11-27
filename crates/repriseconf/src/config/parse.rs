@@ -1,6 +1,6 @@
 //! Reading `config.toml` into a validated [`Config`](super::Config).
 
-use super::file::{AutoFlag, FileAppearance, FileConfig};
+use super::file::{AutoFlag, FileAppearance, FileConfig, FileGlass};
 use super::{
     CURSOR_SIZE_MAX, ClickMethod, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig,
     FontSmoothing, HIDDEN_FRAME_RATE_MAX, HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation,
@@ -409,10 +409,19 @@ impl Config {
 
     /// The defaults of a file naming `interface` and nothing else.
     pub fn default_for(interface: Interface) -> Config {
+        Config::default_for_style(interface, reprisekit::glass::Style::Glass)
+    }
+
+    /// The defaults of a file naming `interface` and `[glass] style` and nothing else.
+    pub fn default_for_style(interface: Interface, style: reprisekit::glass::Style) -> Config {
         Config::from_file(FileConfig {
             appearance: Some(FileAppearance {
                 interface: Some(interface.as_str().into()),
                 ..FileAppearance::default()
+            }),
+            glass: Some(FileGlass {
+                style: Some(style.as_str().into()),
+                ..FileGlass::default()
             }),
             ..FileConfig::default()
         })
@@ -509,6 +518,10 @@ impl Config {
                 cfg.glass.frame = reprisekit::glass::Frame::parse(&f)
                     .ok_or_else(|| format!("[glass] frame = {f:?} is not rounded or square"))?;
             }
+            if let Some(v) = g.style {
+                cfg.glass.style = reprisekit::glass::Style::parse(&v)
+                    .ok_or_else(|| format!("[glass] style = {v:?} is not glass or onyx"))?;
+            }
             if let Some(n) = g.notification_style {
                 cfg.glass.notification =
                     reprisekit::glass::NotifyStyle::parse(&n).ok_or_else(|| {
@@ -518,7 +531,7 @@ impl Config {
                     })?;
             }
         }
-        cfg.taskbar = TaskbarConfig::default_for(cfg.interface);
+        cfg.taskbar = TaskbarConfig::default_for_style(cfg.interface, cfg.glass.style);
         cfg.startmenu_style = StartMenuStyle::default_for(cfg.interface);
         if let Some(s) = &file.startmenu_style {
             cfg.startmenu_style = StartMenuStyle::parse(s)

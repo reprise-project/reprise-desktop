@@ -8,7 +8,9 @@ use reprisekit::schemes;
 use reprisekit::theme::{Color, ColorScheme, FontConfig, Theme};
 use reprisekit::trackbar::{self, TrackBar};
 
-use crate::model::{GLASS_FRAMES, GLASS_MATERIALS, INTERFACES, MODES, Settings, text_to_list};
+use crate::model::{
+    GLASS_FRAMES, GLASS_MATERIALS, GLASS_STYLES, INTERFACES, MODES, Settings, text_to_list,
+};
 use crate::pages::{Area, COMBO_MAX, TRACK_MAX, X, choice, time_edit};
 use crate::registry::Page;
 use repriseconf::config::{AppearanceMode, CLASSIC_DARK_SCHEME};
@@ -61,6 +63,7 @@ pub fn glass(s: &Settings) -> glass::Settings {
         mode: glass::Mode::parse(&s.mode).unwrap_or_default(),
         material: glass::Material::parse(&s.glass_material).unwrap_or_default(),
         frame: glass::Frame::parse(&s.glass_frame).unwrap_or_default(),
+        style: glass::Style::parse(&s.glass_style).unwrap_or_default(),
         notification: glass::NotifyStyle::parse(&s.glass_notification_style).unwrap_or_default(),
         intensity: s.glass_intensity.clamp(0, 100) as u8,
         transparency: s.glass_transparency,
@@ -167,9 +170,10 @@ pub fn glass_row(value: &str, rows: usize) -> usize {
 }
 
 /// The page for `s`'s interface in `a`, before any value is pushed in; the glass colour list has a
-/// Custom row while `s.glass_custom` is set.
+/// Custom row while `s.glass_custom` is set. Under Glass the Style list shares the scheme's row.
 pub fn page(s: &Settings, a: Area) -> Form {
     let i = interface(s);
+    let glass = i == Interface::Glass;
     let rows = scheme_rows(i, !s.glass_custom.is_empty());
     let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
     let (lw, rx, rw) = columns(a);
@@ -177,6 +181,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
     let frame_x = X + half_w + 16;
     let tw = rw.min(TRACK_MAX);
     let y = |y: i32| y + a.dh;
+    let scheme_w = if glass { half_w } else { lw };
     let mut items = vec![
         Item::new(
             SAMPLE,
@@ -199,10 +204,10 @@ pub fn page(s: &Settings, a: Area) -> Form {
             "scheme_label",
             X,
             y(288),
-            lw,
+            scheme_w,
             &tr!("appearancepage-color-scheme"),
         ),
-        Item::combo(scheme_id(i), X, y(304), lw, &refs, refs.len().min(8)),
+        Item::combo(scheme_id(i), X, y(304), scheme_w, &refs, refs.len().min(8)),
         Item::label_at("mode_label", rx, y(242), rw, &tr!("appearancepage-mode")),
         choice("mode", rx, y(258), rw, MODES),
     ];
@@ -245,8 +250,16 @@ pub fn page(s: &Settings, a: Area) -> Form {
             Item::combo(DARK_SCHEME, X, y(350), lw, &dark, dark.len().min(8)),
         ]);
     }
-    if i == Interface::Glass {
+    if glass {
         items.extend([
+            Item::label_at(
+                "style_label",
+                frame_x,
+                y(288),
+                half_w,
+                &tr!("appearancepage-style"),
+            ),
+            choice("glass_style", frame_x, y(304), half_w, GLASS_STYLES),
             Item::label_at(
                 "material_label",
                 X,
