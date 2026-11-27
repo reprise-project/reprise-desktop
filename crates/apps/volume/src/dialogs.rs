@@ -11,6 +11,7 @@ use reprisekit::controls::listbox::ListBox;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::DialogFont;
 use reprisekit::trackbar::{self, TrackBar};
+use reprisekit::{kit_tr, tr};
 
 use crate::view::{self, Options, View};
 
@@ -51,7 +52,7 @@ impl Props {
         let mut other = Combo::new(&[], 0, 1);
         other.enabled = false;
         let items = vec![
-            Item::label_at(DEVICE_LABEL, 11, 14, 70, "&Mixer device:").enabled(live),
+            Item::label_at(DEVICE_LABEL, 11, 14, 70, &tr!("properties-device")).enabled(live),
             Item::new(
                 DEVICE,
                 Rect::new(83, 14, 243, COMBO_H),
@@ -60,24 +61,19 @@ impl Props {
             Item::group(
                 "adjust_group",
                 Rect::new(11, 48, 317, 119),
-                "Adjust volume for",
+                &tr!("properties-adjust"),
             ),
-            Item::radio(PLAYBACK, 21, 71, "&Playback", RADIOS).checked(o.view == View::Playback),
-            Item::radio(RECORDING, 21, 100, "&Recording", RADIOS)
+            Item::radio(PLAYBACK, 21, 71, &tr!("properties-playback"), RADIOS)
+                .checked(o.view == View::Playback),
+            Item::radio(RECORDING, 21, 100, &tr!("properties-recording"), RADIOS)
                 .checked(o.view == View::Recording),
-            Item::radio(OTHER, 21, 131, "&Other", RADIOS).enabled(false),
+            Item::radio(OTHER, 21, 131, &tr!("properties-other"), RADIOS).enabled(false),
             Item::new(
                 OTHER_LIST,
                 Rect::new(83, 131, 233, COMBO_H),
                 Control::Combo(other),
             ),
-            Item::label_at(
-                "shown_label",
-                11,
-                178,
-                317,
-                "S&how the following volume controls:",
-            ),
+            Item::label_at("shown_label", 11, 178, 317, &tr!("properties-shown")),
             Item::new(
                 SHOWN,
                 Rect::new(11, 199, 317, 156),
@@ -86,8 +82,14 @@ impl Props {
                     icons: Vec::new(),
                 },
             ),
-            Item::button(OK, Rect::new(171, 368, 75, 23), "OK", true, true),
-            Item::button(CANCEL, Rect::new(252, 368, 75, 23), "Cancel", true, false),
+            Item::button(OK, Rect::new(171, 368, 75, 23), &kit_tr!("ok"), true, true),
+            Item::button(
+                CANCEL,
+                Rect::new(252, 368, 75, 23),
+                &kit_tr!("cancel"),
+                true,
+                false,
+            ),
         ];
         let mut p = Props {
             // Set in the second dialog font, as the mixer is.
@@ -210,43 +212,41 @@ pub fn advanced(icon: Option<Canvas>) -> Form {
             67,
             12,
             300,
-            &[
-                "Use these settings to make small changes to how your",
-                "audio sounds.",
-            ],
+            &[&tr!("advanced-intro-1"), &tr!("advanced-intro-2")],
         ),
-        Item::group("tone_group", Rect::new(11, 61, 360, 124), "Tone Controls"),
-        Item::lines_at(
-            "tone_text",
-            27,
-            79,
-            330,
-            &["These settings control the tone of your audio."],
+        Item::group(
+            "tone_group",
+            Rect::new(11, 61, 360, 124),
+            &tr!("advanced-tone-group"),
         ),
-        Item::label_at("bass_label", 27, 102, 40, "&Bass:"),
-        greyed("bass_low", 117, 102, 30, "Low"),
+        Item::lines_at("tone_text", 27, 79, 330, &[&tr!("advanced-tone-text")]),
+        Item::label_at("bass_label", 27, 102, 40, &tr!("advanced-bass")),
+        greyed("bass_low", 117, 102, 30, &tr!("advanced-low")),
         track("bass", 104),
-        greyed("bass_high", 274, 102, 30, "High"),
-        Item::label_at("treble_label", 27, 147, 40, "&Treble:"),
-        greyed("treble_low", 117, 147, 30, "Low"),
+        greyed("bass_high", 274, 102, 30, &tr!("advanced-high")),
+        Item::label_at("treble_label", 27, 147, 40, &tr!("advanced-treble")),
+        greyed("treble_low", 117, 147, 30, &tr!("advanced-low")),
         track("treble", 149),
-        greyed("treble_high", 274, 147, 30, "High"),
+        greyed("treble_high", 274, 147, 30, &tr!("advanced-high")),
         Item::group(
             "other_group",
             Rect::new(11, 200, 360, 101),
-            "Other Controls",
+            &tr!("advanced-other-group"),
         ),
         Item::lines_at(
             "other_text",
             27,
             220,
             330,
-            &[
-                "These settings make other changes to how your audio sounds.",
-                "This device has none.",
-            ],
+            &[&tr!("advanced-other-text-1"), &tr!("advanced-other-text-2")],
         ),
-        Item::button(CLOSE, Rect::new(296, 312, 75, 23), "Close", true, true),
+        Item::button(
+            CLOSE,
+            Rect::new(296, 312, 75, 23),
+            &kit_tr!("close"),
+            true,
+            true,
+        ),
     ])
     .set_in(DialogFont::ShellDlg)
     .labels_at_ink()
