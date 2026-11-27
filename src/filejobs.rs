@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use reprisefs::ops::DropOp;
 use reprisefs::undo::EntryId;
+use reprisekit::tr;
 
 use crate::compositor::State;
 
@@ -42,13 +43,13 @@ pub enum What {
 
 impl What {
     /// The title of the box that says the job did not start.
-    fn failure_title(self) -> &'static str {
+    fn failure_title(self) -> String {
         match self {
-            What::Put(op) => op.failure_title(),
-            What::Delete | What::Empty => "Error Deleting File or Folder",
-            What::Zip => reprisefs::compress::FAILURE_TITLE,
-            What::Undo => "Undo",
-            What::NewShortcut => "New Shortcut",
+            What::Put(op) => op.failure_title().to_string(),
+            What::Delete | What::Empty => tr!("dlg-job-delete-failed"),
+            What::Zip => reprisefs::compress::FAILURE_TITLE.to_string(),
+            What::Undo => tr!("dlg-job-undo"),
+            What::NewShortcut => tr!("dlg-job-new-shortcut"),
         }
     }
 }
@@ -264,8 +265,8 @@ impl State {
             Ok(None) => {}
             Err(e) => {
                 log::error!("desktop: {argv:?}: {e}");
-                let text = format!("Cannot start Explorer: {e}");
-                self.open_dialog(crate::dialog::Dialog::error(what.failure_title(), text));
+                let text = tr!("dlg-job-explorer-failed", error = e.to_string());
+                self.open_dialog(crate::dialog::Dialog::error(&what.failure_title(), text));
             }
         }
     }

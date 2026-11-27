@@ -5,6 +5,7 @@
 
 use reprisekit::controls::emojipicker::{self, EmojiPicker, Event, Hit, Key, RECENT};
 use reprisekit::emoji::{EmojiFont, Entry};
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 use std::rc::Rc;
@@ -374,7 +375,7 @@ impl State {
             emojipicker::width(&cm),
             emojipicker::layout(&cm).height,
         );
-        let mut tree = crate::access::root(Role::Window, "Emoji", rect);
+        let mut tree = crate::access::root(Role::Window, &tr!("dlg-emoji-title"), rect);
         let px = self.config.theme.fonts.size_px;
         let focus = emojipicker::access(&v.model, &self.text, px, &mut tree, ROOT, &cm);
         tree.set_focus(focus);

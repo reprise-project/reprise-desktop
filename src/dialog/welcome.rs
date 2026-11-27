@@ -168,7 +168,7 @@ fn buttons_of(w: &Welcome) -> Vec<DialogButton> {
         })
         .collect();
     out.push(super::build::button(
-        "Cancel",
+        &reprisekit::kit_tr!("cancel"),
         DialogAction::Cancel,
         p.focus == Part::Cancel,
     ));

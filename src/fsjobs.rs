@@ -271,10 +271,10 @@ impl<T> Reads<T> {
 }
 
 /// What an action does to files, which decides what a give-up says and what a late answer does.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Action {
     /// The error box's title.
-    pub title: &'static str,
+    pub title: String,
     /// Some for an action that changes files: what refreshes the view when a change it had
     /// already started lands past the deadline.
     pub late: Option<fn(&mut State)>,
@@ -285,18 +285,18 @@ pub struct Action {
 
 impl Action {
     /// An action whose work only reads; a late answer is dropped.
-    pub fn reads(title: &'static str) -> Action {
+    pub fn reads(title: impl Into<String>) -> Action {
         Action {
-            title,
+            title: title.into(),
             late: None,
             gave_up: None,
         }
     }
 
     /// An action whose work changes files after [`Gate::change`].
-    pub fn changes(title: &'static str, late: fn(&mut State)) -> Action {
+    pub fn changes(title: impl Into<String>, late: fn(&mut State)) -> Action {
         Action {
-            title,
+            title: title.into(),
             late: Some(late),
             gave_up: None,
         }
@@ -377,12 +377,13 @@ impl State {
         let deadline = self.fsjobs.deadline();
         let timer = Timer::from_duration(deadline);
         let watch = gate.clone();
+        let timed = action.clone();
         let armed = self.handle.insert_source(timer, move |_, _, state| {
             if let Some(changing) = watch.give_up() {
-                log::warn!("fsjobs: {} gave up after {deadline:?}", action.title);
-                let text = action.not_responding(changing);
-                state.open_dialog(crate::dialog::Dialog::error(action.title, text));
-                if let Some(gave_up) = action.gave_up {
+                log::warn!("fsjobs: {} gave up after {deadline:?}", timed.title);
+                let text = timed.not_responding(changing);
+                state.open_dialog(crate::dialog::Dialog::error(&timed.title, text));
+                if let Some(gave_up) = timed.gave_up {
                     gave_up(state, changing);
                 }
             }

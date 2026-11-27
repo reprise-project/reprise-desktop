@@ -11,6 +11,7 @@ use repriseconf::keybind::{
 use reprisekit::controls::hotkey;
 use reprisekit::controls::keysheet::{self, Binding, Group, KeySheet};
 use reprisekit::look::panel;
+use reprisekit::tr;
 use reprisescene::{Input, TreeId};
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -104,8 +105,8 @@ const GROUPS: [&str; 8] = [
 /// The group `a` is listed under and what its row says.
 fn describe(a: &Action) -> (&'static str, String) {
     match a {
-        Action::Spawn(cmd) => (PROGRAMS, format!("Run {cmd}")),
-        Action::Exec { app, .. } => (PROGRAMS, format!("Start {app}")),
+        Action::Spawn(cmd) => (PROGRAMS, tr!("dlg-keys-run", command = cmd.as_str())),
+        Action::Exec { app, .. } => (PROGRAMS, tr!("dlg-keys-start", app = app.as_str())),
         a => named(a.name().unwrap_or_default()),
     }
 }
@@ -131,8 +132,11 @@ pub fn chord_text(mods: u32, sym: u32) -> String {
 /// action once, its chords joined, under its group, groups in [`GROUPS`] order; the Super tap
 /// heads Launch and search.
 pub fn sheet(binds: &[Keybind], globals: &[(&GlobalShortcut, String)]) -> KeySheet {
-    let mut rows: Vec<(&'static str, String, Vec<String>)> =
-        vec![(LAUNCH, "Start menu".to_string(), vec!["Super".to_string()])];
+    let mut rows: Vec<(&'static str, String, Vec<String>)> = vec![(
+        LAUNCH,
+        tr!("dlg-keys-start-menu"),
+        vec!["Super".to_string()],
+    )];
     let mut add = |group: &'static str, what: String, keys: String| match rows
         .iter_mut()
         .find(|r| r.0 == group && r.1 == what)
@@ -154,7 +158,15 @@ pub fn sheet(binds: &[Keybind], globals: &[(&GlobalShortcut, String)]) -> KeyShe
         } else {
             &g.description
         };
-        add(PROGRAMS, format!("{name}: {what}"), chord_text(mods, sym));
+        add(
+            PROGRAMS,
+            tr!(
+                "dlg-keys-global",
+                program = name.as_str(),
+                what = what.as_str()
+            ),
+            chord_text(mods, sym),
+        );
     }
     let groups = GROUPS
         .iter()

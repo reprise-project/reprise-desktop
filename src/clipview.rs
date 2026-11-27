@@ -6,6 +6,7 @@
 //! Ctrl+V, or Ctrl+Shift+V for an app id in `[clipboard] terminal_apps`.
 
 use reprisekit::controls::cliphistory::{self, ClipHistory, Event, Hit, Key, Row};
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::input::keyboard::{Keycode, xkb};
 use smithay::output::Output;
@@ -368,7 +369,7 @@ impl State {
         let (x, y) = v.origin;
         let (w, h) = panel_size(&v.model, &self.config.theme);
         let rect = crate::raster::Rect::new(x, y, w, h);
-        let mut tree = crate::access::root(Role::Window, "Clipboard History", rect);
+        let mut tree = crate::access::root(Role::Window, &tr!("dlg-clip-title"), rect);
         let px = self.config.theme.fonts.size_px;
         let cm = self.config.theme.controls();
         let focus = cliphistory::access(&v.model, &self.text, px, &mut tree, ROOT, &cm);
