@@ -24,6 +24,18 @@ fn run_beside_a_right_bar_stays_on_a_narrow_output() {
     assert_eq!(by_start(area, Edge::Right, (347, 179)), (1920, 0));
 }
 
+#[test]
+fn run_s_error_box_centres_on_run_and_stays_on_screen() {
+    let area = Rect::new(0, 0, 1920, 1050);
+    let run = Rect::new(0, 1050 - 179, 347, 179);
+    assert_eq!(over_owner(run, area, (300, 120)), (23, 1050 - 179 + 29));
+    assert_eq!(
+        over_owner(run, area, (420, 260)),
+        (0, 1050 - 260),
+        "a box wider and taller than Run keeps to the corner"
+    );
+}
+
 /// A command longer than the box scrolls with the caret; `draw` keeps `Field::first` in step.
 #[test]
 fn a_long_run_command_scrolls_instead_of_overflowing_the_field() {

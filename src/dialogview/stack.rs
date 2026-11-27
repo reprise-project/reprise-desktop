@@ -87,10 +87,20 @@ impl State {
     /// Show `d` on top, as `parent`'s child when given; returns its view, None with no output to
     /// show it on.
     pub(crate) fn open_view(&mut self, mut d: Dialog, parent: Option<u64>) -> Option<u64> {
+        let owner = (parent.and_then(|id| self.dialog_index(id)))
+            .map(|i| &self.dialogs.views[i])
+            .filter(|v| self.scene.outputs().contains(&v.output))
+            .map(|v| {
+                let (w, h) = v.layout.size;
+                (Rect::new(v.x, v.y, w, h), v.output.clone())
+            });
         let pos = self.pointer_location();
-        let out = self
-            .output_at(pos.x, pos.y)
-            .or_else(|| self.scene.outputs().first().cloned())?;
+        let out = match &owner {
+            Some((_, out)) => out.clone(),
+            None => {
+                (self.output_at(pos.x, pos.y)).or_else(|| self.scene.outputs().first().cloned())?
+            }
+        };
         let area = self.usable_area(Some(&out));
         if area.width <= 0 {
             return None;
@@ -103,10 +113,13 @@ impl State {
             Placement::ByStart => {
                 dialog::by_start(area, self.bar_placement(&out).edge, layout.size)
             }
-            Placement::Center => (
-                area.x + (area.width - layout.size.0) / 2,
-                area.y + (area.height - layout.size.1) / 2,
-            ),
+            Placement::Center => match owner {
+                Some((frame, _)) => dialog::over_owner(frame, area, layout.size),
+                None => (
+                    area.x + (area.width - layout.size.0) / 2,
+                    area.y + (area.height - layout.size.1) / 2,
+                ),
+            },
             Placement::CenterAs(h) => (
                 area.x + (area.width - layout.size.0) / 2,
                 area.y + (area.height - h) / 2,

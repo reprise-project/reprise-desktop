@@ -193,6 +193,7 @@ pub struct Welcome {
 /// Where the dialog lands on the output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Placement {
+    /// Centred on the owner dialog for a child ([`over_owner`]), else on the usable area.
     Center,
     /// Centered across the usable area, top where a dialog this tall would have it.
     CenterAs(i32),
@@ -213,6 +214,15 @@ pub fn by_start(area: Rect, edge: reprisekit::taskbar::Edge, size: (i32, i32)) -
         Edge::Right => (area.right() - size.0, area.y),
     };
     crate::window::keep_inside(corner, size, area)
+}
+
+/// Top-left of a child dialog `size` centred on its owner's frame `owner`, kept inside `area`.
+pub fn over_owner(owner: Rect, area: Rect, size: (i32, i32)) -> (i32, i32) {
+    let centred = (
+        owner.x + (owner.width - size.0) / 2,
+        owner.y + (owner.height - size.1) / 2,
+    );
+    crate::window::keep_inside(centred, size, area)
 }
 
 #[derive(Clone, Debug, PartialEq)]
