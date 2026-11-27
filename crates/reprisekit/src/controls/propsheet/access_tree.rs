@@ -9,7 +9,8 @@ use super::{Nav, PropSheet};
 impl PropSheet {
     /// The sheet's `access` part: tabs, or search field and page list, then the open page as a
     /// panel named by its tab or item, or its label when filtered out, its controls under a
-    /// scroll view while the page scrolls. Returns the panel and the focus.
+    /// scroll view while the page scrolls, then the sheet's buttons. Returns the panel and the
+    /// focus.
     pub fn access(
         &self,
         tree: &mut Tree,
@@ -58,7 +59,8 @@ impl PropSheet {
             self.scroll
                 .access(&self.view_frame(), &lay, tree, panel, "scroll")
         });
-        let focus = self.open().access_in(tree, panel, view, text, px);
+        // OK, Cancel and Apply sit below the page, so they hang under the sheet, not its panel.
+        let focus = (self.open()).access_in(tree, parent, Some(view.unwrap_or(panel)), text, px);
         let nav = nav.filter(|_| self.tabs.focused);
         let field = field.filter(|_| self.search_focused);
         (panel, field.or(nav).or(focus))

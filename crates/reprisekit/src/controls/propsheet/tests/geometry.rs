@@ -224,6 +224,26 @@ fn greying_the_focused_apply_hands_the_focus_to_ok() {
 }
 
 #[test]
+fn the_sheet_buttons_hang_under_the_sheet_outside_the_page_panel() {
+    use crate::access::{ROOT, Tree, accesskit::Role};
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut s = folder_sheet();
+    s.set_apply_enabled(true);
+    let mut tree = Tree::window("T", s.size);
+    let (panel, _) = s.access(&mut tree, ROOT, &text, 11);
+    let children = |id| tree.get(id).unwrap().children().to_vec();
+    for (role, name) in [
+        (Role::DefaultButton, "OK"),
+        (Role::Button, "Cancel"),
+        (Role::Button, "Apply"),
+    ] {
+        let b = tree.find(role, name).expect(name);
+        assert!(children(ROOT).contains(&b), "{name} is the sheet's");
+        assert!(!children(panel).contains(&b), "{name} is not the page's");
+    }
+}
+
+#[test]
 fn arrows_on_the_sheet_buttons_move_between_them() {
     let mut s = folder_sheet();
     let focus_id = |s: &PropSheet| s.open().focus().map(|i| s.open().items[i].id);
