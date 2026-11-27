@@ -658,9 +658,21 @@ pub fn render_tree_icons(pct: u32) -> Canvas {
                 cm.list_header + 3 * cm.text.len(listview::ROW_H) + 4,
             );
             let lay = listview::layout(&lv, frame, &cm);
-            let mut l = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
-            listview::draw(&mut l, text, &theme.paint(), &lv, &lay, None, font);
-            parts.push(l);
+            let bare = listview::ListView {
+                rows: (lv.rows.iter())
+                    .map(|r| listview::Row {
+                        icon: None,
+                        ..r.clone()
+                    })
+                    .collect(),
+                columns: lv.columns.clone(),
+                ..listview::ListView::default()
+            };
+            for lv in [&lv, &bare] {
+                let mut l = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+                listview::draw(&mut l, text, &theme.paint(), lv, &lay, None, font);
+                parts.push(l);
+            }
         }
         drawn.push(parts);
     }
