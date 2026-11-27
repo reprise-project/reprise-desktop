@@ -2,6 +2,7 @@
 //! after the Access prompt shows them with the app's reason. Every call asks; nothing is kept.
 
 use crate::access;
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use zbus::{ObjectPath, OwnedVariant, Variant};
@@ -72,19 +73,19 @@ pub struct Me {
 /// The Access prompt for `who`: what it asks for, the account as shared, the app's `reason`,
 /// Share and Cancel.
 fn input(who: &str, window: &str, reason: &str, me: &Me) -> access::Input {
-    let what = match me.picture {
-        Some(_) => "name and picture",
-        None => "name",
+    let subtitle = match me.picture {
+        Some(_) => tr!("account-prompt-picture", who = who),
+        None => tr!("account-prompt-name", who = who),
     };
     access::Input {
         parent: crate::dialog::parent_handle(window),
         modal: true,
-        title: "Your account".into(),
-        subtitle: format!("{who} wants your {what}."),
+        title: tr!("account-title"),
+        subtitle,
         body: reason.into(),
         icon: Some("avatar-default".into()),
-        grant_label: Some("_Share".into()),
-        deny_label: Some("_Cancel".into()),
+        grant_label: Some(tr!("account-share")),
+        deny_label: Some(tr!("access-cancel")),
         choices: Vec::new(),
         person: Some(access::Person {
             name: me.name.clone(),

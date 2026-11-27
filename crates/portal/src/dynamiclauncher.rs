@@ -3,6 +3,7 @@
 //! xdg-desktop-portal writes the desktop file only after Install.
 
 use crate::access;
+use reprisekit::tr;
 use std::collections::HashMap;
 use zbus::{ObjectPath, Variant};
 
@@ -183,31 +184,28 @@ fn address(target: &str) -> Option<String> {
 fn input(who: &str, window: &str, ask: &Ask) -> access::Input {
     let (title, subtitle) = if ask.webapp {
         (
-            "Install web app",
-            format!("{who} wants to add a web app to the Start menu."),
+            tr!("launcher-webapp-title"),
+            tr!("launcher-webapp-prompt", who = who),
         )
     } else {
-        (
-            "Add to Start menu",
-            format!("{who} wants to add a launcher to the Start menu."),
-        )
+        (tr!("launcher-title"), tr!("launcher-prompt", who = who))
     };
     let mut body = Vec::new();
     if ask.webapp
         && let Some(address) = address(&ask.target)
     {
-        body.push(format!("It opens {address}."));
+        body.push(tr!("launcher-opens", address = address.as_str()));
     }
-    body.push("You can uninstall it from its right-click menu in All Programs.".to_string());
+    body.push(tr!("launcher-uninstall"));
     access::Input {
         parent: crate::dialog::parent_handle(window),
         modal: ask.modal,
-        title: title.into(),
+        title,
         subtitle,
         body: body.join("\n"),
         icon: Some("system-software-install".into()),
-        grant_label: Some("_Install".into()),
-        deny_label: Some("_Cancel".into()),
+        grant_label: Some(tr!("launcher-install")),
+        deny_label: Some(tr!("access-cancel")),
         choices: Vec::new(),
         person: None,
         launcher: Some(access::Launcher {

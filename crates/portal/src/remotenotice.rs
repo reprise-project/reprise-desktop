@@ -2,6 +2,7 @@
 //! asked; its button ends the session and deletes the grant from xdg-desktop-portal's store.
 
 use crate::{SessionData, Sessions};
+use reprisekit::tr;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -11,8 +12,6 @@ const SERVER: &str = "org.freedesktop.Notifications";
 const SERVER_PATH: &str = "/org/freedesktop/Notifications";
 const SENDER: &str = "Reprise";
 const FORGET_KEY: &str = "forget";
-const FORGET_LABEL: &str = "Stop and forget";
-const BODY: &str = "You allowed this before and ticked Remember this choice.";
 /// How long the balloon stays up before it waits in the history.
 const TIMEOUT_MS: i32 = 30_000;
 const STORE: &str = "org.freedesktop.impl.portal.PermissionStore";
@@ -106,8 +105,8 @@ impl Notices {
         let id = app_id.clone();
         let (name, icon) = blocking::unblock(move || face(&id)).await;
         let summary = match name.is_empty() {
-            true => "An application is controlling this computer".to_string(),
-            false => format!("{name} is controlling this computer"),
+            true => tr!("remote-notice-unknown"),
+            false => tr!("remote-notice-named", name = name.as_str()),
         };
         // From Reprise and critical, so neither the app's own mute nor Do Not Disturb holds it,
         // and the history keeps it open until dismissed or the session ends.
@@ -119,13 +118,14 @@ impl Notices {
         let replaces = (self.0.lock().unwrap().shown.iter())
             .find(|(_, (app, _))| *app == app_id)
             .map_or(0, |(id, _)| *id);
+        let (note, forget) = (tr!("remote-notice-body"), tr!("remote-notice-forget"));
         let body = (
             SENDER,
             replaces,
             "",
             summary.as_str(),
-            BODY,
-            vec![FORGET_KEY, FORGET_LABEL],
+            note.as_str(),
+            vec![FORGET_KEY, forget.as_str()],
             hints,
             TIMEOUT_MS,
         );

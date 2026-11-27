@@ -5,6 +5,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("portal");
+
 mod access;
 mod account;
 mod appchoose;
