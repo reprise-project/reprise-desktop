@@ -78,7 +78,12 @@ pub fn tasks(place: &Place, sel: Sel, count: usize) -> PaneSection {
                     true,
                 ),
                 dead(&tr!("pane-tasks-add-or-remove-programs"), PROGRAMS),
-                dead(&tr!("pane-tasks-change-a-setting"), SETTINGS),
+                row(
+                    &tr!("pane-tasks-change-a-setting"),
+                    SETTINGS,
+                    Command::Settings,
+                    true,
+                ),
             ],
         ),
         Place::Network(_) => (
@@ -540,6 +545,7 @@ mod tests {
             &[],
         );
         assert_eq!(s[0].rows[0].cmd, Command::SystemInformation);
+        assert_eq!(s[0].rows[2].cmd, Command::Settings);
         assert_eq!(
             table(&s[0]),
             (
@@ -547,7 +553,7 @@ mod tests {
                 vec![
                     ("View system information".to_string(), true),
                     ("Add or remove programs".to_string(), false),
-                    ("Change a setting".to_string(), false),
+                    ("Change a setting".to_string(), true),
                 ]
             )
         );
