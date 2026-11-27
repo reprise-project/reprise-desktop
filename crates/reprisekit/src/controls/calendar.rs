@@ -715,6 +715,7 @@ pub fn access(
 ) -> NodeId {
     let mut n = access::node(Role::DateInput, lay.frame);
     access::focusable(&mut n, cal.enabled);
+    n.set_read_only();
     let id = tree.push(parent, key, n);
     let value = match cal.day {
         Some(d) => cal.date_text(d),

@@ -794,9 +794,6 @@ pub fn value_run(
     text: &TextRenderer,
     px: u32,
 ) {
-    if let Some(n) = tree.get_mut(id) {
-        n.set_read_only();
-    }
     let line = Line {
         text: value,
         start: 0,

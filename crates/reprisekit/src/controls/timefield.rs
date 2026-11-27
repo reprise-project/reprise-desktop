@@ -511,6 +511,22 @@ mod tests {
         );
     }
 
+    /// A reader takes a read-only node for one that cannot change; the field takes typed digits.
+    #[test]
+    fn an_enabled_time_field_reads_as_editable_and_a_greyed_one_as_disabled() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let l = layout(Rect::new(0, 0, 100, 21), &ControlMetrics::CLASSIC);
+        let mut tf = TimeField::hm(9, 0, false);
+        for enabled in [true, false] {
+            tf.enabled = enabled;
+            let mut tree = Tree::window("New Task", (200, 100));
+            let id = access(&tf, &l, &text, 11, &mut tree, access::ROOT, "time");
+            let n = tree.get(id).unwrap();
+            assert!(!n.is_read_only(), "never read-only");
+            assert_eq!(n.is_disabled(), !enabled);
+        }
+    }
+
     #[test]
     fn a_greyed_blue_time_field_inks_its_text_flat() {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);

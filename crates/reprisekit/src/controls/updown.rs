@@ -467,9 +467,13 @@ fn draw_with(
     draw_spin_buttons(c, p, lay.up, lay.down, ud.enabled, spin);
 }
 
+/// The spin button with its numeric range and, as a reader reads an edit, the digits it shows
+/// where `draw` puts them.
 pub fn access(
     ud: &UpDown,
     lay: &Layout,
+    text: &TextRenderer,
+    px: u32,
     tree: &mut Tree,
     parent: NodeId,
     key: impl std::hash::Hash,
@@ -487,7 +491,24 @@ pub fn access(
     {
         n.set_value(e.text.as_str());
     }
-    tree.push(parent, key, n)
+    let id = tree.push(parent, key, n);
+    let shown = ud.shown();
+    let (tr, align) = text_rect(ud, lay.edit, 1);
+    let x = text_x(
+        text,
+        &shown,
+        tr,
+        align,
+        ud.edit.as_ref().map(TextEdit::caret),
+        px,
+    );
+    let sel = ud
+        .edit
+        .as_ref()
+        .map_or(shown.len()..shown.len(), TextEdit::selection);
+    let run = Rect::new(x, tr.y, tr.right() - x, tr.height);
+    access::value_run(tree, id, run, &shown, sel, text, px);
+    id
 }
 
 #[cfg(test)]
@@ -495,6 +516,25 @@ mod tests {
     use super::*;
     use crate::look::classic_paint;
     use crate::theme::{FontConfig, Theme};
+
+    #[test]
+    fn a_reader_reads_the_spin_buttons_digits_as_its_text_where_they_draw() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let lay = layout(10, 20);
+        let mut tree = Tree::window("Print", (200, 100));
+        let ud = UpDown::new(12, 1, 999);
+        let id = access(&ud, &lay, &text, 11, &mut tree, access::ROOT, "copies");
+        assert_eq!(tree.get(id).unwrap().numeric_value(), Some(12.0));
+        let runs: Vec<_> = (tree.nodes())
+            .filter(|(_, n)| n.role() == Role::TextRun)
+            .map(|(_, n)| n)
+            .collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].value(), Some("12"));
+        let r = runs[0].bounds().unwrap();
+        let right = f64::from(lay.edit.right() - 2);
+        assert_eq!(r.x1, right, "right-aligned as drawn");
+    }
 
     /// The Date and Time sheet's greyed 79x21 year spinner on its page.
     #[test]
