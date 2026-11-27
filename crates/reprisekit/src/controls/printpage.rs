@@ -73,13 +73,14 @@ fn draw_rows(
     top: i32,
     width: i32,
 ) {
+    let page = c.bounds();
     for (i, row) in rows.iter().enumerate() {
         let Some(line) = lines.get(row.line) else {
             continue;
         };
         let shown = multiedit::expand(&line[row.start..row.end], m.tab_cols);
         let r = Rect::new(0, top + i as i32 * m.line_h, width, m.line_h);
-        text.draw(c, r, &shown, m.bold, INK, Align::Left, m.font_px);
+        text.draw_tall(c, r, page, &shown, m.bold, INK, Align::Left, m.font_px);
     }
 }
 
@@ -439,7 +440,10 @@ mod tests {
             size_px: 10,
             ..crate::theme::FontConfig::default()
         });
-        let m = metrics();
+        let m = Metrics {
+            tab_cols: 4,
+            ..Metrics::for_font(&text, 10)
+        };
         let frame = Frame {
             width: 200,
             height: 300,
@@ -482,7 +486,10 @@ mod tests {
             inked(&c, 275, 285),
             "the footer in the middle of the bottom one"
         );
-        assert!(!inked(&c, 50, 260), "neither runs into the text's room");
+        assert!(
+            !inked(&c, 40 + m.line_h, 260),
+            "neither runs into the text's room"
+        );
     }
 
     #[test]
@@ -528,6 +535,52 @@ mod tests {
             (fitted.width, fitted.height),
             (17000, 17000),
             "Fit to page fills the width"
+        );
+    }
+
+    #[test]
+    fn accents_over_capitals_and_descenders_print_whole() {
+        crate::pins::fonts();
+        let face = TextRenderer::monospace(50);
+        let text = "\u{150}\u{c9}\u{c1}\u{dc}\u{d6} gjpq";
+        let lines = vec![String::new(), text.to_string(), String::new()];
+        let inked_rows = |m: &Metrics| {
+            let pages = text_pages(&face, m, &lines, 1000, 3 * m.line_h);
+            let c = draw_text_page(&face, m, &lines, &pages[0], (1000, 3 * m.line_h));
+            let rows: Vec<i32> = (0..c.height as i32)
+                .filter(|&y| (0..c.width as i32).any(|x| c.get(x, y) != PAPER.argb()))
+                .collect();
+            let ink = (0..c.height as i32)
+                .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) != PAPER.argb())
+                .count();
+            (rows, ink)
+        };
+        let short = Metrics {
+            font_px: 50,
+            line_h: 50,
+            ..Metrics::default()
+        };
+        let (rows, short_ink) = inked_rows(&short);
+        assert!(
+            rows.first().is_some_and(|&y| y < short.line_h),
+            "the accents ink above a row shorter than the face's line: {:?}",
+            rows.first()
+        );
+        let m = Metrics::for_font(&face, 50);
+        assert!(
+            m.line_h > 50,
+            "a row is as tall as the face's line, {}",
+            m.line_h
+        );
+        let (rows, ink) = inked_rows(&m);
+        assert_eq!(
+            ink, short_ink,
+            "every accent and descender pixel prints either way"
+        );
+        assert!(
+            rows.iter().all(|y| (m.line_h..2 * m.line_h).contains(y)),
+            "{rows:?}"
         );
     }
 }

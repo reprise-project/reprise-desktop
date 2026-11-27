@@ -45,13 +45,11 @@ impl TextFont {
         }
     }
 
-    fn metrics(&self) -> Metrics {
-        let px = self.px();
+    /// Rows as tall as `face`'s line at the size printed.
+    fn metrics(&self, face: &TextRenderer) -> Metrics {
         Metrics {
-            font_px: px,
             bold: self.bold,
-            line_h: px as i32,
-            ..Metrics::default()
+            ..Metrics::for_font(face, self.px())
         }
     }
 }
@@ -91,8 +89,8 @@ impl Laid {
             Doc::Text { font, lines } => {
                 let face = font.load();
                 let (w, h) = body_px(&setup);
-                let rows =
-                    printpage::text_pages(face_of(&face, &font), &font.metrics(), &lines, w, h);
+                let face = face_of(&face, &font);
+                let rows = printpage::text_pages(face, &font.metrics(face), &lines, w, h);
                 (Doc::Text { font, lines }, rows)
             }
             Doc::Picture {
@@ -143,7 +141,7 @@ impl Laid {
             Doc::Text { font, lines } => {
                 let face = font.load();
                 let face = face_of(&face, font);
-                let m = font.metrics();
+                let m = font.metrics(face);
                 let size = body_px(&self.setup);
                 let s = &self.setup;
                 let framed = !(s.header.is_empty() && s.footer.is_empty());

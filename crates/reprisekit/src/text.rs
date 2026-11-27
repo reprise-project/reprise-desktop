@@ -1498,6 +1498,34 @@ impl TextRenderer {
         );
     }
 
+    /// [`TextRenderer::draw`] with the ink cut at `clip` above and below instead of at `rect`, so
+    /// a glyph taller than its row (an accent over a capital, a descender) keeps its ink.
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_tall(
+        &self,
+        canvas: &mut Canvas,
+        rect: Rect,
+        clip: Rect,
+        text: &str,
+        bold: bool,
+        color: Color,
+        align: Align,
+        size_px: u32,
+    ) {
+        let Some(baseline) = self.baseline(rect, bold, size_px) else {
+            return;
+        };
+        let line = Rect::new(rect.x, clip.y, rect.width, clip.height);
+        let clip = line.intersect(&clip);
+        if clip.is_empty() {
+            return;
+        }
+        let pen = self.pen(rect, text, bold, align, size_px);
+        self.draw_line(
+            canvas, pen, baseline, clip, line, text, bold, color, size_px,
+        );
+    }
+
     /// The pen x `text` aligned `align` in `rect` starts at; left-aligned, past a first glyph's
     /// ink left of its pen ([`TextRenderer::hook_room`]).
     fn pen(&self, rect: Rect, text: &str, bold: bool, align: Align, size_px: u32) -> i32 {
