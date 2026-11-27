@@ -83,9 +83,73 @@ fn install_failed(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Error {
     let refused = |n: &str| n == "org.freedesktop.fwupd.AuthFailed";
     match reprisebus::polkit::refusal(&e, refused, dismissed) {
         Some(reprisebus::polkit::Refusal::Dismissed) => Error::Dismissed,
+        Some(reprisebus::polkit::Refusal::TimedOut) => Error::Failed(UNFINISHED.into()),
         _ => failed(e),
     }
 }
+
+/// How long an Install may take in all: a firmware write runs for many minutes,
+/// and a device may ask to be replugged or restarted on the way.
+const INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// What ended a wait in [`install`]'s loop.
+enum Next {
+    Done(zbus::Result<Option<()>>),
+    Signal(Option<Signal>),
+    /// The password prompt was up for [`reprisebus::polkit::PROMPT_TIMEOUT`].
+    PromptOver,
+}
+
+/// An install's password prompt, over at [`reprisebus::polkit::PROMPT_TIMEOUT`] unless fwupd
+/// shows the install past it first. Status is the daemon's: loading the cabinet, which comes
+/// before the prompt, and another client's download set it too.
+struct Prompt {
+    timer: Option<async_io::Timer>,
+    /// fwupd said it waits for authentication, which it sets just before its polkit check
+    /// (deferred 250 ms, so a check that needs no prompt may never show it).
+    asked: bool,
+}
+
+impl Prompt {
+    fn new() -> Prompt {
+        let timer = async_io::Timer::after(reprisebus::polkit::PROMPT_TIMEOUT);
+        Prompt {
+            timer: Some(timer),
+            asked: false,
+        }
+    }
+
+    /// fwupd's status became `s`: past the prompt once it leaves waiting for authentication, or,
+    /// with that never seen, once it works at the device.
+    fn status(&mut self, s: u32) {
+        if s == STATUS_WAITING_FOR_AUTH {
+            self.asked = true;
+        } else if self.asked || at_device(s) {
+            self.past();
+        }
+    }
+
+    /// The install is past its prompt, or nothing more will say so.
+    fn past(&mut self) {
+        self.timer = None;
+    }
+}
+
+fn at_device(s: u32) -> bool {
+    matches!(
+        s,
+        STATUS_DEVICE_RESTART
+            | STATUS_DEVICE_WRITE
+            | STATUS_DEVICE_VERIFY
+            | STATUS_SCHEDULING
+            | STATUS_DEVICE_READ
+            | STATUS_DEVICE_ERASE
+            | STATUS_DEVICE_BUSY
+            | STATUS_WAITING_FOR_USER
+    )
+}
+
+const UNFINISHED: &str = "fwupd stopped answering before the firmware install finished.";
 
 fn sentence(s: &str) -> String {
     let mut s = s.trim().to_string();
@@ -525,28 +589,59 @@ pub async fn install(
     let body = (device.id.as_str(), Fd::from(&cab), options);
     let call =
         proxy.call_with_flags::<_, _, ()>("Install", MethodFlags::ALLOW_INTERACTIVE_AUTH, &body);
+    let call = reprisebus::polkit::asking(INSTALL_TIMEOUT, true, call);
     futures_util::pin_mut!(call);
     let mut listening = true;
     let mut waiting = false;
+    let mut prompt = Prompt::new();
     let done = loop {
-        if !listening {
-            break call.as_mut().await;
-        }
-        match select(call.as_mut(), signals.next()).await {
-            Either::Left((r, _)) => break r,
-            Either::Right((None | Some(Signal::OwnerChanged), _)) => listening = false,
-            Either::Right((Some(Signal::Message(m)), _))
+        let next = {
+            let signal = async {
+                match listening {
+                    true => signals.next().await,
+                    false => std::future::pending().await,
+                }
+            };
+            let prompt_over = async {
+                match prompt.timer.as_mut() {
+                    Some(t) => drop(t.await),
+                    None => std::future::pending().await,
+                }
+            };
+            futures_util::pin_mut!(signal, prompt_over);
+            match select(call.as_mut(), select(signal, prompt_over)).await {
+                Either::Left((r, _)) => Next::Done(r),
+                Either::Right((Either::Left((s, _)), _)) => Next::Signal(s),
+                Either::Right((Either::Right(_), _)) => Next::PromptOver,
+            }
+        };
+        match next {
+            Next::Done(r) => break r,
+            // Dropping the call withdraws its prompt.
+            Next::PromptOver => {
+                log::warn!(
+                    "{name}: no install after {:?}",
+                    reprisebus::polkit::PROMPT_TIMEOUT
+                );
+                return Err(Error::Failed(reprisebus::polkit::TIMED_OUT.into()));
+            }
+            Next::Signal(None | Some(Signal::OwnerChanged)) => {
+                listening = false;
+                prompt.past();
+            }
+            Next::Signal(Some(Signal::Message(m)))
                 if m.header().member().is_some_and(|n| n == "DeviceRequest") =>
             {
                 let Ok(r) = m.body().deserialize::<Dict>() else {
                     continue;
                 };
+                prompt.past();
                 let r = request(&r, name);
                 log::info!("{name} asks: {}", r.message);
                 waiting = r.now;
                 asks(Some(r));
             }
-            Either::Right((Some(Signal::Message(m)), _)) => {
+            Next::Signal(Some(Signal::Message(m))) => {
                 let Ok((_, changed, _)) = m.body().deserialize::<(String, Dict, Vec<String>)>()
                 else {
                     continue;
@@ -562,6 +657,9 @@ pub async fn install(
                     .and_then(|v| u32::try_from(v).ok())
                     .filter(|&p| p > 0 && p <= 100)
                     .map(|p| f64::from(p) / 100.0);
+                if let Some(s) = status {
+                    prompt.status(s);
+                }
                 if line.is_some() || pct.is_some() {
                     progress(pct, line);
                 }
@@ -610,6 +708,46 @@ mod tests {
             panic!("only AuthFailed asks whether the prompt was dismissed")
         });
         assert_eq!(other, Error::Failed("Failed to obtain auth.".into()));
+    }
+
+    #[test]
+    fn an_install_past_its_limit_says_fwupd_stopped_answering() {
+        let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        let failed = install_failed(late, || panic!("a timeout is no dismissal"));
+        assert_eq!(failed, Error::Failed(UNFINISHED.into()));
+    }
+
+    #[test]
+    fn the_prompt_ends_on_leaving_waiting_for_auth_or_else_at_the_device() {
+        let mut asked = Prompt::new();
+        for s in [1, STATUS_DECOMPRESSING, STATUS_WAITING_FOR_AUTH] {
+            asked.status(s);
+            assert!(
+                asked.timer.is_some(),
+                "status {s} comes before or during the prompt"
+            );
+        }
+        asked.status(STATUS_DECOMPRESSING);
+        assert!(
+            !asked.timer.is_some(),
+            "any status after waiting for auth is past it"
+        );
+        let mut unasked = Prompt::new();
+        unasked.status(STATUS_DECOMPRESSING);
+        assert!(unasked.timer.is_some(), "loading the cabinet comes first");
+        unasked.status(STATUS_DEVICE_WRITE);
+        assert!(!unasked.timer.is_some());
+        let mut waiting = Prompt::new();
+        waiting.status(STATUS_WAITING_FOR_USER);
+        assert!(!waiting.timer.is_some());
+    }
+
+    #[test]
+    fn signals_that_stop_leave_only_the_install_bound() {
+        let mut deaf = Prompt::new();
+        deaf.status(STATUS_WAITING_FOR_AUTH);
+        deaf.past();
+        assert!(!deaf.timer.is_some(), "nothing more would end the prompt");
     }
 
     #[test]
