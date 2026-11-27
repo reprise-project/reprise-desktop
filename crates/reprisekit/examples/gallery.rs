@@ -118,10 +118,10 @@ use start::{
     render_blue_start_menus, render_blue_start_panel, render_start_panel, render_start_panel_dark,
 };
 use taskbar::{
-    render_onyx_taskbar, render_orb_glow, render_quick_more, render_task_attention,
-    render_task_progress, render_taskbar_cells, render_taskbar_drag, render_taskbar_edges,
-    render_taskbar_hidden, render_taskbar_keys, render_taskbar_top, render_tray_arrow,
-    render_tray_arrow_schemes,
+    render_onyx_orb, render_onyx_taskbar, render_orb_glow, render_quick_more,
+    render_task_attention, render_task_progress, render_taskbar_cells, render_taskbar_drag,
+    render_taskbar_edges, render_taskbar_hidden, render_taskbar_keys, render_taskbar_top,
+    render_tray_arrow, render_tray_arrow_schemes,
 };
 use text_size::{
     render_list_icons, render_menu_columns, render_menu_icons, render_menu_scroll,
@@ -177,6 +177,10 @@ fn write_scale(n: i32) {
     write_preview(
         || render_orb_glow(n.max(1)),
         "reprisekit-gallery-orb-glow-glass.png",
+    );
+    write_preview(
+        || render_onyx_orb(n.max(1)),
+        &format!("reprisekit-gallery-onyx-orb@{}.png", n.max(1)),
     );
     write_volume_popups(true, n.max(1));
     write_preview(
@@ -665,6 +669,7 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
             || render_orb_glow(1),
             "reprisekit-gallery-orb-glow-glass.png",
         );
+        write_preview(|| render_onyx_orb(1), "reprisekit-gallery-onyx-orb@1.png");
         write_preview(
             || render_windowed_dialog(1),
             "reprisekit-gallery-windowed-dialog.png",

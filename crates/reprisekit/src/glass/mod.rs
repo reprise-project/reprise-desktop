@@ -21,6 +21,7 @@ pub mod logon;
 mod menus;
 pub mod notify;
 mod onyx;
+mod onyxorb;
 mod orb;
 pub mod overview;
 pub mod page;
@@ -337,9 +338,23 @@ fn made(s: &Settings, small_bar: bool, scale: i32) -> crate::style::Style {
         full
     };
     match s.style {
-        Style::Onyx => onyx::restyle(st, s, small_bar, scale),
+        Style::Onyx => onyx_orb(onyx::restyle(st, s, small_bar, scale), small_bar, scale),
         Style::Glass => st,
     }
+}
+
+/// `st` with Onyx's Start orb ([`onyxorb`]) in place of Glass's: wider, standing
+/// [`onyxorb::RISE`] px over the bar on either bar.
+fn onyx_orb(mut st: crate::style::Style, small_bar: bool, scale: i32) -> crate::style::Style {
+    let bar = if small_bar {
+        SMALL_TASKBAR_HEIGHT
+    } else {
+        BAR_HEIGHT
+    };
+    st.metrics.start_button_width = onyxorb::WIDTH;
+    st.taskbar.orb_rise = Some(onyxorb::ORB_RISE);
+    st.with_painted(Part::StartButton, move || onyxorb::orb(bar, scale))
+        .with_painted(Part::StartAbove, move || onyxorb::above(scale))
 }
 
 struct Kept<K, V> {
@@ -1756,6 +1771,51 @@ mod tests {
         );
         assert_eq!(s.taskbar.clock_baselines(30), None, "one on a 30 px bar");
         assert!(s.taskbar.orb, "Start is an orb");
+    }
+
+    #[test]
+    fn onyxs_orb_stands_4_px_over_either_bar_and_takes_the_screen_corner() {
+        use crate::taskbar::{Edge, TaskbarCounts, TaskbarHit, TaskbarLayout};
+        let onyx = Settings {
+            style: Style::Onyx,
+            ..Settings::default()
+        };
+        let counts = TaskbarCounts {
+            tasks: 2,
+            ..TaskbarCounts::default()
+        };
+        let layout = |s: &crate::style::Style, h| {
+            let mut m = style(&onyx).metrics.clone();
+            m.taskbar_height = h;
+            TaskbarLayout::compute(&m, &s.taskbar, 1920, true, counts, 51)
+        };
+        for (s, h) in [(small_bar_style(&onyx), 30), (style(&onyx), 40)] {
+            let l = layout(&s, h);
+            assert_eq!(l.start, Rect::new(0, 0, 59, h), "{h} px: the Start cell");
+            assert_eq!(l.start_disc, Some(Rect::new(9, -4, 41, 41)), "{h} px");
+            assert_eq!(l.start_above, Some(Rect::new(0, -11, 59, 11)), "{h} px");
+            for (x, y) in [(0, h - 1), (0, 0), (58, h - 1), (29, -4), (20, -1)] {
+                assert_eq!(l.hit(x, y), TaskbarHit::Start, "{h} px: ({x}, {y})");
+            }
+            for (x, y) in [(9, -2), (49, -2), (29, -5), (59, h - 1)] {
+                assert_ne!(l.hit(x, y), TaskbarHit::Start, "{h} px: ({x}, {y})");
+            }
+            let size = |p| {
+                let f = s.part(p).unwrap().frame(State::Normal);
+                (f.width, f.height)
+            };
+            assert_eq!(size(Part::StartButton), (59, h), "{h} px");
+            assert_eq!(size(Part::StartAbove), (59, 11), "{h} px");
+        }
+        let top = layout(&small_bar_style(&onyx), 30).on_edge(Edge::Top);
+        assert_eq!(top.hit(0, 0), TaskbarHit::Start, "a top bar's corner");
+        let glass = small_bar_style(&Settings::default());
+        assert_eq!(
+            glass.taskbar.orb_rise,
+            Some(SMALL_ORB_RISE),
+            "Glass keeps its orb"
+        );
+        assert_eq!(glass.metrics.start_button_width, 54);
     }
 
     #[test]
