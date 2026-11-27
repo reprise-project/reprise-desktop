@@ -580,20 +580,20 @@ fn the_taskbar_page_geometry() {
     {
         assert_eq!(
             rect(&s, p, id),
-            Rect::new(20, 100 + 18 * i as i32, 13, 13),
+            Rect::new(20, 118 + 18 * i as i32, 13, 13),
             "{id} is row {i}"
         );
     }
-    assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(294, 185, 84, 23));
+    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 100, 358, 13));
+    assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(294, 203, 84, 23));
     assert_eq!(
         rect(&s, p, "taskbar_slide_note"),
-        Rect::new(282, 226, 96, 13)
+        Rect::new(282, 244, 96, 13)
     );
     assert_eq!(
         rect(&s, p, "taskbar_events_note"),
-        Rect::new(180, 244, 198, 13)
+        Rect::new(180, 262, 198, 13)
     );
-    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 262, 358, 13));
     assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 280);
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
         assert_eq!(
@@ -651,11 +651,27 @@ fn glass_only_taskbar_controls_grey_with_a_note_elsewhere() {
     assert!(!enabled_on(&classic, Page::Taskbar, "taskbar_small_icons"));
     assert_eq!(
         lines(&classic, Page::Taskbar, "taskbar_note"),
-        ["Left unchanged, these follow the interface."]
+        ["Left unchanged, the settings on this page follow the interface."]
     );
     let glass = under("glass");
     assert!(enabled_on(&glass, Page::Taskbar, "glass_orb_glow"));
     assert!(enabled_on(&glass, Page::Taskbar, "taskbar_small_icons"));
+}
+
+#[test]
+fn the_taskbar_customize_stays_beside_its_row_on_a_wide_page_and_the_note_takes_one_line() {
+    reprisekit::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = Theme::default().fonts.size_px;
+    let wide = super::super::desktop::taskbar(Area { w: 1100, dh: 0 });
+    let at = |id: &str| wide.item(id).unwrap().rect;
+    assert_eq!(at(TRAY_CUSTOMIZE), Rect::new(294, 203, 84, 23));
+    assert_eq!(
+        at("taskbar_tray_overflow").y + 18,
+        at("taskbar_network_meter").y
+    );
+    let line = "Left unchanged, the settings on this page follow the interface.";
+    assert!(text.measure(line, false, px) <= Area::MIN.w);
 }
 
 #[test]
