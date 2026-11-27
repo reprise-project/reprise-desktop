@@ -128,7 +128,13 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     if mode != (&base.mode, &base.dark_from, &base.dark_to) || want.interface != base.interface {
         settle_mode_keys(&mut doc);
     }
-    repriseconf::fields::save(&mut doc, &fields(), want, base, &have, &def)
+    // A field whose default the new look moves is written against that default alone: the
+    // sheet's value may equal the old look's default and still be the user's pick.
+    let old = Settings::for_look(&have.interface, &have.glass_style);
+    let (shifted, kept): (Vec<_>, Vec<_>) = fields().into_iter().partition(|f| !f.same(&old, &def));
+    repriseconf::fields::save(&mut doc, &kept, want, base, &have, &def)
+        .map_err(|e| e.to_string())?;
+    repriseconf::fields::save(&mut doc, &shifted, want, &def, &def, &def)
         .map_err(|e| e.to_string())?;
     // The list is written whole or not at all: a table's comments do not
     // survive a rewrite anyway.

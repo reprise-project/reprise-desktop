@@ -202,12 +202,18 @@ impl SettingsApp {
         }
     }
 
-    /// The defaults Restore Defaults puts back for `keys`: the file's interface's and Glass
-    /// style's, Classic's when the interface itself is among them.
+    /// The defaults Restore Defaults puts back for `keys`: the file's interface's under the
+    /// sheet's Glass style while the interface is the file's, Classic's when the interface itself
+    /// is among them.
     fn defaults_for(&self, keys: &[Key]) -> &'static model::Settings {
+        let (i, want) = (&self.loaded.interface, &self.want);
+        let style = match want.interface == *i {
+            true => &want.glass_style,
+            false => &self.loaded.glass_style,
+        };
         match keys.contains(&model::INTERFACE) {
             true => model::defaults("", ""),
-            false => model::defaults(&self.loaded.interface, &self.loaded.glass_style),
+            false => model::defaults(i, style),
         }
     }
 
