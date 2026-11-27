@@ -2,7 +2,7 @@
 //! sizing grip in the corner. A 22 px bar of 18 px panels with 2 px of face
 //! above and below, a 2 px gap, text 11 px in. Panels span the whole client
 //! width; the grip reserves nothing and sits 1 px inside the last panel's
-//! recess. A panel may carry a 16 px icon.
+//! recess. A panel may carry an icon, 16 px at 100% text ([`icon_px`]).
 
 use crate::access::{self, Tree, accesskit};
 use crate::look::Paint;
@@ -19,10 +19,16 @@ pub const PANEL_H: i32 = 18;
 /// A panel's text inset (Notepad's 11, Explorer's 2); programs set `Panel::pad`.
 pub const TEXT_PAD: i32 = 11;
 pub const EXPLORER_TEXT_PAD: i32 = 2;
-/// A panel's icon starts 2 px in and its text 22 px in.
+/// A panel's icon starts 2 px in and its text 22 px in, 4 px past a 16 px icon.
 pub const ICON_PAD: i32 = 2;
 pub const ICON_PX: i32 = 16;
 pub const ICON_TEXT_PAD: i32 = 22;
+
+/// A panel's icon at text `u`, the size a host fetches [`Panel::icon`] at: grown as far as the
+/// panel grows ([`TextUnits::icon_within`]).
+pub fn icon_px(u: TextUnits) -> i32 {
+    u.icon_within(ICON_PX, u.len(PANEL_H) - PANEL_H)
+}
 const GAP: i32 = 2;
 const GRIP: i32 = 16;
 
@@ -41,7 +47,7 @@ pub struct Panel {
     pub text: String,
     pub width: i32,
     pub pad: i32,
-    /// A 16 px icon left of the text, already at the drawing scale.
+    /// An icon left of the text ([`icon_px`]), already at the drawing scale.
     pub icon: Option<Canvas>,
 }
 
@@ -91,7 +97,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, sb: &StatusBar, r: R
                 let ib = boxes.icon;
                 let iy = ib.y + (ib.height - ic.height as i32) / 2;
                 c.blit_over(ib.x + ICON_PAD * s, iy, ic);
-                ICON_TEXT_PAD
+                ICON_TEXT_PAD + (ic.width as i32 / s - ICON_PX).max(0)
             }
             None => panel.pad,
         };
@@ -333,6 +339,61 @@ mod tests {
         assert!(!hit_grip(&sb, r, 390, 102), "above the square");
         let off = StatusBar { grip: false, ..sb };
         assert!(!hit_grip(&off, r, 390, 110), "no grip, no hit");
+    }
+
+    /// At 200% text a panel's icon grows to 32 px, centred down the grown panel, and its text
+    /// moves right by as much.
+    #[test]
+    fn a_panel_icon_grows_with_the_text_and_the_text_follows_it() {
+        let theme = Theme::default().with_text_size(200);
+        assert_eq!(icon_px(Theme::default().text), ICON_PX);
+        assert_eq!(icon_px(theme.text), 32);
+        let cs = &theme.colors;
+        let text = TextRenderer::load(&theme.fonts);
+        let blue = Color::rgb(0, 0, 255).argb();
+        let r = Rect::new(0, 0, 400, theme.controls().status_bar);
+        let drawn = |side: i32| {
+            let mut icon = Canvas::new(side as u32, side as u32);
+            icon.fill_rect(icon.bounds(), Color::rgb(0, 0, 255));
+            let sb = StatusBar {
+                panels: vec![Panel {
+                    text: "My Computer".into(),
+                    width: 300,
+                    pad: TEXT_PAD,
+                    icon: Some(icon),
+                }],
+                grip: false,
+            };
+            let mut c = Canvas::new(400, r.height as u32);
+            c.fill_rect(c.bounds(), cs.window);
+            draw(&mut c, &text, &theme.paint(), &sb, r, theme.fonts.size_px);
+            let p = layout(&sb, r, theme.text)[0];
+            let cols: Vec<i32> = (p.x..p.right())
+                .filter(|&x| (p.y..p.bottom()).any(|y| c.get(x, y) == blue))
+                .collect();
+            let rows: Vec<i32> = (p.y..p.bottom())
+                .filter(|&y| (p.x..p.right()).any(|x| c.get(x, y) == blue))
+                .collect();
+            let ink = cs.button_text.argb();
+            let first_ink = (p.x..p.right())
+                .find(|&x| (p.y..p.bottom()).any(|y| c.get(x, y) == ink))
+                .expect("the text inks");
+            (cols.len() as i32, rows, p, first_ink)
+        };
+        let (w, rows, p, grown_ink) = drawn(32);
+        assert_eq!(w, 32, "the icon's columns");
+        assert_eq!(rows.len(), 32, "the icon's rows");
+        let (above, below) = (rows[0] - p.y, p.bottom() - 1 - rows[31]);
+        assert!(
+            (above - below).abs() <= 1,
+            "centred down the panel: {above} above, {below} below"
+        );
+        let (_, _, _, small_ink) = drawn(16);
+        assert_eq!(
+            grown_ink - small_ink,
+            16,
+            "the text starts 16 px further right"
+        );
     }
 
     /// Explorer's last panel: the icon's box starts 2 px right of the panel's

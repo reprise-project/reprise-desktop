@@ -1429,7 +1429,12 @@ impl Explorer {
         }
         self.read_folder_free(ctx);
 
-        let icon = chrome::address_icon(&mut self.chrome_waits, &mut ctx.icons, &place);
+        let icon = chrome::address_icon(
+            &mut self.chrome_waits,
+            &mut ctx.icons,
+            &place,
+            ctx.theme.text,
+        );
         self.reset_address(&place.address_in(&self.shares.shares), icon);
         self.tree_follow_with(&place, tree, ctx);
         self.refresh_chrome(ctx);

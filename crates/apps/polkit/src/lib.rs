@@ -44,7 +44,8 @@ const USER_ICON: &str = "system-users";
 const ATTEMPTS: u8 = 3;
 
 fn request_icons(ctx: &mut Ctx) -> (Option<Canvas>, Option<Canvas>) {
-    (ctx.icons.get(KEY_ICON, 32), ctx.icons.get(USER_ICON, 16))
+    let user = reprisekit::controls::combo::row_icon_px(ctx.forms().text);
+    (ctx.icons.get(KEY_ICON, 32), ctx.icons.get(USER_ICON, user))
 }
 
 struct Active {
