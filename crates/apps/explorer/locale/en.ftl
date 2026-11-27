@@ -388,6 +388,11 @@ status-panels-objects =
         [one] { NUMBER($objects, useGrouping: "false") } object
        *[other] { NUMBER($objects, useGrouping: "false") } objects
     }
+status-objects-free =
+    { $objects ->
+        [one] { NUMBER($objects, useGrouping: "false") } object (Disk free space: { $free })
+       *[other] { NUMBER($objects, useGrouping: "false") } objects (Disk free space: { $free })
+    }
 status-bin-original-location = Original Location: { $dir }
 status-bin-type = Type: { $kind }
 status-bin-date-modified = Date Modified: { $when }
