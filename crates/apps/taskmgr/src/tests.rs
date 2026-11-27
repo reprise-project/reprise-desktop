@@ -1156,10 +1156,11 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
         t.svc.read_log = |_, _, _| {};
         t.open_log(&ctx);
         let log = t.svc.log.as_mut().unwrap();
-        log.show(Ok(
-            "Nov 27 10:00:01 systemd[1201]: Started sync.service.\nsync[1302]: 4 files sent\n"
-                .into(),
-        ));
+        // An entry's time follows the local time zone, which the pin environment leaves alone.
+        log.show(Err(services::LogError::Exited(
+            1,
+            "No journal files were found.".into(),
+        )));
         ctx.size = ctx.forms().text.size(servicelog::CLIENT);
         for d in [1, 2] {
             let (w, h) = ctx.size;
@@ -1684,7 +1685,7 @@ fn the_services_page_shows_each_service_by_name_with_its_status_and_startup() {
     assert_eq!(
         cells[0],
         [
-            "pipewire.service",
+            "pipewire",
             "pipewire.service described",
             "Running",
             "Automatic",
@@ -1693,7 +1694,7 @@ fn the_services_page_shows_each_service_by_name_with_its_status_and_startup() {
     );
     assert_eq!(
         cells.iter().map(|c| c[0].as_str()).collect::<Vec<_>>(),
-        ["pipewire.service", "sshd.service", "sync.service"],
+        ["pipewire", "sshd", "sync"],
         "sorted by name"
     );
     assert_eq!(cells[1][4], "System");
@@ -1840,7 +1841,7 @@ fn a_failed_job_says_why_and_a_dismissed_prompt_says_nothing() {
     t.event(MAIN, Event::Wake, &mut ctx);
     assert_eq!(
         t.errors.shown().map(|b| b.fields.text.as_str()),
-        Some("sshd.service could not be started.\n\nAccess denied")
+        Some("sshd could not be started.\n\nAccess denied")
     );
 }
 
@@ -1856,7 +1857,7 @@ fn turning_off_start_at_login_for_a_service_every_user_starts_says_why() {
     t.event(MAIN, Event::Wake, &mut ctx);
     let text = t.errors.shown().map(|b| b.fields.text.clone()).unwrap();
     assert!(
-        text.starts_with("pipewire.service could not be kept from starting at login.")
+        text.starts_with("pipewire could not be kept from starting at login.")
             && text.contains("every user"),
         "{text}"
     );
@@ -1910,6 +1911,13 @@ fn open_log_shows_the_journal_lines_of_the_one_service() {
         servicelog::Outcome::None
     ));
     assert!(LOGS.take().is_empty(), "one read at a time");
+    let us = 1_764_219_292_000_000u64;
+    let when = reprisefs::listing::date_text((us / 1_000_000) as i64, reprisefs::locale::is_12h());
+    let json = [
+        format!(r#"{{"__REALTIME_TIMESTAMP":"{us}","MESSAGE":"one"}}"#),
+        format!(r#"{{"__REALTIME_TIMESTAMP":"{us}","MESSAGE":"two\n"}}"#),
+    ]
+    .join("\n");
     let post = |name: &str, read: Result<String, services::LogError>| services::Msg::Log {
         manager: Manager::User,
         name: name.into(),
@@ -1921,10 +1929,14 @@ fn open_log_shows_the_journal_lines_of_the_one_service() {
         .unwrap();
     t.svc
         .tx
-        .send(post("pipewire.service", Ok("one\ntwo\n".into())))
+        .send(post("pipewire.service", Ok(json.clone())))
         .unwrap();
     t.event(MAIN, Event::Wake, &mut ctx);
-    assert_eq!(t.svc.log.as_ref().unwrap().text(), "one\ntwo");
+    assert_eq!(
+        t.svc.log.as_ref().unwrap().text(),
+        format!("{when} one\n{when} two"),
+        "each entry as its time and message"
+    );
     t.svc
         .tx
         .send(post("pipewire.service", Ok(String::new())))
@@ -1997,4 +2009,31 @@ fn a_manager_change_reads_the_services_again_while_the_page_shows() {
     }
     t.event(MAIN, Event::Wake, &mut ctx);
     assert_eq!(files(&asked), [true], "a reload: one read with the files");
+}
+
+#[test]
+fn a_service_shows_its_unescaped_name_and_its_jobs_keep_the_real_one() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    let real = "app-reprise\\x2dbluetooth@autostart.service";
+    let rows = vec![service(
+        real,
+        Manager::User,
+        services::Status::Stopped,
+        services::Startup::Manual,
+    )];
+    list_services(&mut t, &mut ctx, rows, true);
+    assert_eq!(
+        t.svc.list.view.rows[0].cells[0],
+        "app-reprise-bluetooth@autostart"
+    );
+    click_row(&mut t, &mut ctx, 0);
+    t.form_event(form::Event::Pressed(pages::START), &mut ctx);
+    assert_eq!(JOBS.take(), [job(Manager::User, real, Verb::Start)]);
+    t.event(MAIN, key(keysym::RETURN), &mut ctx);
+    assert_eq!(LOGS.take(), [(Manager::User, real.to_string())]);
+    assert_eq!(
+        t.svc.log.as_ref().unwrap().title(),
+        "app-reprise-bluetooth@autostart - Log"
+    );
 }

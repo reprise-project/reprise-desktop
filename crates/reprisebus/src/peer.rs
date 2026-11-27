@@ -346,34 +346,7 @@ pub fn scope_app(unit: &str) -> Option<String> {
     if id.is_empty() || suffix.is_empty() {
         return None;
     }
-    Some(unescape(id))
-}
-
-/// `systemd-escape`'s `\xNN` back to bytes.
-fn unescape(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let hex = b
-            .get(i + 2..i + 4)
-            .and_then(|h| std::str::from_utf8(h).ok());
-        match (
-            b[i],
-            b.get(i + 1),
-            hex.and_then(|h| u8::from_str_radix(h, 16).ok()),
-        ) {
-            (b'\\', Some(b'x'), Some(v)) => {
-                out.push(v);
-                i += 4;
-            }
-            (c, _, _) => {
-                out.push(c);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    Some(crate::services::unescape(id))
 }
 
 /// Whether `/proc/<pid>/status` gives the process more than one pid (`NSpid`), one per nested

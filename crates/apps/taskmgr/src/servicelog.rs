@@ -1,4 +1,5 @@
-//! Open Log: a service's last journal lines, read only, newest at the bottom.
+//! Open Log: a service's last journal lines, read only, newest at the bottom, each as its time
+//! and its message ([`reprisefs::journal::lines`]).
 
 use reprisebus::services::Manager;
 
@@ -20,6 +21,7 @@ pub struct Log {
     pub manager: Manager,
     /// The service shown, `pipewire.service`.
     pub name: String,
+    is_12h: bool,
     pub form: Form,
     /// A read of the log is under way.
     pub reading: bool,
@@ -34,7 +36,7 @@ pub enum Outcome {
 
 impl Log {
     /// The window for service `name`, saying it reads until [`Log::show`].
-    pub fn new(manager: Manager, name: &str) -> Log {
+    pub fn new(manager: Manager, name: &str, is_12h: bool) -> Log {
         let by = CLIENT.1 - MARGIN - BUTTON_H;
         let memo = Rect::new(MARGIN, MARGIN, CLIENT.0 - 2 * MARGIN, by - 2 * MARGIN);
         let refresh_x = CLIENT.0 - MARGIN - 2 * BUTTON_W - 6;
@@ -52,6 +54,7 @@ impl Log {
         let mut l = Log {
             manager,
             name: name.into(),
+            is_12h,
             form: Form::new(items),
             reading: false,
         };
@@ -60,7 +63,7 @@ impl Log {
     }
 
     pub fn title(&self) -> String {
-        tr!("log-title", name = self.name.as_str())
+        tr!("log-title", name = crate::services::shown_name(&self.name))
     }
 
     pub fn reading(&mut self) {
@@ -68,10 +71,10 @@ impl Log {
         self.put(&tr!("log-reading"));
     }
 
-    /// Shows what the journal gave, the last line in view, or why it gave nothing.
+    /// Shows the entries the journal gave, the last line in view, or why it gave nothing.
     pub fn show(&mut self, read: Result<String, LogError>) {
         self.reading = false;
-        let text = match read {
+        let text = match read.map(|json| reprisefs::journal::lines(&json, self.is_12h)) {
             Ok(t) if t.trim().is_empty() => tr!("log-none"),
             Ok(t) => t.trim_end().to_string(),
             Err(LogError::NotAService) => tr!("log-not-a-service"),
