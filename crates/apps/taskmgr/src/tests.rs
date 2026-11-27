@@ -1096,6 +1096,30 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
                 got.push((format!("{i:?} {page:?} @{d}"), fnv(&c)));
             }
         }
+        open(&mut t, &mut ctx, Page::Services);
+        let mut rows = service_rows();
+        rows[1].status = services::Status::Failed;
+        list_services(&mut t, &mut ctx, rows, true);
+        t.event(MAIN, alt('a'), &mut ctx);
+        t.event(MAIN, alt('i'), &mut ctx);
+        for ch in "sy".chars() {
+            t.event(MAIN, typed(ch), &mut ctx);
+        }
+        t.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+        for d in [1, 2] {
+            t.follow_scale(MAIN, d, &mut ctx);
+            let (w, h) = ctx.size;
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
+            got.push((format!("{i:?} Services filtered @{d}"), fnv(&c)));
+        }
+        t.event(MAIN, alt('a'), &mut ctx);
+        t.event(MAIN, alt('i'), &mut ctx);
+        for _ in 0..2 {
+            t.event(MAIN, backspace(), &mut ctx);
+        }
+        t.event(MAIN, key(keysym::TAB), &mut ctx);
+        list_services(&mut t, &mut ctx, service_rows(), true);
         open(&mut t, &mut ctx, Page::Applications);
         t.set_hung(vec![("org.kde.ark".into(), 41)], &mut ctx);
         t.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
@@ -1187,12 +1211,26 @@ fn render_pages() {
         }
         for page in Page::ALL {
             open(&mut t, &mut ctx, page);
+            if page == Page::Services {
+                list_services(&mut t, &mut ctx, service_rows(), true);
+            }
             let (w, h) = ctx.size;
             for d in [1, 2] {
                 let mut c = Canvas::with_scale(w as u32, h as u32, d);
                 ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
                 reprisekit::raster::write_preview(&c, &format!("taskmgr-{i:?}-{page:?}@{d}.png"));
             }
+        }
+        open(&mut t, &mut ctx, Page::Services);
+        t.event(MAIN, alt('i'), &mut ctx);
+        for ch in "sy".chars() {
+            t.event(MAIN, typed(ch), &mut ctx);
+        }
+        let (w, h) = ctx.size;
+        for d in [1, 2] {
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
+            reprisekit::raster::write_preview(&c, &format!("taskmgr-{i:?}-filtered@{d}.png"));
         }
         t.act(Act::SelectColumns);
         ctx.size = ctx.forms().text.size(selectcols::CLIENT);
@@ -2036,4 +2074,103 @@ fn a_service_shows_its_unescaped_name_and_its_jobs_keep_the_real_one() {
         t.svc.log.as_ref().unwrap().title(),
         "app-reprise-bluetooth@autostart - Log"
     );
+}
+
+fn backspace() -> Event {
+    Event::Key(KeyInput {
+        sym: keysym::BACKSPACE,
+        utf8: None,
+        mods: Mods::default(),
+        edit: Some(reprisekit::textedit::EditKey::Backspace { word: false }),
+    })
+}
+
+fn typed(ch: char) -> Event {
+    Event::Key(KeyInput {
+        sym: ch as u32,
+        utf8: Some(ch.to_string()),
+        mods: Mods::default(),
+        edit: Some(reprisekit::textedit::EditKey::Insert(ch.to_string())),
+    })
+}
+
+fn alt(ch: char) -> Event {
+    Event::Key(KeyInput {
+        sym: ch as u32,
+        utf8: Some(ch.to_string()),
+        mods: Mods {
+            alt: true,
+            ..Mods::default()
+        },
+        edit: Some(reprisekit::textedit::EditKey::Insert(ch.to_string())),
+    })
+}
+
+fn shown_names(t: &TaskMgr) -> Vec<String> {
+    (t.svc.list.view.rows.iter())
+        .map(|r| r.cells[0].clone())
+        .collect()
+}
+
+#[test]
+fn the_filter_field_narrows_the_services_and_keys_go_back_to_the_list() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    click_row(&mut t, &mut ctx, 2);
+    assert_eq!(t.selected_service().unwrap().name, "sync.service");
+    t.event(MAIN, alt('i'), &mut ctx);
+    assert!(t.filter_focused(), "Alt+I is the field's access key");
+    for ch in "SY".chars() {
+        t.event(MAIN, typed(ch), &mut ctx);
+    }
+    assert_eq!(
+        shown_names(&t),
+        ["sync"],
+        "sshd's description holds no \"sy\""
+    );
+    assert_eq!(t.svc.filter, "SY");
+    assert_eq!(
+        t.selected_service().unwrap().name,
+        "sync.service",
+        "the selection stays"
+    );
+    t.event(MAIN, key(keysym::TAB), &mut ctx);
+    assert!(!t.filter_focused(), "Tab goes back to the list");
+    t.form_event(form::Event::Pressed(pages::START), &mut ctx);
+    assert_eq!(
+        JOBS.take(),
+        [job(Manager::User, "sync.service", Verb::Start)]
+    );
+    t.event(MAIN, key(keysym::TAB), &mut ctx);
+    assert!(t.filter_focused(), "Tab from the list goes to the field");
+    t.event(MAIN, backspace(), &mut ctx);
+    t.event(MAIN, backspace(), &mut ctx);
+    assert_eq!(shown_names(&t), ["pipewire", "sshd", "sync"]);
+    click_row(&mut t, &mut ctx, 0);
+    assert!(
+        !t.filter_focused(),
+        "a click in the list takes the keyboard back"
+    );
+}
+
+#[test]
+fn show_only_failed_lists_the_failed_services() {
+    use services::{Startup, Status};
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    let mut rows = service_rows();
+    rows.push(service(
+        "broken.service",
+        Manager::User,
+        Status::Failed,
+        Startup::Manual,
+    ));
+    list_services(&mut t, &mut ctx, rows, true);
+    t.event(MAIN, alt('a'), &mut ctx);
+    assert_eq!(t.form.checked(pages::FAILED), Some(true));
+    assert_eq!(shown_names(&t), ["broken"]);
+    list_services(&mut t, &mut ctx, service_rows(), true);
+    assert!(shown_names(&t).is_empty(), "a read keeps the filter");
+    t.event(MAIN, alt('a'), &mut ctx);
+    assert_eq!(shown_names(&t), ["pipewire", "sshd", "sync"]);
 }
