@@ -37,6 +37,9 @@ pub const PRINT: WinId = WinId::named("print");
 /// Device pixels per inch the pages are drawn at.
 pub const DPI: i32 = 300;
 
+/// How long the Print dialog looks for driverless printers on the network.
+const BROWSE_BUDGET: Duration = Duration::from_secs(2);
+
 /// How long a program that quits waits for jobs still being sent: room to draw a
 /// [`printdlg::MAX_PAGES`] job, whose every socket step has its own timeout.
 const QUIT_WAIT: Duration = Duration::from_secs(600);
@@ -56,7 +59,7 @@ enum Open {
         form: Form,
         /// Which listing the dialog waits for, so a late one from an earlier opening is dropped.
         ask: u64,
-        listed: Option<Listed>,
+        listed: Option<Box<Listed>>,
     },
 }
 
@@ -151,8 +154,16 @@ impl Printing {
         let setup = self.setup.clone();
         let title = title.to_string();
         std::thread::spawn(move || {
-            let queues = cups::queues(&http::Server::find(), &login_name());
+            let browsing = std::thread::spawn(|| {
+                reprisebus::avahi::browse(&reprisebus::avahi::IPP_TYPES, BROWSE_BUDGET)
+            });
+            let mut queues = cups::queues(&http::Server::find(), &login_name());
             let laid = Laid::new(doc, setup, &title);
+            if let Ok(q) = &mut queues
+                && let Ok(found) = browsing.join()
+            {
+                q.add_driverless(&found);
+            }
             poster.post(Msg::Listed(ask, Box::new(Listed { queues, laid })));
         });
     }
@@ -324,6 +335,10 @@ impl Printing {
             return Step::reply(Reply::none());
         };
         let queue = dest.name.clone();
+        let driverless = q
+            .driverless
+            .get(&queue)
+            .map(|uri| (uri.clone(), dest.info.clone()));
         let Some(Open::Print {
             listed: Some(listed),
             ..
@@ -335,7 +350,14 @@ impl Printing {
         let poster = self.poster(ctx);
         let (title, copies) = (self.job_title.clone(), choice.copies);
         self.sending.push(std::thread::spawn(move || {
-            let sent = send(&listed.laid, choice.range, &queue, &title, copies);
+            let sent = send(
+                &listed.laid,
+                choice.range,
+                &queue,
+                driverless,
+                &title,
+                copies,
+            );
             match &sent {
                 Ok(id) => log::info!("print: job {id} on {queue}"),
                 Err(e) => log::warn!("print: {queue} refused the job: {e:?}"),
@@ -357,7 +379,7 @@ impl Printing {
         let mut changed = false;
         for m in msgs {
             changed |= match m {
-                Msg::Listed(ask, l) => self.listed(ask, *l),
+                Msg::Listed(ask, l) => self.listed(ask, l),
                 Msg::Sent(Ok(_)) => false,
                 Msg::Sent(Err(e)) => {
                     let icon = self.warn_icon.clone();
@@ -370,7 +392,7 @@ impl Printing {
         changed
     }
 
-    fn listed(&mut self, ask: u64, l: Listed) -> bool {
+    fn listed(&mut self, ask: u64, l: Box<Listed>) -> bool {
         let Some(Open::Print {
             form,
             ask: waiting,
@@ -456,14 +478,26 @@ impl Drop for Printing {
     }
 }
 
-/// Draw `laid`'s pages in `range` one at a time into a PDF and send it to `queue`.
+/// Draw `laid`'s pages in `range` one at a time into a PDF and send it to `queue`; for a
+/// `driverless` printer (its device URI and description), to the temporary queue cupsd makes
+/// for it first.
 fn send(
     laid: &Laid,
     range: Range,
     queue: &str,
+    driverless: Option<(String, String)>,
     title: &str,
     copies: u32,
 ) -> Result<i32, cups::Error> {
+    let (server, user) = (http::Server::find(), login_name());
+    let queue = match driverless {
+        Some((uri, info)) => {
+            let made = cups::create_local(&server, &user, queue, &uri, &info)?;
+            log::info!("print: temporary queue {made} for {uri}");
+            made
+        }
+        None => queue.to_string(),
+    };
     let mut pdf = pdf::Writer::new(range.of(laid.pages()).len());
     laid.render(range, |p| pdf.page(&p));
     let job = cups::Job {
@@ -472,7 +506,7 @@ fn send(
         copies,
         media: laid.setup().paper().media.to_string(),
     };
-    cups::print(&http::Server::find(), &login_name(), queue, job)
+    cups::print(&server, &user, &queue, job)
 }
 
 /// The account requests to cupsd go out under.

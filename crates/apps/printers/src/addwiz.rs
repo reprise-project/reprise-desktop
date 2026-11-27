@@ -1117,7 +1117,8 @@ mod tests {
     }
 
     fn network(name: &str) -> Device {
-        crate::avahi::device(name, "_ipp._tcp", "local", &[], 0).expect("a network printer")
+        crate::avahi::device(&crate::avahi::announced(name, "_ipp._tcp", &[], 0))
+            .expect("a network printer")
     }
 
     fn status(w: &AddWizard) -> String {
