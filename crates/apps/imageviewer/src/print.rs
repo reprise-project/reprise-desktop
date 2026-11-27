@@ -1,4 +1,5 @@
-//! File > Page Setup... and Print...: the picture shown, turned as it shows, fitted to the page.
+//! File > Page Setup... and Print...: the picture shown, turned as it shows, placed on the page
+//! as Page Setup's scaling says at the resolution its file states.
 
 use super::*;
 use repriseapp::print::{Doc, Step};
@@ -6,12 +7,16 @@ use repriseapp::print::{Doc, Step};
 impl Viewer {
     /// Open Print for the picture shown; its first frame for an animation.
     pub(crate) fn open_print(&mut self, ctx: &Ctx) {
-        let Some((frame, _)) = self.picture.as_ref().and_then(|p| p.frames.first()) else {
+        let Some(p) = self.picture.as_ref() else {
+            return;
+        };
+        let Some((frame, _)) = p.frames.first() else {
             return;
         };
         let doc = Doc::Picture {
             picture: frame.clone(),
             turns: self.view.turns,
+            dpi: p.dpi.unwrap_or(repriseapp::print::SCREEN_DPI),
         };
         let title = self
             .folder

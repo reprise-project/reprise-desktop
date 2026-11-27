@@ -1,4 +1,5 @@
-//! File > Page Setup... and Print...: the picture fitted to the page.
+//! File > Page Setup... and Print...: the picture placed on the page as Page Setup's scaling
+//! says, at the screen's resolution.
 
 use super::*;
 use repriseapp::print::{Doc, Step};
@@ -12,6 +13,7 @@ impl Paint {
         let doc = Doc::Picture {
             picture: std::sync::Arc::new(picture),
             turns: 0,
+            dpi: repriseapp::print::SCREEN_DPI,
         };
         let title = self
             .path

@@ -994,7 +994,7 @@ pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
             ..Default::default()
         },
     ];
-    let (sw, sh) = pagesetup::client(true);
+    let (sw, sh) = pagesetup::CLIENT;
     let (sw, sh) = (sw * scale, sh * scale);
     let (pw, ph) = (printdlg::CLIENT.0 * scale, printdlg::CLIENT.1 * scale);
     let col = sw.max(pw) + 10;
@@ -1010,7 +1010,13 @@ pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
         let px = theme.fonts.size_px;
         let mut setup_c = Canvas::new(sw as u32, sh as u32);
         setup_c.fill_rect(setup_c.bounds(), p.cs.button_face);
-        pagesetup::draw(&mut setup_c, &text, &p, &pagesetup::form(&setup, true), px);
+        pagesetup::draw(
+            &mut setup_c,
+            &text,
+            &p,
+            &pagesetup::form(&setup, pagesetup::Kind::Text),
+            px,
+        );
         c.blit_canvas(10 + i as i32 * col, 10, &setup_c);
         let mut print_c = Canvas::new(pw as u32, ph as u32);
         print_c.fill_rect(print_c.bounds(), p.cs.button_face);

@@ -74,6 +74,9 @@ pagesetup-top = &Top:
 pagesetup-bottom = &Bottom:
 pagesetup-header = &Header:
 pagesetup-footer = &Footer:
+pagesetup-scaling = Scaling
+pagesetup-actual-size = A&ctual size
+pagesetup-fit-to-page = Fit to &page
 pagesetup-preview = Preview
 pagesetup-not-a-number = Enter each margin as a number of millimeters.
 # mm is a whole number of millimeters.
