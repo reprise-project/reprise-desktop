@@ -8,6 +8,7 @@ use reprisekit::controls::listbox::ListBox;
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::DialogFont;
+use reprisekit::tr;
 use reprisekit::trackbar::{self, TrackBar};
 
 use repriseconf::config::OnConnect;
@@ -17,7 +18,9 @@ use crate::pipewire::{App, Device, Snapshot};
 
 pub const CLIENT: (i32, i32) = (361, 482);
 
-const TABS: [&str; 2] = ["Audio", "Applications"];
+fn tabs() -> [String; 2] {
+    [tr!("tab-audio"), tr!("tab-apps")]
+}
 pub const AUDIO: usize = 0;
 pub const APPS: usize = 1;
 
@@ -34,12 +37,12 @@ struct Row {
     set_default: &'static str,
     toggle: &'static str,
     mixer: &'static str,
-    mixer_label: &'static str,
+    mixer_label: fn() -> String,
     volume_label: &'static str,
     track: &'static str,
     percent: &'static str,
     mute: &'static str,
-    empty: &'static str,
+    empty: fn() -> String,
 }
 
 const SINK: Row = Row {
@@ -50,12 +53,12 @@ const SINK: Row = Row {
     set_default: "sink_set_default",
     toggle: "sink_toggle",
     mixer: "sink_mixer",
-    mixer_label: "V&olume...",
+    mixer_label: || tr!("mixer-playback"),
     volume_label: "sink_volume_label",
     track: "sink_track",
     percent: "sink_percent",
     mute: "sink_mute",
-    empty: "No Playback Devices",
+    empty: || tr!("no-playback-devices"),
 };
 
 const SOURCE: Row = Row {
@@ -66,12 +69,12 @@ const SOURCE: Row = Row {
     set_default: "source_set_default",
     toggle: "source_toggle",
     mixer: "source_mixer",
-    mixer_label: "Vol&ume...",
+    mixer_label: || tr!("mixer-recording"),
     volume_label: "source_volume_label",
     track: "source_track",
     percent: "source_percent",
     mute: "source_mute",
-    empty: "No Recording Devices",
+    empty: || tr!("no-recording-devices"),
 };
 
 const SINK_Y: i32 = 47;
@@ -82,11 +85,13 @@ const GROUP_H: i32 = 166;
 const CONNECT_LABEL: &str = "connect_label";
 const CONNECT: &str = "connect";
 const CONNECT_Y: i32 = SOURCE_Y + GROUP_H + 24;
-const CONNECT_ROWS: [&str; 3] = [
-    "Use it for playback",
-    "Use it for playback and recording",
-    "Keep my defaults",
-];
+fn connect_rows() -> [String; 3] {
+    [
+        tr!("connect-playback"),
+        tr!("connect-both"),
+        tr!("connect-keep"),
+    ]
+}
 
 /// The Applications page's controls: one group box as tall as the Audio
 /// page's two, the program list filling it down to the volume row.
@@ -101,12 +106,18 @@ const APP_OUTPUT_LABEL: &str = "app_output_label";
 const APP_OUTPUT: &str = "app_output";
 /// Rows the output combo's open list shows before it scrolls.
 const APP_OUTPUT_ROWS: usize = 8;
-const APP_EMPTY: &str = "No programs are playing sound";
+fn app_empty() -> String {
+    tr!("apps-empty")
+}
 const APP_ROWS: usize = 14;
 /// The output combo's first row: the program follows the default output.
-const APP_DEFAULT: &str = "Default";
+fn app_default() -> String {
+    tr!("apps-default")
+}
 /// The output row of a program whose streams play apart ([`App::settled`]).
-const APP_APART: &str = "Several outputs";
+fn app_apart() -> String {
+    tr!("apps-apart")
+}
 /// The volume row's top: the same 12 px above the group's bottom edge
 /// as on the Audio page.
 const APP_TRACK_Y: i32 = SOURCE_Y + 128;
@@ -210,22 +221,34 @@ pub struct Sheet {
 
 impl Sheet {
     pub fn new(snap: &Snapshot, icons: Icons, connect: OnConnect) -> Sheet {
-        let mut items = row_items(&SINK, SINK_Y, "Sound playback", icons.speaker);
-        items.extend(row_items(&SOURCE, SOURCE_Y, "Sound recording", icons.mic));
+        let mut items = row_items(&SINK, SINK_Y, &tr!("group-playback"), icons.speaker);
+        items.extend(row_items(
+            &SOURCE,
+            SOURCE_Y,
+            &tr!("group-recording"),
+            icons.mic,
+        ));
         items.push(Item::label_at(
             CONNECT_LABEL,
             21,
             CONNECT_Y - 16,
             220,
-            "When an audio device &connects:",
+            &tr!("connect-label"),
         ));
-        items.push(Item::combo(CONNECT, 21, CONNECT_Y, 220, &CONNECT_ROWS, 3));
+        items.push(Item::combo(
+            CONNECT,
+            21,
+            CONNECT_Y,
+            220,
+            &connect_rows().each_ref().map(String::as_str),
+            3,
+        ));
         let pages = vec![
             Form::new(items).set_in(DialogFont::ShellDlg),
             Form::new(app_items()),
         ];
         let mut sheet = Sheet {
-            sheet: PropSheet::new(&TABS, pages, CLIENT),
+            sheet: PropSheet::new(&tabs().each_ref().map(String::as_str), pages, CLIENT),
             applied: snap.clone(),
             pending: Pending::from_snapshot(snap),
             shown: [Vec::new(), Vec::new()],
@@ -390,9 +413,9 @@ impl Sheet {
             Entry::Device(i) => {
                 let d = &self.list(sink)[i];
                 if !self.device_on(d) {
-                    (format!("{} (Disabled)", d.label), true)
+                    (tr!("entry-disabled", name = d.label.as_str()), true)
                 } else if self.pick(sink) == Some(i) {
-                    (format!("{} (Default)", d.label), false)
+                    (tr!("entry-default", name = d.label.as_str()), false)
                 } else {
                     (d.label.clone(), false)
                 }
@@ -407,7 +430,7 @@ impl Sheet {
                 if self.card_on(id) {
                     (label, false)
                 } else {
-                    (format!("{label} (Disabled)"), true)
+                    (tr!("entry-disabled", name = label), true)
                 }
             }
         }
@@ -838,18 +861,18 @@ impl Sheet {
             Some(id) => {
                 let c = self.applied.cards.iter().find(|c| c.id == id);
                 if self.card_on(id) {
-                    ("&Disable", c.is_some_and(|c| c.off_index.is_some()))
+                    (tr!("disable"), c.is_some_and(|c| c.off_index.is_some()))
                 } else {
-                    ("&Enable", c.is_some_and(|c| c.best.is_some()))
+                    (tr!("enable"), c.is_some_and(|c| c.best.is_some()))
                 }
             }
-            None => ("&Disable", false),
+            None => (tr!("disable"), false),
         };
         let icon = self.small[k].clone();
         let page = &mut self.sheet.pages[AUDIO];
         if let Some(item) = page.item_mut(ids.list) {
             let (items, greyed): (Vec<String>, Vec<bool>) = if rows.is_empty() {
-                (vec![ids.empty.to_string()], vec![true])
+                (vec![(ids.empty)()], vec![true])
             } else {
                 rows.into_iter().unzip()
             };
@@ -871,10 +894,10 @@ impl Sheet {
             item.control = Control::ListBox { list, icons };
         }
         if let Some(item) = page.item_mut(ids.set_default) {
-            item.control = button("&Set Default", can_default);
+            item.control = button(&tr!("set-default"), can_default);
         }
         if let Some(item) = page.item_mut(ids.toggle) {
-            item.control = button(toggle_label, can_toggle);
+            item.control = button(&toggle_label, can_toggle);
         }
         // Through set_track, so a thumb the device moves to or from under
         // the pointer turns hot or cold.
@@ -885,7 +908,7 @@ impl Sheet {
         page.set_enabled(ids.volume_label, on);
         if let Some(item) = page.item_mut(ids.mute) {
             item.control = Control::Check {
-                label: "&Mute".into(),
+                label: tr!("mute"),
                 checked: mute && on,
                 enabled: on,
                 mixed: None,
@@ -910,7 +933,7 @@ impl Sheet {
             .map(|a| {
                 let (volume, mute) = self.app_values(a);
                 let detail = if mute {
-                    "Muted".to_string()
+                    tr!("muted")
                 } else {
                     format!("{}%", pos_of(volume) * 5)
                 };
@@ -925,7 +948,7 @@ impl Sheet {
             .and_then(|i| i.large.clone());
         let on = chosen.is_some();
         let keys = apps.iter().map(|a| a.key.clone()).collect();
-        let mut outputs: Vec<String> = std::iter::once(APP_DEFAULT.to_string())
+        let mut outputs: Vec<String> = std::iter::once(app_default())
             .chain(self.applied.sinks.iter().map(|d| d.label.clone()))
             .collect();
         let mut output = chosen
@@ -937,7 +960,7 @@ impl Sheet {
             chosen.is_some_and(|a| !self.pending.app_output.contains_key(&a.key) && !a.settled());
         if apart {
             output = outputs.len();
-            outputs.push(APP_APART.into());
+            outputs.push(app_apart());
         }
 
         let page = &mut self.sheet.pages[APPS];
@@ -947,7 +970,7 @@ impl Sheet {
                 _ => 0,
             };
             let (mut list, icons) = if rows.is_empty() {
-                let mut l = ListBox::new(vec![APP_EMPTY.to_string()], None);
+                let mut l = ListBox::new(vec![app_empty()], None);
                 l.greyed = vec![true];
                 (l, vec![None])
             } else {
@@ -1005,7 +1028,7 @@ impl Sheet {
         page.set_enabled(APP_VOLUME_LABEL, on);
         if let Some(item) = page.item_mut(APP_MUTE) {
             item.control = Control::Check {
-                label: "&Mute".into(),
+                label: tr!("mute"),
                 checked: mute && on,
                 enabled: on,
                 mixed: None,
@@ -1023,7 +1046,7 @@ fn app_items() -> Vec<Item> {
         Item::new(
             APP_GROUP,
             Rect::new(21, y, 320, SOURCE_Y + GROUP_H - y),
-            Control::Group("Program volume".into()),
+            Control::Group(tr!("program-volume")),
         ),
         Item::new(
             APP_ICON,
@@ -1041,16 +1064,28 @@ fn app_items() -> Vec<Item> {
                 icons: Vec::new(),
             },
         ),
-        Item::label_at(APP_OUTPUT_LABEL, 71, APP_OUTPUT_Y + 4, 44, "&Output:"),
+        Item::label_at(
+            APP_OUTPUT_LABEL,
+            71,
+            APP_OUTPUT_Y + 4,
+            44,
+            &tr!("output-label"),
+        ),
         Item::combo(
             APP_OUTPUT,
             120,
             APP_OUTPUT_Y,
             211,
-            &[APP_DEFAULT],
+            &[&app_default()],
             APP_OUTPUT_ROWS,
         ),
-        Item::label_at(APP_VOLUME_LABEL, 71, APP_TRACK_Y + 4, 44, "&Volume:"),
+        Item::label_at(
+            APP_VOLUME_LABEL,
+            71,
+            APP_TRACK_Y + 4,
+            44,
+            &tr!("volume-label"),
+        ),
         Item::new(
             APP_TRACK,
             Rect::new(120, APP_TRACK_Y, 130, trackbar::HEIGHT),
@@ -1061,7 +1096,7 @@ fn app_items() -> Vec<Item> {
             APP_MUTE,
             Rect::new(290, APP_TRACK_Y + 8, 13, 13),
             Control::Check {
-                label: "&Mute".into(),
+                label: tr!("mute"),
                 checked: false,
                 enabled: true,
                 mixed: None,
@@ -1160,21 +1195,21 @@ fn row_items(ids: &Row, y: i32, title: &str, icon: Option<Canvas>) -> Vec<Item> 
         Item::new(
             ids.set_default,
             Rect::new(70, y + 96, 74, 23),
-            button("&Set Default", false),
+            button(&tr!("set-default"), false),
         ),
         Item::new(
             ids.toggle,
             Rect::new(148, y + 96, 74, 23),
-            button("&Disable", false),
+            button(&tr!("disable"), false),
         ),
         Item::new(
             ids.mixer,
             Rect::new(226, y + 96, 105, 23),
-            button(ids.mixer_label, true),
+            button(&(ids.mixer_label)(), true),
         ),
         // A label's text is drawn from the rect's left edge, centred in its
         // height.
-        Item::label_at(ids.volume_label, 71, y + 132, 44, "&Volume:"),
+        Item::label_at(ids.volume_label, 71, y + 132, 44, &tr!("volume-label")),
         Item::new(
             ids.track,
             Rect::new(120, y + 128, 130, trackbar::HEIGHT),
@@ -1185,7 +1220,7 @@ fn row_items(ids: &Row, y: i32, title: &str, icon: Option<Canvas>) -> Vec<Item> 
             ids.mute,
             Rect::new(290, y + 136, 13, 13),
             Control::Check {
-                label: "&Mute".into(),
+                label: tr!("mute"),
                 checked: false,
                 enabled: true,
                 mixed: None,
@@ -1666,7 +1701,7 @@ mod tests {
         let s = sheet(&fixture());
         assert_eq!(rect_of(&s, CONNECT_LABEL), Rect::new(21, 399, 220, 13));
         assert_eq!(rect_of(&s, CONNECT), Rect::new(21, 415, 220, 21));
-        let rows: Vec<String> = CONNECT_ROWS.map(String::from).into();
+        let rows: Vec<String> = connect_rows().into();
         assert_eq!(combo(&s, CONNECT), (rows, 0, true));
     }
 
@@ -1852,7 +1887,7 @@ mod tests {
         let mut s = sheet(&snap);
         select_app(&mut s, 0);
         let (rows, picked, _) = combo(&s, APP_OUTPUT);
-        assert_eq!(rows.last().map(String::as_str), Some(APP_APART));
+        assert_eq!(rows.last().map(String::as_str), Some(app_apart().as_str()));
         assert_eq!(picked, rows.len() - 1);
         select(&mut s, APP_OUTPUT, 2);
         assert_eq!(
@@ -1980,7 +2015,7 @@ mod tests {
         let mut s = sheet(&fixture());
         s.open(APPS);
         let l = list(&s, APP_LIST);
-        assert_eq!(l.items, vec![APP_EMPTY]);
+        assert_eq!(l.items, vec![app_empty()]);
         assert_eq!(l.greyed, vec![true]);
         assert!(!track(&s, APP_TRACK).enabled);
         assert_eq!(check(&s, APP_MUTE), (false, false));

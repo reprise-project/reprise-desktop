@@ -6,6 +6,7 @@
 use std::time::{Duration, Instant};
 
 use reprisekit::pointer::DOUBLE_CLICK_SLOP;
+use reprisekit::tr;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 pub const BUS_NAME: &str = "reprise.sound";
@@ -48,14 +49,16 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
 pub fn menu(muted: bool) -> Rows<TrayMsg> {
     let mut rows = Rows::default();
     rows.add(TrayMsg::VolumeControl, |id| {
-        Node::row(id, "Open Volume Control").as_default()
+        Node::row(id, tr!("menu-volume-control")).as_default()
     })
     .add(TrayMsg::Properties, |id| {
-        Node::row(id, "Adjust Audio Properties")
+        Node::row(id, tr!("menu-properties"))
     })
-    .add(TrayMsg::ToggleMute, |id| Node::toggle(id, "Mute", muted))
+    .add(TrayMsg::ToggleMute, |id| {
+        Node::toggle(id, tr!("menu-mute"), muted)
+    })
     .separator()
-    .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
+    .add(TrayMsg::Exit, |id| Node::row(id, tr!("menu-exit")));
     rows
 }
 
@@ -66,9 +69,12 @@ pub fn menu_nodes(muted: bool) -> Vec<Node> {
 /// The one line the host shows when the pointer rests on the icon.
 pub fn tooltip_text(volume: f64, mute: bool) -> String {
     if mute {
-        "Volume: Muted".to_string()
+        tr!("tip-muted")
     } else {
-        format!("Volume: {}%", (volume * 100.0).round() as i64)
+        tr!(
+            "tip-volume",
+            percent = ((volume * 100.0).round() as i64).to_string()
+        )
     }
 }
 
