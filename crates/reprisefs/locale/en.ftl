@@ -40,6 +40,8 @@ archive-other-size = it holds less than its listing says.
 archive-too-long = it took too long to read. Extract it to get at its files.
 archive-missing = the file cannot be found or read.
 archive-no-cache = there is no cache folder to copy it to.
+background-no-data-dir = there is no data folder to keep the picture in.
+background-no-name = the picture has no file name.
 
 ## Copy, move and shortcut errors
 move-failed-title = Error Moving File or Folder
