@@ -153,7 +153,10 @@ impl Host {
         let transfers = reprisebus::filetransfer::Transfers::for_drag();
         let (mimes, actions) = match out.staged {
             None => (dnd::source_mimes(transfers.offered()), DndAction::all()),
-            Some(_) => (dnd::source_mimes(false), DndAction::Copy),
+            Some(_) => {
+                let mimes = [dnd::STAGED].into_iter().chain(dnd::source_mimes(false));
+                (mimes.collect(), DndAction::Copy)
+            }
         };
         let source = manager.create_drag_and_drop_source(&self.qh, mimes, actions);
         let icon = self.drag_icon(&out.image, out.grab);
@@ -231,6 +234,9 @@ impl Host {
     }
 
     fn drag_ended(&mut self, out: Outgoing, finished: bool) {
+        if let Some(staged) = &out.staged {
+            staged.end(finished);
+        }
         let dropped = out.dropped;
         let action = if finished { out.action } else { None };
         let win = out.win;
@@ -441,10 +447,14 @@ impl Host {
                 return;
             }
         };
+        let wait = match d.staged {
+            true => reprisefs::dropdata::STAGED_WAIT,
+            false => reprisefs::pipe::PASTE_TIMEOUT,
+        };
         read_capped(
             &self.loop_handle,
             pipe,
-            reprisefs::pipe::PASTE_TIMEOUT,
+            wait,
             move |host: &mut Host, buf| match buf {
                 Some(b) if mime == dnd::FILE_TRANSFER => {
                     host.retrieve(b.bytes(), move |host, paths| match paths {
@@ -573,6 +583,7 @@ impl DataDeviceHandler for Host {
             kind: accept.kind,
             action,
             sandboxed: inc.sandboxed,
+            staged: !inc.sandboxed && reprisefs::dropdata::staged(&inc.mimes),
         };
         self.read_drop(landing, mime);
     }
@@ -587,6 +598,8 @@ struct Landing {
     action: DragAction,
     uris: bool,
     sandboxed: bool,
+    /// Its files come out after the drag started, so the read waits for them longer.
+    staged: bool,
 }
 
 impl DataOfferHandler for Host {
@@ -661,13 +674,14 @@ impl DataSourceHandler for Host {
             // Each request is its own transfer: a target may read the key
             // while the drag passes over it and again at the drop.
             if let Some(staged) = out.staged.clone() {
-                let Some(bytes) = dnd::encode_files(&out.paths, &mime) else {
+                let names = mime == dnd::STAGED;
+                let as_mime = if names { URI_LIST } else { &mime };
+                let Some(bytes) = dnd::encode_files(&out.paths, as_mime) else {
                     return;
                 };
-                // Before the drop a target only looks at the paths; the drop waits for the files.
-                match out.dropped {
-                    true => staged.send(fd.into(), bytes.into()),
-                    false => reprisefs::pipe::write_detached(fd.into(), bytes.into()),
+                match names {
+                    true => reprisefs::pipe::write_detached(fd.into(), bytes.into()),
+                    false => staged.send(fd.into(), bytes.into()),
                 }
                 return;
             }
@@ -691,9 +705,6 @@ impl DataSourceHandler for Host {
     fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource) {
         if self.drag_of(source).is_some() {
             if let Some(out) = self.drag_out.take() {
-                if let Some(staged) = out.staged.as_ref().filter(|_| out.dropped) {
-                    staged.abandon();
-                }
                 self.drag_ended(out, false);
             }
         } else if self

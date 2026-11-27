@@ -358,7 +358,6 @@ favorites-take-favorites-failed-explorer-cannot-save-your-favorites-e =
 ## extracting
 extracting-extract-label-folders = Folders
 extracting-to-clipboard = Clipboard
-extracting-to-drop = Drop Target
 
 ## props
 props-properties-properties = Properties
@@ -428,4 +427,4 @@ archive-copy-failed-title = Compressed (zipped) Folders
 archive-copy-failed = Cannot open { $name } from the compressed folder: { $why }
 archive-runs = { $name } is a program, and programs do not run from inside a compressed folder. Extract the folder first, then run it from there.
 archive-copy-out-failed = Cannot copy from { $name }: { $why }
-archive-drop-gave-up = The files from { $name } were still being copied out when the drop stopped waiting for them. Copy and paste them instead.
+archive-drag-too-large = The items picked in { $name } take { $size }, more than a drag copies out of a compressed folder ({ $most }). Use Copy To Folder... or Extract All... instead.

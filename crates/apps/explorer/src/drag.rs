@@ -12,6 +12,7 @@ use repriseapp::{
 };
 use repriseapp::{Reply, fielddrop};
 use reprisefs::deadline::Gate;
+use reprisefs::extract::ArchiveEvent;
 use reprisefs::ops::DropOp;
 use reprisekit::controls::addressbar;
 use reprisekit::controls::iconview::{self, Ghost};
@@ -208,12 +209,22 @@ pub fn write_links(links: &[WebLink], dir: &Path) -> Result<(), String> {
     failed.map_or(Ok(()), Err)
 }
 
-/// A drag out of a compressed folder ([`Explorer::stage_drag`]) whose drop has not asked for
-/// its files yet: the archive and its entries' paths, and the scratch folder its paths name.
+/// The most bytes a drag out of a compressed folder copies out; more takes Copy To Folder... or
+/// Extract All..., whose progress dialogs show how far they are.
+pub(crate) const DRAG_MOST: u64 = 1 << 30;
+
+/// A drag out of a compressed folder ([`Explorer::stage_drag`]): its entries copying out into
+/// `scratch` from the drag's start, until the drag ends without a drop or the copies are out
+/// and a target took them.
 pub(crate) struct DragCopy {
+    job: reprisefs::extract::ArchiveJob,
     staged: Staged,
-    picks: crate::extracting::Picks,
     scratch: reprisefs::archive::Scratch,
+    archive: PathBuf,
+    landed: bool,
+    failed: Option<String>,
+    /// Whether the copies came out, once the job ended.
+    out: Option<bool>,
 }
 
 impl Explorer {
@@ -305,8 +316,11 @@ impl Explorer {
         let paths = d.paths.clone();
         let (paths, staged) = match &self.place {
             Place::Archive(..) => match self.stage_drag(&paths, ctx) {
-                Some((paths, staged)) => (paths, Some(staged)),
-                None => return Reply::none(),
+                Ok((paths, staged)) => (paths, Some(staged)),
+                Err(reply) => {
+                    self.drag = None;
+                    return *reply;
+                }
             },
             _ => (paths, None),
         };
@@ -325,38 +339,100 @@ impl Explorer {
         })
     }
 
-    /// A drag out of a compressed folder: it names the copies the entries at `items` will have
-    /// in a fresh scratch folder, and they copy out once the drop asks for them
-    /// ([`Explorer::take_drag_copy`]). None when there is no scratch folder to name.
-    fn stage_drag(&mut self, items: &[PathBuf], ctx: &Ctx) -> Option<(Vec<PathBuf>, Staged)> {
-        let picks = self.archive_picks(items)?;
-        let scratch = reprisefs::archive::Scratch::new().ok()?;
+    /// A drag out of a compressed folder: the entries at `items` start copying out into a fresh
+    /// scratch folder, and the drag names their copies there ([`Explorer::poll_drag_copies`]).
+    /// Entries past [`DRAG_MOST`] are refused with a box.
+    fn stage_drag(
+        &mut self,
+        items: &[PathBuf],
+        ctx: &mut Ctx,
+    ) -> Result<(Vec<PathBuf>, Staged), Box<Reply>> {
+        let picks = (self.archive_picks(items)).ok_or_else(|| Box::new(Reply::none()))?;
+        let bytes = reprisefs::archive::picked_bytes(&picks.entries, &picks.picked);
+        if bytes > self.drag_most {
+            let name = picks.archive.file_name().unwrap_or_default();
+            let text = tr!(
+                "archive-drag-too-large",
+                name = name.to_string_lossy().into_owned(),
+                size = reprisefs::props::short_size(bytes),
+                most = reprisefs::props::short_size(self.drag_most)
+            );
+            return Err(Box::new(self.message_box(
+                &tr!("archive-copy-failed-title"),
+                text,
+                ctx,
+            )));
+        }
+        let scratch = match reprisefs::archive::Scratch::new() {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(Box::new(self.copy_out_failed(
+                    &picks.archive,
+                    e.to_string(),
+                    ctx,
+                )));
+            }
+        };
         let paths = (picks.picked.iter())
             .filter_map(|p| Some(scratch.path().join(p.file_name()?)))
             .collect();
         let wake = ctx.wake.clone();
         let staged = Staged::new(move || wake.wake());
-        self.drag_copy = Some(DragCopy {
+        let wake = ctx.wake.clone();
+        let crate::extracting::Picks {
+            archive,
+            entries,
+            picked,
+        } = picks;
+        let to = (scratch.clone(), None);
+        let job =
+            reprisefs::archive::copy_job(archive.clone(), entries, picked, to, move || wake.wake());
+        self.drag_copies.push(DragCopy {
+            job,
             staged: staged.clone(),
-            picks,
             scratch,
+            archive,
+            landed: false,
+            failed: None,
+            out: None,
         });
-        Some((paths, staged))
+        Ok((paths, staged))
     }
 
-    /// Starts the copy of a drag out of a compressed folder once its drop asks for the files,
-    /// with its progress dialog, after the job running; and drops the queued copies whose drop
-    /// gave up, with a box.
-    pub(crate) fn take_drag_copy(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        if let Some(d) = self.drag_copy.take_if(|d| d.staged.asked()) {
-            let batch = crate::extracting::Batch::CopyOut {
-                picks: d.picks,
-                scratch: d.scratch,
-                then: crate::extracting::Then::Drag(d.staged),
-            };
-            self.queue_archive_job(batch, ctx);
+    /// Follows the drags out of compressed folders: each request waiting gets the copies once
+    /// out, a failed copy says why in a box, a drag that ended without a drop stops its copy and
+    /// lets go of it, and the copies of one a target took are held until another drop's are.
+    pub(crate) fn poll_drag_copies(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let mut failed = Vec::new();
+        for d in &mut self.drag_copies {
+            for ev in d.job.poll() {
+                match ev {
+                    ArchiveEvent::Landed { .. } => d.landed = true,
+                    ArchiveEvent::Failed { text, .. } => d.failed = Some(text),
+                    ArchiveEvent::Finished => {
+                        let out = d.landed && d.failed.is_none() && !d.job.meter().cancelled();
+                        d.out = Some(out);
+                        d.staged.done(out);
+                        failed.extend((d.failed.take()).map(|why| (d.archive.clone(), why)));
+                    }
+                }
+            }
         }
-        self.take_abandoned_drags(ctx)
+        let mut i = 0;
+        while let Some(d) = self.drag_copies.get(i) {
+            match (d.staged.ended(), d.out) {
+                (Some(false), _) | (Some(true), Some(false)) => {
+                    self.drag_copies.remove(i);
+                }
+                (Some(true), Some(true)) => {
+                    self.dropped_copy = Some(self.drag_copies.remove(i).scratch);
+                }
+                _ => i += 1,
+            }
+        }
+        (failed.into_iter())
+            .map(|(archive, why)| self.copy_out_failed(&archive, why, ctx))
+            .reduce(Reply::and)
     }
 
     /// The dragged entries' image drawn at `scale`, and the point of it the pointer holds. An
@@ -472,8 +548,6 @@ impl Explorer {
 
     pub(crate) fn drag_ended(&mut self) -> Reply {
         self.drag = None;
-        // A drag out of a compressed folder that no drop asked of copies nothing.
-        self.drag_copy.take_if(|d| !d.staged.asked());
         Reply::none()
     }
 

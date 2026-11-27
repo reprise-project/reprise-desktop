@@ -23,7 +23,7 @@ use wayland_client::protocol::wl_data_device_manager::DndAction;
 /// `FILE_MIMES` is what a drag of files offers after the portal key;
 /// `TEXT_UTF8` is also the text mime a drop prefers.
 pub use reprisefs::dropdata::{
-    Dropped as Uri, FILE_MIMES, FILE_TRANSFER, HOST_FILES, MOZ_URL, SANDBOXED, TEXT_UTF8,
+    Dropped as Uri, FILE_MIMES, FILE_TRANSFER, HOST_FILES, MOZ_URL, SANDBOXED, STAGED, TEXT_UTF8,
     encode_files,
 };
 
@@ -180,10 +180,13 @@ fn has(mimes: &[String], mime: &str) -> bool {
 }
 
 /// The mime the files of a drag offering `mimes` are read ahead of its
-/// drop in: the portal key when `portal`, else the URI list. None without files.
+/// drop in: the portal key when `portal`, else the names of a staged drag's
+/// files, else the URI list. None without files.
 pub fn peek_mime(mimes: &[String], portal: bool) -> Option<&'static str> {
     if portal {
         Some(FILE_TRANSFER)
+    } else if has(mimes, STAGED) {
+        Some(STAGED)
     } else {
         has(mimes, URI_LIST).then_some(URI_LIST)
     }
@@ -287,15 +290,15 @@ pub struct DragOut {
     pub image: Canvas,
     /// Logical px from the image's top-left.
     pub grab: (i32, i32),
-    /// Set when the files are written only once the drop asks for them: the drag offers only
-    /// Copy and no portal key.
+    /// Set when the files are written after the drag starts: the drag offers only Copy, no
+    /// portal key and [`reprisefs::dropdata::STAGED`].
     pub staged: Option<Staged>,
 }
 
-/// Files a drag names before they are written. A target asking before the drop gets their
-/// paths at once. The drop's request makes [`Staged::asked`] true and waits, with no time limit,
-/// for [`Staged::done`]: then it gets the paths, or nothing when they did not come out. A drop
-/// that gives up first makes [`Staged::abandoned`] true.
+/// Files a drag names before they are written. Each request for them, before the drop or at it
+/// and as often as a target asks, waits with no time limit for [`Staged::done`], then gets the
+/// paths, or its pipe closed empty when they did not come out. The host tells how the drag ended
+/// through [`Staged::end`].
 #[derive(Clone)]
 pub struct Staged(Arc<StagedShared>);
 
@@ -306,18 +309,17 @@ struct StagedShared {
 
 #[derive(Default)]
 struct StagedState {
-    /// The pipes of the drop's requests, each with the bytes it is sent.
+    /// The pipes of the requests waiting, each with the bytes it is sent.
     waiting: Vec<(std::os::fd::OwnedFd, Arc<[u8]>)>,
-    asked: bool,
-    abandoned: bool,
     out: Option<bool>,
+    ended: Option<bool>,
 }
 
 /// The most requests one staged drag holds a pipe for; more are closed empty.
-const MAX_WAITING: usize = 4;
+const MAX_WAITING: usize = 16;
 
 impl Staged {
-    /// `wake` runs when the drop asks for the files, and when it gives up on them.
+    /// `wake` runs when the drag ends.
     pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Staged {
         Staged(Arc::new(StagedShared {
             state: Mutex::default(),
@@ -329,18 +331,8 @@ impl Staged {
         self.0.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Whether the drop has asked for the files: the time to write them.
-    pub fn asked(&self) -> bool {
-        self.state().asked
-    }
-
-    /// Whether the drop gave up before the files were out.
-    pub fn abandoned(&self) -> bool {
-        self.state().abandoned
-    }
-
     /// The files are there (`ok`) or will not be: each waiting request gets its bytes, or its
-    /// pipe closed empty.
+    /// pipe closed empty, and so does each later one.
     pub fn done(&self, ok: bool) {
         let waiting = {
             let mut s = self.state();
@@ -352,32 +344,36 @@ impl Staged {
         }
     }
 
-    /// The drop asks for `bytes` on `fd`, sent once the files are out: the host's part.
+    /// A target asks for `bytes` on `fd`, sent once the files are out: the host's part.
     pub fn send(&self, fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>) {
         let mut s = self.state();
         match s.out {
             Some(true) => reprisefs::pipe::write_detached(fd, bytes),
             Some(false) => {}
-            None if s.abandoned || s.waiting.len() >= MAX_WAITING => {}
-            None => {
-                s.waiting.push((fd, bytes));
-                s.asked = true;
-                drop(s);
-                (self.0.wake)();
-            }
+            None if s.ended == Some(false) || s.waiting.len() >= MAX_WAITING => {}
+            None => s.waiting.push((fd, bytes)),
         }
     }
 
-    /// The drop ended before the files were out: the host's part.
-    pub fn abandon(&self) {
-        let mut s = self.state();
-        if s.out.is_some() || !s.asked {
-            return;
+    /// The drag ended, `taken` when a target took the drop: the host's part. A drag nobody took
+    /// closes the requests waiting.
+    pub fn end(&self, taken: bool) {
+        {
+            let mut s = self.state();
+            if s.ended.is_some() {
+                return;
+            }
+            s.ended = Some(taken);
+            if !taken {
+                s.waiting.clear();
+            }
         }
-        s.abandoned = true;
-        s.waiting.clear();
-        drop(s);
         (self.0.wake)();
+    }
+
+    /// None while the drag runs; then whether a target took the drop.
+    pub fn ended(&self) -> Option<bool> {
+        self.state().ended
     }
 }
 
@@ -567,6 +563,13 @@ mod tests {
     }
 
     #[test]
+    fn a_staged_drags_files_are_peeked_by_name_and_dropped_as_their_uri_list() {
+        let m = mimes(&[STAGED, URI_LIST, TEXT_UTF8]);
+        assert_eq!(peek_mime(&m, false), Some(STAGED));
+        assert_eq!(drop_mime(&m, DropKind::Uris, true, false), Some(URI_LIST));
+    }
+
+    #[test]
     fn a_sandboxed_programs_files_come_through_the_portal() {
         let m = mimes(&[FILE_TRANSFER, URI_LIST, TEXT_UTF8]);
         assert!(through_portal(&m, false));
@@ -655,46 +658,55 @@ mod tests {
     }
 
     #[test]
-    fn a_staged_drop_waits_for_its_files_and_hears_whether_they_came_out() {
+    fn each_request_of_a_staged_drag_waits_for_its_files_and_hears_whether_they_came_out() {
         use std::io::Read;
+        let pipe = || {
+            let (r, w) = std::io::pipe().unwrap();
+            (r, std::os::fd::OwnedFd::from(w))
+        };
+        let read = |mut r: std::io::PipeReader| {
+            let mut got = Vec::new();
+            r.read_to_end(&mut got).unwrap();
+            got
+        };
         let woke = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let w = woke.clone();
         let staged = Staged::new(move || {
             w.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         });
-        let pipe = || {
-            let (r, w) = std::io::pipe().unwrap();
-            (r, std::os::fd::OwnedFd::from(w))
-        };
-        let (mut first, fd) = pipe();
+        let (before, fd) = pipe();
         staged.send(fd, Arc::from(&b"file:///a"[..]));
-        assert!(staged.asked(), "the drop asked");
-        assert_eq!(woke.load(std::sync::atomic::Ordering::Relaxed), 1);
+        let (again, fd) = pipe();
+        staged.send(fd, Arc::from(&b"file:///a"[..]));
         staged.done(true);
-        let mut got = Vec::new();
-        first.read_to_end(&mut got).unwrap();
-        assert_eq!(got, b"file:///a", "sent once out");
+        assert_eq!(read(before), b"file:///a", "a read before the drop waits");
+        assert_eq!(read(again), b"file:///a", "and so does a second");
+        let (after, fd) = pipe();
+        staged.send(fd, Arc::from(&b"file:///a"[..]));
+        assert_eq!(
+            read(after),
+            b"file:///a",
+            "one after they are out gets them at once"
+        );
+        assert_eq!(staged.ended(), None);
+        staged.end(true);
+        staged.end(false);
+        assert_eq!(staged.ended(), Some(true), "a drag ends once");
+        assert_eq!(woke.load(std::sync::atomic::Ordering::Relaxed), 1);
 
         let failed = Staged::new(|| {});
-        let (mut empty, fd) = pipe();
+        let (empty, fd) = pipe();
         failed.send(fd, Arc::from(&b"file:///a"[..]));
         failed.done(false);
-        let mut got = Vec::new();
-        empty.read_to_end(&mut got).unwrap();
-        assert!(got.is_empty(), "a copy that failed sends nothing");
+        assert!(read(empty).is_empty(), "a copy that failed sends nothing");
 
-        let given_up = Staged::new(|| {});
-        given_up.abandon();
+        let untaken = Staged::new(|| {});
+        let (closed, fd) = pipe();
+        untaken.send(fd, Arc::from(&b"file:///a"[..]));
+        untaken.end(false);
         assert!(
-            !given_up.abandoned(),
-            "a drag nobody asked of gives up nothing"
+            read(closed).is_empty(),
+            "a drag nobody took closes its pipes"
         );
-        let (mut closed, fd) = pipe();
-        given_up.send(fd, Arc::from(&b"file:///a"[..]));
-        given_up.abandon();
-        assert!(given_up.abandoned());
-        let mut got = Vec::new();
-        closed.read_to_end(&mut got).unwrap();
-        assert!(got.is_empty(), "its pipe closes");
     }
 }

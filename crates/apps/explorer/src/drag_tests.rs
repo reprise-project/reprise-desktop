@@ -2004,73 +2004,120 @@ fn read_all(mut r: std::io::PipeReader) -> String {
     got
 }
 
+/// Starts a drag of the one entry of [`archive_view`] with a press at `time`: what it offers.
+fn drag_out(
+    ex: &mut Explorer,
+    ctx: &mut Ctx,
+    at: (i32, i32),
+    time: u32,
+) -> Box<repriseapp::DragOut> {
+    let (x, y) = at;
+    let mods = SeatMods::default();
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time,
+        mods,
+    };
+    ex.pointer(press, ctx);
+    let r = motion(ex, ctx, (at.0 + THRESHOLD + 1, at.1));
+    r.start_drag.expect("the drag started")
+}
+
 #[test]
-fn a_drag_out_of_a_compressed_folder_no_drop_asks_of_copies_nothing() {
+fn a_drag_out_of_a_compressed_folder_copies_out_as_it_starts_and_lets_go_if_nothing_takes_it() {
     let mut ctx = test_ctx();
     let (_dir, mut ex, at) = archive_view(&mut ctx);
-    press(&mut ex, &mut ctx, at, BTN_LEFT);
-    let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
-    let out = r.start_drag.expect("the drag started");
-    let staged = out.staged.expect("its copies come out at the drop");
+    let out = drag_out(&mut ex, &mut ctx, at, 5000);
+    let staged = out.staged.expect("its copies come out after it starts");
     let [copy] = &out.paths[..] else {
         panic!("one copy: {:?}", out.paths);
     };
     assert!(copy.starts_with(crate::tests::scratch().join("cache/reprise/archives")));
     assert_eq!(copy.file_name(), Some("a.txt".as_ref()));
-    assert!(!copy.exists(), "nothing copies at the start");
-    ex.drag_ended();
-    assert!(ex.drag_copy.is_none() && ex.extracting.is_none());
-    assert!(!staged.asked());
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies[0].out == Some(true));
+    assert_eq!(std::fs::read_to_string(copy).expect("copied"), "inside");
+    staged.end(false);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies.is_empty());
+    assert!(!copy.parent().unwrap().exists(), "nothing holds its copies");
+    assert!(ex.dialog().is_none());
 }
 
 #[test]
-fn a_drop_asking_a_compressed_folder_drag_for_its_files_gets_them_once_out() {
+fn a_drag_out_of_a_compressed_folder_ended_while_copying_stops_and_sends_nothing() {
     let mut ctx = test_ctx();
     let (_dir, mut ex, at) = archive_view(&mut ctx);
-    press(&mut ex, &mut ctx, at, BTN_LEFT);
-    let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
-    let out = r.start_drag.expect("the drag started");
+    let out = drag_out(&mut ex, &mut ctx, at, 5000);
+    let staged = out.staged.expect("staged");
     let (read, fd) = drop_pipe();
-    out.staged
-        .expect("staged")
-        .send(fd, out.paths[0].to_string_lossy().as_bytes().into());
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_some());
-    assert!(ex.drag_copy.is_none(), "the copy started, with its dialog");
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_none());
-    assert_eq!(
-        read_all(read),
-        out.paths[0].to_string_lossy(),
-        "the drop gets the paths"
-    );
+    staged.send(fd, b"x".as_slice().into());
+    staged.end(false);
+    assert_eq!(read_all(read), "", "the target gets nothing");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies.is_empty());
+    crate::tests::wake_until(&mut ex, &mut ctx, |_| {
+        !out.paths[0].parent().unwrap().exists()
+    });
+}
+
+#[test]
+fn every_read_of_a_drag_out_of_a_compressed_folder_gets_its_copies_once_out_and_a_drop_keeps_them()
+{
+    let mut ctx = test_ctx();
+    let (_dir, mut ex, at) = archive_view(&mut ctx);
+    let out = drag_out(&mut ex, &mut ctx, at, 5000);
+    let staged = out.staged.expect("staged");
+    let uri = out.paths[0].to_string_lossy().into_owned();
+    // A target that reads the offer as the drag enters it, and again at the drop.
+    let (early, fd) = drop_pipe();
+    staged.send(fd, uri.as_bytes().into());
+    let (late, fd) = drop_pipe();
+    staged.send(fd, uri.as_bytes().into());
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.drag_copies.iter().all(|d| d.out.is_some())
+    });
+    assert_eq!(read_all(early), uri, "the early read waited for the copies");
+    assert_eq!(read_all(late), uri);
     assert_eq!(
         std::fs::read_to_string(&out.paths[0]).expect("copied"),
         "inside"
     );
-    assert!(ex.dialog().is_none(), "no box: the copy came out");
+    staged.end(true);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies.is_empty());
+    assert!(
+        out.paths[0].exists(),
+        "the drop's copies stay for its target"
+    );
     ex.drag_ended();
+
+    let next = drag_out(&mut ex, &mut ctx, at, 60_000);
+    let staged = next.staged.expect("staged");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies[0].out.is_some());
+    staged.end(true);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies.is_empty());
+    assert!(
+        !out.paths[0].exists(),
+        "the next drop's copies replace them"
+    );
+    assert!(next.paths[0].exists());
+    assert!(ex.dialog().is_none(), "no box: the copies came out");
 }
 
 #[test]
-fn a_drop_that_stops_waiting_cancels_its_copy_out_of_a_compressed_folder() {
+fn a_drag_out_of_a_compressed_folder_past_its_most_starts_no_drag_and_says_what_to_use() {
     let mut ctx = test_ctx();
     let (_dir, mut ex, at) = archive_view(&mut ctx);
+    ex.drag_most = 5;
     press(&mut ex, &mut ctx, at, BTN_LEFT);
     let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
-    let out = r.start_drag.expect("the drag started");
-    let staged = out.staged.expect("staged");
-    let (read, fd) = drop_pipe();
-    staged.send(fd, b"x".as_slice().into());
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_some());
-    staged.abandon();
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_none());
-    assert_eq!(read_all(read), "", "the drop gets nothing");
+    assert!(r.start_drag.is_none(), "nothing is dragged out");
+    assert!(ex.drag_copies.is_empty() && ex.drag.is_none());
     assert!(
         matches!(ex.dialog(), Some(crate::dialogs::Dialog::Message { text, .. })
-            if text.contains("stopped waiting")),
-        "a box says the drop gave up"
+            if text == "The items picked in pack.tar.gz take 6 bytes, more than a drag copies \
+                out of a compressed folder (5 bytes). Use Copy To Folder... or Extract All... \
+                instead."),
+        "{:?}",
+        ex.dialog().map(|_| ())
     );
-    crate::tests::wake_until(&mut ex, &mut ctx, |_| {
-        !out.paths[0].parent().unwrap().exists()
-    });
-    ex.drag_ended();
 }
