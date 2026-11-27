@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc::Sender;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 
@@ -21,8 +21,7 @@ const IFACE: &str = "org.freedesktop.Accounts";
 const USER_IFACE: &str = "org.freedesktop.Accounts.User";
 
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
-/// A change waits on the polkit agent, which gives up after 120 s.
-const APPLY_TIMEOUT: Duration = Duration::from_secs(150);
+const APPLY_TIMEOUT: Duration = reprisebus::polkit::PROMPT_TIMEOUT;
 /// DeleteUser with its files returns once `userdel -r` has removed the home.
 const DELETE_TIMEOUT: Duration = Duration::from_secs(3600);
 
@@ -448,21 +447,8 @@ pub fn refusal(ops: &[Op], rows: &[User]) -> Option<String> {
 pub fn apply(ops: &[Op]) -> Result<(), Failure> {
     removing_pictures(ops, |ops| {
         check_fresh(ops)?;
-        let deletes_files = ops.iter().any(|op| {
-            matches!(
-                op,
-                Op::Delete {
-                    remove_files: true,
-                    ..
-                }
-            )
-        });
-        let timeout = match deletes_files {
-            true => DELETE_TIMEOUT,
-            false => APPLY_TIMEOUT,
-        };
         zbus::block_on(async {
-            let conn = connect(timeout).await.map_err(|e| e.to_string())?;
+            let conn = connect(APPLY_TIMEOUT).await.map_err(|e| e.to_string())?;
             for (i, op) in ops.iter().enumerate() {
                 run(&conn, op).await.map_err(|why| told(ops, i, why))?;
             }
@@ -568,6 +554,7 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
                 IFACE,
                 "CreateUser",
                 &(login.as_str(), real_name.as_str(), t),
+                APPLY_TIMEOUT,
             )
             .await?;
             // A new account is locked until SetPassword gives it one.
@@ -602,6 +589,11 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
                 IFACE,
                 "DeleteUser",
                 &(i64::from(*uid), *remove_files),
+                if *remove_files {
+                    DELETE_TIMEOUT
+                } else {
+                    APPLY_TIMEOUT
+                },
             )
             .await
         }
@@ -621,9 +613,14 @@ fn expire_command(login: &str) -> Command {
 }
 
 fn expire(login: &str) -> Result<(), Failure> {
-    let out = expire_command(login)
-        .output()
+    let ran = expire_command(login)
+        .spawn()
+        .and_then(|child| finished(child, APPLY_TIMEOUT))
         .map_err(|e| format!("{PKEXEC}: {e}"))?;
+    let Some(out) = ran else {
+        log::warn!("{CHAGE} -d 0 {login}: stopped {PKEXEC} after {APPLY_TIMEOUT:?}");
+        return Err(Failure::Text(reprisebus::polkit::GAVE_UP.into()));
+    };
     let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
     match out.status.code() {
         Some(0) => Ok(()),
@@ -640,6 +637,21 @@ fn expire(login: &str) -> Result<(), Failure> {
             )))
         }
     }
+}
+
+/// `child`'s output once it exits within `limit`; None once `limit` passed and it was killed.
+/// polkitd drops the prompt of a pkexec whose bus connection closed.
+fn finished(mut child: Child, limit: Duration) -> std::io::Result<Option<Output>> {
+    let until = Instant::now() + limit;
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= until {
+            let _ = child.kill();
+            child.wait()?;
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    child.wait_with_output().map(Some)
 }
 
 /// `why` after a blank line, for the end of a message; nothing for a dismissed prompt.
@@ -678,18 +690,19 @@ async fn user_call<B>(
 where
     B: serde::Serialize + zbus::DynamicType,
 {
-    interactive::<_, ()>(conn, path, USER_IFACE, method, body).await
+    interactive::<_, ()>(conn, path, USER_IFACE, method, body, APPLY_TIMEOUT).await
 }
 
 /// Call `method` with the flag that lets the daemon's polkit check ask
 /// for a password; without it, a change that needs one is refused
-/// outright.
+/// outright. The call waits `limit` at most.
 async fn interactive<B, R>(
     conn: &zbus::Connection,
     path: &str,
     iface: &'static str,
     method: &str,
     body: &B,
+    limit: Duration,
 ) -> Result<R, Failure>
 where
     B: serde::Serialize + zbus::DynamicType,
@@ -703,12 +716,12 @@ where
         .build()
         .await
         .map_err(|e| e.to_string())?;
-    proxy
-        .call_with_flags(
-            method,
-            zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
-            body,
-        )
+    let call = proxy.call_with_flags(
+        method,
+        zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
+        body,
+    );
+    reprisebus::polkit::asking(limit, true, call)
         .await
         .map_err(|e| describe(method, e))?
         .ok_or_else(|| Failure::Text(format!("{method} sent no reply")))
@@ -716,6 +729,9 @@ where
 
 fn describe(method: &str, e: zbus::Error) -> Failure {
     log::error!("{method}: {e}");
+    if reprisebus::polkit::gave_up(&e) {
+        return Failure::Text(reprisebus::polkit::GAVE_UP.into());
+    }
     match reprisebus::error::name(&e) {
         Some(name) => failure(
             &name,
@@ -900,6 +916,29 @@ mod tests {
             describe("CreateUser", unreached),
             Failure::Text("The name is not activatable".into())
         );
+        let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        assert_eq!(
+            describe("CreateUser", late),
+            Failure::Text(reprisebus::polkit::GAVE_UP.into())
+        );
+    }
+
+    #[test]
+    fn a_command_past_its_limit_is_killed() {
+        let sleeping = Command::new("sleep").arg("30").spawn().unwrap();
+        let start = Instant::now();
+        assert!(
+            finished(sleeping, Duration::from_millis(100))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "killed, not waited for"
+        );
+        let quick = Command::new("true").spawn().unwrap();
+        let out = finished(quick, Duration::from_secs(30)).unwrap();
+        assert!(out.is_some_and(|o| o.status.success()));
     }
 
     #[test]
