@@ -296,6 +296,20 @@ fn a_run_stamps_its_boot_and_drops_its_other_stamps_only() {
 }
 
 #[test]
+fn a_stamp_of_another_boot_that_cannot_go_leaves_the_run_stamped_and_the_rest_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("schedtasks");
+    let stem = "reprise-task-x";
+    let held = format!("{stem}.{EARLIER}");
+    let other = format!("{stem}.{}", "0".repeat(32));
+    std::fs::create_dir_all(dir.join(&held)).unwrap();
+    std::fs::write(dir.join(&held).join("in"), "").unwrap();
+    std::fs::write(dir.join(&other), "").unwrap();
+    stamp_run(&dir, stem, BOOT).unwrap();
+    assert_eq!(names(&dir), [format!("{stem}.{BOOT}"), held]);
+}
+
+#[test]
 fn a_stamp_run_refuses_arguments_its_unit_never_passes() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
