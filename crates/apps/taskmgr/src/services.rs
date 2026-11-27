@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use reprisebus::services::{Failed, Loaded, Manager, UnitFile, Verb, is_service_name};
+use reprisebus::services::{Failed, Loaded, Manager, Reread, UnitFile, Verb, is_service_name};
 use reprisekit::tr;
 
 /// The lines asked of the journal for a service's log.
@@ -228,6 +228,8 @@ pub enum Msg {
         name: String,
         read: Result<String, LogError>,
     },
+    /// The user manager signalled a change to its services ([`follow`]).
+    Reread(Reread),
 }
 
 /// Where the threads send what they got: the event loop's channel, which they wake.
@@ -238,10 +240,13 @@ pub struct Post {
 }
 
 impl Post {
-    pub fn send(&self, m: Msg) {
-        if self.tx.send(m).is_ok() {
+    /// Sends `m` and wakes the loop; false once the receiver is gone.
+    pub fn send(&self, m: Msg) -> bool {
+        let sent = self.tx.send(m).is_ok();
+        if sent {
             self.wake.wake();
         }
+        sent
     }
 }
 
@@ -313,6 +318,14 @@ fn read(
         files.insert(m, read);
     }
     Ok(rows(m, &loaded, &files[&m], describe))
+}
+
+/// Follows the user manager's signals on a thread of its own, posting a [`Msg::Reread`] for each
+/// change to its services, until the window is gone.
+pub fn follow(post: Post) {
+    std::thread::spawn(move || {
+        reprisebus::services::follow_rereads(|r| post.send(Msg::Reread(r)));
+    });
 }
 
 /// Runs `job` off the event loop, posting [`Msg::Done`].
