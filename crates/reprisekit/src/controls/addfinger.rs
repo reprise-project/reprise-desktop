@@ -69,6 +69,8 @@ pub enum Refusal {
     NotAuthorized,
     /// Another program holds the reader.
     InUse,
+    /// The password prompt was open too long.
+    TimedOut,
     Failed,
 }
 
@@ -79,6 +81,9 @@ impl Refusal {
             Refusal::NotAuthorized => format!("You weren't allowed to {doing}."),
             Refusal::InUse => "Another program is using the fingerprint reader. Try again once \
                                it is done."
+                .into(),
+            Refusal::TimedOut => "The password prompt was open too long. Check the fingerprints \
+                                  and try again."
                 .into(),
             Refusal::Failed => format!("The fingerprint reader couldn't {doing}."),
         }

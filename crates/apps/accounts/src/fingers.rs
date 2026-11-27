@@ -68,6 +68,7 @@ pub fn refusal(r: fprint::Refusal) -> Refusal {
     match r {
         fprint::Refusal::NotAuthorized => Refusal::NotAuthorized,
         fprint::Refusal::InUse => Refusal::InUse,
+        fprint::Refusal::TimedOut => Refusal::TimedOut,
         fprint::Refusal::Failed => Refusal::Failed,
     }
 }
