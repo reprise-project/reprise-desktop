@@ -382,6 +382,23 @@ fn cascade_uses_configured_metrics() {
 }
 
 #[test]
+fn a_note_without_a_place_opens_top_right_and_steps_down_left() {
+    let m = Metrics::default();
+    let area = Rect::new(0, 0, 1920, 1050);
+    let first = top_right_cascade(None, (200, 200), area, &m);
+    assert_eq!(first, (1920 - m.cascade_origin - 200, m.cascade_origin));
+    assert_eq!(
+        top_right_cascade(Some(first), (200, 200), area, &m),
+        (first.0 - m.cascade_step, first.1 + m.cascade_step)
+    );
+    assert_eq!(
+        top_right_cascade(Some((1500, 900)), (200, 200), area, &m),
+        first,
+        "back at the top right past the bottom"
+    );
+}
+
+#[test]
 fn an_apps_next_window_cascades_from_its_newest_and_wraps_at_the_edge() {
     let m = Metrics::default();
     let area = Rect::new(0, 0, 1920, 1050);

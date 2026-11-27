@@ -21,7 +21,7 @@ use crate::windowrules::{Position, Want, WindowState};
 
 use super::{
     DialogTag, Kind, LastFrame, Window, WindowId, anchor_done, anchored_position, cascade_from,
-    cascade_position, centre_on, fit_size, keep_inside,
+    cascade_position, centre_on, fit_size, keep_inside, top_right_cascade,
 };
 
 impl State {
@@ -398,6 +398,13 @@ impl State {
             }
             // A fixed-size ownerless window (polkit prompt, About box) centres on the screen.
             (None, None, None) if !resizable => centre_on(area, total, area),
+            (None, None, None) if self.win(w).is_some_and(|x| x.place_tag.is_some()) => {
+                let app_id = self.win(w).map(Window::app).unwrap_or_default();
+                let prev = (self.newest_of_app(&app_id, Some(w)))
+                    .and_then(|p| self.win(p))
+                    .map(|p| (p.x, p.y));
+                top_right_cascade(prev, total, area, &m)
+            }
             (None, None, None) => {
                 let index = self
                     .windows
