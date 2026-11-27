@@ -28,6 +28,9 @@ const CPU_BYTES_PER_SEC: u64 = 2 << 20;
 /// The most listings one window keeps.
 const KEPT_LISTINGS: usize = 4;
 
+/// The most bytes one listing's names may add up to, which a window keeps [`KEPT_LISTINGS`] of.
+const MAX_NAME_BYTES: usize = 128 << 20;
+
 /// Address space a bsdtar child may map, in bytes.
 const CHILD_MEMORY: u64 = 2 << 30;
 
@@ -137,8 +140,13 @@ fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failur
 }
 
 /// Every file and folder `archive` holds, read from its headers. An archive of more than
-/// [`MAX_ENTRIES`] entries is refused as soon as the listing passes them; cancelling `m` stops it.
+/// [`MAX_ENTRIES`] entries, or whose names add up to more than [`MAX_NAME_BYTES`], is refused as
+/// soon as the listing passes them; cancelling `m` stops it.
 pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
+    list_within(archive, m, MAX_NAME_BYTES)
+}
+
+fn list_within(archive: &Path, m: &Meter, most_names: usize) -> Result<Vec<Entry>, String> {
     if zip_encrypted(archive) {
         return Err(tr!("archive-locked"));
     }
@@ -151,13 +159,18 @@ pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
     let now = now();
     let mut entries = Vec::new();
     let mut seen = 0u64;
+    let mut names = 0usize;
     let read = extract::lines(&mut child, out, m, |line| {
         seen += 1;
         if seen > MAX_ENTRIES {
             return false;
         }
-        entries.extend(listed_entry(line, now));
-        true
+        let Some(e) = listed_entry(line, now) else {
+            return true;
+        };
+        names += e.path.as_os_str().len();
+        entries.push(e);
+        names <= most_names
     });
     let status = match read {
         Ok(true) => child.wait().map_err(|e| e.to_string()),
@@ -168,6 +181,10 @@ pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
     let stderr = drain.join().unwrap_or_default();
     if seen > MAX_ENTRIES {
         return Err(tr!("archive-too-many", most = MAX_ENTRIES));
+    }
+    if names > most_names {
+        let most = crate::props::short_size(most_names as u64);
+        return Err(tr!("archive-names-too-long", most = most));
     }
     match status? {
         s if s.success() => Ok(entries),
@@ -1411,6 +1428,31 @@ mod tests {
         let m = Meter::default();
         m.cancel();
         assert!(list(&t.path().join("t.tar"), &m).is_err());
+    }
+
+    #[test]
+    fn a_listing_whose_names_pass_their_most_is_refused_as_it_passes_them() {
+        let t = tempfile::tempdir().unwrap();
+        let work = t.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        let names: Vec<String> = (0..50)
+            .map(|i| format!("{i:02}{}", "n".repeat(98)))
+            .collect();
+        for n in &names {
+            std::fs::write(work.join(n), "").unwrap();
+        }
+        let args: Vec<&str> = ["-czf", "../many.tar.gz"]
+            .into_iter()
+            .chain(names.iter().map(String::as_str))
+            .collect();
+        bsdtar(&work, &args);
+        let archive = t.path().join("many.tar.gz");
+        let m = Meter::default();
+        assert_eq!(list_within(&archive, &m, 5000).map(|e| e.len()), Ok(50));
+        assert_eq!(
+            list_within(&archive, &m, 4000),
+            Err("its names add up to more than 3.90 KB.".into())
+        );
     }
 
     #[test]
