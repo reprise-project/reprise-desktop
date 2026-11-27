@@ -1322,6 +1322,40 @@ mod tests {
     }
 
     #[test]
+    fn enter_on_a_bar_item_mid_swipe_springs_the_swipe_back_and_clicks() {
+        const KEY_ENTER: u32 = 28;
+        let config = crate::config::Config {
+            base: repriseconf::config::Config {
+                workspaces: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let b = h.map_toplevel(&mut c, "test.other", 300, 200);
+        h.dispatch();
+        assert_eq!(h.state.focused, Some(b.id));
+        let tree = h.state.bars[0].tree;
+        let i = (h.state.bars[0].slots.iter())
+            .position(|s| s.windows == [a.id])
+            .expect("a's task button");
+        h.swipe_with(3, &[(60.0, 0.0); 6], |h| {
+            assert!(h.state.pointers.swipe.is_some(), "the swipe is kept");
+            h.state
+                .focus_bar_item(tree, reprisekit::taskbar::TaskbarHit::Task(i));
+            h.key(KEY_ENTER, true);
+            h.key(KEY_ENTER, false);
+            assert!(h.state.pointers.swipe.is_none(), "Enter drops the swipe");
+            assert_eq!(h.state.focused, Some(a.id), "Enter brings up a");
+        });
+        assert_eq!(h.state.desktops.current, 0, "the lift switches nothing");
+        assert_eq!(h.state.focused, Some(a.id), "a keeps the focus");
+    }
+
+    #[test]
     fn keys_typed_into_the_desktops_lock_are_not_echoed_to_accessibility() {
         use crate::config::PowerAction;
         use crate::lockview::Origin;
