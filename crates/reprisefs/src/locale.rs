@@ -1,6 +1,6 @@
 use std::ffi::{CStr, CString};
 
-use reprisekit::controls::calendar::DateNames;
+use reprisekit::controls::calendar::{DateNames, DateOrder};
 use reprisekit::tr;
 use std::sync::OnceLock;
 
@@ -67,6 +67,21 @@ pub fn long_date_format() -> String {
 
 const SHORT_DATE: &CStr = c"%x";
 
+/// The LC_TIME locale dates are written in, without its codeset or modifier ("hu_HU" for
+/// `LC_TIME=hu_HU.UTF-8`); "C" when the environment names none or one that does not load.
+pub fn time_locale_name() -> String {
+    let named = ["LC_ALL", "LC_TIME", "LANG"]
+        .into_iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()));
+    let loads = |n: &str| CString::new(n).is_ok_and(|c| TimeLocale::load(&c).is_some());
+    shown_locale_name(named.as_deref().filter(|n| loads(n)))
+}
+
+fn shown_locale_name(name: Option<&str>) -> String {
+    let name = name.unwrap_or("C");
+    name.split(['.', '@']).next().unwrap_or(name).to_string()
+}
+
 /// The calendar's month and weekday names in the language [`long_date`] writes.
 pub fn date_names() -> &'static DateNames {
     static NAMES: OnceLock<DateNames> = OnceLock::new();
@@ -75,7 +90,7 @@ pub fn date_names() -> &'static DateNames {
 
 /// Months in their standalone form (`%OB`, which differs from `%B` where a date declines
 /// them); a weekday's letter is its abbreviation's first, upper-cased. The year goes first when
-/// the locale's `date(1)` format writes it before the month.
+/// the locale's `date(1)` format writes it before the month; dates follow its short date's order.
 fn date_names_in(loc: Option<&TimeLocale>) -> DateNames {
     let name = |mon: i32, wday: i32, fmt: &CStr| {
         // SAFETY: `libc::tm` is plain data; `%OB` reads only `tm_mon`, `%A` and `%a` `tm_wday`.
@@ -94,6 +109,16 @@ fn date_names_in(loc: Option<&TimeLocale>) -> DateNames {
                 .map_or_else(String::new, |c| c.to_uppercase().collect())
         }),
         year_first: langinfo(loc, NL_DATE_FMT).and_then(|f| year_first(&f)),
+        order: match date_order(
+            langinfo(loc, libc::D_FMT)
+                .as_deref()
+                .unwrap_or("%D")
+                .as_bytes(),
+        ) {
+            "dmy" => DateOrder::Dmy,
+            "ymd" => DateOrder::Ymd,
+            _ => DateOrder::Mdy,
+        },
     }
 }
 
@@ -380,6 +405,12 @@ mod tests {
             assert_eq!(names.weekday(5), "péntek");
             assert_eq!(names.letters.join(" "), "V H K S C P S");
             assert_eq!(names.year_first.as_deref(), Some(". "), "2026. november");
+            assert_eq!(names.order, DateOrder::Ymd);
+        }
+        if let Some(gb) = TimeLocale::load(c"en_GB.UTF-8") {
+            let names = date_names_in(Some(&gb));
+            assert_eq!(names.order, DateOrder::Dmy);
+            assert_eq!(names.month(11), "November");
         }
     }
 
@@ -400,6 +431,15 @@ mod tests {
         assert_eq!(year_first("%a %d %b %Y %r %Z"), None);
         assert_eq!(year_first("%A %Y"), None, "no month");
         assert_eq!(year_first("100%% %Y"), None, "no month");
+    }
+
+    #[test]
+    fn the_locale_name_drops_its_codeset_and_modifier() {
+        assert_eq!(shown_locale_name(Some("hu_HU.UTF-8")), "hu_HU");
+        assert_eq!(shown_locale_name(Some("sr_RS.UTF-8@latin")), "sr_RS");
+        assert_eq!(shown_locale_name(Some("de_DE@euro")), "de_DE");
+        assert_eq!(shown_locale_name(Some("C.UTF-8")), "C");
+        assert_eq!(shown_locale_name(None), "C");
     }
 
     #[test]

@@ -142,7 +142,8 @@ pub fn place(zone: &str) -> (String, String) {
 
 impl Sheet {
     /// `zones` is timedated's list; `now` the local time; `first_weekday` the locale's (0
-    /// Sunday), `names` its month and weekday names; `twelve` whether it writes 12-hour time.
+    /// Sunday), `names` its month and weekday names; `twelve` whether it writes 12-hour time;
+    /// `regional` the line naming the locale dates are written in.
     pub fn new(
         system: &System,
         zones: &[String],
@@ -150,6 +151,7 @@ impl Sheet {
         first_weekday: u32,
         names: &'static DateNames,
         twelve: bool,
+        regional: &str,
     ) -> Sheet {
         let mut zones = zones.to_vec();
         if !zones.contains(&system.zone) {
@@ -157,7 +159,7 @@ impl Sheet {
             zones.sort();
         }
         let pages = vec![
-            date_page(now, first_weekday, names, twelve, system),
+            date_page(now, first_weekday, names, twelve, regional, system),
             zone_page(&zones, system),
         ];
         let mut s = Sheet {
@@ -435,6 +437,7 @@ fn date_page(
     first_weekday: u32,
     names: &'static DateNames,
     twelve: bool,
+    regional: &str,
     system: &System,
 ) -> Form {
     let month_refs: Vec<&str> = names.months.iter().map(String::as_str).collect();
@@ -473,7 +476,8 @@ fn date_page(
             Rect::new(249, 201, 103, 20),
             Control::Time(TimeField::new(now.h, now.m, now.s, twelve)),
         ),
-        Item::check("ntp", 16, 250, &tr!("ntp")).checked(system.ntp),
+        Item::check("ntp", 16, 244, &tr!("ntp")).checked(system.ntp),
+        Item::label_at("regional", 16, 261, 362, regional),
     ];
     if let Some(Item {
         control: Control::Combo(c),
@@ -564,8 +568,18 @@ mod tests {
             .to_vec()
     }
 
+    const REGIONAL: &str = "Regional format: en_US (9/24/2026)";
+
     fn sheet() -> Sheet {
-        Sheet::new(&system(), &zones(), now(), 0, DateNames::english(), true)
+        Sheet::new(
+            &system(),
+            &zones(),
+            now(),
+            0,
+            DateNames::english(),
+            true,
+            REGIONAL,
+        )
     }
 
     #[test]
@@ -574,7 +588,7 @@ mod tests {
             months: std::array::from_fn(|m| format!("m{}", m + 1)),
             ..DateNames::english().clone()
         }));
-        let s = Sheet::new(&system(), &zones(), now(), 0, names, true);
+        let s = Sheet::new(&system(), &zones(), now(), 0, names, true, REGIONAL);
         let page = &s.sheet.pages[TAB_DATE];
         let Some(Control::Combo(combo)) = page.item("month").map(|i| &i.control) else {
             panic!("the month combo");
@@ -592,7 +606,15 @@ mod tests {
             ntp: true,
             ..system()
         };
-        let s = Sheet::new(&synced, &zones(), now(), 0, DateNames::english(), true);
+        let s = Sheet::new(
+            &synced,
+            &zones(),
+            now(),
+            0,
+            DateNames::english(),
+            true,
+            REGIONAL,
+        );
         let page = &s.sheet.pages[TAB_DATE];
         assert_eq!(page.checked("ntp"), Some(true));
         assert_eq!(
@@ -616,7 +638,16 @@ mod tests {
                     auto_blocked: Some(blocked),
                     ..system()
                 };
-                let s = Sheet::new(&system, &zones(), now(), 0, DateNames::english(), true).sheet;
+                let s = Sheet::new(
+                    &system,
+                    &zones(),
+                    now(),
+                    0,
+                    DateNames::english(),
+                    true,
+                    REGIONAL,
+                )
+                .sheet;
                 pages.extend(s.tabs.labels.into_iter().zip(s.pages));
             }
             pages
@@ -640,7 +671,15 @@ mod tests {
             auto_blocked: Some(Blocked::NotAllowed),
             ..system()
         };
-        let mut s = Sheet::new(&blocked, &zones(), now(), 0, DateNames::english(), true);
+        let mut s = Sheet::new(
+            &blocked,
+            &zones(),
+            now(),
+            0,
+            DateNames::english(),
+            true,
+            REGIONAL,
+        );
         let (w, h) = CLIENT;
         let mut out = Canvas::new(2 * w as u32, h as u32);
         for tab in [TAB_DATE, TAB_ZONE] {
@@ -653,17 +692,12 @@ mod tests {
         reprisekit::raster::write_preview(&out, "datetime-preview.png");
     }
 
-    /// The zone tab in Classic (its default scheme and High Contrast Black), Blue, and Glass
-    /// light and dark: the panel is filled with the window colour and the city drawn in the
-    /// window text colour on it.
-    #[test]
-    fn the_zone_panel_takes_the_window_colours_in_every_look() {
+    /// Classic (its default scheme and High Contrast Black), Blue, and Glass light and dark.
+    fn looks() -> [(&'static str, reprisekit::theme::Theme); 5] {
         use reprisekit::glass::{Mode, Settings};
         use reprisekit::interface::Interface;
         use reprisekit::interfaces::{theme_for, theme_with};
-        use reprisekit::text::TextRenderer;
         use reprisekit::theme::Theme;
-        reprisekit::pins::fonts();
         let glass = |mode| {
             let g = Settings {
                 mode,
@@ -675,13 +709,56 @@ mod tests {
             colors: reprisekit::schemes::scheme("High Contrast Black").expect("the scheme"),
             ..Theme::default()
         };
-        let looks = [
+        [
             ("classic", theme_for(Interface::Classic)),
             ("classic-contrast", contrast),
             ("blue", theme_for(Interface::Blue)),
             ("glass", glass(Mode::Light)),
             ("glass-dark", glass(Mode::Dark)),
-        ];
+        ]
+    }
+
+    #[test]
+    fn the_regional_format_line_sits_under_the_time_server_check_in_every_look() {
+        use reprisekit::text::TextRenderer;
+        reprisekit::pins::fonts();
+        let mut got = Vec::new();
+        for (name, theme) in looks() {
+            let text = TextRenderer::load(&theme.fonts);
+            let s = sheet();
+            let (w, h) = CLIENT;
+            let mut c = Canvas::new(w as u32, h as u32);
+            c.fill_rect(c.bounds(), theme.colors.button_face);
+            propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, false, 11);
+            let page = &s.sheet.pages[TAB_DATE];
+            let (ntp, line) = (page.rect("ntp").unwrap(), page.rect("regional").unwrap());
+            assert!(line.y > ntp.bottom(), "{name}: under the check box");
+            let lay = s.sheet.layout(&text, 11);
+            assert!(
+                line.bottom() <= lay.page.bottom() - 2,
+                "{name}: inside the page's bevel"
+            );
+            let ink = theme.colors.button_text.argb();
+            let inked = (line.x..line.right())
+                .flat_map(|x| (line.y..line.bottom()).map(move |y| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) == ink)
+                .count();
+            assert!(inked > 20, "{name}: the line is drawn");
+            got.push((name.to_string(), fnv(&c)));
+        }
+        reprisekit::pins::check_file(
+            &reprisekit::crate_dir!().join("tests/pins/date_tab.txt"),
+            &got,
+        );
+    }
+
+    /// The zone tab in every look: the panel is filled with the window colour and the city drawn in the
+    /// window text colour on it.
+    #[test]
+    fn the_zone_panel_takes_the_window_colours_in_every_look() {
+        use reprisekit::text::TextRenderer;
+        reprisekit::pins::fonts();
+        let looks = looks();
         let mut got = Vec::new();
         for (name, theme) in looks {
             let text = TextRenderer::load(&theme.fonts);
@@ -810,6 +887,7 @@ mod tests {
             0,
             DateNames::english(),
             true,
+            REGIONAL,
         );
         assert!(matches!(
             &s.sheet.pages[TAB_DATE].item("ntp").unwrap().control,
@@ -854,7 +932,15 @@ mod tests {
             ntp: true,
             ..system()
         };
-        let mut s = Sheet::new(&synced, &zones(), now(), 0, DateNames::english(), true);
+        let mut s = Sheet::new(
+            &synced,
+            &zones(),
+            now(),
+            0,
+            DateNames::english(),
+            true,
+            REGIONAL,
+        );
         s.sheet.pages[TAB_ZONE].set_combo("zone", 2);
         s.event(propsheet::Event::Page(
             TAB_ZONE,
@@ -976,14 +1062,30 @@ mod tests {
             auto_blocked: Some(Blocked::NotAllowed),
             ..system()
         };
-        let s = Sheet::new(&blocked, &zones(), now(), 0, DateNames::english(), true);
+        let s = Sheet::new(
+            &blocked,
+            &zones(),
+            now(),
+            0,
+            DateNames::english(),
+            true,
+            REGIONAL,
+        );
         assert!(!enabled(&s));
         assert_eq!(note(&s), "Ask an administrator to allow time zone changes.");
         let on = System {
             auto_zone: true,
             ..blocked
         };
-        let s = Sheet::new(&on, &zones(), now(), 0, DateNames::english(), true);
+        let s = Sheet::new(
+            &on,
+            &zones(),
+            now(),
+            0,
+            DateNames::english(),
+            true,
+            REGIONAL,
+        );
         assert!(
             enabled(&s),
             "an automatic zone that is on can be turned off"
@@ -1011,6 +1113,7 @@ mod tests {
             0,
             DateNames::english(),
             true,
+            REGIONAL,
         );
         assert_eq!(s.pending_zone(), "Etc/GMT+5");
         assert!(!s.dirty());
@@ -1022,7 +1125,15 @@ mod tests {
             auto_zone: true,
             ..system()
         };
-        let mut s = Sheet::new(&auto, &zones(), now(), 0, DateNames::english(), true);
+        let mut s = Sheet::new(
+            &auto,
+            &zones(),
+            now(),
+            0,
+            DateNames::english(),
+            true,
+            REGIONAL,
+        );
         s.zone_moved("America/New_York");
         assert_eq!(s.pending_zone(), "America/New_York");
         assert_eq!(s.change(), Change::default(), "nothing to apply");

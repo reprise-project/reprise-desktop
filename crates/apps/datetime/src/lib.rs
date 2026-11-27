@@ -64,12 +64,15 @@ struct DateTimeApp {
     quit: bool,
 }
 
+fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
 fn now() -> Local {
     reprisefs::locale::refresh_zone();
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    let tm = reprisefs::locale::localtime(secs);
+    let tm = reprisefs::locale::localtime(now_secs());
     Local {
         year: tm.tm_year + 1900,
         month: (tm.tm_mon + 1) as u32,
@@ -96,6 +99,12 @@ impl DateTimeApp {
     fn ensure(&mut self) -> &mut Sheet {
         let (system, zones) = (&self.system, &self.zones);
         self.sheet.get_or_insert_with(|| {
+            let today = reprisefs::locale::localtime(now_secs());
+            let regional = tr!(
+                "regional-format",
+                locale = reprisefs::locale::time_locale_name(),
+                example = reprisefs::locale::short_date(&today)
+            );
             Sheet::new(
                 system,
                 zones,
@@ -103,6 +112,7 @@ impl DateTimeApp {
                 reprisefs::locale::first_weekday(),
                 reprisefs::locale::date_names(),
                 reprisefs::locale::is_12h(),
+                &regional,
             )
         })
     }
