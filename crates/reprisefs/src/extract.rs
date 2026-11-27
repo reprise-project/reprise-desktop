@@ -540,17 +540,29 @@ fn extract(
         io_count(pid, "wchar").map(|w| w > allowed)
     };
     // Without a write count (no /proc, or one that does not show it), each entry bsdtar reports
-    // is measured once as it lands instead.
-    let counted = io_count(pid, "wchar").is_some();
-    let mut landed = Landed::default();
-    let mut sampled = std::time::Instant::now();
+    // is measured once as it lands instead. A count lost mid-run starts that from what landed.
+    let counted = std::cell::Cell::new(io_count(pid, "wchar").is_some());
+    let landed = std::cell::RefCell::new(Landed::default());
+    let mut sampled: Option<std::time::Instant> = None;
     let tick = || {
-        if !counted || sampled.elapsed() < WRITES_EVERY || past.get() {
+        let due = sampled.is_none_or(|s| s.elapsed() >= WRITES_EVERY);
+        if !counted.get() || !due || past.get() {
             return;
         }
-        sampled = std::time::Instant::now();
-        if wrote_past() == Some(true) {
-            stop();
+        sampled = Some(std::time::Instant::now());
+        match wrote_past() {
+            Some(true) => stop(),
+            Some(false) => {}
+            None => {
+                counted.set(false);
+                let mut landed = landed.borrow_mut();
+                let walked = landed_files(&into, |st| {
+                    landed.add(st);
+                });
+                if walked.is_err() || landed.bytes > listed.bytes {
+                    stop();
+                }
+            }
         }
     };
     let mut n = 0;
@@ -574,14 +586,15 @@ fn extract(
                     // bsdtar ends an entry's line once it is written, with `: why` when that failed.
                     // A name holding `: ` is told apart by having landed.
                     let failed = entry.windows(2).any(|w| w == b": ");
-                    let stat = (failed || !counted && !past.get())
+                    let measured = !counted.get() && !past.get();
+                    let stat = (failed || measured)
                         .then(|| landed_at(into_fd.as_fd(), entry).ok())
                         .flatten();
                     // The entry past the listing has landed whole, and so have those whose lines
                     // the pipe still holds: each under RLIMIT_FSIZE, which stops the one bsdtar
                     // is writing at the listing's total.
-                    if let Some(st) = stat.as_ref().filter(|_| !counted && !past.get())
-                        && landed.add(st) > listed.bytes
+                    if let Some(st) = stat.as_ref().filter(|_| measured)
+                        && landed.borrow_mut().add(st) > listed.bytes
                     {
                         stop();
                     }
@@ -1165,10 +1178,17 @@ fn finish_status(
 /// The bytes the files under `root` hold, each file once however many links it has. No link is
 /// followed, and an entry gone before it is read holds none.
 fn landed_bytes(root: &Path) -> std::io::Result<u64> {
+    let mut bytes = 0u64;
+    landed_files(root, |st| bytes = bytes.saturating_add(st.st_size as u64))?;
+    Ok(bytes)
+}
+
+/// Calls `each` with every regular file under `root`, once however many links it has, as
+/// [`landed_bytes`] walks.
+fn landed_files(root: &Path, mut each: impl FnMut(&libc::stat)) -> std::io::Result<()> {
     use crate::ops::at::{c_path, cwd, open_dir, stat_at};
     let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let mut seen = std::collections::HashSet::new();
-    let mut bytes = 0u64;
     // A folder still to list holds its parent's descriptor, so about one is open per level.
     let mut pending = Vec::new();
     let mut next = Some(std::rc::Rc::new(open_dir(cwd(), &c_path(root)?, true)?));
@@ -1181,7 +1201,7 @@ fn landed_bytes(root: &Path) -> std::io::Result<u64> {
             match st.st_mode & libc::S_IFMT {
                 libc::S_IFDIR => pending.push((fd.clone(), name)),
                 libc::S_IFREG if st.st_nlink == 1 || seen.insert((st.st_dev, st.st_ino)) => {
-                    bytes = bytes.saturating_add(st.st_size as u64);
+                    each(&st);
                 }
                 _ => {}
             }
@@ -1196,7 +1216,7 @@ fn landed_bytes(root: &Path) -> std::io::Result<u64> {
             }
         }
     }
-    Ok(bytes)
+    Ok(())
 }
 
 /// The bytes of the files an extraction reported landing, each file counted at the largest size
@@ -1244,16 +1264,19 @@ fn landed_at(into: std::os::fd::BorrowedFd, entry: &[u8]) -> std::io::Result<lib
 
 #[cfg(test)]
 thread_local! {
-    /// Set by a test to read no write counts, as on a system without `/proc/<pid>/io`.
-    static NO_IO_COUNTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The write counts a test lets this thread read before they go, as on a system without
+    /// `/proc/<pid>/io`; `u32::MAX` never runs out.
+    static IO_COUNTS_LEFT: std::cell::Cell<u32> = const { std::cell::Cell::new(u32::MAX) };
 }
 
 /// The count `field` (`rchar`, `wchar`) of process `pid` and its reaped children, from
 /// `/proc/<pid>/io`.
 pub(crate) fn io_count(pid: u32, field: &str) -> Option<u64> {
     #[cfg(test)]
-    if NO_IO_COUNTS.with(|c| c.get()) {
-        return None;
+    match IO_COUNTS_LEFT.with(|c| c.get()) {
+        0 => return None,
+        u32::MAX => {}
+        left => IO_COUNTS_LEFT.with(|c| c.set(left - 1)),
     }
     let io = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
     io.lines()
@@ -1355,7 +1378,7 @@ mod tests {
             .into_iter()
             .flat_map(|c| cases.map(|case| (c, case)))
         {
-            NO_IO_COUNTS.with(|c| c.set(!counted));
+            IO_COUNTS_LEFT.with(|c| c.set(if counted { u32::MAX } else { 0 }));
             let t = tempfile::tempdir().unwrap();
             let src = t.path().join("src");
             std::fs::create_dir_all(&src).unwrap();
@@ -1392,12 +1415,23 @@ mod tests {
                 "nothing is left"
             );
         }
-        NO_IO_COUNTS.with(|c| c.set(false));
+        IO_COUNTS_LEFT.with(|c| c.set(u32::MAX));
     }
 
     #[test]
     fn without_a_write_count_an_extraction_past_its_listing_is_stopped_part_way() {
-        NO_IO_COUNTS.with(|c| c.set(true));
+        stopped_part_way_with_write_counts(0);
+    }
+
+    #[test]
+    fn a_write_count_lost_mid_run_still_stops_an_extraction_part_way() {
+        stopped_part_way_with_write_counts(1);
+    }
+
+    /// Extracts an archive past its listing with `counts` write counts readable, the first at
+    /// spawn.
+    fn stopped_part_way_with_write_counts(counts: u32) {
+        IO_COUNTS_LEFT.with(|c| c.set(counts));
         let t = tempfile::tempdir().unwrap();
         let src = t.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -1434,7 +1468,7 @@ mod tests {
                 "it holds more than its listing says.".into()
             ))
         );
-        NO_IO_COUNTS.with(|c| c.set(false));
+        IO_COUNTS_LEFT.with(|c| c.set(u32::MAX));
         let reported = m.snapshot().items;
         assert!(
             reported < files as u64 / 2,
