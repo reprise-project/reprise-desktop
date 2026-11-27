@@ -343,6 +343,11 @@ async fn task(
         exit_code: prop(&exec, "ExecMainCode").unwrap_or(0),
         exit_status: prop(&exec, "ExecMainStatus").unwrap_or(0),
         command: command(&exec),
+        once_per_boot: prop::<Vec<Exec>>(&exec, "ExecStartPre")
+            .unwrap_or_default()
+            .iter()
+            .any(|e| e.1.get(1).is_some_and(|a| a == units::ONCE_PER_BOOT)),
+        condition_met: prop(&started, "ConditionResult").unwrap_or(true),
         file,
     };
     Ok(Some((t, path, service_path)))
@@ -365,11 +370,13 @@ fn command(exec: &Props) -> String {
         .join("\n")
 }
 
-/// Runs `cmd` as `systemctl --user start`, `stop`, `enable --now` or `disable --now` would.
+/// Runs `cmd` as `systemctl --user start`, `stop`, `enable --now` or `disable --now` would. Run
+/// Now on a service that is not running forgets its runs this boot ([`forget_runs`]), so it runs.
 pub async fn act(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
     match cmd {
         Cmd::Refresh | Cmd::Output(_) | Cmd::Create { .. } | Cmd::Edit { .. } | Cmd::Delete(_) => {}
         Cmd::Run(service) => {
+            forget_runs(conn, service, true).await;
             call(conn, "StartUnit", &(service, "replace")).await?;
         }
         Cmd::Stop(service) => {
@@ -410,9 +417,11 @@ async fn create(
     let timer = units::write(folders, task, taken, units::notifier().as_deref())
         .map_err(|e| failed(&e.to_string()))?;
     let units = [timer.as_str()];
+    let service = timer.replace(".timer", ".service");
     let started = async {
         call(conn, "EnableUnitFiles", &(&units[..], false, false)).await?;
         call(conn, "Reload", &()).await?;
+        forget_runs(conn, &service, false).await;
         call(conn, "StartUnit", &(&timer, "replace")).await
     };
     let Err(e) = started.await else {
@@ -478,11 +487,51 @@ async fn delete(conn: &Connection, dir: Option<&Path>, timer: &str) -> zbus::Res
     call(conn, "DisableUnitFiles", &(&[timer][..], false)).await?;
     call(conn, "StopUnit", &(timer, "replace")).await?;
     call(conn, "StopUnit", &(&service, "replace")).await?;
+    forget_runs(conn, &service, false).await;
     units::remove(dir, timer).map_err(|e| failed(&e.to_string()))?;
     call(conn, "Reload", &()).await?;
     // A failed service stays loaded, with no file, until its failure is reset.
     let _ = call(conn, "ResetFailedUnit", &(&service,)).await;
     Ok(())
+}
+
+/// Removes the stamps of at-startup task `service` ([`units::forget_runs`]) from the folder its
+/// loaded unit's `ConditionPathExists` names, so this window and the stamping run agree on it.
+/// With `idle`, a running service keeps them, as its run already stamped this boot.
+async fn forget_runs(conn: &Connection, service: &str, idle: bool) {
+    let Some(stem) = service
+        .strip_suffix(".service")
+        .filter(|s| units::is_our_stem(s))
+    else {
+        return;
+    };
+    let props = match load(conn, service).await {
+        Ok(path) => get_all(conn, &path, UNIT).await.unwrap_or_default(),
+        Err(_) => return,
+    };
+    let state = prop::<String>(&props, "ActiveState").unwrap_or_default();
+    if idle
+        && matches!(
+            state.as_str(),
+            "active" | "activating" | "deactivating" | "reloading"
+        )
+    {
+        return;
+    }
+    let conditions = prop::<Vec<(String, bool, bool, String, i32)>>(&props, "Conditions");
+    let dir = conditions
+        .unwrap_or_default()
+        .into_iter()
+        .find_map(|(kind, _, negate, path, _)| {
+            let dir =
+                units::stamps_dir(&path, stem).filter(|_| negate && kind == "ConditionPathExists");
+            dir.map(Path::to_path_buf)
+        });
+    if let Some(dir) = dir
+        && let Err(e) = units::forget_runs(&dir, stem, None)
+    {
+        log::warn!("{stem} may skip its next run, as its stamps stay: {e}");
+    }
 }
 
 fn no_folder() -> zbus::Error {

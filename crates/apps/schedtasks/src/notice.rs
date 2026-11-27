@@ -6,11 +6,13 @@
 use reprisekit::tr;
 
 /// The notification's body for task `name`'s run that ended as `result` (`$SERVICE_RESULT`),
-/// `code` and `status`; None for a run that succeeded.
+/// `code` and `status`; None for a run that succeeded. A run its conditions skip never starts,
+/// so it is never told.
 pub fn text(name: &str, result: &str, code: &str, status: &str) -> Option<String> {
     let what = match (result, code) {
         ("success" | "", _) => return None,
         ("exit-code", "exited") => tr!("failed-exit", name = name, status = status),
+        ("exit-code", "") => tr!("failed-not-started", name = name),
         ("signal" | "core-dump", _) => tr!("failed-signal", name = name, signal = status),
         ("timeout", _) => tr!("failed-timeout", name = name),
         (result, _) => tr!("failed-other", name = name, result = result),
@@ -67,6 +69,13 @@ mod tests {
             );
         }
         assert_eq!(text("Back up", "success", "exited", "0"), None);
+        assert_eq!(
+            text("Back up", "exit-code", "", ""),
+            Some(format!(
+                "'Back up' failed before the program started. {more}"
+            )),
+            "a step before the program failed, as an at-startup task's stamp"
+        );
         assert_eq!(text("Back up", "", "", ""), None, "run by hand");
     }
 }

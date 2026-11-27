@@ -1032,6 +1032,16 @@ pub fn main(args: Vec<OsString>) {
     {
         return notice::tell(&name.to_string_lossy());
     }
+    if let [flag, dir, stem, boot] = args.as_slice()
+        && flag == units::ONCE_PER_BOOT
+    {
+        let (stem, boot) = (stem.to_string_lossy(), boot.to_string_lossy());
+        if let Err(e) = units::stamp_run(std::path::Path::new(dir), &stem, &boot) {
+            log::error!("{stem} does not run, as its run was not stamped: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     repriseapp::run(Box::new(SchedTasks::new())).unwrap_or_else(|e| e.exit());
 }
 

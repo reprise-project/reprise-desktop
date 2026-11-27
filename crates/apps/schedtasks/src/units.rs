@@ -44,6 +44,9 @@ pub enum Schedule {
         every: u32,
     },
     AtLogOn,
+    /// As [`Schedule::AtLogOn`], skipped when the task already ran since the machine started
+    /// ([`stamp_run`]).
+    AtStartup,
 }
 
 /// systemd's weekday names, Monday first.
@@ -74,11 +77,12 @@ impl Schedule {
             } => format!("{y:04}-{mo:02}-{d:02} {}", time(at)),
             Schedule::Hourly => "*-*-* *:00:00".into(),
             Schedule::Minutes { every } => format!("*-*-* *:00/{every}:00"),
-            Schedule::AtLogOn => return None,
+            Schedule::AtLogOn | Schedule::AtStartup => return None,
         })
     }
 
-    /// The `[Timer]` line: `OnCalendar=*-*-* 09:30:00`, or `OnStartupSec=` [`LOGON_DELAY_S`].
+    /// The `[Timer]` line: `OnCalendar=*-*-* 09:30:00`, or `OnStartupSec=` [`LOGON_DELAY_S`]
+    /// for both log-on schedules.
     pub fn setting(&self) -> String {
         match self.calendar() {
             Some(spec) => format!("OnCalendar={spec}"),
@@ -86,7 +90,8 @@ impl Schedule {
         }
     }
 
-    /// The schedule whose [`Schedule::setting`] is `setting`; None for any other line.
+    /// The schedule whose [`Schedule::setting`] is `setting`; None for any other line. The two
+    /// log-on schedules share a line, which reads as [`Schedule::AtLogOn`].
     pub fn parse(setting: &str) -> Option<Schedule> {
         let spec = setting.strip_prefix("OnCalendar=");
         let Some(spec) = spec else {
@@ -153,6 +158,8 @@ pub enum Problem {
     Quote,
     /// The program's path holds a character systemd refuses in an executable ([`SPECIAL`]).
     Special,
+    /// An at-startup task, with no `reprise-schedtasks` it can run to stamp each run.
+    Helper,
 }
 
 /// The user's own unit folder in the manager's search path `search` (its `UnitPath`): the first
@@ -390,22 +397,51 @@ fn description(name: &str) -> Result<String, Problem> {
 /// The argument that has `reprise-schedtasks` tell of a failed run ([`crate::notice`]).
 pub const FAILED: &str = "--failed";
 
-/// `reprise-schedtasks` as found on `PATH`, which a task's service runs after each run.
+/// The argument that has `reprise-schedtasks` stamp an at-startup task's run ([`stamp_run`]).
+pub const ONCE_PER_BOOT: &str = "--once-per-boot";
+
+/// The folder of an at-startup task's stamps, in the user manager's state folder (`%S`).
+const STAMPS: &str = "%S/reprise/schedtasks";
+
+/// `reprise-schedtasks` as found on `PATH`, which a task's service runs after each run and, at
+/// startup, before it.
 pub fn notifier() -> Option<PathBuf> {
     find_program("reprise-schedtasks", std::env::var_os("PATH").as_deref())
 }
 
+/// What keeps `task` from being written with `notifier` ([`texts`]).
+pub fn check(task: &NewTask, notifier: Option<&Path>) -> Result<(), Problem> {
+    texts(task, notifier).map(drop)
+}
+
+/// The `[Unit]` and `[Service]` lines that run `schedule` once per boot; none for the other
+/// schedules. The manager skips the start while the stamp of this boot (`%b`) exists, so only
+/// that skips a run, and `notifier` writes the stamp before the run; its failure fails the run.
+fn once_per_boot(schedule: Schedule, notifier: Option<&Path>) -> Result<[String; 2], Problem> {
+    if schedule != Schedule::AtStartup {
+        return Ok(Default::default());
+    }
+    let stamp = notifier.and_then(|n| exec_start(n, &[ONCE_PER_BOOT.to_string()]).ok());
+    let stamp = stamp.ok_or(Problem::Helper)?;
+    Ok([
+        format!("ConditionPathExists=!{STAMPS}/%N.%b\n"),
+        format!("ExecStartPre={stamp} \"{STAMPS}\" \"%N\" \"%b\"\n"),
+    ])
+}
+
 /// The `.service` and `.timer` files' text for `task`. With a `notifier` the service runs it
-/// after each run with [`FAILED`] and the task's name; its failure is ignored.
+/// after each run with [`FAILED`] and the task's name; its failure is ignored. An at-startup
+/// task needs one ([`once_per_boot`]).
 pub fn texts(task: &NewTask, notifier: Option<&Path>) -> Result<(String, String), Problem> {
     let desc = description(&task.name)?;
     let exec = exec_start(&task.program, &task.args)?;
+    let [condition, stamp] = once_per_boot(task.schedule, notifier)?;
     let tell = [FAILED.to_string(), kept_name(&task.name).to_string()];
     let after = notifier
         .and_then(|n| exec_start(n, &tell).ok())
         .map_or_else(String::new, |e| format!("ExecStopPost=-{e}\n"));
     let service = format!(
-        "{MARKER}\n[Unit]\nDescription={desc}\n\n[Service]\nType=oneshot\nExecStart={exec}\n{after}"
+        "{MARKER}\n[Unit]\nDescription={desc}\n{condition}\n[Service]\nType=oneshot\n{stamp}ExecStart={exec}\n{after}"
     );
     let timer = format!(
         "{MARKER}\n[Unit]\nDescription={desc}\n\n[Timer]\n{}\n\n[Install]\nWantedBy=timers.target\n",
@@ -448,11 +484,15 @@ pub fn parse(service: &str, timer: &str) -> Option<NewTask> {
     let name = value(service, "Description=")?.replace("%%", "%");
     let mut words = unquote(value(service, "ExecStart=")?.strip_prefix(':')?)?.into_iter();
     let program = PathBuf::from(words.next()?);
+    let schedule = match Schedule::parse(timer.lines().find(|l| l.starts_with("On"))?)? {
+        Schedule::AtLogOn if value(service, "ExecStartPre=").is_some() => Schedule::AtStartup,
+        s => s,
+    };
     let task = NewTask {
         name,
         program,
         args: words.collect(),
-        schedule: Schedule::parse(timer.lines().find(|l| l.starts_with("On"))?)?,
+        schedule,
     };
     let notifier = match value(service, "ExecStopPost=-:") {
         Some(line) => Some(PathBuf::from(unquote(&line)?.into_iter().next()?)),
@@ -496,6 +536,56 @@ pub fn read(dir: &Path, timer: &str) -> Option<NewTask> {
     let service = std::fs::read_to_string(dir.join(format!("{stem}.service"))).ok()?;
     let timer = std::fs::read_to_string(dir.join(timer)).ok()?;
     parse(&service, &timer)
+}
+
+/// Whether `s` is a boot id as systemd's `%b` writes it: 32 hex digits.
+fn is_boot(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The `ExecStartPre=` of an at-startup task: stamps boot `boot` (`%b`) for task `stem` in `dir`
+/// and drops its stamps of other boots. Refuses arguments the unit [`texts`] wrote never passes.
+pub fn stamp_run(dir: &Path, stem: &str, boot: &str) -> io::Result<()> {
+    if !dir.is_absolute() || !is_our_stem(stem) || !is_boot(boot) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("not a stamp: {} {stem} {boot}", dir.display()),
+        ));
+    }
+    std::fs::create_dir_all(dir)?;
+    put_over(&dir.join(format!("{stem}.{boot}")), "")?;
+    forget_runs(dir, stem, Some(boot))
+}
+
+/// Removes task `stem`'s stamps from `dir`, but the one of boot `keep`, so the task runs at its
+/// next log on. A folder already gone is no error.
+pub fn forget_runs(dir: &Path, stem: &str, keep: Option<&str>) -> io::Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        r => r?,
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let boot = name
+            .to_str()
+            .and_then(|n| n.strip_prefix(stem)?.strip_prefix('.'));
+        if boot.is_some_and(|b| is_boot(b) && Some(b) != keep) {
+            gone(std::fs::remove_file(entry.path()))?;
+        }
+    }
+    Ok(())
+}
+
+/// The folder of task `stem`'s stamps, from `condition`: the path its unit's
+/// `ConditionPathExists=` resolved to in the manager (its `Conditions`), so the window and the
+/// stamping run agree on `%S`.
+pub fn stamps_dir<'a>(condition: &'a str, stem: &str) -> Option<&'a Path> {
+    let path = Path::new(condition);
+    let name = path.file_name()?.to_str()?;
+    let boot = name.strip_prefix(stem)?.strip_prefix('.')?;
+    let ours = path.is_absolute() && is_our_stem(stem) && is_boot(boot);
+    path.parent().filter(|_| ours)
 }
 
 /// `args` as the Arguments field shows them, so [`split_args`] reads them back: a word holding a

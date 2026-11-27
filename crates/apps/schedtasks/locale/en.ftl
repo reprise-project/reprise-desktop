@@ -62,6 +62,7 @@ schedule-minutes = { $n ->
 days-range = { $first } to { $last }
 after-boot = { $span } after startup
 after-startup = { $span } after logging on
+after-startup-once = Once per startup, { $span } after logging on
 after-start = { $span } after the timer starts
 every = Every { $span }
 after-finish = { $span } after each run finishes
@@ -82,6 +83,8 @@ result-success = Succeeded
 result-exit = Exited with status { $status }
 result-signal = Ended by a signal
 result-timeout = Timed out
+result-skipped = Skipped, as it already ran since startup
+result-not-started = Failed before the program started
 
 ## What the service manager refused; $unit is a unit name, $why its message
 refused-run = { $unit } did not start: { $why }
@@ -134,6 +137,7 @@ kind-weekly = Weekly
 kind-monthly = Monthly
 kind-once = Once
 kind-logon = At log on
+kind-startup = Once per startup, at log on
 new-no-name = Type a name for the task.
 new-no-program = Type the program to run, or Browse for it.
 # $program is what was typed.
@@ -141,6 +145,7 @@ new-no-such-program = Cannot find the program { $program }.
 new-quote = An argument opens a quote it never closes, or ends in \.
 new-control = The name, program and arguments cannot hold control characters.
 new-special = The program's path cannot hold \ " ' * ? or [.
+new-no-helper = A task run once per startup needs reprise-schedtasks on PATH.
 new-bad-date = Type the date as 2026-12-31.
 new-past = That time has passed.
 new-logon-now = The task also runs once now, when it is made.
@@ -160,6 +165,7 @@ failed-exit = '{ $name }' exited with status { $status }.
 # $signal is the signal's name, KILL.
 failed-signal = '{ $name }' was ended by signal { $signal }.
 failed-timeout = '{ $name }' ran out of time.
+failed-not-started = '{ $name }' failed before the program started.
 # $result is how systemd says the run ended.
 failed-other = '{ $name }' failed: { $result }.
 failed-output = View Output in Scheduled Tasks shows what it wrote.
