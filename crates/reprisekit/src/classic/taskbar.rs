@@ -225,10 +225,11 @@ pub fn draw_taskbar(
         if layout.icons_only {
             continue;
         }
+        let grow = theme.metrics.icon_grow;
         let mut label = Rect::new(
-            r.x + 24 * s + o,
+            r.x + 24 * s + grow + o,
             r.y + o,
-            (r.width - 28 * s).max(0),
+            (r.width - 28 * s - grow).max(0),
             r.height,
         );
         if let Some((_, (x, _))) = badge {

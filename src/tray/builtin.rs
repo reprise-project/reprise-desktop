@@ -6,6 +6,7 @@ use crate::media::Value;
 use crate::notifylog::Suppress;
 use crate::raster::{Canvas, Rect};
 use reprisekit::classic::indicator;
+use reprisekit::icon::ICON_SIZE;
 use reprisekit::tr;
 use smithay::output::Output;
 
@@ -81,7 +82,7 @@ pub fn icon(state: &mut State, b: Builtin, px: i32) -> Option<Canvas> {
         }
         Builtin::Layout => {
             let theme = &state.config.theme;
-            let size = theme.text.base_px(theme.fonts.size_px) * (px / 16).max(1) as u32;
+            let size = theme.text.base_px(theme.fonts.size_px) * px as u32 / ICON_SIZE as u32;
             let layouts = &state.key_input.layouts;
             let short = layouts.active().map_or("", |d| d.short.as_str());
             Some(indicator::draw_layout(

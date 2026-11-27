@@ -122,7 +122,7 @@ impl State {
             reveal,
         );
         let mut tray_icons =
-            crate::tray::bar_icons(self, reprisekit::icon::ICON_SIZE * scale, revealed);
+            crate::tray::bar_icons(self, self.config.theme.icon_size() * scale, revealed);
         let base = &self.config.theme;
         let m = &base.metrics;
         let (locked, bands) = (self.bar_shared.locked, self.bar_shared.bands);

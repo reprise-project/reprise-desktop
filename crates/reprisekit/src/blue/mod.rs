@@ -486,6 +486,7 @@ fn taskbar_shape() -> TaskbarShape {
         orb_rise: None,
         two_line_clock: None,
         line_growth: 0,
+        icon_grow: 0,
         start_menu: StartMenuDock::Into(4),
         labelled: LabelledButton::CLASSIC,
     }

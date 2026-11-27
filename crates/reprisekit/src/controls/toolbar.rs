@@ -41,8 +41,16 @@ pub use crate::classic::toolbar::BIG_SEP_INSET;
 /// Classic's big strip height; a look sets its own in [`ToolbarMetrics::height`].
 pub const BIG_HEIGHT: i32 = ToolbarMetrics::CLASSIC.height;
 
-/// The big strip's icon box; the art varies within the 24x24 icons, so the box lays out.
+/// The big strip's icon box at 100% text; the art varies within the 24x24 icons, so the box
+/// lays out.
 pub const BIG_ICON: i32 = 24;
+
+/// The big strip's icon box at text `u`: [`BIG_ICON`] grown as far as the strip's label line
+/// grows ([`TextUnits::icon_within`]). Hosts fetch the strip's icons at it.
+pub fn big_icon(u: TextUnits) -> i32 {
+    let line = ToolbarMetrics::LINE;
+    u.icon_within(BIG_ICON, u.len(line) - line)
+}
 
 /// A big button's left inset, from its frame to its icon box.
 pub const BIG_PAD: i32 = 3;
@@ -138,7 +146,7 @@ fn main_width(
         Some(l) if !l.is_empty() => pads.gap + text.measure(l, false, px),
         _ => 0,
     };
-    pads.inset + BIG_ICON + label + pads.trail
+    pads.inset + big_icon(u) + label + pads.trail
 }
 
 fn drop_width(big: bool, item: &Item, m: &ToolbarMetrics, u: TextUnits) -> i32 {
@@ -354,12 +362,8 @@ fn draw_strip(
         let main_w = main_width(tb.big, drop, label, text, px, m, u) * s;
         let pads = pads(drop, label, m);
         let icon_box = if tb.big {
-            Rect::new(
-                sr.x + pads.inset * s,
-                sr.y + (sr.height - BIG_ICON * s) / 2,
-                BIG_ICON * s,
-                BIG_ICON * s,
-            )
+            let px = big_icon(u) * s;
+            Rect::new(sr.x + pads.inset * s, sr.y + (sr.height - px) / 2, px, px)
         } else {
             Rect::new(sr.x, sr.y, main_w, sr.height)
         };
@@ -733,12 +737,12 @@ mod tests {
         assert_eq!(inked.len(), 5, "the arrow is 5 px at its widest row");
     }
 
-    /// The big strip grows with its labels' line, 13 px at 100%; the 24 px icons centre down it.
-    /// The small strip grows with the text.
+    /// The big strip grows with its labels' line, 13 px at 100%, and its icons grow as far,
+    /// centred down it 3 px from either edge. The small strip grows with the text.
     #[test]
-    fn a_big_strip_grows_to_fit_its_grown_labels() {
-        const EXPECTED: [(u32, i32); 3] = [(100, 30), (150, 37), (200, 43)];
-        for (pct, h) in EXPECTED {
+    fn a_big_strip_grows_to_fit_its_grown_labels_and_icons() {
+        const EXPECTED: [(u32, i32, i32); 3] = [(100, 30, 24), (150, 37, 31), (200, 43, 37)];
+        for (pct, h, side) in EXPECTED {
             let theme = Theme::default().with_text_size(pct);
             let cm = theme.controls();
             assert_eq!(height(true, &cm), h, "{pct}%");
@@ -749,7 +753,8 @@ mod tests {
             );
             let text = TextRenderer::load(&theme.fonts);
             let px = theme.fonts.size_px;
-            let mut icon = Canvas::new(BIG_ICON as u32, BIG_ICON as u32);
+            assert_eq!(big_icon(theme.text), side, "{pct}%");
+            let mut icon = Canvas::new(side as u32, side as u32);
             let red = crate::theme::Color::rgb(255, 0, 0);
             icon.fill_rect(icon.bounds(), red);
             let tb = ToolBar {
@@ -766,14 +771,16 @@ mod tests {
             assert_eq!(rects[0].height, h);
             let mut c = Canvas::new(200, h as u32);
             draw(&mut c, &text, &theme.paint(), &tb, r, &rects, px);
-            let top = (h - BIG_ICON) / 2;
+            let top = (h - side) / 2;
+            assert_eq!(top, 3, "{pct}%");
             let x = rects[0].x + BIG_PAD + 1;
             assert_eq!(c.get(x, top), red.argb(), "{pct}%");
-            assert_eq!(c.get(x, top + BIG_ICON - 1), red.argb(), "{pct}%");
+            assert_eq!(c.get(x, top + side - 1), red.argb(), "{pct}%");
             assert_ne!(c.get(x, top - 1), red.argb(), "{pct}%");
+            assert_ne!(c.get(x, top + side), red.argb(), "{pct}%");
             let ink = theme.colors.button_text.argb();
             let rows: Vec<i32> = (0..h)
-                .filter(|&y| (x + BIG_ICON..200).any(|x| c.get(x, y) == ink))
+                .filter(|&y| (x + side..200).any(|x| c.get(x, y) == ink))
                 .collect();
             let (first, last) = (rows[0], *rows.last().unwrap());
             assert!(

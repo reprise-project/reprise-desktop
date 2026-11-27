@@ -1,11 +1,11 @@
 use super::*;
-use crate::icon::ICON_SIZE;
 use crate::raster::Rect;
 use crate::theme::Metrics;
 
-/// Quick Launch button width: 16 px icon, 3 px padding, 1 px frame each side. A pager button is as wide.
+/// Quick Launch button width at 100% text: 16 px icon, 3 px padding, 1 px frame each side. A
+/// pager button is as wide. [`TaskbarShape::quick_w`] grows it with the icons.
 pub const QUICK_W: i32 = 23;
-/// Width of the » cell ending a Quick Launch band too short for its buttons on a Bottom or Top bar; down a side bar it is a `QUICK_W` cell.
+/// Width of the » cell ending a Quick Launch band too short for its buttons on a Bottom or Top bar; down a side bar it is a [`TaskbarShape::quick_w`] cell.
 const QUICK_MORE_W: i32 = 14;
 const PAGER_GAP: i32 = 4;
 const SIDE_TRAY_MARGIN: i32 = 2;
@@ -207,7 +207,7 @@ impl TaskbarLayout {
         let clock_w = (clock_text_width + cb.pad).max(cb.min_width);
         let clock_x = (end - cb.right - clock_w).max(band_x);
         let clock = Rect::new(clock_x, shape.button_top, clock_w, btn_h);
-        let icon = ICON_SIZE;
+        let icon = shape.tray_icon();
         let tray_y = shape.button_top + (btn_h - icon + i32::from(shape.tray_low)) / 2;
         // Right to left from 6 px before the clock: shown cells, then the hidden cells whole inside the open run, then the ^ cell or arrow. Cells that would reach the clock are left out.
         let pitch = icon + shape.tray_gap;
@@ -216,14 +216,15 @@ impl TaskbarLayout {
         let meter = meter_size.map(|(w, _)| Rect::new(clock.x - 6 - w, shape.button_top, w, btn_h));
         let foot = meter.map_or(clock.x - 6, |r| r.x - 4);
         let cell_x = |k: i32| foot - icon - k * pitch;
-        let quick_w = quick_count as i32 * QUICK_W;
+        let q = shape.quick_w();
+        let quick_w = quick_count as i32 * q;
         let pager_gap = if quick_count > 0 && pager_count > 0 {
             PAGER_GAP
         } else {
             0
         };
-        let tools_w = quick_w + pager_gap + pager_count as i32 * QUICK_W;
-        let pager_w = pager_count as i32 * QUICK_W;
+        let tools_w = quick_w + pager_gap + pager_count as i32 * q;
+        let pager_w = pager_count as i32 * q;
         let tools_least = if quick_count > 0 {
             pager_w + pager_gap + QUICK_MORE_W
         } else {
@@ -291,20 +292,20 @@ impl TaskbarLayout {
         }
         let pager_x = a.tools;
         let pager: Vec<Rect> = (0..pager_count as i32)
-            .map(|i| Rect::new(pager_x + i * QUICK_W, shape.button_top, QUICK_W, btn_h))
+            .map(|i| Rect::new(pager_x + i * q, shape.button_top, q, btn_h))
             .collect();
         let quick_x = pager_x + pager_w + pager_gap;
         let quick_room = a.tools_len - pager_w - pager_gap;
         let shown = if quick_room >= quick_w {
             quick_count
         } else {
-            (((quick_room - QUICK_MORE_W).max(0) / QUICK_W) as usize).min(quick_count)
+            (((quick_room - QUICK_MORE_W).max(0) / q) as usize).min(quick_count)
         };
         let quick: Vec<Rect> = (0..shown as i32)
-            .map(|i| Rect::new(quick_x + i * QUICK_W, shape.button_top, QUICK_W, btn_h))
+            .map(|i| Rect::new(quick_x + i * q, shape.button_top, q, btn_h))
             .collect();
         let quick_more = (shown < quick_count).then(|| {
-            let x = quick_x + shown as i32 * QUICK_W;
+            let x = quick_x + shown as i32 * q;
             Rect::new(x, shape.button_top, QUICK_MORE_W, btn_h)
         });
         // One well around the tray and clock, starting `well_lead` left of the ^ cell or first icon; full height in `well_full_height` shapes, else sunken in the button row.
@@ -368,7 +369,7 @@ impl TaskbarLayout {
         layout.on_edge(span.edge)
     }
 
-    /// A side bar's column along `span`, in its own x/y: x across from its left, y down. From the top: Start, the bands (Quick Launch and pager in rows of `QUICK_W` cells, then the task row); at the foot the tray grid, the clock and the Show desktop strip. With an orb Start the grids are centred.
+    /// A side bar's column along `span`, in its own x/y: x across from its left, y down. From the top: Start, the bands (Quick Launch and pager in rows of [`TaskbarShape::quick_w`] cells, then the task row); at the foot the tray grid, the clock and the Show desktop strip. With an orb Start the grids are centred.
     fn column(
         m: &Metrics,
         shape: &TaskbarShape,
@@ -443,7 +444,7 @@ impl TaskbarLayout {
                 left
             }
         };
-        let icon = ICON_SIZE;
+        let icon = shape.tray_icon();
         let pitch = icon + shape.tray_gap;
         let margin = if shape.orb {
             SIDE_TRAY_MARGIN
@@ -455,8 +456,9 @@ impl TaskbarLayout {
         let foot = meter.map_or(clock_r.y - 6, |r| r.y - 4);
         // An open run lays the hidden cells ahead of the shown ones, so the grid grows up from the clock.
         let arrow = shape.tray_arrow.filter(|_| chevron);
-        let per_line = (room / QUICK_W).max(1);
-        let lines = |n: usize| n.div_ceil(per_line as usize) as i32 * QUICK_W;
+        let q = shape.quick_w();
+        let per_line = (room / q).max(1);
+        let lines = |n: usize| n.div_ceil(per_line as usize) as i32 * q;
         let pager_gap = if quick_count > 0 && pager_count > 0 {
             PAGER_GAP
         } else {
@@ -464,7 +466,7 @@ impl TaskbarLayout {
         };
         let tools = lines(quick_count) + pager_gap + lines(pager_count);
         let tools_least = if quick_count > 0 {
-            lines(pager_count) + pager_gap + QUICK_W
+            lines(pager_count) + pager_gap + q
         } else {
             tools
         };
@@ -555,17 +557,17 @@ impl TaskbarLayout {
         let cell = |top: i32, n: usize, i: usize| {
             let i = i as i32;
             Rect::new(
-                grid_x(n as i32, per_line, QUICK_W, 0) + i % per_line * QUICK_W,
-                top + i / per_line * QUICK_W,
-                QUICK_W,
-                QUICK_W,
+                grid_x(n as i32, per_line, q, 0) + i % per_line * q,
+                top + i / per_line * q,
+                q,
+                q,
             )
         };
         let pager = (0..pager_count)
             .map(|i| cell(a.tools, pager_count, i))
             .collect();
         let quick_y = a.tools + lines(pager_count) + pager_gap;
-        let fits = ((a.tools_len - lines(pager_count) - pager_gap) / QUICK_W).max(1) as usize
+        let fits = ((a.tools_len - lines(pager_count) - pager_gap) / q).max(1) as usize
             * per_line as usize;
         let shown = if fits >= quick_count {
             quick_count
@@ -975,9 +977,9 @@ impl TaskbarLayout {
 }
 
 pub fn reveal_width(shape: &TaskbarShape, hidden: usize) -> i32 {
-    hidden as i32 * (ICON_SIZE + shape.tray_gap)
+    hidden as i32 * (shape.tray_icon() + shape.tray_gap)
 }
 
 pub fn revealed(shape: &TaskbarShape, hidden: usize, reveal: i32) -> usize {
-    (reveal.clamp(0, reveal_width(shape, hidden)) / (ICON_SIZE + shape.tray_gap)) as usize
+    (reveal.clamp(0, reveal_width(shape, hidden)) / (shape.tray_icon() + shape.tray_gap)) as usize
 }

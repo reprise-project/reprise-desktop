@@ -827,3 +827,46 @@ fn the_mouse_keys_indicator_takes_the_bar_ink_on_a_light_bar_and_a_dark_one() {
     }
     crate::pins::check("tray_mouse_keys", &got);
 }
+
+#[test]
+fn tray_quick_launch_and_pager_cells_grow_with_the_bar_icons() {
+    let theme = crate::theme::Theme::default().with_text_size(200);
+    let shape = theme.taskbar_shape();
+    let (icon, grow) = (theme.icon_size(), theme.metrics.icon_grow);
+    assert_eq!((icon, grow), (29, 13));
+    let c = TaskbarCounts {
+        pager: 2,
+        ..counts(3, 1, 2)
+    };
+    let l = TaskbarLayout::compute(&theme.metrics, &shape, 1200, true, c, 60);
+    let (top, h) = l.row;
+    for r in &l.tray {
+        assert_eq!((r.width, r.height), (icon, icon));
+        assert!(r.y >= top && r.bottom() <= top + h, "{r:?} inside the row");
+    }
+    assert_eq!(l.tray[1].x - l.tray[0].x, icon + shape.tray_gap);
+    for r in l.quick.iter().chain(&l.pager) {
+        assert_eq!(r.width, QUICK_W + grow);
+    }
+
+    let span = BarSpan {
+        edge: Edge::Left,
+        length: 800,
+        thickness: 120,
+    };
+    let side = TaskbarLayout::compute_on(
+        &theme.metrics,
+        &shape,
+        span,
+        true,
+        c,
+        ClockText::default(),
+        Bands::default(),
+    );
+    for r in side.quick.iter().chain(&side.pager) {
+        assert_eq!((r.width, r.height), (QUICK_W + grow, QUICK_W + grow));
+    }
+    for r in &side.tray {
+        assert_eq!((r.width, r.height), (icon, icon));
+    }
+}

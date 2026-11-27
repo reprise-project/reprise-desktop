@@ -88,7 +88,7 @@ pub fn draw_frame(
     let icon_y = geom.caption.y + (geom.caption.height - icon.height as i32) / 2;
     canvas.blit_canvas(geom.caption.x + 2 * s, icon_y, icon);
 
-    let room = title_rect(geom, s);
+    let room = title_rect(geom, s, theme.metrics.icon_grow);
     text.draw(
         canvas,
         room,
@@ -103,10 +103,10 @@ pub fn draw_frame(
     punch_client_hole(canvas, geom);
 }
 
-/// The title's room in a caption with an icon: from past the icon to just short of the first
-/// caption button.
-pub(crate) fn title_rect(geom: &FrameGeometry, s: i32) -> Rect {
-    let title_x = geom.caption.x + (4 + ICON_AREA) * s;
+/// The title's room in a caption with an icon `grow` px past its 100% edge: from past the icon
+/// to just short of the first caption button.
+pub(crate) fn title_rect(geom: &FrameGeometry, s: i32, grow: i32) -> Rect {
+    let title_x = geom.caption.x + (4 + ICON_AREA) * s + grow;
     Rect::new(
         title_x,
         geom.caption.y,
@@ -231,13 +231,15 @@ mod tests {
     }
 
     #[test]
-    fn the_caption_icon_is_centred_in_the_caption_at_every_text_size() {
+    fn the_caption_icon_grows_centred_with_the_title_past_it_at_every_text_size() {
         let text = TextRenderer::load(&FontConfig::default());
         let mark = Color::rgb(255, 0, 255);
-        for pct in [100, 125, 150, 200] {
+        for (pct, side) in [(100, 16), (125, 19), (150, 23), (200, 29)] {
             for s in [1, 2] {
                 let theme = Theme::default().with_text_size(pct).scaled(s);
-                let mut icon = Canvas::new(16 * s as u32, 16 * s as u32);
+                let px = side * s;
+                assert_eq!(theme.icon_size(), px, "{pct}% @{s}");
+                let mut icon = Canvas::new(px as u32, px as u32);
                 icon.fill_rect(icon.bounds(), mark);
                 let g = FrameGeometry::layout(&theme.metrics, 200, 100, false, Chrome::WINDOW);
                 let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
@@ -256,12 +258,19 @@ mod tests {
                     .filter(|&y| c.get(cap.x + 2 * s, y) == mark.argb())
                     .collect();
                 let (top, bottom) = (rows[0] - cap.y, cap.bottom() - 1 - rows[rows.len() - 1]);
-                assert_eq!(rows.len() as i32, 16 * s, "{pct}% @{s}");
-                assert_eq!(top, (cap.height - 16 * s) / 2, "{pct}% @{s}: gap above");
+                assert_eq!(rows.len() as i32, px, "{pct}% @{s}");
+                assert_eq!(top, (cap.height - px) / 2, "{pct}% @{s}: gap above");
+                assert!(
+                    top >= s,
+                    "{pct}% @{s}: the icon keeps off the caption's edge"
+                );
                 assert!(
                     bottom - top <= 1,
                     "{pct}% @{s}: {top} above, {bottom} below"
                 );
+                let icon_right = cap.x + 2 * s + px;
+                let room = title_rect(&g, s, theme.metrics.icon_grow);
+                assert_eq!(room.x, icon_right + 6 * s, "{pct}% @{s}: the title's gap");
             }
         }
     }

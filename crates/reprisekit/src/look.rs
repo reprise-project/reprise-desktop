@@ -304,7 +304,7 @@ pub fn caption_fit(theme: &Theme, title: &str, chrome: Chrome) -> i32 {
     let (room, need) = match &theme.look {
         Look::Classic => {
             let room = if chrome.icon {
-                classic::frame::title_rect(&g, 1)
+                classic::frame::title_rect(&g, 1, theme.metrics.icon_grow)
             } else {
                 let n = [CaptionButton::Minimize, CaptionButton::Close]
                     .into_iter()
@@ -317,7 +317,7 @@ pub fn caption_fit(theme: &Theme, title: &str, chrome: Chrome) -> i32 {
             (room.width, text.measure(title, true, theme.fonts.size_px))
         }
         Look::Styled(s) => {
-            let (left, right) = style_frame::title_span(s, &g, 1);
+            let (left, right) = style_frame::title_span(s, &g, 1, theme.metrics.icon_grow);
             let spec = &s.caption_text;
             let need = caption_text(s).measure(title, spec.bold, spec.size_px);
             (right - left, need)
@@ -505,9 +505,9 @@ mod tests {
         let fit = caption_fit(&theme, title, Chrome::DIALOG);
         let g = FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG);
         let room = match &theme.look {
-            Look::Classic => classic::frame::title_rect(&g, 1).width,
+            Look::Classic => classic::frame::title_rect(&g, 1, theme.metrics.icon_grow).width,
             Look::Styled(s) => {
-                let (left, right) = style_frame::title_span(s, &g, 1);
+                let (left, right) = style_frame::title_span(s, &g, 1, theme.metrics.icon_grow);
                 right - left
             }
         };

@@ -411,6 +411,7 @@ fn frame_tree(state: &State, w: WindowId) -> Option<Tree> {
         .then_some(|t: &mut Tree, bar| state.strip_access(w, t, bar));
     reprisekit::frame::access(
         &win.geom,
+        reprisekit::frame::icon_area(&state.config.theme.metrics),
         &title,
         win.maximized,
         strip,

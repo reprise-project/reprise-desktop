@@ -36,6 +36,7 @@ fn a_full_height_shape_lays_start_and_the_well_edge_to_edge() {
         orb_rise: None,
         two_line_clock: None,
         line_growth: 0,
+        icon_grow: 0,
         start_menu: StartMenuDock::Into(4),
         labelled: LabelledButton::CLASSIC,
     };
