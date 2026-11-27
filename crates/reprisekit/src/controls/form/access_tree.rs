@@ -216,6 +216,8 @@ impl Form {
                     let id = updown::access(
                         u,
                         &updown::layout_for(u, r, &cm, self.units()),
+                        text,
+                        px,
                         tree,
                         up,
                         key,
