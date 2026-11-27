@@ -139,6 +139,8 @@ Opening `.flatpakref`, `.flatpak`, `.pkg.tar.zst`, `.pkg.tar.xz` or `.deb` launc
 
 Open from Explorer, low-disk-space balloons or `reprise-diskusage FOLDER` to scan largest files and folders on the same mount (counting hard links once, skipping symlinks). Right-click for `Open in Explorer` or `Move to Recycle Bin`. `Browse...` scans another drive or folder.
 
+`Clean Up...` lists what can go, each with its size: the Recycle Bin (every drive's), the thumbnail cache (`$XDG_CACHE_HOME/thumbnails`), program caches (the rest of `$XDG_CACHE_HOME`), crash dumps (counted through `coredumpctl`, never removed: the system owns them) and the Flatpak runtimes `flatpak uninstall --unused` would remove. Only the Recycle Bin and thumbnails start checked. OK shows what goes, each folder by its path and each runtime by its ref, and asks again; nothing is removed before that Yes. At Yes, Flatpak is asked again and only the listed runtimes it still calls unused go; the system installation asks for a password. A cache folder or thumbnail cache is left alone when it is a link, someone else's, a drive's root (other than `~/.cache` itself, which may be a subvolume or tmpfs), the home folder or above it, or holds the config, data or state folder or one of your folders (Documents, Pictures...) or where one of them links to, or when there is no home folder. Nothing under them is followed through a link or into another mounted drive.
+
 ## Scheduled Tasks
 
 Open from `Start > All Programs > System Tools` to manage systemd user timers with live status (`Ready`, `Running`, `Failed`, `Stopped`, `Disabled`), `Run Now`, `Stop`, `Enable`, `Disable`, `Properties` and `View Output` (last 200 `journalctl --user-unit` lines).

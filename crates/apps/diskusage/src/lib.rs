@@ -6,8 +6,10 @@ reprisebus::test_session!();
 
 reprisekit::strings!("diskusage");
 
+mod cleanup;
 mod model;
 
+use cleanup::{Cleanup, Msg};
 use model::{Line, SHARE};
 use repriseapp::asks::{Answer, Asks};
 use repriseapp::ctxmenu::{Popup, Step, item};
@@ -18,6 +20,7 @@ use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, MAIN, PointerInput, Poster, Reply, WinId,
 };
 use reprisefs::bincap::{self, BinLack, ConfirmKind};
+use reprisefs::cleanup::{Found, Part, Places};
 use reprisefs::usage::{Kind, ROOT, Scan, Sort};
 use reprisekit::access::{ROOT as ACCESS_ROOT, Tree};
 use reprisekit::classic::widgets::BUTTON_H;
@@ -54,19 +57,22 @@ fn columns() -> [(String, i32, bool); 4] {
     ]
 }
 
-fn button_rows() -> [(&'static str, String, i32); 5] {
+fn button_rows() -> [(&'static str, String, i32); 6] {
     [
         ("back", tr!("back"), 75),
         ("up", tr!("up"), 75),
         ("browse", tr!("browse"), 75),
         ("refresh", tr!("refresh"), 75),
         ("explore", tr!("explore"), 110),
+        ("cleanup", tr!("cleanup"), 85),
     ]
 }
 const SCAN_THREADS: usize = 4;
 
 const CONFIRM: WinId = WinId::named("confirm");
 const PICK: WinId = WinId::named("pick");
+const CLEANUP: WinId = WinId::named("cleanup");
+const CLEAN_CONFIRM: WinId = WinId::named("clean-confirm");
 
 /// The rows the list draws: the folder's entries and the icons of each kind.
 #[derive(Default)]
@@ -126,6 +132,15 @@ struct DiskUsage {
     /// Browse...'s folder dialog while it is up.
     pick: Option<FileDlg>,
     host: Host,
+    warning_icon: Option<Canvas>,
+    cleanup: Option<Cleanup>,
+    /// The confirm box over Clean Up, with the parts it would remove.
+    clean_ask: Asks<Vec<(Part, Found)>>,
+    cleaned: Option<(Poster<Msg>, Receiver<Msg>)>,
+    /// Counts the Clean Up boxes opened, so a count posted for a closed one is dropped.
+    cleanups: u64,
+    /// A removal is running: Clean Up stays grey until it ends.
+    cleaning: bool,
 }
 
 fn buttons() -> Vec<Item> {
@@ -181,6 +196,12 @@ impl DiskUsage {
             trash_icon: None,
             pick: None,
             host: Host::default(),
+            warning_icon: None,
+            cleanup: None,
+            clean_ask: Asks::new(CLEAN_CONFIRM).over(CLEANUP),
+            cleaned: None,
+            cleanups: 0,
+            cleaning: false,
         }
     }
 
@@ -289,6 +310,7 @@ impl DiskUsage {
         self.form.set_text("status", &status);
         self.form.set_enabled("back", !self.back.is_empty());
         self.form.set_enabled("up", self.at.parent().is_some());
+        self.form.set_enabled("cleanup", !self.cleaning);
     }
 
     fn picked(&self) -> Option<&Line> {
@@ -390,8 +412,165 @@ impl DiskUsage {
                 }
             }
         }
+        let boxes = self.wake_cleanup();
         self.sync();
-        Reply::redraw()
+        match boxes {
+            true => Reply::redraw_all(),
+            false => Reply::redraw(),
+        }
+    }
+
+    /// Opens Clean Up on `places`, counting its parts on a thread.
+    fn open_cleanup(&mut self, places: Places) -> Reply {
+        let Some((poster, _)) = &self.cleaned else {
+            return Reply::none();
+        };
+        if self.cleanup.is_some() || self.cleaning {
+            return Reply::none();
+        }
+        self.cleanups += 1;
+        let post = poster.clone();
+        let c = Cleanup::new(places.clone(), self.cleanups);
+        cleanup::count(places, self.cleanups, c.stop.clone(), move |m| post.post(m));
+        self.cleanup = Some(c);
+        Reply::redraw_all()
+    }
+
+    /// Takes Clean Up's counts, and a removal's end: the folder is counted again and what could
+    /// not go is named in a box. True when one came.
+    fn wake_cleanup(&mut self) -> bool {
+        let msgs: Vec<Msg> = match &self.cleaned {
+            Some((_, rx)) => rx.try_iter().collect(),
+            None => Vec::new(),
+        };
+        let came = !msgs.is_empty();
+        for m in msgs {
+            match m {
+                Msg::Found(generation, part, found) => {
+                    let open = self.cleanup.as_mut();
+                    if let Some(c) = open.filter(|c| c.generation == generation) {
+                        c.found(part, found);
+                    }
+                }
+                Msg::Cleaned(done) => {
+                    self.cleaning = false;
+                    let failed: Vec<String> = (done.into_iter())
+                        .filter_map(|(p, r)| {
+                            let reason = r.err()?;
+                            Some(tr!(
+                                "cleanup-failed-row",
+                                part = cleanup::name(p, true),
+                                reason = reason
+                            ))
+                        })
+                        .collect();
+                    if !failed.is_empty() {
+                        let text = [tr!("cleanup-failed"), String::new()]
+                            .into_iter()
+                            .chain(failed);
+                        let text = text.collect::<Vec<_>>().join("\n");
+                        self.note
+                            .show(&tr!("cleanup-title"), text, self.warning_icon.clone());
+                    }
+                    let (root, at) = (self.root.clone(), self.at.clone());
+                    self.rescan(root);
+                    self.at = at;
+                }
+            }
+        }
+        came
+    }
+
+    /// The confirm box naming what Clean Up's OK removes.
+    fn ask_clean(&mut self) -> Reply {
+        let Some(c) = &self.cleanup else {
+            return Reply::none();
+        };
+        let parts: Vec<(Part, Found)> = (c.picked().into_iter())
+            .map(|(p, f)| (p, f.clone()))
+            .collect();
+        if parts.is_empty() || !self.clean_ask.is_empty() {
+            return Reply::none();
+        }
+        let buttons = [dlgtemplate::yes(), dlgtemplate::no()];
+        let fields = Fields {
+            text: c.confirm_text(),
+            icon: self.warning_icon.clone(),
+            buttons: buttons.iter().map(|b| b.to_string()).collect(),
+            default: dlgtemplate::delete_default_index(&buttons, true),
+            min_text_h: None,
+            min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
+        };
+        let msg = MsgBox::on_template(tr!("cleanup-title"), Template::MessageBox, fields);
+        self.clean_ask.ask(msg, parts);
+        Reply::redraw_all()
+    }
+
+    fn cleanup_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        if ev == Event::CloseRequest {
+            self.cleanup = None;
+            self.clean_ask.close();
+            return Reply::redraw_all();
+        }
+        let Some(c) = &mut self.cleanup else {
+            return Reply::none();
+        };
+        if matches!(
+            ev,
+            Event::Key(_) | Event::Pointer(PointerInput::Press { .. })
+        ) {
+            c.touched = true;
+        }
+        let pointed = match &ev {
+            Event::Pointer(PointerInput::Motion { x, y }) => c.point(*x, *y, ctx.forms().text),
+            _ => false,
+        };
+        let out = repriseapp::keys::form_input(&mut c.form, &ev, ctx);
+        c.sync();
+        match out {
+            Some(form::Event::Cancel | form::Event::Pressed(cleanup::CANCEL)) => {
+                self.cleanup = None;
+                Reply::redraw_all()
+            }
+            Some(form::Event::Default | form::Event::Pressed(cleanup::OK)) => self.ask_clean(),
+            Some(form::Event::None) | None if !pointed => Reply::none(),
+            Some(_) | None => Reply::redraw(),
+        }
+    }
+
+    fn clean_confirm_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {
+        match self.clean_ask.event(win, &ev, &ctx.text, &ctx.forms()) {
+            Answer::Closed(parts, answer) => self.clean_answered(parts, answer),
+            Answer::Redraw => Reply::redraw(),
+            Answer::None => Reply::none(),
+        }
+    }
+
+    /// The confirm box's answer: Yes closes Clean Up and removes `parts`; anything else goes back
+    /// to Clean Up.
+    fn clean_answered(&mut self, parts: Vec<(Part, Found)>, answer: Option<usize>) -> Reply {
+        if answer == Some(0)
+            && let (Some(c), Some((poster, _))) = (self.cleanup.take(), &self.cleaned)
+        {
+            let post = poster.clone();
+            self.cleaning = true;
+            cleanup::clean(c.places.clone(), parts, move |m| post.post(m));
+            self.sync();
+        }
+        Reply::redraw_all()
+    }
+
+    fn draw_cleanup(&self, c: &mut Canvas, ctx: &Ctx) {
+        let forms = ctx.forms();
+        c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+        if let Some(cl) = &self.cleanup {
+            let paint = Paint {
+                s: 1,
+                ..forms.paint()
+            };
+            form::draw(c, &ctx.text, &paint, &cl.form, true, forms.fonts.size_px);
+        }
     }
 
     fn open_menu(&mut self, x: i32, y: i32, ctx: &Ctx, by_keyboard: bool) -> Reply {
@@ -497,6 +676,7 @@ impl DiskUsage {
                 self.at = at;
             }
             "explore" => return explore(&self.at),
+            "cleanup" => return self.open_cleanup(Places::system()),
             _ => return Reply::none(),
         }
         self.sync();
@@ -613,6 +793,7 @@ impl DiskUsage {
             rows.file = ctx.icons.get("text-x-generic", 16);
             rows.drive = ctx.icons.get("drive-harddisk", 16);
             self.trash_icon = ctx.icons.get("user-trash-full", 32);
+            self.warning_icon = ctx.icons.get("dialog-warning", 32);
         }
         self.host.icons.prime(&mut ctx.icons);
     }
@@ -672,11 +853,22 @@ impl App for DiskUsage {
                 modal: true,
             });
         }
+        if let Some(c) = &self.cleanup {
+            out.push(repriseapp::Child {
+                id: CLEANUP,
+                title: tr!("cleanup-title"),
+                size: forms.text.size(cleanup::client(c.parts.len())),
+                fixed: true,
+                modal: true,
+            });
+        }
+        out.extend(self.clean_ask.child(&text, &forms));
         out
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.trashed = Some(Poster::channel(waker.clone()));
+        self.cleaned = Some(Poster::channel(waker.clone()));
         self.waker = Some(waker);
         let root = self.root.clone();
         self.rescan(root);
@@ -690,6 +882,8 @@ impl App for DiskUsage {
             w if self.confirm.owns(w) => self.confirm_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
             PICK => self.pick_event(ev, ctx),
+            w if self.clean_ask.owns(w) => self.clean_confirm_event(w, ev, ctx),
+            CLEANUP => self.cleanup_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
     }
@@ -710,6 +904,8 @@ impl App for DiskUsage {
                     d.draw(c, &ctx.text, &paint, r, forms.fonts.size_px);
                 }
             }
+            w if self.clean_ask.owns(w) => self.clean_ask.draw(c, &forms, &ctx.text),
+            CLEANUP => self.draw_cleanup(c, ctx),
             _ => self.draw_main(c, ctx),
         }
     }
@@ -718,7 +914,7 @@ impl App for DiskUsage {
 impl repriseapp::Extended for DiskUsage {
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         match win {
-            MAIN => Some((420, 240)),
+            MAIN => Some((550, 240)),
             PICK => self.pick.as_ref().map(FileDlg::min_client),
             _ => None,
         }
@@ -732,6 +928,10 @@ impl repriseapp::Extended for DiskUsage {
             dlg: self.pick.as_mut()?,
             host: &mut self.host,
         })
+    }
+
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        self.clean_ask.parent(win).or(Some(MAIN))
     }
 
     fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
@@ -752,6 +952,12 @@ impl repriseapp::Extended for DiskUsage {
                     let (w, h) = d.client();
                     let r = Rect::new(0, 0, w, h);
                     d.access(tree, r, &ctx.text, forms.fonts.size_px);
+                }
+            }
+            w if self.clean_ask.owns(w) => self.clean_ask.access(tree, &ctx.text, &forms),
+            CLEANUP => {
+                if let Some(c) = &self.cleanup {
+                    repriseapp::oneshot::access_form(&c.form, tree, &ctx.text, forms.fonts.size_px);
                 }
             }
             _ => {

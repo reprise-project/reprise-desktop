@@ -36,6 +36,8 @@ reprise-encode = { path = "../apps/encode" }
 repriseconfine = { path = "../repriseconfine" }
 rustc-hash = "2"
 serde = { workspace = true, features = ["derive"] }
+# Clean Up reads `coredumpctl list --json`.
+serde_json.workspace = true
 # The trust marker, and Properties' Checksums tab.
 sha2 = "0.11"
 # `[recycle_bin]` in config.toml, which every host's Delete reads.

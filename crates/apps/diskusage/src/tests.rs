@@ -30,6 +30,7 @@ fn counted(root: &Path) -> DiskUsage {
     let mut d = DiskUsage::new(root.to_path_buf());
     let waker = repriseapp::Waker::noop();
     d.trashed = Some(Poster::channel(waker.clone()));
+    d.cleaned = Some(Poster::channel(waker.clone()));
     d.waker = Some(waker);
     d.rescan(root.to_path_buf());
     let until = Instant::now() + Duration::from_secs(10);
@@ -308,52 +309,286 @@ fn move_to_recycle_bin_takes_the_entry_out_of_the_count() {
     reprisefs::trash::set_mount_table(None);
 }
 
-/// The window in each look at 100% over three files, the second picked, its path fixed.
-fn drawn() -> Vec<(reprisekit::interface::Interface, Canvas)> {
+/// Clean Up's places under `root`: a cache with a file and a thumbnail, and a bin holding one
+/// file.
+fn cleanup_places(root: &Path) -> Places {
+    let cache = root.join("cache");
+    fs::create_dir_all(cache.join("thumbnails/normal")).unwrap();
+    fs::write(cache.join("thumbnails/normal/a.png"), vec![1u8; 8192]).unwrap();
+    fs::write(cache.join("blob"), vec![1u8; 16384]).unwrap();
+    let bin = root.join("Trash");
+    fs::create_dir(&bin).unwrap();
+    let gone = root.join("gone.txt");
+    fs::write(&gone, vec![1u8; 4096]).unwrap();
+    reprisefs::trash::trash_in(&bin, &gone).unwrap();
+    Places {
+        cache: Some(cache),
+        bins: Some(reprisefs::trash::Bins::new(bin, Vec::new())),
+        flatpak: None,
+        coredumpctl: None,
+        uid: std::os::unix::fs::MetadataExt::uid(&fs::metadata(root).unwrap()),
+        home: Some(root.join("home")),
+        kept: Vec::new(),
+    }
+}
+
+/// Wakes `d` until `done` holds.
+fn wake_until(d: &mut DiskUsage, what: &str, done: impl Fn(&DiskUsage) -> bool) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !done(d) {
+        assert!(Instant::now() < until, "{what}");
+        std::thread::sleep(Duration::from_millis(5));
+        d.wake();
+    }
+}
+
+fn counted_cleanup(d: &mut DiskUsage, places: Places) {
+    d.open_cleanup(places);
+    wake_until(d, "every part is counted", |d| {
+        (d.cleanup.as_ref()).is_some_and(|c| c.parts.iter().all(|(_, f)| f.is_some()))
+    });
+}
+
+/// Whether button or check box `id` takes input.
+fn on(f: &Form, id: &str) -> bool {
+    use reprisekit::controls::form::Control;
+    matches!(
+        f.item(id).map(|i| &i.control),
+        Some(Control::Button { enabled: true, .. } | Control::Check { enabled: true, .. })
+    )
+}
+
+fn key(sym: u32) -> Event {
+    Event::Key(KeyInput {
+        sym,
+        utf8: None,
+        mods: Default::default(),
+        edit: None,
+    })
+}
+
+#[test]
+fn clean_up_removes_only_the_checked_parts_and_only_after_a_yes() {
+    let t = tempfile::tempdir().unwrap();
+    let data = t.path().join("data");
+    fs::create_dir(&data).unwrap();
+    let mut d = counted(&data);
+    let cache = t.path().join("cache");
+    counted_cleanup(&mut d, cleanup_places(t.path()));
+    let c = d.cleanup.as_ref().unwrap();
+    let checked = |id| c.form.checked(id);
+    assert_eq!(checked("recycle-bin"), Some(true));
+    assert_eq!(checked("thumbnails"), Some(true));
+    assert_eq!(
+        checked("caches"),
+        Some(false),
+        "the caches wait for a check"
+    );
+    let text = c.confirm_text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        "Are you sure you want to permanently remove these files?"
+    );
+    assert!(lines[2].starts_with("Recycle Bin: "));
+    let thumbs = cache.join("thumbnails");
+    assert!(
+        lines[3].starts_with(&format!("Thumbnails ({}): ", thumbs.display())),
+        "a folder part names its folder: {}",
+        lines[3]
+    );
+    assert_eq!(lines.len(), 4, "the caches are not named: {text}");
+
+    d.ask_clean();
+    let win = d.clean_ask.win().expect("Clean Up asks first");
+    assert_eq!(repriseapp::Extended::parent(&d, win), Some(CLEANUP));
+    let mut ctx = test_ctx(reprisekit::theme::Theme::default());
+    d.event(win, key(keysym::RETURN), &mut ctx);
+    assert!(d.clean_ask.is_empty(), "Enter answers No");
+    assert!(d.cleanup.is_some(), "No goes back to Clean Up");
+    assert!(cache.join("thumbnails/normal/a.png").exists());
+    assert_eq!(
+        fs::read_dir(t.path().join("Trash/files")).unwrap().count(),
+        1
+    );
+
+    d.ask_clean();
+    let parts = d.clean_ask.close().unwrap();
+    d.clean_answered(parts, Some(0));
+    assert!(d.cleanup.is_none() && d.cleaning);
+    assert!(!on(&d.form, "cleanup"), "one removal at a time");
+    wake_until(&mut d, "the removal ends", |d| !d.cleaning);
+    assert_eq!(fs::read_dir(cache.join("thumbnails")).unwrap().count(), 0);
+    assert_eq!(
+        fs::read_dir(t.path().join("Trash/files")).unwrap().count(),
+        0
+    );
+    assert!(cache.join("blob").exists(), "an unchecked part stays");
+    assert!(!d.note.is_shown());
+}
+
+#[test]
+fn a_part_with_nothing_to_remove_greys_and_ok_waits_for_a_check() {
+    let t = tempfile::tempdir().unwrap();
+    let mut d = counted(t.path());
+    fs::create_dir(t.path().join("p")).unwrap();
+    let places = Places {
+        cache: Some(t.path().join("no-cache")),
+        coredumpctl: Some("/bin/false".into()),
+        ..cleanup_places(&t.path().join("p"))
+    };
+    counted_cleanup(&mut d, places);
+    let c = d.cleanup.as_mut().unwrap();
+    assert!(!on(&c.form, "thumbnails"));
+    assert_eq!(c.form.checked("thumbnails"), Some(false));
+    assert!(on(&c.form, cleanup::OK));
+    c.form.set_check("recycle-bin", false);
+    c.sync();
+    assert!(!on(&c.form, cleanup::OK));
+    assert!(c.picked().is_empty());
+    let u = reprisekit::theme::TextUnits::new(26, 13);
+    let crash_row = u.len(62 + 3 * 20 + 6);
+    assert!(!on(&c.form, "coredumps"));
+    assert!(
+        c.point(u.len(40), crash_row, u),
+        "the crash dumps' row at 200%"
+    );
+    assert!(
+        format!("{:?}", c.form.item("about").unwrap().control).contains("The system keeps them"),
+        "a greyed row still tells why"
+    );
+    c.sync();
+    assert!(
+        format!("{:?}", c.form.item("about").unwrap().control).contains("The system keeps them"),
+        "a check with no focus move keeps the row pointed at"
+    );
+}
+
+#[test]
+fn the_confirm_box_names_each_runtime_flatpak_would_remove() {
+    use reprisefs::cleanup::Found;
+    let t = tempfile::tempdir().unwrap();
+    let places = Places {
+        flatpak: Some("/bin/false".into()),
+        ..cleanup_places(t.path())
+    };
+    let mut c = Cleanup::new(places, 1);
+    for p in [Part::RecycleBin, Part::Thumbnails, Part::Caches] {
+        c.found(
+            p,
+            Found {
+                size: 0,
+                removable: true,
+                folder: None,
+                items: Vec::new(),
+            },
+        );
+    }
+    let runtime = reprisefs::cleanup::Runtime {
+        id: "org.example.Platform".into(),
+        arch: "x86_64".into(),
+        branch: "1".into(),
+        system: true,
+    };
+    c.found(
+        Part::Flatpak,
+        Found {
+            size: 2048,
+            removable: true,
+            folder: None,
+            items: vec![runtime],
+        },
+    );
+    assert_eq!(
+        c.form.checked("flatpak"),
+        Some(false),
+        "runtimes wait for a check"
+    );
+    c.form.set_check("flatpak", true);
+    assert_eq!(
+        c.confirm_text(),
+        "Are you sure you want to permanently remove these files?\n\n\
+         Unused Flatpak runtimes: 2.00 KB\n- org.example.Platform/x86_64/1 (system installation)"
+    );
+}
+
+/// The window in each look at 100% over three files, the second picked, its path fixed, and the
+/// Clean Up box over it with every part counted.
+fn drawn() -> Vec<(reprisekit::interface::Interface, Canvas, Canvas)> {
+    use reprisefs::cleanup::Found;
     use reprisekit::interface::Interface;
     let t = tempfile::tempdir().unwrap();
     files(t.path());
     let mut d = counted(t.path());
     d.list.view.selection.set_only(Some(1));
     d.form.set_text("path", "/home/u/Videos");
+    let places = Places {
+        flatpak: Some("/usr/bin/flatpak".into()),
+        coredumpctl: Some("/usr/bin/coredumpctl".into()),
+        ..cleanup_places(t.path())
+    };
+    let mut box_ = Cleanup::new(places, 1);
+    let found = |size: u64, removable: bool| Found {
+        size,
+        removable,
+        folder: None,
+        items: Vec::new(),
+    };
+    box_.found(Part::RecycleBin, found(48 << 20, true));
+    box_.found(Part::Thumbnails, found(12 << 20, true));
+    box_.found(Part::Caches, found(1536 << 20, true));
+    box_.found(Part::Coredumps, found(300 << 20, false));
+    box_.found(Part::Flatpak, found(0, true));
+    let size = cleanup::client(box_.parts.len());
+    d.cleanup = Some(box_);
     [Interface::Classic, Interface::Blue, Interface::Glass]
         .into_iter()
         .map(|i| {
             let ctx = test_ctx(reprisekit::interfaces::theme_for(i));
             let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
             d.draw_main(&mut c, &ctx);
-            (i, c)
+            let mut b = Canvas::new(size.0 as u32, size.1 as u32);
+            d.draw_cleanup(&mut b, &ctx);
+            (i, c, b)
         })
         .collect()
 }
 
-/// With the test fonts only.
-#[test]
-fn the_window_sits_on_its_pixels_in_every_look() {
-    reprisekit::pins::fonts();
-    let mut pins = Vec::new();
-    for (i, c) in drawn() {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for y in 0..c.height as i32 {
-            for x in 0..c.width as i32 {
-                for b in c.get(x, y).to_le_bytes() {
-                    h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-                }
+fn hash(c: &Canvas) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for y in 0..c.height as i32 {
+        for x in 0..c.width as i32 {
+            for b in c.get(x, y).to_le_bytes() {
+                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
             }
         }
-        pins.push((format!("{i:?}"), h));
     }
-    let file = reprisekit::crate_dir!().join("tests/pins/window.txt");
-    reprisekit::pins::check_file(&file, &pins);
+    h
 }
 
-/// Writes `target/diskusage-{classic,blue,glass}.png` for eyeballing; run with `--ignored`.
+/// With the test fonts only.
+#[test]
+fn the_window_and_clean_up_sit_on_their_pixels_in_every_look() {
+    reprisekit::pins::fonts();
+    let (mut window, mut boxes) = (Vec::new(), Vec::new());
+    for (i, c, b) in drawn() {
+        window.push((format!("{i:?}"), hash(&c)));
+        boxes.push((format!("{i:?}"), hash(&b)));
+    }
+    let dir = reprisekit::crate_dir!().join("tests/pins");
+    reprisekit::pins::check_file(&dir.join("window.txt"), &window);
+    reprisekit::pins::check_file(&dir.join("cleanup.txt"), &boxes);
+}
+
+/// Writes `target/diskusage-{classic,blue,glass}.png` and `cleanup-*.png` for eyeballing; run
+/// with `--ignored`.
 #[test]
 #[ignore]
 fn render_diskusage_preview() {
-    for (i, c) in drawn() {
+    for (i, c, b) in drawn() {
         let name = format!("{i:?}").to_lowercase();
         reprisekit::raster::write_preview(&c, &format!("diskusage-{name}.png"));
+        reprisekit::raster::write_preview(&b, &format!("cleanup-{name}.png"));
     }
 }
 
