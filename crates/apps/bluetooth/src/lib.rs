@@ -1326,6 +1326,14 @@ impl repriseapp::Extended for BtApp {
 }
 
 /// Runs the program; `args` are the command line after the program's name.
+/// `key` as a list reads it: a one-letter insert is the typed `Key::Char`.
+fn typed(key: &form::Key) -> Option<form::Key> {
+    match key {
+        form::Key::Edit(e) => form::flat_key(e),
+        k => Some(k.clone()),
+    }
+}
+
 pub fn main(args: Vec<std::ffi::OsString>) {
     repriseapp::applet_main(&args, BtApp::new);
 }
