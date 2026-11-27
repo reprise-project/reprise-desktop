@@ -5268,6 +5268,7 @@ dependencies = [
  "reprisekit",
  "reprisexdg",
  "serde",
+ "serde_json",
  "tempfile",
  "zbus 6.5.0",
 ]

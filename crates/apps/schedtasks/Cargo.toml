@@ -20,6 +20,7 @@ reprisexdg = { path = "../../reprisexdg" }
 zbus.workspace = true
 futures-util.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 libc.workspace = true
 log.workspace = true
 

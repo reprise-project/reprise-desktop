@@ -351,7 +351,7 @@ impl SchedTasks {
                 return Reply::redraw_all();
             }
             Act::Output => {
-                self.output = Some(output::Output::new(&t.service, t.name()));
+                self.output = Some(output::Output::new(&t.service, t.name(), self.is_12h));
                 self.send(Cmd::Output(t.service));
                 return Reply::redraw_all();
             }
