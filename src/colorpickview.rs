@@ -6,6 +6,7 @@
 //! `reprise_color_pick_v1`.
 
 use reprisekit::controls::colorpick::{self, ColorPick, Event, Still};
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::backend::input::InputTime;
 use smithay::reexports::wayland_server::Resource;
@@ -118,7 +119,7 @@ fn pick_access(pick: &Pick) -> Option<reprisekit::access::Tree> {
     let (r, still) = still_at(&pick.stills, p)?;
     let mut local = ColorPick::default();
     local.motion((p.0 - r.x, p.1 - r.y));
-    let mut tree = crate::access::root(Role::Window, "Colour picker", *r);
+    let mut tree = crate::access::root(Role::Window, &tr!("dlg-colour-title"), *r);
     colorpick::access(&local, still, (r.width, r.height), &mut tree, ROOT)?;
     Some(tree)
 }
@@ -270,8 +271,8 @@ impl State {
                         self.clip_copy(&hex);
                         crate::notifyview::notice_with_image(
                             self,
-                            "Colour copied",
-                            &format!("{hex} is on the clipboard."),
+                            &tr!("dlg-colour-copied-title"),
+                            &tr!("dlg-colour-copied-text", hex = hex.as_str()),
                             swatch(argb),
                         );
                     }

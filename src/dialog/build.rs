@@ -5,6 +5,7 @@ use crate::config::PowerConfig;
 use crate::theme::TextUnits;
 use reprisekit::controls::dlgtemplate::KEY_AID_TEXT_H;
 use reprisekit::controls::pathcomplete::Scope;
+use reprisekit::{kit_tr, tr};
 
 pub(super) fn button(label: &str, action: DialogAction, default: bool) -> DialogButton {
     DialogButton {
@@ -73,11 +74,9 @@ impl Dialog {
     pub fn run(history: &[String]) -> Dialog {
         Dialog {
             icon: Some("system-run".into()),
-            text: "Type the name of a program, folder, document, or Internet resource, and \
-                   Reprise will open it for you."
-                .into(),
+            text: tr!("dlg-run-text"),
             field: Some(Field {
-                label: "&Open:".into(),
+                label: tr!("dlg-run-open"),
                 combo: {
                     let items: Vec<&str> = history.iter().map(String::as_str).collect();
                     let mut c = Combo::new(&items, 0, LIST_ROWS);
@@ -91,13 +90,13 @@ impl Dialog {
                 complete: PathComplete::new(Scope::Shell),
             }),
             buttons: vec![
-                button("OK", DialogAction::RunField, true),
-                button("Cancel", DialogAction::Cancel, false),
-                button("&Browse...", DialogAction::BrowseRun, false),
+                button(&kit_tr!("ok"), DialogAction::RunField, true),
+                button(&kit_tr!("cancel"), DialogAction::Cancel, false),
+                button(&tr!("dlg-run-browse"), DialogAction::BrowseRun, false),
             ],
             help: true,
             ..Dialog::new(
-                "Run",
+                tr!("dlg-run-title"),
                 Style::Classic {
                     template: Template::Run,
                     text_h: None,
@@ -113,13 +112,9 @@ impl Dialog {
         let name = name.map_or("", |s| s.trim());
         Dialog {
             icon: Some("preferences-desktop".into()),
-            text: format!(
-                "Type a name for desktop {}. With no name it is called Desktop {}.",
-                n + 1,
-                n + 1
-            ),
+            text: tr!("dlg-rename-desktop-text", number = (n + 1).to_string()),
             field: Some(Field {
-                label: "&Name:".into(),
+                label: tr!("dlg-rename-desktop-name"),
                 combo: {
                     let mut c = Combo::new(&[], 0, LIST_ROWS);
                     c.edit = Some(TextEdit::new(name.to_string(), !name.is_empty()));
@@ -129,11 +124,11 @@ impl Dialog {
                 complete: PathComplete::new(Scope::Rooted),
             }),
             buttons: vec![
-                button("OK", DialogAction::RenameDesktop(n), true),
-                button("Cancel", DialogAction::Cancel, false),
+                button(&kit_tr!("ok"), DialogAction::RenameDesktop(n), true),
+                button(&kit_tr!("cancel"), DialogAction::Cancel, false),
             ],
             ..Dialog::new(
-                "Rename Desktop",
+                tr!("dlg-rename-desktop-title"),
                 Style::Classic {
                     template: Template::Run,
                     text_h: None,
@@ -171,28 +166,25 @@ impl Dialog {
     pub fn confirm_hide(place: crate::desktop::Place, label: &str) -> Dialog {
         let restore = match place {
             crate::desktop::Place::Documents | crate::desktop::Place::Home => {
-                "The contents of the folder will not be deleted. You can restore this icon \
-                 to the desktop on the Background page of Reprise Settings."
+                tr!("dlg-hide-restore-folder")
             }
-            _ => "To restore it later, use the Background page of Reprise Settings.",
+            _ => tr!("dlg-hide-restore"),
         };
         Dialog {
             // Folder with a document under the `draw_delete_badge` badge; `folder-documents` is the
             // nearest themed icon.
             icon: Some("folder-documents".into()),
-            text: format!(
-                "Are you sure you want to delete the {label} icon from your desktop?\n\n{restore}"
-            ),
+            text: tr!("dlg-hide-text", label = label, restore = restore),
             buttons: vec![
                 button(
-                    "&Yes",
+                    &kit_tr!("yes"),
                     DialogAction::HideSystemIcon(place.config_name().into()),
                     true,
                 ),
-                button("&No", DialogAction::Cancel, false),
+                button(&kit_tr!("no"), DialogAction::Cancel, false),
             ],
             ..Dialog::new(
-                "Confirm Delete",
+                tr!("dlg-confirm-delete-title"),
                 Style::Classic {
                     template: Template::ShellNotice,
                     text_h: None,
@@ -210,10 +202,9 @@ impl Dialog {
     /// files, the second line only says where the icons come back.
     pub fn confirm_delete_icons(hide: Vec<String>, files: Vec<std::path::PathBuf>) -> Dialog {
         let restore = if files.is_empty() {
-            "To restore them later, use the Background page of Reprise Settings."
+            tr!("dlg-icons-restore")
         } else {
-            "One or more of the items you are about to delete cannot be restored from the \
-             Recycle Bin.\nTo restore them later, use the Background page of Reprise Settings."
+            tr!("dlg-icons-restore-files")
         };
         let no = DialogAction::DeleteIcons {
             hide: Vec::new(),
@@ -221,15 +212,17 @@ impl Dialog {
         };
         Dialog {
             icon: Some("folder".into()),
-            text: format!(
-                "Are you sure you want to delete these icons from your desktop?\n\n{restore}"
-            ),
+            text: tr!("dlg-icons-text", restore = restore),
             buttons: vec![
-                button("&Yes", DialogAction::DeleteIcons { hide, files }, true),
-                button("&No", no, false),
+                button(
+                    &kit_tr!("yes"),
+                    DialogAction::DeleteIcons { hide, files },
+                    true,
+                ),
+                button(&kit_tr!("no"), no, false),
             ],
             ..Dialog::new(
-                "Confirm Delete",
+                tr!("dlg-confirm-delete-title"),
                 Style::Classic {
                     template: Template::ShellNotice,
                     text_h: None,
@@ -246,33 +239,20 @@ impl Dialog {
     pub fn key_aid_prompt(aid: crate::keyfilter::Aid, settings: bool) -> Dialog {
         use crate::keyfilter::Aid;
         let what = match aid {
-            Aid::StickyKeys => {
-                "Pressing the Shift key five times is the shortcut for StickyKeys. With \
-                 StickyKeys, Shift, Ctrl, Alt and the Super key work one key at a time."
-            }
-            Aid::SlowKeys => {
-                "Holding down the right Shift key for eight seconds is the shortcut for \
-                 SlowKeys. With SlowKeys, a key counts only once it has been held down for a \
-                 moment, so brief keystrokes are ignored."
-            }
-            Aid::MouseKeys => {
-                "Pressing left Alt, left Shift and Num Lock together is the shortcut for \
-                 MouseKeys. With MouseKeys, the keypad moves the pointer and clicks."
-            }
+            Aid::StickyKeys => tr!("dlg-key-aid-sticky"),
+            Aid::SlowKeys => tr!("dlg-key-aid-slow"),
+            Aid::MouseKeys => tr!("dlg-key-aid-mouse"),
         };
         let name = aid.name();
         Dialog {
-            text: format!(
-                "{what}\n\nTurn on {name}?\nTo leave it off, click No.\n\
-                 To turn off this shortcut, click Settings..."
-            ),
+            text: tr!("dlg-key-aid-text", what = what, name = name),
             buttons: vec![
-                button("&Yes", DialogAction::TurnOn(aid), true),
-                button("&No", DialogAction::Cancel, false),
+                button(&kit_tr!("yes"), DialogAction::TurnOn(aid), true),
+                button(&kit_tr!("no"), DialogAction::Cancel, false),
                 DialogButton {
                     enabled: settings,
                     ..button(
-                        "&Settings...",
+                        &tr!("dlg-key-aid-settings"),
                         DialogAction::Spawn(aid.settings_argv().join(" ")),
                         false,
                     )
@@ -296,18 +276,17 @@ impl Dialog {
     pub fn end_program(program: &str, pid: i32) -> Dialog {
         Dialog {
             icon: Some("application-x-executable".into()),
-            text: "This program has stopped responding.\n\
-                   To go back to the desktop and give the program time to recover, click \
-                   Cancel.\n\
-                   Ending the program right away loses anything it has not saved. To end \
-                   the program now, click End Now."
-                .into(),
+            text: tr!("dlg-end-program-text"),
             buttons: vec![
-                button("End Now", DialogAction::EndProgram(pid), false),
-                button("Cancel", DialogAction::Cancel, true),
+                button(
+                    &tr!("dlg-end-program-end"),
+                    DialogAction::EndProgram(pid),
+                    false,
+                ),
+                button(&kit_tr!("cancel"), DialogAction::Cancel, true),
             ],
             ..Dialog::new(
-                format!("End Program - {program}"),
+                tr!("dlg-end-program-title", program = program),
                 Style::EndProgram,
                 Placement::Center,
             )
@@ -371,11 +350,11 @@ impl Dialog {
             icon: Some("text-x-generic".into()),
             text,
             buttons: vec![
-                button("&Yes", DialogAction::UndoErase(entry), true),
-                button("&No", DialogAction::Cancel, false),
+                button(&kit_tr!("yes"), DialogAction::UndoErase(entry), true),
+                button(&kit_tr!("no"), DialogAction::Cancel, false),
             ],
             ..Dialog::new(
-                "Confirm File Delete",
+                tr!("dlg-confirm-file-delete-title"),
                 Style::Classic {
                     template: Template::ShellNotice,
                     text_h: None,
@@ -449,7 +428,7 @@ impl Dialog {
             text,
             buttons: vec![
                 button(go, DialogAction::PowerAnyway(again), false),
-                button("Cancel", DialogAction::Cancel, true),
+                button(&kit_tr!("cancel"), DialogAction::Cancel, true),
             ],
             ..Dialog::new(
                 title,
@@ -468,7 +447,7 @@ impl Dialog {
         Dialog {
             icon: Some("dialog-error".into()),
             text,
-            buttons: vec![button("OK", DialogAction::Cancel, true)],
+            buttons: vec![button(&kit_tr!("ok"), DialogAction::Cancel, true)],
             ..Dialog::new(
                 title,
                 Style::Classic {
@@ -483,13 +462,7 @@ impl Dialog {
 
     /// Run's answer to a line whose program `word` is not there; the Run box stays open under it.
     pub fn run_not_found(word: &str) -> Dialog {
-        Dialog::error(
-            word,
-            format!(
-                "Reprise cannot find '{word}'. Make sure you typed the name correctly, and then \
-                 try again."
-            ),
-        )
+        Dialog::error(word, tr!("dlg-run-not-found", word = word))
     }
 
     /// The error for a picked program at `path` whose name is not
@@ -498,10 +471,7 @@ impl Dialog {
     pub fn not_utf8_program(title: &str, path: &std::path::Path) -> Dialog {
         Dialog::error(
             title,
-            format!(
-                "Cannot use '{}': its name is not valid UTF-8.",
-                path.display()
-            ),
+            tr!("dlg-not-utf8", path = path.display().to_string()),
         )
     }
 

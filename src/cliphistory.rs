@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
+use reprisekit::tr;
+
 use reprisekit::raster::Canvas;
 use smithay::reexports::calloop::{
     Interest, Mode, PostAction, RegistrationToken,
@@ -40,7 +42,11 @@ impl Kind {
     pub fn label(&self) -> String {
         match self {
             Kind::Text(preview) => preview.clone(),
-            Kind::Image { width, height } => format!("Image, {width}x{height}"),
+            Kind::Image { width, height } => tr!(
+                "dlg-clip-image",
+                width = width.to_string(),
+                height = height.to_string()
+            ),
         }
     }
 }

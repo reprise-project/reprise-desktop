@@ -285,3 +285,93 @@ bar-overview-snap-assist = Snap assist
 bar-switcher-desktop = Desktop
 bar-media-playing = Playing
 bar-media-paused = Paused
+
+## Run and Rename Desktop
+dlg-run-title = Run
+dlg-run-text = Type the name of a program, folder, document, or Internet resource, and Reprise will open it for you.
+dlg-run-open = &Open:
+dlg-run-browse = &Browse...
+dlg-run-not-found = Reprise cannot find '{ $word }'. Make sure you typed the name correctly, and then try again.
+# The path is a program whose file name is not valid UTF-8.
+dlg-not-utf8 = Cannot use '{ $path }': its name is not valid UTF-8.
+dlg-rename-desktop-title = Rename Desktop
+# The number is the desktop's position, from 1.
+dlg-rename-desktop-text = Type a name for desktop { $number }. With no name it is called Desktop { $number }.
+dlg-rename-desktop-name = &Name:
+
+## Confirm Delete on desktop icons
+dlg-confirm-delete-title = Confirm Delete
+dlg-confirm-file-delete-title = Confirm File Delete
+dlg-hide-restore-folder = The contents of the folder will not be deleted. You can restore this icon to the desktop on the Background page of Reprise Settings.
+dlg-hide-restore = To restore it later, use the Background page of Reprise Settings.
+# The restore variable is one of the two sentences above.
+dlg-hide-text =
+    Are you sure you want to delete the { $label } icon from your desktop?
+
+    { $restore }
+dlg-icons-restore = To restore them later, use the Background page of Reprise Settings.
+dlg-icons-restore-files =
+    One or more of the items you are about to delete cannot be restored from the Recycle Bin.
+    To restore them later, use the Background page of Reprise Settings.
+dlg-icons-text =
+    Are you sure you want to delete these icons from your desktop?
+
+    { $restore }
+
+## Accessibility key shortcut prompts
+dlg-key-aid-sticky = Pressing the Shift key five times is the shortcut for StickyKeys. With StickyKeys, Shift, Ctrl, Alt and the Super key work one key at a time.
+dlg-key-aid-slow = Holding down the right Shift key for eight seconds is the shortcut for SlowKeys. With SlowKeys, a key counts only once it has been held down for a moment, so brief keystrokes are ignored.
+dlg-key-aid-mouse = Pressing left Alt, left Shift and Num Lock together is the shortcut for MouseKeys. With MouseKeys, the keypad moves the pointer and clicks.
+# The what variable is one of the three sentences above, name the aid.
+dlg-key-aid-text =
+    { $what }
+
+    Turn on { $name }?
+    To leave it off, click No.
+    To turn off this shortcut, click Settings...
+dlg-key-aid-settings = &Settings...
+
+## End Program
+dlg-end-program-title = End Program - { $program }
+dlg-end-program-text =
+    This program has stopped responding.
+    To go back to the desktop and give the program time to recover, click Cancel.
+    Ending the program right away loses anything it has not saved. To end the program now, click End Now.
+dlg-end-program-end = End Now
+
+## Run's Browse dialog
+dlg-browse-title = Browse
+dlg-browse-open = &Open
+dlg-browse-programs = Programs
+dlg-browse-all-files = All Files
+
+## File jobs
+dlg-job-delete-failed = Error Deleting File or Folder
+dlg-job-undo = Undo
+dlg-job-new-shortcut = New Shortcut
+dlg-job-explorer-failed = Cannot start Explorer: { $error }
+dlg-menu-open-file-location = Open f&ile location
+
+## The keyboard shortcut sheet
+dlg-keys-run = Run { $command }
+dlg-keys-start = Start { $app }
+dlg-keys-start-menu = Start menu
+# A program's global shortcut: its name, then what the shortcut does.
+dlg-keys-global = { $program }: { $what }
+
+## Desktop file actions
+dlg-edit-paste = Paste
+dlg-edit-rename = Rename
+dlg-edit-rename-failed = Cannot rename { $name }: { $error }
+dlg-edit-undo = Undo
+dlg-edit-undo-failed = Cannot undo: { $error }
+dlg-edit-error = Error
+
+## Clipboard history, emoji and colour pickers
+dlg-clip-title = Clipboard History
+# The size of an image in the clipboard history, in plain digits.
+dlg-clip-image = Image, { $width }x{ $height }
+dlg-emoji-title = Emoji
+dlg-colour-title = Colour picker
+dlg-colour-copied-title = Colour copied
+dlg-colour-copied-text = { $hex } is on the clipboard.

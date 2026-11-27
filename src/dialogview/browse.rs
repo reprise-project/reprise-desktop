@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use reprisefs::filechild::{Filter, Input, Kind, Output, Pattern};
+use reprisekit::tr;
 
 use crate::compositor::State;
 use crate::dialog::{Dialog, Outcome};
@@ -33,11 +34,11 @@ pub fn input() -> Input {
     };
     Input {
         kind: Some(Kind::Open),
-        title: "Browse".into(),
-        accept_label: "&Open".into(),
+        title: tr!("dlg-browse-title"),
+        accept_label: tr!("dlg-browse-open"),
         filters: vec![
-            filter("Programs", Pattern::Exec),
-            filter("All Files", Pattern::Glob("*".into())),
+            filter(&tr!("dlg-browse-programs"), Pattern::Exec),
+            filter(&tr!("dlg-browse-all-files"), Pattern::Glob("*".into())),
         ],
         app_id: crate::filedlggeom::OWN_APP.into(),
         exec_icon: true,
@@ -239,7 +240,10 @@ impl State {
                 self.dialogs.views[i].dialog.set_field(&quoted)
             }
             // The field holds text, so a non-UTF-8 name cannot go into it.
-            None => Outcome::Notice(Box::new(Dialog::not_utf8_program("Run", &path))),
+            None => Outcome::Notice(Box::new(Dialog::not_utf8_program(
+                &tr!("dlg-run-title"),
+                &path,
+            ))),
         };
         match outcome {
             Outcome::Redraw => {

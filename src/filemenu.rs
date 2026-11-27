@@ -9,6 +9,7 @@ use reprisefs::apps;
 use reprisefs::program::{Confirm, Program, ScriptOpen};
 use reprisefs::props::Opening;
 use reprisekit::controls::menu::MenuItem;
+use reprisekit::tr;
 
 use crate::compositor::State;
 use crate::desktop::{self, Target};
@@ -28,7 +29,7 @@ pub fn file_menu(m: IconMenu, mime: Option<&str>) -> (Vec<MenuItem>, Vec<Option<
         .iter()
         .position(|i| matches!(i, MenuItem::Separator))
         .unwrap_or(items.len());
-    items.insert(after_open, entry("Open f&ile location"));
+    items.insert(after_open, entry(&tr!("dlg-menu-open-file-location")));
     commands.insert(after_open, Some(DesktopCommand::OpenFileLocation));
     for (item, command) in items.iter_mut().zip(&commands) {
         if *command == Some(DesktopCommand::Rename) {

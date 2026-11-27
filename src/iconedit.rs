@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use reprisefs::undo::{EntryId, NoBin, SharedUndo, Undoable, file_id};
 use reprisekit::textedit::EditKey;
+use reprisekit::tr;
 use smithay::input::keyboard::Keycode;
 
 use crate::{
@@ -207,7 +208,7 @@ impl State {
         let dir = self.desktop.as_ref().map(|v| v.dir.clone());
         let target = target.clone();
         // A clipboard file may sit on a mount that never answers.
-        self.spawn_fs_action(Action::reads("Paste"), move |_| {
+        self.spawn_fs_action(Action::reads(tr!("dlg-edit-paste")), move |_| {
             let paths: Vec<PathBuf> = clip.paths.iter().filter(|p| p.exists()).cloned().collect();
             let here = match &dir {
                 Some(dir) => crate::dragview::in_folder(paths.clone(), dir),
@@ -481,7 +482,7 @@ impl State {
         // rename lands.
         self.relayout_desktop();
         let history = self.desktop_history();
-        let action = Action::changes("Rename", State::rescan_desktop)
+        let action = Action::changes(tr!("dlg-edit-rename"), State::rescan_desktop)
             .on_give_up(|state, _| state.desktop_rename_ended());
         self.desktop_rename_started();
         let spawned = self.spawn_fs_action(action, move |gate| {
@@ -493,7 +494,13 @@ impl State {
                 // A launcher's or a link's label is its `Name=`; the file keeps its name.
                 (reprisefs::apps::set_launcher_name(&entry.path, &typed))
                     .map(|()| None)
-                    .map_err(|e| format!("Cannot rename {}: {e}", entry.label))
+                    .map_err(|e| {
+                        tr!(
+                            "dlg-edit-rename-failed",
+                            name = entry.label.as_str(),
+                            error = e.to_string()
+                        )
+                    })
             } else {
                 desktop::rename_file(&entry, &typed)
             };
@@ -510,7 +517,10 @@ impl State {
                     Ok(None) => state.rescan_desktop(),
                     Err(text) => {
                         log::warn!("desktop: rename {}: {text}", entry.path.display());
-                        state.open_dialog(crate::dialog::Dialog::error("Rename", text));
+                        state.open_dialog(crate::dialog::Dialog::error(
+                            &tr!("dlg-edit-rename"),
+                            text,
+                        ));
                     }
                 }
                 state.desktop_rename_ended();
@@ -596,7 +606,7 @@ impl State {
                 state.undo_ended();
             }
         };
-        let action = Action::changes("Undo", late).on_give_up(gave_up);
+        let action = Action::changes(tr!("dlg-edit-undo"), late).on_give_up(gave_up);
         let reverse = move |gate: &crate::fsjobs::Gate| -> crate::fsjobs::OnLoop {
             if !erase {
                 let top = history.top(|id, u| (id == entry, u.only_in(&dir), restored_in(u, &dir)));
@@ -642,8 +652,8 @@ impl State {
                         state.open_dialog(Dialog::ask_undo_erase(text, entry))
                     }
                     (None, Some(e)) => {
-                        let text = format!("Cannot undo: {e}");
-                        state.open_dialog(Dialog::error("Error", text));
+                        let text = tr!("dlg-edit-undo-failed", error = e.to_string());
+                        state.open_dialog(Dialog::error(&tr!("dlg-edit-error"), text));
                     }
                     (None, None) => {}
                 }
