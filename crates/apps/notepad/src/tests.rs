@@ -3312,3 +3312,73 @@ fn save_as_onto_a_read_only_file_says_so_before_asking_to_replace_it() {
     assert!(np.saveas.is_some());
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
 }
+
+#[test]
+fn saving_a_copy_out_of_a_zip_asks_to_update_it_and_no_opens_save_as() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let mut np = Notepad::new(Some(path.clone()));
+    np.zip_entry = Some((tmp.path().join("Docs.zip"), "2026/notes.txt".into()));
+    np.edit = MultiEdit::new("new");
+    np.edit.mark_unsaved();
+    np.confirm_then(PendingAction::Quit);
+    let reply = np.answer_box(Some(0));
+    assert!(!reply.quit);
+    let (b, ask) = np.asks.up().expect("a box");
+    assert!(matches!(ask, Ask::Update));
+    assert_eq!(
+        b.fields.text,
+        "notes.txt came out of the compressed folder Docs.zip.\n\
+         Do you want to update Docs.zip with your changes?"
+    );
+    assert_eq!(b.fields.buttons, ["&Yes", "&No", "Cancel"]);
+    np.answer_box(Some(1));
+    let dlg = np.saveas.as_ref().expect("No opens Save As");
+    assert_eq!(dlg.file_name(), "notes.txt");
+    assert!(np.pending.is_waiting(), "the quit waits on Save As");
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
+}
+
+#[test]
+fn yes_on_the_update_box_says_why_a_zip_cannot_be_written_and_drops_the_quit() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let zip = tmp.path().join("Docs.zip");
+    std::fs::write(&zip, "not a zip").expect("write");
+    let mut np = Notepad::new(Some(path.clone()));
+    np.zip_entry = Some((zip.clone(), "notes.txt".into()));
+    np.edit = MultiEdit::new("new");
+    np.edit.mark_unsaved();
+    np.confirm_then(PendingAction::Quit);
+    np.answer_box(Some(0));
+    let reply = np.answer_box(Some(0));
+    assert!(!reply.quit);
+    let (b, ask) = np.asks.up().expect("an error box");
+    assert!(matches!(ask, Ask::Error));
+    assert_eq!(
+        b.fields.text,
+        "Cannot update Docs.zip: only a zip compressed folder can be written into."
+    );
+    assert!(!np.pending.is_waiting());
+    assert!(np.edit.modified(), "the changes are kept");
+    assert_eq!(std::fs::read(&zip).expect("read"), b"not a zip");
+}
+
+#[test]
+fn cancel_on_the_update_box_drops_the_quit_and_writes_nothing() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let mut np = Notepad::new(Some(path.clone()));
+    np.zip_entry = Some((tmp.path().join("Docs.zip"), "notes.txt".into()));
+    np.edit = MultiEdit::new("new");
+    np.edit.mark_unsaved();
+    np.confirm_then(PendingAction::Quit);
+    np.answer_box(Some(0));
+    let reply = np.answer_box(Some(2));
+    assert!(!reply.quit && np.asks.up().is_none() && np.saveas.is_none());
+    assert!(!np.pending.is_waiting());
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
+}

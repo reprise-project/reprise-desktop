@@ -1249,3 +1249,65 @@ fn save_as_onto_a_read_only_picture_says_so_before_asking_to_replace_it() {
     assert!(p.saveas.is_some());
     assert_eq!(std::fs::read(&pic).unwrap(), bytes);
 }
+
+/// `dunes.bmp`, read-only, in a fresh folder; None under root, which writes through any mode.
+fn read_only_picture() -> Option<(tempfile::TempDir, PathBuf)> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let pic = dir.path().join("dunes.bmp");
+    file::save(&Bitmap::new(3, 3, WHITE), &pic, file::Kind::Bmp, 100).unwrap();
+    std::fs::set_permissions(&pic, std::fs::Permissions::from_mode(0o400)).unwrap();
+    let writable = std::fs::OpenOptions::new().write(true).open(&pic).is_ok();
+    (!writable).then_some((dir, pic))
+}
+
+#[test]
+fn saving_a_copy_out_of_a_zip_asks_to_update_it_and_no_opens_save_as() {
+    let Some((dir, pic)) = read_only_picture() else {
+        return;
+    };
+    let bytes = std::fs::read(&pic).unwrap();
+    let mut p = Paint::new(Some(pic.clone()));
+    p.zip_entry = Some((dir.path().join("Photos.zip"), "dunes.bmp".into()));
+    p.doc.dirty = true;
+    p.answered(Prompt::SaveChanges(Then::Quit), Some(0));
+    let (what, _) = prompt_up(&p).expect("the update box");
+    assert_eq!(what, Prompt::Update(Some(Then::Quit)));
+    assert_eq!(
+        prompt_text(&p).as_deref(),
+        Some(
+            "dunes.bmp came out of the compressed folder Photos.zip.\n\
+             Do you want to update Photos.zip with your changes?"
+        )
+    );
+    p.prompt.close();
+    p.answered(what, Some(1));
+    let dlg = p.saveas.as_ref().expect("No opens Save As");
+    assert_eq!(dlg.file_name(), "dunes.bmp");
+    assert_eq!(p.after_save, Some(Then::Quit));
+    assert_eq!(std::fs::read(&pic).unwrap(), bytes);
+}
+
+#[test]
+fn yes_on_the_update_box_says_why_a_zip_cannot_be_written() {
+    let Some((dir, pic)) = read_only_picture() else {
+        return;
+    };
+    let zip = dir.path().join("Photos.zip");
+    std::fs::write(&zip, "not a zip").unwrap();
+    let mut p = Paint::new(Some(pic));
+    p.zip_entry = Some((zip.clone(), "dunes.bmp".into()));
+    p.doc.dirty = true;
+    p.save();
+    let (what, _) = prompt_up(&p).expect("the update box");
+    assert_eq!(what, Prompt::Update(None));
+    p.prompt.close();
+    let reply = p.answered(what, Some(0));
+    assert!(!reply.quit);
+    assert_eq!(
+        prompt_text(&p).as_deref(),
+        Some("Cannot update Photos.zip: only a zip compressed folder can be written into.")
+    );
+    assert!(p.doc.dirty, "the changes are kept");
+    assert_eq!(std::fs::read(&zip).unwrap(), b"not a zip");
+}

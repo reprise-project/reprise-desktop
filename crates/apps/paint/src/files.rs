@@ -149,6 +149,7 @@ impl Paint {
             Then::New => {
                 self.doc = Doc::new(Bitmap::new(NEW_SIZE.0, NEW_SIZE.1, WHITE));
                 self.path = None;
+                self.zip_entry = None;
                 self.hscroll.top = 0;
                 self.vscroll.top = 0;
                 Reply::redraw_all()
@@ -189,12 +190,16 @@ impl Paint {
                 self.run(then)
             }
             (Prompt::Overwrite(path, kind), Some(0)) => self.saveas_write(path, kind),
-            (Prompt::ReadOnly(then), Some(0)) => {
+            (Prompt::ReadOnly(then), Some(0)) | (Prompt::Update(then), Some(1)) => {
                 self.after_save = then;
                 self.saveas_dialog();
                 self.name_saveas();
                 Reply::redraw_all()
             }
+            (Prompt::Update(then), Some(0)) => match self.update_zip() {
+                true => then.map_or_else(Reply::redraw_all, |then| self.run(then)),
+                false => Reply::redraw_all(),
+            },
             (Prompt::Recovered(file), answer) => self.recovered_answered(file, answer),
             _ => Reply::redraw_all(),
         }
@@ -217,12 +222,27 @@ impl Paint {
     }
 
     /// Whether `path` takes no writes, in which case a box says so and its OK opens Save As,
-    /// with `then` waiting on that.
+    /// with `then` waiting on that. A copy out of a zip asks to update the zip instead.
     fn refuses(&mut self, path: &Path, then: Option<Then>) -> bool {
         if !reprisefs::ops::is_read_only(path) {
             return false;
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if let Some((zip, _)) = &self.zip_entry {
+            let archive = zip.file_name().unwrap_or_default().to_string_lossy();
+            let text = tr!(
+                "update-archive",
+                name = name.into_owned(),
+                archive = archive.into_owned()
+            );
+            let buttons = vec![
+                reprisekit::kit_tr!("yes"),
+                reprisekit::kit_tr!("no"),
+                reprisekit::kit_tr!("cancel"),
+            ];
+            self.ask(text, buttons, 0, Prompt::Update(then));
+            return true;
+        }
         self.ask(
             tr!("read-only", name = name.into_owned()),
             vec![reprisekit::kit_tr!("ok")],
@@ -259,6 +279,33 @@ impl Paint {
     fn writable(&self) -> Option<(PathBuf, Kind)> {
         let path = self.path.clone()?;
         Kind::of(&path).map(|kind| (path, kind))
+    }
+
+    /// Writes the picture into the zip it came out of, then over its read-only copy, so the copy
+    /// keeps matching what the zip holds. A zip that cannot be written raises a box.
+    fn update_zip(&mut self) -> bool {
+        let (Some((path, kind)), Some((zip, inner))) = (self.writable(), self.zip_entry.clone())
+        else {
+            return false;
+        };
+        self.doc.finish();
+        let written = file::encode(&self.doc.img, kind, self.quality).and_then(|bytes| {
+            reprisefs::zipwrite::update_entry(&zip, &inner, &bytes).map(|()| bytes)
+        });
+        let bytes = match written {
+            Ok(bytes) => bytes,
+            Err(why) => {
+                log::warn!("update {} in {}: {why}", inner.display(), zip.display());
+                self.error(reprisefs::zipwrite::failure(&zip, &why));
+                return false;
+            }
+        };
+        if let Err(e) = reprisefs::ops::write_document(&path, &bytes) {
+            log::warn!("update the copy {}: {e}", path.display());
+        }
+        self.doc.dirty = false;
+        self.forget_rescued();
+        true
     }
 
     /// Writes the picture as shown: a paste that landed under the box that asked is laid down
@@ -372,6 +419,7 @@ impl Paint {
                         self.doc = Doc::new(img);
                         self.doc.dirty = true;
                         self.path = None;
+                        self.zip_entry = None;
                         self.rescued = Some(file);
                         self.hscroll.top = 0;
                         self.vscroll.top = 0;
@@ -430,6 +478,7 @@ impl Paint {
             Ok(img) => {
                 self.recent.record(&path);
                 self.doc = Doc::new(img);
+                self.zip_entry = reprisefs::archivecopy::updatable(&path);
                 self.path = Some(path);
                 self.open = None;
                 self.zoom = 1;
@@ -500,6 +549,7 @@ impl Paint {
             return Reply::redraw_all();
         }
         self.path = Some(path);
+        self.zip_entry = None;
         self.saveas = None;
         match self.after_save.take() {
             Some(then) => self.run(then),
