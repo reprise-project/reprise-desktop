@@ -455,8 +455,13 @@ pub struct Explorer {
     generation: u64,
     /// The compressed folders' listings, kept while their archives stay unchanged.
     pub(crate) archives: reprisefs::archive::Listings,
-    /// A drag's copy out of a compressed folder, answering why it failed.
-    pub(crate) drag_copy: Option<Job<Option<(String, String)>>>,
+    /// The last drag out of a compressed folder, until its drop asks for the files.
+    pub(crate) drag_copy: Option<drag::DragCopy>,
+    /// The scratch folders of a compressed folder's Copy To Folder..., removed once the puts
+    /// that read them end ([`Explorer::sweep_put_scratch`]).
+    pub(crate) put_scratch: Vec<PathBuf>,
+    /// The scratch folder of the copies a compressed folder's Copy put on the clipboard.
+    pub(crate) clip_scratch: Option<PathBuf>,
     /// The scale the main window last drew at ([`Explorer::follow_scale`]).
     drawn_scale: i32,
     /// The size the toolbar's icons were last fetched at
@@ -758,6 +763,8 @@ impl Explorer {
             generation: 0,
             archives: Default::default(),
             drag_copy: None,
+            put_scratch: Vec::new(),
+            clip_scratch: None,
             drawn_scale: 0,
             toolbar_px: 0,
             drawn_theme: None,

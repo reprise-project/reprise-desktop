@@ -1971,11 +1971,9 @@ fn a_folder_opens_in_a_window_of_its_own_under_new_window() {
     );
 }
 
-/// A drag out of a compressed folder names copies of its entries in a fresh scratch folder,
-/// offers only Copy, and the copies come out behind it.
-#[test]
-fn a_drag_out_of_a_compressed_folder_names_copies_that_come_out() {
-    let mut ctx = test_ctx();
+/// `pack.tar.gz` holding `a.txt`, open as a compressed folder in Icons view, with the point
+/// at the middle of its one entry.
+fn archive_view(ctx: &mut Ctx) -> (tempfile::TempDir, Explorer, (i32, i32)) {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::create_dir(dir.path().join("src")).expect("mkdir");
     std::fs::write(dir.path().join("src/a.txt"), "inside").expect("write");
@@ -1986,22 +1984,96 @@ fn a_drag_out_of_a_compressed_folder_names_copies_that_come_out() {
         .expect("bsdtar runs");
     assert!(made.success());
     let tar = dir.path().join("pack.tar.gz");
-    let mut ex = crate::tests::test_explorer(Place::Archive(tar.clone(), PathBuf::new()), &mut ctx);
+    let mut ex = crate::tests::test_explorer(Place::Archive(tar, PathBuf::new()), ctx);
     ex.sv.mode = Mode::Icons;
-    ex.draw_list_icons(&mut ctx);
-    let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
+    ex.draw_list_icons(ctx);
+    let at = centre(&ex, ctx, index_of(&ex, "a.txt"));
+    (dir, ex, at)
+}
 
+/// A pipe for a drop's request: what it reads, and the end the drag writes.
+fn drop_pipe() -> (std::io::PipeReader, std::os::fd::OwnedFd) {
+    let (r, w) = std::io::pipe().expect("a pipe");
+    (r, w.into())
+}
+
+fn read_all(mut r: std::io::PipeReader) -> String {
+    use std::io::Read;
+    let mut got = String::new();
+    r.read_to_string(&mut got).expect("read");
+    got
+}
+
+#[test]
+fn a_drag_out_of_a_compressed_folder_no_drop_asks_of_copies_nothing() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex, at) = archive_view(&mut ctx);
     press(&mut ex, &mut ctx, at, BTN_LEFT);
     let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
     let out = r.start_drag.expect("the drag started");
-    assert!(out.staged.is_some(), "its copies are still coming out");
+    let staged = out.staged.expect("its copies come out at the drop");
     let [copy] = &out.paths[..] else {
         panic!("one copy: {:?}", out.paths);
     };
     assert!(copy.starts_with(crate::tests::scratch().join("cache/reprise/archives")));
     assert_eq!(copy.file_name(), Some("a.txt".as_ref()));
-    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copy.is_none());
-    assert_eq!(std::fs::read_to_string(copy).expect("copied"), "inside");
+    assert!(
+        !copy.parent().unwrap().exists(),
+        "nothing copies at the start"
+    );
+    ex.drag_ended();
+    assert!(ex.drag_copy.is_none() && ex.extracting.is_none());
+    assert!(!staged.asked());
+}
+
+#[test]
+fn a_drop_asking_a_compressed_folder_drag_for_its_files_gets_them_once_out() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex, at) = archive_view(&mut ctx);
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
+    let out = r.start_drag.expect("the drag started");
+    let (read, fd) = drop_pipe();
+    out.staged
+        .expect("staged")
+        .send(fd, out.paths[0].to_string_lossy().as_bytes().into());
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_some());
+    assert!(ex.drag_copy.is_none(), "the copy started, with its dialog");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_none());
+    assert_eq!(
+        read_all(read),
+        out.paths[0].to_string_lossy(),
+        "the drop gets the paths"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&out.paths[0]).expect("copied"),
+        "inside"
+    );
     assert!(ex.dialog().is_none(), "no box: the copy came out");
+    ex.drag_ended();
+}
+
+#[test]
+fn a_drop_that_stops_waiting_cancels_its_copy_out_of_a_compressed_folder() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex, at) = archive_view(&mut ctx);
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
+    let out = r.start_drag.expect("the drag started");
+    let staged = out.staged.expect("staged");
+    let (read, fd) = drop_pipe();
+    staged.send(fd, b"x".as_slice().into());
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_some());
+    staged.abandon();
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_none());
+    assert_eq!(read_all(read), "", "the drop gets nothing");
+    assert!(
+        matches!(ex.dialog(), Some(crate::dialogs::Dialog::Message { text, .. })
+            if text.contains("stopped waiting")),
+        "a box says the drop gave up"
+    );
+    crate::tests::wake_until(&mut ex, &mut ctx, |_| {
+        !out.paths[0].parent().unwrap().exists()
+    });
     ex.drag_ended();
 }

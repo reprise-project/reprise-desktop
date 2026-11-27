@@ -17,7 +17,7 @@
 use crate::URI_LIST;
 use reprisekit::raster::Canvas;
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 
 /// `FILE_MIMES` is what a drag of files offers after the portal key;
@@ -287,33 +287,97 @@ pub struct DragOut {
     pub image: Canvas,
     /// Logical px from the image's top-left.
     pub grab: (i32, i32),
-    /// Set while the files are still being written: the drag offers only Copy and no portal
-    /// key, and sends its paths once they are there.
+    /// Set when the files are written only once the drop asks for them: the drag offers only
+    /// Copy and no portal key.
     pub staged: Option<Staged>,
 }
 
-/// Files a drag names before they are all written. A target asking for the drag's data waits
-/// for [`Staged::done`], up to [`reprisefs::pipe::PASTE_TIMEOUT`], and gets nothing when they
-/// did not come out.
-#[derive(Clone, Default)]
-pub struct Staged(Arc<(Mutex<Option<bool>>, Condvar)>);
+/// Files a drag names before they are written. A target asking before the drop gets their
+/// paths at once. The drop's request makes [`Staged::asked`] true and waits, with no time limit,
+/// for [`Staged::done`]: then it gets the paths, or nothing when they did not come out. A drop
+/// that gives up first makes [`Staged::abandoned`] true.
+#[derive(Clone)]
+pub struct Staged(Arc<StagedShared>);
+
+struct StagedShared {
+    state: Mutex<StagedState>,
+    wake: Box<dyn Fn() + Send + Sync>,
+}
+
+#[derive(Default)]
+struct StagedState {
+    /// The pipes of the drop's requests, each with the bytes it is sent.
+    waiting: Vec<(std::os::fd::OwnedFd, Arc<[u8]>)>,
+    asked: bool,
+    abandoned: bool,
+    out: Option<bool>,
+}
+
+/// The most requests one staged drag holds a pipe for; more are closed empty.
+const MAX_WAITING: usize = 4;
 
 impl Staged {
-    /// The files are there (`ok`) or will not be.
-    pub fn done(&self, ok: bool) {
-        let (state, cv) = &*self.0;
-        *state.lock().unwrap_or_else(|e| e.into_inner()) = Some(ok);
-        cv.notify_all();
+    /// `wake` runs when the drop asks for the files, and when it gives up on them.
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Staged {
+        Staged(Arc::new(StagedShared {
+            state: Mutex::default(),
+            wake: Box::new(wake),
+        }))
     }
 
-    /// Whether the files came out, waiting up to `limit` for them.
-    pub(crate) fn wait(&self, limit: std::time::Duration) -> bool {
-        let (state, cv) = &*self.0;
-        let held = state.lock().unwrap_or_else(|e| e.into_inner());
-        let (held, _) = cv
-            .wait_timeout_while(held, limit, |s| s.is_none())
-            .unwrap_or_else(|e| e.into_inner());
-        *held == Some(true)
+    fn state(&self) -> std::sync::MutexGuard<'_, StagedState> {
+        self.0.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether the drop has asked for the files: the time to write them.
+    pub fn asked(&self) -> bool {
+        self.state().asked
+    }
+
+    /// Whether the drop gave up before the files were out.
+    pub fn abandoned(&self) -> bool {
+        self.state().abandoned
+    }
+
+    /// The files are there (`ok`) or will not be: each waiting request gets its bytes, or its
+    /// pipe closed empty.
+    pub fn done(&self, ok: bool) {
+        let waiting = {
+            let mut s = self.state();
+            s.out = Some(ok);
+            std::mem::take(&mut s.waiting)
+        };
+        for (fd, bytes) in waiting.into_iter().filter(|_| ok) {
+            reprisefs::pipe::write_detached(fd, bytes);
+        }
+    }
+
+    /// The drop asks for `bytes` on `fd`, sent once the files are out: the host's part.
+    pub fn send(&self, fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>) {
+        let mut s = self.state();
+        match s.out {
+            Some(true) => reprisefs::pipe::write_detached(fd, bytes),
+            Some(false) => {}
+            None if s.abandoned || s.waiting.len() >= MAX_WAITING => {}
+            None => {
+                s.waiting.push((fd, bytes));
+                s.asked = true;
+                drop(s);
+                (self.0.wake)();
+            }
+        }
+    }
+
+    /// The drop ended before the files were out: the host's part.
+    pub fn abandon(&self) {
+        let mut s = self.state();
+        if s.out.is_some() || !s.asked {
+            return;
+        }
+        s.abandoned = true;
+        s.waiting.clear();
+        drop(s);
+        (self.0.wake)();
     }
 }
 
@@ -591,22 +655,46 @@ mod tests {
     }
 
     #[test]
-    fn staged_files_are_waited_for_and_their_failure_or_absence_sends_nothing() {
-        use std::time::Duration;
-        let staged = Staged::default();
-        let later = staged.clone();
-        let done = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
-            later.done(true);
+    fn a_staged_drop_waits_for_its_files_and_hears_whether_they_came_out() {
+        use std::io::Read;
+        let woke = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let w = woke.clone();
+        let staged = Staged::new(move || {
+            w.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         });
-        assert!(staged.wait(Duration::from_secs(20)), "out once done");
-        done.join().unwrap();
-        assert!(
-            !Staged::default().wait(Duration::from_millis(20)),
-            "never done"
-        );
-        let failed = Staged::default();
+        let pipe = || {
+            let (r, w) = std::io::pipe().unwrap();
+            (r, std::os::fd::OwnedFd::from(w))
+        };
+        let (mut first, fd) = pipe();
+        staged.send(fd, Arc::from(&b"file:///a"[..]));
+        assert!(staged.asked(), "the drop asked");
+        assert_eq!(woke.load(std::sync::atomic::Ordering::Relaxed), 1);
+        staged.done(true);
+        let mut got = Vec::new();
+        first.read_to_end(&mut got).unwrap();
+        assert_eq!(got, b"file:///a", "sent once out");
+
+        let failed = Staged::new(|| {});
+        let (mut empty, fd) = pipe();
+        failed.send(fd, Arc::from(&b"file:///a"[..]));
         failed.done(false);
-        assert!(!failed.wait(Duration::from_secs(20)));
+        let mut got = Vec::new();
+        empty.read_to_end(&mut got).unwrap();
+        assert!(got.is_empty(), "a copy that failed sends nothing");
+
+        let given_up = Staged::new(|| {});
+        given_up.abandon();
+        assert!(
+            !given_up.abandoned(),
+            "a drag nobody asked of gives up nothing"
+        );
+        let (mut closed, fd) = pipe();
+        given_up.send(fd, Arc::from(&b"file:///a"[..]));
+        given_up.abandon();
+        assert!(given_up.abandoned());
+        let mut got = Vec::new();
+        closed.read_to_end(&mut got).unwrap();
+        assert!(got.is_empty(), "its pipe closes");
     }
 }
