@@ -1259,6 +1259,35 @@ fn super_shift_arrows_carry_a_window_to_the_other_output_in_proportion() {
 }
 
 #[test]
+fn the_window_menus_move_to_screen_lists_the_other_output_and_carries_the_window_there() {
+    use reprisekit::controls::menu::MenuItem;
+    let (mut h, mut c, w, small, big) = two_sizes();
+    h.state.move_to(w, 100, 120);
+    h.roundtrip(&mut c);
+    let before = h.state.win(w).expect("window").frame_rect();
+    let (sw, bw) = (
+        h.state.usable_area(Some(&small)),
+        h.state.usable_area(Some(&big)),
+    );
+    h.state.open_window_menu(w, (100, 100), false);
+    let at = (h.state.menus[0].items.iter())
+        .position(|i| matches!(i, MenuItem::Entry { label, .. } if label == "Move to Screen"))
+        .expect("a Move to Screen row with two outputs");
+    h.state.menu_activate(0, at);
+    let labels: Vec<&str> = (h.state.menus[1].items.iter())
+        .filter_map(|i| match i {
+            MenuItem::Entry { label, .. } => Some(label.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(labels.len(), 1, "only the other output: {labels:?}");
+    h.state.menu_activate(1, 0);
+    h.roundtrip(&mut c);
+    let r = h.state.win(w).expect("window").frame_rect();
+    assert_eq!(r, crate::snap::carried(before, sw, bw));
+}
+
+#[test]
 fn a_maximized_window_carried_to_the_other_output_stays_maximized_there() {
     let (mut h, mut c, w, small, big) = two_sizes();
     let normal = h.state.win(w).expect("window").frame_rect();

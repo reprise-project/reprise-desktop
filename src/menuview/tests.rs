@@ -780,6 +780,7 @@ fn every_window_menu_and_window_list_row_with_an_arrow_opens_a_submenu() {
         open_here: OpenHereState::Off,
         mini: false,
         desktops: 2,
+        screens: 1,
         sticky: false,
         tabs: Some(TabRows {
             targets: true,

@@ -202,6 +202,7 @@ start-win-open-here = Always &Open Here
 start-win-mini-view = M&ini View
 start-win-all-desktops = Show on &All Desktops
 start-win-move-to-desktop = Move to &Desktop
+start-win-move-to-screen = Move to Scr&een
 start-win-add-to-tabs = Add to Ta&bs of
 start-win-leave-tabs = Remove from Tab &Group
 start-win-close = &Close
