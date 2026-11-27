@@ -2557,6 +2557,49 @@ fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved(
     assert!(recovered_in(&dir).is_empty());
 }
 
+/// Yes over an open file starts a Notepad of its own on the recovered text and leaves the file
+/// open; over typed Untitled text it does the same.
+#[test]
+fn a_recovered_document_opens_in_a_new_window_over_an_open_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("recovery");
+    let kept = write_recovery(&dir, 1, "a", &["lost"], Format::default()).expect("write");
+    let path = tmp.path().join("asked.txt");
+    std::fs::write(&path, "asked").expect("write");
+    let spawned = vec![vec![
+        "reprise-notepad".into(),
+        "--recovered".into(),
+        kept.clone().into_os_string(),
+    ]];
+
+    let mut np = Notepad::new(Some(path.clone()));
+    np.rescue_dir = Some(dir.clone());
+    np.offer_recovered();
+    let reply = np.answer_box(Some(0));
+    assert_eq!(reply.spawn, spawned);
+    assert!(np.asks.is_empty(), "Yes offers no more");
+    assert_eq!(np.path.as_deref(), Some(path.as_path()));
+    assert_eq!(np.edit.text(), "asked");
+    assert!(!np.dirty());
+    assert_eq!(np.rescued, None, "the new window owns the recovery file");
+    assert!(kept.exists());
+
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.edit = MultiEdit::new("typed");
+    np.edit.mark_unsaved();
+    np.offer_recovered();
+    assert_eq!(np.answer_box(Some(0)).spawn, spawned);
+    assert_eq!(np.edit.text(), "typed");
+
+    let mut np = Notepad::new(None);
+    np.open_recovered(kept.clone());
+    assert_eq!(np.edit.text(), "lost");
+    assert_eq!(np.path, None);
+    assert!(np.dirty());
+    assert_eq!(np.rescued, Some(kept));
+}
+
 #[test]
 fn declining_a_recovered_document_sends_it_to_the_recycle_bin_and_offers_the_next() {
     let tmp = tempfile::tempdir().expect("tempdir");

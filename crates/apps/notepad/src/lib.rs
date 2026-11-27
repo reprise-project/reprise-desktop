@@ -612,11 +612,18 @@ impl Extended for Notepad {
 }
 
 const DESKTOP: &str = "reprise-notepad.desktop";
+/// The flag before a recovery file whose text Notepad opens in place of offering the files kept.
+const RECOVERED: &str = "--recovered";
 
-/// Runs the program; `args` are the command line after the program's name.
+/// Runs the program; `args` are the command line after the program's name: a file to open, or
+/// [`RECOVERED`] and a recovery file.
 pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let path = args.into_iter().next().map(std::path::PathBuf::from);
+    let mut args = args.into_iter().map(std::path::PathBuf::from);
+    let (path, recovered) = match args.next() {
+        Some(flag) if flag.as_os_str() == RECOVERED => (None, args.next()),
+        path => (path, None),
+    };
     let mut notepad = Notepad::new(path);
     notepad.forms = repriseapp::start_forms();
     notepad.recent = Recent::new(DESKTOP);
@@ -627,7 +634,10 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     if let Some(p) = notepad.path.clone() {
         notepad.recent.record(&p);
     }
-    notepad.offer_recovered();
+    match recovered {
+        Some(file) => notepad.open_recovered(file),
+        None => notepad.offer_recovered(),
+    }
     repriseapp::run(Box::new(notepad)).unwrap_or_else(|e| e.exit());
 }
 
