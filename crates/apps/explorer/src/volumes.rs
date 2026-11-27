@@ -431,8 +431,18 @@ impl Explorer {
         }
         let it = self.items.get(i)?;
         place::row_volume(&self.volumes, it)
-            .filter(|v| self.volumes.can_label(v) && !v.holds_system())
+            .filter(|v| self.volumes.can_label(v) && !v.holds_system() && !v.read_only)
             .cloned()
+    }
+
+    /// The name of Computer's row `i` when it is a read-only file system, which Rename leaves
+    /// alone.
+    pub(crate) fn read_only_drive(&self, i: usize) -> Option<String> {
+        if self.place != Place::Computer {
+            return None;
+        }
+        let v = place::row_volume(&self.volumes, self.items.get(i)?)?;
+        (v.filesystem && v.read_only).then(|| v.name(self.volumes.disk_of(v)))
     }
 
     /// Computer's row `i` is a file system the system runs from, which Rename leaves alone.
@@ -512,6 +522,9 @@ fn refused_label(fs_type: &str, label: &str) -> Option<String> {
 
 pub(crate) fn system_drive() -> String {
     tr!("volumes-system-drive-reprise-doesn-t-rename-the-system")
+}
+pub(crate) fn read_only_drive(name: &str) -> String {
+    tr!("volumes-read-only-drive", name = name)
 }
 fn drive_changed() -> String {
     tr!("volumes-drive-changed-the-drive-changed-nothing-was-renamed")

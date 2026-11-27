@@ -908,8 +908,8 @@ fn box_text(ex: &mut Explorer, ctx: &mut repriseapp::Ctx) -> String {
 }
 
 /// F2 on a mounted FAT stick edits its label alone and sets it through UDisks2; a refusal
-/// raises a box in words. Rename is greyed on the system's own drive, which F2 says, and on a
-/// drive UDisks2 has no tools for. The box opens on the whole label, stops at the file system's
+/// raises a box in words. Rename is greyed on the system's own drive and on a read-only one,
+/// which F2 says, and on a drive UDisks2 has no tools for. The box opens on the whole label, stops at the file system's
 /// longest, and a longer name or one with a character FAT refuses is refused before UDisks2 is
 /// asked. A stick swapped while the box is up keeps its label.
 #[test]
@@ -948,6 +948,7 @@ fn rename_sets_a_drives_label_through_udisks() {
         space_drive("/run/media/u/DATA", "/dev/sdy1", true),
         space_drive("/run/media/u/STICK", "/dev/sdz1", true),
         space_drive("/run/media/u/BACKUP", "/dev/sdx1", true),
+        space_drive("/run/media/u/IMAGE", "/dev/loop0", true),
     ];
     let volume = |path: &str, device: &str, mount: &str, fs: &str, label: &str| Volume {
         path: path.into(),
@@ -979,6 +980,16 @@ fn rename_sets_a_drives_label_through_udisks() {
                 "btrfs",
                 LONG,
             ),
+            Volume {
+                read_only: true,
+                ..volume(
+                    "/block/loop0",
+                    "/dev/loop0",
+                    "/run/media/u/IMAGE",
+                    "vfat",
+                    "IMAGE",
+                )
+            },
         ],
         filesystems: vec!["vfat".into(), "ext4".into(), "btrfs".into()],
         ..Default::default()
@@ -1006,6 +1017,17 @@ fn rename_sets_a_drives_label_through_udisks() {
     assert!(
         ex.sv.edit.is_none() && ex.dialog().is_none(),
         "F2 does nothing"
+    );
+
+    ex.sv
+        .selection
+        .set_only(Some(row(&ex, "/run/media/u/IMAGE")));
+    assert!(!ex.menu_state().relabel, "a read-only image");
+    ex.begin_rename(&mut ctx);
+    assert!(ex.sv.edit.is_none(), "F2 on a read-only image opens no box");
+    assert_eq!(
+        box_text(&mut ex, &mut ctx),
+        "IMAGE is read-only, so it can't be renamed."
     );
 
     ex.sv

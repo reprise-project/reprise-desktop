@@ -117,6 +117,13 @@ impl Explorer {
                     ctx,
                 );
             }
+            if let Some(name) = self.read_only_drive(i) {
+                return self.message_box(
+                    &tr!("rename-begin-rename-rename"),
+                    crate::volumes::read_only_drive(&name),
+                    ctx,
+                );
+            }
         }
         if self.place.read_only() {
             return Reply::none();
