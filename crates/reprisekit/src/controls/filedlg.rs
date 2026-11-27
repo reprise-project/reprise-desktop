@@ -203,8 +203,6 @@ pub const FIELD_X: i32 = 195;
 const FIELD_BUTTON_GAP: i32 = 33;
 const CANCEL_DY: i32 = -2;
 const GRIP: i32 = 16;
-/// Rows an extra combo's open list shows at least; the client grows to fit.
-const EXTRA_LIST_ROWS: usize = 4;
 
 /// The top of a host's extra rows (`FileDlg::set_extra`), 8 px under the
 /// Files of type field, in client coordinates.
@@ -778,21 +776,9 @@ impl FileDlg {
     }
 
     /// Host extra rows of `h` px under the Files of type row, laid out from
-    /// `(FIELD_X, EXTRA_Y)`; the client grows by `h`. Each combo's open list
-    /// must fit inside the client: `h` grows to show up to `EXTRA_LIST_ROWS`
-    /// rows, and longer lists are shortened and scroll.
-    pub fn set_extra(&mut self, mut form: form::Form, h: i32, cm: &ControlMetrics) {
-        let mut h = h;
-        for it in &mut form.items {
-            let field = it.rect;
-            if let form::Control::Combo(c) = &mut it.control {
-                let want = c.rows.min(EXTRA_LIST_ROWS);
-                while c.rows > want && combo::list_rect(c, field, cm).bottom() > CLIENT.1 + h {
-                    c.rows -= 1;
-                }
-                h = h.max(combo::list_rect(c, field, cm).bottom() - CLIENT.1);
-            }
-        }
+    /// `(FIELD_X, EXTRA_Y)`; the client grows by `h`. A combo's open list drops
+    /// past the client on the host's popup ([`Popped`]), as Files of type's does.
+    pub fn set_extra(&mut self, form: form::Form, h: i32) {
         self.extra = Some((form, h));
         self.grow_to_min();
     }

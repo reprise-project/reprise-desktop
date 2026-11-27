@@ -1,28 +1,33 @@
 use super::*;
 
 #[test]
-fn a_tight_extra_grows_to_show_up_to_four_list_rows() {
+fn an_extra_combos_list_shows_every_row_past_the_client() {
     let w = field_w(CLIENT.0);
-    let combo_of = |n: usize| {
-        let names: Vec<String> = (0..n).map(|i| format!("row {i}")).collect();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        form::Form::new(vec![form::Item::combo("c", FIELD_X, EXTRA_Y, w, &refs, n)])
+    let names = ["one", "two", "three", "four", "five"];
+    let mut d = multi(DlgMode::Open, false);
+    let combo = form::Item::combo("c", FIELD_X, EXTRA_Y, w, &names, names.len());
+    d.set_extra(form::Form::new(vec![combo]), 29);
+    assert_eq!(
+        d.client(),
+        (CLIENT.0, CLIENT.1 + 29),
+        "grown by the row alone"
+    );
+    let big = Rect::new(0, 0, d.client().0, d.client().1);
+    let t = Rc::new(text());
+    let hit = d.hit(&t, 11, big, FIELD_X + w - 5, EXTRA_Y + 5);
+    d.click(big, hit, Mods::default());
+    let row_h = match &d.extra().unwrap().item("c").unwrap().control {
+        form::Control::Combo(c) => c.row_h(&ControlMetrics::CLASSIC),
+        _ => panic!("combo"),
     };
-    for (n, shown) in [(2, 2), (3, 3), (9, 4)] {
-        let mut d = multi(DlgMode::Open, false);
-        d.set_extra(combo_of(n), 29, &ControlMetrics::CLASSIC);
-        let it = d.extra().unwrap().item("c").unwrap();
-        let form::Control::Combo(c) = &it.control else {
-            panic!("combo")
-        };
-        assert_eq!(c.rows, shown, "{n} options show {shown} rows");
-        let list = combo::layout(c, it.rect, &ControlMetrics::CLASSIC).list;
-        assert_eq!(
-            d.client().1,
-            list.bottom(),
-            "the client grows to the list's bottom"
-        );
-    }
+    let p = Popped {
+        dlg: &mut d,
+        text: t.clone(),
+        px: 11,
+    };
+    let list = p.spots()[0].rect;
+    assert_eq!(list.height, 5 * row_h + 2, "all five rows");
+    assert!(list.bottom() > big.bottom(), "{list:?} drops past {big:?}");
 }
 
 #[test]
@@ -56,7 +61,7 @@ fn an_extra_rows_key_wins_and_the_labels_pick_around_it() {
         form::Item::check("subfolders", FIELD_X, EXTRA_Y, "&Include subfolders"),
         form::Item::check("names", FIELD_X, EXTRA_Y + 20, "&Name files"),
     ]);
-    d.set_extra(form, EXTRA_H, &ControlMetrics::CLASSIC);
+    d.set_extra(form, EXTRA_H);
     d.fields.accept_label = "Load".into();
     let alt = |d: &mut FileDlg, c| d.key(R, form::Key::Access(c), None, Mods::default());
     alt(&mut d, 'i');
@@ -99,7 +104,7 @@ fn a_cut_extra_label_tips_its_whole_text_after_a_blink() {
     let form = form::Form::new(vec![form::Item::label_at(
         "long", FIELD_X, EXTRA_Y, 60, LONG,
     )]);
-    d.set_extra(form, EXTRA_H, &ControlMetrics::CLASSIC);
+    d.set_extra(form, EXTRA_H);
     let big = Rect::new(0, 0, CLIENT.0, CLIENT.1 + EXTRA_H);
     let theme = Theme::default();
     let t = text();

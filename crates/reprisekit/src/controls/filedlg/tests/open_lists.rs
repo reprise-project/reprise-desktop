@@ -139,7 +139,7 @@ fn a_cut_extra_label_under_the_open_files_of_type_list_tips_nothing() {
     let form = form::Form::new(vec![form::Item::label_at(
         "long", FIELD_X, EXTRA_Y, 60, LONG,
     )]);
-    d.set_extra(form, EXTRA_H, &ControlMetrics::CLASSIC);
+    d.set_extra(form, EXTRA_H);
     let big = Rect::new(0, 0, CLIENT.0, CLIENT.1 + EXTRA_H);
     let t = text();
     let mut c = Canvas::new(big.width as u32, big.height as u32);

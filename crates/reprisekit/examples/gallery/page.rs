@@ -1051,7 +1051,6 @@ fn page_explorer(mut c: Canvas, theme: &Theme, text: &TextRenderer) -> Canvas {
             ),
         ]),
         70,
-        &theme.look.controls_at_100(),
     );
     draw_dialog(&mut c, &choices, 8060);
 
