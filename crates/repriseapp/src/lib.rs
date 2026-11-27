@@ -210,6 +210,8 @@ struct Slot {
     tip_waits: bool,
     /// The [`Extended::reopen`] argument last sent for it.
     reopen: Option<String>,
+    /// The [`Extended::window_icon`] last sent for it.
+    icon: Option<&'static str>,
 }
 
 impl Slot {
