@@ -556,6 +556,6 @@ fn boxes_with_a_bar_are_pinned_at_grown_text_and_scale_2() {
             }
         }
     }
-    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/dialog_bar.txt");
-    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+    let pins = reprisekit::crate_dir!().join("tests/pins/dialog_bar.txt");
+    reprisekit::pins::check_file(&pins, &got);
 }

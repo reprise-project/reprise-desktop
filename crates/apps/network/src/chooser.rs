@@ -1022,8 +1022,8 @@ mod tests {
                 }
             }
         }
-        let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/chooser.txt");
-        reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+        let pins = reprisekit::crate_dir!().join("tests/pins/chooser.txt");
+        reprisekit::pins::check_file(&pins, &got);
     }
 
     /// An unsaved 802.1X network asks for its login; a saved one dials as it is.

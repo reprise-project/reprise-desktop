@@ -914,7 +914,7 @@ fn the_status_bar_shows_the_pointer_and_the_selection_size() {
 /// [`reprisekit::pins::check_file`] on `tests/pins/<name>.txt`.
 #[track_caller]
 fn check_pins(name: &str, got: &[(String, u64)]) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let path = reprisekit::crate_dir!()
         .join("tests/pins")
         .join(format!("{name}.txt"));
     reprisekit::pins::check_file(&path, got);

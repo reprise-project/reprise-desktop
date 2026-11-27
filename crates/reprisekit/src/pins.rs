@@ -299,11 +299,28 @@ pub(crate) fn fnv(c: &crate::raster::Canvas) -> u64 {
     h
 }
 
+/// The calling crate's directory as a `PathBuf`, for its pin files and test fixtures: the one
+/// cargo names to the running test or example, else the one the crate was compiled in.
+#[macro_export]
+macro_rules! crate_dir {
+    () => {
+        $crate::pins::crate_dir(env!("CARGO_MANIFEST_DIR"))
+    };
+}
+
+/// [`crate_dir!`](crate::crate_dir) with the caller's compile-time directory as `compiled`.
+#[doc(hidden)]
+pub fn crate_dir(compiled: &str) -> PathBuf {
+    // Read at run time: cargo reuses a unit whose compiled-in CARGO_MANIFEST_DIR names another
+    // checkout when target/ was copied from it, and files would be read from and written there.
+    std::env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| compiled.into(), PathBuf::from)
+}
+
 /// [`check_file`] on `tests/pins/<name>.txt`.
 #[cfg(test)]
 #[track_caller]
 pub(crate) fn check(name: &str, got: &[(String, u64)]) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = crate_dir(env!("CARGO_MANIFEST_DIR"))
         .join("tests/pins")
         .join(format!("{name}.txt"));
     check_file(&path, got);

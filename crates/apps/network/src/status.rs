@@ -424,8 +424,7 @@ mod tests {
             })
             .collect()
         });
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/pins/text_fit_without_tahoma.txt");
+        let path = reprisekit::crate_dir!().join("tests/pins/text_fit_without_tahoma.txt");
         reprisekit::pins::check_list(&path, &found, "lines DejaVu Sans cuts and Tahoma does not");
     }
 

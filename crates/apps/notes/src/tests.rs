@@ -462,8 +462,8 @@ fn a_note_pins_in_every_interface_at_scale_1_and_2() {
             got.push((format!("{i:?}@{scale}"), fnv(&long_note(i, scale))));
         }
     }
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/note.txt");
-    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    let file = reprisekit::crate_dir!().join("tests/pins/note.txt");
+    reprisekit::pins::check_file(&file, &got);
 }
 
 #[test]
@@ -572,6 +572,6 @@ fn a_wrapped_note_pins_in_every_interface_at_scale_1_and_2() {
             got.push((format!("{i:?}@{scale}"), fnv(&c)));
         }
     }
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/wrapped_note.txt");
-    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    let file = reprisekit::crate_dir!().join("tests/pins/wrapped_note.txt");
+    reprisekit::pins::check_file(&file, &got);
 }

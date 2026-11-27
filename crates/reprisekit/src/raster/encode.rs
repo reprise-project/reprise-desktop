@@ -4,12 +4,7 @@ use super::Canvas;
 /// `target/` and print where. For the ignored preview tests and the
 /// gallery; panics when the file cannot be written.
 pub fn write_preview(canvas: &Canvas, name: &str) {
-    // Read at run time: cargo reuses a unit whose compiled-in CARGO_MANIFEST_DIR names another
-    // checkout when target/ was copied from it, and the PNG would land in that checkout.
-    let manifest = std::env::var_os("CARGO_MANIFEST_DIR").map_or_else(
-        || env!("CARGO_MANIFEST_DIR").into(),
-        std::path::PathBuf::from,
-    );
+    let manifest = crate::pins::crate_dir(env!("CARGO_MANIFEST_DIR"));
     let root = manifest
         .ancestors()
         .find(|p| p.join("target").is_dir())

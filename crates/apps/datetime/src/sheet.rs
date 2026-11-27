@@ -687,7 +687,7 @@ mod tests {
             got.push((name.to_string(), fnv(&c)));
         }
         reprisekit::pins::check_file(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins/zone_panel.txt"),
+            &reprisekit::crate_dir!().join("tests/pins/zone_panel.txt"),
             &got,
         );
     }

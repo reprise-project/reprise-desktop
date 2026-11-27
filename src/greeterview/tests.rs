@@ -1209,7 +1209,7 @@ fn typing_cost() {
 #[test]
 #[ignore]
 fn render_greeter_preview() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/greeter-preview");
+    let dir = reprisekit::crate_dir!().join("target/greeter-preview");
     std::fs::create_dir_all(&dir).unwrap();
     for (interface, name) in [
         (repriselogin::Interface::Classic, "classic"),

@@ -258,7 +258,7 @@ fn check_rows(name: &str, states: &[&str], rows: &[[u64; 3]]) {
 /// [`reprisekit::pins::check_file`] on `tests/pins/<name>.txt`.
 #[track_caller]
 fn pin(name: &str, got: &[(String, u64)]) {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins");
+    let dir = reprisekit::crate_dir!().join("tests/pins");
     reprisekit::pins::check_file(&dir.join(format!("{name}.txt")), got);
 }
 

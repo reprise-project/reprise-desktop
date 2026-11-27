@@ -1329,7 +1329,7 @@ mod tests {
             }
         }
         reprisekit::pins::check_file(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins/body_cut_short.txt"),
+            &reprisekit::crate_dir!().join("tests/pins/body_cut_short.txt"),
             &got,
         );
     }

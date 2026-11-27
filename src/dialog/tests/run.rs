@@ -1168,8 +1168,8 @@ fn run_s_field_with_a_button_focused_is_pinned_in_every_interface_at_1_and_2() {
             }
         }
     }
-    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/run_field.txt");
-    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+    let pins = reprisekit::crate_dir!().join("tests/pins/run_field.txt");
+    reprisekit::pins::check_file(&pins, &got);
 }
 
 #[test]
