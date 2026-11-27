@@ -176,7 +176,7 @@ impl Undoable {
                     )));
                 };
                 same_item(path, Some(l.id))?;
-                if newest_change(path)? > l.newest {
+                if contents(path)? != l.contents {
                     return Err(io::Error::other(format!(
                         "'{name}' has changed since it was copied"
                     )));
@@ -379,12 +379,12 @@ fn replaced(path: &Path) -> io::Error {
     )
 }
 
-/// A copy as it landed: its [`FileId`], and the newest change or modification time in it then
-/// ([`newest_change`]), which anything added, edited or removed in it since passes.
+/// A copy as it landed: its [`FileId`], and the fingerprint of everything in it then
+/// ([`contents`]), which an edit, an addition or a removal in it since changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Landed {
     pub id: FileId,
-    pub newest: (i64, i64),
+    pub contents: u64,
 }
 
 /// `path`'s [`Landed`], for a folder read through everything in it; None when any of it cannot
@@ -392,28 +392,61 @@ pub struct Landed {
 pub fn landed(path: &Path) -> Option<Landed> {
     Some(Landed {
         id: file_id(path)?,
-        newest: newest_change(path).ok()?,
+        contents: contents(path).ok()?,
     })
 }
 
-/// The newest change or modification time, as seconds and nanoseconds, of `path` and of
-/// everything in it. A copy sets the times it copies before it lands, and on some drives the
-/// change time is the creation time, so both count.
-fn newest_change(path: &Path) -> io::Result<(i64, i64)> {
-    let mut newest = (i64::MIN, 0);
-    let mut todo = vec![path.to_path_buf()];
-    while let Some(p) = todo.pop() {
-        let m = std::fs::symlink_metadata(&p)?;
-        newest = newest
-            .max((m.ctime(), m.ctime_nsec()))
-            .max((m.mtime(), m.mtime_nsec()));
+/// A fingerprint of `path` and everything in it: each entry's path under `path`, inode and type,
+/// and a file's or link's size and modification time. Change times and folder times stay out,
+/// since a rename and its undo move them without changing anything in the copy.
+fn contents(path: &Path) -> io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut sum = 0u64;
+    let mut todo = vec![PathBuf::new()];
+    while let Some(rel) = todo.pop() {
+        // Not `path.join("")`: its trailing slash would follow a link at `path`.
+        let at = if rel.as_os_str().is_empty() {
+            path.to_path_buf()
+        } else {
+            path.join(&rel)
+        };
+        let m = std::fs::symlink_metadata(&at)?;
+        let mut h = Fnv::default();
+        h.write(rel.as_os_str().as_bytes());
+        h.write(&[0]);
+        h.write(&m.ino().to_le_bytes());
+        h.write(&m.mode().to_le_bytes());
         if m.is_dir() {
-            for e in std::fs::read_dir(&p)? {
-                todo.push(e?.path());
+            for e in std::fs::read_dir(&at)? {
+                todo.push(rel.join(e?.file_name()));
             }
+        } else {
+            h.write(&m.size().to_le_bytes());
+            h.write(&m.mtime().to_le_bytes());
+            h.write(&m.mtime_nsec().to_le_bytes());
+        }
+        // A sum, so the order `read_dir` lists entries in does not count.
+        sum = sum.wrapping_add(h.0);
+    }
+    Ok(sum)
+}
+
+/// 64-bit FNV-1a, stable across builds: a fingerprint is written to the session's history file
+/// and read back by other programs.
+struct Fnv(u64);
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl Fnv {
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0 ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
         }
     }
-    Ok(newest)
 }
 
 /// `path`'s own [`FileId`], a link's rather than its target's.
@@ -1002,6 +1035,45 @@ mod tests {
             "added since"
         );
         assert!(!root.join("files").exists());
+    }
+
+    #[test]
+    fn undo_of_a_copy_renamed_and_renamed_back_trashes_it() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("Trash");
+        let dir = t.path().join("Photos");
+        let away = t.path().join("Holiday");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("a.jpg"), "a").unwrap();
+        let mut u = UndoStack::default();
+        u.push(Undoable::Copied(dir.clone(), landed(&dir)));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        crate::hidden::rename(&dir, &away).unwrap();
+        crate::hidden::rename(&away, &dir).unwrap();
+        fs::rename(dir.join("a.jpg"), dir.join("b.jpg")).unwrap();
+        fs::rename(dir.join("b.jpg"), dir.join("a.jpg")).unwrap();
+
+        let mut bins = trash::Bins::new(root.clone(), Vec::new());
+        bins.policy.global.remove_immediately = true;
+        u.undo_in(Some(&bins), true).unwrap().unwrap();
+
+        assert!(!dir.exists(), "the copy went");
+    }
+
+    #[test]
+    fn undo_of_a_copied_file_refuses_once_its_text_changed() {
+        let t = tempfile::tempdir().unwrap();
+        let copy = t.path().join("run.sh");
+        fs::write(&copy, "echo a").unwrap();
+        let mut u = UndoStack::default();
+        u.push(Undoable::Copied(copy.clone(), landed(&copy)));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::write(&copy, "echo b").unwrap();
+
+        let err = u.undo_in(None, true).unwrap().unwrap_err();
+
+        assert_eq!(err.to_string(), "'run.sh' has changed since it was copied");
+        assert_eq!(fs::read_to_string(&copy).unwrap(), "echo b");
     }
 
     #[test]

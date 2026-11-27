@@ -640,8 +640,8 @@ impl Out {
 
     fn landed(&mut self, l: Option<Landed>) {
         self.opt(l.map(|l| {
-            let ((dev, ino), (s, ns)) = (l.id, l.newest);
-            format!("{dev}:{ino}:{s}:{ns}")
+            let ((dev, ino), contents) = (l.id, l.contents);
+            format!("{dev}:{ino}:{contents}")
         }))
     }
 
@@ -733,12 +733,12 @@ impl<'b> In<'_, 'b> {
         match self.opt::<String>()? {
             None => Some(None),
             Some(s) => {
-                let [dev, ino, sec, ns] = s.split(':').collect::<Vec<_>>()[..] else {
+                let [dev, ino, contents] = s.split(':').collect::<Vec<_>>()[..] else {
                     return None;
                 };
                 Some(Some(Landed {
                     id: (dev.parse().ok()?, ino.parse().ok()?),
-                    newest: (sec.parse().ok()?, ns.parse().ok()?),
+                    contents: contents.parse().ok()?,
                 }))
             }
         }
@@ -891,7 +891,7 @@ mod tests {
                     "/a/c".into(),
                     Some(Landed {
                         id: (1, 2),
-                        newest: (-3, 4),
+                        contents: u64::MAX,
                     }),
                 ),
                 Undoable::New("/a/n".into(), None),
