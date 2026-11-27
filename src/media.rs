@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
+use reprisekit::tr;
 use smithay::reexports::calloop::{
     Interest, Mode, PostAction, RegistrationToken, channel,
     generic::Generic,
@@ -58,9 +59,9 @@ pub enum Value {
 impl Value {
     pub const ALL: [Value; 1] = [Value::Brightness];
 
-    pub fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            Value::Brightness => "Brightness",
+            Value::Brightness => tr!("media-brightness"),
         }
     }
 }

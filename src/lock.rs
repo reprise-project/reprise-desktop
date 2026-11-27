@@ -2,6 +2,7 @@
 //! a fingerprint line does to the screen. The verifier zeroes the copies of the password it owns.
 
 use reprisekit::logon::Logon;
+use reprisekit::tr;
 use repriselogin::greeter::AuthKind;
 use repriselogin::{add_prompt_lines, is_login_prompt};
 use reprisepam::{Converse, Pam, PamError, ffi};
@@ -11,16 +12,30 @@ use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 /// Shown after PAM rejects the password without saying why.
-pub const INCORRECT: &str = "The password is incorrect. Please retry.";
+pub fn incorrect() -> String {
+    tr!("lock-incorrect")
+}
+
 /// Shown when the password could not be checked at all (the helper did not start, died or hung).
-pub const UNAVAILABLE: &str = "The password could not be checked. Please retry.";
-/// The notice after an unlock with a password that must be changed.
-pub const EXPIRED_SUMMARY: &str = "Your password has expired";
-pub const EXPIRED_BODY: &str =
-    "Change it now. The next login to a new session will ask for a new password.";
+pub fn unavailable() -> String {
+    tr!("lock-unavailable")
+}
+
+/// The notice's summary after an unlock with a password that must be changed.
+pub fn expired_summary() -> String {
+    tr!("lock-expired-summary")
+}
+
+/// The notice's body after an unlock with a password that must be changed.
+pub fn expired_body() -> String {
+    tr!("lock-expired-body")
+}
+
 /// Shown when the fingerprint conversation ended with PAM_MAXTRIES: too
 /// many fingers did not match.
-pub const FINGER_TOO_MANY: &str = "Too many fingerprint attempts. Type your password to unlock.";
+pub fn finger_too_many() -> String {
+    tr!("lock-finger-too-many")
+}
 
 /// The longest answer the password conversation reads, in bytes: libpam's `PAM_MAX_RESP_SIZE`.
 /// The lock's field stops there.
@@ -43,7 +58,7 @@ pub fn finger(m: &mut Logon, line: crate::lockfinger::Line) -> bool {
                 return true;
             }
             if rc == ffi::PAM_MAXTRIES {
-                m.info(FINGER_TOO_MANY.into());
+                m.info(finger_too_many());
             }
         }
     }
@@ -71,7 +86,7 @@ pub trait Verifier {
 
 pub fn failure_text(notices: &[String]) -> String {
     if notices.is_empty() {
-        INCORRECT.into()
+        incorrect()
     } else {
         notices.join("\n")
     }
@@ -124,8 +139,7 @@ fn wait_after(failures: u32) -> Duration {
 /// Shown when a check is refused for `wait`, rounded up to whole seconds.
 pub fn backoff_text(wait: Duration) -> String {
     let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
-    let unit = if secs == 1 { "second" } else { "seconds" };
-    format!("Too many incorrect passwords. Wait {secs} {unit} and retry.")
+    tr!("lock-backoff", seconds = secs)
 }
 
 /// PAM through libpam with `service`; with `account`, its account stack too, which passes a
@@ -502,7 +516,7 @@ mod tests {
         finger(&mut m, Line::Info("Swipe your finger".into()));
         assert!(!finger(&mut m, Line::Result(ffi::PAM_MAXTRIES)));
         assert_eq!(m.hint, None);
-        assert_eq!(m.message.as_deref(), Some(FINGER_TOO_MANY));
+        assert_eq!(m.message.as_deref(), Some(finger_too_many().as_str()));
         assert_eq!(m.password.text, "hunter", "too many fingers leave it too");
     }
 
@@ -650,7 +664,7 @@ mod tests {
 
     #[test]
     fn a_rejection_shows_what_pam_sent_else_the_incorrect_text() {
-        assert_eq!(failure_text(&[]), INCORRECT);
+        assert_eq!(failure_text(&[]), incorrect());
         let locked = ["Account locked.".to_string(), "(10 minutes left)".into()];
         assert_eq!(failure_text(&locked), "Account locked.\n(10 minutes left)");
     }

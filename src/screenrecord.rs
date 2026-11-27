@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use reprisekit::tr;
 use smithay::output::Output;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -27,9 +28,6 @@ const PROGRAM: &str = "reprise-record";
 /// before it is killed. One that works on or waits on its storage is waited for, up to
 /// [`finish_cap`].
 const STOP_GRACE: Duration = Duration::from_secs(5);
-const SAVED: &str = "Screen recording saved";
-const NOT_FINISHED: &str = "Screen recording not finished";
-const MAY_NOT_PLAY: &str = "It was stopped while it closed the file and may not play.";
 /// The recorder's exit status for a recording that stopped by itself and kept its file; its last
 /// stderr line says why.
 const ENDED_EARLY: i32 = 3;
@@ -323,7 +321,11 @@ impl State {
             }
             Err(e) => {
                 remove_later(self, made);
-                let why = format!("{PROGRAM} did not start: {e}.");
+                let why = tr!(
+                    "recording-not-started",
+                    program = PROGRAM,
+                    error = e.to_string()
+                );
                 return self.recording_ended(None, Ended::NotStarted(why));
             }
         };
@@ -359,7 +361,9 @@ impl State {
             self.recording_changed();
         }
         match ended {
-            Ended::Exited { made, ok: true, .. } => saved_notice(self, SAVED, &made.path, None),
+            Ended::Exited { made, ok: true, .. } => {
+                saved_notice(self, &tr!("recording-saved"), &made.path, None)
+            }
             Ended::Exited {
                 made,
                 status: Some(STOPPED_UNSTARTED),
@@ -382,7 +386,12 @@ impl State {
                 ..
             } => {
                 log::warn!("screen recording killed while finishing; its file is kept");
-                saved_notice(self, NOT_FINISHED, &made.path, Some(MAY_NOT_PLAY));
+                saved_notice(
+                    self,
+                    &tr!("recording-not-finished"),
+                    &made.path,
+                    Some(&tr!("recording-may-not-play")),
+                );
             }
             Ended::Exited {
                 made,
@@ -391,8 +400,8 @@ impl State {
                 ..
             } => {
                 log::warn!("screen recording ended early: {last_line}");
-                let note = format!("Stopped early: {last_line}");
-                saved_notice(self, SAVED, &made.path, Some(&note));
+                let note = tr!("recording-stopped-early", reason = last_line);
+                saved_notice(self, &tr!("recording-saved"), &made.path, Some(&note));
             }
             Ended::Exited {
                 made,
@@ -401,8 +410,8 @@ impl State {
                 ..
             } => {
                 log::warn!("screen recording lost its sound: {last_line}");
-                let note = format!("The sound stopped: {last_line}");
-                saved_notice(self, SAVED, &made.path, Some(&note));
+                let note = tr!("recording-sound-stopped", reason = last_line);
+                saved_notice(self, &tr!("recording-saved"), &made.path, Some(&note));
             }
             Ended::Exited {
                 made,
@@ -411,7 +420,7 @@ impl State {
                 ..
             } => {
                 log::warn!("screen recording lost its microphone: {last_line}");
-                saved_notice(self, SAVED, &made.path, Some(&last_line));
+                saved_notice(self, &tr!("recording-saved"), &made.path, Some(&last_line));
             }
             Ended::Exited {
                 made,
@@ -422,12 +431,12 @@ impl State {
                 remove_later(self, made);
                 let why = failed_why(status, last_line);
                 log::warn!("screen recording failed: {why}");
-                crate::notifyview::notice(self, "Screen recording failed", &why);
+                crate::notifyview::notice(self, &tr!("recording-failed"), &why);
             }
             Ended::NotStarted(why) if why.is_empty() => {}
             Ended::NotStarted(why) => {
                 log::warn!("screen recording not started: {why}");
-                crate::notifyview::notice(self, "Screen recording failed", &why);
+                crate::notifyview::notice(self, &tr!("recording-failed"), &why);
             }
         }
     }
@@ -473,7 +482,7 @@ pub fn finishing(state: &State) -> bool {
 /// The tray cell's tooltip, also its name for a screen reader.
 pub fn tip(r: &Recording) -> String {
     match r.stopping {
-        true => "Finishing the recording...\nClick to stop it now; the file may not play.".into(),
+        true => tr!("recording-tip-finishing"),
         false => running_tip(r.elapsed()),
     }
 }
@@ -484,7 +493,7 @@ fn running_tip(elapsed: Duration) -> String {
         0 => format!("{}:{:02}", s / 60, s % 60),
         h => format!("{h}:{:02}:{:02}", s / 60 % 60, s % 60),
     };
-    format!("Recording the screen, {time}\nClick to stop recording.")
+    tr!("recording-tip-running", time = time)
 }
 
 /// The output whose layout box (one of `outputs`) holds most of `area`, and `area` clipped to it
@@ -646,7 +655,11 @@ fn wait(mut child: std::process::Child, made: Made, killed: &AtomicBool) -> Ende
             last_line,
             killed: killed.load(Ordering::SeqCst),
         },
-        Err(e) => Ended::NotStarted(format!("Waiting for {PROGRAM} failed: {e}.")),
+        Err(e) => Ended::NotStarted(tr!(
+            "recording-wait-failed",
+            program = PROGRAM,
+            error = e.to_string()
+        )),
     }
 }
 
@@ -654,10 +667,10 @@ fn wait(mut child: std::process::Child, made: Made, killed: &AtomicBool) -> Ende
 /// loader's own line for a library that did not load stays in the log.
 fn failed_why(status: Option<i32>, last_line: String) -> String {
     match (status, last_line.is_empty()) {
-        (Some(LIBRARY_MISSING), _) => "A library the recorder needs did not load.".to_string(),
+        (Some(LIBRARY_MISSING), _) => tr!("recording-library-missing"),
         (_, false) => last_line,
-        (Some(code), true) => format!("The recorder stopped with status {code}."),
-        (None, true) => "The recorder was killed.".to_string(),
+        (Some(code), true) => tr!("recording-status", code = code.to_string()),
+        (None, true) => tr!("recording-killed"),
     }
 }
 
@@ -686,8 +699,8 @@ fn saved_notice(state: &mut State, summary: &str, path: &Path, note: Option<&str
             String::new(),
             open.clone(),
         ),
-        ("open".to_string(), "Open".to_string(), open),
-        ("folder".to_string(), "Show in Folder".to_string(), folder),
+        ("open".to_string(), tr!("recording-action-open"), open),
+        ("folder".to_string(), tr!("recording-action-folder"), folder),
     ];
     crate::notifyview::notice_with_actions(state, summary, &body, actions);
     state.record_recent(vec![path.to_path_buf()], None);
@@ -698,10 +711,22 @@ fn saved_notice(state: &mut State, summary: &str, path: &Path, note: Option<&str
 fn make_file(secs: i64) -> Result<(std::fs::File, Made), String> {
     let videos = reprisefs::places::user_dir("VIDEOS", "Videos").filter(|p| p.is_dir());
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let dir = folder(videos, home).ok_or("There is no home folder to save it in.")?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot make {}: {e}", dir.display()))?;
+    let dir = folder(videos, home).ok_or_else(|| tr!("recording-no-home"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        tr!(
+            "recording-cannot-make",
+            path = dir.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
     let name = file_name(&reprisefs::locale::localtime(secs));
-    let cannot = |e: std::io::Error| format!("Cannot write in {}: {e}", dir.display());
+    let cannot = |e: std::io::Error| {
+        tr!(
+            "recording-cannot-write",
+            path = dir.display().to_string(),
+            error = e.to_string()
+        )
+    };
     let (file, path) = reprisefs::ops::create_new_numbered(&dir, &name).map_err(cannot)?;
     let made = Made::of(&file, path).map_err(cannot)?;
     Ok((file, made))
@@ -743,9 +768,19 @@ mod tests {
         }
 
         h.state.config.recent_files = false;
-        saved_notice(&mut h.state, SAVED, &dir.join("Off.mp4"), None);
+        saved_notice(
+            &mut h.state,
+            &tr!("recording-saved"),
+            &dir.join("Off.mp4"),
+            None,
+        );
         h.state.config.recent_files = true;
-        saved_notice(&mut h.state, SAVED, &dir.join("Screencast On.mp4"), None);
+        saved_notice(
+            &mut h.state,
+            &tr!("recording-saved"),
+            &dir.join("Screencast On.mp4"),
+            None,
+        );
         h.until("the recording is in the recent files", |_| {
             listed("Screencast%20On.mp4")
         });

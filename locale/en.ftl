@@ -375,3 +375,175 @@ dlg-emoji-title = Emoji
 dlg-colour-title = Colour picker
 dlg-colour-copied-title = Colour copied
 dlg-colour-copied-text = { $hex } is on the clipboard.
+
+## Screenshots
+screenshot-saved = Screenshot saved
+screenshot-not-saved = Screenshot not saved
+# The error's reason on the first line.
+screenshot-not-saved-body =
+    { $error }
+    The picture is on the clipboard.
+screenshot-saving = Saving screenshots...
+screenshot-saving-body = The session ends once they are saved.
+screenshot-action-edit = Edit
+screenshot-action-folder = Show in Folder
+screenshot-note-busy = Earlier screenshots were still being encoded, so this one was saved as PNG.
+screenshot-note-memory = Encoding it needed more than { $megabytes } MB, so it was saved as PNG.
+screenshot-note-late = Encoding it took longer than { $minutes } minutes, so it was saved as PNG.
+screenshot-note-outdated = The JPEG XL encoder could not start, so it was saved as PNG. Log out and back in after an update.
+screenshot-note-no-library = Cannot encode it: the JPEG XL library did not load, so it was saved as PNG.
+screenshot-note-killed = Cannot encode it: the encoder was killed, so it was saved as PNG.
+screenshot-note-codec = Cannot encode it: { $error }, so it was saved as PNG.
+screenshot-no-home = There is no home folder to save it in.
+screenshot-cannot-make = Cannot make { $path }: { $error }
+
+## Screen recording
+recording-saved = Screen recording saved
+recording-not-finished = Screen recording not finished
+recording-may-not-play = It was stopped while it closed the file and may not play.
+recording-failed = Screen recording failed
+# The recorder's exit reason on the first line; { $reason } is its last stderr line.
+recording-stopped-early = Stopped early: { $reason }
+recording-sound-stopped = The sound stopped: { $reason }
+recording-not-started = { $program } did not start: { $error }.
+recording-wait-failed = Waiting for { $program } failed: { $error }.
+recording-library-missing = A library the recorder needs did not load.
+recording-status = The recorder stopped with status { $code }.
+recording-killed = The recorder was killed.
+recording-action-open = Open
+recording-action-folder = Show in Folder
+recording-no-home = There is no home folder to save it in.
+recording-cannot-make = Cannot make { $path }: { $error }
+recording-cannot-write = Cannot write in { $path }: { $error }
+recording-tip-finishing =
+    Finishing the recording...
+    Click to stop it now; the file may not play.
+# { $time } is minutes:seconds or hours:minutes:seconds.
+recording-tip-running =
+    Recording the screen, { $time }
+    Click to stop recording.
+
+## Region picker
+region-title-record = Record an area
+region-title-screenshot = Screenshot of an area
+
+## On-screen display
+osd-muted = Muted
+osd-volume = Volume
+osd-mic-muted = Microphone muted
+osd-mic-on = Microphone on
+osd-keyboard-backlight = Keyboard backlight
+osd-play-pause = Play / Pause
+osd-previous = Previous
+osd-next = Next
+# The media player's name, then what the key did.
+osd-player = { $name }: { $verb }
+osd-wireless-on = Wireless on
+osd-wireless-held = Wireless held off by a hardware switch
+osd-wireless-off = Wireless off
+osd-touchpad-on = Touchpad on
+osd-touchpad-off = Touchpad off
+osd-airplane-on = Airplane mode on
+osd-airplane-off = Airplane mode off
+osd-rotation-on = Rotation lock on
+osd-rotation-off = Rotation lock off
+media-brightness = Brightness
+
+## Screen reader
+screen-reader-on = Screen reader on
+screen-reader-off = Screen reader off
+screen-reader-missing = No screen reader installed
+screen-reader-failed = The screen reader did not start
+
+## Night light
+night-light-off = Off
+night-light-panel-paused = Paused until { $time }
+night-light-panel-until = until { $time }
+night-light-panel-from = from { $time }
+night-light-menu-settings = &Settings...
+night-light-menu-resume = &Resume Night Light
+night-light-menu-resumes-at = Resumes at { $time }
+night-light-menu-disable-hour = Disable for 1 &hour
+night-light-menu-disable-tomorrow = Disable until &tomorrow
+night-light-tip-paused = Night light is paused until { $time }
+night-light-tip-kelvin = Night light: { $kelvin } K
+night-light-tip-starts = Night light starts at { $time }
+night-light-tip = Night light
+
+## Lock screen
+lock-incorrect = The password is incorrect. Please retry.
+lock-unavailable = The password could not be checked. Please retry.
+lock-expired-summary = Your password has expired
+lock-expired-body = Change it now. The next login to a new session will ask for a new password.
+lock-finger-too-many = Too many fingerprint attempts. Type your password to unlock.
+lock-backoff =
+    Too many incorrect passwords. Wait { $seconds ->
+        [one] { $seconds } second
+       *[other] { $seconds } seconds
+    } and retry.
+
+## Notifications
+notify-center-name = Notifications
+notify-balloons-name = Notifications
+notify-more = { $count } more notifications
+notify-age-now = now
+notify-age-minutes = { $minutes } min ago
+notify-age-hours = { $hours } h ago
+# { $count } balloons from the app { $app }.
+notify-burst-title = { $count } new from { $app }
+notify-program-no-balloons = Don't Show &Balloons
+notify-program-no-sounds = No &Sounds
+dnd-until = Do not disturb until { $time }
+dnd-on = Do not disturb is on
+dnd-menu-turn-off = &Turn off
+dnd-menu-on = &Do not disturb
+dnd-menu-hour = Do not disturb for 1 &hour
+dnd-menu-tomorrow = Do not disturb until &tomorrow
+
+## Privacy indicators
+privacy-captured-screen-and-window = Your screen and a window were captured
+privacy-captured-window = A window was captured
+privacy-captured-screen = Your screen was captured
+privacy-app-unnamed = An application
+# The next messages list apps: { $count } is how many, { $one } the only one, { $rest } all but
+# the last, comma separated, and { $last } the last.
+privacy-controlling =
+    { $count ->
+        [0] An application is controlling this computer
+        [1] { $one } is controlling this computer
+       *[other] { $rest } and { $last } are controlling this computer
+    }
+privacy-using-camera =
+    { $count ->
+        [0] An application is using your camera
+        [1] { $one } is using your camera
+       *[other] { $rest } and { $last } are using your camera
+    }
+privacy-using-microphone =
+    { $count ->
+        [0] An application is using your microphone
+        [1] { $one } is using your microphone
+       *[other] { $rest } and { $last } are using your microphone
+    }
+privacy-shared-screen-and-window = Your screen and a window are being shared
+privacy-shared-window = A window is being shared
+privacy-shared-screen = Your screen is being shared
+privacy-what-screen-and-window = your screen and a window
+privacy-what-window = a window
+privacy-what-screen = your screen
+# { $what } is what is shared: your screen, a window, or both.
+privacy-sharing =
+    { $count ->
+        [1] { $one } is sharing { $what }
+       *[other] { $rest } and { $last } are sharing { $what }
+    }
+
+## Location
+# { $count } is how many programs, { $one } the only one, { $rest } all but the last, comma
+# separated, and { $last } the last.
+location-using =
+    { $count ->
+        [0] A program is using your location
+        [1] { $one } is using your location
+       *[other] { $rest } and { $last } are using your location
+    }

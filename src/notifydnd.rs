@@ -2,6 +2,7 @@
 //! history's check box. A timed one outlives a config reload, never the session.
 
 use reprisekit::controls::menu::{MenuItem, place_popup};
+use reprisekit::tr;
 use smithay::output::Output;
 
 use crate::compositor::State;
@@ -59,26 +60,26 @@ pub enum Row {
 fn menu(on: bool, until: Option<i64>) -> (Vec<MenuItem>, Vec<Option<Row>>) {
     let (mut items, mut rows) = if on {
         let status = match until {
-            Some(t) => format!("Do not disturb until {}", crate::taskbar::time_text(t)),
-            None => "Do not disturb is on".to_string(),
+            Some(t) => tr!("dnd-until", time = crate::taskbar::time_text(t)),
+            None => tr!("dnd-on"),
         };
         (
             vec![
                 MenuItem::entry(status).enabled(false),
-                MenuItem::item("&Turn off").bold(true),
+                MenuItem::item(&tr!("dnd-menu-turn-off")).bold(true),
             ],
             vec![None, Some(Row::Off)],
         )
     } else {
         (
-            vec![MenuItem::item("&Do not disturb").bold(true)],
+            vec![MenuItem::item(&tr!("dnd-menu-on")).bold(true)],
             vec![Some(Row::On)],
         )
     };
     items.extend([
         MenuItem::Separator,
-        MenuItem::item("Do not disturb for 1 &hour"),
-        MenuItem::item("Do not disturb until &tomorrow"),
+        MenuItem::item(&tr!("dnd-menu-hour")),
+        MenuItem::item(&tr!("dnd-menu-tomorrow")),
     ]);
     rows.extend([
         None,

@@ -8,6 +8,7 @@
 //! Screenshot portal's Area target, the pick goes to its `reprise_area_pick_v1`.
 
 use reprisekit::controls::regionselect::{self, BORDER, DIM, Event, RegionSelect};
+use reprisekit::tr;
 use reprisescene::{BufferId, RectId, TreeId};
 use smithay::backend::input::InputTime;
 use smithay::reexports::wayland_server::Resource;
@@ -269,9 +270,9 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
         screen,
     );
     let title = if v.model.records() {
-        "Record an area"
+        tr!("region-title-record")
     } else {
-        "Screenshot of an area"
+        tr!("region-title-screenshot")
     };
     let local = |r: Rect| Rect::new(r.x - screen.x, r.y - screen.y, r.width, r.height);
     let lay = regionselect::Layout {
@@ -279,7 +280,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
         mode: local(lay.mode),
         ..lay
     };
-    let mut tree = crate::access::root(Role::Window, title, screen);
+    let mut tree = crate::access::root(Role::Window, &title, screen);
     regionselect::access(&v.model, &lay, &mut tree, ROOT);
     Some(tree)
 }

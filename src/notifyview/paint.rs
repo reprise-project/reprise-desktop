@@ -11,6 +11,7 @@ use reprisekit::icon::IconSource;
 use reprisekit::look::widgets::BUTTON_ICON;
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::Caret;
+use reprisekit::tr;
 use reprisescene::Input;
 use smithay::output::Output;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -33,9 +34,9 @@ use super::{AGE_TICK, Balloon, Bead, Chip, INFO_ICONS, NotifyView, cap, overlay_
 /// A sheet's app line time: "now", then minutes, then hours.
 pub(super) fn relative(d: Duration) -> String {
     match d.as_secs() / 60 {
-        0 => "now".to_string(),
-        m @ 1..60 => format!("{m} min ago"),
-        m => format!("{} h ago", m / 60),
+        0 => tr!("notify-age-now"),
+        m @ 1..60 => tr!("notify-age-minutes", minutes = m.to_string()),
+        m => tr!("notify-age-hours", hours = (m / 60).to_string()),
     }
 }
 

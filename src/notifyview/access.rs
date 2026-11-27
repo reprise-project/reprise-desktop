@@ -1,5 +1,6 @@
 use reprisekit::controls::notifysheet::access_sheet;
 use reprisekit::controls::tooltip::{NotifySays, access_parts};
+use reprisekit::tr;
 use std::time::Instant;
 
 use crate::compositor::State;
@@ -15,10 +16,10 @@ use super::stack::Item;
 /// holds is announced, one in a new tree is not.
 pub fn access(state: &State) -> reprisekit::access::Tree {
     use reprisekit::access::{ROOT, accesskit::Role};
-    const NAME: &str = "Notifications";
+    let name = tr!("notify-balloons-name");
     let v = &state.notify;
     let Some(output) = state.first_output().filter(|_| !v.stack.is_empty()) else {
-        return crate::access::root(Role::Window, NAME, Rect::default());
+        return crate::access::root(Role::Window, &name, Rect::default());
     };
     let theme = &state.config.theme;
     let edge = state.bar_placement(&output).edge;
@@ -53,7 +54,7 @@ pub fn access(state: &State) -> reprisekit::access::Tree {
         .chain(chip.map(|c| c.1))
         .reduce(|a, r| a.union(&r))
         .unwrap_or_default();
-    let mut tree = crate::access::root(Role::Window, NAME, rect);
+    let mut tree = crate::access::root(Role::Window, &name, rect);
     let px = theme.fonts.size_px;
     let answer_key = answer_key(state);
     let mut focus = None;
@@ -120,7 +121,7 @@ pub fn access(state: &State) -> reprisekit::access::Tree {
     }
     if let Some((more, r)) = chip {
         let at = Rect::new(r.x - rect.x, r.y - rect.y, r.width, r.height);
-        let name = format!("{more} more notifications");
+        let name = tr!("notify-more", count = more.to_string());
         tree.push(
             ROOT,
             "chip",

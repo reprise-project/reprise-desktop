@@ -9,6 +9,7 @@ pub mod tint;
 
 use std::path::{Path, PathBuf};
 
+use reprisekit::tr;
 use smithay::{
     output::Output,
     reexports::calloop::{
@@ -554,12 +555,12 @@ fn panel_text(
 ) -> String {
     let time = crate::taskbar::time_text;
     if !enabled {
-        return "Off".into();
+        return tr!("night-light-off");
     }
     match (paused_until, warm_until, next_start) {
-        (Some(t), _, _) => format!("Paused until {}", time(t)),
-        (None, Some(t), _) => format!("until {}", time(t)),
-        (None, None, Some(t)) => format!("from {}", time(t)),
+        (Some(t), _, _) => tr!("night-light-panel-paused", time = time(t)),
+        (None, Some(t), _) => tr!("night-light-panel-until", time = time(t)),
+        (None, None, Some(t)) => tr!("night-light-panel-from", time = time(t)),
         (None, None, None) => String::new(),
     }
 }
@@ -576,23 +577,26 @@ pub enum Row {
 fn menu(enabled: bool, paused_until: Option<i64>) -> (Vec<MenuItem>, Vec<Option<Row>>) {
     if !enabled {
         return (
-            vec![MenuItem::item("&Settings...").bold(true)],
+            vec![MenuItem::item(&tr!("night-light-menu-settings")).bold(true)],
             vec![Some(Row::Settings)],
         );
     }
     let (mut items, mut rows) = match paused_until {
         Some(t) => (
             vec![
-                MenuItem::item("&Resume Night Light").bold(true),
-                MenuItem::entry(format!("Resumes at {}", crate::taskbar::time_text(t)))
-                    .enabled(false),
+                MenuItem::item(&tr!("night-light-menu-resume")).bold(true),
+                MenuItem::entry(tr!(
+                    "night-light-menu-resumes-at",
+                    time = crate::taskbar::time_text(t)
+                ))
+                .enabled(false),
             ],
             vec![Some(Row::Resume), None],
         ),
         None => (
             vec![
-                MenuItem::item("Disable for 1 &hour").bold(true),
-                MenuItem::item("Disable until &tomorrow"),
+                MenuItem::item(&tr!("night-light-menu-disable-hour")).bold(true),
+                MenuItem::item(&tr!("night-light-menu-disable-tomorrow")),
             ],
             vec![
                 Some(Row::Pause(Pause::Hour)),
@@ -600,7 +604,10 @@ fn menu(enabled: bool, paused_until: Option<i64>) -> (Vec<MenuItem>, Vec<Option<
             ],
         ),
     };
-    items.extend([MenuItem::Separator, MenuItem::item("&Settings...")]);
+    items.extend([
+        MenuItem::Separator,
+        MenuItem::item(&tr!("night-light-menu-settings")),
+    ]);
     rows.extend([None, Some(Row::Settings)]);
     (items, rows)
 }
@@ -654,15 +661,18 @@ pub fn tip(nl: &NightLight) -> String {
 /// `kelvin` now, else its next start.
 fn tip_text(paused_until: Option<i64>, kelvin: Option<u32>, next_start: Option<i64>) -> String {
     if let Some(t) = paused_until {
-        return format!(
-            "Night light is paused until {}",
-            crate::taskbar::time_text(t)
+        return tr!(
+            "night-light-tip-paused",
+            time = crate::taskbar::time_text(t)
         );
     }
     match (kelvin, next_start) {
-        (Some(k), _) => format!("Night light: {k} K"),
-        (None, Some(t)) => format!("Night light starts at {}", crate::taskbar::time_text(t)),
-        (None, None) => "Night light".into(),
+        (Some(k), _) => tr!("night-light-tip-kelvin", kelvin = k.to_string()),
+        (None, Some(t)) => tr!(
+            "night-light-tip-starts",
+            time = crate::taskbar::time_text(t)
+        ),
+        (None, None) => tr!("night-light-tip"),
     }
 }
 

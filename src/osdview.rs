@@ -11,6 +11,7 @@ use crate::config::OsdConfig;
 use reprisebus::airplane::{self, Mode};
 use reprisekit::controls::osd::{self, LockKey, Meter, Osd};
 use reprisekit::look::panel;
+use reprisekit::tr;
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::input::keyboard::ModifiersState;
 use smithay::reexports::calloop::RegistrationToken;
@@ -67,10 +68,14 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
             } else {
                 "audio-volume-high"
             };
-            let title = if *muted { "Muted" } else { "Volume" };
+            let title = if *muted {
+                tr!("osd-muted")
+            } else {
+                tr!("osd-volume")
+            };
             (
                 Osd {
-                    title: title.into(),
+                    title,
                     meter: Some(Meter {
                         top,
                         ..Meter::new(*level, !*muted)
@@ -82,11 +87,10 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
         Report::Mic { muted } => (
             Osd {
                 title: if *muted {
-                    "Microphone muted"
+                    tr!("osd-mic-muted")
                 } else {
-                    "Microphone on"
-                }
-                .into(),
+                    tr!("osd-mic-on")
+                },
                 meter: None,
             },
             if *muted {
@@ -97,19 +101,21 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
         ),
         Report::Kbd { level } => (
             Osd {
-                title: "Keyboard backlight".into(),
+                title: tr!("osd-keyboard-backlight"),
                 meter: meter(*level, true),
             },
             "keyboard-brightness",
         ),
         Report::Player { name, verb } => {
             let verb = match *verb {
-                "PlayPause" => "Play / Pause",
-                other => other,
+                "PlayPause" => tr!("osd-play-pause"),
+                "Previous" => tr!("osd-previous"),
+                "Next" => tr!("osd-next"),
+                other => other.to_string(),
             };
             (
                 Osd {
-                    title: format!("{name}: {verb}"),
+                    title: tr!("osd-player", name = name.as_str(), verb = verb),
                     meter: None,
                 },
                 "multimedia-player",
@@ -118,25 +124,28 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
         Report::Wifi(turn) => (
             Osd {
                 title: match (turn.on, turn.held) {
-                    (true, false) => "Wireless on",
-                    (true, true) => "Wireless held off by a hardware switch",
-                    (false, _) => "Wireless off",
-                }
-                .into(),
+                    (true, false) => tr!("osd-wireless-on"),
+                    (true, true) => tr!("osd-wireless-held"),
+                    (false, _) => tr!("osd-wireless-off"),
+                },
                 meter: None,
             },
             "network-wireless",
         ),
         Report::ScreenReader(switched) => (
             Osd {
-                title: switched.title().into(),
+                title: switched.title(),
                 meter: None,
             },
             "preferences-desktop-accessibility",
         ),
         Report::Touchpad { on } => (
             Osd {
-                title: if *on { "Touchpad on" } else { "Touchpad off" }.into(),
+                title: if *on {
+                    tr!("osd-touchpad-on")
+                } else {
+                    tr!("osd-touchpad-off")
+                },
                 meter: None,
             },
             "input-touchpad",
@@ -144,11 +153,10 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
         Report::Airplane(mode) => (
             Osd {
                 title: match mode {
-                    Mode::Off => "Airplane mode off",
-                    Mode::On => "Airplane mode on",
-                    Mode::Killed => airplane::KILLED,
-                }
-                .into(),
+                    Mode::Off => tr!("osd-airplane-off"),
+                    Mode::On => tr!("osd-airplane-on"),
+                    Mode::Killed => airplane::KILLED.into(),
+                },
                 meter: None,
             },
             if mode.on() {
@@ -160,11 +168,10 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
         Report::RotationLock { locked } => (
             Osd {
                 title: if *locked {
-                    "Rotation lock on"
+                    tr!("osd-rotation-on")
                 } else {
-                    "Rotation lock off"
-                }
-                .into(),
+                    tr!("osd-rotation-off")
+                },
                 meter: None,
             },
             if *locked {

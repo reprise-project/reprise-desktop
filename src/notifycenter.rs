@@ -4,6 +4,7 @@ use reprisekit::controls::grouplist;
 use reprisekit::controls::menu::{MenuItem, place_popup};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::notifyhistory::{self, Entry, Event, History, Hit, Key};
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 
@@ -224,7 +225,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     let cm = state.config.theme.controls();
     let size = size(&v.model, &cm);
     let rect = Rect::new(v.at.0, v.at.1, size.0, size.1);
-    let mut tree = crate::access::root(Role::Window, "Notifications", rect);
+    let mut tree = crate::access::root(Role::Window, &tr!("notify-center-name"), rect);
     let focus = notifyhistory::access(&v.model, &cm, &mut tree, ROOT);
     tree.set_focus(focus);
     Some(tree)
@@ -438,9 +439,11 @@ fn program_items(cfg: &crate::config::NotificationsConfig, key: &str) -> Vec<Men
         .iter()
         .map(|row| match row {
             ProgramRow::Balloons => {
-                MenuItem::item("Don't Show &Balloons").checked(!cfg.shows_balloons(key))
+                MenuItem::item(&tr!("notify-program-no-balloons")).checked(!cfg.shows_balloons(key))
             }
-            ProgramRow::Sounds => MenuItem::item("No &Sounds").checked(!cfg.plays_sounds(key)),
+            ProgramRow::Sounds => {
+                MenuItem::item(&tr!("notify-program-no-sounds")).checked(!cfg.plays_sounds(key))
+            }
         })
         .collect()
 }

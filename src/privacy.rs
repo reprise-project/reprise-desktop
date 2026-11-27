@@ -4,6 +4,7 @@
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use reprisekit::tr;
 use smithay::reexports::calloop::{
     LoopHandle, RegistrationToken,
     channel::{Event, Sender, channel},
@@ -103,7 +104,7 @@ impl Privacy {
     }
 
     pub fn mic_tip(&self) -> String {
-        using_label(&self.mic_apps, "microphone")
+        using_label(&self.mic_apps, false)
     }
 }
 
@@ -134,7 +135,7 @@ pub fn camera_tip(state: &State) -> String {
     }
     names.sort();
     names.dedup();
-    using_label(&names, "camera")
+    using_label(&names, true)
 }
 
 /// The dot's tooltip: what is shared, and which apps control this computer, a line each.
@@ -159,11 +160,10 @@ pub fn sharing_tip(state: &State) -> String {
 
 fn still_label(screen: bool, window: bool) -> String {
     match (screen, window) {
-        (true, true) => "Your screen and a window were captured",
-        (false, true) => "A window was captured",
-        _ => "Your screen was captured",
+        (true, true) => tr!("privacy-captured-screen-and-window"),
+        (false, true) => tr!("privacy-captured-window"),
+        _ => tr!("privacy-captured-screen"),
     }
-    .into()
 }
 
 /// Who took a still: its executable, so a shell loop of one-shot screenshot tools counts as one
@@ -244,7 +244,7 @@ fn still_fired(state: &mut State) -> TimeoutAction {
 /// An app id's name in its desktop entry, else the id; an empty id is "An application".
 fn app_name(state: &State, id: &str) -> String {
     if id.is_empty() {
-        return "An application".into();
+        return tr!("privacy-app-unnamed");
     }
     reprisefs::apps::AppId::new(id)
         .and_then(|a| reprisefs::apps::entry_for_app_id(&state.app_index, &a, |_| true))
@@ -253,13 +253,37 @@ fn app_name(state: &State, id: &str) -> String {
 }
 
 fn control_label(apps: &[String]) -> String {
-    match apps {
-        [] => "An application is controlling this computer".into(),
-        [one] => format!("{one} is controlling this computer"),
-        [rest @ .., last] => format!(
-            "{} and {last} are controlling this computer",
-            rest.join(", ")
-        ),
+    let who = Who::of(apps);
+    tr!(
+        "privacy-controlling",
+        count = who.count,
+        one = who.one,
+        rest = who.rest,
+        last = who.last
+    )
+}
+
+/// The ends of a list of app names for a message that picks its wording by `count`: `one` is
+/// the only name, `rest` the names before `last`, comma separated.
+pub(crate) struct Who {
+    pub count: usize,
+    pub one: String,
+    pub rest: String,
+    pub last: String,
+}
+
+impl Who {
+    pub(crate) fn of(apps: &[String]) -> Who {
+        let (rest, last) = match apps {
+            [rest @ .., last] => (rest.join(", "), last.clone()),
+            [] => Default::default(),
+        };
+        Who {
+            count: apps.len(),
+            one: apps.first().cloned().unwrap_or_default(),
+            rest,
+            last,
+        }
     }
 }
 
@@ -280,11 +304,24 @@ pub fn control_changed(state: &mut State) {
     state.redraw_taskbars();
 }
 
-fn using_label(apps: &[String], what: &str) -> String {
-    match apps {
-        [] => format!("An application is using your {what}"),
-        [one] => format!("{one} is using your {what}"),
-        [rest @ .., last] => format!("{} and {last} are using your {what}", rest.join(", ")),
+fn using_label(apps: &[String], camera: bool) -> String {
+    let who = Who::of(apps);
+    if camera {
+        tr!(
+            "privacy-using-camera",
+            count = who.count,
+            one = who.one,
+            rest = who.rest,
+            last = who.last
+        )
+    } else {
+        tr!(
+            "privacy-using-microphone",
+            count = who.count,
+            one = who.one,
+            rest = who.rest,
+            last = who.last
+        )
     }
 }
 
@@ -409,22 +446,27 @@ fn kinds<O, W>(targets: &[Captured<O, W>]) -> (bool, bool) {
 /// The dot's tooltip: who is sharing what. `screen` and `window` say
 /// what kind of capture is live; `apps` names the consumers, if known.
 fn share_label(apps: &[String], screen: bool, window: bool) -> String {
-    let what = match (screen, window) {
-        (true, true) => "your screen and a window",
-        (false, true) => "a window",
-        _ => "your screen",
-    };
-    match apps {
-        [] => {
-            let cap = what[..1].to_uppercase() + &what[1..];
-            format!(
-                "{cap} {} being shared",
-                if screen && window { "are" } else { "is" }
-            )
-        }
-        [one] => format!("{one} is sharing {what}"),
-        [rest @ .., last] => format!("{} and {last} are sharing {what}", rest.join(", ")),
+    if apps.is_empty() {
+        return match (screen, window) {
+            (true, true) => tr!("privacy-shared-screen-and-window"),
+            (false, true) => tr!("privacy-shared-window"),
+            _ => tr!("privacy-shared-screen"),
+        };
     }
+    let what = match (screen, window) {
+        (true, true) => tr!("privacy-what-screen-and-window"),
+        (false, true) => tr!("privacy-what-window"),
+        _ => tr!("privacy-what-screen"),
+    };
+    let who = Who::of(apps);
+    tr!(
+        "privacy-sharing",
+        count = who.count,
+        one = who.one,
+        rest = who.rest,
+        last = who.last,
+        what = what
+    )
 }
 
 fn start_mic_monitor(handle: &LoopHandle<'static, State>) -> Option<MicMonitor> {
@@ -599,7 +641,7 @@ impl Graph {
         match (n.app.is_empty(), client) {
             (false, _) => n.app.clone(),
             (true, Some(c)) => c.clone(),
-            (true, None) => "An application".to_string(),
+            (true, None) => tr!("privacy-app-unnamed"),
         }
     }
 
@@ -1036,18 +1078,15 @@ mod tests {
     fn using_labels() {
         let none: [String; 0] = [];
         assert_eq!(
-            using_label(&none, "camera"),
+            using_label(&none, true),
             "An application is using your camera"
         );
         assert_eq!(
-            using_label(&["Cheese".into()], "camera"),
+            using_label(&["Cheese".into()], true),
             "Cheese is using your camera"
         );
         assert_eq!(
-            using_label(
-                &["Cheese".into(), "Firefox".into(), "obs".into()],
-                "microphone"
-            ),
+            using_label(&["Cheese".into(), "Firefox".into(), "obs".into()], false),
             "Cheese, Firefox and obs are using your microphone"
         );
     }

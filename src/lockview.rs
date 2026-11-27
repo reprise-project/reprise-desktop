@@ -249,7 +249,7 @@ fn verify_timed_out(state: &mut State, side: Side) -> TimeoutAction {
         p.helper.conversation.kill();
     }
     log::error!("lock: the password conversation did not answer in time; ended it");
-    abort_verification(state, side, lock::UNAVAILABLE);
+    abort_verification(state, side, &lock::unavailable());
     TimeoutAction::Drop
 }
 
@@ -439,13 +439,13 @@ fn on_result(state: &mut State, side: Side) -> PostAction {
             }
             unlock_side(state, side, true);
             if passed == lock::Passed::Expired {
-                crate::notifyview::notice(state, lock::EXPIRED_SUMMARY, lock::EXPIRED_BODY);
+                crate::notifyview::notice(state, &lock::expired_summary(), &lock::expired_body());
             }
         }
         Some(Err(notices)) => abort_verification(state, side, &lock::failure_text(&notices)),
         None => {
             log::error!("lock: the password conversation ended without a result");
-            abort_verification(state, side, lock::UNAVAILABLE);
+            abort_verification(state, side, &lock::unavailable());
         }
     }
     PostAction::Remove
@@ -1314,7 +1314,7 @@ fn submit(state: &mut State, side: Side) {
     if let Some(p) = l.pending.as_mut() {
         if let Err(e) = p.helper.conversation.answer(password.as_bytes()) {
             log::error!("lock: cannot answer the password conversation's prompt: {e}");
-            abort_verification(state, side, lock::UNAVAILABLE);
+            abort_verification(state, side, &lock::unavailable());
             return;
         }
         drop(password);
@@ -1357,7 +1357,7 @@ fn submit(state: &mut State, side: Side) {
                     timer,
                 })
             }
-            None => l.view.model.fail(lock::UNAVAILABLE.into()),
+            None => l.view.model.fail(lock::unavailable()),
         }
     }
     update(state);
@@ -1668,7 +1668,7 @@ mod tests {
         let mut h = locked(|_, _| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#));
         check(&mut h, "hunter1");
         assert!(h.state.console_locked());
-        assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT));
+        assert_eq!(message(&h).as_deref(), Some(lock::incorrect().as_str()));
         check(&mut h, "hunter2");
         assert!(!h.state.console_locked());
     }
@@ -1691,7 +1691,11 @@ mod tests {
             logonview::DRAW_PANICS.set(true);
             check(&mut h, "hunter1");
             logonview::DRAW_PANICS.set(false);
-            assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT), "{interface}");
+            assert_eq!(
+                message(&h).as_deref(),
+                Some(lock::incorrect().as_str()),
+                "{interface}"
+            );
             let o = h.state.scene.outputs()[0].clone();
             let (b, s) = (
                 h.state.layout_box(Some(&o)),
@@ -1730,7 +1734,7 @@ mod tests {
         let mut h = locked(|_, _| sh("exit 0"));
         check(&mut h, "hunter2");
         assert!(h.state.console_locked());
-        assert_eq!(message(&h).as_deref(), Some(lock::UNAVAILABLE));
+        assert_eq!(message(&h).as_deref(), Some(lock::unavailable().as_str()));
     }
 
     /// Turn the loop until `done` holds ([`crate::harness::Harness::until`]).
@@ -1864,7 +1868,7 @@ mod tests {
         let l = h.state.lock.console.as_ref().expect("still locked");
         assert!(!l.verifying());
         assert!(l.pending.is_none());
-        assert_eq!(l.message().as_deref(), Some(lock::UNAVAILABLE));
+        assert_eq!(l.message().as_deref(), Some(lock::unavailable().as_str()));
     }
 
     #[test]
