@@ -15,7 +15,7 @@
 //! owns the zone.
 
 use reprisekit::art::clockface::Face;
-use reprisekit::controls::calendar::{self, Calendar, months};
+use reprisekit::controls::calendar::{self, Calendar, DateNames};
 use reprisekit::controls::combo::Combo;
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
@@ -141,13 +141,14 @@ pub fn place(zone: &str) -> (String, String) {
 }
 
 impl Sheet {
-    /// `zones` is timedated's list; `now` the local time; `first_weekday`
-    /// the locale's (0 Sunday); `twelve` whether it writes 12-hour time.
+    /// `zones` is timedated's list; `now` the local time; `first_weekday` the locale's (0
+    /// Sunday), `names` its month and weekday names; `twelve` whether it writes 12-hour time.
     pub fn new(
         system: &System,
         zones: &[String],
         now: Local,
         first_weekday: u32,
+        names: &'static DateNames,
         twelve: bool,
     ) -> Sheet {
         let mut zones = zones.to_vec();
@@ -156,7 +157,7 @@ impl Sheet {
             zones.sort();
         }
         let pages = vec![
-            date_page(now, first_weekday, twelve, system),
+            date_page(now, first_weekday, names, twelve, system),
             zone_page(&zones, system),
         ];
         let mut s = Sheet {
@@ -429,9 +430,14 @@ impl Sheet {
     }
 }
 
-fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> Form {
-    let month_names = months();
-    let month_refs: Vec<&str> = month_names.iter().map(String::as_str).collect();
+fn date_page(
+    now: Local,
+    first_weekday: u32,
+    names: &'static DateNames,
+    twelve: bool,
+    system: &System,
+) -> Form {
+    let month_refs: Vec<&str> = names.months.iter().map(String::as_str).collect();
     let mut items = vec![
         Item::group(
             "date_group",
@@ -447,12 +453,10 @@ fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> F
         Item::new(
             "cal",
             Rect::new(27, 90, calendar::W, calendar::H),
-            Control::Calendar(Calendar::new(
-                now.year,
-                now.month,
-                Some(now.day),
-                first_weekday,
-            )),
+            Control::Calendar(Calendar {
+                names,
+                ..Calendar::new(now.year, now.month, Some(now.day), first_weekday)
+            }),
         ),
         Item::group(
             "time_group",
@@ -561,7 +565,25 @@ mod tests {
     }
 
     fn sheet() -> Sheet {
-        Sheet::new(&system(), &zones(), now(), 0, true)
+        Sheet::new(&system(), &zones(), now(), 0, DateNames::english(), true)
+    }
+
+    #[test]
+    fn the_month_combo_and_the_calendar_name_months_as_the_locale_does() {
+        let names: &'static DateNames = Box::leak(Box::new(DateNames {
+            months: std::array::from_fn(|m| format!("m{}", m + 1)),
+            ..DateNames::english().clone()
+        }));
+        let s = Sheet::new(&system(), &zones(), now(), 0, names, true);
+        let page = &s.sheet.pages[TAB_DATE];
+        let Some(Control::Combo(combo)) = page.item("month").map(|i| &i.control) else {
+            panic!("the month combo");
+        };
+        assert_eq!(combo.text(), "m9");
+        let Some(Control::Calendar(cal)) = page.item("cal").map(|i| &i.control) else {
+            panic!("the calendar");
+        };
+        assert_eq!(cal.title(), "m9 2026");
     }
 
     #[test]
@@ -570,7 +592,7 @@ mod tests {
             ntp: true,
             ..system()
         };
-        let s = Sheet::new(&synced, &zones(), now(), 0, true);
+        let s = Sheet::new(&synced, &zones(), now(), 0, DateNames::english(), true);
         let page = &s.sheet.pages[TAB_DATE];
         assert_eq!(page.checked("ntp"), Some(true));
         assert_eq!(
@@ -594,7 +616,7 @@ mod tests {
                     auto_blocked: Some(blocked),
                     ..system()
                 };
-                let s = Sheet::new(&system, &zones(), now(), 0, true).sheet;
+                let s = Sheet::new(&system, &zones(), now(), 0, DateNames::english(), true).sheet;
                 pages.extend(s.tabs.labels.into_iter().zip(s.pages));
             }
             pages
@@ -618,7 +640,7 @@ mod tests {
             auto_blocked: Some(Blocked::NotAllowed),
             ..system()
         };
-        let mut s = Sheet::new(&blocked, &zones(), now(), 0, true);
+        let mut s = Sheet::new(&blocked, &zones(), now(), 0, DateNames::english(), true);
         let (w, h) = CLIENT;
         let mut out = Canvas::new(2 * w as u32, h as u32);
         for tab in [TAB_DATE, TAB_ZONE] {
@@ -786,6 +808,7 @@ mod tests {
             &zones(),
             now(),
             0,
+            DateNames::english(),
             true,
         );
         assert!(matches!(
@@ -831,7 +854,7 @@ mod tests {
             ntp: true,
             ..system()
         };
-        let mut s = Sheet::new(&synced, &zones(), now(), 0, true);
+        let mut s = Sheet::new(&synced, &zones(), now(), 0, DateNames::english(), true);
         s.sheet.pages[TAB_ZONE].set_combo("zone", 2);
         s.event(propsheet::Event::Page(
             TAB_ZONE,
@@ -953,14 +976,14 @@ mod tests {
             auto_blocked: Some(Blocked::NotAllowed),
             ..system()
         };
-        let s = Sheet::new(&blocked, &zones(), now(), 0, true);
+        let s = Sheet::new(&blocked, &zones(), now(), 0, DateNames::english(), true);
         assert!(!enabled(&s));
         assert_eq!(note(&s), "Ask an administrator to allow time zone changes.");
         let on = System {
             auto_zone: true,
             ..blocked
         };
-        let s = Sheet::new(&on, &zones(), now(), 0, true);
+        let s = Sheet::new(&on, &zones(), now(), 0, DateNames::english(), true);
         assert!(
             enabled(&s),
             "an automatic zone that is on can be turned off"
@@ -986,6 +1009,7 @@ mod tests {
             &zones(),
             now(),
             0,
+            DateNames::english(),
             true,
         );
         assert_eq!(s.pending_zone(), "Etc/GMT+5");
@@ -998,7 +1022,7 @@ mod tests {
             auto_zone: true,
             ..system()
         };
-        let mut s = Sheet::new(&auto, &zones(), now(), 0, true);
+        let mut s = Sheet::new(&auto, &zones(), now(), 0, DateNames::english(), true);
         s.zone_moved("America/New_York");
         assert_eq!(s.pending_zone(), "America/New_York");
         assert_eq!(s.change(), Change::default(), "nothing to apply");

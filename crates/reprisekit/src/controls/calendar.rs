@@ -26,16 +26,61 @@ pub const H: i32 = 130;
 pub const ROW_H: i32 = 18;
 pub const ROWS: usize = 6;
 
-/// Month `m` (1 to 12, clamped) by name.
-pub fn month_name(m: u32) -> String {
-    tr!("calendar-month", month = m.clamp(1, 12) as i64)
+/// Month and weekday names in the language of the LC_TIME locale, which the host reads
+/// (reprisefs's `locale::date_names`). [`DateNames::english`] until a host sets them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DateNames {
+    /// January first, each as it stands alone in a title or a list.
+    pub months: [String; 12],
+    /// Sunday first.
+    pub weekdays: [String; 7],
+    /// The band's one-letter column heads, Sunday first.
+    pub letters: [String; 7],
 }
 
-pub fn months() -> [String; 12] {
-    std::array::from_fn(|i| month_name(i as u32 + 1))
-}
+impl DateNames {
+    pub fn english() -> &'static DateNames {
+        static EN: std::sync::OnceLock<DateNames> = std::sync::OnceLock::new();
+        EN.get_or_init(|| DateNames {
+            months: [
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
+            ]
+            .map(String::from),
+            weekdays: [
+                "Sunday",
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+            ]
+            .map(String::from),
+            letters: ["S", "M", "T", "W", "T", "F", "S"].map(String::from),
+        })
+    }
 
-const LETTERS: [&str; 7] = ["S", "M", "T", "W", "T", "F", "S"];
+    /// Month `m` (1 to 12, clamped) by name.
+    pub fn month(&self, m: u32) -> &str {
+        &self.months[m.clamp(1, 12) as usize - 1]
+    }
+
+    /// Weekday `n` (0 Sunday, taken mod 7) by name.
+    pub fn weekday(&self, n: u32) -> &str {
+        &self.weekdays[n as usize % 7]
+    }
+}
 
 pub fn is_leap(y: i32) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
@@ -77,6 +122,7 @@ pub struct Calendar {
     pub agenda: Option<Agenda>,
     /// The column the week starts in: 0 Sunday .. 6 Saturday.
     pub first_weekday: u32,
+    pub names: &'static DateNames,
     pub enabled: bool,
 }
 
@@ -92,6 +138,7 @@ impl Calendar {
             date: Vec::new(),
             agenda: None,
             first_weekday: first_weekday % 7,
+            names: DateNames::english(),
             enabled: true,
         };
         c.clamp_day();
@@ -161,7 +208,7 @@ impl Calendar {
     pub fn title(&self) -> String {
         tr!(
             "calendar-title",
-            month = month_name(self.month).as_str(),
+            month = self.names.month(self.month),
             year = self.year as i64
         )
     }
@@ -276,7 +323,7 @@ pub fn draw(
     draw_calendar_frame(c, p, frame, cal.enabled);
     let letters = draw_calendar_band(c, p, lay.band.scaled(s), cal.enabled);
     for i in 0..7 {
-        let letter = LETTERS[(i as u32 + cal.first_weekday) as usize % 7];
+        let letter = &cal.names.letters[(i as u32 + cal.first_weekday) as usize % 7];
         text.draw(
             c,
             lay.letter_box(i).scaled(s),
@@ -580,7 +627,7 @@ pub fn draw_popup_base(
     draw(&mut c, text, p, &picked(cal), &lay.grid, false, px);
     if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
         let bold = flyout::look(theme).is_none();
-        agenda::draw(&mut c, text, p, a, cal.today, list, hot, bold, px);
+        agenda::draw(&mut c, text, p, a, cal, list, hot, bold, px);
     }
     if let (Some(r), Some(time)) = (lay.time, &cal.time) {
         let size = cm.text.px(TIME_PX) * s as u32;
@@ -628,7 +675,7 @@ pub fn access(
     let value = match cal.day {
         Some(d) => tr!(
             "calendar-date",
-            month = month_name(cal.month).as_str(),
+            month = cal.names.month(cal.month),
             day = d as i64,
             year = cal.year as i64
         ),
@@ -680,7 +727,7 @@ pub fn popup_access(
     };
     let grid = access(&shown, &lay.grid, text, px, tree, parent, "grid");
     if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
-        agenda::access(a, cal.today, list, tree, parent);
+        agenda::access(a, cal, list, tree, parent);
     }
     let mut link = access::named(Role::Link, lay.settings, &settings());
     link.add_action(accesskit::Action::Click);
@@ -691,17 +738,17 @@ pub fn popup_access(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn month_and_date_texts_read_from_the_messages() {
-        assert_eq!(month_name(1), "January");
-        assert_eq!(month_name(12), "December");
-        assert_eq!(month_name(0), "January", "clamped");
-        assert_eq!(months()[8], "September");
+    fn month_and_date_texts_read_from_the_names_and_messages() {
+        let en = DateNames::english();
+        assert_eq!(en.month(1), "January");
+        assert_eq!(en.month(12), "December");
+        assert_eq!(en.month(0), "January", "clamped");
+        assert_eq!(en.weekday(7), "Sunday", "mod 7");
         assert_eq!(
             tr!("calendar-date", month = "March", day = 5, year = 2026),
             "March 5, 2026",
             "no digit grouping in a year"
         );
-        assert_eq!(agenda::weekday_name(0), "Sunday");
     }
 
     use super::*;
@@ -953,6 +1000,46 @@ mod tests {
         let b = l.number_box(cal.cell_of(3), text.measure("3", false, 11));
         assert_eq!(c.get(b.x - 1, b.y - 1), cs.hilight.argb());
         assert_eq!(c.get(b.x, b.y), cs.window.argb());
+    }
+
+    #[test]
+    fn the_band_title_and_heading_take_the_names_the_host_gives() {
+        let names: &'static DateNames = Box::leak(Box::new(DateNames {
+            months: std::array::from_fn(|m| format!("m{}", m + 1)),
+            weekdays: std::array::from_fn(|d| format!("w{d}")),
+            letters: ["V", "H", "K", "S", "C", "P", "S"].map(String::from),
+        }));
+        let en = Calendar::new(2026, 11, Some(27), 0);
+        let local = Calendar {
+            names,
+            ..en.clone()
+        };
+        assert_eq!(local.title(), "m11 2026");
+        let a = Agenda::new((2026, 11, 28), true);
+        assert_eq!(a.heading(None, names), "w6, m11 28");
+
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let cs = &theme.colors;
+        let l = layout(Rect::new(0, 0, W, H), &ControlMetrics::CLASSIC);
+        let drawn = |cal: &Calendar| {
+            let mut c = Canvas::new(W as u32, H as u32);
+            draw(&mut c, &text, &classic_paint(cs, 1), cal, &l, false, 11);
+            c
+        };
+        let (en, local) = (drawn(&en), drawn(&local));
+        let letter = |c: &Canvas, i: usize| {
+            let r = l.letter_box(i);
+            (r.y..r.bottom())
+                .flat_map(|y| (r.x..r.right()).map(move |x| c.get(x, y)))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(letter(&en, 1), letter(&local, 1), "Monday's M becomes H");
+        assert_eq!(letter(&en, 6), letter(&local, 6), "Saturday's S stays");
+        assert!(
+            (l.band.bottom()..H).all(|y| (0..W).all(|x| en.get(x, y) == local.get(x, y))),
+            "the days draw the same"
+        );
     }
 
     /// At 150% and 200% the grid's columns, rows and number boxes grow with the text, the 2 px

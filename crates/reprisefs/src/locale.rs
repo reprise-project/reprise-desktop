@@ -1,5 +1,6 @@
 use std::ffi::{CStr, CString};
 
+use reprisekit::controls::calendar::DateNames;
 use reprisekit::tr;
 use std::sync::OnceLock;
 
@@ -65,6 +66,34 @@ pub fn long_date_format() -> String {
 }
 
 const SHORT_DATE: &CStr = c"%x";
+
+/// The calendar's month and weekday names in the language [`long_date`] writes.
+pub fn date_names() -> &'static DateNames {
+    static NAMES: OnceLock<DateNames> = OnceLock::new();
+    NAMES.get_or_init(|| date_names_in(env_locale()))
+}
+
+/// Months in their standalone form (`%OB`, which differs from `%B` where a date declines
+/// them); a weekday's letter is its abbreviation's first, upper-cased.
+fn date_names_in(loc: Option<&TimeLocale>) -> DateNames {
+    let name = |mon: i32, wday: i32, fmt: &CStr| {
+        // SAFETY: `libc::tm` is plain data; `%OB` reads only `tm_mon`, `%A` and `%a` `tm_wday`.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        tm.tm_mon = mon;
+        tm.tm_wday = wday;
+        strftime_in(loc, &tm, fmt)
+    };
+    DateNames {
+        months: std::array::from_fn(|m| name(m as i32, 0, c"%OB")),
+        weekdays: std::array::from_fn(|d| name(0, d as i32, c"%A")),
+        letters: std::array::from_fn(|d| {
+            let abbr = name(0, d as i32, c"%a");
+            abbr.chars()
+                .next()
+                .map_or_else(String::new, |c| c.to_uppercase().collect())
+        }),
+    }
+}
 
 fn long_date_in(loc: Option<&TimeLocale>, tm: &libc::tm) -> String {
     let fmt = CString::new(long_format_in(loc)).unwrap_or_default();
@@ -296,6 +325,21 @@ mod tests {
         }
         if let Some(de) = TimeLocale::load(c"de_DE.UTF-8") {
             assert_eq!(long_date_in(Some(&de), &tm), "Samstag 14 November 2026");
+        }
+    }
+
+    #[test]
+    fn date_names_come_from_the_locale_they_are_read_in() {
+        let c = TimeLocale::load(c"C").expect("the C locale");
+        assert_eq!(&date_names_in(Some(&c)), DateNames::english());
+        if let Some(us) = TimeLocale::load(c"en_US.UTF-8") {
+            assert_eq!(&date_names_in(Some(&us)), DateNames::english());
+        }
+        if let Some(hu) = TimeLocale::load(c"hu_HU.UTF-8") {
+            let names = date_names_in(Some(&hu));
+            assert_eq!(names.month(11), "november");
+            assert_eq!(names.weekday(5), "péntek");
+            assert_eq!(names.letters.join(" "), "V H K S C P S");
         }
     }
 

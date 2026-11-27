@@ -101,6 +101,7 @@ impl DateTimeApp {
                 zones,
                 now(),
                 reprisefs::locale::first_weekday(),
+                reprisefs::locale::date_names(),
                 reprisefs::locale::is_12h(),
             )
         })

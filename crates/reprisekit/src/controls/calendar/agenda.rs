@@ -1,7 +1,7 @@
 //! The clock popup's event list: the listed day's heading over [`AGENDA_ROWS`] rows of time and
 //! summary, the last counting the rest when they overflow. The host reads and words the events.
 
-use super::{PopupHit, month_name, weekday};
+use super::{Calendar, DateNames, PopupHit, weekday};
 use crate::access::{self, Tree, accesskit};
 use crate::look::Paint;
 use crate::look::widgets::item::{self, Mark};
@@ -17,11 +17,6 @@ const ROW_H: i32 = 16;
 const INSET: i32 = 4;
 /// Between the time column and the summary.
 const GAP: i32 = 8;
-
-/// Weekday `n` (0 is Sunday) by name.
-pub(super) fn weekday_name(n: u32) -> String {
-    tr!("calendar-weekday", day = n as i64)
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DayEvent {
@@ -89,15 +84,15 @@ impl Agenda {
     }
 
     /// "Today", else the day's weekday and date, with its year when that is not this year.
-    pub fn heading(&self, today: Option<(i32, u32, u32)>) -> String {
+    pub fn heading(&self, today: Option<(i32, u32, u32)>, names: &DateNames) -> String {
         if Some(self.day) == today {
             return tr!("calendar-today");
         }
         let (y, m, d) = self.day;
         let name = tr!(
             "calendar-agenda-day",
-            weekday = weekday_name(weekday(y, m, d)).as_str(),
-            month = month_name(m).as_str(),
+            weekday = names.weekday(weekday(y, m, d)),
+            month = names.month(m),
             day = d as i64
         );
         match today {
@@ -155,7 +150,7 @@ pub(super) fn draw(
     text: &TextRenderer,
     p: &Paint,
     a: &Agenda,
-    today: Option<(i32, u32, u32)>,
+    cal: &Calendar,
     lay: &Layout,
     hot: PopupHit,
     bold: bool,
@@ -169,7 +164,7 @@ pub(super) fn draw(
         inset.width - 2 * INSET * s,
         inset.height,
     );
-    let heading = a.heading(today);
+    let heading = a.heading(cal.today, cal.names);
     text.draw(c, inset, &heading, bold, cs.button_text, Align::Left, px);
     let rows = a.rows();
     let when_w = (rows.iter())
@@ -222,14 +217,8 @@ pub(super) fn draw(
 
 /// The heading as a label and each row: a button a reader can click when a click opens it, else a
 /// label.
-pub(super) fn access(
-    a: &Agenda,
-    today: Option<(i32, u32, u32)>,
-    lay: &Layout,
-    tree: &mut Tree,
-    parent: NodeId,
-) {
-    let heading = access::named(Role::Label, lay.heading, &a.heading(today));
+pub(super) fn access(a: &Agenda, cal: &Calendar, lay: &Layout, tree: &mut Tree, parent: NodeId) {
+    let heading = access::named(Role::Label, lay.heading, &a.heading(cal.today, cal.names));
     tree.push(parent, "agenda", heading);
     for (i, row) in a.rows().into_iter().enumerate() {
         let opens = a.opens && !matches!(row, Row::Empty);
@@ -333,11 +322,12 @@ mod tests {
     fn the_heading_names_today_or_the_date() {
         let mut a = Agenda::new((2026, 11, 13), true);
         let today = Some((2026, 11, 13));
-        assert_eq!(a.heading(today), "Today");
+        let en = DateNames::english();
+        assert_eq!(a.heading(today, en), "Today");
         a.day = (2026, 11, 14);
-        assert_eq!(a.heading(today), "Saturday, November 14");
+        assert_eq!(a.heading(today, en), "Saturday, November 14");
         a.day = (2027, 1, 1);
-        assert_eq!(a.heading(today), "Friday, January 1, 2027");
+        assert_eq!(a.heading(today, en), "Friday, January 1, 2027");
     }
 
     #[test]

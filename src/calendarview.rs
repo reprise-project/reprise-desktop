@@ -205,6 +205,7 @@ fn open(state: &mut State, bar: TreeId) {
     }
     let (y, m, d) = today();
     let mut model = Calendar::new(y, m, None, reprisefs::locale::first_weekday());
+    model.names = reprisefs::locale::date_names();
     model.today = Some((y, m, d));
     let ticks = state.config.theme.controls().clock_face > 0;
     model.now = ticks.then(now);
