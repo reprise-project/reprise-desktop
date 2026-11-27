@@ -8,13 +8,14 @@ use crate::Explorer;
 use crate::copydlg::Progress;
 use crate::place::Place;
 use repriseapp::{Ctx, Reply};
+use reprisefs::archive::{self, Scratch};
 use reprisefs::compress::{self, Compress};
 use reprisefs::extract::{self, Archive, ArchiveEvent, ArchiveJob};
 use reprisefs::listing::Item;
 use reprisefs::ops::DropOp;
 use reprisekit::controls::copyprogress::Kind;
 use reprisekit::tr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The extraction or compression running, with its dialog.
@@ -29,7 +30,15 @@ pub(crate) struct Extracting {
     /// A compressed folder's copy: where its entries go once out, and the scratch folder they
     /// come out into.
     then: Option<Then>,
-    pub scratch: Option<PathBuf>,
+    pub scratch: Option<Scratch>,
+}
+
+/// Entries picked in a compressed folder: the archive, its listing when picked, and the entries'
+/// paths in it.
+pub(crate) struct Picks {
+    pub archive: PathBuf,
+    pub entries: Arc<Vec<reprisefs::archive::Entry>>,
+    pub picked: Vec<PathBuf>,
 }
 
 /// Where the entries a compressed folder's Copy, Copy To Folder... or drag copied out go.
@@ -45,13 +54,10 @@ pub(crate) enum Then {
 pub(crate) enum Batch {
     Extract(Vec<Archive>),
     Compress(Compress),
-    /// Entries of `archive` (paths inside it, from the listing `entries`) into the scratch
-    /// folder `dir`.
+    /// Picked entries into the folder of `scratch`.
     CopyOut {
-        archive: PathBuf,
-        entries: Arc<Vec<reprisefs::archive::Entry>>,
-        picked: Vec<PathBuf>,
-        dir: Option<PathBuf>,
+        picks: Picks,
+        scratch: Scratch,
         then: Then,
     },
 }
@@ -133,35 +139,47 @@ impl Explorer {
         self.queue_archive_job(Batch::Extract(batch), ctx);
     }
 
-    /// The archive on view and the paths in it of the entries at `items`: what a Copy, Copy To
-    /// Folder... or drag in a compressed folder copies out. None elsewhere, or for no entry.
-    pub(crate) fn archive_picks(&self, items: &[PathBuf]) -> Option<(PathBuf, Vec<PathBuf>)> {
+    /// The entries at `items` of the archive on view: what a Copy, Copy To Folder... or drag in
+    /// a compressed folder copies out. None elsewhere, or for no entry.
+    pub(crate) fn archive_picks(&self, items: &[PathBuf]) -> Option<Picks> {
         let Place::Archive(archive, _) = &self.place else {
             return None;
         };
         let picked: Vec<PathBuf> = (items.iter())
             .filter_map(|p| Some(self.place.archive_entry(p)?.1))
             .collect();
-        (!picked.is_empty()).then(|| (archive.clone(), picked))
+        (!picked.is_empty()).then(|| Picks {
+            entries: self.archives.kept(archive).unwrap_or_default(),
+            archive: archive.clone(),
+            picked,
+        })
     }
 
-    /// The entries `picked` of `archive` ([`Explorer::archive_picks`]) come out on a job, after
-    /// the one running, into a fresh scratch folder, and go where `then` says.
-    pub(crate) fn copy_out(
-        &mut self,
-        (archive, picked): (PathBuf, Vec<PathBuf>),
-        then: Then,
-        ctx: &mut Ctx,
-    ) -> Reply {
+    /// The entries `picks` come out on a job, after the one running, into a fresh scratch
+    /// folder, and go where `then` says.
+    pub(crate) fn copy_out(&mut self, picks: Picks, then: Then, ctx: &mut Ctx) -> Reply {
+        let scratch = match Scratch::new() {
+            Ok(s) => s,
+            Err(e) => return self.copy_out_failed(&picks.archive, e.to_string(), ctx),
+        };
         let batch = Batch::CopyOut {
-            entries: self.archives.kept(&archive).unwrap_or_default(),
-            archive,
-            picked,
-            dir: reprisefs::archive::scratch_name(),
+            picks,
+            scratch,
             then,
         };
         self.queue_archive_job(batch, ctx);
         Reply::none()
+    }
+
+    /// A box saying the entries of `archive` did not copy out, and `why`.
+    pub(crate) fn copy_out_failed(&mut self, archive: &Path, why: String, ctx: &mut Ctx) -> Reply {
+        let name = archive.file_name().unwrap_or_default().to_string_lossy();
+        let text = tr!(
+            "archive-copy-out-failed",
+            name = name.into_owned(),
+            why = why
+        );
+        self.message_box(&tr!("archive-copy-failed-title"), text, ctx)
     }
 
     /// A box saying the drop of the entries of the archive `name` stopped waiting for them.
@@ -176,17 +194,12 @@ impl Explorer {
         let mut names = Vec::new();
         self.extract_queue.retain(|b| match b {
             Batch::CopyOut {
-                archive,
+                picks,
                 then: Then::Drag(staged),
                 ..
             } if staged.abandoned() => {
-                names.push(
-                    archive
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned(),
-                );
+                let name = picks.archive.file_name().unwrap_or_default();
+                names.push(name.to_string_lossy().into_owned());
                 false
             }
             _ => true,
@@ -196,13 +209,12 @@ impl Explorer {
             .reduce(Reply::and)
     }
 
-    /// Removes the scratch folders of finished Copy To Folder... copies once no put is running,
-    /// queued, checked or asking: by then the put has read them.
-    pub(crate) fn sweep_put_scratch(&mut self) {
-        if self.put_scratch.is_empty() || !self.puts_idle() {
-            return;
+    /// Lets go of the copies the puts held ([`Explorer::put_all`]) once no put is running,
+    /// queued, checked or asking: by then the puts have read them.
+    pub(crate) fn release_put_holds(&mut self) {
+        if !self.put_holds.is_empty() && self.puts_idle() {
+            self.put_holds.clear();
         }
-        crate::fileops::remove_in_background(std::mem::take(&mut self.put_scratch));
     }
 
     /// The zip Compress to and Send To make of the selection: `name.zip`, numbered past a name
@@ -278,7 +290,7 @@ impl Explorer {
         let show = matches!(&batch, Batch::Extract(b) if b.iter().any(|a| a.to.is_some()))
             .then(|| self.place.clone());
         let (then, scratch) = match &batch {
-            Batch::CopyOut { then, dir, .. } => (Some(then.clone()), dir.clone()),
+            Batch::CopyOut { then, scratch, .. } => (Some(then.clone()), Some(scratch.clone())),
             _ => (None, None),
         };
         let (job, kind, from, to) = match batch {
@@ -295,19 +307,22 @@ impl Explorer {
                 (ArchiveJob::compress(c, wake), Kind::Compress, from, to)
             }
             Batch::CopyOut {
-                archive,
-                entries,
-                picked,
-                dir,
+                picks,
+                scratch,
                 then,
             } => {
-                let from = name(Some(&archive));
+                let from = name(Some(&picks.archive));
                 let (to, dest) = match then {
                     Then::Clipboard => (tr!("extracting-to-clipboard"), None),
                     Then::Drag(_) => (tr!("extracting-to-drop"), None),
                     Then::Into(dest) => (name(Some(&dest)), Some(dest)),
                 };
-                let job = reprisefs::archive::copy_job(archive, entries, picked, (dir, dest), wake);
+                let Picks {
+                    archive,
+                    entries,
+                    picked,
+                } = picks;
+                let job = archive::copy_job(archive, entries, picked, (scratch, dest), wake);
                 (job, Kind::Extract, from, to)
             }
         };
@@ -377,13 +392,11 @@ impl Explorer {
                 self.start_archive_job(next, ctx);
             }
             let out = failed.is_none() && !ex.job.meter().cancelled() && !ex.landed.is_empty();
-            if !out {
-                crate::fileops::remove_in_background(ex.scratch.iter().cloned().collect());
-            }
             let landed = ex.landed;
             let reply = match then {
                 Then::Drag(staged) => {
                     staged.done(out);
+                    self.dropped_copy = ex.scratch.filter(|_| out);
                     match staged.abandoned() {
                         true => self.drop_gave_up(&ex.progress.from, ctx),
                         false => Reply::none(),
@@ -395,11 +408,8 @@ impl Explorer {
                     self.clip_scratch = ex.scratch;
                     reply
                 }
-                Then::Into(dir) => {
-                    let reply = self.put_all(&landed, &dir, &|_| Some(DropOp::Copy), true, ctx);
-                    self.put_scratch.extend(ex.scratch);
-                    reply
-                }
+                // The put holds the copies until it has read them.
+                Then::Into(dir) => self.put_all(&landed, &dir, &|_| Some(DropOp::Copy), true, ctx),
             };
             return Some(match boxed {
                 Some(b) => reply.and(b),

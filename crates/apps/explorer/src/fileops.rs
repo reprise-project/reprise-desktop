@@ -78,20 +78,6 @@ pub(crate) type UndoEdit = Box<dyn FnOnce(&reprisefs::undo::SharedUndo) -> JobDo
 pub(crate) type ItemOp = (PathBuf, DropOp, String, bool);
 
 /// Wake the window once a job just started may have run long enough to show its dialog.
-/// Removes the folders `dirs` and all they hold on a thread of their own.
-pub(crate) fn remove_in_background(dirs: Vec<PathBuf>) {
-    if dirs.is_empty() {
-        return;
-    }
-    std::thread::spawn(move || {
-        for d in dirs {
-            if let Err(e) = std::fs::remove_dir_all(&d) {
-                log::debug!("explorer: cannot remove {}: {e}", d.display());
-            }
-        }
-    });
-}
-
 pub(crate) fn wake_to_show(ctx: &Ctx) {
     let wake = ctx.wake.clone();
     std::thread::spawn(move || {
@@ -244,8 +230,8 @@ impl Explorer {
     }
 
     pub fn clipboard_paths(&mut self, cut: bool, paths: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
-        // The copies a compressed folder's Copy put on the clipboard go with it.
-        remove_in_background(self.clip_scratch.take().into_iter().collect());
+        // The copies a compressed folder's Copy put on the clipboard are let go with it.
+        self.clip_scratch = None;
         self.refresh_chrome(ctx);
         Reply {
             redraw: true,
@@ -388,6 +374,13 @@ impl Explorer {
             .collect();
         if puts.is_empty() {
             return Reply::none();
+        }
+        for (src, _) in &puts {
+            if !self.put_holds.iter().any(|h| src.starts_with(h.path()))
+                && let Some(held) = reprisefs::archive::Scratch::hold(src)
+            {
+                self.put_holds.push(held);
+            }
         }
         let title = puts[0].1.failure_title();
         let into = dir.to_path_buf();
