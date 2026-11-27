@@ -119,7 +119,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     let config = Config {
         bus_name: BUS_NAME,
         id: "reprise-bluetooth",
-        title: "Bluetooth".into(),
+        title: tr!("tray-title"),
         notify_icon: "bluetooth",
         raise: Raise::MenuRow(Rows::id(&TrayMsg::Show)),
     };

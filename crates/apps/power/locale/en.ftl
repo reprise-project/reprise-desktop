@@ -77,6 +77,7 @@ power-button-label = When I press the power button on my computer:
 sleep-button-label = When I press the sleep button on my computer:
 
 ## Tray menu and tooltip
+tray-title = Power
 menu-meter = Open Power Meter
 menu-properties = Adjust Power Properties
 menu-keep-awake = Keep Awake

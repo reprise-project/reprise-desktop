@@ -36,6 +36,7 @@ mute = &Mute
 muted = Muted
 
 ## Tray menu
+tray-title = Volume
 menu-volume-control = Open Volume Control
 menu-properties = Adjust Audio Properties
 menu-mute = Mute
