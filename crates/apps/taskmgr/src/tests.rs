@@ -2,6 +2,7 @@ use super::*;
 use crate::procfs::MemInfo;
 use crate::scopes::Scope;
 use repriseapp::{Extended, MAIN, Mods};
+use reprisebus::services::{Failed, Manager};
 use reprisekit::interface::Interface;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
@@ -180,10 +181,10 @@ pub(crate) fn centre(r: reprisekit::raster::Rect) -> (i32, i32) {
 
 fn row_point(t: &TaskMgr, ctx: &Ctx, i: usize) -> (i32, i32) {
     let r = pages::layout(t, ctx).list.unwrap();
-    let list = if t.page() == Page::Applications {
-        &t.apps
-    } else {
-        &t.procs
+    let list = match t.page() {
+        Page::Applications => &t.apps,
+        Page::Services => &t.svc.list,
+        _ => &t.procs,
     };
     let l = list.layout(r, ctx);
     (
@@ -335,7 +336,7 @@ fn end_process_asks_first_and_offers_end_now_once_it_outlives_the_wait() {
         Some((_, Ask::EndNow(Target::Process(42, 142))))
     ));
     t.asks.close();
-    t.answered(Ask::EndNow(Target::Process(42, 142)), Some(1));
+    t.answered(Ask::EndNow(Target::Process(42, 142)), Some(1), &ctx);
     assert!(t.ending.is_empty(), "Cancel stops waiting");
     let mut s = snapshot();
     s.procs[3].start = 999;
@@ -1082,6 +1083,10 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
             if page == Page::Processes {
                 click_row(&mut t, &mut ctx, 1);
             }
+            if page == Page::Services {
+                list_services(&mut t, &mut ctx, service_rows(), true);
+                click_row(&mut t, &mut ctx, 0);
+            }
             t.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
             for d in [1, 2] {
                 t.follow_scale(MAIN, d, &mut ctx);
@@ -1133,6 +1138,34 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
             let mut c = Canvas::with_scale(w as u32, h as u32, d);
             ctx.at_scale(d, |ctx| t.draw(PICK, &mut c, ctx));
             got.push((format!("{i:?} Select Columns @{d}"), fnv(&c)));
+        }
+        ctx.size = main;
+        t.pick = None;
+        open(&mut t, &mut ctx, Page::Services);
+        click_row(&mut t, &mut ctx, 2);
+        t.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+        for d in [1, 2] {
+            t.follow_scale(MAIN, d, &mut ctx);
+            t.event(MAIN, key(keysym::MENU), &mut ctx);
+            let (w, h) = ctx.size;
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
+            got.push((format!("{i:?} Services menu @{d}"), fnv(&c)));
+            t.event(MAIN, key(keysym::ESCAPE), &mut ctx);
+        }
+        t.svc.read_log = |_, _, _| {};
+        t.open_log(&ctx);
+        let log = t.svc.log.as_mut().unwrap();
+        log.show(Ok(
+            "Nov 27 10:00:01 systemd[1201]: Started sync.service.\nsync[1302]: 4 files sent\n"
+                .into(),
+        ));
+        ctx.size = ctx.forms().text.size(servicelog::CLIENT);
+        for d in [1, 2] {
+            let (w, h) = ctx.size;
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(LOG, &mut c, ctx));
+            got.push((format!("{i:?} Service log @{d}"), fnv(&c)));
         }
         ctx.size = main;
     }
@@ -1556,4 +1589,375 @@ fn box_texts_keep_their_paragraph_breaks() {
     );
     assert_eq!(tr!("sensors-heading", count = 1), "1 sensor chip");
     assert_eq!(tr!("sensors-heading", count = 3), "3 sensor chips");
+}
+
+fn service(
+    name: &str,
+    manager: Manager,
+    status: services::Status,
+    startup: services::Startup,
+) -> services::Service {
+    services::Service {
+        name: name.into(),
+        description: format!("{name} described"),
+        manager,
+        status,
+        startup,
+    }
+}
+
+/// A user service running and enabled, a stopped user service that installs, and a stopped
+/// system service.
+fn service_rows() -> Vec<services::Service> {
+    use services::{Startup, Status};
+    vec![
+        service(
+            "pipewire.service",
+            Manager::User,
+            Status::Running,
+            Startup::Automatic,
+        ),
+        service(
+            "sync.service",
+            Manager::User,
+            Status::Stopped,
+            Startup::Manual,
+        ),
+        service(
+            "sshd.service",
+            Manager::System,
+            Status::Stopped,
+            Startup::Manual,
+        ),
+    ]
+}
+
+/// Posts `rows` as the reader thread does and wakes the window.
+fn list_services(t: &mut TaskMgr, ctx: &mut Ctx, rows: Vec<services::Service>, manage: bool) {
+    t.svc
+        .tx
+        .send(services::Msg::Listed {
+            rows,
+            system: t.svc.system,
+            manage_system: manage,
+        })
+        .unwrap();
+    t.event(MAIN, Event::Wake, ctx);
+}
+
+thread_local! {
+    static JOBS: std::cell::RefCell<Vec<services::Job>> = const { std::cell::RefCell::new(Vec::new()) };
+    static LOGS: std::cell::RefCell<Vec<(Manager, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn services_mgr(ctx: &mut Ctx) -> TaskMgr {
+    let mut t = loaded(ctx);
+    t.svc.run_job = |job, _| JOBS.with_borrow_mut(|j| j.push(job));
+    t.svc.read_log = |m, name, _| LOGS.with_borrow_mut(|l| l.push((m, name)));
+    open(&mut t, ctx, Page::Services);
+    list_services(&mut t, ctx, service_rows(), true);
+    t
+}
+
+fn job(manager: Manager, name: &str, verb: Verb) -> services::Job {
+    services::Job {
+        manager,
+        name: name.into(),
+        verb,
+    }
+}
+
+fn service_menu_rows(t: &TaskMgr) -> Vec<Option<Act>> {
+    (t.service_menu().expect("a menu").into_iter())
+        .filter(|(i, _)| !matches!(i, MenuItem::Separator))
+        .map(|(_, a)| a)
+        .collect()
+}
+
+#[test]
+fn the_services_page_shows_each_service_by_name_with_its_status_and_startup() {
+    let mut ctx = ctx();
+    let t = services_mgr(&mut ctx);
+    let cells: Vec<Vec<String>> = (t.svc.list.view.rows.iter())
+        .map(|r| r.cells.clone())
+        .collect();
+    assert_eq!(
+        cells[0],
+        [
+            "pipewire.service",
+            "pipewire.service described",
+            "Running",
+            "Automatic",
+            "User"
+        ]
+    );
+    assert_eq!(
+        cells.iter().map(|c| c[0].as_str()).collect::<Vec<_>>(),
+        ["pipewire.service", "sshd.service", "sync.service"],
+        "sorted by name"
+    );
+    assert_eq!(cells[1][4], "System");
+}
+
+#[test]
+fn a_column_title_sorts_the_services_and_the_selection_stays() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    click_row(&mut t, &mut ctx, 2);
+    assert_eq!(t.selected_service().unwrap().name, "sync.service");
+    t.sort_services(2);
+    let names: Vec<&str> = t.svc.rows.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["pipewire.service", "sshd.service", "sync.service"],
+        "Running before Stopped, then by name"
+    );
+    t.sort_services(2);
+    let names: Vec<&str> = t.svc.rows.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["sshd.service", "sync.service", "pipewire.service"],
+        "a second click turns the column; a tie stays by name"
+    );
+    assert_eq!(t.selected_service().unwrap().name, "sync.service");
+}
+
+#[test]
+fn start_and_restart_run_at_once_and_stop_asks_first() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    click_row(&mut t, &mut ctx, 2);
+    assert!(enabled(&t, pages::START));
+    assert!(!enabled(&t, pages::STOP));
+    t.form_event(form::Event::Pressed(pages::START), &mut ctx);
+    assert_eq!(
+        JOBS.take(),
+        [job(Manager::User, "sync.service", Verb::Start)]
+    );
+    pages::follow_form(&mut t, &ctx);
+    assert!(
+        !enabled(&t, pages::START),
+        "a service a job is under way on takes no other"
+    );
+    t.svc
+        .tx
+        .send(services::Msg::Done(
+            job(Manager::User, "sync.service", Verb::Start),
+            Ok(()),
+        ))
+        .unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert!(t.svc.busy.is_empty());
+
+    click_row(&mut t, &mut ctx, 0);
+    t.form_event(form::Event::Pressed(pages::RESTART), &mut ctx);
+    assert_eq!(
+        JOBS.take(),
+        [job(Manager::User, "pipewire.service", Verb::Restart)]
+    );
+    t.svc.busy.clear();
+    t.form_event(form::Event::Pressed(pages::STOP), &mut ctx);
+    assert!(JOBS.take().is_empty(), "Stop waits for the answer");
+    let Some((_, Ask::StopService(asked))) = t.asks.up() else {
+        panic!("Stop asks first");
+    };
+    assert_eq!(*asked, job(Manager::User, "pipewire.service", Verb::Stop));
+    let asked = asked.clone();
+    t.asks.close();
+    t.answered(Ask::StopService(asked.clone()), Some(1), &ctx);
+    assert!(JOBS.take().is_empty(), "No stops nothing");
+    t.answered(Ask::StopService(asked.clone()), Some(0), &ctx);
+    assert_eq!(JOBS.take(), [asked]);
+}
+
+#[test]
+fn a_system_service_takes_no_job_polkit_refuses() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    click_row(&mut t, &mut ctx, 1);
+    assert_eq!(t.selected_service().unwrap().manager, Manager::System);
+    pages::follow_form(&mut t, &ctx);
+    assert!(enabled(&t, pages::START));
+    assert_eq!(
+        service_menu_rows(&t),
+        [
+            Some(Act::Service(Verb::Start)),
+            None,
+            None,
+            Some(Act::OpenLog)
+        ],
+        "no Start at Login for a system service"
+    );
+    list_services(&mut t, &mut ctx, service_rows(), false);
+    pages::follow_form(&mut t, &ctx);
+    assert!(!enabled(&t, pages::START));
+    t.form_event(form::Event::Pressed(pages::START), &mut ctx);
+    assert!(JOBS.take().is_empty());
+}
+
+#[test]
+fn start_at_login_enables_or_disables_a_user_service() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    let menu = t.service_menu().unwrap();
+    let login = (menu.iter())
+        .find(|(i, _)| matches!(i, MenuItem::Entry { label, .. } if label.contains("Login")))
+        .unwrap();
+    assert!(matches!(login.0, MenuItem::Entry { checked: true, .. }));
+    assert_eq!(login.1, Some(Act::Service(Verb::Disable)));
+    click_row(&mut t, &mut ctx, 2);
+    assert_eq!(
+        service_menu_rows(&t),
+        [
+            Some(Act::Service(Verb::Start)),
+            None,
+            None,
+            Some(Act::Service(Verb::Enable)),
+            Some(Act::OpenLog)
+        ]
+    );
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    for k in [keysym::DOWN, keysym::RETURN] {
+        t.event(MAIN, key(k), &mut ctx);
+    }
+    assert_eq!(
+        JOBS.take(),
+        [job(Manager::User, "sync.service", Verb::Enable)]
+    );
+}
+
+#[test]
+fn a_failed_job_says_why_and_a_dismissed_prompt_says_nothing() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    let done = |r| services::Msg::Done(job(Manager::System, "sshd.service", Verb::Start), r);
+    t.svc.tx.send(done(Err(Failed::Dismissed))).unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert!(!t.errors.is_shown(), "a dismissed prompt is no failure");
+    let why = reprisebus::polkit::Told::Text("Access denied".into());
+    t.svc.tx.send(done(Err(Failed::Told(why)))).unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert_eq!(
+        t.errors.shown().map(|b| b.fields.text.as_str()),
+        Some("sshd.service could not be started.\n\nAccess denied")
+    );
+}
+
+#[test]
+fn turning_off_start_at_login_for_a_service_every_user_starts_says_why() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    let off = job(Manager::User, "pipewire.service", Verb::Disable);
+    t.svc
+        .tx
+        .send(services::Msg::Done(off, Err(Failed::Unchanged)))
+        .unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    let text = t.errors.shown().map(|b| b.fields.text.clone()).unwrap();
+    assert!(
+        text.starts_with("pipewire.service could not be kept from starting at login.")
+            && text.contains("every user"),
+        "{text}"
+    );
+    click_row(&mut t, &mut ctx, 0);
+    assert!(
+        (t.service_menu().unwrap().iter()).any(|(i, _)| matches!(
+            i,
+            MenuItem::Entry { label, checked: true, .. } if label.contains("Login")
+        )),
+        "the row still reads Automatic, so the check stays on"
+    );
+}
+
+#[test]
+fn a_list_read_before_the_box_changed_is_dropped() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    t.set_system_services(false);
+    t.svc
+        .tx
+        .send(services::Msg::Listed {
+            rows: service_rows(),
+            system: true,
+            manage_system: true,
+        })
+        .unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert!(
+        (t.svc.rows.iter()).all(|s| s.manager == Manager::User),
+        "the hidden system rows stay hidden"
+    );
+}
+
+#[test]
+fn open_log_shows_the_journal_lines_of_the_one_service() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::RETURN), &mut ctx);
+    assert_eq!(
+        LOGS.take(),
+        [(Manager::User, "pipewire.service".to_string())]
+    );
+    let log = t.svc.log.as_ref().expect("the log window");
+    assert_eq!(log.text(), "Reading the journal...");
+    assert!(t.children().iter().any(|c| c.id == LOG));
+    t.event(MAIN, key(keysym::RETURN), &mut ctx);
+    let refresh = form::Event::Pressed(servicelog::REFRESH);
+    assert!(matches!(
+        t.svc.log.as_mut().unwrap().event(refresh),
+        servicelog::Outcome::None
+    ));
+    assert!(LOGS.take().is_empty(), "one read at a time");
+    let post = |name: &str, read: Result<String, services::LogError>| services::Msg::Log {
+        manager: Manager::User,
+        name: name.into(),
+        read,
+    };
+    t.svc
+        .tx
+        .send(post("other.service", Ok("x".into())))
+        .unwrap();
+    t.svc
+        .tx
+        .send(post("pipewire.service", Ok("one\ntwo\n".into())))
+        .unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert_eq!(t.svc.log.as_ref().unwrap().text(), "one\ntwo");
+    t.svc
+        .tx
+        .send(post("pipewire.service", Ok(String::new())))
+        .unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert_eq!(
+        t.svc.log.as_ref().unwrap().text(),
+        "The journal holds no lines for this service that you may read."
+    );
+    t.svc
+        .tx
+        .send(post(
+            "pipewire.service",
+            Err(services::LogError::TookTooLong),
+        ))
+        .unwrap();
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert_eq!(
+        t.svc.log.as_ref().unwrap().text(),
+        "The journal could not be read: journalctl took too long and was stopped."
+    );
+    t.event(LOG, Event::CloseRequest, &mut ctx);
+    assert!(t.svc.log.is_none());
+}
+
+#[test]
+fn hiding_system_services_drops_their_rows_at_once() {
+    let mut ctx = ctx();
+    let mut t = services_mgr(&mut ctx);
+    t.svc.system = true;
+    t.set_system_services(false);
+    assert!(
+        (t.svc.rows.iter()).all(|s| s.manager == Manager::User),
+        "only user services stay"
+    );
 }

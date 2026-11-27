@@ -1,5 +1,6 @@
-//! Task Manager: the running programs by app scope, every process with its CPU and memory, and
-//! the CPU and memory history, sampled by [`worker`] while the window shows.
+//! Task Manager: the running programs by app scope, every process with its CPU and memory, the
+//! CPU and memory history, sampled by [`worker`] while the window shows, and the systemd
+//! services ([`services`]).
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -14,7 +15,10 @@ mod procfs;
 mod sample;
 mod scopes;
 mod selectcols;
+mod servicelog;
+mod services;
 mod state;
+mod svcpage;
 mod toplevel;
 mod worker;
 
@@ -30,11 +34,12 @@ use repriseapp::asks::{Answer, Asks};
 use repriseapp::ctxmenu::{self, Popup};
 use repriseapp::detailslist::{List, Press};
 use repriseapp::keys::AltArm;
-use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::oneshot::{self, ErrorBox, MsgBox};
 use repriseapp::tip::Rest;
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId,
 };
+use reprisebus::services::Verb;
 use reprisebus::tray::{AppWindow, Hung};
 use reprisefs::apps::{AppEntry, AppId};
 use reprisekit::access::Tree;
@@ -58,6 +63,7 @@ use state::State;
 
 const ASK: WinId = WinId::named("ask");
 const PICK: WinId = WinId::named("pick");
+const LOG: WinId = WinId::named("log");
 
 /// How many samples a history graph spans.
 const HISTORY: usize = 100;
@@ -107,10 +113,16 @@ pub enum Page {
     Applications,
     Processes,
     Performance,
+    Services,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::Applications, Page::Processes, Page::Performance];
+    const ALL: [Page; 4] = [
+        Page::Applications,
+        Page::Processes,
+        Page::Performance,
+        Page::Services,
+    ];
 }
 
 /// A row on the Applications page: a window with a task button, or, while the compositor lists
@@ -174,13 +186,16 @@ enum Ask {
         fd: Rc<OwnedFd>,
     },
     EndNow(Target),
+    StopService(services::Job),
 }
 
 impl Ask {
-    fn target(&self) -> Target {
+    /// What the box asks to end, which takes it down once it has ended.
+    fn target(&self) -> Option<Target> {
         match self {
-            Ask::EndProcess { pid, start, .. } => Target::Process(*pid, *start),
-            Ask::EndNow(t) => t.clone(),
+            Ask::EndProcess { pid, start, .. } => Some(Target::Process(*pid, *start)),
+            Ask::EndNow(t) => Some(t.clone()),
+            Ask::StopService(_) => None,
         }
     }
 }
@@ -228,6 +243,9 @@ enum Act {
     OpenLocation,
     EndProcess,
     Properties,
+    /// The service menu's rows, on the selected service.
+    Service(Verb),
+    OpenLog,
 }
 
 /// The pointer resting on a process row, by pid; `shown` once its command line is up. `pointer`
@@ -301,6 +319,8 @@ pub struct TaskMgr {
     text: Option<Rc<reprisekit::text::TextRenderer>>,
     /// Where the state is kept, and what it last held.
     state: Option<(PathBuf, State)>,
+    svc: svcpage::Svc,
+    errors: ErrorBox,
 }
 
 impl TaskMgr {
@@ -316,6 +336,7 @@ impl TaskMgr {
                     &tr!("tab-applications"),
                     &tr!("tab-processes"),
                     &tr!("tab-performance"),
+                    &tr!("tab-services"),
                 ],
                 0,
             ),
@@ -361,6 +382,8 @@ impl TaskMgr {
             forms: None,
             text: None,
             state: None,
+            svc: svcpage::Svc::new(),
+            errors: ErrorBox::default(),
         };
         t.show_columns();
         t.apps.view.frame = true;
@@ -492,6 +515,8 @@ impl TaskMgr {
                 self.popup = None;
                 match act {
                     Some(Act::EndProcess) => self.ask_end_process(ctx),
+                    Some(Act::Service(verb)) => self.service_verb(verb, ctx),
+                    Some(Act::OpenLog) => self.open_log(ctx),
                     Some(a) => Reply {
                         redraw: true,
                         ..self.act(a)
@@ -528,7 +553,10 @@ impl TaskMgr {
                 return Reply::none();
             }
             Act::Quit => return quit(),
-            Act::Refresh => self.send(worker::Cmd::Now),
+            Act::Refresh => {
+                self.send(worker::Cmd::Now);
+                self.services_shown();
+            }
             Act::Speed(s) => {
                 self.speed = s;
                 self.follow_visibility();
@@ -541,7 +569,7 @@ impl TaskMgr {
             }
             Act::OpenLocation => return self.proc_file(reprisefs::apps::open_location_argv),
             Act::Properties => return self.proc_file(reprisefs::apps::properties_argv),
-            Act::EndProcess => return Reply::none(),
+            Act::EndProcess | Act::Service(_) | Act::OpenLog => return Reply::none(),
         }
         self.set_menus();
         self.persist();
@@ -637,7 +665,10 @@ impl TaskMgr {
     /// Every list lets go, as a page switched from mid-press leaves its list holding the thumb, and
     /// the Processes widths are kept. True when a part lit under `styled` let go.
     fn let_go_lists(&mut self, styled: bool) -> bool {
-        let lit = self.apps.let_go() | self.procs.let_go() | self.perf.sensors.let_go();
+        let lit = self.apps.let_go()
+            | self.procs.let_go()
+            | self.svc.list.let_go()
+            | self.perf.sensors.let_go();
         let tiles = self.perf.list.release();
         self.note_widths();
         (lit && styled) || tiles
@@ -647,10 +678,11 @@ impl TaskMgr {
     fn fit_lists(&mut self, ctx: &Ctx) {
         let r = pages::layout(self, ctx).list_area;
         self.apps.fit_last(r, ctx);
+        self.svc.list.fit_last(r, ctx);
         // The process list nearly always scrolls: fill beside its bar, or a horizontal one appears.
         let last = self.procs.view.columns.len() - 1;
         (self.procs.view).fill_beside_bar(last, r, &ctx.theme.controls());
-        for list in [&mut self.apps, &mut self.procs] {
+        for list in [&mut self.apps, &mut self.procs, &mut self.svc.list] {
             list.follow(r, ctx);
         }
         self.refit = false;
@@ -822,7 +854,8 @@ impl TaskMgr {
         let (starts, snap, entries) = (&self.starts, &self.snap, &self.entries);
         let waits = |t: &Target| waits_on(starts, snap, entries, t);
         self.ending.retain(|e| waits(&e.target));
-        self.asks.withdraw(|a| !waits(&a.target()));
+        self.asks
+            .withdraw(|a| a.target().is_some_and(|t| !waits(&t)));
         let now = Instant::now();
         for e in (self.ending.iter_mut()).filter(|e| !e.asked) {
             if now.duration_since(e.since) >= END_WAIT {
@@ -967,7 +1000,7 @@ impl TaskMgr {
         Reply::redraw()
     }
 
-    fn answered(&mut self, ask: Ask, button: Option<usize>) {
+    fn answered(&mut self, ask: Ask, button: Option<usize>, ctx: &Ctx) {
         if button != Some(0) {
             if let Ask::EndNow(t) = &ask {
                 self.ending.retain(|e| &e.target != t);
@@ -994,6 +1027,7 @@ impl TaskMgr {
                     log::warn!("end process {pid} now: {e}");
                 }
             }
+            Ask::StopService(job) => self.run_service_job(job, ctx),
         }
     }
 
@@ -1003,7 +1037,7 @@ impl TaskMgr {
             Answer::None => Reply::none(),
             Answer::Redraw => Reply::redraw(),
             Answer::Closed(ask, button) => {
-                self.answered(ask, button);
+                self.answered(ask, button, ctx);
                 Reply::redraw_all()
             }
         }
@@ -1033,6 +1067,14 @@ impl TaskMgr {
                 self.refresh_procs();
                 Reply::redraw()
             }
+            form::Event::Pressed(pages::START) => self.service_verb(Verb::Start, ctx),
+            form::Event::Pressed(pages::STOP) => self.service_verb(Verb::Stop, ctx),
+            form::Event::Pressed(pages::RESTART) => self.service_verb(Verb::Restart, ctx),
+            form::Event::Changed(pages::SYSTEM) => {
+                let on = self.form.checked(pages::SYSTEM).unwrap_or(false);
+                self.set_system_services(on);
+                Reply::redraw()
+            }
             form::Event::None => Reply::none(),
             _ => Reply::redraw(),
         }
@@ -1042,6 +1084,7 @@ impl TaskMgr {
         match self.page() {
             Page::Applications => Some(&mut self.apps),
             Page::Processes => Some(&mut self.procs),
+            Page::Services => Some(&mut self.svc.list),
             Page::Performance => None,
         }
     }
@@ -1073,6 +1116,7 @@ impl TaskMgr {
                 self.tabs.open = i;
                 self.form_for = None;
                 self.set_menus();
+                self.services_shown();
                 return Reply::redraw();
             }
         }
@@ -1092,6 +1136,10 @@ impl TaskMgr {
                 Press::Row(_) if page == Page::Processes && button == BTN_RIGHT => {
                     self.open_proc_menu(x, y, ctx, false)
                 }
+                Press::Row(_) if page == Page::Services && button == BTN_RIGHT => {
+                    self.open_service_menu(x, y, ctx, false)
+                }
+                Press::Activate(_) if page == Page::Services => self.open_log(ctx),
                 Press::None => Reply::none(),
                 _ => Reply::redraw(),
             };
@@ -1179,6 +1227,7 @@ impl TaskMgr {
             self.tabs.open = (self.tabs.open + if back { n - 1 } else { 1 }) % n;
             self.form_for = None;
             self.set_menus();
+            self.services_shown();
             return Reply::redraw();
         }
         if k.mods.alt
@@ -1199,20 +1248,24 @@ impl TaskMgr {
             return r;
         }
         let menu_key = k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift);
-        if menu_key && self.page() == Page::Processes {
-            let Some(r) = lay.list else {
+        if menu_key && matches!(self.page(), Page::Processes | Page::Services) {
+            let (Some(r), Some(list)) = (lay.list, self.list()) else {
                 return Reply::none();
             };
-            let l = self.procs.layout(r, ctx);
-            let row = self.procs.selected().unwrap_or(0) as i32;
-            let y = l.body.y + (row - self.procs.view.top as i32 + 1) * l.row_h();
-            return self.open_proc_menu(l.body.x + 20, y, ctx, true);
+            let l = list.layout(r, ctx);
+            let row = list.selected().unwrap_or(0) as i32;
+            let y = l.body.y + (row - list.view.top as i32 + 1) * l.row_h();
+            return match self.page() {
+                Page::Services => self.open_service_menu(l.body.x + 20, y, ctx, true),
+                _ => self.open_proc_menu(l.body.x + 20, y, ctx, true),
+            };
         }
         match (k.sym, self.page()) {
             (keysym::F5, _) => self.act(Act::Refresh),
             (keysym::DELETE | keysym::KP_DELETE, Page::Applications) => self.end_task(),
             (keysym::DELETE | keysym::KP_DELETE, Page::Processes) => self.ask_end_process(ctx),
             (keysym::RETURN | keysym::KP_ENTER, Page::Applications) => self.switch_to(),
+            (keysym::RETURN | keysym::KP_ENTER, Page::Services) => self.open_log(ctx),
             _ => Reply::none(),
         }
     }
@@ -1260,8 +1313,13 @@ impl TaskMgr {
                     Some(w) => w.rx.try_iter().collect(),
                     None => Vec::new(),
                 };
+                let sampled = !got.is_empty();
                 for s in got {
                     self.take(s, ctx);
+                }
+                self.service_msgs(ctx);
+                if sampled && self.page() == Page::Services {
+                    self.read_services(false);
                 }
                 let hung = self.hung_rx.as_ref().and_then(|rx| rx.try_iter().last());
                 if let Some(h) = hung {
@@ -1296,10 +1354,18 @@ impl TaskMgr {
             }
             Event::Pointer(PointerInput::Motion { x, y }) => self.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => {
-                let held = [&mut self.apps, &mut self.procs, &mut self.perf.sensors]
-                    .map(|l| l.release(ctx));
+                let held = [
+                    &mut self.apps,
+                    &mut self.procs,
+                    &mut self.perf.sensors,
+                    &mut self.svc.list,
+                ]
+                .map(|l| l.release(ctx));
                 if let Some(c) = held[1].column {
                     self.sort_by(c);
+                }
+                if let Some(c) = held[3].column {
+                    self.sort_services(c);
                 }
                 let list = self.let_go_lists(ctx.styled()) | held.iter().any(|h| h.redraw);
                 let ev = self.form.release();
@@ -1485,12 +1551,26 @@ impl App for TaskMgr {
             });
         }
         if let (Some(theme), Some(text)) = (&self.forms, &self.text) {
+            if let Some(l) = &self.svc.log {
+                kids.push(Child {
+                    id: LOG,
+                    title: l.title(),
+                    size: theme.text.size(servicelog::CLIENT),
+                    fixed: true,
+                    modal: false,
+                });
+            }
             kids.extend(self.asks.child(text, theme));
+            kids.extend(self.errors.child(text, theme));
         }
         kids
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
+        self.svc.reader = Some(services::spawn(services::Post {
+            tx: self.svc.tx.clone(),
+            wake: waker.clone(),
+        }));
         if let Some(mut s) = self.sampler.take() {
             s.disk = self.columns.contains(&ProcColumn::Disk);
             if let Some(d) = s.devices.as_mut() {
@@ -1515,7 +1595,12 @@ impl App for TaskMgr {
         self.text = Some(ctx.text.clone());
         match win {
             w if self.asks.owns(w) => self.ask_event(w, ev, ctx),
+            w if self.errors.owns(w) => {
+                let theme = self.forms.clone().unwrap_or_else(|| ctx.forms());
+                self.errors.event(w, &ev, &ctx.text, &theme)
+            }
             PICK => self.pick_event(ev, ctx),
+            LOG => self.log_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
     }
@@ -1523,6 +1608,22 @@ impl App for TaskMgr {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         if self.asks.owns(win) {
             self.asks.draw(c, &ctx.forms(), &ctx.text);
+            return;
+        }
+        if self.errors.owns(win) {
+            self.errors.draw(c, &ctx.forms(), &ctx.text);
+            return;
+        }
+        if win == LOG {
+            let forms = ctx.forms();
+            c.fill_rect(c.bounds(), forms.colors.button_face);
+            if let Some(l) = &self.svc.log {
+                let p = reprisekit::look::Paint {
+                    s: 1,
+                    ..forms.paint()
+                };
+                form::draw(c, &ctx.text, &p, &l.form, true, forms.fonts.size_px);
+            }
             return;
         }
         if win == PICK {
@@ -1580,6 +1681,17 @@ impl repriseapp::Extended for TaskMgr {
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         if self.asks.owns(win) {
             self.asks.access(tree, &ctx.text, &ctx.forms());
+            return;
+        }
+        if self.errors.owns(win) {
+            self.errors.access(tree, &ctx.text, &ctx.forms());
+            return;
+        }
+        if win == LOG {
+            if let Some(l) = &self.svc.log {
+                let px = ctx.forms().fonts.size_px;
+                oneshot::access_form(&l.form, tree, &ctx.text, px);
+            }
             return;
         }
         if win == PICK {

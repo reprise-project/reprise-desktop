@@ -22,7 +22,8 @@
 //! task button, and [`inhibit`] holds off log off while it works. [`journal`] starts the logger with journal priorities.
 //! [`units`] lists the programs the systemd user manager starts with the
 //! session, and [`remote`] reads the Remote Desktop server and turns its user
-//! unit on or off. Every module on the session bus shares a program's one
+//! unit on or off. [`services`] lists the user and system managers' services and runs a start,
+//! stop or restart on one. Every module on the session bus shares a program's one
 //! connection ([`session`]); synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`bolt`] lists and follows boltd's Thunderbolt devices and authorizes, enrolls or forgets one.
@@ -88,6 +89,7 @@ pub mod rfkill;
 pub mod searchprovider;
 pub mod secrets;
 pub mod sensorproxy;
+pub mod services;
 pub mod testbus;
 pub mod testsession;
 pub mod tray;
