@@ -945,6 +945,12 @@ mod tests {
     }
 
     #[test]
+    fn a_delete_prompt_over_1234_items_prints_no_digit_group() {
+        let (_, text) = delete_prompt(ConfirmKind::Multiple, "", 1234, true, BinLack::None);
+        assert_eq!(text, "Are you sure you want to delete these 1234 items?");
+    }
+
+    #[test]
     fn the_delete_prompts_read_as_expected() {
         use ConfirmKind::*;
         let p = |kind, name, count, erase, no_bin| delete_prompt(kind, name, count, erase, no_bin);
