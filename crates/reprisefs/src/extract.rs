@@ -12,6 +12,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 /// The types offered Extract Here and Extract to. A lone compressed file (`.gz`, `.xz`, `.zst`)
 /// is no archive: bsdtar reads it only with `--format raw`.
@@ -283,12 +284,29 @@ impl ArchiveJob {
     }
 }
 
+/// How long letting go of a running job waits for its thread to stop and remove what it made.
+const LET_GO_WAIT: Duration = Duration::from_secs(3);
+
 /// A job let go before it finished is cancelled, so a paused one neither sleeps nor keeps its
-/// stopped bsdtar for good.
+/// stopped bsdtar for good, and waited for up to [`LET_GO_WAIT`], so a program quitting mid-job
+/// leaves no temp file behind.
 impl Drop for ArchiveJob {
     fn drop(&mut self) {
-        if !self.finished {
-            self.meter.cancel();
+        if self.finished {
+            return;
+        }
+        self.meter.cancel();
+        let until = Instant::now() + LET_GO_WAIT;
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            match self.events.recv_timeout(left) {
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    log::warn!("reprisefs: let go of a job still stopping");
+                    return;
+                }
+            }
         }
     }
 }

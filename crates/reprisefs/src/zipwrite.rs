@@ -4,17 +4,19 @@
 //! adds one folder's files by name; the last writes a zip into a temp file beside the old one.
 //! The temp file is listed and must hold exactly the old entries kept plus the files added, and
 //! is renamed over the zip only while the zip is still the file that was read. A failure, Cancel
-//! or the deadline removes the temp file; a crash leaves it hidden beside the zip
-//! (`.<name>.<tag>.tmp`, as a crashed document save does), the zip untouched. docs/security.md
-//! "Writing into zips" has the rules.
+//! or the deadline removes the temp file. A crash leaves it hidden beside the zip
+//! (`.<name>.<tag>.tmp`, as a crashed document save does), the zip untouched; a rewrite holds its
+//! temp file locked, and the next rewrite of that zip removes one no rewrite holds that was not
+//! written to for that rewrite's deadline. docs/security.md "Writing into zips" has the rules.
 
 use crate::archive::{self, Entry, Kind, Scratch};
 use crate::extract::{self, ArchiveEvent, ArchiveJob, Failure, MAX_ENTRIES, STDERR_TAIL};
 use crate::progress::{Meter, Phase, Totals};
 use reprisekit::tr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Write};
+use std::fs::Permissions;
+use std::io::Write;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -26,11 +28,15 @@ pub const EMPTY_ZIP: [u8; 22] = [
     b'P', b'K', 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
-/// The most bytes of files a save into a zip ([`update_entry`]) rewrites: the program waits.
+/// The most bytes a save into a zip ([`ArchiveJob::update_entry`]) rewrites, counted once on the
+/// zip itself and once on the files it holds.
 pub const UPDATE_MOST: u64 = 256 << 20;
 
-/// How long a save into a zip may take.
-const UPDATE_DEADLINE: Duration = Duration::from_secs(60);
+/// Seconds of running time that replace every rewrite's deadline, to try a timeout by hand.
+const DEADLINE_ENV: &str = "REPRISE_ZIP_DEADLINE_SECS";
+
+/// How often a rewrite's deadline counts the time it ran.
+const WATCH_EVERY: Duration = Duration::from_millis(250);
 
 /// Zip bytes per added file or entry kept, past its data: its local and central headers (the
 /// name counted apart), data descriptor and zip64 fields, with room to spare.
@@ -38,6 +44,7 @@ const ENTRY_OVERHEAD: u64 = 512;
 
 /// Whether `path` starts as a zip does: a local file header, or the end record of an empty one.
 pub fn is_zip(path: &Path) -> bool {
+    use std::io::Read;
     let mut head = [0u8; 4];
     let read = std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut head));
     read.is_ok() && zip_head(&head)
@@ -48,54 +55,36 @@ fn zip_head(head: &[u8; 4]) -> bool {
 }
 
 /// Files of the folder `dir` added at the zip's top under their paths below it (`names`, plain
-/// names only). Each replaces what the zip holds at its path: a file the entry of that path and
-/// everything below it, a folder only the folder's own entry, so a folder merges.
+/// names only). A file replaces the zip's file of its path, a folder only the folder's own entry,
+/// so a folder merges. A file over a folder, a folder over a file, or two of one path, is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Adding {
     pub dir: PathBuf,
     pub names: Vec<PathBuf>,
 }
 
-/// Writes `bytes` over the file `inner` of the zip `zip`: the save of a file opened out of a
-/// compressed folder. Refused past [`UPDATE_MOST`] bytes of files, and stopped after
-/// [`UPDATE_DEADLINE`].
-pub fn update_entry(zip: &Path, inner: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    if !plain(inner) {
-        return Err(tr!("archive-unread"));
-    }
-    open_zip(zip)?;
-    let stage = Scratch::new().map_err(|e| e.to_string())?;
-    let to = stage.path().join(inner);
-    if let Some(parent) = to.parent() {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent)
-            .map_err(|e| e.to_string())?;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o644)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&to)
-        .map_err(|e| e.to_string())?;
-    file.write_all(bytes).map_err(|e| e.to_string())?;
-    drop(file);
-    let adding = Adding {
-        dir: stage.path().to_path_buf(),
-        names: vec![inner.to_path_buf()],
-    };
-    let bound = Bound {
-        most: Some(UPDATE_MOST),
-        deadline: Some(UPDATE_DEADLINE),
-    };
-    rewrite(zip, &[adding], &Arc::new(Meter::default()), bound)
+/// Why a [`rewrite`] left the zip as it was.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unwritten {
+    Cancelled,
+    /// Its deadline passed.
+    TooLong,
+    Failed(String),
 }
 
-/// What one [`rewrite`] may take: `most` bytes of files, and until `deadline`, else twice the CPU
-/// time its bsdtar children may take.
+impl Unwritten {
+    /// The reason an error box gives.
+    pub fn why(&self) -> String {
+        match self {
+            Unwritten::Cancelled => Failure::Cancelled.why(),
+            Unwritten::TooLong => tr!("archive-update-too-long"),
+            Unwritten::Failed(why) => why.clone(),
+        }
+    }
+}
+
+/// What one [`rewrite`] may take: `most` bytes of zip and of files, and `deadline` of running
+/// time (a pause stops its clock), else twice the CPU time its bsdtar children may take.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Bound {
     pub most: Option<u64>,
@@ -104,20 +93,55 @@ pub struct Bound {
 
 impl ArchiveJob {
     /// Adds `adds` to the zip `zip` on a thread ([`rewrite`]): one [`ArchiveEvent::Landed`] with
-    /// the zip, or one [`ArchiveEvent::Failed`]. A cancelled job sends neither and leaves the zip
-    /// as it was. It stops past twice the CPU time its bsdtar children may take.
+    /// the zip, or one [`ArchiveEvent::Failed`], a passed deadline among them. A cancelled job
+    /// sends neither and leaves the zip as it was.
     pub fn add_to_zip(zip: PathBuf, adds: Vec<Adding>, wake: impl Fn() + Send + 'static) -> Self {
+        ArchiveJob::rewriting("reprisefs-add-to-zip", zip, wake, move |zip, m| {
+            rewrite(zip, &adds, m, Bound::default())
+        })
+    }
+
+    /// Writes `bytes` over the file `inner` of the zip `zip` on a thread, keeping the entry's
+    /// mode: the save of a file opened out of a compressed folder, refused past [`UPDATE_MOST`].
+    /// Once the zip holds it, the read-only archive `copy` the file was opened from is written
+    /// again ([`crate::archivecopy::rewrite_copy`]). Its events are [`ArchiveJob::add_to_zip`]'s.
+    pub fn update_entry(
+        zip: PathBuf,
+        inner: PathBuf,
+        bytes: Vec<u8>,
+        copy: Option<PathBuf>,
+        wake: impl Fn() + Send + 'static,
+    ) -> Self {
+        ArchiveJob::rewriting("reprisefs-update-zip", zip, wake, move |zip, m| {
+            update(zip, &inner, &bytes, m)?;
+            if let Some(copy) = &copy
+                && let Err(e) = crate::archivecopy::rewrite_copy(copy, &bytes)
+            {
+                log::warn!("reprisefs: cannot rewrite the copy {}: {e}", copy.display());
+            }
+            Ok(())
+        })
+    }
+
+    fn rewriting(
+        name: &str,
+        zip: PathBuf,
+        wake: impl Fn() + Send + 'static,
+        body: impl FnOnce(&Path, &Arc<Meter>) -> Result<(), Unwritten> + Send + 'static,
+    ) -> Self {
         let meter = Arc::new(Meter::default());
         let watched = meter.clone();
-        ArchiveJob::on_thread("reprisefs-add-to-zip", meter, wake, move |m, send| {
-            let wrote = rewrite(&zip, &adds, &watched, Bound::default());
-            let ev = match wrote {
+        ArchiveJob::on_thread(name, meter, wake, move |_, send| {
+            let ev = match body(&zip, &watched) {
                 Ok(()) => Some(ArchiveEvent::Landed {
                     index: 0,
                     into: zip.clone(),
                 }),
-                Err(_) if m.cancelled() => None,
-                Err(why) => Some(failed(&zip, why)),
+                Err(Unwritten::Cancelled) => None,
+                Err(e) => Some(ArchiveEvent::Failed {
+                    index: 0,
+                    text: failure(&zip, &e.why()),
+                }),
             };
             if let Some(ev) = ev
                 && !send(ev)
@@ -129,11 +153,46 @@ impl ArchiveJob {
     }
 }
 
-fn failed(zip: &Path, why: String) -> ArchiveEvent {
-    ArchiveEvent::Failed {
-        index: 0,
-        text: failure(zip, &why),
+/// [`ArchiveJob::update_entry`]'s rewrite: `bytes` staged in a private folder as `inner`, given
+/// the mode of the entry it replaces.
+fn update(zip: &Path, inner: &Path, bytes: &[u8], m: &Arc<Meter>) -> Result<(), Unwritten> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let failed = |why: String| Unwritten::Failed(why);
+    let io = |e: std::io::Error| failed(e.to_string());
+    if !plain(inner) {
+        return Err(failed(tr!("archive-unread")));
     }
+    open_zip(zip).map_err(failed)?;
+    if bytes.len() as u64 > UPDATE_MOST {
+        return Err(failed(too_large(bytes.len() as u64, UPDATE_MOST)));
+    }
+    let stage = Scratch::new().map_err(io)?;
+    let to = stage.path().join(inner);
+    if let Some(parent) = to.parent() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(io)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&to)
+        .map_err(io)?;
+    file.write_all(bytes).map_err(io)?;
+    drop(file);
+    let adding = Adding {
+        dir: stage.path().to_path_buf(),
+        names: vec![inner.to_path_buf()],
+    };
+    let bound = Bound {
+        most: Some(UPDATE_MOST),
+        deadline: None,
+    };
+    rewrite_keeping(zip, &[adding], m, bound, true)
 }
 
 /// The error box's text for a write into `zip` that failed for `why`.
@@ -142,13 +201,21 @@ pub fn failure(zip: &Path, why: &str) -> String {
     tr!("archive-update-failed", name = &*name, why = why)
 }
 
-/// Cancels a meter once its deadline passes, unless dropped first.
+fn too_large(bytes: u64, most: u64) -> String {
+    let (size, most) = (
+        crate::props::short_size(bytes),
+        crate::props::short_size(most),
+    );
+    tr!("archive-update-too-large", size = size, most = most)
+}
+
+/// Cancels a meter once it has run, outside its pauses, for its deadline, unless dropped first.
 struct Watch {
     state: Arc<(Mutex<Watched>, Condvar)>,
 }
 
 struct Watched {
-    until: Instant,
+    left: Duration,
     done: bool,
     passed: bool,
 }
@@ -157,7 +224,7 @@ impl Watch {
     fn start(m: Arc<Meter>, after: Duration) -> Watch {
         let state = Arc::new((
             Mutex::new(Watched {
-                until: Instant::now() + after,
+                left: after,
                 done: false,
                 passed: false,
             }),
@@ -169,14 +236,20 @@ impl Watch {
             let Ok(mut held) = lock.lock() else {
                 return;
             };
+            let mut from = Instant::now();
             while !held.done {
-                let left = held.until.saturating_duration_since(Instant::now());
-                if left.is_zero() {
+                let now = Instant::now();
+                if !m.paused() {
+                    held.left = held.left.saturating_sub(now - from);
+                }
+                from = now;
+                if held.left.is_zero() {
                     held.passed = true;
                     m.cancel();
                     return;
                 }
-                held = match cv.wait_timeout(held, left) {
+                let step = held.left.min(WATCH_EVERY);
+                held = match cv.wait_timeout(held, step) {
                     Ok((h, _)) => h,
                     Err(_) => return,
                 };
@@ -185,10 +258,10 @@ impl Watch {
         Watch { state }
     }
 
-    /// Moves the deadline to `after` from now.
+    /// Gives the rewrite `after` more running time from now.
     fn reset(&self, after: Duration) {
         if let Ok(mut s) = self.state.0.lock() {
-            s.until = Instant::now() + after;
+            s.left = after;
         }
         self.state.1.notify_all();
     }
@@ -222,36 +295,107 @@ fn listed(e: &Entry) -> Listed {
 
 /// Rewrites the zip `zip` with `adds` added ([`Adding`]), as the module says. Refused when `zip`
 /// is a link, not a regular zip file this user owns, or encrypted; past [`MAX_ENTRIES`] entries,
-/// `bound`, or what the zip's folder has room for. Cancelling `m` stops it.
-pub fn rewrite(zip: &Path, adds: &[Adding], m: &Arc<Meter>, bound: Bound) -> Result<(), String> {
+/// `bound`, or what the zip's folder has room for. Cancelling `m` stops it. A rewrite that
+/// renamed its zip into place has landed, however late.
+pub fn rewrite(zip: &Path, adds: &[Adding], m: &Arc<Meter>, bound: Bound) -> Result<(), Unwritten> {
+    rewrite_keeping(zip, adds, m, bound, false)
+}
+
+/// [`rewrite`]; with `keep_modes` each added file takes the mode of the zip's file it replaces.
+fn rewrite_keeping(
+    zip: &Path,
+    adds: &[Adding],
+    m: &Arc<Meter>,
+    bound: Bound,
+    keep_modes: bool,
+) -> Result<(), Unwritten> {
+    let forced = std::env::var(DEADLINE_ENV)
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let bound = Bound {
+        deadline: forced.map(Duration::from_secs).or(bound.deadline),
+        ..bound
+    };
     let cpu = archive::cpu_secs(archive::archive_bytes(zip));
     let first = bound.deadline.unwrap_or(Duration::from_secs(2 * cpu));
     let watch = Watch::start(m.clone(), first);
-    let wrote = rewrite_watched(zip, adds, m, bound, &watch);
-    match watch.passed() {
-        true => Err(tr!("archive-update-too-long")),
-        false => wrote,
+    let wrote = rewrite_watched(zip, adds, (m, &watch), bound, keep_modes, first);
+    match wrote {
+        Ok(()) => Ok(()),
+        Err(_) if watch.passed() => Err(Unwritten::TooLong),
+        Err(_) if m.cancelled() => Err(Unwritten::Cancelled),
+        Err(why) => Err(Unwritten::Failed(why)),
     }
+}
+
+/// Every entry of `old` by its path, and each folder above one that the zip holds only by the
+/// paths below it.
+fn held_kinds(old: &[Entry]) -> HashMap<&Path, Kind> {
+    let mut held: HashMap<&Path, Kind> = HashMap::new();
+    for e in old {
+        held.insert(&e.path, e.kind);
+    }
+    for e in old {
+        for a in e.path.ancestors().skip(1) {
+            if a.as_os_str().is_empty() {
+                break;
+            }
+            held.entry(a).or_insert(Kind::Folder);
+        }
+    }
+    held
 }
 
 fn rewrite_watched(
     zip: &Path,
     adds: &[Adding],
-    m: &Meter,
+    (m, watch): (&Meter, &Watch),
     Bound { most, deadline }: Bound,
-    watch: &Watch,
+    keep_modes: bool,
+    stale: Duration,
 ) -> Result<(), String> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let io = |e: std::io::Error| e.to_string();
     let (file, before) = open_zip(zip)?;
+    if let Some(most) = most
+        && before.len() > most
+    {
+        return Err(too_large(before.len(), most));
+    }
     if archive::zip_encrypted(zip) {
         return Err(tr!("archive-locked"));
     }
-    let old = archive::list(zip, m)?;
+    let staged: HashSet<&Path> = match keep_modes {
+        true => adds
+            .iter()
+            .flat_map(|a| &a.names)
+            .map(PathBuf::as_path)
+            .collect(),
+        false => HashSet::new(),
+    };
+    let mut modes: HashMap<PathBuf, u32> = HashMap::new();
+    let old = archive::list_noting(zip, m, &mut |e, mode| {
+        if e.kind == Kind::File && staged.contains(e.path.as_path()) {
+            modes.insert(e.path.clone(), mode);
+        }
+    })?;
     let walked = walk(adds, m, MAX_ENTRIES.saturating_sub(old.len() as u64))?;
     let kinds: HashMap<&Path, Kind> = walked.iter().map(|(p, k, _)| (p.as_path(), *k)).collect();
+    let held = held_kinds(&old);
+    let clash = (walked.iter()).any(|(p, k, _)| held.get(p.as_path()).is_some_and(|h| h != k));
+    if clash || kinds.len() != walked.len() {
+        return Err(crate::ops::PutError::Occupied.to_string());
+    }
+    for a in adds {
+        for name in &a.names {
+            if let Some(&mode) = modes.get(name) {
+                let mode = std::fs::Permissions::from_mode(mode & 0o777);
+                std::fs::set_permissions(a.dir.join(name), mode).map_err(io)?;
+            }
+        }
+    }
     let mut expected: Vec<Listed> = (old.iter())
-        .filter(|e| !replaced(&kinds, &e.path))
+        .filter(|e| !kinds.contains_key(e.path.as_path()))
         .map(listed)
         .chain(walked.iter().cloned())
         .collect();
@@ -259,11 +403,7 @@ fn rewrite_watched(
     if let Some(most) = most
         && bytes > most
     {
-        let (size, most) = (
-            crate::props::short_size(bytes),
-            crate::props::short_size(most),
-        );
-        return Err(tr!("archive-update-too-large", size = size, most = most));
+        return Err(too_large(bytes, most));
     }
     let names = (expected.iter())
         .map(|e| e.0.as_os_str().len() as u64)
@@ -289,14 +429,19 @@ fn rewrite_watched(
     });
     m.set_phase(Phase::Copying);
     let work = Scratch::new().map_err(io)?;
-    let mode = std::fs::Permissions::from_mode(before.mode() & 0o777);
-    let (out, tmp) = crate::ops::create_temp_beside(zip, Some(mode)).map_err(io)?;
+    sweep_temps(dir, zip, stale);
+    let (out, tmp) = temp_beside(zip, &before).map_err(io)?;
     let tmp = Temp(tmp);
     let budget = archive::cpu_secs(before.len().saturating_add(bytes));
     if deadline.is_none() {
         watch.reset(Duration::from_secs(2 * budget));
     }
-    let argvs = stages(&work, &walked, adds)?;
+    let explicit: HashSet<&Path> = old.iter().map(|e| e.path.as_path()).collect();
+    let excluded: Vec<&Path> = (walked.iter())
+        .map(|(p, _, _)| p.as_path())
+        .filter(|p| explicit.contains(p))
+        .collect();
+    let argvs = stages(&work, &excluded, adds)?;
     let total = Totals {
         bytes,
         items: expected.len() as u64,
@@ -304,7 +449,6 @@ fn rewrite_watched(
     let sink = out.try_clone().map_err(io)?;
     run(&argvs, (file, sink), (budget, out_most), total, m)?;
     out.sync_all().map_err(io)?;
-    drop(out);
     let mut got: Vec<Listed> = archive::list(&tmp.0, m)?.iter().map(listed).collect();
     got.sort();
     expected.sort();
@@ -329,6 +473,86 @@ fn rewrite_watched(
     }
     m.set_phase(Phase::Finishing);
     Ok(())
+}
+
+/// The temp file a rewrite of `zip` (as `before`) writes, locked while it lives: the zip's mode,
+/// its group where this user may give it (else no group bits), and its xattrs and ACLs.
+fn temp_beside(
+    zip: &Path,
+    before: &std::fs::Metadata,
+) -> std::io::Result<(std::fs::File, PathBuf)> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let mut mode = before.mode() & 0o777;
+    let (out, tmp) = crate::ops::create_temp_beside(zip, Some(Permissions::from_mode(mode)))?;
+    let made = (|| {
+        if !archive::flock(&out, libc::LOCK_EX) {
+            return Err(std::io::Error::last_os_error());
+        }
+        if std::os::unix::fs::fchown(&out, None, Some(before.gid())).is_err()
+            && out.metadata()?.gid() != before.gid()
+        {
+            mode &= !0o070;
+        }
+        out.set_permissions(Permissions::from_mode(mode))?;
+        crate::ops::copy_xattrs(zip, &out);
+        Ok(())
+    })();
+    match made {
+        Ok(()) => Ok((out, tmp)),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Removes what rewrites of `zip` whose process died left in its folder `dir`: this user's
+/// `.<name>.<tag>.tmp` files that no rewrite holds locked and nothing wrote to for `stale`.
+fn sweep_temps(dir: &Path, zip: &Path, stale: Duration) {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let Some(name) = zip.file_name() else {
+        return;
+    };
+    let prefix = format!(".{}.", name.to_string_lossy());
+    let Ok(kids) = std::fs::read_dir(dir) else {
+        return;
+    };
+    // SAFETY: geteuid has no preconditions.
+    let me = unsafe { libc::geteuid() };
+    for kid in kids.flatten() {
+        let file = kid.file_name();
+        let tag =
+            (file.to_str()).and_then(|f| f.strip_prefix(prefix.as_str())?.strip_suffix(".tmp"));
+        if !tag.is_some_and(|t| t.len() == 16 && t.bytes().all(|b| b.is_ascii_hexdigit())) {
+            continue;
+        }
+        let path = kid.path();
+        if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            continue;
+        }
+        let Ok(f) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)
+        else {
+            continue;
+        };
+        let Ok(meta) = f.metadata() else {
+            continue;
+        };
+        let idle = (meta.modified().ok()).and_then(|t| t.elapsed().ok());
+        if !meta.is_file() || meta.uid() != me || idle.is_none_or(|t| t < stale) {
+            continue;
+        }
+        if !archive::flock(&f, libc::LOCK_EX) {
+            continue;
+        }
+        let same = std::fs::symlink_metadata(&path)
+            .is_ok_and(|now| (now.dev(), now.ino()) == (meta.dev(), meta.ino()));
+        if same && std::fs::remove_file(&path).is_ok() {
+            log::info!("reprisefs: removed {} left by a rewrite", path.display());
+        }
+    }
 }
 
 /// The zip at `zip` opened to read, never through a link, with its metadata: refused unless it
@@ -365,17 +589,6 @@ impl Drop for Temp {
             log::warn!("reprisefs: cannot remove {}: {e}", self.0.display());
         }
     }
-}
-
-/// Whether the walked paths `kinds` replace the zip's entry at `path`: the entry of a path added,
-/// or one below a file added.
-fn replaced(kinds: &HashMap<&Path, Kind>, path: &Path) -> bool {
-    if kinds.contains_key(path) {
-        return true;
-    }
-    path.ancestors()
-        .skip(1)
-        .any(|a| kinds.get(a) == Some(&Kind::File))
 }
 
 /// The files and folders under `adds` as the rewritten zip lists them: regular files with their
@@ -417,9 +630,9 @@ fn walk(adds: &[Adding], m: &Meter, most: u64) -> Result<Vec<Listed>, String> {
     Ok(out)
 }
 
-/// The pattern that keeps the zip's entry at `path` out: every byte but `/` escaped, anchored
-/// at the start and, unless `below` takes what lies under it too, at the end.
-fn pattern(path: &Path, below: bool) -> Vec<u8> {
+/// The pattern that keeps the zip's entry at `path` out: every byte but `/` escaped, anchored at
+/// both ends.
+fn pattern(path: &Path) -> Vec<u8> {
     let mut p = b"^".to_vec();
     for &b in path.as_os_str().as_bytes() {
         if b != b'/' {
@@ -427,9 +640,7 @@ fn pattern(path: &Path, below: bool) -> Vec<u8> {
         }
         p.push(b);
     }
-    if !below {
-        p.push(b'$');
-    }
+    p.push(b'$');
     p
 }
 
@@ -448,13 +659,13 @@ fn write_list(work: &Scratch, name: &str, bytes: &[u8]) -> Result<PathBuf, Strin
     Ok(path)
 }
 
-/// The chain's argument lists: the zip read as a pax stream (its own stdin) less what `walked`
-/// replaces, one stage per folder of `adds` adding its names, and a last stage writing the zip.
+/// The chain's argument lists: the zip read as a pax stream (its own stdin) less the entries at
+/// `excluded`, one stage per folder of `adds` adding its names, and a last stage writing the zip.
 /// The patterns go in a file bsdtar reads by line, but one holding a line break goes on the
 /// command line. The names go by `-T` as NUL-ended lines, where neither `@` nor `-C` mean more.
 fn stages(
     work: &Scratch,
-    walked: &[Listed],
+    excluded: &[&Path],
     adds: &[Adding],
 ) -> Result<Vec<Vec<OsString>>, String> {
     let os = |s: &str| OsString::from(s);
@@ -462,8 +673,8 @@ fn stages(
         .map(os)
         .into();
     let mut lines = Vec::new();
-    for (path, kind, _) in walked {
-        let p = pattern(path, *kind == Kind::File);
+    for path in excluded {
+        let p = pattern(path);
         if p.contains(&b'\n') || p.contains(&b'\r') {
             first.extend([os("--exclude"), OsString::from_vec(p)]);
         } else {
@@ -623,4 +834,58 @@ fn run(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn events(mut job: ArchiveJob) -> Vec<ArchiveEvent> {
+        let until = Instant::now() + Duration::from_secs(10);
+        let mut events = Vec::new();
+        while !job.is_finished() {
+            assert!(Instant::now() < until, "the job ends");
+            events.extend(job.poll());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        events
+    }
+
+    #[test]
+    fn a_passed_deadline_is_a_failure_with_its_own_box_and_a_cancel_says_nothing() {
+        let zip = PathBuf::from("/d/a.zip");
+        let late = ArchiveJob::rewriting("t", zip.clone(), || {}, |_, _| Err(Unwritten::TooLong));
+        assert!(
+            matches!(
+                events(late).as_slice(),
+                [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                    if text == "Cannot update a.zip: it took too long to rewrite."
+            ),
+            "a timeout gets a box"
+        );
+        let cancelled = ArchiveJob::rewriting("t", zip, || {}, |_, _| Err(Unwritten::Cancelled));
+        assert!(matches!(
+            events(cancelled).as_slice(),
+            [ArchiveEvent::Finished]
+        ));
+    }
+
+    #[test]
+    fn the_deadline_counts_running_time_and_not_a_pause() {
+        let m = Arc::new(Meter::default());
+        m.set_paused(true);
+        let watch = Watch::start(m.clone(), Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(900));
+        assert!(
+            !watch.passed() && !m.cancelled(),
+            "a paused rewrite keeps its time"
+        );
+        m.set_paused(false);
+        let until = Instant::now() + Duration::from_secs(10);
+        while !watch.passed() {
+            assert!(Instant::now() < until, "the deadline passes once it runs");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(m.cancelled(), "a passed deadline cancels the meter");
+    }
 }

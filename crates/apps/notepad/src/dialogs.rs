@@ -21,8 +21,8 @@ pub(crate) enum Ask {
     /// The file takes no writes; OK opens Save As on its name, and the action waiting on the save
     /// waits on that.
     ReadOnly,
-    /// The read-only file came out of a zip; Yes writes the document into it, No opens Save
-    /// As on its name, and the action waiting on the save waits on either.
+    /// The file came out of a zip; Yes writes the document into it, No opens Save As on its
+    /// name, and the action waiting on the save waits on either.
     Update,
     NotFound,
     Error,

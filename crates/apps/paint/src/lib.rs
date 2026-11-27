@@ -25,11 +25,14 @@ use repriseapp::asks::Asks;
 use repriseapp::colordlg::ColorDialog;
 use repriseapp::decode::Decoders;
 use repriseapp::filedlg::Host;
+use repriseapp::jobbox::{JobBox, Woke};
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::print::Printing;
 use repriseapp::recent::Recent;
-use repriseapp::{App, Child, Ctx, DropForm, Event, Extended, FileDrop, MAIN, Reply, WinId};
+use repriseapp::{
+    App, Child, Ctx, DropForm, Event, Extended, FileDrop, MAIN, Reply, Start, Waker, WinId,
+};
 use reprisekit::access::Tree;
 use reprisekit::controls::aboutbox;
 use reprisekit::controls::filedlg::FileDlg;
@@ -67,8 +70,8 @@ enum Prompt {
     Overwrite(PathBuf, file::Kind),
     /// The picture's file takes no writes; OK opens Save As on its name, then `Then` runs.
     ReadOnly(Option<Then>),
-    /// The read-only file came out of a zip; Yes writes the picture into it, No opens Save As
-    /// on its name, and `Then` runs once either saved.
+    /// The file came out of a zip; Yes writes the picture into it, No opens Save As on its name,
+    /// and `Then` runs once either saved.
     Update(Option<Then>),
     /// A recovery file; Yes opens its picture.
     Recovered(PathBuf),
@@ -91,9 +94,14 @@ struct Paint {
     /// The tool the color picker goes back to.
     before_pick: Tool,
     path: Option<PathBuf>,
-    /// The zip and the path inside it the picture was copied out of, which a save of the
-    /// read-only copy offers to write into.
+    /// The zip and the path inside it the picture was copied out of, which a save of the copy
+    /// offers to write into.
     zip_entry: Option<(PathBuf, PathBuf)>,
+    /// The save into `zip_entry`'s zip while it runs, with its progress box, and what runs once
+    /// it lands.
+    zip_save: JobBox,
+    zip_then: Option<Then>,
+    waker: Option<Waker>,
     /// JPEG quality, from Save As.
     quality: u8,
     zoom: i32,
@@ -172,6 +180,9 @@ impl Paint {
             tool: Tool::Pencil,
             before_pick: Tool::Pencil,
             zip_entry: path.as_deref().and_then(reprisefs::archivecopy::updatable),
+            zip_save: JobBox::default(),
+            zip_then: None,
+            waker: None,
             path,
             quality: file::DEFAULT_QUALITY,
             zoom: 1,
@@ -298,6 +309,11 @@ impl App for Paint {
         view::INITIAL_SIZE
     }
 
+    fn start(&mut self, waker: Waker) -> Start {
+        self.waker = Some(waker);
+        Start::Continue
+    }
+
     fn children(&self) -> Vec<Child> {
         let mut kids = Vec::new();
         if self.fonts.is_some() {
@@ -345,6 +361,7 @@ impl App for Paint {
             }
         }
         kids.extend(self.printing.children());
+        kids.extend(self.zip_save.child(&self.forms));
         kids.extend(self.prompt.child(&self.dialog_text, &self.forms));
         kids
     }
@@ -356,7 +373,12 @@ impl App for Paint {
             self.alt_arm.interrupt();
         }
         let printed = win == MAIN && matches!(ev, Event::Wake) && self.printing.wake();
+        let saved = match (win, &ev) {
+            (MAIN, Event::Wake) => self.zip_save.wake(),
+            _ => Woke::Nothing,
+        };
         let reply = match win {
+            _ if self.zip_save.owns(win) => self.zip_save.event(&ev, ctx),
             _ if self.printing.owns(win) => self.print_event(win, ev, ctx),
             _ if self.prompt.owns(win) => self.prompt_event(win, ev),
             DIALOG => self.dialog_event(ev, ctx),
@@ -366,6 +388,11 @@ impl App for Paint {
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
+        };
+        let reply = match saved {
+            Woke::Nothing => reply,
+            Woke::Shown => reply.and(Reply::redraw_all()),
+            Woke::Ended(ended) => reply.and(self.zip_saved(ended)),
         };
         self.sync_menus();
         Reply {
@@ -380,6 +407,7 @@ impl App for Paint {
         let cs = &ctx.theme.colors;
         let px = self.forms.fonts.size_px;
         match win {
+            _ if self.zip_save.owns(win) => self.zip_save.draw(c, ctx),
             _ if self.printing.owns(win) => self.printing.draw(win, c, ctx),
             _ if self.prompt.owns(win) => self.prompt.draw(c, &self.forms, &self.dialog_text),
             DIALOG | FONTS => {
@@ -480,6 +508,7 @@ impl Extended for Paint {
         self.follow(ctx);
         let (dt, fpx) = (&self.dialog_text, self.forms.fonts.size_px);
         match win {
+            _ if self.zip_save.owns(win) => self.zip_save.access(tree, ctx),
             _ if self.printing.owns(win) => self.printing.access(win, tree, ctx),
             _ if self.prompt.owns(win) => self.prompt.access(tree, dt, &self.forms),
             DIALOG => {

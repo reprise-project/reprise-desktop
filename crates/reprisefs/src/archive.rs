@@ -169,10 +169,24 @@ fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failur
 /// [`MAX_ENTRIES`] entries, or whose names add up to more than [`MAX_NAME_BYTES`], is refused as
 /// soon as the listing passes them; cancelling `m` stops it.
 pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
-    list_within(archive, m, MAX_NAME_BYTES)
+    list_within(archive, m, MAX_NAME_BYTES, &mut |_, _| {})
 }
 
-fn list_within(archive: &Path, m: &Meter, most_names: usize) -> Result<Vec<Entry>, String> {
+/// [`list`], handing `note` each entry with its permission bits.
+pub(crate) fn list_noting(
+    archive: &Path,
+    m: &Meter,
+    note: &mut dyn FnMut(&Entry, u32),
+) -> Result<Vec<Entry>, String> {
+    list_within(archive, m, MAX_NAME_BYTES, note)
+}
+
+fn list_within(
+    archive: &Path,
+    m: &Meter,
+    most_names: usize,
+    note: &mut dyn FnMut(&Entry, u32),
+) -> Result<Vec<Entry>, String> {
     if zip_encrypted(archive) {
         return Err(tr!("archive-locked"));
     }
@@ -194,6 +208,7 @@ fn list_within(archive: &Path, m: &Meter, most_names: usize) -> Result<Vec<Entry
         let Some(e) = listed_entry(line, now) else {
             return true;
         };
+        note(&e, listed_mode(line));
         names += e.path.as_os_str().len();
         entries.push(e);
         names <= most_names
@@ -332,6 +347,19 @@ fn listed_entry(line: &[u8], now: i64) -> Option<Entry> {
         kind,
         size: if kind == Kind::File { size } else { 0 },
         modified: listed_time(month?, day?, third?, now),
+    })
+}
+
+/// The permission bits of a listing's line, read off its `-rwxr-xr-x` word.
+fn listed_mode(line: &[u8]) -> u32 {
+    let word = line.get(1..10).unwrap_or_default();
+    (word.iter().enumerate()).fold(0, |mode, (i, &b)| {
+        let on = match i % 3 {
+            0 => b == b'r',
+            1 => b == b'w',
+            _ => matches!(b, b'x' | b's' | b't'),
+        };
+        mode | (u32::from(on) << (8 - i))
     })
 }
 
@@ -859,7 +887,7 @@ fn open_dir(path: &Path) -> Option<std::fs::File> {
 }
 
 /// Takes `how` (`LOCK_SH` or `LOCK_EX`) on `file` without waiting: whether it was granted.
-fn flock(file: &std::fs::File, how: libc::c_int) -> bool {
+pub(crate) fn flock(file: &std::fs::File, how: libc::c_int) -> bool {
     use std::os::fd::AsRawFd;
     // SAFETY: flock on a file descriptor `file` keeps open.
     unsafe { libc::flock(file.as_raw_fd(), how | libc::LOCK_NB) == 0 }
@@ -1379,6 +1407,15 @@ mod tests {
     }
 
     #[test]
+    fn a_listed_mode_reads_the_permission_bits() {
+        let mode = |l: &str| listed_mode(l.as_bytes());
+        assert_eq!(mode("-rwxr-xr-x  0 1000 1000 2 Jan  2  2020 run.sh"), 0o755);
+        assert_eq!(mode("-rw-r-----  0 1000 1000 2 Jan  2  2020 a"), 0o640);
+        assert_eq!(mode("-rwsr-xr-T  0 1000 1000 2 Jan  2  2020 a"), 0o754);
+        assert_eq!(mode("drwx------  0 1000 1000 0 Jan  2  2020 d/"), 0o700);
+    }
+
+    #[test]
     fn a_listed_clock_time_takes_the_year_nearest_now() {
         let now = 1_800_000_000;
         let year = |t: i64| crate::locale::localtime(t).tm_year + 1900;
@@ -1631,9 +1668,12 @@ mod tests {
         bsdtar(&work, &args);
         let archive = t.path().join("many.tar.gz");
         let m = Meter::default();
-        assert_eq!(list_within(&archive, &m, 5000).map(|e| e.len()), Ok(50));
         assert_eq!(
-            list_within(&archive, &m, 4000),
+            list_within(&archive, &m, 5000, &mut |_, _| {}).map(|e| e.len()),
+            Ok(50)
+        );
+        assert_eq!(
+            list_within(&archive, &m, 4000, &mut |_, _| {}),
             Err("its names add up to more than 3.90 KB.".into())
         );
     }

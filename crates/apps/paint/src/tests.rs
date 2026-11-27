@@ -1302,7 +1302,16 @@ fn yes_on_the_update_box_says_why_a_zip_cannot_be_written() {
     let (what, _) = prompt_up(&p).expect("the update box");
     assert_eq!(what, Prompt::Update(None));
     p.prompt.close();
-    let reply = p.answered(what, Some(0));
+    p.answered(what, Some(0));
+    assert!(p.zip_save.running(), "the save runs on a job");
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let reply = loop {
+        if let Woke::Ended(ended) = p.zip_save.wake() {
+            break p.zip_saved(ended);
+        }
+        assert!(std::time::Instant::now() < until, "the save ends");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
     assert!(!reply.quit);
     assert_eq!(
         prompt_text(&p).as_deref(),
