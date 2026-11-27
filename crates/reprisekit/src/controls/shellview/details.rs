@@ -2,8 +2,11 @@
 
 use super::{Entry, ICON_PX, Layout, ShellView, list_icon, size_text};
 use crate::controls::listview;
-use crate::raster::Canvas;
+use crate::controls::metrics::ControlMetrics;
+use crate::look::Paint;
+use crate::raster::{Canvas, Rect};
 use crate::selection::Selection;
+use crate::text::TextRenderer;
 use crate::theme::TextUnits;
 use std::borrow::Cow;
 
@@ -31,6 +34,46 @@ pub fn resize_column(sv: &mut ShellView, col: usize, from: i32, dx: i32, u: Text
     };
     let width = u.within(u.len(from) + dx).max(listview::MIN_COL_W);
     std::mem::replace(&mut c.width, width) != width
+}
+
+/// Details' column `col` at the width that shows its title and every cell whole in `text` at
+/// `px` in `p`'s look, narrower or wider than it was: a double-click on its divider. `true`
+/// when it changed.
+pub fn fit_column(
+    sv: &mut ShellView,
+    col: usize,
+    text: &TextRenderer,
+    p: &Paint,
+    px: u32,
+    u: TextUnits,
+) -> bool {
+    let cells = listview::cells_width(&DetailsRows(&sv.entries, &sv.fields), col, text, px, u);
+    let Some(c) = sv.columns.get_mut(col) else {
+        return false;
+    };
+    let width =
+        (cells.max(listview::title_width(&c.title, text, p, px, u))).max(listview::MIN_COL_W);
+    std::mem::replace(&mut c.width, width) != width
+}
+
+/// Name at `base`, widened toward its widest cell as far as Details laid out in `frame` leaves
+/// room beside the other columns and the vertical bar, so a long name shows whole without a
+/// horizontal bar.
+pub fn fit_name(
+    sv: &mut ShellView,
+    base: i32,
+    frame: Rect,
+    cm: &ControlMetrics,
+    text: &TextRenderer,
+    px: u32,
+) {
+    let u = cm.text;
+    let others: i32 = sv.columns.iter().skip(1).map(|c| u.len(c.width)).sum();
+    let room = u.within(frame.inset(2).width - cm.scroll - others);
+    let need = listview::cells_width(&DetailsRows(&sv.entries, &sv.fields), 0, text, px, u);
+    if let Some(name) = sv.columns.first_mut() {
+        name.width = base.max(need.min(room));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

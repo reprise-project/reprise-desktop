@@ -412,6 +412,66 @@ fn a_title_released_off_it_or_a_divider_drag_sorts_nothing() {
 }
 
 #[test]
+fn a_double_click_on_a_divider_fits_the_column_and_keeps_the_width() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let long = "a name long enough to run well past the Name column.txt";
+    std::fs::write(dir.path().join(long), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.set_mode(shellview::Mode::Details);
+    ex.sv.columns[0].width = 60;
+    let (x, y) = details_point(&ex, &ctx, shellview::Hit::Divider(0));
+    let mods = repriseapp::Mods::default();
+    let press = |time| repriseapp::PointerInput::Press {
+        x,
+        y,
+        button: crate::BTN_LEFT,
+        time,
+        mods,
+    };
+    let release = repriseapp::PointerInput::Release {
+        x,
+        y,
+        button: crate::BTN_LEFT,
+        mods,
+    };
+    ex.pointer(press(5000), &mut ctx);
+    ex.pointer(release, &mut ctx);
+    assert_eq!(ex.sv.columns[0].width, 60, "one click leaves the width");
+    ex.pointer(press(5100), &mut ctx);
+    ex.pointer(release, &mut ctx);
+    let rows = shellview::DetailsRows(&ex.sv.entries, &ex.sv.fields);
+    let u = ctx.theme.controls().text;
+    let px = ctx.theme.fonts.size_px;
+    let widest = reprisekit::controls::listview::cells_width(&rows, 0, &ctx.text, px, u);
+    assert_eq!(ex.sv.columns[0].width, widest, "the long name shows whole");
+    assert_eq!(ex.settings.columns[0], widest, "the fitted width is kept");
+}
+
+#[test]
+fn a_folder_opens_with_name_wide_enough_for_its_longest_name() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let long = "Screenshot 2026-09-25 01-02-03 of the whole desktop.png";
+    std::fs::write(dir.path().join(long), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.set_mode(shellview::Mode::Details);
+    let rows = shellview::DetailsRows(&ex.sv.entries, &ex.sv.fields);
+    let u = ctx.theme.controls().text;
+    let px = ctx.theme.fonts.size_px;
+    let widest = reprisekit::controls::listview::cells_width(&rows, 0, &ctx.text, px, u);
+    assert!(widest > 178, "the name needs more than the saved 178 px");
+    let name = ex.sv.columns[0].width;
+    assert!(
+        (179..=widest).contains(&name),
+        "Name grows toward {widest}: {name}"
+    );
+    let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+    assert_eq!(sl.hscroll, None, "the columns fit the window");
+    assert_eq!(ex.settings.columns.first(), None, "opening saves no width");
+}
+
+#[test]
 fn thumb_buttons_step_back_and_forward() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let sub = dir.path().join("sub");

@@ -1796,3 +1796,55 @@ fn a_details_header_draws_a_held_title_in_each_interface() {
     }
     crate::pins::check("shellview/details_held_header", &got);
 }
+
+#[test]
+fn a_fitted_column_takes_its_widest_cell_and_never_less_than_its_title() {
+    let (text, px) = rend();
+    let cs = ColorScheme::default();
+    let p = classic_paint(&cs, 1);
+    let u = TextUnits::ONE;
+    let long = "a name long enough to run past the column.txt";
+    let mut sv = ShellView {
+        entries: vec![entry("a"), entry(long)],
+        mode: Mode::Details,
+        ..Default::default()
+    };
+    assert!(fit_column(&mut sv, 0, &text, &p, px, u), "Name grows");
+    let rows = DetailsRows(&sv.entries, &sv.fields);
+    let widest = listview::cells_width(&rows, 0, &text, px, u);
+    assert!(widest > 178, "the long name needs more than 178 px");
+    assert_eq!(sv.columns[0].width, widest);
+
+    sv.entries = vec![entry("a")];
+    assert!(fit_column(&mut sv, 0, &text, &p, px, u), "Name shrinks");
+    let title = listview::title_width("Name", &text, &p, px, u);
+    assert_eq!(sv.columns[0].width, title.max(listview::MIN_COL_W));
+}
+
+#[test]
+fn an_opened_listing_widens_name_only_as_far_as_the_window_has_room() {
+    let (text, px) = rend();
+    let cm = ControlMetrics::CLASSIC;
+    let long = "a name long enough to run past the column.txt";
+    let mut sv = ShellView {
+        entries: vec![entry(long)],
+        mode: Mode::Details,
+        ..Default::default()
+    };
+    let rows = DetailsRows(&sv.entries, &sv.fields);
+    let widest = listview::cells_width(&rows, 0, &text, px, cm.text);
+    let others: i32 = sv.columns[1..].iter().map(|c| c.width).sum();
+
+    fit_name(&mut sv, 178, Rect::new(0, 0, 2000, 400), &cm, &text, px);
+    assert_eq!(
+        sv.columns[0].width, widest,
+        "a wide window shows the name whole"
+    );
+
+    let narrow = 178 + others + 4 + cm.scroll + 40;
+    fit_name(&mut sv, 178, Rect::new(0, 0, narrow, 400), &cm, &text, px);
+    assert_eq!(sv.columns[0].width, 218, "Name takes the 40 px left over");
+
+    fit_name(&mut sv, 178, Rect::new(0, 0, 300, 400), &cm, &text, px);
+    assert_eq!(sv.columns[0].width, 178, "no room keeps the saved width");
+}

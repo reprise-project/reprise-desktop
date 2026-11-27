@@ -43,8 +43,8 @@ mod scroll;
 pub use access::access;
 pub use details::{
     DetailsRows, Field, bin_columns, bin_fields, computer_columns, computer_fields,
-    details_columns, details_fields, resize_column, search_columns, search_fields, sort,
-    sort_by_column,
+    details_columns, details_fields, fit_column, fit_name, resize_column, search_columns,
+    search_fields, sort, sort_by_column,
 };
 pub use drag::{DragRow, drag_image};
 pub use draw::draw;
