@@ -12,4 +12,6 @@ key-home = Pos1
 key-page-up = Bild auf
 key-left = Links
 key-plus = Plus
+key-left-alt = Alt links
+key-print = Druck
 hotkey-none = Keine

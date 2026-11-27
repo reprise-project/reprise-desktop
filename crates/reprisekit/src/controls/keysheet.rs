@@ -8,7 +8,11 @@ use crate::text::{Align, TextRenderer};
 use crate::theme::{Color, TextUnits, Theme};
 use accesskit::{NodeId, Role};
 
-pub const TITLE: &str = "Keyboard Shortcuts";
+/// The sheet's heading, in the user's language.
+pub fn title() -> String {
+    tr!("keysheet-title")
+}
+
 const PAD: i32 = 12;
 const TITLE_H: i32 = 24;
 const HEAD_H: i32 = 20;
@@ -155,7 +159,7 @@ pub fn layout(k: &KeySheet, theme: &Theme, text: &TextRenderer, room: (i32, i32)
     }
     let used_cols = if k.groups.is_empty() { 1 } else { col + 1 };
     let width = 2 * pad + used_cols * col_w + (used_cols - 1) * col_gap;
-    let width = width.max(2 * pad + width_of(text, theme, TITLE, true));
+    let width = width.max(2 * pad + width_of(text, theme, &title(), true));
     Layout {
         width,
         height: bottom + pad,
@@ -214,7 +218,7 @@ fn body(
         }
         text.measure(&t, bold, px)
     };
-    put(c, lay.title, TITLE, true);
+    put(c, lay.title, &title(), true);
     for ((g, head), rows) in k.groups.iter().zip(&lay.headings).zip(&lay.rows) {
         let label_w = put(c, *head, &g.title, true);
         let x0 = head.x * s + label_w + RULE_GAP * s;
@@ -244,7 +248,7 @@ pub fn hit(lay: &Layout, x: i32, y: i32) -> Option<(usize, usize)> {
 /// "keys: what". `at` is the sheet's rect.
 pub fn access(k: &KeySheet, lay: &Layout, at: Rect, tree: &mut Tree, parent: NodeId) -> NodeId {
     let shift = |r: Rect| Rect::new(at.x + r.x, at.y + r.y, r.width, r.height);
-    let id = tree.push(parent, "keysheet", access::named(Role::Group, at, TITLE));
+    let id = tree.push(parent, "keysheet", access::named(Role::Group, at, &title()));
     for (gi, ((g, head), rows)) in k
         .groups
         .iter()
