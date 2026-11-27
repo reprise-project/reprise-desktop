@@ -38,6 +38,7 @@ pub(crate) struct Outgoing {
     action: Option<DragAction>,
     dropped: bool,
     transfers: reprisebus::filetransfer::Transfers,
+    staged: Option<crate::Staged>,
     pub(crate) icon: Option<DragIcon>,
     source: DragSource,
 }
@@ -150,8 +151,11 @@ impl Host {
             return;
         };
         let transfers = reprisebus::filetransfer::Transfers::for_drag();
-        let mimes = dnd::source_mimes(transfers.offered());
-        let source = manager.create_drag_and_drop_source(&self.qh, mimes, DndAction::all());
+        let (mimes, actions) = match out.staged {
+            None => (dnd::source_mimes(transfers.offered()), DndAction::all()),
+            Some(_) => (dnd::source_mimes(false), DndAction::Copy),
+        };
+        let source = manager.create_drag_and_drop_source(&self.qh, mimes, actions);
         let icon = self.drag_icon(&out.image, out.grab);
         source.start_drag(
             device,
@@ -168,6 +172,7 @@ impl Host {
             action: None,
             dropped: false,
             transfers,
+            staged: out.staged,
             icon,
             source,
         });
@@ -655,6 +660,22 @@ impl DataSourceHandler for Host {
         } else if let Some(out) = self.drag_of(source) {
             // Each request is its own transfer: a target may read the key
             // while the drag passes over it and again at the drop.
+            if let Some(staged) = out.staged.clone() {
+                let Some(bytes) = dnd::encode_files(&out.paths, &mime) else {
+                    return;
+                };
+                let fd: std::os::fd::OwnedFd = fd.into();
+                let waits = std::thread::Builder::new().name("repriseapp-staged".into());
+                let spawned = waits.spawn(move || {
+                    if staged.wait(reprisefs::pipe::PASTE_TIMEOUT) {
+                        reprisefs::pipe::write_detached(fd, bytes.into());
+                    }
+                });
+                if let Err(e) = spawned {
+                    log::warn!("drag: cannot wait for the staged files: {e}");
+                }
+                return;
+            }
             if mime == dnd::FILE_TRANSFER {
                 let fd: std::os::fd::OwnedFd = fd.into();
                 out.transfers.send_key(out.paths.clone(), move |key| {

@@ -17,6 +17,7 @@
 use crate::URI_LIST;
 use reprisekit::raster::Canvas;
 use std::path::PathBuf;
+use std::sync::{Arc, Condvar, Mutex};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 
 /// `FILE_MIMES` is what a drag of files offers after the portal key;
@@ -286,6 +287,48 @@ pub struct DragOut {
     pub image: Canvas,
     /// Logical px from the image's top-left.
     pub grab: (i32, i32),
+    /// Set while the files are still being written: the drag offers only Copy and no portal
+    /// key, and sends its paths once they are there.
+    pub staged: Option<Staged>,
+}
+
+/// Files a drag names before they are all written. A target asking for the drag's data waits
+/// for [`Staged::done`], up to [`reprisefs::pipe::PASTE_TIMEOUT`], and gets nothing when they
+/// did not come out.
+#[derive(Clone, Default)]
+pub struct Staged(Arc<(Mutex<Option<bool>>, Condvar)>);
+
+impl Staged {
+    /// The files are there (`ok`) or will not be.
+    pub fn done(&self, ok: bool) {
+        let (state, cv) = &*self.0;
+        *state.lock().unwrap_or_else(|e| e.into_inner()) = Some(ok);
+        cv.notify_all();
+    }
+
+    /// Whether the files came out, waiting up to `limit` for them.
+    pub(crate) fn wait(&self, limit: std::time::Duration) -> bool {
+        let (state, cv) = &*self.0;
+        let held = state.lock().unwrap_or_else(|e| e.into_inner());
+        let (held, _) = cv
+            .wait_timeout_while(held, limit, |s| s.is_none())
+            .unwrap_or_else(|e| e.into_inner());
+        *held == Some(true)
+    }
+}
+
+impl PartialEq for Staged {
+    fn eq(&self, other: &Staged) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Staged {}
+
+impl std::fmt::Debug for Staged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Staged")
+    }
 }
 
 #[cfg(test)]
@@ -545,5 +588,25 @@ mod tests {
         }
         let text = Dropped::Text("file:///home/u/.ssh/id_ed25519".into());
         assert_eq!(held_drop(text.clone(), true), Some(text), "text is text");
+    }
+
+    #[test]
+    fn staged_files_are_waited_for_and_their_failure_or_absence_sends_nothing() {
+        use std::time::Duration;
+        let staged = Staged::default();
+        let later = staged.clone();
+        let done = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            later.done(true);
+        });
+        assert!(staged.wait(Duration::from_secs(20)), "out once done");
+        done.join().unwrap();
+        assert!(
+            !Staged::default().wait(Duration::from_millis(20)),
+            "never done"
+        );
+        let failed = Staged::default();
+        failed.done(false);
+        assert!(!failed.wait(Duration::from_secs(20)));
     }
 }

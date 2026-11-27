@@ -455,6 +455,8 @@ pub struct Explorer {
     generation: u64,
     /// The compressed folders' listings, kept while their archives stay unchanged.
     pub(crate) archives: reprisefs::archive::Listings,
+    /// A drag's copy out of a compressed folder, answering why it failed.
+    pub(crate) drag_copy: Option<Job<Option<(String, String)>>>,
     /// The scale the main window last drew at ([`Explorer::follow_scale`]).
     drawn_scale: i32,
     /// The size the toolbar's icons were last fetched at
@@ -755,6 +757,7 @@ impl Explorer {
             ),
             generation: 0,
             archives: Default::default(),
+            drag_copy: None,
             drawn_scale: 0,
             toolbar_px: 0,
             drawn_theme: None,

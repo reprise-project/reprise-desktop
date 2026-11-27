@@ -1970,3 +1970,38 @@ fn a_folder_opens_in_a_window_of_its_own_under_new_window() {
         "this window stays"
     );
 }
+
+/// A drag out of a compressed folder names copies of its entries in a fresh scratch folder,
+/// offers only Copy, and the copies come out behind it.
+#[test]
+fn a_drag_out_of_a_compressed_folder_names_copies_that_come_out() {
+    let mut ctx = test_ctx();
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir(dir.path().join("src")).expect("mkdir");
+    std::fs::write(dir.path().join("src/a.txt"), "inside").expect("write");
+    let made = std::process::Command::new("bsdtar")
+        .current_dir(dir.path().join("src"))
+        .args(["-czf", "../pack.tar.gz", "a.txt"])
+        .status()
+        .expect("bsdtar runs");
+    assert!(made.success());
+    let tar = dir.path().join("pack.tar.gz");
+    let mut ex = crate::tests::test_explorer(Place::Archive(tar.clone(), PathBuf::new()), &mut ctx);
+    ex.sv.mode = Mode::Icons;
+    ex.draw_list_icons(&mut ctx);
+    let at = centre(&ex, &ctx, index_of(&ex, "a.txt"));
+
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
+    let out = r.start_drag.expect("the drag started");
+    assert!(out.staged.is_some(), "its copies are still coming out");
+    let [copy] = &out.paths[..] else {
+        panic!("one copy: {:?}", out.paths);
+    };
+    assert!(copy.starts_with(crate::tests::scratch().join("cache/reprise/archives")));
+    assert_eq!(copy.file_name(), Some("a.txt".as_ref()));
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copy.is_none());
+    assert_eq!(std::fs::read_to_string(copy).expect("copied"), "inside");
+    assert!(ex.dialog().is_none(), "no box: the copy came out");
+    ex.drag_ended();
+}

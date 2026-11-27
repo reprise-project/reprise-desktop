@@ -182,6 +182,16 @@ fn delete_planned(
 
 impl Explorer {
     pub fn clipboard(&mut self, cut: bool, ctx: &mut Ctx) -> Reply {
+        if matches!(self.place, Place::Archive(..)) {
+            // Its entries come out first; cutting one would change a read-only place.
+            return match cut {
+                true => Reply::none(),
+                false => {
+                    let items = self.selection_paths();
+                    self.copy_out(&items, crate::extracting::Then::Clipboard, ctx)
+                }
+            };
+        }
         let paths = self.selected_paths();
         if paths.is_empty() || self.place == Place::RecycleBin {
             return Reply::none();

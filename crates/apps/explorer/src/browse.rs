@@ -196,7 +196,11 @@ pub fn make_new_folder(dir: &Path) -> std::io::Result<(PathBuf, Option<reprisefs
 
 impl Explorer {
     pub fn open_browse(&mut self, pick: Pick, ctx: &mut Ctx) -> Reply {
-        let items = self.selected_paths();
+        let items = match (pick, &self.place) {
+            // A compressed folder's entries, by their paths in its listing, copy out.
+            (Pick::Copy, Place::Archive(..)) => self.selection_paths(),
+            _ => self.selected_paths(),
+        };
         self.browse_items(pick, items, ctx)
     }
 
@@ -215,7 +219,12 @@ impl Explorer {
         let mut places = foldertree::Places::default();
         places.px = treeview::icon_px(ctx.forms().controls().text);
         foldertree::build(&mut tree, &mut places, &mut ctx.icons);
-        let here = items[0].parent().map(Place::from_path);
+        // A compressed folder's entries start the walk at the folder holding the archive.
+        let first = match self.place.archive_entry(&items[0]) {
+            Some((file, _)) => file,
+            None => &items[0],
+        };
+        let here = first.parent().map(Place::from_path);
         let walk_to = here.clone().unwrap_or(Place::Desktop);
         let mut walking = None;
         let chain = foldertree::to_fill(&tree, &places, &walk_to, inp.drive_mounts);
@@ -445,6 +454,13 @@ impl Explorer {
                 let Some(dir) = dir else {
                     return self.put_back_picker(b, Reply::none());
                 };
+                if b.pick == Pick::Copy
+                    && (b.items.first()).is_some_and(|i| self.place.archive_entry(i).is_some())
+                {
+                    self.browse_left.extend(b.making);
+                    let then = crate::extracting::Then::Into(dir);
+                    return self.copy_out(&b.items, then, ctx).and(Reply::redraw_all());
+                }
                 let op = match b.pick {
                     Pick::Move => DropOp::Move,
                     Pick::Copy => DropOp::Copy,
