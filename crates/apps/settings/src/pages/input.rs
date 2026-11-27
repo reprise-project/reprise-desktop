@@ -383,7 +383,7 @@ pub fn touchpad(a: Area) -> Form {
         ),
         Item::check("gestures_enabled", x2, 66, &tr!("pages-input-swipe-with")),
         combo_of("gesture_fingers", x2 + 88, 62, 78, GESTURE_FINGERS)
-            .named(&tr!("pages-input-swipe-fingers")),
+            .named(tr!("pages-input-swipe-fingers")),
         Item::check(
             "disable_with_mouse",
             GX,

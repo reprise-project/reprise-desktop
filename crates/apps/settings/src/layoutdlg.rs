@@ -49,7 +49,7 @@ fn combo(id: &'static str, y: i32, items: Vec<ListItem>, selected: usize) -> Ite
 
 /// The Variant combo's rows for `l`: "None", then its variants.
 fn variant_items(l: Option<&Layout>) -> Vec<ListItem> {
-    std::iter::once(ListItem::new(&tr!("layoutdlg-none")))
+    std::iter::once(ListItem::new(tr!("layoutdlg-none")))
         .chain(
             l.into_iter()
                 .flat_map(|l| &l.variants)

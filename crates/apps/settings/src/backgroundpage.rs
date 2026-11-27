@@ -188,7 +188,7 @@ pub fn page(a: Area) -> Form {
             WALLPAPER,
             list_rect(a),
             Control::ListBox {
-                list: ListBox::new(vec![none_row_text().into()], Some(0)),
+                list: ListBox::new(vec![none_row_text()], Some(0)),
                 icons: vec![None],
             },
         ),
@@ -290,7 +290,7 @@ pub fn page(a: Area) -> Form {
             &tr!("backgroundpage-desktop-water"),
         ),
         choice(WATER_STYLE, X + 112, SLIDE_Y + 28 + dh, 80, WATER_STYLES)
-            .named(&tr!("backgroundpage-water-style")),
+            .named(tr!("backgroundpage-water-style")),
         Item::label_at(
             WATER_NOTE,
             X + 198,

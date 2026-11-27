@@ -257,7 +257,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
             time_edit(DARK_HOURS[1], rx, y(422), TIME_W),
             Item::label_at(DARK_HOURS[2], rx + TIME_W + 4, y(426), 14, "to"),
             time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(422), TIME_W)
-                .named(&tr!("appearancepage-dark-until")),
+                .named(tr!("appearancepage-dark-until")),
         ]);
     }
     Form::new(items)

@@ -948,7 +948,7 @@ pub fn page(d: &Display, a: Area) -> Form {
             Rect::new(65, 113 + dy, 71, trackbar::HEIGHT),
             Control::TrackBar(bar),
         )
-        .named(&tr!("displaypage-screen-resolution-2")),
+        .named(tr!("displaypage-screen-resolution-2")),
     );
     items.push(Item::aligned(
         "mode_label",

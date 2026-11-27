@@ -271,7 +271,7 @@ pub fn privacy(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named(&tr!("pages-system-clipboard-access")),
+        .named(tr!("pages-system-clipboard-access")),
         group(a, "history_group", y, 88, &tr!("pages-system-history")),
         Item::check(
             "recent_files",
@@ -540,7 +540,7 @@ pub fn notifications(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named(&tr!("pages-system-program-notifications")),
+        .named(tr!("pages-system-program-notifications")),
         Item::check(
             notifypage::BALLOONS,
             GX,
@@ -778,7 +778,7 @@ pub fn remote_desktop(
     let print_x = X + PRINT_W + 4;
     items.extend([
         combo_of(REMOTE_PRINT, X, 100 + dy, PRINT_W, &PRINTS)
-            .named(&tr!("pages-system-certificate")),
+            .named(tr!("pages-system-certificate")),
         edit(
             REMOTE_FINGERPRINT,
             print_x,
