@@ -49,6 +49,9 @@ pub struct Browse {
     pub making: Option<Making>,
     pub clicks: DoubleClick<Option<browsefolder::Hit>>,
     pub refused: Option<Refused>,
+    /// Copy To Folder... in a compressed folder: the archive and its entries' paths, taken when
+    /// the picker opened, which copy out once a folder is picked.
+    pub archive_picks: Option<(PathBuf, Vec<PathBuf>)>,
 }
 
 pub const ERROR: repriseapp::WinId = repriseapp::WinId::named("browse error");
@@ -246,6 +249,9 @@ impl Explorer {
             Pick::Copy => tr!("browse-items-copy"),
             Pick::Extract => tr!("browse-items-extract"),
         };
+        let archive_picks = (pick == Pick::Copy)
+            .then(|| self.archive_picks(&items))
+            .flatten();
         let mut b = Browse {
             bf: BrowseFolder::new(prompt(pick, &items), accept, tree),
             places,
@@ -258,6 +264,7 @@ impl Explorer {
             making: None,
             clicks: DoubleClick::default(),
             refused: None,
+            archive_picks,
         };
         if self.keyed {
             b.bf.cue(true);
@@ -454,12 +461,10 @@ impl Explorer {
                 let Some(dir) = dir else {
                     return self.put_back_picker(b, Reply::none());
                 };
-                if b.pick == Pick::Copy
-                    && (b.items.first()).is_some_and(|i| self.place.archive_entry(i).is_some())
-                {
+                if let Some(picks) = b.archive_picks.take() {
                     self.browse_left.extend(b.making);
                     let then = crate::extracting::Then::Into(dir);
-                    return self.copy_out(&b.items, then, ctx).and(Reply::redraw_all());
+                    return self.copy_out(picks, then, ctx).and(Reply::redraw_all());
                 }
                 let op = match b.pick {
                     Pick::Move => DropOp::Move,
@@ -1031,6 +1036,7 @@ mod tests {
             making: None,
             clicks: DoubleClick::default(),
             refused: None,
+            archive_picks: None,
         };
         let judge = |b: &mut Browse| {
             if let Some(read) = b.judge() {

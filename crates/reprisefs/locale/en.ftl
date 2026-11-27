@@ -44,6 +44,8 @@ background-no-data-dir = there is no data folder to keep the picture in.
 background-no-name = the picture has no file name.
 archive-locked = it is password-protected.
 archive-not-held = it no longer holds { $name }.
+archive-path-too-long = it holds a path too long to copy out.
+archive-line-too-long = bsdtar listed a name too long to read.
 
 ## Copy, move and shortcut errors
 move-failed-title = Error Moving File or Folder

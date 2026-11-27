@@ -78,6 +78,20 @@ pub(crate) type UndoEdit = Box<dyn FnOnce(&reprisefs::undo::SharedUndo) -> JobDo
 pub(crate) type ItemOp = (PathBuf, DropOp, String, bool);
 
 /// Wake the window once a job just started may have run long enough to show its dialog.
+/// Removes the folders `dirs` and all they hold on a thread of their own.
+pub(crate) fn remove_in_background(dirs: Vec<PathBuf>) {
+    if dirs.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        for d in dirs {
+            if let Err(e) = std::fs::remove_dir_all(&d) {
+                log::debug!("explorer: cannot remove {}: {e}", d.display());
+            }
+        }
+    });
+}
+
 pub(crate) fn wake_to_show(ctx: &Ctx) {
     let wake = ctx.wake.clone();
     std::thread::spawn(move || {
@@ -186,10 +200,10 @@ impl Explorer {
             // Its entries come out first; cutting one would change a read-only place.
             return match cut {
                 true => Reply::none(),
-                false => {
-                    let items = self.selection_paths();
-                    self.copy_out(&items, crate::extracting::Then::Clipboard, ctx)
-                }
+                false => match self.archive_picks(&self.selection_paths()) {
+                    Some(picks) => self.copy_out(picks, crate::extracting::Then::Clipboard, ctx),
+                    None => Reply::none(),
+                },
             };
         }
         let paths = self.selected_paths();
@@ -230,6 +244,8 @@ impl Explorer {
     }
 
     pub fn clipboard_paths(&mut self, cut: bool, paths: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
+        // The copies a compressed folder's Copy put on the clipboard go with it.
+        remove_in_background(self.clip_scratch.take().into_iter().collect());
         self.refresh_chrome(ctx);
         Reply {
             redraw: true,
@@ -896,6 +912,20 @@ impl Explorer {
             });
         }
         reply
+    }
+
+    /// Whether no put is running, queued, being checked or asking about a clash.
+    pub(crate) fn puts_idle(&self) -> bool {
+        self.put.is_none()
+            && self.put_queue.is_empty()
+            && self.clashing.is_empty()
+            && self.unsettled.iter().all(|j| j.settled())
+            && !(self.dialogs.iter()).any(|d| {
+                matches!(
+                    d,
+                    Dialog::Paste(_) | Dialog::Reading(_) | Dialog::Replace(_)
+                )
+            })
     }
 
     pub(crate) fn busy(&self) -> bool {
