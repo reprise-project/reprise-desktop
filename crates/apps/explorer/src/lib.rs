@@ -53,7 +53,7 @@ mod window;
 use dialogs::DIALOG;
 use dialogs::{Dialog, PROGRAM_BROWSE, is_dialog};
 use menus::MenuState;
-use place::{Listed, Place, archive_place, list, sort_order_grouped};
+use place::{Found, Listed, Place, archive_place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::AltArm;
@@ -205,8 +205,8 @@ pub(crate) struct Checking {
     place: Place,
     /// The place shown at Enter: an answer landing after the window moved on is dropped.
     from: Place,
-    /// The place the text names once checked: `None` when it is not there.
-    job: Job<Option<Place>>,
+    /// What the text names once checked.
+    job: Job<Found>,
 }
 
 /// A place as a listing's thread read it ([`Explorer::show`]), with the children of the
@@ -1027,21 +1027,23 @@ impl Explorer {
         (c.from == self.place).then(|| self.checked(c.typed.as_deref(), c.place, found, ctx))
     }
 
-    fn checked(
-        &mut self,
-        typed: Option<&str>,
-        place: Place,
-        found: Option<Place>,
-        ctx: &mut Ctx,
-    ) -> Reply {
+    fn checked(&mut self, typed: Option<&str>, place: Place, found: Found, ctx: &mut Ctx) -> Reply {
         match (typed, found) {
-            (Some(_), Some(found)) => self.go(found, ctx),
-            (Some(typed), None) => self.not_found(typed, ctx),
-            (None, Some(found)) if found == place => Reply::none(),
+            (Some(_), Found::Place(found)) => self.go(found, ctx),
+            (Some(typed), _) => self.not_found(typed, ctx),
+            (None, Found::Place(found)) if found == place => Reply::none(),
+            (None, Found::Place(found)) => {
+                self.history = History::new(found.clone());
+                self.show(found, ctx)
+            }
             (None, found) => {
-                let shown = found.unwrap_or(Place::Home);
-                self.history = History::new(shown.clone());
-                self.show(shown, ctx)
+                self.history = History::new(Place::Home);
+                let shown = self.show(Place::Home, ctx);
+                // A start folder inside an archive says it is not there, as typing it would.
+                match found {
+                    Found::NotHeld(path) => shown.and(self.not_found(&path.to_string_lossy(), ctx)),
+                    _ => shown,
+                }
             }
         }
     }
@@ -1054,11 +1056,11 @@ impl Explorer {
         dir: PathBuf,
         is_dir: impl FnOnce(&Path) -> bool + Send + 'static,
         ctx: &Ctx,
-    ) -> Job<Option<Place>> {
+    ) -> Job<Found> {
         let (globs, apps) = (self.globs.clone(), self.app_index.clone());
         let archives = self.archives.clone();
         Job::spawn(Some(&ctx.wake), move || match is_dir(&dir) {
-            true => Some(place),
+            true => Found::Place(place),
             false => archive_place(&dir, &globs, &apps, &archives),
         })
     }
