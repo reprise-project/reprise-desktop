@@ -17,7 +17,9 @@ use reprisekit::controls::form::{Form, Item};
 use reprisekit::raster::Rect;
 use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item as TomlItem, Table, Value};
 
+use crate::model::Label;
 use crate::pages::{Area, GX, X};
+use reprisekit::tr;
 
 /// One `[[tablet_pads]]` entry's own keys; an empty string or `None` is a
 /// key the file leaves out.
@@ -43,10 +45,10 @@ pub struct PadEntry {
 impl Eq for PadEntry {}
 
 /// The pad keys a `keys` table names, and their row labels.
-pub const PAD_KEYS: [(&str, &str); 3] = [
-    ("buttonconfig", "Config key:"),
-    ("controlpanel", "Panel key:"),
-    ("onscreen_keyboard", "Keyboard key:"),
+pub const PAD_KEYS: [(&str, Label); 3] = [
+    ("buttonconfig", || tr!("tabletpage-config-key")),
+    ("controlpanel", || tr!("tabletpage-panel-key")),
+    ("onscreen_keyboard", || tr!("tabletpage-keyboard-key")),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,14 +67,17 @@ pub enum Slot {
 impl Slot {
     fn label(self) -> String {
         match self {
-            Slot::Button(n) => format!("Button {n}:"),
-            Slot::Key(k) => PAD_KEYS.iter().find(|p| p.0 == k).map_or(k, |p| p.1).into(),
-            Slot::RingUp => "Ring up:".into(),
-            Slot::RingDown => "Ring down:".into(),
-            Slot::StripUp => "Strip up:".into(),
-            Slot::StripDown => "Strip down:".into(),
-            Slot::DialUp => "Dial up:".into(),
-            Slot::DialDown => "Dial down:".into(),
+            Slot::Button(n) => tr!("tabletpage-button", n = n.to_string()),
+            Slot::Key(k) => PAD_KEYS
+                .iter()
+                .find(|p| p.0 == k)
+                .map_or_else(|| k.to_string(), |p| (p.1)()),
+            Slot::RingUp => tr!("tabletpage-ring-up"),
+            Slot::RingDown => tr!("tabletpage-ring-down"),
+            Slot::StripUp => tr!("tabletpage-strip-up"),
+            Slot::StripDown => tr!("tabletpage-strip-down"),
+            Slot::DialUp => tr!("tabletpage-dial-up"),
+            Slot::DialDown => tr!("tabletpage-dial-down"),
         }
     }
 }
@@ -402,29 +407,29 @@ pub fn write(doc: &mut DocumentMut, want: &[PadEntry], base: &[PadEntry]) {
 /// What the combos offer besides a value the file has: (value, row).
 /// Mirrors action names in the compositor's `Action::name` and chords
 /// as `[[keybinds]]` spell them.
-pub const CHOICES: &[(&str, &str)] = &[
-    ("", "(None)"),
-    ("ctrl+z", "Undo (Ctrl+Z)"),
-    ("ctrl+shift+z", "Redo (Ctrl+Shift+Z)"),
-    ("ctrl+plus", "Zoom in (Ctrl++)"),
-    ("ctrl+minus", "Zoom out (Ctrl+-)"),
-    ("zoom-in", "Magnify"),
-    ("zoom-out", "Magnify less"),
-    ("showdesktop", "Show desktop"),
-    ("startmenu", "Start menu"),
-    ("overview", "Overview"),
-    ("launcher", "Launcher"),
-    ("run", "Run..."),
-    ("screenshot-region", "Screenshot"),
-    ("volume-up", "Volume up"),
-    ("volume-down", "Volume down"),
-    ("mode", "Next mode"),
+pub const CHOICES: &[(&str, Label)] = &[
+    ("", || tr!("tabletpage-none")),
+    ("ctrl+z", || tr!("tabletpage-undo-ctrl-z")),
+    ("ctrl+shift+z", || tr!("tabletpage-redo-ctrl-shift-z")),
+    ("ctrl+plus", || tr!("tabletpage-zoom-in-ctrl")),
+    ("ctrl+minus", || tr!("tabletpage-zoom-out-ctrl")),
+    ("zoom-in", || tr!("tabletpage-magnify")),
+    ("zoom-out", || tr!("tabletpage-magnify-less")),
+    ("showdesktop", || tr!("tabletpage-show-desktop")),
+    ("startmenu", || tr!("tabletpage-start-menu")),
+    ("overview", || tr!("tabletpage-overview")),
+    ("launcher", || tr!("tabletpage-launcher")),
+    ("run", || tr!("tabletpage-run")),
+    ("screenshot-region", || tr!("tabletpage-screenshot")),
+    ("volume-up", || tr!("tabletpage-volume-up")),
+    ("volume-down", || tr!("tabletpage-volume-down")),
+    ("mode", || tr!("tabletpage-next-mode")),
 ];
 
 /// The combo rows for a slot bound to `value`: the choices, then
 /// `value` itself when they do not offer it; and the row to select.
 pub fn rows(value: &str) -> (Vec<String>, usize) {
-    let mut rows: Vec<String> = CHOICES.iter().map(|c| c.1.to_string()).collect();
+    let mut rows: Vec<String> = CHOICES.iter().map(|c| (c.1)()).collect();
     let at = match CHOICES.iter().position(|c| c.0 == value) {
         Some(i) => i,
         None => {
@@ -520,19 +525,29 @@ const LABEL_IDS: [&str; ROWS] = [
 /// column up to their most.
 pub fn page(a: Area, pads: &[Pad], picked: usize, entries: &[PadEntry]) -> Form {
     let gw = a.gw();
-    let mut items = vec![Item::group(GROUP, Rect::new(X, 44, a.w, 380), "Tablet Pad")];
+    let mut items = vec![Item::group(
+        GROUP,
+        Rect::new(X, 44, a.w, 380),
+        &tr!("tabletpage-tablet-pad"),
+    )];
     let Some(pad) = pads.get(picked) else {
         items.push(Item::label_at(
             NONE,
             GX,
             66,
             gw,
-            "No tablet pad is connected.",
+            &tr!("tabletpage-no-tablet-pad-is-connected"),
         ));
         return Form::new(items);
     };
     let names: Vec<&str> = pads.iter().map(|p| p.name.as_str()).collect();
-    items.push(Item::label_at(PAD_LABEL, GX, 66, 40, "&Pad:"));
+    items.push(Item::label_at(
+        PAD_LABEL,
+        GX,
+        66,
+        40,
+        &tr!("tabletpage-pad"),
+    ));
     let mut c = Item::combo(
         PAD,
         GX + 44,
@@ -560,8 +575,8 @@ pub fn page(a: Area, pads: &[Pad], picked: usize, entries: &[PadEntry]) -> Form 
             Row::Step(step) => {
                 let (id, units_id, range, units) = step.spin();
                 let label = match step {
-                    Step::Ring => "Ring step:",
-                    Step::Strip => "Strip step:",
+                    Step::Ring => &tr!("tabletpage-ring-step"),
+                    Step::Strip => &tr!("tabletpage-strip-step"),
                 };
                 let v = entry.and_then(|e| e.step(step)).unwrap_or(step.default());
                 let mut spin = crate::pages::spin(LABEL_IDS[i], id, x, y, label_w, label, range);
@@ -602,7 +617,7 @@ pub fn page(a: Area, pads: &[Pad], picked: usize, entries: &[PadEntry]) -> Form 
         GX,
         86,
         gw,
-        "Per-mode bindings go in config.toml.",
+        &tr!("tabletpage-per-mode-bindings-go-in-config"),
     ));
     Form::new(items)
 }

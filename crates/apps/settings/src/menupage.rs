@@ -13,6 +13,7 @@ use reprisekit::text::{escape_mnemonic, split_mnemonic};
 use crate::model::STARTMENU_STYLES;
 use crate::pages::{Area, X, choice, edit};
 use crate::startmenu::{self, Entry, Target};
+use reprisekit::tr;
 
 pub const TREE: &str = "sm_tree";
 pub const ADD: &str = "sm_add";
@@ -28,14 +29,26 @@ pub fn tree_rect(a: Area) -> Rect {
 }
 const BUTTON_STEP: i32 = BUTTON_H + 4;
 
-pub const NEW_FOLDER: &str = "New Folder";
-const SEPARATOR: &str = "(Separator)";
-const ROOT: &str = "Start Menu";
+pub fn new_folder_text() -> String {
+    tr!("menupage-new-folder")
+}
+fn separator() -> String {
+    tr!("menupage-separator")
+}
+fn root() -> String {
+    tr!("menupage-start-menu")
+}
 
 pub fn page(a: Area) -> Form {
     let tree_rect = tree_rect(a);
     let mut items = vec![
-        Item::label_at("startmenu_style_label", X, 48, 110, "Start menu st&yle:"),
+        Item::label_at(
+            "startmenu_style_label",
+            X,
+            48,
+            110,
+            &tr!("menupage-start-menu-style"),
+        ),
         choice(
             "startmenu_style",
             X + 114,
@@ -43,24 +56,22 @@ pub fn page(a: Area) -> Form {
             a.combo(Area::MIN.w - 114),
             STARTMENU_STYLES,
         ),
-        Item::label_at("banner_label", X, 74, 110, "&Banner:"),
+        Item::label_at("banner_label", X, 74, 110, &tr!("menupage-banner")),
         edit("startmenu_banner", X + 114, 70, a.w - 114),
         Item::new(
             STYLE_NOTE,
             Rect::new(X, 94, a.w, LINE_H),
-            Control::Lines(vec![
-                "Only the Classic style shows the banner and menu below.".into(),
-            ]),
+            Control::Lines(vec![tr!("menupage-only-the-classic-style-shows-the")]),
         ),
-        Item::new(TREE, tree_rect, Control::Tree(tree(&[]))).named("Start menu"),
+        Item::new(TREE, tree_rect, Control::Tree(tree(&[]))).named(&tr!("menupage-start-menu-2")),
     ];
     let buttons = [
-        (ADD, "&Add..."),
-        (FOLDER, "New &Folder"),
-        (RENAME, "Re&name..."),
-        (REMOVE, "&Remove"),
-        (UP, "Move &Up"),
-        (DOWN, "Move Do&wn"),
+        (ADD, &tr!("menupage-add")),
+        (FOLDER, &tr!("menupage-new-folder-2")),
+        (RENAME, &tr!("menupage-rename")),
+        (REMOVE, &tr!("menupage-remove")),
+        (UP, &tr!("menupage-move-up")),
+        (DOWN, &tr!("menupage-move-down")),
     ];
     for (i, (id, text)) in buttons.into_iter().enumerate() {
         let r = Rect::new(
@@ -83,7 +94,7 @@ pub fn shown(e: &Entry) -> String {
 pub fn shown_as(e: &Entry, user: &str) -> String {
     match e.label() {
         Some(l) => split_mnemonic(&expand_label(l, &escape_mnemonic(user))).0,
-        None => SEPARATOR.into(),
+        None => separator().into(),
     }
 }
 
@@ -109,7 +120,7 @@ fn tree(entries: &[Entry]) -> TreeView {
         has_children: true,
         expanded: true,
         children: nodes(entries),
-        ..Node::new(ROOT, true)
+        ..Node::new(&root(), true)
     };
     TreeView::new(vec![root], Style::Classic)
 }
@@ -262,7 +273,7 @@ pub fn insert(
 }
 
 pub fn new_folder(form: &mut Form, entries: &mut Vec<Entry>, cm: &ControlMetrics) -> bool {
-    let e = Entry::item(NEW_FOLDER, "", Target::Folder(Vec::new()));
+    let e = Entry::item(&new_folder_text(), "", Target::Folder(Vec::new()));
     insert(form, entries, e, cm).is_some()
 }
 
@@ -454,7 +465,10 @@ mod tests {
         assert!(t.node(&[0, 5]).unwrap().expanded && t.node(&[0, 5]).unwrap().has_children);
         assert_eq!(labels(&f, &[5]), ["Editor"]);
         pick(&mut f, &[5], &CM);
-        assert_eq!(selected_label(&f, &m).as_deref(), Some(NEW_FOLDER));
+        assert_eq!(
+            selected_label(&f, &m).as_deref(),
+            Some(new_folder_text().as_str())
+        );
         assert!(rename(&mut f, &mut m, "&Tools"));
         assert_eq!(labels(&f, &[])[5], "Tools");
         assert_eq!(

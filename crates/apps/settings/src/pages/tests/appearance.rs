@@ -327,8 +327,8 @@ fn a_custom_glass_colour_keeps_its_row() {
     let mut s = with(&got);
     let (list, at) = rows(&s, p, appearancepage::GLASS_COLOR);
     assert_eq!(
-        (list.last().map(String::as_str), at),
-        (Some(appearancepage::CUSTOM_ROW), list.len() - 1)
+        (list.last().cloned(), at),
+        (Some(appearancepage::custom_row()), list.len() - 1)
     );
     let untouched = got.clone();
     read_one(&s, "interface", &mut got);

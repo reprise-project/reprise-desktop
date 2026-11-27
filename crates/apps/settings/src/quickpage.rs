@@ -15,6 +15,7 @@ use reprisekit::raster::{Canvas, Rect};
 use crate::additem::NewItem;
 use crate::model::ACTIONS;
 use crate::pages::{Area, GX, X};
+use reprisekit::tr;
 
 pub const LIST: &str = "ql_list";
 pub const ADD: &str = "ql_add";
@@ -47,12 +48,12 @@ pub struct Launcher {
 pub fn items(a: Area) -> Vec<Item> {
     let list_rect = list_rect(a);
     let mut items = vec![
-        Item::group("ql_group", group_rect(a), "Quick Launch"),
+        Item::group("ql_group", group_rect(a), &tr!("quickpage-quick-launch")),
         Item::check(
             "taskbar_pinned",
             GX,
             304 + a.dh,
-            "Show the Quick Launch programs as pinned tas&k buttons",
+            &tr!("quickpage-show-the-quick-launch-programs-as"),
         ),
         Item::new(
             LIST,
@@ -64,10 +65,10 @@ pub fn items(a: Area) -> Vec<Item> {
         ),
     ];
     let buttons = [
-        (ADD, "A&dd..."),
-        (REMOVE, "Remo&ve"),
-        (UP, "Move U&p"),
-        (DOWN, "Move D&own"),
+        (ADD, &tr!("quickpage-add")),
+        (REMOVE, &tr!("quickpage-remove")),
+        (UP, &tr!("quickpage-move-up")),
+        (DOWN, &tr!("quickpage-move-down")),
     ];
     for (i, (id, text)) in buttons.into_iter().enumerate() {
         let r = Rect::new(
@@ -129,7 +130,7 @@ pub fn add(dir: &Path, item: &NewItem) -> std::io::Result<String> {
                 .ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
-                        "the command holds a control character",
+                        tr!("quickpage-the-command-holds-a-control-character"),
                     )
                 })?;
             let name = format!("{}.desktop", ql::slug(&item.name));

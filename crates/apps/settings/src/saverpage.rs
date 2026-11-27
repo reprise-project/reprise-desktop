@@ -12,8 +12,10 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::saver::{self, Kind, Options, Saver};
 use reprisekit::text::TextRenderer;
 
+use crate::model::Label;
 use crate::model::{LOCK_MEDIA, Settings};
 use crate::pages::{Area, GX, X, button, choice, spin};
+use reprisekit::tr;
 
 pub const MONITOR: &str = "saver_monitor";
 pub const SAVER: &str = "saver";
@@ -28,23 +30,34 @@ const AWAY_ROWS: usize = 8;
 const MONITOR_RECT: Rect = Rect::new(X, 44, 191, 168);
 /// The right column, beside the monitor; 159 px wide at [`Area::MIN`].
 const RX: i32 = X + 199;
-pub const NONE_ROW: &str = "(None)";
+pub fn none_row() -> String {
+    tr!("saverpage-none")
+}
 /// Seconds of wait a saver picked over "(None)" starts with.
 pub const WAIT_DEFAULT: i64 = 600;
 
 pub fn page(a: Area) -> Form {
-    let rows: Vec<&str> = std::iter::once(NONE_ROW)
-        .chain(Kind::ALL.iter().map(|k| k.label()))
+    let rows: Vec<String> = std::iter::once(none_row())
+        .chain(Kind::ALL.iter().map(|k| k.label().to_string()))
         .collect();
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
     let rw = Area::MIN.right() - RX;
     let mut items = vec![
         Item::new(MONITOR, MONITOR_RECT, Control::Monitor(Screen::Black)),
-        Item::label_at("saver_label", RX, 44, rw, "S&creen saver:"),
+        Item::label_at("saver_label", RX, 44, rw, &tr!("saverpage-screen-saver")),
         Item::combo(SAVER, RX, 60, rw, &rows, rows.len()),
-        button(SETTINGS, RX, 89, "Se&ttings..."),
-        button(PREVIEW, RX + rw - BUTTON_W, 89, "Pre&view"),
+        button(SETTINGS, RX, 89, &tr!("saverpage-settings")),
+        button(PREVIEW, RX + rw - BUTTON_W, 89, &tr!("saverpage-preview")),
     ];
-    items.extend(spin("wait_label", WAIT, RX, 126, 40, "&Wait:", (1, 1440)));
+    items.extend(spin(
+        "wait_label",
+        WAIT,
+        RX,
+        126,
+        40,
+        &tr!("saverpage-wait"),
+        (1, 1440),
+    ));
     items.push(Item::label_at(
         "wait_units",
         RX + 100,
@@ -56,17 +69,25 @@ pub fn page(a: Area) -> Form {
     items.push(Item::group(
         "lock_group",
         Rect::new(X, 222, a.w, 166),
-        "Lock",
+        &tr!("saverpage-lock"),
     ));
     let gw = a.gw();
-    let seconds = |id, y| Item::label_at(id, GX + 174, y, gw - 174, "seconds (0 is off)");
+    let seconds = |id, y| {
+        Item::label_at(
+            id,
+            GX + 174,
+            y,
+            gw - 174,
+            &tr!("saverpage-seconds-0-is-off"),
+        )
+    };
     items.extend(spin(
         "lock_label",
         "lock_after",
         GX,
         244,
         114,
-        "&Lock after:",
+        &tr!("saverpage-lock-after"),
         (0, 99999),
     ));
     items.push(seconds("lock_units", 244));
@@ -76,7 +97,7 @@ pub fn page(a: Area) -> Form {
         GX,
         268,
         114,
-        "&Fade before lock:",
+        &tr!("saverpage-fade-before-lock"),
         (0, 99999),
     ));
     items.push(seconds("fade_units", 268));
@@ -84,23 +105,23 @@ pub fn page(a: Area) -> Form {
         "lock_on_sleep",
         GX,
         290,
-        "Lock the computer when it goes to &sleep",
+        &tr!("saverpage-lock-the-computer-when-it-goes"),
     ));
     items.push(Item::label_at(
         "away_label",
         GX,
         312,
         gw,
-        "Lock when this device &disconnects:",
+        &tr!("saverpage-lock-when-this-device-disconnects"),
     ));
-    items.push(Item::combo(AWAY, GX, 328, 150, &[NONE_ROW], AWAY_ROWS));
+    items.push(Item::combo(AWAY, GX, 328, 150, &[&none_row()], AWAY_ROWS));
     items.extend(spin(
         "away_after_label",
         AWAY_AFTER,
         GX + 160,
         332,
         40,
-        "Aft&er:",
+        &tr!("saverpage-after"),
         (0, 3600),
     ));
     items.push(Item::label_at("away_units", GX + 260, 332, 60, "seconds"));
@@ -109,7 +130,7 @@ pub fn page(a: Area) -> Form {
         GX,
         360,
         90,
-        "&Now playing:",
+        &tr!("saverpage-now-playing"),
     ));
     items.push(choice(LOCK_MEDIA_ID, GX + 90, 356, 170, LOCK_MEDIA));
     Form::new(items)
@@ -173,7 +194,7 @@ pub fn follow(form: &mut Form, s: &Settings) {
 /// The device combo's rows: "(None)", the paired `devices`, then the configured device when
 /// BlueZ does not list it, by its address or path.
 pub fn away_rows(devices: &[Device], s: &Settings) -> Vec<String> {
-    let mut rows = vec![NONE_ROW.to_string()];
+    let mut rows = vec![none_row().to_string()];
     rows.extend(devices.iter().map(|d| match d.name.as_str() {
         "" => d.address.clone(),
         n => n.to_string(),

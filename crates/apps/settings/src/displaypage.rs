@@ -17,8 +17,10 @@ use crate::outputwrite::SavedVrr;
 use crate::pages::Area;
 use crate::registry::Page;
 
+use crate::model::Label;
 use repriseconf::hz_string;
 use repriseconf::projection::{self, Home, Projection, Screen};
+use reprisekit::tr;
 
 /// How many rows the Scale combo has: 100% to 400% in quarter steps, the scales `[[outputs]] scale`
 /// takes.
@@ -33,18 +35,24 @@ const PROFILE_ROWS: usize = 12;
 
 /// A mirrored transform in force shows as a fifth row, so the combo tells the truth; picking any
 /// row leaves it.
-const ORIENTATIONS: [(&str, Transform); 4] = [
-    ("Landscape", Transform::Normal),
-    ("Portrait", Transform::Rotate90),
-    ("Landscape (flipped)", Transform::Rotate180),
-    ("Portrait (flipped)", Transform::Rotate270),
+const ORIENTATIONS: [(Label, Transform); 4] = [
+    (|| tr!("displaypage-landscape"), Transform::Normal),
+    (|| tr!("displaypage-portrait"), Transform::Rotate90),
+    (
+        || tr!("displaypage-landscape-flipped"),
+        Transform::Rotate180,
+    ),
+    (|| tr!("displaypage-portrait-flipped"), Transform::Rotate270),
 ];
 
 /// The Variable refresh rate combo's rows.
-pub const VRR_ROWS: [(&str, VrrPolicy); 3] = [
-    ("Off", VrrPolicy::Off),
-    ("On", VrrPolicy::On),
-    ("Full-screen windows only", VrrPolicy::Fullscreen),
+pub const VRR_ROWS: [(Label, VrrPolicy); 3] = [
+    (|| tr!("displaypage-off"), VrrPolicy::Off),
+    (|| tr!("displaypage-on"), VrrPolicy::On),
+    (
+        || tr!("displaypage-full-screen-windows-only"),
+        VrrPolicy::Fullscreen,
+    ),
 ];
 
 /// What the page has picked for its output.
@@ -249,7 +257,7 @@ impl Display {
     /// The Color profile combo's rows (None, then each profile found, then the shown output's
     /// saved one when it is not among them, by file name) and the picked one's row.
     pub fn profile_rows(&self) -> (Vec<String>, usize) {
-        let mut rows = vec!["None".to_string()];
+        let mut rows = vec![tr!("displaypage-none")];
         rows.extend(self.profiles.iter().map(|l| l.name.clone()));
         let Some(name) = self.head().map(|h| h.name.as_str()) else {
             return (rows, 0);
@@ -258,7 +266,7 @@ impl Display {
         if let Some(p) = own {
             let file = p.file_name().unwrap_or(p.as_os_str()).to_string_lossy();
             rows.push(match self.profiles_gone.contains(p) {
-                true => format!("{file} (missing)"),
+                true => tr!("displaypage-profile-missing", file = file.as_ref()),
                 false => file.into_owned(),
             });
         }
@@ -694,10 +702,8 @@ impl Display {
     /// The Orientation combo's rows and the picked one's.
     pub fn orientation_rows(&self) -> (Vec<(String, Transform)>, usize) {
         let t = self.pick().map_or(Transform::Normal, |p| p.transform);
-        let mut rows: Vec<(String, Transform)> = ORIENTATIONS
-            .iter()
-            .map(|(s, r)| (s.to_string(), *r))
-            .collect();
+        let mut rows: Vec<(String, Transform)> =
+            ORIENTATIONS.iter().map(|(s, r)| (s(), *r)).collect();
         if !rows.iter().any(|(_, r)| *r == t) {
             rows.push((t.name().to_string(), t));
         }
@@ -734,7 +740,11 @@ impl Display {
     /// "1920 by 1080 pixels" under the trackbar.
     pub fn mode_label(&self) -> String {
         match self.pick().and_then(|p| p.mode) {
-            Some(m) => format!("{} by {} pixels", m.width, m.height),
+            Some(m) => tr!(
+                "displaypage-mode-pixels",
+                width = m.width.to_string(),
+                height = m.height.to_string()
+            ),
             None => String::new(),
         }
     }
@@ -767,8 +777,13 @@ pub fn row_scale(i: usize) -> f64 {
 fn scale_label(pick: Pick, scale: f64) -> String {
     let percent = (scale * 100.0).round();
     match logical_size(pick.mode, pick.transform, scale) {
-        (0, _) | (_, 0) => format!("{percent}%"),
-        (w, h) => format!("{percent}% ({w} x {h})"),
+        (0, _) | (_, 0) => tr!("displaypage-scale", percent = percent.to_string()),
+        (w, h) => tr!(
+            "displaypage-scale-size",
+            percent = percent.to_string(),
+            w = w.to_string(),
+            h = h.to_string()
+        ),
     }
 }
 
@@ -778,7 +793,12 @@ fn scale_warning(pick: Pick) -> Option<String> {
     let small = w > 0 && h > 0 && (w < MIN_DESKTOP.0 || h < MIN_DESKTOP.1);
     small.then(|| {
         let percent = (pick.scale * 100.0).round();
-        format!("At {percent}% the desktop is {w} x {h}, too small for many windows.")
+        tr!(
+            "displaypage-scale-warning",
+            percent = percent.to_string(),
+            w = w.to_string(),
+            h = h.to_string()
+        )
     })
 }
 
@@ -787,18 +807,27 @@ fn scale_warning(pick: Pick) -> Option<String> {
 pub fn head_label(number: usize, h: &Head) -> String {
     let m = format!("{} {}", h.make, h.model).trim().to_string();
     if m.is_empty() || h.make == "Unknown" {
-        format!("{number}. {}", h.name)
+        tr!(
+            "displaypage-head-name",
+            number = number.to_string(),
+            name = h.name.as_str()
+        )
     } else {
-        format!("{number}. {m} on {}", h.name)
+        tr!(
+            "displaypage-head-make-name",
+            number = number.to_string(),
+            make = m,
+            name = h.name.as_str()
+        )
     }
 }
 
 /// A Refresh row: "60 Hertz", "59.94 Hertz"; "Default" when the mode has no rate.
 pub fn refresh_label(m: &HeadMode) -> String {
     if m.refresh_mhz > 0 {
-        format!("{} Hertz", hz_string(m.refresh_mhz))
+        tr!("displaypage-hertz", hz = hz_string(m.refresh_mhz))
     } else {
-        "Default".into()
+        tr!("displaypage-default")
     }
 }
 
@@ -853,7 +882,7 @@ pub fn page(d: &Display, a: Area) -> Form {
             X,
             44,
             a.w,
-            "The compositor has listed no monitors.",
+            &tr!("displaypage-the-compositor-has-listed-no-monitors"),
         )]);
     };
     let dy = DY + a.dh;
@@ -868,14 +897,19 @@ pub fn page(d: &Display, a: Area) -> Form {
     ));
     let primary = d.primary_index() == d.monitor();
     items.push(
-        Item::check(PRIMARY, X, 163 + a.dh, "Use as the &primary display")
-            .checked(primary)
-            .enabled(!primary),
+        Item::check(
+            PRIMARY,
+            X,
+            163 + a.dh,
+            &tr!("displaypage-use-as-the-primary-display"),
+        )
+        .checked(primary)
+        .enabled(!primary),
     );
     items.push(Item::button(
         IDENTIFY,
         Rect::new(a.right() - 75, 158 + a.dh, 75, 23),
-        "&Identify",
+        &tr!("displaypage-identify"),
         true,
         false,
     ));
@@ -889,10 +923,22 @@ pub fn page(d: &Display, a: Area) -> Form {
     items.push(Item::group(
         "res_group",
         Rect::new(X, 100 + dy, 173, 64),
-        "&Screen resolution",
+        &tr!("displaypage-screen-resolution"),
     ));
-    items.push(Item::label_at("less", 30, 111 + dy, 30, "Less"));
-    items.push(Item::label_at("more", 156, 111 + dy, 30, "More"));
+    items.push(Item::label_at(
+        "less",
+        30,
+        111 + dy,
+        30,
+        &tr!("displaypage-less"),
+    ));
+    items.push(Item::label_at(
+        "more",
+        156,
+        111 + dy,
+        30,
+        &tr!("displaypage-more"),
+    ));
     let sizes = d.resolutions().len().max(1);
     let mut bar = TrackBar::new(d.resolution_index(), sizes);
     bar.enabled = !d.mode_locked();
@@ -902,7 +948,7 @@ pub fn page(d: &Display, a: Area) -> Form {
             Rect::new(65, 113 + dy, 71, trackbar::HEIGHT),
             Control::TrackBar(bar),
         )
-        .named("Screen resolution"),
+        .named(&tr!("displaypage-screen-resolution-2")),
     );
     items.push(Item::aligned(
         "mode_label",
@@ -917,7 +963,7 @@ pub fn page(d: &Display, a: Area) -> Form {
         RX,
         104 + dy,
         rw,
-        "Screen &refresh rate:",
+        &tr!("displaypage-screen-refresh-rate"),
     ));
     let refresh_on = rates.len() > 1 && !d.mode_locked();
     let at = (RX, 120 + dy, combo_w);
@@ -929,13 +975,19 @@ pub fn page(d: &Display, a: Area) -> Form {
         X,
         174 + dy,
         173,
-        "&Orientation:",
+        &tr!("displaypage-orientation"),
     ));
     items.push(combo(ORIENTATION, (X, 189 + dy, 173), &turns, turn, true));
     let scales: Vec<String> = (0..SCALE_ROWS)
         .map(|i| scale_label(pick, row_scale(i)))
         .collect();
-    items.push(Item::label_at("scale_label", RX, 174 + dy, rw, "S&cale:"));
+    items.push(Item::label_at(
+        "scale_label",
+        RX,
+        174 + dy,
+        rw,
+        &tr!("displaypage-scale"),
+    ));
     items.push(combo(
         SCALE,
         (RX, 189 + dy, combo_w),
@@ -948,9 +1000,9 @@ pub fn page(d: &Display, a: Area) -> Form {
         X,
         226 + dy,
         RX - X,
-        "&Variable refresh rate:",
+        &tr!("displaypage-variable-refresh-rate"),
     ));
-    let vrr_rows: Vec<String> = VRR_ROWS.iter().map(|(s, _)| s.to_string()).collect();
+    let vrr_rows: Vec<String> = VRR_ROWS.iter().map(|(s, _)| s()).collect();
     let vrr_row = (VRR_ROWS.iter().position(|(_, p)| *p == pick.vrr)).unwrap_or(0);
     let vrr_on = head.adaptive_sync != AdaptiveSync::Unsupported;
     items.push(combo(
@@ -963,15 +1015,20 @@ pub fn page(d: &Display, a: Area) -> Form {
     items.push(Item::button(
         FORGET,
         Rect::new(a.right() - 135, 252 + dy, 135, 23),
-        "&Forget saved layouts",
+        &tr!("displaypage-forget-saved-layouts"),
         d.layouts_saved,
         false,
     ));
     let built_in = repriseconf::displays::is_built_in(&head.name);
     if built_in {
         items.push(
-            Item::check(AUTO_ROTATE, X, 257 + dy, "Rotate &automatically")
-                .enabled(d.sensor == Some(true)),
+            Item::check(
+                AUTO_ROTATE,
+                X,
+                257 + dy,
+                &tr!("displaypage-rotate-automatically"),
+            )
+            .enabled(d.sensor == Some(true)),
         );
     }
     let mut row_y = 286 + dy;
@@ -981,7 +1038,7 @@ pub fn page(d: &Display, a: Area) -> Form {
             X,
             row_y + 4,
             RX - X,
-            "&Multiple displays:",
+            &tr!("displaypage-multiple-displays"),
         ));
         items.push(combo(PROJECTION, (RX, row_y, combo_w), &rows, sel, true));
         row_y += 30;
@@ -991,7 +1048,7 @@ pub fn page(d: &Display, a: Area) -> Form {
         X,
         row_y + 4,
         RX - X,
-        "Co&lor profile:",
+        &tr!("displaypage-color-profile"),
     ));
     let (profiles, profile) = d.profile_rows();
     let refs: Vec<&str> = profiles.iter().map(String::as_str).collect();
@@ -1018,7 +1075,7 @@ pub fn page(d: &Display, a: Area) -> Form {
             X,
             note_y + 18,
             a.w,
-            "Rotating needs iio-sensor-proxy and an accelerometer.",
+            &tr!("displaypage-rotating-needs-iio-sensor-proxy-and"),
         ));
     }
     Form::new(items)

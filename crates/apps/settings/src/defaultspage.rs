@@ -15,7 +15,9 @@ use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listview::{Column, IconRows, ListView, Row};
 use reprisekit::raster::Rect;
 
+use crate::model::Label;
 use crate::pages::{Area, X, button};
+use reprisekit::tr;
 
 /// One kind of program: its combo and label, and the types it is the
 /// default for. The combo shows the default of `types[0]` and offers the
@@ -24,7 +26,7 @@ use crate::pages::{Area, X, button};
 pub struct Kind {
     pub id: &'static str,
     pub label_id: &'static str,
-    pub label: &'static str,
+    pub label: Label,
     pub types: &'static [&'static str],
     pub always: usize,
 }
@@ -33,7 +35,7 @@ pub const KINDS: [Kind; 7] = [
     Kind {
         id: "dp_browser",
         label_id: "dp_browser_label",
-        label: "&Web browser:",
+        label: || tr!("defaultspage-web-browser"),
         types: &[
             "x-scheme-handler/https",
             "x-scheme-handler/http",
@@ -45,14 +47,14 @@ pub const KINDS: [Kind; 7] = [
     Kind {
         id: "dp_mail",
         label_id: "dp_mail_label",
-        label: "&Mail:",
+        label: || tr!("defaultspage-mail"),
         types: &["x-scheme-handler/mailto"],
         always: 1,
     },
     Kind {
         id: "dp_music",
         label_id: "dp_music_label",
-        label: "M&usic:",
+        label: || tr!("defaultspage-music"),
         types: &[
             "audio/mpeg",
             "audio/flac",
@@ -69,7 +71,7 @@ pub const KINDS: [Kind; 7] = [
     Kind {
         id: "dp_video",
         label_id: "dp_video_label",
-        label: "&Video:",
+        label: || tr!("defaultspage-video"),
         types: &[
             "video/mp4",
             "video/x-matroska",
@@ -84,7 +86,7 @@ pub const KINDS: [Kind; 7] = [
     Kind {
         id: "dp_photos",
         label_id: "dp_photos_label",
-        label: "P&hotos:",
+        label: || tr!("defaultspage-photos"),
         types: &[
             "image/jpeg",
             "image/png",
@@ -100,14 +102,14 @@ pub const KINDS: [Kind; 7] = [
     Kind {
         id: "dp_editor",
         label_id: "dp_editor_label",
-        label: "Te&xt editor:",
+        label: || tr!("defaultspage-text-editor"),
         types: &["text/plain"],
         always: 1,
     },
     Kind {
         id: "dp_files",
         label_id: "dp_files_label",
-        label: "&File manager:",
+        label: || tr!("defaultspage-file-manager"),
         types: &["inode/directory"],
         always: 1,
     },
@@ -129,7 +131,9 @@ pub const FILTER: &str = "dp_filter";
 pub const CHANGE: &str = "dp_change";
 pub const RESTORE: &str = "dp_restore";
 
-pub const NONE_ROW: &str = "(None)";
+pub fn none_row_text() -> String {
+    tr!("defaultspage-none")
+}
 
 const ROW0: i32 = 48;
 const ROW_STEP: i32 = 23;
@@ -139,7 +143,11 @@ const DROP_ROWS: usize = 12;
 pub fn list(a: Area) -> Rect {
     Rect::new(X, 365, a.w, 55 + a.dh)
 }
-pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
+pub const COLUMNS: [(Label, i32); 3] = [
+    (|| tr!("defaultspage-type"), 90),
+    (|| tr!("defaultspage-description"), 140),
+    (|| tr!("defaultspage-opens-with"), 108),
+];
 const RESTORE_W: i32 = 100;
 
 /// The page in `a` as built, before [`fill`] puts the programs in. The
@@ -147,14 +155,13 @@ const RESTORE_W: i32 = 100;
 pub fn page(a: Area) -> Form {
     let list = list(a);
     let mut items = Vec::new();
-    let labels = KINDS.iter().map(|k| (k.label_id, k.label, k.id)).chain([(
-        TERMINAL_LABEL,
-        "&Terminal:",
-        TERMINAL,
-    )]);
+    let labels = KINDS
+        .iter()
+        .map(|k| (k.label_id, (k.label)(), k.id))
+        .chain([(TERMINAL_LABEL, tr!("defaultspage-terminal"), TERMINAL)]);
     for (i, (label_id, label, id)) in labels.enumerate() {
         let y = ROW0 + i as i32 * ROW_STEP;
-        items.push(Item::label_at(label_id, X, y, LABEL_W, label));
+        items.push(Item::label_at(label_id, X, y, LABEL_W, &label));
         items.push(Item::combo(
             id,
             X + LABEL_W + 4,
@@ -170,7 +177,7 @@ pub fn page(a: Area) -> Form {
         X,
         y,
         DRIVE_LABEL_W,
-        "Terminal ar&guments:",
+        &tr!("defaultspage-terminal-arguments"),
     ));
     items.push(Item::edit(
         TERMINAL_ARGS,
@@ -189,7 +196,7 @@ pub fn page(a: Area) -> Form {
         X,
         y,
         DRIVE_LABEL_W,
-        "When a &drive is plugged in:",
+        &tr!("defaultspage-when-a-drive-is-plugged-in"),
     ));
     items.push(crate::pages::choice(
         DRIVE_INSERT,
@@ -204,7 +211,7 @@ pub fn page(a: Area) -> Form {
         X,
         y,
         DRIVE_LABEL_W,
-        "When a script is &opened:",
+        &tr!("defaultspage-when-a-script-is-opened"),
     ));
     items.push(crate::pages::choice(
         SCRIPT_OPEN,
@@ -219,7 +226,7 @@ pub fn page(a: Area) -> Form {
         X,
         y,
         DRIVE_LABEL_W,
-        "When a &script ends:",
+        &tr!("defaultspage-when-a-script-ends"),
     ));
     items.push(crate::pages::choice(
         SCRIPT_END,
@@ -232,17 +239,23 @@ pub fn page(a: Area) -> Form {
         CONFIRM_SCRIPTS,
         X,
         y + ROW_STEP,
-        "As&k before running a program the first time",
+        &tr!("defaultspage-ask-before-running-a-program-the"),
     ));
     let y = list.y - 20;
-    items.push(Item::label_at("dp_types_label", X, y, 120, "File types:"));
+    items.push(Item::label_at(
+        "dp_types_label",
+        X,
+        y,
+        120,
+        &tr!("defaultspage-file-types"),
+    ));
     let fw = a.combo(150);
     items.push(Item::label_at(
         "dp_filter_label",
         a.right() - fw - 40,
         y,
         36,
-        "Fi&lter:",
+        &tr!("defaultspage-filter"),
     ));
     items.push(Item::edit(
         FILTER,
@@ -255,12 +268,12 @@ pub fn page(a: Area) -> Form {
         CHANGE,
         list.right() - RESTORE_W - BUTTON_GAP - BUTTON_W,
         by,
-        "&Change...",
+        &tr!("defaultspage-change"),
     ));
     items.push(Item::button(
         RESTORE,
         Rect::new(list.right() - RESTORE_W, by, RESTORE_W, BUTTON_H),
-        "&Restore Default",
+        &tr!("defaultspage-restore-default"),
         true,
         false,
     ));
@@ -271,7 +284,7 @@ pub fn new_list() -> ListView<IconRows> {
     ListView {
         columns: COLUMNS
             .iter()
-            .map(|(title, w)| Column::new(title, *w))
+            .map(|(title, w)| Column::new(&title(), *w))
             .collect(),
         ..ListView::default()
     }
@@ -382,7 +395,8 @@ impl Defaults {
         if !Path::new(id).is_absolute() {
             return Ok(id.to_string());
         }
-        let dir = dir.ok_or_else(|| std::io::Error::other("no home directory"))?;
+        let dir =
+            dir.ok_or_else(|| std::io::Error::other(tr!("defaultspage-no-home-directory")))?;
         let entry = reprisefs::apps::program_entry_in(dir, Path::new(id), Some(mime))?;
         let id = entry.id.clone();
         match self.apps.iter_mut().find(|a| a.id == id) {
@@ -458,7 +472,9 @@ impl Defaults {
         match at {
             Some(at) => (names.collect(), at),
             None => (
-                std::iter::once(NONE_ROW.to_string()).chain(names).collect(),
+                std::iter::once(none_row_text().to_string())
+                    .chain(names)
+                    .collect(),
                 0,
             ),
         }
@@ -557,7 +573,7 @@ impl Defaults {
 fn terminals(apps: &[AppEntry]) -> Vec<Terminal> {
     let mut out: Vec<Terminal> = apps
         .iter()
-        .filter(|a| a.shown && a.in_category("TerminalEmulator"))
+        .filter(|a| a.shown && a.in_category(&tr!("defaultspage-terminalemulator")))
         .filter_map(|a| {
             let command = reprisefs::apps::exec_argv(&a.exec_line)
                 .into_iter()
@@ -916,7 +932,7 @@ pub(crate) mod tests {
     fn a_kind_with_no_program_offers_none_first() {
         let mut d = defaults();
         let rows = d.kind_rows(kind("dp_mail"));
-        assert_eq!(rows, (vec![NONE_ROW.to_string()], 0));
+        assert_eq!(rows, (vec![none_row_text().to_string()], 0));
         assert!(!d.pick(kind("dp_mail"), 0), "(None) sets nothing");
         let rows = d.kind_rows(kind("dp_editor"));
         assert_eq!(rows, (vec!["Notepad".into(), "Zed".into()], 0));

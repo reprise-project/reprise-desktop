@@ -2,12 +2,14 @@
 //! what it sets dimmed after them, and Add..., Edit..., Remove, Move Up and Move Down beside the
 //! list. The list takes the page's extra height.
 
+use crate::model::Label;
 use crate::pages::{Area, X};
 use crate::windowrules::Rule;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 
 pub const LIST: &str = "window_rules";
 pub const ADD: &str = "wr_add";
@@ -22,12 +24,12 @@ const BUTTON_STEP: i32 = BUTTON_H + 4;
 const LIST_Y: i32 = 78;
 
 /// `[[window_rules]]` `state` values and the State combo's rows for them; "" leaves the key out.
-pub const STATES: &[(&str, &str)] = &[
-    ("", "(As it opens)"),
-    ("normal", "Normal"),
-    ("maximized", "Maximized"),
-    ("minimized", "Minimized"),
-    ("fullscreen", "Full screen"),
+pub const STATES: &[(&str, Label)] = &[
+    ("", || tr!("rulespage-as-it-opens")),
+    ("normal", || tr!("rulespage-normal")),
+    ("maximized", || tr!("rulespage-maximized")),
+    ("minimized", || tr!("rulespage-minimized")),
+    ("fullscreen", || tr!("rulespage-full-screen")),
 ];
 
 fn list_rect(a: Area) -> Rect {
@@ -46,8 +48,8 @@ pub fn page(a: Area) -> Form {
             "window_rules_note",
             Rect::new(X, 44, a.w, 2 * LINE_H),
             Control::Lines(vec![
-                "A window takes every rule matching it as it opens;".into(),
-                "where two set the same thing, the lower one wins.".into(),
+                tr!("rulespage-a-window-takes-every-rule-matching"),
+                tr!("rulespage-where-two-set-the-same-thing"),
             ]),
         ),
         Item::new(
@@ -58,21 +60,21 @@ pub fn page(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named("Window rules"),
+        .named(&tr!("rulespage-window-rules")),
         Item::label_at(
             "window_rules_menu_note",
             X,
             list.bottom() + 8,
             a.w,
-            "Always Open Here on a window's menu adds a rule too.",
+            &tr!("rulespage-always-open-here-on-a-windows"),
         ),
     ];
     let buttons = [
-        (ADD, "&Add..."),
-        (EDIT, "&Edit..."),
-        (REMOVE, "&Remove"),
-        (UP, "Move &Up"),
-        (DOWN, "Move &Down"),
+        (ADD, &tr!("rulespage-add")),
+        (EDIT, &tr!("rulespage-edit")),
+        (REMOVE, &tr!("rulespage-remove")),
+        (UP, &tr!("rulespage-move-up")),
+        (DOWN, &tr!("rulespage-move-down")),
     ];
     for (i, (id, text)) in buttons.into_iter().enumerate() {
         let r = Rect::new(
@@ -89,11 +91,11 @@ pub fn page(a: Area) -> Form {
 /// A row's text: the program, and the title when the rule matches one.
 pub fn shown(r: &Rule) -> String {
     let app = match r.app_id.trim() {
-        "" => "(no app ID)",
+        "" => &tr!("rulespage-no-app-id"),
         _ => &r.app_id,
     };
     match &r.title {
-        Some(t) => format!("{app}, titled {t}"),
+        Some(t) => tr!("rulespage-titled", app = app.as_str(), title = t.as_str()),
         None => app.to_string(),
     }
 }
@@ -105,7 +107,7 @@ pub fn screen(output: &str) -> String {
     let (Some(make), Some(model), Some(serial)) = (parts.next(), parts.next(), parts.next()) else {
         return output.to_string();
     };
-    let serial = (!serial.is_empty()).then(|| format!("({serial})"));
+    let serial = (!serial.is_empty()).then(|| tr!("rulespage-serial", serial = serial));
     let name = [Some(make.to_string()), Some(model.to_string()), serial]
         .into_iter()
         .flatten()
@@ -113,7 +115,11 @@ pub fn screen(output: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     match parts.next() {
-        Some(connector) => format!("{name} on {connector}"),
+        Some(connector) => tr!(
+            "rulespage-name-on",
+            name = name.as_str(),
+            connector = connector
+        ),
         None => name,
     }
 }
@@ -122,26 +128,40 @@ pub fn screen(output: &str) -> String {
 pub fn sets(r: &Rule) -> String {
     let on = |v: Option<bool>, yes: &str, no: &str| v.map(|v| if v { yes } else { no }.to_string());
     let parts: Vec<String> = [
-        r.size.map(|[w, h]| format!("{w} x {h}")),
-        r.position.map(|[x, y]| format!("at {x}, {y}")),
-        r.output.as_ref().map(|o| format!("on {}", screen(o))),
+        r.size
+            .map(|[w, h]| tr!("rulespage-size", w = w.to_string(), h = h.to_string())),
+        r.position
+            .map(|[x, y]| tr!("rulespage-at", x = x.to_string(), y = y.to_string())),
+        r.output
+            .as_ref()
+            .map(|o| tr!("rulespage-on", screen = screen(o))),
         (r.state.as_deref()).map(|s| {
             STATES
                 .iter()
                 .find(|(v, _)| *v == s)
-                .map_or(s, |(_, l)| l)
-                .to_string()
+                .map_or_else(|| s.to_string(), |(_, l)| l())
         }),
-        r.desktop.map(|d| format!("desktop {d}")),
-        on(r.always_on_top, "on top", "not on top"),
-        on(r.sticky, "every desktop", "one desktop"),
-        r.tab_group.as_ref().map(|g| format!("tab group {g}")),
+        r.desktop
+            .map(|d| tr!("rulespage-desktop", d = d.to_string())),
+        on(
+            r.always_on_top,
+            &tr!("rulespage-on-top"),
+            &tr!("rulespage-not-on-top"),
+        ),
+        on(
+            r.sticky,
+            &tr!("rulespage-every-desktop"),
+            &tr!("rulespage-one-desktop"),
+        ),
+        r.tab_group
+            .as_ref()
+            .map(|g| tr!("rulespage-tab-group", g = g.as_str())),
     ]
     .into_iter()
     .flatten()
     .collect();
     if parts.is_empty() {
-        "sets nothing".into()
+        tr!("rulespage-sets-nothing")
     } else {
         parts.join(", ")
     }

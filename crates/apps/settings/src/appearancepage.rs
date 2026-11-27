@@ -13,6 +13,7 @@ use crate::model::{
 };
 use crate::pages::{Area, COMBO_MAX, TRACK_MAX, X, choice, time_edit};
 use crate::registry::Page;
+use reprisekit::tr;
 
 pub const SAMPLE: &str = "sample";
 pub fn sample_rect(a: Area) -> Rect {
@@ -23,7 +24,9 @@ pub const CLASSIC_SCHEME: &str = "classic_scheme";
 pub const BLUE_SCHEME: &str = "blue_scheme";
 pub const GLASS_COLOR: &str = "glass_color";
 /// The last glass colour row while the file's colour names no swatch.
-pub const CUSTOM_ROW: &str = "Custom";
+pub fn custom_row() -> String {
+    tr!("appearancepage-custom")
+}
 const COMBO_W: i32 = 196;
 const RIGHT_X: i32 = 232;
 const RIGHT_W: i32 = 146;
@@ -132,7 +135,7 @@ fn scheme_rows(i: Interface, custom: bool) -> Vec<String> {
             .collect(),
         Interface::Glass => glass::swatch_names()
             .map(title)
-            .chain(custom.then(|| CUSTOM_ROW.to_string()))
+            .chain(custom.then(|| custom_row().to_string()))
             .collect(),
     }
 }
@@ -165,39 +168,96 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 icon: None,
             },
         ),
-        Item::label_at("interface_label", X, y(242), lw, "&Interface:"),
+        Item::label_at(
+            "interface_label",
+            X,
+            y(242),
+            lw,
+            &tr!("appearancepage-interface"),
+        ),
         choice("interface", X, y(258), lw, INTERFACES),
-        Item::label_at("scheme_label", X, y(288), lw, "&Color scheme:"),
+        Item::label_at(
+            "scheme_label",
+            X,
+            y(288),
+            lw,
+            &tr!("appearancepage-color-scheme"),
+        ),
         Item::combo(scheme_id(i), X, y(304), lw, &refs, refs.len().min(8)),
     ];
     if i == Interface::Glass {
         items.extend([
-            Item::label_at("mode_label", rx, y(242), rw, "&Mode:"),
+            Item::label_at("mode_label", rx, y(242), rw, &tr!("appearancepage-mode")),
             choice("glass_mode", rx, y(258), rw, GLASS_MODES),
-            Item::label_at("material_label", X, y(334), half_w, "M&aterial:"),
+            Item::label_at(
+                "material_label",
+                X,
+                y(334),
+                half_w,
+                &tr!("appearancepage-material"),
+            ),
             choice("glass_material", X, y(350), half_w, GLASS_MATERIALS),
-            Item::label_at("frame_label", frame_x, y(334), half_w, "&Frame:"),
+            Item::label_at(
+                "frame_label",
+                frame_x,
+                y(334),
+                half_w,
+                &tr!("appearancepage-frame"),
+            ),
             choice("glass_frame", frame_x, y(350), half_w, GLASS_FRAMES),
-            Item::check("glass_transparency", X, y(384), "Enable &transparency"),
-            Item::check("glass_fast_drag", X, y(406), "Faster &glass while dragging"),
-            Item::check("glass_blur_frames", X, y(428), "Sho&w frames behind glass"),
-            Item::check("glass_streaks", rx, y(384), "Show &reflections"),
-            Item::label_at("intensity_label", rx, y(288), rw, "Color i&ntensity:"),
+            Item::check(
+                "glass_transparency",
+                X,
+                y(384),
+                &tr!("appearancepage-enable-transparency"),
+            ),
+            Item::check(
+                "glass_fast_drag",
+                X,
+                y(406),
+                &tr!("appearancepage-faster-glass-while-dragging"),
+            ),
+            Item::check(
+                "glass_blur_frames",
+                X,
+                y(428),
+                &tr!("appearancepage-show-frames-behind-glass"),
+            ),
+            Item::check(
+                "glass_streaks",
+                rx,
+                y(384),
+                &tr!("appearancepage-show-reflections"),
+            ),
+            Item::label_at(
+                "intensity_label",
+                rx,
+                y(288),
+                rw,
+                &tr!("appearancepage-color-intensity"),
+            ),
             Item::new(
                 "glass_intensity",
                 Rect::new(rx, y(304), tw, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new(42, INTENSITY_POSITIONS).paged(10, 5)),
             ),
-            Item::label_at("blur_label", rx, y(334), rw, "&Blur:"),
+            Item::label_at("blur_label", rx, y(334), rw, &tr!("appearancepage-blur")),
             Item::new(
                 "glass_blur",
                 Rect::new(rx, y(350), tw, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new(1, BLUR_POSITIONS).paged(1, 1)),
             ),
-            Item::label_at(DARK_HOURS[0], rx, y(406), rw, "Dark &hours:"),
+            Item::label_at(
+                DARK_HOURS[0],
+                rx,
+                y(406),
+                rw,
+                &tr!("appearancepage-dark-hours"),
+            ),
             time_edit(DARK_HOURS[1], rx, y(422), TIME_W),
             Item::label_at(DARK_HOURS[2], rx + TIME_W + 4, y(426), 14, "to"),
-            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(422), TIME_W).named("Dark until"),
+            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(422), TIME_W)
+                .named(&tr!("appearancepage-dark-until")),
         ]);
     }
     Form::new(items)
