@@ -11,7 +11,7 @@ use crate::controls::scrollbar::ThumbDrag;
 use crate::controls::timefield;
 use crate::controls::treeview;
 use crate::controls::updown;
-use crate::pointer::{Interaction, Lit, Shape, WHEEL_ROWS};
+use crate::pointer::{Click, Interaction, Lit, Shape, WHEEL_ROWS};
 use crate::text::TextRenderer;
 use crate::trackbar;
 
@@ -478,6 +478,29 @@ impl Form {
             .is_some_and(|open| hit.is_none_or(|h| h.item != open))
     }
 
+    /// A left press on `hit` at `at`, for a host that pairs no clicks itself. The second press of
+    /// a double click on an edit field's text or a number field's digits is
+    /// [`Form::double_click`]; any other press is [`Form::click`], so a double click on a list row
+    /// never presses the default button. A press that only closes a dropped list starts no pair.
+    pub fn press(&mut self, hit: Option<Hit>, at: Click) -> Event {
+        let field = hit.filter(|h| {
+            !self.popup_open()
+                && matches!(h.part, Part::Edit(_) | Part::UpDown(updown::Hit::Edit(_)))
+        });
+        let double = match field {
+            Some(h) => self.clicks.press(h.item, at),
+            None => {
+                self.clicks.reset();
+                false
+            }
+        };
+        if double {
+            self.double_click(field)
+        } else {
+            self.click(hit)
+        }
+    }
+
     /// A left press on `hit`. With a combo's list or a colour popup open, a press off that
     /// control only closes it: the control under the press is left alone.
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
@@ -838,8 +861,8 @@ impl Form {
     }
 
     /// The second press of a double click. On a list box row the row is
-    /// taken and the dialog's default button acts; in an edit field or a
-    /// number field's digits the word under the pointer is selected.
+    /// taken and the dialog's default button acts; in an edit field the word
+    /// under the pointer is selected, in a number field the whole number.
     /// Anywhere else it is a plain press.
     pub fn double_click(&mut self, hit: Option<Hit>) -> Event {
         if let Some(Hit {
@@ -860,14 +883,14 @@ impl Form {
         }
         if let Some(Hit {
             item,
-            part: Part::UpDown(updown::Hit::Edit(at)),
+            part: Part::UpDown(updown::Hit::Edit(_)),
             ..
         }) = hit
             && matches!(&self.items[item].control, Control::UpDown(u) if u.enabled)
         {
             self.set_focus(Some(item));
             if let Control::UpDown(u) = &mut self.items[item].control {
-                u.select_word_at(at);
+                u.select_number();
             }
             self.drag = None;
             return Event::Redraw;
