@@ -2,7 +2,6 @@ use crate::controls::form;
 use crate::controls::hosted::Hosted;
 use crate::controls::pagelist::{self, PageList, Pick};
 use crate::controls::scrollview;
-use crate::controls::updown;
 use crate::controls::{searchfield, tabstrip};
 use crate::pointer::{Click, Shape};
 use crate::text::TextRenderer;
@@ -526,31 +525,14 @@ impl PropSheet {
         self.event(i, ev)
     }
 
-    /// A left press over `hit` at `at`. The second press of a double click on an edit field's text
-    /// or a number field's digits selects the word there; any other press is
-    /// [`PropSheet::click`], so a double click on a list row picks it and never presses OK. A
-    /// press that only closes a dropped list starts no pair.
+    /// A left press over `hit` at `at`: on the page, [`Form::press`](form::Form::press), which
+    /// pairs presses on a field's text into double clicks; anywhere else [`PropSheet::click`].
     pub fn press(&mut self, hit: Option<Hit>, at: Click) -> Event {
-        let field = control(hit)
-            .filter(|_| !self.open().popup_open())
-            .filter(|h| {
-                matches!(
-                    h.part,
-                    form::Part::Edit(_) | form::Part::UpDown(updown::Hit::Edit(_))
-                )
-            });
-        let double = match field {
-            Some(h) => self.clicks.press((self.tabs.open, h.item), at),
-            None => {
-                self.clicks.reset();
-                false
-            }
-        };
-        if !double {
+        let Some(Hit::Control(h)) = hit else {
             return self.click(hit);
-        }
+        };
         let i = self.tabs.open;
-        let ev = self.pages[i].double_click(field);
+        let ev = self.pages[i].press(Some(h), at);
         self.page_clicked();
         self.event(i, ev)
     }

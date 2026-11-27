@@ -48,7 +48,6 @@ use crate::controls::pagelist::{self, PageList};
 use crate::controls::scrollview::ScrollView;
 use crate::controls::searchfield::SearchField;
 use crate::controls::tabstrip::TabStrip;
-use crate::pointer::DoubleClick;
 use crate::raster::Rect;
 use crate::text::DialogFont;
 
@@ -126,8 +125,6 @@ pub struct PropSheet {
     pub search_focused: bool,
     /// Where the last paste key was pressed ([`PropSheet::paste`]).
     paste_to: Option<PasteTo>,
-    /// The page and item of the last press on a field's text ([`PropSheet::press`]).
-    clicks: DoubleClick<(usize, usize)>,
 }
 
 /// The search field, or the page whose edit a paste was asked in.
@@ -234,7 +231,6 @@ impl PropSheet {
             search: SearchField::default(),
             search_focused: false,
             paste_to: None,
-            clicks: DoubleClick::default(),
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -274,7 +270,6 @@ impl PropSheet {
             search: SearchField::default(),
             search_focused: false,
             paste_to: None,
-            clicks: DoubleClick::default(),
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
