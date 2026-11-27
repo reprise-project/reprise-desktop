@@ -196,6 +196,9 @@ impl State {
             }
             _ => (cw, ch),
         };
+        if let Some(win) = self.win_mut(w) {
+            win.sized = true;
+        }
         if self.win(w).is_some_and(|x| x.x11().is_some()) {
             self.configure_x11(w, cw, ch);
             return;

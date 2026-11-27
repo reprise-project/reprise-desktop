@@ -100,6 +100,7 @@ impl State {
             saved_fullscreen: None,
             fullscreen_from: None,
             own_size: false,
+            sized: false,
             sized_at: None,
             shrunk: None,
             rescued: None,

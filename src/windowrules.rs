@@ -197,6 +197,10 @@ pub struct Remembered {
     /// the same client size under any interface. Without it they are the outer frame's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub client: bool,
+    /// `width` and `height` are a size the program took itself, which no one gave it: the next
+    /// window opens at the place alone and picks its own size again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub picked: bool,
 }
 
 fn full_size() -> u32 {
@@ -233,10 +237,10 @@ impl Remembered {
     /// Where the app's next window opens at `text_size`: a frame kept at another text size
     /// scales by the ratio of the two, so a window that grew or shrank with the text does so
     /// again, but no further than its program's own size ([`Rescaled`]). A maximized one
-    /// restores to the scaled size.
+    /// restores to the scaled size. A size the program picked itself is left out.
     pub fn want(&self, first: bool, text_size: u32) -> Want {
         let kept = (self.width, self.height);
-        let rescaled = (self.text_size != text_size).then(|| {
+        let rescaled = (!self.picked && self.text_size != text_size).then(|| {
             let scale =
                 |v: i32| (i64::from(v) * i64::from(text_size) / i64::from(self.text_size)) as i32;
             Rescaled {
@@ -249,7 +253,7 @@ impl Remembered {
             size: match rescaled {
                 Some(s) if maximized => Some(s.to),
                 Some(_) => None,
-                None => Some(kept),
+                None => (!self.picked).then_some(kept),
             },
             rescaled: rescaled.filter(|_| !maximized),
             position: Some(if first {
@@ -361,6 +365,7 @@ mod tests {
             maximized: true,
             text_size: 100,
             client: false,
+            picked: false,
         };
         assert_eq!(
             m.want(true, 100),
@@ -393,6 +398,7 @@ mod tests {
             maximized: false,
             text_size: 200,
             client: false,
+            picked: false,
         };
         let opened = |pct: u32, opening: (i32, i32)| {
             let want = m.want(true, pct);
@@ -472,6 +478,7 @@ mod tests {
             maximized: true,
             text_size: 100,
             client: false,
+            picked: false,
         }
         .want(true, 100);
         let rules = [
@@ -528,6 +535,7 @@ mod tests {
             maximized: false,
             text_size: 150,
             client: false,
+            picked: false,
         };
         let r = WindowRule::open_here("foot", "Dell|U2720Q|ABC".into(), &at, false, false);
         assert_eq!(

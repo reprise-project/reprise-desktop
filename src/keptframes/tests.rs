@@ -10,6 +10,7 @@ fn frame(x: i32) -> Remembered {
         maximized: false,
         text_size: 100,
         client: false,
+        picked: false,
     }
 }
 
@@ -117,10 +118,16 @@ fn close(h: &mut Harness, c: &mut TestClient, t: Toplevel) {
     assert!(h.state.win(t.id).is_none(), "the window went");
 }
 
+/// The user sizes `t`'s client to `(w, hh)`.
+fn resize(h: &mut Harness, c: &mut TestClient, t: Toplevel, w: i32, hh: i32) {
+    h.state.request_size(t.id, w, hh);
+    h.roundtrip(c);
+}
+
 /// Opens `APP`, gives it frame `(x, y, w, h)` and closes it.
 fn leave_at(h: &mut Harness, c: &mut TestClient, (x, y): (i32, i32), (w, hh): (i32, i32)) {
     let t = h.map_toplevel(c, APP, 300, 200);
-    h.resize_self(c, t, w, hh);
+    resize(h, c, t, w, hh);
     h.state.move_to(t.id, x, y);
     close(h, c, t);
 }
@@ -169,7 +176,7 @@ fn a_program_reopens_where_and_at_the_size_its_last_window_closed() {
     let mut c = h.connect();
     let t = h.map_toplevel(&mut c, APP, 300, 200);
     let first = frame_of(&h, t);
-    h.resize_self(&mut c, t, 500, 400);
+    resize(&mut h, &mut c, t, 500, 400);
     let left = frame_of(&h, t);
     h.state.move_to(t.id, 400, 300);
     close(&mut h, &mut c, t);
@@ -188,6 +195,42 @@ fn a_program_reopens_where_and_at_the_size_its_last_window_closed() {
         r2.x > r.x && r2.y > r.y,
         "a second window cascades from the first: {r2:?} after {r:?}"
     );
+}
+
+#[test]
+fn a_size_the_program_took_itself_is_left_out_and_one_it_was_given_is_kept() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    let set = h.state.output_set();
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    h.resize_self(&mut c, t, 900, 700);
+    h.state.move_to(t.id, 400, 300);
+    close(&mut h, &mut c, t);
+    assert!(h.state.wm.kept.get(&set, APP).is_some_and(|k| k.picked));
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    let r = frame_of(&h, t);
+    assert_eq!((r.x, r.y), (400, 300), "the place is kept");
+    assert_eq!(asked_client(&h, t), (0, 0), "it picks its own size again");
+    resize(&mut h, &mut c, t, 500, 400);
+    close(&mut h, &mut c, t);
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    assert_eq!(asked_client(&h, t), (500, 400), "the size the user gave");
+}
+
+#[test]
+fn a_kept_size_the_program_then_grows_out_of_is_left_out() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    let set = h.state.output_set();
+    leave_at(&mut h, &mut c, (400, 300), (500, 400));
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    assert_eq!(asked_client(&h, t), (500, 400), "opens at the kept size");
+    h.resize_self(&mut c, t, 500, 400);
+    h.resize_self(&mut c, t, 900, 700);
+    close(&mut h, &mut c, t);
+    assert!(h.state.wm.kept.get(&set, APP).is_some_and(|k| k.picked));
+    let t = h.map_toplevel(&mut c, APP, 300, 200);
+    assert_eq!(asked_client(&h, t), (0, 0), "it picks its own size again");
 }
 
 #[test]
@@ -414,6 +457,7 @@ fn keep(h: &mut Harness, output: &str, x: i32, y: i32) {
             maximized: false,
             text_size: 100,
             client: false,
+            picked: false,
         },
     );
 }
@@ -602,7 +646,7 @@ fn a_size_kept_under_one_interface_opens_at_the_same_client_size_under_the_other
             for to in all.into_iter().filter(|&i| i != from) {
                 switch_to(&mut h, from);
                 let t = h.map_toplevel(&mut c, APP, 300, 200);
-                h.resize_self(&mut c, t, 420, 310);
+                resize(&mut h, &mut c, t, 420, 310);
                 close(&mut h, &mut c, t);
                 switch_to(&mut h, to);
                 let t = h.map_toplevel(&mut c, APP, 300, 200);

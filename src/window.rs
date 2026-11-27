@@ -214,6 +214,9 @@ pub struct Window {
     /// Opened maximized or fullscreen with no normal size known: leaving that state lets the
     /// client pick its size.
     pub own_size: bool,
+    /// Reprise asked it for its client size (a kept frame, a rule, the user's resize or snap) and
+    /// it has not taken one of its own since. A program's own size is left out of its kept frame.
+    pub sized: bool,
     /// Its last normal client size and the `[accessibility] text_size` it took that size at: a
     /// text size change alone resizes no window, so the kept size is stamped with this one.
     pub sized_at: Option<((i32, i32), u32)>,

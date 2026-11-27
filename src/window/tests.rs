@@ -440,6 +440,7 @@ fn a_remembered_frame_reopens_at_the_same_size() {
         maximized: false,
         text_size: 100,
         client: false,
+        picked: false,
     }
     .want(true, 100);
     for decorated in [false, true] {
@@ -479,6 +480,7 @@ fn a_remembered_frame_under_the_minimum_reopens_at_the_minimum() {
             maximized: false,
             text_size: 100,
             client: false,
+            picked: false,
         }
         .want(true, 100)
     };
