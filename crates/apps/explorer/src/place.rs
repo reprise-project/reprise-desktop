@@ -723,6 +723,26 @@ pub fn archive_listing(
     }
 }
 
+/// The compressed folder a typed `path` that is not a folder names: a folder inside an archive
+/// that opens as one. One whose archive cannot be listed is taken, so its box says why.
+pub(crate) fn archive_place(
+    path: &Path,
+    globs: &reprisefs::apps::MimeDb,
+    apps: &[reprisefs::apps::AppEntry],
+    archives: &reprisefs::archive::Listings,
+) -> Option<Place> {
+    let (file, inner) = reprisefs::archive::address(path)?;
+    let mime = globs.mime_of_name(&file.file_name()?.to_string_lossy())?;
+    if !reprisefs::archive::opens_as_folder(&mime, apps) {
+        return None;
+    }
+    let held = match archives.entries(&file) {
+        Ok(entries) => reprisefs::archive::holds_folder(&entries, &inner),
+        Err(_) => true,
+    };
+    held.then_some(Place::Archive(file, inner))
+}
+
 /// The path standing for the folder `inner` of the archive `file`: the archive's own at its top.
 pub(crate) fn in_archive(file: &Path, inner: &Path) -> PathBuf {
     match inner.as_os_str().is_empty() {

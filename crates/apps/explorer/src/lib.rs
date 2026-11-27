@@ -53,7 +53,7 @@ mod window;
 use dialogs::DIALOG;
 use dialogs::{Dialog, PROGRAM_BROWSE, is_dialog};
 use menus::MenuState;
-use place::{Listed, Place, list, sort_order_grouped};
+use place::{Listed, Place, archive_place, list, sort_order_grouped};
 use props_dialog::{PROPS, Props};
 use repriseapp::decode::Decoders;
 use repriseapp::keys::AltArm;
@@ -205,7 +205,8 @@ pub(crate) struct Checking {
     place: Place,
     /// The place shown at Enter: an answer landing after the window moved on is dropped.
     from: Place,
-    job: Job<bool>,
+    /// The place the text names once checked: `None` when it is not there.
+    job: Job<Option<Place>>,
 }
 
 /// A place as a listing's thread read it ([`Explorer::show`]), with the children of the
@@ -993,7 +994,7 @@ impl Explorer {
         let Some(dir) = dir else {
             return self.go(place, ctx);
         };
-        let job = Job::spawn(Some(&ctx.wake), move || is_dir(&dir));
+        let job = self.check_place(place.clone(), dir, is_dir, ctx);
         match job.wait(repriseapp::listjob::WAIT) {
             Some(found) => self.checked(Some(typed), place, found, ctx),
             None => {
@@ -1016,16 +1017,40 @@ impl Explorer {
         (c.from == self.place).then(|| self.checked(c.typed.as_deref(), c.place, found, ctx))
     }
 
-    fn checked(&mut self, typed: Option<&str>, place: Place, found: bool, ctx: &mut Ctx) -> Reply {
+    fn checked(
+        &mut self,
+        typed: Option<&str>,
+        place: Place,
+        found: Option<Place>,
+        ctx: &mut Ctx,
+    ) -> Reply {
         match (typed, found) {
-            (Some(_), true) => self.go(place, ctx),
-            (Some(typed), false) => self.not_found(typed, ctx),
-            (None, true) => Reply::none(),
-            (None, false) => {
-                self.history = History::new(Place::Home);
-                self.show(Place::Home, ctx)
+            (Some(_), Some(found)) => self.go(found, ctx),
+            (Some(typed), None) => self.not_found(typed, ctx),
+            (None, Some(found)) if found == place => Reply::none(),
+            (None, found) => {
+                let shown = found.unwrap_or(Place::Home);
+                self.history = History::new(shown.clone());
+                self.show(shown, ctx)
             }
         }
+    }
+
+    /// Checks on a listing thread that the folder `dir` typed for `place` is there, through
+    /// `is_dir`, or else that it names a folder of a compressed folder ([`archive_place`]).
+    fn check_place(
+        &self,
+        place: Place,
+        dir: PathBuf,
+        is_dir: impl FnOnce(&Path) -> bool + Send + 'static,
+        ctx: &Ctx,
+    ) -> Job<Option<Place>> {
+        let (globs, apps) = (self.globs.clone(), self.app_index.clone());
+        let archives = self.archives.clone();
+        Job::spawn(Some(&ctx.wake), move || match is_dir(&dir) {
+            true => Some(place),
+            false => archive_place(&dir, &globs, &apps, &archives),
+        })
     }
 
     /// Opens the window built by `build` on the command line's [`Start`]. Its folder is checked
@@ -1046,8 +1071,8 @@ impl Explorer {
             search,
             tabs,
         } = start;
-        let check = dir.map(|d| Job::spawn(Some(&ctx.wake), move || is_dir(&d)));
         let mut ex = build(place.clone(), ctx);
+        let check = dir.map(|d| ex.check_place(place.clone(), d, is_dir, ctx));
         if let Some(tabs) = tabs {
             ex.restore_tabs(tabs, ctx);
         }
