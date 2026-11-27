@@ -30,6 +30,7 @@ use reprisekit::theme::Theme;
 use reprisekit::tr;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -117,7 +118,7 @@ pub struct Printing {
     msgs: Option<(Poster<Msg>, Receiver<Msg>)>,
     asks: u64,
     /// Jobs being drawn or sent.
-    sending: Vec<JoinHandle<()>>,
+    sending: Vec<Job>,
     /// The forms theme and font of the last event or draw, for [`Printing::children`].
     forms: Theme,
     text: Rc<TextRenderer>,
@@ -375,7 +376,9 @@ impl Printing {
         let action = match ev {
             Event::Key(k) if !k.mods.alt && !k.mods.ctrl => preview.key(k.sym, &lay),
             Event::Pointer(p) => match *p {
-                PointerInput::Press { x, y, .. } if !lay.bar.contains(x, y) => {
+                PointerInput::Press { x, y, .. }
+                    if printpreview::hit(&lay, x, y) == printpreview::Part::Page =>
+                {
                     Some(redraw(preview.press(x, y, &lay)))
                 }
                 PointerInput::Motion { x, y } if preview.dragging() => {
@@ -502,7 +505,9 @@ impl Printing {
         self.close();
         let poster = self.poster(ctx);
         let (title, copies) = (self.job_title.clone(), choice.copies);
-        self.sending.push(std::thread::spawn(move || {
+        let creating = Arc::new(AtomicBool::new(false));
+        let flag = creating.clone();
+        let handle = std::thread::spawn(move || {
             let sent = send(
                 &listed.laid,
                 choice.range,
@@ -510,13 +515,15 @@ impl Printing {
                 driverless,
                 &title,
                 copies,
+                &flag,
             );
             match &sent {
                 Ok(id) => log::info!("print: job {id} on {queue}"),
                 Err(e) => log::warn!("print: {queue} refused the job: {e:?}"),
             }
             poster.post(Msg::Sent(sent));
-        }));
+        });
+        self.sending.push(Job { handle, creating });
         Step::reply(Reply::redraw_all())
     }
 
@@ -524,7 +531,7 @@ impl Printing {
     /// job sent was refused. Whether anything changed on screen; a program goes on with its
     /// own wake handling either way.
     pub fn wake(&mut self) -> bool {
-        self.sending.retain(|h| !h.is_finished());
+        self.sending.retain(|j| !j.handle.is_finished());
         let Some((_, rx)) = &self.msgs else {
             return false;
         };
@@ -672,17 +679,33 @@ impl Printing {
     }
 }
 
+/// A job on its thread; `creating` while cupsd sets up a driverless printer's queue.
+struct Job {
+    handle: JoinHandle<()>,
+    creating: Arc<AtomicBool>,
+}
+
+impl Job {
+    fn waited_for(&self) -> bool {
+        !self.handle.is_finished() && !self.creating.load(Ordering::Relaxed)
+    }
+}
+
 /// A program quitting while a job is still being drawn or sent waits for it, up to
-/// [`QUIT_WAIT`]: the app is dropped after its windows are gone.
+/// [`QUIT_WAIT`]: the app is dropped after its windows are gone. A job whose driverless
+/// printer cupsd is still setting up has sent nothing yet and is dropped, not waited out.
 impl Drop for Printing {
     fn drop(&mut self) {
         let until = Instant::now() + QUIT_WAIT;
-        while self.sending.iter().any(|h| !h.is_finished()) {
+        while self.sending.iter().any(Job::waited_for) {
             if Instant::now() >= until {
                 log::warn!("print: quit with a job still being sent; it was cut off");
                 return;
             }
             std::thread::sleep(Duration::from_millis(50));
+        }
+        if self.sending.iter().any(|j| !j.handle.is_finished()) {
+            log::warn!("print: quit while cupsd was setting up a printer; that job was dropped");
         }
     }
 }
@@ -702,8 +725,6 @@ fn draw_pages(laid: &Laid, wanted: &Receiver<(u32, (u32, u32))>, out: impl Fn(u3
     }
 }
 
-/// Draw `laid`'s pages in `range` one at a time into a PDF and send it to `queue`; for a
-/// `driverless` printer, to the temporary queue cupsd makes for it first.
 fn redraw(changed: bool) -> Action {
     match changed {
         true => Action::Redraw,
@@ -711,6 +732,8 @@ fn redraw(changed: bool) -> Action {
     }
 }
 
+/// Draw `laid`'s pages in `range` one at a time into a PDF and send it to `queue`; for a
+/// `driverless` printer, to the temporary queue cupsd makes for it first.
 fn send(
     laid: &Laid,
     range: Range,
@@ -718,11 +741,15 @@ fn send(
     driverless: Option<cups::Driverless>,
     title: &str,
     copies: u32,
+    creating: &AtomicBool,
 ) -> Result<i32, cups::Error> {
     let (server, user) = (http::Server::find(), login_name());
     let queue = match driverless {
         Some(printer) => {
-            let made = cups::create_local(&server, &user, queue, &printer)?;
+            creating.store(true, Ordering::Relaxed);
+            let made = cups::create_local(&server, &user, queue, &printer);
+            creating.store(false, Ordering::Relaxed);
+            let made = made?;
             log::info!("print: temporary queue {made} for {}", printer.uri);
             made
         }

@@ -530,6 +530,12 @@ mod tests {
             fit(4000, 3000, a4_body),
             "a picture larger than the body is fitted"
         );
+        let wide = place((25_000_000, 1), 24, a4_body, Scaling::Actual);
+        assert_eq!(
+            wide,
+            fit(25_000_000, 1, a4_body),
+            "a size past i32 is fitted, not wrapped"
+        );
         let fitted = place((48, 48), 96, a4_body, Scaling::Fit);
         assert_eq!(
             (fitted.width, fitted.height),
