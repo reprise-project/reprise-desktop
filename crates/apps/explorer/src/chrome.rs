@@ -46,7 +46,9 @@ impl Explorer {
             icon(&["folder"]),
         );
         // Few themes carry a view icon, so the drawn one stands in rather than the placeholder.
-        let views = (waits.first(icons, &["view-list"], px)).or_else(|| Some(viewsicon::draw24()));
+        let scale = icons.scale();
+        let views = (waits.first(icons, &["view-list"], px))
+            .or_else(|| Some(viewsicon::draw24_grown(px, scale)));
         self.toolbar.items = vec![
             toolbar::Item::DropButton {
                 id: toolbar::BACK,

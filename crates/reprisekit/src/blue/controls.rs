@@ -19,7 +19,7 @@ mod sizebox;
 mod spin;
 mod statusbar;
 mod tab;
-mod taskpane;
+pub(super) mod taskpane;
 pub(super) mod toolbar;
 mod tooltip;
 mod trackbar;

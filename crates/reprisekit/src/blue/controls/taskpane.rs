@@ -59,6 +59,11 @@ fn mid(v: f64, d: i32) -> f64 {
     shape::centre(v as i32, d) + 0.5
 }
 
+/// [`mid`] for art drawn `k` device px to the design px, a whole `d` or a grown mark's `d * g`.
+fn mid_at(v: f64, k: f64) -> f64 {
+    ((v + 0.5) / k - 0.5) + 0.5
+}
+
 #[derive(Clone, Copy)]
 enum Side {
     Fill,
@@ -179,9 +184,8 @@ impl Band {
     }
 }
 
-fn disc(f: &Face, (shadow, alpha): (Color, u8), x: f64, y: f64, d: i32, under: Px) -> Px {
-    let k = f64::from(d);
-    let (mx, my) = (mid(x, d), mid(y, d));
+fn disc(f: &Face, (shadow, alpha): (Color, u8), x: f64, y: f64, k: f64, under: Px) -> Px {
+    let (mx, my) = (mid_at(x, k), mid_at(y, k));
     let reach = ((mx - DISC_X - SHADOW_DX).hypot(my - DISC_Y - SHADOW_DY) - DISC_R) / SHADOW_SOFT;
     let shade = 1.0 - shape::smooth((reach + 1.0) / 2.0);
     let under = shape::over(shape::scale(shape::premul(shadow, alpha), shade), under);
@@ -198,8 +202,7 @@ fn disc(f: &Face, (shadow, alpha): (Color, u8), x: f64, y: f64, d: i32, under: P
     shape::over(top, under)
 }
 
-fn chevrons(lines: &[[(f64, f64); 3]; 2], x: f64, y: f64, d: i32) -> f64 {
-    let k = f64::from(d);
+fn chevrons(lines: &[[(f64, f64); 3]; 2], x: f64, y: f64, k: f64) -> f64 {
     lines
         .iter()
         .map(|l| {
@@ -220,10 +223,48 @@ fn button(band: &Band, f: &Face, lines: &[[(f64, f64); 3]; 2], backed: bool, d: 
             shape::CLEAR
         };
         if let Some(halo) = f.halo {
-            p = disc(f, halo, x, y, d, p);
+            p = disc(f, halo, x, y, f64::from(d), p);
         }
-        shape::over(shape::scale(ink, chevrons(lines, x, y, d)), p)
+        shape::over(shape::scale(ink, chevrons(lines, x, y, f64::from(d))), p)
     })
+}
+
+/// The fold button's disc and chevrons alone over a `h` px band, `g` times their design size and
+/// drawn afresh at it: the mark a band grown with the text carries.
+fn grown_mark(f: &Face, lines: &[[(f64, f64); 3]; 2], h: i32, g: f64, d: i32) -> Canvas {
+    let k = f64::from(d) * g;
+    let size = |n: i32| (f64::from(n) * g).round() as i32;
+    let ink = solid(f.mark.unwrap_or(f.rim));
+    shape::draw(size(BUTTON_W), size(h), d, |x, y| {
+        let mut p = shape::CLEAR;
+        if let Some(halo) = f.halo {
+            p = disc(f, halo, x, y, k, p);
+        }
+        shape::over(shape::scale(ink, chevrons(lines, x, y, k)), p)
+    })
+}
+
+/// [`Part::TaskCollapseMark`] and [`Part::TaskExpandMark`] `g` times their design size at `d`,
+/// for a text size that grows the icons ([`crate::style::Style::with_task_marks`]).
+pub(crate) fn grown_marks(v: Variant, d: i32, g: f64) -> Vec<(Part, PartImage)> {
+    let s = v.scheme();
+    let h = band_h(v);
+    let c = &s.task_collapse;
+    let collapse = Canvas::stacked(&[
+        grown_mark(&c.normal, &UP, h, g, d),
+        grown_mark(&c.hot, &UP, h, g, d),
+        grown_mark(&c.pressed, &UP, h, g, d),
+    ]);
+    let expand = grown_mark(&s.task_expand.normal, &DOWN, h, g, d);
+    let image =
+        |a: Canvas, states: &[State]| PartImage::new(a, states, Layout::Vertical).at_scale(d);
+    vec![
+        (
+            Part::TaskCollapseMark,
+            image(collapse, &[State::Normal, State::Hot, State::Pressed]),
+        ),
+        (Part::TaskExpandMark, image(expand, &[State::Normal])),
+    ]
 }
 
 pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {

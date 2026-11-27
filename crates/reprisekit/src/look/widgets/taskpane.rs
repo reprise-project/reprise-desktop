@@ -21,6 +21,7 @@ const CHEVRON_Y_SHUT: i32 = 8;
 /// One arrow of Classic's chevron, top row first: the columns of the up
 /// arrow, the down arrow being the same rows in reverse.
 const CHEVRON: [&[i32]; 4] = [&[3], &[2, 3, 4], &[1, 2, 4, 5], &[0, 1, 5, 6]];
+const CHEVRON_W: i32 = 7;
 
 /// The pane's background over `r`: the style's [`Part::TaskPane`] when it
 /// has one, the window colour otherwise.
@@ -60,18 +61,20 @@ pub fn draw_header(
     c.fill_rect(r, cs.button_face);
     text.draw(c, title_r, title, true, cs.button_text, Align::Left, px);
     let dy = if open { CHEVRON_Y_OPEN } else { CHEVRON_Y_SHUT };
-    // A band grown with the text keeps the chevron centred down it.
-    let grown = (r.height - TaskMetrics::CLASSIC.header * s).max(0) / 2;
-    let cy = r.y + dy * s + grown;
-    let cx = r.right() - CHEVRON_RIGHT * s;
+    // The chevron grows by the whole multiple of its width the text reaches, its insets with it,
+    // and a band grown further keeps it centred down the band.
+    let n = (p.text.len(CHEVRON_W) / CHEVRON_W).max(1);
+    let grown = (r.height - TaskMetrics::CLASSIC.header * n * s).max(0) / 2;
+    let cy = r.y + dy * n * s + grown;
+    let cx = r.right() - CHEVRON_RIGHT * n * s;
     for k in 0..2 {
         draw_chevron(
             c,
             cx,
-            cy + k * CHEVRON.len() as i32 * s,
+            cy + k * CHEVRON.len() as i32 * n * s,
             open,
             cs.button_text,
-            s,
+            n * s,
         );
     }
 }
@@ -114,4 +117,52 @@ pub fn link_ink(p: &Paint, enabled: bool, hot: bool) -> Color {
         .style()
         .and_then(|st| st.text_color(Part::TaskGroupBody, state))
         .unwrap_or(p.cs.window_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{FontConfig, Theme};
+
+    /// Classic's double chevron doubles in a band grown to 200% text, its insets with it.
+    #[test]
+    fn the_classic_chevron_grows_by_whole_steps_with_the_text() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let inked = |pct: u32| {
+            let theme = Theme::default().with_text_size(pct);
+            let p = theme.paint();
+            let band = Rect::new(0, 0, 185, theme.text.len(TaskMetrics::CLASSIC.header));
+            let mut c = Canvas::new(band.width as u32, band.height as u32);
+            draw_header(
+                &mut c,
+                &text,
+                &p,
+                band,
+                band,
+                "",
+                true,
+                Interaction::Idle,
+                11,
+            );
+            let ink = theme.colors.button_text.argb();
+            let pts: Vec<(i32, i32)> = (0..c.height as i32)
+                .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) == ink)
+                .collect();
+            let xs = pts.iter().map(|p| p.0);
+            let ys = pts.iter().map(|p| p.1);
+            (
+                xs.clone().max().unwrap() - xs.min().unwrap() + 1,
+                ys.clone().max().unwrap() - ys.min().unwrap() + 1,
+                185 - pts.iter().map(|p| p.0).min().unwrap(),
+            )
+        };
+        assert_eq!(
+            inked(100),
+            (7, 8, CHEVRON_RIGHT),
+            "7x8, 18 px in from the right"
+        );
+        assert_eq!(inked(150), inked(100), "less than double the text keeps it");
+        assert_eq!(inked(200), (14, 16, 2 * CHEVRON_RIGHT));
+    }
 }

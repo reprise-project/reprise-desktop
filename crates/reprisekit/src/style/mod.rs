@@ -101,6 +101,7 @@ pub struct Style {
     button_side: Option<ButtonSide>,
     sided: Rescaled,
     start_pill: Option<StartPill>,
+    task_marks: Option<TaskMarks>,
 }
 
 /// Art [`Style::warm`] found unpainted at one scale; [`Warm::paint`] paints it, on any thread.
@@ -147,6 +148,9 @@ type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
 
 /// Paints a look's caption and ? buttons `side` design px square at the style's scale.
 type ButtonSide = Arc<dyn Fn(i32) -> Vec<(Part, PartImage)> + Send + Sync>;
+/// Paints the task pane's [`Part::TaskCollapseMark`] and [`Part::TaskExpandMark`] at a factor of
+/// their design size, at the style's scale ([`Style::with_task_marks`]).
+type TaskMarks = Arc<dyn Fn(f64) -> Vec<(Part, PartImage)> + Send + Sync>;
 
 /// A labelled Start button drawn afresh at any size ([`Style::with_start_pill`]).
 #[derive(Clone)]
@@ -238,6 +242,7 @@ impl Style {
             rescaled: Rescaled::default(),
             button_side: None,
             start_pill: None,
+            task_marks: None,
             sided: Rescaled::default(),
         }
     }
@@ -273,6 +278,16 @@ impl Style {
             label,
             paint: Arc::new(paint),
         });
+        self
+    }
+
+    /// The task pane's fold marks drawn afresh at a factor of their size: a text size that grows
+    /// the icons grows them alike ([`Style::with_text_size`]).
+    pub(crate) fn with_task_marks(
+        mut self,
+        paint: impl Fn(f64) -> Vec<(Part, PartImage)> + Send + Sync + 'static,
+    ) -> Style {
+        self.task_marks = Some(Arc::new(paint));
         self
     }
 
@@ -444,6 +459,17 @@ impl Style {
 
     fn grown_text(mut self, pct: u32, grow: i32) -> Style {
         self.caption_text = self.caption_text.with_text_size(pct);
+        if let Some(marks) = self.task_marks.clone() {
+            let icon = crate::icon::ICON_SIZE;
+            let side = (crate::theme::text_px(icon as u32, pct) as i32).min(icon + grow.max(0));
+            if side > icon {
+                let g = f64::from(side) / f64::from(icon);
+                self = self.with_painted_group(
+                    &[Part::TaskCollapseMark, Part::TaskExpandMark],
+                    move || marks(g),
+                );
+            }
+        }
         let Some(pill) = self.start_pill.clone() else {
             return self;
         };
