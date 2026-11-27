@@ -98,6 +98,7 @@ pub mod taskbarfocus;
 pub mod taskpreview;
 pub mod text;
 pub mod textedit;
+mod textlog;
 pub mod theme;
 mod themecache;
 pub mod toolkit;
