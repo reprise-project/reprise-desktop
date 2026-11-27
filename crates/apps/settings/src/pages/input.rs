@@ -1,10 +1,10 @@
 //! Keyboard, Mouse, Touchpad, Cursor, Text & Keys and Pointer & Alerts.
 
 use super::{
-    Area, BOUNCE_DELAY, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD,
-    KB_CAPS, KB_COMPOSE, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD,
-    SC_EDIT, SC_OVERLAY_MS, SC_REMOVE, SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, edit,
-    ends_track, group, shortcuts, spin, updown,
+    Area, BOUNCE_DELAY, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD, KB_CAPS, KB_COMPOSE,
+    KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT,
+    SC_OVERLAY_MS, SC_REMOVE, SCROLL_SPEED, SPEED_STEPS, X, button, choice, combo, combo_of,
+    cursor_default_row, edit, ends_track, group, shortcuts, spin, updown,
 };
 use crate::model::{
     ATTENTION_FLASH_MAX, CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, GESTURE_FINGERS,
@@ -281,13 +281,11 @@ pub(super) const TOUCHPAD_CONTROLS: [&str; 21] = [
 
 pub fn touchpad(a: Area) -> Form {
     let x2 = GX + a.gw() / 2;
-    let fingers: Vec<&str> = GESTURE_FINGERS.iter().map(|f| f.1).collect();
     let mut items = vec![
         group(a, "touchpad_group", 44, 144, "Touchpad"),
         Item::check("touchpad_enabled", GX, 66, "&Use the touchpad"),
         Item::check("gestures_enabled", x2, 66, "&Swipe with:"),
-        Item::combo("gesture_fingers", x2 + 88, 62, 78, &fingers, fingers.len())
-            .named("Swipe fingers"),
+        combo_of("gesture_fingers", x2 + 88, 62, 78, GESTURE_FINGERS).named("Swipe fingers"),
         Item::check(
             "disable_with_mouse",
             GX,
@@ -367,9 +365,8 @@ pub fn touchpad(a: Area) -> Form {
 /// The pointer theme and size, and a preview of the theme's pointers the host
 /// draws into `CURSOR_PREVIEW` (inside is [`preview_size`]), which takes the page's extra width and height.
 pub fn cursor(a: Area, cursor_themes: &[String]) -> Form {
-    let mut themes = vec![CURSOR_DEFAULT_ROW.to_string()];
+    let mut themes = vec![cursor_default_row()];
     themes.extend(cursor_themes.iter().cloned());
-    let sizes: Vec<&str> = CURSOR_SIZES.iter().map(|c| c.1).collect();
     Form::new(vec![
         group(a, "cursor_group", 44, 84, "Pointer Theme"),
         Item::label_at("cursor_theme_label", GX, 66, 56, "&Scheme:"),
@@ -382,7 +379,7 @@ pub fn cursor(a: Area, cursor_themes: &[String]) -> Form {
             themes.len().clamp(1, 8),
         ),
         Item::label_at("cursor_size_label", GX, 96, 56, "Si&ze:"),
-        Item::combo("cursor_size", GX + 60, 92, 110, &sizes, sizes.len()),
+        combo_of("cursor_size", GX + 60, 92, 110, CURSOR_SIZES),
         group(a, "cursor_preview_group", 138, 242 + a.dh, "Preview"),
         Item::new(
             CURSOR_PREVIEW,
@@ -440,10 +437,9 @@ pub(super) const BOUNCE_CONTROLS: [&str; 5] = [
 pub fn text_and_keys(a: Area) -> Form {
     let gw = a.gw();
     let note = |id, y, text: &str| Item::label_at(id, GX, y, gw, text);
-    let sizes: Vec<&str> = TEXT_SIZES.iter().map(|c| c.1).collect();
     let mut items = vec![
         Item::label_at("text_size_label", X, 48, 70, "&Text size:"),
-        Item::combo("text_size", X + 74, 44, 80, &sizes, sizes.len()),
+        combo_of("text_size", X + 74, 44, 80, TEXT_SIZES),
     ];
     items.push(group(a, "sticky_group", 70, 103, "StickyKeys"));
     items.push(note(

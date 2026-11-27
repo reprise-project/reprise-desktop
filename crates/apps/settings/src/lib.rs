@@ -5,6 +5,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("settings");
+
 mod additem;
 mod airplanehost;
 mod appearancepage;

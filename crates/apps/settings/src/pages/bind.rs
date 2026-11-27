@@ -39,10 +39,10 @@ use reprisekit::theme::Color;
 use crate::model::{
     AUDIO_CODECS, CAPS_LOCK, CLICK_METHODS, COMPOSE_KEY, CURSOR_SIZES, Choices, DESKTOPS_DEFAULT,
     ENCODERS, FONT_SMOOTHINGS, FRAME_RATES, GESTURE_FINGERS, HOT_CORNERS, INTERFACES, LOCK_GRACES,
-    LOCK_MEDIA, MENU_ANIMATIONS, PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS, QT_PLATFORM_THEMES,
-    RATE_MODES, RECORD_FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES, SHOT_FORMATS,
-    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut,
-    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS,
+    LOCK_MEDIA, Label, MENU_ANIMATIONS, PAGER_MARKS, PNG_COMPRESSIONS, POSITIONS,
+    QT_PLATFORM_THEMES, RATE_MODES, RECORD_FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES,
+    SHOT_FORMATS, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings,
+    Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS,
     VISUAL_BELLS, WATER_STYLES, XkbPick, keys_for, remote_quality_row,
 };
 
@@ -54,13 +54,9 @@ pub(super) enum Bind {
     Named(&'static str, Lens<Settings, String>, &'static Choices),
     /// A drop-down owning part of an xkb options field: its row's id replaces the others it owns.
     XkbOption(&'static str, Lens<Settings, String>, &'static XkbPick),
-    /// A [`Bind::Choice`] whose first rows are the labels of `Choices` standing for their values (`CURSOR_DEFAULT_ROW` for "").
+    /// A [`Bind::Choice`] whose first rows are the labels of `Choices` standing for their values (`cursor_default_row` for "").
     ChoiceOrDefault(&'static str, Lens<Settings, String>, &'static Choices),
-    NamedNum(
-        &'static str,
-        Lens<Settings, i64>,
-        &'static [(i64, &'static str)],
-    ),
+    NamedNum(&'static str, Lens<Settings, i64>, &'static [(i64, Label)]),
     /// The "Use virtual desktops" check box: ticked is more than one desktop.
     /// Unticking writes 1; ticking writes the count the up-down beside it shows.
     UseDesktops(&'static str, Lens<Settings, i64>),
@@ -703,8 +699,8 @@ pub fn write_form(form: &mut Form, s: &Settings) {
                 let want = fixed
                     .iter()
                     .find(|(f, _)| *f == v)
-                    .map_or(v, |(_, row)| *row);
-                c.select_text(want);
+                    .map_or_else(|| v.to_string(), |(_, row)| row());
+                c.select_text(&want);
             }
             (Bind::NamedNum(_, at, choices), Control::Combo(c)) => {
                 let want = *at.get(s);
@@ -941,9 +937,9 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in ["banner_label", "startmenu_banner"] {
         sm.set_enabled(id, s.startmenu_style == "classic");
     }
-    let quality = REMOTE_QUALITIES[remote_quality_row(&s.remote_quality)].1;
+    let quality = (REMOTE_QUALITIES[remote_quality_row(&s.remote_quality)].1)();
     let rd = &mut sheet.pages[Page::RemoteDesktop.index()];
-    rd.set_text(QUALITY_VALUE, quality);
+    rd.set_text(QUALITY_VALUE, &quality);
     follow_lock(rd);
     let held = !s.power_locker.trim().is_empty();
     rd.set_text(REMOTE_SCREEN_NOTE, if held { LOCKER_NOTE } else { "" });
@@ -1078,7 +1074,7 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
                         let t = v.text.as_str();
                         *at.get_mut(s) = fixed
                             .iter()
-                            .find(|(_, row)| *row == t)
+                            .find(|(_, row)| row() == t)
                             .map_or(t, |(value, _)| *value)
                             .to_string();
                     }

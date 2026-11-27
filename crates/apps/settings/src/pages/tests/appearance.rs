@@ -1153,8 +1153,8 @@ fn reprise_toolkits_are_the_second_rows_and_qt_needs_a_tool() {
             _ => unreachable!("the Qt style is a combo"),
         }
     };
-    assert_eq!(qt_row(true), (REPRISE_TOOLKIT_ROW.to_string(), false));
-    assert_eq!(qt_row(false), (REPRISE_TOOLKIT_ROW.to_string(), true));
+    assert_eq!(qt_row(true), (reprise_toolkit_row(), false));
+    assert_eq!(qt_row(false), (reprise_toolkit_row(), true));
 }
 
 #[test]
@@ -1195,7 +1195,7 @@ fn water_styles_list_the_fluids() {
         keys,
         ["calm", "lively", "rain", "ink", "glow", "sparks", "neon"]
     );
-    let labels: Vec<_> = WATER_STYLES.iter().skip(3).map(|c| c.1).collect();
+    let labels: Vec<_> = WATER_STYLES.iter().skip(3).map(|c| (c.1)()).collect();
     assert_eq!(labels, ["Ink", "Glow", "Sparks", "Neon"]);
     for (key, _) in WATER_STYLES {
         assert!(reprisekit::water::Water::parse(key).is_some(), "{key}");
