@@ -40,7 +40,7 @@ It opens UTF-8 (with or without BOM), UTF-16 LE/BE (with BOM) and Western (CP125
 
 ## Sticky Notes
 
-Sticky Notes opens frameless coloured notes. Click `+` (`Ctrl+N`) to add, `x` to delete, drag the top strip to move, drag edges to resize and right-click for edit commands and six colours.
+Sticky Notes opens frameless coloured notes. Click `+` (`Ctrl+N`) to add, `x` to delete, drag the top strip to move, drag edges to resize and right-click for edit commands and six colours. A new note opens at the top right of the screen, clear of the desktop icons.
 
 Notes auto-save in `~/.local/share/reprise/notes/` and reopen at login via `reprise-notes --restore` (toggle in Settings > Startup).
 

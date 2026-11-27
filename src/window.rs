@@ -43,7 +43,7 @@ pub(crate) use geometry::{client_limits, x11_geometry};
 pub use place::{
     Rescued, ResizeAnchor, anchor_done, anchored_position, area_client, below_top_bar,
     cascade_from, cascade_position, centre_on, first_configure_size, fit_size, keep_inside,
-    landing, rect_below_top_bar,
+    landing, rect_below_top_bar, top_right_cascade,
 };
 
 pub const PROMPT_TAG: &str = "prompt";

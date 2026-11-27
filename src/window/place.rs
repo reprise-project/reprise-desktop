@@ -59,6 +59,29 @@ pub fn cascade_from(prev: (i32, i32), size: (i32, i32), area: Rect, m: &Metrics)
     }
 }
 
+/// Where a window that keeps its own place (a note) and has none yet opens: the work area's top
+/// right, clear of the desktop's icons down the left, or a step down and left of `prev`, the
+/// newest of its program's, back at the top right once that would leave the area.
+pub fn top_right_cascade(
+    prev: Option<(i32, i32)>,
+    size: (i32, i32),
+    area: Rect,
+    m: &Metrics,
+) -> (i32, i32) {
+    let first = (
+        area.right() - m.cascade_origin - size.0,
+        area.y + m.cascade_origin,
+    );
+    let Some((x, y)) = prev.map(|(x, y)| (x - m.cascade_step, y + m.cascade_step)) else {
+        return keep_inside(first, size, area);
+    };
+    if x < area.x || y + size.1 > area.bottom() {
+        keep_inside(first, size, area)
+    } else {
+        (x, y)
+    }
+}
+
 pub fn keep_inside(origin: (i32, i32), size: (i32, i32), area: Rect) -> (i32, i32) {
     let max_x = (area.right() - size.0).max(area.x);
     let max_y = (area.bottom() - size.1).max(area.y);
