@@ -74,7 +74,8 @@ pub fn date_names() -> &'static DateNames {
 }
 
 /// Months in their standalone form (`%OB`, which differs from `%B` where a date declines
-/// them); a weekday's letter is its abbreviation's first, upper-cased.
+/// them); a weekday's letter is its abbreviation's first, upper-cased. The year goes first when
+/// the locale's `date(1)` format writes it before the month.
 fn date_names_in(loc: Option<&TimeLocale>) -> DateNames {
     let name = |mon: i32, wday: i32, fmt: &CStr| {
         // SAFETY: `libc::tm` is plain data; `%OB` reads only `tm_mon`, `%A` and `%a` `tm_wday`.
@@ -92,7 +93,54 @@ fn date_names_in(loc: Option<&TimeLocale>) -> DateNames {
                 .next()
                 .map_or_else(String::new, |c| c.to_uppercase().collect())
         }),
+        year_first: langinfo(loc, NL_DATE_FMT).and_then(|f| year_first(&f)),
     }
+}
+
+/// glibc's `_DATE_FMT`, the format `date(1)` writes, which names the month.
+const NL_DATE_FMT: libc::nl_item = 0x2006c;
+
+/// Item `item` of `loc`, None for no locale or an item glibc lacks.
+fn langinfo(loc: Option<&TimeLocale>, item: libc::nl_item) -> Option<String> {
+    // SAFETY: `loc` is a live locale object; `nl_langinfo_l` returns null or a NUL-terminated
+    // string that stays valid while it lives, and it is copied out before `loc` can go.
+    unsafe {
+        let p = libc::nl_langinfo_l(item, loc?.0);
+        (!p.is_null()).then(|| CStr::from_ptr(p).to_string_lossy().into_owned())
+    }
+}
+
+/// The text after the year when strftime format `fmt` writes the year before the month
+/// (". " in hu_HU's "%Y. %b. %-e., %A"), else None.
+fn year_first(fmt: &str) -> Option<String> {
+    let b = fmt.as_bytes();
+    let (mut i, mut after_year) = (0, None);
+    while i < b.len() {
+        if b[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i < b.len() && (b"-_0^#EO".contains(&b[i]) || b[i].is_ascii_digit()) {
+            i += 1;
+        }
+        let Some(&c) = b.get(i) else { break };
+        i += 1;
+        match c {
+            b'Y' | b'y' if after_year.is_none() => after_year = Some((i, None)),
+            b'b' | b'B' | b'h' | b'm' => {
+                return after_year.map(|(from, to)| fmt[from..to.unwrap_or(start)].to_string());
+            }
+            b'%' => {}
+            _ => {
+                if let Some((_, to @ None)) = &mut after_year {
+                    *to = Some(start);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn long_date_in(loc: Option<&TimeLocale>, tm: &libc::tm) -> String {
@@ -101,16 +149,7 @@ fn long_date_in(loc: Option<&TimeLocale>, tm: &libc::tm) -> String {
 }
 
 fn long_format_in(loc: Option<&TimeLocale>) -> String {
-    // SAFETY: `loc` is a live locale object; `nl_langinfo_l` returns null or a NUL-terminated
-    // string that stays valid while it lives, and it is copied out before `loc` can go.
-    let d_fmt = unsafe {
-        let p = match loc {
-            Some(l) => libc::nl_langinfo_l(libc::D_FMT, l.0),
-            None => std::ptr::null(),
-        };
-        (!p.is_null()).then(|| CStr::from_ptr(p).to_string_lossy().into_owned())
-    };
-    long_format_for(d_fmt.as_deref().unwrap_or("%D"))
+    long_format_for(langinfo(loc, libc::D_FMT).as_deref().unwrap_or("%D"))
 }
 
 /// The long date's strftime pattern for a locale whose short date is `d_fmt` (its `D_FMT`).
@@ -340,7 +379,27 @@ mod tests {
             assert_eq!(names.month(11), "november");
             assert_eq!(names.weekday(5), "péntek");
             assert_eq!(names.letters.join(" "), "V H K S C P S");
+            assert_eq!(names.year_first.as_deref(), Some(". "), "2026. november");
         }
+    }
+
+    #[test]
+    fn the_year_goes_first_only_where_the_date_format_writes_it_before_the_month() {
+        assert_eq!(
+            year_first("%Y. %b. %-e., %A, %H:%M:%S %Z").as_deref(),
+            Some(". ")
+        );
+        assert_eq!(year_first("%Y年 %b %e日 %A").as_deref(), Some("年 "));
+        assert_eq!(year_first("%Y-%m-%d").as_deref(), Some("-"));
+        assert_eq!(
+            year_first("%Y %A %B").as_deref(),
+            Some(" "),
+            "up to the next field"
+        );
+        assert_eq!(year_first("%a %b %e %H:%M:%S %Z %Y"), None, "C");
+        assert_eq!(year_first("%a %d %b %Y %r %Z"), None);
+        assert_eq!(year_first("%A %Y"), None, "no month");
+        assert_eq!(year_first("100%% %Y"), None, "no month");
     }
 
     #[test]

@@ -36,6 +36,9 @@ pub struct DateNames {
     pub weekdays: [String; 7],
     /// The band's one-letter column heads, Sunday first.
     pub letters: [String; 7],
+    /// The text between year and month in a locale that writes the year first (". " gives
+    /// "2026. november"); None titles a month as `calendar-title` orders it.
+    pub year_first: Option<String>,
 }
 
 impl DateNames {
@@ -68,6 +71,7 @@ impl DateNames {
             ]
             .map(String::from),
             letters: ["S", "M", "T", "W", "T", "F", "S"].map(String::from),
+            year_first: None,
         })
     }
 
@@ -206,11 +210,11 @@ impl Calendar {
     }
 
     pub fn title(&self) -> String {
-        tr!(
-            "calendar-title",
-            month = self.names.month(self.month),
-            year = self.year as i64
-        )
+        let month = self.names.month(self.month);
+        match &self.names.year_first {
+            Some(sep) => format!("{}{sep}{month}", self.year),
+            None => tr!("calendar-title", month = month, year = self.year as i64),
+        }
     }
 }
 
@@ -1003,11 +1007,26 @@ mod tests {
     }
 
     #[test]
+    fn a_year_first_locale_titles_the_month_after_the_year() {
+        let names: &'static DateNames = Box::leak(Box::new(DateNames {
+            months: std::array::from_fn(|m| format!("m{}", m + 1)),
+            year_first: Some(". ".into()),
+            ..DateNames::english().clone()
+        }));
+        let cal = Calendar {
+            names,
+            ..Calendar::new(2026, 11, None, 1)
+        };
+        assert_eq!(cal.title(), "2026. m11");
+    }
+
+    #[test]
     fn the_band_title_and_heading_take_the_names_the_host_gives() {
         let names: &'static DateNames = Box::leak(Box::new(DateNames {
             months: std::array::from_fn(|m| format!("m{}", m + 1)),
             weekdays: std::array::from_fn(|d| format!("w{d}")),
             letters: ["V", "H", "K", "S", "C", "P", "S"].map(String::from),
+            year_first: None,
         }));
         let en = Calendar::new(2026, 11, Some(27), 0);
         let local = Calendar {
