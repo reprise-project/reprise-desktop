@@ -491,11 +491,7 @@ fn documents_folders_have_their_infotips() {
             None,
             Some("/tmp/a.txt".into()),
         ],
-        tips: vec![
-            crate::desktop::document_tip("folder-documents").map(String::from),
-            None,
-            None,
-        ],
+        tips: vec![crate::desktop::document_tip("folder-documents"), None, None],
         dirs: true,
         icon_px: 16,
         widest: None,

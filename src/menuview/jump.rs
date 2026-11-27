@@ -1,5 +1,6 @@
 //! Jump lists on task buttons and their recent files.
 
+use reprisekit::tr;
 use std::{path::PathBuf, sync::Arc};
 
 use reprisefs::apps::AppEntry;
@@ -102,7 +103,7 @@ impl State {
             rows.push(Some(row));
         }
         if items.is_empty() {
-            items.push(MenuItem::entry("(Empty)").enabled(false));
+            items.push(MenuItem::entry(tr!("start-empty")).enabled(false));
             rows.push(None);
         }
         (items, rows, waits)

@@ -1,3 +1,4 @@
+use reprisekit::tr;
 use std::path::Path;
 
 use repriseconf::search::word_starts;
@@ -73,16 +74,20 @@ pub(super) fn result_groups<'a>(
             .collect()
     };
     let calc: Vec<String> = calc.map(str::to_string).into_iter().collect();
-    group(ResultKind::Calc, "Calculator".into(), named(&calc));
+    group(
+        ResultKind::Calc,
+        tr!("start-search-calculator"),
+        named(&calc),
+    );
     let apps = &apps[..apps.len().min(SEARCH_ROWS)];
     group(
         ResultKind::Programs,
-        format!("Programs ({})", apps.len()),
+        tr!("start-search-programs", count = apps.len().to_string()),
         named(apps),
     );
     group(
         ResultKind::Settings,
-        format!("Settings ({})", settings.len()),
+        tr!("start-search-settings", count = settings.len().to_string()),
         (settings.iter())
             .map(|(name, detail)| ResultRow {
                 name: name.clone(),
@@ -102,7 +107,11 @@ pub(super) fn result_groups<'a>(
             .collect();
         group(
             ResultKind::Found(s),
-            format!("{heading} ({})", rows.len()),
+            tr!(
+                "start-search-found",
+                heading = heading,
+                count = rows.len().to_string()
+            ),
             rows,
         );
     }
@@ -164,7 +173,14 @@ impl State {
             })
             .collect();
         let calc = v.answer.as_ref().map(|(row, _)| row.clone());
-        let found = (v.search.sections()).map(|(source, rows)| (source.heading(), rows));
+        let sections: Vec<_> = v.search.sections().collect();
+        let headings: Vec<_> = sections
+            .iter()
+            .map(|(source, _)| source.heading())
+            .collect();
+        let found = (headings.iter())
+            .zip(&sections)
+            .map(|(heading, (_, rows))| (&**heading, *rows));
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let (mut groups, kinds) =
             result_groups(calc.as_deref(), &names, &settings, found, home.as_deref());

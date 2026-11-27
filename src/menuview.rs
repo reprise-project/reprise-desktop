@@ -17,6 +17,7 @@ mod window_list;
 #[cfg(test)]
 mod tests;
 
+use reprisekit::tr;
 use std::{path::PathBuf, rc::Rc, time::Instant};
 
 use reprisefs::apps::AppEntry;
@@ -366,8 +367,10 @@ impl MenuKind {
             MenuKind::Entries(entries) => entries.get(idx)?.tip().map(String::from),
             MenuKind::Documents { tips, .. } => tips.get(idx).cloned().flatten(),
             MenuKind::StartPanel { rows } => match rows.get(idx) {
-                Some(Some(StartRow::CannotUninstall(why))) => Some(why.to_string()),
-                Some(Some(StartRow::OnDesktop)) => Some(crate::startmenu::ON_DESKTOP.to_string()),
+                Some(Some(StartRow::CannotUninstall)) => {
+                    Some(crate::startmenu::no_packagekit_tip())
+                }
+                Some(Some(StartRow::OnDesktop)) => Some(crate::startmenu::on_desktop_tip()),
                 _ => None,
             },
             _ => None,
@@ -692,10 +695,10 @@ fn pick_closes_start_panel(pick: &MenuPick) -> bool {
     !matches!(pick, MenuPick::StartPanel(_))
 }
 
-fn stack_name(kind: &MenuKind) -> &'static str {
+fn stack_name(kind: &MenuKind) -> String {
     match kind {
-        MenuKind::Entries(_) => "Start Menu",
-        MenuKind::Window { .. } => "Window Menu",
-        _ => "Context Menu",
+        MenuKind::Entries(_) => tr!("start-menu-start"),
+        MenuKind::Window { .. } => tr!("start-menu-window"),
+        _ => tr!("start-menu-context"),
     }
 }

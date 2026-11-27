@@ -153,7 +153,7 @@ fn jump_sections(
     let sections = crate::taskbar::jump_sections(files, crate::taskbar::jump_tasks(a));
     (sections.into_iter())
         .map(|section| ResultGroup {
-            title: section.title.into(),
+            title: section.title,
             rows: (section.rows.iter())
                 .map(|(name, row)| ResultRow {
                     name: name.clone(),

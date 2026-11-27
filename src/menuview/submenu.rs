@@ -1,5 +1,6 @@
 //! Submenus: the rows a submenu row opens and placing them beside it.
 
+use reprisekit::tr;
 use std::{path::PathBuf, rc::Rc};
 
 use reprisefs::apps::AppEntry;
@@ -252,7 +253,7 @@ impl State {
                 let (mut items, entry_waits) = self.entry_items(&entries, px);
                 waits = entry_waits;
                 if items.is_empty() {
-                    items.push(MenuItem::entry("(Empty)").enabled(false));
+                    items.push(MenuItem::entry(tr!("start-empty")).enabled(false));
                 }
                 (items, MenuKind::Entries(entries))
             }
@@ -307,7 +308,7 @@ impl State {
             let art = self.menu_icon(items.len(), icon, px, &mut icons);
             items.push(MenuItem::entry(name(dir)).icon(art));
             paths.push(Some(dir.clone()));
-            tips.push(crate::desktop::document_tip(icon).map(String::from));
+            tips.push(crate::desktop::document_tip(icon));
         }
         if show_recent && !dirs.is_empty() {
             items.push(MenuItem::Separator);
@@ -322,7 +323,7 @@ impl State {
             tips.push(None);
         }
         if show_recent && recent.is_empty() {
-            items.push(MenuItem::entry("(Empty)").enabled(false));
+            items.push(MenuItem::entry(tr!("start-empty")).enabled(false));
             paths.push(None);
             tips.push(None);
         }

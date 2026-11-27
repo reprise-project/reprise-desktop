@@ -344,7 +344,7 @@ impl State {
                     self.spawn_argv_activated(&[program[0], program[1], file.as_os_str()]);
                 }
             }
-            StartRow::CannotUninstall(_) | StartRow::OnDesktop => {}
+            StartRow::CannotUninstall | StartRow::OnDesktop => {}
             StartRow::OpenFileLocation(a) => {
                 let file = entry(self, a).and_then(|e| reprisefs::apps::find_file(&e.id));
                 self.close_start_panel();

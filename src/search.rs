@@ -4,6 +4,7 @@
 //! takes a new generation from one process-wide counter, so a late answer for older text, or
 //! for a closed box, is dropped.
 
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -197,11 +198,11 @@ pub enum Source {
 }
 
 impl Source {
-    pub fn heading(&self) -> &str {
+    pub fn heading(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            Source::Names => "Files",
-            Source::Contents => "Contents",
-            Source::Provider(p) => &p.name,
+            Source::Names => tr!("start-search-files").into(),
+            Source::Contents => tr!("start-search-contents").into(),
+            Source::Provider(p) => (&p.name[..]).into(),
         }
     }
 
@@ -1197,7 +1198,10 @@ mod tests {
     fn each_provider_gets_a_section_after_the_files_with_its_results() {
         let p = calc();
         let mut f = FileSearch::new(true, vec![p.clone()]);
-        let heads: Vec<&str> = f.sections().map(|(s, _)| s.heading()).collect();
+        let heads: Vec<String> = f
+            .sections()
+            .map(|(s, _)| s.heading().into_owned())
+            .collect();
         assert_eq!(heads, ["Files", "Contents", "Calculator"]);
         f.set(2, vec![result("a"), result("b")]);
         let (provider, meta) = f.result(2, 1).expect("a program's result");
@@ -1209,7 +1213,10 @@ mod tests {
     #[test]
     fn content_search_off_has_no_contents_section_and_asks_only_names_and_programs() {
         let off = FileSearch::new(false, vec![calc()]);
-        let heads: Vec<&str> = off.sections().map(|(s, _)| s.heading()).collect();
+        let heads: Vec<String> = off
+            .sections()
+            .map(|(s, _)| s.heading().into_owned())
+            .collect();
         assert_eq!(heads, ["Files", "Calculator"]);
         let asked: Vec<Source> = (off.asked("quarterly", true).into_iter())
             .map(|(_, s)| s)

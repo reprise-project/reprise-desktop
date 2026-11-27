@@ -130,3 +130,83 @@ desk-widgets-pane = Desktop widgets
 
 ## Calendar
 desk-calendar-window = Calendar
+
+## Start menu places
+start-recent-items = Recent Items
+start-computer = Computer
+start-control-panel = Control Panel
+start-printers = Printers
+start-run = Run...
+start-help-support = Help and Support
+start-tip-recent = Lists the files you opened most recently.
+start-tip-run = Opens a program, folder, document or web site by its name.
+start-tip-help = Opens the Reprise project page.
+start-tip-on-desktop = The desktop already holds a copy of this program.
+start-tip-no-packagekit = Uninstalling a program from the system's packages needs PackageKit.
+
+## Place context menu
+start-place-open = &Open
+start-place-explore = E&xplore
+start-place-properties = P&roperties
+
+## Program context menu
+start-open = &Open
+start-open-location = Open f&ile location
+start-unpin-taskbar = Unpin from Tas&kbar
+start-pin-taskbar = Pin to Tas&kbar
+start-unpin-start = Unpin from Start Men&u
+start-pin-start = Pin to Start Men&u
+start-add-to-desktop = Add to &desktop
+start-remove-from-list = Remove from this &list
+start-uninstall = U&ninstall...
+start-properties = P&roperties
+
+## Shut down options
+start-install-shut-down = Install &updates and shut down
+start-install-restart = Install updates and r&estart
+start-switch-user = S&witch user
+start-log-off = &Log off
+start-lock = L&ock
+start-restart = &Restart
+start-restart-into = Restart &into
+start-sleep = &Sleep
+start-hibernate = &Hibernate
+
+## Window menu
+start-win-restore = &Restore
+start-win-move = &Move
+start-win-size = &Size
+start-win-minimize = Mi&nimize
+start-win-maximize = Ma&ximize
+start-win-roll-down = Roll Do&wn
+start-win-roll-up = Roll &Up
+start-win-always-on-top = Always on &Top
+start-win-open-here = Always &Open Here
+start-win-mini-view = M&ini View
+start-win-all-desktops = Show on &All Desktops
+start-win-move-to-desktop = Move to &Desktop
+start-win-add-to-tabs = Add to Ta&bs of
+start-win-leave-tabs = Remove from Tab &Group
+start-win-close = &Close
+start-win-recent-files = Recent &Files
+# The desktop's number; the keyed form marks it as the access key.
+start-win-desktop-keyed = Desktop &{ $number }
+start-win-desktop = Desktop { $number }
+
+## Menus
+start-menu-start = Start Menu
+start-menu-window = Window Menu
+start-menu-context = Context Menu
+start-empty = (Empty)
+
+## Start panel and launcher
+start-panel-name = Start menu
+start-launcher-name = Launcher
+start-search-calculator = Calculator
+# The counts are plain digits.
+start-search-programs = Programs ({ $count })
+start-search-settings = Settings ({ $count })
+# A found section's heading and its row count.
+start-search-found = { $heading } ({ $count })
+start-search-files = Files
+start-search-contents = Contents
