@@ -137,3 +137,55 @@ fn a_program_in_a_compressed_folder_is_not_opened_and_says_to_extract_first() {
         "a box says to extract it first"
     );
 }
+
+#[test]
+fn a_typed_address_inside_an_archive_opens_that_folder() {
+    let (dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    ex.navigate(
+        &format!("{}/docs/", zip.display()),
+        |d| d.is_dir(),
+        &mut ctx,
+    );
+    wake_until(&mut ex, &mut ctx, |ex| ex.place != here);
+    assert_eq!(ex.place, Place::Archive(zip.clone(), "docs".into()));
+    assert_eq!(names(&ex), ["a.txt"]);
+    ex.navigate(&zip.display().to_string(), |d| d.is_dir(), &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| ex.place.title() == "pack.zip");
+    assert_eq!(ex.place, Place::Archive(zip, PathBuf::new()));
+}
+
+#[test]
+fn a_typed_address_of_no_folder_in_an_archive_cannot_be_found() {
+    let (dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    for missing in ["nope", "top.txt", "docs/a.txt/deeper"] {
+        let mut ex = test_explorer(here.clone(), &mut ctx);
+        let typed = format!("{}/{missing}", zip.display());
+        ex.navigate(&typed, |d| d.is_dir(), &mut ctx);
+        wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+        assert!(
+            matches!(ex.dialog(), Some(crate::dialogs::Dialog::Message { text, .. })
+                if *text == format!("Cannot find '{typed}'. Check the spelling and try again.")),
+            "{missing}"
+        );
+        assert_eq!(ex.place, here, "{missing}");
+    }
+}
+
+#[test]
+fn a_start_address_inside_an_archive_opens_that_folder() {
+    let (_dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let start = parse_args([zip.join("docs").into_os_string()]);
+    let mut ex = Explorer::open(start, |d| d.is_dir(), test_explorer, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        matches!(ex.place, Place::Archive(..))
+    });
+    assert_eq!(ex.place, Place::Archive(zip, "docs".into()));
+    assert_eq!(names(&ex), ["a.txt"]);
+    assert!(!ex.history.can_back());
+}

@@ -334,6 +334,13 @@ impl State {
         let path = std::env::var_os("PATH");
         let mime = (folder.as_ref().and_then(|d| d.file_name()))
             .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
+        let archives = folder
+            .as_deref()
+            .map_or_else(Vec::new, |d| self.archives_above(d));
+        let apps = match archives.is_empty() {
+            true => Vec::new(),
+            false => self.app_index.clone(),
+        };
         let cmd = cmd.to_string();
         let terminal = self.config.terminal.clone();
         self.dialogs.checking.push(from);
@@ -348,8 +355,16 @@ impl State {
                             false => RunLine::Command,
                         }
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        RunLine::Missing(cmd.trim().to_string())
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        match names_a_compressed_folder(&dir, &archives, &apps) {
+                            true => RunLine::Folder(dir),
+                            false => RunLine::Missing(cmd.trim().to_string()),
+                        }
                     }
                     Err(_) => RunLine::Command,
                 },
@@ -363,6 +378,18 @@ impl State {
         if !started {
             self.dialogs.checking.retain(|&id| id != from);
         }
+    }
+
+    /// The steps of `path`, itself included, whose names give them an archive's type, with it:
+    /// the archives a Run line may name a compressed folder of.
+    fn archives_above(&self, path: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
+        self.with_mime(|db| {
+            (path.ancestors())
+                .filter_map(|a| Some((a, db.mime_of_name(&a.file_name()?.to_string_lossy())?)))
+                .filter(|(_, mime)| reprisefs::extract::is_archive(mime))
+                .map(|(a, mime)| (a.to_path_buf(), mime))
+                .collect()
+        })
     }
 
     fn run_line_checked(&mut self, cmd: &str, from: u64, line: RunLine) {
@@ -503,6 +530,28 @@ fn program_line(cmd: &str, word: String, missing: bool, terminal: &str) -> RunLi
         _ if missing => RunLine::Missing(word),
         _ => RunLine::Command,
     }
+}
+
+/// Whether `path`, which is not there, names a folder inside one of `archives` (each with its
+/// type) that opens as a compressed folder. One whose archive cannot be listed is taken, so
+/// Explorer's box says why.
+fn names_a_compressed_folder(
+    path: &std::path::Path,
+    archives: &[(std::path::PathBuf, String)],
+    apps: &[reprisefs::apps::AppEntry],
+) -> bool {
+    use reprisefs::archive;
+    let Some((file, inner)) = archive::address(path) else {
+        return false;
+    };
+    let Some((_, mime)) = archives.iter().find(|(p, _)| *p == file) else {
+        return false;
+    };
+    archive::opens_as_folder(mime, apps)
+        && match archive::list(&file, &reprisefs::progress::Meter::default()) {
+            Ok(entries) => archive::holds_folder(&entries, &inner),
+            Err(_) => true,
+        }
 }
 
 /// Whether a Run line's path is a document to record as opened: a regular file with no execute
@@ -1349,6 +1398,32 @@ pub(crate) mod tests {
         assert!(
             !names_a_document(&meta(&dir), Some("text/plain"), true),
             "a folder is not"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_run_line_below_an_archive_names_only_a_folder_it_holds() {
+        let dir = std::env::temp_dir().join(format!("reprise-run-zip-{}", std::process::id()));
+        let d = dir.as_path();
+        std::fs::create_dir_all(d.join("docs")).unwrap();
+        std::fs::write(d.join("docs/a.txt"), "a").unwrap();
+        let made = std::process::Command::new("bsdtar")
+            .current_dir(d)
+            .args(["-a", "-cf", "pack.zip", "docs"])
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let zip = d.join("pack.zip");
+        let archives = [(zip.clone(), "application/zip".to_string())];
+        let names = |rest: &str| names_a_compressed_folder(&zip.join(rest), &archives, &[]);
+        assert!(names("docs"));
+        assert!(names("docs/"));
+        assert!(!names("nope"), "a missing member");
+        assert!(!names("docs/a.txt"), "a file is no folder");
+        assert!(
+            !names_a_compressed_folder(&zip.join("docs"), &[], &[]),
+            "a file whose name gives no archive type"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

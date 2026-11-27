@@ -471,6 +471,39 @@ pub fn runs_as_a_program(copy: &Path, mime: Option<&str>) -> bool {
         || head.starts_with(b"#!")
 }
 
+/// The file and the path inside it an address names when `path` reaches below a file: `path`'s
+/// nearest ancestor (or itself) that is a file, and the plain names under it. `None` when the
+/// nearest that exists is a folder, or the rest holds a `..`.
+pub fn address(path: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut file = path;
+    loop {
+        match std::fs::metadata(file) {
+            Ok(m) if m.is_file() => break,
+            Ok(_) => return None,
+            Err(_) => file = file.parent()?,
+        }
+    }
+    let mut inner = PathBuf::new();
+    for c in path.strip_prefix(file).ok()?.components() {
+        match c {
+            Component::Normal(n) => inner.push(n),
+            Component::CurDir => {}
+            Component::RootDir | Component::ParentDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some((file.to_path_buf(), inner))
+}
+
+/// Whether `inner` is a folder of the archive `entries` list: its top (empty), a folder entry, or
+/// a folder the paths below it imply.
+pub fn holds_folder(entries: &[Entry], inner: &Path) -> bool {
+    inner.as_os_str().is_empty()
+        || entries.iter().any(|e| match e.path.strip_prefix(inner) {
+            Ok(rest) => e.kind == Kind::Folder || !rest.as_os_str().is_empty(),
+            Err(_) => false,
+        })
+}
+
 /// What the folder `inner` of the archive holds directly, by name. An entry listed twice keeps
 /// its first listing, and a folder another entry implies is a [`Kind::Folder`] of size 0.
 pub fn children(entries: &[Entry], inner: &Path) -> Vec<Child> {
@@ -1149,5 +1182,50 @@ mod tests {
         assert!(!locked(
             b"bsdtar: Error opening archive: Unrecognized archive format"
         ));
+    }
+
+    #[test]
+    fn an_address_below_a_file_splits_into_the_file_and_its_inner_path() {
+        let t = tempfile::tempdir().unwrap();
+        let zip = t.path().join("a.zip");
+        std::fs::write(&zip, "x").unwrap();
+        std::fs::create_dir(t.path().join("dir")).unwrap();
+        let split = |rest: &str| address(&t.path().join(rest));
+        assert_eq!(split("a.zip"), Some((zip.clone(), PathBuf::new())));
+        assert_eq!(split("a.zip/docs"), Some((zip.clone(), "docs".into())));
+        assert_eq!(
+            split("a.zip/docs/./more/"),
+            Some((zip.clone(), "docs/more".into()))
+        );
+        assert_eq!(split("a.zip/docs/../.."), None, "no step climbs out");
+        assert_eq!(split("dir"), None, "a folder is no archive");
+        assert_eq!(
+            split("dir/none/deeper"),
+            None,
+            "the nearest there is a folder"
+        );
+        assert_eq!(split("gone.zip/docs"), None);
+    }
+
+    #[test]
+    fn an_archive_holds_its_listed_and_implied_folders_only() {
+        let entries = [
+            entry("docs", Kind::Folder, 0),
+            entry("docs/a.txt", Kind::File, 1),
+            entry("deep/er/b.txt", Kind::File, 1),
+            entry("note.txt", Kind::File, 1),
+        ];
+        for (inner, held) in [
+            ("", true),
+            ("docs", true),
+            ("deep", true),
+            ("deep/er", true),
+            ("note.txt", false),
+            ("docs/a.txt", false),
+            ("doc", false),
+            ("missing", false),
+        ] {
+            assert_eq!(holds_folder(&entries, Path::new(inner)), held, "{inner:?}");
+        }
     }
 }
