@@ -470,6 +470,14 @@ pub(crate) mod words {
     }
 }
 
+/// What [`TextEdit::paste_cut`] did: whether the text changed, and whether the field's caps cut
+/// the line short.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pasted {
+    pub edited: bool,
+    pub cut: bool,
+}
+
 /// What a key did to a [`TextEdit`] or a multi-line edit: a host redraws on anything but `Same`
 /// and counts only `Edited` as a change to the text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1057,19 +1065,24 @@ impl TextEdit {
 
     /// Paste: the first line of clipboard text that fits in the field's cap, replacing the selection. Control chars and chars in `banned` are dropped. A password goes to PAM a line at a time, so a stray line break must never reach it.
     pub fn paste(&mut self, text: &str, banned: &[char]) -> bool {
+        self.paste_cut(text, banned).edited
+    }
+
+    /// [`TextEdit::paste`], telling also whether the caps cut the line short.
+    pub fn paste_cut(&mut self, text: &str, banned: &[char]) -> Pasted {
+        let kept = |c: &char| !c.is_control() && !banned.contains(c);
         let first = text.split(['\r', '\n']).next().unwrap_or("");
-        let first = &first[..first.floor_char_boundary(self.max_len())];
+        let end = first.floor_char_boundary(self.max_len());
+        let over = first[end..].chars().any(|c| kept(&c));
         // Sized up front: a collect would grow through smaller buffers, each freed with a prefix of the line in it.
-        let mut line = String::with_capacity(first.len());
-        line.extend(
-            first
-                .chars()
-                .filter(|c| !c.is_control() && !banned.contains(c)),
-        );
+        let mut line = String::with_capacity(end);
+        line.extend(first[..end].chars().filter(kept));
+        let cut = over || !self.fits(&line);
         if line.is_empty() {
-            return false;
+            return Pasted { edited: false, cut };
         }
-        self.key(EditKey::Insert(line)).edited()
+        let edited = self.key(EditKey::Insert(line)).edited();
+        Pasted { edited, cut }
     }
 
     /// A drop, taken as [`TextEdit::paste`] takes it, put in at byte `at` and selected; the selection there was is let go.
@@ -1781,6 +1794,46 @@ mod tests {
         });
         assert!(t.paste("xy", &[]), "a selected unit makes room for one");
         assert_eq!(t.text, "ééx");
+    }
+
+    #[test]
+    fn a_paste_tells_when_the_limit_cut_it_short() {
+        let mut t = e("");
+        t.set_limit(Limit::Bytes(4));
+        let whole = Pasted {
+            edited: true,
+            cut: false,
+        };
+        assert_eq!(
+            t.paste_cut("ab\tc\nrest", &['/']),
+            whole,
+            "a tab and the next line drop"
+        );
+        assert_eq!(
+            t.paste_cut("de", &[]),
+            Pasted {
+                edited: true,
+                cut: true
+            }
+        );
+        assert_eq!(t.text, "abcd");
+        assert_eq!(
+            t.paste_cut("f", &[]),
+            Pasted {
+                edited: false,
+                cut: true
+            }
+        );
+        let mut t = e("");
+        t.set_limit(Limit::Bytes(2));
+        assert_eq!(
+            t.paste_cut("ab\t\t//", &['/']),
+            whole,
+            "only dropped chars past the cap"
+        );
+        let mut t = e("");
+        t.set_limit(Limit::Bytes(2));
+        assert!(t.paste_cut("ab\tc", &[]).cut, "a kept char past the cap");
     }
 
     #[test]

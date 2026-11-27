@@ -91,7 +91,15 @@ impl Explorer {
             );
             return Reply::none();
         };
-        if edit.paste(text, refused) {
+        let pasted = edit.paste_cut(text, refused);
+        if matches!(self.paste_field, Some(PasteField::Rename(_))) {
+            let balloon = self.limit_balloon(pasted.cut);
+            if balloon != self.rename_balloon {
+                self.rename_balloon = balloon;
+                return Reply::redraw();
+            }
+        }
+        if pasted.edited {
             Reply::redraw()
         } else {
             Reply::none()
@@ -185,16 +193,19 @@ impl Explorer {
             return Some(Reply::redraw());
         }
         let key = k.edit.clone()?;
-        let limit =
-            (self.relabeling.as_ref()).and_then(|v| reprisefs::udisks::label_limit(&v.fs_type));
         if let Some((_, ed)) = self.sv.edit.as_mut() {
             let full = matches!(&key, EditKey::Insert(s) if !s.is_empty() && !ed.fits(s));
             ed.key(key);
-            self.rename_balloon = limit
-                .filter(|_| full)
-                .map(|l| crate::volumes::label_limit_text(l.max()));
+            self.rename_balloon = self.limit_balloon(full);
         }
         Some(Reply::redraw())
+    }
+
+    /// The balloon a drive's Rename box shows after a key or a paste its name had no room for.
+    fn limit_balloon(&self, full: bool) -> Option<String> {
+        let v = self.relabeling.as_ref()?;
+        let limit = reprisefs::udisks::label_limit(&v.fs_type)?;
+        full.then(|| crate::volumes::label_limit_text(limit.max()))
     }
 
     /// Ends the in-place edit at once; its item keeps the old name until the rename lands.
@@ -605,6 +616,33 @@ mod tests {
         };
         ex.rename_key(&left, &mut ctx);
         assert_eq!(ex.rename_balloon, None, "the next key drops it");
+    }
+
+    #[test]
+    fn a_paste_cut_short_at_a_drive_names_limit_raises_the_balloon() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(dir.path().join("a.txt"), "x").expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        let stick = reprisefs::udisks::Volume {
+            fs_type: "vfat".into(),
+            ..Default::default()
+        };
+        ex.open_relabel_box(0, stick, "HOLIDAY", &mut ctx);
+        let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+        edit.key(EditKey::End { select: false });
+        ex.ask_paste();
+        assert!(ex.paste_text(" 2026 SUMMER").redraw);
+        assert_eq!(ex.sv.edit.as_ref().unwrap().1.text, "HOLIDAY 202");
+        assert_eq!(
+            ex.rename_balloon.as_deref(),
+            Some("This drive's name can be at most 11 characters long.")
+        );
+        let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+        edit.key(EditKey::SelectAll);
+        ex.ask_paste();
+        ex.paste_text("SUMMER");
+        assert_eq!(ex.rename_balloon, None, "a paste that fits drops it");
     }
 
     #[test]
