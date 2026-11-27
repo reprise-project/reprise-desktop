@@ -458,7 +458,7 @@ impl Explorer {
         let item = self.items.get(i);
         self.menu_paste = item.and_then(|it| match it.shortcut.as_deref() {
             _ if it.is_dir => Some(PasteTo::Folder(it.path.clone())),
-            Some(reprisefs::apps::Shortcut::App(app)) => Some(PasteTo::App(app.clone())),
+            Some(reprisefs::apps::Shortcut::App(app)) => Some(PasteTo::App(Box::new(app.clone()))),
             _ => None,
         });
         let kind = match (&self.menu_paste, item.and_then(|it| it.program)) {

@@ -103,6 +103,7 @@ mod tests {
 
     fn app(id: &str) -> AppEntry {
         AppEntry {
+            plain_name: None,
             name: id.parse::<DesktopId>().unwrap().stem().into(),
             exec_line: id.into(),
             terminal: false,

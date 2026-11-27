@@ -1842,6 +1842,7 @@ fn raise_without_token(desktop_id: &str, app_id: &str, hint: &str) -> (bool, boo
     let mut h = crate::harness::Harness::new();
     h.output("TEST-1", 1024, 768);
     h.state.app_index = vec![reprisefs::apps::AppEntry {
+        plain_name: None,
         name: "Mail".into(),
         exec_line: String::new(),
         terminal: false,

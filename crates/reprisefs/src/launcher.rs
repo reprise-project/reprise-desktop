@@ -60,6 +60,11 @@ pub struct Launcher {
 
 impl Launcher {
     pub fn parse(text: &str) -> Option<Launcher> {
+        Launcher::parse_in(text, reprisekit::i18n::ui_locales())
+    }
+
+    /// [`Launcher::parse`] with the comment in `locales` ([`crate::apps::localized`]).
+    fn parse_in(text: &str, locales: &[String]) -> Option<Launcher> {
         let kv = desktop_entry_kv(text);
         let get = |k: &str| kv.get(k).map(|v| v.to_string()).unwrap_or_default();
         if get("Type") == "Link" {
@@ -79,7 +84,9 @@ impl Launcher {
             kind: Kind::Program,
             target: get("Exec"),
             path: get("Path"),
-            comment: get("Comment"),
+            comment: crate::apps::localized(&kv, "Comment", locales)
+                .unwrap_or_default()
+                .to_string(),
             icon: Some(get("Icon")).filter(|i| !i.is_empty()),
             target_type: "Application".to_string(),
             location: String::new(),
@@ -227,7 +234,8 @@ pub fn folder_name(path: &Path) -> String {
 
 /// Edits `text`'s `[Desktop Entry]` group; every other line stays byte for
 /// byte. An empty `Exec` or `URL` edit is dropped: a launcher without one opens
-/// nothing.
+/// nothing. A `Comment` edit drops the group's `Comment[xx]` lines, which would
+/// otherwise still show in their languages.
 pub fn with_keys<S: AsRef<str>>(text: &str, edits: &[(Key, S)]) -> String {
     let edits: Vec<(Key, &str)> = edits
         .iter()
@@ -246,6 +254,7 @@ pub fn with_keys<S: AsRef<str>>(text: &str, edits: &[(Key, S)]) -> String {
         };
         format!("{}={value}", k.name())
     };
+    let edits_comment = edits.iter().any(|(k, _)| *k == Key::Comment);
     let mut out = String::with_capacity(text.len() + 64);
     let mut done = vec![false; edits.len()];
     let mut in_entry = false;
@@ -267,6 +276,9 @@ pub fn with_keys<S: AsRef<str>>(text: &str, edits: &[(Key, S)]) -> String {
         }
         if in_entry && !trimmed.is_empty() && !trimmed.starts_with('#') {
             let key = trimmed.split_once('=').map(|(k, _)| k.trim());
+            if key.is_some_and(|k| k.starts_with("Comment[")) && edits_comment {
+                continue;
+            }
             if let Some(j) = edits.iter().position(|(k, _)| Some(k.name()) == key) {
                 let (k, v) = edits[j];
                 if !done[j] && !v.is_empty() {
@@ -405,7 +417,7 @@ Exec=firefox --new-window %u
 
     #[test]
     fn a_launcher_reads_its_own_keys() {
-        let l = Launcher::parse(FIREFOX).expect("a launcher");
+        let l = Launcher::parse_in(FIREFOX, &[]).expect("a launcher");
         assert_eq!(l.target, "firefox %u");
         assert_eq!(l.path, "");
         assert_eq!(l.comment, "Browse the web");
@@ -435,7 +447,8 @@ Exec=firefox --new-window %u
         );
     }
 
-    /// An edit changes only its own unlocalized line in the entry group.
+    /// An edit changes only its own line in the entry group; a Comment edit also drops the
+    /// Comment translations.
     #[test]
     fn edits_keep_every_other_line() {
         let out = with_keys(
@@ -455,7 +468,6 @@ Exec=firefox --new-window %u
 Type=Application
 Name=Firefox
 Name[de]=Feuerfuchs
-Comment[de]=Im Internet surfen
 Exec=firefox --private-window %u
 Icon=web-browser
 X-Custom=kept
@@ -472,6 +484,21 @@ Exec=firefox --new-window %u
         assert_eq!(back.comment, "");
         assert_eq!(with_keys(FIREFOX, &[(Key::Exec, "  ")]), FIREFOX);
         assert_eq!(with_keys::<&str>(FIREFOX, &[]), FIREFOX);
+    }
+
+    #[test]
+    fn a_launchers_comment_is_in_the_ui_language() {
+        let de = ["de_DE.UTF-8".to_string()];
+        assert_eq!(
+            Launcher::parse_in(FIREFOX, &de).unwrap().comment,
+            "Im Internet surfen"
+        );
+        assert_eq!(
+            Launcher::parse_in(FIREFOX, &[]).unwrap().comment,
+            "Browse the web"
+        );
+        let edited = with_keys(FIREFOX, &[(Key::Comment, "Surf")]);
+        assert_eq!(Launcher::parse_in(&edited, &de).unwrap().comment, "Surf");
     }
 
     #[test]

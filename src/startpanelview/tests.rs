@@ -49,6 +49,7 @@ fn press(sym: u32, mods: u32) -> DialogKey {
 
 fn app(name: &str, category: &str) -> AppEntry {
     AppEntry {
+        plain_name: None,
         name: name.into(),
         exec_line: name.into(),
         terminal: false,
@@ -353,6 +354,15 @@ fn the_program_search_lists_names_with_a_word_starting_with_the_text() {
     let kept = one_per_name(&apps);
     assert_eq!(panel_matches("no", &apps, &kept, 8), [1, 3]);
     assert_eq!(panel_matches("no", &apps, &kept, 1), [1], "capped");
+}
+
+#[test]
+fn the_program_search_finds_a_translated_name_by_its_plain_name_too() {
+    let mut apps = [app("Rechner", "Utility"), app("Notepad", "Utility")];
+    apps[0].plain_name = Some("Calculator".into());
+    let kept = one_per_name(&apps);
+    assert_eq!(panel_matches("calc", &apps, &kept, 8), [0]);
+    assert_eq!(panel_matches("rech", &apps, &kept, 8), [0]);
 }
 
 #[test]

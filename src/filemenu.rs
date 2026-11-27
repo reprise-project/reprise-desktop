@@ -153,7 +153,7 @@ impl State {
             Dc::PasteInto => self.paste_files(DropTarget::Folder(path), false),
             Dc::PasteOpen => {
                 if let Target::Launch(app) = &facts.target {
-                    self.paste_open(app.clone());
+                    self.paste_open((**app).clone());
                 }
             }
             Dc::CreateShortcut => {

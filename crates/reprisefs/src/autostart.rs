@@ -132,6 +132,11 @@ impl Entry {
 /// hidden entry. A `Hidden=true` file with no `Exec` is kept with an empty
 /// command: it only deletes the system entry of its id (`merge`).
 pub fn parse(id: &str, text: &str, user: bool) -> Option<Entry> {
+    parse_in(id, text, user, reprisekit::i18n::ui_locales())
+}
+
+/// [`parse`] with the name in `locales` ([`crate::apps::localized`]).
+fn parse_in(id: &str, text: &str, user: bool, locales: &[String]) -> Option<Entry> {
     let kv = desktop_entry_kv(text);
     let get = |k: &str| kv.get(k).map(|v| v.as_ref());
     if let Some(t) = get("Type")
@@ -151,7 +156,9 @@ pub fn parse(id: &str, text: &str, user: bool) -> Option<Entry> {
     }
     Some(Entry {
         id: id.to_string(),
-        name: get("Name").unwrap_or(id).to_string(),
+        name: crate::apps::localized(&kv, "Name", locales)
+            .unwrap_or(id)
+            .to_string(),
         exec,
         exec_line,
         hidden,
@@ -481,6 +488,18 @@ mod tests {
         assert_eq!(e.not_show_in, vec!["XFCE"]);
         assert_eq!(e.try_exec.as_deref(), Some("applet"));
         assert!(!e.user);
+    }
+
+    #[test]
+    fn an_entrys_name_is_in_the_ui_language() {
+        let text = "[Desktop Entry]\nName=Applet\nName[de]=Helfer\nExec=applet\n";
+        let name = |l: &str| {
+            parse_in("applet", text, false, &[l.to_string()])
+                .unwrap()
+                .name
+        };
+        assert_eq!(name("de_DE.UTF-8"), "Helfer");
+        assert_eq!(name("C"), "Applet");
     }
 
     #[test]

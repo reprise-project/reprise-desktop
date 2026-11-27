@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppEntry {
+    /// `Name` in the session's language ([`localized`]).
     pub name: String,
+    /// `Name` as written, when `name` is a translation of it: search finds the entry by either.
+    pub plain_name: Option<String>,
     /// `Exec=` as written, field codes and all: [`launch_argv`] and
     /// [`open_argv`] split it with no shell.
     pub exec_line: String,
@@ -56,6 +59,11 @@ pub fn start_dir(dir: Option<&Path>) -> Option<&Path> {
 }
 
 impl AppEntry {
+    /// The names search matches: `name`, then `plain_name`.
+    pub fn search_names(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.name.as_str()).chain(self.plain_name.as_deref())
+    }
+
     pub fn in_category(&self, category: &str) -> bool {
         self.categories.iter().any(|c| c == category)
     }
@@ -299,17 +307,30 @@ pub fn read_desktop_file(path: &Path) -> std::io::Result<String> {
     String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-/// A desktop entry's line under its name in a list: `GenericName`, else `Comment`; None when it has
-/// neither or that line says what the name does.
+/// A desktop entry's line under its name in a list: `GenericName`, else `Comment`, each
+/// [`localized`]; None when it has neither or that line says what the name does.
 pub fn subtitle(text: &str) -> Option<String> {
+    subtitle_in(text, reprisekit::i18n::ui_locales())
+}
+
+fn subtitle_in(text: &str, locales: &[String]) -> Option<String> {
     let kv = desktop_entry_kv(text);
-    let get = |k: &str| kv.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+    let get = |k: &str| {
+        localized(&kv, k, locales)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    };
     let line = get("GenericName").or_else(|| get("Comment"))?;
     (Some(line) != get("Name")).then(|| line.to_string())
 }
 
 pub fn parse_desktop(text: &str, id: &DesktopId) -> Option<AppEntry> {
-    parse_desktop_any(text, id).filter(|e| e.shown)
+    parse_desktop_in(text, id, reprisekit::i18n::ui_locales())
+}
+
+/// [`parse_desktop`] with names in `locales` ([`localized`]).
+pub(crate) fn parse_desktop_in(text: &str, id: &DesktopId, locales: &[String]) -> Option<AppEntry> {
+    parse_desktop_any_in(text, id, locales).filter(|e| e.shown)
 }
 
 /// [`parse_desktop`], keeping a `NoDisplay` entry with `shown` false: the
@@ -317,27 +338,20 @@ pub fn parse_desktop(text: &str, id: &DesktopId) -> Option<AppEntry> {
 /// `OnlyShowIn` / `NotShowIn` keeps off every name in `XDG_CURRENT_DESKTOP`, or
 /// whose `TryExec` program is missing, is none.
 pub fn parse_desktop_any(text: &str, id: &DesktopId) -> Option<AppEntry> {
+    parse_desktop_any_in(text, id, reprisekit::i18n::ui_locales())
+}
+
+fn parse_desktop_any_in(text: &str, id: &DesktopId, locales: &[String]) -> Option<AppEntry> {
     let desktops =
         crate::autostart::desktop_names(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref());
-    let locale = messages_locale(|k| std::env::var(k).ok());
-    parse_desktop_on(text, id, &desktops, &locale, |p| {
+    parse_desktop_on(text, id, &desktops, locales, |p| {
         crate::autostart::find_program(p).is_some()
     })
 }
 
-/// The locale the session's messages are in: the first of `LC_ALL`, `LC_MESSAGES` and `LANG`
-/// that `var` has set, else empty.
-fn messages_locale(var: impl Fn(&str) -> Option<String>) -> String {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .into_iter()
-        .filter_map(var)
-        .find(|v| !v.is_empty())
-        .unwrap_or_default()
-}
-
 /// The keys a localestring `key` is looked up under in `locale` (`lang_COUNTRY.ENCODING@MODIFIER`,
 /// each part but `lang` optional), most specific first: `key[lang_COUNTRY@MODIFIER]`,
-/// `key[lang_COUNTRY]`, `key[lang@MODIFIER]`, `key[lang]`, then `key`, as the Desktop Entry spec
+/// `key[lang_COUNTRY]`, `key[lang@MODIFIER]`, then `key[lang]`, as the Desktop Entry spec
 /// orders them.
 fn locale_keys(key: &str, locale: &str) -> Vec<String> {
     let (rest, modifier) = match locale.split_once('@') {
@@ -363,30 +377,48 @@ fn locale_keys(key: &str, locale: &str) -> Vec<String> {
         }
         tag(lang.to_string());
     }
-    keys.push(key.to_string());
     keys
 }
 
-/// `kv`'s localestring `key` in `locale`: the most specific of [`locale_keys`] that is set and
-/// not blank.
-fn localized<'a>(kv: &'a HashMap<&str, Cow<'_, str>>, key: &str, locale: &str) -> Option<&'a str> {
-    locale_keys(key, locale)
-        .iter()
-        .filter_map(|k| kv.get(k.as_str()))
-        .map(|v| v.trim())
-        .find(|v| !v.is_empty())
+/// `kv`'s localestring `key` in the UI `locales` ([`reprisekit::i18n::ui_locales`]), picked as
+/// docs/i18n.md's "Desktop entries" says; None without the plain `key`.
+pub fn localized<'a>(
+    kv: &'a HashMap<&str, Cow<'_, str>>,
+    key: &str,
+    locales: &[String],
+) -> Option<&'a str> {
+    let plain = kv.get(key)?;
+    for locale in locales {
+        let own = (locale_keys(key, locale).iter())
+            .filter_map(|k| kv.get(k.as_str()))
+            .map(|v| v.trim())
+            .find(|v| !v.is_empty());
+        if own.is_some() {
+            return own;
+        }
+        if english_ui(locale) {
+            break;
+        }
+    }
+    Some(plain)
+}
+
+/// Whether the UI is English in `locale`: C, POSIX or language `en`.
+fn english_ui(locale: &str) -> bool {
+    reprisekit::i18n::is_posix(locale) || locale.split(['_', '.', '@']).next() == Some("en")
 }
 
 /// The actions `Actions=` (`list`) names, in its order, each from its `[Desktop Action <id>]`
 /// group of `text`; an id listed twice counts once.
-fn desktop_actions(text: &str, list: Option<&str>, locale: &str) -> Vec<DesktopAction> {
+fn desktop_actions(text: &str, list: Option<&str>, locales: &[String]) -> Vec<DesktopAction> {
     let mut ids = split_list(list);
     let mut seen = std::collections::HashSet::new();
     ids.retain(|id| seen.insert(id.clone()));
     ids.into_iter()
         .filter_map(|id| {
             let kv = group_kv(text, &format!("[Desktop Action {id}]"));
-            let name = localized(&kv, "Name", locale)?.to_string();
+            let name = localized(&kv, "Name", locales).filter(|n| !n.is_empty())?;
+            let name = name.to_string();
             let exec_line = kv.get("Exec")?.trim().to_string();
             if exec_argv(&exec_line).is_empty() {
                 return None;
@@ -402,13 +434,13 @@ fn desktop_actions(text: &str, list: Option<&str>, locale: &str) -> Vec<DesktopA
         .collect()
 }
 
-/// [`parse_desktop_any`] on a desktop announcing `desktops`, messages in `locale`, `installed`
-/// saying whether a `TryExec` program is there.
+/// [`parse_desktop_any`] on a desktop announcing `desktops`, names in `locales` ([`localized`]),
+/// `installed` saying whether a `TryExec` program is there.
 fn parse_desktop_on(
     text: &str,
     id: &DesktopId,
     desktops: &[String],
-    locale: &str,
+    locales: &[String],
     installed: impl Fn(&str) -> bool,
 ) -> Option<AppEntry> {
     let kv = desktop_entry_kv(text);
@@ -429,13 +461,15 @@ fn parse_desktop_on(
     {
         return None;
     }
-    let name = get("Name")?.to_string();
+    let plain_name = get("Name")?;
+    let name = localized(&kv, "Name", locales)?;
     let exec_line = get("Exec")?.to_string();
     if exec_argv(&exec_line).is_empty() {
         return None;
     }
     Some(AppEntry {
-        name,
+        name: name.to_string(),
+        plain_name: (name != plain_name).then(|| plain_name.to_string()),
         exec_line,
         terminal: get("Terminal") == Some("true"),
         id: id.clone(),
@@ -447,7 +481,7 @@ fn parse_desktop_on(
         mime_types: split_list(get("MimeType")),
         shown: get("NoDisplay") != Some("true"),
         path: get("Path").filter(|s| !s.is_empty()).map(PathBuf::from),
-        actions: desktop_actions(text, get("Actions"), locale),
+        actions: desktop_actions(text, get("Actions"), locales),
     })
 }
 
@@ -599,6 +633,10 @@ pub struct LinkEntry {
 }
 
 pub fn parse_link(text: &str) -> Option<LinkEntry> {
+    parse_link_in(text, reprisekit::i18n::ui_locales())
+}
+
+fn parse_link_in(text: &str, locales: &[String]) -> Option<LinkEntry> {
     let kv = desktop_entry_kv(text);
     let get = |k: &str| kv.get(k).map(|v| v.as_ref()).filter(|v| !v.is_empty());
     if get("Type") != Some("Link") {
@@ -608,7 +646,9 @@ pub fn parse_link(text: &str) -> Option<LinkEntry> {
     // scheme would hand xdg-open something other than a browser.
     let url = get("URL").filter(|u| crate::dropdata::is_web_url(u))?;
     Some(LinkEntry {
-        name: get("Name")?.to_string(),
+        name: localized(&kv, "Name", locales)
+            .filter(|n| !n.is_empty())?
+            .to_string(),
         url: url.to_string(),
         icon: get("Icon").map(str::to_string),
     })

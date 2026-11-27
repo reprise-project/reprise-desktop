@@ -68,6 +68,7 @@ fn key_event_alt(c: char) -> repriseapp::Event {
 
 fn app(name: &str, id: &str, mimes: &[&str]) -> AppEntry {
     AppEntry {
+        plain_name: None,
         name: name.into(),
         exec_line: format!("/usr/bin/{id} %f"),
         terminal: false,

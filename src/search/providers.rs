@@ -263,6 +263,7 @@ mod tests {
 
     fn app(id: &str, name: &str, shown: bool) -> AppEntry {
         AppEntry {
+            plain_name: None,
             name: name.into(),
             exec_line: String::new(),
             terminal: false,
