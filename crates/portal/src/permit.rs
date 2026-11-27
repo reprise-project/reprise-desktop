@@ -152,8 +152,14 @@ impl Kind {
             Kind::RemoteControl(Devices::Pointer) => tr!("permit-remote-note-pointer"),
             Kind::RemoteControl(Devices::Both) => tr!("permit-remote-note-both"),
             Kind::Screenshot => tr!("permit-screenshot-note"),
-            Kind::InputCapture(Devices::Both) => tr!("permit-capture-note-both"),
-            Kind::InputCapture(_) => tr!("permit-capture-note-one"),
+            Kind::InputCapture(Devices::Both) => tr!(
+                "permit-capture-note-both",
+                keys = reprisekit::keycap::shown_chord("Super+Shift+Esc")
+            ),
+            Kind::InputCapture(_) => tr!(
+                "permit-capture-note-one",
+                keys = reprisekit::keycap::shown_chord("Super+Shift+Esc")
+            ),
             Kind::Shortcuts => tr!("permit-shortcuts-note"),
             Kind::Background => tr!("permit-background-note"),
             Kind::Wallpaper => tr!("permit-wallpaper-note"),

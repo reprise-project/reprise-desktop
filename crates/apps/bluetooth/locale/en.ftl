@@ -98,7 +98,7 @@ wizard-radio-off = Bluetooth was turned off.
 ## The Pairing Request box and the wizard's pairing step
 pair-type-pin = Type the PIN for { $name }. If you do not know it, check the device's manual; many devices use 0000.
 pair-type-passkey = Type the six-digit passkey that { $name } shows.
-pair-show-passkey = Type this passkey on { $name }, then press its Enter key:
+pair-show-passkey = Type this passkey on { $name }, then press its { $enter } key:
 pair-confirm-passkey = Check that { $name } shows this passkey:
 pair-authorize = { $name } wants to pair with this computer.
 pair-pin-label = &PIN:

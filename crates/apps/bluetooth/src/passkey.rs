@@ -22,7 +22,11 @@ pub fn sentence(ask: &Ask, name: &str) -> String {
     match ask {
         Ask::PinCode => tr!("pair-type-pin", name = name),
         Ask::Passkey => tr!("pair-type-passkey", name = name),
-        Ask::ShowPin(_) | Ask::ShowPasskey(_) => tr!("pair-show-passkey", name = name),
+        Ask::ShowPin(_) | Ask::ShowPasskey(_) => tr!(
+            "pair-show-passkey",
+            name = name,
+            enter = reprisekit::keycap::shown_chord("Enter")
+        ),
         Ask::Confirm(_) => tr!("pair-confirm-passkey", name = name),
         Ask::Authorize => tr!("pair-authorize", name = name),
     }

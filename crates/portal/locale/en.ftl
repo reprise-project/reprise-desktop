@@ -33,8 +33,8 @@ permit-capture-prompt =
         [pointer] { $who } wants to capture your mouse.
        *[both] { $who } wants to capture your keyboard and mouse.
     }
-permit-capture-note-both = At a screen edge it takes both. Super+Shift+Esc ends it.
-permit-capture-note-one = At a screen edge it takes it. Super+Shift+Esc ends it.
+permit-capture-note-both = At a screen edge it takes both. { $keys } ends it.
+permit-capture-note-one = At a screen edge it takes it. { $keys } ends it.
 permit-shortcuts-title = Keyboard shortcuts
 permit-shortcuts-prompt = { $who } wants to use keyboard shortcuts.
 permit-shortcuts-note = Change the keys on Reprise Settings' Keyboard page.
