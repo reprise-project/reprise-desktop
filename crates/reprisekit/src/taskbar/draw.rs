@@ -94,40 +94,12 @@ pub fn quick_icon_origin(r: Rect, icon_px: i32, s: i32) -> (i32, i32) {
     (r.x + 3 * s, r.y + (r.height - icon_px) / 2)
 }
 
-/// Coverage below this alpha is left out of [`symbolic`]'s test: its premultiplied channels round
-/// too coarsely to tell a grey from a hue.
-const SYMBOLIC_MIN_ALPHA: u32 = 0x40;
-/// How far apart (per channel, 0..255) the greys of a symbolic icon may be.
-const SYMBOLIC_SPREAD: u32 = 24;
-
 /// Tray icon `icon` at (x, y). A symbolic one (a single grey at varying coverage) is drawn in
 /// `ink`, the bar's label ink, so it reads on a pale bar and a dark one; a colour icon as it is.
 pub fn draw_tray_icon(canvas: &mut Canvas, x: i32, y: i32, icon: &Canvas, ink: Color) {
-    if !symbolic(icon) {
+    if crate::icon::is_symbolic(icon) {
+        canvas.blit_canvas(x, y, &crate::icon::inked(icon, ink));
+    } else {
         canvas.blit_canvas(x, y, icon);
-        return;
     }
-    let mut inked = icon.clone();
-    for p in &mut inked.pixels {
-        *p = crate::icon::premultiply((*p & 0xFF00_0000) | (ink.argb() & 0x00FF_FFFF));
-    }
-    canvas.blit_canvas(x, y, &inked);
-}
-
-/// Whether every pixel of `icon` with real coverage is the same grey, within [`SYMBOLIC_SPREAD`].
-fn symbolic(icon: &Canvas) -> bool {
-    let mut range = (u32::MAX, 0);
-    for &p in &icon.pixels {
-        let a = p >> 24;
-        if a < SYMBOLIC_MIN_ALPHA {
-            continue;
-        }
-        let [r, g, b] = [16, 8, 0].map(|sh| ((p >> sh) & 0xFF) * 255 / a);
-        let (lo, hi) = (r.min(g).min(b), r.max(g).max(b));
-        if hi - lo > SYMBOLIC_SPREAD {
-            return false;
-        }
-        range = (range.0.min(lo), range.1.max(hi));
-    }
-    range.0 != u32::MAX && range.1 - range.0 <= SYMBOLIC_SPREAD
 }

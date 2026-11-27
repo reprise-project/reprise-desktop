@@ -627,6 +627,14 @@ pub fn draw_cell_at(
         item::draw_desktop_item(c, &theme.paint(), r)
     };
     let selected = selected.filter(|_| !boxed);
+    let grounded;
+    let icon = match ground {
+        Ground::Window => {
+            grounded = crate::icon::on_ground(icon, cs.window, cs.window_text, s);
+            &*grounded
+        }
+        Ground::Wallpaper => icon,
+    };
     let tinted;
     let icon = match selected {
         Some(_) => {

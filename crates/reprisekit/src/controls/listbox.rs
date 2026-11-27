@@ -314,6 +314,7 @@ pub fn draw(
         }
         let icon_x = inner.x + icon_x(lb, lay) * s;
         if let Some(Some(ic)) = icons.get(i) {
+            let ic = &*crate::icon::on_ground(ic, cs.window, cs.window_text, s);
             // An icon smaller than the column (not yet loaded at the text size) sits centred in it.
             let icon_x = icon_x + ((slot - ic.width as i32) / 2).max(0);
             let iy = y + icon_dy + ((slot - ic.height as i32) / 2).max(0);

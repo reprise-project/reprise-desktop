@@ -495,6 +495,7 @@ pub fn draw_tile(
     c.fill_rect(r, if selected { cs.hilight } else { cs.window });
     let mut tx = r.x + TEXT_X;
     if let Some(icon) = tile.icon {
+        let icon = &*crate::icon::on_ground(icon, cs.window, cs.window_text, c.scale());
         let (iw, ih) = (
             ICON_PX.max(icon.width as i32),
             ICON_PX.max(icon.height as i32),

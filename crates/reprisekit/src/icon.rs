@@ -1,7 +1,8 @@
 //! Window icons: conversion of 32 bpp DRM-format pixel data into an `IconSource` kept at its native size, box resampling to the pixel size the chrome needs, and the window glyph shown when a client provides no icon. Reading pixels out of buffers is the compositor's job.
 
 use crate::raster::{Canvas, Rect};
-use crate::theme::{ColorScheme, Theme};
+use crate::theme::{Color, ColorScheme, Theme};
+use std::borrow::Cow;
 
 /// Logical icon edge; multiplied by the output scale through
 /// `Theme::icon_size`.
@@ -131,6 +132,155 @@ pub fn hot(icon: &Canvas) -> Canvas {
     out
 }
 
+/// Coverage below this alpha is left out of [`is_symbolic`]'s test: its premultiplied channels
+/// round too coarsely to tell a grey from a hue.
+const SYMBOLIC_MIN_ALPHA: u32 = 0x40;
+/// How far apart (per channel, 0..255) the greys of a symbolic icon may be.
+const SYMBOLIC_SPREAD: u32 = 24;
+
+/// Whether every pixel of `icon` with real coverage is the same grey, within [`SYMBOLIC_SPREAD`].
+pub fn is_symbolic(icon: &Canvas) -> bool {
+    symbolic_grey(icon).is_some()
+}
+
+/// The grey of a symbolic `icon` (see [`is_symbolic`]), 0..255.
+fn symbolic_grey(icon: &Canvas) -> Option<u32> {
+    let mut range = (u32::MAX, 0);
+    for &p in &icon.pixels {
+        let a = p >> 24;
+        if a < SYMBOLIC_MIN_ALPHA {
+            continue;
+        }
+        let [r, g, b] = [16, 8, 0].map(|sh| ((p >> sh) & 0xFF) * 255 / a);
+        let (lo, hi) = (r.min(g).min(b), r.max(g).max(b));
+        if hi - lo > SYMBOLIC_SPREAD {
+            return None;
+        }
+        range = (range.0.min(lo), range.1.max(hi));
+    }
+    (range.0 != u32::MAX && range.1 - range.0 <= SYMBOLIC_SPREAD).then(|| (range.0 + range.1) / 2)
+}
+
+/// `icon` with every pixel's colour replaced by `ink`, its coverage kept.
+pub fn inked(icon: &Canvas, ink: Color) -> Canvas {
+    let mut out = icon.clone();
+    for p in &mut out.pixels {
+        *p = premultiply((*p & 0xFF00_0000) | (ink.argb() & 0x00FF_FFFF));
+    }
+    out
+}
+
+/// A ground at most this luminance is dark: a dark scheme's window, menu or face, not a light
+/// scheme's mid-tone face.
+const DARK_GROUND: f64 = 0.18;
+/// A symbolic icon's grey reads on a ground at this contrast; a darker one is inked.
+const SYMBOLIC_MIN_CONTRAST: f64 = 3.0;
+/// An outline pixel reads on the ground at this contrast.
+const EDGE_MIN_CONTRAST: f64 = 2.0;
+/// An icon whose outline reads in less than this share of its pixels (out of 255) gets a halo.
+const EDGE_MIN_SHARE: u32 = 128;
+/// How far a halo's colour goes from the ground toward the ink, out of 255.
+const HALO_MIX: u8 = 0x99;
+
+/// `icon` as it is drawn on a `ground` with labels in `ink`, at `s` device pixels per design
+/// pixel. On a light or mid-tone ground it is unchanged. On a dark one a symbolic icon too dark to read is
+/// drawn in `ink`, and an icon whose outline vanishes into the ground gets a one design pixel
+/// halo of the ground mixed toward `ink` around its shape.
+pub fn on_ground(icon: &Canvas, ground: Color, ink: Color, s: i32) -> Cow<'_, Canvas> {
+    if ground.luminance() > DARK_GROUND {
+        return Cow::Borrowed(icon);
+    }
+    if let Some(grey) = symbolic_grey(icon) {
+        let grey = grey as u8;
+        return if Color::rgb(grey, grey, grey).contrast(ground) < SYMBOLIC_MIN_CONTRAST {
+            Cow::Owned(inked(icon, ink))
+        } else {
+            Cow::Borrowed(icon)
+        };
+    }
+    let (w, h) = device_size(icon);
+    if outline_share(icon, w, h, ground) >= EDGE_MIN_SHARE {
+        return Cow::Borrowed(icon);
+    }
+    Cow::Owned(haloed(
+        icon,
+        w,
+        h,
+        ground.toward(ink, HALO_MIX),
+        s.max(1) as usize,
+    ))
+}
+
+fn device_size(icon: &Canvas) -> (usize, usize) {
+    let s = icon.scale().max(1) as usize;
+    (icon.width as usize * s, icon.height as usize * s)
+}
+
+/// Out of 255, how many of `icon`'s outline pixels (mostly covered, beside a clear one) read on
+/// `ground`; 255 for an icon with no outline.
+fn outline_share(icon: &Canvas, w: usize, h: usize, ground: Color) -> u32 {
+    let alpha = |x: isize, y: isize| -> u32 {
+        if x < 0 || y < 0 || x >= w as isize || y >= h as isize {
+            0
+        } else {
+            icon.pixels[y as usize * w + x as usize] >> 24
+        }
+    };
+    let (mut edge, mut seen) = (0u32, 0u32);
+    for y in 0..h {
+        for x in 0..w {
+            let p = icon.pixels[y * w + x];
+            let a = p >> 24;
+            if a < 0x80 {
+                continue;
+            }
+            let (xi, yi) = (x as isize, y as isize);
+            let clear = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .iter()
+                .any(|(dx, dy)| alpha(xi + dx, yi + dy) < 0x40);
+            if !clear {
+                continue;
+            }
+            edge += 1;
+            let over = |sh: u32, g: u8| {
+                let c = (p >> sh) & 0xFF;
+                (c + u32::from(g) * (255 - a) / 255).min(255) as u8
+            };
+            let shown = Color::rgb(over(16, ground.r), over(8, ground.g), over(0, ground.b));
+            if shown.contrast(ground) >= EDGE_MIN_CONTRAST {
+                seen += 1;
+            }
+        }
+    }
+    (seen * 255).checked_div(edge).unwrap_or(255)
+}
+
+/// `icon` over a `halo`-coloured copy of its shape grown by `r` pixels each way.
+fn haloed(icon: &Canvas, w: usize, h: usize, halo: Color, r: usize) -> Canvas {
+    let mut out = icon.clone();
+    let rgb = halo.argb() & 0x00FF_FFFF;
+    for y in 0..h {
+        for x in 0..w {
+            let mut a = 0;
+            for ny in y.saturating_sub(r)..(y + r + 1).min(h) {
+                for nx in x.saturating_sub(r)..(x + r + 1).min(w) {
+                    a = a.max(icon.pixels[ny * w + nx] >> 24);
+                }
+            }
+            let under = premultiply(a << 24 | rgb);
+            let p = icon.pixels[y * w + x];
+            let pa = p >> 24;
+            let mix = |sh: u32| {
+                let top = (p >> sh) & 0xFF;
+                let bottom = (under >> sh) & 0xFF;
+                (top + bottom * (255 - pa) / 255).min(255)
+            };
+            out.pixels[y * w + x] = mix(24) << 24 | mix(16) << 16 | mix(8) << 8 | mix(0);
+        }
+    }
+    out
+}
+
 /// Classic window glyph drawn when a client has no icon: a dark outline, a
 /// button-face frame, a 3 px active-title caption band and a white body at
 /// 16 px, scaled to `size` by nearest neighbour so the pixel art stays crisp.
@@ -161,6 +311,68 @@ fn fallback_in(cs: &ColorScheme, size: i32) -> Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CHARCOAL: Color = Color::rgb(0x2B, 0x2B, 0x2B);
+    const LIGHT_INK: Color = Color::rgb(0xE6, 0xE6, 0xE6);
+
+    /// A 16 px icon: a white 8x8 square with a one pixel black outline, at (4, 4).
+    fn outlined() -> Canvas {
+        let mut c = Canvas::new(16, 16);
+        c.fill_rect(Rect::new(4, 4, 8, 8), Color::rgb(0, 0, 0));
+        c.fill_rect(Rect::new(5, 5, 6, 6), Color::rgb(0xFF, 0xFF, 0xFF));
+        c
+    }
+
+    #[test]
+    fn a_light_or_mid_tone_ground_leaves_every_icon_as_it_is() {
+        let mut grey = Canvas::new(16, 16);
+        grey.fill_rect(Rect::new(2, 7, 12, 2), Color::rgb(0x80, 0x80, 0x80));
+        for ground in [Color::rgb(0xFF, 0xFF, 0xFF), Color::rgb(131, 153, 177)] {
+            for icon in [outlined(), grey.clone()] {
+                let got = on_ground(&icon, ground, Color::rgb(0, 0, 0), 1);
+                assert!(matches!(got, Cow::Borrowed(_)), "{ground:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_black_outline_on_charcoal_gets_a_halo_one_design_pixel_wide() {
+        let icon = outlined();
+        let halo = CHARCOAL.toward(LIGHT_INK, HALO_MIX).argb();
+        for s in [1, 2] {
+            let got = on_ground(&icon, CHARCOAL, LIGHT_INK, s);
+            let at = |x: usize, y: usize| got.pixels[y * 16 + x];
+            assert_eq!(at(4 - s as usize, 8), halo, "the halo at {s}");
+            assert_eq!(at(3 - s as usize, 8), 0, "clear past the halo at {s}");
+            assert_eq!(at(4, 8), 0xFF00_0000, "the outline stays black at {s}");
+            assert_eq!(at(8, 8), 0xFFFF_FFFF, "the inside stays white at {s}");
+        }
+    }
+
+    #[test]
+    fn an_outline_that_reads_on_charcoal_gets_no_halo() {
+        let mut icon = Canvas::new(16, 16);
+        icon.fill_rect(Rect::new(4, 4, 8, 8), Color::rgb(0xF0, 0xC0, 0x40));
+        assert!(matches!(
+            on_ground(&icon, CHARCOAL, LIGHT_INK, 1),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn a_dark_symbolic_icon_on_charcoal_takes_the_ink_and_a_light_one_stays() {
+        let mut dark = Canvas::new(16, 16);
+        dark.fill_rect(Rect::new(2, 7, 12, 2), Color::rgb(0x23, 0x26, 0x29));
+        let got = on_ground(&dark, CHARCOAL, LIGHT_INK, 1);
+        assert_eq!(got.pixels[7 * 16 + 5], LIGHT_INK.argb());
+        assert_eq!(got.pixels[0], 0, "clear stays clear");
+        let mut light = Canvas::new(16, 16);
+        light.fill_rect(Rect::new(2, 7, 12, 2), Color::rgb(0xD0, 0xD0, 0xD0));
+        assert!(matches!(
+            on_ground(&light, CHARCOAL, LIGHT_INK, 1),
+            Cow::Borrowed(_)
+        ));
+    }
 
     #[test]
     fn convert_refuses_oversized_and_empty_icons() {

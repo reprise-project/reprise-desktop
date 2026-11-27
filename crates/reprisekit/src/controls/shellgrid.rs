@@ -261,6 +261,7 @@ pub(crate) fn draw_tile(
     let Paint { cs, s, .. } = *p;
     let (selected, ring) = sel;
     if let Some(icon) = icon {
+        let icon = &*crate::icon::on_ground(icon, cs.window, cs.window_text, s);
         let dy = TILE_ICON_OFF.1 + (cell.height / s - TILE_CELL.1) / 2;
         let (ix, iy) = (cell.x + TILE_ICON_OFF.0 * s, cell.y + dy * s);
         c.blit_over(ix, iy, icon);

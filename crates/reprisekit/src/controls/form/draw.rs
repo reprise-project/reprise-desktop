@@ -417,6 +417,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     c.fill_rect(r.inset(frame * s), cs.window);
                 }
                 if let Some(pic) = canvas {
+                    let (ground, ink) = match it.on_window {
+                        true => (cs.window, cs.window_text),
+                        false => (cs.button_face, cs.button_text),
+                    };
+                    let pic = &*crate::icon::on_ground(pic, ground, ink, s);
                     c.blit_over(at.0, at.1, pic);
                 }
             }

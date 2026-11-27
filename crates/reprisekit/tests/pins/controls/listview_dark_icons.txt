@@ -1,0 +1,12 @@
+Classic dark scale 1 2a6baad66faddb68
+Classic dark scale 2 0f4ab79e888053a3
+Classic light scale 1 6d761cf1ad2676cd
+Classic light scale 2 87ded50d8615f881
+Blue dark scale 1 48190fe10be201fa
+Blue dark scale 2 a72e723b83762ad7
+Blue light scale 1 4ae51b8c3363589c
+Blue light scale 2 f6d15abb780e7490
+Glass dark scale 1 f093fc57859583a8
+Glass dark scale 2 fdc9e5cb1208733b
+Glass light scale 1 759b6c4ebae4e626
+Glass light scale 2 bb2d2db3d25c438a

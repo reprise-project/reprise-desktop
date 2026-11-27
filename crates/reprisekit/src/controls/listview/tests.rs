@@ -1764,3 +1764,81 @@ fn icon_rows_given_no_icons_set_their_names_past_no_icon_column() {
     let name = bare.name_rect(&lay, 0, &text, theme.fonts.size_px);
     assert_eq!(name.x, lay.body.x + ICON_X, "the name box 2 px in");
 }
+
+/// Each interface's dark theme, and its light one: Classic in its dark colour scheme.
+fn dark_and_light(i: crate::interface::Interface) -> [(Theme, bool); 2] {
+    let glass = crate::glass::Settings::default();
+    let theme = |dark| {
+        let mut t = crate::interfaces::theme_with(i, crate::blue::Variant::Blue, dark, &glass);
+        if dark && i == crate::interface::Interface::Classic {
+            t.colors = crate::schemes::scheme("One Dark").expect("One Dark is a Classic scheme");
+        }
+        t
+    };
+    [(theme(true), true), (theme(false), false)]
+}
+
+#[test]
+fn a_black_outlined_icon_gets_a_light_halo_on_a_dark_list_only() {
+    use crate::interface::Interface;
+    let mut hashes = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for (base, dark) in dark_and_light(i) {
+            assert_eq!(base.colors.is_dark(), dark, "{i:?} dark {dark}");
+            let cm = base.controls();
+            for s in [1, 2] {
+                let at = format!("{i:?} {} scale {s}", if dark { "dark" } else { "light" });
+                let theme = base.scaled(s);
+                let text = TextRenderer::load(&base.fonts);
+                let text = text.for_output(s);
+                let n = ICON_PX * s;
+                let mut ic = Canvas::new(n as u32, n as u32);
+                ic.fill_rect(Rect::new(s, s, n - 2 * s, n - 2 * s), Color::rgb(0, 0, 0));
+                ic.fill_rect(
+                    Rect::new(2 * s, 2 * s, n - 4 * s, n - 4 * s),
+                    Color::rgb(0xFF, 0xFF, 0xFF),
+                );
+                let lv = ListView {
+                    columns: vec![Column::new("Program", 200)],
+                    rows: IconRows(vec![Row {
+                        icon: Some(std::rc::Rc::new(ic)),
+                        cells: vec!["Notepad".into()],
+                    }]),
+                    ..ListView::default()
+                };
+                let frame = Rect::new(
+                    0,
+                    0,
+                    base.text.len(220),
+                    cm.list_header + cm.text.len(ROW_H) + 4,
+                );
+                let lay = layout(&lv, frame, &cm);
+                let mut c = Canvas::new((frame.width * s) as u32, (frame.height * s) as u32);
+                draw(
+                    &mut c,
+                    text,
+                    &theme.paint(),
+                    &lv,
+                    &lay,
+                    None,
+                    theme.fonts.size_px,
+                );
+                let ix = (lay.body.x + ICON_X) * s;
+                let iy = lay.body.y * s + (lay.row_h() * s - n) / 2;
+                let ring = c.get(ix, iy + n / 2);
+                assert_eq!(
+                    ring != theme.colors.window.argb(),
+                    dark,
+                    "{at}: a halo only on the dark list"
+                );
+                assert_eq!(
+                    c.get(ix + s, iy + n / 2),
+                    0xFF00_0000,
+                    "{at}: the outline stays black"
+                );
+                hashes.push((at, crate::pins::fnv(&c)));
+            }
+        }
+    }
+    crate::pins::check("controls/listview_dark_icons", &hashes);
+}
