@@ -341,28 +341,13 @@ impl Explorer {
 
     /// A drag out of a compressed folder: the entries at `items` start copying out into a fresh
     /// scratch folder, and the drag names their copies there ([`Explorer::poll_drag_copies`]).
-    /// Entries past [`DRAG_MOST`] are refused with a box.
+    /// Entries past [`DRAG_MOST`] are refused on the copy, which says so in a box.
     fn stage_drag(
         &mut self,
         items: &[PathBuf],
         ctx: &mut Ctx,
     ) -> Result<(Vec<PathBuf>, Staged), Box<Reply>> {
         let picks = (self.archive_picks(items)).ok_or_else(|| Box::new(Reply::none()))?;
-        let bytes = reprisefs::archive::picked_bytes(&picks.entries, &picks.picked);
-        if bytes > self.drag_most {
-            let name = picks.archive.file_name().unwrap_or_default();
-            let text = tr!(
-                "archive-drag-too-large",
-                name = name.to_string_lossy().into_owned(),
-                size = reprisefs::props::short_size(bytes),
-                most = reprisefs::props::short_size(self.drag_most)
-            );
-            return Err(Box::new(self.message_box(
-                &tr!("archive-copy-failed-title"),
-                text,
-                ctx,
-            )));
-        }
         let scratch = match reprisefs::archive::Scratch::new() {
             Ok(s) => s,
             Err(e) => {
@@ -385,8 +370,9 @@ impl Explorer {
             picked,
         } = picks;
         let to = (scratch.clone(), None);
-        let job =
-            reprisefs::archive::copy_job(archive.clone(), entries, picked, to, move || wake.wake());
+        let most = Some(self.drag_most);
+        let wake = move || wake.wake();
+        let job = reprisefs::archive::copy_job(archive.clone(), entries, picked, to, most, wake);
         self.drag_copies.push(DragCopy {
             job,
             staged: staged.clone(),

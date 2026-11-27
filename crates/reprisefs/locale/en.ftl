@@ -60,6 +60,7 @@ archive-too-many = it holds more than { NUMBER($most, useGrouping: "false") } it
 archive-no-room = it takes { $size }, more than the free space here allows.
 archive-more-than-listed = it holds more than its listing says.
 archive-other-size = it holds less than its listing says.
+archive-drag-too-large = the items picked take { $size }, more than a drag copies out of a compressed folder ({ $most }). Use Copy To Folder... or Extract All... instead.
 archive-too-long = it took too long to read. Extract it to get at its files.
 archive-missing = the file cannot be found or read.
 archive-no-cache = there is no cache folder to copy it to.

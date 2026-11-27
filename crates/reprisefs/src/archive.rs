@@ -1,8 +1,8 @@
 //! An archive browsed as a read-only folder. `bsdtar -tv` lists its entries from their headers,
-//! and `bsdtar -xqO` writes one file at a time to its stdout, which Reprise copies into a fresh
-//! private folder to open: bsdtar itself writes nothing to disk. Both run in the C.UTF-8 locale
-//! (names and dates read back exactly) under CPU and memory limits, and die with the thread that
-//! started them. docs/security.md "Extracting archives" has the rules.
+//! and `bsdtar -xqO` writes the files picked to its stdout in archive order, which Reprise splits
+//! by their listed sizes into a fresh private folder: bsdtar itself writes nothing to disk. Both
+//! run in the C.UTF-8 locale (names and dates read back exactly) under CPU and memory limits, and
+//! die with the thread that started them. docs/security.md "Extracting archives" has the rules.
 
 use crate::extract::{self, ArchiveEvent, ArchiveJob, Failure, MAX_ENTRIES, STDERR_TAIL};
 use crate::progress::Meter;
@@ -68,24 +68,40 @@ pub fn opens_as_folder(mime: &str, apps: &[crate::apps::AppEntry]) -> bool {
         && crate::search::which("bsdtar").is_some()
 }
 
-/// Writes the first file named `entry` to stdout. bsdtar reads the name as a pattern, so every
-/// byte but `/` is escaped, the closing `$` stops it matching what lies below the name, and the
-/// leading `./` keeps a name like `-C` from reading as an option.
+/// Writes the first file named `entry` to stdout.
 pub fn open_argv(archive: &Path, entry: &Path) -> Vec<OsString> {
-    let mut pattern = b"./".to_vec();
-    for &b in entry.as_os_str().as_bytes() {
-        if b != b'/' {
-            pattern.push(b'\\');
+    members_argv(archive, [entry])
+}
+
+/// Writes the first file named each of `entries` to stdout, in archive order. bsdtar reads a
+/// name as a pattern, so every byte but `/` is escaped, the closing `$` stops it matching what
+/// lies below the name, and the leading `./` keeps a name like `-C` from reading as an option.
+fn members_argv<'a>(archive: &Path, entries: impl IntoIterator<Item = &'a Path>) -> Vec<OsString> {
+    let pattern = |entry: &Path| {
+        let mut pattern = b"./".to_vec();
+        for &b in entry.as_os_str().as_bytes() {
+            if b != b'/' {
+                pattern.push(b'\\');
+            }
+            pattern.push(b);
         }
-        pattern.push(b);
-    }
-    pattern.push(b'$');
+        pattern.push(b'$');
+        OsString::from_vec(pattern)
+    };
     ["bsdtar", "-xqO", "-f"]
         .map(OsString::from)
         .into_iter()
-        .chain([archive.into(), OsString::from_vec(pattern)])
+        .chain([archive.into()])
+        .chain(entries.into_iter().map(pattern))
         .collect()
 }
+
+/// The most files one bsdtar run copies out, each run decompressing a compressed tar from its
+/// start: more names cost each entry more pattern matches.
+const BATCH_FILES: usize = 128;
+
+/// The most bytes of escaped names one bsdtar run's arguments hold.
+const BATCH_NAME_BYTES: usize = 256 << 10;
 
 /// The CPU seconds a child reading `bytes` of archive (and member) may take.
 pub(crate) fn cpu_secs(bytes: u64) -> u64 {
@@ -841,18 +857,21 @@ fn flock(file: &std::fs::File, how: libc::c_int) -> bool {
 
 /// [`copy_tree_out`] into the empty folder of `scratch` on a job, which holds it while it runs,
 /// the copies going on to `dest`: each copy as an [`ArchiveEvent::Landed`], or one
-/// [`ArchiveEvent::Failed`] saying why. A cancelled job lands nothing.
+/// [`ArchiveEvent::Failed`] saying why. A drag's copy (`drag_most`) is refused past that many
+/// bytes. A cancelled job lands nothing.
 pub fn copy_job(
     archive: PathBuf,
     entries: Arc<Vec<Entry>>,
     picked: Vec<PathBuf>,
     (scratch, dest): (Scratch, Option<PathBuf>),
+    drag_most: Option<u64>,
     wake: impl Fn() + Send + 'static,
 ) -> ArchiveJob {
     let meter = Arc::new(Meter::default());
     ArchiveJob::on_thread("reprisefs-copy-out", meter, wake, move |m, send| {
         let into = scratch.path();
-        let copied = copy_tree_out(&archive, &entries, &picked, into, dest.as_deref(), m);
+        let to = (into, dest.as_deref());
+        let copied = copy_tree_within(&archive, &entries, &picked, to, drag_most, m);
         // Let go before the end is told, so the host's holds decide when the folder goes.
         drop(scratch);
         match copied {
@@ -898,35 +917,48 @@ fn copy_out_within(
         ));
     }
     let to = into.join(name);
-    write_entry(archive, entry, &to, 0o400, &Meter::default())?;
+    write_entries(
+        archive,
+        &[(entry, to.clone())],
+        0o400,
+        &Meter::default(),
+        |_| {},
+    )?;
     Ok(to)
 }
 
-/// Writes the file `entry` of `archive` to the new file `to`, never through a link, then gives
-/// it `mode`. Nothing is left at `to` when bsdtar fails or writes other than the listed size, or
-/// `m` is cancelled; bsdtar is stopped while `m` is paused.
-fn write_entry(
+/// Writes the files `files` of `archive`, in archive order, to their new paths, never through a
+/// link, each given `mode` once its listed size is in and then passed to `landed` by index. None
+/// of them is left when bsdtar fails or writes other than their listed sizes in all, or `m` is
+/// cancelled; bsdtar is stopped while `m` is paused.
+fn write_entries(
     archive: &Path,
-    entry: &Entry,
-    to: &Path,
+    files: &[(&Entry, PathBuf)],
     mode: u32,
     m: &Meter,
+    mut landed: impl FnMut(usize),
 ) -> Result<(), String> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(to)
-        .map_err(|e| e.to_string())?;
-    let failed = |why: String| {
-        let _ = std::fs::remove_file(to);
+    let mut to = Landing {
+        files,
+        mode,
+        made: 0,
+        file: None,
+        left: 0,
+    };
+    let failed = |made: usize, why: String| {
+        for (_, path) in &files[..made] {
+            let _ = std::fs::remove_file(path);
+        }
         why
     };
-    let tool = |f: Failure| failed(f.why());
-    let budget = cpu_secs(archive_bytes(archive).saturating_add(entry.size));
-    let mut child = spawn(&open_argv(archive, &entry.path), budget).map_err(tool)?;
+    // The first file is made before bsdtar runs, so a paused copy shows it begun.
+    to.step(&mut landed).map_err(|why| failed(to.made, why))?;
+    let made = to.made;
+    let tool = |f: Failure| failed(made, f.why());
+    let bytes = (files.iter()).fold(0u64, |n, (e, _)| n.saturating_add(e.size));
+    let budget = cpu_secs(archive_bytes(archive).saturating_add(bytes));
+    let argv = members_argv(archive, files.iter().map(|(e, _)| e.path.as_path()));
+    let mut child = spawn(&argv, budget).map_err(tool)?;
     let out = child
         .stdout
         .take()
@@ -936,18 +968,13 @@ fn write_entry(
         .take()
         .ok_or_else(|| tool(extract::no_pipe()))?;
     let drain = std::thread::spawn(move || extract::tail(&mut err, STDERR_TAIL));
-    let mut written = 0u64;
     let mut wrong = None;
     let read = extract::chunks(
         &mut child,
         out,
         m,
         |chunk| {
-            written += chunk.len() as u64;
-            let wrote = match written > entry.size {
-                true => Err(tr!("archive-more-than-listed")),
-                false => file.write_all(chunk).map_err(|e| e.to_string()),
-            };
+            let wrote = to.write(chunk, &mut landed);
             wrote.map_err(|e| wrong = Some(e)).is_ok()
         },
         || {},
@@ -963,34 +990,100 @@ fn write_entry(
     }
     let status = child.wait();
     let stderr = drain.join().unwrap_or_default();
+    let made = to.made;
     // A child killed here for writing too much died of SIGKILL too, not of its CPU limit.
     if let Ok(s) = &status
         && copied.is_ok()
         && ran_out(s)
     {
-        return Err(failed(tr!("archive-too-long")));
+        return Err(failed(made, tr!("archive-too-long")));
     }
     if status.as_ref().is_ok_and(|s| !s.success()) && locked(&stderr) {
-        return Err(failed(tr!("archive-locked")));
+        return Err(failed(made, tr!("archive-locked")));
     }
-    copied.map_err(failed)?;
-    if written != entry.size {
-        return Err(failed(tr!("archive-other-size")));
-    }
+    copied.map_err(|why| failed(made, why))?;
+    let finished = to.finish(&mut landed);
+    let made = to.made;
+    finished.map_err(|why| failed(made, why))?;
     match status {
-        Ok(s) if s.success() => {}
-        Ok(_) => return Err(failed(extract::said(&stderr, &tr!("archive-unread")))),
-        Err(e) => return Err(failed(e.to_string())),
+        Ok(s) if s.success() => Ok(()),
+        Ok(_) => Err(failed(made, extract::said(&stderr, &tr!("archive-unread")))),
+        Err(e) => Err(failed(made, e.to_string())),
     }
-    file.set_permissions(std::fs::Permissions::from_mode(mode))
-        .map_err(|e| failed(e.to_string()))
 }
 
-/// A name [`copy_tree_out`] makes: a folder, or a file with its entry, and its own names in
-/// listing order (indices into [`TreePlan::nodes`]).
+/// The files [`write_entries`] fills from one stream, each taking its listed size in turn.
+struct Landing<'a> {
+    files: &'a [(&'a Entry, PathBuf)],
+    mode: u32,
+    /// How many of `files` were made.
+    made: usize,
+    /// The last one made, while bytes are still `left` for it.
+    file: Option<std::fs::File>,
+    left: u64,
+}
+
+impl Landing<'_> {
+    /// Gives the file made last its mode once it is full, and makes the next ones until one still
+    /// takes bytes or none is left.
+    fn step(&mut self, landed: &mut impl FnMut(usize)) -> Result<(), String> {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        loop {
+            if self.file.is_some() && self.left > 0 {
+                return Ok(());
+            }
+            if let Some(file) = self.file.take() {
+                (file.set_permissions(std::fs::Permissions::from_mode(self.mode)))
+                    .map_err(|e| e.to_string())?;
+                landed(self.made - 1);
+            }
+            let Some((entry, to)) = self.files.get(self.made) else {
+                return Ok(());
+            };
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(to)
+                .map_err(|e| e.to_string())?;
+            self.made += 1;
+            self.file = Some(file);
+            self.left = entry.size;
+        }
+    }
+
+    fn write(&mut self, mut chunk: &[u8], landed: &mut impl FnMut(usize)) -> Result<(), String> {
+        while !chunk.is_empty() {
+            self.step(landed)?;
+            let Some(file) = self.file.as_mut() else {
+                return Err(tr!("archive-more-than-listed"));
+            };
+            let n = chunk
+                .len()
+                .min(usize::try_from(self.left).unwrap_or(usize::MAX));
+            file.write_all(&chunk[..n]).map_err(|e| e.to_string())?;
+            self.left -= n as u64;
+            chunk = &chunk[n..];
+        }
+        Ok(())
+    }
+
+    /// Makes and lands the empty files at the end; a file still short of its size fails.
+    fn finish(&mut self, landed: &mut impl FnMut(usize)) -> Result<(), String> {
+        self.step(landed)?;
+        match self.file {
+            Some(_) => Err(tr!("archive-other-size")),
+            None => Ok(()),
+        }
+    }
+}
+
+/// A name [`copy_tree_out`] makes: a folder, or a file with its entry and that entry's index in
+/// the listing, and its own names in listing order (indices into [`TreePlan::nodes`]).
 struct Node<'a> {
     name: &'a OsStr,
-    file: Option<&'a Entry>,
+    file: Option<(usize, &'a Entry)>,
     kids: Vec<usize>,
 }
 
@@ -1047,8 +1140,8 @@ fn tree_plan<'a>(
                 Some(&n) if nodes[n].file.is_some() => break,
                 Some(&n) => n,
                 None => {
-                    let file = (last && e.kind == Kind::File).then_some(e);
-                    bytes = bytes.saturating_add(file.map_or(0, |e| e.size));
+                    let file = (last && e.kind == Kind::File).then_some((i, e));
+                    bytes = bytes.saturating_add(file.map_or(0, |(_, e)| e.size));
                     nodes.push(Node {
                         name,
                         file,
@@ -1074,12 +1167,6 @@ fn tree_plan<'a>(
     Ok(TreePlan { nodes, bytes })
 }
 
-/// The bytes of the files the entries `picked` of the listing `entries` copy out as; 0 when the
-/// listing no longer holds one, which the copy then says.
-pub fn picked_bytes(entries: &[Entry], picked: &[PathBuf]) -> u64 {
-    tree_plan(entries, picked, usize::MAX, &Meter::default()).map_or(0, |p| p.bytes)
-}
-
 /// Whether `a` and `b` are on one file system.
 fn same_device(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -1091,11 +1178,12 @@ fn same_device(a: &Path, b: &Path) -> bool {
 
 /// Copies the entries `picked` of `archive` (paths inside it, each a file or a folder with all
 /// that `entries` lists below it) into the empty private folder `into` under their own names,
-/// files 0644 and folders 0755, one [`write_entry`] per file, laid out as [`TreePlan`] says.
-/// Refused past [`extract::FREE_SHARE_PERCENT`] of the free space, [`MAX_ENTRIES`] or a path
-/// longer than the system takes. When the copies then go on to the folder `dest`, they must fit
-/// there too: twice over when it shares `into`'s file system. Cancelling `m` stops it, part way
-/// through a file too. Returns each picked entry's copy.
+/// files 0644 and folders 0755, laid out as [`TreePlan`] says: the folders first, then the files
+/// in archive order, up to [`BATCH_FILES`] per [`write_entries`]. Refused past
+/// [`extract::FREE_SHARE_PERCENT`] of the free space, [`MAX_ENTRIES`] or a path longer than the
+/// system takes. When the copies then go on to the folder `dest`, they must fit there too: twice
+/// over when it shares `into`'s file system. Cancelling `m` stops it, part way through a file
+/// too. Returns each picked entry's copy.
 pub fn copy_tree_out(
     archive: &Path,
     entries: &[Entry],
@@ -1104,10 +1192,29 @@ pub fn copy_tree_out(
     dest: Option<&Path>,
     m: &Meter,
 ) -> Result<Vec<PathBuf>, String> {
+    copy_tree_within(archive, entries, picked, (into, dest), None, m)
+}
+
+/// [`copy_tree_out`], refused past `drag_most` bytes when it is a drag's.
+fn copy_tree_within(
+    archive: &Path,
+    entries: &[Entry],
+    picked: &[PathBuf],
+    (into, dest): (&Path, Option<&Path>),
+    drag_most: Option<u64>,
+    m: &Meter,
+) -> Result<Vec<PathBuf>, String> {
     use crate::progress::{Phase, Totals};
     use std::os::unix::fs::DirBuilderExt;
     let room = (libc::PATH_MAX as usize).saturating_sub(into.as_os_str().len() + 2);
     let TreePlan { nodes, bytes } = tree_plan(entries, picked, room, m)?;
+    if let Some(most) = drag_most.filter(|&most| bytes > most) {
+        return Err(tr!(
+            "archive-drag-too-large",
+            size = crate::props::short_size(bytes),
+            most = crate::props::short_size(most)
+        ));
+    }
     let items = (nodes.len() - 1) as u64;
     let limits = extract::Limits::of(into);
     if items > limits.entries {
@@ -1129,6 +1236,7 @@ pub fn copy_tree_out(
     m.add_totals(Totals { bytes, items });
     m.set_phase(Phase::Copying);
     let mut done = Totals::default();
+    let mut files = Vec::new();
     let mut path = into.to_path_buf();
     // Each folder being filled, with the next of its names to make.
     let mut open = vec![(0, 0)];
@@ -1141,28 +1249,45 @@ pub fn copy_tree_out(
             continue;
         };
         path.push(nodes[kid].name);
+        if let Some((i, e)) = nodes[kid].file {
+            files.push((i, (e, path.clone())));
+            path.pop();
+            continue;
+        }
         if m.cancelled() {
             return Err(Failure::Cancelled.why());
         }
-        match nodes[kid].file {
-            Some(e) => write_entry(archive, e, &path, 0o644, m)?,
-            None => std::fs::DirBuilder::new()
-                .mode(0o755)
-                .create(&path)
-                .map_err(|e| e.to_string())?,
-        }
+        (std::fs::DirBuilder::new().mode(0o755).create(&path)).map_err(|e| e.to_string())?;
         m.set_current(path.strip_prefix(into).unwrap_or(&path).as_os_str());
         done.items += 1;
-        done.bytes = done
-            .bytes
-            .saturating_add(nodes[kid].file.map_or(0, |e| e.size));
         m.settle(done);
-        match nodes[kid].file {
-            Some(_) => {
-                path.pop();
-            }
-            None => open.push((kid, 0)),
+        open.push((kid, 0));
+    }
+    // bsdtar writes the files it finds in archive order, the listing's.
+    files.sort_unstable_by_key(|&(i, _)| i);
+    let files: Vec<(&Entry, PathBuf)> = files.into_iter().map(|(_, f)| f).collect();
+    let mut rest = files.as_slice();
+    while !rest.is_empty() {
+        if m.cancelled() {
+            return Err(Failure::Cancelled.why());
         }
+        let mut names = 0;
+        let take = (rest.iter().take(BATCH_FILES))
+            .take_while(|(e, _)| {
+                names += 2 * e.path.as_os_str().len() + 3;
+                names <= BATCH_NAME_BYTES
+            })
+            .count()
+            .max(1);
+        let (batch, after) = rest.split_at(take);
+        write_entries(archive, batch, 0o644, m, |k| {
+            let (e, path) = &batch[k];
+            m.set_current(path.strip_prefix(into).unwrap_or(path).as_os_str());
+            done.items += 1;
+            done.bytes = done.bytes.saturating_add(e.size);
+            m.settle(done);
+        })?;
+        rest = after;
     }
     if m.cancelled() {
         return Err(Failure::Cancelled.why());
@@ -1793,6 +1918,52 @@ mod tests {
     }
 
     #[test]
+    fn a_tree_copies_out_in_archive_order_across_batches_each_file_with_its_own_bytes() {
+        let t = tempfile::tempdir().unwrap();
+        let work = t.path().join("work");
+        std::fs::create_dir_all(work.join("a")).unwrap();
+        std::fs::create_dir_all(work.join("b")).unwrap();
+        // The archive interleaves the folders, and some files are empty.
+        let mut names = Vec::new();
+        for i in 0..BATCH_FILES + 5 {
+            let name = format!("{}/{i}", ["a", "b"][i % 2]);
+            std::fs::write(work.join(&name), format!("{i}-").repeat(i % 4)).unwrap();
+            names.push(name);
+        }
+        let mut args = vec!["-czf", "../p.tar.gz"];
+        args.extend(names.iter().map(String::as_str));
+        bsdtar(&work, &args);
+        let archive = t.path().join("p.tar.gz");
+        let into = t.path().join("into");
+        std::fs::create_dir(&into).unwrap();
+        let picked = ["a", "b"].map(PathBuf::from);
+        let m = Meter::default();
+        copy_tree_out(&archive, &listed(&archive), &picked, &into, None, &m).expect("copied");
+        for (i, name) in names.iter().enumerate() {
+            let got = std::fs::read_to_string(into.join(name)).unwrap();
+            assert_eq!(got, format!("{i}-").repeat(i % 4), "{name}");
+        }
+        assert_eq!(m.snapshot().items, 2 + names.len() as u64);
+    }
+
+    #[test]
+    fn a_batch_whose_bytes_fall_short_of_the_listing_leaves_none_of_its_files() {
+        let t = tempfile::tempdir().unwrap();
+        let archive = pack(t.path());
+        let mut entries = listed(&archive);
+        let a = (entries.iter_mut()).find(|e| e.path == Path::new("docs/a.txt"));
+        a.expect("listed").size += 1;
+        let into = t.path().join("into");
+        std::fs::create_dir(&into).unwrap();
+        let picked = [PathBuf::from("docs")];
+        assert_eq!(
+            copy_tree_out(&archive, &entries, &picked, &into, None, &Meter::default()),
+            Err("it holds less than its listing says.".into())
+        );
+        assert!(!into.join("docs/a.txt").exists() && !into.join("docs/deep/-C n\nl").exists());
+    }
+
+    #[test]
     fn a_copy_out_takes_the_first_of_a_name_listed_twice_and_no_file_under_a_folder() {
         let t = tempfile::tempdir().unwrap();
         let (one, two) = (t.path().join("one"), t.path().join("two"));
@@ -1895,6 +2066,7 @@ mod tests {
             entries.clone(),
             picked,
             (scratch.clone(), None),
+            None,
             wake,
         );
         let landed: Vec<PathBuf> = (job_events(job, woke).into_iter())
@@ -1915,7 +2087,7 @@ mod tests {
         let failed = Scratch::new_in(&base, 3600).unwrap();
         let (wake, woke) = waker();
         let gone = vec![PathBuf::from("gone")];
-        let job = copy_job(archive, entries, gone, (failed, None), wake);
+        let job = copy_job(archive, entries, gone, (failed, None), None, wake);
         let events = job_events(job, woke);
         assert!(
             matches!(&events[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
@@ -1975,7 +2147,7 @@ mod tests {
         let dir = scratch.path().to_path_buf();
         let picked = vec![PathBuf::from("big")];
         let (wake, woke) = waker();
-        let job = copy_job(archive, entries, picked, (scratch, None), wake);
+        let job = copy_job(archive, entries, picked, (scratch, None), None, wake);
         job.meter().set_paused(true);
         for _ in 0..2000 {
             if dir.join("big").exists() {

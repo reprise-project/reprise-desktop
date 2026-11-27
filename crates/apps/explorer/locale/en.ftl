@@ -430,4 +430,3 @@ archive-copy-failed-title = Compressed (zipped) Folders
 archive-copy-failed = Cannot open { $name } from the compressed folder: { $why }
 archive-runs = { $name } is a program, and programs do not run from inside a compressed folder. Extract the folder first, then run it from there.
 archive-copy-out-failed = Cannot copy from { $name }: { $why }
-archive-drag-too-large = The items picked in { $name } take { $size }, more than a drag copies out of a compressed folder ({ $most }). Use Copy To Folder... or Extract All... instead.
