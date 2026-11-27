@@ -445,8 +445,21 @@ fn scratch_base() -> Option<PathBuf> {
 }
 
 /// Whether `path` is a copy [`copy_out`] made in a [`scratch`] folder, which Recent files skips.
+/// The path is made absolute with `..` dropped by name first.
 pub fn is_copy(path: &Path) -> bool {
-    scratch_base().is_some_and(|base| path.starts_with(base))
+    let Ok(joined) = std::path::absolute(path) else {
+        return false;
+    };
+    let mut clean = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            Component::ParentDir => {
+                clean.pop();
+            }
+            c => clean.push(c),
+        }
+    }
+    scratch_base().is_some_and(|base| clean.starts_with(base))
 }
 
 fn scratch_in(base: &Path, keep_secs: u64) -> std::io::Result<PathBuf> {

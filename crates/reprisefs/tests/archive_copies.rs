@@ -142,3 +142,21 @@ fn no_dialog_starts_in_a_scratch_folder() {
         assert_eq!(archivecopy::dialog_folder(&marked), None);
     }
 }
+
+#[test]
+fn a_kept_background_leaves_no_temp_file_behind() {
+    let kept = archivecopy::lasting_background(&copy("moon.png", b"full")).expect("kept");
+    let dir = kept.parent().expect("a folder");
+    let names: Vec<_> = (std::fs::read_dir(dir).expect("list").flatten())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("moon"))
+        .collect();
+    assert_eq!(names, vec!["moon.png".to_string()]);
+    assert_eq!(std::fs::read(&kept).expect("read"), b"full");
+    assert_eq!(
+        std::fs::metadata(&kept)
+            .map(|m| std::os::unix::fs::MetadataExt::nlink(&m))
+            .ok(),
+        Some(1)
+    );
+}
