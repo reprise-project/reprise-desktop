@@ -38,8 +38,13 @@ const COMBO_GAP: i32 = 6;
 const LABEL_GAP: i32 = 8;
 /// The Output and Input labels' column, at its narrowest.
 const LABEL_W: i32 = 52;
-/// The Output and Input combos' width.
+/// The Output and Input combos' width: as wide as their widest device name takes, within these.
 const FIELD_W: i32 = 360;
+const FIELD_MIN_W: i32 = 150;
+/// A combo's frame, text insets and the gap before its drop button, beside the text and button.
+const FIELD_CHROME: i32 = 12;
+/// The panel's inside at its narrowest while a player's strip shows, so its title has room.
+const STRIP_MIN_W: i32 = 300;
 const SEP_GAP: i32 = 10;
 const SEP_H: i32 = 2;
 /// Either side of the etched line between master and the programs.
