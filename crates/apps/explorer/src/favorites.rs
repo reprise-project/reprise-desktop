@@ -32,12 +32,21 @@ pub struct Organize {
 }
 
 /// A favorite's row in the Favorites menu: its label, what picking it does (`None` greyed) and
-/// whether it is a server address, which wears a server's icon in place of a folder's.
+/// its icon.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MenuRow {
     pub label: String,
     pub go: Option<Command>,
-    pub remote: bool,
+    pub icon: RowIcon,
+}
+
+/// A Favorites menu row's icon: a folder's, a server's, or a special folder's own by its icon
+/// name ([`reprisefs::places::special_folders`]), as the Folders tree shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowIcon {
+    Folder,
+    Server,
+    Special(&'static str),
 }
 
 /// What opening `f` does: a folder there goes to it, a server address connects through
@@ -57,14 +66,34 @@ fn state(f: &Favorite) -> State {
     }
 }
 
-pub fn menu_rows(favorites: &[Favorite]) -> Vec<MenuRow> {
+/// The menu's rows for `favorites`, a folder among `specials` wearing its own icon.
+pub fn menu_rows(favorites: &[Favorite], specials: &[(PathBuf, &'static str)]) -> Vec<MenuRow> {
     (favorites.iter().take(MENU_ROWS))
         .map(|f| MenuRow {
-            label: f.label.clone(),
+            label: menu_label(f),
             go: opening(f),
-            remote: matches!(f.target, Target::Uri(_)),
+            icon: match &f.target {
+                Target::Uri(_) => RowIcon::Server,
+                Target::Folder(path) => (specials.iter())
+                    .find(|(p, _)| p == path)
+                    .map_or(RowIcon::Folder, |(_, name)| RowIcon::Special(name)),
+            },
         })
         .collect()
+}
+
+/// A favorite's label; a server address without one is named as a share is, "user on host".
+fn menu_label(f: &Favorite) -> String {
+    let Target::Uri(uri) = &f.target else {
+        return f.label.clone();
+    };
+    match Address::parse(uri) {
+        Some(a) if f.label == f.target.default_name() => match a.named() {
+            Some(name) => tr!("favorites-on-host", name = name, host = a.host.as_str()),
+            None => a.host,
+        },
+        _ => f.label.clone(),
+    }
 }
 
 fn rows(shown: &[Favorite]) -> Vec<Row> {
@@ -318,12 +347,13 @@ mod tests {
             present,
             line: Default::default(),
         };
-        let rows = menu_rows(&[
+        let favorites = [
             at(Target::Folder("/srv".into()), true),
             at(Target::Folder("/gone".into()), false),
             at(Target::Uri("sftp://h/srv".into()), true),
             at(Target::Uri("recent:///".into()), true),
-        ]);
+        ];
+        let rows = menu_rows(&favorites, &[]);
         let go: Vec<Option<Command>> = rows.into_iter().map(|r| r.go).collect();
         assert_eq!(
             go,
@@ -525,10 +555,35 @@ mod tests {
         let (_dir, file) = with_file("file:///nonexistent-fav/Gone\nsftp://h/srv Server\n");
         let ex = reading(&file, &mut ctx);
         let rows = ex.menu_state().favorites;
-        let got: Vec<(&str, bool, bool)> = rows
+        let got: Vec<(&str, bool, RowIcon)> = rows
             .iter()
-            .map(|r| (r.label.as_str(), r.go.is_some(), r.remote))
+            .map(|r| (r.label.as_str(), r.go.is_some(), r.icon))
             .collect();
-        assert_eq!(got, [("Gone", false, false), ("Server", true, true)]);
+        assert_eq!(
+            got,
+            [
+                ("Gone", false, RowIcon::Folder),
+                ("Server", true, RowIcon::Server)
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unlabelled_server_is_named_on_its_host_and_a_special_folder_wears_its_icon() {
+        let file = "sftp://localhost/home/user\nsftp://bob@host\nftp://host\nfile:///srv/docs\n";
+        let b = reprisefs::pins::Bookmarks::parse(file);
+        let favorites = reprisefs::pins::favorites(&b, &Default::default());
+        let specials = [(PathBuf::from("/srv/docs"), "folder-documents")];
+        let rows = menu_rows(&favorites, &specials);
+        let got: Vec<(&str, RowIcon)> = rows.iter().map(|r| (r.label.as_str(), r.icon)).collect();
+        assert_eq!(
+            got,
+            [
+                ("user on localhost", RowIcon::Server),
+                ("bob on host", RowIcon::Server),
+                ("host", RowIcon::Server),
+                ("docs", RowIcon::Special("folder-documents")),
+            ]
+        );
     }
 }

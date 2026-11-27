@@ -94,12 +94,12 @@ fn favorites_rows_follow_the_bookmarks() {
         crate::favorites::MenuRow {
             label: "R&D".into(),
             go: Some(go.clone()),
-            remote: false,
+            icon: crate::favorites::RowIcon::Folder,
         },
         crate::favorites::MenuRow {
             label: "Recent".into(),
             go: None,
-            remote: true,
+            icon: crate::favorites::RowIcon::Server,
         },
     ];
     let (folder, server) = (Canvas::new(16, 16), Canvas::new(8, 8));

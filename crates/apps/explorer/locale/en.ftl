@@ -350,6 +350,7 @@ folder-tree-build-desktop = Desktop
 
 ## favorites
 favorites-take-favorites-failed-favorites = Favorites
+favorites-on-host = { $name } on { $host }
 favorites-take-favorites-failed-explorer-cannot-save-your-favorites-e = 
     Explorer cannot save your Favorites.
     

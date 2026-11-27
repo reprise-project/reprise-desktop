@@ -121,6 +121,15 @@ impl Address {
             .flatten()
     }
 
+    /// What the address is named by on its host, as a share is "public on nas": the path's last
+    /// folder with its escapes decoded, else the user; None for a host's top level.
+    pub fn named(&self) -> Option<String> {
+        let last = self.path.split('/').rfind(|s| !s.is_empty());
+        let decoded =
+            last.map(|s| String::from_utf8_lossy(&crate::trash::percent_decode(s)).into());
+        decoded.or_else(|| self.user.clone())
+    }
+
     /// An SMB server with no share: it lists its shares in the Network place rather than
     /// opening as a folder.
     pub fn is_server(&self) -> bool {
@@ -450,6 +459,21 @@ mod tests {
         assert_eq!(at("ssh://host").uri(), "sftp://host/");
         assert_eq!(at("sftp://[fe80::1]:2222/srv").host, "[fe80::1]");
         assert_eq!(at("sftp://[fe80::1]:2222/srv").port, Some(2222));
+    }
+
+    #[test]
+    fn an_address_is_named_by_its_last_folder_else_its_user() {
+        assert_eq!(
+            at("sftp://localhost/home/user").named().as_deref(),
+            Some("user")
+        );
+        assert_eq!(at("smb://nas/public/").named().as_deref(), Some("public"));
+        assert_eq!(
+            at("smb://nas/My%20Music").named().as_deref(),
+            Some("My Music")
+        );
+        assert_eq!(at("sftp://bob@host/").named().as_deref(), Some("bob"));
+        assert_eq!(at("ftp://host").named(), None);
     }
 
     #[test]
