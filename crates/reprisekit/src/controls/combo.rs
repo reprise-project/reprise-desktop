@@ -32,7 +32,7 @@ use accesskit::{Node, NodeId, Role};
 use std::cell::Cell;
 
 mod act;
-pub use act::{Act, list_above};
+pub use act::{Act, list_above, widen_within};
 
 /// One row of the drop list: label, optional 16 px icon and indent level (levels under the root). A list with no icon anywhere is plain and ignores indents. A greyed row draws in `gray_text` and is never highlighted or picked.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

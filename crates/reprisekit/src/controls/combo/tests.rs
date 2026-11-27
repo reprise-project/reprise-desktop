@@ -7,6 +7,33 @@ fn combo() -> Combo {
 }
 
 #[test]
+fn a_list_widened_within_bounds_takes_its_longest_row_and_moves_left_to_stay_inside() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let cm = ControlMetrics::CLASSIC;
+    let long = "Integrated Audio Controller Speaker and Headphones";
+    let c = Combo::new(&["Speakers", long], 0, 8);
+    let need = 1 + 2 + text.measure(long, false, 11) + 3;
+    let field = Rect::new(300, 10, 120, COMBO_H);
+    let mut lay = layout(&c, field, &cm);
+    widen_within(&c, &mut lay, Rect::new(0, 0, 1000, 600), &text, 11);
+    assert_eq!(
+        (lay.list.x, lay.list.width),
+        (300, need),
+        "its longest row, from the field"
+    );
+    let mut lay = layout(&c, field, &cm);
+    widen_within(&c, &mut lay, Rect::new(0, 0, 400, 600), &text, 11);
+    assert_eq!(lay.list.right(), 400, "moved left to end at the edge");
+    let mut lay = layout(&c, field, &cm);
+    widen_within(&c, &mut lay, Rect::new(0, 0, 150, 600), &text, 11);
+    assert_eq!(
+        (lay.list.x, lay.list.width),
+        (0, 150),
+        "no wider than the bounds"
+    );
+}
+
+#[test]
 fn a_value_the_list_lacks_shows_as_one_added_row() {
     let mut c = combo();
     c.select_text("Gone");

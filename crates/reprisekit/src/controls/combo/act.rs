@@ -141,13 +141,22 @@ fn live_names(items: &[ListItem]) -> impl Iterator<Item = &str> {
 /// Move `lay`'s list from under its field to above it, widened to its longest row and kept inside
 /// `inner`.
 pub fn list_above(combo: &Combo, lay: &mut Layout, inner: Rect, text: &TextRenderer, px: u32) {
-    widen_list(combo, lay, text, px, inner.right() + inner.width);
+    widen_within(combo, lay, inner, text, px);
     let list = &mut lay.list;
-    list.width = list.width.min(inner.width);
-    list.x = list.x.min(inner.right() - list.width);
     list.y = lay.field.y - list.height;
     if let Some(sb) = &mut lay.scrollbar {
-        sb.x = list.right() - 1 - sb.width;
         sb.y = list.y + 1;
+    }
+}
+
+/// Widen `lay`'s open list to its longest row, as far as `bounds` is wide, moved left as far as
+/// it must to stay inside `bounds`.
+pub fn widen_within(combo: &Combo, lay: &mut Layout, bounds: Rect, text: &TextRenderer, px: u32) {
+    widen_list(combo, lay, text, px, lay.list.x + bounds.width);
+    let list = &mut lay.list;
+    list.width = list.width.min(bounds.width);
+    list.x = list.x.min(bounds.right() - list.width).max(bounds.x);
+    if let Some(sb) = &mut lay.scrollbar {
+        sb.x = list.right() - 1 - sb.width;
     }
 }
