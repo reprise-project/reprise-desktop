@@ -222,6 +222,8 @@ start-search-calculator = Calculator
 # The counts are plain digits.
 start-search-programs = Programs ({ $count })
 start-search-settings = Settings ({ $count })
+start-search-uninstall = Uninstall a program
+start-search-uninstall-detail = Right-click it in All Programs
 # A found section's heading and its row count.
 start-search-found = { $heading } ({ $count })
 start-search-files = Files

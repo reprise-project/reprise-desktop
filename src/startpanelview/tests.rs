@@ -1169,6 +1169,18 @@ fn opening_and_closing_start_asks_only_its_output_for_frames() {
 }
 
 #[test]
+fn the_uninstall_row_opens_start_on_all_programs() {
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.state.app_index = vec![app("Notepad", "Utility")];
+    let pick = crate::search::Picked::Setting(crate::search::Setting::Uninstall);
+    h.state.run_search_pick(pick, "uninstall");
+    let v = h.state.start_panel.as_ref().expect("Start opened");
+    assert_eq!(v.model.mode(), Mode::Programs);
+}
+
+#[test]
 fn the_blue_menu_hangs_all_programs_off_its_row_and_drops_it_on_another_row() {
     let config = crate::config::Config::parse("[appearance]\ninterface = \"blue\"\n").unwrap();
     let mut h = crate::harness::Harness::with_config(config);

@@ -466,7 +466,7 @@ impl State {
             .iter()
             .map(|s| launcher::FoundRow {
                 name: s.name(app_index),
-                detail: s.detail(&query, app_index).unwrap_or_default().into(),
+                detail: s.detail(&query, app_index).unwrap_or_default(),
                 icon: s.icon(app_index).and_then(|n| unread(icons, &n, px)),
             })
             .collect();

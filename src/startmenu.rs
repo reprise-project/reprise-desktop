@@ -37,6 +37,17 @@ impl State {
         }
     }
 
+    /// Start opened from the keyboard on its program list: All Programs as a click on it opens
+    /// it, or the Classic menu.
+    pub fn open_start_programs(&mut self) {
+        if self.start_panel.is_none() && self.menus.is_empty() {
+            self.toggle_start_from_keys();
+        }
+        if self.start_panel.is_some() {
+            self.start_panel_click(reprisekit::startpanel::Spot::AllPrograms);
+        }
+    }
+
     /// Program `app`'s context menu ([`program_menu`]), from its pins and where its desktop file is.
     pub(crate) fn program_menu_of(
         &self,
