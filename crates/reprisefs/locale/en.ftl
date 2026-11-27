@@ -46,6 +46,8 @@ archive-locked = it is password-protected.
 archive-not-held = it no longer holds { $name }.
 archive-path-too-long = it holds a path too long to copy out.
 archive-line-too-long = bsdtar listed a name too long to read.
+extract-list-too-long = it took too long to read.
+extract-too-long = it took too long to extract.
 
 ## Copy, move and shortcut errors
 move-failed-title = Error Moving File or Folder
