@@ -214,7 +214,7 @@ fn reason(said: &[u8], paths: &[PathBuf], m: &Meter) -> String {
         .map(|p| p.strip_prefix(dir).unwrap_or(p).display().to_string())
         .filter(|s| !why.starts_with(&format!("{s}: ")) && !why.contains(&format!("'{s}'")))
         .count();
-    extract::and_others(why, others, "read")
+    extract::and_others(why, others, extract::Others::Read)
 }
 
 /// bsdtar's reason with the entry it quotes by its file name alone (`` Can't open `b.txt' ``)
