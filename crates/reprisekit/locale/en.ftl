@@ -710,6 +710,7 @@ newshortcut-name-the-shortcut = Name the Shortcut
 newshortcut-what-do-you-want-to-call = What do you want to call it?
 newshortcut-name-has-a-slash = A name cannot contain a slash (/).
 newshortcut-name-is-dots = A name cannot be . or .. alone.
+newshortcut-name-too-long = This name is too long for a file name.
 
 
 ## openwith

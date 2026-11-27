@@ -120,8 +120,16 @@ impl Explorer {
                 };
                 match read {
                     Ok(target) => {
-                        w.wizard.named(&target.default_name(), &self.forms);
+                        let offered = target.default_name();
+                        w.wizard.named(&offered, &self.forms);
+                        let web = match &target {
+                            Target::Web(url) => Some(url.clone()),
+                            _ => None,
+                        };
                         w.target = Some(target);
+                        if let Some(url) = web {
+                            self.fetch_title(url, offered, ctx);
+                        }
                         Reply::redraw()
                     }
                     Err(why) => {
@@ -139,11 +147,38 @@ impl Explorer {
         }
     }
 
+    /// The page title of web address `url` read on a listing thread, which then names the shortcut
+    /// in place of `offered` unless the wizard moved on or the name was edited.
+    fn fetch_title(&mut self, url: String, offered: String, ctx: &Ctx) {
+        self.spawn_read_job(ctx, move || {
+            let title = newshortcut::page_title(&url);
+            Box::new(move |ex: &mut Explorer, _: &mut Ctx| {
+                let Some(title) = title else {
+                    return Reply::none();
+                };
+                if let Some(Dialog::NewShortcut(w)) = ex.dialogs.up_mut()
+                    && w.target == Some(Target::Web(url))
+                    && w.wizard.offer_name(&offered, &title)
+                {
+                    return Reply::redraw_all();
+                }
+                Reply::none()
+            })
+        });
+    }
+
     /// The launcher Finish asked for, written on a listing thread, then selected with its rename
     /// begun and recorded for Undo as a New.
     fn write_shortcut(&mut self, w: ShortcutWizard, ctx: &mut Ctx) -> Reply {
         let name = w.wizard.name().to_string();
-        let Some(text) = w.target.as_ref().and_then(|t| t.launcher(&name)) else {
+        let browser = match &w.target {
+            Some(Target::Web(url)) if newshortcut::is_http(url) => {
+                newshortcut::browser_icon(&self.app_index)
+            }
+            _ => None,
+        };
+        let launcher = |t: &Target| t.launcher(&name, browser.as_deref());
+        let Some(text) = w.target.as_ref().and_then(launcher) else {
             return self.message_box(
                 &newshortcut_title(),
                 tr!("new-shortcut-write-shortcut-a-shortcut-cannot-hold-that-name"),

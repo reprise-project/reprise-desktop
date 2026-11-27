@@ -4,8 +4,8 @@
 //!
 //! The host lists the programs, answers Browse... ([`Outcome::Browse`]) with
 //! [`NewShortcut::set_location`], reads the target on Next ([`Outcome::Next`]) and moves on with
-//! [`NewShortcut::named`] (or says why not with [`NewShortcut::refuse`]), and writes the launcher on
-//! Finish.
+//! [`NewShortcut::named`] (or says why not with [`NewShortcut::refuse`]), may offer a better name
+//! it found later ([`NewShortcut::offer_name`]), and writes the launcher on Finish.
 
 use crate::access::{ROOT, Tree};
 use crate::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
@@ -18,6 +18,9 @@ use crate::text::TextRenderer;
 use crate::theme::Theme;
 
 pub const CLIENT: (i32, i32) = wizard::CLIENT;
+/// The longest name a shortcut takes, in bytes: its file adds `.desktop` and a number up to
+/// ` (1000)`, under the 255-byte file name limit.
+pub const NAME_MAX_BYTES: usize = 255 - ".desktop".len() - " (1000)".len();
 pub fn title() -> String {
     tr!("newshortcut-title")
 }
@@ -265,6 +268,20 @@ impl NewShortcut {
         self.name.trim()
     }
 
+    /// The name page's field takes `better` (a web page's title) in place of `offered`, the
+    /// name [`NewShortcut::named`] gave it, unless the field was edited since. Whether it did.
+    pub fn offer_name(&mut self, offered: &str, better: &str) -> bool {
+        if self.page != Page::Name || self.name != offered {
+            return false;
+        }
+        self.name = better.to_string();
+        self.wizard.form.show_edit_text(NAME, better);
+        self.wizard.form.select_edit_text(NAME);
+        (self.wizard.form).set_lines(PROBLEM, &[name_problem(&self.name)]);
+        self.gate();
+        true
+    }
+
     fn clear_problem(&mut self) {
         if !self.problem.is_empty() {
             self.problem.clear();
@@ -351,6 +368,7 @@ fn name_problem(name: &str) -> String {
     match name.trim() {
         n if n.contains('/') => tr!("newshortcut-name-has-a-slash"),
         "." | ".." => tr!("newshortcut-name-is-dots"),
+        n if n.len() > NAME_MAX_BYTES => tr!("newshortcut-name-too-long"),
         _ => String::new(),
     }
 }
@@ -443,6 +461,23 @@ mod tests {
     }
 
     #[test]
+    fn a_later_name_replaces_the_offered_one_only_while_the_field_is_untouched() {
+        let theme = Theme::default();
+        let mut w = NewShortcut::new(programs(), &theme);
+        assert!(!w.offer_name("", "Docs"), "not on the name page");
+        w.named("example.org", &theme);
+        assert!(!w.offer_name("other.org", "Docs"), "another offer");
+        assert!(w.offer_name("example.org", "Example Docs"));
+        assert_eq!(w.name(), "Example Docs");
+        assert_eq!(w.wizard.form.edit_text(NAME), "Example Docs");
+        assert!(next_live(&w));
+        w.named("example.org", &theme);
+        type_in(&mut w, NAME, "Mine", &theme);
+        assert!(!w.offer_name("example.org", "Example Docs"), "edited");
+        assert_eq!(w.name(), "Mine");
+    }
+
+    #[test]
     fn next_hands_over_to_the_name_page_and_finish_waits_for_a_usable_name() {
         let theme = Theme::default();
         let mut w = NewShortcut::new(programs(), &theme);
@@ -464,6 +499,10 @@ mod tests {
             ("   ", ""),
             ("a/b", "A name cannot contain a slash (/)."),
             ("..", "A name cannot be . or .. alone."),
+            (
+                "名".repeat(81).as_str(),
+                "This name is too long for a file name.",
+            ),
         ] {
             type_in(&mut w, NAME, bad, &theme);
             assert!(!next_live(&w), "{bad:?} greys Finish");
