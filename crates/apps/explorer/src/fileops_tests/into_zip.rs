@@ -12,7 +12,9 @@ fn zip_beside(
     std::fs::create_dir_all(&src).expect("mkdir");
     std::fs::create_dir_all(&dir).expect("mkdir");
     for (name, body) in in_zip {
-        std::fs::write(src.join(name), body).expect("write");
+        let path = src.join(name);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("mkdir");
+        std::fs::write(path, body).expect("write");
     }
     let zip = dir.join("a.zip");
     let made = std::process::Command::new("bsdtar")
@@ -152,4 +154,31 @@ fn a_zips_item_menu_pastes_into_it() {
     ex.sv.selection.set_only(Some(i));
     ex.entry_menu_at(i, (0, 0), &mut ctx, false);
     assert!(matches!(&ex.menu_paste, Some(PasteTo::Zip(z)) if *z == zip));
+}
+
+#[test]
+fn a_file_onto_a_folder_of_its_name_in_the_zip_is_refused_as_a_copy_refuses_it() {
+    let mut ctx = test_ctx();
+    let (_t, zip, mut ex) = zip_beside(
+        &[("photos/a.jpg", "a"), ("photos/b.jpg", "b")],
+        &[("photos", "a file")],
+        &mut ctx,
+    );
+    let before = std::fs::read(&zip).expect("read");
+    ex.drop_into(
+        &[zip.with_file_name("photos")],
+        &zip,
+        DropOp::Copy,
+        &mut ctx,
+    );
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    let Some(Dialog::Message { text, .. }) = ex.dialog() else {
+        panic!("a box says why");
+    };
+    assert_eq!(
+        text,
+        "Cannot copy photos: There is already a file with the same name in this location."
+    );
+    assert!(ex.extracting.is_none(), "no job starts");
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
 }
