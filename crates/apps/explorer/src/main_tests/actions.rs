@@ -80,6 +80,41 @@ fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
     assert_eq!(names(&ex), ["b"]);
 }
 
+#[test]
+fn a_selected_search_hit_names_its_folder_in_the_status_bar() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let deep = dir.path().join("a");
+    std::fs::create_dir_all(&deep).expect("mkdir");
+    std::fs::write(deep.join("notes.txt"), "x").expect("write");
+    std::fs::write(dir.path().join("notes.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.search_run = find_search;
+    ex.sv.set_mode(shellview::Mode::Thumbnails);
+    search_for(&mut ex, "notes", &mut ctx);
+    let i = (ex.items.iter())
+        .position(|it| it.path.parent() == Some(deep.as_path()))
+        .expect("the hit in a");
+    ex.sv.selection.set_only(Some(i));
+    ex.refresh_chrome(&mut ctx);
+    let want = format!("In Folder: {}", deep.display());
+    assert_eq!(ex.status.panels[0].text, want);
+    assert_eq!(
+        ex.hit_folder(&ex.items[i]),
+        Some(want),
+        "the infotip's first line"
+    );
+
+    press(&mut ex, keysym::ESCAPE, &mut ctx);
+    let i = (ex.items.iter()).position(|it| it.name == "notes.txt");
+    ex.sv.selection.set_only(i);
+    ex.refresh_chrome(&mut ctx);
+    assert_eq!(
+        ex.status.panels[0].text, "1 object(s) selected",
+        "a folder's own listing"
+    );
+}
+
 fn back_on(ex: &Explorer) -> bool {
     match &ex.toolbar.items[0] {
         reprisekit::controls::toolbar::Item::DropButton { enabled, .. }

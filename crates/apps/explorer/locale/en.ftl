@@ -394,6 +394,7 @@ status-bin-date-modified = Date Modified: { $when }
 status-shortcut-location = Location: { $dir }
 status-details-size = Size: { $size }
 status-details-items-selected = { $count } items selected
+status-in-folder = In Folder: { $dir }
 status-infotip-type = Type: { $kind }
 status-infotip-date-modified = Date Modified: { $when }
 status-infotip-size = Size: { $size }

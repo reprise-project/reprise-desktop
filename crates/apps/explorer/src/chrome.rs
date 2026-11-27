@@ -187,13 +187,16 @@ impl Explorer {
         if self.search.no_tool() {
             self.status.panels[0].text = reprisefs::search::no_tool();
         }
-        // One item picked in the Recycle Bin says where it came from; one shortcut elsewhere, where it points.
+        // One item picked in the Recycle Bin says where it came from, a search hit the folder it is
+        // in, one shortcut elsewhere where it points.
         if let [i] = chosen[..]
             && let Some(it) = self.items.get(i)
         {
             if self.place == Place::RecycleBin {
                 self.status.panels[0].text =
                     window::bin_status_text(it, reprisefs::locale::is_12h());
+            } else if let Some(text) = self.hit_folder(it) {
+                self.status.panels[0].text = text;
             } else if (it.is_link || it.shortcut.is_some())
                 && let Some(text) = self.link_status(it.path.clone(), ctx)
             {
@@ -215,6 +218,14 @@ impl Explorer {
         }
         self.toolbar.latched = self.settings.folders.then_some(FOLDERS_ITEM);
         self.build_taskpane(ctx);
+    }
+
+    /// "In Folder: <dir>" for a search hit, which the status bar and infotip lead with: results
+    /// from several folders can share a name.
+    pub(crate) fn hit_folder(&self, it: &Item) -> Option<String> {
+        self.search.shown()?;
+        let dir = it.path.parent()?;
+        Some(tr!("status-in-folder", dir = dir.display().to_string()))
     }
 
     /// Where the shortcut at `path` points, for the status bar, read on a listing thread. While a
