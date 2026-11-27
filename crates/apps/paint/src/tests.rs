@@ -1226,3 +1226,25 @@ fn saving_a_read_only_picture_says_so_and_ok_opens_save_as_on_its_name() {
     assert_eq!(p.after_save, Some(Then::Quit));
     assert_eq!(std::fs::read(&pic).unwrap(), bytes);
 }
+
+#[test]
+fn save_as_onto_a_read_only_picture_says_so_before_asking_to_replace_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let pic = dir.path().join("dunes.png");
+    file::save(&Bitmap::new(3, 3, WHITE), &pic, file::Kind::Png, 100).unwrap();
+    std::fs::set_permissions(&pic, std::fs::Permissions::from_mode(0o400)).unwrap();
+    // Root writes through any mode, so there is nothing to check.
+    if std::fs::OpenOptions::new().write(true).open(&pic).is_ok() {
+        return;
+    }
+    let bytes = std::fs::read(&pic).unwrap();
+    let mut p = Paint::new(None);
+    p.saveas_dialog();
+    p.saveas_driven(Driven::Picked(pic.clone()));
+    let (what, _) = prompt_up(&p).expect("a box");
+    assert_eq!(what, Prompt::Error);
+    assert!(prompt_text(&p).is_some_and(|t| t.starts_with("dunes.png is read-only.\n")));
+    assert!(p.saveas.is_some());
+    assert_eq!(std::fs::read(&pic).unwrap(), bytes);
+}

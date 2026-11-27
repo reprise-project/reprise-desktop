@@ -2,11 +2,12 @@
 //! [`crate::archive::scratch`] folder) is read-only and goes with its folder a day later, so a
 //! program saves it elsewhere and keeps nothing pointing at it.
 
+use crate::archive::is_copy;
 use reprisekit::tr;
 use std::ffi::{CStr, CString, OsString};
-use std::io;
+use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// The xattr on a copy's scratch folder naming the compressed folder it came from; the copy
 /// itself is read-only, and a read-only file takes no user xattrs.
@@ -80,10 +81,11 @@ pub fn dialog_folder(path: &Path) -> Option<PathBuf> {
 /// What `[wallpaper] image` points at for `picture`: the picture itself, or for an archive copy
 /// a new file under `$XDG_DATA_HOME/reprise/backgrounds`, which outlives the scratch folder. The
 /// name is the picture's, numbered (`dunes (2).png`) past other pictures; one holding the same
-/// bytes is used again.
+/// bytes is used again. The file is written beside its name and linked to it, so a crash leaves
+/// no part-written picture under a real name.
 pub fn lasting_background(picture: &Path) -> io::Result<PathBuf> {
     use std::io::Write;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::unix::fs::MetadataExt;
     if !is_copy(picture) {
         return Ok(picture.to_path_buf());
     }
@@ -98,44 +100,55 @@ pub fn lasting_background(picture: &Path) -> io::Result<PathBuf> {
     let bytes = std::fs::read(picture)?;
     std::fs::create_dir_all(&dir)?;
     let same = |p: &Path| {
-        std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file() && m.nlink() == 1)
-            && std::fs::read(p).is_ok_and(|b| b == bytes)
+        let len = bytes.len() as u64;
+        std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file() && m.nlink() == 1 && m.len() == len)
+            && holds(p, &bytes)
     };
-    let kept = dir.join(crate::names::first_free(&name, |n| {
-        let p = dir.join(n);
-        std::fs::symlink_metadata(&p).is_ok() && !same(&p)
-    }));
-    if same(&kept) {
-        return Ok(kept);
+    let pick = || {
+        dir.join(crate::names::first_free(&name, |n| {
+            let p = dir.join(n);
+            std::fs::symlink_metadata(&p).is_ok() && !same(&p)
+        }))
+    };
+    let first = pick();
+    if same(&first) {
+        return Ok(first);
     }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o644)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&kept)?;
-    let written = file.write_all(&bytes).and_then(|()| file.sync_all());
-    if written.is_err() {
-        let _ = std::fs::remove_file(&kept);
+    let (mut file, tmp) = crate::ops::create_temp_beside(&dir.join(&name), None)?;
+    if let Err(e) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
-    written.map(|()| kept)
+    // A name taken between the pick and the link is picked again.
+    let mut tries = 0;
+    let kept = loop {
+        let kept = pick();
+        if same(&kept) {
+            break Ok(kept);
+        }
+        match std::fs::hard_link(&tmp, &kept) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && tries < 8 => tries += 1,
+            linked => break linked.map(|()| kept),
+        }
+    };
+    let _ = std::fs::remove_file(&tmp);
+    kept
 }
 
-/// [`crate::archive::is_copy`] on `path` made absolute with `..` dropped by name.
-fn is_copy(path: &Path) -> bool {
-    let Ok(joined) = std::path::absolute(path) else {
+/// Whether the file at `path` holds exactly `bytes`, read a block at a time.
+fn holds(path: &Path, bytes: &[u8]) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
         return false;
     };
-    let mut clean = PathBuf::new();
-    for c in joined.components() {
-        match c {
-            Component::ParentDir => {
-                clean.pop();
-            }
-            c => clean.push(c),
+    let mut block = vec![0u8; 64 * 1024];
+    let mut at = 0;
+    loop {
+        match file.read(&mut block) {
+            Ok(0) => return at == bytes.len(),
+            Ok(n) if bytes.get(at..at + n) == Some(&block[..n]) => at += n,
+            _ => return false,
         }
     }
-    crate::archive::is_copy(&clean)
 }
 
 fn cstring(path: &Path) -> io::Result<CString> {
