@@ -115,7 +115,11 @@ impl FileDlg {
         let places_rects = placesbar::layout(&self.places, places, cm);
 
         let label_w = text
-            .measure(&split_mnemonic(&filename_label()).0, false, px)
+            .measure(
+                &split_mnemonic(&filename_label(self.fields.mode)).0,
+                false,
+                px,
+            )
             .max(text.measure(&split_mnemonic(&filetype_label()).0, false, px));
         let field_x = r.x + u(FIELD_X);
         // Accept and Cancel share a width, grown past 75 px for a label that needs it.
@@ -241,7 +245,7 @@ impl FileDlg {
         };
         let (lookin, filename, filetype) = (
             keyed(lookin_label()),
-            keyed(filename_label()),
+            keyed(filename_label(self.fields.mode)),
             keyed(filetype_label()),
         );
         Labels {

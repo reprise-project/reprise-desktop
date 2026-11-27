@@ -33,6 +33,12 @@ fn folder_mode_has_no_files_of_type_row() {
 }
 
 #[test]
+fn a_folder_picker_labels_its_name_field_folder() {
+    assert_eq!(multi(DlgMode::Folder, false).labels().filename, "&Folder:");
+    assert_eq!(multi(DlgMode::Open, false).labels().filename, "File &name:");
+}
+
+#[test]
 fn folder_mode_accepts_the_selected_subfolder_from_the_button() {
     let mut d = multi(DlgMode::Folder, false);
     d.click(R, entry_hit(0), Mods::default());

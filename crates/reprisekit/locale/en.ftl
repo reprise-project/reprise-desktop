@@ -134,6 +134,7 @@ printpreview-drawing = Drawing the page...
 ## The file dialog
 filedlg-look-in = Look &in:
 filedlg-file-name = File &name:
+filedlg-folder = &Folder:
 filedlg-file-type = Files of &type:
 filedlg-new-folder = New Folder
 filedlg-view-thumbnails = Thumbnails
