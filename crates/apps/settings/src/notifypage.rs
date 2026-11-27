@@ -5,6 +5,7 @@ use crate::model::Settings;
 use repriseconf::config::{program_listed, same_program, set_program_listed};
 use reprisekit::controls::form::{Control, Form};
 use reprisekit::controls::listbox::ListBox;
+use reprisekit::tr;
 
 pub const PROGRAMS: &str = "notify_programs";
 pub const BALLOONS: &str = "notify_balloons";
@@ -56,14 +57,14 @@ pub fn programs(
     out
 }
 
-fn detail(s: &Settings, key: &str) -> &'static str {
+fn detail(s: &Settings, key: &str) -> String {
     let balloons = !program_listed(&s.notify_no_balloons, key);
     let sounds = !program_listed(&s.notify_no_sounds, key);
     match (balloons, sounds) {
-        (true, true) => "",
-        (false, true) => "No balloons",
-        (true, false) => "No sounds",
-        (false, false) => "No balloons or sounds",
+        (true, true) => String::new(),
+        (false, true) => tr!("notifypage-no-balloons"),
+        (true, false) => tr!("notifypage-no-sounds"),
+        (false, false) => tr!("notifypage-no-balloons-or-sounds"),
     }
 }
 
@@ -95,7 +96,7 @@ pub fn fill(form: &mut Form, programs: &[Program], s: &Settings) {
         list.top = top.min(list.items.len().saturating_sub(ROWS));
         *icons = vec![None; programs.len()];
     }
-    list.detail = programs.iter().map(|p| detail(s, &p.key).into()).collect();
+    list.detail = programs.iter().map(|p| detail(s, &p.key)).collect();
     let picked = list.selected.and_then(|i| programs.get(i));
     let on = picked.map(|p| {
         (

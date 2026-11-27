@@ -12,6 +12,7 @@ use reprisekit::controls::form::{Control, Form};
 use reprisekit::controls::listbox::ListBox;
 use reprisekit::controls::openwith;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
@@ -21,7 +22,9 @@ pub const DOWN: &str = "search_providers_down";
 /// The list's rows at [`Area::MIN`](crate::pages::Area::MIN).
 pub const ROWS: usize = 6;
 /// The dimmed text after a row held back by content search being off.
-pub const HELD_NOTE: &str = "Needs Find files by their contents";
+pub fn held_note() -> String {
+    tr!("providerpage-needs-find-files-by-their-contents")
+}
 
 /// A provider whose program has a shown desktop entry, with that entry's name and icon.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,7 +121,7 @@ fn list_mut(form: &mut Form) -> Option<(&mut ListBox, &mut Vec<Option<Canvas>>)>
 }
 
 /// Show `rows` with row `pick` picked, a greyed Loading... while they are read (None), or a greyed
-/// note when no program offers results; a held row greys with [`HELD_NOTE`] after its name. True
+/// note when no program offers results; a held row greys with [`held_note()`] after its name. True
 /// when the rows' names changed, which drops their icons. Move Up and Move Down follow the picked
 /// row.
 pub fn fill(form: &mut Form, rows: Option<&[Row]>, pick: Option<usize>) -> bool {
@@ -126,9 +129,11 @@ pub fn fill(form: &mut Form, rows: Option<&[Row]>, pick: Option<usize>) -> bool 
         return false;
     };
     let items: Vec<String> = match rows {
-        Some([]) => vec!["No installed program offers search results.".into()],
+        Some([]) => vec![tr!(
+            "providerpage-no-installed-program-offers-search-results"
+        )],
         Some(rows) => rows.iter().map(|r| r.name.clone()).collect(),
-        None => vec!["Loading...".into()],
+        None => vec![tr!("providerpage-loading")],
     };
     let rows = rows.unwrap_or_default();
     let renamed = list.items != items;
@@ -146,7 +151,7 @@ pub fn fill(form: &mut Form, rows: Option<&[Row]>, pick: Option<usize>) -> bool 
     };
     list.detail = (rows.iter())
         .map(|r| match r.held {
-            true => HELD_NOTE.to_string(),
+            true => held_note().to_string(),
             false => String::new(),
         })
         .collect();
@@ -368,7 +373,7 @@ mod tests {
         let f = search(Area::MIN);
         let w = f.item(LIST).unwrap().rect.width;
         let used =
-            4 + 42 + text.measure("Files", false, px) + 8 + text.measure(HELD_NOTE, false, px);
+            4 + 42 + text.measure("Files", false, px) + 8 + text.measure(&held_note(), false, px);
         assert!(used <= w - 4, "{used} > {}", w - 4);
     }
 
@@ -393,7 +398,7 @@ mod tests {
         fill(&mut f, Some(&rows(&[files, calc], &off)), None);
         let lb = list(&f).unwrap();
         assert_eq!(lb.greyed, [false, true]);
-        assert_eq!(lb.detail, ["", HELD_NOTE]);
+        assert_eq!(lb.detail, ["", &held_note()]);
         assert_eq!(lb.checks, [true, true], "the tick stays as set");
     }
 

@@ -82,7 +82,7 @@ fn constant_screen_rate() -> String {
 }
 
 /// The 1..100 trackbar `track` on row `y` from [`CONTROL_X`], its value `value` right of it.
-fn bar(a: Area, track: &'static str, value: &'static str, name: &'static str, y: i32) -> [Item; 2] {
+fn bar(a: Area, track: &'static str, value: &'static str, name: &str, y: i32) -> [Item; 2] {
     let w = a.track(Area::MIN.gright() - CONTROL_X - VALUE_W - 6);
     let r = Rect::new(CONTROL_X, y - 6, w, trackbar::HEIGHT);
     [
@@ -97,7 +97,7 @@ fn bar(a: Area, track: &'static str, value: &'static str, name: &'static str, y:
 }
 
 /// A label and the [`bar`] it names.
-fn level(a: Area, ids: [&'static str; 3], name: &'static str, y: i32, text: &str) -> [Item; 3] {
+fn level(a: Area, ids: [&'static str; 3], name: &str, y: i32, text: &str) -> [Item; 3] {
     let [label, track, value] = ids;
     let [t, v] = bar(a, track, value, name, y);
     [Item::label_at(label, GX, y, LABEL_W, text), t, v]
@@ -120,7 +120,7 @@ fn row(
 }
 
 /// A [`row`] or [`spin`] whose control a reader calls `name`, its label shown in another group too.
-fn naming([label, control]: [Item; 2], name: &'static str) -> [Item; 2] {
+fn naming([label, control]: [Item; 2], name: &str) -> [Item; 2] {
     [label, control.named(name)]
 }
 
@@ -138,10 +138,28 @@ fn units(id: &'static str, y: i32, text: &str) -> Item {
 /// The page for `s`'s format, rate mode and audio codec in `a`, before any value is pushed in.
 pub fn page(s: &Settings, a: Area) -> Form {
     let mut items = vec![
-        group(a, "screenshots_group", 44, 96, "Screenshots"),
-        Item::check(SAVE, GX, 66, "Save in &Pictures/Screenshots"),
-        Item::label_at("delay_label", DELAY_X - 40, 66, 36, "&Delay:"),
-        updown(DELAY, DELAY_X, 62, 0, SHOT_DELAY_MAX.into()).named("Screenshot delay"),
+        group(
+            a,
+            "screenshots_group",
+            44,
+            96,
+            &tr!("capturepage-screenshots"),
+        ),
+        Item::check(
+            SAVE,
+            GX,
+            66,
+            &tr!("capturepage-save-in-pictures-screenshots"),
+        ),
+        Item::label_at(
+            "delay_label",
+            DELAY_X - 40,
+            66,
+            36,
+            &tr!("capturepage-delay"),
+        ),
+        updown(DELAY, DELAY_X, 62, 0, SHOT_DELAY_MAX.into())
+            .named(&tr!("capturepage-screenshot-delay")),
         Item::label_at(
             "delay_units",
             DELAY_X + reprisekit::controls::updown::WIDTH + 4,
@@ -150,11 +168,25 @@ pub fn page(s: &Settings, a: Area) -> Form {
             "seconds",
         ),
     ];
-    let format = row(a, "format_label", FORMAT, 90, 110, "&Format:", SHOT_FORMATS);
+    let format = row(
+        a,
+        "format_label",
+        FORMAT,
+        90,
+        110,
+        &tr!("capturepage-format"),
+        SHOT_FORMATS,
+    );
     let effort_x = format[1].rect.right() + 12;
     items.extend(format);
     match s.screenshot_format.as_str() {
-        "jpg" => items.extend(level(a, JPG_LEVEL, "JPG quality", 114, "&Quality:")),
+        "jpg" => items.extend(level(
+            a,
+            JPG_LEVEL,
+            &tr!("capturepage-jpg-quality"),
+            114,
+            &tr!("capturepage-quality"),
+        )),
         "jxl" => {
             items.extend(spin(
                 "jxl_effort_label",
@@ -162,11 +194,22 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 effort_x,
                 90,
                 44,
-                "&Effort:",
+                &tr!("capturepage-effort"),
                 (1, 9),
             ));
-            items.push(Item::check(JXL_LOSSLESS, GX, 114, "&Lossless"));
-            items.extend(bar(a, JXL_QUALITY, JXL_LEVEL[2], "JPEG XL quality", 114));
+            items.push(Item::check(
+                JXL_LOSSLESS,
+                GX,
+                114,
+                &tr!("capturepage-lossless"),
+            ));
+            items.extend(bar(
+                a,
+                JXL_QUALITY,
+                JXL_LEVEL[2],
+                &tr!("capturepage-jpeg-xl-quality"),
+                114,
+            ));
         }
         _ => items.extend(naming(
             row(
@@ -175,21 +218,21 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 PNG_COMPRESSION,
                 114,
                 110,
-                "Co&mpression:",
+                &tr!("capturepage-compression"),
                 PNG_COMPRESSIONS,
             ),
-            "PNG compression",
+            &tr!("capturepage-png-compression"),
         )),
     }
 
-    items.push(group(a, "video_group", 150, 184, "Video"));
+    items.push(group(a, "video_group", 150, 184, &tr!("capturepage-video")));
     items.extend(row(
         a,
         "codec_label",
         CODEC,
         172,
         130,
-        "&Codec:",
+        &tr!("capturepage-codec"),
         VIDEO_CODECS,
     ));
     items.extend(row(
@@ -198,7 +241,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
         ENCODER,
         196,
         160,
-        "E&ncoder:",
+        &tr!("capturepage-encoder"),
         ENCODERS,
     ));
     items.push(Item::label_at(
@@ -214,7 +257,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
         RATE,
         238,
         160,
-        "&Rate control:",
+        &tr!("capturepage-rate-control"),
         RATE_MODES,
     ));
     match s.recording_rate.as_str() {
@@ -225,15 +268,27 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 GX,
                 262,
                 LABEL_W,
-                "&Bitrate:",
+                &tr!("capturepage-bitrate"),
                 (500, 100_000),
             ));
             items.push(units("bitrate_units", 262, "kbit/s"));
         }
-        _ => items.extend(level(a, VIDEO_LEVEL, "Recording quality", 262, "Q&uality:")),
+        _ => items.extend(level(
+            a,
+            VIDEO_LEVEL,
+            &tr!("capturepage-recording-quality"),
+            262,
+            &tr!("capturepage-quality-2"),
+        )),
     }
     items.extend([
-        Item::label_at("frame_rate_label", GX, 288, LABEL_W, "Frame ra&te:"),
+        Item::label_at(
+            "frame_rate_label",
+            GX,
+            288,
+            LABEL_W,
+            &tr!("capturepage-frame-rate"),
+        ),
         combo_of(FRAME_RATE, CONTROL_X, 284, a.combo(160), RECORD_FRAME_RATES),
     ]);
     items.extend(spin(
@@ -242,19 +297,19 @@ pub fn page(s: &Settings, a: Area) -> Form {
         GX,
         312,
         LABEL_W,
-        "&Keyframe after:",
+        &tr!("capturepage-keyframe-after"),
         (1, 60),
     ));
     items.push(units("keyframe_units", 312, "seconds"));
 
     items.extend([
-        group(a, "audio_group", 344, 92, "Audio"),
-        Item::check(RECORD_SOUND, GX, 366, "Record &what plays"),
+        group(a, "audio_group", 344, 92, &tr!("capturepage-audio")),
+        Item::check(RECORD_SOUND, GX, 366, &tr!("capturepage-record-what-plays")),
         Item::check(
             RECORD_MICROPHONE,
             MICROPHONE_X,
             366,
-            "Record t&he microphone",
+            &tr!("capturepage-record-the-microphone"),
         ),
     ]);
     items.extend(naming(
@@ -264,10 +319,10 @@ pub fn page(s: &Settings, a: Area) -> Form {
             AUDIO_CODEC,
             390,
             130,
-            "C&odec:",
+            &tr!("capturepage-codec-2"),
             AUDIO_CODECS,
         ),
-        "Audio codec",
+        &tr!("capturepage-audio-codec"),
     ));
     if s.recording_audio_codec == "flac" {
         items.extend(naming(
@@ -277,10 +332,10 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 GX,
                 414,
                 LABEL_W,
-                "Compre&ssion:",
+                &tr!("capturepage-compression-2"),
                 (0, 12),
             ),
-            "FLAC compression",
+            &tr!("capturepage-flac-compression"),
         ));
     } else {
         items.extend(naming(
@@ -290,13 +345,18 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 GX,
                 414,
                 LABEL_W,
-                "B&itrate:",
+                &tr!("capturepage-bitrate-2"),
                 (32, 512),
             ),
-            "Audio bitrate",
+            &tr!("capturepage-audio-bitrate"),
         ));
         items.push(units("audio_bitrate_units", 414, "kbit/s"));
-        items.push(Item::check(AUDIO_VBR, RIGHT_X, 414, "&Variable bitrate"));
+        items.push(Item::check(
+            AUDIO_VBR,
+            RIGHT_X,
+            414,
+            &tr!("capturepage-variable-bitrate"),
+        ));
     }
     Form::new(items)
 }
@@ -424,8 +484,8 @@ pub fn show_probe(page: &mut Form, s: &Settings, probe: &ProbeState) {
 fn status(s: &Settings, probe: &ProbeState) -> String {
     let p = match probe {
         ProbeState::Unknown => return String::new(),
-        ProbeState::Checking => return "Checking encoders...".into(),
-        ProbeState::Failed => return "Encoders could not be checked.".into(),
+        ProbeState::Checking => return tr!("capturepage-checking-encoders"),
+        ProbeState::Failed => return tr!("capturepage-encoders-could-not-be-checked"),
         ProbeState::Done(p) => p,
     };
     let codec = codec(s);
@@ -436,9 +496,9 @@ fn status(s: &Settings, probe: &ProbeState) -> String {
     let audio = AudioCodec::from_name(&s.recording_audio_codec).unwrap_or(AudioCodec::Aac);
     let chosen = EncoderChoice::from_name(&s.recording_encoder).unwrap_or(EncoderChoice::Auto);
     match working.first() {
-        None => format!("No {} encoder works here.", codec.label()),
+        None => tr!("capturepage-no-encoder-works", codec = codec.label()),
         Some(_) if s.screenshot_record_sound && !p.audio.contains(&audio) => {
-            format!("{} can't be recorded here.", audio.label())
+            tr!("capturepage-cant-be-recorded", audio = audio.label())
         }
         Some(&using) if chosen != EncoderChoice::Auto && !working.contains(&chosen) => {
             chosen.status(using, codec)

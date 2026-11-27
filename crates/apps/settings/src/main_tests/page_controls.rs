@@ -525,7 +525,7 @@ fn the_program_results_list_ticks_and_orders_the_providers() {
 /// is off and lights as soon as the check is ticked.
 #[test]
 fn the_files_provider_greys_until_content_search_is_on() {
-    use crate::providerpage::{HELD_NOTE, Installed, LIST};
+    use crate::providerpage::{Installed, LIST, held_note};
     let mut a = app("providers-held");
     a.open_page(Page::Search, None);
     let at = Page::Search.index();
@@ -554,7 +554,7 @@ fn the_files_provider_greys_until_content_search_is_on() {
     };
     assert_eq!(
         row(&a),
-        (vec![true], vec![true], vec![HELD_NOTE.to_string()]),
+        (vec![true], vec![true], vec![held_note().to_string()]),
         "ticked, greyed and noted"
     );
     if let Some(form::Control::Check { checked, .. }) = a.sheet.pages[at]

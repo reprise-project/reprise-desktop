@@ -1,11 +1,13 @@
 //! The Region & Language page: this account's language and formats, saved to its locale.conf on
 //! Apply and taken at the next log on, and the system's, set through localed at once.
 
+use crate::model::Label;
 use crate::pages::{Area, GX, X, group};
 use reprisefs::region::{Choice, Sample};
 use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 
 pub const LANGUAGE: &str = "region_language";
 pub const FORMATS: &str = "region_formats";
@@ -14,22 +16,43 @@ const SYSTEM_TEXT: &str = "region_system_text";
 const SYSTEM_NOTE: &str = "region_system_note";
 
 /// Each sample row's label id, value id and label.
-const SAMPLE_ROWS: [(&str, &str, &str); 6] = [
-    ("region_date_label", "region_date", "Date:"),
-    ("region_time_label", "region_time", "Time:"),
-    ("region_number_label", "region_number", "Numbers:"),
-    ("region_currency_label", "region_currency", "Currency:"),
-    ("region_measure_label", "region_measure", "Measures:"),
-    ("region_paper_label", "region_paper", "Paper:"),
+const SAMPLE_ROWS: [(&str, &str, Label); 6] = [
+    ("region_date_label", "region_date", || {
+        tr!("regionpage-date")
+    }),
+    ("region_time_label", "region_time", || {
+        tr!("regionpage-time")
+    }),
+    ("region_number_label", "region_number", || {
+        tr!("regionpage-numbers")
+    }),
+    ("region_currency_label", "region_currency", || {
+        tr!("regionpage-currency")
+    }),
+    ("region_measure_label", "region_measure", || {
+        tr!("regionpage-measures")
+    }),
+    ("region_paper_label", "region_paper", || {
+        tr!("regionpage-paper")
+    }),
 ];
 
 /// The Formats combo's first row: the language's own formats.
-pub const SAME: &str = "Same as the language";
-pub const NEXT_LOGON: &str = "Changes take effect the next time you log on.";
-pub const ASK_ADMIN: &str = "Ask an administrator to change the system's language.";
-pub const NO_LOCALED: &str =
-    "The system's language cannot be read: systemd-localed does not answer.";
-pub const SETTING: &str = "Changing the system's language...";
+pub fn same() -> String {
+    tr!("regionpage-same-as-the-language")
+}
+pub fn next_logon() -> String {
+    tr!("regionpage-changes-take-effect-the-next-time")
+}
+pub fn ask_admin() -> String {
+    tr!("regionpage-ask-an-administrator-to-change-the")
+}
+pub fn no_localed() -> String {
+    tr!("regionpage-the-systems-language-cannot-be-read")
+}
+pub fn setting() -> String {
+    tr!("regionpage-changing-the-systems-language")
+}
 
 const LABEL_W: i32 = 80;
 const VALUE_X: i32 = GX + LABEL_W + 4;
@@ -43,33 +66,58 @@ const DROP_ROWS: usize = 12;
 pub fn page(a: Area) -> Form {
     let value_w = a.gright() - VALUE_X;
     let mut items = vec![
-        group(a, "region_account_group", 44, 84, "Language && Formats"),
-        Item::label_at("region_language_label", GX, 70, LABEL_W, "&Language:"),
+        group(
+            a,
+            "region_account_group",
+            44,
+            84,
+            &tr!("regionpage-language-formats"),
+        ),
+        Item::label_at(
+            "region_language_label",
+            GX,
+            70,
+            LABEL_W,
+            &tr!("regionpage-language"),
+        ),
         Item::combo(LANGUAGE, VALUE_X, 66, a.combo(COMBO_W), &[], DROP_ROWS),
-        Item::label_at("region_formats_label", GX, 100, LABEL_W, "&Formats:"),
-        Item::combo(FORMATS, VALUE_X, 96, a.combo(COMBO_W), &[SAME], DROP_ROWS),
+        Item::label_at(
+            "region_formats_label",
+            GX,
+            100,
+            LABEL_W,
+            &tr!("regionpage-formats"),
+        ),
+        Item::combo(
+            FORMATS,
+            VALUE_X,
+            96,
+            a.combo(COMBO_W),
+            &[&same()],
+            DROP_ROWS,
+        ),
         group(
             a,
             "region_sample_group",
             SAMPLE_Y,
             SAMPLE_ROWS.len() as i32 * SAMPLE_DY + 30,
-            "Sample",
+            &tr!("regionpage-sample"),
         ),
     ];
     for (i, (label_id, id, label)) in SAMPLE_ROWS.into_iter().enumerate() {
         let y = SAMPLE_Y + 22 + i as i32 * SAMPLE_DY;
-        items.push(Item::label_at(label_id, GX, y, LABEL_W, label));
+        items.push(Item::label_at(label_id, GX, y, LABEL_W, &label()));
         items.push(Item::label_at(id, VALUE_X, y, value_w, ""));
     }
     let note_y = SAMPLE_Y + SAMPLE_ROWS.len() as i32 * SAMPLE_DY + 40;
     items.extend([
-        Item::lines_at("region_note", X, note_y, a.w, &[NEXT_LOGON]),
+        Item::lines_at("region_note", X, note_y, a.w, &[&next_logon()]),
         group(
             a,
             "region_system_group",
             SYSTEM_Y,
             112,
-            "Login Screen && New Users",
+            &tr!("regionpage-login-screen-new-users"),
         ),
         Item::new(
             SYSTEM_TEXT,
@@ -81,7 +129,7 @@ pub fn page(a: Area) -> Form {
             GX,
             SYSTEM_Y + 52,
             170,
-            "Apply to the &System...",
+            &tr!("regionpage-apply-to-the-system"),
             false,
         ),
         Item::new(
@@ -105,7 +153,14 @@ pub fn named(locales: Vec<(String, String)>) -> Vec<(String, String)> {
         .map(|(code, name)| {
             let shared = locales.iter().filter(|(_, n)| n == name).count() > 1;
             match shared {
-                true => (code.clone(), format!("{name} - {code}")),
+                true => (
+                    code.clone(),
+                    tr!(
+                        "regionpage-name-code",
+                        name = name.as_str(),
+                        code = code.as_str()
+                    ),
+                ),
                 false => (code.clone(), name.clone()),
             }
         })
@@ -128,7 +183,7 @@ pub fn show_choice(page: &mut Form, locales: &[(String, String)], want: &Choice,
     let names: Vec<String> = locales.iter().map(|(_, n)| n.clone()).collect();
     let language = row_of(locales, &want.language).unwrap_or(0);
     page.set_combo_rows(LANGUAGE, &names, language, DROP_ROWS);
-    let formats_rows: Vec<String> = std::iter::once(SAME.to_string()).chain(names).collect();
+    let formats_rows: Vec<String> = std::iter::once(same().to_string()).chain(names).collect();
     let formats = match &want.formats {
         Some(f) => row_of(locales, f).map_or(0, |i| i + 1),
         None => 0,
@@ -163,7 +218,7 @@ fn show_sample(page: &mut Form, s: Option<&Sample>) {
             s.time.clone(),
             s.number.clone(),
             s.currency.clone(),
-            measures(s.metric).into(),
+            measures(s.metric),
             paper(s.paper),
         ],
         None => Default::default(),
@@ -173,20 +228,24 @@ fn show_sample(page: &mut Form, s: Option<&Sample>) {
     }
 }
 
-fn measures(metric: bool) -> &'static str {
+fn measures(metric: bool) -> String {
     match metric {
-        true => "Metric",
-        false => "U.S. customary",
+        true => tr!("regionpage-metric"),
+        false => tr!("regionpage-u-s-customary"),
     }
 }
 
 /// A paper size `(w, h)` in mm by its name where it has a common one.
 fn paper((w, h): (u32, u32)) -> String {
     match (w, h) {
-        (210, 297) => "A4".into(),
-        (216, 279) => "Letter".into(),
-        (216, 356) => "Legal".into(),
-        _ => format!("{w} x {h} mm"),
+        (210, 297) => tr!("regionpage-a4"),
+        (216, 279) => tr!("regionpage-letter"),
+        (216, 356) => tr!("regionpage-legal"),
+        _ => tr!(
+            "regionpage-paper-size",
+            w = w.to_string(),
+            h = h.to_string()
+        ),
     }
 }
 
@@ -212,31 +271,37 @@ pub fn show_system(
     busy: bool,
 ) {
     let (lines, on, note) = match system {
-        System::Unread => (Vec::new(), false, NO_LOCALED),
+        System::Unread => (Vec::new(), false, no_localed()),
         System::Read { locale, may_set } => {
             let now = reprisefs::region::Choice::of(locale);
             let lines = match &now {
                 Some(c) => vec![
-                    format!("Language: {}", name_of(locales, &c.language)),
-                    format!(
-                        "Formats: {}",
-                        c.formats.as_deref().map_or(SAME, |f| name_of(locales, f))
+                    tr!(
+                        "regionpage-language-line",
+                        name = name_of(locales, &c.language)
+                    ),
+                    tr!(
+                        "regionpage-formats-line",
+                        name = c
+                            .formats
+                            .as_deref()
+                            .map_or_else(same, |f| name_of(locales, f).to_string())
                     ),
                 ],
-                None => vec!["Language: not set".into()],
+                None => vec![tr!("regionpage-language-not-set")],
             };
             let differs = want.is_some_and(|w| now.as_ref() != Some(w));
             let note = match (*may_set, busy) {
-                (false, _) => ASK_ADMIN,
-                (true, true) => SETTING,
-                (true, false) => "",
+                (false, _) => ask_admin(),
+                (true, true) => setting(),
+                (true, false) => String::new(),
             };
             (lines, *may_set && differs && !busy, note)
         }
     };
     page.set_lines(SYSTEM_TEXT, &lines);
     page.set_enabled(SYSTEM, on);
-    page.set_text(SYSTEM_NOTE, note);
+    page.set_text(SYSTEM_NOTE, &note);
 }
 
 /// The page at `a` with long names, the widest sample texts and the longest note, for the fit
@@ -257,15 +322,15 @@ pub fn filled(a: Area) -> Form {
     };
     show_choice(&mut p, &locales, &want, 0);
     let widest = [
-        "Wednesday, September 30, 2026",
-        "07:54:40 PM",
-        "1 234 567,89",
-        "1 234 567,89 USD",
+        "Wednesday, September 30, 2026".to_string(),
+        "07:54:40 PM".to_string(),
+        "1 234 567,89".to_string(),
+        "1 234 567,89 USD".to_string(),
         measures(false),
-        "182 x 257 mm",
+        "182 x 257 mm".to_string(),
     ];
     for ((_, id, _), text) in SAMPLE_ROWS.iter().zip(widest) {
-        p.set_text(id, text);
+        p.set_text(id, &text);
     }
     let system = System::Read {
         locale: vec![
@@ -275,7 +340,7 @@ pub fn filled(a: Area) -> Form {
         may_set: true,
     };
     show_system(&mut p, &system, &locales, Some(&want), false);
-    p.set_text(SYSTEM_NOTE, NO_LOCALED);
+    p.set_text(SYSTEM_NOTE, &no_localed());
     p
 }
 
@@ -390,13 +455,13 @@ mod tests {
         assert!(!lit(&p), "the system already has it");
         show_system(&mut p, &read("en_US.UTF-8", false), &l, Some(&want), false);
         assert!(!lit(&p));
-        assert_eq!(note(&p), ASK_ADMIN);
+        assert_eq!(note(&p), ask_admin());
         show_system(&mut p, &read("en_US.UTF-8", true), &l, Some(&want), true);
         assert!(!lit(&p), "greyed while a change runs");
-        assert_eq!(note(&p), SETTING);
+        assert_eq!(note(&p), setting());
         show_system(&mut p, &System::Unread, &l, Some(&want), false);
         assert!(!lit(&p));
-        assert_eq!(note(&p), NO_LOCALED);
+        assert_eq!(note(&p), no_localed());
         let text = match p.item(SYSTEM_TEXT).map(|i| &i.control) {
             Some(Control::Lines(l)) => l.clone(),
             _ => Vec::new(),

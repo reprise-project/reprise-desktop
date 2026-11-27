@@ -25,6 +25,7 @@ use crate::model::{
 };
 use crate::pages::{Area, GX, WATER, WATER_STYLE, X, button, choice, combo_of};
 use crate::wallpapers::expand;
+use reprisekit::tr;
 
 pub const MONITOR: &str = "monitor";
 pub const MODE: &str = "wallpaper_mode";
@@ -34,10 +35,16 @@ pub const BROWSE: &str = "browse";
 /// its own.
 pub const USE_FOR: &str = "wallpaper_for";
 const USE_FOR_LABEL: &str = "use_for_label";
-pub const ALL_DESKTOPS: &str = "All desktops";
-pub const ALL_MONITORS: &str = "All monitors";
+pub fn all_desktops() -> String {
+    tr!("backgroundpage-all-desktops")
+}
+pub fn all_monitors() -> String {
+    tr!("backgroundpage-all-monitors")
+}
 /// The first Use for row with both desktops and monitors listed.
-pub const EVERYWHERE: &str = "Everywhere";
+pub fn everywhere() -> String {
+    tr!("backgroundpage-everywhere")
+}
 pub const POSITION: &str = "wallpaper_position";
 /// The file name extensions combo and its label, greyed while the desktop shows no files.
 pub const EXTENSIONS: &str = "desktop_extensions";
@@ -48,7 +55,9 @@ const SLIDE_Y: i32 = 392;
 pub const INTERVAL: &str = "slideshow_interval";
 const SLIDE_CONTROLS: [&str; 3] = ["interval_label", INTERVAL, "slideshow_shuffle"];
 const WATER_NOTE: &str = "water_note";
-pub const NONE_ROW: &str = "(None)";
+pub fn none_row_text() -> String {
+    tr!("backgroundpage-none")
+}
 pub const MONITOR_RECT: Rect = Rect::new(X, 44, 191, 168);
 /// The right column, beside the monitor; 159 px wide at [`Area::MIN`].
 const RX: i32 = 219;
@@ -103,15 +112,28 @@ pub fn builtin_label(b: Builtin) -> String {
     let name = b.design.name();
     let cap = name[..1].to_uppercase() + &name[1..];
     match b.variant {
-        Variant::Named(v) => format!("{cap} ({v})"),
-        Variant::Glass => format!("{cap} (glass colour)"),
-        Variant::Hue { hue, dark } => {
-            format!("{cap} (hue {hue}{})", if dark { ", dark" } else { "" })
+        Variant::Named(v) => tr!("backgroundpage-variant-named", cap = cap, v = v),
+        Variant::Glass => tr!("backgroundpage-variant-glass", cap = cap),
+        Variant::Hue { hue, dark: false } => {
+            tr!(
+                "backgroundpage-variant-hue",
+                cap = cap,
+                hue = hue.to_string()
+            )
+        }
+        Variant::Hue { hue, dark: true } => {
+            tr!(
+                "backgroundpage-variant-hue-dark",
+                cap = cap,
+                hue = hue.to_string()
+            )
         }
     }
 }
 
-pub const BUILTIN_DETAIL: &str = "Reprise";
+pub fn builtin_detail() -> String {
+    tr!("backgroundpage-reprise")
+}
 
 /// The built-in `[wallpaper] image = s` names, if it names one.
 pub fn builtin(s: &str) -> Option<Builtin> {
@@ -154,20 +176,38 @@ pub fn page(a: Area) -> Form {
     let dh = a.dh;
     Form::new(vec![
         Item::new(MONITOR, MONITOR_RECT, Control::Monitor(Screen::Black)),
-        Item::label_at("wallpaper_label", RX, 44, 66, "&Background:"),
+        Item::label_at(
+            "wallpaper_label",
+            RX,
+            44,
+            66,
+            &tr!("backgroundpage-background"),
+        ),
         choice(MODE, RX + 70, 40, rw(Area::MIN) - 70, WALLPAPER_MODES),
         Item::new(
             WALLPAPER,
             list_rect(a),
             Control::ListBox {
-                list: ListBox::new(vec![NONE_ROW.into()], Some(0)),
+                list: ListBox::new(vec![none_row_text().into()], Some(0)),
                 icons: vec![None],
             },
         ),
-        button(BROWSE, right, 196 + dh, "B&rowse..."),
-        Item::label_at("position_label", RX, 230 + dh, BUTTON_W, "&Position:"),
+        button(BROWSE, right, 196 + dh, &tr!("backgroundpage-browse")),
+        Item::label_at(
+            "position_label",
+            RX,
+            230 + dh,
+            BUTTON_W,
+            &tr!("backgroundpage-position"),
+        ),
         choice(POSITION, RX, 246 + dh, BUTTON_W, POSITIONS),
-        Item::label_at("color_label", right, 230 + dh, BUTTON_W, "&Color:"),
+        Item::label_at(
+            "color_label",
+            right,
+            230 + dh,
+            BUTTON_W,
+            &tr!("backgroundpage-color"),
+        ),
         Item::new(
             "background",
             Rect::new(right, 246 + dh, BUTTON_W, 21),
@@ -176,40 +216,87 @@ pub fn page(a: Area) -> Form {
                 schemes::PALETTE.to_vec(),
             )),
         ),
-        Item::label_at(USE_FOR_LABEL, RX, 276 + dh, 44, "Use &for:"),
+        Item::label_at(
+            USE_FOR_LABEL,
+            RX,
+            276 + dh,
+            44,
+            &tr!("backgroundpage-use-for"),
+        ),
         use_for(dh),
         Item::group(
             "widgets_group",
             Rect::new(RX, 300 + dh, rw(a), 82),
-            "Desktop Widgets",
+            &tr!("backgroundpage-desktop-widgets"),
         ),
-        Item::check("widget_clock", RX + 12, 322 + dh, "Cl&ock"),
-        Item::check("widget_calendar", RX + 12, 344 + dh, "Ca&lendar"),
-        Item::check("widget_meter", RX + 12, 366 + dh, "System me&ter"),
-        Item::group("icons_group", Rect::new(X, 222, 191, 160), "Desktop icons"),
-        Item::check("documents", GX, 244, "&Documents"),
-        Item::check("computer", GX, 266, "Co&mputer"),
+        Item::check(
+            "widget_clock",
+            RX + 12,
+            322 + dh,
+            &tr!("backgroundpage-clock"),
+        ),
+        Item::check(
+            "widget_calendar",
+            RX + 12,
+            344 + dh,
+            &tr!("backgroundpage-calendar"),
+        ),
+        Item::check(
+            "widget_meter",
+            RX + 12,
+            366 + dh,
+            &tr!("backgroundpage-system-meter"),
+        ),
+        Item::group(
+            "icons_group",
+            Rect::new(X, 222, 191, 160),
+            &tr!("backgroundpage-desktop-icons"),
+        ),
+        Item::check("documents", GX, 244, &tr!("backgroundpage-documents")),
+        Item::check("computer", GX, 266, &tr!("backgroundpage-computer")),
         Item::check("home", GX, 288, &home_check()),
-        Item::check("desktop_icons", GX, 310, "&Show the files in ~/Desktop"),
-        Item::label_at(EXTENSIONS_LABEL, GX, 334, 167, "File name e&xtensions:"),
+        Item::check(
+            "desktop_icons",
+            GX,
+            310,
+            &tr!("backgroundpage-show-the-files-in-desktop"),
+        ),
+        Item::label_at(
+            EXTENSIONS_LABEL,
+            GX,
+            334,
+            167,
+            &tr!("backgroundpage-file-name-extensions"),
+        ),
         choice(EXTENSIONS, GX, 350, 167, DESKTOP_EXTENSIONS),
         Item::label_at(
             "interval_label",
             X,
             SLIDE_Y + 4 + dh,
             130,
-            "Change picture &every:",
+            &tr!("backgroundpage-change-picture-every"),
         ),
         combo_of(INTERVAL, X + 134, SLIDE_Y + dh, 120, SLIDE_INTERVALS),
-        Item::check("slideshow_shuffle", X + 264, SLIDE_Y + 4 + dh, "Sh&uffle"),
-        Item::check(WATER, X, SLIDE_Y + 32 + dh, "Desktop &water:"),
-        choice(WATER_STYLE, X + 112, SLIDE_Y + 28 + dh, 80, WATER_STYLES).named("Water style"),
+        Item::check(
+            "slideshow_shuffle",
+            X + 264,
+            SLIDE_Y + 4 + dh,
+            &tr!("backgroundpage-shuffle"),
+        ),
+        Item::check(
+            WATER,
+            X,
+            SLIDE_Y + 32 + dh,
+            &tr!("backgroundpage-desktop-water"),
+        ),
+        choice(WATER_STYLE, X + 112, SLIDE_Y + 28 + dh, 80, WATER_STYLES)
+            .named(&tr!("backgroundpage-water-style")),
         Item::label_at(
             WATER_NOTE,
             X + 198,
             SLIDE_Y + 32 + dh,
             a.w - 198,
-            "Drag on the desktop to stir.",
+            &tr!("backgroundpage-drag-on-the-desktop-to-stir"),
         ),
     ])
 }
@@ -221,7 +308,7 @@ fn use_for(dh: i32) -> Item {
         RX + 48,
         272 + dh,
         rw(Area::MIN) - 48,
-        &[ALL_DESKTOPS],
+        &[&all_desktops()],
         1,
     );
     if let Control::Combo(c) = &mut item.control {
@@ -286,9 +373,9 @@ pub fn target(form: &Form, s: &Settings, monitors: &[Monitor]) -> Target {
 pub fn use_for_rows(s: &Settings, monitors: &[Monitor]) -> Vec<String> {
     let n = desktop_rows(s);
     let first = match (n > 0, monitors.is_empty()) {
-        (true, false) => EVERYWHERE,
-        (false, false) => ALL_MONITORS,
-        _ => ALL_DESKTOPS,
+        (true, false) => everywhere(),
+        (false, false) => all_monitors(),
+        _ => all_desktops(),
     };
     std::iter::once(first.to_string())
         .chain((0..n).map(|i| repriseconf::config::desktop_name(&s.desktop_names, i)))
@@ -502,7 +589,7 @@ pub fn slideshow_start(last: &str, wallpaper: &str) -> Option<String> {
 fn home_check() -> String {
     let label = reprisekit::text::escape_mnemonic(&reprisefs::places::home_label());
     match label.strip_suffix("Home") {
-        Some(owner) => format!("{owner}&Home"),
+        Some(owner) => tr!("backgroundpage-home-owned", owner = owner),
         None => label,
     }
 }
@@ -521,7 +608,7 @@ pub fn fill(
     thumbs: &[Option<Canvas>],
 ) {
     let built = builtins();
-    let rows: Vec<String> = std::iter::once(NONE_ROW.to_string())
+    let rows: Vec<String> = std::iter::once(none_row_text().to_string())
         .chain(built.iter().map(|b| builtin_label(*b)))
         .chain(paths.iter().map(|p| label(p)))
         .collect();
@@ -536,7 +623,10 @@ pub fn fill(
     {
         *list = ListBox::new(rows, None);
         list.detail = std::iter::once(String::new())
-            .chain(std::iter::repeat_n(BUILTIN_DETAIL.to_string(), built.len()))
+            .chain(std::iter::repeat_n(
+                builtin_detail().to_string(),
+                built.len(),
+            ))
             .collect();
         list.select(at, LIST_ROWS);
         *icons = std::iter::once(none)
@@ -802,7 +892,12 @@ mod tests {
         s.slideshow = "~/Slides".into();
         assert_eq!(
             use_for_rows(&s, &[]),
-            [ALL_DESKTOPS, "Work", "Desktop 2", "Desktop 3"]
+            [
+                all_desktops(),
+                "Work".into(),
+                "Desktop 2".into(),
+                "Desktop 3".into()
+            ]
         );
         set_for_desktop(&mut s, 2, "/p/c.png".into());
         assert_eq!(s.wallpaper_desktops, ["", "reprise:tarn/dusk", "/p/c.png"]);
@@ -819,7 +914,7 @@ mod tests {
             "the picture for all drops it"
         );
         s.desktops = 1;
-        assert_eq!(use_for_rows(&s, &[]), [ALL_DESKTOPS]);
+        assert_eq!(use_for_rows(&s, &[]), [all_desktops()]);
     }
 
     #[test]
@@ -844,11 +939,11 @@ mod tests {
         assert_eq!(
             use_for_rows(&s, &monitors),
             [
-                EVERYWHERE,
-                "Desktop 1",
-                "Desktop 2",
-                "1. DP-1",
-                "2. Dell U2412M on HDMI-A-1"
+                everywhere(),
+                "Desktop 1".into(),
+                "Desktop 2".into(),
+                "1. DP-1".into(),
+                "2. Dell U2412M on HDMI-A-1".into()
             ]
         );
         let mut f = page(Area::MIN);
@@ -895,10 +990,14 @@ mod tests {
             desktops: 1,
             ..Settings::default()
         };
-        assert_eq!(use_for_rows(&one, &monitors[..0]), [ALL_DESKTOPS]);
+        assert_eq!(use_for_rows(&one, &monitors[..0]), [all_desktops()]);
         assert_eq!(
             use_for_rows(&one, &monitors),
-            [ALL_MONITORS, "1. DP-1", "2. Dell U2412M on HDMI-A-1"]
+            [
+                all_monitors(),
+                "1. DP-1".into(),
+                "2. Dell U2412M on HDMI-A-1".into()
+            ]
         );
     }
 

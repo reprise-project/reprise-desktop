@@ -138,7 +138,8 @@ impl RuleDialog {
         let state = (STATES.iter())
             .position(|(v, _)| Some(*v) == r.state.as_deref())
             .unwrap_or(0);
-        let states: Vec<&str> = STATES.iter().map(|(_, l)| *l).collect();
+        let states: Vec<String> = STATES.iter().map(|(_, l)| l()).collect();
+        let states: Vec<&str> = states.iter().map(String::as_str).collect();
         if let Some(o) = &r.output
             && !outputs.contains(o)
         {

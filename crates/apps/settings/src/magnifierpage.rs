@@ -74,8 +74,14 @@ pub fn page(a: Area) -> Form {
         trackbar::HEIGHT,
     );
     Form::new(vec![
-        group(a, "cf_group", TOP, 110, "Color Filter"),
-        Item::label_at("color_filter_label", GX, TOP + 22, 70, "Color fi&lter:"),
+        group(a, "cf_group", TOP, 110, &tr!("magnifierpage-color-filter")),
+        Item::label_at(
+            "color_filter_label",
+            GX,
+            TOP + 22,
+            70,
+            &tr!("magnifierpage-color-filter-2"),
+        ),
         choice("color_filter", GX + 74, TOP + 18, 150, FILTERS),
         Item::new(
             PREVIEW,
@@ -85,7 +91,13 @@ pub fn page(a: Area) -> Form {
                 frame: 2,
             },
         ),
-        Item::label_at("cf_intensity_label", GX, TOP + 58, 60, "&Intensity:"),
+        Item::label_at(
+            "cf_intensity_label",
+            GX,
+            TOP + 58,
+            60,
+            &tr!("magnifierpage-intensity"),
+        ),
         Item::new(
             "color_filter_intensity",
             track,
@@ -95,41 +107,58 @@ pub fn page(a: Area) -> Form {
         Item::new(
             "cf_note",
             Rect::new(GX, TOP + 88, gw, LINE_H),
-            Control::Lines(vec![
-                "Screenshots and screen sharing see the original colors.".into(),
-            ]),
+            Control::Lines(vec![tr!(
+                "magnifierpage-screenshots-and-screen-sharing-see-the"
+            )]),
         ),
-        group(a, "mag_group", MAG_TOP, 93, "Magnifier"),
+        group(a, "mag_group", MAG_TOP, 93, &tr!("magnifierpage-magnifier")),
         Item::check(
             "magnifier_follow",
             GX,
             MAG_TOP + 20,
-            "When zoomed in, &follow the text cursor and focus",
+            &tr!("magnifierpage-when-zoomed-in-follow-the-text"),
         ),
         Item::new(
             MAG_NOTE,
             Rect::new(GX, MAG_TOP + 42, gw, NOTE_LINES as i32 * LINE_H),
             Control::Lines(Vec::new()),
         ),
-        group(a, "motion_group", MOTION_TOP, 62, "Motion"),
+        group(
+            a,
+            "motion_group",
+            MOTION_TOP,
+            62,
+            &tr!("magnifierpage-motion"),
+        ),
         Item::check(
             REDUCE_MOTION,
             GX,
             MOTION_TOP + 20,
-            "&Reduce motion everywhere",
+            &tr!("magnifierpage-reduce-motion-everywhere"),
         ),
         Item::new(
             "motion_note",
             Rect::new(GX, MOTION_TOP + 38, gw, LINE_H),
-            Control::Lines(vec!["GTK programs stop animating too.".into()]),
+            Control::Lines(vec![tr!("magnifierpage-gtk-programs-stop-animating-too")]),
         ),
-        group(a, "reader_group", READER_TOP, 97, "Screen Reader"),
-        Item::check(READER, GX, READER_TOP + 20, "Use the &screen reader"),
+        group(
+            a,
+            "reader_group",
+            READER_TOP,
+            97,
+            &tr!("magnifierpage-screen-reader"),
+        ),
+        Item::check(
+            READER,
+            GX,
+            READER_TOP + 20,
+            &tr!("magnifierpage-use-the-screen-reader"),
+        ),
         Item::check(
             READER_LOGON,
             GX,
             READER_TOP + 42,
-            "Start the screen reader when I log o&n",
+            &tr!("magnifierpage-start-the-screen-reader-when-i"),
         ),
         Item::new(
             READER_KEYS,
@@ -152,7 +181,7 @@ pub fn show_reader(page: &mut Form, installed: bool, running: bool, at_logon: bo
     page.set_enabled(READER_LOGON, installed);
     let missing = match installed {
         true => Vec::new(),
-        false => vec!["Install Orca to use the screen reader.".into()],
+        false => vec![tr!("magnifierpage-install-orca-to-use-the-screen")],
     };
     page.set_lines(READER_MISSING, &missing);
 }
@@ -170,35 +199,46 @@ pub fn show_keys(page: &mut Form, binds: &[Shortcut]) {
 
 fn reader_note(binds: &[Shortcut]) -> String {
     keys_for(binds, "screen-reader").map_or_else(
-        || "No key turns it on. The Keyboard page binds one.".into(),
-        |k| format!("{k} turns it on and off anywhere."),
+        || tr!("magnifierpage-no-key-turns-it-on-the"),
+        |k| tr!("magnifierpage-key-turns-it-on", keys = k),
     )
 }
 
 /// The zoom note's lines: the keys bound to zoom-in, zoom-out and zoom-reset, then where to change
 /// them. A note too long for the group drops the pointer to the Keyboard page first.
 fn zoom_note(binds: &[Shortcut]) -> Vec<String> {
-    let parts: Vec<String> = [
-        ("zoom-in", "zooms in, up to 8x"),
-        ("zoom-out", "zooms out"),
-        ("zoom-reset", "goes back to 1x"),
-    ]
-    .into_iter()
-    .filter_map(|(action, does)| keys_for(binds, action).map(|k| format!("{k} {does}")))
-    .collect();
+    let keyed: [(&str, fn(String) -> String); 3] = [
+        ("zoom-in", |k| tr!("magnifierpage-keys-zoom-in", keys = k)),
+        ("zoom-out", |k| tr!("magnifierpage-keys-zoom-out", keys = k)),
+        ("zoom-reset", |k| {
+            tr!("magnifierpage-keys-zoom-reset", keys = k)
+        }),
+    ];
+    let parts: Vec<String> = keyed
+        .into_iter()
+        .filter_map(|(action, does)| keys_for(binds, action).map(does))
+        .collect();
     let sentence = match parts.as_slice() {
-        [] => return vec!["No keys zoom. The Keyboard page binds them.".into()],
+        [] => return vec![tr!("magnifierpage-no-keys-zoom-the-keyboard-page")],
         [one] => one.clone(),
-        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        [init @ .., last] => tr!(
+            "magnifierpage-keys-and",
+            init = init.join(", "),
+            last = last.as_str()
+        ),
     };
     let wrap = |body: &str| reprisekit::text::wrap_chars(body, NOTE_COLS);
-    let lines = wrap(&format!(
-        "{sentence}. The Keyboard page changes these keys."
+    let lines = wrap(&tr!(
+        "magnifierpage-zoom-note",
+        sentence = sentence.as_str()
     ));
     let mut lines = if lines.len() <= NOTE_LINES {
         lines
     } else {
-        wrap(&format!("{sentence}."))
+        wrap(&tr!(
+            "magnifierpage-zoom-note-short",
+            sentence = sentence.as_str()
+        ))
     };
     lines.truncate(NOTE_LINES);
     lines
@@ -229,7 +269,10 @@ pub fn follow(page: &mut Form, s: &Settings) {
         page.set_enabled(id, filter.takes_intensity());
     }
     let percent = s.color_filter_intensity.clamp(0, 100);
-    page.set_text("cf_intensity_value", &format!("{percent}%"));
+    page.set_text(
+        "cf_intensity_value",
+        &tr!("magnifierpage-percent", percent = percent.to_string()),
+    );
     if let Some(item) = page.item_mut(PREVIEW) {
         item.control = Control::Picture {
             canvas: Some(swatch(filter, percent as f64 / 100.0)),
