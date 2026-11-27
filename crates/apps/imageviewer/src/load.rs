@@ -44,7 +44,18 @@ pub enum Job {
         generation: u64,
         path: PathBuf,
     },
+    /// Copy the picture `entry` out of `zip`, then open the copy.
+    OpenEntry {
+        generation: u64,
+        zip: PathBuf,
+        entry: reprisefs::archive::Entry,
+    },
     List(PathBuf),
+    /// List the pictures of the folder `inner_dir` of the archive `zip`.
+    ListArchive {
+        zip: PathBuf,
+        inner_dir: PathBuf,
+    },
     Render {
         key: RenderKey,
         picture: Arc<Canvas>,
@@ -63,10 +74,16 @@ pub enum Msg {
     Opened {
         generation: u64,
         picture: Result<Picture, String>,
+        copied: Option<crate::walk::Copied>,
     },
     Listed {
         dir: PathBuf,
         pictures: Vec<PathBuf>,
+    },
+    ListedArchive {
+        zip: PathBuf,
+        inner_dir: PathBuf,
+        pictures: Vec<reprisefs::archive::Entry>,
     },
     Rendered {
         key: RenderKey,
@@ -196,10 +213,32 @@ pub fn run(job: Job) -> Msg {
         Job::Open { generation, path } => Msg::Opened {
             generation,
             picture: open(&path),
+            copied: None,
+        },
+        Job::OpenEntry {
+            generation,
+            zip,
+            entry,
+        } => match crate::walk::copy_out(&zip, &entry, Budget::viewer().file) {
+            Ok(copied) => Msg::Opened {
+                generation,
+                picture: open(&copied.path),
+                copied: Some(copied),
+            },
+            Err(why) => Msg::Opened {
+                generation,
+                picture: Err(why),
+                copied: None,
+            },
         },
         Job::List(dir) => Msg::Listed {
             pictures: crate::folder::list(&dir),
             dir,
+        },
+        Job::ListArchive { zip, inner_dir } => Msg::ListedArchive {
+            pictures: crate::walk::list(&zip, &inner_dir),
+            zip,
+            inner_dir,
         },
         Job::Render { key, picture } => {
             let (w, h) = (key.size.0.max(1) as u32, key.size.1.max(1) as u32);

@@ -274,6 +274,7 @@ fn a_moving_picture_steps_its_frames_as_they_come_due() {
     let frame = |ms| (Arc::new(Canvas::new(2, 2)), ms);
     v.generation = 1;
     v.handle(Msg::Opened {
+        copied: None,
         generation: 1,
         picture: Ok(Picture {
             frames: vec![frame(100), frame(250)],
@@ -288,6 +289,7 @@ fn a_moving_picture_steps_its_frames_as_they_come_due() {
     v.due(first + Duration::from_millis(250));
     assert_eq!(v.frame, 0);
     v.handle(Msg::Opened {
+        copied: None,
         generation: 0,
         picture: Ok(Picture {
             frames: vec![frame(0)],
@@ -769,4 +771,101 @@ fn page_setup_and_print_sit_above_exit_in_the_file_menu() {
     assert_eq!(label(menu::row::PREVIEW), "Print Preview...");
     assert_eq!(label(menu::row::PRINT), "Print...");
     assert_eq!(label(menu::row::EXIT), "Exit");
+}
+
+/// Points `$XDG_CACHE_HOME`, where copies out of compressed folders go, at a scratch folder once
+/// per process.
+fn scratch_cache() {
+    static SCRATCH: std::sync::Once = std::sync::Once::new();
+    SCRATCH.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("imageviewer-cache-{}", std::process::id()));
+        // SAFETY: std serialises its own env access; no other test reads this variable.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", dir) };
+    });
+}
+
+/// `Photos.zip` holding `a.bmp`, `b.bmp`, `notes.txt` and `sub/c.bmp`, and Explorer's copy of
+/// its `a.bmp`.
+fn zip_of_photos() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    scratch_cache();
+    let dir = folder(&[("b.bmp", 4, 4), ("a.bmp", 2, 2)]);
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    std::fs::write(dir.path().join("sub/c.bmp"), bmp(3, 3)).unwrap();
+    let zip = dir.path().join("Photos.zip");
+    let made = std::process::Command::new("bsdtar")
+        .args(["-c", "--format", "zip", "-f"])
+        .arg(&zip)
+        .arg("-C")
+        .arg(dir.path())
+        .args(["b.bmp", "notes.txt", "a.bmp", "sub/c.bmp"])
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let copy = reprisefs::archive::scratch().unwrap().join("a.bmp");
+    std::fs::write(&copy, bmp(2, 2)).unwrap();
+    reprisefs::archivecopy::set_origin(&copy, &zip, Path::new("a.bmp")).unwrap();
+    (dir, zip, copy)
+}
+
+#[test]
+fn next_and_previous_walk_the_pictures_of_the_compressed_folder_a_copy_came_out_of() {
+    let (_dir, zip, copy) = zip_of_photos();
+    let mut v = opened(copy.clone());
+    assert_eq!(v.folder.position(), "1 of 2");
+    assert_eq!(v.folder.current(), Some(copy.as_path()));
+    v.go(Step::Next);
+    let b = v.folder.current().unwrap().to_path_buf();
+    assert_eq!(b.file_name().unwrap(), "b.bmp");
+    assert!(
+        reprisefs::archive::is_copy(&b),
+        "b.bmp is copied out to show"
+    );
+    assert_eq!(v.picture.as_ref().map(|p| p.size()), Some((4, 4)));
+    assert_eq!(v.folder.position(), "2 of 2");
+    v.go(Step::Previous);
+    let a = v.folder.current().unwrap().to_path_buf();
+    assert_eq!(a.file_name().unwrap(), "a.bmp");
+    assert_ne!(a, copy, "a.bmp is copied out again");
+    assert_eq!(v.picture.as_ref().map(|p| p.size()), Some((2, 2)));
+    assert_eq!(
+        v.folder.pictures[1],
+        zip.join("b.bmp"),
+        "b.bmp stands as its address again"
+    );
+    let until = Instant::now() + Duration::from_secs(10);
+    while b.exists() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!b.exists(), "b.bmp's copy goes once another picture shows");
+}
+
+#[test]
+fn a_compressed_folders_pictures_are_those_beside_it_by_name_in_name_order() {
+    let entry = |p: &str| reprisefs::archive::Entry {
+        path: p.into(),
+        kind: reprisefs::archive::Kind::File,
+        size: 1,
+        modified: None,
+    };
+    let entries = [
+        entry("img10.png"),
+        entry("img9.png"),
+        entry(".hidden.png"),
+        entry("notes.txt"),
+        entry("sub/deeper.png"),
+    ];
+    let picked = walk::pictures(&entries, Path::new(""));
+    let names: Vec<_> = picked
+        .iter()
+        .map(|e| e.path.display().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        ["img10.png", "img9.png"],
+        "listing order, sorted when shown"
+    );
+    let (_dir, zip, copy) = zip_of_photos();
+    let mut w = walk::Walk::of(&copy).expect("a copy that says where it came from");
+    let listed = w.listed(picked);
+    assert_eq!(listed, [zip.join("img9.png"), zip.join("img10.png")]);
 }
