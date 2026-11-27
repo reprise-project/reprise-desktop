@@ -159,6 +159,9 @@ impl Viewer {
         let Some(path) = self.folder.current() else {
             return Reply::none();
         };
+        if let Some(w) = &self.walk {
+            w.hand_over_shown();
+        }
         Reply {
             spawn: vec![argv(path)],
             ..Reply::none()
