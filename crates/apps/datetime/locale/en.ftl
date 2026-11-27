@@ -8,6 +8,8 @@ tab-zone = Time Zone
 group-date = Date
 group-time = Time
 ntp = Automatically &synchronize with an Internet time server
+# $locale is the LC_TIME locale dates are written in ("hu_HU"), $example today's short date in it.
+regional-format = Regional format: { $locale } ({ $example })
 
 ## The Time Zone tab
 auto-zone = Set time &zone automatically

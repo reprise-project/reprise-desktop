@@ -89,19 +89,30 @@ impl Agenda {
             return tr!("calendar-today");
         }
         let (y, m, d) = self.day;
-        let name = tr!(
-            "calendar-agenda-day",
-            weekday = names.weekday(weekday(y, m, d)),
-            month = names.month(m),
-            day = d as i64
+        let (order, weekday, month, sep) = (
+            names.order.key(),
+            names.weekday(weekday(y, m, d)),
+            names.month(m),
+            names.year_sep(),
         );
+        let (day, year) = (d as i64, y as i64);
         match today {
-            Some((year, ..)) if year != y => tr!(
+            Some((this, ..)) if this != y => tr!(
                 "calendar-agenda-year",
-                date = name.as_str(),
-                year = y as i64
+                order = order,
+                weekday = weekday,
+                month = month,
+                day = day,
+                year = year,
+                sep = sep
             ),
-            _ => name,
+            _ => tr!(
+                "calendar-agenda-day",
+                order = order,
+                weekday = weekday,
+                month = month,
+                day = day
+            ),
         }
     }
 }

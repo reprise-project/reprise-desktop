@@ -858,13 +858,29 @@ filesheet-general-attributes-colon = Attributes:
 
 ## calendar: titles and dates (month and weekday names follow LC_TIME)
 calendar-title = { $month } { NUMBER($year, useGrouping: "false") }
-calendar-date = { $month } { NUMBER($day, useGrouping: "false") }, { NUMBER($year, useGrouping: "false") }
+## $order is the order the LC_TIME locale's short date puts day, month and year in (dmy, mdy, ymd);
+## $sep is what it writes between a leading year and the month.
+calendar-date =
+    { $order ->
+        [dmy] { NUMBER($day, useGrouping: "false") } { $month } { NUMBER($year, useGrouping: "false") }
+        [ymd] { NUMBER($year, useGrouping: "false") }{ $sep }{ $month } { NUMBER($day, useGrouping: "false") }
+       *[mdy] { $month } { NUMBER($day, useGrouping: "false") }, { NUMBER($year, useGrouping: "false") }
+    }
 calendar-previous-month = Previous month
 calendar-next-month = Next month
 calendar-clock = Clock
 calendar-today = Today
-calendar-agenda-day = { $weekday }, { $month } { NUMBER($day, useGrouping: "false") }
-calendar-agenda-year = { $date }, { NUMBER($year, useGrouping: "false") }
+calendar-agenda-day =
+    { $order ->
+        [dmy] { $weekday } { NUMBER($day, useGrouping: "false") } { $month }
+       *[other] { $weekday }, { $month } { NUMBER($day, useGrouping: "false") }
+    }
+calendar-agenda-year =
+    { $order ->
+        [dmy] { $weekday } { NUMBER($day, useGrouping: "false") } { $month } { NUMBER($year, useGrouping: "false") }
+        [ymd] { $weekday }, { NUMBER($year, useGrouping: "false") }{ $sep }{ $month } { NUMBER($day, useGrouping: "false") }
+       *[mdy] { $weekday }, { $month } { NUMBER($day, useGrouping: "false") }, { NUMBER($year, useGrouping: "false") }
+    }
 calendar-more-events =
     { $count ->
         [one] 1 more event

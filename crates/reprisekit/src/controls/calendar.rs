@@ -39,6 +39,28 @@ pub struct DateNames {
     /// The text between year and month in a locale that writes the year first (". " gives
     /// "2026. november"); None titles a month as `calendar-title` orders it.
     pub year_first: Option<String>,
+    /// The order the locale's short date writes day, month and year in, which a date the
+    /// calendar words follows.
+    pub order: DateOrder,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DateOrder {
+    #[default]
+    Mdy,
+    Dmy,
+    Ymd,
+}
+
+impl DateOrder {
+    /// The `$order` a date message selects on.
+    pub fn key(self) -> &'static str {
+        match self {
+            DateOrder::Mdy => "mdy",
+            DateOrder::Dmy => "dmy",
+            DateOrder::Ymd => "ymd",
+        }
+    }
 }
 
 impl DateNames {
@@ -72,7 +94,13 @@ impl DateNames {
             .map(String::from),
             letters: ["S", "M", "T", "W", "T", "F", "S"].map(String::from),
             year_first: None,
+            order: DateOrder::Mdy,
         })
+    }
+
+    /// What a year-first date puts between the year and the month.
+    fn year_sep(&self) -> &str {
+        self.year_first.as_deref().unwrap_or(" ")
     }
 
     /// Month `m` (1 to 12, clamped) by name.
@@ -207,6 +235,18 @@ impl Calendar {
 
     pub fn cell_of(&self, d: u32) -> usize {
         self.first_cell() + d as usize - 1
+    }
+
+    /// Day `d` of the month shown, worded in the locale's date order.
+    pub fn date_text(&self, d: u32) -> String {
+        tr!(
+            "calendar-date",
+            order = self.names.order.key(),
+            month = self.names.month(self.month),
+            day = d as i64,
+            year = self.year as i64,
+            sep = self.names.year_sep()
+        )
     }
 
     pub fn title(&self) -> String {
@@ -677,12 +717,7 @@ pub fn access(
     access::focusable(&mut n, cal.enabled);
     let id = tree.push(parent, key, n);
     let value = match cal.day {
-        Some(d) => tr!(
-            "calendar-date",
-            month = cal.names.month(cal.month),
-            day = d as i64,
-            year = cal.year as i64
-        ),
+        Some(d) => cal.date_text(d),
         None => cal.title(),
     };
     access::value_run(tree, id, lay.band, &value, 0..0, text, px);
@@ -749,7 +784,7 @@ mod tests {
         assert_eq!(en.month(0), "January", "clamped");
         assert_eq!(en.weekday(7), "Sunday", "mod 7");
         assert_eq!(
-            tr!("calendar-date", month = "March", day = 5, year = 2026),
+            Calendar::new(2026, 3, None, 0).date_text(5),
             "March 5, 2026",
             "no digit grouping in a year"
         );
@@ -1021,12 +1056,51 @@ mod tests {
     }
 
     #[test]
+    fn the_agenda_heading_and_the_picked_date_follow_the_locales_date_order() {
+        let with = |order, year_first: Option<&str>| -> &'static DateNames {
+            Box::leak(Box::new(DateNames {
+                order,
+                year_first: year_first.map(String::from),
+                ..DateNames::english().clone()
+            }))
+        };
+        let today = Some((2026, 11, 13));
+        let (sat, next_year) = (
+            Agenda::new((2026, 11, 14), true),
+            Agenda::new((2027, 1, 1), true),
+        );
+        let picked = |names| {
+            Calendar {
+                names,
+                ..Calendar::new(2026, 11, None, 0)
+            }
+            .date_text(14)
+        };
+
+        let mdy = with(DateOrder::Mdy, None);
+        assert_eq!(sat.heading(today, mdy), "Saturday, November 14");
+        assert_eq!(next_year.heading(today, mdy), "Friday, January 1, 2027");
+        assert_eq!(picked(mdy), "November 14, 2026");
+
+        let dmy = with(DateOrder::Dmy, None);
+        assert_eq!(sat.heading(today, dmy), "Saturday 14 November");
+        assert_eq!(next_year.heading(today, dmy), "Friday 1 January 2027");
+        assert_eq!(picked(dmy), "14 November 2026");
+
+        let ymd = with(DateOrder::Ymd, Some(". "));
+        assert_eq!(sat.heading(today, ymd), "Saturday, November 14");
+        assert_eq!(next_year.heading(today, ymd), "Friday, 2027. January 1");
+        assert_eq!(picked(ymd), "2026. November 14");
+    }
+
+    #[test]
     fn the_band_title_and_heading_take_the_names_the_host_gives() {
         let names: &'static DateNames = Box::leak(Box::new(DateNames {
             months: std::array::from_fn(|m| format!("m{}", m + 1)),
             weekdays: std::array::from_fn(|d| format!("w{d}")),
             letters: ["V", "H", "K", "S", "C", "P", "S"].map(String::from),
             year_first: None,
+            order: DateOrder::Mdy,
         }));
         let en = Calendar::new(2026, 11, Some(27), 0);
         let local = Calendar {

@@ -150,7 +150,7 @@ Default viewer for `.ttf`, `.otf`, `.ttc`, `.woff` and `.woff2` files, showing m
 
 ## Date and Time Properties
 
-Double-click the clock for calendar, clock, time zone and NTP settings. `Set time zone automatically` (`[time_zone] automatic`, off by default) updates via `geoclue` (at most hourly) when location is enabled and passwordless polkit permission is granted.
+Double-click the clock for calendar, clock, time zone and NTP settings. The calendar starts its week on the LC_TIME locale's first weekday, and the Date & Time tab names that locale with today's short date in it. `Set time zone automatically` (`[time_zone] automatic`, off by default) updates via `geoclue` (at most hourly) when location is enabled and passwordless polkit permission is granted.
 
 ## Welcome
 
