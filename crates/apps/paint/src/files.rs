@@ -232,6 +232,16 @@ impl Paint {
         true
     }
 
+    /// Whether `path` takes no writes, in which case a box says so.
+    fn refused(&mut self, path: &Path) -> bool {
+        if !reprisefs::ops::is_read_only(path) {
+            return false;
+        }
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        self.error(tr!("read-only", name = name.into_owned()));
+        true
+    }
+
     /// Save As on the picture's own name and type, for a file that takes no writes.
     fn name_saveas(&mut self) {
         let (Some(dlg), Some(path)) = (self.saveas.as_mut(), self.path.as_deref()) else {
@@ -255,9 +265,7 @@ impl Paint {
     /// first.
     fn write(&mut self, path: &Path, kind: Kind) -> bool {
         self.doc.finish();
-        if reprisefs::ops::is_read_only(path) {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            self.error(tr!("read-only", name = name.into_owned()));
+        if self.refused(path) {
             return false;
         }
         match file::save(&self.doc.img, path, kind, self.quality) {
@@ -465,6 +473,9 @@ impl Paint {
         let quoted = self.saveas.as_ref().is_some_and(FileDlg::name_quoted);
         let path = if quoted { path } else { with_ext(path, kind) };
         let kind = Kind::of(&path).unwrap_or(kind);
+        if self.refused(&path) {
+            return Reply::redraw_all();
+        }
         if taken(&path) && self.path.as_deref() != Some(&path) {
             self.ask(
                 tr!("overwrite", path = path.display().to_string()),

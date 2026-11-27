@@ -3238,3 +3238,21 @@ fn escape_on_the_read_only_box_drops_the_pending_quit() {
     assert!(!reply.quit && !np.pending.is_waiting() && np.saveas.is_none());
     assert!(np.dirty());
 }
+
+#[test]
+fn save_as_onto_a_read_only_file_says_so_before_asking_to_replace_it() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let mut np = Notepad::new(None);
+    np.edit = MultiEdit::new("new");
+    np.saveas_dialog();
+    let id = np.host.folders.id(tmp.path());
+    np.host.folder = Some(id);
+    np.saveas_accept("notes.txt", &mut test_icons());
+    let (b, ask) = np.asks.up().expect("a box");
+    assert!(matches!(ask, Ask::Error));
+    assert!(b.fields.text.starts_with("notes.txt is read-only.\n"));
+    assert!(np.saveas.is_some());
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
+}

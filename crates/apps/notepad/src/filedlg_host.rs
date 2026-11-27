@@ -178,6 +178,9 @@ impl Notepad {
                 return Reply::redraw_all();
             }
         };
+        if self.refused_over_saveas(&path) {
+            return Reply::redraw_all();
+        }
         // Ask before writing over another file; the document's own path is what Save As opened on, so it is not "another".
         if taken(&path) && self.path.as_deref() != Some(&path) {
             let b = self.overwrite_box(&path);
@@ -185,6 +188,16 @@ impl Notepad {
             return Reply::redraw_all();
         }
         self.saveas_write(path)
+    }
+
+    /// Whether `path` takes no writes, in which case a box over Save As says so.
+    fn refused_over_saveas(&mut self, path: &Path) -> bool {
+        if !reprisefs::ops::is_read_only(path) {
+            return false;
+        }
+        let b = self.read_only_box(path);
+        self.asks.ask_over(SAVEAS, b, Ask::Error);
+        true
     }
 
     /// Save As goes, and the overwrite question it raised with it.
@@ -210,9 +223,7 @@ impl Notepad {
             self.asks.ask_over(SAVEAS, b, Ask::Unheld(Some(path)));
             return Reply::redraw_all();
         }
-        if reprisefs::ops::is_read_only(&path) {
-            let b = self.read_only_box(&path);
-            self.asks.ask_over(SAVEAS, b, Ask::Error);
+        if self.refused_over_saveas(&path) {
             return Reply::redraw_all();
         }
         match self.write_to(&path, format) {
