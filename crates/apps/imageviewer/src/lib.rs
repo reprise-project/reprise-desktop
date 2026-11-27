@@ -106,11 +106,26 @@ struct Viewer {
     recent: Recent,
     /// The picture opened, until its decode lands.
     opening: Option<PathBuf>,
+    /// Where growing the window to the picture it launched on stands.
+    grow: Grow,
+}
+
+/// The window grows once, to show the picture it launched on at 100% where the screen has room.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Grow {
+    /// Until the first picture's decode lands.
+    Waiting,
+    Due,
+    Done,
 }
 
 impl Viewer {
     fn new(path: Option<PathBuf>) -> Viewer {
         let path = path.map(|p| std::path::absolute(&p).unwrap_or(p));
+        let grow = match path {
+            Some(_) => Grow::Waiting,
+            None => Grow::Done,
+        };
         let mut v = Viewer {
             folder: path.map(Folder::of).unwrap_or_default(),
             picture: None,
@@ -147,6 +162,7 @@ impl Viewer {
             warn_icon: None,
             recent: Recent::at(DESKTOP, None),
             opening: None,
+            grow,
         };
         v.sync_menus();
         v
@@ -214,6 +230,12 @@ impl Viewer {
                     return false;
                 }
                 let opened = self.opening.take();
+                if self.grow == Grow::Waiting {
+                    self.grow = match picture {
+                        Ok(_) => Grow::Due,
+                        Err(_) => Grow::Done,
+                    };
+                }
                 match picture {
                     Ok(p) => {
                         if let Some(path) = opened
@@ -435,7 +457,13 @@ impl App for Viewer {
             w if self.delete.owns(w) => self.delete_event(w, ev),
             w if self.error.owns(w) => self.error.event(w, &ev, &self.dialog_text, &self.forms),
             OPEN => self.open_event(ev, ctx),
-            _ => self.main_event(ev, ctx),
+            _ => {
+                let reply = self.main_event(ev, ctx);
+                Reply {
+                    size: reply.size.or_else(|| self.grown(ctx)),
+                    ..reply
+                }
+            }
         };
         self.sync_menus();
         reply

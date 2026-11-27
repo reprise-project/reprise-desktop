@@ -727,3 +727,30 @@ fn an_opened_picture_goes_to_the_recent_files_and_its_neighbours_and_an_unreadab
         "recorded as Image Viewer's: {marks:?}"
     );
 }
+
+#[test]
+fn the_window_grows_once_to_show_the_picture_it_opened_on_at_full_size() {
+    let dir = folder(&[("dunes.bmp", 600, 500), ("tiny.bmp", 4, 4)]);
+    let mut v = opened(dir.path().join("dunes.bmp"));
+    let mut ctx = test_ctx();
+    ctx.at_pick = true;
+    let b = v.box_rect(&ctx);
+    let chrome = (ctx.size.0 - b.width, ctx.size.1 - b.height);
+    let r = v.event(MAIN, Event::Wake, &mut ctx);
+    assert_eq!(r.size, Some((600 + chrome.0, 500 + chrome.1)));
+    assert_eq!(v.event(MAIN, Event::Wake, &mut ctx).size, None, "once");
+
+    let mut small = opened(dir.path().join("tiny.bmp"));
+    assert_eq!(
+        small.event(MAIN, Event::Wake, &mut ctx).size,
+        None,
+        "a small picture leaves the window at its own size"
+    );
+    let mut sized = opened(dir.path().join("dunes.bmp"));
+    ctx.at_pick = false;
+    assert_eq!(
+        sized.event(MAIN, Event::Wake, &mut ctx).size,
+        None,
+        "a size the user or the compositor gave stands"
+    );
+}
