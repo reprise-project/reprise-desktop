@@ -13,6 +13,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("volume");
+
 mod dialogs;
 mod fit;
 mod scroll;
@@ -42,6 +44,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 use reprisekit::theme::{TextUnits, Theme};
+use reprisekit::tr;
 
 use state::State;
 use view::{Options, Recent, View};
@@ -96,23 +99,23 @@ fn level_write(
     }
 }
 
-fn menus(advanced: bool) -> Vec<(&'static str, Vec<MenuItem>)> {
+fn menus(advanced: bool) -> Vec<(String, Vec<MenuItem>)> {
     vec![
         (
-            "&Options",
+            tr!("menu-options"),
             vec![
-                MenuItem::item("&Properties"),
-                MenuItem::item("&Advanced Controls").checked(advanced),
+                MenuItem::item(&tr!("menu-properties")),
+                MenuItem::item(&tr!("menu-advanced")).checked(advanced),
                 MenuItem::Separator,
-                MenuItem::item("E&xit"),
+                MenuItem::item(&tr!("menu-exit")),
             ],
         ),
         (
-            "&Help",
+            tr!("menu-help"),
             vec![
-                MenuItem::item("&Help Topics").enabled(false),
+                MenuItem::item(&tr!("menu-help-topics")).enabled(false),
                 MenuItem::Separator,
-                MenuItem::item("&About Volume Control"),
+                MenuItem::item(&tr!("menu-about")),
             ],
         ),
     ]
@@ -161,7 +164,7 @@ impl Volume {
         let lines = view::lines(&snapshot, &opts, &Recent::default());
         let (refused_tx, refused) = mpsc::channel();
         let mixer = Mixer::new(&lines, opts.advanced);
-        let main_size = fit::window(&mixer, &Theme::default(), None, view.title());
+        let main_size = fit::window(&mixer, &Theme::default(), None, &view.title());
         Volume {
             mixer,
             bar: Bar::new(menus(opts.advanced)),
@@ -205,7 +208,7 @@ impl Volume {
     /// The size the window asks for: [`fit::window`], wider by the body's bar while the window
     /// is too short for the columns.
     fn refit(&mut self, theme: &Theme) -> Option<(i32, i32)> {
-        let (w, h) = fit::window(&self.mixer, theme, self.room, self.opts.view.title());
+        let (w, h) = fit::window(&self.mixer, theme, self.room, &self.opts.view.title());
         // A window the compositor holds shorter than asked stays that short.
         let tall = match self.main_size.1 < self.asked.1 {
             true => self.main_size.1.min(h),
@@ -643,7 +646,7 @@ impl Volume {
     }
 
     fn about_fields(&self) -> aboutbox::Fields {
-        repriseapp::about::fields("Volume Control", self.app_icon.clone())
+        repriseapp::about::fields(&tr!("title"), self.app_icon.clone())
     }
 
     /// The about box's theme: the forms theme with its font at `dialog_px` grown.
@@ -716,7 +719,7 @@ impl Volume {
 
 impl App for Volume {
     fn title(&self) -> String {
-        self.opts.view.title().into()
+        self.opts.view.title()
     }
 
     fn app_id(&self) -> String {
@@ -734,7 +737,7 @@ impl App for Volume {
         if self.props.is_some() {
             kids.push(Child {
                 id: PROPS_WIN,
-                title: "Properties".into(),
+                title: tr!("properties-title"),
                 size: self.forms.text.size(dialogs::PROPS),
                 fixed: true,
                 modal: true,
@@ -743,12 +746,13 @@ impl App for Volume {
         if self.advanced.is_some() {
             kids.push(Child {
                 id: ADVANCED_WIN,
-                title: format!(
-                    "Advanced Controls for {}",
-                    self.mixer
+                title: tr!(
+                    "advanced-title",
+                    name = self
+                        .mixer
                         .columns
                         .first()
-                        .map_or(view::MASTER_TITLE, |c| c.title.as_str())
+                        .map_or_else(|| tr!("title"), |c| c.title.clone())
                 ),
                 size: self.forms.text.size(dialogs::ADVANCED),
                 fixed: true,
@@ -758,7 +762,7 @@ impl App for Volume {
         if self.about {
             kids.push(Child {
                 id: ABOUT_WIN,
-                title: "About Volume Control".into(),
+                title: tr!("about-title"),
                 size: self.forms.text.size(aboutbox::CLIENT),
                 fixed: true,
                 modal: true,

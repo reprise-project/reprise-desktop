@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use repriseaudio::{Channels, Device, Scale, Snapshot};
 use reprisekit::controls::mixer::{self, Check, Line, Route};
+use reprisekit::tr;
 
 pub const MASTER: &str = "master";
-pub const MASTER_TITLE: &str = "Volume Control";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
@@ -15,10 +15,10 @@ pub enum View {
 }
 
 impl View {
-    pub fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            View::Playback => "Volume Control",
-            View::Recording => "Recording Control",
+            View::Playback => tr!("title"),
+            View::Recording => tr!("title-recording"),
         }
     }
 }
@@ -89,7 +89,7 @@ pub fn all_lines(snap: &Snapshot, o: &Options) -> Vec<Line> {
             let out = sink(snap, o.device.as_deref());
             let mut v = vec![Line {
                 key: MASTER.into(),
-                title: MASTER_TITLE.into(),
+                title: tr!("title"),
                 volume: out.map_or(0, |d| scale(o.boost).pos(d.volume)),
                 balance: out.and_then(|d| balance(&d.channels)),
                 check: Check::MuteAll,
