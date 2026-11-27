@@ -3,6 +3,7 @@
 
 use reprisebus::kdeconnect::Device;
 use reprisekit::art::icons;
+use reprisekit::tr;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 pub const BUS_NAME: &str = "reprise.phone";
@@ -21,8 +22,16 @@ pub enum TrayMsg {
 /// "Pixel: 80%, charging", or the name alone before a charge is reported.
 pub fn status(d: &Device) -> String {
     match d.battery {
-        Some(b) if b.charging => format!("{}: {}%, charging", d.name, b.charge),
-        Some(b) => format!("{}: {}%", d.name, b.charge),
+        Some(b) if b.charging => tr!(
+            "status-charging",
+            name = d.name.as_str(),
+            charge = b.charge.to_string()
+        ),
+        Some(b) => tr!(
+            "status",
+            name = d.name.as_str(),
+            charge = b.charge.to_string()
+        ),
         None => d.name.clone(),
     }
 }
@@ -32,7 +41,9 @@ pub fn status(d: &Device) -> String {
 pub fn rows(devices: &[Device]) -> Rows<TrayMsg> {
     let mut rows = Rows::default();
     if devices.is_empty() {
-        rows.add(TrayMsg::NoDevices, |id| Node::inert(id, "No devices"));
+        rows.add(TrayMsg::NoDevices, |id| {
+            Node::inert(id, tr!("menu-no-devices"))
+        });
     }
     for d in devices {
         rows.add(TrayMsg::Status(d.id.clone()), |id| {
@@ -40,12 +51,12 @@ pub fn rows(devices: &[Device]) -> Rows<TrayMsg> {
         });
         if d.ring {
             rows.add(TrayMsg::Ring(d.id.clone()), |id| {
-                Node::row(id, "Ring phone")
+                Node::row(id, tr!("menu-ring"))
             });
         }
         if d.share {
             rows.add(TrayMsg::Send(d.id.clone()), |id| {
-                Node::row(id, "Send files...")
+                Node::row(id, tr!("menu-send"))
             });
         }
         rows.separator();
@@ -54,7 +65,7 @@ pub fn rows(devices: &[Device]) -> Rows<TrayMsg> {
         rows.separator();
     }
     rows.add(TrayMsg::Settings, |id| {
-        Node::row(id, "Open KDE Connect settings").as_default()
+        Node::row(id, tr!("menu-settings")).as_default()
     });
     rows
 }
@@ -71,7 +82,7 @@ pub fn translate(msg: Msg, devices: &[Device]) -> Option<TrayMsg> {
 
 pub fn tooltip(devices: &[Device]) -> String {
     if devices.is_empty() {
-        return "KDE Connect: no devices connected".into();
+        return tr!("tooltip-none");
     }
     let lines: Vec<String> = devices.iter().map(status).collect();
     lines.join("\n")
