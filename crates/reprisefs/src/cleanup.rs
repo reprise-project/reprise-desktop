@@ -13,7 +13,7 @@
 //! dumps are only counted: the system owns their files.
 
 use crate::ops::at::{c_path, cwd, open_dir, stat_fd};
-use crate::ops::{entries_at, erase_all_at};
+use crate::ops::{Failures, entries_at, erase_all_at};
 use crate::subprocess;
 use crate::trash::Bins;
 use std::collections::HashSet;
@@ -359,27 +359,32 @@ fn contents_size(root: &Path, skip: Option<&OsStr>, stop: &AtomicBool) -> u64 {
 }
 
 /// Removes every entry of the folder open as `dir` (at `path`) but `keep`, through
-/// [`erase_all_at`]: links go as links, mounted drives are refused, and an entry that fails at
-/// any depth keeps only itself and the folders above it. Each failure is logged; the error is
-/// the first.
+/// [`erase_all_at`]: links go as links, mounted drives are refused, and a failure at any depth
+/// does not stop the rest. Each entry that keeps something is logged once; the error is the
+/// first failure.
 fn empty_folder(dir: BorrowedFd, path: &Path, keep: Option<&CStr>) -> io::Result<()> {
-    let mut failed = Vec::new();
+    let mut first = None;
     for (name, _) in entries_at(dir)? {
         if Some(name.as_c_str()) == keep {
             continue;
         }
         let at = path.join(OsStr::from_bytes(name.to_bytes()));
-        let start = failed.len();
+        let mut failed = Failures::default();
         if let Err(e) = erase_all_at(dir, &name, &at, &mut failed)
             && e.kind() != io::ErrorKind::NotFound
         {
-            failed.push(e);
+            failed.add(e);
         }
-        for e in &failed[start..] {
-            log::warn!("clean up: {} stays: {e}", at.display());
+        if let Some(e) = failed.first {
+            let n = failed.count;
+            log::warn!(
+                "clean up: {} keeps {n} entries, the first: {e}",
+                at.display()
+            );
+            first.get_or_insert(e);
         }
     }
-    failed.into_iter().next().map_or(Ok(()), Err)
+    first.map_or(Ok(()), Err)
 }
 
 /// `program ARGS` with nothing on its standard input, so a question it asks is answered no; in

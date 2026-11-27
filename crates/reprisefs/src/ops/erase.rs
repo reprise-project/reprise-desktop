@@ -48,14 +48,29 @@ pub(crate) fn erase_at(
     erase_entry_at(dir, name, path, meter, None)
 }
 
-/// [`erase_at`] that goes on past an entry it cannot remove at any depth, adding each failure to
-/// `failed` and keeping the folders above it; an entry already gone is no failure. The error is
-/// `name` itself failing, or what stops the walk, as a folder replaced on the way.
+/// What [`erase_all_at`] could not remove: how many entries, and the first one's error.
+#[derive(Debug, Default)]
+pub(crate) struct Failures {
+    pub count: usize,
+    pub first: Option<io::Error>,
+}
+
+impl Failures {
+    pub(crate) fn add(&mut self, e: io::Error) {
+        self.count += 1;
+        self.first.get_or_insert(e);
+    }
+}
+
+/// [`erase_at`] that goes on past an entry it cannot remove at any depth, counting it in
+/// `failed`: a folder it cannot write keeps its entries, and an entry that stays keeps the
+/// folders above it. An entry already gone is no failure. The error is `name` itself failing, or
+/// what stops the walk part way, as a folder replaced on the way.
 pub(crate) fn erase_all_at(
     dir: BorrowedFd,
     name: &CStr,
     path: &Path,
-    failed: &mut Vec<io::Error>,
+    failed: &mut Failures,
 ) -> io::Result<()> {
     erase_entry_at(dir, name, path, None, Some(failed))
 }
@@ -65,7 +80,7 @@ fn erase_entry_at(
     name: &CStr,
     path: &Path,
     meter: Option<&Meter>,
-    failed: Option<&mut Vec<io::Error>>,
+    failed: Option<&mut Failures>,
 ) -> io::Result<()> {
     refuse_mount_point(path)?;
     if !is_dir_at(dir, name)? {
@@ -157,8 +172,9 @@ fn remove_tree_at(
     parent: BorrowedFd,
     name: &CStr,
     meter: Option<&Meter>,
-    mut failed: Option<&mut Vec<io::Error>>,
+    mut failed: Option<&mut Failures>,
 ) -> io::Result<()> {
+    let keep_going = failed.is_some();
     let dev = stat_fd(parent)?.st_dev;
     let mut stack = vec![level(parent, name, dev)?];
     while !stack.is_empty() {
@@ -169,7 +185,7 @@ fn remove_tree_at(
                     Some(m) => m.hold()?,
                     None => crate::progress::step(),
                 }
-                let at = reopen(parent, &mut stack, dev)?;
+                let at = reopen(parent, &mut stack, dev).map_err(|e| stopped(e, keep_going))?;
                 let stays = if is_dir {
                     match level(at, &child, dev) {
                         Ok(next) => {
@@ -199,7 +215,7 @@ fn remove_tree_at(
                 drop(done.fd);
                 let up = match stack.is_empty() {
                     true => parent,
-                    false => reopen(parent, &mut stack, dev)?,
+                    false => reopen(parent, &mut stack, dev).map_err(|e| stopped(e, keep_going))?,
                 };
                 let stays = done.kept
                     || match unlink_at(up, &done.name, libc::AT_REMOVEDIR) {
@@ -216,16 +232,25 @@ fn remove_tree_at(
 }
 
 /// An entry [`remove_tree_at`] could not remove: without `failed` the walk stops with `e`; with
-/// it `e` joins `failed` and the entry stays (true), unless it is already gone.
-fn settle(failed: &mut Option<&mut Vec<io::Error>>, e: io::Error) -> io::Result<bool> {
-    let Some(list) = failed else {
+/// it `e` is counted in `failed` and the entry stays (true), unless it is already gone.
+fn settle(failed: &mut Option<&mut Failures>, e: io::Error) -> io::Result<bool> {
+    let Some(failures) = failed else {
         return Err(e);
     };
     if e.kind() == io::ErrorKind::NotFound {
         return Ok(false);
     }
-    list.push(e);
+    failures.add(e);
     Ok(true)
+}
+
+/// The error of a walk that stops part way. One that goes on past failures never stops as
+/// NotFound, which its caller reads as the entry already gone.
+fn stopped(e: io::Error, keep_going: bool) -> io::Error {
+    match keep_going && e.kind() == io::ErrorKind::NotFound {
+        true => io::Error::other(e),
+        false => e,
+    }
 }
 
 /// The path of `name`, in the last of `levels`, under the first; empty with no levels, `name`
