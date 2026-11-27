@@ -41,13 +41,11 @@ pub(crate) struct Picks {
     pub picked: Vec<PathBuf>,
 }
 
-/// Where the entries a compressed folder's Copy, Copy To Folder... or drag copied out go.
+/// Where the entries a compressed folder's Copy or Copy To Folder... copied out go.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Then {
     Clipboard,
     Into(PathBuf),
-    /// The drop that asked for them.
-    Drag(repriseapp::Staged),
 }
 
 /// One run of the job: archives to extract, or items to zip.
@@ -182,33 +180,6 @@ impl Explorer {
         self.message_box(&tr!("archive-copy-failed-title"), text, ctx)
     }
 
-    /// A box saying the drop of the entries of the archive `name` stopped waiting for them.
-    pub(crate) fn drop_gave_up(&mut self, name: &str, ctx: &mut Ctx) -> Reply {
-        let text = tr!("archive-drop-gave-up", name = name);
-        self.message_box(&tr!("archive-copy-failed-title"), text, ctx)
-    }
-
-    /// Drags out of a compressed folder whose drop gave up while their copy waited its turn:
-    /// each is dropped from the queue, with its box.
-    pub(crate) fn take_abandoned_drags(&mut self, ctx: &mut Ctx) -> Option<Reply> {
-        let mut names = Vec::new();
-        self.extract_queue.retain(|b| match b {
-            Batch::CopyOut {
-                picks,
-                then: Then::Drag(staged),
-                ..
-            } if staged.abandoned() => {
-                let name = picks.archive.file_name().unwrap_or_default();
-                names.push(name.to_string_lossy().into_owned());
-                false
-            }
-            _ => true,
-        });
-        (names.into_iter())
-            .map(|name| self.drop_gave_up(&name, ctx))
-            .reduce(Reply::and)
-    }
-
     /// Lets go of the copies the puts held ([`Explorer::put_all`]) once no put is running,
     /// queued, checked or asking: by then the puts have read them.
     pub(crate) fn release_put_holds(&mut self) {
@@ -314,7 +285,6 @@ impl Explorer {
                 let from = name(Some(&picks.archive));
                 let (to, dest) = match then {
                     Then::Clipboard => (tr!("extracting-to-clipboard"), None),
-                    Then::Drag(_) => (tr!("extracting-to-drop"), None),
                     Then::Into(dest) => (name(Some(&dest)), Some(dest)),
                 };
                 let Picks {
@@ -343,11 +313,6 @@ impl Explorer {
     /// again with the new folders or zip selected and starts the next batch.
     pub(crate) fn poll_extract(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let ex = self.extracting.as_mut()?;
-        if let Some(Then::Drag(staged)) = &ex.then
-            && staged.abandoned()
-        {
-            ex.job.meter().cancel();
-        }
         let zipping = ex.progress.kind == Kind::Compress;
         let copying = ex.then.is_some();
         let mut ask = None;
@@ -394,14 +359,6 @@ impl Explorer {
             let out = failed.is_none() && !ex.job.meter().cancelled() && !ex.landed.is_empty();
             let landed = ex.landed;
             let reply = match then {
-                Then::Drag(staged) => {
-                    staged.done(out);
-                    self.dropped_copy = ex.scratch.filter(|_| out);
-                    match staged.abandoned() {
-                        true => self.drop_gave_up(&ex.progress.from, ctx),
-                        false => Reply::none(),
-                    }
-                }
                 _ if !out => Reply::none(),
                 Then::Clipboard => {
                     let reply = self.clipboard_paths(false, landed, ctx);
