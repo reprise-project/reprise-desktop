@@ -44,6 +44,27 @@ impl Viewer {
         Rect::new(c.x, c.y + top, c.width, (c.height - top - bottom).max(0))
     }
 
+    /// The client size that shows the picture the window launched on at 100%, once, while the
+    /// window is at its own size; the host holds it inside the screen's work area. Never smaller.
+    pub(crate) fn grown(&mut self, ctx: &Ctx) -> Option<(i32, i32)> {
+        if self.grow != Grow::Due {
+            return None;
+        }
+        self.grow = Grow::Done;
+        if !ctx.at_pick || ctx.maximized || self.full {
+            return None;
+        }
+        let (w, h) = self.view.shown_size();
+        let s = self.scale.max(1) as u32;
+        let b = self.box_rect(ctx);
+        let want = (
+            w.div_ceil(s) as i32 + ctx.size.0 - b.width,
+            h.div_ceil(s) as i32 + ctx.size.1 - b.height,
+        );
+        let size = (want.0.max(ctx.size.0), want.1.max(ctx.size.1));
+        (size != ctx.size).then_some(size)
+    }
+
     pub(crate) fn view_layout(&self, ctx: &Ctx) -> Layout {
         imageview::layout(
             &self.view,
