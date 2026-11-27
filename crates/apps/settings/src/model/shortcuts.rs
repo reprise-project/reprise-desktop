@@ -113,7 +113,7 @@ pub fn action_text(action: &str, command: Option<&str>) -> String {
             None => tr!("model-shortcuts-run-a-command"),
         },
         repriseconf::keybind::NONE => tr!("model-shortcuts-nothing"),
-        a => repriseconf::keybind::describe(a).map_or_else(|| a.into(), |(_, what)| what.into()),
+        a => repriseconf::keybind::describe(a).map_or_else(|| a.into(), |(_, what)| what),
     }
 }
 

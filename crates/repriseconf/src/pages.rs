@@ -4,6 +4,7 @@
 mod terms;
 
 use crate::search::{all_words, word_starts};
+use reprisekit::tr;
 use std::path::Path;
 
 /// The login manager's program; the Login Manager page applies only where it is installed.
@@ -208,43 +209,43 @@ impl Page {
             .expect("every page is in GROUPS")
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Page::Appearance => "Appearance",
-            Page::Background => "Background",
-            Page::ScreenSaverLock => "Screen Saver & Lock",
-            Page::Display => "Display",
-            Page::NightLight => "Night Light",
-            Page::FontsAndIcons => "Fonts & Icons",
-            Page::Effects => "Effects",
-            Page::Taskbar => "Taskbar",
-            Page::StartMenu => "Start Menu",
-            Page::Search => "Search",
-            Page::Switcher => "Window Switcher",
-            Page::VirtualDesktops => "Virtual Desktops",
-            Page::WindowBehavior => "Window Behavior",
-            Page::WindowRules => "Window Rules",
-            Page::Keyboard => "Keyboard",
-            Page::Mouse => "Mouse",
-            Page::Touchpad => "Touchpad",
-            Page::Tablet => "Tablet",
-            Page::Thunderbolt => "Thunderbolt",
-            Page::Cursor => "Cursor",
-            Page::TextKeys => "Text & Keys",
-            Page::PointerAlerts => "Pointer & Alerts",
-            Page::MagnifierFilters => "Magnifier & Filters",
-            Page::Sound => "Sound",
-            Page::ScreenCapture => "Screen Capture",
-            Page::Notifications => "Notifications",
-            Page::Startup => "Startup",
-            Page::DefaultPrograms => "Default Programs",
-            Page::Privacy => "Privacy",
-            Page::RegionLanguage => "Region & Language",
-            Page::Network => "Network",
-            Page::RemoteDesktop => "Remote Desktop",
-            Page::LoginManager => "Login Manager",
-            Page::Advanced => "Advanced",
-            Page::Backup => "Backup",
+            Page::Appearance => tr!("page-appearance"),
+            Page::Background => tr!("page-background"),
+            Page::ScreenSaverLock => tr!("page-screen-saver-lock"),
+            Page::Display => tr!("page-display"),
+            Page::NightLight => tr!("page-night-light"),
+            Page::FontsAndIcons => tr!("page-fonts-and-icons"),
+            Page::Effects => tr!("page-effects"),
+            Page::Taskbar => tr!("page-taskbar"),
+            Page::StartMenu => tr!("page-start-menu"),
+            Page::Search => tr!("page-search"),
+            Page::Switcher => tr!("page-switcher"),
+            Page::VirtualDesktops => tr!("page-virtual-desktops"),
+            Page::WindowBehavior => tr!("page-window-behavior"),
+            Page::WindowRules => tr!("page-window-rules"),
+            Page::Keyboard => tr!("page-keyboard"),
+            Page::Mouse => tr!("page-mouse"),
+            Page::Touchpad => tr!("page-touchpad"),
+            Page::Tablet => tr!("page-tablet"),
+            Page::Thunderbolt => tr!("page-thunderbolt"),
+            Page::Cursor => tr!("page-cursor"),
+            Page::TextKeys => tr!("page-text-keys"),
+            Page::PointerAlerts => tr!("page-pointer-alerts"),
+            Page::MagnifierFilters => tr!("page-magnifier-filters"),
+            Page::Sound => tr!("page-sound"),
+            Page::ScreenCapture => tr!("page-screen-capture"),
+            Page::Notifications => tr!("page-notifications"),
+            Page::Startup => tr!("page-startup"),
+            Page::DefaultPrograms => tr!("page-default-programs"),
+            Page::Privacy => tr!("page-privacy"),
+            Page::RegionLanguage => tr!("page-region-language"),
+            Page::Network => tr!("page-network"),
+            Page::RemoteDesktop => tr!("page-remote-desktop"),
+            Page::LoginManager => tr!("page-login-manager"),
+            Page::Advanced => tr!("page-advanced"),
+            Page::Backup => tr!("page-backup"),
         }
     }
 
@@ -571,12 +572,13 @@ impl Page {
     /// Matches when every word of `query` starts a word of the label, a keyword or a
     /// control label; a control's hit names the first control holding a word the page lacks.
     pub fn find(self, query: &str) -> Option<Hit> {
-        match find_by_name(query, self.label(), self.keywords()) {
+        match find_by_name(query, &self.label(), self.keywords()) {
             Some(Hit::Keyword(_)) => return Some(Hit::Keyword(self.sole_control(query))),
             Some(hit) => return Some(hit),
             None => {}
         }
-        let page: Vec<&str> = [self.label()]
+        let label = self.label();
+        let page: Vec<&str> = [label.as_str()]
             .into_iter()
             .chain(self.keywords().iter().copied())
             .collect();
@@ -601,7 +603,7 @@ impl Page {
     /// The keyword `query` found the page by: the first holding every word the label lacks, else
     /// the first holding one; None when the label holds them all.
     pub fn keyword_for(self, query: &str) -> Option<&'static str> {
-        keyword_for(query, self.label(), self.keywords())
+        keyword_for(query, &self.label(), self.keywords())
     }
 
     /// Control `id`'s label as shown, without a trailing ":" or "...".
@@ -613,9 +615,10 @@ impl Page {
     /// The one control whose label holds every word of `query` the page label lacks; `None`
     /// when no control or several do ("mouse speed" names three speeds).
     fn sole_control(self, query: &str) -> Option<&'static str> {
+        let label = self.label();
         let rest: Vec<&str> = query
             .split_whitespace()
-            .filter(|w| !word_starts(w, self.label()))
+            .filter(|w| !word_starts(w, &label))
             .collect();
         let rest = rest.join(" ");
         let mut ids = self
@@ -787,11 +790,11 @@ mod tests {
             .chain(
                 PROGRAMS
                     .iter()
-                    .flat_map(|p| p.keywords.iter().map(|k| (p.label, *k))),
+                    .flat_map(|p| p.keywords.iter().map(|k| (p.label.to_string(), *k))),
             );
-        let dead: Vec<(&str, &str)> = words
+        let dead: Vec<(String, &str)> = words
             .inspect(|(owner, k)| assert_eq!(*k, k.to_lowercase(), "{owner}: {k}"))
-            .filter(|(owner, k)| all_words(k, &[owner]))
+            .filter(|(owner, k)| all_words(k, &[owner.as_str()]))
             .collect();
         assert_eq!(dead, [], "keywords the label already finds");
     }

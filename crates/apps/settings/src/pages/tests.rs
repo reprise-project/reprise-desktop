@@ -89,7 +89,7 @@ fn every_bind_names_a_control_on_exactly_one_page() {
     for b in binds() {
         let mut shown = false;
         for s in &sheets {
-            let on: Vec<&str> = Page::all()
+            let on: Vec<String> = Page::all()
                 .filter(|p| s.pages[p.index()].item(b.id()).is_some())
                 .map(Page::label)
                 .collect();
