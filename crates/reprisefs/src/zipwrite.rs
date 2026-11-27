@@ -5,7 +5,7 @@
 //! The temp file is listed and must hold exactly the old entries kept plus the files added, and
 //! is renamed over the zip only while the zip is still the file that was read. A failure, Cancel
 //! or the deadline removes the temp file. A crash leaves it hidden beside the zip
-//! (`.<name>.<tag>.tmp`, as a crashed document save does), the zip untouched; a rewrite holds its
+//! (`.<name>.<tag>.zipwrite`), the zip untouched; a rewrite holds its
 //! temp file locked, and the next rewrite of that zip removes one no rewrite holds that was not
 //! written to for that rewrite's deadline. docs/security.md "Writing into zips" has the rules.
 
@@ -34,6 +34,10 @@ pub const UPDATE_MOST: u64 = 256 << 20;
 
 /// Seconds of running time that replace every rewrite's deadline, to try a timeout by hand.
 const DEADLINE_ENV: &str = "REPRISE_ZIP_DEADLINE_SECS";
+
+/// What a rewrite's temp file ends in, apart from a document save's `.tmp`, which only its
+/// sweep removes.
+const TEMP_SUFFIX: &str = "zipwrite";
 
 /// How often a rewrite's deadline counts the time it ran.
 const WATCH_EVERY: Duration = Duration::from_millis(250);
@@ -486,7 +490,8 @@ fn temp_beside(
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let mut mode = before.mode() & 0o777;
-    let (out, tmp) = crate::ops::create_temp_beside(zip, Some(Permissions::from_mode(0o600)))?;
+    let (out, tmp) =
+        crate::ops::create_temp_ending(zip, Some(Permissions::from_mode(0o600)), TEMP_SUFFIX)?;
     let made = (|| {
         if !archive::flock(&out, libc::LOCK_EX) {
             return Err(std::io::Error::last_os_error());
@@ -513,7 +518,7 @@ fn temp_beside(
 }
 
 /// Removes what rewrites whose process died left in the folder `dir` of `zip`: this user's
-/// `.<name>.<tag>.tmp` files, of `zip` or of any `.zip`, that no rewrite holds locked and nothing
+/// `.<name>.<tag>.zipwrite` files, of `zip` or of any `.zip`, that no rewrite holds locked and nothing
 /// wrote to for `stale`.
 fn sweep_temps(dir: &Path, zip: &Path, stale: Duration) {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -560,9 +565,12 @@ fn sweep_temps(dir: &Path, zip: &Path, stale: Duration) {
     }
 }
 
-/// The name of the file whose temp file `name` is (`.<name>.<16 hex digits>.tmp`).
+/// The name of the file whose rewrite's temp file `name` is (`.<name>.<16 hex digits>.zipwrite`).
 fn temp_of(name: &str) -> Option<&str> {
-    let inner = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let inner = name
+        .strip_prefix('.')?
+        .strip_suffix(TEMP_SUFFIX)?
+        .strip_suffix('.')?;
     let (of, tag) = inner.rsplit_once('.')?;
     let tagged = tag.len() == 16 && tag.bytes().all(|b| b.is_ascii_hexdigit());
     (tagged && !of.is_empty()).then_some(of)
