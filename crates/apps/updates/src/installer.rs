@@ -16,6 +16,7 @@ use reprisekit::controls::installsheet::{self, Choice, Sheet, Stage, Verb};
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 use zbus::Connection;
 
 use crate::model::{Install, split_package_id};
@@ -23,16 +24,18 @@ use crate::{flatpak, guard, packagekit, pkgfile};
 
 /// The desktop entry that opens package files, whose task button shows the progress.
 const DESKTOP_ID: &str = "reprise-install";
-const NO_PACKAGEKIT: &str = "Reprise installs and uninstalls the system's packages through \
-                             PackageKit, which is not installed.";
-const NO_FLATPAK: &str = "Installing a Flatpak needs Flatpak, which is not installed.";
-const NO_APP_ID: &str =
-    "This program's Flatpak app ID is not valid, so Reprise cannot uninstall it.";
-const UNKNOWN: &str = "Unknown";
+fn no_packagekit() -> String {
+    tr!("installer-no-packagekit")
+}
+
+fn unknown() -> String {
+    tr!("installer-unknown")
+}
+
 /// A `.flatpakref`'s size until Flatpak says how much it downloads.
-const SIZE_LATER: &str = "Known once the download starts";
-const LAUNCHER_NOTE: &str = "Only the launcher is removed. The program that installed it keeps \
-                             its own files.";
+fn size_later() -> String {
+    tr!("installer-size-later")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -132,7 +135,7 @@ type Poster = repriseapp::Poster<Msg>;
 
 fn fact(label: &str, value: impl Into<String>) -> (String, String) {
     let v = value.into();
-    let v = if v.is_empty() { UNKNOWN.into() } else { v };
+    let v = if v.is_empty() { unknown() } else { v };
     (label.into(), v)
 }
 
@@ -156,13 +159,9 @@ fn named(ids: &[String]) -> (usize, String) {
     let n = names.len();
     let mut list = names[..n.min(LISTED)].join(", ");
     if n > LISTED {
-        list.push_str(&format!(" and {} more", n - LISTED));
+        list = tr!("installer-more", list = list, count = n - LISTED);
     }
     (n, list)
-}
-
-fn packages(n: usize) -> &'static str {
-    if n == 1 { "package" } else { "packages" }
 }
 
 /// "Uninstalling it also removes 2 packages that need it: a, b." for the other `ids` a change
@@ -172,13 +171,9 @@ fn also(ids: &[String], verb: Verb) -> String {
         return String::new();
     }
     let (n, list) = named(ids);
-    let noun = packages(n);
     match verb {
-        Verb::Uninstall => {
-            let needs = if n == 1 { "needs" } else { "need" };
-            format!("Uninstalling it also removes {n} {noun} that {needs} it: {list}.")
-        }
-        Verb::Install => format!("Installing it also installs or updates {n} {noun}: {list}."),
+        Verb::Uninstall => tr!("installer-also-uninstall", count = n, list = list),
+        Verb::Install => tr!("installer-also-install", count = n, list = list),
     }
 }
 
@@ -190,18 +185,22 @@ fn install_note(t: &packagekit::Touched) -> String {
         return added;
     }
     let (n, list) = named(&t.removed);
-    let removes = format!("removes {n} {}: {list}.", packages(n));
     if added.is_empty() {
-        format!("Installing it {removes}")
+        tr!("installer-note-removes", count = n, list = list)
     } else {
-        format!("{added} It {removes}")
+        tr!(
+            "installer-note-also-removes",
+            added = added,
+            count = n,
+            list = list
+        )
     }
 }
 
 fn pk_text(e: packagekit::Error) -> String {
     match e {
-        packagekit::Error::Unavailable => NO_PACKAGEKIT.into(),
-        packagekit::Error::Dismissed => "The password prompt was dismissed.".into(),
+        packagekit::Error::Unavailable => no_packagekit(),
+        packagekit::Error::Dismissed => tr!("installer-password-dismissed"),
         packagekit::Error::Failed(e) | packagekit::Error::SystemPackage(e) => e,
     }
 }
@@ -232,23 +231,26 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
         Remover::Flatpak(at) => {
             let install = install_of(at);
             let app = (reprisefs::software::flatpak_app(&text, file))
-                .ok_or_else(|| NO_APP_ID.to_string())
+                .ok_or_else(|| tr!("installer-bad-app-id"))
                 .and_then(|app| flatpak::info(install, &app).map(|info| (app, info)));
             match app {
                 Ok((app, info)) => {
-                    let source = format!(
-                        "{} (Flatpak, {} installation)",
-                        info.origin,
-                        install.label()
+                    let source = tr!(
+                        "installer-source-flatpak-install",
+                        origin = info.origin.as_str(),
+                        install = install.label()
                     );
                     let size = pkgfile::size_bytes(&info.size);
                     found.facts = vec![
-                        fact("App ID:", app.clone()),
-                        fact("Version:", info.version),
-                        fact("Size:", size.map_or(info.size, |b| size_text(Some(b)))),
-                        fact("Source:", source),
+                        fact(&tr!("installer-fact-app-id"), app.clone()),
+                        fact(&tr!("installer-fact-version"), info.version),
+                        fact(
+                            &tr!("installer-fact-size"),
+                            size.map_or(info.size, |b| size_text(Some(b))),
+                        ),
+                        fact(&tr!("installer-fact-source"), source),
                     ];
-                    found.note = "Its settings and files in your home folder are kept.".into();
+                    found.note = tr!("installer-note-kept-files");
                     found.ready = true;
                     let r = if info.reference.is_empty() {
                         app
@@ -267,7 +269,7 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
         Remover::Package => match conn {
             Some(c) => zbus::block_on(read_package(c, file, &mut found)),
             None => {
-                found.note = NO_PACKAGEKIT.into();
+                found.note = no_packagekit();
                 Plan::Nothing
             }
         },
@@ -277,7 +279,7 @@ fn read_program(file: &Path, conn: Option<&Connection>) -> (Found, Plan) {
                 let text = reprisefs::apps::read_desktop_file(&reprisefs::apps::find_file(&id)?);
                 reprisefs::apps::parse_desktop_any(&text.ok()?, &id).map(|e| e.name)
             });
-            found.note = LAUNCHER_NOTE.into();
+            found.note = tr!("installer-launcher-note");
             found.ready = true;
             Plan::Launcher(file.to_path_buf())
         }
@@ -301,7 +303,7 @@ fn launcher_facts(text: &str, name_of: impl Fn(&str) -> Option<String>) -> Vec<(
         .filter(|v| !v.is_empty())
     {
         Some(id) => vec![fact(
-            "Installed by:",
+            &tr!("installer-fact-installed-by"),
             name_of(id).unwrap_or_else(|| id.into()),
         )],
         None => Vec::new(),
@@ -312,7 +314,7 @@ async fn read_package(c: &Connection, file: &Path, found: &mut Found) -> Plan {
     let id = match packagekit::owner(c, &file.to_string_lossy()).await {
         Ok(Some(id)) => id,
         Ok(None) => {
-            found.note = "No installed package holds this program.".into();
+            found.note = tr!("installer-note-no-owner");
             return Plan::Nothing;
         }
         Err(e) => {
@@ -323,10 +325,13 @@ async fn read_package(c: &Connection, file: &Path, found: &mut Found) -> Plan {
     let (name, version) = split_package_id(&id);
     let size = packagekit::size(c, &id).await.ok().flatten();
     found.facts = vec![
-        fact("Package:", name),
-        fact("Version:", version),
-        fact("Size:", size_text(size)),
-        fact("Source:", format!("{} packages", os_name())),
+        fact(&tr!("installer-fact-package"), name),
+        fact(&tr!("installer-fact-version"), version),
+        fact(&tr!("installer-fact-size"), size_text(size)),
+        fact(
+            &tr!("installer-fact-source"),
+            tr!("installer-source-packages", os = os_name()),
+        ),
     ];
     match packagekit::remove(c, &id, true, &mut |_, _| {}, &mut |_| {}).await {
         Ok(others) => {
@@ -369,20 +374,18 @@ fn ref_found(r: reprisefs::software::FlatpakRef, found: &mut Found) {
     found.name = r.title;
     found.icon = Some(r.id.clone());
     found.facts = vec![
-        fact("App ID:", r.id),
-        fact("Branch:", r.branch),
-        fact("Size:", SIZE_LATER),
-        fact("Source:", format!("{source} (Flatpak)")),
+        fact(&tr!("installer-fact-app-id"), r.id),
+        fact(&tr!("installer-fact-branch"), r.branch),
+        fact(&tr!("installer-fact-size"), size_later()),
+        fact(
+            &tr!("installer-fact-source"),
+            tr!("installer-source-flatpak", source = source.as_str()),
+        ),
     ];
     found.note = if runtime.is_empty() || runtime == source {
-        "It is installed for every user of this computer, with the runtime it needs from the \
-         same source, which stays added for later installs and updates."
-            .into()
+        tr!("installer-note-ref-same-source")
     } else {
-        format!(
-            "It is installed for every user of this computer, with the runtime it needs from \
-             {runtime}. Both sources stay added for later installs and updates."
-        )
+        tr!("installer-note-ref-runtime", runtime = runtime)
     };
     found.ready = true;
 }
@@ -392,8 +395,8 @@ fn ref_found(r: reprisefs::software::FlatpakRef, found: &mut Found) {
 fn packager(name: String, checked: bool) -> String {
     match (name.is_empty(), checked) {
         (true, _) => String::new(),
-        (false, true) => format!("{name} (signature checked when it installs)"),
-        (false, false) => format!("(unverified) {name}"),
+        (false, true) => tr!("installer-packager-checked", name = name),
+        (false, false) => tr!("installer-packager-unverified", name = name),
     }
 }
 
@@ -418,11 +421,11 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
     };
     let plan = match pkgfile::kind_of(path) {
         None => {
-            found.note = "Reprise cannot install this kind of file.".into();
+            found.note = tr!("installer-note-bad-kind");
             Plan::Nothing
         }
         Some(pkgfile::Kind::FlatpakRef | pkgfile::Kind::FlatpakBundle) if !flatpak::present() => {
-            found.note = NO_FLATPAK.into();
+            found.note = tr!("installer-no-flatpak");
             Plan::Nothing
         }
         Some(pkgfile::Kind::FlatpakRef) => {
@@ -433,7 +436,7 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
                     flatpak_args("--from")
                 }
                 None => {
-                    found.note = "This file does not name a Flatpak app.".into();
+                    found.note = tr!("installer-note-not-flatpak");
                     Plan::Nothing
                 }
             }
@@ -442,12 +445,15 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
             let size = std::fs::metadata(path).ok().map(|m| m.len());
             found.name = file_name.trim_end_matches(".flatpak").to_string();
             found.facts = vec![
-                fact("File:", file_name),
-                fact("Version:", ""),
-                fact("Size:", size_text(size)),
-                fact("Source:", "Flatpak bundle file"),
+                fact(&tr!("installer-fact-file"), file_name),
+                fact(&tr!("installer-fact-version"), ""),
+                fact(&tr!("installer-fact-size"), size_text(size)),
+                fact(
+                    &tr!("installer-fact-source"),
+                    tr!("installer-source-bundle"),
+                ),
             ];
-            found.note = "It is installed for every user of this computer.".into();
+            found.note = tr!("installer-note-bundle");
             found.ready = true;
             flatpak_args("--bundle")
         }
@@ -464,11 +470,11 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
                     };
                     found.name = facts.name.clone();
                     found.facts = vec![
-                        fact("Package:", facts.name.clone()),
-                        fact("Version:", facts.version),
-                        fact("Size:", size_text(facts.size)),
+                        fact(&tr!("installer-fact-package"), facts.name.clone()),
+                        fact(&tr!("installer-fact-version"), facts.version),
+                        fact(&tr!("installer-fact-size"), size_text(facts.size)),
                         fact(
-                            "Packager:",
+                            &tr!("installer-fact-packager"),
                             packager(
                                 facts.packager,
                                 signed
@@ -485,11 +491,11 @@ fn read_file(path: &Path, signed: bool, conn: Option<&Connection>) -> (Found, Pl
                             zbus::block_on(simulate_file(c, &arg, &facts.name, &mut found))
                         }
                         Some(_) if reprisefs::software::packagekit_present() => {
-                            found.note = "This system's packages are of another kind.".into();
+                            found.note = tr!("installer-note-other-packages");
                             Plan::Nothing
                         }
                         _ => {
-                            found.note = NO_PACKAGEKIT.into();
+                            found.note = no_packagekit();
                             Plan::Nothing
                         }
                     }
@@ -541,11 +547,7 @@ fn pacman_plan(path: &Path, name: &str, conflicts: &[String], found: &mut Found)
 /// "It conflicts with 1 installed package: foo. Uninstall it first."
 fn conflict_note(names: &[String]) -> String {
     let (n, list) = named(names);
-    let them = if n == 1 { "it" } else { "them" };
-    format!(
-        "It conflicts with {n} installed {}: {list}. Uninstall {them} first.",
-        packages(n)
-    )
+    tr!("installer-conflicts", count = n, list = list)
 }
 
 async fn simulate_file(c: &Connection, file: &str, name: &str, found: &mut Found) -> Plan {
@@ -591,7 +593,7 @@ fn run(
     stop: &Mutex<Stopper>,
 ) -> Result<(), Failure> {
     lock(stop).new_run();
-    let mut doing = "Preparing".to_string();
+    let mut doing = tr!("installer-preparing");
     let mut report = |fraction: Option<f64>, line: Option<String>| {
         if let Some(l) = line {
             doing = l;
@@ -612,27 +614,26 @@ fn run(
         Err(e) => Err(Failure::Text(pk_text(e))),
     };
     let done = match (plan, conn) {
-        (Plan::Nothing, _) => Err(Failure::Text("There is nothing to do.".into())),
+        (Plan::Nothing, _) => Err(Failure::Text(tr!("installer-nothing-to-do"))),
         (Plan::Pacman(path), _) => pkgfile::pacman_install(path, &mut |f, s| report(Some(f), s))
             .map_err(|e| match e {
                 pkgfile::PacmanError::Dismissed => Failure::Dismissed,
                 pkgfile::PacmanError::Failed(t) => Failure::Text(t),
             }),
         (Plan::Launcher(file), _) => reprisefs::software::remove_launcher(file)
-            .map_err(|e| Failure::Text(format!("The launcher could not be removed: {e}."))),
+            .map_err(|e| Failure::Text(tr!("installer-launcher-failed", why = e.to_string()))),
         (Plan::Flatpak { at, args }, _) => {
             let at = install_of(*at);
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            let what = match verb {
-                Verb::Install => "Installing",
-                Verb::Uninstall => "Uninstalling",
-            };
             let before = flatpak::refs(at);
             flatpak::adopt_orphans();
             let ran = flatpak::follow(
                 &args,
                 &mut |id, f| {
-                    let line = (!id.is_empty()).then(|| format!("{what} {id}"));
+                    let line = (!id.is_empty()).then(|| match verb {
+                        Verb::Install => tr!("installer-doing-install", id = id),
+                        Verb::Uninstall => tr!("installer-doing-uninstall", id = id),
+                    });
                     report(Some(f), line);
                 },
                 &mut |fd| {
@@ -651,7 +652,7 @@ fn run(
                 (ran, _) => ran.map_err(Failure::Text),
             }
         }
-        (_, None) => Err(Failure::Text("There is no system bus.".into())),
+        (_, None) => Err(Failure::Text(tr!("installer-no-bus"))),
         (Plan::Remove(id), Some(c)) => pk(zbus::block_on(packagekit::remove(
             c,
             id,
@@ -667,8 +668,8 @@ fn run(
     let cancelled = std::mem::take(&mut lock(stop).cancelled);
     match done {
         Err(Failure::Text(_)) if cancelled => Err(Failure::Text(match verb {
-            Verb::Install => "The install was cancelled.".into(),
-            Verb::Uninstall => "The uninstall was cancelled.".into(),
+            Verb::Install => tr!("installer-cancelled-install"),
+            Verb::Uninstall => tr!("installer-cancelled-uninstall"),
         })),
         done => done,
     }
@@ -682,7 +683,7 @@ fn settle_cancel(
     verb: Verb,
     report: &mut dyn FnMut(Option<f64>, Option<String>),
 ) -> Result<(), ()> {
-    report(None, Some("Waiting for Flatpak to stop".into()));
+    report(None, Some(tr!("installer-waiting-flatpak")));
     let Some(after) = flatpak::settled_refs(at) else {
         return Err(());
     };
@@ -690,10 +691,7 @@ fn settle_cancel(
         flatpak::Settled::Done => Ok(()),
         flatpak::Settled::Undo(refs) if refs.is_empty() => Err(()),
         flatpak::Settled::Undo(refs) => {
-            report(
-                None,
-                Some("Removing what it installed before the cancel".into()),
-            );
+            report(None, Some(tr!("installer-undoing")));
             let mut args = vec!["uninstall", flatpak::flag(at), "-y"];
             args.extend(refs.iter().map(String::as_str));
             let undone = flatpak::follow(
@@ -744,7 +742,7 @@ fn work(target: Target, go: Receiver<()>, poster: Poster, stop: Arc<Mutex<Stoppe
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default(),
-                    note: format!("Reprise could not read the file: {e}."),
+                    note: tr!("installer-file-unreadable", why = e.to_string()),
                     ..Found::default()
                 };
                 (found, Plan::Nothing, Verb::Install, None)
@@ -880,10 +878,10 @@ impl Installer {
                         Stage::Reading | Stage::Asking { .. } | Stage::Running { .. }
                     ) {
                         let why = match self.sheet.verb {
-                            Verb::Install => "The install stopped unexpectedly.",
-                            Verb::Uninstall => "The uninstall stopped unexpectedly.",
+                            Verb::Install => tr!("installer-stopped-install"),
+                            Verb::Uninstall => tr!("installer-stopped-uninstall"),
                         };
-                        self.worker_msg(Msg::Ended(Err(Failure::Text(why.into()))));
+                        self.worker_msg(Msg::Ended(Err(Failure::Text(why))));
                     }
                 }
             }
@@ -920,8 +918,8 @@ impl Installer {
             }
             Msg::Download(bytes) => {
                 for (label, value) in &mut self.sheet.facts {
-                    if label == "Size:" && value == SIZE_LATER {
-                        *value = format!("Up to {} to download", size_text(Some(bytes)));
+                    if *label == tr!("installer-fact-size") && *value == size_later() {
+                        *value = tr!("installer-size-up-to", size = size_text(Some(bytes)));
                         self.stale = true;
                     }
                 }
@@ -968,7 +966,7 @@ impl Installer {
             Choice::Go if self.sheet.stage == (Stage::Asking { ready: true }) => {
                 self.set_stage(Stage::Running {
                     fraction: None,
-                    doing: "Preparing".into(),
+                    doing: tr!("installer-preparing"),
                     cancellable: false,
                 });
                 if let Some(go) = &self.go {
@@ -1303,7 +1301,14 @@ mod tests {
         for level in ["PackageNever\n", "Never\n", ""] {
             assert!(!pkgfile::sigs_checked(level), "{level:?} ignores a .sig");
         }
-        assert_eq!(fact("Packager:", packager(String::new(), false)).1, UNKNOWN);
+        assert_eq!(
+            fact(
+                &tr!("installer-fact-packager"),
+                packager(String::new(), false)
+            )
+            .1,
+            unknown()
+        );
     }
 
     #[test]
@@ -1385,7 +1390,10 @@ mod tests {
     #[test]
     fn a_flatpakref_size_fills_in_once_flatpak_tells_it() {
         let mut app = Installer::new(Target::Install("/d/x.flatpakref".into()));
-        let facts = vec![fact("App ID:", "org.example.X"), fact("Size:", SIZE_LATER)];
+        let facts = vec![
+            fact(&tr!("installer-fact-app-id"), "org.example.X"),
+            fact(&tr!("installer-fact-size"), size_later()),
+        ];
         app.worker_msg(Msg::Found(Found {
             facts,
             ready: true,
@@ -1402,7 +1410,7 @@ mod tests {
 
         let mut bundle = Installer::new(Target::Install("/d/x.flatpak".into()));
         bundle.worker_msg(Msg::Found(Found {
-            facts: vec![fact("Size:", "12.0 MB")],
+            facts: vec![fact(&tr!("installer-fact-size"), "12.0 MB")],
             ready: true,
             ..Found::default()
         }));

@@ -1,6 +1,7 @@
 //! What a package file holds, read with the system's own tools in the C locale (`pacman -Qip`,
 //! `dpkg-deb --field`), and an Arch package installed through `pkexec pacman -U`.
 
+use reprisekit::tr;
 use std::ffi::OsStr;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -302,13 +303,13 @@ fn output(program: &str, args: &[&OsStr]) -> Result<String, String> {
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .output()
-        .map_err(|_| format!("{program} is not installed, so Reprise cannot read this package."))?;
+        .map_err(|_| tr!("pkgfile-no-tool", program = program))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
         let line = err.lines().map(str::trim).rfind(|l| !l.is_empty());
-        Err(line.unwrap_or("The package could not be read.").to_string())
+        Err(line.map_or_else(|| tr!("pkgfile-unreadable"), str::to_string))
     }
 }
 
@@ -324,10 +325,10 @@ pub fn read(path: &Path, kind: Kind) -> Result<Facts, String> {
             args.extend(fields.map(os));
             parse_deb(&output("dpkg-deb", &args)?)
         }
-        Kind::FlatpakRef | Kind::FlatpakBundle => return Err("Not a package file.".into()),
+        Kind::FlatpakRef | Kind::FlatpakBundle => return Err(tr!("pkgfile-not-a-package")),
     };
     if facts.name.is_empty() {
-        return Err("The package does not name itself.".into());
+        return Err(tr!("pkgfile-no-name"));
     }
     Ok(facts)
 }
@@ -539,7 +540,7 @@ impl PacmanFollow {
             self.done = self.done.max(DOWNLOAD_SHARE * here);
         }
         let file = label.split_whitespace().next()?;
-        Some(format!("Downloading {file}"))
+        Some(tr!("step-download", name = file))
     }
 }
 
@@ -615,7 +616,7 @@ pub fn pacman_install(
         // cmd drops its copy of the slave here, so reading the master ends when pacman exits.
         let child = cmd
             .spawn()
-            .map_err(|e| PacmanError::Failed(format!("pkexec could not be started: {e}.")))?;
+            .map_err(|e| PacmanError::Failed(tr!("pkgfile-pkexec-failed", why = e.to_string())))?;
         (child, master)
     };
     // stderr drains on its own thread, so a chatty one never fills its pipe.
@@ -656,10 +657,10 @@ pub fn pacman_install(
         _ => {
             let line = stderr.lines().map(str::trim).rfind(|l| !l.is_empty());
             let line = line.map(|l| l.strip_prefix("error: ").unwrap_or(l));
-            Err(PacmanError::Failed(
-                line.unwrap_or("pacman did not install the package.")
-                    .to_string(),
-            ))
+            Err(PacmanError::Failed(line.map_or_else(
+                || tr!("pkgfile-pacman-failed"),
+                str::to_string,
+            )))
         }
     }
 }

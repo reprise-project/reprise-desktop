@@ -1,5 +1,6 @@
 //! The PackageKit side: distribution updates on the system bus. Every request is a transaction (`CreateTransaction`, a method on the object, answers as signals until `Finished`). Refreshing and listing need no password; installing asks polkit, which reprise-polkit prompts for.
 
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -122,9 +123,9 @@ fn restart(kind: u32) -> Restart {
 fn step(status: u32, package_id: &str) -> Option<String> {
     let (name, _) = split_package_id(package_id);
     match status {
-        STATUS_DOWNLOAD => Some(format!("Downloading {name}")),
-        STATUS_INSTALL | STATUS_UPDATE => Some(format!("Installing {name}")),
-        STATUS_REMOVE => Some(format!("Removing {name}")),
+        STATUS_DOWNLOAD => Some(tr!("step-download", name = name)),
+        STATUS_INSTALL | STATUS_UPDATE => Some(tr!("step-install", name = name)),
+        STATUS_REMOVE => Some(tr!("step-remove", name = name)),
         _ => None,
     }
 }
@@ -312,14 +313,12 @@ async fn transaction_within(
                 if let Err(e) = cancel(conn, tid.as_str()).await {
                     log::debug!("Cancel: {e}");
                 }
-                return Err(Error::Failed(
-                    "PackageKit took too long and was stopped.".into(),
-                ));
+                return Err(Error::Failed(tr!("pk-timeout")));
             }
         };
         let m = match sig {
             Signal::OwnerChanged => {
-                return Err(Error::Failed("PackageKit stopped.".into()));
+                return Err(Error::Failed(tr!("pk-stopped")));
             }
             Signal::Message(m) => m,
         };
@@ -362,7 +361,7 @@ async fn transaction_within(
                 let (exit, _) = body.deserialize::<(u32, u32)>().unwrap_or((0, 0));
                 return match exit {
                     EXIT_SUCCESS => Ok(said),
-                    EXIT_CANCELLED => Err(Error::Failed(cancelled(&request).into())),
+                    EXIT_CANCELLED => Err(Error::Failed(cancelled(&request))),
                     _ => Err(refusal(error, reprisebus::polkit::dismissed)),
                 };
             }
@@ -396,7 +395,7 @@ async fn transaction_within(
             _ => {}
         }
     }
-    Err(Error::Failed("PackageKit went quiet.".into()))
+    Err(Error::Failed(tr!("pk-quiet")))
 }
 
 /// The package updates there are. With `refresh`, the lists are downloaded first, unless an offline update is prepared: PackageKit discards that update once the lists change. A refresh that fails (no network) leaves the old lists, still worth reading.
@@ -445,7 +444,7 @@ fn refusal(error: Option<(u32, String)>, dismissed: impl FnOnce() -> bool) -> Er
         Some((ERROR_NOT_AUTHORIZED, _)) if dismissed() => Error::Dismissed,
         Some((ERROR_SYSTEM_PACKAGE, details)) => Error::SystemPackage(details),
         Some((_, details)) => Error::Failed(details),
-        None => Error::Failed("PackageKit did not finish the request.".into()),
+        None => Error::Failed(tr!("pk-unfinished")),
     }
 }
 
@@ -459,11 +458,11 @@ pub async fn install(
 }
 
 /// What a cancelled `request` says.
-fn cancelled(request: &Request) -> &'static str {
+fn cancelled(request: &Request) -> String {
     match request {
-        Request::Remove { .. } => "The uninstall was cancelled.",
-        Request::InstallFiles { .. } => "The install was cancelled.",
-        _ => "The update was cancelled.",
+        Request::Remove { .. } => tr!("cancelled-uninstall"),
+        Request::InstallFiles { .. } => tr!("cancelled-install"),
+        _ => tr!("cancelled-update"),
     }
 }
 

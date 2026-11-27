@@ -7,6 +7,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("updates");
+
 mod flatpak;
 mod fwupd;
 mod guard;
@@ -27,6 +29,7 @@ use repriseapp::{App, BTN_LEFT, Ctx, Event, PointerInput, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 
 use model::{Announced, Phase, Restart, Update};
 
@@ -164,7 +167,7 @@ impl UpdatesApp {
                 &summary,
                 &body,
                 tray::RESTART_BALLOON,
-                &tray::RESTART_BUTTONS,
+                &tray::restart_buttons().each_ref().map(String::as_str),
             );
         }
     }
@@ -193,7 +196,7 @@ impl UpdatesApp {
         }
         self.phase = Phase::Installing {
             fraction: None,
-            doing: "Preparing to install".into(),
+            doing: tr!("install-preparing"),
             request: None,
         };
         if let Some(j) = &self.jobs {
@@ -272,7 +275,7 @@ impl UpdatesApp {
                         log::warn!("installing updates: {why}");
                         let message = model::install_failed(&why);
                         if self.hidden {
-                            self.notify(("Updates were not installed".into(), why), true);
+                            self.notify((tr!("install-failed-title"), why), true);
                         }
                         self.phase = Phase::Failed(message);
                     }
@@ -374,7 +377,7 @@ impl UpdatesApp {
 
 impl App for UpdatesApp {
     fn title(&self) -> String {
-        tray::TITLE.into()
+        tray::title()
     }
 
     fn app_id(&self) -> String {

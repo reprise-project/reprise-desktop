@@ -17,6 +17,7 @@ use reprisekit::look::widgets::draw_progress;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::{kit_tr, tr};
 
 use crate::model::{self, Phase, Restart, Update};
 
@@ -28,7 +29,13 @@ const MSG_X: i32 = 56;
 const MSG_W: i32 = CLIENT.0 - MSG_X - MARGIN;
 const MSG_LINES: usize = 3;
 pub const LIST: Rect = Rect::new(MARGIN, 60, CLIENT.0 - 2 * MARGIN, 228);
-const COLUMNS: [(&str, i32); 3] = [("Name", 214), ("Version", 132), ("Type", 128)];
+fn columns() -> [(String, i32); 3] {
+    [
+        (tr!("column-name"), 214),
+        (tr!("column-version"), 132),
+        (tr!("column-type"), 128),
+    ]
+}
 const ABOUT_Y: i32 = 296;
 const PROGRESS_Y: i32 = 318;
 const BAR: Rect = Rect::new(MARGIN, 336, CLIENT.0 - 2 * MARGIN, 16);
@@ -86,7 +93,7 @@ impl Window {
             Item::new(
                 "check",
                 Rect::new(MARGIN, BTN_Y, CHECK_W, BUTTON_H),
-                button("&Check Now", true, false),
+                button(&tr!("check-now"), true, false),
             ),
             Item::new(
                 "restart",
@@ -96,12 +103,12 @@ impl Window {
             Item::new(
                 "act",
                 Rect::new(ACT_X, BTN_Y, ACT_W, BUTTON_H),
-                button("&Install", false, true),
+                button(&tr!("install"), false, true),
             ),
             Item::new(
                 "close",
                 Rect::new(CLOSE_X, BTN_Y, BUTTON_W, BUTTON_H),
-                button("Close", true, false),
+                button(&kit_tr!("close"), true, false),
             ),
         ];
         let mut form = Form::new(items);
@@ -109,7 +116,7 @@ impl Window {
         Window {
             form,
             list: ListView {
-                columns: COLUMNS.iter().map(|(t, w)| Column::new(t, *w)).collect(),
+                columns: columns().iter().map(|(t, w)| Column::new(t, *w)).collect(),
                 checks: Some(Vec::new()),
                 ..ListView::default()
             },
@@ -172,7 +179,7 @@ impl Window {
             let g = u.origin.group();
             if i == 0 || self.rows[i - 1].origin.group() != g {
                 self.list.groups.push(Group {
-                    title: g.title().into(),
+                    title: g.title(),
                     first: i,
                 });
             }
@@ -217,16 +224,16 @@ impl Window {
         );
         let install = !busy && !held && picked > 0;
         let (label, act, enabled) = if restart && !install {
-            ("&Restart Now", Outcome::Restart, true)
+            (tr!("restart-now"), Outcome::Restart, true)
         } else {
-            ("&Install", Outcome::Install, install)
+            (tr!("install"), Outcome::Install, install)
         };
         if let Some(item) = self.form.item_mut("act") {
-            item.control = button(label, enabled, true);
+            item.control = button(&label, enabled, true);
         }
         self.restart_beside = restart && install;
         let beside = if self.restart_beside {
-            button("&Restart Now", true, false)
+            button(&tr!("restart-now"), true, false)
         } else {
             Control::Blank
         };

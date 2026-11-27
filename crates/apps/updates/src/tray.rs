@@ -2,13 +2,23 @@
 
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
+use reprisekit::tr;
+
 use crate::model::TrayLook;
 
 pub const BUS_NAME: &str = "reprise.updates";
+/// The title the tray item is registered under; `reprisetray` takes a static string.
 pub const TITLE: &str = "Software Updates";
+
+/// The window title.
+pub fn title() -> String {
+    tr!("updates-title")
+}
 /// The tag of the restart balloon, whose buttons are Restart Now and Later.
 pub const RESTART_BALLOON: u32 = 1;
-pub const RESTART_BUTTONS: [&str; 2] = ["Restart Now", "Later"];
+pub fn restart_buttons() -> [String; 2] {
+    [tr!("balloon-restart-now"), tr!("balloon-later")]
+}
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
@@ -28,8 +38,8 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
 
 pub fn rows() -> Rows<TrayMsg> {
     let mut rows = Rows::default();
-    rows.add(TrayMsg::Open, |id| Node::row(id, "Review Updates"))
-        .add(TrayMsg::Check, |id| Node::row(id, "Check for Updates"));
+    rows.add(TrayMsg::Open, |id| Node::row(id, tr!("tray-review")))
+        .add(TrayMsg::Check, |id| Node::row(id, tr!("tray-check")));
     rows
 }
 
