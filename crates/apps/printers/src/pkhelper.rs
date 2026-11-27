@@ -4,8 +4,9 @@
 use reprisebus::mutex::lock;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::time::Duration;
 
-use reprisebus::polkit::Refusal;
+use reprisebus::polkit::{PROMPT_TIMEOUT, Refusal, asking};
 
 use crate::cups::{Error, Result};
 
@@ -104,6 +105,9 @@ fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> E
     match reprisebus::polkit::refusal(&e, |n| n == NOT_PRIVILEGED, dismissed) {
         Some(Refusal::Dismissed) => return Error::Dismissed,
         Some(Refusal::Denied) => return Error::NotAuthorized,
+        Some(Refusal::TimedOut) if reprisebus::polkit::gave_up(&e) => {
+            return Error::Refused(reprisebus::polkit::GAVE_UP.into());
+        }
         Some(Refusal::TimedOut) | None => {}
     }
     log::warn!("{method}: {e}");
@@ -146,12 +150,12 @@ impl Bus {
     {
         let proxy = self.proxy()?;
         let call = || {
-            reprisebus::wait(proxy.call_with_flags(
+            let call = proxy.call_with_flags(
                 method,
                 zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
                 body,
-            ))
-            .map(Option::unwrap_or_default)
+            );
+            reprisebus::wait(asking(PROMPT_TIMEOUT, true, call)).map(Option::unwrap_or_default)
         };
         send_with(method, call, || self.running())
     }
@@ -179,18 +183,27 @@ impl Bus {
 /// after the old instance left starts a new one.
 fn send_with(
     method: &str,
-    mut call: impl FnMut() -> zbus::Result<String>,
+    call: impl FnMut() -> zbus::Result<String>,
     running: impl Fn() -> bool,
 ) -> Result<()> {
-    let error = match call() {
+    let error = resent(method, call, running)?;
+    outcome(method, &error)
+}
+
+/// [`send_with`]'s answer before its outcome is read.
+fn resent<T>(
+    method: &str,
+    mut call: impl FnMut() -> zbus::Result<T>,
+    running: impl Fn() -> bool,
+) -> Result<T> {
+    match call() {
         Err(e) if quit_under(&e, running) => {
             log::info!("{method}: cups-pk-helper quit under the call ({e}), sending it again");
             call()
         }
         r => r,
     }
-    .map_err(|e| bus_error(method, e))?;
-    outcome(method, &error)
+    .map_err(|e| bus_error(method, e))
 }
 
 /// How long an instance that dropped its object may take to leave the bus.
@@ -264,14 +277,19 @@ impl Helper for Bus {
     fn devices(&self, timeout: i32, exclude: &[&str]) -> Result<BTreeMap<String, String>> {
         let none: &[&str] = &[];
         let proxy = self.proxy()?;
-        let (error, found): (String, BTreeMap<String, String>) =
-            reprisebus::wait(proxy.call_with_flags(
+        let body = (timeout, 0i32, none, exclude);
+        // The search runs for `timeout` seconds once the prompt is answered.
+        let limit = PROMPT_TIMEOUT + Duration::from_secs(u64::try_from(timeout).unwrap_or(0));
+        let call = || {
+            let call = proxy.call_with_flags(
                 "DevicesGet",
                 zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
-                &(timeout, 0i32, none, exclude),
-            ))
-            .map_err(|e| bus_error("DevicesGet", e))?
-            .unwrap_or_default();
+                &body,
+            );
+            reprisebus::wait(asking(limit, true, call)).map(Option::unwrap_or_default)
+        };
+        let (error, found): (String, BTreeMap<String, String>) =
+            resent("DevicesGet", call, || self.running())?;
         outcome("DevicesGet", &error).map(|()| found)
     }
 }
@@ -372,6 +390,15 @@ mod tests {
             || panic!("only NotPrivileged asks whether the prompt was dismissed"),
         );
         assert!(matches!(other, Error::Refused(_)));
+    }
+
+    #[test]
+    fn a_call_that_gave_up_says_the_change_may_not_have_been_made() {
+        let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        assert_eq!(
+            describe("PrinterAdd", late, || panic!("a timeout is no dismissal")),
+            Error::Refused(reprisebus::polkit::GAVE_UP.into())
+        );
     }
 
     fn no_reply() -> zbus::Error {
