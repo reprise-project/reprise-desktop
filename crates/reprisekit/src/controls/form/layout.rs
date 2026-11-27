@@ -154,10 +154,20 @@ impl Form {
     }
 
     /// The rects every item takes as built, before [`Form::fit_text`] moves them and notes
-    /// flow, with what each holds for the fit.
-    fn fit_input(&self, text: &TextRenderer, px: u32) -> (Vec<Rect>, Vec<fit::Kind>) {
+    /// flow, with what each holds for the fit: text drawn at `px` on a paint at scale `s`, in
+    /// 1x px.
+    fn fit_input(&self, text: &TextRenderer, px: u32, s: i32) -> (Vec<Rect>, Vec<fit::Kind>) {
         let (cm, u) = (self.controls(), self.units());
-        let measure = |s: &str| text.ink_width(&crate::text::split_mnemonic(s).0, false, px);
+        // A glyph run drawn at `s` times the 1x size can ink wider than `s` times its 1x width:
+        // the 1x need holds both.
+        let ink = |plain: &str| {
+            let one = text.ink_width(plain, false, px / s as u32);
+            match s {
+                1 => one,
+                _ => one.max((text.ink_width(plain, false, px) + s - 1) / s),
+            }
+        };
+        let measure = |t: &str| ink(&crate::text::split_mnemonic(t).0);
         self.items
             .iter()
             .map(|it| {
@@ -170,9 +180,7 @@ impl Form {
                     } => fit::Kind::Text {
                         need: measure(text),
                     },
-                    Control::Link { label, .. } => fit::Kind::Text {
-                        need: text.ink_width(label, false, px),
-                    },
+                    Control::Link { label, .. } => fit::Kind::Text { need: ink(label) },
                     Control::Label {
                         text,
                         align: Align::Right,
@@ -215,13 +223,13 @@ impl Form {
             .unzip()
     }
 
-    /// Lays the form out for the text `text` sets at `px`: a label or a combo's value wider
-    /// than its rect takes the room right of it, moving the column after it when there is too
-    /// little ([`fit::fit`]). Run by `draw` after [`Form::drawn_with`] and before
-    /// [`Form::lay_out_notes`], which rewraps the notes at the widths the fit leaves.
-    pub(super) fn fit_text(&self, text: &TextRenderer, px: u32) {
+    /// Lays the form out for the text `text` sets at `px` on a paint at scale `s`: a label or a
+    /// combo's value wider than its rect takes the room right of it, moving the column after it
+    /// when there is too little ([`fit::fit`]). Run by `draw` after [`Form::drawn_with`] and
+    /// before [`Form::lay_out_notes`], which rewraps the notes at the widths the fit leaves.
+    pub(super) fn fit_text(&self, text: &TextRenderer, px: u32, s: i32) {
         let text = text.dialog(self.font);
-        let (rects, kinds) = self.fit_input(text, px);
+        let (rects, kinds) = self.fit_input(text, px, s.max(1));
         let fits = rects.iter().zip(&kinds).all(|(r, k)| match *k {
             fit::Kind::Text { need }
             | fit::Kind::TextRight { need }
@@ -251,7 +259,7 @@ impl Form {
     /// rows than it was built with, even where it flows and pushes the page down, or keeps a
     /// line wider than its rect.
     pub fn overflows(&self, text: &TextRenderer, px: u32) -> Vec<(&'static str, i32)> {
-        self.fit_text(text, px);
+        self.fit_text(text, px, 1);
         self.lay_out_notes(text, 1, px);
         let text = text.dialog(self.font);
         let (cm, u) = (self.controls(), self.units());
@@ -293,7 +301,7 @@ impl Form {
     /// The laid-out rects a check box's or radio's label runs in, for text `text` at `px`
     /// ([`Form::fit_text`] has run).
     pub(super) fn choice_room(&self, text: &TextRenderer, px: u32) -> ChoiceRoom {
-        let (_, kinds) = self.fit_input(text, px);
+        let (_, kinds) = self.fit_input(text, px, 1);
         let wide = |it: &Item| match it.control {
             Control::Check { .. } => it.rect.width > CHECK,
             Control::Radio { .. } => it.rect.width > RADIO_ROW,

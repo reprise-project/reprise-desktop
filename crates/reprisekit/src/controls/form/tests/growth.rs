@@ -515,10 +515,11 @@ fn a_bar_hanging_past_the_descent_keeps_its_ink() {
     );
 }
 
-/// A canvas at 1x drawn at scale 2 with twice the px lays a label wider than its rect, and a
-/// button wider than its label room, out as scale 1 does.
+/// A canvas at 1x drawn at scale 2 with twice the px widens a label wider than its rect, and a
+/// button wider than its label room, as scale 1 does, by as much as the text drawn at twice the
+/// px needs, so neither is shortened.
 #[test]
-fn a_form_fits_its_text_alike_at_scale_1_and_2() {
+fn a_form_fits_its_text_at_scale_1_and_2() {
     crate::pins::fonts();
     let t = tr();
     let f = Form::new(vec![
@@ -535,17 +536,25 @@ fn a_form_fits_its_text_alike_at_scale_1_and_2() {
     let laid = |s: i32| {
         let theme = Theme::default().scaled(s);
         let mut c = Canvas::new(200 * s as u32, 80 * s as u32);
-        draw(&mut c, &t, &theme.paint(), &f, false, theme.fonts.size_px);
-        ["l", "e", "b"].map(|id| f.rect(id))
+        let ((), short) = crate::pins::shortened_text(|| {
+            draw(&mut c, &t, &theme.paint(), &f, false, theme.fonts.size_px)
+        });
+        assert_eq!(short, Vec::new(), "nothing shortened at scale {s}");
+        ["l", "e", "b"].map(|id| f.rect(id).unwrap())
     };
-    let one = laid(1);
-    assert_ne!(
-        one[1],
-        Some(Rect::new(44, 10, 120, 21)),
-        "the label moves the field"
+    let [l, e, b] = laid(1);
+    assert_ne!(e, Rect::new(44, 10, 120, 21), "the label moves the field");
+    assert_ne!(b, Rect::new(10, 40, 40, 23), "the button widens");
+    let [l2, e2, b2] = laid(2);
+    assert!(
+        l2.width >= l.width && b2.width >= b.width,
+        "as wide at scale 2"
     );
-    assert_ne!(one[2], Some(Rect::new(10, 40, 40, 23)), "the button widens");
-    assert_eq!(laid(2), one);
+    assert_eq!(
+        e2.right(),
+        e.right(),
+        "the field gives up width on its left"
+    );
 }
 
 /// A label, a check box's and a radio's label whose first glyph inks left of its pen (DejaVu
@@ -799,4 +808,46 @@ fn a_forms_trackbars_grow_twice_at_200_percent_in_every_look() {
         }
     }
     crate::pins::check("form/trackbars_200", &got);
+}
+
+/// A combo sized for its rows at 1x widens in the fit for a longer row, and that row is drawn
+/// whole, neither cut nor shortened, at scale 2 by the paint and by the canvas, at every text
+/// size.
+#[test]
+fn a_combo_fitted_to_its_widest_row_keeps_it_at_scale_2() {
+    crate::pins::fonts();
+    let t = tr();
+    let rows = [
+        "Every 5 minutes",
+        "At log on",
+        "Once per startup, at log on",
+    ];
+    let mut cut = Vec::new();
+    for pct in [100, 125, 150, 175, 200] {
+        for (s, by_canvas) in [(1, false), (2, false), (2, true)] {
+            let mut f = Form::new(vec![
+                Item::label_at("l", 10, 14, 60, "Run:"),
+                Item::combo("c", 80, 10, 100, &rows, rows.len()),
+                Item::edit("e", Rect::new(80, 40, 300, 21), "", true),
+            ]);
+            if let Some(Control::Combo(c)) = f.item_mut("c").map(|it| &mut it.control) {
+                c.selected = 2;
+            }
+            let (ps, cs) = if by_canvas { (1, s) } else { (s, 1) };
+            let theme = Theme::default().with_text_size(pct).scaled(ps);
+            let mut c = Canvas::with_scale(600 * ps as u32, 120 * ps as u32, cs);
+            let (((), short), cuts) = crate::pins::clipped_ink(|| {
+                crate::pins::shortened_text(|| {
+                    draw(&mut c, &t, &theme.paint(), &f, false, theme.fonts.size_px)
+                })
+            });
+            cut.extend(cuts.into_iter().map(|c| (pct, s, by_canvas, c.text)));
+            cut.extend(short.into_iter().map(|c| (pct, s, by_canvas, c.text)));
+        }
+    }
+    assert_eq!(
+        cut,
+        Vec::new(),
+        "(text size, scale, by the canvas, row cut or shortened)"
+    );
 }
