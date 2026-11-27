@@ -1048,6 +1048,7 @@ fn rename_sets_a_drives_label_through_udisks() {
         "A drive's name cannot start with a hyphen (-)."
     );
 
+    let stick_row = row(&ex, "/run/media/u/STICK");
     rename(&mut ex, &mut ctx, "A:B");
     assert_eq!(
         box_text(&mut ex, &mut ctx),
@@ -1055,6 +1056,21 @@ fn rename_sets_a_drives_label_through_udisks() {
          * ? . , ; : / \\ | + = < > [ ] \"",
         "refused before UDisks2 is asked"
     );
+    let (i, edit) = ex.sv.edit.as_mut().expect("the rename box is open again");
+    assert_eq!(
+        (*i, edit.text.as_str()),
+        (stick_row, "A:B"),
+        "the box holds the typed name to fix"
+    );
+    edit.key(reprisekit::textedit::EditKey::Insert("AB".into()));
+    assert_eq!(edit.text, "AB", "the typed name opens selected");
+    ex.commit_rename(&mut ctx);
+    wake_until(&mut ex, &mut ctx, |_| labels.lock().unwrap().len() == 2);
+    assert_eq!(labels.lock().unwrap()[1], "AB", "the fixed name renames");
+    wake_until(&mut ex, &mut ctx, |ex| ex.jobs_pending == 0);
+    ex.drives = vec![space_drive("/run/media/u/STICK", "/dev/sdz1", true)];
+    ex.go(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.go(Place::Computer, &mut ctx);
 
     rename(&mut ex, &mut ctx, "HOLIDAY 2026");
     assert_eq!(
@@ -1083,8 +1099,8 @@ fn rename_sets_a_drives_label_through_udisks() {
     wake_until(&mut ex, &mut ctx, |ex| ex.jobs_pending == 0);
     assert_eq!(
         *labels.lock().unwrap(),
-        ["PHOTOS"],
-        "only the first call labelled"
+        ["PHOTOS", "AB"],
+        "only the named calls labelled"
     );
 }
 
