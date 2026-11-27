@@ -1559,9 +1559,40 @@ impl Explorer {
         self.mounts_seen = mounts;
         self.mark_volumes();
         if self.drive_mounts != before {
+            _ = self.rewalk(&before);
             self.refill_tree_node(&Place::Computer, ctx);
         }
         self.build_address(ctx);
+    }
+
+    /// The place's own mount arrived with this scan (a drive opened as it mounted), so the Folders
+    /// tree walked to it through Local Disk: that walk folds up where it leaves the new one, and
+    /// the tree follows the drive under Computer once Computer lists it. `true` when it did.
+    pub(crate) fn rewalk(&mut self, before: &[PathBuf]) -> bool {
+        let new = self.place.chain_in(&self.drive_mounts);
+        let arrived = (new.get(2).and_then(Place::path))
+            .is_some_and(|m| !before.contains(&m) && self.drive_mounts.contains(&m));
+        if !arrived {
+            return false;
+        }
+        let old = self.place.chain_in(before);
+        if let Some(off) = (0..old.len()).find(|&k| new.get(k) != Some(&old[k]))
+            && let Some(path) =
+                foldertree::path_of(&self.tree, &self.tree_places, &old[off], before)
+            && let Some(node) = self.tree.node_mut(&path)
+        {
+            node.expanded = false;
+            if self
+                .tree
+                .selected
+                .as_ref()
+                .is_some_and(|s| s.starts_with(&path))
+            {
+                self.tree.selected = Some(path);
+            }
+        }
+        self.refollow = true;
+        true
     }
 
     /// Takes a drive scan ([`Explorer::sync_drives`]) that answered late; Computer re-lists on it.

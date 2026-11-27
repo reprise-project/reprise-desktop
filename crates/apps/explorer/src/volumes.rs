@@ -49,14 +49,20 @@ impl Explorer {
         };
         let moved = mounts(&snap) != mounts(&self.volumes);
         self.volumes = snap;
-        if self.mark_volumes() {
+        let before = self.drive_mounts.clone();
+        let rewalked = self.mark_volumes() && {
+            let rewalked = self.rewalk(&before);
             self.refill_tree_node(&Place::Computer, ctx);
-        }
+            rewalked
+        };
         if self.place == Place::Computer || (moved && self.place == Place::RecycleBin) {
             return self.refresh(ctx);
         }
         self.sync_drives(ctx);
-        Reply::none()
+        match rewalked {
+            true => Reply::redraw(),
+            false => Reply::none(),
+        }
     }
 
     pub(crate) fn selected_unmounted(&self) -> Option<Volume> {

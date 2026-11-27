@@ -633,6 +633,89 @@ fn a_mount_landing_under_the_open_folder_moves_the_tree_under_computer() {
 }
 
 #[test]
+fn a_drive_opened_before_the_scan_lists_it_folds_the_walk_through_its_parent_drive() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let stick = dir.path().join("STICK");
+    std::fs::create_dir(&stick).expect("the stick's folder");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(stick.clone()), &mut ctx);
+    let old = ex.place.chain_in(&ex.drive_mounts);
+    assert_eq!(
+        old[1],
+        Place::Computer,
+        "before the scan, the folder hangs off a drive"
+    );
+    let parent = ex
+        .tree_path_of(&old[2])
+        .expect("the drive the walk went through");
+    assert!(ex.tree.node(&parent).is_some_and(|n| n.expanded));
+
+    let mut plugged = ex.drives.clone();
+    plugged.push(reprisefs::places::Drive {
+        mount: stick.clone(),
+        device: "/dev/sdb1".into(),
+        fs: "vfat".into(),
+        label: Some("STICK".into()),
+        removable: true,
+        optical: false,
+        total: 1 << 30,
+        free: 1 << 29,
+    });
+    ex.drives_read("plugged".into(), plugged, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.tree.selected.is_some() && ex.tree.selected == ex.tree_path_of(&ex.place)
+    });
+    let computer = ex.tree_path_of(&Place::Computer).unwrap();
+    assert_eq!(
+        ex.tree.selected.as_ref().map(|p| p.len()),
+        Some(computer.len() + 1),
+        "the stick is selected as Computer's child"
+    );
+    assert!(
+        ex.tree.node(&parent).is_some_and(|n| !n.expanded),
+        "the drive walked through folds up"
+    );
+}
+
+#[test]
+fn an_image_opened_before_udisks_lists_its_mount_moves_the_tree_under_computer_and_redraws() {
+    use reprisefs::udisks::{Image, Snapshot, Volume};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let stick = dir.path().join("N14BSTICK");
+    std::fs::create_dir(&stick).expect("the image's folder");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(stick.clone()), &mut ctx);
+    let mounted = Snapshot {
+        filesystems: Vec::new(),
+        disks: vec![],
+        volumes: vec![Volume {
+            path: "/block/loop0".into(),
+            device: "/dev/loop0".into(),
+            label: Some("N14BSTICK".into()),
+            fs_type: "vfat".into(),
+            filesystem: true,
+            mounts: vec![stick.clone()],
+            image: Some(Image {
+                file: "/home/u/stick.iso".into(),
+                loop_path: "/block/loop0".into(),
+            }),
+            ..Default::default()
+        }],
+    };
+    let reply = ex.volumes_changed(mounted, &mut ctx);
+    assert!(reply.redraw, "the tree moved");
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.tree.selected.is_some() && ex.tree.selected == ex.tree_path_of(&ex.place)
+    });
+    let computer = ex.tree_path_of(&Place::Computer).unwrap();
+    assert_eq!(
+        ex.tree.selected.as_ref().map(|p| p.len()),
+        Some(computer.len() + 1),
+        "the image's volume is selected as Computer's child"
+    );
+}
+
+#[test]
 fn a_phones_folder_is_addressed_by_the_phones_name_and_reached_by_it() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let at = dir.path().join("mtp:host=Reprise_Test_Phone");
