@@ -8,6 +8,7 @@ use crate::deadline::ACTION_DEADLINE;
 use crate::progress::{self, Decision, Meter, Phase, Snapshot, Totals};
 use crate::trash::{self, Bins, Trashed};
 use crate::undo::Undoable;
+use reprisekit::tr;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -159,7 +160,7 @@ impl Removal {
 
 /// The error a removal fails with once it made no headway for [`ACTION_DEADLINE`].
 fn not_responding() -> io::Error {
-    io::Error::new(io::ErrorKind::TimedOut, "The location is not responding.")
+    io::Error::new(io::ErrorKind::TimedOut, tr!("not-responding"))
 }
 
 impl RemoveJob {

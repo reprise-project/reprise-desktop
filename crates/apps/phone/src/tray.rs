@@ -107,7 +107,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     let config = Config {
         bus_name: BUS_NAME,
         id: "reprise-phone",
-        title: TITLE,
+        title: TITLE.into(),
         notify_icon: "phone",
         raise: Raise::Activate,
     };

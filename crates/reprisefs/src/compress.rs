@@ -4,6 +4,7 @@
 use crate::extract::{self, ArchiveEvent, ArchiveJob, Failure};
 use crate::ops;
 use crate::progress::{Meter, Phase, Totals};
+use reprisekit::tr;
 use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -12,7 +13,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub const FAILURE_TITLE: &str = "Error Compressing File";
+/// The caption of a compress error box.
+pub fn failure_title() -> String {
+    tr!("compress-failed-title")
+}
 const SAMPLE_EVERY: Duration = Duration::from_millis(100);
 
 /// Items of one folder going into the zip `zip`, numbered past a name taken by the time it lands.
@@ -101,11 +105,11 @@ fn run(c: &Compress, m: &Meter, path: Option<&OsStr>, send: &dyn Fn(ArchiveEvent
                 | Failure::Climbs(why)
                 | Failure::Refused(why)
                 | Failure::Kept(why) => why,
-                Failure::Cancelled => "the operation was cancelled.".into(),
+                Failure::Cancelled => tr!("compress-cancelled"),
             };
             Some(ArchiveEvent::Failed {
                 index: 0,
-                text: format!("Cannot compress {name}: {why}"),
+                text: tr!("compress-failed", name = &*name, why = &*why),
             })
         }
     };

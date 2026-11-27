@@ -3,6 +3,7 @@
 //! Explorer, as Create Shortcut's launchers do); a web address becomes a `Type=Link`. The file is
 //! written trusted, as the desktop runs only trusted launchers.
 
+use reprisekit::tr;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -54,10 +55,8 @@ fn read_typed_with(
     let argv = apps::exec_argv(text);
     match argv.first() {
         Some(program) if found(program) => Ok(Target::Command(text.to_string())),
-        Some(program) => Err(format!(
-            "Cannot find '{program}'. Check the spelling, then try again."
-        )),
-        None => Err("Type the location of an item or a command.".to_string()),
+        Some(program) => Err(tr!("shortcut-no-program", program = program.as_str())),
+        None => Err(tr!("shortcut-no-location")),
     }
 }
 

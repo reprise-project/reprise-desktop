@@ -60,7 +60,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
         Config {
             bus_name: BUS_NAME,
             id: "reprise-drives",
-            title: tip(),
+            title: tip().into(),
             notify_icon: "drive-removable-media",
             // No window to raise: a second instance clicks the root,
             // which is no row, and exits.

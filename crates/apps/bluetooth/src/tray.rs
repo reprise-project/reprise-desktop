@@ -70,7 +70,13 @@ pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
             .add(TrayMsg::TogglePower, |id| Node::row(id, word));
     }
     if let Some(mode) = s.airplane {
-        rows.airplane(TrayMsg::Airplane, TrayMsg::AirplaneNote, mode);
+        rows.airplane(
+            TrayMsg::Airplane,
+            TrayMsg::AirplaneNote,
+            mode,
+            &reprisekit::kit_tr!("airplane-mode"),
+            &reprisekit::kit_tr!("airplane-killed"),
+        );
     }
     rows.separator()
         .add(TrayMsg::Exit, |id| Node::row(id, tr!("tray-exit")));
@@ -113,7 +119,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     let config = Config {
         bus_name: BUS_NAME,
         id: "reprise-bluetooth",
-        title: "Bluetooth",
+        title: "Bluetooth".into(),
         notify_icon: "bluetooth",
         raise: Raise::MenuRow(Rows::id(&TrayMsg::Show)),
     };

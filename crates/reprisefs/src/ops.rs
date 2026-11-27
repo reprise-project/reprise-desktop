@@ -25,6 +25,7 @@ pub(crate) use put::{
 };
 pub use put::{PutError, put_in, put_in_with, same_device, same_folder};
 
+use reprisekit::tr;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -296,21 +297,22 @@ pub fn modifier_op(ctrl: bool, shift: bool, alt: bool) -> Option<DropOp> {
 impl DropOp {
     /// The error box's title and text when this op on `name` fails with
     /// `error`.
-    pub fn failure(self, name: &str, error: &dyn std::fmt::Display) -> (&'static str, String) {
-        let what = match self {
-            DropOp::Move => format!("move {name}"),
-            DropOp::Copy => format!("copy {name}"),
-            DropOp::Shortcut => format!("create a shortcut to {name}"),
+    pub fn failure(self, name: &str, error: &dyn std::fmt::Display) -> (String, String) {
+        let error = error.to_string();
+        let text = match self {
+            DropOp::Move => tr!("move-failed", name = name, why = error.as_str()),
+            DropOp::Copy => tr!("copy-failed", name = name, why = error.as_str()),
+            DropOp::Shortcut => tr!("shortcut-failed", name = name, why = error.as_str()),
         };
-        (self.failure_title(), format!("Cannot {what}: {error}"))
+        (self.failure_title(), text)
     }
 
     /// The title of this op's error box.
-    pub fn failure_title(self) -> &'static str {
+    pub fn failure_title(self) -> String {
         match self {
-            DropOp::Move => "Error Moving File or Folder",
-            DropOp::Copy => "Error Copying File or Folder",
-            DropOp::Shortcut => "Error Creating Shortcut",
+            DropOp::Move => tr!("move-failed-title"),
+            DropOp::Copy => tr!("copy-failed-title"),
+            DropOp::Shortcut => tr!("shortcut-failed-title"),
         }
     }
 

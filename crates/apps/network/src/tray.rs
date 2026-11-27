@@ -97,8 +97,14 @@ pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
         rows.separator();
     }
     if let Some(mode) = shape.airplane {
-        rows.airplane(TrayMsg::Airplane, TrayMsg::AirplaneNote, mode)
-            .separator();
+        rows.airplane(
+            TrayMsg::Airplane,
+            TrayMsg::AirplaneNote,
+            mode,
+            &reprisekit::kit_tr!("airplane-mode"),
+            &reprisekit::kit_tr!("airplane-killed"),
+        )
+        .separator();
     }
     rows.add(TrayMsg::Folder, row("Open Network Connections"))
         .separator()
@@ -202,7 +208,7 @@ pub fn tooltip(s: &nm::Snapshot) -> String {
     let link = link_tip(s);
     match s.airplane {
         Some(Mode::On) => return format!("{link}\nAirplane mode is on"),
-        Some(Mode::Killed) => return format!("{link}\n{}", reprisebus::airplane::KILLED),
+        Some(Mode::Killed) => return format!("{link}\n{}", reprisekit::kit_tr!("airplane-killed")),
         _ => {}
     }
     if !limited(s) {
@@ -404,7 +410,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     let config = Config {
         bus_name: BUS_NAME,
         id: "reprise-network",
-        title: "Network",
+        title: "Network".into(),
         notify_icon: "network-wired",
         raise: Raise::MenuRow(Rows::id(&TrayMsg::Folder)),
     };

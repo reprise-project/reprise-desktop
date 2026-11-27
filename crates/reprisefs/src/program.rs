@@ -1,5 +1,6 @@
 //! Files that run when opened instead of opening in their type's program.
 
+use reprisekit::tr;
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
@@ -119,10 +120,10 @@ impl ScriptOpen {
     }
 
     /// Its row in a script's context menu, which stands in for Open.
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            ScriptOpen::Run => "R&un",
-            ScriptOpen::Terminal => "Run in termina&l",
+            ScriptOpen::Run => tr!("script-run"),
+            ScriptOpen::Terminal => tr!("script-run-in-terminal"),
         }
     }
 }
@@ -269,7 +270,9 @@ pub fn opens_as_a_program(path: &Path, mime: Option<&str>) -> bool {
 }
 
 /// The question's caption.
-pub const ASK_TITLE: &str = "Open File";
+pub fn ask_title() -> String {
+    tr!("open-file-title")
+}
 
 /// The argument vector that opens the file at `path` in Notepad, the question's second button.
 pub fn notepad_argv(path: &Path) -> Vec<OsString> {
@@ -329,13 +332,13 @@ pub fn run_failed_text(name: &str, e: &io::Error) -> String {
     let name = crate::names::shown_line(name, usize::MAX);
     let why = match e.raw_os_error() {
         // A missing terminal, interpreter on the `#!` line or binary loader.
-        Some(libc::ENOENT) => "The program that runs it was not found.".to_string(),
+        Some(libc::ENOENT) => tr!("run-failed-not-found"),
         // A mount that does not run programs, or no execute permission.
-        Some(libc::EACCES) => "Access is denied.".to_string(),
-        Some(libc::ENOEXEC) => "It is not a program this computer can run.".to_string(),
+        Some(libc::EACCES) => tr!("run-failed-denied"),
+        Some(libc::ENOEXEC) => tr!("run-failed-not-a-program"),
         _ => e.to_string(),
     };
-    format!("Cannot run {name}: {why}")
+    tr!("run-failed", name = name, why = why)
 }
 
 #[cfg(test)]

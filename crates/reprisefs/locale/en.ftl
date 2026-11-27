@@ -9,3 +9,80 @@ long-date =
 ## A file's date in Properties, in place of the weekday.
 date-today = Today
 date-yesterday = Yesterday
+
+## Running a program or script from a file view
+script-run = R&un
+script-run-in-terminal = Run in termina&l
+open-file-title = Open File
+run-failed = Cannot run { $name }: { $why }
+run-failed-not-found = The program that runs it was not found.
+run-failed-denied = Access is denied.
+run-failed-not-a-program = It is not a program this computer can run.
+
+## Mounting a disk image
+mount-image-title = Mount Disk Image
+mount-image-mount = &Mount
+mount-image-text =
+    "{ $name }" is a disk image. Mounting it has this computer read the file system inside, which an image from someone you do not trust can use to harm it. It mounts read-only.
+
+    Do you want to mount it?
+
+## Compressing and extracting
+compress-failed-title = Error Compressing File
+compress-failed = Cannot compress { $name }: { $why }
+compress-cancelled = the operation was cancelled.
+extract-failed-title = Error Extracting File
+
+## Copy, move and shortcut errors
+move-failed-title = Error Moving File or Folder
+copy-failed-title = Error Copying File or Folder
+shortcut-failed-title = Error Creating Shortcut
+move-failed = Cannot move { $name }: { $why }
+copy-failed = Cannot copy { $name }: { $why }
+shortcut-failed = Cannot create a shortcut to { $name }: { $why }
+copy-cancelled = The copy was cancelled.
+operation-cancelled = The operation was cancelled.
+folder-too-deep = The folder is more than { $depth } levels deep.
+
+## Delete prompts
+delete-file-title = Confirm File Delete
+delete-folder-title = Confirm Folder Delete
+delete-multiple-title = Confirm Multiple File Delete
+delete-file-recycle = Are you sure you want to send '{ $name }' to the Recycle Bin?
+delete-file-erase = Are you sure you want to delete '{ $name }'?
+delete-folder-recycle = Are you sure you want to remove the folder '{ $name }' and move all its contents to the Recycle Bin?
+delete-folder-erase = Are you sure you want to remove the folder '{ $name }' and all its contents?
+delete-multiple-recycle = Are you sure you want to send these { $count } items to the Recycle Bin?
+delete-multiple-erase = Are you sure you want to delete these { $count } items?
+delete-no-bin-one = This drive has no Recycle Bin.
+delete-no-bin-all = None of these items can go to the Recycle Bin.
+delete-no-bin-some = Some of these items cannot go to the Recycle Bin.
+# The lead sentence and the question, one after the other.
+delete-prompt-lead = { $lead } { $question }
+too-big-text = '{ $name }' is too big for the Recycle Bin. Do you want to delete it permanently?
+undo-erase-many = The items Undo removes cannot go to the Recycle Bin. Do you want to delete them permanently?
+undo-erase-one = '{ $name }' is on a drive that removes files immediately. Do you want to delete it permanently?
+delete-failed = Cannot delete { $name }: { $why }
+
+## File dialog and typed locations
+folder-gone = The folder is no longer available.
+not-in-recent = { $name } is not in { $place }. Type the full path to save or open it elsewhere.
+folder-missing = The folder { $path } does not exist.
+file-not-found = { $path } was not found. Check the file name and try again.
+shortcut-no-program = Cannot find '{ $program }'. Check the spelling, then try again.
+shortcut-no-location = Type the location of an item or a command.
+device-no-folder = The device is mounted, but gvfs gives it no folder.
+
+## A location that stops answering
+not-responding = The location is not responding.
+not-responding-unchanged = The location is not responding. Nothing was changed.
+not-responding-may-change = The location is not responding. The change may still be made once it answers.
+
+## Renaming
+rename-bad-characters =
+    A file name cannot contain any of the following characters:
+    /
+    A file name cannot contain the null character.
+rename-invalid = Cannot rename { $old }: The file name you specified is not valid or too long.
+rename-taken = Cannot rename { $old }: A file with the name you specified already exists. Specify a different file name.
+rename-failed = Cannot rename { $old }: { $why }

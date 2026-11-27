@@ -120,7 +120,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     let config = Config {
         bus_name: BUS_NAME,
         id: "reprise-power",
-        title: "Power",
+        title: "Power".into(),
         notify_icon: "battery-caution",
         // A second instance raises the sheet on its first tab; Activate would open the Power Meter tab instead.
         raise: Raise::MenuRow(Rows::id(&TrayMsg::OpenProperties)),

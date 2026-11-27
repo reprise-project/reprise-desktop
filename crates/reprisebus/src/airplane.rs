@@ -85,9 +85,6 @@ pub enum Mode {
     Killed,
 }
 
-/// What the check box and the tray rows say under [`Mode::Killed`].
-pub const KILLED: &str = "Turned off by a hardware switch";
-
 impl Mode {
     /// Whether the check box reads checked: every radio is off.
     pub fn on(self) -> bool {
