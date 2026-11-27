@@ -136,6 +136,7 @@ battery-low-summary = Low Bluetooth battery
 battery-low-body = { $alias } has { $percent }% battery left.
 
 ## The notification area icon
+tray-title = Bluetooth
 tray-show = Show Bluetooth Devices
 tray-add = Add a Bluetooth Device
 tray-turn-off = Turn Bluetooth Off

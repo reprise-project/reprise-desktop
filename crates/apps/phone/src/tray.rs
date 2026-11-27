@@ -7,7 +7,6 @@ use reprisekit::tr;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 pub const BUS_NAME: &str = "reprise.phone";
-pub const TITLE: &str = "Phone";
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
@@ -107,7 +106,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     let config = Config {
         bus_name: BUS_NAME,
         id: "reprise-phone",
-        title: TITLE.into(),
+        title: tr!("title"),
         notify_icon: "phone",
         raise: Raise::Activate,
     };

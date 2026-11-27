@@ -139,7 +139,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     let config = Config {
         bus_name: BUS_NAME,
         id: "reprise-sound",
-        title: "Volume".into(),
+        title: tr!("tray-title"),
         notify_icon: "audio-volume-high",
         // A second instance raises the sheet through the Properties row:
         // Activate would wait out a double click and open the popup.
