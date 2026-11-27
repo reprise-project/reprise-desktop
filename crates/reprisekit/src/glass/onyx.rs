@@ -28,7 +28,7 @@ const FOOT_LINE: (Color, u8) = (Color::rgb(0x02, 0x03, 0x04), 246);
 
 /// The frame's corner radius at its outer rim, 1 px tighter per ring inward.
 const BUTTON_RADIUS: f64 = 4.0;
-/// A labelled button: 158 px wide, 2 px apart, its 16 px icon 12 px in and its label at 34.
+/// A labelled button's spacing, icon and label; its width is [`LABELLED_WIDTH`].
 const LABELLED: LabelledButton = LabelledButton {
     gap: 2,
     icon_x: 12,
@@ -181,7 +181,7 @@ fn frame_px(face: Face, lit: bool, ring: usize, y: f64, bh: i32) -> Px {
         (Face::Flash, 2) => white(INNER_SIDE),
         (Face::Flash, _) => {
             let (top, foot) = FLASH_SHARE;
-            let t = ((y - 2.0) / (f64::from(bh) - 5.0)).clamp(0.0, 1.0);
+            let t = ((y - 3.0) / (f64::from(bh) - 7.0)).clamp(0.0, 1.0);
             premul(FLASH, share_alpha(top + (foot - top) * t))
         }
         (Face::Rest, _) if y < half => {
