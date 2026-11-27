@@ -60,6 +60,8 @@ pub enum Error {
     Broken,
     /// A temporary queue stayed stopped, with cupsd's message, which may be empty.
     NotReady(String),
+    /// cupsd answered a temporary queue with this destination, which prints elsewhere.
+    Taken(String),
 }
 
 impl Error {
@@ -74,6 +76,7 @@ impl Error {
             Error::Broken => tr!("print-broken"),
             Error::NotReady(m) if m.is_empty() => tr!("print-not-ready"),
             Error::NotReady(m) => tr!("print-not-ready-why", why = m.as_str()),
+            Error::Taken(name) => tr!("print-name-taken", name = name.as_str()),
         }
     }
 }
@@ -97,17 +100,29 @@ impl From<http::Error> for Error {
 pub struct Queues {
     pub list: Vec<Dest>,
     pub default: Option<String>,
-    /// The printers in `list` with no queue yet, by name: the `dnssd://` URI cupsd makes a
-    /// temporary queue from.
-    pub driverless: BTreeMap<String, String>,
+    /// The printers in `list` with no queue yet, by name.
+    pub driverless: BTreeMap<String, Driverless>,
     /// The DNS-SD services the queues print through, lower-cased.
     served: Vec<String>,
+    /// Every destination's name, classes included, lower-cased.
+    taken: Vec<String>,
+}
+
+/// A printer on the network with no queue yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Driverless {
+    /// The `dnssd://` URI cupsd makes a temporary queue from.
+    pub uri: String,
+    /// Its DNS-SD service name, the temporary queue's description.
+    pub info: String,
 }
 
 impl Queues {
-    /// `found` added to the list as printers without a queue: each IPP printer once, over IPPS
-    /// when it announces both, and none that a queue already prints to or names, nor this
-    /// computer's own shared queues.
+    /// `found` added to the list as printers without a queue, none that a queue already prints
+    /// to and none of this computer's own shared queues. An IPP printer that also announces
+    /// IPPS is listed once, over IPPS, when both are [`same_printer`]; otherwise each is its
+    /// own printer. A name a destination already has
+    /// is not offered again; two printers on the network that would share one are numbered.
     pub fn add_driverless(&mut self, found: &[Service]) {
         let rank = |s: &Service| IPP_TYPES.iter().position(|t| *t == s.kind);
         let mut found: Vec<&Service> = found
@@ -115,21 +130,52 @@ impl Queues {
             .filter(|s| rank(s).is_some() && !s.own_queue())
             .collect();
         found.sort_by_key(|s| rank(s));
+        let mut listed: Vec<&Service> = Vec::new();
         for s in found {
-            let name = queue_name(&s.name);
-            let service = s.name.to_lowercase();
-            let named = self.list.iter().any(|d| d.name.eq_ignore_ascii_case(&name));
-            if name.is_empty() || named || self.served.contains(&service) {
+            let twin = listed
+                .iter()
+                .any(|l| l.name.eq_ignore_ascii_case(&s.name) && same_printer(l, s));
+            if twin || self.served.contains(&s.name.to_lowercase()) {
                 continue;
             }
-            self.served.push(service);
+            let base = queue_name(&s.name);
+            if base.is_empty() {
+                log::debug!("print: no queue name for the network printer {:?}", s.name);
+                continue;
+            }
+            if self.taken.contains(&base.to_lowercase()) {
+                continue;
+            }
+            let free = |n: &String| !self.list.iter().any(|d| d.name.eq_ignore_ascii_case(n));
+            let Some(name) = (1..100)
+                .map(|i| match i {
+                    1 => base.clone(),
+                    i => format!("{base}_{i}"),
+                })
+                .find(|n| free(n) && !self.taken.contains(&n.to_lowercase()))
+            else {
+                continue;
+            };
+            listed.push(s);
+            let info = match s.host.is_empty() {
+                true => s.name.clone(),
+                false => tr!(
+                    "print-network-printer",
+                    name = s.name.as_str(),
+                    host = s.host.trim_end_matches('.')
+                ),
+            };
             self.list.push(Dest {
                 name: name.clone(),
-                info: s.name.clone(),
+                info,
                 location: s.get("note").unwrap_or_default().into(),
                 state: DestState::Ready,
             });
-            self.driverless.insert(name, s.uri());
+            let printer = Driverless {
+                uri: s.uri(),
+                info: s.name.clone(),
+            };
+            self.driverless.insert(name, printer);
         }
         self.list.sort_by_key(|d| d.name.to_lowercase());
     }
@@ -141,6 +187,16 @@ impl Queues {
             .and_then(|d| self.list.iter().position(|q| q.name == d))
             .unwrap_or(0)
     }
+}
+
+/// Whether two announcements of one service name are one printer: the same host, and the
+/// same uuid when both carry one. A uuid alone is no proof, as anyone may announce it.
+fn same_printer(a: &Service, b: &Service) -> bool {
+    let uuids_agree = match (a.get("uuid"), b.get("uuid")) {
+        (Some(x), Some(y)) => x.eq_ignore_ascii_case(y),
+        _ => true,
+    };
+    !a.host.is_empty() && a.host.eq_ignore_ascii_case(&b.host) && uuids_agree
 }
 
 /// A document for [`print`]: a PDF, its title in the queue, and what the job asks of the printer.
@@ -208,6 +264,10 @@ pub fn queues(server: &Server, user: &str) -> Result<Queues, Error> {
         ) => return Ok(Queues::default()),
         Err(e) => return Err(e),
     };
+    let taken = resp
+        .groups(PRINTER)
+        .map(|g| g.string("printer-name").to_lowercase())
+        .collect();
     let printers: Vec<&ipp::Group> = resp
         .groups(PRINTER)
         .filter(|g| g.int("printer-type").unwrap_or(0) & 1 == 0)
@@ -241,65 +301,73 @@ pub fn queues(server: &Server, user: &str) -> Result<Queues, Error> {
         default,
         driverless: BTreeMap::new(),
         served,
+        taken,
     })
 }
 
-/// A queue name for the DNS-SD service `name`, as libcups names its temporary queues: letters,
-/// digits, `-` and `_` kept, each run of anything else one `_`, none at the end.
+/// A queue name for the DNS-SD service `name`, as libcups names its temporary queues: ASCII
+/// letters and digits kept, each run of anything else one `_`, and a `_` at the end dropped
+/// unless it is the whole name.
 pub fn queue_name(name: &str) -> String {
     let mut out = String::new();
     for b in name.bytes() {
-        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' {
+        if b.is_ascii_alphanumeric() {
             out.push(b as char);
-        } else if !out.is_empty() && !out.ends_with('_') {
+        } else if !out.ends_with('_') {
             out.push('_');
         }
     }
-    while out.ends_with('_') {
+    if out.len() > 1 && out.ends_with('_') {
         out.pop();
     }
     out
 }
 
-/// Have cupsd make a temporary queue named about `name` for the driverless printer at
-/// `device_uri`, described as `info`, and wait up to [`READY_WAIT`] while cupsd reads the
-/// printer; the queue's name. cupsd hands back its existing queue for a printer it has one for.
+/// Have cupsd make a temporary queue named about `name` for `printer` and wait up to
+/// [`READY_WAIT`] while cupsd reads it; the queue's name. cupsd hands back an existing
+/// destination for a name or printer it already has, which is printed on only when it prints
+/// to `printer`.
 pub fn create_local(
     server: &Server,
     user: &str,
     name: &str,
-    device_uri: &str,
-    info: &str,
+    printer: &Driverless,
 ) -> Result<String, Error> {
     let req = Request::new(CUPS_CREATE_LOCAL_PRINTER)
         .op_attr("printer-uri", Value::uri("ipp://localhost/"))
         .printer_attr("printer-name", Value::name(&ipp_name(name)))
-        .printer_attr("device-uri", Value::uri(device_uri))
-        .printer_attr("printer-info", Value::text(&ipp_name(info)));
+        .printer_attr("device-uri", Value::uri(&printer.uri))
+        .printer_attr("printer-info", Value::text(&ipp_name(&printer.info)));
     let r = call(server, user, "/", req, &[], LIST_TIMEOUT)?;
-    let made = r.first(PRINTER).ok_or(Error::BadReply)?;
-    let queue = made
-        .str("printer-uri-supported")
+    let queue = r
+        .first(PRINTER)
+        .and_then(|g| g.str("printer-uri-supported"))
         .and_then(queue_of)
         .ok_or(Error::BadReply)?;
     let until = Instant::now() + READY_WAIT;
-    let mut state = (
-        made.int("printer-state"),
-        made.string("printer-state-message"),
-    );
-    while state.0 == Some(STOPPED) {
-        if Instant::now() >= until {
-            return Err(Error::NotReady(state.1));
-        }
-        std::thread::sleep(Duration::from_secs(1));
+    loop {
         let req = Request::new(GET_PRINTER_ATTRIBUTES)
             .op_attr("printer-uri", Value::uri(&printer_uri(&queue)))
-            .requested(&["printer-state", "printer-state-message"]);
+            .requested(&["printer-state", "printer-state-message", "device-uri"]);
         let r = call(server, user, "/", req, &[], LIST_TIMEOUT)?;
         let g = r.first(PRINTER).ok_or(Error::BadReply)?;
-        state = (g.int("printer-state"), g.string("printer-state-message"));
+        if made_ready(g, &queue, &printer.uri)? {
+            return Ok(queue);
+        }
+        if Instant::now() >= until {
+            return Err(Error::NotReady(g.string("printer-state-message")));
+        }
+        std::thread::sleep(Duration::from_secs(1));
     }
-    Ok(queue)
+}
+
+/// Whether the queue `queue` cupsd made, whose attributes are `g`, is ready: refused when it
+/// prints somewhere other than `device_uri`, false while it is stopped.
+fn made_ready(g: &ipp::Group, queue: &str, device_uri: &str) -> Result<bool, Error> {
+    if g.str("device-uri") != Some(device_uri) {
+        return Err(Error::Taken(queue.into()));
+    }
+    Ok(g.int("printer-state") != Some(STOPPED))
 }
 
 /// The queue a cupsd printer URI (`ipp://localhost/printers/<name>`) names, unescaped.
@@ -418,16 +486,17 @@ mod tests {
         assert!(cut.chars().all(|c| c == '\u{e9}'));
     }
 
-    fn found(name: &str, kind: &str, txt: &[(&str, &str)], flags: u32) -> Service {
+    fn found(name: &str, kind: &str, host: &str, txt: &[(&str, &str)]) -> Service {
         Service {
             name: name.into(),
             kind: kind.into(),
             domain: "local".into(),
+            host: host.into(),
             txt: txt
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
-            flags,
+            flags: 0,
         }
     }
 
@@ -438,15 +507,22 @@ mod tests {
         }
     }
 
+    fn names(q: &Queues) -> Vec<&str> {
+        q.list.iter().map(|d| d.name.as_str()).collect()
+    }
+
     #[test]
     fn a_service_name_becomes_a_queue_name_as_libcups_makes_it() {
         assert_eq!(
             queue_name("HP OfficeJet 5200 [A1B2]"),
             "HP_OfficeJet_5200_A1B2"
         );
-        assert_eq!(queue_name("Lab-2 (2nd floor)"), "Lab-2_2nd_floor");
-        assert_eq!(queue_name("  Caf\u{e9}  "), "Caf");
-        assert_eq!(queue_name("()"), "");
+        assert_eq!(queue_name("H\u{e9}-llo.v2"), "H_llo_v2");
+        assert_eq!(queue_name("a__b x"), "a_b_x");
+        assert_eq!(queue_name(" Lead"), "_Lead");
+        assert_eq!(queue_name("Caf\u{e9}"), "Caf");
+        assert_eq!(queue_name("\u{30d7}\u{30ea}\u{30f3}\u{30bf}\u{30fc}"), "_");
+        assert_eq!(queue_name(""), "");
     }
 
     #[test]
@@ -454,39 +530,100 @@ mod tests {
         let mut q = Queues {
             list: vec![queue("PDF"), queue("Hall")],
             served: vec!["attic laser".into()],
+            taken: vec!["pdf".into(), "hall".into(), "lab".into()],
             ..Queues::default()
         };
+        let jet = "jet.local";
         q.add_driverless(&[
-            found("Office Jet", "_ipp._tcp", &[("note", "Room 4")], 0),
+            found(
+                "Office Jet",
+                "_ipp._tcp",
+                jet,
+                &[("note", "Room 4"), ("uuid", "U1")],
+            ),
             found(
                 "Office Jet",
                 "_ipps._tcp",
+                jet,
                 &[("uuid", "u1"), ("note", "Room 4")],
-                0,
             ),
-            found("Attic Laser", "_ipps._tcp", &[], 0),
-            found("hall", "_ipp._tcp", &[], 0),
-            found(
-                "Desk",
-                "_ipp._tcp",
-                &[("printer-type", "0x809046")],
-                avahi::LOCAL,
-            ),
-            found("Plotter", "_pdl-datastream._tcp", &[], 0),
+            found("Attic Laser", "_ipps._tcp", "attic.local", &[]),
+            found("hall", "_ipp._tcp", "hall.local", &[]),
+            found("Lab", "_ipp._tcp", "lab.local", &[]),
+            Service {
+                flags: avahi::LOCAL,
+                ..found(
+                    "Desk",
+                    "_ipp._tcp",
+                    "me.local",
+                    &[("printer-type", "0x809046")],
+                )
+            },
+            found("Plotter", "_pdl-datastream._tcp", "plot.local", &[]),
         ]);
-        let names: Vec<&str> = q.list.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, ["Hall", "Office_Jet", "PDF"]);
+        assert_eq!(
+            names(&q),
+            ["Hall", "Office_Jet", "PDF"],
+            "Lab is the name of a class"
+        );
         let jet = &q.list[1];
         assert_eq!(
             (jet.info.as_str(), jet.location.as_str()),
-            ("Office Jet", "Room 4")
+            ("Office Jet on jet.local", "Room 4")
         );
+        let made = &q.driverless["Office_Jet"];
         assert_eq!(
-            q.driverless.get("Office_Jet").map(String::as_str),
-            Some("dnssd://Office%20Jet._ipps._tcp.local/?uuid=u1"),
-            "over IPPS when it announces both"
+            made.uri, "dnssd://Office%20Jet._ipps._tcp.local/?uuid=u1",
+            "over IPPS"
         );
+        assert_eq!(made.info, "Office Jet");
         assert_eq!(q.driverless.len(), 1);
+    }
+
+    #[test]
+    fn an_ipps_announcement_from_another_host_or_uuid_never_stands_in_for_an_ipp_printer() {
+        let mut q = Queues::default();
+        q.add_driverless(&[
+            found("Office Jet", "_ipp._tcp", "jet.local", &[("uuid", "u1")]),
+            found("Office Jet", "_ipps._tcp", "other.local", &[("uuid", "u1")]),
+            found("Lab", "_ipp._tcp", "lab.local", &[("uuid", "u2")]),
+            found("Lab", "_ipps._tcp", "lab.local", &[("uuid", "u3")]),
+        ]);
+        assert_eq!(names(&q), ["Lab", "Lab_2", "Office_Jet", "Office_Jet_2"]);
+        let uri = |n: &str| q.driverless[n].uri.as_str();
+        assert!(uri("Office_Jet").contains("._ipps._tcp"));
+        assert!(
+            uri("Office_Jet_2").contains("._ipp._tcp"),
+            "the printer announced over IPP alone stays listed"
+        );
+        assert!(
+            uri("Lab_2").contains("._ipp._tcp"),
+            "a uuid of its own is another printer"
+        );
+    }
+
+    #[test]
+    fn a_made_queue_is_printed_on_only_when_it_prints_to_the_printer_asked_for() {
+        let group = |uri: &str, state: i32| ipp::Group {
+            tag: PRINTER,
+            attrs: vec![
+                ipp::Attr {
+                    name: "device-uri".into(),
+                    values: vec![Value::uri(uri)],
+                },
+                ipp::Attr {
+                    name: "printer-state".into(),
+                    values: vec![Value::Enum(state)],
+                },
+            ],
+        };
+        let jet = "dnssd://Jet._ipps._tcp.local/";
+        assert_eq!(made_ready(&group(jet, 3), "Jet", jet), Ok(true));
+        assert_eq!(made_ready(&group(jet, STOPPED), "Jet", jet), Ok(false));
+        assert_eq!(
+            made_ready(&group("usb://HP/Laser", 3), "Jet", jet),
+            Err(Error::Taken("Jet".into()))
+        );
     }
 
     #[test]
