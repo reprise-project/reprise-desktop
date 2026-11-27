@@ -14,6 +14,8 @@ pub struct Panels {
     pub clipview: Option<crate::clipview::ClipView>,
     pub region: Option<crate::regionview::RegionView>,
     pub colorpick: Option<crate::colorpickview::ColorPickView>,
+    /// Super+. waits for the focused client's caret report (`State::toggle_emoji`).
+    pub emoji_wait: Option<smithay::reexports::calloop::RegistrationToken>,
     /// The wheel's carry over the emoji picker or the clipboard history.
     pub wheel: reprisekit::pointer::WheelCarry,
 }

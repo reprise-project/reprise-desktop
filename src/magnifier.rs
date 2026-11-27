@@ -405,12 +405,14 @@ impl State {
     }
 
     /// Enter the focused client's text input as an input method would while zoomed and
-    /// following the caret, so it reports its caret; leave it otherwise, as entering takes a
-    /// client's own compose handling away in some toolkits.
+    /// following the caret, or while the emoji picker waits for the caret, so it reports its
+    /// caret; leave it otherwise, as entering takes a client's own compose handling away in
+    /// some toolkits.
     pub fn sync_caret_reports(&mut self) {
         use smithay::wayland::text_input::TextInputSeat;
-        let want =
+        let zoomed =
             self.config.accessibility.magnifier_follow.focus() && self.magnifier.any_zoomed();
+        let want = zoomed || self.panels.emoji_wait.is_some();
         let ti = self.seat.text_input();
         if ti.compositor_input_method() != want {
             log::info!("magnifier: text inputs report their caret: {want}");

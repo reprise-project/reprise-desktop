@@ -1,5 +1,6 @@
 //! The emoji picker on the scene: one `reprisekit::controls::emojipicker` panel on the menu layer,
-//! at the text caret when the focused client reports one, else at the pointer. A pick is typed
+//! at the text caret when the focused client reports one, else at the pointer. With no input
+//! method running, the bind enters the client's text input until it reports. A pick is typed
 //! through a keymap with one key per code point, then the seat's own keymap and modifiers come
 //! back; the clipboard is left alone.
 
@@ -8,7 +9,9 @@ use reprisekit::emoji::{EmojiFont, Entry};
 use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::rc::Rc;
+use std::time::Duration;
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
@@ -16,6 +19,10 @@ use crate::glass::{self, Backdrop};
 use crate::input::Interaction;
 use crate::keys;
 use crate::output::upload_scaled;
+use crate::raster::Rect;
+
+/// How long Super+. waits for the focused client's caret before opening at the pointer.
+const CARET_WAIT: Duration = Duration::from_millis(100);
 
 /// What outlives the panel: the font and catalog once loaded, and the recent picks.
 #[derive(Default)]
@@ -122,15 +129,78 @@ pub fn keys_for(text: &str) -> (Vec<char>, Vec<u32>) {
 impl State {
     /// The bind: open, or close if open. Does nothing under the lock.
     pub fn toggle_emoji(&mut self) {
-        if self.panels.emojiview.is_some() {
+        if self.panels.emojiview.is_some() || self.panels.emoji_wait.is_some() {
             self.close_emoji();
             return;
         }
         if self.desktop_locked() {
             return;
         }
+        if !self.wait_for_caret() {
+            self.open_emoji(self.panel_anchor());
+        }
+    }
+
+    /// With no input method running, a client reports its caret only once its text input is
+    /// entered: enter it and open on the report, or at the pointer after [`CARET_WAIT`].
+    fn wait_for_caret(&mut self) -> bool {
+        use smithay::reexports::wayland_server::Resource;
+        use smithay::wayland::{input_method::InputMethodSeat, text_input::TextInputSeat};
+        let ti = self.seat.text_input();
+        if self.text_caret().is_some()
+            || ti.compositor_input_method()
+            || self.seat.input_method().has_instance()
+        {
+            return false;
+        }
+        let Some(surface) = ti.focus().filter(|s| s.is_alive()) else {
+            return false;
+        };
+        if !crate::textinput::has_text_input(self, &surface) {
+            return false;
+        }
+        let timer = self
+            .handle
+            .insert_source(Timer::from_duration(CARET_WAIT), |_, _, state| {
+                state.panels.emoji_wait = None;
+                state.sync_caret_reports();
+                state.open_emoji(state.panel_anchor());
+                TimeoutAction::Drop
+            });
+        let Ok(token) = timer else {
+            return false;
+        };
+        self.panels.emoji_wait = Some(token);
+        self.sync_caret_reports();
+        true
+    }
+
+    /// A text input committed: the caret the picker waits for, if it now has one.
+    pub fn emoji_caret_heard(&mut self) {
+        if self.panels.emoji_wait.is_none() {
+            return;
+        }
+        let Some(caret) = self.text_caret() else {
+            return;
+        };
+        self.end_caret_wait();
+        self.open_emoji(caret);
+    }
+
+    fn end_caret_wait(&mut self) -> bool {
+        let Some(token) = self.panels.emoji_wait.take() else {
+            return false;
+        };
+        self.handle.remove(token);
+        self.sync_caret_reports();
+        true
+    }
+
+    fn open_emoji(&mut self, anchor: Rect) {
+        if self.desktop_locked() {
+            return;
+        }
         self.panels.emoji.load();
-        let anchor = self.panel_anchor();
         let out = self.output_at(
             f64::from(anchor.x + anchor.width / 2),
             f64::from(anchor.y + anchor.height / 2),
@@ -168,6 +238,9 @@ impl State {
     }
 
     pub fn close_emoji(&mut self) {
+        if self.end_caret_wait() {
+            return;
+        }
         let Some(v) = self.panels.emojiview.take() else {
             return;
         };
@@ -431,6 +504,82 @@ mod tests {
         assert_eq!(c.side.keys, [(1, true), (1, false)]);
         let im = &m.side.ims[0];
         assert!(im.grab_keys.is_empty(), "the grab heard {:?}", im.grab_keys);
+    }
+
+    /// A focused window whose client made a text input, and the pointer parked away from it.
+    fn window_with_text_input() -> (crate::harness::Harness, crate::harness::TestClient, usize) {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let ti = c.text_input();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.pointer_to(1000.0, 740.0);
+        (h, c, ti)
+    }
+
+    fn reports_caret(h: &crate::harness::Harness) -> bool {
+        use smithay::wayland::text_input::TextInputSeat;
+        h.state.seat.text_input().compositor_input_method()
+    }
+
+    #[test]
+    fn with_no_input_method_the_picker_opens_at_the_caret_the_client_reports() {
+        let (mut h, mut c, ti) = window_with_text_input();
+        h.state.toggle_emoji();
+        assert!(h.state.panels.emojiview.is_none(), "it waits for the caret");
+        assert!(reports_caret(&h), "the client's text input is entered");
+        let text_input = &c.side.text_inputs[ti];
+        text_input.enable();
+        text_input.set_cursor_rectangle(40, 30, 0, 18);
+        text_input.commit();
+        h.roundtrip(&mut c);
+        let window = h.state.windows[0].wl_surface().clone();
+        let scene = &h.state.scene;
+        let (at, _) = scene
+            .coords(scene.surface_node(&window).expect("the window's node"))
+            .expect("the window is placed");
+        let caret = Rect::new(at.x + 40, at.y + 30, 0, 18);
+        let cm = h.state.config.theme.controls();
+        let size = (emojipicker::width(&cm), emojipicker::layout(&cm).height);
+        let usable = h
+            .state
+            .usable_area(h.state.output_at(500.0, 400.0).as_ref());
+        let v = h.state.panels.emojiview.as_ref().expect("the picker opens");
+        assert_eq!(
+            v.origin,
+            crate::textinput::popup_origin(caret, size, usable),
+            "the picker sits at the caret"
+        );
+        assert!(!reports_caret(&h), "the text input is left once heard");
+    }
+
+    #[test]
+    fn a_client_that_reports_no_caret_gets_the_picker_at_the_pointer() {
+        let (mut h, _c, _) = window_with_text_input();
+        h.state.toggle_emoji();
+        h.until("the picker opens", |s| s.panels.emojiview.is_some());
+        let cm = h.state.config.theme.controls();
+        let size = (emojipicker::width(&cm), emojipicker::layout(&cm).height);
+        let usable = h
+            .state
+            .usable_area(h.state.output_at(500.0, 400.0).as_ref());
+        let pointer = Rect::new(1000, 740, 1, 1);
+        assert_eq!(
+            h.state.panels.emojiview.as_ref().map(|v| v.origin),
+            Some(crate::textinput::popup_origin(pointer, size, usable)),
+            "the picker sits at the pointer"
+        );
+        assert!(!reports_caret(&h), "the text input is left");
+    }
+
+    #[test]
+    fn a_second_press_while_waiting_opens_nothing() {
+        let (mut h, _c, _) = window_with_text_input();
+        h.state.toggle_emoji();
+        h.state.toggle_emoji();
+        assert!(!reports_caret(&h), "the text input is left");
+        h.run_for(2 * CARET_WAIT.as_millis() as u64);
+        assert!(h.state.panels.emojiview.is_none(), "no picker opens");
     }
 
     #[test]
