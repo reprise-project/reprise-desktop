@@ -1549,8 +1549,8 @@ fn a_bar_cell_fills_its_share_in_every_look_and_scale() {
 
 /// Draws icon rows ([`IconRows`]) in each look at 100-200% text, scale 1 and 2: the icon column
 /// grows with the text, each icon stands whole in its row, the name starts 2 px past it with no
-/// ink before it, and no line's ink is cut. A plain `Vec<Row>` and icon rows given no icons keep
-/// the 100% column. Hashes each list at 200%.
+/// ink before it, and no line's ink is cut. A plain `Vec<Row>` keeps the 100% column and icon
+/// rows given no icons keep none. Hashes each list at 200%.
 #[test]
 fn icon_rows_grow_their_icons_with_the_text_and_names_clear_them() {
     use crate::interface::Interface;
@@ -1564,7 +1564,7 @@ fn icon_rows_grow_their_icons_with_the_text_and_names_clear_them() {
             let cm = base.controls();
             let icon = icon_px(cm.text);
             assert_eq!(icon, cm.text.icon(16), "{interface:?} at {pct}%");
-            assert_eq!(IconRows::default().icon_slot(cm.text), ICON_PX);
+            assert_eq!(IconRows::default().icon_slot(cm.text), 0);
             for s in [1, 2] {
                 let at = format!("{interface:?} at {pct}% scale {s}");
                 let theme = base.scaled(s);
@@ -1728,4 +1728,39 @@ fn a_classic_header_draws_its_held_and_sorted_titles_at_both_scales() {
         }
     }
     crate::pins::check("controls/listview_classic_header", &pins);
+}
+
+#[test]
+fn icon_rows_given_no_icons_set_their_names_past_no_icon_column() {
+    let plain = view(2);
+    let mut bare = ListView {
+        columns: plain.columns.clone(),
+        rows: IconRows(plain.rows.clone()),
+        ..Default::default()
+    };
+    let r = Rect::new(0, 0, 300, 80);
+    let theme = Theme::default();
+    let text = TextRenderer::load(&FontConfig::default());
+    let lay = layout(&bare, r, &ControlMetrics::CLASSIC);
+    bare.select(Some(0), &lay);
+    let mut c = Canvas::new(r.width as u32, r.height as u32);
+    let paint = classic_paint(&theme.colors, 1);
+    draw(
+        &mut c,
+        &text,
+        &paint,
+        &bare,
+        &lay,
+        None,
+        theme.fonts.size_px,
+    );
+    let at = |x: i32| c.get(lay.body.x + x, lay.body.y + 8);
+    assert_eq!(at(ICON_X - 1), theme.colors.window.argb());
+    assert_eq!(
+        at(ICON_X),
+        theme.colors.hilight.argb(),
+        "the highlight starts 2 px in"
+    );
+    let name = bare.name_rect(&lay, 0, &text, theme.fonts.size_px);
+    assert_eq!(name.x, lay.body.x + ICON_X, "the name box 2 px in");
 }

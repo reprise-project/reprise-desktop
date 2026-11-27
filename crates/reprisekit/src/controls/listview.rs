@@ -174,8 +174,8 @@ pub fn icon_px(u: TextUnits) -> i32 {
     u.icon(ICON_PX)
 }
 
-/// `Row`s whose icon column grows with the text ([`icon_px`]) once they hold an icon; a plain
-/// `Vec<Row>` keeps [`ICON_PX`].
+/// `Row`s whose icon column grows with the text ([`icon_px`]) once they hold an icon, and is
+/// left out while none does; a plain `Vec<Row>` keeps [`ICON_PX`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IconRows(pub Vec<Row>);
 
@@ -211,7 +211,7 @@ impl Rows for IconRows {
     fn icon_slot(&self, u: TextUnits) -> i32 {
         match self.0.iter().any(|r| r.icon.is_some()) {
             true => icon_px(u),
-            false => ICON_PX,
+            false => 0,
         }
     }
 }
