@@ -6,6 +6,7 @@
 //! needs a password, [`may_ask`] whether a password would allow it.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use zbus::Variant;
 
@@ -95,6 +96,140 @@ fn withdraw_with(method: &str) {
 pub fn withdraw_timed_out(e: &zbus::Error, interactive: bool) {
     if interactive && crate::error::timed_out(e) {
         withdraw();
+    }
+}
+
+/// How long a call that may open a password prompt waits, the change it then makes included:
+/// time to read the prompt, find the password and type it. Past it the prompt is withdrawn.
+pub const PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// `call`, or a timeout error once `limit` passes: zbus applies a connection's method timeout to
+/// plain calls only, not to `call_with_flags`.
+pub async fn within<T>(
+    limit: Duration,
+    call: impl Future<Output = zbus::Result<T>>,
+) -> zbus::Result<T> {
+    let late = async {
+        async_io::Timer::after(limit).await;
+        let e = std::io::Error::from(std::io::ErrorKind::TimedOut);
+        Err(zbus::Error::InputOutput(std::sync::Arc::new(e)))
+    };
+    futures_lite::future::or(call, late).await
+}
+
+/// [`within`] for a call that lets polkit ask for a password when `interactive`. A call that
+/// gives up on its prompt ([`gave_up`]) or is dropped meanwhile leaves the prompt open; since
+/// [`withdraw`] takes every prompt of this process, the last such call to end withdraws them.
+pub async fn asking<T>(
+    limit: Duration,
+    interactive: bool,
+    call: impl Future<Output = zbus::Result<T>>,
+) -> zbus::Result<T> {
+    asking_with(limit, interactive, call, &IN_FLIGHT, withdraw).await
+}
+
+/// A `NoReply` this long after the call is the service giving up on its prompt (systemd's
+/// services wait 25 s); one sooner is the service quitting under the call.
+const SERVICE_GAVE_UP: Duration = Duration::from_secs(20);
+
+/// Whether `e`, from [`asking`], is its call giving up on the prompt: [`within`]'s timeout, or
+/// the service's late `NoReply`. The change may have been made as the call gave up.
+pub fn gave_up(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut)
+}
+
+/// What a program says for a call [`gave_up`] on.
+pub const GAVE_UP: &str = "The password prompt was open too long, so the change may not have \
+                           been made. Check it and try again.";
+
+fn timeout() -> zbus::Error {
+    let e = std::io::Error::from(std::io::ErrorKind::TimedOut);
+    zbus::Error::InputOutput(std::sync::Arc::new(e))
+}
+
+/// `e` from a call that took `after`, with a late `NoReply` read as a timeout.
+fn classified(e: zbus::Error, after: Duration) -> zbus::Error {
+    let no_reply =
+        crate::error::name(&e).is_some_and(|n| n == "org.freedesktop.DBus.Error.NoReply");
+    match no_reply && after >= SERVICE_GAVE_UP {
+        true => timeout(),
+        false => e,
+    }
+}
+
+async fn asking_with<T, W: FnOnce()>(
+    limit: Duration,
+    interactive: bool,
+    call: impl Future<Output = zbus::Result<T>>,
+    flight: &InFlight,
+    withdraw: W,
+) -> zbus::Result<T> {
+    let start = std::time::Instant::now();
+    let ending = interactive.then(|| Ending::new(flight, withdraw));
+    let answer = within(limit, call)
+        .await
+        .map_err(|e| classified(e, start.elapsed()));
+    if let Some(ending) = ending {
+        ending.end(matches!(&answer, Err(e) if gave_up(e)));
+    }
+    answer
+}
+
+/// The calls that may prompt under way in this process, and whether one that ended left its
+/// prompt open.
+struct InFlight(std::sync::Mutex<(usize, bool)>);
+
+static IN_FLIGHT: InFlight = InFlight(std::sync::Mutex::new((0, false)));
+
+impl InFlight {
+    fn begin(&self) {
+        crate::mutex::lock(&self.0).0 += 1;
+    }
+
+    /// One call ended, leaving its prompt `open`; whether to withdraw the prompts now.
+    fn end(&self, open: bool) -> bool {
+        let mut f = crate::mutex::lock(&self.0);
+        f.0 = f.0.saturating_sub(1);
+        f.1 |= open;
+        let now = f.0 == 0 && f.1;
+        if now {
+            f.1 = false;
+        }
+        now
+    }
+}
+
+/// A call under way in [`InFlight`]; dropped before [`Ending::end`], it left its prompt open.
+struct Ending<'a, W: FnOnce()> {
+    flight: &'a InFlight,
+    withdraw: Option<W>,
+}
+
+impl<'a, W: FnOnce()> Ending<'a, W> {
+    fn new(flight: &'a InFlight, withdraw: W) -> Self {
+        flight.begin();
+        Ending {
+            flight,
+            withdraw: Some(withdraw),
+        }
+    }
+
+    fn end(mut self, open: bool) {
+        self.finish(open);
+    }
+
+    fn finish(&mut self, open: bool) {
+        if let Some(withdraw) = self.withdraw.take()
+            && self.flight.end(open)
+        {
+            withdraw();
+        }
+    }
+}
+
+impl<W: FnOnce()> Drop for Ending<'_, W> {
+    fn drop(&mut self) {
+        self.finish(true);
     }
 }
 
@@ -240,6 +375,95 @@ mod tests {
 
     fn error(name: &str) -> zbus::Error {
         crate::error::reply(name, "Not authorized")
+    }
+
+    #[test]
+    fn a_call_past_its_limit_fails_as_timed_out() {
+        let call = futures_lite::future::pending::<zbus::Result<()>>();
+        let e = zbus::block_on(within(Duration::from_millis(20), call)).unwrap_err();
+        assert!(crate::error::timed_out(&e), "{e}");
+        assert_eq!(
+            zbus::block_on(within(Duration::from_secs(60), async { Ok(7) })).unwrap(),
+            7
+        );
+    }
+
+    fn flight() -> InFlight {
+        InFlight(std::sync::Mutex::new((0, false)))
+    }
+
+    #[test]
+    fn only_an_interactive_call_that_gave_up_withdraws_its_prompt() {
+        let limit = Duration::from_millis(20);
+        let withdrawn = |interactive: bool, call: zbus::Result<()>| {
+            let n = std::cell::Cell::new(0);
+            let call = async {
+                match call {
+                    Ok(()) => futures_lite::future::pending().await,
+                    Err(e) => Err(e),
+                }
+            };
+            let f = flight();
+            let withdraw = || n.set(n.get() + 1);
+            let _: zbus::Result<()> =
+                zbus::block_on(asking_with(limit, interactive, call, &f, withdraw));
+            n.get()
+        };
+        assert_eq!(withdrawn(true, Ok(())), 1, "past its limit");
+        assert_eq!(withdrawn(false, Ok(())), 0, "no prompt to withdraw");
+        let no_reply = error("org.freedesktop.DBus.Error.NoReply");
+        assert_eq!(
+            withdrawn(true, Err(no_reply)),
+            0,
+            "the service quit at once"
+        );
+        let denied = error("org.freedesktop.DBus.Error.AccessDenied");
+        assert_eq!(withdrawn(true, Err(denied)), 0, "the prompt was answered");
+        let f = flight();
+        let answered = zbus::block_on(asking_with(limit, true, async { Ok(7) }, &f, || panic!()));
+        assert_eq!(answered.unwrap(), 7);
+    }
+
+    #[test]
+    fn a_late_no_reply_is_the_service_giving_up_and_an_early_one_its_failure() {
+        let no_reply = || error("org.freedesktop.DBus.Error.NoReply");
+        assert!(gave_up(&classified(no_reply(), Duration::from_secs(25))));
+        let early = classified(no_reply(), Duration::from_secs(1));
+        assert!(!gave_up(&early));
+        assert!(
+            crate::error::name(&early).is_some_and(|n| n == "org.freedesktop.DBus.Error.NoReply")
+        );
+        let denied = classified(
+            error("org.freedesktop.DBus.Error.AccessDenied"),
+            Duration::from_secs(60),
+        );
+        assert!(!gave_up(&denied));
+    }
+
+    #[test]
+    fn the_last_call_out_withdraws_the_prompts_an_earlier_one_left_open() {
+        let f = flight();
+        f.begin();
+        f.begin();
+        assert!(!f.end(true), "another call's prompt may be up");
+        assert!(f.end(false), "the last call out sweeps the open prompt");
+        f.begin();
+        assert!(!f.end(false), "nothing left open");
+        f.begin();
+        assert!(f.end(true), "alone, it withdraws its own");
+    }
+
+    #[test]
+    fn a_call_dropped_while_its_prompt_is_up_withdraws_it() {
+        let (f, n) = (flight(), std::cell::Cell::new(0));
+        let pending = futures_lite::future::pending::<zbus::Result<()>>();
+        let mut call = Box::pin(asking_with(PROMPT_TIMEOUT, true, pending, &f, || {
+            n.set(n.get() + 1)
+        }));
+        assert!(zbus::block_on(futures_lite::future::poll_once(&mut call)).is_none());
+        assert_eq!(n.get(), 0);
+        drop(call);
+        assert_eq!(n.get(), 1);
     }
 
     #[test]
