@@ -80,7 +80,7 @@ pub use crate::controls::shellgrid::{
 
 /// One file or folder. The host fills the fields its modes need: `icon`
 /// for List and Details (16 px, or [`list_icon_px`] grown with the text), `icon32` for Icons
-/// and for List and Details once the text grows their icon column to 32 px ([`list_icon`]),
+/// (and List and Details when it fits their icon column, [`list_icon`]),
 /// `icon48` for Tiles, `thumb` for Thumbnails. `id` is the host's own handle (a `filedlg::FolderId`
 /// for a directory, whatever it keys its files by otherwise); reprisekit only carries it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -383,20 +383,19 @@ pub fn listing_px(u: TextUnits) -> [i32; 3] {
     ]
 }
 
-/// The icon List and Details draw for `e` in an icon column `slot` px wide: the 32 px one once
-/// it fits, else `icon`.
-pub fn list_icon(e: &Entry, slot: i32) -> Option<&std::rc::Rc<Canvas>> {
-    match slot >= 32 {
-        true => e.icon32.as_ref().or(e.icon.as_ref()),
-        false => e.icon.as_ref(),
-    }
+/// The icon List and Details draw for `e` in an icon column `slot` px wide at scale `s`:
+/// `icon32` once the column is 32 px and it fits there, else `icon`.
+pub fn list_icon(e: &Entry, slot: i32, s: i32) -> Option<&std::rc::Rc<Canvas>> {
+    (e.icon32.as_ref())
+        .filter(|c| slot >= 32 && c.height as i32 <= slot * s)
+        .or(e.icon.as_ref())
 }
 
 /// The [`ListingIcons::sizes`](crate::icontheme::ListingIcons::sizes) `mode` draws an entry's
-/// icon at, with List and Details' icon column `list` px wide ([`list_icon`]).
-pub fn drawn_sizes(mode: Mode, list: i32) -> [bool; 3] {
+/// icon at: List and Details draw `icon`, fetched at their column's size.
+pub fn drawn_sizes(mode: Mode) -> [bool; 3] {
     match mode {
-        Mode::List | Mode::Details => [true, list >= 32, false],
+        Mode::List | Mode::Details => [true, false, false],
         Mode::Icons | Mode::Thumbnails => [false, true, false],
         Mode::Tiles => [false, false, true],
     }

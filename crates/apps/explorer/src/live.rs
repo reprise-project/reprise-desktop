@@ -149,7 +149,7 @@ impl Explorer {
 
     /// The entries wear their theme icons at every size the view now draws.
     pub(crate) fn draw_list_icons(&mut self, ctx: &mut Ctx) {
-        let drawn = shellview::drawn_sizes(self.sv.mode, shellview::list_icon_px(ctx.theme.text));
+        let drawn = shellview::drawn_sizes(self.sv.mode);
         (self.list_icons).draw(drawn, &mut ctx.icons, &mut self.sv.entries);
     }
 
@@ -1222,7 +1222,7 @@ pub(crate) mod tests {
             ex.run(crate::commands::Command::Mode(mode), &mut ctx);
             let e = &ex.sv.entries[i];
             let drawn = match mode {
-                Mode::List | Mode::Details => shellview::list_icon(e, 16),
+                Mode::List | Mode::Details => shellview::list_icon(e, 16, 1),
                 Mode::Icons | Mode::Thumbnails => e.icon32.as_ref(),
                 Mode::Tiles => e.icon48.as_ref(),
             };

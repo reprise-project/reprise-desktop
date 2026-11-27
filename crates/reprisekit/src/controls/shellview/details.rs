@@ -231,10 +231,10 @@ impl listview::Rows for DetailsRows<'_> {
     fn icon_slot(&self, u: TextUnits) -> i32 {
         u.len(ICON_PX)
     }
-    fn icon_in(&self, row: usize, slot: i32) -> Option<&Canvas> {
+    fn icon_in(&self, row: usize, slot: i32, s: i32) -> Option<&Canvas> {
         self.0
             .get(row)
-            .and_then(|e| list_icon(e, slot))
+            .and_then(|e| list_icon(e, slot, s))
             .map(|c| &**c)
     }
     fn cell(&self, row: usize, col: usize) -> Cow<'_, str> {

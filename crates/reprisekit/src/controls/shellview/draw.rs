@@ -125,7 +125,7 @@ pub fn draw(
             continue;
         }
         let editing = matches!(&sv.edit, Some((j, _)) if *j == i);
-        let icon = shellgrid::faded(entry, list_icon(entry, slot).map(|c| &**c));
+        let icon = shellgrid::faded(entry, list_icon(entry, slot, s).map(|c| &**c));
         let row = ListRow {
             name: &entry.name,
             icon: icon.as_deref(),
