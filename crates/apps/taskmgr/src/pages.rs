@@ -21,6 +21,7 @@ pub const MIN: (i32, i32) = (440, 360);
 
 pub const END_TASK: &str = "end_task";
 pub const SWITCH_TO: &str = "switch_to";
+pub const NEW_TASK: &str = "new_task";
 pub const END_PROCESS: &str = "end_process";
 pub const ALL_USERS: &str = "all_users";
 
@@ -112,7 +113,7 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
         Page::Applications => vec![
             Item::button_at(
                 END_TASK,
-                inner.right() - 2 * BUTTON_W - GAP,
+                inner.right() - 3 * BUTTON_W - 2 * GAP,
                 by,
                 BUTTON_W,
                 &tr!("end-task"),
@@ -120,10 +121,18 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
             ),
             Item::button_at(
                 SWITCH_TO,
-                inner.right() - BUTTON_W,
+                inner.right() - 2 * BUTTON_W - GAP,
                 by,
                 BUTTON_W,
                 &tr!("switch-to"),
+                true,
+            ),
+            Item::button_at(
+                NEW_TASK,
+                inner.right() - BUTTON_W,
+                by,
+                BUTTON_W,
+                &tr!("new-task"),
                 true,
             ),
         ],

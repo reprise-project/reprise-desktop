@@ -2803,21 +2803,22 @@ fn call_shell(
     })
 }
 
-/// The error names `CriticalTurnOff` and `Restart` from another peer on `bus` answer (None for a
-/// reply), and how many tray events they sent, with the tray reading processes under `proc`.
+/// The error names `CriticalTurnOff`, `Restart` and `ShowRun` from another peer on `bus` answer
+/// (None for a reply), and how many tray events they sent, with the tray reading processes under
+/// `proc`.
 fn shell_calls(
     bus: &reprisebus::testbus::Bus,
     proc: &std::path::Path,
 ) -> (Vec<Option<String>>, usize) {
     let (events, received) = std::sync::mpsc::channel();
     let (shell, _fd) = test_shell(events, proc);
-    let replies = call_shell(bus, shell, &["CriticalTurnOff", "Restart"]);
+    let replies = call_shell(bus, shell, &["CriticalTurnOff", "Restart", "ShowRun"]);
     let replies = replies.into_iter().map(Result::err).collect();
     (replies, received.try_iter().count())
 }
 
 #[test]
-fn a_sandboxed_peer_cannot_turn_the_computer_off_or_restart_it() {
+fn a_sandboxed_peer_cannot_turn_the_computer_off_restart_it_or_open_run() {
     let Some(bus) = reprisebus::testbus::bus() else {
         return;
     };
@@ -2832,12 +2833,12 @@ fn a_sandboxed_peer_cannot_turn_the_computer_off_or_restart_it() {
     let denied = Some("org.freedesktop.DBus.Error.AccessDenied".to_string());
     assert_eq!(
         shell_calls(&bus, &proc),
-        (vec![denied.clone(), denied], 0),
-        "both refused, no event sent"
+        (vec![denied.clone(), denied.clone(), denied], 0),
+        "all refused, no event sent"
     );
     assert_eq!(
         shell_calls(&bus, std::path::Path::new("/proc")),
-        (vec![None, None], 2),
+        (vec![None, None, None], 3),
         "a host program is answered"
     );
     let _ = std::fs::remove_dir_all(&proc);

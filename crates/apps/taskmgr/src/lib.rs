@@ -215,6 +215,7 @@ fn waits_on(starts: &HashMap<i32, u64>, snap: &Snapshot, entries: &[AppEntry], t
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Act {
+    NewTask,
     Quit,
     Refresh,
     Speed(Speed),
@@ -279,6 +280,8 @@ pub struct TaskMgr {
     end_task: fn(String, Vec<i32>, bool),
     /// End Task on one window of a program that shows others ([`worker::close_window`]).
     close_window: fn(AppWindow),
+    /// New Task...: the Run box ([`worker::new_task`]).
+    new_task: fn(),
     /// A pidfd for a process End Process asks about ([`worker::open_process`]).
     open_process: fn(i32, u64) -> std::io::Result<OwnedFd>,
     entries: Arc<Vec<AppEntry>>,
@@ -317,6 +320,7 @@ impl TaskMgr {
             hung_rx: None,
             end_task: worker::end_task,
             close_window: worker::close_window,
+            new_task: worker::new_task,
             open_process: worker::open_process,
             procs: List::new(Vec::new()),
             proc_rows: Vec::new(),
@@ -365,6 +369,8 @@ impl TaskMgr {
             return;
         }
         let mut file = MenuTree::new();
+        file.push(MenuItem::item(&tr!("menu-new-task")));
+        file.push(MenuItem::Separator);
         file.push(MenuItem::item(&tr!("menu-exit")));
         let mut options = MenuTree::new();
         options.push(MenuItem::item(&tr!("menu-always-on-top")).checked(self.on_top));
@@ -454,7 +460,8 @@ impl TaskMgr {
 
     fn menu_act(&self, title: usize, path: &[usize]) -> Option<Act> {
         Some(match (title, path) {
-            (0, [0]) => Act::Quit,
+            (0, [0]) => Act::NewTask,
+            (0, [2]) => Act::Quit,
             (1, [0]) => Act::OnTop(!self.on_top),
             (2, [0]) => Act::Refresh,
             (2, [1, i]) => Act::Speed(*Speed::ALL.get(*i)?),
@@ -466,6 +473,10 @@ impl TaskMgr {
 
     fn act(&mut self, a: Act) -> Reply {
         match a {
+            Act::NewTask => {
+                (self.new_task)();
+                return Reply::none();
+            }
             Act::Quit => return quit(),
             Act::Refresh => self.send(worker::Cmd::Now),
             Act::Speed(s) => {
@@ -962,6 +973,7 @@ impl TaskMgr {
         match ev {
             form::Event::Pressed(pages::END_TASK) => self.end_task(),
             form::Event::Pressed(pages::SWITCH_TO) => self.switch_to(),
+            form::Event::Pressed(pages::NEW_TASK) => self.act(Act::NewTask),
             form::Event::Pressed(pages::END_PROCESS) => self.ask_end_process(ctx),
             form::Event::Changed(pages::ALL_USERS) => {
                 self.all_users = self.form.checked(pages::ALL_USERS).unwrap_or(false);

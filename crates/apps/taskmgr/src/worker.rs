@@ -107,6 +107,15 @@ pub fn end_task(unit: String, pids: Vec<i32>, spare: bool) {
     });
 }
 
+/// New Task... off the event loop: the compositor's Run box.
+pub fn new_task() {
+    std::thread::spawn(|| {
+        if let Err(e) = reprisebus::tray::show_run() {
+            log::warn!("New Task: no Run box: {e}");
+        }
+    });
+}
+
 /// End Task on one window off the event loop: it is asked to close as its X button does.
 pub fn close_window(w: reprisebus::tray::AppWindow) {
     std::thread::spawn(move || {
