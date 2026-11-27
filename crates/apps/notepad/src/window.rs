@@ -52,13 +52,7 @@ pub(crate) fn default_family(families: &[String]) -> Option<&str> {
 pub(crate) fn local_stamp(secs: i64) -> String {
     use reprisefs::locale;
     let tm = locale::localtime(secs);
-    let clock = if locale::is_12h() {
-        c"%l:%M %p"
-    } else {
-        c"%H:%M"
-    };
-    let time = locale::strftime(&tm, clock);
-    format!("{} {}", time.trim(), locale::short_date(&tm))
+    format!("{} {}", locale::short_time(&tm), locale::short_date(&tm))
 }
 
 impl Notepad {

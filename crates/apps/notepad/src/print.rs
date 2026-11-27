@@ -1,5 +1,5 @@
 //! File > Page Setup... and Print...: the text printed wrapped between the margins in the
-//! document's font, with no header or footer.
+//! document's font, with Page Setup's header and footer in the margins.
 
 use super::*;
 use repriseapp::print::{Doc, Step, TextFont};

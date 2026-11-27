@@ -37,6 +37,7 @@ fn a_long_text_is_drawn_one_raw_page_at_a_time() {
             lines,
         },
         s,
+        "notes.txt",
     );
     assert!(laid.pages() > 20, "{} pages", laid.pages());
     LIVE.with(|l| l.set((0, 0)));
@@ -67,6 +68,7 @@ fn a_text_wraps_between_the_margins_and_a_range_draws_only_its_pages() {
             lines,
         },
         s,
+        "notes.txt",
     );
     assert_eq!(laid.pages(), 2);
     let mut pages = Vec::new();
@@ -76,6 +78,38 @@ fn a_text_wraps_between_the_margins_and_a_range_draws_only_its_pages() {
     assert_eq!((p.image.width, p.image.height), (1890, 2917));
     assert!((p.size.0 - 595.28).abs() < 0.01 && (p.size.1 - 841.89).abs() < 0.01);
     assert!((p.at[0] - 70.866).abs() < 0.01, "the body starts 25 mm in");
+}
+
+#[test]
+fn a_header_or_footer_prints_the_strip_between_the_side_margins_top_to_bottom() {
+    let s = PageSetup {
+        footer: "Page &p".into(),
+        ..a4(25 * MM)
+    };
+    assert_eq!(
+        frame_px(&s),
+        Frame {
+            width: 1890,
+            height: 3508,
+            top: 295,
+            bottom: 3508 - 295 - 2917,
+        },
+        "297 mm tall, the text's 247 mm 25 mm down"
+    );
+    let laid = Laid::new(
+        Doc::Text {
+            font: mono(12),
+            lines: vec!["x".into()],
+        },
+        s,
+        "notes.txt",
+    );
+    let mut pages = Vec::new();
+    laid.render(Range::All, |p| pages.push(p));
+    let p = &pages[0];
+    assert_eq!((p.image.width, p.image.height), (1890, 3508));
+    let [x, y, _, h] = p.at;
+    assert!((x - 70.866).abs() < 0.01 && y == 0.0 && (h - 841.89).abs() < 0.01);
 }
 
 #[test]
@@ -89,6 +123,7 @@ fn a_large_picture_is_drawn_at_300_dpi_of_its_place_and_a_small_one_at_its_own_s
             turns: 1,
         },
         s,
+        "notes.txt",
     );
     let mut got = Vec::new();
     laid.render(Range::All, |p| got.push(p));
@@ -115,6 +150,7 @@ fn laying_out_a_large_picture_shrinks_it_and_lets_the_full_one_go() {
             turns: 0,
         },
         a4(25 * MM),
+        "notes.txt",
     );
     assert_eq!(
         Arc::strong_count(&full),
@@ -132,6 +168,7 @@ fn laying_out_a_large_picture_shrinks_it_and_lets_the_full_one_go() {
             turns: 1,
         },
         a4(25 * MM),
+        "notes.txt",
     );
     let Doc::Picture { picture, .. } = &laid.doc else {
         panic!("a picture");

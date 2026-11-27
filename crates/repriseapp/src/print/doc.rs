@@ -8,7 +8,7 @@ use reprisekit::controls::imageview;
 use reprisekit::controls::multiedit::{Metrics, Row};
 use reprisekit::controls::pagesetup::{self, PageSetup, points};
 use reprisekit::controls::printdlg::Range;
-use reprisekit::controls::printpage;
+use reprisekit::controls::printpage::{self, Frame, Stamp, band};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::FontConfig;
@@ -73,12 +73,15 @@ pub enum Doc {
 pub struct Laid {
     doc: Doc,
     setup: PageSetup,
+    /// What a text's header and footer call the file.
+    title: String,
     /// A text's rows, page by page; a picture is one page.
     rows: Vec<Vec<Row>>,
 }
 
 impl Laid {
-    pub fn new(doc: Doc, setup: PageSetup) -> Laid {
+    /// `doc`, titled `title`, cut into pages of `setup`.
+    pub fn new(doc: Doc, setup: PageSetup, title: &str) -> Laid {
         let (doc, rows) = match doc {
             Doc::Text { font, lines } => {
                 let face = font.load();
@@ -92,7 +95,12 @@ impl Laid {
                 (Doc::Picture { picture, turns }, vec![Vec::new()])
             }
         };
-        Laid { doc, setup, rows }
+        Laid {
+            doc,
+            setup,
+            title: title.into(),
+            rows,
+        }
     }
 
     pub fn pages(&self) -> u32 {
@@ -112,12 +120,38 @@ impl Laid {
                 let face = face_of(&face, font);
                 let m = font.metrics();
                 let size = body_px(&self.setup);
-                for rows in range
-                    .of(self.pages())
-                    .filter_map(|i| self.rows.get(i as usize))
-                {
-                    let raw = Raw::new(printpage::draw_text_page(face, &m, lines, rows, size));
-                    out(page(&self.setup, &raw.0, b));
+                let s = &self.setup;
+                let framed = !(s.header.is_empty() && s.footer.is_empty());
+                let (date, time) = match framed {
+                    true => now_stamp(),
+                    false => Default::default(),
+                };
+                for i in range.of(self.pages()) {
+                    let Some(rows) = self.rows.get(i as usize) else {
+                        continue;
+                    };
+                    if !framed {
+                        let raw = Raw::new(printpage::draw_text_page(face, &m, lines, rows, size));
+                        out(page(s, &raw.0, b));
+                        continue;
+                    }
+                    let stamp = Stamp {
+                        file: &self.title,
+                        page: i + 1,
+                        date: &date,
+                        time: &time,
+                    };
+                    let (header, footer) = (band(&s.header, &stamp), band(&s.footer, &stamp));
+                    let raw = Raw::new(printpage::draw_framed_page(
+                        face,
+                        &m,
+                        lines,
+                        rows,
+                        frame_px(s),
+                        &header,
+                        &footer,
+                    ));
+                    out(page(s, &raw.0, Rect::new(b.x, 0, b.width, s.size().1)));
                 }
             }
             Doc::Picture { picture, turns } => {
@@ -142,6 +176,32 @@ fn face_of<'a>(face: &'a TextRenderer, font: &TextFont) -> &'a TextRenderer {
 fn body_px(s: &PageSetup) -> (i32, i32) {
     let b = s.body();
     (pagesetup::px(b.width, DPI), pagesetup::px(b.height, DPI))
+}
+
+/// The strip of `s`'s page between the left and right margins, top to bottom, device px at
+/// [`DPI`]: the text's rows start below the top margin, as [`body_px`] has them.
+fn frame_px(s: &PageSetup) -> Frame {
+    let (width, body_h) = body_px(s);
+    let height = pagesetup::px(s.size().1, DPI);
+    let top = pagesetup::px(s.body().y, DPI);
+    Frame {
+        width,
+        height,
+        top,
+        bottom: height - top - body_h,
+    }
+}
+
+/// The date and time a header's `&d` and `&t` print, in the user's LC_TIME locale.
+fn now_stamp() -> (String, String) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let tm = reprisefs::locale::localtime(now);
+    (
+        reprisefs::locale::short_date(&tm),
+        reprisefs::locale::short_time(&tm),
+    )
 }
 
 /// A picture `size` px drawn into `at` (hundredths of a millimetre): its size at [`DPI`] there,
