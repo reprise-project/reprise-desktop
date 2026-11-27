@@ -157,18 +157,14 @@ mod tests {
             })
     }
 
-    fn part(v: Variant, d: i32, p: Part) -> PartImage {
-        parts(v.into(), d)
-            .into_iter()
-            .find(|(q, _)| *q == p)
-            .unwrap()
-            .1
+    fn part(v: Tone, d: i32, p: Part) -> PartImage {
+        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
     }
 
     /// Navy, olive green and silver draw a white line after the shadow.
-    fn lit(v: Variant) -> bool {
+    fn lit(v: Tone) -> bool {
         matches!(
-            v,
+            v.variant,
             Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel
         )
     }
@@ -177,7 +173,7 @@ mod tests {
     #[test]
     fn status_parts_pin_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in [Part::StatusBar, Part::StatusPane] {
                     got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p).atlas)));
@@ -191,7 +187,7 @@ mod tests {
     /// and content insets still in design pixels.
     #[test]
     fn status_parts_are_painted_at_the_style_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2, 3] {
                 let du = d as u32;
                 let bar = part(v, d, Part::StatusBar);
@@ -219,7 +215,7 @@ mod tests {
     #[test]
     fn the_bar_is_redrawn_at_scale_2() {
         let luma = |p: u32| (p >> 16 & 0xFF) + (p >> 8 & 0xFF) + (p & 0xFF);
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             let one = part(v, 1, Part::StatusBar).atlas;
             let two = part(v, 2, Part::StatusBar).atlas;
             assert!(one.pixels.iter().all(|p| p >> 24 == 0xFF), "{v:?}: opaque");
@@ -237,7 +233,7 @@ mod tests {
             Variant::Silver,
             Variant::Steel,
         ] {
-            let two = part(v, 2, Part::StatusBar).atlas;
+            let two = part(v.into(), 2, Part::StatusBar).atlas;
             assert!(
                 (0..50).any(|c| two.get(2 * c, 20) != two.get(2 * c + 1, 20)),
                 "{v:?}: the left fade steps inside a design column"
@@ -255,7 +251,7 @@ mod tests {
     /// column in the other schemes. Whole design pixels at every scale.
     #[test]
     fn the_pane_is_its_divider() {
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             for d in [1, 2] {
                 let c = part(v, d, Part::StatusPane).atlas;
                 for y in 0..23 * d {

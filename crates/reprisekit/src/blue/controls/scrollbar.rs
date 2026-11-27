@@ -329,7 +329,6 @@ fn atlas(frames: &[Canvas], states: &[State], d: i32) -> PartImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blue::Variant;
     use crate::raster::Rect;
 
     const PARTS: [Part; 10] = [
@@ -345,12 +344,8 @@ mod tests {
         Part::ScrollTrackH,
     ];
 
-    fn part(v: Variant, p: Part, d: i32) -> PartImage {
-        parts(v.into(), d)
-            .into_iter()
-            .find(|(q, _)| *q == p)
-            .unwrap()
-            .1
+    fn part(v: Tone, p: Part, d: i32) -> PartImage {
+        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
     }
 
     fn frame(img: &PartImage, state: State) -> Rect {
@@ -389,7 +384,7 @@ mod tests {
 
     #[test]
     fn every_part_keeps_its_size_and_nine_grid_at_scale_1_and_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for (p, size) in [
                 (Part::ScrollArrowUp, (17, 17)),
                 (Part::ScrollArrowDown, (17, 17)),
@@ -423,7 +418,7 @@ mod tests {
 
     #[test]
     fn every_state_draws_its_own_frame_where_its_face_is_its_own() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let s = v.scheme();
             for p in &PARTS[..4] {
                 let img = part(v, *p, 1);
@@ -500,7 +495,7 @@ mod tests {
 
     #[test]
     fn a_buttons_corners_are_round_and_clean_at_scale_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for p in [Part::ScrollArrowUp, Part::ScrollThumbV] {
                 let img = part(v, p, 2);
                 for &state in &STATES {
@@ -541,7 +536,7 @@ mod tests {
 
     #[test]
     fn every_chevron_arm_is_solid_at_1_and_smooth_at_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let s = v.scheme();
             for (p, face, pts) in [
                 (
@@ -579,7 +574,7 @@ mod tests {
 
     #[test]
     fn an_arrows_seam_carries_no_chevron() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let face = &v.scheme().scroll_arrow_up.normal;
             let sh = Shading::of(face, Lie::Upright);
             for d in [1, 2] {
@@ -602,7 +597,7 @@ mod tests {
 
     #[test]
     fn grips_are_ridges_and_tracks_keep_whole_edges() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let g = part(v, Part::ScrollGripV, 1);
             let light = px(&g, State::Normal, 0, 0);
             let dark = px(&g, State::Normal, 6, 1);
@@ -638,7 +633,7 @@ mod tests {
     #[test]
     fn scrollbar_parts_pin_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in PARTS {
                     got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, p, d))));

@@ -728,6 +728,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
             "reprisekit-gallery-caption-tabs.png",
         );
         write_preview(gallery_p3::render, "reprisekit-gallery-blue-variants.png");
+        write_preview(
+            gallery_p3::render_dark,
+            "reprisekit-gallery-blue-variants-dark.png",
+        );
     }
 }
 

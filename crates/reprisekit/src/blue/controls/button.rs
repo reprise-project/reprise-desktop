@@ -40,8 +40,9 @@ const SIZING: Insets = Insets::new(6, 4, 7, 5);
 const CONTENT: Insets = Insets::new(4, 1, 4, 0);
 
 /// The lit line along the bottom edge in navy, olive green and silver: white
-/// at this alpha.
+/// at this alpha, fainter on a dark twin's charcoal.
 const LIT_EDGE: u8 = 0xA4;
+const DARK_LIT_EDGE: u8 = 0x20;
 
 /// The edge ring's corner radius in design px: navy, olive green and silver
 /// round theirs, the other schemes keep a squarer corner.
@@ -118,7 +119,8 @@ fn frame(v: Tone, s: State, d: i32) -> Canvas {
         let col = x.min(f64::from(W - 1) - x);
         if row <= col { down(y) } else { across(x) }
     };
-    let lit = shape::premul(Color::rgb(0xFF, 0xFF, 0xFF), LIT_EDGE);
+    let lit_alpha = if v.dark { DARK_LIT_EDGE } else { LIT_EDGE };
+    let lit = shape::premul(Color::rgb(0xFF, 0xFF, 0xFF), lit_alpha);
     let px = shape::ringed(W, H, r, 4, d, |x, y, i| match i {
         0 => match (edge, f.halo) {
             (Edge::Solid, _) => nearest(x, y),
@@ -153,11 +155,11 @@ mod tests {
         h
     }
 
-    fn img(v: Variant, d: i32) -> PartImage {
-        parts(v.into(), d).into_iter().next().unwrap().1
+    fn img(v: Tone, d: i32) -> PartImage {
+        parts(v, d).into_iter().next().unwrap().1
     }
 
-    fn cut(v: Variant, s: State, d: i32) -> Canvas {
+    fn cut(v: Tone, s: State, d: i32) -> Canvas {
         let i = STATES.iter().position(|&t| t == s).unwrap() as i32;
         img(v, d)
             .atlas
@@ -173,7 +175,7 @@ mod tests {
     /// scale.
     #[test]
     fn the_push_button_is_75_by_23_with_design_insets_at_every_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let i = img(v, d);
                 assert_eq!(i.scale, d, "{v:?} at {d}");
@@ -194,7 +196,7 @@ mod tests {
     /// and at 2 the curves carry partial alpha.
     #[test]
     fn the_corners_are_round_and_smooth_at_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for s in STATES {
                 let one = cut(v, s, 1);
                 assert!(alpha(&one, 0, 0) < 0x60, "{v:?} {s:?} corner");
@@ -214,15 +216,12 @@ mod tests {
     /// the hot button's ring; Focused repeats Default.
     #[test]
     fn each_state_draws_its_own_frame() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
-                let h: Vec<u64> = STATES
-                    .iter()
-                    .map(|&s| fnv(&frame(v.into(), s, d)))
-                    .collect();
+                let h: Vec<u64> = STATES.iter().map(|&s| fnv(&frame(v, s, d))).collect();
                 for i in 0..5 {
                     for j in i + 1..5 {
-                        let alias = matches!(v, Variant::Slate | Variant::Ember)
+                        let alias = matches!(v.variant, Variant::Slate | Variant::Ember)
                             && (STATES[i], STATES[j]) == (State::Hot, State::Default);
                         if alias {
                             assert_eq!(h[i], h[j], "{v:?} Default repeats Hot at {d}");
@@ -240,9 +239,9 @@ mod tests {
     /// side columns inside the border differ from the face's middle.
     #[test]
     fn the_hot_ring_shows_down_the_sides() {
-        for v in Variant::ALL {
-            let n = frame(v.into(), State::Normal, 1);
-            let h = frame(v.into(), State::Hot, 1);
+        for v in Tone::ALL {
+            let n = frame(v, State::Normal, 1);
+            let h = frame(v, State::Hot, 1);
             let at = |c: &Canvas, x: i32| c.pixels[(11 * c.width as i32 + x) as usize];
             for x in [2, 72] {
                 assert_ne!(at(&h, x), at(&n, x), "{v:?} column {x}");
@@ -256,8 +255,8 @@ mod tests {
     #[test]
     fn the_border_is_solid_with_no_dark_fringe() {
         let lum = |p: u32| ((p >> 16) & 0xFF) + ((p >> 8) & 0xFF) + (p & 0xFF);
-        for v in Variant::ALL {
-            let c = frame(v.into(), State::Normal, 2);
+        for v in Variant::ALL.map(Tone::from) {
+            let c = frame(v, State::Normal, 2);
             let px = |x: i32, y: i32| c.pixels[(y * c.width as i32 + x) as usize];
             for y in [2, 3] {
                 assert_eq!(px(75, y) >> 24, 255, "{v:?} top border row {y}");
@@ -299,7 +298,7 @@ mod tests {
     /// Every scheme's atlas at 1 and 2, pinned.
     #[test]
     fn push_button_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&img(v, d).atlas))))
             .collect();

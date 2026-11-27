@@ -1292,8 +1292,8 @@ mod tests {
     }
 
     #[test]
-    fn every_blue_schemes_text_is_4_5_to_1_on_its_fill() {
-        for v in crate::blue::Variant::ALL {
+    fn every_blue_scheme_and_twins_text_is_4_5_to_1_on_its_fill() {
+        for v in crate::blue::Tone::ALL {
             let cs = v.scheme().system.colors();
             for (what, ratio) in text_pairs(&cs) {
                 assert!(
@@ -1305,8 +1305,8 @@ mod tests {
     }
 
     #[test]
-    fn every_blue_schemes_links_are_4_5_to_1_on_the_face() {
-        for v in crate::blue::Variant::ALL {
+    fn every_blue_scheme_and_twins_links_are_4_5_to_1_on_the_face() {
+        for v in crate::blue::Tone::ALL {
             let cs = v.scheme().system.colors();
             let ratio = cs.hot_light.contrast(cs.button_face);
             assert!(

@@ -1,13 +1,13 @@
 //! Every part of the Blue and Glass styles in every frame, at the scale
-//! `REPRISE_GALLERY_SCALE` asks for: one page per Blue scheme
-//! (`target/reprisekit-gallery-parts-blue-<scheme>.png`) and one per Glass
+//! `REPRISE_GALLERY_SCALE` asks for: one page per Blue scheme and one per dark twin
+//! (`target/reprisekit-gallery-parts-blue-<scheme>[-dark].png`) and one per Glass
 //! setting (`target/reprisekit-gallery-parts-glass-<sky|dark|smoked>.png`).
 //! Each part is a row of frames labelled by state, at their own size (at most
 //! [`MAX_W`] x [`MAX_H`] design px).
 
 use crate::interfaces;
 use crate::write_preview;
-use reprisekit::blue::Variant;
+use reprisekit::blue::{Tone, Variant};
 use reprisekit::glass::{Material, Mode, Settings};
 use reprisekit::interface::Interface;
 use reprisekit::raster::{Canvas, Rect};
@@ -25,12 +25,16 @@ const TEXT_PX: u32 = 11;
 const LABEL_MIN: i32 = 100;
 
 pub fn write_all(n: i32) {
-    for v in Variant::ALL {
-        let st = reprisekit::blue::style_for(v).at_scale(n);
-        let back = interfaces::blue_theme(v).colors.button_face;
+    for t in Tone::ALL {
+        let st = reprisekit::blue::style_for(t).at_scale(n);
+        let colors = interfaces::blue_theme_in(t.variant, t.dark).colors;
+        let dark = if t.dark { "-dark" } else { "" };
         write_preview(
-            || page(&st, back, n),
-            &format!("reprisekit-gallery-parts-blue-{}.png", v.as_str()),
+            || page(&st, colors.button_face, colors.button_text, n),
+            &format!(
+                "reprisekit-gallery-parts-blue-{}{dark}.png",
+                t.variant.as_str()
+            ),
         );
     }
     let glass = [
@@ -55,7 +59,7 @@ pub fn write_all(n: i32) {
             interfaces::theme_with(Interface::Glass, Variant::default(), false, &s).scaled(n);
         let st = theme.look.style().expect("Glass is styled");
         write_preview(
-            || page(st, Color::rgb(0x3A, 0x6E, 0xA5), n),
+            || page(st, Color::rgb(0x3A, 0x6E, 0xA5), Color::rgb(0, 0, 0), n),
             &format!("reprisekit-gallery-parts-glass-{name}.png"),
         );
     }
@@ -112,7 +116,7 @@ fn frames(st: &Style, part: Part) -> Vec<Frame> {
         .collect()
 }
 
-fn page(st: &Style, back: Color, n: i32) -> Canvas {
+fn page(st: &Style, back: Color, ink: Color, n: i32) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let mut parts: Vec<Part> = st.part_keys().collect();
     parts.sort_by_key(|p| format!("{p:?}"));
@@ -143,7 +147,6 @@ fn page(st: &Style, back: Color, n: i32) -> Canvas {
     }
     let mut c = Canvas::new((PAGE_W * n) as u32, (y * n) as u32);
     c.fill_rect(c.bounds(), back);
-    let ink = Color::rgb(0, 0, 0);
     for (label, r, f) in placed {
         let s = |v: i32| v * n;
         match f {

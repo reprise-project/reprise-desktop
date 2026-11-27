@@ -38,3 +38,43 @@ Steel ProgressBar 1 569f9805207f1eb2
 Steel ProgressChunk 1 cce827beb548970b
 Steel ProgressBar 2 4f462251171c004b
 Steel ProgressChunk 2 69a4f7170302ebd9
+Blue dark ProgressBar 1 d23430d76f5f4832
+Blue dark ProgressChunk 1 afe9e201e6c786cb
+Blue dark ProgressBar 2 9e335640d80a6b03
+Blue dark ProgressChunk 2 3eb96eadd6999d69
+Olive dark ProgressBar 1 569f9805207f1eb2
+Olive dark ProgressChunk 1 a45c69b4fad35a8b
+Olive dark ProgressBar 2 4f462251171c004b
+Olive dark ProgressChunk 2 0301e094298a7329
+Silver dark ProgressBar 1 569f9805207f1eb2
+Silver dark ProgressChunk 1 1d238ad0f92b0d33
+Silver dark ProgressBar 2 4f462251171c004b
+Silver dark ProgressChunk 2 014a7a59dd6f51f9
+Slate dark ProgressBar 1 afdcafa02895a8f2
+Slate dark ProgressChunk 1 5f64ace72bb980a4
+Slate dark ProgressBar 2 353b6ad5ded9ad8b
+Slate dark ProgressChunk 2 bfe2580b921a8087
+Sapphire dark ProgressBar 1 afdcafa02895a8f2
+Sapphire dark ProgressChunk 1 5f64ace72bb980a4
+Sapphire dark ProgressBar 2 353b6ad5ded9ad8b
+Sapphire dark ProgressChunk 2 bfe2580b921a8087
+Obsidian dark ProgressBar 1 afdcafa02895a8f2
+Obsidian dark ProgressChunk 1 5f64ace72bb980a4
+Obsidian dark ProgressBar 2 353b6ad5ded9ad8b
+Obsidian dark ProgressChunk 2 bfe2580b921a8087
+Ember dark ProgressBar 1 afdcafa02895a8f2
+Ember dark ProgressChunk 1 03efc33cb2e7c4d3
+Ember dark ProgressBar 2 353b6ad5ded9ad8b
+Ember dark ProgressChunk 2 adecb1007565f439
+Cobalt dark ProgressBar 1 afdcafa02895a8f2
+Cobalt dark ProgressChunk 1 100e616f70284c34
+Cobalt dark ProgressBar 2 353b6ad5ded9ad8b
+Cobalt dark ProgressChunk 2 f7f35ceb32edad27
+Carbon dark ProgressBar 1 afdcafa02895a8f2
+Carbon dark ProgressChunk 1 0ebbab23143ecd0c
+Carbon dark ProgressBar 2 353b6ad5ded9ad8b
+Carbon dark ProgressChunk 2 7eb7af7b2101b117
+Steel dark ProgressBar 1 569f9805207f1eb2
+Steel dark ProgressChunk 1 cce827beb548970b
+Steel dark ProgressBar 2 4f462251171c004b
+Steel dark ProgressChunk 2 69a4f7170302ebd9

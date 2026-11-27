@@ -42,3 +42,7 @@ pub fn theme_with(
 pub fn blue_theme(v: blue::Variant) -> Theme {
     sized(reprisekit::interfaces::blue_theme(v))
 }
+
+pub fn blue_theme_in(v: blue::Variant, dark: bool) -> Theme {
+    sized(reprisekit::interfaces::blue_theme_in(v, dark))
+}

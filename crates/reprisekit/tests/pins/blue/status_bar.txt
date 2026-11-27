@@ -38,3 +38,43 @@ Steel StatusBar 1 46bb332e1b2df1cf
 Steel StatusPane 1 1a44e373d7d1ce2d
 Steel StatusBar 2 045501f6d6a43960
 Steel StatusPane 2 53aa96d6d037c73d
+Blue dark StatusBar 1 07f06409076ca5f6
+Blue dark StatusPane 1 5bfa3bf4532888f1
+Blue dark StatusBar 2 47372ce583704c4e
+Blue dark StatusPane 2 6a374d9f6cfbbdfd
+Olive dark StatusBar 1 66a5acfcc0da061d
+Olive dark StatusPane 1 a86478beb447735e
+Olive dark StatusBar 2 59a90a19ad780025
+Olive dark StatusPane 2 edfecca9de479b1d
+Silver dark StatusBar 1 46bb332e1b2df1cf
+Silver dark StatusPane 1 1a44e373d7d1ce2d
+Silver dark StatusBar 2 045501f6d6a43960
+Silver dark StatusPane 2 53aa96d6d037c73d
+Slate dark StatusBar 1 a13c31ff30eaa6f6
+Slate dark StatusPane 1 25a18c1834c6bdaf
+Slate dark StatusBar 2 0b5534d19b183523
+Slate dark StatusPane 2 29d6854f9f585d0d
+Sapphire dark StatusBar 1 f1f9912de5c53906
+Sapphire dark StatusPane 1 25a18c1834c6bdaf
+Sapphire dark StatusBar 2 9223af804aee0003
+Sapphire dark StatusPane 2 29d6854f9f585d0d
+Obsidian dark StatusBar 1 f1f9912de5c53906
+Obsidian dark StatusPane 1 25a18c1834c6bdaf
+Obsidian dark StatusBar 2 9223af804aee0003
+Obsidian dark StatusPane 2 29d6854f9f585d0d
+Ember dark StatusBar 1 a13c31ff30eaa6f6
+Ember dark StatusPane 1 25a18c1834c6bdaf
+Ember dark StatusBar 2 0b5534d19b183523
+Ember dark StatusPane 2 29d6854f9f585d0d
+Cobalt dark StatusBar 1 f1f9912de5c53906
+Cobalt dark StatusPane 1 25a18c1834c6bdaf
+Cobalt dark StatusBar 2 9223af804aee0003
+Cobalt dark StatusPane 2 29d6854f9f585d0d
+Carbon dark StatusBar 1 f1f9912de5c53906
+Carbon dark StatusPane 1 25a18c1834c6bdaf
+Carbon dark StatusBar 2 9223af804aee0003
+Carbon dark StatusPane 2 29d6854f9f585d0d
+Steel dark StatusBar 1 46bb332e1b2df1cf
+Steel dark StatusPane 1 1a44e373d7d1ce2d
+Steel dark StatusBar 2 045501f6d6a43960
+Steel dark StatusPane 2 53aa96d6d037c73d

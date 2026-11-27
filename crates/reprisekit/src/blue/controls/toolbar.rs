@@ -164,15 +164,15 @@ mod tests {
     use super::*;
     use crate::blue::Variant;
 
-    fn part(v: Variant, part: Part, d: i32) -> PartImage {
-        parts(v.into(), d)
+    fn part(v: Tone, part: Part, d: i32) -> PartImage {
+        parts(v, d)
             .into_iter()
             .find(|(p, _)| *p == part)
             .expect("a toolbar part")
             .1
     }
 
-    fn frame(v: Variant, state: State, d: i32) -> Canvas {
+    fn frame(v: Tone, state: State, d: i32) -> Canvas {
         let img = part(v, Part::ToolbarButton, d);
         let f = img.frame(state);
         let mut c = Canvas::new(f.width as u32, f.height as u32);
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn parts_are_painted_at_the_style_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for (p, w, h) in [
                     (Part::ToolbarButton, W, H * 6),
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn normal_and_disabled_are_empty() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for state in [State::Normal, State::Disabled] {
                     let f = frame(v, state, d);
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn lit_frames_hold_a_rim_and_a_face_and_differ() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let frames: Vec<Canvas> = LIT.iter().map(|&s| frame(v, s, d)).collect();
                 for (state, f) in LIT.iter().zip(&frames) {
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn faces_shade_as_the_scheme_says() {
         let luma = |p: u32| ((p >> 16) & 0xFF) + ((p >> 8) & 0xFF) + (p & 0xFF);
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             let c = frame(v, State::Checked, 1);
             assert_eq!(c.get(4, 18), 0xFFFF_FFFF, "{v:?} latched face");
             let h = frame(v, State::Hot, 1);
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn lit_frames_round_their_corners_smoothly() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for state in LIT {
                 for d in [1, 2] {
                     let f = frame(v, state, d);
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn the_corner_curve_has_no_dark_fringe() {
         let luma = |p: u32| ((p >> 16) & 0xFF) + ((p >> 8) & 0xFF) + (p & 0xFF);
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             for state in LIT {
                 let f = frame(v, state, 2);
                 let rim = luma(f.get(0, 20));
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn the_separator_is_a_one_pixel_line() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let ink = v.scheme().toolbar_separator.normal.rim.argb();
             for d in [1, 2] {
                 let img = part(v, Part::ToolbarSeparator, d);
@@ -358,7 +358,7 @@ mod tests {
         let ink = Variant::Blue.scheme().toolbar_separator.normal.rim.argb();
         let style = one_part_style(
             Part::ToolbarSeparator,
-            part(Variant::Blue, Part::ToolbarSeparator, 1),
+            part(Variant::Blue.into(), Part::ToolbarSeparator, 1),
         );
         for (w, h) in [(6, 38), (8, 22), (12, 22)] {
             let mut c = Canvas::new(w as u32, h as u32);
@@ -375,9 +375,9 @@ mod tests {
 
     #[test]
     fn the_label_inks_follow_the_scheme() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let k = &v.scheme().inks;
-            let [pressed, disabled, arrow] = inks(v.into());
+            let [pressed, disabled, arrow] = inks(v);
             assert_eq!(pressed.2, k.toolbar_pressed, "{v:?}: a held label");
             assert_eq!(disabled.2, k.toolbar_disabled, "{v:?}: a greyed label");
             assert_eq!(
@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn toolbar_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in [
                     Part::ToolbarButton,

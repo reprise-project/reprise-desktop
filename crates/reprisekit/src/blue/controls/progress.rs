@@ -123,20 +123,16 @@ mod tests {
             })
     }
 
-    fn part(v: Variant, d: i32, p: Part) -> PartImage {
-        parts(v.into(), d)
-            .into_iter()
-            .find(|(q, _)| *q == p)
-            .unwrap()
-            .1
+    fn part(v: Tone, d: i32, p: Part) -> PartImage {
+        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
     }
 
     fn luma(p: u32) -> u32 {
         (p >> 16 & 0xFF) + (p >> 8 & 0xFF) + (p & 0xFF)
     }
 
-    fn bar(v: Variant, h: i32, fraction: f64, s: i32) -> Canvas {
-        let theme = crate::interfaces::blue_theme(v).scaled(s);
+    fn bar(v: Tone, h: i32, fraction: f64, s: i32) -> Canvas {
+        let theme = crate::interfaces::blue_theme_in(v.variant, v.dark).scaled(s);
         let mut c = Canvas::new((110 * s) as u32, ((h + 6) * s) as u32);
         c.fill_rect(
             Rect::new(0, 0, 110 * s, (h + 6) * s),
@@ -150,7 +146,7 @@ mod tests {
     #[test]
     fn progress_parts_pin_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in [Part::ProgressBar, Part::ProgressChunk] {
                     got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p).atlas)));
@@ -162,7 +158,7 @@ mod tests {
 
     #[test]
     fn every_part_keeps_its_design_insets_at_scale_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for p in [Part::ProgressBar, Part::ProgressChunk] {
                 let (one, two) = (part(v, 1, p), part(v, 2, p));
                 assert_eq!(two.scale, 2, "{v:?} {p:?}");
@@ -180,7 +176,7 @@ mod tests {
 
     #[test]
     fn the_trough_has_round_clear_corners_without_a_dark_fringe() {
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             let rim = v.scheme().progress_bar.normal.rim.argb();
             for d in [1, 2] {
                 let a = part(v, d, Part::ProgressBar).atlas;
@@ -215,7 +211,7 @@ mod tests {
     #[test]
     fn the_trough_sinks_deeper_at_the_top_and_left() {
         let white = 0xFFFF_FFFF;
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             let f = &v.scheme().progress_bar.normal;
             let a = part(v, 1, Part::ProgressBar).atlas;
             let mid = TROUGH_H / 2;
@@ -244,7 +240,7 @@ mod tests {
 
     #[test]
     fn a_block_shades_down_and_leaves_its_gap_clear() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let f = &v.scheme().progress_chunk.normal;
             for d in [1, 2] {
                 let a = part(v, d, Part::ProgressChunk).atlas;
@@ -252,7 +248,7 @@ mod tests {
                     for x in 0..BLOCK_W * d {
                         assert_eq!(a.get(x, y) >> 24, 0xFF, "{v:?} d={d}: ({x}, {y})");
                     }
-                    for x in BLOCK_W * d..(BLOCK_W + gap(v.into())) * d {
+                    for x in BLOCK_W * d..(BLOCK_W + gap(v)) * d {
                         assert_eq!(a.get(x, y), 0, "{v:?} d={d}: gap ({x}, {y})");
                     }
                 }
@@ -272,9 +268,9 @@ mod tests {
     #[test]
     fn each_variant_fills_with_its_own_blocks() {
         let hash = |v| fnv(&part(v, 1, Part::ProgressChunk).atlas);
-        let slate = hash(Variant::Slate);
+        let slate = hash(Variant::Slate.into());
         for v in [Variant::Sapphire, Variant::Obsidian] {
-            assert_eq!(hash(v), slate, "{v:?} fills as slate does");
+            assert_eq!(hash(v.into()), slate, "{v:?} fills as slate does");
         }
         let own = [
             Variant::Blue,
@@ -287,12 +283,12 @@ mod tests {
         ];
         let mut seen = Vec::new();
         for v in own {
-            assert!(!seen.contains(&hash(v)), "{v:?} has its own block");
-            seen.push(hash(v));
+            assert!(!seen.contains(&hash(v.into())), "{v:?} has its own block");
+            seen.push(hash(v.into()));
         }
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let gap = part(v, 1, Part::ProgressChunk).atlas.width as i32 - BLOCK_W;
-            let want = match v {
+            let want = match v.variant {
                 Variant::Slate
                 | Variant::Sapphire
                 | Variant::Obsidian
@@ -306,7 +302,7 @@ mod tests {
 
     #[test]
     fn disabled_repeats_normal() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for p in [Part::ProgressBar, Part::ProgressChunk] {
                 let img = part(v, 2, p);
                 let (n, off) = (img.frame(State::Normal), img.frame(State::Disabled));
@@ -321,7 +317,7 @@ mod tests {
 
     #[test]
     fn a_bar_at_scale_2_fills_as_far_as_at_scale_1() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let filled = |s: i32| {
                 let (full, empty) = (bar(v, 16, 0.5, s), bar(v, 16, 0.0, s));
                 let y = (3 + 8) * s;

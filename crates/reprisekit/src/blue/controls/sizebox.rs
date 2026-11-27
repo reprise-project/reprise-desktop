@@ -66,7 +66,6 @@ fn grip(f: &Face, d: i32) -> Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blue::Variant;
 
     fn fnv(c: &Canvas) -> u64 {
         [c.width, c.height]
@@ -79,15 +78,15 @@ mod tests {
             })
     }
 
-    fn atlas(v: Variant, d: i32) -> PartImage {
-        parts(v.into(), d).remove(0).1
+    fn atlas(v: Tone, d: i32) -> PartImage {
+        parts(v, d).remove(0).1
     }
 
     /// Each scheme's grip at scale 1 and 2, as FNV-1a hashes of (width,
     /// height, pixels).
     #[test]
     fn size_box_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&atlas(v, d).atlas))))
             .collect();
@@ -96,7 +95,7 @@ mod tests {
 
     #[test]
     fn the_size_box_is_painted_at_the_style_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2, 3] {
                 let img = atlas(v, d);
                 let du = d as u32;
@@ -112,7 +111,7 @@ mod tests {
     /// between dots are clear, and every pixel is a whole colour or clear.
     #[test]
     fn the_grip_is_a_staircase_of_raised_dots() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let f = &v.scheme().size_box.normal;
             let (grey, white) = (f.inner.argb(), light(f).argb());
             for d in [1, 2] {

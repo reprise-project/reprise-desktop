@@ -143,8 +143,8 @@ mod tests {
     use crate::pointer::Interaction;
     use crate::raster::Rect;
 
-    fn part(v: Variant, d: i32) -> PartImage {
-        parts(v.into(), d).into_iter().next().unwrap().1
+    fn part(v: Tone, d: i32) -> PartImage {
+        parts(v, d).into_iter().next().unwrap().1
     }
 
     fn px(img: &PartImage, state: State, x: i32, y: i32) -> u32 {
@@ -152,7 +152,7 @@ mod tests {
         img.atlas.get(f.x + x, f.y + y)
     }
 
-    fn ink(v: Variant, state: State) -> u32 {
+    fn ink(v: Tone, state: State) -> u32 {
         let f = match state {
             State::Hot => &v.scheme().combo_drop.hot,
             State::Pressed => &v.scheme().combo_drop.pressed,
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn combo_drop_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&part(v, d)))))
             .collect();
@@ -190,8 +190,8 @@ mod tests {
 
     #[test]
     fn each_cut_sizes_its_frames_and_insets_by_the_scale() {
-        for v in Variant::ALL {
-            let c = cut(v.into());
+        for v in Tone::ALL {
+            let c = cut(v);
             let (one, two) = (part(v, 1), part(v, 2));
             for (d, img) in [(1, &one), (2, &two)] {
                 assert_eq!(img.scale, d, "{v:?}");
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn every_state_draws_its_own_frame() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let img = part(v, d);
                 let frames: Vec<Vec<u32>> = STATES
@@ -234,8 +234,8 @@ mod tests {
 
     #[test]
     fn the_corners_are_round_and_smooth_at_scale_2() {
-        for v in Variant::ALL {
-            let c = cut(v.into());
+        for v in Tone::ALL {
+            let c = cut(v);
             for d in [1, 2] {
                 let img = part(v, d);
                 for state in [State::Normal, State::Hot, State::Pressed] {
@@ -259,8 +259,8 @@ mod tests {
 
     #[test]
     fn the_chevron_is_solid_at_scale_1_and_smooth_at_scale_2() {
-        for v in Variant::ALL {
-            let (o, top) = (cut(v.into()).out, cut(v.into()).chevron as i32);
+        for v in Tone::ALL {
+            let (o, top) = (cut(v).out, cut(v).chevron as i32);
             for state in STATES {
                 let ink = ink(v, state);
                 let img = part(v, 1);
@@ -292,8 +292,8 @@ mod tests {
 
     #[test]
     fn the_seams_carry_no_chevron() {
-        for v in Variant::ALL {
-            let c = cut(v.into());
+        for v in Tone::ALL {
+            let c = cut(v);
             let img = part(v, 1);
             for state in STATES {
                 let ink = ink(v, state);
@@ -318,8 +318,8 @@ mod tests {
             let (_, c) = shape::unpack(p);
             c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11
         };
-        for v in Variant::ALL {
-            let o = cut(v.into()).out;
+        for v in Variant::ALL.map(Tone::from) {
+            let o = cut(v).out;
             let img = part(v, 1);
             let at = |s, x, y| luma(px(&img, s, x + o, y + o));
             let (face, rim) = ((7, 3), (-o, 8));
@@ -339,8 +339,8 @@ mod tests {
 
     #[test]
     fn a_taller_button_keeps_the_framed_chevron_in_place() {
-        let draw = |v: Variant, h: i32| {
-            let theme = crate::interfaces::blue_theme(v);
+        let draw = |v: Tone, h: i32| {
+            let theme = crate::interfaces::blue_theme_in(v.variant, v.dark);
             let mut c = Canvas::new(21, 26);
             draw_combo_drop(
                 &mut c,
@@ -361,7 +361,7 @@ mod tests {
             Variant::Cobalt,
             Variant::Carbon,
         ] {
-            let (short, tall) = (draw(v, 17), draw(v, 18));
+            let (short, tall) = (draw(v.into(), 17), draw(v.into(), 18));
             // The frame's row `seam` lands at y = 2 + seam.
             for y in 0..2 + FRAMED.seam + 1 {
                 for x in 0..21 {
@@ -375,7 +375,7 @@ mod tests {
             }
         }
         for v in [Variant::Blue, Variant::Olive] {
-            let (short, tall) = (draw(v, 17), draw(v, 18));
+            let (short, tall) = (draw(v.into(), 17), draw(v.into(), 18));
             assert_eq!(
                 tall.get(10, 13),
                 short.get(10, 12),

@@ -113,8 +113,8 @@ mod tests {
     use super::*;
     use crate::raster::Rect;
 
-    fn part(v: Variant, part: Part, d: i32) -> PartImage {
-        parts(v.into(), d)
+    fn part(v: Tone, part: Part, d: i32) -> PartImage {
+        parts(v, d)
             .into_iter()
             .find(|(p, _)| *p == part)
             .expect("the part")
@@ -136,7 +136,7 @@ mod tests {
         h
     }
 
-    fn drawn(v: Variant, w: i32, h: i32, s: i32) -> Canvas {
+    fn drawn(v: Tone, w: i32, h: i32, s: i32) -> Canvas {
         let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
         crate::blue::style_for(v).at_scale(s).draw(
             &mut c,
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn rebar_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in [Part::Rebar, Part::RebarBand] {
                     got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, p, d).atlas)));
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn both_parts_double_their_size_and_keep_their_sizing() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for p in [Part::Rebar, Part::RebarBand] {
                 let (one, two) = (part(v, p, 1), part(v, p, 2));
                 assert_eq!(
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn the_background_runs_light_to_dark_and_closes_with_a_line() {
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             for d in [1, 2] {
                 let a = part(v, Part::Rebar, d).atlas;
                 let (w, h) = (a.width as i32, a.height as i32);
@@ -201,7 +201,7 @@ mod tests {
                 let bottom = a.get(0, h - 1);
                 let flat = (0..w).all(|x| a.get(x, h - 1) == bottom);
                 let darker = channels(bottom) < channels(a.get(0, h - 1 - d)) - 30;
-                let closes = !matches!(v, Variant::Silver | Variant::Steel);
+                let closes = !matches!(v.variant, Variant::Silver | Variant::Steel);
                 assert_eq!(flat && darker, closes, "{v:?} at {d}: closing line");
             }
         }
@@ -209,9 +209,9 @@ mod tests {
 
     #[test]
     fn navy_darkens_toward_its_bottom() {
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             let a = part(v, Part::Rebar, 1).atlas;
-            let shades = matches!(v, Variant::Blue | Variant::Olive);
+            let shades = matches!(v.variant, Variant::Blue | Variant::Olive);
             for x in [0, W / 2, W - 1] {
                 let (top, low) = (channels(a.get(x, 0)), channels(a.get(x, SHADE_ROW - 1)));
                 assert_eq!(top > low + 8, shades, "{v:?} at x {x}: {top} over {low}");
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn the_background_stretches_with_its_bottom_rows_whole() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for s in [1, 2] {
                 let a = drawn(v, 792, 86, s);
                 let src = part(v, Part::Rebar, s).atlas;
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn each_variant_has_its_band_line_and_label() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let face = &v.scheme().rebar_band.normal;
             for d in [1, 2] {
                 let a = part(v, Part::RebarBand, d).atlas;
@@ -262,7 +262,7 @@ mod tests {
                     }
                 }
             }
-            let [(part, state, ink)] = inks(v.into())[..] else {
+            let [(part, state, ink)] = inks(v)[..] else {
                 panic!("{v:?}: one ink")
             };
             assert_eq!((part, state), (Part::RebarBand, State::Normal));
@@ -272,8 +272,8 @@ mod tests {
 
     #[test]
     fn every_scheme_keeps_its_band_top() {
-        for v in Variant::ALL {
-            let want = match v {
+        for v in Tone::ALL {
+            let want = match v.variant {
                 Variant::Slate
                 | Variant::Sapphire
                 | Variant::Obsidian
@@ -281,7 +281,7 @@ mod tests {
                 | Variant::Carbon => 2,
                 _ => 0,
             };
-            assert_eq!(metrics(v.into()).band_top, want, "{v:?}");
+            assert_eq!(metrics(v).band_top, want, "{v:?}");
         }
     }
 }

@@ -1,4 +1,6 @@
-//! Blue's colour variants side by side, written to `target/reprisekit-gallery-blue-variants.png`: one column per variant, one band per surface. Each band is a file here with a `HEIGHT` and a `draw`.
+//! Blue's colour variants side by side, written to `target/reprisekit-gallery-blue-variants.png`
+//! and their dark twins to `target/reprisekit-gallery-blue-variants-dark.png`: one column per
+//! variant, one band per surface. Each band is a file here with a `HEIGHT` and a `draw`.
 
 mod chrome;
 mod controls;
@@ -80,11 +82,19 @@ const COLUMN: i32 = 640;
 const TITLE: i32 = 16;
 
 pub fn render() -> Canvas {
+    render_in(false)
+}
+
+pub fn render_dark() -> Canvas {
+    render_in(true)
+}
+
+fn render_in(dark: bool) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let height: i32 = BANDS.iter().map(|b| TITLE + b.height).sum();
     let mut c = Canvas::new(COLUMN as u32 * Variant::ALL.len() as u32, height as u32);
     for (i, v) in Variant::ALL.into_iter().enumerate() {
-        let theme = crate::cued(interfaces::blue_theme(v));
+        let theme = crate::cued(interfaces::blue_theme_in(v, dark));
         let x = i as i32 * COLUMN;
         let mut y = 0;
         for b in &BANDS {
@@ -93,7 +103,12 @@ pub fn render() -> Canvas {
             text.draw(
                 &mut c,
                 Rect::new(x + 4, y + 2, COLUMN - 8, TITLE - 2),
-                &format!("{}: {}", v.name(), b.title),
+                &format!(
+                    "{}{}: {}",
+                    v.name(),
+                    if dark { " dark" } else { "" },
+                    b.title
+                ),
                 false,
                 Color::rgb(0, 0, 0),
                 Align::Left,

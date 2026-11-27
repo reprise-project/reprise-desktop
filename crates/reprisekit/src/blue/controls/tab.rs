@@ -133,26 +133,26 @@ mod tests {
     use crate::style::Style;
     use std::sync::Arc;
 
-    fn style(v: Variant, d: i32) -> Arc<Style> {
+    fn style(v: Tone, d: i32) -> Arc<Style> {
         crate::blue::style_for(v).at_scale(d)
     }
 
-    fn tab(v: Variant, state: State, d: i32) -> Canvas {
+    fn tab(v: Tone, state: State, d: i32) -> Canvas {
         let mut c = Canvas::new((TAB_W * d) as u32, (TAB_H * d) as u32);
         let r = Rect::new(0, 0, TAB_W * d, TAB_H * d);
         style(v, d).draw(&mut c, r, Part::TabItem, state, d);
         c
     }
 
-    fn page(v: Variant, w: i32, h: i32, s: i32) -> Canvas {
-        let mut theme = crate::interfaces::blue_theme(v);
+    fn page(v: Tone, w: i32, h: i32, s: i32) -> Canvas {
+        let mut theme = crate::interfaces::blue_theme_in(v.variant, v.dark);
         theme.scale = s;
         let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
         draw_page(&mut c, &theme.paint(), Rect::new(0, 0, w, h).scaled(s));
         c
     }
 
-    fn frame(v: Variant, part: Part, state: State, d: i32) -> Canvas {
+    fn frame(v: Tone, part: Part, state: State, d: i32) -> Canvas {
         let st = style(v, d);
         let img = st.part(part).expect("the part is built");
         let r = img.frame(state);
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn tab_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for state in STATES {
                     let h = fnv(&frame(v, Part::TabItem, state, d));
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn a_tab_and_page_at_scale_2_are_twice_the_size_with_the_same_grid() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in [Part::TabItem, Part::TabPane] {
                 let one = style(v, 1);
                 let two = style(v, 2);
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn a_tabs_states_differ() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let [n, h, c] = STATES.map(|s| tab(v, s, d));
                 assert!(n != h && h != c && n != c, "{v:?} at {d}");
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn a_tabs_corners_and_gap_are_clear() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for state in STATES {
                     let c = tab(v, state, d);
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn a_tabs_top_is_smooth_at_scale_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for state in STATES {
                 let c = tab(v, state, 2);
                 let partial = (0..6)
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn a_lit_tab_has_its_marks_top() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let s = v.scheme();
             for (state, f) in [
                 (State::Normal, &s.tab_item.normal),
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn the_open_tab_is_the_pages_colour() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let s = v.scheme();
             let c = tab(v, State::Checked, 1);
             let body = s.tab_pane.normal.down[0].1;
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn a_page_has_a_border_an_inner_line_and_a_soft_shadow() {
         let (w, h) = (120, 90);
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let f = &v.scheme().tab_pane.normal;
             let rgb = |c: crate::theme::Color| c.argb();
             let (near, far) = (f.across[0].1, f.across[f.across.len() - 1].1);
@@ -365,7 +365,7 @@ mod tests {
         let f = &Variant::Blue.scheme().tab_pane.normal;
         let grey = f.down[f.down.len() - 1].1.argb();
         for h in [120, 360, 720] {
-            let c = page(Variant::Blue, 40, h, 1);
+            let c = page(Variant::Blue.into(), 40, h, 1);
             let (top, bottom) = (2, h - 4);
             let first = (top..bottom)
                 .find(|&y| c.get(20, y) == grey)
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn olive_green_pages_as_navy_does() {
         assert!(
-            page(Variant::Olive, 100, 60, 1) == page(Variant::Blue, 100, 60, 1),
+            page(Variant::Olive.into(), 100, 60, 1) == page(Variant::Blue.into(), 100, 60, 1),
             "an olive green page is navy's"
         );
     }
