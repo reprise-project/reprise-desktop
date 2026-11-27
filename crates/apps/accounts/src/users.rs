@@ -135,6 +135,9 @@ impl Users {
         self.rows = rows;
         self.pictures = pictures;
         self.list.entries = entries(&self.rows);
+        self.list.labels = (self.rows.iter())
+            .map(|u| u.shown_name().to_string())
+            .collect();
         let yours = self.rows.iter().position(|u| u.you);
         let pick = keep
             .and_then(|uid| self.rows.iter().position(|u| u.uid == uid))
@@ -150,6 +153,7 @@ impl Users {
         self.rows.clear();
         self.pictures.clear();
         self.list.entries.clear();
+        self.list.labels.clear();
         self.list.select_row(None);
         self.failed = Some(why);
         self.loaded = true;

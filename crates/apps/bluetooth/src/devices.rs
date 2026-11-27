@@ -249,6 +249,7 @@ impl Devices {
         let keep = self.selected_path();
         self.rows = bz::by_group(s.devices.iter().filter(|d| d.paired));
         self.list.entries = entries(&self.rows);
+        self.list.labels = self.rows.iter().map(|d| d.alias.clone()).collect();
         self.list
             .select_row(keep.and_then(|p| self.rows.iter().position(|d| d.path == p)));
         self.list.clamp(self.list_rect(), self.sheet.open().units());

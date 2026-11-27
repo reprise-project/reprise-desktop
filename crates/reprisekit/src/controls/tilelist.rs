@@ -16,6 +16,7 @@ use crate::look::Paint;
 use crate::look::widgets::{draw_field_frame, draw_scrollbar};
 use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
+use crate::selection::{TypeAhead, types_ahead};
 use crate::text::{Align, TextRenderer};
 use crate::theme::{ColorScheme, TextUnits};
 use accesskit::{NodeId, Role};
@@ -46,6 +47,10 @@ pub struct TileList {
     pub selected: Option<usize>,
     /// A row's height at 100% text; [`layout`] grows it with the text.
     pub row_h: i32,
+    /// Per row, the tile's title, which type-ahead matches.
+    pub labels: Vec<String>,
+    /// The letters typed on the list in a row, for type-ahead.
+    pub typed: TypeAhead,
     thumb_drag: Option<i32>,
     bars: Pointer<ScrollHit>,
     clicks: DoubleClick<usize>,
@@ -94,6 +99,8 @@ impl TileList {
             top: 0,
             selected: None,
             row_h,
+            labels: Vec::new(),
+            typed: TypeAhead::default(),
             thumb_drag: None,
             bars: Pointer::new(),
             clicks: DoubleClick::default(),
@@ -185,7 +192,21 @@ impl TileList {
         }
     }
 
+    /// A key on the focused list: the arrows, Home / End and the Page keys move the selection,
+    /// and a typed character jumps ([`TileList::jump`]).
     pub fn key(&mut self, key: &form::Key, rect: Rect, cm: &ControlMetrics) -> bool {
+        let key = match key {
+            form::Key::Edit(e) => match form::flat_key(e) {
+                Some(k) => k,
+                None => return false,
+            },
+            k => k.clone(),
+        };
+        if let form::Key::Char(c) = key
+            && types_ahead(c)
+        {
+            return self.jump(c, rect, cm);
+        }
         let page = layout(self, rect, cm).page.max(1) as i32;
         let delta = match key {
             form::Key::Up => -1,
@@ -197,6 +218,31 @@ impl TileList {
             _ => return false,
         };
         self.step(delta, rect, cm)
+    }
+
+    /// Type-ahead: selects the row whose [`TileList::labels`] entry starts with the letters typed
+    /// so far ([`TypeAhead`]) and scrolls it in.
+    pub fn jump(&mut self, ch: char, rect: Rect, cm: &ControlMetrics) -> bool {
+        let rows: Vec<(usize, usize)> = (self.entries.iter().enumerate())
+            .filter_map(|(e, entry)| match entry {
+                Entry::Row(r) => Some((e, *r)),
+                Entry::Header(_) => None,
+            })
+            .collect();
+        let names = rows
+            .iter()
+            .map(|&(_, r)| self.labels.get(r).map_or("", String::as_str));
+        let from = self
+            .selected
+            .and_then(|s| rows.iter().position(|&(e, _)| e == s));
+        match self.typed.find(names, from, ch) {
+            Some(k) if Some(k) != from => {
+                self.selected = Some(rows[k].0);
+                self.reveal(rows[k].0, rect, cm);
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn press(&mut self, rect: Rect, at: Click, cm: &ControlMetrics) -> Press {
@@ -622,6 +668,32 @@ mod tests {
             !list.step(1, short, &ControlMetrics::CLASSIC),
             "the last row stays picked"
         );
+    }
+
+    #[test]
+    fn letters_typed_together_jump_by_the_titles_prefix_past_the_headers() {
+        let mut list = grouped();
+        list.labels = ["Headphones", "Headset", "Keyboard"]
+            .map(String::from)
+            .into();
+        let short = Rect::new(0, 0, 300, 2 * TILE_H + 4);
+        let cm = &ControlMetrics::CLASSIC;
+        let typed = form::Key::Edit(crate::textedit::EditKey::Insert("k".into()));
+        assert!(list.key(&typed, short, cm), "a typed letter");
+        assert_eq!(list.selected_row(), Some(2), "past the Input header");
+        let lay = layout(&list, short, cm);
+        assert!(lay.slots.iter().any(|s| s.entry == 4), "scrolled in");
+        list.typed = TypeAhead::default();
+        for c in "heads".chars() {
+            list.key(&form::Key::Char(c), short, cm);
+        }
+        assert_eq!(list.selected_row(), Some(1), "\"heads\" is Headset");
+        list.typed = TypeAhead::default();
+        assert!(
+            !list.key(&form::Key::Char('z'), short, cm),
+            "no title starts with z"
+        );
+        assert_eq!(list.selected_row(), Some(1));
     }
 
     fn click(x: i32, y: i32, time: u32) -> Click {
