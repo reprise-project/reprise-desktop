@@ -183,7 +183,7 @@ fn zip(c: &Compress, m: &Meter, path: Option<&OsStr>) -> Result<PathBuf, Failure
             return;
         }
         sampled = Instant::now();
-        if let Some(read) = bytes_read(pid) {
+        if let Some(read) = extract::io_count(pid, "rchar") {
             let d = done.get();
             settle(Totals {
                 bytes: read.min(total.bytes),
@@ -298,16 +298,6 @@ fn count(path: &Path, m: &Meter) -> Option<Totals> {
         }
     }
     Some(n)
-}
-
-/// The bytes process `pid` and its reaped children have read, `rchar` in `/proc/<pid>/io`.
-fn bytes_read(pid: u32) -> Option<u64> {
-    let io = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
-    io.lines()
-        .find_map(|l| l.strip_prefix("rchar:"))?
-        .trim()
-        .parse()
-        .ok()
 }
 
 #[cfg(test)]

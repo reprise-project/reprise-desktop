@@ -37,6 +37,12 @@ const SUFFIXES: [&str; 10] = [
 
 const SLICE_MS: i32 = 50;
 
+/// How often an extraction's writes are counted.
+const WRITES_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Bytes an extraction may write past its listing: its stderr not yet read, with room to spare.
+const WRITE_SLACK: u64 = 1 << 20;
+
 /// The share of a folder's free space one extraction may fill, in percent.
 pub const FREE_SHARE_PERCENT: u64 = 90;
 
@@ -375,7 +381,8 @@ fn list(archive: &Path, m: &Meter) -> Result<Listed, Failure> {
     if crate::archive::zip_encrypted(archive) {
         return Err(Failure::Refused(tr!("archive-locked")));
     }
-    match listing(&list_argv(archive), m) {
+    let budget = crate::archive::cpu_secs(crate::archive::archive_bytes(archive));
+    match listing(&list_argv(archive), budget, m) {
         Err(Failure::Tool(why)) if crate::archive::locked(why.as_bytes()) => {
             Err(Failure::Refused(tr!("archive-locked")))
         }
@@ -383,10 +390,14 @@ fn list(archive: &Path, m: &Meter) -> Result<Listed, Failure> {
     }
 }
 
-/// Reads the `bsdtar -tv` listing `argv` prints, refusing an entry that lands outside, and
-/// draining its stderr on a thread so a chatty listing cannot fill that pipe and stall.
-fn listing(argv: &[OsString], m: &Meter) -> Result<Listed, Failure> {
-    let mut child = spawn_with(argv, true, c_dates)?;
+/// Reads the `bsdtar -tv` listing `argv` prints in at most `cpu_secs` of CPU, refusing an entry
+/// that lands outside, and draining its stderr on a thread so a chatty listing cannot fill that
+/// pipe and stall.
+fn listing(argv: &[OsString], cpu_secs: u64, m: &Meter) -> Result<Listed, Failure> {
+    let mut child = spawn_with(argv, true, |cmd| {
+        c_dates(cmd);
+        crate::archive::limit(cmd, cpu_secs, None);
+    })?;
     let out = child.stdout.take().ok_or_else(no_pipe)?;
     let mut err = child.stderr.take().ok_or_else(no_pipe)?;
     let drain = std::thread::spawn(move || tail(&mut err, STDERR_TAIL));
@@ -419,15 +430,16 @@ fn listing(argv: &[OsString], m: &Meter) -> Result<Listed, Failure> {
         got.bin |= top == Some(b"bin".as_slice());
         true
     });
-    let status = finish(child, &read);
+    let status = finish_status(child, &read);
     let stderr = drain.join().unwrap_or_default();
     if let Some(entry) = climbs {
         return Err(Failure::Climbs(entry));
     }
     match status? {
-        true if unread => Err(Failure::Tool(UNREAD.into())),
-        true => Ok(got),
-        false => Err(Failure::Tool(said(&stderr, UNREAD))),
+        s if s.success() && unread => Err(Failure::Tool(UNREAD.into())),
+        s if s.success() => Ok(got),
+        s if crate::archive::ran_out(&s) => Err(Failure::Refused(tr!("extract-list-too-long"))),
+        _ => Err(Failure::Tool(said(&stderr, UNREAD))),
     }
 }
 
@@ -502,44 +514,90 @@ fn extract(
         e
     };
     let argv = extract_argv(&a.src, &into);
-    let mut child = spawn(&argv, false, None).map_err(undo)?;
+    let budget = crate::archive::archive_bytes(&a.src).saturating_add(listed.bytes);
+    let mut child = spawn_with(&argv, false, |cmd| {
+        crate::archive::limit(cmd, crate::archive::cpu_secs(budget), Some(listed.bytes));
+    })
+    .map_err(undo)?;
     let err = child.stderr.take().ok_or_else(no_pipe).map_err(undo)?;
+    let pid = child.id();
+    // What bsdtar may write: the listed bytes, its stderr, and what that pipe still holds.
+    let said_bytes = std::cell::Cell::new(0u64);
+    let past = std::cell::Cell::new(false);
+    let wrote_past = || {
+        let allowed = (listed.bytes)
+            .saturating_add(said_bytes.get())
+            .saturating_add(WRITE_SLACK);
+        io_count(pid, "wchar").is_some_and(|w| w > allowed)
+    };
+    let mut sampled = std::time::Instant::now();
+    let tick = || {
+        if sampled.elapsed() < WRITES_EVERY || past.get() {
+            return;
+        }
+        sampled = std::time::Instant::now();
+        if wrote_past() {
+            past.set(true);
+            // SAFETY: `pid` is our own unreaped child, so the id names no other process.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
+    };
     let mut n = 0;
     let mut first = None;
     let mut others = 0;
     let mut locked = false;
-    let read = lines(&mut child, err, m, |line| {
-        locked |= crate::archive::locked(line);
-        match line.strip_prefix(b"x ") {
-            Some(entry) => {
-                n += 1;
-                m.set_current(OsStr::from_bytes(entry));
-                m.settle(Totals {
-                    bytes: 0,
-                    items: before + n,
-                });
-                // bsdtar ends an entry's line once it is written, with `: why` when that failed.
-                // A name holding `: ` is told apart by having landed.
-                let landed = || {
-                    into.join(OsStr::from_bytes(entry))
-                        .symlink_metadata()
-                        .is_ok()
-                };
-                if entry.windows(2).any(|w| w == b": ") && !landed() {
-                    match first {
-                        None => first = Some(entry.to_vec()),
-                        Some(_) => others += 1,
+    let read = lines_ticking(
+        &mut child,
+        err,
+        m,
+        |line| {
+            said_bytes.set(said_bytes.get() + line.len() as u64 + 1);
+            locked |= crate::archive::locked(line);
+            match line.strip_prefix(b"x ") {
+                Some(entry) => {
+                    n += 1;
+                    m.set_current(OsStr::from_bytes(entry));
+                    m.settle(Totals {
+                        bytes: 0,
+                        items: before + n,
+                    });
+                    // bsdtar ends an entry's line once it is written, with `: why` when that failed.
+                    // A name holding `: ` is told apart by having landed.
+                    let landed = || {
+                        into.join(OsStr::from_bytes(entry))
+                            .symlink_metadata()
+                            .is_ok()
+                    };
+                    if entry.windows(2).any(|w| w == b": ") && !landed() {
+                        match first {
+                            None => first = Some(entry.to_vec()),
+                            Some(_) => others += 1,
+                        }
                     }
                 }
+                None if !String::from_utf8_lossy(line).contains(DELAYED) => {
+                    first.get_or_insert_with(|| line.to_vec());
+                }
+                None => {}
             }
-            None if !String::from_utf8_lossy(line).contains(DELAYED) => {
-                first.get_or_insert_with(|| line.to_vec());
-            }
-            None => {}
-        }
-        true
-    });
-    let ok = finish(child, &read).map_err(undo)?;
+            true
+        },
+        tick,
+    );
+    // The child is unreaped, so its count is still there when it ended between samples.
+    if !past.get() && matches!(read, Ok(true)) && wrote_past() {
+        past.set(true);
+    }
+    let status = finish_status(child, &read).map_err(undo)?;
+    let wrote_too_much =
+        std::os::unix::process::ExitStatusExt::signal(&status) == Some(libc::SIGXFSZ);
+    if past.get() || wrote_too_much {
+        return Err(undo(Failure::Refused(tr!("archive-more-than-listed"))));
+    }
+    if crate::archive::ran_out(&status) {
+        return Err(undo(Failure::Refused(tr!("extract-too-long"))));
+    }
+    let ok = status.success();
     if !ok && locked {
         return Err(undo(Failure::Refused(tr!("archive-locked"))));
     }
@@ -917,7 +975,8 @@ pub(crate) fn spawn(
     })
 }
 
-/// [`spawn`], `env` setting the command's environment.
+/// [`spawn`], `env` setting the command's environment. The child has no terminal, a stdin it
+/// cannot read, and dies with the thread that started it.
 pub(crate) fn spawn_with(
     argv: &[OsString],
     stdout: bool,
@@ -933,11 +992,15 @@ pub(crate) fn spawn_with(
         .write(true)
         .open("/dev/null")
         .map_or_else(|_| Stdio::null(), Stdio::from);
-    // SAFETY: setsid is async-signal-safe.
+    // No terminal also means no terminal's signals, so the child dies with the thread that
+    // started it instead. SAFETY: setsid and prctl are async-signal-safe.
     unsafe {
-        cmd.pre_exec(|| match libc::setsid() {
-            -1 => Err(std::io::Error::last_os_error()),
-            _ => Ok(()),
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
         });
     }
     cmd.args(&argv[1..]).stdin(stdin).stderr(Stdio::piped());
@@ -1065,7 +1128,15 @@ pub(crate) fn chunks(
 
 /// Reaps `child` after [`lines`] read it to `read`: whether it exited cleanly. A child cut
 /// short is killed first and counts as cancelled.
-pub(crate) fn finish(mut child: Child, read: &std::io::Result<bool>) -> Result<bool, Failure> {
+pub(crate) fn finish(child: Child, read: &std::io::Result<bool>) -> Result<bool, Failure> {
+    finish_status(child, read).map(|s| s.success())
+}
+
+/// [`finish`], with how the child ended.
+fn finish_status(
+    mut child: Child,
+    read: &std::io::Result<bool>,
+) -> Result<std::process::ExitStatus, Failure> {
     if !matches!(read, Ok(true)) {
         let _ = child.kill();
         let _ = child.wait();
@@ -1074,8 +1145,18 @@ pub(crate) fn finish(mut child: Child, read: &std::io::Result<bool>) -> Result<b
             _ => Err(Failure::Cancelled),
         };
     }
-    let status = child.wait().map_err(|e| Failure::Tool(e.to_string()))?;
-    Ok(status.success())
+    child.wait().map_err(|e| Failure::Tool(e.to_string()))
+}
+
+/// The count `field` (`rchar`, `wchar`) of process `pid` and its reaped children, from
+/// `/proc/<pid>/io`.
+pub(crate) fn io_count(pid: u32, field: &str) -> Option<u64> {
+    let io = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
+    io.lines()
+        .find_map(|l| l.strip_prefix(field)?.strip_prefix(':'))?
+        .trim()
+        .parse()
+        .ok()
 }
 
 #[cfg(test)]
@@ -1161,12 +1242,55 @@ mod tests {
     }
 
     #[test]
+    fn an_extraction_writing_past_its_listing_is_stopped_and_leaves_nothing() {
+        let room = |_: &Path| Limits::from_free(u64::MAX, None);
+        // One file over the listing's total, and files each under it that pass it together.
+        for (files, size, listed) in [(1u64, 8usize << 20, 1000u64), (8, 1 << 20, 3 << 20)] {
+            let t = tempfile::tempdir().unwrap();
+            let src = t.path().join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            let names: Vec<String> = (0..files).map(|i| format!("f{i}")).collect();
+            for n in &names {
+                std::fs::write(src.join(n), vec![b'x'; size]).unwrap();
+            }
+            let tar = t.path().join("p.tar.gz");
+            let mut args = vec!["-czf", tar.to_str().unwrap()];
+            args.extend(names.iter().map(String::as_str));
+            bsdtar(&src, &args);
+            let out = t.path().join("out");
+            std::fs::create_dir(&out).unwrap();
+            let a = Archive {
+                src: tar,
+                here: false,
+                to: Some(out.clone()),
+            };
+            let lying = Listed {
+                entries: files,
+                bytes: listed,
+                ..Listed::default()
+            };
+            assert_eq!(
+                extract(&a, &Meter::default(), 0, lying, room),
+                Err(Failure::Refused(
+                    "it holds more than its listing says.".into()
+                )),
+                "{files} files"
+            );
+            assert_eq!(
+                std::fs::read_dir(&out).unwrap().count(),
+                0,
+                "nothing is left"
+            );
+        }
+    }
+
+    #[test]
     fn a_listing_that_floods_stderr_still_ends_with_its_count() {
         let script = "head -c 300000 /dev/zero | tr '\\0' w >&2; echo a; echo b; exit 1";
         let argv: Vec<OsString> = ["sh", "-c", script].map(OsString::from).to_vec();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(listing(&argv, &Meter::default()));
+            let _ = tx.send(listing(&argv, 60, &Meter::default()));
         });
         let res = rx
             .recv_timeout(std::time::Duration::from_secs(20))
