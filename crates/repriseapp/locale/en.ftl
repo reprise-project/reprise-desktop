@@ -82,5 +82,9 @@ print-broken = The connection to the printing service broke off.
 print-not-ready = The printer did not get ready to print.
 # why is the printing service's own message.
 print-not-ready-why = The printer did not get ready to print: { $why }
+# name is a printer queue's name.
+print-name-taken = Another printer is already called { $name }.
+# A printer on the network: name is its own name, host the computer it is on.
+print-network-printer = { $name } on { $host }
 # why is one of the print-* messages above.
 print-failed = The document was not printed. { $why }

@@ -57,6 +57,7 @@ pub fn announced(name: &str, kind: &str, txt: &[&str], flags: u32) -> Service {
         name: name.into(),
         kind: kind.into(),
         domain: "local".into(),
+        host: "printer.local".into(),
         txt: bus::txt_pairs(&txt),
         flags,
     }
@@ -123,12 +124,16 @@ pub fn run(conn: &Connection, signals: MessageStream, mut changed: impl FnMut(Ve
         return;
     };
     let resolve = |key: &Key| reprisebus::wait(bus::resolve(&server, key)).and_then(|s| device(&s));
+    let owner = bus::owner(conn);
     let mut services = Services::default();
     let mut done: HashSet<String> = HashSet::new();
     for msg in reprisebus::blocking_iter(signals) {
         let Ok(msg) = msg else {
             break;
         };
+        if !bus::from_avahi(&msg, owner.as_deref()) {
+            continue;
+        }
         let ready = done.len() >= TYPES.len();
         let moved = match bus::member(&msg).as_deref() {
             Some("ItemNew") => match bus::item(&msg) {

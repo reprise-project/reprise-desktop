@@ -49,7 +49,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'cups: reprise-printers, Printers, print queues and the printing tray icon'
             'cups-filters: driverless IPP Everywhere and AirPrint printers, and the test page, in Printers'
             'cups-pk-helper: changing printers in Printers with an administrator password, for accounts outside the CUPS admin group'
-            'avahi: network printers in the Add Printer wizard without an administrator password, for accounts outside the CUPS admin group, and the SMB and SFTP servers the Network place lists'
+            'avahi: network printers in the Add Printer wizard without an administrator password, for accounts outside the CUPS admin group, driverless printers in the Print dialog, and the SMB and SFTP servers the Network place lists'
             'polkit: the password prompt behind pkexec, udisks and NetworkManager system actions (reprise-polkit), and pkexec for installing .pkg.tar.zst files'
             'gnome-keyring: saved passwords for browsers and other programs and remembered network share passwords, unlocked through PAM (pam_gnome_keyring) at login and by the lock screen password, and the Secret portal for sandboxed programs'
             'kwallet-pam: a KWallet named kdewallet with the login password opens at a reprise-login login (pam_kwallet5)'

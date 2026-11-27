@@ -335,10 +335,7 @@ impl Printing {
             return Step::reply(Reply::none());
         };
         let queue = dest.name.clone();
-        let driverless = q
-            .driverless
-            .get(&queue)
-            .map(|uri| (uri.clone(), dest.info.clone()));
+        let driverless = q.driverless.get(&queue).cloned();
         let Some(Open::Print {
             listed: Some(listed),
             ..
@@ -479,21 +476,20 @@ impl Drop for Printing {
 }
 
 /// Draw `laid`'s pages in `range` one at a time into a PDF and send it to `queue`; for a
-/// `driverless` printer (its device URI and description), to the temporary queue cupsd makes
-/// for it first.
+/// `driverless` printer, to the temporary queue cupsd makes for it first.
 fn send(
     laid: &Laid,
     range: Range,
     queue: &str,
-    driverless: Option<(String, String)>,
+    driverless: Option<cups::Driverless>,
     title: &str,
     copies: u32,
 ) -> Result<i32, cups::Error> {
     let (server, user) = (http::Server::find(), login_name());
     let queue = match driverless {
-        Some((uri, info)) => {
-            let made = cups::create_local(&server, &user, queue, &uri, &info)?;
-            log::info!("print: temporary queue {made} for {uri}");
+        Some(printer) => {
+            let made = cups::create_local(&server, &user, queue, &printer)?;
+            log::info!("print: temporary queue {made} for {}", printer.uri);
             made
         }
         None => queue.to_string(),
