@@ -49,9 +49,10 @@ runs:
     - if: inputs.checks != 'lint'
       shell: bash
       run: runuser -u builder -- env HOME=/home/builder cargo build --locked -p reprise-encode-jxl
+    # Target selection as in scripts/affected-tests: the gallery is the one example with tests.
     - if: inputs.checks != 'lint' && inputs.affected != 'true'
       shell: bash
-      run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo nextest run --workspace --locked --profile ci
+      run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo nextest run --workspace --lib --bins --tests --example gallery --locked --profile ci
     - if: inputs.checks != 'lint' && inputs.affected == 'true'
       shell: bash
       run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" scripts/affected-tests HEAD^ --profile ci

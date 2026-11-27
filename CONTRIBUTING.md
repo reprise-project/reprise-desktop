@@ -30,7 +30,7 @@ Pixel tests pin Wine 9.0 Tahoma, Noto Color Emoji 2.051 and DejaVu. Run them thr
 
 - **D-Bus fakes.** Serve fakes with `Builder::serve_at` or `reprisebus::testbus::serve` instead of `ObjectServer::at` (`crates/reprisebus/tests/served.rs` enforces this). Connect with `testbus::connect` (10 s timeout).
 - **Pixel-neutral changes.** Run `scripts/pixels-unchanged.sh [--with-blue] BASE` to confirm no gallery or preview PNG changed.
-- **Pinned hashes.** Store hashes in `tests/pins/` via `pins::check` or `pins::check_file`, never inline (`tests/inline_pins.rs` rejects inline 64-bit literals). Run `REPRISE_BLESS=1 scripts/pin-env cargo test -p <crate>` after intentional visual changes and review the diff.
+- **Pinned hashes.** Store hashes in `tests/pins/` via `pins::check` or `pins::check_file`, never inline (`crates/reprisechecks/tests/inline_pins.rs` rejects inline 64-bit literals). Run `REPRISE_BLESS=1 scripts/pin-env cargo test -p <crate>` after intentional visual changes and review the diff.
 - **Text at 200%.** `clip_test` checks gallery pages at 200% text against `crates/reprisekit/tests/pins/text_clip_200.txt`. Size rows from `theme.controls()` or `theme.text`.
 - **Text without Tahoma.** `fit_test` and app `text_fit` tests compare Tahoma against DejaVu Sans Book (`pins::without_tahoma`) using `tests/pins/text_fit_without_tahoma.txt`. Size controls from measured text (`Form` fit or `ListView::fit_titles`).
 - **UI strings.** Wrap user-visible text in `tr!("id")` with English in `locale/en.ftl`. `cargo test -p reprisekit` runs `scripts/i18n-check`. See [docs/i18n.md](docs/i18n.md).

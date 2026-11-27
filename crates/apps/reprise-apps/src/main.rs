@@ -39,6 +39,7 @@ fn entry(program: &str) -> Option<fn(Vec<OsString>)> {
 }
 
 fn main() {
+    repriseapp::about::set_build(option_env!("REPRISE_BUILD"));
     let args: Vec<OsString> = std::env::args_os().collect();
     let Some((main, rest)) =
         multicall::split(&args).and_then(|(p, rest)| Some((entry(p)?, rest.to_vec())))

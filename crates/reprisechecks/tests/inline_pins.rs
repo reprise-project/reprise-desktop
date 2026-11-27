@@ -38,7 +38,7 @@ fn literals(code: &str) -> Vec<(&str, u64)> {
 
 #[test]
 fn no_source_that_hashes_pixels_writes_a_hash_inline() {
-    let root = env!("CARGO_MANIFEST_DIR");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let out = Command::new("git")
         .args(["-C", root, "ls-files", "-z", "--", "*.rs"])
         .output()

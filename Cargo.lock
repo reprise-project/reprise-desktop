@@ -4801,6 +4801,7 @@ dependencies = [
  "reprise-updates",
  "reprise-volume",
  "reprise-welcome",
+ "repriseapp",
  "reprisefs",
 ]
 
@@ -5478,6 +5479,13 @@ dependencies = [
  "zbus 6.5.0",
  "zeroize",
  "zruntime",
+]
+
+[[package]]
+name = "reprisechecks"
+version = "0.1.0"
+dependencies = [
+ "reprisefs",
 ]
 
 [[package]]

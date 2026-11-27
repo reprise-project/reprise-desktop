@@ -6,6 +6,8 @@
 # dependencies. A change under packaging/ runs reprise-updates' tests. The
 # scanners that read the whole tree (SCANNERS below) run on any member or
 # packaging change. A change elsewhere outside the members runs everything.
+# Only libraries, binaries and test targets are built, plus the one example
+# that holds tests (reprisekit's gallery); the other examples are not linked.
 # --dry-run prints the crate set and the commands instead of running them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -40,7 +42,7 @@ root_paths = ("src/", "tests/", "examples/", "benches/", "build.rs")
 # Tests that read files outside their own crate: string ids, window ids, test D-Bus serving,
 # licence citations, packaging invariants. A pull request runs them whatever crate it changes.
 SCANNERS = (("reprisekit", "i18n"), ("repriseapp", "win_names"), ("reprisebus", "served"),
-            ("reprise", "licences"), ("reprise", "packaging"))
+            ("reprisechecks", "licences"), ("reprisechecks", "packaging"))
 # Unit tests that read packaging/.
 PACKAGING = ("reprise-updates",)
 
@@ -89,16 +91,20 @@ if affected:
 print(" ".join(sorted(changed)) + "\t" + " ".join(sorted(affected)) + "\t" + " ".join(scanners))
 ')
 
-cmd=(cargo nextest run --locked)
+cmd=(cargo nextest run --locked --lib --bins --tests)
+gallery=(--example gallery)
 scan=()
 case $sets in
-  ALL) crates="(whole workspace)"; cmd+=(--workspace) ;;
+  ALL) crates="(whole workspace)"; cmd+=(--workspace "${gallery[@]}") ;;
   $'\t\t') echo "affected-tests: no crate changed since $base"; exit 0 ;;
   *)
     rest=${sets#*$'\t'}
     crates=${rest%%$'\t'*}
     scanners=${rest#*$'\t'}
-    for c in $crates; do cmd+=(-p "$c"); done
+    for c in $crates; do
+      cmd+=(-p "$c")
+      [ "$c" = reprisekit ] && cmd+=("${gallery[@]}")
+    done
     if [ -n "$scanners" ]; then
       scan=(cargo nextest run --locked)
       for p in $(printf '%s\n' $scanners | cut -d: -f1 | sort -u); do scan+=(-p "$p"); done

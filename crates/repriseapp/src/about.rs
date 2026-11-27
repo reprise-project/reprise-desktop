@@ -7,8 +7,15 @@ use reprisekit::raster::Canvas;
 use reprisekit::text::escape_mnemonic;
 use reprisekit::tr;
 
-/// The build id a package compiles in (its PKGBUILD exports `REPRISE_BUILD`); `None` in a plain cargo build.
-const BUILD: Option<&str> = option_env!("REPRISE_BUILD");
+/// The build id a package compiles in (its PKGBUILD exports `REPRISE_BUILD`); unset in a plain cargo build. The binary reads the variable and hands it over ([`set_build`]), so a new id recompiles the binary crate alone.
+static BUILD: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// A binary's `main` calls this first, with `option_env!("REPRISE_BUILD")`.
+pub fn set_build(id: Option<&'static str>) {
+    if let Some(id) = id {
+        let _ = BUILD.set(id);
+    }
+}
 
 /// Every string an About box shows for `product` (the row under the banner) wearing `icon` (32x32; `None` leaves the slot empty).
 pub fn fields(product: &str, icon: Option<Canvas>) -> Fields {
@@ -41,7 +48,7 @@ impl Machine {
             .map(|kb| format_kb(kb * 1024))
             .unwrap_or_default();
         Machine {
-            version: version_line(env!("CARGO_PKG_VERSION"), BUILD, &kernel),
+            version: version_line(env!("CARGO_PKG_VERSION"), BUILD.get().copied(), &kernel),
             facts: [cpu, video, free],
             memory,
         }
@@ -107,7 +114,7 @@ impl SystemFacts {
         let login = std::env::var("USER").unwrap_or_default();
         SystemFacts {
             version: env!("CARGO_PKG_VERSION").into(),
-            build: BUILD.map(str::to_string),
+            build: BUILD.get().copied().map(str::to_string),
             interface: String::new(),
             renderer: std::env::var(si::RENDERER_ENV)
                 .ok()

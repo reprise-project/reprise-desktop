@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn no_source_cites_an_incompatible_licence() {
-    let root = env!("CARGO_MANIFEST_DIR");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let out = Command::new("git")
         .args(["-C", root, "ls-files", "-z", "--", "*.rs"])
         .output()

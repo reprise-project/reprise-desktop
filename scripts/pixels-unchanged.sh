@@ -12,7 +12,10 @@
 #
 # Each BASE builds in its own kept worktree, ~/.cache/reprise-pixels/base-<sha12>;
 # runs on the same commit serialize on its lock. A new tree seeds target/
-# from the most recently used one; only that tree is kept.
+# from the most recently used one; only that tree is kept. The base builds
+# without incremental state. Cargo never deletes a unit, so a target/ over
+# REPRISE_PIXELS_CAP_GB (default 30) is not handed on as a seed, and is
+# removed before its own tree builds again.
 # The base render is cached in out-classic/ (out-blue/) with a .complete file
 # holding this script's sha256; --no-cache renders BASE afresh.
 set -euo pipefail
@@ -54,11 +57,19 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/preview-dir"
 export REPRISE_PREVIEW_DIR="$work/preview-dir"
 
-# seed_new_base DIR: copy target/ from the most recently used base tree so the
-# first build is incremental. Skipped if that tree's lock is held.
+# over_cap DIR: DIR holds more than REPRISE_PIXELS_CAP_GB.
+over_cap() {
+    local gb
+    gb=$(du -s -BG "$1" 2>/dev/null | cut -f1 | tr -dc 0-9)
+    ((${gb:-0} > ${REPRISE_PIXELS_CAP_GB:-30}))
+}
+
+# seed_new_base DIR: copy the built units from the most recently used base
+# tree, so the first build compiles the workspace only. Skipped if that
+# tree's lock is held or its target/ is over the cap.
 seed_new_base() {
     local dir=$1
-    local best="" best_time=0 d t
+    local best="" best_time=0 d t p
     for d in "$cachedir"/base-*; do
         [[ -d $d && $d != "$dir" && -f $d/.last-used ]] || continue
         t=$(stat -c %Y "$d/.last-used" 2>/dev/null) || continue
@@ -66,9 +77,15 @@ seed_new_base() {
     done
     [[ -n $best && -d $best/target ]] || return 0
     exec 8>"$best.lock"
-    if flock -n 8; then
-        mkdir -p "$dir/target"
-        cp -a --reflink=auto "$best/target/." "$dir/target/" 2>/dev/null || true
+    if flock -n 8 && ! over_cap "$best/target"; then
+        # rustc's incremental/ is dead under a new path.
+        for p in "$best"/target/*/build; do
+            [[ -d $p ]] || continue
+            p=${p%/build}
+            mkdir -p "$dir/target/${p##*/}"
+            find "$p" -mindepth 1 -maxdepth 1 ! -name incremental \
+                -exec cp -a --reflink=auto -t "$dir/target/${p##*/}" {} + 2>/dev/null || true
+        done
     fi
     exec 8>&-
 }
@@ -176,7 +193,12 @@ else
     fi
     git -C "$basewt" checkout -qf --detach "$base_sha"
     touch "$basewt/.last-used"
+    if over_cap "$basewt/target"; then rm -rf "$basewt/target"; fi
 
+    # The tree only ever builds this one commit: incremental state is never reused. A config
+    # file, not CARGO_INCREMENTAL: sccache keys on the variable and misses every other tree's entries.
+    mkdir -p "$basewt/.cargo"
+    printf '[build]\nincremental = false\n' >"$basewt/.cargo/config.toml"
     render "$basewt" "$work/a"
 
     rm -rf "$kept"

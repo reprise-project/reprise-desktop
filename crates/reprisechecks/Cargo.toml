@@ -1,0 +1,15 @@
+[package]
+name = "reprisechecks"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "No code: the tests that read the whole tree (licence citations, packaging invariants, desktop file ids, inline pin hashes), in a crate without a binary."
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+reprisefs = { path = "../reprisefs" }

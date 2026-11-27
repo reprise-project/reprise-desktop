@@ -12,7 +12,7 @@ use std::path::Path;
 const PKGBUILDS: [&str; 2] = ["packaging/arch/PKGBUILD", "packaging/arch/local/PKGBUILD"];
 
 fn root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
 }
 
 /// The `[package]` name of every program crate under `crates/apps`, the multi-call binary aside.

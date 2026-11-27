@@ -8,7 +8,7 @@ const OWNER: &str = "crates/reprisefs/src/apps/desktopid.rs";
 
 #[test]
 fn only_desktop_id_takes_the_desktop_suffix_apart() {
-    let root = env!("CARGO_MANIFEST_DIR");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let out = Command::new("git")
         .args(["-C", root, "ls-files", "-z", "--", "*.rs"])
         .output()

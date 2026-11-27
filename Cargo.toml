@@ -7,6 +7,7 @@ members = [
     "crates/reprisefs",
     "crates/reprisetray",
     "crates/reprisebus",
+    "crates/reprisechecks",
     "crates/repriseconf",
     "crates/repriseaudio",
     "crates/reprisexdg",
@@ -223,6 +224,11 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 [profile.dev]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
+
+# By default a build dependency gets debug info only when the build also links it as a normal
+# dependency, which differs between `-p` and `--workspace`. Pinned, both resolve the same units.
+[profile.dev.build-override]
+debug = "line-tables-only"
 
 # On dev, not test, so build and test share one reprisekit: its tests run in 11 s, not 86 s.
 [profile.dev.package.reprisekit]

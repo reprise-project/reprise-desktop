@@ -12,6 +12,7 @@ description = "Every Reprise program in one binary, picked by the name it is sta
 workspace = true
 
 [dependencies]
+repriseapp = { path = "../../repriseapp" }
 reprisefs = { path = "../../reprisefs" }
 reprise-about = { path = "../about" }
 reprise-accounts = { path = "../accounts" }
