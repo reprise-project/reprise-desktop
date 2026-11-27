@@ -364,9 +364,33 @@ fn tray_item(state: &State, bar: TreeId, i: usize) -> Option<&crate::tray::TrayI
 
 fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, cursor: (i32, i32)) {
     let scale = state.draw_scale_at(Some(output)).max(1);
+    let (canvas, (x, y)) = drawn_tip(state, target, tip, output, cursor);
+    let scene = &mut state.scene;
+    let tree = scene.tree_create(state.layers.overlay);
+    crate::glass::leave_out(scene, tree);
+    crate::output::keep_on(scene, tree, output);
+    let buffer = scene.buffer_create(tree);
+    scene.set_input(buffer, Input::Passthrough);
+    scene.set_position(tree, x, y);
+    upload_scaled(scene, buffer, &canvas, scale);
+    state.tooltip.shown = Some((target, tree));
+    state.redraw_nodes(Vec::new(), &[tree.into()]);
+}
+
+/// `tip` drawn at `output`'s scale and where it goes, in layout px. It is sized as it draws
+/// there: hinted text at a larger size can run wider than the scale times its width at scale 1.
+fn drawn_tip(
+    state: &State,
+    target: Target,
+    tip: &Tip,
+    output: &Output,
+    cursor: (i32, i32),
+) -> (crate::raster::Canvas, (i32, i32)) {
+    let scale = state.draw_scale_at(Some(output)).max(1);
     let base = &state.config.theme;
     let theme = base.scaled(scale);
-    let text = &state.text;
+    let text = state.text.for_output(scale);
+    let layout = |(w, h): (i32, i32)| ((w + scale - 1) / scale, (h + scale - 1) / scale);
     let screen = state.layout_box(Some(output));
     // A taskbar tip opens on the screen side of the bar: above the
     // pointer over a bottom bar, under it below a top bar, beside a side
@@ -379,9 +403,9 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
         _ => None,
     };
     let room = shadow_room(base, screen);
-    let (canvas, (x, y)) = match tip {
+    match tip {
         Tip::Label(label) => {
-            let size = tip_size(text, base, label);
+            let size = layout(tip_size(text, &theme, label));
             let at = if let Some(button) = caption {
                 place_caption(cursor, size, room, button, state.snap_picker.is_shown())
             } else if beside {
@@ -390,11 +414,15 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
             } else {
                 place(cursor, size, room, below)
             };
-            (draw_tip(&theme, text.for_output(theme.scale), label), at)
+            (draw_tip(&theme, text, label), at)
         }
         Tip::Balloon { title, body } => (
-            draw_balloon_tip(&theme, text.for_output(theme.scale), title, body),
-            place_balloon(cursor, balloon_size(text, base, title, body), screen),
+            draw_balloon_tip(&theme, text, title, body),
+            place_balloon(
+                cursor,
+                layout(balloon_size(text, &theme, title, body)),
+                screen,
+            ),
         ),
         Tip::Info(body) => {
             let row = match target {
@@ -410,28 +438,18 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
                 _ => (cursor.0, cursor.1 + INFO_BELOW_POINTER),
             };
             (
-                draw_info_tip(&theme, text.for_output(theme.scale), body),
-                place_below(anchor, info_size(text, base, body), room),
+                draw_info_tip(&theme, text, body),
+                place_below(anchor, layout(info_size(text, &theme, body)), room),
             )
         }
         Tip::Icon(lines) => {
             use reprisekit::controls::infotip;
             (
-                infotip::draw(&theme, text.for_output(theme.scale), lines, scale),
-                infotip::place(cursor, infotip::size(text, base, lines), room),
+                infotip::draw(&theme, text, lines, scale),
+                infotip::place(cursor, layout(infotip::size(text, &theme, lines)), room),
             )
         }
-    };
-    let scene = &mut state.scene;
-    let tree = scene.tree_create(state.layers.overlay);
-    crate::glass::leave_out(scene, tree);
-    crate::output::keep_on(scene, tree, output);
-    let buffer = scene.buffer_create(tree);
-    scene.set_input(buffer, Input::Passthrough);
-    scene.set_position(tree, x, y);
-    upload_scaled(scene, buffer, &canvas, scale);
-    state.tooltip.shown = Some((target, tree));
-    state.redraw_nodes(Vec::new(), &[tree.into()]);
+    }
 }
 
 fn menu_row_rect(state: &State, depth: usize, row: usize) -> Option<Rect> {
@@ -709,6 +727,29 @@ mod tests {
         assert!(crate::netspeed::sampling(&h.state), "shown");
         hide(&mut h.state);
         assert!(!crate::netspeed::sampling(&h.state), "hidden");
+    }
+
+    #[test]
+    fn a_tip_at_the_right_edge_at_scale_2_keeps_its_border_on_the_screen() {
+        use smithay::output::Scale;
+        for text_size in [100, 200] {
+            let toml = format!("[accessibility]\ntext_size = {text_size}\n");
+            let config = crate::config::Config::parse(&toml).unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            let out = h.output("TEST-1", 1024, 768);
+            out.change_current_state(None, None, Some(Scale::Integer(2)), None);
+            h.state.update_layout();
+            let screen = h.state.layout_box(Some(&out));
+            let tip = Tip::Label("Wednesday, September 30, 2026".into());
+            let cursor = (screen.right() - 2, screen.y + screen.height / 2);
+            let (canvas, (x, _)) = drawn_tip(&h.state, Target::Desktop(0), &tip, &out, cursor);
+            let end = 2 * x + canvas.width as i32;
+            assert!(
+                end <= 2 * (screen.right() - 1),
+                "at {text_size}% the tip ends at device x {end}, at most {}",
+                2 * (screen.right() - 1)
+            );
+        }
     }
 
     #[test]
