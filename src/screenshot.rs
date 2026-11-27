@@ -27,6 +27,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use repriseconf::config::ShotFormat;
+use reprisekit::tr;
 use reprisescene::View;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -286,7 +287,8 @@ impl State {
                 match crate::shotfile::plan(&shot, state.shots.encodes.count()) {
                     Plan::Clipboard => return save(state, png, now, ext, None, saving, still),
                     Plan::Busy => {
-                        let note = (!wants_png).then_some(BUSY);
+                        let note = (!wants_png).then(|| tr!("screenshot-note-busy"));
+                        let note = note.as_deref();
                         return save(state, png, now, "png", note, saving, still);
                     }
                     Plan::Encode => {}
@@ -298,27 +300,21 @@ impl State {
                     Box::new(move |state| match file {
                         Ok(bytes) => save(state, bytes.into(), now, ext, None, saving, still),
                         Err(e) => {
-                            let as_png = "so it was saved as PNG.";
                             let note = match e {
-                                Failed::Memory(budget) => format!(
-                                    "Encoding it needed more than {} MB, {as_png}",
-                                    budget / 1_000_000
+                                Failed::Memory(budget) => tr!(
+                                    "screenshot-note-memory",
+                                    megabytes = (budget / 1_000_000).to_string()
                                 ),
-                                Failed::Late(limit) => format!(
-                                    "Encoding it took longer than {} minutes, {as_png}",
-                                    limit.as_secs() / 60
+                                Failed::Late(limit) => tr!(
+                                    "screenshot-note-late",
+                                    minutes = (limit.as_secs() / 60).to_string()
                                 ),
-                                Failed::Outdated => format!(
-                                    "The JPEG XL encoder could not start, {as_png} Log out and \
-                                     back in after an update."
-                                ),
-                                Failed::Unavailable(_) => format!(
-                                    "Cannot encode it: the JPEG XL library did not load, {as_png}"
-                                ),
-                                Failed::Killed(_) => {
-                                    format!("Cannot encode it: the encoder was killed, {as_png}")
+                                Failed::Outdated => tr!("screenshot-note-outdated"),
+                                Failed::Unavailable(_) => tr!("screenshot-note-no-library"),
+                                Failed::Killed(_) => tr!("screenshot-note-killed"),
+                                Failed::Codec(e) => {
+                                    tr!("screenshot-note-codec", error = e.to_string())
                                 }
-                                Failed::Codec(e) => format!("Cannot encode it: {e}, {as_png}"),
                             };
                             let note = (!wants_png).then_some(note.as_str());
                             save(state, png, now, "png", note, saving, still)
@@ -329,11 +325,6 @@ impl State {
         });
     }
 }
-
-const SAVED: &str = "Screenshot saved";
-
-/// Why a screenshot past `shotfile::MAX_ENCODES` is a PNG.
-const BUSY: &str = "Earlier screenshots were still being encoded, so this one was saved as PNG.";
 
 /// Work under way, counted while its [`Held`] lives.
 #[derive(Clone, Default)]
@@ -372,8 +363,6 @@ pub struct Shots {
     taken: Vec<Take>,
 }
 
-const SAVING: &str = "Saving screenshots...";
-
 /// How often [`when_saved`] looks.
 const SAVED_POLL: Duration = Duration::from_millis(100);
 
@@ -388,7 +377,11 @@ pub fn when_saved(state: &mut State, wait: Duration, then: Box<dyn FnOnce(&mut S
         "screenshot: waiting for {} file(s) to be saved",
         saves.count()
     );
-    crate::notifyview::notice(state, SAVING, "The session ends once they are saved.");
+    crate::notifyview::notice(
+        state,
+        &tr!("screenshot-saving"),
+        &tr!("screenshot-saving-body"),
+    );
     let deadline = Instant::now() + wait;
     let then = Rc::new(Cell::new(Some(then)));
     let fire = Rc::clone(&then);
@@ -465,22 +458,32 @@ fn saved_notice(
                     String::new(),
                     OwnAction::Open(path.clone()),
                 ),
-                ("edit".to_string(), "Edit".to_string(), OwnAction::Run(edit)),
+                (
+                    "edit".to_string(),
+                    tr!("screenshot-action-edit"),
+                    OwnAction::Run(edit),
+                ),
                 (
                     "folder".to_string(),
-                    "Show in Folder".to_string(),
+                    tr!("screenshot-action-folder"),
                     OwnAction::Run(reprisefs::apps::open_location_argv(&path)),
                 ),
             ];
-            crate::notifyview::notice_with_picture(state, SAVED, &body, actions, shown);
+            crate::notifyview::notice_with_picture(
+                state,
+                &tr!("screenshot-saved"),
+                &body,
+                actions,
+                shown,
+            );
             state.record_recent(vec![path], None);
         }
         Err(e) => {
             log::warn!("screenshot not saved: {e}");
             crate::notifyview::notice(
                 state,
-                "Screenshot not saved",
-                &format!("{e}\nThe picture is on the clipboard."),
+                &tr!("screenshot-not-saved"),
+                &tr!("screenshot-not-saved-body", error = e),
             );
         }
     }
@@ -490,9 +493,14 @@ fn saved_notice(
 /// which is made if missing. Blocking.
 fn write_file(bytes: &[u8], secs: i64, ext: &str) -> Result<PathBuf, String> {
     use std::io::Write;
-    let dir =
-        reprisefs::places::screenshots_dir().ok_or("There is no home folder to save it in.")?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot make {}: {e}", dir.display()))?;
+    let dir = reprisefs::places::screenshots_dir().ok_or_else(|| tr!("screenshot-no-home"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        tr!(
+            "screenshot-cannot-make",
+            path = dir.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
     let name = file_name(&reprisefs::locale::localtime(secs), ext);
     write_into(&dir.join(name), |f| f.write_all(bytes))
 }

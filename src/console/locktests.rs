@@ -340,7 +340,10 @@ fn remote_unlock_failures_back_off() {
         remote_submit(&mut h, "nope");
         fourth = (sent, Instant::now());
         settle(&mut h);
-        assert_eq!(message(&h, Side::Remote).as_deref(), Some(lock::INCORRECT));
+        assert_eq!(
+            message(&h, Side::Remote).as_deref(),
+            Some(lock::incorrect().as_str())
+        );
     }
     let fifth = Instant::now();
     remote_submit(&mut h, "hunter2");
@@ -368,7 +371,7 @@ fn remote_unlock_failures_back_off() {
     settle(&mut h);
     assert_eq!(
         message(&h, Side::Console).as_deref(),
-        Some(lock::INCORRECT),
+        Some(lock::incorrect().as_str()),
         "the console's check runs at once"
     );
 }
@@ -440,7 +443,10 @@ fn both_sides_verifying_at_once_each_get_their_own_verdict() {
     let _ = std::fs::remove_file(verdict_gate());
     assert!(!h.state.desktop_locked(), "the remote side unlocks");
     assert!(h.state.console_locked(), "the console stays locked");
-    assert_eq!(message(&h, Side::Console).as_deref(), Some(lock::INCORRECT));
+    assert_eq!(
+        message(&h, Side::Console).as_deref(),
+        Some(lock::incorrect().as_str())
+    );
 }
 
 #[test]

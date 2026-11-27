@@ -3,6 +3,7 @@
 use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, has_sheets};
 use reprisekit::icon::IconSource;
 use reprisekit::style::SheetShape;
+use reprisekit::tr;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -69,7 +70,11 @@ impl Burst {
     }
 
     pub(super) fn title(&self) -> String {
-        format!("{} new from {}", self.ids.len(), self.app)
+        tr!(
+            "notify-burst-title",
+            count = self.ids.len().to_string(),
+            app = self.app.as_str()
+        )
     }
 }
 

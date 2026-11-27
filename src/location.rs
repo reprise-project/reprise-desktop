@@ -34,6 +34,7 @@ use std::time::Duration;
 
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
 use reprisekit::controls::locationprompt::{self, Answer};
+use reprisekit::tr;
 use smithay::reexports::calloop::{
     LoopHandle,
     channel::{Event, Sender, channel},
@@ -148,11 +149,14 @@ pub fn tip(state: &State) -> String {
         .collect();
     names.sort();
     names.dedup();
-    match names.as_slice() {
-        [] => "A program is using your location".to_string(),
-        [one] => format!("{one} is using your location"),
-        [rest @ .., last] => format!("{} and {last} are using your location", rest.join(", ")),
-    }
+    let who = crate::privacy::Who::of(&names);
+    tr!(
+        "location-using",
+        count = who.count,
+        one = who.one,
+        rest = who.rest,
+        last = who.last
+    )
 }
 
 fn app_name(state: &State, desktop_id: &str) -> String {

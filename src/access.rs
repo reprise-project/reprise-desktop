@@ -1254,7 +1254,7 @@ mod tests {
         let (_, msg) = (t.nodes())
             .find(|(_, n)| n.role() == Role::Label)
             .expect("the message");
-        assert_eq!(msg.value(), Some(crate::lock::INCORRECT));
+        assert_eq!(msg.value(), Some(crate::lock::incorrect().as_str()));
         assert_eq!(msg.live(), Some(Live::Polite), "spoken when it changes");
     }
 

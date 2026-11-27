@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reprisefs::screenreader::{self, PROGRAM};
+use reprisekit::tr;
 
 use crate::compositor::{ClientState, Host, State};
 use crate::media::Report;
@@ -54,12 +55,12 @@ pub enum Switched {
 }
 
 impl Switched {
-    pub fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            Switched::On => "Screen reader on",
-            Switched::Off => "Screen reader off",
-            Switched::Missing => "No screen reader installed",
-            Switched::Failed => "The screen reader did not start",
+            Switched::On => tr!("screen-reader-on"),
+            Switched::Off => tr!("screen-reader-off"),
+            Switched::Missing => tr!("screen-reader-missing"),
+            Switched::Failed => tr!("screen-reader-failed"),
         }
     }
 
