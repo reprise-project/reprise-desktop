@@ -167,7 +167,7 @@ fn each_schedule_maps_to_one_timer_setting() {
 
 #[test]
 fn the_files_carry_the_marker_name_command_and_schedule() {
-    let (service, timer) = texts(&task()).unwrap();
+    let (service, timer) = texts(&task(), None).unwrap();
     assert_eq!(
         service,
         format!(
@@ -182,12 +182,18 @@ fn the_files_carry_the_marker_name_command_and_schedule() {
              OnCalendar=*-*-* 09:05:00\n\n[Install]\nWantedBy=timers.target\n"
         )
     );
+    let (told, _) = texts(&task(), Some(Path::new("/usr/bin/reprise-schedtasks"))).unwrap();
+    assert_eq!(
+        told,
+        service.clone()
+            + "ExecStopPost=-:\"/usr/bin/reprise-schedtasks\" \"--failed\" \"Back up photos\"\n"
+    );
     let odd = NewTask {
         name: " 100% done \\".into(),
         ..task()
     };
     assert!(
-        texts(&odd)
+        texts(&odd, None)
             .unwrap()
             .0
             .contains("\nDescription=100%% done\n")
@@ -196,7 +202,7 @@ fn the_files_carry_the_marker_name_command_and_schedule() {
         name: "a\nExecStart=/bin/rm".into(),
         ..task()
     };
-    assert_eq!(texts(&broken), Err(Problem::Control));
+    assert_eq!(texts(&broken, None), Err(Problem::Control));
 }
 
 /// Every name in `dir`.
@@ -213,15 +219,15 @@ fn names(dir: &Path) -> Vec<String> {
 fn write_makes_the_pair_under_a_free_name_and_leaves_nothing_else() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("systemd/user");
-    let timer = write(&own(&dir), &task(), &[]).unwrap();
+    let timer = write(&own(&dir), &task(), &[], None).unwrap();
     assert_eq!(timer, "reprise-task-back-up-photos.timer");
-    let (service, timer_text) = texts(&task()).unwrap();
+    let (service, timer_text) = texts(&task(), None).unwrap();
     let read = |n: &str| std::fs::read_to_string(dir.join(n)).unwrap();
     assert_eq!(read("reprise-task-back-up-photos.service"), service);
     assert_eq!(read("reprise-task-back-up-photos.timer"), timer_text);
     let taken = vec!["reprise-task-back-up-photos-2.timer".to_string()];
     assert_eq!(
-        write(&own(&dir), &task(), &taken).unwrap(),
+        write(&own(&dir), &task(), &taken, None).unwrap(),
         "reprise-task-back-up-photos-3.timer",
         "a file in the folder and a timer the manager knows both take a name"
     );
@@ -308,7 +314,7 @@ fn a_dangling_enable_link_takes_its_timers_name() {
 fn remove_takes_the_pair_and_its_enable_link_and_skips_what_is_gone() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let timer = write(&own(dir), &task(), &[]).unwrap();
+    let timer = write(&own(dir), &task(), &[], None).unwrap();
     let wants = dir.join("timers.target.wants");
     std::fs::create_dir(&wants).unwrap();
     std::os::unix::fs::symlink(dir.join(&timer), wants.join(&timer)).unwrap();
@@ -360,7 +366,7 @@ fn a_new_file_never_replaces_one_already_there() {
 fn only_a_marked_pair_loaded_from_the_folder_is_ours() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let timer = write(&own(dir), &task(), &[]).unwrap();
+    let timer = write(&own(dir), &task(), &[], None).unwrap();
     let fragment = dir.join(&timer).to_string_lossy().into_owned();
     assert!(ours(dir, &timer, &fragment), "a pair New Task wrote");
     assert!(
@@ -459,14 +465,16 @@ fn a_pair_new_task_wrote_reads_back_as_its_task() {
             schedule,
             ..task()
         };
-        let (service, timer) = texts(&t).unwrap();
-        assert_eq!(parse(&service, &timer), Some(t), "{schedule:?}");
+        for notifier in [None, Some(Path::new("/usr/bin/reprise-schedtasks"))] {
+            let (service, timer) = texts(&t, notifier).unwrap();
+            assert_eq!(parse(&service, &timer).as_ref(), Some(&t), "{schedule:?}");
+        }
     }
 }
 
 #[test]
 fn a_pair_changed_by_hand_does_not_read_as_a_task() {
-    let (service, timer) = texts(&task()).unwrap();
+    let (service, timer) = texts(&task(), None).unwrap();
     for (service, timer) in [
         (
             service.replace("Type=oneshot", "Type=simple"),
@@ -516,13 +524,19 @@ fn the_arguments_field_reads_back_the_words_it_shows() {
 #[test]
 fn rewrite_replaces_the_pair_in_place() {
     let tmp = tempfile::tempdir().unwrap();
-    let timer = write(&own(tmp.path()), &task(), &[]).unwrap();
+    let timer = write(&own(tmp.path()), &task(), &[], None).unwrap();
     let changed = NewTask {
         name: "Back up all".into(),
         schedule: Schedule::Hourly,
         ..task()
     };
-    rewrite(tmp.path(), &timer, &changed).unwrap();
+    rewrite(
+        tmp.path(),
+        &timer,
+        &changed,
+        Some(Path::new("/usr/bin/reprise-schedtasks")),
+    )
+    .unwrap();
     assert_eq!(read(tmp.path(), &timer), Some(changed));
     assert_eq!(
         names(tmp.path()),
@@ -532,7 +546,7 @@ fn rewrite_replaces_the_pair_in_place() {
         ],
         "the unit names stay, and no temporary file is left"
     );
-    assert!(rewrite(tmp.path(), "backup.timer", &task()).is_err());
+    assert!(rewrite(tmp.path(), "backup.timer", &task(), None).is_err());
 }
 
 #[test]
@@ -542,17 +556,19 @@ fn a_name_ending_in_a_backslash_is_kept_without_it_and_reads_back() {
         name: "Back up \\".into(),
         ..task()
     };
-    let (service, timer) = texts(&t).unwrap();
+    let notifier = Some(Path::new("/usr/bin/reprise-schedtasks"));
+    let (service, timer) = texts(&t, notifier).unwrap();
     assert!(service.contains("\nDescription=Back up\n"), "{service}");
+    assert!(service.contains(" \"--failed\" \"Back up\"\n"), "{service}");
     let read = parse(&service, &timer).unwrap();
     assert_eq!(read.name, "Back up");
-    assert_eq!(texts(&read).unwrap(), (service, timer));
+    assert_eq!(texts(&read, notifier).unwrap(), (service, timer));
 }
 
 #[test]
 fn a_timer_that_cannot_be_rewritten_puts_the_service_back() {
     let tmp = tempfile::tempdir().unwrap();
-    let timer = write(&own(tmp.path()), &task(), &[]).unwrap();
+    let timer = write(&own(tmp.path()), &task(), &[], None).unwrap();
     let service = tmp.path().join(timer.replace(".timer", ".service"));
     let before = std::fs::read_to_string(&service).unwrap();
     std::fs::remove_file(tmp.path().join(&timer)).unwrap();
@@ -561,6 +577,6 @@ fn a_timer_that_cannot_be_rewritten_puts_the_service_back() {
         name: "Back up all".into(),
         ..task()
     };
-    assert!(rewrite(tmp.path(), &timer, &changed).is_err());
+    assert!(rewrite(tmp.path(), &timer, &changed, None).is_err());
     assert_eq!(std::fs::read_to_string(&service).unwrap(), before);
 }

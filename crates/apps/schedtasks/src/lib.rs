@@ -11,6 +11,7 @@ reprisekit::strings!("schedtasks");
 
 mod model;
 mod newtask;
+mod notice;
 mod output;
 mod props;
 mod systemd;
@@ -1024,8 +1025,13 @@ impl repriseapp::Extended for SchedTasks {
     }
 }
 
-pub fn main(_args: Vec<OsString>) {
+pub fn main(args: Vec<OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
+    if let [flag, name] = args.as_slice()
+        && flag == units::FAILED
+    {
+        return notice::tell(&name.to_string_lossy());
+    }
     repriseapp::run(Box::new(SchedTasks::new())).unwrap_or_else(|e| e.exit());
 }
 
