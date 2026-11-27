@@ -196,6 +196,7 @@ impl Paint {
                 self.name_saveas();
                 Reply::redraw_all()
             }
+            (Prompt::Update(_), Some(0)) if self.zip_save.running() => Reply::redraw_all(),
             (Prompt::Update(then), Some(0)) => {
                 let started = self.update_zip();
                 self.zip_then = then.filter(|_| started);
@@ -283,13 +284,16 @@ impl Paint {
     }
 
     /// Starts the job writing the picture into the zip it came out of, and then over its copy.
-    /// The window takes no input until it ends ([`Paint::zip_saved`]). A picture that does not
-    /// encode raises a box.
+    /// Its windows take no input until it ends ([`Paint::zip_saved`]); refused while one runs. A
+    /// picture that does not encode raises a box.
     fn update_zip(&mut self) -> bool {
         let (Some((path, kind)), Some((zip, inner))) = (self.writable(), self.zip_entry.clone())
         else {
             return false;
         };
+        if self.zip_save.running() {
+            return false;
+        }
         self.doc.finish();
         let bytes = match file::encode(&self.doc.img, kind, self.quality) {
             Ok(bytes) => bytes,
@@ -318,8 +322,7 @@ impl Paint {
             },
         );
         let kind = reprisekit::controls::copyprogress::Kind::Compress;
-        self.zip_save.start(job, kind, names, self.waker.as_ref());
-        true
+        self.zip_save.start(job, kind, names, self.waker.as_ref())
     }
 
     /// The save into a zip ended: once it landed the picture is saved and what waited on the save
