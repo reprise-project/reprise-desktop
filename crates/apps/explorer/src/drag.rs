@@ -7,7 +7,9 @@ use crate::place::Place;
 use crate::window::Popup;
 use crate::{BTN_LEFT, DRAG_SLOP, Explorer};
 use repriseapp::listjob::Job;
-use repriseapp::{Accept, Actions, Ctx, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
+use repriseapp::{
+    Accept, Actions, Ctx, DragAction, DragOut, DropKind, Dropped, Offered, Staged, Uri,
+};
 use repriseapp::{Reply, fielddrop};
 use reprisefs::deadline::Gate;
 use reprisefs::ops::DropOp;
@@ -254,12 +256,12 @@ impl Explorer {
         Reply::redraw()
     }
 
-    /// A read-only place arms nothing: the drives under Computer and the
-    /// bin's contents are not files to move, and every operation behind
-    /// a drop ([`Explorer::put_all`]) refuses them anyway. The Desktop's
-    /// rows stay behind for the same reason.
+    /// A read-only place arms nothing but a compressed folder, whose entries copy out: the
+    /// drives under Computer and the bin's contents are not files to move, and every operation
+    /// behind a drop ([`Explorer::put_all`]) refuses them anyway. The Desktop's rows stay
+    /// behind for the same reason.
     pub(crate) fn arm_drag(&mut self, i: usize, button: u32, x: i32, y: i32) {
-        if self.place.read_only() {
+        if self.place.read_only() && !matches!(self.place, Place::Archive(..)) {
             return;
         }
         let items: Vec<usize> = self.sv.selection.set.iter().copied().collect();
@@ -292,17 +294,64 @@ impl Explorer {
         if (x - ox).abs() < THRESHOLD && (y - oy).abs() < THRESHOLD {
             return Reply::none();
         }
+        let paths = d.paths.clone();
+        let (paths, staged) = match &self.place {
+            Place::Archive(..) => match self.stage_drag(&paths, ctx) {
+                Some((paths, staged)) => (paths, Some(staged)),
+                None => return Reply::none(),
+            },
+            _ => (paths, None),
+        };
         let (image, grab) = self
             .drag_image(ctx, self.drawn_scale)
             .unwrap_or_else(|| (Canvas::new(0, 0), (0, 0)));
         self.click_open = None;
         let d = self.drag.as_mut().expect("still armed");
         d.started = true;
+        d.paths = paths.clone();
         Reply::start_drag(DragOut {
-            paths: d.paths.clone(),
+            paths,
             image,
             grab,
+            staged,
         })
+    }
+
+    /// A drag out of a compressed folder: the entries at `items` copy out into a fresh scratch
+    /// folder on a listing thread, and the drag names their copies there, sent once they are
+    /// out. None when there is no scratch folder to name.
+    fn stage_drag(&mut self, items: &[PathBuf], ctx: &Ctx) -> Option<(Vec<PathBuf>, Staged)> {
+        let Place::Archive(archive, _) = &self.place else {
+            return None;
+        };
+        let picked: Vec<PathBuf> = (items.iter())
+            .filter_map(|p| Some(self.place.archive_entry(p)?.1))
+            .collect();
+        let dir = reprisefs::archive::scratch_name()?;
+        let paths = (picked.iter())
+            .filter_map(|p| Some(dir.join(p.file_name()?)))
+            .collect();
+        let entries = self.archives.kept(archive).unwrap_or_default();
+        let (archive, staged) = (archive.clone(), Staged::default());
+        let done = staged.clone();
+        self.drag_copy = Some(Job::spawn(Some(&ctx.wake), move || {
+            let m = reprisefs::progress::Meter::default();
+            let copied = reprisefs::archive::copy_to_scratch(&archive, &entries, &picked, &dir, &m);
+            done.done(copied.is_ok());
+            let name = archive.file_name().unwrap_or_default().to_string_lossy();
+            copied.err().map(|why| (name.into_owned(), why))
+        }));
+        Some((paths, staged))
+    }
+
+    /// A drag's copy out of a compressed folder ([`Explorer::stage_drag`]) that failed: a box
+    /// says why.
+    pub(crate) fn take_drag_copy(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        let failed = self.drag_copy.as_ref()?.take()?;
+        self.drag_copy = None;
+        let (name, why) = failed?;
+        let text = tr!("archive-copy-out-failed", name = name, why = why);
+        Some(self.message_box(&tr!("archive-copy-failed-title"), text, ctx))
     }
 
     /// The dragged entries' image drawn at `scale`, and the point of it the pointer holds. An

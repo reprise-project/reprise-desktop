@@ -1,6 +1,8 @@
-//! Extract Here, Extract to and Extract All... on an archive's menu, and Compress to on any items:
-//! an [`ArchiveJob`] with its progress dialog. An archive that fails asks Skip, Retry or Cancel; a
-//! zip that fails shows an error box.
+//! Extract Here, Extract to and Extract All... on an archive's menu, Compress to on any items, and
+//! Copy or Copy To Folder... in a compressed folder: an [`ArchiveJob`] with its progress dialog.
+//! An archive that fails asks Skip, Retry or Cancel; a zip or a copy that fails shows an error box.
+//! A copy comes out into a private scratch folder, then goes onto the clipboard or through the
+//! put a paste makes, so it lands as any copied file does.
 
 use crate::Explorer;
 use crate::copydlg::Progress;
@@ -9,9 +11,11 @@ use repriseapp::{Ctx, Reply};
 use reprisefs::compress::{self, Compress};
 use reprisefs::extract::{self, Archive, ArchiveEvent, ArchiveJob};
 use reprisefs::listing::Item;
+use reprisefs::ops::DropOp;
 use reprisekit::controls::copyprogress::Kind;
 use reprisekit::tr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// The extraction or compression running, with its dialog.
 pub(crate) struct Extracting {
@@ -22,12 +26,30 @@ pub(crate) struct Extracting {
     /// Extract All: the place shown when it started, which goes to the first folder that came
     /// out unless the window has moved on.
     show: Option<Place>,
+    /// A compressed folder's copy: where its entries go once out.
+    then: Option<Then>,
+}
+
+/// Where the entries a compressed folder's Copy or Copy To Folder... copied out go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Then {
+    Clipboard,
+    Into(PathBuf),
 }
 
 /// One run of the job: archives to extract, or items to zip.
 pub(crate) enum Batch {
     Extract(Vec<Archive>),
     Compress(Compress),
+    /// Entries of `archive` (paths inside it, from the listing `entries`) into the scratch
+    /// folder `dir`.
+    CopyOut {
+        archive: PathBuf,
+        entries: Arc<Vec<reprisefs::archive::Entry>>,
+        picked: Vec<PathBuf>,
+        dir: Option<PathBuf>,
+        then: Then,
+    },
 }
 
 /// What Extract to names after an archive, `name/`.
@@ -107,6 +129,29 @@ impl Explorer {
         self.queue_archive_job(Batch::Extract(batch), ctx);
     }
 
+    /// Copy or Copy To Folder... in a compressed folder: the entries at `items` (their paths in
+    /// the listing) come out on a job, after the one running, and go where `then` says.
+    pub(crate) fn copy_out(&mut self, items: &[PathBuf], then: Then, ctx: &mut Ctx) -> Reply {
+        let Place::Archive(archive, _) = &self.place else {
+            return Reply::none();
+        };
+        let picked: Vec<PathBuf> = (items.iter())
+            .filter_map(|p| Some(self.place.archive_entry(p)?.1))
+            .collect();
+        if picked.is_empty() {
+            return Reply::none();
+        }
+        let batch = Batch::CopyOut {
+            entries: self.archives.kept(archive).unwrap_or_default(),
+            archive: archive.clone(),
+            picked,
+            dir: reprisefs::archive::scratch_name(),
+            then,
+        };
+        self.queue_archive_job(batch, ctx);
+        Reply::none()
+    }
+
     /// The zip Compress to and Send To make of the selection: `name.zip`, numbered past a name
     /// the folder lists. None in a read-only place, or for items of several folders.
     pub(crate) fn compress_target(&self) -> Option<Compress> {
@@ -179,6 +224,10 @@ impl Explorer {
         let wake = move || wake.wake();
         let show = matches!(&batch, Batch::Extract(b) if b.iter().any(|a| a.to.is_some()))
             .then(|| self.place.clone());
+        let then = match &batch {
+            Batch::CopyOut { then, .. } => Some(then.clone()),
+            _ => None,
+        };
         let (job, kind, from, to) = match batch {
             Batch::Extract(batch) => {
                 let first = batch.first();
@@ -192,6 +241,21 @@ impl Explorer {
                 let to = name(Some(&c.zip));
                 (ArchiveJob::compress(c, wake), Kind::Compress, from, to)
             }
+            Batch::CopyOut {
+                archive,
+                entries,
+                picked,
+                dir,
+                then,
+            } => {
+                let from = name(Some(&archive));
+                let to = match &then {
+                    Then::Clipboard => tr!("extracting-to-clipboard"),
+                    Then::Into(dir) => name(Some(dir)),
+                };
+                let job = reprisefs::archive::copy_job(archive, entries, picked, dir, wake);
+                (job, Kind::Extract, from, to)
+            }
         };
         let progress = Progress::new(job.meter().clone(), kind, from, to);
         crate::fileops::wake_to_show(ctx);
@@ -200,6 +264,7 @@ impl Explorer {
             progress,
             landed: Vec::new(),
             show,
+            then,
         });
     }
 
@@ -209,6 +274,7 @@ impl Explorer {
     pub(crate) fn poll_extract(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let ex = self.extracting.as_mut()?;
         let zipping = ex.progress.kind == Kind::Compress;
+        let copying = ex.then.is_some();
         let mut ask = None;
         let mut finished = false;
         for ev in ex.job.poll() {
@@ -219,7 +285,7 @@ impl Explorer {
             }
         }
         // A job that ended does not wait for an answer: its end tells the failure.
-        if let Some(text) = ask.take_if(|_| !zipping && !finished) {
+        if let Some(text) = ask.take_if(|_| !zipping && !copying && !finished) {
             let meter = ex.job.meter().clone();
             return Some(self.ask_failed(
                 reprisefs::progress::Asked::new(meter),
@@ -228,17 +294,39 @@ impl Explorer {
                 ctx,
             ));
         }
-        let title = match zipping {
-            true => compress::failure_title(),
-            false => extract::failure_title(),
-        };
-        let failed = ask.map(|text| (title, text));
+        let failed = ask.map(|text| match (zipping, copying) {
+            (true, _) => (compress::failure_title(), text),
+            (_, true) => {
+                let name = ex.progress.from.clone();
+                let text = tr!("archive-copy-out-failed", name = name, why = text);
+                (tr!("archive-copy-failed-title"), text)
+            }
+            _ => (extract::failure_title(), text),
+        });
         let boxed = (failed.clone()).map(|(title, text)| self.message_box(&title, text, ctx));
         if !finished {
             return boxed;
         }
         let ex = self.extracting.take()?;
         self.job_ended(ex.job.meter(), ctx);
+        if let Some(then) = ex.then {
+            ex.progress
+                .ended(ex.job.meter().snapshot().items as usize, failed.as_ref());
+            self.publish_task_progress();
+            if let Some(next) = self.extract_queue.pop_front() {
+                self.start_archive_job(next, ctx);
+            }
+            let landed = ex.landed;
+            let reply = match then {
+                _ if failed.is_some() || landed.is_empty() => Reply::none(),
+                Then::Clipboard => self.clipboard_paths(false, landed, ctx),
+                Then::Into(dir) => self.put_all(&landed, &dir, &|_| Some(DropOp::Copy), true, ctx),
+            };
+            return Some(match boxed {
+                Some(b) => reply.and(b),
+                None => reply,
+            });
+        }
         let shown_after = (ex.show.as_ref() == Some(&self.place))
             .then(|| ex.landed.first().cloned())
             .flatten();

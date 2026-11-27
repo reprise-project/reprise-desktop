@@ -520,7 +520,7 @@ fn an_archives_menu_extracts_all_here_or_into_its_folder() {
 }
 
 #[test]
-fn a_compressed_folders_entries_open_or_extract_the_archive_and_nothing_else() {
+fn a_compressed_folders_entries_open_copy_or_extract_the_archive_and_nothing_else() {
     let s = MenuState {
         archive: true,
         read_only: true,
@@ -529,9 +529,10 @@ fn a_compressed_folders_entries_open_or_extract_the_archive_and_nothing_else() {
     for kind in [ItemKind::File, ItemKind::Folder] {
         let m = item_menu(&s, kind, &[], &[]);
         let rows: Vec<&str> = (0..m.items().len()).map(|i| label(m.items(), i)).collect();
-        assert_eq!(rows, ["Open", "", "Extract All..."], "{kind:?}");
+        assert_eq!(rows, ["Open", "", "Copy", "", "Extract All..."], "{kind:?}");
         assert_eq!(m.command(&[0]), Command::Open);
-        assert_eq!(m.command(&[2]), Command::ExtractAll);
+        assert_eq!(m.command(&[2]), Command::Copy);
+        assert_eq!(m.command(&[4]), Command::ExtractAll);
     }
 }
 

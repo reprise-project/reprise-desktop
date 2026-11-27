@@ -4,7 +4,7 @@
 //! (names and dates read back exactly) under CPU and memory limits, and die with the thread that
 //! started them. docs/security.md "Extracting archives" has the rules.
 
-use crate::extract::{self, Failure, MAX_ENTRIES, STDERR_TAIL};
+use crate::extract::{self, ArchiveEvent, ArchiveJob, Failure, MAX_ENTRIES, STDERR_TAIL};
 use crate::progress::Meter;
 use reprisekit::tr;
 use std::collections::{BTreeMap, VecDeque};
@@ -422,6 +422,14 @@ impl Listings {
         listed
     }
 
+    /// The entries `archive` was last listed with, without asking whether it changed since: what
+    /// a compressed folder on view shows.
+    pub fn kept(&self, archive: &Path) -> Option<Arc<Vec<Entry>>> {
+        let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let listed = inner.listed.iter().rev().find(|(p, ..)| p == archive);
+        listed.and_then(|(_, _, l)| l.as_ref().ok().cloned())
+    }
+
     /// Stops the listing running, if any: the window has left the archive.
     pub fn cancel(&self) {
         let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -574,7 +582,42 @@ pub fn is_copy(path: &Path) -> bool {
     scratch_base().is_some_and(|base| clean.starts_with(base))
 }
 
+/// A fresh name under the scratch folder, for a folder [`make_scratch`] makes later.
+pub fn scratch_name() -> Option<PathBuf> {
+    static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
+        .map_or(0, |d| d.as_nanos());
+    let name = format!("{}-{nanos:x}-{n}", std::process::id());
+    Some(scratch_base()?.join(name))
+}
+
+/// Makes the folder [`scratch_name`] gave, as [`scratch`] makes its own; refused when it is
+/// there already.
+pub fn make_scratch(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let base = dir
+        .parent()
+        .ok_or_else(|| std::io::Error::other(tr!("archive-no-cache")))?;
+    sweep_scratch(base, SCRATCH_KEEP_SECS)?;
+    std::fs::DirBuilder::new().mode(0o700).create(dir)
+}
+
 fn scratch_in(base: &Path, keep_secs: u64) -> std::io::Result<PathBuf> {
+    sweep_scratch(base, keep_secs)?;
+    let mut template = base.join("XXXXXX").into_os_string().into_vec();
+    template.push(0);
+    // SAFETY: `template` is a writable NUL-terminated buffer that mkdtemp fills in place.
+    let made = unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) };
+    if made.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    template.pop();
+    Ok(PathBuf::from(OsString::from_vec(template)))
+}
+
+/// Makes the private scratch folder `base`, removing the folders in it older than `keep_secs`.
+fn sweep_scratch(base: &Path, keep_secs: u64) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
         .recursive(true)
@@ -589,15 +632,54 @@ fn scratch_in(base: &Path, keep_secs: u64) -> std::io::Result<PathBuf> {
             let _ = std::fs::remove_dir_all(e.path());
         }
     }
-    let mut template = base.join("XXXXXX").into_os_string().into_vec();
-    template.push(0);
-    // SAFETY: `template` is a writable NUL-terminated buffer that mkdtemp fills in place.
-    let made = unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) };
-    if made.is_null() {
-        return Err(std::io::Error::last_os_error());
+    Ok(())
+}
+
+/// [`copy_tree_out`] into the scratch folder `dir` [`scratch_name`] gave, made here and removed
+/// again when the copy fails.
+pub fn copy_to_scratch(
+    archive: &Path,
+    entries: &[Entry],
+    picked: &[PathBuf],
+    dir: &Path,
+    m: &Meter,
+) -> Result<Vec<PathBuf>, String> {
+    make_scratch(dir).map_err(|e| e.to_string())?;
+    let copied = copy_tree_out(archive, entries, picked, dir, m);
+    if copied.is_err() {
+        let _ = std::fs::remove_dir_all(dir);
     }
-    template.pop();
-    Ok(PathBuf::from(OsString::from_vec(template)))
+    copied
+}
+
+/// [`copy_to_scratch`] into `dir` (from [`scratch_name`]) on a job: each copy as an
+/// [`ArchiveEvent::Landed`], or one [`ArchiveEvent::Failed`] saying why.
+pub fn copy_job(
+    archive: PathBuf,
+    entries: Arc<Vec<Entry>>,
+    picked: Vec<PathBuf>,
+    dir: Option<PathBuf>,
+    wake: impl Fn() + Send + 'static,
+) -> ArchiveJob {
+    let meter = Arc::new(Meter::default());
+    ArchiveJob::on_thread("reprisefs-copy-out", meter, wake, move |m, send| {
+        let copied = (dir.ok_or_else(|| tr!("archive-no-cache")))
+            .and_then(|dir| copy_to_scratch(&archive, &entries, &picked, &dir, m));
+        match copied {
+            Ok(copies) => {
+                for (index, into) in copies.into_iter().enumerate() {
+                    if !send(ArchiveEvent::Landed { index, into }) {
+                        return;
+                    }
+                }
+            }
+            Err(_) if m.cancelled() => {}
+            Err(text) => {
+                send(ArchiveEvent::Failed { index: 0, text });
+            }
+        }
+        send(ArchiveEvent::Finished);
+    })
 }
 
 /// Copies the file `entry` of `archive` into the empty folder `into` under its own name, read-only:
@@ -614,7 +696,6 @@ fn copy_out_within(
     into: &Path,
     room: u64,
 ) -> Result<PathBuf, String> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let name = entry
         .path
         .file_name()
@@ -626,15 +707,23 @@ fn copy_out_within(
         ));
     }
     let to = into.join(name);
+    write_entry(archive, entry, &to, 0o400)?;
+    Ok(to)
+}
+
+/// Writes the file `entry` of `archive` to the new file `to`, never through a link, then gives
+/// it `mode`. Nothing is left at `to` when bsdtar fails or writes other than the listed size.
+fn write_entry(archive: &Path, entry: &Entry, to: &Path, mode: u32) -> Result<(), String> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
-        .open(&to)
+        .open(to)
         .map_err(|e| e.to_string())?;
     let failed = |why: String| {
-        let _ = std::fs::remove_file(&to);
+        let _ = std::fs::remove_file(to);
         why
     };
     let tool = |f: Failure| failed(f.why());
@@ -671,7 +760,9 @@ fn copy_out_within(
     }
     let status = child.wait();
     let stderr = drain.join().unwrap_or_default();
+    // A child killed here for writing too much died of SIGKILL too, not of its CPU limit.
     if let Ok(s) = &status
+        && copied.is_ok()
         && ran_out(s)
     {
         return Err(failed(tr!("archive-too-long")));
@@ -688,9 +779,118 @@ fn copy_out_within(
         Ok(_) => return Err(failed(extract::said(&stderr, &tr!("archive-unread")))),
         Err(e) => return Err(failed(e.to_string())),
     }
-    file.set_permissions(std::fs::Permissions::from_mode(0o400))
-        .map_err(|e| failed(e.to_string()))?;
-    Ok(to)
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
+        .map_err(|e| failed(e.to_string()))
+}
+
+/// What [`copy_tree_out`] makes under its folder: the folders, parents first, then the files in
+/// listing order, each by its path under the folder (its name, then the path below it).
+struct TreePlan<'a> {
+    folders: Vec<PathBuf>,
+    files: Vec<(PathBuf, &'a Entry)>,
+}
+
+/// The [`TreePlan`] for the entries `picked` of the listing `entries`.
+fn tree_plan<'a>(entries: &'a [Entry], picked: &[PathBuf]) -> Result<TreePlan<'a>, String> {
+    let mut folders = std::collections::BTreeSet::new();
+    let mut files = Vec::new();
+    for p in picked {
+        let name = p.file_name().ok_or_else(|| tr!("archive-unread"))?;
+        let mut held = false;
+        for e in entries {
+            let Ok(below) = e.path.strip_prefix(p) else {
+                continue;
+            };
+            held = true;
+            let mut at = PathBuf::from(name);
+            if !below.as_os_str().is_empty() {
+                at.push(below);
+            }
+            let parents = at.ancestors().skip(1).filter(|a| !a.as_os_str().is_empty());
+            folders.extend(parents.map(Path::to_path_buf));
+            match e.kind {
+                Kind::Folder => {
+                    folders.insert(at);
+                }
+                Kind::File => files.push((at, e)),
+            }
+        }
+        if !held {
+            return Err(tr!(
+                "archive-not-held",
+                name = name.to_string_lossy().into_owned()
+            ));
+        }
+    }
+    let files = (files.into_iter())
+        .filter(|(at, _)| !folders.contains(at))
+        .collect();
+    Ok(TreePlan {
+        folders: folders.into_iter().collect(),
+        files,
+    })
+}
+
+/// Copies the entries `picked` of `archive` (paths inside it, each a file or a folder with all
+/// that `entries` lists below it) into the empty private folder `into` under their own names,
+/// files 0644 and folders 0755, one [`write_entry`] per file. A name listed twice keeps its
+/// first entry, and a file shadowed by a folder of its name is left out, as the compressed
+/// folder shows them. Refused past [`extract::FREE_SHARE_PERCENT`] of the free space or
+/// [`MAX_ENTRIES`]; cancelling `m` stops it between files. Returns each picked entry's copy.
+pub fn copy_tree_out(
+    archive: &Path,
+    entries: &[Entry],
+    picked: &[PathBuf],
+    into: &Path,
+    m: &Meter,
+) -> Result<Vec<PathBuf>, String> {
+    use crate::progress::{Phase, Totals};
+    use std::os::unix::fs::DirBuilderExt;
+    let TreePlan { folders, files } = tree_plan(entries, picked)?;
+    let bytes = files
+        .iter()
+        .fold(0u64, |n, (_, e)| n.saturating_add(e.size));
+    let items = (folders.len() + files.len()) as u64;
+    let limits = extract::Limits::of(into);
+    if items > limits.entries {
+        return Err(tr!("archive-too-many", most = limits.entries));
+    }
+    if bytes > limits.bytes {
+        return Err(tr!(
+            "archive-no-room",
+            size = crate::props::short_size(bytes)
+        ));
+    }
+    m.add_totals(Totals { bytes, items });
+    m.set_phase(Phase::Copying);
+    let mut done = Totals::default();
+    let mut step = |m: &Meter, at: &Path, size: u64| {
+        m.set_current(at.as_os_str());
+        done.items += 1;
+        done.bytes = done.bytes.saturating_add(size);
+        m.settle(done);
+    };
+    for at in &folders {
+        std::fs::DirBuilder::new()
+            .mode(0o755)
+            .create(into.join(at))
+            .map_err(|e| e.to_string())?;
+        step(m, at, 0);
+    }
+    for (at, e) in &files {
+        if m.cancelled() {
+            return Err(Failure::Cancelled.why());
+        }
+        let to = into.join(at);
+        // A name listed again: its first entry is already there.
+        if to.symlink_metadata().is_err() {
+            write_entry(archive, e, &to, 0o644)?;
+        }
+        step(m, at, e.size);
+    }
+    Ok((picked.iter())
+        .filter_map(|p| Some(into.join(p.file_name()?)))
+        .collect())
 }
 
 #[cfg(test)]
@@ -1227,5 +1427,177 @@ mod tests {
         ] {
             assert_eq!(holds_folder(&entries, Path::new(inner)), held, "{inner:?}");
         }
+    }
+
+    /// `pack.tar.gz` in `dir` holding `docs/` (with an awkward name and a nested folder), a top
+    /// file and an empty folder.
+    fn pack(dir: &Path) -> PathBuf {
+        let work = dir.join("work");
+        std::fs::create_dir_all(work.join("docs/deep")).unwrap();
+        std::fs::create_dir_all(work.join("empty")).unwrap();
+        std::fs::write(work.join("docs/a.txt"), "a").unwrap();
+        std::fs::write(work.join("docs/deep/-C n\nl"), "odd").unwrap();
+        std::fs::write(work.join("top.txt"), "top").unwrap();
+        bsdtar(
+            &work,
+            &["-czf", "../pack.tar.gz", "docs", "top.txt", "empty"],
+        );
+        dir.join("pack.tar.gz")
+    }
+
+    #[test]
+    fn picked_files_and_folders_copy_out_whole_as_plain_files_and_folders() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let archive = pack(t.path());
+        let entries = listed(&archive);
+        let into = t.path().join("into");
+        std::fs::create_dir(&into).unwrap();
+        let picked = ["docs", "top.txt", "empty"].map(PathBuf::from);
+        let m = Meter::default();
+        let got = copy_tree_out(&archive, &entries, &picked, &into, &m).expect("copied");
+        assert_eq!(got, ["docs", "top.txt", "empty"].map(|n| into.join(n)));
+        let read = |p: &str| std::fs::read_to_string(into.join(p)).unwrap();
+        assert_eq!(read("docs/a.txt"), "a");
+        assert_eq!(read("docs/deep/-C n\nl"), "odd");
+        assert_eq!(read("top.txt"), "top");
+        assert!(into.join("empty").is_dir());
+        let mode = |p: &str| {
+            std::fs::metadata(into.join(p))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode("top.txt"), 0o644);
+        assert_eq!(mode("docs/deep") & 0o700, 0o700);
+        let s = m.snapshot();
+        assert_eq!(
+            (s.items, s.bytes),
+            (6, 7),
+            "three folders and three files, seven bytes"
+        );
+    }
+
+    #[test]
+    fn a_copy_out_takes_the_first_of_a_name_listed_twice_and_no_file_under_a_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let (one, two) = (t.path().join("one"), t.path().join("two"));
+        std::fs::create_dir_all(one.join("d/b")).unwrap();
+        std::fs::create_dir_all(two.join("d")).unwrap();
+        std::fs::write(one.join("d/a"), "first").unwrap();
+        std::fs::write(two.join("d/a"), "second!").unwrap();
+        std::fs::write(one.join("d/b/y"), "below").unwrap();
+        std::fs::write(two.join("d/b"), "file b").unwrap();
+        let tar = t.path().join("t.tar");
+        bsdtar(&one, &["-cf", tar.to_str().unwrap(), "d"]);
+        bsdtar(&two, &["-rf", tar.to_str().unwrap(), "d/a", "d/b"]);
+        let into = t.path().join("into");
+        std::fs::create_dir(&into).unwrap();
+        let picked = [PathBuf::from("d")];
+        copy_tree_out(&tar, &listed(&tar), &picked, &into, &Meter::default()).expect("copied");
+        assert_eq!(std::fs::read_to_string(into.join("d/a")).unwrap(), "first");
+        assert_eq!(
+            std::fs::read_to_string(into.join("d/b/y")).unwrap(),
+            "below"
+        );
+    }
+
+    #[test]
+    fn a_copy_out_of_an_unlisted_entry_too_large_or_lying_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let archive = pack(t.path());
+        let entries = listed(&archive);
+        let into = t.path().join("into");
+        std::fs::create_dir(&into).unwrap();
+        let m = Meter::default();
+        let copy = |entries: &[Entry], picked: &str| {
+            copy_tree_out(&archive, entries, &[PathBuf::from(picked)], &into, &m)
+        };
+        assert_eq!(
+            copy(&entries, "gone"),
+            Err("it no longer holds gone.".into())
+        );
+        let huge = [entry("top.txt", Kind::File, u64::MAX / 2)];
+        assert!(copy(&huge, "top.txt").unwrap_err().starts_with("it takes "));
+        let short = [entry("top.txt", Kind::File, 2)];
+        assert_eq!(
+            copy(&short, "top.txt"),
+            Err("it holds more than its listing says.".into())
+        );
+        assert!(
+            !into.join("top.txt").exists(),
+            "a refused copy leaves nothing"
+        );
+        m.cancel();
+        assert!(copy(&entries, "docs").is_err(), "a cancelled copy stops");
+        assert!(!into.join("docs/a.txt").exists());
+    }
+
+    #[test]
+    fn a_copy_job_lands_each_picked_copy_in_a_fresh_private_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let archive = pack(t.path());
+        let entries = Arc::new(listed(&archive));
+        let (wtx, woke) = std::sync::mpsc::channel();
+        let picked = ["top.txt", "docs"].map(PathBuf::from).to_vec();
+        let dir = t.path().join("scratch/one");
+        let mut job = copy_job(
+            archive.clone(),
+            entries.clone(),
+            picked,
+            Some(dir.clone()),
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let mut landed = Vec::new();
+        while !job.is_finished() {
+            woke.recv_timeout(std::time::Duration::from_secs(30))
+                .expect("a wake");
+            for ev in job.poll() {
+                match ev {
+                    ArchiveEvent::Landed { into, .. } => landed.push(into),
+                    ArchiveEvent::Failed { text, .. } => panic!("{text}"),
+                    ArchiveEvent::Finished => {}
+                }
+            }
+        }
+        let [top, docs] = &landed[..] else {
+            panic!("{landed:?}")
+        };
+        assert_eq!((top.parent(), docs.parent()), (Some(&*dir), Some(&*dir)));
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!((mode(&dir), mode(dir.parent().unwrap())), (0o700, 0o700));
+        assert_eq!(std::fs::read_to_string(docs.join("a.txt")).unwrap(), "a");
+
+        let gone = vec![PathBuf::from("gone")];
+        let (wtx, woke) = std::sync::mpsc::channel();
+        let two = t.path().join("scratch/two");
+        let mut job = copy_job(archive, entries, gone, Some(two.clone()), move || {
+            let _ = wtx.send(());
+        });
+        let mut failed = None;
+        while !job.is_finished() {
+            woke.recv_timeout(std::time::Duration::from_secs(30))
+                .expect("a wake");
+            for ev in job.poll() {
+                if let ArchiveEvent::Failed { text, .. } = ev {
+                    failed = Some(text);
+                }
+            }
+        }
+        assert_eq!(failed.as_deref(), Some("it no longer holds gone."));
+        assert!(!two.exists(), "a failed copy's folder is removed");
+        let again = copy_to_scratch(
+            &t.path().join("pack.tar.gz"),
+            &[],
+            &[],
+            &dir,
+            &Meter::default(),
+        );
+        assert!(again.is_err(), "a folder there already is not taken");
+        assert!(top.exists(), "nor removed");
     }
 }

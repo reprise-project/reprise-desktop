@@ -189,3 +189,86 @@ fn a_start_address_inside_an_archive_opens_that_folder() {
     assert_eq!(names(&ex), ["a.txt"]);
     assert!(!ex.history.can_back());
 }
+
+/// Polls the archive jobs to the end of the queue, keeping every reply.
+fn finish_copies(ex: &mut Explorer, ctx: &mut Ctx) -> Reply {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut got = Reply::none();
+    while ex.extracting.is_some() {
+        assert!(std::time::Instant::now() < end, "the copy ends");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        if let Some(r) = ex.poll_extract(ctx) {
+            got = got.and(r);
+        }
+    }
+    got
+}
+
+#[test]
+fn copy_in_a_compressed_folder_puts_copies_of_the_picked_entries_on_the_clipboard() {
+    let (_dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    ex.select_paths(&[zip.join("docs"), zip.join("top.txt")]);
+    let cut = ex.run(Command::Cut, &mut ctx);
+    assert!(
+        cut.copy_files.is_none(),
+        "nothing is cut from a read-only place"
+    );
+    assert!(ex.extracting.is_none());
+    ex.run(Command::Copy, &mut ctx);
+    let clip = finish_copies(&mut ex, &mut ctx)
+        .copy_files
+        .expect("the copies go on the clipboard");
+    assert!(!clip.cut);
+    let [docs, top] = &clip.paths[..] else {
+        panic!("one copy per picked entry: {:?}", clip.paths);
+    };
+    assert!(docs.starts_with(scratch().join("cache/reprise/archives")));
+    assert_eq!(
+        (docs.file_name(), top.file_name()),
+        (Some("docs".as_ref()), Some("top.txt".as_ref()))
+    );
+    assert_eq!(
+        std::fs::read_to_string(docs.join("a.txt")).expect("copied"),
+        "inside"
+    );
+    assert_eq!(std::fs::read_to_string(top).expect("copied"), "top");
+}
+
+#[test]
+fn copy_to_folder_out_of_a_compressed_folder_asks_before_replacing_as_a_copy_does() {
+    let (dir, zip) = pack();
+    let to = dir.path().join("to");
+    std::fs::create_dir(&to).expect("mkdir");
+    std::fs::write(to.join("top.txt"), "old").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    // The temp folders' names start with a dot.
+    ex.folders.show_hidden = true;
+    ex.select_paths(&[zip.join("docs"), zip.join("top.txt")]);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
+    let mounts = ex.drive_mounts.clone();
+    let Some(Dialog::Browse(b)) = ex.dialogs.up_mut() else {
+        panic!("the picker is up");
+    };
+    assert_eq!(b.items, [zip.join("docs"), zip.join("top.txt")]);
+    let path = foldertree::path_of(&b.bf.tree, &b.places, &Place::Folder(to.clone()), &mounts);
+    assert!(path.is_some(), "the picker walked to the archive's folder");
+    b.bf.tree.selected = path;
+    let (accept, new_folder) = b.judge().expect("a new pick")();
+    b.bf.set_enabled(accept, new_folder);
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), &mut ctx);
+    assert!(ex.extracting.is_some(), "the entries copy out first");
+
+    finish_copies(&mut ex, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Replace(_))),
+        "top.txt asks before it replaces what is there"
+    );
+    assert_eq!(
+        std::fs::read_to_string(to.join("top.txt")).expect("kept"),
+        "old"
+    );
+}

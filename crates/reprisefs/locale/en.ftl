@@ -43,6 +43,7 @@ archive-no-cache = there is no cache folder to copy it to.
 background-no-data-dir = there is no data folder to keep the picture in.
 background-no-name = the picture has no file name.
 archive-locked = it is password-protected.
+archive-not-held = it no longer holds { $name }.
 
 ## Copy, move and shortcut errors
 move-failed-title = Error Moving File or Folder
