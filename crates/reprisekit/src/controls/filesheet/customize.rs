@@ -8,13 +8,15 @@ use crate::raster::Rect;
 pub const CHANGE_ICON: &str = "cu_change_icon";
 pub const CUSTOM_ICON: &str = "cu_icon";
 pub const CUSTOM_PREVIEW: &str = "cu_preview";
+pub const CHOOSE_PICTURE: &str = "cu_choose";
+pub const RESTORE_PICTURE: &str = "cu_restore";
 pub const PREVIEW_PX: i32 = 96;
 
 /// Greyed: the template list and "Also apply this template to all
 /// subfolders" stand for a view per kind of folder, which nothing here
-/// keeps, so the list shows no template and the box no tick; Choose
-/// Picture... and Restore Default, as the picture Thumbnails view would
-/// put on the folder is not kept either.
+/// keeps, so the list shows no template and the box no tick. Choose
+/// Picture... and Restore Default start greyed too: one folder's sheet
+/// turns them on ([`set_picture_buttons`]).
 pub fn customize_page() -> Form {
     let mut items = vec![
         Item::group(
@@ -74,13 +76,13 @@ pub fn customize_page() -> Form {
         None,
     ));
     items.push(button(
-        "cu_choose",
+        CHOOSE_PICTURE,
         Rect::new(31, 222, 98, BUTTON_H),
         &tr!("filesheet-customize-choose-picture"),
         false,
     ));
     items.push(button(
-        "cu_restore",
+        RESTORE_PICTURE,
         Rect::new(31, 251, 98, BUTTON_H),
         &tr!("filesheet-customize-restore-default"),
         false,
@@ -112,6 +114,26 @@ pub fn customize_page() -> Form {
         None,
     ));
     Form::new(items)
+}
+
+/// Customize's Choose Picture... takes clicks with `choose`, and Restore Default with `restore`,
+/// while the folder shows a picture. A focus on a button greyed moves to Choose Picture....
+pub fn set_picture_buttons(
+    sheet: &mut crate::controls::propsheet::PropSheet,
+    choose: bool,
+    restore: bool,
+) {
+    for page in &mut sheet.pages {
+        if page.item(CHOOSE_PICTURE).is_none() {
+            continue;
+        }
+        let focused = page.focus().map(|i| page.items[i].id);
+        page.set_enabled(CHOOSE_PICTURE, choose);
+        page.set_enabled(RESTORE_PICTURE, choose && restore);
+        if focused == Some(RESTORE_PICTURE) && !(choose && restore) {
+            page.focus_id(CHOOSE_PICTURE);
+        }
+    }
 }
 
 pub const CHANGE_ICON_SIZE: (i32, i32) = (290, 326);

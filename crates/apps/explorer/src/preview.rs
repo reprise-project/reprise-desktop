@@ -220,8 +220,11 @@ impl Explorer {
             ((within.0 - 2 * PAD).max(1) * scale) as u32,
             ((within.1 - 2 * PAD).max(1) * scale) as u32,
         );
-        let job = (!folder).then(|| {
-            let p = it.path.clone();
+        let (read_path, route) = match self.pictures.get(&it.path) {
+            Some(picture) if folder => (Some(picture.clone()), Route::Picture),
+            _ => ((!folder).then(|| it.path.clone()), route),
+        };
+        let job = read_path.map(|p| {
             Job::spawn(Some(&ctx.wake), move || {
                 let cache = repriseapp::thumbs::cache_for(repriseconf::current().thumbnail_cache);
                 read(&p, route, cache.as_ref(), &Jailed::installed(), max, scale)

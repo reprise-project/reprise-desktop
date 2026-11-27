@@ -31,29 +31,27 @@ pub fn custom_icon(dir: &Path) -> Option<String> {
     custom_icon_in(dir, &db_dir()?, home().as_deref(), &drive_tree)
 }
 
-const ICON_KEYS: [&str; 2] = ["custom-icon", "custom-icon-name"];
+pub(crate) const ICON_KEYS: [&str; 2] = ["custom-icon", "custom-icon-name"];
 
-/// Clears the icon Nautilus set on folder `dir`, through gvfsd-metadata. Nothing is asked of the
-/// bus when none is set.
-pub fn unset_custom_icon(dir: &Path) -> zbus::Result<()> {
-    let Some((tree, path)) =
-        db_dir().and_then(|db| tree_of(dir, &db, home().as_deref(), &drive_tree))
+/// The key of a folder's picture (`metadata::reprise-folder-picture`), a `file://` URI as
+/// custom-icon is; [`crate::meta::folder_picture`] reads it where the folder's `.directory` has none.
+pub const PICTURE_KEY: &str = "reprise-folder-picture";
+
+/// Folder `dir`'s picture as `gio set DIR metadata::reprise-folder-picture URI` set it.
+pub fn custom_picture(dir: &Path) -> Option<PathBuf> {
+    lookup_in(dir, PICTURE_KEY, &db_dir()?, home().as_deref(), &drive_tree)
+        .as_deref()
+        .and_then(file_path)
+        .map(PathBuf::from)
+}
+
+/// Clears `keys` of `dir` through gvfsd-metadata. Nothing is asked of the bus when none is set.
+pub fn unset(dir: &Path, keys: &[&str]) -> zbus::Result<()> {
+    let Some((tree, path, set)) =
+        db_dir().and_then(|db| set_keys_in(dir, keys, &db, home().as_deref(), &drive_tree))
     else {
         return Ok(());
     };
-    let set: Vec<&str> = load(&tree)
-        .and_then(|db| {
-            let db = Db::parse(&db.0, db.1.as_deref())?;
-            Some(
-                (ICON_KEYS.into_iter())
-                    .filter(|k| db.lookup(&path, k).is_some())
-                    .collect(),
-            )
-        })
-        .unwrap_or_default();
-    if set.is_empty() {
-        return Ok(());
-    }
     // An unset is a byte 0, as GIO sends `gio set -t unset`; both paths are NUL-terminated.
     let data: HashMap<&str, zbus::Variant> = (set.into_iter())
         .map(|k| (k, zbus::Variant::U8(0)))
@@ -95,14 +93,41 @@ fn custom_icon_in(
     home: Option<&Path>,
     drive: DriveTree,
 ) -> Option<String> {
+    if let Some(uri) = lookup_in(dir, "custom-icon", db_dir, home, drive) {
+        return file_path(&uri);
+    }
+    lookup_in(dir, "custom-icon-name", db_dir, home, drive).filter(|n| !n.is_empty())
+}
+
+/// The tree and path of `dir` in the database in `db_dir`, and which of `keys` it sets; `None`
+/// when it sets none.
+fn set_keys_in<'k>(
+    dir: &Path,
+    keys: &[&'k str],
+    db_dir: &Path,
+    home: Option<&Path>,
+    drive: DriveTree,
+) -> Option<(PathBuf, Vec<u8>, Vec<&'k str>)> {
     let (tree, path) = tree_of(dir, db_dir, home, drive)?;
     let db = load(&tree)?;
     let db = Db::parse(&db.0, db.1.as_deref())?;
-    if let Some(uri) = db.lookup(&path, "custom-icon") {
-        return file_path(&uri);
-    }
-    db.lookup(&path, "custom-icon-name")
-        .filter(|n| !n.is_empty())
+    let set: Vec<&str> = (keys.iter().copied())
+        .filter(|k| db.lookup(&path, k).is_some())
+        .collect();
+    (!set.is_empty()).then_some((tree, path, set))
+}
+
+/// `dir`'s string `key` in the database in `db_dir`, `home` being the home tree's folder.
+fn lookup_in(
+    dir: &Path,
+    key: &str,
+    db_dir: &Path,
+    home: Option<&Path>,
+    drive: DriveTree,
+) -> Option<String> {
+    let (tree, path) = tree_of(dir, db_dir, home, drive)?;
+    let db = load(&tree)?;
+    Db::parse(&db.0, db.1.as_deref())?.lookup(&path, key)
 }
 
 /// A process-wide ear for gvfsd-metadata's changes: [`Changes::take`] gives the files whose
@@ -677,6 +702,50 @@ mod tests {
             custom_icon_in(&dir, other.path(), None, &no_drive),
             None,
             "not on the root tree"
+        );
+    }
+
+    #[test]
+    fn a_folders_picture_reads_and_unsets_through_the_journal() {
+        let home = tempfile::tempdir().expect("a temp dir");
+        let db = tempfile::tempdir().expect("a temp dir");
+        let dir = home.path().join("gvfs-probe/a");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(db.path().join("home"), tree()).expect("tree");
+        let log = db.path().join("home-256f3361.log");
+        let set = journal(&[(
+            0,
+            &["/gvfs-probe/a", PICTURE_KEY, "file:///srv/cover%20art.png"],
+        )]);
+        std::fs::write(&log, set).expect("journal");
+        let at = |k: &str| lookup_in(&dir, k, db.path(), Some(home.path()), &no_drive);
+        assert_eq!(
+            at(PICTURE_KEY).as_deref().and_then(file_path).as_deref(),
+            Some("/srv/cover art.png")
+        );
+        let keys = [ICON_KEYS[0], ICON_KEYS[1], PICTURE_KEY];
+        let (_, path, set) = set_keys_in(&dir, &keys, db.path(), Some(home.path()), &no_drive)
+            .expect("keys to unset");
+        assert_eq!(path, b"/gvfs-probe/a".to_vec());
+        assert_eq!(set, keys);
+
+        forget(&db.path().join("home"));
+        let cleared = journal(&[
+            (0, &["/gvfs-probe/a", PICTURE_KEY, "file:///srv/a.png"]),
+            (2, &["/gvfs-probe/a", PICTURE_KEY]),
+        ]);
+        std::fs::write(&log, cleared).expect("journal");
+        assert_eq!(at(PICTURE_KEY), None, "the newest entry unset it");
+        assert_eq!(
+            set_keys_in(
+                &dir,
+                &[PICTURE_KEY],
+                db.path(),
+                Some(home.path()),
+                &no_drive
+            ),
+            None,
+            "nothing to unset asks nothing of the bus"
         );
     }
 
