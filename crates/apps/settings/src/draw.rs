@@ -157,6 +157,16 @@ impl SettingsApp {
         if self.sheet.tabs.open == Page::Cursor.index() {
             self.refresh_preview(cs.window);
         }
+        if self.sheet.tabs.open == Page::WindowBehavior.index() {
+            let pic = pages::snap_preview(&forms, &self.want.snap_layouts, c.scale());
+            let page = &mut self.sheet.pages[Page::WindowBehavior.index()];
+            if let Some(item) = page.item_mut(pages::SNAP_PREVIEW) {
+                item.control = form::Control::Picture {
+                    canvas: pic,
+                    frame: 0,
+                };
+            }
+        }
         c.fill_rect(c.bounds(), cs.button_face);
         propsheet::draw(
             c,

@@ -2,10 +2,15 @@
 
 use super::{Area, GX, TRAY_CUSTOMIZE, X, button, choice, edit, group, spin};
 use crate::providerpage;
+use repriseconf::fields::words;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::{self, ListBox};
-use reprisekit::raster::Rect;
+use reprisekit::raster::{Canvas, Rect};
+use reprisekit::snaplayouts::{
+    PICKER_SPECS, PREVIEW_CELL, PREVIEW_GAP, PREVIEW_PAD, PickerLayout, ZONE_MAX, ZoneLayout,
+};
+use reprisekit::theme::Theme;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
@@ -27,7 +32,8 @@ fn alt_tab() -> String {
 /// How windows snap, tab and come back: the Snapping group holds
 /// `[window_snapping]`'s drag snapping and how near an edge it starts (greyed
 /// with drag snapping off), the snap layouts on the maximize button, the snap
-/// bar a drag shows (greyed too) and the layouts they offer; Tabs and Placement
+/// bar a drag shows (greyed too) and the layouts they offer, drawn small under the field
+/// ([`SNAP_PREVIEW`]); Tabs and Placement
 /// holds `[windows]`, shaking, the title bar double click, dimming and the hidden frame rate
 /// included.
 pub fn window_behavior(a: Area) -> Form {
@@ -43,13 +49,13 @@ pub fn window_behavior(a: Area) -> Form {
         Item::check(
             "snap_picker",
             GX,
-            90,
+            84,
             &tr!("pages-desktop-show-snap-layouts-when-resting-on"),
         ),
         Item::check(
             "snap_bar",
             GX,
-            114,
+            102,
             &tr!("pages-desktop-show-snap-layouts-in-a-bar"),
         ),
     ];
@@ -57,27 +63,37 @@ pub fn window_behavior(a: Area) -> Form {
         "snap_distance_label",
         "snap_distance",
         GX,
-        142,
+        126,
         150,
         &tr!("pages-desktop-snap-distance-from-edges"),
         (1, SNAP_DISTANCE_MAX as i32),
     ));
+    let preview = Rect::new(GX, 178, PREVIEW_W, PREVIEW_H);
     items.extend([
-        Item::label_at("snap_distance_units", GX + 210, 142, 30, &tr!("units-px")),
+        Item::label_at("snap_distance_units", GX + 210, 126, 30, &tr!("units-px")),
         Item::label_at(
             "snap_layouts_label",
             GX,
-            170,
+            154,
             84,
             &tr!("pages-desktop-custom-layouts"),
         ),
-        edit("snap_layouts", GX + 88, 166, gw - 88),
-        Item::label_at(
+        edit("snap_layouts", GX + 88, 150, gw - 88),
+        Item::new(
+            SNAP_PREVIEW,
+            preview,
+            Control::Picture {
+                canvas: None,
+                frame: 0,
+            },
+        ),
+        Item::new(
             "snap_layouts_note",
-            GX,
-            192,
-            gw,
-            &tr!("pages-desktop-empty-for-the-built-in-six"),
+            Rect::new(preview.right() + 8, 178, gw - PREVIEW_W - 8, 2 * LINE_H),
+            Control::Lines(vec![
+                tr!("pages-desktop-empty-built-in-six"),
+                tr!("pages-desktop-eg-snap-layouts"),
+            ]),
         ),
         group(
             a,
@@ -154,6 +170,34 @@ pub fn window_behavior(a: Area) -> Form {
         &tr!("pages-desktop-0-no-limit"),
     ));
     Form::new(items)
+}
+
+/// The Window Behavior page's row of the layouts the snap picker offers, under the layouts field;
+/// the host draws it with [`snap_preview`].
+pub const SNAP_PREVIEW: &str = "snap_layouts_preview";
+const PREVIEW_W: i32 =
+    ZONE_MAX as i32 * (PREVIEW_CELL.0 + PREVIEW_GAP) - PREVIEW_GAP + 2 * PREVIEW_PAD;
+const PREVIEW_H: i32 = PREVIEW_CELL.1 + 2 * PREVIEW_PAD;
+
+/// The layouts `text` names (the picker's own when it names none) as `theme`'s snap picker draws
+/// them, at `scale`; None while one does not parse or there are too many.
+pub fn snap_preview(theme: &Theme, text: &str, scale: i32) -> Option<Canvas> {
+    let named: Vec<&str> = words(text).collect();
+    let specs = if named.is_empty() {
+        &PICKER_SPECS[..]
+    } else {
+        &named[..]
+    };
+    if specs.len() > ZONE_MAX {
+        return None;
+    }
+    let layouts: Vec<ZoneLayout> = (specs.iter())
+        .map(|s| ZoneLayout::parse(s))
+        .collect::<Result<_, _>>()
+        .ok()?;
+    let s = scale.max(1);
+    let layout = PickerLayout::preview(&layouts).scaled(s);
+    Some(reprisekit::interfaces::draw_snap_picker(theme, &layout, &[], None).at_scale(s))
 }
 
 /// The Window Behavior page's Forget Positions under the remember check: the compositor drops every

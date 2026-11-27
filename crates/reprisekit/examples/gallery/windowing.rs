@@ -8,13 +8,16 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::{Color, FontConfig};
 
-/// The snap layouts panel in Classic, Blue and Glass over a 1920x1050 work area, the display switcher (Extend lit, Only 1 hot, Only 2 greyed), then snap assist in the right half of a half-screen desktop. Glass's panels lie on mid-grey so the translucent sheet shows.
+/// The snap layouts panel in Classic, Blue and Glass over a 1920x1050 work area, Settings' small
+/// preview of three own layouts, the display switcher (Extend lit, Only 1 hot, Only 2 greyed), then snap assist in the right half of a half-screen desktop. Glass's panels lie on mid-grey so the translucent sheet shows.
 pub fn render_snap_layouts() -> Canvas {
     use reprisekit::controls::projector::{Projector, ProjectorLayout};
     use reprisekit::overview::{self, OverviewLayout};
     use reprisekit::projection::Projection;
-    use reprisekit::snaplayouts::{CellSpec, PickerLayout, Shape};
-    let (w, h) = (920, 696);
+    use reprisekit::snaplayouts::{CellSpec, PickerLayout, Shape, ZoneLayout};
+    let (w, h) = (920, 734);
+    // The screen snap assist sizes its cells for.
+    let screen = (920, 696);
     let mut c = Canvas::new(3 * w as u32, h as u32);
     let text = TextRenderer::load(&FontConfig::default());
     let cols = |cuts: &[i32]| -> Vec<Rect> {
@@ -63,8 +66,13 @@ pub fn render_snap_layouts() -> Canvas {
         let grid = PickerLayout::compute(Shape::Grid, (1920, 1050), &cells);
         let row = PickerLayout::compute(Shape::Row, (1920, 1050), &bar_cells);
         let row_top = 12 + grid.height + 12;
+        let own: Vec<ZoneLayout> = ["1|1:2", "1-1", "2|1|1"]
+            .map(|s| ZoneLayout::parse(s).unwrap())
+            .to_vec();
+        let preview = PickerLayout::preview(&own);
+        let preview_top = row_top + row.height + 12;
         let switcher = ProjectorLayout::compute(theme.text);
-        let switcher_top = row_top + row.height + 12;
+        let switcher_top = preview_top + preview.height + 12;
         if i == Interface::Glass {
             let band = Rect::new(x0, 0, w, switcher_top + switcher.height + 12);
             c.fill_rect(band, Color::rgb(0x80, 0x80, 0x80));
@@ -73,6 +81,8 @@ pub fn render_snap_layouts() -> Canvas {
         c.blit_over(x0 + (w - grid.width) / 2, 12, &panel);
         let bar = interfaces::draw_snap_picker(&theme, &row, &[((0, 0), &app)], Some((3, 1)));
         c.blit_over(x0 + (w - row.width) / 2, row_top, &bar);
+        let own = interfaces::draw_snap_picker(&theme, &preview, &[], None);
+        c.blit_over(x0 + (w - preview.width) / 2, preview_top, &own);
         let p = Projector {
             hot: Some(2),
             enabled: [true, true, true, false],
@@ -90,7 +100,7 @@ pub fn render_snap_layouts() -> Canvas {
         );
         let zone = Rect::new(desk.x + w / 2, desk.y, w / 2, desk.height);
         let ol =
-            OverviewLayout::compute_assist(2, Rect::new(0, 0, zone.width, zone.height), (w, h));
+            OverviewLayout::compute_assist(2, Rect::new(0, 0, zone.width, zone.height), screen);
         let mut icon = Canvas::new(16, 16);
         icon.fill_rect(icon.bounds(), Color::rgb(0x31, 0x6A, 0xC5));
         let titles = ["Untitled - Notepad", "Terminal"];
