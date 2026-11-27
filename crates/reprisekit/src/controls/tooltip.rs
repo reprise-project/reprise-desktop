@@ -317,42 +317,54 @@ pub fn balloon_size(text: &TextRenderer, theme: &Theme, title: &str, body: &str)
     }
 }
 
+/// Which way a balloon tip's stem points: up at a box above the balloon, or down at one below it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Stem {
+    #[default]
+    Up,
+    Down,
+}
+
 /// Draw the balloon tip into a canvas of `balloon_size`: the bubble below the
 /// stem (left side vertical, right side sloping down), the title and the body.
 /// Classic's bubble is tooltip yellow with a bold title; a look with its own
 /// balloon draws as [`BalloonLook`] says, the text from the icon's left edge.
 pub fn draw_balloon_tip(theme: &Theme, text: &TextRenderer, title: &str, body: &str) -> Canvas {
-    draw_balloon_tip_at(theme, text, title, body, 1)
+    draw_balloon_tip_at(theme, text, title, body, 1, Stem::Up)
 }
 
 /// [`draw_balloon_tip`] on a canvas of `canvas_scale` device px per unit, as a program's window
-/// draws at a theme of scale 1.
+/// draws at a theme of scale 1. With [`Stem::Down`] the bubble sits over a stem that hangs from
+/// its bottom border.
 pub fn draw_balloon_tip_at(
     theme: &Theme,
     text: &TextRenderer,
     title: &str,
     body: &str,
     canvas_scale: i32,
+    stem: Stem,
 ) -> Canvas {
     let s = theme.scale.max(1);
     let size = theme.fonts.size_px;
     let (w, h) = balloon_size(text, theme, title, body);
     let mut c = Canvas::with_scale(w as u32, h as u32, canvas_scale);
+    let down = stem == Stem::Down;
     if let Some(b) = balloon_look(theme) {
         let shadow = b.shadow.map_or(0, |_| DropShadow::N as i32 * s);
-        let stem = b.tail.2 * s;
-        let bubble = Rect::new(0, stem, w - shadow, h - stem - shadow);
+        let stem_h = b.tail.2 * s;
+        let top = if down { 0 } else { stem_h };
+        let bubble = Rect::new(0, top, w - shadow, h - stem_h - shadow);
         let tail = styled::balloon::Tail {
             x: STEM_X * s,
             right: true,
-            down: false,
+            down,
         };
         styled::balloon::draw_bubble(&b, &mut c, bubble, tail, s);
         let tx = b.icon_at.0 * s;
         let tw = bubble.width - 2 * tx;
         let title_px = b.title_px * s as u32;
         let th = (b.title_px as i32 + 4) * s;
-        let title_box = Rect::new(tx, stem + b.title_y * s, tw, th);
+        let title_box = Rect::new(tx, top + b.title_y * s, tw, th);
         let title_box = text.ink_box(title_box, title, false, title_px, c.scale());
         text.draw(
             &mut c,
@@ -363,7 +375,7 @@ pub fn draw_balloon_tip_at(
             Align::Left,
             title_px,
         );
-        let mut y = stem + b.body_y * s;
+        let mut y = top + b.body_y * s;
         for line in balloon_lines(text, theme, body) {
             let r = Rect::new(tx, y, tw, b.line_h * s);
             let r = text.ink_box(r, &line, false, size, c.scale());
@@ -373,27 +385,31 @@ pub fn draw_balloon_tip_at(
         return c;
     }
     let (bg, ink) = (theme.colors.info_bk, theme.colors.info_text);
-    let bubble = Rect::new(0, STEM_H * s, w, h - STEM_H * s);
+    let stem_h = STEM_H * s;
+    let top = if down { 0 } else { stem_h };
+    let bubble = Rect::new(0, top, w, h - stem_h);
     rounded_fill(&mut c, bubble, BALLOON_RADIUS * s, bg);
     rounded_border(&mut c, bubble, BALLOON_RADIUS * s, ink, s);
-    // The stem: row r below the apex spans from the vertical left side to
-    // a right edge that reaches STEM_W at the bubble's top border.
+    // The stem: row r from the apex spans from the vertical left side to
+    // a right edge that reaches STEM_W at the bubble's border.
     let x0 = STEM_X * s;
-    for r in 0..STEM_H * s {
-        let width = (STEM_W * s * (r + 1) / (STEM_H * s)).max(s);
-        c.fill_rect(Rect::new(x0, r, width, 1), bg);
-        c.fill_rect(Rect::new(x0, r, s, 1), ink);
-        c.fill_rect(Rect::new(x0 + width - s, r, s, 1), ink);
+    for r in 0..stem_h {
+        let width = (STEM_W * s * (r + 1) / stem_h).max(s);
+        let y = if down { h - 1 - r } else { r };
+        c.fill_rect(Rect::new(x0, y, width, 1), bg);
+        c.fill_rect(Rect::new(x0, y, s, 1), ink);
+        c.fill_rect(Rect::new(x0 + width - s, y, s, 1), ink);
     }
-    // Open the bubble's top border where the stem joins it.
-    c.fill_rect(Rect::new(x0 + s, STEM_H * s, STEM_W * s - 2 * s, s), bg);
+    // Open the bubble's border where the stem joins it.
+    let seam = if down { bubble.bottom() - s } else { top };
+    c.fill_rect(Rect::new(x0 + s, seam, STEM_W * s - 2 * s, s), bg);
     let tx = (1 + BALLOON_PAD_X) * s;
     let tw = w - 2 * tx;
     let line_h = (BALLOON_LINE_H + theme.line_growth()) * s;
-    let r = Rect::new(tx, (STEM_H + BALLOON_TITLE_Y) * s, tw, line_h);
+    let r = Rect::new(tx, top + BALLOON_TITLE_Y * s, tw, line_h);
     let r = text.ink_box(r, title, true, size, c.scale());
     text.draw(&mut c, r, title, true, ink, Align::Left, size);
-    let mut y = (STEM_H + BALLOON_BODY_Y + theme.line_growth()) * s;
+    let mut y = top + (BALLOON_BODY_Y + theme.line_growth()) * s;
     for line in balloon_lines(text, theme, body) {
         let r = Rect::new(tx, y, tw, line_h);
         let r = text.ink_box(r, &line, false, size, c.scale());
@@ -401,6 +417,17 @@ pub fn draw_balloon_tip_at(
         y += line_h;
     }
     c
+}
+
+/// Where a balloon tip of `size` pointing at `anchor` goes in a window `room` big: under the
+/// anchor with its stem up, else over it with its stem down when the window ends first.
+pub fn place_at_box(anchor: Rect, size: (i32, i32), room: (i32, i32)) -> (Rect, Stem) {
+    let (w, h) = size;
+    let x = anchor.x.min(room.0 - w).max(0);
+    match anchor.bottom() + h > room.1 {
+        true => (Rect::new(x, (anchor.y - h).max(0), w, h), Stem::Down),
+        false => (Rect::new(x, anchor.bottom(), w, h), Stem::Up),
+    }
 }
 
 pub fn place_balloon(cursor: (i32, i32), size: (i32, i32), screen: Rect) -> (i32, i32) {

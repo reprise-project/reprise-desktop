@@ -1585,3 +1585,71 @@ fn blue_tips_and_balloons_pin_light_and_dark() {
     }
     crate::pins::check("controls/blue_tips", &got);
 }
+
+/// The lowest and highest rows with a drawn pixel in column `x`.
+fn inked_rows(c: &Canvas, x: i32) -> (i32, i32) {
+    let rows: Vec<i32> = (0..c.height as i32).filter(|&y| c.get(x, y) != 0).collect();
+    (rows[0], rows[rows.len() - 1])
+}
+
+#[test]
+fn a_balloon_tips_stem_hangs_under_its_bubble_when_it_points_down() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let (title, body) = (
+        "Name too long",
+        "This drive's name can be at most 11 characters long.",
+    );
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for s in [1, 2] {
+            let theme = crate::interfaces::theme_for(i).scaled(s);
+            let t = TextRenderer::load(&theme.fonts);
+            let up = draw_balloon_tip_at(&theme, &t, title, body, 1, Stem::Up);
+            let down = draw_balloon_tip_at(&theme, &t, title, body, 1, Stem::Down);
+            assert_eq!(
+                (up.width, up.height),
+                (down.width, down.height),
+                "{i:?} x{s}: one size"
+            );
+            let (stem, mid) = (STEM_X * s, up.width as i32 / 2);
+            assert!(
+                inked_rows(&up, stem).0 < inked_rows(&up, mid).0,
+                "{i:?} x{s}: the stem rises over the bubble"
+            );
+            assert!(
+                inked_rows(&down, stem).1 > inked_rows(&down, mid).1,
+                "{i:?} x{s}: the stem hangs under the bubble"
+            );
+            assert_ne!(
+                down.get(mid, 0),
+                0,
+                "{i:?} x{s}: the bubble's top border on row 0"
+            );
+            got.push((format!("{i:?} x{s} down"), fnv(&down)));
+        }
+        let theme = crate::interfaces::theme_for(i);
+        let t = TextRenderer::load(&theme.fonts);
+        let window = draw_balloon_tip_at(&theme, &t, title, body, 2, Stem::Down);
+        got.push((format!("{i:?} window x2 down"), fnv(&window)));
+    }
+    crate::pins::check("controls/balloon_tip_stems", &got);
+}
+
+#[test]
+fn a_balloon_at_a_box_flips_over_it_when_the_window_ends_first() {
+    let r = Rect::new(40, 100, 80, 18);
+    assert_eq!(
+        place_at_box(r, (200, 80), (400, 300)),
+        (Rect::new(40, 118, 200, 80), Stem::Up)
+    );
+    assert_eq!(
+        place_at_box(r, (200, 80), (400, 190)),
+        (Rect::new(40, 20, 200, 80), Stem::Down)
+    );
+    assert_eq!(
+        place_at_box(r, (200, 80), (220, 300)).0.x,
+        20,
+        "pulled in from the right edge"
+    );
+}
