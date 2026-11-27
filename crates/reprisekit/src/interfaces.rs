@@ -216,20 +216,36 @@ fn styled(s: Arc<Style>) -> Theme {
     }
 }
 
-pub fn task_preview_grid(theme: &Theme) -> Grid {
-    if theme.glass().is_some() {
+/// The task preview grid in `theme`'s look; Onyx sizes its cells to a `picture` of that many px
+/// (one window's, the panel showing only it).
+pub fn task_preview_grid(
+    theme: &Theme,
+    glass: &glass::Settings,
+    picture: Option<(i32, i32)>,
+) -> Grid {
+    if onyx_previews(theme, glass) {
+        glass::preview::onyx_grid(picture)
+    } else if theme.glass().is_some() {
         glass::preview::GRID
     } else {
         controls::taskpreview::CLASSIC.grown(theme.line_growth())
     }
 }
 
+/// Whether `theme`'s task preview leaves the titles out of the panel: Onyx shows a one-window
+/// panel's title in a tip over it once the panel has stayed up a while.
+pub fn onyx_previews(theme: &Theme, glass: &glass::Settings) -> bool {
+    theme.glass().is_some() && glass.style == glass::Style::Onyx
+}
+
 /// The task preview panel in `theme`'s look, then `media`'s buttons. `text`
 /// is Classic's renderer for `theme.fonts`; Glass sets the titles in its
 /// caption face.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_task_preview(
     canvas: &mut Canvas,
     theme: &Theme,
+    glass: &glass::Settings,
     text: &TextRenderer,
     layout: &TaskPreviewLayout,
     cells: &[Cell],
@@ -237,6 +253,9 @@ pub fn draw_task_preview(
     media: &controls::taskpreview::Media,
 ) {
     match theme.look.style() {
+        _ if onyx_previews(theme, glass) => {
+            glass::preview::draw_onyx(canvas, glass, layout, cells, hot);
+        }
         Some(s) if s.glass.is_some() => {
             let size = s.caption_text.size_px * theme.scale.max(1) as u32;
             let face = look::caption_text(s);

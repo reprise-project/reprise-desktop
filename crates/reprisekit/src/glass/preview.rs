@@ -2,7 +2,7 @@ use super::Settings;
 use super::panel::{self, Corners, Fade, LightBox, Panel, Shadow};
 use crate::raster::{Canvas, Insets, Rect};
 use crate::style::{Layout, Part, PartImage, State, Style};
-use crate::taskpreview::{Cell, Grid, TaskPreviewLayout};
+use crate::taskpreview::{Cell, Grid, TaskPreviewLayout, WELL_EDGE, fit};
 use crate::text::TextRenderer;
 use crate::theme::Color;
 
@@ -140,6 +140,105 @@ pub fn draw(
             && let Some(x) = layout.close(i)
         {
             style.draw(canvas, at(x), Part::PreviewClose, State::Normal, s);
+        }
+    }
+}
+
+/// The largest picture an Onyx cell holds; a window's picture keeps its aspect inside it.
+pub const ONYX_PICTURE: (i32, i32) = (160, 120);
+
+/// How far Onyx's shadow reaches past its panel; the 3 px at the bottom are the gap to the bar.
+const ONYX_SHADOW: Insets = Insets::new(9, 8, 10, 3);
+
+/// Onyx's panel: the window frame's outline and light line round plain glass, with a close
+/// shadow.
+pub const ONYX_PANEL: Panel = Panel {
+    corners: Corners::Round(5.0),
+    lines: (1.0, 1.0),
+    sheen_rows: 0,
+    ends: None,
+    deepen: 0.0,
+    density: 0.0,
+    shadow: Some(Shadow {
+        margin: ONYX_SHADOW,
+        alpha: 255.0,
+        sigma: 3.0,
+        offset: (1.0, 1.0),
+        grow: 1.0,
+        radius: 0.0,
+    }),
+};
+
+/// The ring round an Onyx picture, in the well's edge: a light line outside a dark one.
+pub const ONYX_WELL: LightBox = LightBox {
+    outline: (Color::rgb(255, 255, 255), 150),
+    line: Some(((Color::rgb(16, 24, 32), 170), (Color::rgb(16, 24, 32), 170))),
+    fill: ((Color::rgb(0, 0, 0), 0), (Color::rgb(0, 0, 0), 0)),
+    radius: 0.0,
+    fade: Fade::Box,
+};
+
+/// Glass between Onyx's panel edge and a well, and between two wells.
+const ONYX_PAD: i32 = 5;
+const ONYX_GAP: i32 = 10;
+
+/// Onyx's grid: no title row or close button, each well holding a `picture`-sized window's
+/// picture inside [`ONYX_PICTURE`] (the whole of it when there is none), the panel sized to it.
+pub fn onyx_grid(picture: Option<(i32, i32)>) -> Grid {
+    let e = WELL_EDGE;
+    let (bw, bh) = ONYX_PICTURE;
+    let well = |w: i32, h: i32| Rect::new(0, 0, w + 2 * e, h + 2 * e);
+    // Fitted twice: the live picture is fitted again into the well, and rounding can take a pixel.
+    let (w, h) = picture
+        .map(|(w, h)| {
+            let once = fit(w, h, well(bw, bh), 1);
+            fit(w, h, well(once.width, once.height), 1)
+        })
+        .filter(|r| !r.is_empty())
+        .map_or((bw, bh), |r| (r.width, r.height));
+    let well = well(w, h);
+    Grid {
+        cell: (well.width, well.height),
+        pad: ONYX_PAD,
+        gap: ONYX_GAP,
+        well,
+        close: Rect::new(0, 0, 0, 0),
+        media: None,
+        shadow: ONYX_SHADOW,
+        corner: &[3, 1, 1],
+    }
+}
+
+/// Onyx's panel for `layout` (on [`onyx_grid`]) in `s`'s glass: each well ringed, its fallback
+/// picture centred, and with more than one cell the hot one lit. Titles are shown apart.
+pub fn draw_onyx(
+    canvas: &mut Canvas,
+    s: &Settings,
+    layout: &TaskPreviewLayout,
+    cells: &[Cell],
+    hot: Option<usize>,
+) {
+    let d = layout.scale.max(1);
+    let area = layout.canvas();
+    let at = |r: Rect| Rect::new(r.x - area.x, r.y - area.y, r.width, r.height);
+    let (w, h) = (layout.rect.width / d, layout.rect.height / d);
+    canvas.blit_over(0, 0, &panel::draw(&ONYX_PANEL, s, w, h, d));
+    for (i, cell) in cells.iter().enumerate() {
+        let (Some(r), Some(well)) = (layout.cells.get(i).copied(), layout.well(i)) else {
+            break;
+        };
+        if hot == Some(i) && cells.len() > 1 {
+            let lit = at(r).inset(-2 * d);
+            let light = panel::light_box(&THUMB_HOT, lit.width / d, lit.height / d, d);
+            canvas.blit_over(lit.x, lit.y, &light);
+        }
+        let well = at(well);
+        let ring = panel::light_box(&ONYX_WELL, well.width / d, well.height / d, d);
+        canvas.blit_over(well.x, well.y, &ring);
+        if let Some(p) = cell.picture {
+            let b = well.inset(WELL_EDGE * d);
+            let (pw, ph) = (p.width as i32, p.height as i32);
+            canvas.blit_over(b.x + (b.width - pw) / 2, b.y + (b.height - ph) / 2, p);
         }
     }
 }
@@ -354,5 +453,131 @@ mod tests {
                     || close.contains(x, y)
             },
         );
+    }
+
+    fn onyx() -> Settings {
+        Settings {
+            style: glass::Style::Onyx,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn an_onyx_panel_is_sized_to_its_window_and_sits_3_px_above_the_bar() {
+        let l = TaskPreviewLayout::compute(
+            onyx_grid(Some((600, 400))),
+            1,
+            BUTTON,
+            BOUNDS,
+            Edge::Bottom,
+        );
+        assert_eq!(
+            l.rect,
+            Rect::new(244, 917, 173, 120),
+            "a 159x106 picture in 7 px of frame, centred on the button, 3 px above the bar"
+        );
+        assert_eq!(l.well(0), Some(Rect::new(5, 5, 163, 110)));
+        assert_eq!(
+            crate::taskpreview::fit(600, 400, l.well(0).unwrap(), 1),
+            Rect::new(7, 7, 159, 106),
+            "the live picture fills the well inside its edge"
+        );
+        let tall = onyx_grid(Some((300, 500)));
+        assert_eq!(
+            tall.cell,
+            (76, 124),
+            "a tall window 120 px high, its aspect kept"
+        );
+        assert_eq!(
+            onyx_grid(None).cell,
+            (164, 124),
+            "no picture: the whole box"
+        );
+        assert_eq!(onyx_grid(Some((80, 40))).cell, (84, 44), "never enlarged");
+    }
+
+    #[test]
+    fn an_onyx_panel_has_no_close_button() {
+        let l = TaskPreviewLayout::compute(onyx_grid(None), 2, BUTTON, BOUNDS, Edge::Bottom);
+        for i in 0..2 {
+            let c = l.cells[i];
+            for (x, y) in [(c.x, c.y), (c.x + c.width - 8, c.y + 8)] {
+                assert_eq!(close_hit(&l, Some(i), x, y), None, "cell {i} at ({x}, {y})");
+            }
+        }
+    }
+
+    fn onyx_over_grey(n: usize, hot: Option<usize>, d: i32) -> (TaskPreviewLayout, Canvas) {
+        let l = TaskPreviewLayout::compute(
+            onyx_grid(Some((600, 400))),
+            n,
+            BUTTON,
+            BOUNDS,
+            Edge::Bottom,
+        )
+        .scaled(d);
+        let a = l.canvas();
+        let mut c = Canvas::new(a.width as u32, a.height as u32);
+        c.fill_rect(c.bounds(), Color::rgb(128, 128, 128));
+        let cells: Vec<Cell> = (0..n)
+            .map(|_| Cell {
+                title: "Untitled - Notepad",
+                icon: None,
+                active: false,
+                picture: None,
+            })
+            .collect();
+        draw_onyx(&mut c, &onyx(), &l, &cells, hot);
+        (l, c)
+    }
+
+    #[test]
+    fn onyx_panels_keep_their_pixels() {
+        let mut hashes = Vec::new();
+        for d in [1, 2] {
+            for (name, n, hot) in [("one", 1, None), ("two-hot", 2, Some(1))] {
+                let (_, c) = onyx_over_grey(n, hot, d);
+                hashes.push((format!("{name}@{d}"), crate::pins::fnv(&c)));
+            }
+        }
+        crate::pins::check("glass/onyx_preview", &hashes);
+    }
+
+    #[test]
+    fn an_onyx_well_rings_its_picture_light_outside_dark_inside() {
+        let (l, c) = onyx_over_grey(1, None, 1);
+        let a = l.canvas();
+        let w = l.well(0).unwrap();
+        let at = |x: i32, y: i32| rgb(c.get(x - a.x, y - a.y));
+        let (light, dark, glass) = (
+            at(w.x + 40, w.y),
+            at(w.x + 40, w.y + 1),
+            at(w.x + 40, w.y - 2),
+        );
+        assert!(
+            light[0] > glass[0] + 20,
+            "a light line {light:?} over the glass {glass:?}"
+        );
+        assert!(dark[0] + 40 < glass[0], "a dark line {dark:?} inside it");
+        assert_eq!(
+            at(w.x + 40, w.y + 12),
+            at(w.x + 40, w.y + 60),
+            "no title row: the well is plain glass until its picture lands"
+        );
+    }
+
+    #[test]
+    fn an_onyx_popup_at_scale_2_is_its_scale_1_design_twice_over() {
+        let (_, one) = onyx_over_grey(2, Some(1), 1);
+        let (l2, two) = onyx_over_grey(2, Some(1), 2);
+        let a = l2.canvas();
+        let at = |r: Rect| Rect::new(r.x - a.x, r.y - a.y, r.width, r.height);
+        let popup = at(Rect::new(0, 0, l2.rect.width, l2.rect.height));
+        let lit = at(l2.cells[1]).inset(-4);
+        panel::assert_twice_over("the Onyx popup", &one, &two, |x, y| {
+            panel::in_corner(popup, 5.0, x, y)
+                || panel::beside(popup, x, y)
+                || panel::in_corner(lit, 3.0, x, y)
+        });
     }
 }

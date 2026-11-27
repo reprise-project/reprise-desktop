@@ -10,7 +10,7 @@ pub(crate) const TITLE_H: i32 = 18;
 pub(crate) const TITLE_GAP: i32 = 4;
 pub(crate) const WELL_H: i32 = 110;
 pub const CELL_H: i32 = TITLE_H + TITLE_GAP + WELL_H;
-const WELL_EDGE: i32 = 2;
+pub(crate) const WELL_EDGE: i32 = 2;
 /// The media row under a cell's well, for a window with a media player.
 const MEDIA_GAP: i32 = 4;
 const MEDIA_H: i32 = 24;
@@ -407,7 +407,11 @@ mod tests {
             (Interface::Blue, 0),
             (Interface::Glass, 8),
         ] {
-            let grid = crate::interfaces::task_preview_grid(&crate::interfaces::theme_for(i));
+            let grid = crate::interfaces::task_preview_grid(
+                &crate::interfaces::theme_for(i),
+                &Default::default(),
+                None,
+            );
             let gaps = |n: usize| {
                 let b = Rect::new(300, 1040, 60, 40);
                 let t = Rect::new(300, 0, 60, 40);
@@ -435,7 +439,11 @@ mod tests {
             (Interface::Blue, 0),
             (Interface::Glass, 8),
         ] {
-            let grid = crate::interfaces::task_preview_grid(&crate::interfaces::theme_for(i));
+            let grid = crate::interfaces::task_preview_grid(
+                &crate::interfaces::theme_for(i),
+                &Default::default(),
+                None,
+            );
             let b = Rect::new(0, 500, 60, 40);
             let left = TaskPreviewLayout::compute(grid, 2, b, left_bounds, Edge::Left);
             assert_eq!(
