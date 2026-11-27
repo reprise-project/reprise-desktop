@@ -190,9 +190,9 @@ impl NewTaskBox {
                 Control::Separator,
             ),
             label("kind_label", sy, &tr!("new-kind")),
-            Item::combo(KIND, FIELD_X, sy, 170, &kinds, KINDS.len()),
+            Item::combo(KIND, FIELD_X, sy, 140, &kinds, KINDS.len()),
             label("day_label", sy + PITCH, &tr!("new-day")),
-            Item::combo(DAY, FIELD_X, sy + PITCH, 170, &[], 8),
+            Item::combo(DAY, FIELD_X, sy + PITCH, 140, &[], 8),
             label("date_label", sy + 2 * PITCH, &tr!("new-date")),
             field(DATE, sy + 2 * PITCH, 100),
             label("time_label", sy + 3 * PITCH, &tr!("new-time")),
@@ -482,6 +482,73 @@ mod tests {
     fn pick(b: &mut NewTaskBox, kind: Kind) {
         b.form.set_combo(KIND, kind_row(kind));
         b.sync();
+    }
+
+    /// Every Run row and every Day row draws whole in its combo, at each text size and scale
+    /// and in every look.
+    #[test]
+    fn every_run_and_day_row_draws_whole_at_scale_1_and_2() {
+        use reprisekit::interface::Interface;
+        use reprisekit::look::Paint;
+        use reprisekit::raster::Canvas;
+        reprisekit::pins::fonts();
+        let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
+        let mut cut = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for pct in [100u32, 150, 200] {
+                let forms = reprisekit::interfaces::theme_for(i).with_form_text(pct);
+                let p = Paint {
+                    s: 1,
+                    ..forms.paint()
+                };
+                for s in [1, 2] {
+                    for kind in KINDS {
+                        let mut b = NewTaskBox::new(|| NOW, false);
+                        pick(&mut b, kind);
+                        let days = match kind {
+                            Kind::Weekly => 7,
+                            Kind::Monthly => 31,
+                            _ => 1,
+                        };
+                        for day in 0..days {
+                            if days > 1 {
+                                b.form.set_combo(DAY, day);
+                            }
+                            let open = if days > 1 { DAY } else { KIND };
+                            if let Some(Control::Combo(c)) =
+                                b.form.item_mut(open).map(|it| &mut it.control)
+                            {
+                                c.open = Some(c.selected);
+                            }
+                            let (w, h) = (
+                                CLIENT.0 * pct as i32 / 100 + 200,
+                                CLIENT.1 * pct as i32 / 100 + 200,
+                            );
+                            let mut c = Canvas::with_scale(w as u32, h as u32, s);
+                            let (((), short), cuts) = reprisekit::pins::clipped_ink(|| {
+                                reprisekit::pins::shortened_text(|| {
+                                    form::draw(
+                                        &mut c,
+                                        &text,
+                                        &p,
+                                        &b.form,
+                                        true,
+                                        forms.fonts.size_px,
+                                    )
+                                })
+                            });
+                            cut.extend(cuts.into_iter().map(|c| (i, pct, s, c.text)));
+                            cut.extend(short.into_iter().map(|c| (i, pct, s, c.text)));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            cut,
+            Vec::new(),
+            "(look, text size, scale, row cut or shortened)"
+        );
     }
 
     fn label(b: &NewTaskBox, id: &str) -> String {
