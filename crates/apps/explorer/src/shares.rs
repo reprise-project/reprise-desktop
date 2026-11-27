@@ -1,6 +1,7 @@
 //! Network shares: Connect to Server, typed addresses and the Network place connect through
 //! `netshare::mount`, whose prompts show here as boxes; Computer's Network Locations disconnect.
 
+use reprisekit::tr;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
@@ -161,7 +162,7 @@ impl Asking {
 
 /// The box title for a password asked by `host`.
 pub fn login_title(host: &str) -> String {
-    format!("Connect to {host}")
+    tr!("shares-login-title-connect-to-host", host = host)
 }
 
 impl Explorer {
@@ -260,7 +261,7 @@ impl Explorer {
         nc::set_busy(
             &mut b.form,
             true,
-            &format!("Connecting to {}...", addr.host),
+            &tr!("shares-connecting-to-host", host = addr.host.as_str()),
         );
         let (tx, rx) = std::sync::mpsc::channel();
         let wake = ctx.wake.clone();
@@ -335,7 +336,7 @@ impl Explorer {
                 let Some(addr) = Address::parse(&typed) else {
                     b.form.set_text(
                         nc::STATUS,
-                        "That is not a server address. Start it with smb://, sftp://, ftp:// or dav://.",
+                        &tr!("shares-connect-answered-that-is-not-a-server-address"),
                     );
                     return Reply::redraw();
                 };
@@ -360,7 +361,11 @@ impl Explorer {
                     return Reply::none();
                 }
                 let creds = b.credentials();
-                nc::set_busy(&mut b.form, true, "Connecting...");
+                nc::set_busy(
+                    &mut b.form,
+                    true,
+                    &tr!("shares-connect-answered-connecting"),
+                );
                 nc::wipe(&mut b.form);
                 if let Some(c) = self.connection.as_ref().and_then(|c| c.conn.as_ref()) {
                     c.answer(Answer::Login(creds));
@@ -549,20 +554,19 @@ impl Explorer {
         self.spawn_job(ctx, move || {
             let done = netshare::unmount(&share.path, force);
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                let title = format!("Problem Disconnecting {}", share.name);
+                let title = tr!("shares-problem-disconnecting", name = share.name.as_str());
                 match done {
                     Ok(()) => Reply::none(),
                     Err(netshare::Unmount::Busy) => {
-                        let title = format!("Disconnect {}", share.name);
-                        let text = format!(
-                            "'{}' is in use, or its server is not answering. Disconnect it anyway? \
-                             Anything still being copied to or from it stops.",
-                            share.name
-                        );
+                        let title = tr!("shares-disconnect-title", name = share.name.as_str());
+                        let text = tr!("shares-disconnect-busy", name = share.name.as_str());
                         ex.raise(Dialog::Question {
                             title,
                             text,
-                            choices: vec!["Disconnect".into(), "Cancel".into()],
+                            choices: vec![
+                                tr!("shares-unmount-share-disconnect"),
+                                reprisekit::kit_tr!("cancel"),
+                            ],
                             about: Asking::Disconnect(share),
                             focus: None,
                         })

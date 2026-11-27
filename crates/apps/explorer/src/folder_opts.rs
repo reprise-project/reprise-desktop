@@ -14,10 +14,13 @@ use reprisekit::controls::folderopts::{FolderSheet, Outcome, Settings};
 use reprisekit::controls::propsheet;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::ffi::OsStr;
 
 pub const FOLDER_OPTS: WinId = WinId::named("folder-options");
-const TITLE: &str = "Folder Options";
+fn title() -> String {
+    tr!("folder-options-title-folder-options")
+}
 
 pub(crate) struct FolderOpts {
     pub(crate) sheet: FolderSheet,
@@ -116,7 +119,7 @@ impl Explorer {
         let f = self.folder_opts.as_ref()?;
         Some(Child {
             id: FOLDER_OPTS,
-            title: TITLE.into(),
+            title: title(),
             size: self.forms.text.size(f.sheet.sheet.size),
             fixed: true,
             modal: true,
@@ -210,15 +213,18 @@ impl Explorer {
             saved.map_err(|e| e.to_string()).and_then(|r| r.map(drop))
         };
         let action = match sheet {
-            Some(s) => Action::changes(TITLE).of(s),
-            None => Action::changes(TITLE),
+            Some(s) => Action::changes(title()).of(s),
+            None => Action::changes(title()),
         };
         let saved = self.act(ctx, action, work, move |ex, saved, ctx| match saved {
             Ok(()) => Reply::none(),
             Err(e) => {
                 log::error!("folder options: not saved: {e}");
-                let text = format!("Cannot save the folder options in config.toml: {e}");
-                ex.message_over(sheet, TITLE, text, ctx)
+                let text = tr!(
+                    "folder-options-save-folders-cannot-save-the-folder-options-in",
+                    e = e.to_string()
+                );
+                ex.message_over(sheet, &title(), text, ctx)
             }
         });
         reply.and(saved)
@@ -289,7 +295,7 @@ mod tests {
         ex.run(crate::commands::Command::FolderOptions, &mut ctx);
         let child = ex.children().into_iter().find(|c| c.id == FOLDER_OPTS);
         let child = child.expect("the sheet's window");
-        assert_eq!(child.title, TITLE);
+        assert_eq!(child.title, title());
         assert!(child.modal);
         let tabs = &ex.folder_opts.as_ref().unwrap().sheet.sheet.tabs;
         assert_eq!(tabs.labels, ["General", "View", "File Types"]);

@@ -10,6 +10,7 @@ use reprisefs::compress::{self, Compress};
 use reprisefs::extract::{self, Archive, ArchiveEvent, ArchiveJob};
 use reprisefs::listing::Item;
 use reprisekit::controls::copyprogress::Kind;
+use reprisekit::tr;
 use std::path::PathBuf;
 
 /// The extraction or compression running, with its dialog.
@@ -53,7 +54,7 @@ impl Explorer {
         }
         match self.selected_archives()?.as_slice() {
             [it] => Some(folder_label(it)),
-            _ => Some("Folders".into()),
+            _ => Some(tr!("extracting-extract-label-folders")),
         }
     }
 
@@ -197,8 +198,8 @@ impl Explorer {
             true => compress::FAILURE_TITLE,
             false => extract::FAILURE_TITLE,
         };
-        let failed = ask.map(|text| (title, text));
-        let boxed = (failed.clone()).map(|(title, text)| self.message_box(title, text, ctx));
+        let failed = ask.map(|text| (title.to_string(), text));
+        let boxed = (failed.clone()).map(|(title, text)| self.message_box(&title, text, ctx));
         if !finished {
             return boxed;
         }

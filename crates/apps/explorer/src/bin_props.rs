@@ -13,12 +13,15 @@ use reprisekit::controls::binsheet::{self, BinSheet, Drive, Outcome, Rule, Setti
 use reprisekit::controls::propsheet;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub const BIN_PROPS: WinId = WinId::named("bin-props");
-const TITLE: &str = "Recycle Bin Properties";
+fn title() -> String {
+    tr!("bin-props-title-recycle-bin-properties")
+}
 
 const _: () = assert!(binsheet::MAX_DAYS == bincap::MAX_DAYS);
 
@@ -78,7 +81,7 @@ impl Explorer {
             let full = (bins.files_dirs().iter()).any(|f| !reprisefs::places::trash_empty(f));
             Some((bins, home, full))
         };
-        self.act(ctx, Action::reads(TITLE), work, |ex, read, ctx| {
+        self.act(ctx, Action::reads(title()), work, |ex, read, ctx| {
             // A second Properties pressed while the first read was out leaves the sheet up.
             let Some((bins, home, full)) = read.filter(|_| ex.bin_props.is_none()) else {
                 return Reply::none();
@@ -169,7 +172,7 @@ impl Explorer {
         let b = self.bin_props.as_ref()?;
         Some(Child {
             id: BIN_PROPS,
-            title: TITLE.into(),
+            title: title(),
             size: self.forms.text.size(b.sheet.sheet.size),
             fixed: true,
             modal: false,
@@ -250,14 +253,17 @@ impl Explorer {
         };
         let reply = self.act(
             ctx,
-            Action::changes(TITLE).of(sheet),
+            Action::changes(title()).of(sheet),
             work,
             move |ex, saved, ctx| match saved {
                 Ok(()) => Reply::none(),
                 Err(e) => {
                     log::error!("recycle bin: settings not saved: {e}");
-                    let text = format!("Cannot save the Recycle Bin settings in config.toml: {e}");
-                    ex.message_over(Some(sheet), TITLE, text, ctx)
+                    let text = tr!(
+                        "bin-props-save-bin-settings-cannot-save-the-recycle-bin-settings",
+                        e = e.to_string()
+                    );
+                    ex.message_over(Some(sheet), &title(), text, ctx)
                 }
             },
         );
@@ -308,7 +314,7 @@ fn home_drive(bins: &Bins) -> Option<Drive> {
     let top = bins.home_top()?;
     Some(Drive {
         key: bincap::HOME.into(),
-        label: format!("Local Disk ({})", top.display()),
+        label: tr!("bin-props-local-disk", top = top.display().to_string()),
         size: fs_size(top)?,
     })
 }
@@ -371,7 +377,7 @@ mod tests {
         assert!(ex.sv.selection.single().is_none());
         assert!(ex.props.is_none(), "no file's sheet");
         let child = ex.children().into_iter().find(|c| c.id == BIN_PROPS);
-        assert_eq!(child.map(|c| c.title), Some(TITLE.to_string()));
+        assert_eq!(child.map(|c| c.title), Some(title().to_string()));
         let tabs = &ex.bin_props.as_ref().unwrap().sheet.sheet.tabs.labels;
         assert_eq!(tabs.first().map(String::as_str), Some("Global"));
     }
@@ -407,7 +413,7 @@ mod tests {
         wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
         match ex.dialog() {
             Some(crate::dialogs::Dialog::Message { title, text, .. }) => {
-                assert_eq!(title, TITLE);
+                assert_eq!(title, &crate::bin_props::title());
                 assert!(
                     text.starts_with("Cannot save the Recycle Bin settings in config.toml: "),
                     "{text}"
@@ -510,7 +516,7 @@ mod tests {
         drop(held_first);
         wake_until(&mut ex, &mut ctx, |ex| ex.bin_props.is_some());
         let up = ex.bin_props.as_ref().expect("the sheet").id();
-        ex.message_over(Some(up), TITLE, "about the sheet".into(), &mut ctx);
+        ex.message_over(Some(up), &title(), "about the sheet".into(), &mut ctx);
         drop(held_second);
         wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
         assert!(ex.sheet_up(up), "the first sheet stays up");

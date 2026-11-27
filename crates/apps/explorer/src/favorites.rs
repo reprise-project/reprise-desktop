@@ -1,6 +1,7 @@
 //! The Favorites menu: Add to Favorites, Organize Favorites and a row per bookmark of GTK's
 //! bookmarks file ([`reprisefs::pins`]), which GTK's and the portal's file dialogs list too.
 
+use reprisekit::tr;
 use std::path::PathBuf;
 
 use repriseapp::{Ctx, Reply};
@@ -178,8 +179,11 @@ impl Explorer {
             self.take_up();
         }
         let reply = self.message_box(
-            "Favorites",
-            format!("Explorer cannot save your Favorites.\n\n{e}"),
+            &tr!("favorites-take-favorites-failed-favorites"),
+            tr!(
+                "favorites-take-favorites-failed-explorer-cannot-save-your-favorites-e",
+                e = e.to_string()
+            ),
             ctx,
         );
         Some(reply.and(Reply::redraw_all()))

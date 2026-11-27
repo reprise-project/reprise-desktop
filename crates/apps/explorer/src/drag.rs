@@ -17,6 +17,7 @@ use reprisekit::controls::shellview::{self, Mode};
 use reprisekit::controls::treeview;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::selection::Mods;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 pub const THRESHOLD: i32 = DRAG_SLOP;
@@ -188,10 +189,17 @@ pub fn write_links(links: &[WebLink], dir: &Path) -> Result<(), String> {
         match written {
             Some(Ok(())) => {}
             Some(Err(e)) => {
-                failed.get_or_insert(format!("Cannot create {name}: {e}"));
+                failed.get_or_insert(tr!(
+                    "drag-write-links-cannot-create-name-e",
+                    name = name,
+                    e = e.to_string()
+                ));
             }
             None => {
-                failed.get_or_insert(format!("Cannot create {name}: every name is taken"));
+                failed.get_or_insert(tr!(
+                    "drag-write-links-cannot-create-name-every-name-is",
+                    name = name
+                ));
             }
         }
     }

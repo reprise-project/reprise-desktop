@@ -24,6 +24,7 @@ use reprisekit::controls::openwith::{Check, OpenWith, Program};
 use reprisekit::controls::replacebox;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// The icon size of the Open With and Send To menus' rows: the menu's icon column at the text size.
@@ -60,11 +61,13 @@ pub(crate) struct Put {
     landed_folder: bool,
     select_landed: bool,
     /// The last failure; `Failed` and `Finished` can arrive in different polls.
-    failed: Option<(&'static str, String)>,
+    failed: Option<(String, String)>,
     pub(crate) progress: crate::copydlg::Progress,
 }
 
-const UNDO_HELD: &str = "Another undo is still running.";
+fn undo_held() -> String {
+    tr!("fileops-undo-held-another-undo-is-still-running")
+}
 
 pub(crate) type JobDone = Box<dyn FnOnce(&mut Explorer, &mut Ctx) -> Reply + Send>;
 
@@ -147,7 +150,9 @@ pub(crate) fn file_label(path: &Path) -> String {
 }
 
 /// The title of a delete's error boxes.
-const DELETE_TITLE: &str = "Error Deleting File or Folder";
+fn delete_title() -> String {
+    tr!("fileops-delete-title-error-deleting-file-or-folder")
+}
 
 /// Each of `paths`' fate in the session's Recycle Bins, and whether a delete asks first. Reads
 /// the paths and their mounts, so it runs off the loop.
@@ -278,9 +283,14 @@ impl Explorer {
             let path = stillfile::write_pasted(&dir, &file, ext, secs)?;
             Ok((reprisefs::undo::file_id(&path), path))
         };
-        self.act(ctx, Action::changes("Paste"), work, move |ex, made, ctx| {
-            ex.item_made("the pasted picture", made, ctx)
-        })
+        self.act(
+            ctx,
+            Action::changes(tr!("fileops-write-pasted-paste")),
+            work,
+            move |ex, made, ctx| {
+                ex.item_made(&tr!("fileops-write-pasted-the-pasted-picture"), made, ctx)
+            },
+        )
     }
 
     /// Paste on the folder or launcher the item menu was opened on.
@@ -388,7 +398,7 @@ impl Explorer {
             to,
             job,
             deadline: Deadline::start(self.action_deadline, ctx),
-            title,
+            title: title.to_string(),
         });
         Reply::none()
     }
@@ -408,7 +418,7 @@ impl Explorer {
                     c.to.0.display()
                 );
                 self.message_box(
-                    c.title,
+                    &c.title,
                     reprisefs::deadline::not_responding(false, false),
                     ctx,
                 );
@@ -586,14 +596,17 @@ impl Explorer {
             if !deadline.passed(std::time::Instant::now()) {
                 return None;
             }
-            let title = (ask.pending.items.first()).map_or("Paste", |it| it.op.failure_title());
+            let title = (ask.pending.items.first()).map_or_else(
+                || tr!("fileops-asking-landed-paste"),
+                |it| it.op.failure_title().to_string(),
+            );
             log::warn!("explorer: a replace prompt's files gave up");
             self.take_up();
             if self.closing {
                 return Some(Reply::none());
             }
             let text = reprisefs::deadline::not_responding(false, false);
-            return Some(self.message_box(title, text, ctx));
+            return Some(self.message_box(&title, text, ctx));
         };
         let Some(Dialog::Reading(r)) = self.take_up() else {
             return None;
@@ -675,6 +688,7 @@ impl Explorer {
                 PutEvent::Failed { index, error } => {
                     let (_, op, name, _) = &put.ops[index];
                     let failure = op.failure(name, &error);
+                    let failure = (failure.0.to_string(), failure.1);
                     match put.progress.meter.cancelled() {
                         true => put.failed = Some(failure),
                         false => ask = Some(failure),
@@ -685,7 +699,12 @@ impl Explorer {
         }
         if !finished && let Some((title, text)) = ask {
             let meter = put.progress.meter.clone();
-            return Some(self.ask_failed(reprisefs::progress::Asked::new(meter), title, text, ctx));
+            return Some(self.ask_failed(
+                reprisefs::progress::Asked::new(meter),
+                &title,
+                text,
+                ctx,
+            ));
         }
         // A job that ended does not wait for an answer: its end tells the failure.
         if let Some(failure) = ask {
@@ -726,7 +745,7 @@ impl Explorer {
             self.select_once_listed(self.place.clone(), put.landed, ctx);
         }
         if let Some((title, text)) = failed {
-            reply = self.message_box(title, text, ctx);
+            reply = self.message_box(&title, text, ctx);
         }
         if let Some(next) = self.put_queue.pop_front() {
             let ops = next.ops();
@@ -1004,7 +1023,7 @@ impl Explorer {
         let bin = in_bin.then(|| self.selected_bin_items());
         let read = paths.clone();
         let work = move |_: &Gate| read_fates(&read);
-        let action = Action::reads(DELETE_TITLE);
+        let action = Action::reads(delete_title());
         self.act(ctx, action, work, move |ex, (fates, confirm), ctx| {
             let mode = delete_mode(confirm, &fates, erase);
             if !in_bin && !mode.ask {
@@ -1070,7 +1089,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::reads(DELETE_TITLE),
+            Action::reads(delete_title()),
             work,
             move |ex, read, ctx| {
                 let ((fates, confirm), one) = read;
@@ -1135,7 +1154,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::reads(DELETE_TITLE),
+            Action::reads(delete_title()),
             work,
             |ex, (count, one), ctx| ex.ask_empty(count, one, ctx),
         )
@@ -1160,8 +1179,8 @@ impl Explorer {
     pub(crate) fn empty_bin_now(&mut self, ctx: &mut Ctx) -> Reply {
         let Some(bins) = reprisefs::trash::Bins::system() else {
             return self.message_box(
-                "Error Deleting File or Folder",
-                "Cannot find the Recycle Bin.".to_string(),
+                &tr!("fileops-empty-bin-now-error-deleting-file-or-folder"),
+                tr!("fileops-empty-bin-now-cannot-find-the-recycle-bin"),
                 ctx,
             );
         };
@@ -1278,9 +1297,9 @@ impl Explorer {
         };
         let path = dir.join(&name);
         let title = if folder {
-            "New Folder"
+            tr!("new-folder-name")
         } else {
-            "New Text Document"
+            tr!("fileops-new-item-new-text-document")
         };
         // The listing can be stale, so neither kind may land on an existing name: both fail with
         // `AlreadyExists`.
@@ -1320,9 +1339,12 @@ impl Explorer {
             }
             reprisefs::templates::make(&template, &dir).map(|p| (reprisefs::undo::file_id(&p), p))
         };
-        self.act(ctx, Action::changes("New"), work, move |ex, made, ctx| {
-            ex.item_made(&name, made, ctx)
-        })
+        self.act(
+            ctx,
+            Action::changes(tr!("fileops-new-from-template-new")),
+            work,
+            move |ex, made, ctx| ex.item_made(&name, made, ctx),
+        )
     }
 
     /// A New's item landed at the path `made` holds, with its identity: one undo entry, then it
@@ -1338,8 +1360,12 @@ impl Explorer {
             Ok(made) => made,
             Err(e) => {
                 return self.message_box(
-                    "Error Creating File or Folder",
-                    format!("Cannot create {name}: {e}"),
+                    &tr!("fileops-item-made-error-creating-file-or-folder"),
+                    tr!(
+                        "fileops-item-made-cannot-create-name-e",
+                        name = name,
+                        e = e.to_string()
+                    ),
                     ctx,
                 );
             }
@@ -1550,8 +1576,8 @@ impl Explorer {
             (path, mime)
         };
         let title = match sheet {
-            Some(_) => "Properties",
-            None => "Open With",
+            Some(_) => tr!("fileops-choose-program-for-properties"),
+            None => tr!("fileops-choose-program-for-open-with"),
         };
         let action = Action {
             sheet,
@@ -1676,7 +1702,7 @@ impl Explorer {
     /// on their way, of the entry they leave on top once they land.
     pub fn undo_last(&mut self, ctx: &mut Ctx) -> Reply {
         if self.undo_held {
-            return self.message_box("Error", UNDO_HELD.into(), ctx);
+            return self.message_box(&tr!("fileops-undo-last-error"), undo_held(), ctx);
         }
         match self.undo_entry {
             Some(entry) => self.undo_with(entry, false, ctx),
@@ -1688,7 +1714,7 @@ impl Explorer {
                         match (head, held) {
                             (Some((entry, _)), None) => ex.undo_with(entry, false, ctx),
                             (Some(_), Some(Hold::Undo)) => {
-                                ex.message_box("Error", UNDO_HELD.into(), ctx)
+                                ex.message_box(&tr!("fileops-undo-last-error"), undo_held(), ctx)
                             }
                             _ => Reply::redraw(),
                         }
@@ -1743,7 +1769,11 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Reply {
         let (Some(no_bin), Some((entry, items))) = (reprisefs::undo::NoBin::of(e), left) else {
-            return self.message_box("Error", format!("Cannot undo: {e}"), ctx);
+            return self.message_box(
+                &tr!("fileops-undo-failed-error"),
+                tr!("fileops-undo-failed-cannot-undo-e", e = e.to_string()),
+                ctx,
+            );
         };
         let many = items > 1;
         let is_dir = no_bin.path.is_dir() && !no_bin.path.is_symlink();
@@ -1835,7 +1865,7 @@ pub(crate) struct Clashing {
     to: (PathBuf, bool),
     job: repriseapp::listjob::Job<Checked>,
     deadline: Deadline,
-    title: &'static str,
+    title: String,
 }
 
 /// A replace prompt whose sides are still being read, and when the read gives up.

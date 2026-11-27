@@ -9,6 +9,7 @@ use repriseapp::{Ctx, Reply};
 use reprisefs::ops::DropOp;
 use reprisefs::places::{self, MountedDrives};
 use reprisefs::sendto::{self, Dirs, Drives, SendToRow};
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -144,7 +145,7 @@ impl Explorer {
     fn send_not_responding(&mut self, dir: &Path, ctx: &mut Ctx) -> Reply {
         log::warn!("send to: {} is not answering; nothing sent", dir.display());
         let text = reprisefs::deadline::not_responding(false, false);
-        self.message_box("Send To", text, ctx)
+        self.message_box(&tr!("send-to-send-not-responding-send-to"), text, ctx)
     }
 
     /// Takes Send To's reads that answered since the last wake.

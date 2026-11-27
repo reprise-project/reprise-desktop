@@ -10,6 +10,7 @@ use reprisefs::undo::{FileId, Undoable, file_id};
 use reprisekit::controls::batchrename as renamebox;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::textedit::{TextEdit, keysym};
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// The text field a Ctrl+V asked the clipboard for. A rename box and an Address edit carry
@@ -117,7 +118,11 @@ impl Explorer {
                 return Reply::redraw();
             }
             if self.system_drive(i) {
-                return self.message_box("Rename", crate::volumes::SYSTEM_DRIVE.into(), ctx);
+                return self.message_box(
+                    &tr!("rename-begin-rename-rename"),
+                    crate::volumes::system_drive(),
+                    ctx,
+                );
             }
         }
         if self.place.read_only() {
@@ -200,7 +205,7 @@ impl Explorer {
             .collect();
         match verdict(&it.name, &text, &existing) {
             Verdict::Cancel => Reply::none(),
-            Verdict::Refuse(text) => self.message_box("Rename", text, ctx),
+            Verdict::Refuse(text) => self.message_box(&tr!("rename-to-rename"), text, ctx),
             Verdict::Rename(name) => {
                 let to = match it.path.parent() {
                     Some(dir) => dir.join(&name),
@@ -215,7 +220,7 @@ impl Explorer {
                 };
                 self.act(
                     ctx,
-                    Action::changes("Rename"),
+                    Action::changes(tr!("rename-to-rename")),
                     work,
                     move |ex, done, ctx| ex.rename_done(&it, dest, done, ctx),
                 )
@@ -235,7 +240,11 @@ impl Explorer {
             Ok(id) => id,
             Err(e) => {
                 log::warn!("explorer: rename {} failed: {e}", it.path.display());
-                return self.message_box("Rename", failed_text(&it.name, &e), ctx);
+                return self.message_box(
+                    &tr!("rename-done-rename"),
+                    failed_text(&it.name, &e),
+                    ctx,
+                );
             }
         };
         self.after_rename(&it.path, &to, id, it.is_dir, ctx);
@@ -265,12 +274,16 @@ impl Explorer {
         let path = it.path.clone();
         self.act(
             ctx,
-            Action::changes("Rename"),
+            Action::changes(tr!("rename-shortcut-rename")),
             work,
             move |ex, done, ctx| {
                 if let Err(e) = done {
                     log::warn!("explorer: rename {} failed: {e}", path.display());
-                    return ex.message_box("Rename", failed_text(&label, &e), ctx);
+                    return ex.message_box(
+                        &tr!("rename-shortcut-rename"),
+                        failed_text(&label, &e),
+                        ctx,
+                    );
                 }
                 ex.refresh(ctx)
             },
@@ -322,8 +335,8 @@ impl BatchRename {
                 new: r.new.clone(),
                 problem: r.problem.map(|p| {
                     match p {
-                        batchrename::Problem::Invalid => "not a valid name",
-                        batchrename::Problem::Taken => "name in use",
+                        batchrename::Problem::Invalid => tr!("rename-replan-not-a-valid-name"),
+                        batchrename::Problem::Taken => tr!("rename-replan-name-in-use"),
                     }
                     .to_string()
                 }),
@@ -421,7 +434,7 @@ impl Explorer {
                 };
                 let reply = self.act(
                     ctx,
-                    Action::changes("Rename"),
+                    Action::changes(tr!("rename-batch-rename-answered-rename")),
                     work,
                     move |ex, done, ctx| ex.batch_renamed(done, landed, dirs, ctx),
                 );
@@ -451,7 +464,11 @@ impl Explorer {
         if let Some(f) = failed {
             log::warn!("explorer: rename {} failed: {}", f.from.display(), f.error);
             let name = f.from.file_name().unwrap_or_default().to_string_lossy();
-            return self.message_box("Rename", failed_text(&name, &f.error), ctx);
+            return self.message_box(
+                &tr!("rename-batch-renamed-rename"),
+                failed_text(&name, &f.error),
+                ctx,
+            );
         }
         if self.reading.is_none() {
             self.select_paths(&landed);

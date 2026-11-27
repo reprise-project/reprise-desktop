@@ -40,6 +40,7 @@ use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::tr;
 use reprisekit::{
     controls::addressbar, controls::explorerbar, controls::menubar, controls::rebar,
     controls::searchfield, controls::shellview, controls::statusbar, controls::taskpane,
@@ -150,7 +151,7 @@ pub fn layout(
             height,
         );
         let eb = explorerbar::ExplorerBar {
-            title: "Folders".to_string(),
+            title: tr!("status-layout-folders"),
             width: bar_width,
             hot_close: false,
             greyed: false,
@@ -605,9 +606,12 @@ pub fn status_panels(
     vec![
         statusbar::Panel {
             text: if selected > 0 {
-                format!("{selected} object(s) selected")
+                tr!(
+                    "status-panels-selected-object-s-selected",
+                    selected = selected
+                )
             } else {
-                format!("{objects} object{}", if objects == 1 { "" } else { "s" })
+                tr!("status-panels-objects", objects = objects)
             },
             width: 0,
             pad: statusbar::EXPLORER_TEXT_PAD,
@@ -634,13 +638,16 @@ pub fn status_panels(
 pub fn bin_status_text(it: &Item, is_12h: bool) -> String {
     let mut facts = Vec::new();
     if let Some(dir) = it.trashed.as_ref().and_then(|t| t.original.parent()) {
-        facts.push(format!("Original Location: {}", dir.display()));
+        facts.push(tr!(
+            "status-bin-original-location",
+            dir = dir.display().to_string()
+        ));
     }
-    facts.push(format!("Type: {}", it.kind));
+    facts.push(tr!("status-bin-type", kind = it.kind.as_str()));
     if let Some(secs) = it.modified {
-        facts.push(format!(
-            "Date Modified: {}",
-            reprisefs::listing::date_text(secs, is_12h)
+        facts.push(tr!(
+            "status-bin-date-modified",
+            when = reprisefs::listing::date_text(secs, is_12h)
         ));
     }
     facts.join(" ")
@@ -653,7 +660,7 @@ pub fn shortcut_status_text(l: &Launcher, path: &std::path::Path) -> Option<Stri
         reprisefs::launcher::Kind::Web => Some(l.target.clone()).filter(|t| !t.is_empty()),
         _ => l
             .folder(path)
-            .map(|dir| format!("Location: {}", dir.display())),
+            .map(|dir| tr!("status-shortcut-location", dir = dir.display().to_string())),
     }
 }
 
@@ -676,9 +683,9 @@ pub fn details_text(
         [] => {
             out.push((folder.to_string(), true));
             let kind = if system {
-                "System Folder"
+                tr!("status-details-text-system-folder")
             } else {
-                "File Folder"
+                tr!("status-details-text-file-folder")
             };
             out.push((kind.to_string(), false));
         }
@@ -689,12 +696,21 @@ pub fn details_text(
             out.push((it.kind.clone(), false));
             let modified = it.modified.map(|secs| {
                 let when = reprisefs::props::format_pane_time(secs, is_12h);
-                format!("Date Modified: {when}")
+                tr!("status-details-text-date-modified-when", when = when)
             });
             // Folders are never sized.
-            let size = (!it.is_folder()).then(|| format!("Size: {}", short_size(it.size)));
+            let size =
+                (!it.is_folder()).then(|| tr!("status-details-size", size = short_size(it.size)));
             let groups = match dims {
-                Some((w, h)) => [Some(format!("Dimensions: {w} x {h}")), size, modified],
+                Some((w, h)) => [
+                    Some(tr!(
+                        "status-details-text-dimensions-w-x-h",
+                        w = w.to_string(),
+                        h = h.to_string()
+                    )),
+                    size,
+                    modified,
+                ],
                 None => [modified, size, None],
             };
             for line in groups.into_iter().flatten() {
@@ -703,10 +719,16 @@ pub fn details_text(
             }
         }
         many => {
-            out.push((format!("{} items selected", many.len()), true));
+            out.push((
+                tr!(
+                    "status-details-items-selected",
+                    count = many.len().to_string()
+                ),
+                true,
+            ));
             let bytes: u64 = many.iter().filter(|i| !i.is_folder()).map(|i| i.size).sum();
             out.push((String::new(), false));
-            out.push((format!("Size: {}", short_size(bytes)), false));
+            out.push((tr!("status-details-size", size = short_size(bytes)), false));
         }
     }
     out
@@ -719,19 +741,23 @@ pub fn details_text(
 pub fn infotip_lines(it: &Item, dims: Option<(u32, u32)>, is_12h: bool) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some((w, h)) = dims {
-        lines.push(format!("Dimensions: {w} x {h}"));
+        lines.push(tr!(
+            "status-infotip-lines-dimensions-w-x-h",
+            w = w.to_string(),
+            h = h.to_string()
+        ));
     }
-    lines.push(format!("Type: {}", it.kind));
+    lines.push(tr!("status-infotip-type", kind = it.kind.as_str()));
     if dims.is_none()
         && let Some(secs) = it.modified
     {
-        lines.push(format!(
-            "Date Modified: {}",
-            reprisefs::listing::date_text(secs, is_12h)
+        lines.push(tr!(
+            "status-infotip-date-modified",
+            when = reprisefs::listing::date_text(secs, is_12h)
         ));
     }
     if !it.is_folder() {
-        lines.push(format!("Size: {}", short_size(it.size)));
+        lines.push(tr!("status-infotip-size", size = short_size(it.size)));
     }
     lines
 }
@@ -744,10 +770,13 @@ const TIP_NAMES: usize = 3;
 /// an empty folder says "Folder is Empty".
 pub fn folder_tip_text(size: u64, mut folders: Vec<String>, mut files: Vec<String>) -> Vec<String> {
     if folders.is_empty() && files.is_empty() {
-        return vec!["Folder is Empty".to_string()];
+        return vec![tr!("status-folder-tip-text-folder-is-empty")];
     }
-    let mut lines = vec![format!("Size: {}", short_size(size))];
-    for (label, names) in [("Folders", &mut folders), ("Files", &mut files)] {
+    let mut lines = vec![tr!("status-folder-tip-size", size = short_size(size))];
+    for (label, names) in [
+        (tr!("status-folder-tip-text-folders"), &mut folders),
+        (tr!("status-folder-tip-text-files"), &mut files),
+    ] {
         if names.is_empty() {
             continue;
         }
@@ -757,7 +786,11 @@ pub fn folder_tip_text(size: u64, mut folders: Vec<String>, mut files: Vec<Strin
         if more {
             names.push("...".to_string());
         }
-        lines.push(format!("{label}: {}", names.join(", ")));
+        lines.push(tr!(
+            "status-folder-tip-names",
+            label = label,
+            names = names.join(", ")
+        ));
     }
     lines
 }

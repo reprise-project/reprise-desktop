@@ -19,6 +19,7 @@ use reprisekit::controls::{filesheet, iconview};
 use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,7 +78,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::reads("Properties"),
+            Action::reads(tr!("props-properties-properties")),
             work,
             |ex, read, ctx| match read {
                 Some((glanced, name, title)) => ex.glanced(glanced, &name, &title, ctx),
@@ -124,7 +125,7 @@ impl Explorer {
         let work = move |_: &Gate| glance(&path, &read, &apps, &globs, scale);
         self.act(
             ctx,
-            Action::reads("Properties"),
+            Action::reads(tr!("props-open-properties-properties")),
             work,
             move |ex, glanced, ctx| ex.glanced(glanced, &name, &title, ctx),
         )
@@ -147,7 +148,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::reads("Properties"),
+            Action::reads(tr!("props-open-path-properties-properties")),
             work,
             |ex, (glanced, name), ctx| ex.glanced(glanced, &name, &name, ctx),
         )
@@ -175,7 +176,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::reads("Properties"),
+            Action::reads(tr!("props-open-paths-properties-properties")),
             work,
             |ex, (items, paths), ctx| match items.first() {
                 Some(first) if items.len() > 1 => {
@@ -197,8 +198,12 @@ impl Explorer {
         match glanced {
             Ok(g) => self.open_sheet(SheetRead::One(g, title.to_string()), ctx),
             Err(e) => {
-                let text = format!("Cannot show the properties of {name}: {e}");
-                self.message_box("Properties", text, ctx)
+                let text = tr!(
+                    "props-glanced-cannot-show-the-properties-of-name",
+                    name = name,
+                    e = e.to_string()
+                );
+                self.message_box(&tr!("props-glanced-properties"), text, ctx)
             }
         }
     }
@@ -210,7 +215,7 @@ impl Explorer {
         let work = move |_: &Gate| glance(&path, &name, &apps, &globs, scale);
         self.act(
             ctx,
-            Action::reads("Properties"),
+            Action::reads(tr!("props-open-bin-item-properties-properties")),
             work,
             move |ex, glanced, ctx| ex.bin_glanced(glanced, &it, ctx),
         )
@@ -225,8 +230,12 @@ impl Explorer {
         match glanced {
             Ok(g) => self.open_sheet(SheetRead::Bin(g, it.clone()), ctx),
             Err(e) => {
-                let text = format!("Cannot show the properties of {}: {e}", it.label());
-                self.message_box("Properties", text, ctx)
+                let text = tr!(
+                    "props-bin-glanced-cannot-show",
+                    name = it.label(),
+                    e = e.to_string()
+                );
+                self.message_box(&tr!("props-bin-glanced-properties"), text, ctx)
             }
         }
     }
@@ -359,7 +368,11 @@ impl Explorer {
         };
         let icon = props_icon(sheet_icon, &info.path, waits, ctx);
         let page = bin_page(&facts, it.label(), icon);
-        let sheet = PropSheet::new(&["General"], vec![page], (SHEET_W, BIN_SHEET_H));
+        let sheet = PropSheet::new(
+            &[&tr!("props-build-bin-props-general")],
+            vec![page],
+            (SHEET_W, BIN_SHEET_H),
+        );
         Props {
             opened_read_only: filesheet::read_only(&sheet.pages[0]),
             opened_name: String::new(),
@@ -493,13 +506,18 @@ impl Explorer {
             .collect();
         let (apps, globs) = (self.app_index.clone(), self.globs.clone());
         let work = move |_: &Gate| glance_set_items(&chosen, &apps, &globs);
-        self.act(ctx, Action::reads("Properties"), work, |ex, items, ctx| {
-            let Some(first) = items.first() else {
-                return Reply::none();
-            };
-            let caption = format!("{}, ...", first.name);
-            ex.open_sheet(SheetRead::Set(items, caption), ctx)
-        })
+        self.act(
+            ctx,
+            Action::reads(tr!("props-open-set-properties-properties")),
+            work,
+            |ex, items, ctx| {
+                let Some(first) = items.first() else {
+                    return Reply::none();
+                };
+                let caption = format!("{}, ...", first.name);
+                ex.open_sheet(SheetRead::Set(items, caption), ctx)
+            },
+        )
     }
 
     /// The combined sheet's walk of its folders' totals, while it is up.
@@ -795,10 +813,10 @@ impl Explorer {
             Some(found) => Ok(found),
             None => Err(l.not_found_text(&target)),
         };
-        let title = "Problem with Shortcut";
+        let title = tr!("props-find-target-problem-with-shortcut");
         self.act(
             ctx,
-            Action::reads(title).of(sheet),
+            Action::reads(title.clone()).of(sheet),
             work,
             move |ex, found, ctx| match found {
                 Ok(found) => Reply {
@@ -809,7 +827,7 @@ impl Explorer {
                     ]],
                     ..Reply::none()
                 },
-                Err(text) => ex.message_over(Some(sheet), title, text, ctx),
+                Err(text) => ex.message_over(Some(sheet), &title, text, ctx),
             },
         )
     }
@@ -840,7 +858,7 @@ impl Explorer {
             };
             return self.act(
                 ctx,
-                Action::changes("Properties").of(sheet),
+                Action::changes(tr!("props-apply-props-properties")).of(sheet),
                 work,
                 move |ex, (), ctx| {
                     if attrs.is_empty() && hidden.is_none() {
@@ -852,7 +870,9 @@ impl Explorer {
         }
         let new_name = match p.new_name() {
             Ok(name) => name,
-            Err(text) => return self.message_over(Some(sheet), "Rename", text, ctx),
+            Err(text) => {
+                return self.message_over(Some(sheet), &tr!("props-apply-props-rename"), text, ctx);
+            }
         };
         let (attrs, hidden) = (p.attrs(), p.hidden());
         let summary = p.summary_moves();
@@ -881,28 +901,47 @@ impl Explorer {
             // The description goes first, while the file is where the sheet found it; the rest
             // may rename it.
             if let Err(e) = reprisefs::meta::write_summary(&at, &summary) {
-                return Err(format!("Cannot change {name}: {e}"));
+                return Err(tr!(
+                    "props-apply-props-cannot-change-name-e",
+                    name = name,
+                    e = e.to_string()
+                ));
             }
             if !launcher.is_empty()
                 && let Err(e) = reprisefs::launcher::write_keys(&at, &launcher)
             {
-                return Err(format!("Cannot change {name}: {e}"));
+                return Err(tr!(
+                    "props-apply-props-cannot-change-name-e",
+                    name = name,
+                    e = e.to_string()
+                ));
             }
             if let Some(icon) = &folder_icon
                 && let Err(e) = reprisefs::meta::set_folder_icon(&at, icon.as_deref())
             {
-                return Err(format!("Cannot change the icon of {name}: {e}"));
+                return Err(tr!(
+                    "props-apply-props-cannot-change-the-icon-of-name",
+                    name = name,
+                    e = e.to_string()
+                ));
             }
             Ok(look_inside && folder_has_contents(&at))
         };
         self.act(
             ctx,
-            Action::changes("Properties").of(sheet),
+            Action::changes(tr!("props-apply-props-properties")).of(sheet),
             work,
             move |ex, pre, ctx| {
                 let ask = match pre {
                     Ok(ask) => ask,
-                    Err(text) => return ex.message_over(Some(sheet), "Properties", text, ctx),
+                    Err(text) => {
+                        return ex.message_over(
+                            Some(sheet),
+                            &tr!("props-apply-props-properties"),
+                            text,
+                            ctx,
+                        );
+                    }
                 };
                 if new_name.is_none() && attrs.is_empty() && hidden.is_none() {
                     return ex.finish_props(&path, &path, close, sheet, ctx);
@@ -953,7 +992,7 @@ impl Explorer {
         let work = move |_: &Gate| looked.iter().any(|p| p.is_dir() && folder_has_contents(p));
         self.act(
             ctx,
-            Action::reads("Properties").of(sheet),
+            Action::reads(tr!("props-apply-set-props-properties")).of(sheet),
             work,
             move |ex, ask, ctx| {
                 if !ask {
@@ -1003,7 +1042,7 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties").of(sheet),
+            Action::changes(tr!("props-write-set-props-properties")).of(sheet),
             work,
             move |ex, w, ctx| {
                 let Some(w) = w else {
@@ -1016,14 +1055,21 @@ impl Explorer {
                 // Raised before Apply reads the sheet again, which keeps its boxes; after OK
                 // closed it, the box covers the folder window.
                 let shown = match &failed {
-                    Some(text) if !close => {
-                        ex.message_over(Some(sheet), "Properties", text.clone(), ctx)
-                    }
+                    Some(text) if !close => ex.message_over(
+                        Some(sheet),
+                        &tr!("props-write-set-props-properties"),
+                        text.clone(),
+                        ctx,
+                    ),
                     _ => Reply::none(),
                 };
                 let reply = ex.finish_set_props(w.now, &was, close, sheet, ctx);
                 match failed {
-                    Some(text) if close => reply.and(ex.message_box("Properties", text, ctx)),
+                    Some(text) if close => reply.and(ex.message_box(
+                        &tr!("props-write-set-props-properties"),
+                        text,
+                        ctx,
+                    )),
                     _ => reply.and(shown),
                 }
             },
@@ -1061,7 +1107,7 @@ impl Explorer {
                 let was = was.to_vec();
                 self.act(
                     ctx,
-                    Action::reads("Properties").of(target),
+                    Action::reads(tr!("props-finish-set-props-properties")).of(target),
                     work,
                     move |ex, items, ctx| {
                         ex.refresh_sheet(target, &was, SheetRead::Set(items, caption), ctx)
@@ -1110,12 +1156,19 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("Properties").of(sheet),
+            Action::changes(tr!("props-write-props-properties")).of(sheet),
             work,
             move |ex, done, ctx| {
                 let (renamed, path, write) = match done {
                     None => return Reply::none(),
-                    Some(Err(text)) => return ex.message_over(Some(sheet), "Rename", text, ctx),
+                    Some(Err(text)) => {
+                        return ex.message_over(
+                            Some(sheet),
+                            &tr!("props-write-props-rename"),
+                            text,
+                            ctx,
+                        );
+                    }
                     Some(Ok(done)) => done,
                 };
                 if let Some((to, id)) = &renamed {
@@ -1158,7 +1211,12 @@ impl Explorer {
         };
         // Raised before the sheet is read again, which keeps its boxes.
         let text = change_failed_text(path, &e);
-        let shown = self.message_over(Some(sheet), "Properties", text, ctx);
+        let shown = self.message_over(
+            Some(sheet),
+            &tr!("props-attrs-written-properties"),
+            text,
+            ctx,
+        );
         shown.and(self.finish_props(path, was, false, sheet, ctx))
     }
 
@@ -1238,7 +1296,7 @@ impl Explorer {
         let was = vec![was.to_path_buf()];
         let sheet = self.act(
             ctx,
-            Action::reads("Properties"),
+            Action::reads(tr!("props-finish-props-properties")),
             work,
             move |ex, (glanced, name), ctx| match glanced {
                 Ok(g) => {
@@ -1331,7 +1389,11 @@ fn shortcut_facts(info: &FileInfo, l: &reprisefs::launcher::Launcher) -> fileshe
 
 fn change_failed_text(path: &Path, e: &dyn std::fmt::Display) -> String {
     let name = path.file_name().unwrap_or(path.as_os_str());
-    format!("Cannot change {}: {e}", name.to_string_lossy())
+    tr!(
+        "props-change-failed",
+        name = name.to_string_lossy().into_owned(),
+        e = e.to_string()
+    )
 }
 
 /// The path, the sheet field's name and the caption's name for `place`'s own sheet, or `None`
