@@ -119,13 +119,22 @@ fn named(name: &str) -> (&'static str, String) {
 
 /// A chord as the sheet lists it ([`hotkey::chord_text`]).
 pub fn chord_text(mods: u32, sym: u32) -> String {
-    let held = hotkey::Mods {
+    hotkey::chord_text(held(mods), sym)
+}
+
+/// The chord in English ([`hotkey::chord_spelling`]), for a menu row's accelerator: the menu
+/// shows it in the user's language.
+pub fn chord_spelling(mods: u32, sym: u32) -> String {
+    hotkey::chord_spelling(held(mods), sym)
+}
+
+fn held(mods: u32) -> hotkey::Mods {
+    hotkey::Mods {
         logo: mods & MOD_LOGO != 0,
         ctrl: mods & MOD_CTRL != 0,
         alt: mods & MOD_ALT != 0,
         shift: mods & MOD_SHIFT != 0,
-    };
-    hotkey::chord_text(held, sym)
+    }
 }
 
 /// The sheet for `binds` and the programs' `globals` (each with its program's name): every bound
@@ -135,7 +144,7 @@ pub fn sheet(binds: &[Keybind], globals: &[(&GlobalShortcut, String)]) -> KeyShe
     let mut rows: Vec<(&'static str, String, Vec<String>)> = vec![(
         LAUNCH,
         tr!("dlg-keys-start-menu"),
-        vec!["Super".to_string()],
+        vec![reprisekit::keycap::shown_chord("Super")],
     )];
     let mut add = |group: &'static str, what: String, keys: String| match rows
         .iter_mut()

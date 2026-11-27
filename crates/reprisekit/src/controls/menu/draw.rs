@@ -3,6 +3,7 @@ use super::layout::{
     ARROW_RIGHT_INSET, ARROW_SPACE, BANNER_OVER, BANNER_PAD, BULLET_X, CHECK_DY, CHECK_X,
     MenuLayout, ScrollArrow,
 };
+use crate::keycap;
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Theme;
@@ -369,6 +370,7 @@ pub fn draw_menu_at(
                 );
                 let shown = text.ellipsize(label, text_rect.width, *bold, size);
                 if let Some(sc) = shortcut {
+                    let sc = &keycap::shown_chord(sc);
                     let sc_rect = Rect::new(text_rect.x, r.y, text_rect.width, r.height);
                     if etched {
                         let lit =
@@ -600,6 +602,7 @@ fn draw_gutter_menu(
         );
         let shown = text.ellipsize(label, text_rect.width, *bold, size);
         if let Some(sc) = shortcut {
+            let sc = &keycap::shown_chord(sc);
             text.draw(canvas, text_rect, sc, false, fg, Align::Right, size);
         }
         let mnemonic = mnemonic.filter(|_| underline);

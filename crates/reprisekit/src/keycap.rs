@@ -1,6 +1,8 @@
-//! Keysyms by their xkb names, and a key as its cap reads.
+//! Keysyms by their xkb names, a key as its cap reads, and a chord's English spelling in the
+//! user's language.
 
 use std::ffi::{CString, c_char, c_int};
+use std::sync::OnceLock;
 
 const XKB_KEYSYM_CASE_INSENSITIVE: c_int = 1;
 
@@ -95,6 +97,85 @@ pub fn key_text(sym: u32) -> String {
         .unwrap_or_default()
 }
 
+/// The modifiers a chord's spelling may start with, each followed by "+".
+const MODIFIERS: [&str; 4] = ["Ctrl", "Shift", "Alt", "Super"];
+
+/// The shown names of a chord's words, the modifiers and the named keys, and the separator
+/// between them. A word outside the table (a letter, a sign, F5) shows as written.
+pub struct KeyNames {
+    separator: String,
+    words: Vec<(&'static str, String)>,
+}
+
+/// A [`KeyNames`] read through `$tr!("id")`: each id stays a literal scripts/i18n-check finds,
+/// and a test can read a fixture catalog instead of reprisekit's strings.
+macro_rules! key_names {
+    ($tr:ident) => {
+        KeyNames {
+            separator: $tr!("key-separator"),
+            words: vec![
+                ("Ctrl", $tr!("key-ctrl")),
+                ("Shift", $tr!("key-shift")),
+                ("Alt", $tr!("key-alt")),
+                ("Super", $tr!("key-super")),
+                ("Del", $tr!("key-del")),
+                ("Delete", $tr!("key-delete")),
+                ("Ins", $tr!("key-ins")),
+                ("Insert", $tr!("key-insert")),
+                ("Enter", $tr!("key-enter")),
+                ("Esc", $tr!("key-esc")),
+                ("Tab", $tr!("key-tab")),
+                ("Space", $tr!("key-space")),
+                ("Backspace", $tr!("key-backspace")),
+                ("Home", $tr!("key-home")),
+                ("End", $tr!("key-end")),
+                ("PgUp", $tr!("key-pgup")),
+                ("PgDn", $tr!("key-pgdn")),
+                ("Page Up", $tr!("key-page-up")),
+                ("Page Down", $tr!("key-page-down")),
+                ("Left", $tr!("key-left")),
+                ("Right", $tr!("key-right")),
+                ("Up", $tr!("key-up")),
+                ("Down", $tr!("key-down")),
+                ("Plus", $tr!("key-plus")),
+                ("Minus", $tr!("key-minus")),
+            ],
+        }
+    };
+}
+
+impl KeyNames {
+    /// `english`, a chord as Reprise spells it ("Ctrl+Shift+N", "Ctrl++", "Del", or the held
+    /// "Ctrl+" with no key yet), with each word and separator in these names.
+    pub fn shown(&self, english: &str) -> String {
+        let mut out = String::new();
+        let mut rest = english;
+        while let Some((m, after)) = MODIFIERS
+            .iter()
+            .find_map(|m| Some((*m, rest.strip_prefix(m)?.strip_prefix('+')?)))
+        {
+            out += self.word(m);
+            out += &self.separator;
+            rest = after;
+        }
+        out + self.word(rest)
+    }
+
+    fn word<'a>(&'a self, english: &'a str) -> &'a str {
+        self.words
+            .iter()
+            .find(|(e, _)| *e == english)
+            .map_or(english, |(_, shown)| shown)
+    }
+}
+
+/// [`KeyNames::shown`] in the user's language. Menus' accelerators, the shortcut box and the key
+/// sheet show chords through it; config and files keep the English spelling.
+pub fn shown_chord(english: &str) -> String {
+    static NAMES: OnceLock<KeyNames> = OnceLock::new();
+    NAMES.get_or_init(|| key_names!(tr)).shown(english)
+}
+
 /// Whether keysym `sym` types a character.
 pub fn types_char(sym: u32) -> bool {
     // SAFETY: a pure function on a keysym value.
@@ -125,5 +206,62 @@ mod tests {
         assert_eq!(key_text(0xff55), "Page Up");
         assert_eq!(key_text(0xffe9), "Left Alt");
         assert_eq!(key_text(0x1008ff13), "Audio Raise Volume");
+    }
+
+    #[test]
+    fn english_chords_show_as_spelled() {
+        for c in [
+            "Ctrl+Z",
+            "Ctrl+Shift+N",
+            "Ctrl++",
+            "Ctrl+-",
+            "Ctrl+Plus",
+            "Alt+F4",
+            "Alt+Enter",
+            "Del",
+            "F5",
+            "Super",
+            "Ctrl+",
+            "Super+Shift+Page Up",
+            "Shift+Left Alt",
+        ] {
+            assert_eq!(shown_chord(c), c);
+        }
+    }
+
+    #[test]
+    fn a_translation_names_modifiers_keys_and_the_separator() {
+        use crate::i18n::Catalog;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/i18n-keys");
+        let de = "de".parse().unwrap();
+        let cat = Catalog::load(
+            "reprisekit",
+            include_str!("../locale/en.ftl"),
+            &[de],
+            &[dir],
+        );
+        macro_rules! fixture {
+            ($id:literal) => {
+                cat.tr_args($id, &[])
+            };
+        }
+        let names = key_names!(fixture);
+        assert_eq!(names.shown("Ctrl+Z"), "Strg + Z");
+        assert_eq!(names.shown("Ctrl+Shift+N"), "Strg + Umschalt + N");
+        assert_eq!(names.shown("Ctrl++"), "Strg + +");
+        assert_eq!(names.shown("Ctrl+Plus"), "Strg + Plus");
+        assert_eq!(names.shown("Alt+Enter"), "Alt + Eingabe");
+        assert_eq!(names.shown("Del"), "Entf");
+        assert_eq!(
+            names.shown("Super+Shift+Page Up"),
+            "Super + Umschalt + Bild auf"
+        );
+        assert_eq!(names.shown("Ctrl+"), "Strg + ");
+        assert_eq!(names.shown("F5"), "F5");
+        assert_eq!(
+            names.shown("Esc"),
+            "Esc",
+            "a word the translation lacks is English"
+        );
     }
 }

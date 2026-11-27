@@ -91,13 +91,18 @@ fn is_character(sym: u32) -> bool {
     (0x21..=0x7e).contains(&sym) || (0xa0..=0xff).contains(&sym) || sym & 0xff00_0000 == 0x0100_0000
 }
 
-/// A chord as Reprise spells it everywhere: each modifier held, in the order Super, Ctrl, Alt,
-/// Shift, followed by "+", then the key's cap ("Super+Shift+Page Up").
+/// [`chord_spelling`] in the user's language ([`keycap::shown_chord`]).
 pub fn chord_text(mods: Mods, sym: u32) -> String {
-    held_text(mods) + &keycap::key_text(sym)
+    keycap::shown_chord(&chord_spelling(mods, sym))
 }
 
-fn held_text(mods: Mods) -> String {
+/// A chord as Reprise spells it in English: each modifier held, in the order Super, Ctrl, Alt,
+/// Shift, followed by "+", then the key's cap ("Super+Shift+Page Up").
+pub fn chord_spelling(mods: Mods, sym: u32) -> String {
+    held_spelling(mods) + &keycap::key_text(sym)
+}
+
+fn held_spelling(mods: Mods) -> String {
     mods.names().map(|n| format!("{n}+")).collect()
 }
 
@@ -141,7 +146,7 @@ impl Chord {
     /// The chord as [`chord_text`] spells it; a key xkb does not know as written.
     pub fn shown(&self) -> String {
         let cap = keycap::keysym(&self.key).map_or_else(|| self.key.clone(), keycap::key_text);
-        held_text(self.mods) + &cap
+        keycap::shown_chord(&(held_spelling(self.mods) + &cap))
     }
 
     pub fn same(&self, other: &Chord) -> bool {
@@ -291,11 +296,11 @@ impl HotKey {
 
     pub fn shown(&self, focused: bool) -> String {
         if focused && let Some(m) = self.pending() {
-            return held_text(m);
+            return keycap::shown_chord(&held_spelling(m));
         }
         match &self.value {
             Some(c) => c.shown(),
-            None => "None".into(),
+            None => tr!("hotkey-none"),
         }
     }
 

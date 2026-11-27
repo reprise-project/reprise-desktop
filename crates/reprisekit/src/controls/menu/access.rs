@@ -2,6 +2,7 @@ use super::MenuItem;
 use super::layout::MenuLayout;
 use super::popup::PopupMenu;
 use crate::access::{self, Tree, accesskit};
+use crate::keycap;
 use crate::raster::Rect;
 use accesskit::{Node, NodeId, Role};
 
@@ -38,7 +39,7 @@ pub fn access_row(item: &MenuItem, r: Rect, open: bool) -> Option<Node> {
         n.set_expanded(open);
     }
     if let Some(s) = shortcut {
-        n.set_keyboard_shortcut(s.as_str());
+        n.set_keyboard_shortcut(keycap::shown_chord(s));
     }
     access::focusable(&mut n, *enabled);
     Some(n)
