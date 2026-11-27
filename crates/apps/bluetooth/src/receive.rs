@@ -8,16 +8,21 @@ use std::path::{Path, PathBuf};
 use reprisefs::apps::ExecRefused;
 use reprisefs::names;
 use reprisefs::props::Opening;
+use reprisekit::tr;
 
 use crate::bz::Offer;
 
 /// The compositor focuses this program's window by this title (`mapfocus::DEVICE_PROMPTS`).
 pub const TITLE: &str = "Bluetooth File Transfer";
 pub const ACCEPT: usize = 0;
-pub const BUTTONS: [&str; 2] = ["&Accept", "&Decline"];
+pub fn buttons() -> Vec<String> {
+    vec![tr!("offer-accept"), tr!("offer-decline")]
+}
 /// The received balloon's buttons, in [`reprisetray::Msg::BalloonButton`] order.
 pub const OPEN: usize = 0;
-pub const BALLOON_BUTTONS: [&str; 2] = ["Open", "Show in folder"];
+pub fn balloon_buttons() -> [String; 2] {
+    [tr!("received-open"), tr!("received-show-in-folder")]
+}
 
 /// Longest saved name in bytes, under the usual 255-byte limit with room for " (99)".
 const NAME_MAX: usize = 200;
@@ -137,27 +142,30 @@ fn shown(name: &str) -> String {
 /// The prompt's text: who sends what, its size when the device said, and where it goes.
 pub fn prompt(o: &Offer) -> String {
     let mut lines = vec![
-        format!("{} wants to send you a file.", o.sender),
+        tr!("offer-sender", sender = o.sender.as_str()),
         String::new(),
-        format!("File: {}", shown(&safe_name(&o.name))),
+        tr!("offer-file", name = shown(&safe_name(&o.name))),
     ];
     if let Some(size) = o.size {
-        lines.push(format!("Size: {}", reprisefs::replace::size_text(size)));
+        lines.push(tr!(
+            "offer-size",
+            size = reprisefs::replace::size_text(size)
+        ));
     }
     lines.push(String::new());
-    lines.push("Accepted files are saved in your Downloads folder.".into());
+    lines.push(tr!("offer-destination"));
     lines.join("\n")
 }
 
-/// The balloon for a file saved at `path`, with [`BALLOON_BUTTONS`].
+/// The balloon for a file saved at `path`, with [`balloon_buttons`].
 pub fn received(path: &Path, sender: &str) -> (String, String) {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     (
-        "File received".into(),
-        format!("{} from {sender} is in Downloads.", shown(&name)),
+        tr!("received-summary"),
+        tr!("received-body", name = shown(&name), sender = sender),
     )
 }
 
@@ -186,10 +194,11 @@ pub fn shown_in_folder(path: &Path) -> Opening {
 
 pub fn not_received(name: &str, sender: &str) -> (String, String) {
     (
-        "File not received".into(),
-        format!(
-            "{} from {sender} was not received.",
-            shown(&safe_name(name))
+        tr!("not-received-summary"),
+        tr!(
+            "not-received-body",
+            name = shown(&safe_name(name)),
+            sender = sender
         ),
     )
 }

@@ -13,6 +13,13 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("bluetooth");
+
+/// A message of hard-broken lines, as the notes on the sheets lay them out.
+fn lines(text: &str) -> Vec<&str> {
+    text.lines().collect()
+}
+
 mod addwiz;
 mod battery;
 mod bz;
@@ -42,6 +49,7 @@ use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
 /// Child windows; one of each at a time.
 const WIZARD: WinId = WinId::named("wizard");
@@ -331,7 +339,7 @@ impl BtApp {
             bz::Cmd::StartDiscovery(_) if self.wizard.is_some() => WIZARD,
             _ => repriseapp::MAIN,
         };
-        self.error.show_over(over, title, body, None);
+        self.error.show_over(over, &title, body, None);
     }
 
     /// Takes the failures over a sheet or wizard that closed.
@@ -592,13 +600,11 @@ impl BtApp {
             .device(&path)
             .map_or_else(|| path.clone(), |d| d.alias.clone());
         let b = MsgBox::new(
-            "Confirm Device Removal",
+            &tr!("remove-title"),
             Fields {
-                text: format!(
-                    "Are you sure you want to remove {alias}?\nTo use it again, you will have to add it again."
-                ),
+                text: tr!("remove-text", alias = alias.as_str()),
                 icon: ctx.icons.get("dialog-question", 32),
-                buttons: vec!["&Yes".into(), "&No".into()],
+                buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
@@ -1015,7 +1021,7 @@ impl BtApp {
             Fields {
                 text: receive::prompt(&o),
                 icon: ctx.icons.get("dialog-question", 32),
-                buttons: receive::BUTTONS.map(String::from).to_vec(),
+                buttons: receive::buttons(),
                 default: 1,
                 min_text_h: None,
                 min_w: 0,
@@ -1080,7 +1086,12 @@ impl BtApp {
         self.next_tag = self.next_tag.wrapping_add(1);
         self.received.insert(tag, path);
         if let Some(t) = &self.tray {
-            t.notify_buttons(&summary, &body, tag, &receive::BALLOON_BUTTONS);
+            t.notify_buttons(
+                &summary,
+                &body,
+                tag,
+                &receive::balloon_buttons().each_ref().map(String::as_str),
+            );
         }
     }
 
@@ -1105,7 +1116,7 @@ impl BtApp {
 
 impl App for BtApp {
     fn title(&self) -> String {
-        "Bluetooth Devices".into()
+        tr!("app-title")
     }
 
     fn app_id(&self) -> String {
@@ -1124,7 +1135,7 @@ impl App for BtApp {
         if self.wizard.is_some() {
             out.push(Child {
                 id: WIZARD,
-                title: "Add Bluetooth Device Wizard".into(),
+                title: tr!("wizard-title"),
                 size: u.size(wizard::CLIENT),
                 fixed: true,
                 modal: false,

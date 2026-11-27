@@ -9,6 +9,7 @@ pub use bus::{BzHandle, watch};
 
 use reprisebus::prop;
 use reprisekit::art::devicon;
+use reprisekit::tr;
 use zbus::OwnedObjectPath;
 
 pub use reprisebus::Props;
@@ -78,13 +79,13 @@ pub enum Group {
 }
 
 impl Group {
-    pub fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            Group::Audio => "Audio",
-            Group::Input => "Input devices",
-            Group::Phones => "Phones",
-            Group::Computers => "Computers",
-            Group::Other => "Other devices",
+            Group::Audio => tr!("group-audio"),
+            Group::Input => tr!("group-input"),
+            Group::Phones => tr!("group-phones"),
+            Group::Computers => tr!("group-computers"),
+            Group::Other => tr!("group-other"),
         }
     }
 }
@@ -141,17 +142,17 @@ impl Kind {
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Kind::Headphones => "Headphones",
-            Kind::Headset => "Headset",
-            Kind::Speaker => "Speaker",
-            Kind::Gamepad => "Game controller",
-            Kind::Keyboard => "Keyboard",
-            Kind::Mouse => "Mouse",
-            Kind::Phone => "Phone",
-            Kind::Computer => "Computer",
-            Kind::Other => "Bluetooth device",
+            Kind::Headphones => tr!("kind-headphones"),
+            Kind::Headset => tr!("kind-headset"),
+            Kind::Speaker => tr!("kind-speaker"),
+            Kind::Gamepad => tr!("kind-gamepad"),
+            Kind::Keyboard => tr!("kind-keyboard"),
+            Kind::Mouse => tr!("kind-mouse"),
+            Kind::Phone => tr!("kind-phone"),
+            Kind::Computer => tr!("kind-computer"),
+            Kind::Other => tr!("kind-other"),
         }
     }
 
@@ -374,21 +375,22 @@ pub fn by_group<'a>(devs: impl IntoIterator<Item = &'a Device>) -> Vec<Device> {
 }
 
 pub fn status_line(d: &Device) -> String {
-    let state = if d.connected {
-        "Connected"
-    } else {
-        "Not connected"
-    };
-    match d.battery {
-        Some(b) => format!("{state}, battery {b}%"),
-        None => state.to_string(),
+    match (d.connected, d.battery) {
+        (true, Some(b)) => tr!("status-connected-battery", percent = b.to_string()),
+        (false, Some(b)) => tr!("status-disconnected-battery", percent = b.to_string()),
+        (true, None) => tr!("status-connected"),
+        (false, None) => tr!("status-disconnected"),
     }
 }
 
 /// A device as the tray names it: its alias, then its battery when BlueZ reports one.
 pub fn battery_row(d: &Device) -> String {
     match d.battery {
-        Some(b) => format!("{} \u{2014} {b}%", d.alias),
+        Some(b) => tr!(
+            "battery-row",
+            alias = d.alias.as_str(),
+            percent = b.to_string()
+        ),
         None => d.alias.clone(),
     }
 }
@@ -544,20 +546,20 @@ impl AgentRequest {
     }
 }
 
-pub fn failure_title(cmd: &Cmd) -> &'static str {
+pub fn failure_title(cmd: &Cmd) -> String {
     match cmd {
-        Cmd::SetPowered { on: true, .. } => "Could not turn Bluetooth on",
-        Cmd::SetPowered { on: false, .. } => "Could not turn Bluetooth off",
-        Cmd::SetDiscoverable { .. } => "Could not change discovery",
-        Cmd::StartDiscovery(_) => "Could not search for devices",
-        Cmd::Connect(_) => "Could not connect",
-        Cmd::Disconnect(_) => "Could not disconnect",
-        Cmd::Remove { .. } => "Could not remove the device",
-        Cmd::SetTrusted { .. } | Cmd::SetAlias { .. } => "Could not change the device",
-        Cmd::Airplane(true) => "Could not turn airplane mode on",
-        Cmd::Airplane(false) => "Could not turn airplane mode off",
+        Cmd::SetPowered { on: true, .. } => tr!("failure-power-on"),
+        Cmd::SetPowered { on: false, .. } => tr!("failure-power-off"),
+        Cmd::SetDiscoverable { .. } => tr!("failure-discovery"),
+        Cmd::StartDiscovery(_) => tr!("failure-search"),
+        Cmd::Connect(_) => tr!("failure-connect"),
+        Cmd::Disconnect(_) => tr!("failure-disconnect"),
+        Cmd::Remove { .. } => tr!("failure-remove"),
+        Cmd::SetTrusted { .. } | Cmd::SetAlias { .. } => tr!("failure-change"),
+        Cmd::Airplane(true) => tr!("failure-airplane-on"),
+        Cmd::Airplane(false) => tr!("failure-airplane-off"),
         Cmd::StopDiscovery(_) | Cmd::Pair(_) | Cmd::CancelPair(_) | Cmd::Receive(_) | Cmd::Quit => {
-            "Bluetooth"
+            tr!("failure-other")
         }
     }
 }
@@ -572,24 +574,20 @@ pub fn plain_error(name: &str, detail: &str) -> String {
         || short == "ConnectionAttemptFailed";
     let words = match short {
         "AuthenticationFailed" | "AuthenticationRejected" | "AuthenticationTimeout" => {
-            "The device did not accept the pairing."
+            tr!("error-pairing-refused")
         }
-        "AuthenticationCanceled" => "Pairing was cancelled.",
-        _ if unreachable => {
-            "The device could not be reached. Make sure it is turned on and in range."
-        }
-        _ if detail.contains("key-missing") => {
-            "The device no longer knows this computer. Remove it and add it again."
-        }
-        "NotReady" => "Bluetooth is not ready. Make sure it is turned on.",
-        "InProgress" => "Bluetooth is busy with another request. Try again in a moment.",
-        "AlreadyExists" => "This device has already been added.",
-        "DoesNotExist" => "The device is no longer available.",
-        "Blocked" => "Bluetooth is turned off by a switch or key on this computer.",
+        "AuthenticationCanceled" => tr!("error-pairing-cancelled"),
+        _ if unreachable => tr!("error-unreachable"),
+        _ if detail.contains("key-missing") => tr!("error-key-missing"),
+        "NotReady" => tr!("error-not-ready"),
+        "InProgress" => tr!("error-busy"),
+        "AlreadyExists" => tr!("error-already-added"),
+        "DoesNotExist" => tr!("error-gone"),
+        "Blocked" => tr!("error-blocked"),
         _ if !detail.is_empty() => return detail.to_string(),
         _ => return name.to_string(),
     };
-    words.to_string()
+    words
 }
 
 #[cfg(test)]

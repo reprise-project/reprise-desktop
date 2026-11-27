@@ -6,6 +6,7 @@ use reprisekit::controls::form::{Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::text::{TextRenderer, wrap};
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
 use crate::bz::{Answer, Ask};
 
@@ -19,15 +20,11 @@ const PASSKEY_DIGITS: usize = 6;
 
 pub fn sentence(ask: &Ask, name: &str) -> String {
     match ask {
-        Ask::PinCode => format!(
-            "Type the PIN for {name}. If you do not know it, check the device's manual; many devices use 0000."
-        ),
-        Ask::Passkey => format!("Type the six-digit passkey that {name} shows."),
-        Ask::ShowPin(_) | Ask::ShowPasskey(_) => {
-            format!("Type this passkey on {name}, then press its Enter key:")
-        }
-        Ask::Confirm(_) => format!("Check that {name} shows this passkey:"),
-        Ask::Authorize => format!("{name} wants to pair with this computer."),
+        Ask::PinCode => tr!("pair-type-pin", name = name),
+        Ask::Passkey => tr!("pair-type-passkey", name = name),
+        Ask::ShowPin(_) | Ask::ShowPasskey(_) => tr!("pair-show-passkey", name = name),
+        Ask::Confirm(_) => tr!("pair-confirm-passkey", name = name),
+        Ask::Authorize => tr!("pair-authorize", name = name),
     }
 }
 
@@ -73,11 +70,11 @@ pub fn items(
     match ask {
         Ask::PinCode | Ask::Passkey => {
             let label = if *ask == Ask::PinCode {
-                "&PIN:"
+                tr!("pair-pin-label")
             } else {
-                "&Passkey:"
+                tr!("pair-passkey-label")
             };
-            out.push(Item::label_at("code_label", body.x, y + 4, 60, label));
+            out.push(Item::label_at("code_label", body.x, y + 4, 60, &label));
             out.push(Item::edit(
                 CODE,
                 Rect::new(body.x + 64, y, 120, EDIT_H),
@@ -86,18 +83,12 @@ pub fn items(
             ));
         }
         Ask::Confirm(_) => {
-            out.push(radio(YES, body.x, y, "&Yes, the passkeys match", accept));
-            out.push(radio(
-                NO,
-                body.x,
-                y + 20,
-                "No, they are &different",
-                !accept,
-            ));
+            out.push(radio(YES, body.x, y, &tr!("pair-match"), accept));
+            out.push(radio(NO, body.x, y + 20, &tr!("pair-differ"), !accept));
         }
         Ask::Authorize => {
-            out.push(radio(YES, body.x, y, "&Allow it to pair", accept));
-            out.push(radio(NO, body.x, y + 20, "&Do not allow it", !accept));
+            out.push(radio(YES, body.x, y, &tr!("pair-allow"), accept));
+            out.push(radio(NO, body.x, y + 20, &tr!("pair-deny"), !accept));
         }
         Ask::ShowPin(_) | Ask::ShowPasskey(_) => {}
     }

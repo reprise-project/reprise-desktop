@@ -3,6 +3,7 @@
 //! adapter. The D-Bus side is `reprisetray`'s.
 
 use reprisekit::art::bticon;
+use reprisekit::tr;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::bz::{self, Device, Snapshot};
@@ -55,15 +56,15 @@ pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
             rows.separator();
         }
     }
-    rows.add(TrayMsg::Show, |id| Node::row(id, "Show Bluetooth Devices"));
+    rows.add(TrayMsg::Show, |id| Node::row(id, tr!("tray-show")));
     if let Some(a) = &s.adapter {
         if a.powered {
-            rows.add(TrayMsg::Add, |id| Node::row(id, "Add a Bluetooth Device"));
+            rows.add(TrayMsg::Add, |id| Node::row(id, tr!("tray-add")));
         }
         let word = if a.powered {
-            "Turn Bluetooth Off"
+            tr!("tray-turn-off")
         } else {
-            "Turn Bluetooth On"
+            tr!("tray-turn-on")
         };
         rows.separator()
             .add(TrayMsg::TogglePower, |id| Node::row(id, word));
@@ -72,7 +73,7 @@ pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
         rows.airplane(TrayMsg::Airplane, TrayMsg::AirplaneNote, mode);
     }
     rows.separator()
-        .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
+        .add(TrayMsg::Exit, |id| Node::row(id, tr!("tray-exit")));
     rows
 }
 
@@ -82,14 +83,12 @@ pub fn menu_nodes(s: &Snapshot) -> Vec<Node> {
 
 pub fn tooltip(s: &Snapshot) -> String {
     match &s.adapter {
-        None => "No Bluetooth adapter".into(),
-        Some(a) if !a.powered => "Bluetooth is off".into(),
+        None => tr!("tray-no-adapter"),
+        Some(a) if !a.powered => tr!("tray-off"),
         Some(_) => {
             let devices = connected(s);
             let head = match devices.len() {
-                0 => return "Bluetooth: no devices connected".into(),
-                1 => "Bluetooth: 1 device connected".to_string(),
-                n => format!("Bluetooth: {n} devices connected"),
+                n => tr!("tray-connected", count = n),
             };
             devices
                 .iter()

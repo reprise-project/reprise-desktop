@@ -17,12 +17,12 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
+use reprisekit::tr;
 
 use crate::bz::{self, Device, Snapshot};
 use crate::icons::Icons;
 
 pub const CLIENT: (i32, i32) = (398, 424);
-pub const TABS: [&str; 2] = ["Devices", "Options"];
 pub const TAB_DEVICES: usize = 0;
 pub const TAB_OPTIONS: usize = 1;
 
@@ -35,14 +35,6 @@ const DISCOVERABLE: &str = "discoverable";
 const BATTERY: &str = "battery_warning";
 const RECEIVE: &str = "receive_files";
 const RECEIVE_NOTE: &str = "receive_note";
-const RECEIVE_NOTE_ON: [&str; 2] = [
-    "You are asked before each file, and accepted files",
-    "are saved in your Downloads folder.",
-];
-const RECEIVE_NOTE_MISSING: [&str; 2] = [
-    "Receiving files needs BlueZ's OBEX service (obexd),",
-    "which is not installed.",
-];
 
 /// The page runs (6, 28) to (392, 388); buttons sit 8 px above its bottom.
 const BTN_Y: i32 = 388 - 8 - BUTTON_H;
@@ -101,14 +93,21 @@ pub fn entries(rows: &[Device]) -> Vec<Entry> {
 
 fn devices_page() -> Form {
     Form::new(vec![
-        Item::button_at(ADD, 14, BTN_Y, BUTTON_W, "&Add...", false),
-        Item::button_at(REMOVE, 14 + BUTTON_W + 6, BTN_Y, BUTTON_W, "&Remove", false),
+        Item::button_at(ADD, 14, BTN_Y, BUTTON_W, &tr!("devices-add"), false),
+        Item::button_at(
+            REMOVE,
+            14 + BUTTON_W + 6,
+            BTN_Y,
+            BUTTON_W,
+            &tr!("devices-remove"),
+            false,
+        ),
         Item::button_at(
             CONNECT,
             14 + 2 * (BUTTON_W + 6),
             BTN_Y,
             CONNECT_W,
-            "&Connect",
+            &tr!("devices-connect"),
             false,
         ),
         Item::button_at(
@@ -116,7 +115,7 @@ fn devices_page() -> Form {
             LIST.right() - BUTTON_W,
             BTN_Y,
             BUTTON_W,
-            "&Properties",
+            &tr!("devices-properties"),
             false,
         ),
     ])
@@ -124,33 +123,31 @@ fn devices_page() -> Form {
 
 fn options_page() -> Form {
     Form::new(vec![
-        Item::group("radio_group", Rect::new(14, 36, 370, 50), "Bluetooth radio"),
-        Item::check(POWER, 26, 58, "&Turn on Bluetooth"),
-        Item::group("discovery_group", Rect::new(14, 96, 370, 70), "Discovery"),
-        Item::check(
-            DISCOVERABLE,
-            26,
-            118,
-            "Allow Bluetooth &devices to find this computer",
+        Item::group(
+            "radio_group",
+            Rect::new(14, 36, 370, 50),
+            &tr!("options-radio-group"),
         ),
+        Item::check(POWER, 26, 58, &tr!("options-power")),
+        Item::group(
+            "discovery_group",
+            Rect::new(14, 96, 370, 70),
+            &tr!("options-discovery-group"),
+        ),
+        Item::check(DISCOVERABLE, 26, 118, &tr!("options-discoverable")),
         Item::lines_at(
             "discovery_note",
             44,
             138,
             330,
-            &[
-                "While this is on, other devices can see this computer",
-                "and ask to pair with it.",
-            ],
+            &crate::lines(&tr!("options-discovery-note")),
         ),
-        Item::group("battery_group", Rect::new(14, 176, 370, 70), "Battery"),
-        Item::label_at(
-            "battery_label",
-            26,
-            202,
-            210,
-            "&Warn when a device's battery drops to:",
+        Item::group(
+            "battery_group",
+            Rect::new(14, 176, 370, 70),
+            &tr!("options-battery-group"),
         ),
+        Item::label_at("battery_label", 26, 202, 210, &tr!("options-battery-label")),
         Item::new(
             BATTERY,
             Rect::new(240, 198, updown::WIDTH, updown::HEIGHT),
@@ -160,17 +157,27 @@ fn options_page() -> Form {
                 repriseconf::BT_BATTERY_MAX.into(),
             )),
         ),
-        Item::label_at("battery_units", 240 + updown::WIDTH + 6, 202, 20, "%"),
         Item::label_at(
-            "battery_note",
-            26,
-            224,
-            340,
-            "For connected devices. 0 turns the warning off.",
+            "battery_units",
+            240 + updown::WIDTH + 6,
+            202,
+            20,
+            &tr!("options-battery-units"),
         ),
-        Item::group("files_group", Rect::new(14, 256, 370, 70), "File transfer"),
-        Item::check(RECEIVE, 26, 278, "&Receive files from paired devices"),
-        Item::lines_at(RECEIVE_NOTE, 44, 298, 330, &RECEIVE_NOTE_ON),
+        Item::label_at("battery_note", 26, 224, 340, &tr!("options-battery-note")),
+        Item::group(
+            "files_group",
+            Rect::new(14, 256, 370, 70),
+            &tr!("options-files-group"),
+        ),
+        Item::check(RECEIVE, 26, 278, &tr!("options-receive")),
+        Item::lines_at(
+            RECEIVE_NOTE,
+            44,
+            298,
+            330,
+            &crate::lines(&tr!("options-receive-note-on")),
+        ),
     ])
 }
 
@@ -183,7 +190,11 @@ impl Devices {
             ..Options::default()
         };
         let mut d = Devices {
-            sheet: PropSheet::new(&TABS, vec![devices_page(), options_page()], CLIENT),
+            sheet: PropSheet::new(
+                &[&tr!("devices-tab-devices"), &tr!("devices-tab-options")],
+                vec![devices_page(), options_page()],
+                CLIENT,
+            ),
             list: TileList::new(TILE_H),
             rows: Vec::new(),
             list_focus: false,
@@ -200,11 +211,12 @@ impl Devices {
     pub fn set_obex(&mut self, present: bool) {
         self.obex = present;
         let note = if present {
-            RECEIVE_NOTE_ON
+            tr!("options-receive-note-on")
         } else {
-            RECEIVE_NOTE_MISSING
+            tr!("options-receive-note-missing")
         };
-        self.sheet.pages[TAB_OPTIONS].set_lines(RECEIVE_NOTE, &note.map(String::from));
+        let lines = note.lines().map(String::from).collect::<Vec<_>>();
+        self.sheet.pages[TAB_OPTIONS].set_lines(RECEIVE_NOTE, &lines);
         self.write();
     }
 
@@ -221,11 +233,11 @@ impl Devices {
         self.selected().map(|d| d.path.clone())
     }
 
-    pub fn blank_text(&self) -> Option<&'static str> {
+    pub fn blank_text(&self) -> Option<String> {
         if !self.adapter {
-            Some("No Bluetooth adapter was found.")
+            Some(tr!("devices-no-adapter"))
         } else if !self.applied.powered {
-            Some("Bluetooth is turned off. Turn it on from the Options tab.")
+            Some(tr!("devices-radio-off"))
         } else {
             None
         }
@@ -271,11 +283,10 @@ impl Devices {
             }) = page.item_mut(CONNECT)
             {
                 *label = if picked == Some(true) {
-                    "&Disconnect"
+                    tr!("devices-disconnect")
                 } else {
-                    "&Connect"
-                }
-                .into();
+                    tr!("devices-connect")
+                };
             }
         }
         let page = &mut self.sheet.pages[TAB_OPTIONS];
@@ -409,7 +420,7 @@ impl Devices {
             return;
         }
         if let Some(line) = self.blank_text() {
-            tree.push(panel, "empty", access::label(list, line, true));
+            tree.push(panel, "empty", access::label(list, &line, true));
             return;
         }
         let lay = tilelist::layout(&self.list, list, &ctx.theme.controls());
@@ -472,7 +483,7 @@ impl Devices {
             let u = ctx.theme.text;
             let r = Rect::new(list.x, list.y + u.len(24), list.width, u.len(LINE_H));
             ctx.text
-                .draw(c, r, line, false, cs.gray_text, Align::Center, px);
+                .draw(c, r, &line, false, cs.gray_text, Align::Center, px);
             return;
         }
         let lay = tilelist::layout(&self.list, list, &ctx.theme.controls());
@@ -681,7 +692,10 @@ mod tests {
         );
         d.refresh(&Snapshot::default());
         assert!(!enabled(&d, ADD));
-        assert_eq!(d.blank_text(), Some("No Bluetooth adapter was found."));
+        assert_eq!(
+            d.blank_text(),
+            Some("No Bluetooth adapter was found.".to_string())
+        );
     }
 
     #[test]
