@@ -1,5 +1,5 @@
-//! Move and Copy through a folder picker (`reprisekit::controls::browsefolder`)
-//! over a folder tree of its own; Accept runs the same move or copy a paste does.
+//! Move To, Copy To and Extract All through a folder picker (`reprisekit::controls::browsefolder`)
+//! over a folder tree of its own; Accept runs the same move or copy a paste does, or extracts.
 
 use crate::dialogs::{Dialog, dialog_key};
 use crate::foldertree::{self, Inputs, Kids};
@@ -20,11 +20,20 @@ use reprisekit::textedit::keysym;
 use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
+/// What the picker's Accept does with its items.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Move,
+    Copy,
+    /// The items are archives, each extracted into a folder of its own in the pick.
+    Extract,
+}
+
 pub struct Browse {
     pub bf: BrowseFolder,
     pub places: foldertree::Places,
     pub items: Vec<PathBuf>,
-    pub mv: bool,
+    pub pick: Pick,
     /// The pick the buttons were last judged for; judging stats the folder, and
     /// every pointer motion ends in [`Explorer::sync_browse_buttons`].
     pub judged: Option<Option<Place>>,
@@ -101,20 +110,15 @@ impl Browse {
         }
         self.judged = Some(pick.clone());
         self.judging = None;
-        let (mv, items) = (self.mv, self.items.clone());
+        let (how, items) = (self.pick, self.items.clone());
         Some(move || match &pick {
-            Some(p) => (accept_ok(mv, &items, p), new_folder_ok(p)),
+            Some(p) => (accept_ok(how, &items, p), new_folder_ok(p)),
             None => (false, false),
         })
     }
 }
 
-pub fn prompt(mv: bool, items: &[PathBuf]) -> String {
-    let (verb, button) = if mv {
-        ("move", tr!("browse-prompt-move"))
-    } else {
-        ("copy", tr!("browse-prompt-copy"))
-    };
+pub fn prompt(pick: Pick, items: &[PathBuf]) -> String {
     let what = match items {
         [one] => format!(
             "'{}'",
@@ -126,6 +130,11 @@ pub fn prompt(mv: bool, items: &[PathBuf]) -> String {
             "browse-prompt-selected-items",
             count = many.len().to_string()
         ),
+    };
+    let (verb, button) = match pick {
+        Pick::Move => ("move", tr!("browse-prompt-move")),
+        Pick::Copy => ("copy", tr!("browse-prompt-copy")),
+        Pick::Extract => return tr!("browse-prompt-extract", what = what),
     };
     tr!(
         "browse-prompt-pick-the-folder-to-verb-what",
@@ -147,14 +156,15 @@ pub fn new_folder_ok(place: &Place) -> bool {
 }
 
 /// Whether the items can go into `place`: writable, not one of them or below
-/// one, and for a move not their own folder.
-pub fn accept_ok(mv: bool, items: &[PathBuf], place: &Place) -> bool {
+/// one, and for a move not their own folder. Archives extract into any writable folder.
+pub fn accept_ok(pick: Pick, items: &[PathBuf], place: &Place) -> bool {
     let Some(dir) = writable_dir(place) else {
         return false;
     };
-    items
-        .iter()
-        .all(|it| !dir.starts_with(it) && !(mv && it.parent() == Some(dir.as_path())))
+    let mv = pick == Pick::Move;
+    pick == Pick::Extract
+        || (items.iter())
+            .all(|it| !dir.starts_with(it) && !(mv && it.parent() == Some(dir.as_path())))
 }
 
 /// Where the rename box's `typed` name takes the folder at `from`: `None` when
@@ -185,12 +195,12 @@ pub fn make_new_folder(dir: &Path) -> std::io::Result<(PathBuf, Option<reprisefs
 }
 
 impl Explorer {
-    pub fn open_browse(&mut self, mv: bool, ctx: &mut Ctx) -> Reply {
+    pub fn open_browse(&mut self, pick: Pick, ctx: &mut Ctx) -> Reply {
         let items = self.selected_paths();
-        self.browse_items(mv, items, ctx)
+        self.browse_items(pick, items, ctx)
     }
 
-    pub fn browse_items(&mut self, mv: bool, items: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
+    pub fn browse_items(&mut self, pick: Pick, items: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
         if items.is_empty() {
             return Reply::none();
         }
@@ -222,16 +232,16 @@ impl Explorer {
             }
             Err(job) => walking = Some((walk_to, job)),
         }
-        let accept = if mv {
-            tr!("browse-items-move")
-        } else {
-            tr!("browse-items-copy")
+        let accept = match pick {
+            Pick::Move => tr!("browse-items-move"),
+            Pick::Copy => tr!("browse-items-copy"),
+            Pick::Extract => tr!("browse-items-extract"),
         };
         let mut b = Browse {
-            bf: BrowseFolder::new(prompt(mv, &items), accept, tree),
+            bf: BrowseFolder::new(prompt(pick, &items), accept, tree),
             places,
             items,
-            mv,
+            pick,
             judged: None,
             judging: None,
             walking,
@@ -435,7 +445,15 @@ impl Explorer {
                 let Some(dir) = dir else {
                     return self.put_back_picker(b, Reply::none());
                 };
-                let op = if b.mv { DropOp::Move } else { DropOp::Copy };
+                let op = match b.pick {
+                    Pick::Move => DropOp::Move,
+                    Pick::Copy => DropOp::Copy,
+                    Pick::Extract => {
+                        self.browse_left.extend(b.making);
+                        self.extract_into(b.items, dir, ctx);
+                        return Reply::redraw_all();
+                    }
+                };
                 self.put_all(&b.items, &dir, &|_| Some(op), true, ctx);
                 self.browse_left.extend(b.making);
                 return Reply::redraw_all();
@@ -893,11 +911,11 @@ mod tests {
     #[test]
     fn prompts_name_one_item_or_count_several() {
         assert_eq!(
-            prompt(true, &[PathBuf::from("/x/a.txt")]),
+            prompt(Pick::Move, &[PathBuf::from("/x/a.txt")]),
             "Pick the folder to move 'a.txt' to, then click Move."
         );
         assert_eq!(
-            prompt(false, &[PathBuf::from("/x/a"), PathBuf::from("/x/b")]),
+            prompt(Pick::Copy, &[PathBuf::from("/x/a"), PathBuf::from("/x/b")]),
             "Pick the folder to copy the 2 selected items to, then click Copy."
         );
     }
@@ -908,20 +926,20 @@ mod tests {
         let file = [t.join("a.txt")];
         let folder = [t.join("sub")];
         assert!(
-            !accept_ok(true, &file, &Place::Folder(t.clone())),
+            !accept_ok(Pick::Move, &file, &Place::Folder(t.clone())),
             "a move into its own folder does nothing"
         );
         assert!(
-            accept_ok(false, &file, &Place::Folder(t.clone())),
+            accept_ok(Pick::Copy, &file, &Place::Folder(t.clone())),
             "a copy there makes Copy of"
         );
-        assert!(accept_ok(true, &file, &Place::Folder(t.join("sub"))));
+        assert!(accept_ok(Pick::Move, &file, &Place::Folder(t.join("sub"))));
         assert!(
-            !accept_ok(true, &folder, &Place::Folder(t.join("sub"))),
+            !accept_ok(Pick::Move, &folder, &Place::Folder(t.join("sub"))),
             "into itself"
         );
         assert!(
-            !accept_ok(false, &folder, &Place::Folder(t.join("sub/deeper"))),
+            !accept_ok(Pick::Copy, &folder, &Place::Folder(t.join("sub/deeper"))),
             "below itself"
         );
         std::fs::remove_dir_all(&t).ok();
@@ -931,11 +949,11 @@ mod tests {
     fn accept_rules_grey_places_and_read_only() {
         let file = [PathBuf::from("/tmp/a.txt")];
         for p in [Place::Computer, Place::RecycleBin] {
-            assert!(!accept_ok(true, &file, &p), "{p:?}");
+            assert!(!accept_ok(Pick::Move, &file, &p), "{p:?}");
             assert!(!new_folder_ok(&p), "{p:?}");
         }
         assert!(
-            !accept_ok(false, &file, &Place::Folder(PathBuf::from("/proc"))),
+            !accept_ok(Pick::Copy, &file, &Place::Folder(PathBuf::from("/proc"))),
             "/proc has no write bit"
         );
         assert!(!new_folder_ok(&Place::Folder(PathBuf::from("/proc"))));
@@ -953,7 +971,11 @@ mod tests {
             .into_iter()
             .map(|d| {
                 let place = Place::Folder(d.clone());
-                (d, accept_ok(false, &file, &place), new_folder_ok(&place))
+                (
+                    d,
+                    accept_ok(Pick::Copy, &file, &place),
+                    new_folder_ok(&place),
+                )
             })
             .collect();
         std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -985,7 +1007,7 @@ mod tests {
             bf: BrowseFolder::new(String::new(), "Copy".into(), tree),
             places: vec![Place::Folder(one.clone()), Place::Folder(two.clone())].into(),
             items: vec![t.path().join("a.txt")],
-            mv: false,
+            pick: Pick::Copy,
             judged: None,
             judging: None,
             walking: None,

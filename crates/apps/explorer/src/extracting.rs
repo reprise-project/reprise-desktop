@@ -1,6 +1,6 @@
-//! Extract Here and Extract to on an archive's menu, and Compress to on any items: an
-//! [`ArchiveJob`] with its progress dialog. An archive that fails asks Skip, Retry or Cancel; a zip
-//! that fails shows an error box.
+//! Extract Here, Extract to and Extract All... on an archive's menu, and Compress to on any items:
+//! an [`ArchiveJob`] with its progress dialog. An archive that fails asks Skip, Retry or Cancel; a
+//! zip that fails shows an error box.
 
 use crate::Explorer;
 use crate::copydlg::Progress;
@@ -19,6 +19,9 @@ pub(crate) struct Extracting {
     pub progress: Progress,
     /// The folders archives came out into so far, or the zip.
     landed: Vec<PathBuf>,
+    /// Extract All: the place shown when it started, which goes to the first folder that came
+    /// out unless the window has moved on.
+    show: Option<Place>,
 }
 
 /// One run of the job: archives to extract, or items to zip.
@@ -72,10 +75,36 @@ impl Explorer {
             .map(|it| Archive {
                 src: it.path.clone(),
                 here,
+                to: None,
             })
             .collect();
         self.queue_archive_job(Batch::Extract(batch), ctx);
         Reply::none()
+    }
+
+    /// Extract All...: the picker for where the selected archives, or the compressed folder
+    /// shown, come out.
+    pub(crate) fn extract_all(&mut self, ctx: &mut Ctx) -> Reply {
+        let archives = match &self.place {
+            Place::Archive(file, _) => vec![file.clone()],
+            _ => (self.selected_archives().unwrap_or_default().iter())
+                .map(|it| it.path.clone())
+                .collect(),
+        };
+        self.browse_items(crate::browse::Pick::Extract, archives, ctx)
+    }
+
+    /// The picker's Extract: each archive comes out into a folder of its own in `dir`, after the
+    /// job running, and the window then shows the first.
+    pub(crate) fn extract_into(&mut self, archives: Vec<PathBuf>, dir: PathBuf, ctx: &Ctx) {
+        let batch = (archives.into_iter())
+            .map(|src| Archive {
+                src,
+                here: false,
+                to: Some(dir.clone()),
+            })
+            .collect();
+        self.queue_archive_job(Batch::Extract(batch), ctx);
     }
 
     /// The zip Compress to and Send To make of the selection: `name.zip`, numbered past a name
@@ -148,10 +177,14 @@ impl Explorer {
         };
         let wake = ctx.wake.clone();
         let wake = move || wake.wake();
+        let show = matches!(&batch, Batch::Extract(b) if b.iter().any(|a| a.to.is_some()))
+            .then(|| self.place.clone());
         let (job, kind, from, to) = match batch {
             Batch::Extract(batch) => {
-                let src = batch.first().map(|a| a.src.as_path());
-                let (from, to) = (name(src), name(src.and_then(|s| s.parent())));
+                let first = batch.first();
+                let src = first.map(|a| a.src.as_path());
+                let dir = first.and_then(|a| a.to.as_deref().or(a.src.parent()));
+                let (from, to) = (name(src), name(dir));
                 (ArchiveJob::extract(batch, wake), Kind::Extract, from, to)
             }
             Batch::Compress(c) => {
@@ -166,6 +199,7 @@ impl Explorer {
             job,
             progress,
             landed: Vec::new(),
+            show,
         });
     }
 
@@ -205,6 +239,9 @@ impl Explorer {
         }
         let ex = self.extracting.take()?;
         self.job_ended(ex.job.meter(), ctx);
+        let shown_after = (ex.show.as_ref() == Some(&self.place))
+            .then(|| ex.landed.first().cloned())
+            .flatten();
         let done = match zipping {
             true => ex.job.meter().snapshot().items as usize,
             false => ex.landed.len(),
@@ -232,6 +269,10 @@ impl Explorer {
         if let Some(next) = self.extract_queue.pop_front() {
             self.start_archive_job(next, ctx);
         }
+        let reply = match shown_after {
+            Some(dir) => reply.and(self.go(Place::from_path(&dir), ctx)),
+            None => reply,
+        };
         Some(match boxed {
             Some(b) => reply.and(b),
             None => reply,

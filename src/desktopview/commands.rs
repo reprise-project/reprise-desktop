@@ -220,6 +220,9 @@ impl State {
             let mime = (path.file_name())
                 .and_then(|n| apps::mime_globs().mime_of_name(&n.to_string_lossy()));
             let image = with.is_none() && mime.as_deref().is_some_and(udisks::is_disk_image);
+            let archive = with.is_none()
+                && (mime.as_deref().zip(programs.as_ref()))
+                    .is_some_and(|(m, apps)| reprisefs::archive::opens_as_folder(m, apps));
             let asks = program.is_none()
                 && !image
                 && reprisefs::program::opens_as_a_program(&path, mime.as_deref())
@@ -239,6 +242,9 @@ impl State {
                 if asks {
                     let d = Dialog::ask_open(path, with.map(|e| e.id), recent);
                     return state.open_dialog(d);
+                }
+                if archive {
+                    return state.browse_archive(&path);
                 }
                 let Some(app) = &with else {
                     return state.choose_program(&path);

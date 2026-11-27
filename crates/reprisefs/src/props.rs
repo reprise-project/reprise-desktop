@@ -1171,6 +1171,31 @@ pub fn own_default_in_lists(
     default_of_names(lists, &tree.names(mime), apps)
 }
 
+/// The program a mimeapps.list `[Default Applications]` line names for `mime` or an alias: a
+/// default the user chose, where [`default_app`] also takes any program declaring the type.
+pub fn chosen_default(mime: &str, apps: &[AppEntry]) -> Option<usize> {
+    let lists: Vec<String> = mimeapps_paths()
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    chosen_in_lists(&lists, &MimeTree::load(), mime, apps)
+}
+
+/// [`chosen_default`] over `lists`, as [`default_in_lists`] is to [`default_app`].
+pub fn chosen_in_lists(
+    lists: &[String],
+    tree: &MimeTree,
+    mime: &str,
+    apps: &[AppEntry],
+) -> Option<usize> {
+    let names = tree.names(mime);
+    lists.iter().find_map(|text| {
+        (names.iter())
+            .flat_map(|m| ids_in_list(text, "Default Applications", m))
+            .find_map(|id| apps.iter().position(|a| a.id == id))
+    })
+}
+
 /// File verbs a file of `mime` gets besides Open: Print for text, images and PDFs when `lp` is installed, Edit for text.
 pub fn verbs(mime: Option<&str>, has_lp: bool) -> (bool, bool) {
     let Some(mime) = mime else {

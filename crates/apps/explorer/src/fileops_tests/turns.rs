@@ -53,7 +53,7 @@ fn the_picker_keeps_its_window_across_its_events() {
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.sv.selection.set_only(Some(0));
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     let win = box_win(&ex).expect("the picker's window");
     ex.event(win, right(), &mut ctx);
     assert!(matches!(ex.dialog(), Some(Dialog::Browse(_))));

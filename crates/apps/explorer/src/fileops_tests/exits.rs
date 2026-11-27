@@ -125,7 +125,7 @@ fn raise(i: usize) -> Option<Raised> {
         7 => drop(ex.about_box(&mut ctx)),
         8 => {
             ex.sv.selection.set_only(Some(0));
-            ex.open_browse(false, &mut ctx);
+            ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
         }
         9 => {
             let u = repriseapp::unlock::Unlock::open("/dev/sdz1".into(), "Stick", &mut ctx);

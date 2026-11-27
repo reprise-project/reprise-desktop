@@ -318,6 +318,28 @@ fn a_type_s_own_default_never_falls_back_to_a_parent() {
     );
 }
 
+#[test]
+fn a_chosen_default_is_only_one_a_default_applications_line_names() {
+    let tree = MimeTree::parse([""], [""]);
+    let apps = vec![
+        app("files.desktop", &["application/zip"]),
+        app("ark.desktop", &["application/zip"]),
+    ];
+    let chosen = |list: &str| {
+        let lists = [list.to_string()];
+        chosen_in_lists(&lists, &tree, "application/zip", &apps).map(|i| apps[i].id.to_string())
+    };
+    assert_eq!(chosen(""), None, "declaring the type is no choice");
+    assert_eq!(
+        chosen("[Added Associations]\napplication/zip=ark.desktop\n"),
+        None
+    );
+    assert_eq!(
+        chosen("[Default Applications]\napplication/zip=ark.desktop\n").as_deref(),
+        Some("ark.desktop")
+    );
+}
+
 const DOCX: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 #[test]

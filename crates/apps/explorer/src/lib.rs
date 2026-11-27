@@ -170,6 +170,14 @@ pub(crate) enum Opened {
     Open(Result<reprisefs::props::Opening, reprisefs::apps::ExecRefused>),
     /// A file whose type has no program: Open With asks for one.
     Choose,
+    /// An archive that opens as a compressed folder ([`reprisefs::archive::opens_as_folder`]).
+    Browse,
+    /// A file of a compressed folder copied out to `.0`, and what opening the copy came to.
+    Copied(PathBuf, Box<Opened>),
+    /// A file of a compressed folder that could not be copied out, and why.
+    NotCopied(String),
+    /// A file of a compressed folder that would run as a program, which is not opened.
+    Runs,
 }
 
 /// How long a listing is waited for before the window goes on. Tests wait as long as it takes.
@@ -444,6 +452,8 @@ pub struct Explorer {
     /// work for a folder the user has left.
     thumbs: Thumbs,
     generation: u64,
+    /// The compressed folders' listings, kept while their archives stay unchanged.
+    pub(crate) archives: reprisefs::archive::Listings,
     /// The scale the main window last drew at ([`Explorer::follow_scale`]).
     drawn_scale: i32,
     /// The size the toolbar's icons were last fetched at
@@ -743,6 +753,7 @@ impl Explorer {
                 ctx.wake.clone(),
             ),
             generation: 0,
+            archives: Default::default(),
             drawn_scale: 0,
             toolbar_px: 0,
             drawn_theme: None,
@@ -894,6 +905,7 @@ impl Explorer {
             can_back: self.can_back(),
             can_forward: self.history.can_forward(),
             extract: None,
+            archive: matches!(self.place, Place::Archive(..)),
             local_paths: self.selected_local().is_some(),
             compress: None,
             disk_image: false,
@@ -1078,8 +1090,9 @@ impl Explorer {
         ctx: &mut Ctx,
         show: impl FnOnce(&mut Self, Place, &mut Ctx) -> Reply,
     ) -> Reply {
-        let left = match place {
-            Place::Desktop => self.place.row_path().or_else(|| self.place.path()),
+        let left = match (&place, &self.place) {
+            (Place::Desktop, _) => self.place.row_path().or_else(|| self.place.path()),
+            (_, Place::Archive(file, inner)) => Some(place::in_archive(file, inner)),
             _ => self.place.path(),
         };
         let reply = show(self, place.clone(), ctx);
@@ -1164,6 +1177,15 @@ impl Explorer {
         }
         self.search_job = None;
         self.sync_drives(ctx);
+        let archive = |p: &Place| match p {
+            Place::Archive(file, _) => Some(file.clone()),
+            _ => None,
+        };
+        if archive(&place) != archive(&self.place) {
+            // A listing of the archive left is stopped, and a read of it is not joined later.
+            self.archives.cancel();
+            self.left.retain(|r| archive(&r.key.0).is_none());
+        }
         let key = (place, self.folders.show_hidden, ctx.icons.scale());
         if let Some(r) = self.reading.take_if(|r| r.key != key) {
             self.leave(r);
@@ -1222,11 +1244,12 @@ impl Explorer {
         let shares = self.shares.shares.clone();
         let portable = self.portable.clone();
         let mounts = self.drive_mounts.clone();
-        let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
+        let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place.in_tree(), &mounts);
         let scale = ctx.icons.scale();
         let sizes = shellview::listing_px(ctx.theme.text);
         let tree_px = self.tree_places.px;
         let specials = self.specials.clone();
+        let archives = self.archives.clone();
         move || {
             let devices = place::Devices {
                 drives: &drives,
@@ -1234,7 +1257,12 @@ impl Explorer {
                 shares: &shares,
                 portable: &portable,
             };
-            let listed = list(&place, &globs, show_hidden, devices);
+            let listed = match &place {
+                Place::Archive(file, inner) => {
+                    place::archive_listing(&archives, (file, inner), &globs, show_hidden)
+                }
+                _ => list(&place, &globs, show_hidden, devices),
+            };
             let icons = ReadIcons::read(&listed.items, sizes, scale);
             let inp = foldertree::Inputs {
                 show_hidden,
@@ -1282,7 +1310,13 @@ impl Explorer {
     fn show_read(&mut self, read: Read, ctx: &mut Ctx) -> Reply {
         let Read {
             place,
-            listed: Listed { items, groups, .. },
+            listed:
+                Listed {
+                    items,
+                    groups,
+                    error,
+                    ..
+                },
             icons: read_icons,
             sizes,
             tree,
@@ -1441,6 +1475,14 @@ impl Explorer {
         self.thumbs.cancel_all();
         self.hide_tip();
         self.request_thumbs(ctx.icons.scale());
+        let failed = match (&place, error) {
+            (Place::Archive(file, _), Some(why)) => {
+                let name = file.file_name().unwrap_or_default().to_string_lossy();
+                let text = tr!("archive-open-failed", name = &*name, why = why);
+                self.message_box(&tr!("archive-open-failed-title"), text, ctx)
+            }
+            _ => Reply::none(),
+        };
         if let Some(w) = self.watch.as_mut() {
             match place.path() {
                 Some(_) if place == Place::RecycleBin => {
@@ -1456,7 +1498,7 @@ impl Explorer {
         }
         Reply {
             redraw: true,
-            ..closed
+            ..closed.and(failed)
         }
     }
 
@@ -1648,6 +1690,9 @@ impl Explorer {
     /// listing thread since the link's mount may be dead; a late answer lands on a wake
     /// ([`Explorer::take_followed`]), dropped if the window has moved on by then.
     pub(crate) fn open_folder(&mut self, it: &Item, to: Follow, ctx: &mut Ctx) -> Reply {
+        if let Some((file, inner)) = self.place.archive_entry(&it.path) {
+            return self.followed(Place::Archive(file.to_path_buf(), inner), to, ctx);
+        }
         if !it.is_link {
             return self.followed(Place::from_path(&it.path), to, ctx);
         }
@@ -1722,6 +1767,39 @@ impl Explorer {
         if let Some(shortcut) = it.shortcut.as_deref() {
             return self.opened(&it.path, Opened::Open(self.open_for(shortcut)), ctx);
         }
+        if let Some((file, path)) = self.place.archive_entry(&it.path) {
+            let entry = reprisefs::archive::Entry {
+                path,
+                kind: reprisefs::archive::Kind::File,
+                size: it.size,
+                modified: it.modified,
+            };
+            let (file, open) = (file.to_path_buf(), self.opening(false, open, how));
+            let globs = self.globs.clone();
+            let copy = move || {
+                let dir = match reprisefs::archive::scratch() {
+                    Ok(dir) => dir,
+                    Err(e) => return Opened::NotCopied(e.to_string()),
+                };
+                let copy = match reprisefs::archive::copy_out(&file, &entry, &dir) {
+                    Ok(copy) => copy,
+                    Err(why) => {
+                        let _ = std::fs::remove_dir(&dir);
+                        return Opened::NotCopied(why);
+                    }
+                };
+                let name = entry.path.file_name().unwrap_or_default().to_string_lossy();
+                if reprisefs::archive::runs_as_a_program(
+                    &copy,
+                    globs.mime_of_name(&name).as_deref(),
+                ) {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    return Opened::Runs;
+                }
+                Opened::Copied(copy.clone(), Box::new(open(copy)))
+            };
+            return self.open_off_loop(it.path.clone(), copy, ctx);
+        }
         self.open_file(&it.path, it.exec, open, how, ctx)
     }
 
@@ -1777,14 +1855,25 @@ impl Explorer {
         how: Confirm,
         ctx: &mut Ctx,
     ) -> Reply {
+        let (path, open) = (path.to_path_buf(), self.opening(exec, open, how));
+        let at = path.clone();
+        self.open_off_loop(at, move || open(path), ctx)
+    }
+
+    /// What opening the file at a path comes to, for a listing thread: [`Explorer::open_file`]'s
+    /// reading of it.
+    fn opening(
+        &self,
+        exec: bool,
+        open: ScriptOpen,
+        how: Confirm,
+    ) -> impl FnOnce(PathBuf) -> Opened + Send + 'static {
         let (globs, apps) = (self.globs.clone(), self.app_index.clone());
         let (terminal, end) = (
             repriseconf::current().terminal.clone(),
             repriseconf::current().script_terminal,
         );
-        let path = path.to_path_buf();
-        let at = path.clone();
-        let read = move || {
+        move |path: PathBuf| {
             let program = exec
                 .then(|| std::fs::metadata(&path).ok())
                 .flatten()
@@ -1796,12 +1885,19 @@ impl Explorer {
                 {
                     return Opened::Ask(open, reprisefs::program::Asked::Typed);
                 }
+                if mime
+                    .as_deref()
+                    .is_some_and(|m| reprisefs::archive::opens_as_folder(m, &apps))
+                {
+                    return Opened::Browse;
+                }
                 let open = reprisefs::props::open_in(&path, &globs, &apps, &terminal);
                 let Some(open) = open.transpose() else {
                     return Opened::Choose;
                 };
                 if let Ok(open) = &open
                     && repriseconf::current().recent_files
+                    && !reprisefs::archive::is_copy(&path)
                 {
                     let app = (open.app.as_ref()).and_then(|id| apps.iter().find(|a| a.id == *id));
                     if let Err(e) = reprisefs::recent::record(&[(&path, app, mime.as_deref())]) {
@@ -1819,8 +1915,7 @@ impl Explorer {
                 Ok(argv) => Opened::Run(argv, scope),
                 Err(e) => Opened::Ran(Err(e)),
             }
-        };
-        self.open_off_loop(at, read, ctx)
+        }
     }
 
     /// Runs `read` for the opening of `at` on a listing thread, answered now or, late, by
@@ -1879,7 +1974,19 @@ impl Explorer {
                 ..Default::default()
             },
             Opened::Open(Err(refused)) => self.exec_refused(&refused, ctx),
+            Opened::Browse => self.go(Place::Archive(path.to_path_buf(), PathBuf::new()), ctx),
             Opened::Choose => self.choose_program_for(path, None, ctx),
+            Opened::Copied(copy, opened) => self.opened(&copy, *opened, ctx),
+            Opened::Runs => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let text = tr!("archive-runs", name = &*name);
+                self.message_box(&tr!("archive-copy-failed-title"), text, ctx)
+            }
+            Opened::NotCopied(why) => {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let text = tr!("archive-copy-failed", name = &*name, why = why);
+                self.message_box(&tr!("archive-copy-failed-title"), text, ctx)
+            }
             Opened::Run(argv, scope) => {
                 self.launches
                     .push_back(Launch::Run(path.to_path_buf(), argv, scope));
@@ -2527,6 +2634,13 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             alone: None,
             search: false,
             tabs: Some(tabs),
+        };
+    }
+    if first.as_deref() == Some("--archive".as_ref()) {
+        let file = args.next().map(PathBuf::from).filter(|p| p.is_absolute());
+        return Start {
+            place: file.map_or(Place::Home, |f| Place::Archive(f, PathBuf::new())),
+            ..parse_args(std::iter::empty())
         };
     }
     if first.as_deref() == Some("--search".as_ref()) {

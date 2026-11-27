@@ -285,7 +285,7 @@ impl Explorer {
 
     /// The single selected file, when it is a disk image.
     pub(crate) fn selected_disk_image(&self) -> Option<&Item> {
-        if self.place == Place::RecycleBin {
+        if matches!(self.place, Place::RecycleBin | Place::Archive(..)) {
             return None;
         }
         let it = self.items.get(self.sv.selection.single()?)?;

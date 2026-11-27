@@ -78,7 +78,9 @@ impl Explorer {
     /// Queues thumbnails for files ([`Item::thumbnailable`]) without one at the window's `scale` (Thumbnails and
     /// Tiles only). One made at another scale shows until its replacement arrives.
     pub fn request_thumbs(&mut self, scale: i32) {
-        if !matches!(self.sv.mode, Mode::Thumbnails | Mode::Tiles) {
+        if !matches!(self.sv.mode, Mode::Thumbnails | Mode::Tiles)
+            || matches!(self.place, Place::Archive(..))
+        {
             return;
         }
         let r#gen = self.generation;

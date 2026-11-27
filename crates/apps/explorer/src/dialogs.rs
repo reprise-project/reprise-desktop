@@ -350,8 +350,11 @@ impl Dialog {
                 tr!("dialogs-title-change-icon-for-name-folder", name = name)
             }
             Dialog::About(..) => tr!("dialogs-title-about-explorer"),
-            Dialog::Browse(b) if b.mv => tr!("dialogs-title-move-items"),
-            Dialog::Browse(_) => tr!("dialogs-title-copy-items"),
+            Dialog::Browse(b) => match b.pick {
+                crate::browse::Pick::Move => tr!("dialogs-title-move-items"),
+                crate::browse::Pick::Copy => tr!("dialogs-title-copy-items"),
+                crate::browse::Pick::Extract => tr!("dialogs-title-extract-all"),
+            },
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
             Dialog::BatchRename(_) => tr!("dialogs-title-rename"),
             Dialog::NewShortcut(_) => reprisekit::controls::newshortcut::title().to_string(),
