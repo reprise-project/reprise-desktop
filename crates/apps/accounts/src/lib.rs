@@ -1,6 +1,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("accounts");
+
 mod acct;
 mod adduser;
 mod fingers;
@@ -35,6 +37,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
 use reprisekit::theme::{TextUnits, Theme};
+use reprisekit::{kit_tr, tr};
 
 use acct::{Op, User};
 use rdpassword::RdPasswordDialog;
@@ -47,8 +50,9 @@ const BROWSE: WinId = WinId::named("browse");
 const RD_PASSWORD: WinId = WinId::named("rd_password");
 const ADD_FINGER: WinId = WinId::named("add_finger");
 
-const TITLE: &str = "User Accounts";
-const BUSY: &str = "Another change is still being made. Try again once it is done.";
+fn title() -> String {
+    tr!("accounts-title")
+}
 
 const ROW_PX: u32 = 32;
 
@@ -327,13 +331,11 @@ impl AccountsApp {
             fingerprints::Action::Delete(f) => self.delete_fingers(Some(f)),
             fingerprints::Action::DeleteAll => {
                 let b = MsgBox::new(
-                    "Delete All Fingerprints",
+                    tr!("accounts-delete-fingerprints-title"),
                     Fields {
-                        text: "Delete all your fingerprints? You unlock with your password until \
-                               you add one again."
-                            .into(),
+                        text: tr!("accounts-delete-fingerprints-text"),
                         icon: ctx.icons.get("dialog-question", 32),
-                        buttons: vec!["&Delete All".into(), "Cancel".into()],
+                        buttons: vec![tr!("accounts-delete-all"), kit_tr!("cancel")],
                         default: 1,
                         min_text_h: None,
                         min_w: 0,
@@ -520,7 +522,7 @@ impl AccountsApp {
     }
 
     fn fail(&mut self, text: String) {
-        self.error.show(TITLE, text, None);
+        self.error.show(&title(), text, None);
     }
 
     /// [`AccountsApp::fail`] raised from the sheet or Add Account (`win`): the box covers that
@@ -532,7 +534,7 @@ impl AccountsApp {
             _ => false,
         };
         match open {
-            true => self.error.show_over(win, TITLE, text, None),
+            true => self.error.show_over(win, &title(), text, None),
             false => self.fail(text),
         }
     }
@@ -651,8 +653,7 @@ impl AccountsApp {
             }
             Err(e) => {
                 log::error!("AccountsService does not answer: {e}");
-                self.users
-                    .fail("The accounts could not be read. Is AccountsService installed?".into());
+                self.users.fail(tr!("accounts-unreadable"));
             }
         }
         let mine = |sheet| matches!(after, After::Props { sheet: s, .. } if s == sheet);
@@ -695,7 +696,9 @@ impl AccountsApp {
                 _ => None,
             };
             match (whose, after) {
-                (Some(name), _) => self.fail(format!("The account {name}:\n\n{why}")),
+                (Some(name), _) => {
+                    self.fail(tr!("accounts-account-failed", name = name, why = why))
+                }
                 (None, After::Props { .. }) if ours => self.fail_over(PROPS, why),
                 (None, After::Add { .. }) if added => self.fail_over(ADD, why),
                 (None, _) => self.fail(why),
@@ -762,18 +765,18 @@ impl AccountsApp {
             return self.fail(why);
         }
         let b = MsgBox::new(
-            "Delete Account",
+            tr!("accounts-delete-title"),
             Fields {
-                text: format!(
-                    "Delete the account {}?\nTheir files in {} can stay on this computer or go with the account.",
-                    u.named(),
-                    u.home
+                text: tr!(
+                    "accounts-delete-text",
+                    name = u.named(),
+                    home = u.home.as_str()
                 ),
                 icon: ctx.icons.get("dialog-question", 32),
                 buttons: vec![
-                    "&Delete Files".into(),
-                    "&Keep Files".into(),
-                    "Cancel".into(),
+                    tr!("accounts-delete-files"),
+                    tr!("accounts-keep-files"),
+                    kit_tr!("cancel"),
                 ],
                 default: 2,
                 min_text_h: None,
@@ -1035,7 +1038,7 @@ impl AccountsApp {
                     remove_files: b == 0,
                 };
                 if !self.run(vec![op], After::Remove) {
-                    self.fail(BUSY.into());
+                    self.fail(tr!("accounts-busy"));
                 }
             }
             (Ask::ClearFingers, Some(0)) => self.delete_fingers(None),
@@ -1055,13 +1058,13 @@ impl AccountsApp {
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("/"));
         let fields = FileFields {
-            title: "Browse".into(),
-            accept_label: "Open".into(),
+            title: tr!("accounts-browse-title"),
+            accept_label: tr!("accounts-browse-open"),
             mode: DlgMode::Open,
             multiple: false,
             filters: vec![
-                "Pictures (*.png;*.jpg;*.jpeg;*.bmp;*.jxl;*.avif)".into(),
-                "All Files (*.*)".into(),
+                tr!("accounts-browse-filter-pictures"),
+                tr!("accounts-browse-filter-all"),
             ],
         };
         self.browse = Some(self.browse_host.open_last(&dir, fields, u));
@@ -1102,10 +1105,7 @@ impl AccountsApp {
                     .file_name()
                     .unwrap_or(path.as_os_str())
                     .to_string_lossy();
-                self.fail_over(
-                    PROPS,
-                    format!("'{name}' is not a picture Reprise can read."),
-                );
+                self.fail_over(PROPS, tr!("accounts-not-a-picture", name = name.as_ref()));
             }
         }
     }
@@ -1133,7 +1133,7 @@ fn p_unapplied(p: &mut Option<props::Props>) {
 
 impl App for AccountsApp {
     fn title(&self) -> String {
-        TITLE.into()
+        title()
     }
 
     fn app_id(&self) -> String {
@@ -1158,7 +1158,7 @@ impl App for AccountsApp {
         if self.add.is_some() {
             out.push(Child {
                 id: ADD,
-                title: "Add Account".into(),
+                title: tr!("accounts-add-title"),
                 size: self.forms.text.size(adduser::CLIENT),
                 fixed: true,
                 modal: false,
@@ -1167,7 +1167,7 @@ impl App for AccountsApp {
         if let Some(d) = &self.rd_password {
             out.push(Child {
                 id: RD_PASSWORD,
-                title: d.title().into(),
+                title: d.title(),
                 size: self.forms.text.size(d.client()),
                 fixed: true,
                 modal: true,
@@ -1185,7 +1185,7 @@ impl App for AccountsApp {
         if self.browse.is_some() {
             out.push(Child {
                 id: BROWSE,
-                title: "Browse".into(),
+                title: tr!("accounts-browse-title"),
                 size: self.browse.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
                 fixed: false,
                 modal: true,

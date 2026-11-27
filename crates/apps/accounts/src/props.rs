@@ -18,13 +18,21 @@ use reprisekit::controls::remotepassword::{self, Action, Section};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 use zeroize::Zeroizing;
 
 use crate::acct::{ONLY_ADMIN, Op, PasswordMode, User};
 use crate::picture::Source;
 
 pub const CLIENT: (i32, i32) = (398, 410);
-pub const TABS: [&str; 4] = ["General", "Picture", "Password", "Fingerprints"];
+fn tabs() -> [String; 4] {
+    [
+        tr!("props-tab-general"),
+        tr!("props-tab-picture"),
+        tr!("props-tab-password"),
+        tr!("props-tab-fingerprints"),
+    ]
+}
 pub const TAB_GENERAL: usize = 0;
 pub const TAB_PICTURE: usize = 1;
 pub const TAB_PASSWORD: usize = 2;
@@ -49,11 +57,13 @@ pub const PREVIEW_PX: u32 = 96;
 const STOCK_PX: u32 = 32;
 
 /// Why the box alone is refused on an account with no password.
-pub const NO_PASSWORD: &str = "This account has no password. Type a new one for it.";
+pub fn no_password() -> String {
+    tr!("props-no-password")
+}
 /// Why the box alone is refused on an account that may have none until its next login.
-pub const MAYBE_NO_PASSWORD: &str = "This account already has to pick a new password at its \
-                                     next login, and may have none until then. Type a new one \
-                                     for it.";
+pub fn maybe_no_password() -> String {
+    tr!("props-may-have-no-password")
+}
 
 const X: i32 = 16;
 const FIELD_X: i32 = 150;
@@ -126,21 +136,21 @@ fn general_page(user: &User, face: Option<Canvas>, last_admin: bool) -> Form {
             Rect::new(X, 104, CLIENT.0 - 2 * X, 2),
             Control::Separator,
         ),
-        Item::label_at("name_l", X, 122, 120, "&Full name:"),
+        Item::label_at("name_l", X, 122, 120, &tr!("props-full-name")),
         Item::edit(
             NAME,
             Rect::new(FIELD_X - 50, 118, FIELD_W + 50, FIELD_H),
             &user.real_name,
             true,
         ),
-        Item::label_at("login_l", X, 148, 80, "User name:"),
+        Item::label_at("login_l", X, 148, 80, &tr!("props-user-name")),
         Item::label_at("login_v", FIELD_X - 50, 148, FIELD_W + 50, &user.login),
         Item::group(
             "kind_g",
             Rect::new(X, gy, CLIENT.0 - 2 * X, 112),
-            "Account type",
+            &tr!("props-account-type"),
         ),
-        Item::radio(STANDARD, X + 12, gy + 20, "&Standard user", "kind")
+        Item::radio(STANDARD, X + 12, gy + 20, &tr!("props-standard"), "kind")
             .checked(!user.admin)
             .enabled(!last_admin),
         Item::lines_at(
@@ -148,16 +158,10 @@ fn general_page(user: &User, face: Option<Canvas>, last_admin: bool) -> Form {
             X + 30,
             gy + 38,
             320,
-            &["Can use programs and change their own settings."],
+            &[&tr!("props-standard-desc")],
         ),
-        Item::radio(ADMIN, X + 12, gy + 60, "&Administrator", "kind").checked(user.admin),
-        Item::lines_at(
-            "admin_d",
-            X + 30,
-            gy + 78,
-            320,
-            &["Can change any setting and manage other accounts."],
-        ),
+        Item::radio(ADMIN, X + 12, gy + 60, &tr!("props-admin"), "kind").checked(user.admin),
+        Item::lines_at("admin_d", X + 30, gy + 78, 320, &[&tr!("props-admin-desc")]),
     ])
 }
 
@@ -180,10 +184,7 @@ fn picture_page(face: Option<Canvas>, u: TextUnits) -> Form {
             X,
             40,
             CLIENT.0 - 2 * X,
-            &[
-                "Pick a picture for the account, or browse for one of your",
-                "own. A picture that is not square is cut to its middle.",
-            ],
+            &tr!("props-picture-intro").lines().collect::<Vec<_>>(),
         ),
         Item::new(
             STOCK,
@@ -200,7 +201,7 @@ fn picture_page(face: Option<Canvas>, u: TextUnits) -> Form {
             },
         )
         .grows(),
-        Item::button_at(BROWSE, right, 80 + px + 12, px, "&Browse...", true),
+        Item::button_at(BROWSE, right, 80 + px + 12, px, &tr!("props-browse"), true),
     ])
 }
 
@@ -234,23 +235,23 @@ fn fingers_page(s: &fingerprints::Section) -> Form {
 
 fn login_password(user: &User) -> Vec<Item> {
     if user.you {
-        let intro: &[&str] = match user.password_mode {
-            PasswordMode::Empty => &[
-                "Your account has no password. To set one, type the",
-                "new password twice.",
-            ],
-            PasswordMode::Regular | PasswordMode::AtLogin => &[
-                "To change your password, type the one you use now,",
-                "then the new one twice.",
-            ],
+        let intro = match user.password_mode {
+            PasswordMode::Empty => tr!("props-password-intro-none"),
+            PasswordMode::Regular | PasswordMode::AtLogin => tr!("props-password-intro-change"),
         };
         return vec![
-            Item::lines_at("intro", X, 40, CLIENT.0 - 2 * X, intro),
-            Item::label_at(CURRENT_L, X, 84, 130, "&Current password:"),
+            Item::lines_at(
+                "intro",
+                X,
+                40,
+                CLIENT.0 - 2 * X,
+                &intro.lines().collect::<Vec<_>>(),
+            ),
+            Item::label_at(CURRENT_L, X, 84, 130, &tr!("props-current-password")),
             secret(CURRENT, 80),
-            Item::label_at("new_l", X, 114, 130, "&New password:"),
+            Item::label_at("new_l", X, 114, 130, &tr!("props-new-password")),
             secret(NEW, 110),
-            Item::label_at("confirm_l", X, 144, 130, "C&onfirm new password:"),
+            Item::label_at("confirm_l", X, 144, 130, &tr!("props-confirm-new-password")),
             secret(CONFIRM, 140),
         ];
     }
@@ -260,22 +261,15 @@ fn login_password(user: &User) -> Vec<Item> {
             X,
             40,
             CLIENT.0 - 2 * X,
-            &[
-                "Set a new password for this account. Anything its old",
-                "password unlocked, such as saved keyring passwords,",
-                "stays locked until it is unlocked with the old one.",
-            ],
+            &tr!("props-password-intro-other")
+                .lines()
+                .collect::<Vec<_>>(),
         ),
-        Item::label_at("new_l", X, 98, 130, "&New password:"),
+        Item::label_at("new_l", X, 98, 130, &tr!("props-new-password")),
         secret(NEW, 94),
-        Item::label_at("confirm_l", X, 128, 130, "C&onfirm new password:"),
+        Item::label_at("confirm_l", X, 128, 130, &tr!("props-confirm-new-password")),
         secret(CONFIRM, 124),
-        Item::check(
-            AT_LOGIN,
-            X,
-            160,
-            "As&k for a new password at the next login",
-        ),
+        Item::check(AT_LOGIN, X, 160, &tr!("props-at-next-login")),
     ]
 }
 
@@ -302,7 +296,7 @@ impl Props {
             fingers_page(&fingers),
         ];
         let mut p = Props {
-            sheet: PropSheet::new(&TABS, pages, CLIENT),
+            sheet: PropSheet::new(&tabs().each_ref().map(String::as_str), pages, CLIENT),
             user,
             last_admin,
             picture: None,
@@ -340,7 +334,7 @@ impl Props {
     }
 
     pub fn window_title(&self) -> String {
-        format!("{} Properties", self.user.shown_name())
+        tr!("props-title", name = self.user.shown_name())
     }
 
     fn pending_name(&self) -> String {
@@ -430,26 +424,26 @@ impl Props {
                 && self.user.password_mode != PasswordMode::Empty
                 && page.edit_text(CURRENT).is_empty()
             {
-                return Err("Type your current password first.".into());
+                return Err(tr!("props-need-current"));
             }
             // The box alone keeps the account's password; it only has to be changed at login.
             let keeps = at_login && new.is_empty() && confirm.is_empty();
             if new.is_empty() && !keeps {
-                return Err("Type a new password.".into());
+                return Err(tr!("props-need-new"));
             }
             match self.user.password_mode {
-                PasswordMode::Empty if keeps => return Err(NO_PASSWORD.into()),
-                PasswordMode::AtLogin if keeps => return Err(MAYBE_NO_PASSWORD.into()),
+                PasswordMode::Empty if keeps => return Err(no_password()),
+                PasswordMode::AtLogin if keeps => return Err(maybe_no_password()),
                 _ => {}
             }
             if new != confirm {
-                return Err("The new passwords do not match. Type them again.".into());
+                return Err(tr!("props-new-differ"));
             }
         }
         let name = self.pending_name();
         if name != self.user.real_name.trim() {
             if name.contains([':', ',', '\n']) {
-                return Err("A full name cannot hold a colon or a comma.".into());
+                return Err(tr!("props-name-chars"));
             }
             ops.push(Op::RealName {
                 path: path.clone(),
@@ -1326,8 +1320,8 @@ mod tests {
     #[test]
     fn the_box_alone_is_refused_on_an_account_that_may_have_no_password() {
         for (mode, why) in [
-            (PasswordMode::Empty, NO_PASSWORD),
-            (PasswordMode::AtLogin, MAYBE_NO_PASSWORD),
+            (PasswordMode::Empty, no_password()),
+            (PasswordMode::AtLogin, maybe_no_password()),
         ] {
             let mut u = user(false, false);
             u.password_mode = mode;
@@ -1335,7 +1329,7 @@ mod tests {
             tick_at_login(&mut p);
             assert_eq!(
                 p.event(propsheet::Event::Apply, no_file),
-                Outcome::Refuse(why.into()),
+                Outcome::Refuse(why),
                 "{mode:?}"
             );
             type_into(&mut p, TAB_PASSWORD, NEW, "temp-pw1");

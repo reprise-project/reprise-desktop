@@ -6,6 +6,7 @@ use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
+use reprisekit::{kit_tr, tr};
 use zeroize::Zeroizing;
 
 use crate::acct::Op;
@@ -74,7 +75,7 @@ pub fn suggest(full: &str) -> String {
     s.chars().take(LOGIN_MAX).collect()
 }
 
-pub fn login_problem(login: &str, taken: &[String]) -> Option<&'static str> {
+pub fn login_problem(login: &str, taken: &[String]) -> Option<String> {
     let mut chars = login.chars();
     let first_ok = chars
         .next()
@@ -83,13 +84,13 @@ pub fn login_problem(login: &str, taken: &[String]) -> Option<&'static str> {
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
     if login.is_empty() {
-        Some("Type a user name.")
+        Some(tr!("add-account-type-name"))
     } else if login.len() > LOGIN_MAX {
-        Some("The user name is longer than 32 characters.")
+        Some(tr!("add-account-name-too-long"))
     } else if !first_ok || !rest_ok {
-        Some("Use small letters, digits, - and _, starting with a letter.")
+        Some(tr!("add-account-name-rules"))
     } else if taken.iter().any(|t| t == login) {
-        Some("That user name is taken.")
+        Some(tr!("add-account-name-taken"))
     } else {
         None
     }
@@ -100,34 +101,45 @@ impl AddUser {
         let gy = 104;
         let py = 176;
         let by = CLIENT.1 - X - BUTTON_H;
+        let intro = tr!("add-account-intro");
         let items = vec![
             Item::lines_at(
                 "intro",
                 X,
                 12,
                 CLIENT.0 - 2 * X,
-                &[
-                    "Type the person's name. The user name is what they",
-                    "log in with; it cannot be changed later.",
-                ],
+                &intro.lines().collect::<Vec<_>>(),
             ),
-            Item::label_at("full_l", X, 52, 100, "&Full name:"),
+            Item::label_at("full_l", X, 52, 100, &tr!("add-account-full-name")),
             field(FULL, 48, false),
-            Item::label_at("login_l", X, 80, 100, "&User name:"),
+            Item::label_at("login_l", X, 80, 100, &tr!("add-account-user-name")),
             field(LOGIN, 76, false),
             Item::group(
                 "kind_g",
                 Rect::new(X, gy, CLIENT.0 - 2 * X, 62),
-                "Account type",
+                &tr!("add-account-type"),
             ),
-            Item::radio("standard", X + 12, gy + 18, "&Standard user", "kind").checked(true),
-            Item::radio(ADMIN, X + 12, gy + 38, "&Administrator", "kind"),
+            Item::radio(
+                "standard",
+                X + 12,
+                gy + 18,
+                &tr!("add-account-standard"),
+                "kind",
+            )
+            .checked(true),
+            Item::radio(ADMIN, X + 12, gy + 38, &tr!("add-account-admin"), "kind"),
             Item::group(
                 "password_g",
                 Rect::new(X, py, CLIENT.0 - 2 * X, 92),
-                "Password",
+                &tr!("add-account-password-group"),
             ),
-            Item::label_at("password_l", X + 12, py + 22, 96, "&Password:"),
+            Item::label_at(
+                "password_l",
+                X + 12,
+                py + 22,
+                96,
+                &tr!("add-account-password"),
+            ),
             Item::new(
                 PASSWORD,
                 Rect::new(FIELD_X, py + 18, FIELD_W - 12, FIELD_H),
@@ -137,7 +149,13 @@ impl AddUser {
                     enabled: true,
                 },
             ),
-            Item::label_at("confirm_l", X + 12, py + 48, 96, "C&onfirm:"),
+            Item::label_at(
+                "confirm_l",
+                X + 12,
+                py + 48,
+                96,
+                &tr!("add-account-confirm"),
+            ),
             Item::new(
                 CONFIRM,
                 Rect::new(FIELD_X, py + 44, FIELD_W - 12, FIELD_H),
@@ -147,17 +165,12 @@ impl AddUser {
                     enabled: true,
                 },
             ),
-            Item::check(
-                AT_LOGIN,
-                X + 12,
-                py + 72,
-                "As&k for a new password at the first login",
-            ),
+            Item::check(AT_LOGIN, X + 12, py + 72, &tr!("add-account-at-login")),
             Item::label(HINT, Rect::new(X, py + 100, CLIENT.0 - 2 * X, LINE_H), ""),
             Item::button(
                 CREATE,
                 Rect::new(CLIENT.0 - X - 2 * BUTTON_W - 6, by, BUTTON_W, BUTTON_H),
-                "Create",
+                &tr!("add-account-create"),
                 false,
                 true,
             ),
@@ -166,7 +179,7 @@ impl AddUser {
                 CLIENT.0 - X - BUTTON_W,
                 by,
                 BUTTON_W,
-                "Cancel",
+                &kit_tr!("cancel"),
                 true,
             ),
         ];
@@ -189,17 +202,17 @@ impl AddUser {
         self.form.checked(AT_LOGIN) == Some(true)
     }
 
-    pub fn problem(&self) -> Option<&'static str> {
+    pub fn problem(&self) -> Option<String> {
         if self.text(FULL).contains([':', ',']) {
-            return Some("A full name cannot hold a colon or a comma.");
+            return Some(tr!("add-account-full-name-chars"));
         }
         if let Some(p) = login_problem(self.text(LOGIN), &self.taken) {
             return Some(p);
         }
         if self.text(PASSWORD).is_empty() {
-            Some("Type a password for the account.")
+            Some(tr!("add-account-type-password"))
         } else if self.text(PASSWORD) != self.text(CONFIRM) {
-            Some("The passwords do not match.")
+            Some(tr!("add-account-passwords-differ"))
         } else {
             None
         }
@@ -208,8 +221,14 @@ impl AddUser {
     fn sync(&mut self) {
         let problem = self.problem();
         let typed = !self.text(FULL).is_empty() || !self.text(LOGIN).is_empty();
-        self.form
-            .set_text(HINT, if typed { problem.unwrap_or("") } else { "" });
+        self.form.set_text(
+            HINT,
+            if typed {
+                problem.as_deref().unwrap_or("")
+            } else {
+                ""
+            },
+        );
         self.form
             .set_enabled(CREATE, problem.is_none() && !self.busy);
     }
@@ -343,13 +362,16 @@ mod tests {
         let taken = vec!["jo".to_string()];
         assert_eq!(login_problem("sam_2-b", &taken), None);
         assert_eq!(
-            login_problem("jo", &taken),
+            login_problem("jo", &taken).as_deref(),
             Some("That user name is taken.")
         );
         assert!(login_problem("Sam", &taken).is_some());
         assert!(login_problem("2sam", &taken).is_some());
         assert!(login_problem(&"a".repeat(33), &taken).is_some());
-        assert_eq!(login_problem("", &taken), Some("Type a user name."));
+        assert_eq!(
+            login_problem("", &taken),
+            Some(tr!("add-account-type-name"))
+        );
     }
 
     #[test]
@@ -358,10 +380,13 @@ mod tests {
         assert!(!create_live(&d));
         type_into(&mut d, FULL, "Sam Lee");
         assert_eq!(d.text(LOGIN), "sam", "filled in from the full name");
-        assert_eq!(d.problem(), Some("Type a password for the account."));
+        assert_eq!(
+            d.problem().as_deref(),
+            Some("Type a password for the account.")
+        );
         type_into(&mut d, PASSWORD, "pw12345!");
         type_into(&mut d, CONFIRM, "pw12345?");
-        assert_eq!(d.problem(), Some("The passwords do not match."));
+        assert_eq!(d.problem().as_deref(), Some("The passwords do not match."));
         if let Some(Control::Edit { edit, .. }) = d.form.item_mut(CONFIRM).map(|i| &mut i.control) {
             edit.wipe();
         }
@@ -391,7 +416,7 @@ mod tests {
         d.set_busy(false);
         assert!(create_live(&d));
         d.set_taken(vec!["sam".into()]);
-        assert_eq!(d.problem(), Some("That user name is taken."));
+        assert_eq!(d.problem().as_deref(), Some("That user name is taken."));
         assert!(!create_live(&d));
     }
 
@@ -426,7 +451,10 @@ mod tests {
         assert_eq!(d.text(LOGIN), "lee", "a typed user name stays");
         tick(&mut d, AT_LOGIN);
         tick(&mut d, ADMIN);
-        assert_eq!(d.problem(), Some("Type a password for the account."));
+        assert_eq!(
+            d.problem().as_deref(),
+            Some("Type a password for the account.")
+        );
         assert!(!create_live(&d));
         assert_eq!(d.event(form::Event::Default), Outcome::None);
         type_into(&mut d, PASSWORD, "first-pw1");

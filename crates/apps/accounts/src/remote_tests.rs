@@ -148,7 +148,7 @@ fn create_sends_the_login_and_remote_passwords_and_shows_done() {
 
     press(&mut a, remotepassword::CREATE);
     assert_eq!(
-        a.rd_password.as_ref().map(|d| d.title()),
+        a.rd_password.as_ref().map(|d| d.title()).as_deref(),
         Some("Create Remote Desktop Password")
     );
     send(&mut a, &SET_NEW);
