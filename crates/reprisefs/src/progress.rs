@@ -1,6 +1,7 @@
 //! How far a put or a removal has got: totals from a walk of its sources, bytes and items done,
 //! pause and cancel. The job's thread writes a [`Meter`]; the host reads a [`Snapshot`].
 
+use reprisekit::tr;
 use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -328,7 +329,7 @@ impl Meter {
         if self.cancelled() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
-                "The operation was cancelled.",
+                tr!("operation-cancelled"),
             ));
         }
         Ok(())

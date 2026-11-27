@@ -3,6 +3,7 @@
 
 use crate::names;
 use crate::progress::{Decision, Meter, Phase, Totals};
+use reprisekit::tr;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
@@ -24,7 +25,10 @@ pub const MIMES: [&str; 7] = [
     "application/x-bzip2-compressed-tar",
 ];
 
-pub const FAILURE_TITLE: &str = "Error Extracting File";
+/// The caption of an extract error box.
+pub fn failure_title() -> String {
+    tr!("extract-failed-title")
+}
 
 /// Suffixes a folder named after its archive drops, longest first.
 const SUFFIXES: [&str; 10] = [

@@ -99,7 +99,7 @@ pub fn start(waker: repriseapp::Waker, first: Shown) -> reprisetray::Started {
         Config {
             bus_name: BUS_NAME,
             id: "reprise-printers",
-            title: TITLE,
+            title: TITLE.into(),
             notify_icon: ICON,
             raise: Raise::MenuRow(Rows::id(&TrayMsg::Folder)),
         },

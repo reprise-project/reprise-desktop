@@ -6,6 +6,7 @@
 //! change. Polkit decides every call; the session's agent prompts when it has to. A disk image
 //! is set up read-only on a loop device ([`Udisks::mount_image`]) and stands in for a drive.
 
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -48,18 +49,18 @@ pub fn is_disk_image(mime: &str) -> bool {
 }
 
 /// The caption of the question before a disk image is mounted.
-pub const MOUNT_TITLE: &str = "Mount Disk Image";
+pub fn mount_title() -> String {
+    tr!("mount-image-title")
+}
 
 /// The question's buttons, Mount first and the default.
-pub const MOUNT_BUTTONS: [&str; 2] = ["&Mount", "Cancel"];
+pub fn mount_buttons() -> [String; 2] {
+    [tr!("mount-image-mount"), reprisekit::kit_tr!("cancel")]
+}
 
 /// The question's text for the disk image `name`.
 pub fn mount_text(name: &str) -> String {
-    format!(
-        "\"{name}\" is a disk image. Mounting it has this computer read the file system \
-         inside, which an image from someone you do not trust can use to harm it. It mounts \
-         read-only.\n\nDo you want to mount it?"
-    )
+    tr!("mount-image-text", name = name)
 }
 
 /// One interface's properties as `GetManagedObjects` returns them.

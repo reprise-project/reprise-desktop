@@ -3,6 +3,7 @@
 
 use crate::bindir::BinDir;
 use reprisebus::mutex::lock;
+use reprisekit::tr;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -467,7 +468,7 @@ pub(crate) fn make_room(
 }
 
 pub fn too_big_text(name: &str) -> String {
-    format!("'{name}' is too big for the Recycle Bin. Do you want to delete it permanently?")
+    tr!("too-big-text", name = name)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -627,43 +628,47 @@ pub fn delete_prompt(
     count: usize,
     erase: bool,
     no_bin: BinLack,
-) -> (&'static str, String) {
+) -> (String, String) {
     let (title, question) = match (kind, erase) {
         (ConfirmKind::File, false) => (
-            "Confirm File Delete",
-            format!("Are you sure you want to send '{name}' to the Recycle Bin?"),
+            tr!("delete-file-title"),
+            tr!("delete-file-recycle", name = name),
         ),
         (ConfirmKind::File, true) => (
-            "Confirm File Delete",
-            format!("Are you sure you want to delete '{name}'?"),
+            tr!("delete-file-title"),
+            tr!("delete-file-erase", name = name),
         ),
         (ConfirmKind::Folder, false) => (
-            "Confirm Folder Delete",
-            format!(
-                "Are you sure you want to remove the folder '{name}' and move all its \
-                 contents to the Recycle Bin?"
-            ),
+            tr!("delete-folder-title"),
+            tr!("delete-folder-recycle", name = name),
         ),
         (ConfirmKind::Folder, true) => (
-            "Confirm Folder Delete",
-            format!("Are you sure you want to remove the folder '{name}' and all its contents?"),
+            tr!("delete-folder-title"),
+            tr!("delete-folder-erase", name = name),
         ),
         (ConfirmKind::Multiple, false) => (
-            "Confirm Multiple File Delete",
-            format!("Are you sure you want to send these {count} items to the Recycle Bin?"),
+            tr!("delete-multiple-title"),
+            tr!("delete-multiple-recycle", count = count),
         ),
         (ConfirmKind::Multiple, true) => (
-            "Confirm Multiple File Delete",
-            format!("Are you sure you want to delete these {count} items?"),
+            tr!("delete-multiple-title"),
+            tr!("delete-multiple-erase", count = count),
         ),
     };
     let lead = match (no_bin, count) {
         (BinLack::None, _) => return (title, question),
-        (_, 1) => "This drive has no Recycle Bin.",
-        (BinLack::All, _) => "None of these items can go to the Recycle Bin.",
-        (BinLack::Some, _) => "Some of these items cannot go to the Recycle Bin.",
+        (_, 1) => tr!("delete-no-bin-one"),
+        (BinLack::All, _) => tr!("delete-no-bin-all"),
+        (BinLack::Some, _) => tr!("delete-no-bin-some"),
     };
-    (title, format!("{lead} {question}"))
+    (
+        title,
+        tr!(
+            "delete-prompt-lead",
+            lead = lead.as_str(),
+            question = question.as_str()
+        ),
+    )
 }
 
 pub fn label(path: &Path) -> String {
@@ -943,8 +948,8 @@ mod tests {
     fn the_delete_prompts_read_as_expected() {
         use ConfirmKind::*;
         let p = |kind, name, count, erase, no_bin| delete_prompt(kind, name, count, erase, no_bin);
-        let same = |(title, text): (&str, String), want: (&str, &str)| {
-            assert_eq!((title, text.as_str()), want);
+        let same = |(title, text): (String, String), want: (&str, &str)| {
+            assert_eq!((title.as_str(), text.as_str()), want);
         };
         same(
             p(File, "notes.txt", 1, false, BinLack::None),

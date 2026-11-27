@@ -1,6 +1,7 @@
 //! Phones and cameras through gvfs's MTP and PTP volume monitors: the devices plugged in, and
 //! mounting one with `gio mount` onto a FUSE folder, which [`netshare::follow`] then lists.
 
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -109,8 +110,7 @@ pub fn with_mounts(devices: &[Device], shares: &[Share]) -> Vec<Device> {
 /// Mounts the device at `uri` and gives its FUSE folder. Runs `gio` and waits on it.
 pub fn mount(uri: &str) -> Result<PathBuf, String> {
     netshare::run_gio(&["mount", "--", uri], MOUNT_WAIT)?;
-    netshare::local_path(uri)
-        .ok_or_else(|| "The device is mounted, but gvfs gives it no folder.".to_string())
+    netshare::local_path(uri).ok_or_else(|| tr!("device-no-folder"))
 }
 
 /// `(id, name, gicon, symbolic_gicon, uuid, activation_uri, can_mount, should_automount,

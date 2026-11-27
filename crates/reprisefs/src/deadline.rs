@@ -1,6 +1,7 @@
 //! An action asked for by hand races [`ACTION_DEADLINE`]: its thread and the host's timer share a
 //! [`Gate`], and whichever comes first, the answer or the deadline, wins.
 
+use reprisekit::tr;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -80,12 +81,11 @@ impl Gate {
 /// The give-up's error text for an action that `changes` files; `changing` when the work had
 /// passed [`Gate::change`].
 pub fn not_responding(changes: bool, changing: bool) -> String {
-    let rest = match (changes, changing) {
-        (false, _) => "",
-        (true, false) => " Nothing was changed.",
-        (true, true) => " The change may still be made once it answers.",
-    };
-    format!("The location is not responding.{rest}")
+    match (changes, changing) {
+        (false, _) => tr!("not-responding"),
+        (true, false) => tr!("not-responding-unchanged"),
+        (true, true) => tr!("not-responding-may-change"),
+    }
 }
 
 #[cfg(test)]

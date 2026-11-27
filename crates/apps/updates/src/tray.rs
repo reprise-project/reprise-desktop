@@ -48,7 +48,7 @@ pub fn start(waker: repriseapp::Waker, first: &TrayLook) -> reprisetray::Started
         Config {
             bus_name: BUS_NAME,
             id: "reprise-updates",
-            title: TITLE,
+            title: TITLE.into(),
             notify_icon: "software-update-available",
             // A second instance opens the window.
             raise: Raise::Activate,

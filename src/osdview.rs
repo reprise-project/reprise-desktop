@@ -155,7 +155,7 @@ fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
                 title: match mode {
                     Mode::Off => tr!("osd-airplane-off"),
                     Mode::On => tr!("osd-airplane-on"),
-                    Mode::Killed => airplane::KILLED.into(),
+                    Mode::Killed => reprisekit::kit_tr!("airplane-killed"),
                 },
                 meter: None,
             },

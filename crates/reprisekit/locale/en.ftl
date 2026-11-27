@@ -15,6 +15,10 @@ yes = &Yes
 yes-to-all = Yes to &All
 no = &No
 
+## Airplane mode when a hardware switch holds the radios off
+airplane-mode = Airplane Mode
+airplane-killed = Turned off by a hardware switch
+
 ## The edit menu of a text box
 edit-undo = &Undo
 edit-redo = &Redo

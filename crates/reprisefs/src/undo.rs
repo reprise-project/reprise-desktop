@@ -2,6 +2,7 @@
 //! host takes the top entry ([`SharedUndo::take`]) and reverses its steps on a removal job
 //! ([`crate::removal::Removal::Undo`]).
 
+use reprisekit::tr;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -328,14 +329,12 @@ impl NoBin {
     /// removes when `many`.
     pub fn question(&self, many: bool) -> String {
         if many {
-            return "The items Undo removes cannot go to the Recycle Bin. Do you want to delete them permanently?".to_string();
+            return tr!("undo-erase-many");
         }
         let name = crate::bincap::label(&self.path);
         match self.reason.kind() {
             io::ErrorKind::FileTooLarge => crate::bincap::too_big_text(&name),
-            _ => format!(
-                "'{name}' is on a drive that removes files immediately. Do you want to delete it permanently?"
-            ),
+            _ => tr!("undo-erase-one", name = name.as_str()),
         }
     }
 }

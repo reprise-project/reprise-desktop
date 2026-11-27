@@ -244,7 +244,7 @@ pub fn show_airplane(page: &mut Form, state: Option<airplane::Mode>, busy: bool)
     page.set_enabled(AIRPLANE_NOTE, state.is_some());
     let status = match state {
         None => no_radio(),
-        Some(airplane::Mode::Killed) => airplane::KILLED.to_string(),
+        Some(airplane::Mode::Killed) => reprisekit::kit_tr!("airplane-killed"),
         Some(_) => String::new(),
     };
     page.set_text(AIRPLANE_STATUS, &status);

@@ -3,30 +3,34 @@
 //! config in the compositor, so the sheet refuses it first).
 
 pub use reprisekit::keycap::{key_known, key_name, key_text, keysym};
+use reprisekit::tr;
 
 pub const MODIFIERS: &[&str] = &[
     "super", "logo", "mod4", "win", "ctrl", "control", "alt", "mod1", "shift",
 ];
 
-pub fn check(keys: &str) -> Result<(), &'static str> {
+/// Why `keys` would not bind, in words for an error box.
+pub fn check(keys: &str) -> Result<(), String> {
     let parts: Vec<&str> = keys.split('+').map(str::trim).collect();
-    let (key, mods) = parts.split_last().ok_or(ENDS_IN_A_KEY)?;
+    let (key, mods) = parts.split_last().ok_or_else(ends_in_a_key)?;
     if key.is_empty() {
-        return Err(ENDS_IN_A_KEY);
+        return Err(ends_in_a_key());
     }
     if mods
         .iter()
         .any(|m| !MODIFIERS.contains(&m.to_ascii_lowercase().as_str()))
     {
-        return Err("The modifiers are Super, Ctrl, Alt and Shift.");
+        return Err(tr!("keys-bad-modifier"));
     }
     if !key_known(key) {
-        return Err("The key is not one the keyboard layout names, as in b, F5 or Return.");
+        return Err(tr!("keys-unknown-key"));
     }
     Ok(())
 }
 
-const ENDS_IN_A_KEY: &str = "A shortcut ends in a key, as in Super+Shift+b.";
+fn ends_in_a_key() -> String {
+    tr!("keys-no-key")
+}
 
 pub const DEFAULTS: &[(&str, &str)] = &[
     ("Super+Return", "terminal"),

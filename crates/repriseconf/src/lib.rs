@@ -5,6 +5,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("repriseconf");
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use toml_edit::{Decor, DocumentMut, Item, TableLike, Value};

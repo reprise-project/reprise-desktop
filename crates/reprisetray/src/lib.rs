@@ -19,7 +19,7 @@ use zbus::object_server::SignalEmitter;
 use zbus::{Connection, Proxy};
 use zbus::{ObjectPath, OwnedVariant, Variant};
 
-use reprisebus::airplane::{self, Mode};
+use reprisebus::airplane::Mode;
 use reprisebus::instance::Handoff;
 
 pub const ITEM_PATH: &str = "/StatusNotifierItem";
@@ -38,7 +38,7 @@ pub struct Config {
     pub bus_name: &'static str,
     /// The program's desktop entry id, so balloons carry its Name and icon.
     pub id: &'static str,
-    pub title: &'static str,
+    pub title: String,
     pub notify_icon: &'static str,
     pub raise: Raise,
 }
@@ -172,15 +172,23 @@ impl<T: Hash + PartialEq + Clone> Rows<T> {
     }
 
     /// The Airplane Mode check row for `mode` as `row`. Under a hardware kill it greys, with
-    /// `note`'s greyed row under it saying so.
-    pub fn airplane(&mut self, row: T, note: T, mode: Mode) -> &mut Self {
-        let killed = mode == Mode::Killed;
+    /// `note`'s greyed row under it saying
+    /// `killed`. `label` is the check row's text.
+    pub fn airplane(
+        &mut self,
+        row: T,
+        note: T,
+        mode: Mode,
+        label: &str,
+        killed: &str,
+    ) -> &mut Self {
+        let held = mode == Mode::Killed;
         self.add(row, |id| Node {
-            enabled: !killed,
-            ..Node::toggle(id, "Airplane Mode", mode.on())
+            enabled: !held,
+            ..Node::toggle(id, label, mode.on())
         });
-        if killed {
-            self.add(note, |id| Node::inert(id, airplane::KILLED));
+        if held {
+            self.add(note, |id| Node::inert(id, killed));
         }
         self
     }
@@ -546,7 +554,7 @@ impl Item {
 
     #[zbus(property)]
     fn title(&self) -> &str {
-        self.0.config.title
+        &self.0.config.title
     }
 
     #[zbus(property)]
@@ -1293,7 +1301,7 @@ mod tests {
         let config = Config {
             bus_name: "reprise.test",
             id: "reprise-printers",
-            title: "Printers",
+            title: "Printers".into(),
             notify_icon: "printer",
             raise: Raise::Activate,
         };
@@ -1307,7 +1315,7 @@ mod tests {
         let config = Config {
             bus_name: "reprise.test",
             id: "reprise-test",
-            title: "Test",
+            title: "Test".into(),
             notify_icon: "",
             raise: Raise::Activate,
         };

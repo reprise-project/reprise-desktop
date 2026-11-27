@@ -3,6 +3,7 @@
 //! known extension, and which typed names a rename takes.
 
 use crate::apps::{self, MimeDb};
+use reprisekit::tr;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
@@ -139,18 +140,11 @@ pub fn verdict(old: &str, typed: &str, existing: &[String]) -> Verdict {
         return Verdict::Cancel;
     }
     if typed.contains('/') || typed.contains('\0') {
-        return Verdict::Refuse(
-            "A file name cannot contain any of the following characters:\n\
-             /\n\
-             A file name cannot contain the null character."
-                .to_string(),
-        );
+        return Verdict::Refuse(tr!("rename-bad-characters"));
     }
     // `rename` would refuse `.` and `..` with a bare errno, so they get the box's wording.
     if typed == "." || typed == ".." {
-        return Verdict::Refuse(format!(
-            "Cannot rename {old}: The file name you specified is not valid or too long."
-        ));
+        return Verdict::Refuse(tr!("rename-invalid", old = old));
     }
     if existing.iter().any(|e| e == typed) {
         return Verdict::Refuse(taken_text(old));
@@ -159,10 +153,7 @@ pub fn verdict(old: &str, typed: &str, existing: &[String]) -> Verdict {
 }
 
 pub fn taken_text(old: &str) -> String {
-    format!(
-        "Cannot rename {old}: A file with the name you specified already \
-         exists. Specify a different file name."
-    )
+    tr!("rename-taken", old = old)
 }
 
 /// A name free when [`verdict`] looked can be taken by the time the write
@@ -171,7 +162,7 @@ pub fn failed_text(old: &str, e: &std::io::Error) -> String {
     if e.kind() == std::io::ErrorKind::AlreadyExists {
         taken_text(old)
     } else {
-        format!("Cannot rename {old}: {e}")
+        tr!("rename-failed", old = old, why = e.to_string().as_str())
     }
 }
 

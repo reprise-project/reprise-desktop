@@ -70,7 +70,7 @@ pub fn default_chord(keys: &str) -> bool {
     DEFAULTS.iter().any(|(k, _)| same(keys, k))
 }
 
-pub fn check_keys(keys: &str) -> Result<(), &'static str> {
+pub fn check_keys(keys: &str) -> Result<(), String> {
     repriseconf::keybind::check(keys)
 }
 

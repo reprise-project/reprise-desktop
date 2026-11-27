@@ -1,4 +1,5 @@
 use super::MAX_DEPTH;
+use reprisekit::tr;
 use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -85,7 +86,7 @@ fn copy_entries(
         if stop.load(Ordering::Relaxed) {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
-                "The copy was cancelled.",
+                tr!("copy-cancelled"),
             ));
         }
         crate::progress::step();
@@ -119,7 +120,7 @@ fn copy_entry(
         if depth + 1 >= MAX_DEPTH {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("The folder is more than {MAX_DEPTH} levels deep."),
+                tr!("folder-too-deep", depth = MAX_DEPTH),
             ));
         }
         let entries = read_then_create(&from, &to).map_err(clash)?;

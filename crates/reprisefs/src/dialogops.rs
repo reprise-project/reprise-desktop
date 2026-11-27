@@ -3,6 +3,7 @@
 //! its loop.
 
 use crate::{bincap, hidden, names, places, trash};
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io;
@@ -76,7 +77,12 @@ pub fn delete(plan: Vec<(PathBuf, bincap::Plan)>) -> Result<(), (PathBuf, io::Er
 
 /// The error box's text for `path`, which a delete could not take.
 pub fn delete_failed_text(path: &Path, e: &io::Error) -> String {
-    format!("Cannot delete {}: {e}", bincap::label(path))
+    let name = bincap::label(path);
+    tr!(
+        "delete-failed",
+        name = name.as_str(),
+        why = e.to_string().as_str()
+    )
 }
 
 /// Where `name`, typed into File name, points from `base`, the folder shown: `~` and `~/` from
@@ -94,14 +100,11 @@ pub fn typed_path(
         (n, Some(h)) if n.starts_with("~/") => h.join(&n[2..]),
         (n, _) if n.starts_with('/') => PathBuf::from(n),
         (n, _) => {
-            let base = base.ok_or_else(|| "The folder is no longer available.".to_string())?;
+            let base = base.ok_or_else(|| tr!("folder-gone"))?;
             match aliases.get(n) {
                 Some(raw) => base.join(raw),
                 None if places::is_recent(base) => {
-                    return Err(format!(
-                        "{n} is not in {}. Type the full path to save or open it elsewhere.",
-                        places::RECENT_LABEL
-                    ));
+                    return Err(tr!("not-in-recent", name = n, place = places::RECENT_LABEL));
                 }
                 None => base.join(n),
             }
@@ -123,15 +126,12 @@ pub fn alias(dir: &Path, path: &Path) -> Option<OsString> {
 
 /// The error box's text for a typed name whose folder `dir` is not there.
 pub fn no_folder_text(dir: &Path) -> String {
-    format!("The folder {} does not exist.", dir.display())
+    tr!("folder-missing", path = dir.display().to_string().as_str())
 }
 
 /// The error box's text for a typed file to open, `path`, that is not there.
 pub fn not_found_text(path: &Path) -> String {
-    format!(
-        "{} was not found. Check the file name and try again.",
-        path.display()
-    )
+    tr!("file-not-found", path = path.display().to_string().as_str())
 }
 
 #[cfg(test)]
@@ -157,7 +157,7 @@ mod tests {
         );
         assert_eq!(
             typed_path(None, "x", Some(home), &aliases),
-            Err("The folder is no longer available.".into())
+            Err(tr!("folder-gone"))
         );
     }
 
