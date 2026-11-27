@@ -72,12 +72,12 @@ pub fn balloon(r: &Reading) -> (String, String) {
 }
 
 pub const OPEN: usize = 0;
-pub const SHOW_USAGE: usize = 1;
+pub const CLEAN_UP: usize = 1;
 pub const EMPTY_BIN: usize = 2;
 
-/// The warning's buttons: Open, Show Usage, then Empty Recycle Bin while the bin holds something.
+/// The warning's buttons: Open, Clean Up..., then Empty Recycle Bin while the bin holds something.
 pub fn buttons(r: &Reading) -> Vec<String> {
-    let mut b = vec![tr!("low-space-open"), tr!("show-usage")];
+    let mut b = vec![tr!("low-space-open"), tr!("low-space-clean-up")];
     if r.bin {
         b.push(tr!("empty-bin"));
     }
@@ -216,9 +216,9 @@ mod tests {
     #[test]
     fn the_bin_button_shows_only_with_something_in_the_bin() {
         let mut r = disk(1, 812 << 20, 20 * GB);
-        assert_eq!(buttons(&r), ["Open", "Show Usage"]);
+        assert_eq!(buttons(&r), ["Open", "Clean Up..."]);
         r.bin = true;
-        assert_eq!(buttons(&r), ["Open", "Show Usage", "Empty Recycle Bin"]);
+        assert_eq!(buttons(&r), ["Open", "Clean Up...", "Empty Recycle Bin"]);
         assert_eq!(
             balloon(&r),
             (

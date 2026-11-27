@@ -142,6 +142,8 @@ struct DiskUsage {
     cleaned: Option<(Poster<Msg>, Receiver<Msg>)>,
     /// The box saying what a removal freed and what it could not remove.
     cleaned_box: Asks<()>,
+    /// Clean Up opens as the window does (`--cleanup`).
+    cleanup_at_start: bool,
     /// Counts the Clean Up boxes opened, so a count posted for a closed one is dropped.
     cleanups: u64,
     /// A removal is running: Clean Up stays grey until it ends.
@@ -207,6 +209,7 @@ impl DiskUsage {
             clean_ask: Asks::new(CLEAN_CONFIRM).over(CLEANUP),
             cleaned: None,
             cleaned_box: Asks::new(CLEANED),
+            cleanup_at_start: false,
             cleanups: 0,
             cleaning: false,
         }
@@ -900,6 +903,9 @@ impl App for DiskUsage {
         self.waker = Some(waker);
         let root = self.root.clone();
         self.rescan(root);
+        if self.cleanup_at_start {
+            self.open_cleanup(Places::system());
+        }
         self.sync();
         repriseapp::Start::Continue
     }
@@ -1009,16 +1015,26 @@ impl repriseapp::Extended for DiskUsage {
     }
 }
 
+/// `reprise-diskusage [--cleanup] [FOLDER]`: whether Clean Up opens over the count, and the
+/// folder when it is absolute.
+fn parse_args(args: Vec<OsString>) -> (bool, Option<PathBuf>) {
+    let mut args = args.into_iter().peekable();
+    let cleanup = args.next_if(|a| a == "--cleanup").is_some();
+    let root = args.next().map(PathBuf::from).filter(|p| p.is_absolute());
+    (cleanup, root)
+}
+
 pub fn main(args: Vec<OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let root = args
-        .into_iter()
-        .next()
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
+    let (cleanup_at_start, root) = parse_args(args);
+    let root = root
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/"));
-    repriseapp::run(Box::new(DiskUsage::new(root))).unwrap_or_else(|e| e.exit());
+    let d = DiskUsage {
+        cleanup_at_start,
+        ..DiskUsage::new(root)
+    };
+    repriseapp::run(Box::new(d)).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]

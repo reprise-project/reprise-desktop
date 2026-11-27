@@ -281,8 +281,8 @@ impl DrivesApp {
         }
     }
 
-    /// Button `i` of low disk space balloon `tag`: Open opens the disk, Show Usage opens Disk
-    /// Usage on it, Empty Recycle Bin asks to empty the bin.
+    /// Button `i` of low disk space balloon `tag`: Open opens the disk, Clean Up... opens Disk
+    /// Usage on it with Clean Up over it, Empty Recycle Bin asks to empty the bin.
     fn space_answered(&mut self, tag: u32, i: usize) {
         let Some(r) = self.space_asks.get(&tag) else {
             return;
@@ -290,7 +290,10 @@ impl DrivesApp {
         let mount = r.mount.clone();
         match i {
             space::OPEN => self.open_path(&mount),
-            space::SHOW_USAGE => self.spawn_with_token("reprise-diskusage", [&mount]),
+            space::CLEAN_UP => {
+                let args = [OsStr::new("--cleanup"), mount.as_os_str()];
+                self.spawn_with_token("reprise-diskusage", args)
+            }
             space::EMPTY_BIN if r.bin => {
                 std::thread::spawn(|| {
                     if let Err(e) = reprisebus::tray::empty_recycle_bin() {
