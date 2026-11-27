@@ -76,6 +76,15 @@ pub fn create_temp_beside(
     path: &Path,
     mode: Option<std::fs::Permissions>,
 ) -> io::Result<(std::fs::File, PathBuf)> {
+    create_temp_ending(path, mode, "tmp")
+}
+
+/// [`create_temp_beside`] named `.{name}.{random}.{suffix}`.
+pub(crate) fn create_temp_ending(
+    path: &Path,
+    mode: Option<std::fs::Permissions>,
+    suffix: &str,
+) -> io::Result<(std::fs::File, PathBuf)> {
     use std::hash::{BuildHasher, Hasher};
     use std::os::unix::fs::OpenOptionsExt;
     let dir = match path.parent() {
@@ -87,7 +96,7 @@ pub fn create_temp_beside(
     loop {
         // RandomState keys are OS-random per thread and step on every call.
         let tag = std::hash::RandomState::new().build_hasher().finish();
-        let tmp = dir.join(format!(".{name}.{tag:016x}.tmp"));
+        let tmp = dir.join(format!(".{name}.{tag:016x}.{suffix}"));
         let opened = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
