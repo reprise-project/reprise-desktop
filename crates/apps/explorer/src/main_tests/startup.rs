@@ -11,6 +11,10 @@ fn the_command_line_takes_a_place() {
     assert_eq!(args(&["Recycle Bin".as_ref()]), Place::RecycleBin);
     assert_eq!(args(&["My Computer".as_ref()]), Place::Home);
     assert_eq!(args(&["network".as_ref()]), Place::network());
+    assert_eq!(args(&["computer:".as_ref()]), Place::Computer);
+    assert_eq!(args(&["computer:///".as_ref()]), Place::Computer);
+    assert_eq!(args(&["trash:".as_ref()]), Place::RecycleBin);
+    assert_eq!(args(&["network:///".as_ref()]), Place::network());
     let start = parse_args(["SMB://nas/public".into()]);
     assert_eq!(
         start.place,

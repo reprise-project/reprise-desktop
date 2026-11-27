@@ -2406,7 +2406,7 @@ fn put_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<Alone>
 
 /// `reprise-explorer [--search] [PLACE]`, `--select PATH...`, `--properties PATH...`,
 /// `--open-with PATH`, `--new-shortcut DIR`, `--bin-properties` or one of [`Alone`]'s file jobs. PLACE is a
-/// folder's path, "Computer", "Recycle Bin" or "Network", or a server address, which opens
+/// folder's path, a place name or URI ([`Place::read_address`]), or a server address, which opens
 /// Computer and connects to it; a missing or unknown one is Home. `--search` puts the keyboard in
 /// the Search field. `--select` opens the folder the first absolute PATH sits in with it and the
 /// others there selected, the first scrolled into view (Find Target's window). `--properties`
