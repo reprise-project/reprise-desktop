@@ -31,7 +31,9 @@ pub const CELL: i32 = 30;
 pub const GLYPH: i32 = 22;
 const PAD: i32 = 4;
 const NAME_H: i32 = 16;
-pub const NO_MATCH: &str = "No emoji match.";
+pub fn no_match() -> String {
+    tr!("emojipicker-no-match")
+}
 pub const RECENT: usize = 2 * COLS;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -495,7 +497,7 @@ pub fn draw(
         None if !m.edit.text.is_empty() => {
             let r = lay.cells.scaled(s);
             let r = Rect::new(r.x + 3 * s, r.y, r.width - 3 * s, cm.text.len(17) * s);
-            text.draw(&mut c, r, NO_MATCH, false, cs.gray_text, Align::Left, px);
+            text.draw(&mut c, r, &no_match(), false, cs.gray_text, Align::Left, px);
         }
         None => {}
     }
@@ -556,7 +558,7 @@ pub fn access(
     }
     if m.is_empty() && !m.edit.text.is_empty() {
         let r = Rect::new(lay.cells.x, lay.cells.y, lay.cells.width, 17);
-        tree.push(parent, "empty", access::label(r, NO_MATCH, false));
+        tree.push(parent, "empty", access::label(r, &no_match(), false));
     }
     focus
 }
@@ -876,7 +878,7 @@ mod tests {
             &ControlMetrics::CLASSIC,
         );
         assert_eq!(t.get(focus).unwrap().role(), Role::TextInput);
-        assert!(t.nodes().any(|(_, n)| n.value() == Some(NO_MATCH)));
+        assert!(t.nodes().any(|(_, n)| n.value() == Some(&no_match())));
         let theme = Theme::default();
         let c = draw(&theme, &text, None, &m, false, None);
         let grey = theme.colors.gray_text.argb();

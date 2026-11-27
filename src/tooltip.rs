@@ -499,7 +499,7 @@ pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<S
             Some(chevron_tip(crate::trayreveal::arrow_look(state), open))
         }
         TaskbarHit::More => Some(tr!("bar-tip-more-windows")),
-        TaskbarHit::QuickMore => Some(reprisekit::taskbar::QUICK_MORE_NAME.to_string()),
+        TaskbarHit::QuickMore => Some(reprisekit::taskbar::quick_more_name()),
         TaskbarHit::Meter => Some(match crate::netspeed::line(state) {
             Some(line) => format!("{}\n{line}", tr!("bar-tip-network-speed")),
             None => tr!("bar-tip-network-speed"),

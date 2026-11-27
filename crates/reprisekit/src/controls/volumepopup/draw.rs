@@ -15,8 +15,8 @@ use crate::theme::Theme;
 
 use super::layout::{ColumnLayout, Layout, StripLayout};
 use super::{
-    Column, Dir, Focus, INPUT, MAX_SHOWN, NAME_PAD, NowPlaying, OUTPUT, Part, Pick, SETTINGS,
-    SPEAKER, STEPS, Transport, VolumePopup, combo_focus,
+    Column, Dir, Focus, MAX_SHOWN, NAME_PAD, NowPlaying, Part, Pick, SPEAKER, STEPS, Transport,
+    VolumePopup, combo_focus, input, output, settings,
 };
 
 /// The panel, top to bottom; the focus ring shows once a key was pressed, the link underlines while lit, and an open device list draws last, over the columns.
@@ -43,8 +43,8 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
     flyout::draw_shadow(at_1, c, lay.panel);
     flyout::draw_panel(at_1, c, lay.panel, cs.button_face, flyout::Backdrop::None);
     for (dir, label, r) in [
-        (Dir::Output, OUTPUT, lay.output_label),
-        (Dir::Input, INPUT, lay.input_label),
+        (Dir::Output, &output(), lay.output_label),
+        (Dir::Input, &input(), lay.input_label),
     ] {
         let combo = vp.combo(dir);
         let r = text.line_box(r, false, px);
@@ -78,7 +78,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, vp: &VolumePopup
     }
     let link = text.line_box(lay.settings, false, px);
     let hot = vp.ptr.of(Part::Settings) != Interaction::Idle;
-    draw_link(c, text, p, link, SETTINGS, hot, px);
+    draw_link(c, text, p, link, &settings(), hot, px);
     if vp.cues && vp.focus == Focus::Settings {
         draw_focus_ring(c, p, lay.settings, cs.button_text);
     }

@@ -12,7 +12,9 @@ use crate::text::TextRenderer;
 use crate::textedit::{Caret, EditKey, TextEdit, Took, edit_first_visible, index_at};
 use accesskit::NodeId;
 
-pub const CUE: &str = "Search";
+pub fn cue() -> String {
+    tr!("searchfield-cue")
+}
 /// The field's size at 100% text; both grow with the text.
 pub const WIDTH: i32 = 180;
 pub const HEIGHT: i32 = 22;
@@ -29,7 +31,7 @@ pub struct SearchField {
 impl Default for SearchField {
     fn default() -> SearchField {
         let mut edit = TextEdit::new("", false);
-        edit.set_cue(CUE);
+        edit.set_cue(cue());
         SearchField { edit }
     }
 }
@@ -115,7 +117,7 @@ pub fn access(
 ) -> NodeId {
     let id = access_edit(&sf.edit, 0, false, field, true, text, px, tree, parent, key);
     if let Some(n) = tree.get_mut(id) {
-        n.set_label(CUE);
+        n.set_label(cue());
     }
     id
 }
@@ -266,6 +268,6 @@ mod tests {
         );
         let n = t.get(id).expect("the node");
         assert_eq!(n.role(), accesskit::Role::TextInput);
-        assert_eq!(n.label(), Some(CUE));
+        assert_eq!(n.label(), Some(cue().as_str()));
     }
 }

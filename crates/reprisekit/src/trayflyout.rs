@@ -15,7 +15,9 @@ pub const GLASS_CELL: i32 = 32;
 const MENU_INSET: i32 = 4;
 const GLASS_PAD: i32 = 2;
 pub const LINK_H: i32 = 41;
-pub const LINK: &str = "Customize...";
+pub fn link() -> String {
+    tr!("trayflyout-link")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlyoutLayout {
@@ -126,9 +128,9 @@ fn draw_panel(
             }
         }
         let px = theme.fonts.size_px;
-        let w = text.measure(LINK, false, px);
+        let w = text.measure(&link(), false, px);
         let tr = Rect::new(band.x + (band.width - w) / 2, band.y, w, band.height);
-        crate::flyout::draw_link(&mut c, text, &theme.paint(), tr, LINK, link_hot, px);
+        crate::flyout::draw_link(&mut c, text, &theme.paint(), tr, &link(), link_hot, px);
     }
     c
 }
@@ -146,7 +148,7 @@ pub fn access(layout: &FlyoutLayout, names: &[String], tree: &mut Tree, parent: 
         tree.push(parent, i, n);
     }
     if let Some(l) = layout.link {
-        let mut n = access::named(Role::Link, l, LINK);
+        let mut n = access::named(Role::Link, l, &link());
         n.add_action(Action::Click);
         tree.push(parent, "link", n);
     }

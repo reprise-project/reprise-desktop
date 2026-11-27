@@ -41,13 +41,13 @@ impl Kind {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Kind::Blank => "Blank",
-            Kind::Starfield => "Starfield",
-            Kind::Mystify => "Mystify",
-            Kind::Logo => "Bouncing logo",
-            Kind::Photos => "Photos",
+            Kind::Blank => tr!("saver-blank"),
+            Kind::Starfield => tr!("saver-starfield"),
+            Kind::Mystify => tr!("saver-mystify"),
+            Kind::Logo => tr!("saver-logo"),
+            Kind::Photos => tr!("saver-photos"),
         }
     }
 

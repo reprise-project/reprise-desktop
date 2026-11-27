@@ -598,17 +598,21 @@ pub fn doc_access(
             tree.push(
                 id,
                 "close",
-                access::named(Role::Button, *close, "Close Tab"),
+                access::named(Role::Button, *close, &tr!("tabstrip-close-tab")),
             );
             id
         })
         .collect();
-    tree.push(list, "add", access::named(Role::Button, l.add, "New Tab"));
+    tree.push(
+        list,
+        "add",
+        access::named(Role::Button, l.add, &tr!("tabstrip-new-tab")),
+    );
     if !l.menu.is_empty() {
         tree.push(
             list,
             "menu",
-            access::named(Role::Button, l.menu, "New Tab Menu"),
+            access::named(Role::Button, l.menu, &tr!("tabstrip-new-tab-menu")),
         );
     }
     tabs

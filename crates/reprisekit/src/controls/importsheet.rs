@@ -32,7 +32,15 @@ const LIST: Rect = Rect::new(MARGIN, 72, WIDE, 236);
 const ABOUT_Y: i32 = LIST.y + LIST.height + 8;
 const ABOUT_LINES: usize = 2;
 const BUTTON_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
-const COLUMNS: [(&str, i32); 3] = [("Setting", 168), ("Now", 132), ("New", 170)];
+const COLUMN_WIDTHS: [i32; 3] = [168, 132, 170];
+
+fn column_titles() -> [String; 3] {
+    [
+        tr!("importsheet-setting"),
+        tr!("importsheet-now"),
+        tr!("importsheet-new"),
+    ]
+}
 
 /// One row: a change Reprise can make, or with `greyed` a setting it found but can't take, `now`
 /// then saying why.
@@ -109,7 +117,11 @@ impl Sheet {
             stage: Stage::Asking,
             form: Form::new(Vec::new()),
             list: ListView {
-                columns: COLUMNS.iter().map(|(t, w)| Column::new(t, *w)).collect(),
+                columns: column_titles()
+                    .iter()
+                    .zip(COLUMN_WIDTHS)
+                    .map(|(t, w)| Column::new(t, w))
+                    .collect(),
                 ..ListView::default()
             },
             list_focus: true,
@@ -139,13 +151,13 @@ impl Sheet {
         self.list.groups = Vec::new();
         if changes > 0 {
             self.list.groups.push(Group {
-                title: "Changes".into(),
+                title: tr!("importsheet-changes"),
                 first: 0,
             });
         }
         if changes < lines.len() {
             self.list.groups.push(Group {
-                title: "Found, but Reprise has no setting for it".into(),
+                title: tr!("importsheet-found-but-reprise-has-no-setting"),
                 first: changes,
             });
         }
@@ -159,7 +171,7 @@ impl Sheet {
 
     fn headline(&self) -> String {
         let Some(src) = self.shown() else {
-            return "Reprise found no GNOME or Plasma settings in this account.".into();
+            return tr!("importsheet-reprise-found-no-gnome-or-plasma");
         };
         match &self.stage {
             Stage::Done(line) => line.clone(),
@@ -187,9 +199,23 @@ impl Sheet {
             return String::new();
         };
         match (l.greyed, l.now.is_empty()) {
-            (true, _) => format!("{}: {} ({})", l.what, l.new, l.now),
-            (false, true) => format!("{}: {}", l.what, l.new),
-            (false, false) => format!("{}: {} (now {})", l.what, l.new, l.now),
+            (true, _) => tr!(
+                "importsheet-found",
+                what = l.what.as_str(),
+                new = l.new.as_str(),
+                now = l.now.as_str()
+            ),
+            (false, true) => tr!(
+                "importsheet-change",
+                what = l.what.as_str(),
+                new = l.new.as_str()
+            ),
+            (false, false) => tr!(
+                "importsheet-change-now",
+                what = l.what.as_str(),
+                new = l.new.as_str(),
+                now = l.now.as_str()
+            ),
         }
     }
 
@@ -215,7 +241,7 @@ impl Sheet {
                 MARGIN,
                 SOURCE_Y + 3,
                 SOURCE_LABEL_W,
-                "Import &from:",
+                &tr!("importsheet-import-from"),
             ));
             items.push(Item::combo(
                 SOURCE,
@@ -231,7 +257,7 @@ impl Sheet {
         items.push(Item::lines_at(ABOUT, MARGIN, ABOUT_Y, WIDE, &about));
         let right = Rect::new(CLIENT.0 - MARGIN - BUTTON_W, BUTTON_Y, BUTTON_W, BUTTON_H);
         if self.ended() {
-            items.push(Item::button(CLOSE, right, "Close", true, true));
+            items.push(Item::button(CLOSE, right, &tr!("close"), true, true));
         } else {
             let left = Rect::new(
                 right.x - BUTTON_GAP - BUTTON_W,
@@ -240,8 +266,14 @@ impl Sheet {
                 BUTTON_H,
             );
             let any = !self.checked().is_empty();
-            items.push(Item::button(IMPORT, left, "&Import", any, any));
-            items.push(Item::button(CANCEL, right, "Cancel", true, !any));
+            items.push(Item::button(
+                IMPORT,
+                left,
+                &tr!("importsheet-import"),
+                any,
+                any,
+            ));
+            items.push(Item::button(CANCEL, right, &tr!("cancel"), true, !any));
         }
         let focus = self.form.focus().map(|i| self.form.items[i].id);
         self.form = Form::new(items);
@@ -273,7 +305,7 @@ impl Sheet {
                 .filter_map(|i| self.list.rows.get(i).cloned())
                 .collect();
             self.list.groups = vec![Group {
-                title: "Imported".into(),
+                title: tr!("importsheet-imported"),
                 first: 0,
             }];
             self.list.checks = None;

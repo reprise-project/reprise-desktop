@@ -69,7 +69,7 @@ fn another_users_entry_shows_only_a_greyed_note() {
                 Section {
                     status: None,
                     actions: Vec::new(),
-                    note: Some(NOT_YOURS.into()),
+                    note: Some(not_yours()),
                     note_greyed: true,
                 },
                 "{f:?}"
@@ -84,7 +84,7 @@ fn a_stopped_login_manager_greys_create_and_says_it_is_not_running() {
         let s = shown(&f);
         assert_eq!(s.status, None);
         assert_eq!(s.actions, [(Action::Create, false)]);
-        assert_eq!(s.note.as_deref(), Some(NO_MANAGER));
+        assert_eq!(s.note.as_deref(), Some(no_manager().as_str()));
         assert!(!s.note_greyed);
     }
 }
@@ -95,7 +95,7 @@ fn a_silent_login_manager_greys_create_and_says_it_asks_again() {
         let s = shown(&f);
         assert_eq!(s.status, None);
         assert_eq!(s.actions, [(Action::Create, false)]);
-        assert_eq!(s.note.as_deref(), Some(SILENT));
+        assert_eq!(s.note.as_deref(), Some(silent().as_str()));
     }
 }
 
@@ -104,7 +104,7 @@ fn in_the_group_with_remote_logins_on_every_action_is_lit() {
     assert_eq!(
         shown(&running(false)),
         Section {
-            status: Some(HAS_NONE),
+            status: Some(has_none()),
             actions: vec![(Action::Create, true)],
             note: None,
             note_greyed: false,
@@ -113,7 +113,7 @@ fn in_the_group_with_remote_logins_on_every_action_is_lit() {
     assert_eq!(
         shown(&running(true)),
         Section {
-            status: Some(HAS_ONE),
+            status: Some(has_one()),
             actions: vec![(Action::Change, true), (Action::Remove, true)],
             note: None,
             note_greyed: false,
@@ -129,7 +129,7 @@ fn with_remote_logins_off_create_and_change_grey_and_say_so() {
             ..running(has)
         };
         let s = shown(&f);
-        assert_eq!(s.note.as_deref(), Some(REMOTE_OFF), "{f:?}");
+        assert_eq!(s.note.as_deref(), Some(remote_off().as_str()), "{f:?}");
         let set = if has { Action::Change } else { Action::Create };
         assert_eq!(s.actions[0], (set, false), "{f:?}");
     }
@@ -138,7 +138,7 @@ fn with_remote_logins_off_create_and_change_grey_and_say_so() {
 #[test]
 fn while_you_cannot_set_one_the_status_claims_no_logon() {
     for access in [Access::RemoteLoginsOff, outside("staff-rdp")] {
-        for (has, status) in [(false, HAS_NONE_SHORT), (true, HAS_ONE_SHORT)] {
+        for (has, status) in [(false, has_none_short()), (true, has_one_short())] {
             let f = Facts {
                 access: access.clone(),
                 ..running(has)
@@ -157,7 +157,7 @@ fn roots_own_entry_is_unavailable_and_says_why() {
         });
         assert_eq!(s.status, None);
         assert_eq!(s.actions, [(Action::Create, false)]);
-        assert_eq!(s.note.as_deref(), Some(ROOT));
+        assert_eq!(s.note.as_deref(), Some(root().as_str()));
     }
 }
 
@@ -375,7 +375,7 @@ fn every_action_label_fits_its_button_under_every_interface() {
         [Action::Create, Action::Change, Action::Remove]
             .into_iter()
             .filter_map(|a| {
-                let label = crate::text::split_mnemonic(a.label()).0;
+                let label = crate::text::split_mnemonic(&a.label()).0;
                 let by = text.ink_width(&label, false, px) + 12 - theme.text.len(ACTION_W);
                 (by > 0).then_some((a.label().to_string(), a.id(), by))
             })

@@ -93,15 +93,14 @@ pub fn advanced_form(
     };
     let mut lines = vec![match subject {
         Subject::Set { has_dir: true } => {
-            "Choose the settings you want for the selected items".to_string()
+            tr!("filesheet-attrs-choose-the-settings-you-want-for").to_string()
         }
-        _ => format!("Choose the options you want for this {what}."),
+        _ => tr!("filesheet-attrs-options", kind = what),
     }];
     if is_dir {
         lines.extend(crate::text::wrap(
             text,
-            "When you apply these changes you will be asked whether they should reach all \
-             subfolders and files as well.",
+            &tr!("filesheet-attrs-subfolders-asked"),
             u.len(ADV_TEXT_W),
             px,
         ));
@@ -118,11 +117,11 @@ pub fn advanced_form(
     let titles = [
         (
             ("adv_g0", "adv_gap0", "adv_t0"),
-            "Archive and Index attributes",
+            &tr!("filesheet-attrs-archive-and-index-attributes"),
         ),
         (
             ("adv_g1", "adv_gap1", "adv_t1"),
-            "Compress or Encrypt attributes",
+            &tr!("filesheet-attrs-compress-or-encrypt-attributes"),
         ),
     ];
     for (((id, gap, title_id), title), y) in titles.into_iter().zip(grid.groups) {
@@ -144,13 +143,10 @@ pub fn advanced_form(
         items.push(Item::group_title(title_id, tx, y + ADV_TITLE_DY, tw, title));
     }
     let labels = [
-        format!(
-            "{} is ready for &archiving",
-            if is_dir { "Folder" } else { "File" }
-        ),
-        format!("Allow this {what} to be &indexed for fast searching"),
-        "&Compress contents to save disk space".to_string(),
-        "&Encrypt contents to secure data".to_string(),
+        tr!("filesheet-attrs-ready", kind = what),
+        tr!("filesheet-attrs-index", kind = what),
+        tr!("filesheet-attrs-compress-contents-to-save-disk-space").to_string(),
+        tr!("filesheet-attrs-encrypt-contents-to-secure-data").to_string(),
     ];
     const CHECK_IDS: [&str; 4] = [ADV_ARCHIVE, ADV_INDEX, "adv_compress", "adv_encrypt"];
     for (k, ((id, y), label)) in CHECK_IDS
@@ -167,7 +163,7 @@ pub fn advanced_form(
     items.push(button(
         "adv_details",
         Rect::new(ADV_DETAILS_X, grid.details_y, BUTTON_W, BUTTON_H),
-        "&Details",
+        &tr!("filesheet-attrs-details"),
         false,
     ));
     items.push(Item::button(
@@ -185,7 +181,7 @@ pub fn advanced_form(
             BUTTON_W,
             BUTTON_H,
         ),
-        "Cancel",
+        &tr!("cancel"),
         true,
     ));
     Form::new(items)
@@ -207,31 +203,45 @@ const ATTR_RADIO: (i32, i32) = (54, 117);
 const ATTR_RADIO_PITCH: i32 = 23;
 const ATTR_BUTTON_Y: i32 = 181;
 const ATTR_BUTTON_RIGHT: i32 = 11;
-const ATTR_INTRO: &str = "You have chosen to make the following attribute changes:";
-const ATTR_QUESTION: &str = "Do you want to apply this change to this folder only, or do you \
-                             want to apply it to all subfolders and files as well?";
-pub const ATTR_LABELS: [&str; 2] = [
-    "Apply changes to this folder only",
-    "Apply changes to this folder, subfolders and files",
-];
-const SET_ATTR_QUESTION: &str = "Do you want to apply this change to the selected items only, or \
-                                 do you want to apply it to all subfolders and files as well?";
-pub const SET_ATTR_LABELS: [&str; 2] = [
-    "Apply changes to the selected items only",
-    "Apply changes to the selected items, subfolders and files",
-];
+fn attr_intro() -> String {
+    tr!("attrs-attr-intro")
+}
+fn attr_question() -> String {
+    tr!("attrs-attr-question")
+}
+pub fn attr_labels() -> [String; 2] {
+    [
+        tr!("filesheet-attrs-apply-changes-to-this-folder-only"),
+        tr!("filesheet-attrs-apply-changes-to-this-folder-subfolders"),
+    ]
+}
+fn set_attr_question() -> String {
+    tr!("attrs-set-attr-question")
+}
+pub fn set_attr_labels() -> [String; 2] {
+    [
+        tr!("filesheet-attrs-apply-changes-to-the-selected-items"),
+        tr!("filesheet-attrs-apply-changes-to-the-selected-items-2"),
+    ]
+}
 
 pub fn attr_form(verb: &str, subject: Subject, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let (question, labels) = match subject {
-        Subject::Set { .. } => (SET_ATTR_QUESTION, SET_ATTR_LABELS),
-        _ => (ATTR_QUESTION, ATTR_LABELS),
+        Subject::Set { .. } => (set_attr_question(), set_attr_labels()),
+        _ => (attr_question(), attr_labels()),
     };
     let width = ATTR_SIZE.0 - ATTR_TEXT_X - ATTR_RIGHT;
     let mut items = vec![
-        Item::label_at("attr_intro", ATTR_TEXT_X, ATTR_INTRO_Y, width, ATTR_INTRO),
+        Item::label_at(
+            "attr_intro",
+            ATTR_TEXT_X,
+            ATTR_INTRO_Y,
+            width,
+            &attr_intro(),
+        ),
         Item::label_at("attr_verb", ATTR_CHANGE_X, ATTR_CHANGE_Y, width, verb),
     ];
-    for (i, line) in crate::text::wrap(text, question, u.len(width), px)
+    for (i, line) in crate::text::wrap(text, &question, u.len(width), px)
         .into_iter()
         .enumerate()
     {
@@ -243,7 +253,7 @@ pub fn attr_form(verb: &str, subject: Subject, text: &TextRenderer, px: u32, u: 
             &line,
         ));
     }
-    for (i, (id, text)) in [(ATTR_ONLY, labels[0]), (ATTR_TREE, labels[1])]
+    for (i, (id, text)) in [(ATTR_ONLY, &labels[0]), (ATTR_TREE, &labels[1])]
         .into_iter()
         .enumerate()
     {
@@ -279,7 +289,7 @@ pub fn attr_form(verb: &str, subject: Subject, text: &TextRenderer, px: u32, u: 
             BUTTON_W,
             BUTTON_H,
         ),
-        "Cancel",
+        &tr!("cancel"),
         true,
     ));
     Form::new(items)

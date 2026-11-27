@@ -105,11 +105,19 @@ const OUTPUT_ROW: i32 = ADVANCED_GAP + OUTPUT_H + 5 - BOTTOM;
 const RING_PAD: i32 = 1;
 const RING_BELOW: i32 = 1;
 
-pub const BALANCE: &str = "Balance:";
-pub const VOLUME: &str = "Volume:";
-pub const ADVANCED: &str = "Advanced";
+pub fn balance() -> String {
+    tr!("mixer-balance")
+}
+pub fn volume() -> String {
+    tr!("mixer-volume")
+}
+pub fn advanced() -> String {
+    tr!("mixer-advanced")
+}
 /// An output combo's first row: the program follows the default output.
-pub const DEFAULT: &str = "Default";
+pub fn default() -> String {
+    tr!("mixer-default")
+}
 
 /// What a column's check box stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,11 +131,11 @@ pub enum Check {
 }
 
 impl Check {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Check::MuteAll => "Mute all",
-            Check::Mute => "Mute",
-            Check::Select => "Select",
+            Check::MuteAll => tr!("mixer-mute-all"),
+            Check::Mute => tr!("mixer-mute"),
+            Check::Select => tr!("mixer-select"),
         }
     }
 }
@@ -164,7 +172,7 @@ pub struct Route {
 impl Route {
     /// The combo's rows, [`DEFAULT`] first, and its pick among them.
     fn rows(&self) -> (Vec<String>, Option<usize>) {
-        let rows = std::iter::once(DEFAULT.to_string())
+        let rows = std::iter::once(default().to_string())
             .chain(self.outputs.iter().cloned())
             .collect();
         (rows, Some(self.picked.map_or(0, |i| i + 1)))
@@ -469,7 +477,7 @@ fn column_layout(
     };
     let label_w = w - 2 * d.pad;
     let check_y = y + d.track_y + track_h + d.check_gap;
-    let check_w = text.measure(col.check.label(), false, px);
+    let check_w = text.measure(&col.check.label(), false, px);
     let k = d.small;
     // The channels run from a pixel left of the centre line, `k` grown.
     let channel_x = x + mid - k;
@@ -723,7 +731,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, m: &Mixer, lay: 
             text,
             p,
             r,
-            ADVANCED,
+            &advanced(),
             false,
             m.ptr.of(Part::Advanced),
             live,
@@ -853,7 +861,7 @@ fn draw_column(
         );
     }
     let balanced = col.balance.enabled;
-    column_label(c, text, p, cl.balance_label, BALANCE, balanced, None, px);
+    column_label(c, text, p, cl.balance_label, &balance(), balanced, None, px);
     if let Some(right) = &m.speaker {
         for (r, icon) in cl.speakers.into_iter().zip([&right.mirrored(), right]) {
             let x = r.x + (r.width - icon.width as i32) / 2;
@@ -874,7 +882,7 @@ fn draw_column(
         focused(Focus::Balance(i)),
         m.ptr.of(Part::Balance(i)),
     );
-    column_label(c, text, p, cl.volume_label, VOLUME, live, None, px);
+    column_label(c, text, p, cl.volume_label, &volume(), live, None, px);
     draw_vertical_trackbar(
         c,
         p,
@@ -893,7 +901,7 @@ fn draw_column(
         text,
         p,
         cl.check_label,
-        col.check.label(),
+        &col.check.label(),
         live,
         Some(StylePart::CheckBox),
         px,
@@ -1311,13 +1319,13 @@ impl Mixer {
             let bl = tree.push(
                 g,
                 "balance-label",
-                access::label(cl.balance_label, BALANCE, col.balance.enabled),
+                access::label(cl.balance_label, &balance(), col.balance.enabled),
             );
             let balance = trackbar::access(&col.balance, &cl.balance, tree, g, "balance");
             let vl = tree.push(
                 g,
                 "volume-label",
-                access::label(cl.volume_label, VOLUME, col.live),
+                access::label(cl.volume_label, &volume(), col.live),
             );
             let volume = trackbar::access(&col.volume, &cl.volume, tree, g, "volume");
             for (slider, label) in [(balance, bl), (volume, vl)] {
@@ -1331,7 +1339,7 @@ impl Mixer {
                 access::toggle(
                     Role::CheckBox,
                     cl.check.union(&cl.check_label),
-                    col.check.label(),
+                    &col.check.label(),
                     col.checked.into(),
                     col.live,
                 ),
@@ -1339,7 +1347,7 @@ impl Mixer {
             if let (Some(c), Some(ol)) = (&col.output, &cl.output) {
                 let f = combo::access(c, ol, text, px, tree, g, "output");
                 if let Some(n) = tree.get_mut(Tree::id_of(g, "output")) {
-                    n.set_label("Output");
+                    n.set_label(tr!("mixer-output"));
                 }
                 if self.focus == Focus::Output(i) {
                     focus = f;
@@ -1354,7 +1362,11 @@ impl Mixer {
         }
         if let Some(r) = lay.advanced {
             let live = self.first_live();
-            let b = tree.push(parent, "advanced", access::button(r, ADVANCED, live, false));
+            let b = tree.push(
+                parent,
+                "advanced",
+                access::button(r, &advanced(), live, false),
+            );
             if self.focus == Focus::Advanced {
                 focus = b;
             }

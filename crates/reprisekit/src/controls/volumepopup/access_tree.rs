@@ -7,7 +7,7 @@ use accesskit::{NodeId, Role};
 use super::draw::level_text;
 use super::layout::Layout;
 use super::{
-    Dir, Focus, MUTE, NOW_PLAYING, Pick, SETTINGS, Transport, VOLUME, VolumePopup, combo_focus,
+    Dir, Focus, Pick, Transport, VolumePopup, combo_focus, mute, now_playing, settings, volume,
 };
 
 impl VolumePopup {
@@ -22,10 +22,13 @@ impl VolumePopup {
     ) -> NodeId {
         let text = text.dialog(DialogFont::ShellDlg);
         let mut win = access::node(Role::Window, lay.panel);
-        win.set_label(VOLUME);
+        win.set_label(volume());
         let win = tree.push(parent, "volume-popup", win);
         let mut focus = win;
-        for (dir, name) in [(Dir::Output, "Output"), (Dir::Input, "Input")] {
+        for (dir, name) in [
+            (Dir::Output, &tr!("volumepopup-access_tree-output")),
+            (Dir::Input, &tr!("volumepopup-access_tree-input")),
+        ] {
             let f = combo::access(self.combo(dir), lay.combo(dir), text, px, tree, win, name);
             if let Some(n) = tree.get_mut(Tree::id_of(win, name)) {
                 n.set_label(name);
@@ -60,12 +63,12 @@ impl VolumePopup {
             let mute = tree.push(
                 g,
                 "mute",
-                access::toggle(Role::Button, cl.mute, MUTE, col.mute.into(), live),
+                access::toggle(Role::Button, cl.mute, &mute(), col.mute.into(), live),
             );
             if let (Some(c), Some(ol)) = (&col.output, &cl.output) {
                 let f = combo::access(c, ol, text, px, tree, g, "output");
                 if let Some(n) = tree.get_mut(Tree::id_of(g, "output")) {
-                    n.set_label("Output");
+                    n.set_label(tr!("volumepopup-access_tree-output"));
                 }
                 if self.focus == Focus::Device(i) {
                     focus = f;
@@ -81,7 +84,7 @@ impl VolumePopup {
             let g = tree.push(
                 win,
                 "now-playing",
-                access::named(Role::Group, st.rect, NOW_PLAYING),
+                access::named(Role::Group, st.rect, &now_playing()),
             );
             // A track's names are plain text: an `&` in them is no access key.
             let lines = [("title", st.title, &np.title)]
@@ -97,14 +100,14 @@ impl VolumePopup {
                 let b = tree.push(
                     g,
                     ("media", t as usize),
-                    access::button(st.button(t), name, np.can(t), false),
+                    access::button(st.button(t), &name, np.can(t), false),
                 );
                 if self.focus == Focus::Media(t) {
                     focus = b;
                 }
             }
         }
-        let mut link = access::named(Role::Link, lay.settings, SETTINGS);
+        let mut link = access::named(Role::Link, lay.settings, &settings());
         access::focusable(&mut link, true);
         link.add_action(accesskit::Action::Click);
         let link = tree.push(win, "settings", link);

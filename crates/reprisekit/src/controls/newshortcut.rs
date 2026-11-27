@@ -18,7 +18,9 @@ use crate::text::TextRenderer;
 use crate::theme::Theme;
 
 pub const CLIENT: (i32, i32) = wizard::CLIENT;
-pub const TITLE: &str = "Create Shortcut";
+pub fn title() -> String {
+    tr!("newshortcut-title")
+}
 
 const LOCATION: &str = "location";
 const BROWSE: &str = "browse";
@@ -122,7 +124,7 @@ impl NewShortcut {
                         body.x,
                         body.y,
                         body.width,
-                        "Type the &location of the item, or a command:",
+                        &tr!("newshortcut-type-the-location-of-the-item"),
                     ),
                     Item::edit(
                         LOCATION,
@@ -142,7 +144,7 @@ impl NewShortcut {
                         body.x,
                         LIST_LABEL_Y,
                         body.width,
-                        "Or pick a &program:",
+                        &tr!("newshortcut-or-pick-a-program"),
                     ),
                     Item::new(
                         PROGRAMS,
@@ -159,8 +161,8 @@ impl NewShortcut {
                     ),
                 ];
                 let style = Style::Interior {
-                    title: TITLE.into(),
-                    subtitle: "What do you want the shortcut to open?".into(),
+                    title: title(),
+                    subtitle: tr!("newshortcut-what-do-you-want-the-shortcut"),
                     icon: None,
                 };
                 (style, items)
@@ -172,7 +174,7 @@ impl NewShortcut {
                         body.x,
                         body.y,
                         body.width,
-                        "&Type a name for this shortcut:",
+                        &tr!("newshortcut-type-a-name-for-this-shortcut"),
                     ),
                     Item::edit(
                         NAME,
@@ -185,12 +187,12 @@ impl NewShortcut {
                         body.x,
                         LIST_LABEL_Y,
                         body.width,
-                        &["Click Finish to create the shortcut."],
+                        &[&tr!("newshortcut-click-finish-to-create-the-shortcut")],
                     ),
                 ];
                 let style = Style::Interior {
-                    title: "Name the Shortcut".into(),
-                    subtitle: "What do you want to call it?".into(),
+                    title: tr!("newshortcut-name-the-shortcut"),
+                    subtitle: tr!("newshortcut-what-do-you-want-to-call"),
                     icon: None,
                 };
                 (style, items)

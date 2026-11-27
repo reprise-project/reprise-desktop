@@ -22,9 +22,13 @@ use crate::theme::Theme;
 pub const W: i32 = 360;
 pub const VISIBLE: usize = 10;
 const PAD: i32 = 4;
-pub const EMPTY: &str = "Nothing has been copied yet.";
+pub fn empty() -> String {
+    tr!("cliphistory-empty")
+}
 /// What a reader calls the filter field.
-pub const FILTER: &str = "Filter";
+pub fn filter() -> String {
+    tr!("cliphistory-filter")
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -358,7 +362,7 @@ pub fn draw(
     if m.rows.is_empty() {
         let r = ll.inner.scaled(s);
         let r = Rect::new(r.x + 3 * s, r.y, r.width - 3 * s, ll.row_h * s);
-        text.draw(&mut c, r, EMPTY, false, cs.gray_text, Align::Left, px);
+        text.draw(&mut c, r, &empty(), false, cs.gray_text, Align::Left, px);
     }
     flyout::shadowed(theme, c)
 }
@@ -377,7 +381,7 @@ pub fn access(
     let ll = listbox::layout(&m.list, lay.list, cm);
     let focus = listbox::access_filtered(
         &m.edit,
-        FILTER,
+        &filter(),
         lay.field,
         &m.list,
         Some(&ll),
@@ -388,7 +392,7 @@ pub fn access(
     );
     if m.rows.is_empty() {
         let r = Rect::new(ll.inner.x, ll.inner.y, ll.inner.width, ll.row_h);
-        tree.push(parent, "empty", crate::access::label(r, EMPTY, false));
+        tree.push(parent, "empty", crate::access::label(r, &empty(), false));
     }
     focus
 }
@@ -451,9 +455,10 @@ mod tests {
             crate::access::accesskit::Role::TextInput,
             "with no rows the field has the focus"
         );
-        assert_eq!(t.get(focus).unwrap().label(), Some(FILTER));
+        assert_eq!(t.get(focus).unwrap().label(), Some(filter().as_str()));
         assert!(
-            t.nodes().any(|(_, n)| n.value() == Some(EMPTY)),
+            t.nodes()
+                .any(|(_, n)| n.value() == Some(super::empty().as_str())),
             "the empty history's label is there"
         );
     }

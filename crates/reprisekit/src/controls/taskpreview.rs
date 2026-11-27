@@ -204,7 +204,11 @@ pub fn access(
             tree.set_focus(id);
         }
         if let Some(close) = layout.close(i).filter(|_| hot == Some(i)) {
-            tree.push(id, "close", access::named(Role::Button, close, "Close"));
+            tree.push(
+                id,
+                "close",
+                access::named(Role::Button, close, &tr!("close")),
+            );
         }
         let Some(Some(np)) = media.players.get(i) else {
             continue;
@@ -217,7 +221,7 @@ pub fn access(
             let b = tree.push(
                 id,
                 ("media", t as usize),
-                access::button(r, name, np.can(t), false),
+                access::button(r, &name, np.can(t), false),
             );
             if keys && media.focus == Some((i, t)) {
                 tree.set_focus(b);

@@ -12,14 +12,16 @@ pub const SUMMARY_IDS: [&str; 6] = [
     "sum_comments",
 ];
 pub const SUMMARY_ADVANCED: &str = "sum_advanced";
-const SUMMARY_LABELS: [&str; 6] = [
-    "&Title:",
-    "&Subject:",
-    "A&uthor:",
-    "&Category:",
-    "&Keywords:",
-    "Co&mments:",
-];
+fn summary_labels() -> [String; 6] {
+    [
+        tr!("filesheet-summary-title"),
+        tr!("filesheet-summary-subject"),
+        tr!("filesheet-summary-author"),
+        tr!("filesheet-summary-category"),
+        tr!("filesheet-summary-keywords"),
+        tr!("filesheet-summary-comments"),
+    ]
+}
 const SUM_LABEL_X: i32 = 22;
 const SUM_FIELD_X: i32 = 81;
 const SUM_FIELD_W: i32 = 263;
@@ -33,6 +35,7 @@ const SUM_ADVANCED: Rect = Rect::new(244, 305, 99, BUTTON_H);
 pub fn summary_page(values: Option<&[String; 6]>) -> Form {
     let live = values.is_some();
     let value = |k: usize| values.map_or("", |v| v[k].as_str());
+    let labels = summary_labels();
     let mut items = Vec::new();
     for (k, &y) in SUM_ROWS.iter().enumerate() {
         items.push(Item::label_at(
@@ -40,7 +43,7 @@ pub fn summary_page(values: Option<&[String; 6]>) -> Form {
             SUM_LABEL_X,
             y + SUM_LABEL_DY,
             SUM_FIELD_X - SUM_LABEL_X,
-            SUMMARY_LABELS[k],
+            &labels[k],
         ));
         items.push(Item::edit(
             SUMMARY_IDS[k],
@@ -57,13 +60,13 @@ pub fn summary_page(values: Option<&[String; 6]>) -> Form {
         SUM_LABEL_X,
         SUM_COMMENTS.y + SUM_LABEL_DY,
         SUM_FIELD_X - SUM_LABEL_X,
-        SUMMARY_LABELS[5],
+        &labels[5],
     ));
     items.push(Item::memo(SUMMARY_IDS[5], SUM_COMMENTS, value(5), live));
     items.push(button(
         SUMMARY_ADVANCED,
         SUM_ADVANCED,
-        "Ad&vanced >>",
+        &tr!("filesheet-summary-advanced"),
         false,
     ));
     Form::new(items)
@@ -89,14 +92,14 @@ pub fn no_summary_page() -> Form {
             44,
             310,
             &[
-                "There are no summary properties in common among the selected",
+                &tr!("filesheet-summary-there-are-no-summary-properties-in"),
                 "sources.",
             ],
         ),
         button(
             "ns_simple",
             Rect::new(244, 410, 99, BUTTON_H),
-            "<< &Simple",
+            &tr!("filesheet-summary-simple"),
             false,
         ),
     ])

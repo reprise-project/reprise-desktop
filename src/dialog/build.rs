@@ -50,7 +50,7 @@ impl Dialog {
     ) -> Dialog {
         use reprisekit::controls::locationprompt;
         Dialog::new(
-            locationprompt::TITLE,
+            locationprompt::title(),
             Style::Form(Box::new(FormDialog::measured(
                 Measured::Location(fields.clone()),
                 FormKind::Location(desktop_id),

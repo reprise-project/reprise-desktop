@@ -67,7 +67,7 @@ impl ConnectBox {
     fn open(address: &str, ctx: &mut Ctx) -> ConnectBox {
         let mut waits = IconWaits::default();
         let icon = icon(ctx, &mut waits, nc::CONNECT_ICON);
-        let form = nc::connect_form(&wrapped(nc::CONNECT_MESSAGE, ctx), address, icon);
+        let form = nc::connect_form(&wrapped(&nc::connect_message(), ctx), address, icon);
         ConnectBox { form, waits }
     }
 
@@ -84,7 +84,7 @@ impl ConnectBox {
 
     fn rewrap(&mut self, ctx: &Ctx) {
         self.form
-            .set_lines("message", &wrapped(nc::CONNECT_MESSAGE, ctx));
+            .set_lines("message", &wrapped(&nc::connect_message(), ctx));
     }
 }
 
@@ -104,7 +104,7 @@ impl LoginBox {
             icon,
         );
         if l.retry {
-            form.set_text(nc::STATUS, nc::WRONG);
+            form.set_text(nc::STATUS, &nc::wrong());
         }
         LoginBox {
             form,
@@ -676,7 +676,7 @@ pub(crate) mod tests {
         let Some(Dialog::Login(b)) = ex.dialog() else {
             panic!("asked again");
         };
-        assert_eq!(status(&b.form), nc::WRONG);
+        assert_eq!(status(&b.form), nc::wrong());
         assert_eq!(b.form.edit_text(nc::PASSWORD), "", "the field starts empty");
     }
 

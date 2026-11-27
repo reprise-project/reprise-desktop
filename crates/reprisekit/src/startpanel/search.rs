@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::SEARCH_CUE;
+use super::search_cue;
 use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State, Style};
 use crate::text::{CaretBar, TextRenderer};
@@ -257,7 +257,7 @@ pub fn field(
             x,
             y,
             clip,
-            SEARCH_CUE,
+            &search_cue(),
             style.pane_inks.cue,
             size,
         );

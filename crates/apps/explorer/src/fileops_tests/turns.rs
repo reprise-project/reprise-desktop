@@ -37,7 +37,7 @@ fn a_clash_asked_after_an_answer_is_in_the_other_window() {
     ex.event(first, key_event_alt('y'), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "b.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "b.txt".to_string()))
     );
     assert_ne!(
         box_win(&ex),
@@ -108,7 +108,7 @@ fn a_pastes_replace_prompt_comes_up_over_a_busy_connect_to_server() {
     );
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string()))
     );
 
     let prompt = box_win(&ex).expect("the prompt's window");

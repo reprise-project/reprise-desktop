@@ -63,10 +63,10 @@ pub struct Fields {
 
 impl Fields {
     /// The caption the host puts on the frame.
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self.subject {
-            Subject::File { .. } => "Confirm File Replace",
-            Subject::Folder => "Confirm Folder Replace",
+            Subject::File { .. } => tr!("replacebox-title-file"),
+            Subject::Folder => tr!("replacebox-title-folder"),
         }
     }
 }
@@ -137,9 +137,9 @@ const FOLDER_BUTTON_RIGHT: i32 = FOLDER_MIN_W - TEXT_X - (4 * BUTTON_W + 3 * BUT
 /// The widest the first line runs: the prompt is at most 553 px wide.
 const FIRST_MAX_W: i32 = 480;
 
-const MERGE_TEXT: &str = "If files in the existing folder have the same names as files in \
-                          the folder you are moving or copying, they will be replaced. Do \
-                          you still want to move or copy the folder?";
+fn merge_text() -> String {
+    tr!("replacebox-merge-text")
+}
 
 fn buttons(f: &Fields) -> Vec<(&'static str, String)> {
     if f.many {
@@ -174,10 +174,10 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
     match &f.subject {
         Subject::File { existing, incoming } => {
             lines.push((
-                "Would you like to replace the existing file".into(),
+                tr!("replacebox-would-you-like-to-replace-the"),
                 FILE_QUESTION_Y,
             ));
-            lines.push(("with this one?".into(), FILE_WITH_Y));
+            lines.push((tr!("replacebox-with-this-one"), FILE_WITH_Y));
             Plan {
                 lines,
                 sides: vec![
@@ -191,7 +191,7 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
         }
         Subject::Folder => {
             let mut y = FOLDER_PARA_Y;
-            for l in crate::text::wrap(text, MERGE_TEXT, u.len(FOLDER_WRAP_W), px) {
+            for l in crate::text::wrap(text, &merge_text(), u.len(FOLDER_WRAP_W), px) {
                 lines.push((l, y));
                 y += LINE_H;
             }
@@ -210,8 +210,13 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
 /// loses its start at a slash (".../2024/Q3") and, past that, the name its end.
 fn first_line(f: &Fields, what: &str, text: &TextRenderer, px: u32, u: TextUnits) -> String {
     let line = |dir: Option<&str>, name: &str| match dir {
-        None => format!("This folder already contains a {what} named '{name}'."),
-        Some(dir) => format!("The folder '{dir}' already contains a {what} named '{name}'."),
+        None => tr!("replacebox-contains", kind = what, name = name),
+        Some(dir) => tr!(
+            "replacebox-folder-contains",
+            kind = what,
+            dir = dir,
+            name = name
+        ),
     };
     let max = u.len(FIRST_MAX_W);
     let full = line(f.folder.as_deref(), &f.name);

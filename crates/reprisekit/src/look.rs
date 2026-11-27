@@ -442,11 +442,11 @@ pub fn draw_sample_at(
     let message_w = {
         let spec = &style.caption_text;
         let at = |n: i32| {
-            caption_text.measure(sample::MESSAGE_TITLE, spec.bold, spec.size_px * n as u32)
+            caption_text.measure(&sample::message_title(), spec.bold, spec.size_px * n as u32)
         };
         // A title set at scale `s` can run wider than `s` times its scale-1 width.
         let wider = ((at(s) + s - 1) / s - at(1)).max(0);
-        let fit = caption_fit(theme, sample::MESSAGE_TITLE, Chrome::DIALOG) + wider;
+        let fit = caption_fit(theme, &sample::message_title(), Chrome::DIALOG) + wider;
         FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG)
             .total
             .0
@@ -563,7 +563,7 @@ mod tests {
         let mut got = Vec::new();
         for i in [Interface::Blue, Interface::Glass] {
             let theme = theme_for(i);
-            let fit = caption_fit(&theme, sample::MESSAGE_TITLE, Chrome::DIALOG);
+            let fit = caption_fit(&theme, &sample::message_title(), Chrome::DIALOG);
             let total = FrameGeometry::layout(&theme.metrics, fit, 1, false, Chrome::DIALOG).total;
             assert!(
                 28 + total.0 <= sample::APPEARANCE_SIZE.0,

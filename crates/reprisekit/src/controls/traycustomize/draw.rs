@@ -19,7 +19,8 @@ use super::geometry::{
     PAGE_TITLE_X, rows_in,
 };
 use super::layout::Layout;
-use super::{ALL_ICONS, CURRENT, Focus, PAST, Slot, TrayCustomize, Wording};
+use super::refs;
+use super::{Focus, Slot, TrayCustomize, Wording, all_icons, current, past};
 use crate::controls::label_rect;
 
 /// `sources` drawn `px` square: the smallest at least that big, else the largest.
@@ -58,7 +59,7 @@ impl TrayCustomize {
         let g = self.geometry();
         let live = self.list_enabled();
         c.fill_rect(lay.client.scaled(s), cs.button_face);
-        let lines = text::wrap(text, w.intro(), lay.intro.width * s, px);
+        let lines = text::wrap(text, &w.intro(), lay.intro.width * s, px);
         let line_h = self.metrics.text.len(LINE_H);
         let pitch = lay.intro.height / rows_in(lay.intro.height, line_h);
         for (i, line) in lines.iter().enumerate() {
@@ -75,7 +76,7 @@ impl TrayCustomize {
         text.draw(
             c,
             prompt,
-            w.prompt(),
+            &w.prompt(),
             false,
             cs.button_text,
             Align::Left,
@@ -97,7 +98,7 @@ impl TrayCustomize {
                     (t.width - (2 * HEADER_TEXT_X) * s).max(0),
                     hr.height - g.header_under * s,
                 );
-                let title = text.ellipsize(titles[i], tr.width, false, px);
+                let title = text.ellipsize(&titles[i], tr.width, false, px);
                 text.draw(c, tr, &title, false, cs.button_text, Align::Left, px);
             }
             let end = lay.columns[1].right();
@@ -132,7 +133,8 @@ impl TrayCustomize {
         }
         if let (Some(b), Some(l)) = (lay.check, lay.check_label) {
             let (b, lr) = (b.scaled(s), label_rect(l, s));
-            let label = cues.label(ALL_ICONS);
+            let all_icons_text = all_icons();
+            let label = cues.label(&all_icons_text);
             let on = self.all_icons == Some(true);
             draw_checkbox(c, p, b, on, self.pointer.of(Focus::AllIcons));
             draw_label(
@@ -159,9 +161,14 @@ impl TrayCustomize {
                 }
         };
         for (r, label, enabled, f) in [
-            (lay.restore, &*cues.label(w.restore()), live, Focus::Restore),
+            (
+                lay.restore,
+                &*cues.label(&w.restore()),
+                live,
+                Focus::Restore,
+            ),
             (lay.ok, "OK", true, Focus::Ok),
-            (lay.cancel, "Cancel", true, Focus::Cancel),
+            (lay.cancel, &tr!("cancel"), true, Focus::Cancel),
         ] {
             draw_button(
                 c,
@@ -213,7 +220,7 @@ impl TrayCustomize {
         let dots = cues.focus && active;
         for (r, label, f) in [
             (lay.ok, "OK", Focus::Ok),
-            (lay.cancel, "Cancel", Focus::Cancel),
+            (lay.cancel, &tr!("cancel"), Focus::Cancel),
         ] {
             let default = active
                 && match self.focus {
@@ -257,10 +264,10 @@ impl TrayCustomize {
         let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
         let u = self.metrics.text;
         let pitch = u.len(PAGE_HEADING_LINE_H);
-        let one = [Wording::HEADING];
-        let lines: Vec<&str> = match self.heading.as_slice() {
+        let one = [Wording::heading()];
+        let lines: Vec<String> = match self.heading.as_slice() {
             [] => one.to_vec(),
-            lines => lines.iter().map(String::as_str).collect(),
+            lines => lines.to_vec(),
         };
         for (k, line) in lines.into_iter().enumerate() {
             let p = lay.prompt;
@@ -269,7 +276,7 @@ impl TrayCustomize {
             text.draw(
                 c,
                 r.scaled(s),
-                line,
+                &line,
                 false,
                 inks.heading,
                 Align::Left,
@@ -278,7 +285,7 @@ impl TrayCustomize {
         }
         let intro = lay.intro.scaled(s);
         if self.intro.is_empty() {
-            text.draw(c, intro, w.intro(), false, cs.window_text, Align::Left, px);
+            text.draw(c, intro, &w.intro(), false, cs.window_text, Align::Left, px);
         }
         let first = self.metrics.text.rect(GLASS.intro).height * s;
         let pitch = self.metrics.text.len(LINE_H) * s;
@@ -299,7 +306,7 @@ impl TrayCustomize {
             text.draw(
                 c,
                 tr.scaled(s),
-                title,
+                &title,
                 true,
                 cs.window_text,
                 Align::Left,
@@ -334,7 +341,7 @@ impl TrayCustomize {
             (true, Interaction::Idle) => inks.link,
             (true, _) => inks.link_hot,
         };
-        text.draw(c, link, w.restore(), false, ink, Align::Left, px);
+        text.draw(c, link, &w.restore(), false, ink, Align::Left, px);
         if live
             && lit != Interaction::Idle
             && let Some(base) = text.baseline(link, false, px)
@@ -349,7 +356,8 @@ impl TrayCustomize {
             let (b, lr) = (b.scaled(s), label_rect(l, s));
             let on = self.all_icons == Some(true);
             draw_checkbox(c, p, b, on, self.pointer.of(Focus::AllIcons));
-            let label = cues.label(ALL_ICONS);
+            let all_icons_text = all_icons();
+            let label = cues.label(&all_icons_text);
             draw_label(
                 c,
                 text,
@@ -411,8 +419,12 @@ impl TrayCustomize {
         let (combo, cl) = match &lay.combo {
             Some((j, cl)) if *j == i => (&self.combo, *cl),
             _ => {
-                let labels: Vec<&str> = w.choices().iter().map(|&b| w.label(b)).collect();
-                row_combo = Combo::new(&labels, w.index(e.behaviour, e.passive), labels.len());
+                let labels: Vec<String> = w.choices().iter().map(|&b| w.label(b)).collect();
+                row_combo = Combo::new(
+                    &refs(&labels),
+                    w.index(e.behaviour, e.passive),
+                    labels.len(),
+                );
                 (&row_combo, combo::layout(&row_combo, field, &self.metrics))
             }
         };
@@ -469,7 +481,7 @@ impl TrayCustomize {
         let live = self.list_enabled();
         c.fill_rect(lay.body.scaled(s), cs.window);
         let ink = if live { cs.window_text } else { cs.gray_text };
-        let titles = [CURRENT, PAST];
+        let titles = [&current(), &past()];
         for &(slot, r) in &lay.slots {
             let i = match slot {
                 Slot::Header(grp) => {
@@ -525,7 +537,7 @@ impl TrayCustomize {
                 g.highlight_h * s,
             );
             let label = w.label(w.choices()[w.index(e.behaviour, e.passive)]);
-            let label = text.ellipsize(label, br.width, false, px);
+            let label = text.ellipsize(&label, br.width, false, px);
             text.draw(c, br, &label, false, ink, Align::Left, px);
         }
     }

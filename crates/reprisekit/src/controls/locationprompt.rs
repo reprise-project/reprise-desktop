@@ -15,7 +15,9 @@ pub const REMEMBER: &str = "remember";
 const QUESTION: &str = "question";
 const DETAIL: &str = "detail";
 
-pub const TITLE: &str = "Location";
+pub fn title() -> String {
+    tr!("locationprompt-title")
+}
 
 /// The prompt's model.
 #[derive(Clone, Debug, PartialEq)]
@@ -28,12 +30,13 @@ pub struct Fields {
 
 impl Fields {
     fn question(&self) -> String {
-        format!("Allow {} to use your location?", self.program)
+        tr!("locationprompt-question", program = self.program.as_str())
     }
 }
 
-const DETAIL_TEXT: &str = "A remembered choice can be forgotten on the Privacy page of \
-                           Reprise Settings.";
+fn detail_text() -> String {
+    tr!("locationprompt-detail-text")
+}
 
 /// What the user answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +93,7 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
     let col = u.len(W - TEXT_X - MARGIN);
     let question = crate::text::wrap(text, &f.question(), col, px);
     let detail_y = TEXT_Y + question.len() as i32 * LINE_H + GAP;
-    let detail = crate::text::wrap(text, DETAIL_TEXT, col, px);
+    let detail = crate::text::wrap(text, &detail_text(), col, px);
     let check_y = (detail_y + detail.len() as i32 * LINE_H + GAP).max(ICON_XY.1 + ICON + GAP);
     let button_y = check_y + LINE_H + BUTTON_GAP_Y;
     Plan {
@@ -130,7 +133,7 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
             REMEMBER,
             TEXT_X,
             p.check_y,
-            "&Remember my choice for this program",
+            &tr!("locationprompt-remember-my-choice-for-this-program"),
         )
         .checked(true),
     );
@@ -139,14 +142,14 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     items.push(Item::button(
         ALLOW,
         Rect::new(allow_x, p.button_y, BUTTON_W, BUTTON_H),
-        "&Allow",
+        &tr!("locationprompt-allow"),
         true,
         false,
     ));
     items.push(Item::button(
         DENY,
         Rect::new(deny_x, p.button_y, BUTTON_W, BUTTON_H),
-        "&Deny",
+        &tr!("locationprompt-deny"),
         true,
         true,
     ));

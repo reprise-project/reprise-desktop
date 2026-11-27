@@ -129,25 +129,38 @@ fn held(s: &Status) -> bool {
 /// The end balloon's summary and body for a `kind` job from `from` to `to` that dealt with
 /// `landed` items, whether or not its dialog is still up.
 pub fn ended_note(kind: Kind, from: &str, to: &str, landed: usize) -> (String, String) {
-    let noun = if landed == 1 { "item" } else { "items" };
-    let (verb, place) = match kind {
-        Kind::Copy => ("Copied", format!("to {to}")),
-        Kind::Move => ("Moved", format!("to {to}")),
-        Kind::Delete | Kind::Erase => ("Deleted", format!("from {from}")),
-        Kind::Restore => ("Restored", format!("from {from}")),
-        Kind::Extract => ("Extracted", format!("to {to}")),
-        Kind::Compress => ("Compressed", format!("into {to}")),
-        Kind::Empty => {
-            return (
-                "Emptied the Recycle Bin".into(),
-                format!("Deleted {landed} {noun}"),
-            );
-        }
-    };
-    (
-        format!("{verb} {landed} {noun}"),
-        format!("{verb} {landed} {noun} {place}"),
-    )
+    let items = tr!("copyprogress-items", count = landed as i64);
+    let items = items.as_str();
+    match kind {
+        Kind::Copy => (
+            tr!("copyprogress-done-copy", items = items),
+            tr!("copyprogress-done-copy-body", items = items, to = to),
+        ),
+        Kind::Move => (
+            tr!("copyprogress-done-move", items = items),
+            tr!("copyprogress-done-move-body", items = items, to = to),
+        ),
+        Kind::Delete | Kind::Erase => (
+            tr!("copyprogress-done-delete", items = items),
+            tr!("copyprogress-done-delete-body", items = items, from = from),
+        ),
+        Kind::Restore => (
+            tr!("copyprogress-done-restore", items = items),
+            tr!("copyprogress-done-restore-body", items = items, from = from),
+        ),
+        Kind::Extract => (
+            tr!("copyprogress-done-extract", items = items),
+            tr!("copyprogress-done-extract-body", items = items, to = to),
+        ),
+        Kind::Compress => (
+            tr!("copyprogress-done-compress", items = items),
+            tr!("copyprogress-done-compress-body", items = items, to = to),
+        ),
+        Kind::Empty => (
+            tr!("copyprogress-done-empty"),
+            tr!("copyprogress-done-delete", items = items),
+        ),
+    }
 }
 
 impl CopyProgress {
@@ -173,15 +186,15 @@ impl CopyProgress {
         cp
     }
 
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self.kind {
-            Kind::Copy => "Copying...",
-            Kind::Move => "Moving...",
-            Kind::Delete | Kind::Erase => "Deleting...",
-            Kind::Empty => "Emptying the Recycle Bin...",
-            Kind::Restore => "Restoring...",
-            Kind::Extract => "Extracting...",
-            Kind::Compress => "Compressing...",
+            Kind::Copy => tr!("copyprogress-title-copy"),
+            Kind::Move => tr!("copyprogress-title-move"),
+            Kind::Delete | Kind::Erase => tr!("copyprogress-title-delete"),
+            Kind::Empty => tr!("copyprogress-title-empty"),
+            Kind::Restore => tr!("copyprogress-title-restore"),
+            Kind::Extract => tr!("copyprogress-title-extract"),
+            Kind::Compress => tr!("copyprogress-title-compress"),
         }
     }
 
@@ -259,7 +272,7 @@ impl CopyProgress {
             && let Some(form::Control::Button { label, .. }) =
                 self.form.item_mut(PAUSE).map(|i| &mut i.control)
         {
-            *label = pause_label(self.status.paused).into();
+            *label = pause_label(self.status.paused);
         }
         self.sample();
         changed || self.anim_ms / FRAME_MS != frame
@@ -291,43 +304,54 @@ impl CopyProgress {
 
     /// The time remaining in words.
     pub fn remaining(&self) -> String {
+        self.left(true)
+    }
+
+    /// [`CopyProgress::remaining`] without its last word, for the Time remaining row.
+    fn time_left(&self) -> String {
+        self.left(false)
+    }
+
+    /// The time left; `sentence` ends a known time with "remaining".
+    fn left(&self, sentence: bool) -> String {
         let s = &self.status;
         match s.phase {
-            Phase::Preparing => return "Calculating...".into(),
-            Phase::Finishing => return format!("Finishing: writing to {}...", self.to),
-            Phase::Copying if s.paused => return "Paused".into(),
+            Phase::Preparing => return tr!("copyprogress-calculating"),
+            Phase::Finishing => {
+                return tr!("copyprogress-finishing-to", to = self.to.as_str());
+            }
+            Phase::Copying if s.paused => return tr!("copyprogress-paused"),
             Phase::Copying => {}
         }
         let (done, all) = self.measure(s);
         let left = all.saturating_sub(done) as f64;
         match self.rate() {
-            Some(r) if left <= r * LONGEST_S => remaining_text(left / r),
-            _ => "Calculating...".into(),
+            Some(r) if left <= r * LONGEST_S => {
+                let body = remaining_body(left / r);
+                if sentence {
+                    tr!("copyprogress-remaining", body = body.as_str())
+                } else {
+                    body
+                }
+            }
+            _ => tr!("copyprogress-calculating"),
         }
     }
 
-    /// [`CopyProgress::remaining`] without its last word, for the Time remaining row.
-    fn time_left(&self) -> String {
-        let r = self.remaining();
-        r.strip_suffix(" remaining").map(String::from).unwrap_or(r)
-    }
-
-    fn verb(&self) -> &'static str {
+    fn verb(&self) -> String {
         match self.kind {
-            Kind::Copy => "Copying",
-            Kind::Move => "Moving",
-            Kind::Delete | Kind::Erase => "Deleting",
-            Kind::Empty => "Emptying",
-            Kind::Restore => "Restoring",
-            Kind::Extract => "Extracting",
-            Kind::Compress => "Compressing",
+            Kind::Copy => tr!("copyprogress-verb-copy"),
+            Kind::Move => tr!("copyprogress-verb-move"),
+            Kind::Delete | Kind::Erase => tr!("copyprogress-verb-delete"),
+            Kind::Empty => tr!("copyprogress-verb-empty"),
+            Kind::Restore => tr!("copyprogress-verb-restore"),
+            Kind::Extract => tr!("copyprogress-verb-extract"),
+            Kind::Compress => tr!("copyprogress-verb-compress"),
         }
     }
 
     fn items_text(&self) -> String {
-        let n = self.status.total_items;
-        let noun = if n == 1 { "item" } else { "items" };
-        format!("{n} {noun}")
+        tr!("copyprogress-items", count = self.status.total_items as i64)
     }
 
     fn flight(&self) -> Flight {
@@ -418,14 +442,14 @@ impl CopyProgress {
             Item::button(
                 PAUSE,
                 Rect::new(pause_x, y, BUTTON_W, BUTTON_H),
-                pause,
+                &pause,
                 self.status.phase != Phase::Finishing,
                 false,
             ),
             Item::button(
                 CANCEL,
                 Rect::new(cancel_x, y, BUTTON_W, BUTTON_H),
-                "Cancel",
+                &tr!("cancel"),
                 true,
                 true,
             ),
@@ -483,12 +507,12 @@ impl CopyProgress {
         draw_copy_flight(c, p, strip, &self.flight());
         let line = |y: i32| u.rect(Rect::new(MARGIN, y, W - 2 * MARGIN, LINE_H + 2));
         let name = match (self.status.phase, self.kind) {
-            (Phase::Preparing, Kind::Copy) => "Preparing to copy...".to_string(),
-            (Phase::Preparing, Kind::Move) => "Preparing to move...".to_string(),
-            (Phase::Preparing, Kind::Restore) => "Preparing to restore...".to_string(),
-            (Phase::Preparing, Kind::Extract) => "Preparing to extract...".to_string(),
-            (Phase::Preparing, Kind::Compress) => "Preparing to compress...".to_string(),
-            (Phase::Preparing, _) => "Preparing to delete...".to_string(),
+            (Phase::Preparing, Kind::Copy) => tr!("copyprogress-preparing-copy"),
+            (Phase::Preparing, Kind::Move) => tr!("copyprogress-preparing-move"),
+            (Phase::Preparing, Kind::Restore) => tr!("copyprogress-preparing-restore"),
+            (Phase::Preparing, Kind::Extract) => tr!("copyprogress-preparing-extract"),
+            (Phase::Preparing, Kind::Compress) => tr!("copyprogress-preparing-compress"),
+            (Phase::Preparing, _) => tr!("copyprogress-preparing-delete"),
             _ => self.status.current.clone(),
         };
         let ink = cs.button_text;
@@ -504,9 +528,13 @@ impl CopyProgress {
         );
         let r = line(FROM_Y);
         let from_to = if self.kind.has_dest() {
-            format!("From '{}' to '{}'", self.from, self.to)
+            tr!(
+                "copyprogress-from-to",
+                from = self.from.as_str(),
+                to = self.to.as_str()
+            )
         } else {
-            format!("From '{}'", self.from)
+            tr!("copyprogress-from", from = self.from.as_str())
         };
         text.draw(
             c,
@@ -522,7 +550,7 @@ impl CopyProgress {
         let r = line(LEFT_Y);
         text.draw(c, r, &self.remaining(), false, ink, Align::Left, px);
         if self.status.waiting > 0 {
-            let more = format!("{} more waiting", self.status.waiting);
+            let more = tr!("copyprogress-waiting", count = self.status.waiting as i64);
             text.draw(c, r, &more, false, cs.gray_text, Align::Right, px);
         }
     }
@@ -568,14 +596,14 @@ impl CopyProgress {
         let big = u.rect(Rect::new(GLASS_MARGIN, BIG_Y, w, BIG_H));
         let pct = (self.fraction() * 100.0).floor() as u32;
         let heading = match (self.status.phase, self.status.paused) {
-            (Phase::Preparing, _) => "Calculating...".to_string(),
-            (Phase::Finishing, _) => "Finishing...".to_string(),
-            (_, true) => format!("Paused - {pct}% complete"),
-            _ => format!("{pct}% complete"),
+            (Phase::Preparing, _) => tr!("copyprogress-calculating"),
+            (Phase::Finishing, _) => tr!("copyprogress-finishing"),
+            (_, true) => tr!("copyprogress-paused-percent", percent = i64::from(pct)),
+            _ => tr!("copyprogress-percent", percent = i64::from(pct)),
         };
         text.draw(c, big, &heading, false, look.heading, Align::Left, big_px);
         if self.status.waiting > 0 {
-            let more = format!("{} more waiting", self.status.waiting);
+            let more = tr!("copyprogress-waiting", count = self.status.waiting as i64);
             text.draw(c, big, &more, false, cs.gray_text, Align::Right, px);
         }
         if self.details {
@@ -589,12 +617,12 @@ impl CopyProgress {
             draw_copy_graph(c, p, g, &graph);
             if let Some(r) = self.rate() {
                 let label = if self.kind.by_items() {
-                    {
-                        let n = r.round() as u64;
-                        format!("Speed: {n} {}/s", if n == 1 { "item" } else { "items" })
-                    }
+                    tr!("copyprogress-speed-items", count = r.round() as i64)
                 } else {
-                    format!("Speed: {}/s", bytes_text(r as u64))
+                    tr!(
+                        "copyprogress-speed-bytes",
+                        size = bytes_text(r as u64).as_str()
+                    )
                 };
                 let lw = text.measure(&label, false, px) + 6;
                 let lh = u.len(LINE_H + 2);
@@ -605,9 +633,9 @@ impl CopyProgress {
                 text.draw(c, lr, &label, false, cs.window_text, Align::Center, px);
             }
             let rows = [
-                ("Name:", self.status.current.clone()),
-                ("Time remaining:", self.time_left()),
-                ("Items remaining:", self.items_left()),
+                (tr!("copyprogress-name"), self.status.current.clone()),
+                (tr!("copyprogress-time-remaining"), self.time_left()),
+                (tr!("copyprogress-items-remaining"), self.items_left()),
             ];
             for (i, (label, value)) in rows.iter().enumerate() {
                 let y = ROWS_Y + i as i32 * ROW_H;
@@ -659,26 +687,39 @@ impl CopyProgress {
         if self.kind.by_items() {
             return n.to_string();
         }
-        format!(
-            "{n} ({})",
-            bytes_text(s.total_bytes.saturating_sub(s.bytes))
+        tr!(
+            "copyprogress-items-left",
+            count = n as i64,
+            size = bytes_text(s.total_bytes.saturating_sub(s.bytes)).as_str()
         )
     }
 
     /// "Copying 12 items (1.2 GB) from Downloads to KINGSTON", the folders in the link ink.
     fn draw_header(&self, c: &mut Canvas, text: &TextRenderer, p: &Paint, r: Rect, px: u32) {
         let lead = match self.status.phase {
-            _ if self.kind.by_items() => format!("{} {} from ", self.verb(), self.items_text()),
-            Phase::Preparing => format!("{} {} from ", self.verb(), self.items_text()),
-            _ => format!(
-                "{} {} ({}) from ",
-                self.verb(),
-                self.items_text(),
-                bytes_text(self.status.total_bytes)
+            _ if self.kind.by_items() => tr!(
+                "copyprogress-lead",
+                verb = self.verb().as_str(),
+                items = self.items_text().as_str()
             ),
+            Phase::Preparing => tr!(
+                "copyprogress-lead",
+                verb = self.verb().as_str(),
+                items = self.items_text().as_str()
+            ),
+            _ => tr!(
+                "copyprogress-lead-size",
+                verb = self.verb().as_str(),
+                items = self.items_text().as_str(),
+                size = bytes_text(self.status.total_bytes).as_str()
+            ),
+        } + " ";
+        let to = if self.kind.has_dest() {
+            format!(" {} ", tr!("copyprogress-to"))
+        } else {
+            String::new()
         };
-        let to = if self.kind.has_dest() { " to " } else { "" };
-        let fixed = text.measure(&lead, false, px) + text.measure(to, false, px);
+        let fixed = text.measure(&lead, false, px) + text.measure(&to, false, px);
         let each = if to.is_empty() {
             (r.width - fixed).max(0)
         } else {
@@ -694,7 +735,7 @@ impl CopyProgress {
         for (s, ink) in [
             (lead.as_str(), p.cs.window_text),
             (&from, p.cs.hot_light),
-            (to, p.cs.window_text),
+            (to.as_str(), p.cs.window_text),
             (&dest, p.cs.hot_light),
         ] {
             let w = text.measure(s, false, px);
@@ -740,11 +781,11 @@ impl CopyProgress {
         debug_assert_eq!(art.width as i32, n);
         c.blit_over(r.x * p.s, r.y * p.s, &art.at_scale(c.scale()));
         let label = if self.details {
-            "Fewer &details"
+            tr!("copyprogress-fewer-details")
         } else {
-            "More &details"
+            tr!("copyprogress-more-details")
         };
-        let (plain, key) = crate::text::split_mnemonic(label);
+        let (plain, key) = crate::text::split_mnemonic(&label);
         let t = Rect::new(r.x + side + 6, r.y, r.width - side - 6, side);
         text.draw(c, t, &plain, false, p.cs.window_text, Align::Left, px);
         if let Some(i) = key {
@@ -761,7 +802,11 @@ impl CopyProgress {
         let all = Rect::new(0, 0, w, h);
         let lines = [
             self.status.current.clone(),
-            format!("From {} to {}", self.from, self.to),
+            tr!(
+                "copyprogress-access-from-to",
+                from = self.from.as_str(),
+                to = self.to.as_str()
+            ),
             self.remaining(),
         ];
         for (i, l) in lines.iter().enumerate() {
@@ -779,14 +824,14 @@ impl CopyProgress {
         tree.push(ROOT, "progress", bar);
         if let Some(t) = self.toggle_rect() {
             let label = if self.details {
-                "Fewer details"
+                tr!("copyprogress-access-fewer-details")
             } else {
-                "More details"
+                tr!("copyprogress-access-more-details")
             };
             tree.push(
                 ROOT,
                 "details",
-                access::button(u.rect(t), label, true, false),
+                access::button(u.rect(t), &label, true, false),
             );
         }
         if let Some(f) = self.form.access(tree, ROOT, text, px) {
@@ -795,8 +840,12 @@ impl CopyProgress {
     }
 }
 
-fn pause_label(paused: bool) -> &'static str {
-    if paused { "&Resume" } else { "&Pause" }
+fn pause_label(paused: bool) -> String {
+    if paused {
+        tr!("copyprogress-resume")
+    } else {
+        tr!("copyprogress-pause")
+    }
 }
 
 fn premul_of(c: Color) -> shape::Px {
@@ -863,30 +912,36 @@ pub fn bytes_text(bytes: u64) -> String {
 /// `secs` left in words: "A few seconds", seconds in fives under a minute, then minutes, then
 /// hours and minutes. Each unit takes over once the smaller one rounds up to it.
 pub fn remaining_text(secs: f64) -> String {
+    tr!(
+        "copyprogress-remaining",
+        body = remaining_body(secs).as_str()
+    )
+}
+
+/// [`remaining_text`] without its last word.
+fn remaining_body(secs: f64) -> String {
     let secs = secs.max(0.0).ceil() as u64;
-    let plural = |n: u64, one: &str| {
-        if n == 1 {
-            format!("1 {one}")
-        } else {
-            format!("{n} {one}s")
-        }
-    };
     let fives = secs.div_ceil(5) * 5;
     let minutes = ((secs + 30) / 60).max(1);
-    let body = if secs <= 5 {
-        return "A few seconds remaining".into();
+    let about = |span: String| tr!("copyprogress-about", span = span.as_str());
+    if secs <= 5 {
+        tr!("copyprogress-few-seconds")
     } else if fives < 60 {
-        plural(fives, "second")
+        about(tr!("copyprogress-seconds", count = fives as i64))
     } else if minutes < 60 {
-        plural(minutes, "minute")
+        about(tr!("copyprogress-minutes", count = minutes as i64))
     } else {
         let (h, m) = (minutes / 60, minutes % 60);
+        let hours = tr!("copyprogress-hours", count = h as i64);
         match m {
-            0 => plural(h, "hour"),
-            m => format!("{} and {}", plural(h, "hour"), plural(m, "minute")),
+            0 => about(hours),
+            m => about(tr!(
+                "copyprogress-hours-minutes",
+                hours = hours.as_str(),
+                minutes = tr!("copyprogress-minutes", count = m as i64).as_str()
+            )),
         }
-    };
-    format!("About {body} remaining")
+    }
 }
 
 #[cfg(test)]

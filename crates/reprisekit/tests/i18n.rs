@@ -38,3 +38,28 @@ fn a_translation_using_a_variable_its_english_message_lacks_fails_the_check() {
          data/locale/de/demo.ftl: \"window-title\" uses $nme, which the English message does not\n"
     );
 }
+
+#[test]
+fn every_english_ftl_parses_without_errors() {
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if path.is_dir() && name != "target" && name != "tmp" && name != ".git" {
+                walk(&path, out);
+            } else if name == "en.ftl" && path.parent().is_some_and(|p| p.ends_with("locale")) {
+                out.push(path);
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    walk(&root.join("crates"), &mut files);
+    assert!(!files.is_empty(), "no en.ftl found under crates/");
+    for file in files {
+        let text = std::fs::read_to_string(&file).unwrap();
+        if let Err((_, errors)) = fluent_bundle::FluentResource::try_new(text) {
+            panic!("{}: {errors:?}", file.display());
+        }
+    }
+}

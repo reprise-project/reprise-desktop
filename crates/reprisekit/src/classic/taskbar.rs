@@ -19,7 +19,7 @@ pub(crate) fn start_ring(
     let s = theme.scale.max(1);
     let st = layout.start;
     let o = if pressed { s } else { 0 };
-    let tw = text.measure("Start", true, theme.fonts.size_px);
+    let tw = text.measure(&tr!("classic-taskbar-start"), true, theme.fonts.size_px);
     Rect::new(
         st.x + 19 * s + o,
         st.y + 5 * s,
@@ -78,7 +78,7 @@ pub fn draw_taskbar(
     text.draw(
         canvas,
         label,
-        "Start",
+        &tr!("classic-taskbar-start"),
         true,
         cs.button_text,
         Align::Left,

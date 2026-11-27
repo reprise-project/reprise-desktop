@@ -119,12 +119,12 @@ impl CaptionButton {
     ];
 
     /// What the button is called, on its tip and to a screen reader.
-    pub fn name(self, maximized: bool) -> &'static str {
+    pub fn name(self, maximized: bool) -> String {
         match self {
-            CaptionButton::Minimize => "Minimize",
-            CaptionButton::Maximize if maximized => "Restore Down",
-            CaptionButton::Maximize => "Maximize",
-            CaptionButton::Close => "Close",
+            CaptionButton::Minimize => tr!("frame-minimize"),
+            CaptionButton::Maximize if maximized => tr!("frame-restore-down"),
+            CaptionButton::Maximize => tr!("frame-maximize"),
+            CaptionButton::Close => tr!("close"),
         }
     }
 }
@@ -530,14 +530,17 @@ pub fn access(
         Some(add) => add(tree, bar),
         None if geom.chrome.icon => {
             let c = geom.caption;
-            let mut n = press(Rect::new(c.x, c.y, ICON_AREA, c.height), "Window menu");
+            let mut n = press(
+                Rect::new(c.x, c.y, ICON_AREA, c.height),
+                &tr!("frame-window-menu"),
+            );
             n.set_has_popup(HasPopup::Menu);
             tree.push(bar, "menu", n);
         }
         None => {}
     }
     for b in shown {
-        tree.push(bar, b as u8, press(geom.button_rect(b), b.name(maximized)));
+        tree.push(bar, b as u8, press(geom.button_rect(b), &b.name(maximized)));
     }
 }
 

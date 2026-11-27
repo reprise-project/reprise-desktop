@@ -7,7 +7,7 @@ use super::geometry::{
     HEADING_SCALE, PAGE_BODY_Y, PAGE_CANCEL_X, PAGE_CHECK_LABEL, PAGE_COMBO, PAGE_OK_X,
     PAGE_RULE_INSET, PAGE_TITLE_X, PAGE_TITLES, rows_in,
 };
-use super::{ALL_ICONS, Hit, Slot, TrayCustomize, Wording};
+use super::{Hit, Slot, TrayCustomize, Wording, all_icons};
 
 impl TrayCustomize {
     /// The parts with the client area's top-left at `origin`. Label
@@ -79,7 +79,7 @@ impl TrayCustomize {
                     cm.check,
                     cm.check,
                 );
-                let (plain, _) = split_mnemonic(ALL_ICONS);
+                let (plain, _) = split_mnemonic(&all_icons());
                 let l = Rect::new(
                     b.x + cm.check_label,
                     line.y,
@@ -183,7 +183,7 @@ impl TrayCustomize {
             cm.check,
             cm.check,
         );
-        let (plain, _) = split_mnemonic(ALL_ICONS);
+        let (plain, _) = split_mnemonic(&all_icons());
         let check_label = Rect::new(
             check.x + cm.text.small() * PAGE_CHECK_LABEL,
             row.y - 1,
@@ -194,7 +194,7 @@ impl TrayCustomize {
         let restore = Rect::new(
             link.x,
             link.y,
-            text.measure(self.wording.restore(), false, px),
+            text.measure(&self.wording.restore(), false, px),
             link.height,
         );
         let view = at(g.view());
@@ -294,11 +294,11 @@ impl TrayCustomize {
         };
         let button = |label: &str, r: Rect| width(label, false, px) - (r.width - u.len(6));
         put("ok", button("OK", lay.ok));
-        put("cancel", button("Cancel", lay.cancel));
+        put("cancel", button(&tr!("cancel"), lay.cancel));
         if self.is_page() {
             let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
             let heading = match self.heading.as_slice() {
-                [] => width(Wording::HEADING, false, heading_px),
+                [] => width(&Wording::heading(), false, heading_px),
                 lines => lines
                     .iter()
                     .map(|l| width(l, false, heading_px))
@@ -307,7 +307,7 @@ impl TrayCustomize {
             };
             put("heading", heading - lay.prompt.width);
             let intro = match self.intro.as_slice() {
-                [] => width(w.intro(), false, px),
+                [] => width(&w.intro(), false, px),
                 lines => lines.iter().map(|l| width(l, false, px)).max().unwrap_or(0),
             };
             put("intro", intro - lay.intro.width);
@@ -322,18 +322,18 @@ impl TrayCustomize {
                     continue;
                 }
                 let room = r.width - u.len(PAGE_TITLE_X);
-                put("column", width(title, true, px) - room);
+                put("column", width(&title, true, px) - room);
             }
             return over;
         }
         let line_h = u.len(LINE_H);
-        let lines = text::wrap(text, w.intro(), lay.intro.width, px).len() as i32;
+        let lines = text::wrap(text, &w.intro(), lay.intro.width, px).len() as i32;
         put(
             "intro",
             (lines - rows_in(lay.intro.height, line_h)) * line_h,
         );
-        put("prompt", width(w.prompt(), false, px) - lay.prompt.width);
-        put("restore", button(w.restore(), lay.restore));
+        put("prompt", width(&w.prompt(), false, px) - lay.prompt.width);
+        put("restore", button(&w.restore(), lay.restore));
         let check = lay
             .check_label
             .map_or(0, |l| l.right() - lay.client.right());

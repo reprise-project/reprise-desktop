@@ -163,7 +163,7 @@ pub fn widgets_menu(on: &[Kind]) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>)
     Kind::ALL
         .into_iter()
         .map(|k| {
-            let row = entry(k.label()).checked(on.contains(&k));
+            let row = entry(&k.label()).checked(on.contains(&k));
             (row, Some(DesktopCommand::ToggleWidget(k)))
         })
         .unzip()

@@ -56,14 +56,26 @@ const TIME_W: i32 = 60;
 /// A replied notification's time column, room for "Replied, 12:59 PM".
 const REPLIED_TIME_W: i32 = 110;
 const TIME_INSET: i32 = 4;
-const DND_LABEL: &str = "Do not disturb";
-const CLEAR_LABEL: &str = "Clear All";
-const GROUP_CLEAR_LABEL: &str = "Clear";
-const EMPTY_LABEL: &str = "No notifications";
+fn dnd_text() -> String {
+    tr!("notifyhistory-dnd-label")
+}
+fn clear_label() -> String {
+    tr!("notifyhistory-clear-label")
+}
+fn group_clear_label() -> String {
+    tr!("notifyhistory-group-clear-label")
+}
+fn empty_label() -> String {
+    tr!("notifyhistory-empty-label")
+}
 const COLLAPSED_LABEL: &str = "collapsed";
-const REPLIED_LABEL: &str = "Replied";
+fn replied_label() -> String {
+    tr!("notifyhistory-replied-label")
+}
 /// A group's name when the program gave none.
-const NO_APP: &str = "Other";
+fn no_app() -> String {
+    tr!("notifyhistory-no-app")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
@@ -185,7 +197,12 @@ fn time_w(replied: bool) -> i32 {
 /// A notification's grey time text, "Replied, " ahead of it once answered.
 fn time_text(time: &str, replied: bool) -> std::borrow::Cow<'_, str> {
     if replied {
-        format!("{REPLIED_LABEL}, {time}").into()
+        tr!(
+            "notifyhistory-replied-at",
+            replied = replied_label().as_str(),
+            time = time
+        )
+        .into()
     } else {
         time.into()
     }
@@ -327,8 +344,12 @@ impl History {
             let notes: Vec<&Entry> = self.entries.iter().filter(|e| e.key == key).collect();
             let open = !self.folded.contains(key);
             let app = notes.first().map_or("", |e| e.app.as_str());
-            let name = if app.is_empty() { NO_APP } else { app };
-            rows.push(Row::Group(format!("{name} ({})", notes.len())));
+            let name = if app.is_empty() { &no_app() } else { app };
+            rows.push(Row::Group(tr!(
+                "notifyhistory-group",
+                name = name,
+                count = notes.len() as i64
+            )));
             meta.push(Meta::Header {
                 key: key.to_string(),
                 open,
@@ -662,8 +683,12 @@ fn neighbour_group(
 
 fn dnd_label(h: &History) -> String {
     match &h.dnd_until {
-        Some(t) if h.dnd => format!("{DND_LABEL} until {t}"),
-        _ => DND_LABEL.to_string(),
+        Some(t) if h.dnd => tr!(
+            "notifyhistory-dnd-until",
+            dnd = dnd_text().as_str(),
+            time = t.as_str()
+        ),
+        _ => dnd_text(),
     }
 }
 
@@ -751,7 +776,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
                     text,
                     p,
                     clear.scaled(s),
-                    GROUP_CLEAR_LABEL,
+                    &group_clear_label(),
                     false,
                     h.pointer.of(Held::GroupClear(i)),
                     true,
@@ -781,7 +806,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
             text,
             p,
             first.scaled(s),
-            EMPTY_LABEL,
+            &empty_label(),
             Align::Center,
             px,
             None,
@@ -793,7 +818,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
         text,
         p,
         lay.clear.scaled(s),
-        CLEAR_LABEL,
+        &clear_label(),
         false,
         Interaction::pressed_if(h.pointer.of(Held::Clear) == Interaction::Pressed && enabled),
         enabled,
@@ -855,21 +880,25 @@ pub fn access(
             }
         }
         if let (Meta::Header { .. }, Some(row)) = (m, shown) {
-            let clear =
-                access::button(header_parts(row, cm.text).0, GROUP_CLEAR_LABEL, true, false);
+            let clear = access::button(
+                header_parts(row, cm.text).0,
+                &group_clear_label(),
+                true,
+                false,
+            );
             tree.push(id, "clear", clear);
         }
     }
     if h.list.rows.is_empty() {
         let first = Rect::new(ll.inner.x, ll.inner.y + 4, ll.inner.width, ll.row_h);
-        tree.push(list, "empty", access::label(first, EMPTY_LABEL, false));
+        tree.push(list, "empty", access::label(first, &empty_label(), false));
         focus = list;
     }
     let enabled = !h.list.rows.is_empty();
     tree.push(
         parent,
         "clear",
-        access::button(lay.clear, CLEAR_LABEL, enabled, false),
+        access::button(lay.clear, &clear_label(), enabled, false),
     );
     focus
 }

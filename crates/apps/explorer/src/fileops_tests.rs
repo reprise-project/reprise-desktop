@@ -167,9 +167,9 @@ fn enter() -> repriseapp::Event {
     key_event_plain(reprisekit::textedit::keysym::RETURN, None)
 }
 
-fn asked(ex: &Explorer) -> Option<(&'static str, String)> {
+fn asked(ex: &Explorer) -> Option<(String, String)> {
     match ex.dialog() {
-        Some(Dialog::Replace(r)) => Some((r.fields.title(), r.fields.name.clone())),
+        Some(Dialog::Replace(r)) => Some((r.fields.title().to_string(), r.fields.name.clone())),
         _ => None,
     }
 }

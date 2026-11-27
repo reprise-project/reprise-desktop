@@ -10,8 +10,8 @@ use reprisefs::trash::Trashed;
 use reprisekit::classic::widgets::CheckState;
 use reprisekit::controls::filesheet;
 pub use reprisekit::controls::filesheet::{
-    ADV_CANCEL, ADV_OK, ADVANCED, ATTR_CANCEL, ATTR_OK, ATTR_SIZE, BIN_SHEET_H, CALCULATING,
-    CHANGE, Facts, ICON_PX, READ_ONLY, RESTORE, Row, SHEET_W, attr_tree_picked, bin_page,
+    ADV_CANCEL, ADV_OK, ADVANCED, ATTR_CANCEL, ATTR_OK, ATTR_SIZE, BIN_SHEET_H, CHANGE, Facts,
+    ICON_PX, READ_ONLY, RESTORE, Row, SHEET_W, attr_tree_picked, bin_page, calculating,
     general_page,
 };
 use reprisekit::controls::form::{Control, Form};
@@ -26,7 +26,13 @@ pub const PROPS: WinId = WinId::named("props");
 
 pub fn facts(info: &FileInfo, is_12h: bool) -> Facts {
     let walking = info.is_dir && info.contains.is_none();
-    let total = |v: String| if walking { CALCULATING.to_string() } else { v };
+    let total = |v: String| {
+        if walking {
+            calculating().to_string()
+        } else {
+            v
+        }
+    };
     Facts {
         is_dir: info.is_dir,
         type_name: info.type_name.clone(),
@@ -37,7 +43,7 @@ pub fn facts(info: &FileInfo, is_12h: bool) -> Facts {
         on_disk: total(format_size(info.on_disk)),
         contains: match info.contains {
             Some((f, d)) => Some(format_contains(f, d)),
-            None => walking.then(|| CALCULATING.to_string()),
+            None => walking.then(|| calculating().to_string()),
         },
         created: info.created.map(|t| format_time(t, is_12h)),
         modified: format_time(info.modified, is_12h),
@@ -71,7 +77,7 @@ pub fn rows(info: &FileInfo, is_12h: bool) -> Vec<Row> {
 pub fn set_facts(set: &SetInfo) -> filesheet::SetFacts {
     let total = |v: String| {
         if set.walking {
-            CALCULATING.to_string()
+            calculating().to_string()
         } else {
             v
         }
@@ -147,7 +153,7 @@ pub fn bin_facts(
 
 fn bin_size(info: &FileInfo) -> String {
     if info.is_dir && info.contains.is_none() {
-        CALCULATING.to_string()
+        calculating().to_string()
     } else {
         crate::window::short_size(info.size)
     }

@@ -7,7 +7,8 @@ use crate::raster::Rect;
 use crate::text::TextRenderer;
 
 use super::layout::Layout;
-use super::{ALL_ICONS, Focus, TrayCustomize, Wording};
+use super::refs;
+use super::{Focus, TrayCustomize, Wording, all_icons};
 
 impl TrayCustomize {
     /// Names the combo just pushed under `list` for entry `i` of `total`, gives it the
@@ -38,11 +39,11 @@ impl TrayCustomize {
         let root = access::ROOT;
         let w = self.wording;
         let live = self.list_enabled();
-        tree.push(root, "intro", access::label(lay.intro, w.intro(), true));
+        tree.push(root, "intro", access::label(lay.intro, &w.intro(), true));
         let prompt = if self.is_page() {
-            Wording::HEADING
+            &Wording::heading()
         } else {
-            w.prompt()
+            &w.prompt()
         };
         tree.push(root, "prompt", access::label(lay.prompt, prompt, true));
         let mut ln = access::node(Role::ListBox, lay.body);
@@ -89,13 +90,17 @@ impl TrayCustomize {
             }
         }
         if self.is_page() && live {
-            let labels: Vec<&str> = w.choices().iter().map(|&b| w.label(b)).collect();
+            let labels: Vec<String> = w.choices().iter().map(|&b| w.label(b)).collect();
             for &(i, field) in &lay.fields {
                 if lay.combo.as_ref().is_some_and(|(j, _)| *j == i) {
                     continue;
                 }
                 let e = &self.entries[i];
-                let row = Combo::new(&labels, w.index(e.behaviour, e.passive), labels.len());
+                let row = Combo::new(
+                    &refs(&labels),
+                    w.index(e.behaviour, e.passive),
+                    labels.len(),
+                );
                 let cl = combo::layout(&row, field, &self.metrics);
                 combo::access(&row, &cl, text, px, tree, list, ("combo", i));
                 Self::name_combo(tree, list, row_ids[i], &e.name, i, self.entries.len());
@@ -105,20 +110,20 @@ impl TrayCustomize {
             (Some(b), Some(l), Some(on)) => Some(tree.push(
                 root,
                 "all",
-                access::toggle(Role::CheckBox, b.union(&l), ALL_ICONS, on.into(), true),
+                access::toggle(Role::CheckBox, b.union(&l), &all_icons(), on.into(), true),
             )),
             _ => None,
         };
         let restore = tree.push(
             root,
             "restore",
-            access::button(lay.restore, w.restore(), live, false),
+            access::button(lay.restore, &w.restore(), live, false),
         );
         let ok = tree.push(root, "ok", access::button(lay.ok, "OK", true, true));
         let cancel = tree.push(
             root,
             "cancel",
-            access::button(lay.cancel, "Cancel", true, false),
+            access::button(lay.cancel, &tr!("cancel"), true, false),
         );
         let focus = match self.focus {
             Focus::List => focus_row,

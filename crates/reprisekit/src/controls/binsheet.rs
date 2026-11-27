@@ -117,7 +117,7 @@ fn size_controls(
             "no_bin",
             check_x,
             93,
-            "Do not move files to the &Recycle Bin.",
+            &tr!("binsheet-do-not-move-files-to-the"),
         )
         .checked(rule.remove_immediately)
         .enabled(live)
@@ -125,7 +125,7 @@ fn size_controls(
         Item::label(
             "no_bin_2",
             Rect::new(check_x, 106, 250, 13),
-            "Remove files immediately when deleted",
+            &tr!("binsheet-remove-files-immediately-when-deleted"),
         )
         .check_wrap()
         .enabled(live),
@@ -161,7 +161,7 @@ impl BinSheet {
             applied: settings,
             drives,
             days,
-            sheet: PropSheet::new(&[], Vec::new(), SIZE),
+            sheet: PropSheet::new(&[] as &[&str], Vec::new(), SIZE),
         };
         s.sheet = s.build();
         s
@@ -174,7 +174,7 @@ impl BinSheet {
                 "independent",
                 31,
                 42,
-                "&Configure drives independently",
+                &tr!("binsheet-configure-drives-independently"),
                 "drives",
             )
             .checked(p.independent),
@@ -182,27 +182,41 @@ impl BinSheet {
             // The second radio and its label sit on the group's top line, which breaks
             // for 156 px from x 30 in every look.
             Item::new("gap", Rect::new(30, 70, 156, 2), Control::Blank),
-            Item::radio("all", 31, 64, "&Use one setting for all drives", "drives")
-                .checked(!p.independent),
+            Item::radio(
+                "all",
+                31,
+                64,
+                &tr!("binsheet-use-one-setting-for-all-drives"),
+                "drives",
+            )
+            .checked(!p.independent),
         ];
         items.extend(size_controls(
             30,
             54,
             139,
             46,
-            &["&Maximum size of Recycle Bin", "(percent of each drive)"],
+            &[
+                &tr!("binsheet-maximum-size-of-recycle-bin"),
+                &tr!("binsheet-percent-of-each-drive"),
+            ],
             p.global,
             !p.independent,
         ));
         items.push(
-            Item::check("confirm", 30, 242, "&Display delete confirmation dialog")
-                .checked(p.confirm),
+            Item::check(
+                "confirm",
+                30,
+                242,
+                &tr!("binsheet-display-delete-confirmation-dialog"),
+            )
+            .checked(p.confirm),
         );
         let aging = p.older_than_days > 0;
         let mut days = UpDown::new(i32::from(self.days), 1, i32::from(MAX_DAYS));
         days.enabled = aging;
         items.extend([
-            Item::check("aging", 30, 266, "Delete items &older than").checked(aging),
+            Item::check("aging", 30, 266, &tr!("binsheet-delete-items-older-than")).checked(aging),
             Item::new(
                 "days",
                 Rect::new(190, 262, updown::WIDTH, updown::HEIGHT),
@@ -220,9 +234,17 @@ impl BinSheet {
             false => rule.cap(d.size),
         };
         let mut items = vec![
-            Item::label("size_of_l", Rect::new(21, 41, 120, 13), "Size of drive:"),
+            Item::label(
+                "size_of_l",
+                Rect::new(21, 41, 120, 13),
+                &tr!("binsheet-size-of-drive"),
+            ),
             Item::label("size_of", Rect::new(153, 41, 160, 13), &bytes_text(d.size)),
-            Item::label("reserved_l", Rect::new(21, 63, 120, 13), "Space reserved:"),
+            Item::label(
+                "reserved_l",
+                Rect::new(21, 63, 120, 13),
+                &tr!("binsheet-space-reserved"),
+            ),
             Item::label(
                 "reserved",
                 Rect::new(153, 63, 160, 13),
@@ -234,7 +256,7 @@ impl BinSheet {
             45,
             130,
             37,
-            &["&Maximum size of Recycle Bin (percent of drive)"],
+            &[&tr!("binsheet-maximum-size-of-recycle-bin-percent")],
             rule,
             self.pending.independent,
         ));
@@ -262,8 +284,8 @@ impl BinSheet {
     }
 
     fn build(&self) -> PropSheet {
-        let labels: Vec<&str> = std::iter::once("Global")
-            .chain(self.drives.iter().map(|d| d.label.as_str()))
+        let labels: Vec<String> = std::iter::once(tr!("binsheet-global"))
+            .chain(self.drives.iter().map(|d| d.label.clone()))
             .collect();
         let mut sheet = PropSheet::new(&labels, self.pages(), SIZE);
         sheet.set_apply_enabled(self.dirty());

@@ -10,7 +10,9 @@ use accesskit::{NodeId, Role};
 
 /// The pangram's sizes, px at 100%.
 pub const SIZES: [u32; 6] = [12, 18, 24, 36, 48, 72];
-pub const PANGRAM: &str = "The quick brown fox jumps over the lazy dog. 1234567890";
+pub fn pangram() -> String {
+    tr!("fontsample-pangram")
+}
 const CHARSET: [&str; 3] = [
     "abcdefghijklmnopqrstuvwxyz",
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
@@ -81,7 +83,7 @@ pub fn size(sample: &TextRenderer) -> (i32, i32) {
     let bottom = sizes.last().map_or(0, |(y, h)| y + h) + PAD;
     let widest = SIZES
         .iter()
-        .map(|&px| sample.measure(PANGRAM, false, px))
+        .map(|&px| sample.measure(&pangram(), false, px))
         .chain(
             CHARSET
                 .iter()
@@ -138,7 +140,7 @@ pub fn draw_rows(
                 ui_px,
             );
         }
-        line(c, x + SIZE_COL * s, (y, h), PANGRAM, px);
+        line(c, x + SIZE_COL * s, (y, h), &pangram(), px);
     }
 }
 
@@ -221,7 +223,7 @@ mod tests {
             t.advance('\u{4e2e}', false, 24),
             "chars the face lacks draw its notdef"
         );
-        assert_ne!(ui.measure(PANGRAM, false, 11), 0);
+        assert_ne!(ui.measure(&pangram(), false, 11), 0);
     }
 
     #[test]

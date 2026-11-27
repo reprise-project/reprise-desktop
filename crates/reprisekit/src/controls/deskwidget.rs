@@ -40,11 +40,11 @@ impl Kind {
     }
 
     /// Its row in menus, with the access key marked.
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Kind::Clock => "&Clock",
-            Kind::Calendar => "C&alendar",
-            Kind::Meter => "System &Meter",
+            Kind::Clock => tr!("deskwidget-clock"),
+            Kind::Calendar => tr!("deskwidget-calendar"),
+            Kind::Meter => tr!("deskwidget-meter"),
         }
     }
 }
@@ -505,7 +505,10 @@ fn body(
             calendar::draw(c, text, p, cal, &calendar::layout(grid, &cm), false, px);
         }
         Content::Meter(m) => {
-            let rows = [("CPU", &m.cpu), ("Memory", &m.memory)];
+            let rows = [
+                (tr!("deskwidget-cpu"), &m.cpu),
+                (tr!("deskwidget-memory"), &m.memory),
+            ];
             match m.style {
                 MeterStyle::Bars => {
                     let u = cm.text;
@@ -514,7 +517,7 @@ fn body(
                     for (i, (label, list)) in rows.into_iter().enumerate() {
                         let y = inner.y + i as i32 * (bar_h + ROW_GAP);
                         let l = Rect::new(inner.x, y, label_w, bar_h).scaled(s);
-                        put_text(c, text, glass, l, label, false, ink, Align::Left, px);
+                        put_text(c, text, glass, l, &label, false, ink, Align::Left, px);
                         let bar_w = inner.width - label_w - percent_w;
                         let bar = Rect::new(inner.x + label_w, y, bar_w, bar_h);
                         let now = list.last().copied();
@@ -634,7 +637,7 @@ pub fn access(
     parent: NodeId,
     key: impl std::hash::Hash,
 ) -> NodeId {
-    let name = crate::text::split_mnemonic(content.kind().label()).0;
+    let name = crate::text::split_mnemonic(&content.kind().label()).0;
     let id = tree.push(parent, key, access::titled(Role::Group, r, &name));
     let inner = Rect::new(r.x + PAD, r.y + PAD, r.width - 2 * PAD, r.height - 2 * PAD);
     match content {
@@ -663,7 +666,10 @@ pub fn access(
             );
         }
         Content::Meter(m) => {
-            for (label, now) in [("CPU", m.cpu_now()), ("Memory", m.memory_now())] {
+            for (label, now) in [
+                (tr!("deskwidget-cpu"), m.cpu_now()),
+                (tr!("deskwidget-memory"), m.memory_now()),
+            ] {
                 let mut n = access::range(
                     Role::ProgressIndicator,
                     inner,
@@ -672,7 +678,7 @@ pub fn access(
                     100.0,
                     true,
                 );
-                n.set_label(label);
+                n.set_label(&label);
                 tree.push(id, label, n);
             }
         }

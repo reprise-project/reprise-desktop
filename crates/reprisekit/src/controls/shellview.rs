@@ -308,7 +308,11 @@ impl Hit {
 /// once its size is known.
 pub fn tile_detail(e: &Entry) -> Vec<String> {
     if let Some(sp) = &e.space {
-        return vec![format!("{} free of {}", sp.free_text, sp.total_text)];
+        return vec![tr!(
+            "shellview-free-of",
+            free = sp.free_text.as_str(),
+            total = sp.total_text.as_str()
+        )];
     }
     if e.is_folder() {
         return Vec::new();

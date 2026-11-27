@@ -73,7 +73,7 @@ impl Rows {
         let y = self.button_y();
         [
             Rows::button(ok, self.ok_x(), y, "OK", true),
-            Rows::button(cancel, self.cancel_x(), y, "Cancel", false),
+            Rows::button(cancel, self.cancel_x(), y, &tr!("cancel"), false),
         ]
     }
 }

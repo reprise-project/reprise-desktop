@@ -77,16 +77,32 @@ const MEDIA_H: i32 = 28;
 const MEDIA_GAP: i32 = 4;
 const LINK_GAP: i32 = 8;
 
-pub const VOLUME: &str = "Volume";
-pub const MUTE: &str = "Mute";
-pub const OUTPUT: &str = "Output:";
-pub const INPUT: &str = "Input:";
-pub const NOW_PLAYING: &str = "Now Playing";
-pub const SETTINGS: &str = "Sound settings...";
+pub fn volume() -> String {
+    tr!("volumepopup-volume")
+}
+pub fn mute() -> String {
+    tr!("volumepopup-mute")
+}
+pub fn output() -> String {
+    tr!("volumepopup-output")
+}
+pub fn input() -> String {
+    tr!("volumepopup-input")
+}
+pub fn now_playing() -> String {
+    tr!("volumepopup-now-playing")
+}
+pub fn settings() -> String {
+    tr!("volumepopup-settings")
+}
 /// A program's output combo's first row: the program follows the default output.
-pub const DEFAULT: &str = "Default";
+pub fn default() -> String {
+    tr!("volumepopup-default")
+}
 /// What a device combo shows, greyed, with no device to pick.
-pub const NO_DEVICE: &str = "No audio device";
+pub fn no_device() -> String {
+    tr!("volumepopup-no-device")
+}
 
 /// A device's volume and mute as trackbar positions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -192,7 +208,7 @@ impl Column {
         volume.enabled = level.live;
         Column {
             key: None,
-            label: VOLUME.into(),
+            label: self::volume(),
             icon: level.icon.clone(),
             volume,
             mute: level.mute,
@@ -215,7 +231,7 @@ impl Column {
 
 /// A program's output combo's rows: [`DEFAULT`], then each output.
 fn app_outputs(mix: &Mix) -> Vec<String> {
-    std::iter::once(DEFAULT.to_string())
+    std::iter::once(default().to_string())
         .chain(mix.outputs.iter().cloned())
         .collect()
 }
@@ -281,7 +297,7 @@ fn device_combo(names: &[String], picked: Option<usize>) -> Combo {
 
 fn shown_devices(names: &[String]) -> Vec<String> {
     match names {
-        [] => vec![NO_DEVICE.to_string()],
+        [] => vec![no_device().to_string()],
         _ => names.to_vec(),
     }
 }

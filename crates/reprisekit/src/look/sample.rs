@@ -119,7 +119,7 @@ pub fn draw_message_box(
     let f = Rect::new(f.x, f.y, f.width, f.height + message_growth(theme, text));
     let (left, top) = match frames {
         Some(paint) => {
-            let client = paint(c, f, MESSAGE_TITLE, true, Chrome::DIALOG);
+            let client = paint(c, f, &message_title(), true, Chrome::DIALOG);
             (client.x, client.y)
         }
         None => {
@@ -129,7 +129,17 @@ pub fn draw_message_box(
             let caption = Rect::new(f.x + b, f.y + b, f.width - 2 * b, m.caption_height);
             let close = caption_buttons(m, caption, 2 * s)[2];
             let buttons = [(close, Glyph::Close)];
-            draw_caption(c, text, cs, caption, MESSAGE_TITLE, true, &buttons, px, s);
+            draw_caption(
+                c,
+                text,
+                cs,
+                caption,
+                &message_title(),
+                true,
+                &buttons,
+                px,
+                s,
+            );
             (caption.x, caption.bottom())
         }
     };
@@ -143,7 +153,7 @@ pub fn draw_message_box(
         x: ok.x + wider / 2,
         ..ok
     };
-    text.draw(c, body, MESSAGE, false, cs.button_text, Align::Left, px);
+    text.draw(c, body, &message(), false, cs.button_text, Align::Left, px);
     draw_button(
         c,
         text,
@@ -174,7 +184,7 @@ fn message_parts(
         .line(Rect::new(0, 0, 0, 0), false, px)
         .map_or(0, |(_, h)| h);
     let body = Rect::new(x + u(6), top + u(3), u(201), line.max(u(13)));
-    let ink = text.ink_box(body, MESSAGE, false, px, 1);
+    let ink = text.ink_box(body, &message(), false, px, 1);
     let ok_y = (top + u(12)).max(ink.bottom());
     (body, Rect::new(x + u(OK_X), ok_y, u(72), u(24)))
 }
@@ -189,8 +199,12 @@ fn message_growth(theme: &Theme, text: &TextRenderer) -> i32 {
     caption + ok
 }
 
-const MESSAGE: &str = "Message Text";
-pub const MESSAGE_TITLE: &str = "Message Box";
+fn message() -> String {
+    tr!("sample-message")
+}
+pub fn message_title() -> String {
+    tr!("sample-message-title")
+}
 /// The message box's width at 100% text, and OK's left edge in it.
 const MESSAGE_W: i32 = 207;
 const OK_X: i32 = 67;
@@ -322,7 +336,7 @@ mod tests {
                 let theme = Theme::default().with_text_size(pct).scaled(s);
                 let px = theme.fonts.size_px;
                 let (body, ok) = message_parts(&text, theme.text, px, s, 0, 0);
-                let ink = text.ink_box(body, MESSAGE, false, px, 1);
+                let ink = text.ink_box(body, &message(), false, px, 1);
                 assert!(
                     ink.bottom() <= ok.y,
                     "{pct}% @{s}: ink to {}, OK from {}",
@@ -351,7 +365,7 @@ mod tests {
         let f = boxes
             .borrow()
             .iter()
-            .find(|(t, _)| t == MESSAGE_TITLE)
+            .find(|(t, _)| t == &message_title())
             .map(|b| b.1)
             .expect("the message box's frame");
         assert_eq!((f.x, f.width), (28, 260), "the box takes its title's width");

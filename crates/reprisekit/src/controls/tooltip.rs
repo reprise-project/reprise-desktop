@@ -1195,16 +1195,22 @@ impl NotifySays<'_> {
         let said = match (self.app.is_empty(), text.is_empty()) {
             (true, _) => text,
             (false, true) => self.app.to_string(),
-            (false, false) => format!("{}: {text}", self.app),
+            (false, false) => tr!("tooltip-app-said", app = self.app, text = text.as_str()),
         };
         match self.answer_key {
-            Some(key) => format!("{said}. Answer with {key}"),
+            Some(key) => tr!(
+                "tooltip-answer-with",
+                said = said.as_str(),
+                key = key.to_string()
+            ),
             None => said,
         }
     }
 }
 
-const NOTIFY_MORE_NAME: &str = "More actions";
+fn notify_more_name() -> String {
+    tr!("tooltip-notify-more-name")
+}
 
 /// The balloon's `access` part for `lay` at scale 1: a live alert, announced when added under a
 /// new `key` or renamed. Returns the reply field while it has the keyboard, else the alert.
@@ -1262,7 +1268,11 @@ pub fn access_parts(
         tree.push(id, ("button", i), access::button(r, &name, true, false));
     }
     if let Some(r) = p.more {
-        tree.push(id, "more", access::button(r, NOTIFY_MORE_NAME, true, false));
+        tree.push(
+            id,
+            "more",
+            access::button(r, &notify_more_name(), true, false),
+        );
     }
     let mut focus = id;
     if let (Some(f), Some(field)) = (p.field, reply) {
@@ -1293,7 +1303,11 @@ pub fn access_parts(
         let name = plain(&p.send_label);
         tree.push(id, "send", access::button(r, &name, can, false));
     }
-    tree.push(id, "close", access::button(p.close, "Close", true, false));
+    tree.push(
+        id,
+        "close",
+        access::button(p.close, &tr!("close"), true, false),
+    );
     // Liveness is inherited: the parts would each be announced too.
     let parts = tree
         .get(id)

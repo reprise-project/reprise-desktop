@@ -336,13 +336,17 @@ pub fn layout_at(
 
 pub const BUTTON_IDS: [&str; 4] = ["btn0", "btn1", "btn2", "btn3"];
 
-pub const YES: &str = "&Yes";
-pub const NO: &str = "&No";
+pub fn yes() -> String {
+    tr!("yes")
+}
+pub fn no() -> String {
+    tr!("no")
+}
 
 /// The label of the button Enter presses on a delete prompt: Yes when the Recycle Bin can give
 /// the items back, No when `erase` deletes them for good.
-pub fn delete_default(erase: bool) -> &'static str {
-    if erase { NO } else { YES }
+pub fn delete_default(erase: bool) -> String {
+    if erase { no() } else { yes() }
 }
 
 /// Where [`delete_default`]'s button sits in `buttons`; the first when it is not among them.
@@ -639,8 +643,8 @@ mod tests {
 
     #[test]
     fn a_delete_prompt_defaults_to_yes_unless_it_erases() {
-        let two = [YES, NO];
-        let four = [YES, "Yes to &All", NO, "Cancel"];
+        let two = [yes(), no()];
+        let four = [yes(), "Yes to &All".to_string(), no(), "Cancel".to_string()];
         assert_eq!(delete_default_index(&two, false), 0, "recycling: Yes");
         assert_eq!(delete_default_index(&two, true), 1, "erasing: No");
         assert_eq!(delete_default_index(&four, true), 2, "erasing a batch: No");
@@ -651,7 +655,7 @@ mod tests {
     fn enter_on_an_erasing_delete_prompt_presses_no() {
         use crate::controls::form::{Event, Key};
         let (text, px) = rend();
-        let buttons = [YES.to_string(), NO.to_string()];
+        let buttons = [yes(), no()];
         let f = Fields {
             text: "Are you sure you want to delete 'a'?",
             icon: true,

@@ -592,7 +592,7 @@ pub fn access(
     key: impl std::hash::Hash,
 ) -> Nodes {
     let mut list_node = access::node(Role::List, lay.inner);
-    list_node.set_label("Pages");
+    list_node.set_label(tr!("pagelist-pages"));
     let id = tree.push(parent, key, list_node);
     let total = list.picks().count();
     let current = list.current(strip.open);

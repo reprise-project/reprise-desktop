@@ -11,17 +11,37 @@ use crate::raster::Canvas;
 use crate::textedit::{EditKey, TextEdit};
 use crate::theme::TextUnits;
 
-pub const ALL_PROGRAMS: &str = "All Programs";
-pub const BACK: &str = "Back";
-pub const SHUT_DOWN: &str = "Shut down";
-pub const SHUT_DOWN_OPTIONS: &str = "Shut down options";
-pub const LOG_OFF: &str = "Log Off";
-pub const TURN_OFF: &str = "Turn Off Computer";
-pub const SEARCH_CUE: &str = "Search programs and files";
-pub const CLEAR: &str = "Clear";
+pub fn all_programs() -> String {
+    tr!("startpanel-all-programs")
+}
+pub fn back() -> String {
+    tr!("startpanel-back")
+}
+pub fn shut_down() -> String {
+    tr!("startpanel-shut-down")
+}
+pub fn shut_down_options() -> String {
+    tr!("startpanel-shut-down-options")
+}
+pub fn log_off() -> String {
+    tr!("startpanel-log-off")
+}
+pub fn turn_off() -> String {
+    tr!("startpanel-turn-off")
+}
+pub fn search_cue() -> String {
+    tr!("startpanel-search-cue")
+}
+pub fn clear() -> String {
+    tr!("startpanel-clear")
+}
 /// The program the user picture opens.
-pub const USER_ACCOUNTS: &str = "User Accounts";
-pub const NO_RESULTS: &str = "No items match your search.";
+pub fn user_accounts() -> String {
+    tr!("startpanel-user-accounts")
+}
+pub fn no_results() -> String {
+    tr!("startpanel-no-results")
+}
 pub const MAX_RESULTS: usize = 8;
 /// A program row's icon and a tree, jump or result row's, design px at 100% text: they grow with
 /// [`StartPanel::text`] as their rows do ([`StartPanel::icon_px`]).
@@ -930,13 +950,13 @@ impl StartPanel {
         v
     }
 
-    fn label(&self, s: Spot) -> Option<&str> {
+    fn label(&self, s: Spot) -> Option<String> {
         match s {
-            Spot::Program(i) => self.program(i).map(|r| r.name.as_str()),
-            Spot::AllPrograms => Some(ALL_PROGRAMS),
-            Spot::Place(i) => self.places.get(i).map(|p| p.label.as_str()),
-            Spot::LogOff => Some(LOG_OFF),
-            Spot::Shutdown => Some(TURN_OFF),
+            Spot::Program(i) => self.program(i).map(|r| r.name.clone()),
+            Spot::AllPrograms => Some(all_programs()),
+            Spot::Place(i) => self.places.get(i).map(|p| p.label.clone()),
+            Spot::LogOff => Some(log_off()),
+            Spot::Shutdown => Some(turn_off()),
             _ => None,
         }
     }
@@ -945,7 +965,7 @@ impl StartPanel {
     /// lit row lights, wrapping round.
     fn letter(&mut self, c: char) -> Event {
         let low: Vec<char> = c.to_lowercase().collect();
-        let starts = |l: &str| {
+        let starts = |l: String| {
             l.chars()
                 .next()
                 .is_some_and(|f| f.to_lowercase().eq(low.iter().copied()))

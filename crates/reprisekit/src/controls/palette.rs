@@ -111,12 +111,12 @@ pub fn access(pal: &Palette, lay: &Layout, tree: &mut Tree, parent: NodeId) -> N
     let group = tree.push(
         parent,
         "palette",
-        access::named(Role::Group, lay.bounds, "Colors"),
+        access::named(Role::Group, lay.bounds, &tr!("palette-colors")),
     );
-    let label = format!(
-        "Primary {}, secondary {}",
-        pal.name_of(pal.primary),
-        pal.name_of(pal.secondary)
+    let label = tr!(
+        "palette-primary-secondary",
+        primary = pal.name_of(pal.primary),
+        secondary = pal.name_of(pal.secondary)
     );
     tree.push(
         group,

@@ -11,8 +11,12 @@ use crate::raster::Rect;
 
 pub use crate::controls::namebox::NameBox;
 
-pub const ADD_TITLE: &str = "Add Favorite";
-pub const ORGANIZE_TITLE: &str = "Organize Favorites";
+pub fn add_title() -> String {
+    tr!("favorites-add-title")
+}
+pub fn organize_title() -> String {
+    tr!("favorites-organize-title")
+}
 
 pub const LIST: &str = "favorites";
 pub const NAME: &str = "name";
@@ -49,11 +53,11 @@ pub enum State {
 }
 
 impl State {
-    fn note(self) -> &'static str {
+    fn note(self) -> String {
         match self {
-            State::Opens => "",
-            State::Missing => "This folder is not there. Its drive may be unplugged.",
-            State::Unsupported => "Explorer cannot open this kind of address.",
+            State::Opens => String::new(),
+            State::Missing => tr!("favorites-missing"),
+            State::Unsupported => tr!("favorites-unsupported"),
         }
     }
 }
@@ -79,7 +83,7 @@ pub fn organize(rows: &[Row], selected: Option<usize>) -> Form {
             MARGIN,
             11,
             CLIENT.0 - 2 * MARGIN,
-            "&Favorites, shared with GTK programs' file dialogs:",
+            &tr!("favorites-favorites-shared-with-gtk-programs-file"),
         ),
         Item::new(
             LIST,
@@ -89,10 +93,16 @@ pub fn organize(rows: &[Row], selected: Option<usize>) -> Form {
                 icons: Vec::new(),
             },
         ),
-        button(DELETE, 0, "&Delete"),
-        button(UP, 1, "Move &Up"),
-        button(DOWN, 2, "Move Do&wn"),
-        Item::label_at("name_l", MARGIN, NAME_Y + 4, FIELD_X - MARGIN - 4, "&Name:"),
+        button(DELETE, 0, &tr!("favorites-delete")),
+        button(UP, 1, &tr!("favorites-move-up")),
+        button(DOWN, 2, &tr!("favorites-move-down")),
+        Item::label_at(
+            "name_l",
+            MARGIN,
+            NAME_Y + 4,
+            FIELD_X - MARGIN - 4,
+            &tr!("favorites-name"),
+        ),
         Item::edit(
             NAME,
             Rect::new(FIELD_X, NAME_Y, MARGIN + LIST_W - FIELD_X, EDIT_H),
@@ -102,7 +112,7 @@ pub fn organize(rows: &[Row], selected: Option<usize>) -> Form {
         Item::button(
             RENAME,
             Rect::new(BUTTON_X, NAME_Y - 1, BUTTON_W, BUTTON_H),
-            "&Rename",
+            &tr!("favorites-rename"),
             false,
             false,
         ),
@@ -111,7 +121,7 @@ pub fn organize(rows: &[Row], selected: Option<usize>) -> Form {
             MARGIN,
             ADDRESS_Y,
             FIELD_X - MARGIN - 4,
-            "Address:",
+            &tr!("favorites-address"),
         ),
         Item::label_at(ADDRESS, FIELD_X, ADDRESS_Y, CLIENT.0 - MARGIN - FIELD_X, ""),
         Item::new(
@@ -122,7 +132,7 @@ pub fn organize(rows: &[Row], selected: Option<usize>) -> Form {
         Item::button(
             CLOSE,
             Rect::new(BUTTON_X, CLIENT.1 - MARGIN - BUTTON_H, BUTTON_W, BUTTON_H),
-            "Close",
+            &tr!("close"),
             true,
             true,
         ),
@@ -164,7 +174,7 @@ pub fn show_selected(form: &mut Form, rows: &[Row]) {
     form.select_edit_text(NAME);
     let address = row.map_or(String::new(), |r| crate::text::escape_mnemonic(&r.address));
     form.set_text(ADDRESS, &address);
-    form.set_text(NOTE, row.map_or("", |r| r.state.note()));
+    form.set_text(NOTE, &row.map_or(String::new(), |r| r.state.note()));
     form.set_enabled(NAME, row.is_some());
     form.set_enabled("name_l", row.is_some());
     form.set_enabled(DELETE, row.is_some());
@@ -307,8 +317,8 @@ mod tests {
     fn the_boxes_fit_their_text_under_every_interface() {
         let over = interfaces::form_overflows(|_, _, _| {
             vec![
-                (ORGANIZE_TITLE.into(), organize(&rows(), Some(2))),
-                (ADD_TITLE.into(), NameBox::new("Projects").form),
+                (organize_title(), organize(&rows(), Some(2))),
+                (add_title(), NameBox::new("Projects").form),
             ]
         });
         assert!(over.is_empty(), "{}", over.join("\n"));

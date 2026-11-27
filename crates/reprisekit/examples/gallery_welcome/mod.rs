@@ -46,7 +46,7 @@ pub fn render(s: i32) -> Canvas {
         };
         let links = vec![Link {
             id: "settings",
-            label: "Open &Settings",
+            label: "Open &Settings".into(),
         }];
         let sample = super::cued(reprisekit::interfaces::theme_for(interface));
         let mut wiz = Welcome::new(picks, sample, links, &text, &theme);

@@ -63,13 +63,13 @@ fn a_paste_whose_clash_check_answers_late_asks_on_a_later_wake() {
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     assert_eq!(
         asked(&ex),
-        Some(("Confirm Folder Replace", "Reports".to_string()))
+        Some(("Confirm Folder Replace".to_string(), "Reports".to_string()))
     );
     ex.event(crate::DIALOG, key_event_alt('n'), &mut ctx);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.clashing.is_empty());
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string()))
     );
 }
 
@@ -154,7 +154,7 @@ fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string()))
     );
     match ex.dialog() {
         Some(Dialog::Replace(r)) => match &r.fields.subject {
@@ -171,7 +171,7 @@ fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
     ex.event(crate::DIALOG, key_event_alt('n'), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "b.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "b.txt".to_string()))
     );
 }
 
@@ -213,7 +213,7 @@ fn a_failure_raised_while_a_prompts_files_are_read_comes_up_after_the_prompt() {
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string()))
     );
     ex.event(crate::DIALOG, key_event_alt('n'), &mut ctx);
     assert!(ex.holds_a_job(), "the failure is up after the prompt");
@@ -462,22 +462,22 @@ fn the_replace_prompt_asks_per_clash_and_carries_out_each_answer() {
     let (_t, dest, mut ex) = paste_onto_taken_names(&mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string()))
     );
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "b.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "b.txt".to_string()))
     );
     ex.dialog_event(key_event_alt('n'), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm Folder Replace", "Reports".to_string()))
+        Some(("Confirm Folder Replace".to_string(), "Reports".to_string()))
     );
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "r.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "r.txt".to_string()))
     );
     assert!(
         matches!(ex.dialog(), Some(Dialog::Replace(r)) if r.fields.many),
@@ -513,7 +513,7 @@ fn no_on_a_file_inside_a_merge_keeps_it() {
     ex.dialog_event(key_event_alt('y'), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "r.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "r.txt".to_string()))
     );
     ex.dialog_event(key_event_alt('n'), &mut ctx);
     assert!(ex.dialog().is_none());
@@ -533,19 +533,19 @@ fn arrows_move_the_replace_prompt_s_focus_and_enter_presses_it() {
     ex.dialog_event(right(), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string())),
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string())),
         "the arrows leave a.txt's question up"
     );
     ex.dialog_event(enter(), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "b.txt".to_string())),
+        Some(("Confirm File Replace".to_string(), "b.txt".to_string())),
         "Enter on No answers a.txt"
     );
     ex.dialog_event(enter(), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm Folder Replace", "Reports".to_string())),
+        Some(("Confirm Folder Replace".to_string(), "Reports".to_string())),
         "Enter on Yes answers b.txt"
     );
     ex.dialog_event(key_event_alt('y'), &mut ctx);
@@ -607,13 +607,13 @@ fn a_box_or_a_second_prompt_waits_for_the_prompt_up() {
     );
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string())),
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string())),
         "still the first batch's question"
     );
     ex.event(crate::DIALOG, key_event_escape(), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string())),
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string())),
         "the second batch asks next"
     );
     assert!(matches!(ex.dialog(), Some(Dialog::Replace(r)) if !r.fields.many));

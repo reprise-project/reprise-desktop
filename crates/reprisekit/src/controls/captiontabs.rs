@@ -223,7 +223,7 @@ pub fn access(
             n.set_selected(i == tabs.selected && !tabs.is_ghost(i));
             let tab = tree.push(list, i, n);
             if let Some(c) = l.closes[i].filter(|_| !tabs.is_ghost(i)) {
-                let mut n = access::titled(Role::Button, c, "Close");
+                let mut n = access::titled(Role::Button, c, &tr!("close"));
                 n.add_action(accesskit::Action::Click);
                 tree.push(tab, "close", n);
             }

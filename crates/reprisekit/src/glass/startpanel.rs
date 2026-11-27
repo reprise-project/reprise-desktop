@@ -13,8 +13,8 @@ pub use crate::startpanel::search::{
     TEXT_PX,
 };
 use crate::startpanel::{
-    ALL_PROGRAMS, BACK, Mode, NO_RESULTS, PROGRAM_ICON, SHUT_DOWN, SMALL_ICON, Spot, StartPanel,
-    TreeRow,
+    Mode, PROGRAM_ICON, SMALL_ICON, Spot, StartPanel, TreeRow, all_programs, back, no_results,
+    shut_down,
 };
 use crate::style::{Layout as Stack, Part, PartImage, State, Style};
 use crate::text::TextRenderer;
@@ -365,9 +365,9 @@ fn draw_contents(
                     d.part(at(r), Part::StartHotAll, State::Normal);
                 }
                 let (label, pen, part) = if mode == Mode::Programs {
-                    (BACK, at::BACK_PEN, Part::StartTriangleLeft)
+                    (&back(), at::BACK_PEN, Part::StartTriangleLeft)
                 } else {
-                    (ALL_PROGRAMS, at::ALL_PEN, Part::StartTriangleRight)
+                    (&all_programs(), at::ALL_PEN, Part::StartTriangleRight)
                 };
                 d.glyph(glyph_at(r, at::TRIANGLE, part), part);
                 let (x, y) = off(r, (pen, at::ALL_BASE));
@@ -483,11 +483,11 @@ fn draw_contents(
                         (true, false) => d.part(half, plain, State::Normal),
                     }
                 }
-                let w = text.measure(SHUT_DOWN, false, size);
+                let w = text.measure(&shut_down(), false, size);
                 let x = r.x - o.x + (g.len(at::SHUT_W) - w) / 2;
                 let y = r.y - o.y + g.len(at::SHUT_BASE);
                 let color = if light { inks.strong } else { right };
-                d.line(text, x, y, at(r), SHUT_DOWN, color, size);
+                d.line(text, x, y, at(r), &shut_down(), color, size);
             }
             Spot::Picture => {
                 let place_picture = p
@@ -553,11 +553,11 @@ fn draw_contents(
         }
     }
     if mode == Mode::Search && !p.results.iter().any(|g| !g.rows.is_empty()) {
-        let w = text.measure(NO_RESULTS, false, size);
+        let w = text.measure(&no_results(), false, size);
         let pane = at(l.pane);
         let x = pane.x + (pane.width - w) / 2;
         let y = pane.y + g.len(at::NONE_BASE);
-        d.line(text, x, y, pane, NO_RESULTS, inks.greyed, size);
+        d.line(text, x, y, pane, &no_results(), inks.greyed, size);
     }
 }
 

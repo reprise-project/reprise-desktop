@@ -183,7 +183,7 @@ fn the_replace_prompt_keeps_the_focus_and_the_next_clash_opens_on_yes() {
     key(&mut ex, space(), &mut ctx);
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "b.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "b.txt".to_string()))
     );
     assert_eq!(focused(&ex), yes, "the next clash opens on Yes");
     key(&mut ex, right(), &mut ctx);

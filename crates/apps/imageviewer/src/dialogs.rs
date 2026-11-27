@@ -56,7 +56,7 @@ impl Viewer {
         }
         let name = reprisefs::bincap::label(&path);
         let (title, text) = delete_prompt(ConfirmKind::File, &name, 1, mode.erase, mode.no_bin);
-        let buttons = vec![dlgtemplate::YES.to_string(), dlgtemplate::NO.to_string()];
+        let buttons = vec![dlgtemplate::yes(), dlgtemplate::no()];
         let default = dlgtemplate::delete_default_index(&buttons, mode.erase);
         let fields = msgbox::Fields {
             text,

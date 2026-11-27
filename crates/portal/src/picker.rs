@@ -334,7 +334,7 @@ fn build_form(
                 DELAY,
                 Control::UpDown(UpDown::new(s.into(), 0, max)),
             )
-            .named("Delay"),
+            .named(tr!("picker-delay-name")),
             Item::label("delay_units", DELAY_UNITS, &tr!("picker-delay-units")),
         ]);
     }

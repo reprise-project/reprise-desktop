@@ -159,7 +159,10 @@ fn access_focuses_the_keyboards_item_and_says_who_wants_attention() {
     access(&l, &names, &mut t, access::ROOT);
     let two = t.find(Role::Button, "Two").unwrap();
     assert_eq!(t.focus(), two, "the keyboard is on the second task");
-    assert_eq!(t.get(two).unwrap().description(), Some(ATTENTION));
+    assert_eq!(
+        t.get(two).unwrap().description(),
+        Some(attention().as_str())
+    );
     let one = t.find(Role::Button, "One").unwrap();
     assert_eq!(t.get(one).unwrap().description(), None);
     assert!(

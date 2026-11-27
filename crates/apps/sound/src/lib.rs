@@ -803,7 +803,7 @@ impl repriseapp::Extended for Sound {
         self.flyout.as_ref().map(|f| repriseapp::Flyout {
             id: FLYOUT_WIN,
             at: f.at,
-            title: volumepopup::VOLUME,
+            title: volumepopup::volume(),
         })
     }
 

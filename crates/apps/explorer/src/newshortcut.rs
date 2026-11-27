@@ -197,7 +197,7 @@ impl Explorer {
 }
 
 fn newshortcut_title() -> String {
-    reprisekit::controls::newshortcut::TITLE.to_string()
+    reprisekit::controls::newshortcut::title().to_string()
 }
 
 /// The file dialog a host keeps for Browse..., Open With's or the wizard's.

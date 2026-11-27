@@ -856,7 +856,7 @@ fn with_two_outputs_a_program_column_ends_in_its_output_combo() {
         let texts: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
         (texts, c.selected)
     };
-    assert_eq!(rows(1), (vec![DEFAULT, "Speakers", "Headphones"], 0));
+    assert_eq!(rows(1), (vec![&default(), "Speakers", "Headphones"], 0));
     assert_eq!(rows(2).1, 2, "mpv plays to Headphones");
     let l = lay(&m);
     let c = col(&l, 1);

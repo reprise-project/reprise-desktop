@@ -74,11 +74,15 @@ pub fn layout(u: TextUnits) -> Layout {
 /// The panel a lock key shows when it changes: "Caps Lock On", "Num Lock Off".
 pub fn lock_key(key: LockKey, on: bool) -> Osd {
     let name = match key {
-        LockKey::Caps => "Caps Lock",
-        LockKey::Num => "Num Lock",
+        LockKey::Caps => tr!("osd-caps-lock"),
+        LockKey::Num => tr!("osd-num-lock"),
     };
     Osd {
-        title: format!("{name} {}", if on { "On" } else { "Off" }),
+        title: if on {
+            tr!("osd-lock-on", name = name.as_str())
+        } else {
+            tr!("osd-lock-off", name = name.as_str())
+        },
         meter: None,
     }
 }
@@ -222,7 +226,9 @@ pub struct Lines {
     pub lines: Vec<Line>,
 }
 
-pub const NOT_ADJUSTABLE: &str = "Not adjustable";
+pub fn not_adjustable() -> String {
+    tr!("osd-not-adjustable")
+}
 const TITLE_GAP: i32 = 6;
 /// A display's line at 100% text: its 13 px label row with 5 px above and 6 below.
 const LINE_H: i32 = 24;
@@ -394,7 +400,7 @@ fn lines_body(
                     c,
                     text,
                     r.scaled(s),
-                    NOT_ADJUSTABLE,
+                    &not_adjustable(),
                     false,
                     dim,
                     Align::Left,

@@ -98,12 +98,12 @@ impl Confirm {
         let labels: Vec<String> = match &self.too_big {
             _ if self.job.is_some() => failed_buttons().to_vec(),
             Some(q) if q.many() => vec![
-                dlgtemplate::YES.to_string(),
+                dlgtemplate::yes(),
                 reprisekit::kit_tr!("yes-to-all"),
-                dlgtemplate::NO.to_string(),
+                dlgtemplate::no(),
                 reprisekit::kit_tr!("cancel"),
             ],
-            _ => vec![dlgtemplate::YES.to_string(), dlgtemplate::NO.to_string()],
+            _ => vec![dlgtemplate::yes(), dlgtemplate::no()],
         };
         labels
     }
@@ -354,10 +354,10 @@ impl Dialog {
             Dialog::Browse(_) => tr!("dialogs-title-copy-items"),
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
             Dialog::BatchRename(_) => tr!("dialogs-title-rename"),
-            Dialog::NewShortcut(_) => reprisekit::controls::newshortcut::TITLE.to_string(),
-            Dialog::AddFavorite(_) => favorites::ADD_TITLE.to_string(),
-            Dialog::Organize(_) => favorites::ORGANIZE_TITLE.to_string(),
-            Dialog::Connect(_) => reprisekit::controls::netconnect::CONNECT_TITLE.to_string(),
+            Dialog::NewShortcut(_) => reprisekit::controls::newshortcut::title().to_string(),
+            Dialog::AddFavorite(_) => favorites::add_title().to_string(),
+            Dialog::Organize(_) => favorites::organize_title().to_string(),
+            Dialog::Connect(_) => reprisekit::controls::netconnect::connect_title().to_string(),
             Dialog::Login(b) => crate::shares::login_title(&b.host),
             Dialog::Question { title, .. } => title.clone(),
             Dialog::Paste(_) | Dialog::Reading(_) => String::new(),

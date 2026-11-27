@@ -34,15 +34,29 @@ pub const CLIENT: (i32, i32) = (390, 395);
 pub fn client(cm: &ControlMetrics) -> (i32, i32) {
     cm.text.size(CLIENT)
 }
-pub const TITLE: &str = "Open With";
+pub fn title() -> String {
+    tr!("openwith-title")
+}
 pub const ICON: &str = "system-run";
 pub const PROGRAM_ICON: &str = "application-x-executable";
-pub const PROMPT: &str = "Choose the program you want to use to open this file:";
-pub const RECOMMENDED: &str = "Recommended Programs:";
-pub const OTHERS: &str = "Other Programs:";
-pub const GROUP: &str = "&Programs";
-pub const ALWAYS: &str = "&Always use the selected program to open this kind of file";
-pub const BROWSE: &str = "&Browse...";
+pub fn prompt() -> String {
+    tr!("openwith-prompt")
+}
+pub fn recommended() -> String {
+    tr!("openwith-recommended")
+}
+pub fn others() -> String {
+    tr!("openwith-others")
+}
+pub fn group() -> String {
+    tr!("openwith-group")
+}
+pub fn always() -> String {
+    tr!("openwith-always")
+}
+pub fn browse() -> String {
+    tr!("openwith-browse")
+}
 const FOLDER_ICON: &str = "folder";
 
 pub(crate) const LIST: crate::raster::Rect = crate::raster::Rect::new(24, 81, 338, 210);
@@ -131,13 +145,16 @@ pub struct OpenWith {
     rows: std::cell::Cell<usize>,
 }
 
-fn rows(recommended: Vec<Program>, others: Vec<Program>) -> Vec<Row<Program>> {
+fn rows(recommended_programs: Vec<Program>, other_programs: Vec<Program>) -> Vec<Row<Program>> {
     let mut rows = Vec::new();
-    for (label, programs) in [(RECOMMENDED, recommended), (OTHERS, others)] {
+    for (label, programs) in [
+        (recommended(), recommended_programs),
+        (others(), other_programs),
+    ] {
         if programs.is_empty() {
             continue;
         }
-        rows.push(Row::Group(label.into()));
+        rows.push(Row::Group(label));
         rows.extend(programs.into_iter().map(|p| Row::Item {
             name: p.name.clone(),
             data: p,
@@ -213,9 +230,9 @@ impl OpenWith {
         let rows = &mut self.list.rows;
         if !rows
             .iter()
-            .any(|r| matches!(r, Row::Group(g) if g == OTHERS))
+            .any(|r| matches!(r, Row::Group(g) if g == &others()))
         {
-            rows.push(Row::Group(OTHERS.into()));
+            rows.push(Row::Group(others()));
         }
         rows.push(Row::Item {
             name: p.name.clone(),
@@ -459,8 +476,8 @@ impl OpenWith {
         let u = cm.text;
         let moved = |r: Rect| Rect::new(r.x + origin.0, r.y + origin.1, r.width, r.height);
         let at = |r: Rect| moved(u.rect(r));
-        let (plain_group, _) = split_mnemonic(GROUP);
-        let (plain_always, _) = split_mnemonic(ALWAYS);
+        let (plain_group, _) = split_mnemonic(&group());
+        let (plain_always, _) = split_mnemonic(&always());
         // The box grows by its own whole multiple, centred down the label's grown line.
         let line = at(Rect::new(
             CHECK_AT.0,
@@ -547,7 +564,7 @@ impl OpenWith {
         text.draw(
             c,
             lay.prompt.scaled(s),
-            PROMPT,
+            &prompt(),
             false,
             cs.button_text,
             Align::Left,
@@ -556,7 +573,7 @@ impl OpenWith {
         text.draw(
             c,
             lay.file.scaled(s),
-            "File:",
+            &tr!("openwith-file"),
             false,
             cs.button_text,
             Align::Left,
@@ -586,7 +603,7 @@ impl OpenWith {
             p,
             lay.group.scaled(s),
             label,
-            &cues.label(GROUP),
+            &cues.label(&group()),
             px,
         );
         let shown = match (self.focus == Focus::List && active, dots) {
@@ -596,7 +613,8 @@ impl OpenWith {
         };
         grouplist::draw(c, text, p, &self.list, &lay.list, row_icons, shown, px);
         let (b, lr) = (lay.check.scaled(s), label_rect(lay.check_label, s));
-        let always = cues.label(ALWAYS);
+        let always_text = always();
+        let always = cues.label(&always_text);
         if self.always.enabled {
             draw_checkbox(c, p, b, self.always.on, self.pointer.of(Focus::Always));
             draw_label(
@@ -637,12 +655,12 @@ impl OpenWith {
         for (r, label, enabled, f) in [
             (
                 lay.browse,
-                &*cues.label(BROWSE),
+                &*cues.label(&browse()),
                 self.browse_enabled,
                 Focus::Browse,
             ),
             (lay.ok, "OK", self.ok_enabled(), Focus::Ok),
-            (lay.cancel, "Cancel", true, Focus::Cancel),
+            (lay.cancel, &tr!("cancel"), true, Focus::Cancel),
         ] {
             draw_button(
                 c,
@@ -661,13 +679,21 @@ impl OpenWith {
 
     pub fn access(&self, tree: &mut Tree, lay: &Layout) -> NodeId {
         let root = access::ROOT;
-        let words = format!("{PROMPT} File: {}", self.file);
+        let words = tr!(
+            "openwith-file-line",
+            prompt = prompt().as_str(),
+            file = self.file.as_str()
+        );
         tree.push(
             root,
             "text",
             access::static_text(lay.prompt.union(&lay.file), &words, true),
         );
-        let group = tree.push(root, "group", access::named(Role::Group, lay.group, GROUP));
+        let group = tree.push(
+            root,
+            "group",
+            access::named(Role::Group, lay.group, &group()),
+        );
         let list = grouplist::access(&self.list, &lay.list, tree, group, "list");
         let always = tree.push(
             root,
@@ -675,7 +701,7 @@ impl OpenWith {
             access::toggle(
                 Role::CheckBox,
                 lay.check.union(&lay.check_label),
-                ALWAYS,
+                &always(),
                 self.always.on.into(),
                 self.always.enabled,
             ),
@@ -683,7 +709,7 @@ impl OpenWith {
         let browse = tree.push(
             root,
             "browse",
-            access::button(lay.browse, BROWSE, self.browse_enabled, false),
+            access::button(lay.browse, &browse(), self.browse_enabled, false),
         );
         let ok = tree.push(
             root,
@@ -693,7 +719,7 @@ impl OpenWith {
         let cancel = tree.push(
             root,
             "cancel",
-            access::button(lay.cancel, "Cancel", true, false),
+            access::button(lay.cancel, &tr!("cancel"), true, false),
         );
         let focus = match self.focus {
             Focus::List => list,
@@ -743,8 +769,8 @@ mod tests {
     fn the_first_program_is_picked_under_two_headers() {
         let o = sample();
         assert_eq!(o.list.rows.len(), 16, "two headers and fourteen programs");
-        assert_eq!(o.list.rows[0], Row::Group(RECOMMENDED.into()));
-        assert_eq!(o.list.rows[3], Row::Group(OTHERS.into()));
+        assert_eq!(o.list.rows[0], Row::Group(recommended()));
+        assert_eq!(o.list.rows[3], Row::Group(others()));
         assert_eq!(o.list.selected, Some(1));
         assert_eq!(ROWS, 11);
         assert!(o.ok_enabled());
@@ -782,7 +808,7 @@ mod tests {
         assert_eq!(
             o.list.rows,
             vec![
-                Row::Group(OTHERS.into()),
+                Row::Group(others()),
                 Row::Item {
                     name: "A".into(),
                     data: p("a", "A")
@@ -1025,7 +1051,7 @@ mod tests {
             icon: Some(PROGRAM_ICON.into()),
         });
         assert_eq!(o.list.rows.len(), 4, "a header was added for it");
-        assert_eq!(o.list.rows[2], Row::Group(OTHERS.into()));
+        assert_eq!(o.list.rows[2], Row::Group(others()));
         assert_eq!(o.chosen().map(|p| p.id.as_str()), Some("/usr/bin/nano"));
         o.list.select(1, ROWS);
         o.add_program(Program {
@@ -1582,12 +1608,12 @@ mod tests {
         let mut o = sample();
         o.key(form::Key::Up);
         let l = o.layout(&t, 11, (0, 0), &ControlMetrics::CLASSIC);
-        let mut tree = Tree::window(TITLE, CLIENT);
+        let mut tree = Tree::window(&title(), CLIENT);
         let focus = o.access(&mut tree, &l);
         let n = tree.get(focus).unwrap();
         assert_eq!(
             n.label(),
-            Some(RECOMMENDED),
+            Some(recommended().as_str()),
             "the picked header row has the focus"
         );
         let ok = tree

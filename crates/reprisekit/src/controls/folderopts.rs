@@ -50,7 +50,13 @@ pub enum Outcome {
 }
 
 pub const SIZE: (i32, i32) = (360, 376);
-pub const TABS: [&str; 3] = ["General", "View", "File Types"];
+pub fn tabs() -> [String; 3] {
+    [
+        tr!("folderopts-tab-general"),
+        tr!("folderopts-tab-view"),
+        tr!("folderopts-tab-file-types"),
+    ]
+}
 pub const DEFAULTS: &str = "defaults";
 pub const PROGRAMS: &str = "programs";
 
@@ -64,7 +70,14 @@ pub struct FolderSheet {
 
 /// Restore Defaults, at the page's bottom right.
 fn restore_defaults() -> Item {
-    Item::button_at(DEFAULTS, 250, 306, 95, "Restore &Defaults", true)
+    Item::button_at(
+        DEFAULTS,
+        250,
+        306,
+        95,
+        &tr!("folderopts-restore-defaults"),
+        true,
+    )
 }
 
 impl FolderSheet {
@@ -73,9 +86,9 @@ impl FolderSheet {
         let mut s = FolderSheet {
             pending: settings,
             applied: settings,
-            sheet: PropSheet::new(&[], Vec::new(), SIZE),
+            sheet: PropSheet::new(&[] as &[&str], Vec::new(), SIZE),
         };
-        s.sheet = PropSheet::new(&TABS, s.pages(), SIZE);
+        s.sheet = PropSheet::new(&tabs(), s.pages(), SIZE);
         s.sheet.set_apply_enabled(false);
         s
     }
@@ -83,12 +96,16 @@ impl FolderSheet {
     pub(crate) fn page_general(&self) -> Form {
         let p = &self.pending;
         Form::new(vec![
-            Item::group("browse", Rect::new(15, 40, 330, 70), "Browse folders"),
+            Item::group(
+                "browse",
+                Rect::new(15, 40, 330, 70),
+                &tr!("folderopts-browse-folders"),
+            ),
             Item::radio(
                 "same",
                 27,
                 60,
-                "Open each folder in the s&ame window",
+                &tr!("folderopts-open-each-folder-in-the-same"),
                 "browse",
             )
             .checked(!p.new_window),
@@ -96,20 +113,20 @@ impl FolderSheet {
                 "own",
                 27,
                 82,
-                "Open each folder in its o&wn window",
+                &tr!("folderopts-open-each-folder-in-its-own"),
                 "browse",
             )
             .checked(p.new_window),
             Item::group(
                 "click",
                 Rect::new(15, 120, 330, 70),
-                "Click items as follows",
+                &tr!("folderopts-click-items-as-follows"),
             ),
             Item::radio(
                 "single",
                 27,
                 140,
-                "&Single-click to open an item (point to select)",
+                &tr!("folderopts-single-click-to-open-an-item"),
                 "click",
             )
             .checked(p.single_click),
@@ -117,7 +134,7 @@ impl FolderSheet {
                 "double",
                 27,
                 162,
-                "D&ouble-click to open an item (single-click to select)",
+                &tr!("folderopts-double-click-to-open-an-item"),
                 "click",
             )
             .checked(!p.single_click),
@@ -131,28 +148,45 @@ impl FolderSheet {
             Item::group(
                 "hidden",
                 Rect::new(15, 40, 330, 70),
-                "Hidden files and folders",
+                &tr!("folderopts-hidden-files-and-folders"),
             ),
             Item::radio(
                 "hide",
                 27,
                 60,
-                "Do &not show hidden files and folders",
+                &tr!("folderopts-do-not-show-hidden-files-and"),
                 "hidden",
             )
             .checked(!p.show_hidden),
-            Item::radio("show", 27, 82, "&Show hidden files and folders", "hidden")
-                .checked(p.show_hidden),
+            Item::radio(
+                "show",
+                27,
+                82,
+                &tr!("folderopts-show-hidden-files-and-folders"),
+                "hidden",
+            )
+            .checked(p.show_hidden),
             Item::check(
                 "extensions",
                 21,
                 124,
-                "&Hide extensions for known file types",
+                &tr!("folderopts-hide-extensions-for-known-file-types"),
             )
             .checked(p.hide_extensions),
-            Item::check("tips", 21, 146, "Show &pop-up description for folder items")
-                .checked(p.tips),
-            Item::check("thumbs", 21, 168, "Do not cache &thumbnails").checked(!p.cache_thumbnails),
+            Item::check(
+                "tips",
+                21,
+                146,
+                &tr!("folderopts-show-pop-up-description-for-folder"),
+            )
+            .checked(p.tips),
+            Item::check(
+                "thumbs",
+                21,
+                168,
+                &tr!("folderopts-do-not-cache-thumbnails"),
+            )
+            .checked(!p.cache_thumbnails),
             restore_defaults(),
         ])
     }
@@ -165,11 +199,18 @@ impl FolderSheet {
                 42,
                 330,
                 &[
-                    "The program that opens each type of file is picked",
-                    "in Default Programs.",
+                    &tr!("folderopts-the-program-that-opens-each-type"),
+                    &tr!("folderopts-in-default-programs"),
                 ],
             ),
-            Item::button_at(PROGRAMS, 15, 78, 120, "Default &Programs...", true),
+            Item::button_at(
+                PROGRAMS,
+                15,
+                78,
+                120,
+                &tr!("folderopts-default-programs"),
+                true,
+            ),
         ])
     }
 

@@ -9,7 +9,7 @@ use crate::shape::{self, CLEAR, Px, Stops};
 use crate::startpanel::bluelayout::BUTTON_PEN;
 use crate::startpanel::layout::Layout;
 use crate::startpanel::search::Grow;
-use crate::startpanel::{ALL_PROGRAMS, LOG_OFF, PROGRAM_ICON, Spot, StartPanel, TURN_OFF};
+use crate::startpanel::{PROGRAM_ICON, Spot, StartPanel, all_programs, log_off, turn_off};
 use crate::style::State;
 use crate::text::TextRenderer;
 use crate::theme::Color;
@@ -52,7 +52,7 @@ mod at {
 /// device width as the shortest 100% length that grows to it.
 pub fn foot_labels(text: &TextRenderer, g: Grow) -> [i32; 2] {
     let size = g.px(TEXT_PX);
-    [LOG_OFF, TURN_OFF].map(|label| {
+    [&log_off(), &turn_off()].map(|label| {
         let w = text.measure(label, false, size);
         g.u.design((w + g.s - 1) / g.s)
     })
@@ -210,15 +210,26 @@ pub fn draw(
                     canvas.fill_rect(r, hot);
                 }
                 let ink = if is_lit { hot_ink } else { s.system.menu_text };
-                let w = text.measure(ALL_PROGRAMS, true, size);
+                let w = text.measure(&all_programs(), true, size);
                 let (aw, ah) = (ARROW.0 * d, ARROW.1 * d);
                 let gap = g.len(at::ARROW_GAP);
                 let x = r.x + (r.width - w - gap - aw) / 2;
                 let clip = Rect::new(r.x, r.y, r.width, r.height);
                 let y = r.y + g.len(at::ALL_BASE);
-                text.draw_run_over(canvas, x, y, clip, ALL_PROGRAMS, true, ink, size);
+                text.draw_run_over(canvas, x, y, clip, &all_programs(), true, ink, size);
                 if p.keys {
-                    key_mark(canvas, text, x, y, clip, ALL_PROGRAMS, true, ink, size, d);
+                    key_mark(
+                        canvas,
+                        text,
+                        x,
+                        y,
+                        clip,
+                        &all_programs(),
+                        true,
+                        ink,
+                        size,
+                        d,
+                    );
                 }
                 let ay = r.y + (r.height - ah) / 2;
                 canvas.blit_over(x + w + gap, ay, &arrow(s, d));
@@ -254,9 +265,9 @@ pub fn draw(
             }
             Spot::LogOff | Spot::Shutdown => {
                 let (choice, label) = if spot == Spot::LogOff {
-                    (Choice::LogOff, LOG_OFF)
+                    (Choice::LogOff, &log_off())
                 } else {
-                    (Choice::TurnOff, TURN_OFF)
+                    (Choice::TurnOff, &turn_off())
                 };
                 let state = if pressed == Some(spot) {
                     State::Pressed

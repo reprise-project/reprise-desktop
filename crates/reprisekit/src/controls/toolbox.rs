@@ -150,7 +150,7 @@ pub fn access(tb: &ToolBox, lay: &Layout, tree: &mut Tree, parent: NodeId) -> No
     let bar = tree.push(
         parent,
         "toolbox",
-        access::named(Role::Toolbar, lay.bounds, "Tools"),
+        access::named(Role::Toolbar, lay.bounds, &tr!("toolbox-tools")),
     );
     for (i, (tool, &r)) in tb.tools.iter().zip(&lay.tools).enumerate() {
         let n = access::toggle(

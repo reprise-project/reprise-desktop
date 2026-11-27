@@ -297,7 +297,7 @@ impl Dialog {
                 t.metrics = theme.controls();
                 t.set_wording(traycustomize::Wording::of(theme));
                 t.fit(text, theme.fonts.size_px);
-                self.title = t.wording.title().into();
+                self.title = t.wording.title();
             }
             _ => {}
         }

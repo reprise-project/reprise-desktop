@@ -71,16 +71,16 @@ const TRUNK: Color = Color::rgb(0x6c, 0x44, 0x24);
 const LEAVES_LIT: Color = Color::rgb(0x58, 0xb0, 0x48);
 
 impl Picture {
-    pub fn name(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Picture::Sunset => "Sunset",
-            Picture::Mountains => "Mountains",
-            Picture::Sailboat => "Sailboat",
-            Picture::Flower => "Flower",
-            Picture::Planet => "Planet",
-            Picture::Fish => "Fish",
-            Picture::Balloon => "Balloon",
-            Picture::Tree => "Tree",
+            Picture::Sunset => tr!("userpic-sunset"),
+            Picture::Mountains => tr!("userpic-mountains"),
+            Picture::Sailboat => tr!("userpic-sailboat"),
+            Picture::Flower => tr!("userpic-flower"),
+            Picture::Planet => tr!("userpic-planet"),
+            Picture::Fish => tr!("userpic-fish"),
+            Picture::Balloon => tr!("userpic-balloon"),
+            Picture::Tree => tr!("userpic-tree"),
         }
     }
 

@@ -26,7 +26,7 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
         Item::group(
             "sh_g0",
             Rect::new(21, 43, 318, 108),
-            "Local sharing and security",
+            &tr!("filesheet-inert-local-sharing-and-security"),
         ),
         Item::picture("sh_local", Rect::new(31, 54, ICON_PX, ICON_PX), local),
     ];
@@ -35,8 +35,8 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
         "sh_a0",
         (SHARE_X, 53, SHARE_W),
         &[
-            "To share this folder with other users of this computer",
-            "only, drag it to the Public folder.",
+            &tr!("filesheet-inert-to-share-this-folder-with-other"),
+            &tr!("filesheet-inert-only-drag-it-to-the-public"),
         ],
     );
     greyed_note(
@@ -44,15 +44,23 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
         "sh_b0",
         (SHARE_X, 92, SHARE_W),
         &[
-            "To make this folder and its subfolders private,",
-            "select the following check box.",
+            &tr!("filesheet-inert-to-make-this-folder-and-its"),
+            &tr!("filesheet-inert-select-the-following-check-box"),
         ],
     );
-    items.push(Item::check("sh_private", 70, 129, "&Make this folder private").enabled(false));
+    items.push(
+        Item::check(
+            "sh_private",
+            70,
+            129,
+            &tr!("filesheet-inert-make-this-folder-private"),
+        )
+        .enabled(false),
+    );
     items.push(Item::group(
         "sh_g1",
         Rect::new(21, 161, 318, 150),
-        "Network sharing and security",
+        &tr!("filesheet-inert-network-sharing-and-security"),
     ));
     items.push(Item::picture(
         "sh_network",
@@ -64,9 +72,9 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
         "sh_c0",
         (SHARE_X, 170, SHARE_W),
         &[
-            "This computer shares no folders on the network.",
-            "A file server such as Samba, set up outside",
-            "Reprise, shares folders.",
+            &tr!("filesheet-inert-this-computer-shares-no-folders-on"),
+            &tr!("filesheet-inert-a-file-server-such-as-samba"),
+            &tr!("filesheet-inert-reprise-shares-folders"),
         ],
     );
     greyed_note(
@@ -74,15 +82,17 @@ pub fn sharing_page(local: Option<Canvas>, network: Option<Canvas>) -> Form {
         "sh_d0",
         (SHARE_X, 237, SHARE_W),
         &[
-            "If you understand the security risks, add this folder",
-            "to the file server's shares yourself.",
+            &tr!("filesheet-inert-if-you-understand-the-security-risks"),
+            &tr!("filesheet-inert-to-the-file-server-s-shares"),
         ],
     );
     greyed_note(
         &mut items,
         "sh_more",
         (29, 287, 300),
-        &["Learn more about sharing and security."],
+        &[&tr!(
+            "filesheet-inert-learn-more-about-sharing-and-security"
+        )],
     );
     Form::new(items)
 }
@@ -98,22 +108,22 @@ pub fn compat_page() -> Form {
         "cp_l0",
         (22, 40, 310),
         &[
-            "If you have problems with this program and it worked correctly",
-            "on an earlier system, select the compatibility mode that",
-            "matches that earlier system.",
+            &tr!("filesheet-inert-if-you-have-problems-with-this"),
+            &tr!("filesheet-inert-on-an-earlier-system-select-the"),
+            &tr!("filesheet-inert-matches-that-earlier-system"),
         ],
     );
     items.push(Item::group(
         "cp_g0",
         Rect::new(21, 103, 315, 73),
-        "Compatibility mode",
+        &tr!("filesheet-inert-compatibility-mode"),
     ));
     items.push(
         Item::check(
             "cp_mode",
             37,
             124,
-            "&Run this program in compatibility mode for:",
+            &tr!("filesheet-inert-run-this-program-in-compatibility-mode"),
         )
         .enabled(false),
     );
@@ -125,26 +135,34 @@ pub fn compat_page() -> Form {
     items.push(Item::group(
         "cp_g1",
         Rect::new(21, 197, 315, 92),
-        "Display settings",
+        &tr!("filesheet-inert-display-settings"),
     ));
     for (id, y, label) in [
-        ("cp_256", 216, "Run in 256 colo&rs"),
-        ("cp_640", 241, "Run in 640 x 480 screen resolutio&n"),
-        ("cp_themes", 265, "Disable &visual themes"),
+        ("cp_256", 216, &tr!("filesheet-inert-run-in-256-colors")),
+        (
+            "cp_640",
+            241,
+            &tr!("filesheet-inert-run-in-640-x-480-screen"),
+        ),
+        (
+            "cp_themes",
+            265,
+            &tr!("filesheet-inert-disable-visual-themes"),
+        ),
     ] {
         items.push(Item::check(id, 37, y, label).enabled(false));
     }
     items.push(Item::group(
         "cp_g2",
         Rect::new(21, 311, 315, 40),
-        "Input settings",
+        &tr!("filesheet-inert-input-settings"),
     ));
     items.push(
         Item::check(
             "cp_text",
             37,
             327,
-            "Turn off advanced text services for this program",
+            &tr!("filesheet-inert-turn-off-advanced-text-services-for"),
         )
         .enabled(false),
     );
@@ -152,7 +170,9 @@ pub fn compat_page() -> Form {
         &mut items,
         "cp_more",
         (22, 365, 300),
-        &["Learn more about program compatibility."],
+        &[&tr!(
+            "filesheet-inert-learn-more-about-program-compatibility"
+        )],
     );
     Form::new(items)
 }
