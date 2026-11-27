@@ -36,6 +36,9 @@ pub fn message(e: &zbus::Error) -> Option<&str> {
 /// `dismissed` (usually [`crate::polkit::dismissed`]) says the prompt was dismissed. A refusal
 /// and a failure of the call itself read alike, so the prompt is asked about first.
 pub fn to_tell(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<String> {
+    if crate::polkit::gave_up(&e) {
+        return Some(crate::polkit::GAVE_UP.into());
+    }
     if name(&e).is_some() && dismissed() {
         return None;
     }
@@ -101,5 +104,18 @@ mod tests {
         let lost = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
         let told = to_tell(lost, || panic!("only an error reply follows a prompt"));
         assert!(told.is_some());
+    }
+
+    #[test]
+    fn a_call_that_gave_up_says_the_change_may_not_have_been_made() {
+        let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        let told = to_tell(late, || panic!("a timeout is no dismissal"));
+        assert_eq!(told.as_deref(), Some(crate::polkit::GAVE_UP));
+        let quit = reply(
+            "org.freedesktop.DBus.Error.NoReply",
+            "Remote peer disconnected",
+        );
+        let told = to_tell(quit, || false);
+        assert_eq!(told.as_deref(), Some("Remote peer disconnected"));
     }
 }

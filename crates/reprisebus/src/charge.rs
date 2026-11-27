@@ -92,12 +92,13 @@ pub async fn find(conn: &Connection) -> Option<ChargeLimit> {
 /// Turn the limit on `device` on or off; polkit may ask for a password through the session's agent.
 pub async fn enable(conn: &Connection, device: &str, on: bool) -> zbus::Result<()> {
     let battery = Proxy::new(conn, NAME, device.to_string(), DEVICE).await?;
-    battery
-        .call_with_flags::<_, _, ()>(
-            "EnableChargeThreshold",
-            MethodFlags::ALLOW_INTERACTIVE_AUTH,
-            &(on,),
-        )
+    let body = (on,);
+    let call = battery.call_with_flags::<_, _, ()>(
+        "EnableChargeThreshold",
+        MethodFlags::ALLOW_INTERACTIVE_AUTH,
+        &body,
+    );
+    crate::polkit::asking(crate::polkit::PROMPT_TIMEOUT, true, call)
         .await
         .map(|_| ())
 }
@@ -114,8 +115,9 @@ pub fn read() -> Option<ChargeLimit> {
     })
 }
 
-/// [`enable`] on a system bus connection of its own, blocking until polkit and UPower answer. The
-/// error is what to tell the user; `None` when they dismissed the password prompt.
+/// [`enable`] on a system bus connection of its own, blocking until polkit and UPower answer or
+/// [`crate::polkit::PROMPT_TIMEOUT`] passes. The error is what to tell the user; `None` when they
+/// dismissed the password prompt.
 pub fn set(device: &str, on: bool) -> Result<(), Option<String>> {
     let e = match zbus::block_on(async {
         let conn = Connection::system().await?;
