@@ -295,7 +295,7 @@ impl State {
             session,
             launched: launch.is_some(),
             prompt: self.prompt_pid(w).is_some_and(|pid| {
-                mapfocus::is_prompt_window(pid, &self.win(w).map(|x| x.title()).unwrap_or_default())
+                mapfocus::is_prompt_window(pid, self.win(w).is_some_and(|x| x.device_prompt))
             }),
             handed,
         };

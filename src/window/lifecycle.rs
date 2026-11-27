@@ -114,6 +114,7 @@ impl State {
             csd: false,
             dialog_tag: DialogTag::None,
             file_dialog: false,
+            device_prompt: false,
             place_tag: None,
             modal: false,
             owned: false,

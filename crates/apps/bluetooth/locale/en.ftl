@@ -96,6 +96,7 @@ wizard-adapter-removed = The Bluetooth adapter was removed.
 wizard-radio-off = Bluetooth was turned off.
 
 ## The Pairing Request box and the wizard's pairing step
+pair-title = Bluetooth Pairing Request
 pair-type-pin = Type the PIN for { $name }. If you do not know it, check the device's manual; many devices use 0000.
 pair-type-passkey = Type the six-digit passkey that { $name } shows.
 pair-show-passkey = Type this passkey on { $name }, then press its { $enter } key:
@@ -116,6 +117,7 @@ remove-text =
     To use it again, you will have to add it again.
 
 ## The prompt for a file a device sends, and its balloons
+offer-title = Bluetooth File Transfer
 offer-accept = &Accept
 offer-decline = &Decline
 offer-sender = { $sender } wants to send you a file.

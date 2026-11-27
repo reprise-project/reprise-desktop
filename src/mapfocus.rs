@@ -316,21 +316,15 @@ pub fn is_prompt(pid: i32) -> bool {
 #[cfg(test)]
 pub const TEST_PROMPT_PID: i32 = i32::MAX - 1;
 
-/// Windows another device asked for, by installed program and title: reprise-bluetooth's
-/// Pairing Request box and file offer prompt (`receive::TITLE`). Its other windows stack like
-/// any other program's.
-const DEVICE_PROMPTS: &[(&str, &str)] = &[
-    ("reprise-bluetooth", "Bluetooth Pairing Request"),
-    ("reprise-bluetooth", "Bluetooth File Transfer"),
-];
+/// The installed programs whose windows tagged `device-prompt` are prompts another device asked
+/// for: reprise-bluetooth's Pairing Request box and file offer prompt. Their other windows stack
+/// like any other program's, and the tag from any other program is ignored.
+const DEVICE_PROMPTS: &[&str] = &["reprise-bluetooth"];
 
-/// Whether a window of process `pid` titled `title` takes focus as a prompt: any window of a
-/// [`PROMPTS`] program, or one of the [`DEVICE_PROMPTS`].
-pub fn is_prompt_window(pid: i32, title: &str) -> bool {
-    is_prompt(pid)
-        || DEVICE_PROMPTS
-            .iter()
-            .any(|&(program, t)| t == title && runs_installed(pid, program))
+/// Whether a window of process `pid` takes focus as a prompt: any window of a [`PROMPTS`]
+/// program, or one tagged `device-prompt` (`device_prompt`) by a [`DEVICE_PROMPTS`] program.
+pub fn is_prompt_window(pid: i32, device_prompt: bool) -> bool {
+    is_prompt(pid) || device_prompt && DEVICE_PROMPTS.iter().any(|p| runs_installed(pid, p))
 }
 
 fn runs_installed(pid: i32, program: &str) -> bool {
@@ -801,18 +795,34 @@ mod tests {
             Some(editor.id),
             "the devices window maps behind"
         );
-        for title in ["Bluetooth File Transfer", "Bluetooth Pairing Request"] {
-            h.state.focus_window(editor.id);
-            let prompt = h.map_titled(&mut bt, "reprise.bluetooth", title, (300, 150));
-            assert_eq!(h.state.focused, Some(prompt.id), "{title} takes focus");
-        }
-        let mut other = h.connect_as(i32::MAX - 3);
         h.state.focus_window(editor.id);
-        h.map_titled(&mut other, "fake", "Bluetooth File Transfer", (300, 150));
+        h.map_titled(
+            &mut bt,
+            "reprise.bluetooth",
+            "Bluetooth File Transfer",
+            (300, 150),
+        );
         assert_eq!(
             h.state.focused,
             Some(editor.id),
-            "another program's lookalike maps behind"
+            "an untagged window maps behind whatever its title"
+        );
+        let tag = crate::window::DEVICE_PROMPT_TAG;
+        let prompt = h.map_dialog(&mut bt, "reprise.bluetooth", None, tag, (300, 150));
+        assert_eq!(
+            h.state.focused,
+            Some(prompt.id),
+            "a device-prompt takes focus"
+        );
+        let place = h.state.win(prompt.id).and_then(|w| w.place_tag.clone());
+        assert_eq!(place, None, "the tag names no place to keep");
+        let mut other = h.connect_as(i32::MAX - 3);
+        h.state.focus_window(editor.id);
+        h.map_dialog(&mut other, "reprise.bluetooth", None, tag, (300, 150));
+        assert_eq!(
+            h.state.focused,
+            Some(editor.id),
+            "another program's device-prompt maps behind"
         );
     }
 
