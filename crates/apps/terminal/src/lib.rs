@@ -5,6 +5,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("terminal");
+
 mod chrome;
 mod cwd;
 mod drop;
@@ -47,6 +49,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::TextSpot;
 use reprisekit::theme::{Color, FontConfig, Theme};
+use reprisekit::tr;
 
 use crate::chrome::Chrome;
 use crate::keys::Shortcut;
@@ -237,11 +240,7 @@ fn paste_question(text: &str) -> String {
     if lines.len() > rows {
         shown.push("...".into());
     }
-    format!(
-        "The text you are pasting holds line ends, so the program may run each line as it \
-         arrives:\n\n{}\n\nPaste it anyway?",
-        shown.join("\n")
-    )
+    tr!("paste-question", lines = shown.join("\n"))
 }
 
 fn in_range(s: Settings) -> Settings {
@@ -601,8 +600,8 @@ impl Terminal {
             return Reply::none();
         };
         if t.busy() {
-            let text = "A program is still running in this tab.\nClose the tab anyway?";
-            self.ask(Asking::Tab(t.pid()), text, "&Close", ctx);
+            let text = tr!("close-tab-text");
+            self.ask(Asking::Tab(t.pid()), &text, &tr!("close"), ctx);
             return Reply::redraw();
         }
         self.close_tab(i)
@@ -619,8 +618,8 @@ impl Terminal {
 
     fn close_window(&mut self, ctx: &mut Ctx) -> Reply {
         if self.w.tabs.list.iter().any(Tab::busy) {
-            let text = "Programs are still running in this window.\nClose the window anyway?";
-            self.ask(Asking::Window(self.cur), text, "&Close", ctx);
+            let text = tr!("close-window-text");
+            self.ask(Asking::Window(self.cur), &text, &tr!("close"), ctx);
             return Reply::redraw();
         }
         self.close_pane()
@@ -645,14 +644,14 @@ impl Terminal {
         let fields = Fields {
             text: text.into(),
             icon: ctx.icons.get("dialog-warning", 32),
-            buttons: vec![yes.into(), "Cancel".into()],
+            buttons: vec![yes.into(), reprisekit::kit_tr!("cancel")],
             default: 0,
             min_text_h: None,
             min_w: 0,
             max_w: repriseapp::dialog_max_w(),
         };
         (self.w.asks).ask(
-            MsgBox::new("Terminal", fields).sounding(repriseapp::sound::Event::Warning),
+            MsgBox::new(tr!("title"), fields).sounding(repriseapp::sound::Event::Warning),
             what,
         );
     }
@@ -792,7 +791,12 @@ impl Terminal {
         let bracketed = tab.mode().contains(TermMode::BRACKETED_PASTE);
         if self.settings.confirm_multiline_paste && !bracketed && text.contains(['\n', '\r']) {
             let (pid, question) = (tab.pid(), paste_question(&text));
-            self.ask(Asking::Paste { pid, text }, &question, "&Paste", ctx);
+            self.ask(
+                Asking::Paste { pid, text },
+                &question,
+                &tr!("paste-yes"),
+                ctx,
+            );
             return Reply::redraw();
         }
         tab.scroll(Scroll::Bottom);
@@ -1058,7 +1062,7 @@ impl App for Terminal {
         if let Some(o) = &self.options {
             out.push(Child {
                 id: OPTIONS,
-                title: "Terminal Options".into(),
+                title: tr!("options-title"),
                 size: u.size(options::CLIENT),
                 fixed: true,
                 modal: false,
@@ -1066,7 +1070,7 @@ impl App for Terminal {
             if o.editing.is_some() {
                 out.push(Child {
                     id: PROFILE,
-                    title: "Profile".into(),
+                    title: tr!("profile-title"),
                     size: u.size(options::PROFILE_CLIENT),
                     fixed: true,
                     modal: true,
@@ -1076,7 +1080,7 @@ impl App for Terminal {
         if self.find.is_some() {
             out.push(Child {
                 id: FIND,
-                title: "Find".into(),
+                title: tr!("find-title"),
                 size: u.size(finddlg::FIND_CLIENT),
                 fixed: true,
                 modal: false,
@@ -1376,7 +1380,7 @@ fn panes_mut<'a>(
 /// A window's title: its open tab's.
 fn pane_title(p: Option<&Pane>) -> String {
     p.and_then(|p| p.tabs.current())
-        .map_or_else(|| "Terminal".into(), |t| t.title().to_owned())
+        .map_or_else(|| tr!("title"), |t| t.title().to_owned())
 }
 
 fn mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {

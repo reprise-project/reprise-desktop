@@ -15,6 +15,7 @@ use reprisekit::controls::form::{self, Control, Form};
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 
 use crate::{Asking, Terminal};
 
@@ -228,15 +229,15 @@ impl Terminal {
             .is_some_and(|t| t.find(&q.text, q.match_case, !q.up));
         if !found && !self.w.asks.iter().any(|(_, k)| *k == Asking::NotFound) {
             let fields = Fields {
-                text: format!("Cannot find \"{}\"", q.text),
+                text: tr!("not-found", text = q.text.as_str()),
                 icon: ctx.icons.get("dialog-information", 32),
-                buttons: vec!["OK".into()],
+                buttons: vec![reprisekit::kit_tr!("ok")],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
                 max_w: repriseapp::dialog_max_w(),
             };
-            (self.w.asks).ask(MsgBox::new("Terminal", fields), Asking::NotFound);
+            (self.w.asks).ask(MsgBox::new(tr!("title"), fields), Asking::NotFound);
         }
         self.w.snap.dirty.fill(true);
         Reply::redraw_all()
