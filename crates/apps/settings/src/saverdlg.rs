@@ -125,7 +125,7 @@ impl SaverDialog {
                     FIELD_X + updown::WIDTH + 6,
                     y,
                     60,
-                    "seconds",
+                    &tr!("units-seconds"),
                 ));
                 y += 28;
             }

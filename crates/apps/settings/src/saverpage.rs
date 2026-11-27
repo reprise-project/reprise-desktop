@@ -62,7 +62,7 @@ pub fn page(a: Area) -> Form {
         RX + 100,
         126,
         rw - 100,
-        "minutes",
+        &tr!("units-minutes"),
     ));
 
     items.push(Item::group(
@@ -123,7 +123,13 @@ pub fn page(a: Area) -> Form {
         &tr!("saverpage-after"),
         (0, 3600),
     ));
-    items.push(Item::label_at("away_units", GX + 260, 332, 60, "seconds"));
+    items.push(Item::label_at(
+        "away_units",
+        GX + 260,
+        332,
+        60,
+        &tr!("units-seconds"),
+    ));
     items.push(Item::label_at(
         "lock_media_label",
         GX,

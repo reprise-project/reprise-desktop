@@ -809,7 +809,13 @@ pub fn pointer_and_alerts(a: Area) -> Form {
         (0, ATTENTION_FLASH_MAX as i32),
     ));
     items.extend([
-        Item::label_at("attention_flash_units", GX + 264, 306, gw - 264, "seconds"),
+        Item::label_at(
+            "attention_flash_units",
+            GX + 264,
+            306,
+            gw - 264,
+            &tr!("units-seconds"),
+        ),
         Item::label_at(
             "attention_flash_note",
             GX,
