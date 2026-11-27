@@ -90,10 +90,10 @@ pub(crate) const TRASH_ICON: &[&str] = &["user-trash-full"];
 impl Confirm {
     pub(crate) fn buttons(&self) -> Vec<String> {
         if let Some((_, asked)) = self.script {
-            return asked.buttons().iter().map(|s| s.to_string()).collect();
+            return asked.buttons();
         }
         if self.mount {
-            return reprisefs::udisks::MOUNT_BUTTONS.map(String::from).to_vec();
+            return reprisefs::udisks::mount_buttons().to_vec();
         }
         let labels: Vec<String> = match &self.too_big {
             _ if self.job.is_some() => failed_buttons().to_vec(),
@@ -804,7 +804,7 @@ impl Explorer {
     ) -> Reply {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         self.raise(Dialog::Confirm(Confirm {
-            title: reprisefs::program::ASK_TITLE.into(),
+            title: reprisefs::program::ask_title(),
             text: asked.text(&name),
             min_text_h: None,
             template: Template::MessageBox,

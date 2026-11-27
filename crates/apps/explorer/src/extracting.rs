@@ -124,7 +124,7 @@ impl Explorer {
             }
             c
         };
-        let action = crate::acting::Action::reads(compress::FAILURE_TITLE);
+        let action = crate::acting::Action::reads(compress::failure_title());
         self.act(ctx, action, work, |ex, c, ctx| {
             if let Some(c) = c {
                 ex.queue_archive_job(Batch::Compress(c), ctx);
@@ -189,16 +189,16 @@ impl Explorer {
             let meter = ex.job.meter().clone();
             return Some(self.ask_failed(
                 reprisefs::progress::Asked::new(meter),
-                extract::FAILURE_TITLE,
+                &extract::failure_title(),
                 text,
                 ctx,
             ));
         }
         let title = match zipping {
-            true => compress::FAILURE_TITLE,
-            false => extract::FAILURE_TITLE,
+            true => compress::failure_title(),
+            false => extract::failure_title(),
         };
-        let failed = ask.map(|text| (title.to_string(), text));
+        let failed = ask.map(|text| (title, text));
         let boxed = (failed.clone()).map(|(title, text)| self.message_box(&title, text, ctx));
         if !finished {
             return boxed;

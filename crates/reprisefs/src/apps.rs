@@ -2,6 +2,7 @@
 //! Open With, and a window's icon by its app_id (the share picker).
 
 use reprisebus::mutex::lock;
+use reprisekit::tr;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -274,11 +275,7 @@ pub struct ExecRefused {
 
 impl std::fmt::Display for ExecRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Reprise cannot run '{}' safely: its command line has a field code inside quotes.",
-            self.name
-        )
+        f.write_str(&tr!("exec-refused", name = &*self.name))
     }
 }
 

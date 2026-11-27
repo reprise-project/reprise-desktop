@@ -299,7 +299,7 @@ impl Explorer {
         let path = it.path.clone();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         self.raise(Dialog::Confirm(crate::dialogs::Confirm {
-            title: reprisefs::udisks::MOUNT_TITLE.into(),
+            title: reprisefs::udisks::mount_title(),
             text: reprisefs::udisks::mount_text(&name),
             min_text_h: None,
             template: reprisekit::controls::dlgtemplate::Template::MessageBox,

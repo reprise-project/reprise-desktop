@@ -58,7 +58,7 @@ pub(crate) struct Search {
     last_start: Option<Instant>,
     /// The re-run deadline a wake was asked for.
     armed: Option<Instant>,
-    /// The results shown came from no tool ([`reprisefs::search::NO_TOOL`]).
+    /// The results shown came from no tool ([`reprisefs::search::no_tool`]).
     no_tool: bool,
 }
 
@@ -122,7 +122,7 @@ impl Search {
         }
     }
 
-    /// Whether the results shown say [`reprisefs::search::NO_TOOL`] instead of a count.
+    /// Whether the results shown say [`reprisefs::search::no_tool`] instead of a count.
     pub fn no_tool(&self) -> bool {
         self.shown.is_some() && self.no_tool
     }

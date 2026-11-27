@@ -290,7 +290,7 @@ fn file_path(url: &str) -> Option<PathBuf> {
 }
 
 /// A found row: a file, a result a program's search provider found, or a note that picks
-/// nothing (the Files section's [`reprisefs::search::NO_TOOL`]).
+/// nothing (the Files section's [`reprisefs::search::no_tool`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Found {
     Path(PathBuf),
@@ -745,7 +745,7 @@ impl State {
                     .collect();
                 let found = match best {
                     Some(best) => paths(best),
-                    None => vec![Found::Note(reprisefs::search::NO_TOOL.into())],
+                    None => vec![Found::Note(reprisefs::search::no_tool())],
                 };
                 Box::new(move |state: &mut State| {
                     state.files_found(o, generation, section, found, facts)
@@ -1190,7 +1190,7 @@ mod tests {
     #[test]
     fn the_no_tool_note_reads_as_a_row_that_picks_nothing() {
         let mut f = FileSearch::new(false, Vec::new());
-        f.set(0, vec![Found::Note(reprisefs::search::NO_TOOL.into())]);
+        f.set(0, vec![Found::Note(reprisefs::search::no_tool())]);
         let rows: Vec<String> = f
             .sections()
             .flat_map(|(_, r)| r.iter().map(Found::name))

@@ -137,7 +137,7 @@ pub fn hover_desktop(state: &mut State, index: Option<usize>) {
     rest_on(state, Target::Desktop(i), |s| {
         let view = s.desktop.as_ref()?;
         let place = crate::desktop::shell_place(&view.entries.get(i)?.kind)?;
-        Some(Tip::Icon(vec![place.tip().to_string()]))
+        Some(Tip::Icon(vec![place.tip()]))
     });
 }
 

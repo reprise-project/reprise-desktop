@@ -185,7 +185,7 @@ impl Explorer {
             zone,
         );
         if self.search.no_tool() {
-            self.status.panels[0].text = reprisefs::search::NO_TOOL.into();
+            self.status.panels[0].text = reprisefs::search::no_tool();
         }
         // One item picked in the Recycle Bin says where it came from; one shortcut elsewhere, where it points.
         if let [i] = chosen[..]

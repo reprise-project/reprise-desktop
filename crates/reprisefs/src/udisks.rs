@@ -937,11 +937,11 @@ impl Udisks {
             came_off: Vec::new(),
         };
         let Some(d) = snap.disk(disk).filter(|d| d.removable) else {
-            return Err(refused(NOT_REMOVABLE));
+            return Err(refused(&tr!("eject-not-removable")));
         };
         let on = snap.volumes_on(disk);
         if on.iter().any(|v| v.system_needs()) {
-            return Err(refused(HOLDS_SYSTEM));
+            return Err(refused(&tr!("eject-holds-system")));
         }
         let name = |v: &Volume| Path::new(&v.device).file_name().map(|n| n.to_owned());
         let own: Vec<_> = on.iter().filter_map(|v| name(v)).collect();
@@ -951,7 +951,7 @@ impl Udisks {
                     .is_some_and(|n| holders(&self.sys, &n).iter().any(|h| !own.contains(h)))
         });
         if held {
-            return Err(refused(HELD));
+            return Err(refused(&tr!("eject-held")));
         }
         let (clear, plain): (Vec<&&Volume>, Vec<&&Volume>) =
             on.iter().partition(|v| v.backing.is_some());
@@ -985,7 +985,9 @@ impl Udisks {
             match e.kind {
                 ErrorKind::Other => Error {
                     kind: ErrorKind::Other,
-                    message: format!("{NOT_STOPPED} {}", e.message).trim_end().into(),
+                    message: format!("{} {}", tr!("eject-not-stopped"), e.message)
+                        .trim_end()
+                        .into(),
                     came_off: Vec::new(),
                 },
                 _ => e,
@@ -993,13 +995,6 @@ impl Udisks {
         })
     }
 }
-
-const NOT_REMOVABLE: &str = "This drive cannot be removed safely.";
-const HOLDS_SYSTEM: &str = "This drive holds part of the system, so it cannot be removed safely.";
-const HELD: &str = "Part of this drive is in use as swap space or by an LVM or RAID volume, so it \
-                    cannot be removed safely.";
-const NOT_STOPPED: &str = "Its volumes were unmounted, but the drive could not be stopped and may \
-                           still be in use.";
 
 /// The kernel names of the devices stacked on block device `name` (`sdb1`): an LVM volume, a
 /// RAID array or a container's cleartext.
@@ -1014,12 +1009,9 @@ fn holders(sys: &Path, name: &std::ffi::OsStr) -> Vec<std::ffi::OsString> {
 pub fn eject_failed_text(volume: &str, e: &Error) -> Option<String> {
     let why = match e.kind {
         ErrorKind::Cancelled => return None,
-        ErrorKind::Busy => format!(
-            "'{volume}' is in use: a program is using a file on it. Close any program or window \
-             using it, and then try again."
-        ),
-        ErrorKind::NotAuthorized => format!("You do not have permission to eject '{volume}'."),
-        ErrorKind::Other if e.message.is_empty() => format!("'{volume}' could not be ejected."),
+        ErrorKind::Busy => tr!("eject-busy", volume = volume),
+        ErrorKind::NotAuthorized => tr!("eject-denied", volume = volume),
+        ErrorKind::Other if e.message.is_empty() => tr!("eject-failed", volume = volume),
         ErrorKind::Other => e.message.clone(),
     };
     Some(why + &already_off(&e.came_off))
@@ -1027,11 +1019,21 @@ pub fn eject_failed_text(volume: &str, e: &Error) -> Option<String> {
 
 /// " 'A' was already unmounted.", " 'A' and 'B' were ...", or nothing for no volumes.
 fn already_off(names: &[String]) -> String {
-    let quoted: Vec<String> = names.iter().map(|n| format!("'{n}'")).collect();
-    match quoted.as_slice() {
+    match names {
         [] => String::new(),
-        [one] => format!(" {one} was already unmounted."),
-        [rest @ .., last] => format!(" {} and {last} were already unmounted.", rest.join(", ")),
+        [one] => format!(" {}", tr!("already-unmounted-one", name = one.as_str())),
+        [rest @ .., last] => {
+            let rest: Vec<String> = rest.iter().map(|n| format!("'{n}'")).collect();
+            let rest = rest.join(", ");
+            format!(
+                " {}",
+                tr!(
+                    "already-unmounted-many",
+                    rest = rest.as_str(),
+                    last = last.as_str()
+                )
+            )
+        }
     }
 }
 

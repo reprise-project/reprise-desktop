@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use crate::config::OsdConfig;
-use reprisebus::airplane::{self, Mode};
+use reprisebus::airplane::Mode;
 use reprisekit::controls::osd::{self, LockKey, Meter, Osd};
 use reprisekit::look::panel;
 use reprisekit::tr;

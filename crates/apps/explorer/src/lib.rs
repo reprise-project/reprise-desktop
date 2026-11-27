@@ -280,7 +280,7 @@ pub struct Explorer {
     pub explorer_bar: ExplorerBar,
     pub taskpane: TaskPane,
     pub pane_cmds: Vec<Vec<commands::Command>>,
-    pub pane_tips: Vec<Vec<Option<&'static str>>>,
+    pub pane_tips: Vec<Vec<Option<String>>>,
     /// What the task sections were built for, so a selection change that keeps
     /// them only rewrites Details instead of refetching every row's icon.
     pane_key: Option<pane::PaneKey>,

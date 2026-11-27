@@ -309,12 +309,12 @@ impl Dialog {
             program,
         };
         let is_script = program == Program::Script;
-        let mut buttons = vec![button(labels[0], script(Some(open)), is_script)];
+        let mut buttons = vec![button(&labels[0], script(Some(open)), is_script)];
         if is_script {
-            buttons.push(button(labels[1], script(None), false));
+            buttons.push(button(&labels[1], script(None), false));
         }
         buttons.push(button(
-            labels[labels.len() - 1],
+            &labels[labels.len() - 1],
             DialogAction::Cancel,
             !is_script,
         ));
@@ -336,8 +336,8 @@ impl Dialog {
             recent,
         };
         let buttons = vec![
-            button(labels[0], run, false),
-            button(labels[1], DialogAction::Cancel, true),
+            button(&labels[0], run, false),
+            button(&labels[1], DialogAction::Cancel, true),
         ];
         Dialog::run_question(&path, asked, buttons)
     }
@@ -368,21 +368,18 @@ impl Dialog {
     /// The question before the disk image at `path` is mounted: Mount mounts it read-only,
     /// Cancel, the default, leaves it.
     pub fn ask_mount(path: std::path::PathBuf) -> Dialog {
-        use reprisefs::udisks::{MOUNT_BUTTONS, MOUNT_TITLE, mount_text};
+        use reprisefs::udisks::{mount_buttons, mount_text, mount_title};
+        let [mount, cancel] = mount_buttons();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         Dialog {
             icon: Some("dialog-warning".into()),
             text: mount_text(&name),
             buttons: vec![
-                button(
-                    MOUNT_BUTTONS[0],
-                    DialogAction::MountImage(path.clone()),
-                    false,
-                ),
-                button(MOUNT_BUTTONS[1], DialogAction::Cancel, true),
+                button(&mount, DialogAction::MountImage(path.clone()), false),
+                button(&cancel, DialogAction::Cancel, true),
             ],
             ..Dialog::new(
-                MOUNT_TITLE,
+                mount_title(),
                 Style::Classic {
                     template: Template::MessageBox,
                     text_h: None,
@@ -404,7 +401,7 @@ impl Dialog {
             text: asked.text(&name),
             buttons,
             ..Dialog::new(
-                reprisefs::program::ASK_TITLE,
+                reprisefs::program::ask_title(),
                 Style::Classic {
                     template: Template::MessageBox,
                     text_h: None,

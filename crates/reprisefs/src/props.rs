@@ -320,9 +320,7 @@ pub fn set_executable(path: &Path, on: bool) -> std::io::Result<()> {
     std::fs::set_permissions(path, PermissionsExt::from_mode(new))?;
     let now = std::fs::metadata(path)?.permissions().mode();
     if now & 0o111 != new & 0o111 {
-        return Err(std::io::Error::other(
-            "This file system cannot mark files as executable.",
-        ));
+        return Err(std::io::Error::other(tr!("no-executable-bit")));
     }
     Ok(())
 }

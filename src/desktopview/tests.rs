@@ -1420,7 +1420,7 @@ fn opening_a_disk_image_asks_before_mounting_it_and_starts_nothing() {
         [DialogAction::MountImage(img.clone()), DialogAction::Cancel]
     );
     let d = &h.state.dialogs.views.last().unwrap().dialog;
-    assert_eq!(d.title, reprisefs::udisks::MOUNT_TITLE);
+    assert_eq!(d.title, reprisefs::udisks::mount_title());
     assert!(d.buttons[1].default, "Enter cancels");
     assert_eq!(crate::spawn::recorded(), Vec::<String>::new());
 }
