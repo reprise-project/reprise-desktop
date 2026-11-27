@@ -795,7 +795,7 @@ mod tests {
                 continue;
             }
             for kind in Kind::ALL {
-                for line in [kind.prompt(&who("")), kind.note().into()] {
+                for line in [kind.prompt(&who("")), kind.note()] {
                     let w = text.measure(&line, false, 11);
                     assert!(
                         w <= column,

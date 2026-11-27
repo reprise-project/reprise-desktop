@@ -600,7 +600,7 @@ impl BtApp {
             .device(&path)
             .map_or_else(|| path.clone(), |d| d.alias.clone());
         let b = MsgBox::new(
-            &tr!("remove-title"),
+            tr!("remove-title"),
             Fields {
                 text: tr!("remove-text", alias = alias.as_str()),
                 icon: ctx.icons.get("dialog-question", 32),
