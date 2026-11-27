@@ -123,15 +123,15 @@ pub(super) fn refill_tree(
     }
 }
 
-/// App `a`'s jump list ([`crate::taskbar::jump_sections`]) with its recent `files`, each row
-/// wearing [`crate::taskbar::jump_icon`].
+/// App `a`'s jump list ([`crate::taskbar::jump_sections`]) with its `files`, the first `pinned`
+/// of them pinned, each row wearing [`crate::taskbar::jump_icon`].
 fn jump_sections(
     icons: &mut crate::icontheme::IconCache,
     a: &AppEntry,
-    files: &[PathBuf],
+    (files, pinned): (&[PathBuf], usize),
     px: i32,
 ) -> Vec<ResultGroup> {
-    let sections = crate::taskbar::jump_sections(files, crate::taskbar::jump_tasks(a));
+    let sections = crate::taskbar::jump_sections(files, pinned, crate::taskbar::jump_tasks(a));
     (sections.into_iter())
         .map(|section| ResultGroup {
             title: section.title,
@@ -153,20 +153,20 @@ fn has_jump(shape: Shape, a: &AppEntry, files: &[PathBuf]) -> bool {
     shape != Shape::Blue && (!files.is_empty() || !crate::taskbar::jump_tasks(a).is_empty())
 }
 
-pub(super) fn jump_file(jumps: &[Vec<PathBuf>], mode: Mode, k: usize) -> Option<&Path> {
+pub(super) fn jump_file(jumps: &[(Vec<PathBuf>, usize)], mode: Mode, k: usize) -> Option<&Path> {
     let Mode::Jump(i) = mode else {
         return None;
     };
-    jumps.get(i)?.get(k).map(PathBuf::as_path)
+    jumps.get(i)?.0.get(k).map(PathBuf::as_path)
 }
 
 /// The desktop action jump row `k` runs, indexing [`crate::taskbar::jump_tasks`]: the rows after
-/// the recent files.
-pub(super) fn jump_task(jumps: &[Vec<PathBuf>], mode: Mode, k: usize) -> Option<usize> {
+/// the files.
+pub(super) fn jump_task(jumps: &[(Vec<PathBuf>, usize)], mode: Mode, k: usize) -> Option<usize> {
     let Mode::Jump(i) = mode else {
         return None;
     };
-    k.checked_sub(jumps.get(i)?.len())
+    k.checked_sub(jumps.get(i)?.0.len())
 }
 
 /// The tree's scroll, lit and hot rows index the old rows and are dropped.
@@ -271,6 +271,7 @@ impl State {
             icons,
             config,
             recent,
+            jump_pins,
             ..
         } = self;
         let Some(v) = start_panel.as_mut() else {
@@ -288,12 +289,14 @@ impl State {
         let blue = v.model.shape == Shape::Blue;
         v.jumps = programs
             .iter()
-            .map(|&i| {
-                if config.recent_files && !blue {
-                    recent.for_app(crate::taskbar::JUMP_RECENT, &app_index[i])
-                } else {
-                    Vec::new()
-                }
+            .map(|&i| match blue {
+                true => (Vec::new(), 0),
+                false => crate::jumppins::files_for(
+                    jump_pins,
+                    recent,
+                    config.recent_files,
+                    &app_index[i],
+                ),
             })
             .collect();
         let px = v.model.icon_px(PROGRAM_ICON, scale);
@@ -307,7 +310,7 @@ impl State {
                 ProgramRow {
                     name: a.name.clone(),
                     icon: app_icon(icons, a, px),
-                    jump: has_jump(v.model.shape, a, jumps),
+                    jump: has_jump(v.model.shape, a, &jumps.0),
                     new_pin: pin && v.new_pins.contains(&a.id),
                     detail: (blue && pin).then(|| subtitle(a)).flatten(),
                 }
@@ -337,9 +340,11 @@ impl State {
         };
         let px = v.model.icon_px(SMALL_ICON, scale);
         let app = v.programs.get(i).and_then(|&a| app_index.get(a));
-        v.model.jump = match (app, v.jumps.get(i)) {
-            (Some(a), Some(files)) => jump_sections(icons, a, files, px),
-            _ => Vec::new(),
+        (v.model.jump, v.model.jump_files) = match (app, v.jumps.get(i)) {
+            (Some(a), Some((files, pinned))) => {
+                (jump_sections(icons, a, (files, *pinned), px), files.len())
+            }
+            _ => (Vec::new(), 0),
         };
     }
 
@@ -425,11 +430,11 @@ impl State {
             }
         }
         if let Mode::Jump(i) = v.model.mode()
-            && let Some(files) = v.jumps.get(i)
+            && let Some((files, pinned)) = v.jumps.get(i)
             && let Some(a) = v.programs.get(i).and_then(|&a| app_index.get(a))
         {
             let px = v.model.icon_px(SMALL_ICON, scale);
-            v.model.jump = jump_sections(icons, a, files, px);
+            v.model.jump = jump_sections(icons, a, (files, *pinned), px);
         }
         let picture = self.start_user_picture(PICTURE * scale);
         let Some(v) = self.start_panel.as_mut() else {
@@ -475,6 +480,7 @@ impl State {
             icons,
             config,
             recent,
+            jump_pins,
             ..
         } = self;
         let Some(v) = start_panel.as_mut() else {
@@ -486,23 +492,25 @@ impl State {
             let Some(e) = app_index.get(app) else {
                 continue;
             };
-            let files = if config.recent_files && shape != Shape::Blue {
-                recent.for_app(crate::taskbar::JUMP_RECENT, e)
-            } else {
-                Vec::new()
+            let fresh = match shape {
+                Shape::Blue => (Vec::new(), 0),
+                _ => crate::jumppins::files_for(jump_pins, recent, config.recent_files, e),
             };
             let Some(old) = v.jumps.get_mut(k) else {
                 break;
             };
-            if *old == files {
+            if *old == fresh {
                 continue;
             }
             changed = true;
+            let (old_files, files) = (&old.0, &fresh.0);
             if v.model.mode() == Mode::Jump(k) {
-                let rows = jump_sections(icons, e, &files, v.model.icon_px(SMALL_ICON, scale));
+                let px = v.model.icon_px(SMALL_ICON, scale);
+                let rows = jump_sections(icons, e, (files, fresh.1), px);
+                v.model.jump_files = files.len();
                 v.model
-                    .relist_jump(rows, |i| match i.checked_sub(old.len()) {
-                        None => reprisekit::selection::follow(old, &files, i, |_| true),
+                    .relist_jump(rows, |i| match i.checked_sub(old_files.len()) {
+                        None => reprisekit::selection::follow(old_files, files, i, |_| true),
                         Some(task) => Some(files.len() + task),
                     });
             }
@@ -511,9 +519,9 @@ impl State {
                 Some(f) => v.model.frequent.get_mut(f),
             };
             if let Some(row) = row {
-                row.jump = has_jump(shape, e, &files);
+                row.jump = has_jump(shape, e, &fresh.0);
             }
-            *old = files;
+            *old = fresh;
         }
         if changed {
             crate::tooltip::hover_start_panel(self, None);

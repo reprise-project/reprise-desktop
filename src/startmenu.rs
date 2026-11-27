@@ -269,6 +269,44 @@ pub enum StartRow {
     Hibernate,
     /// Install the prepared offline update, then turn off or restart.
     InstallUpdates(reprisekit::controls::endsession::Goal),
+    /// A row of the menu of a file on program `String`'s jump list ([`jump_file_menu`]).
+    JumpFile(JumpFileRow, String, std::path::PathBuf),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JumpFileRow {
+    Open,
+    OpenLocation,
+    Pin,
+    Unpin,
+    /// Takes the file off the program's recent files.
+    Remove,
+}
+
+/// The menu of file `path` on program `app`'s jump list: Open (bold), Open file location, then
+/// Unpin from this list for a `pinned` file, else Pin to this list and Remove from this list.
+pub fn jump_file_menu(
+    app: &str,
+    path: &std::path::Path,
+    pinned: bool,
+) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+    use JumpFileRow::*;
+    let row = |r: JumpFileRow| Some(StartRow::JumpFile(r, app.into(), path.into()));
+    let mut v = vec![
+        (MenuItem::item(&tr!("start-open")).bold(true), row(Open)),
+        (
+            MenuItem::item(&tr!("start-open-location")),
+            row(OpenLocation),
+        ),
+        (MenuItem::Separator, None),
+    ];
+    if pinned {
+        v.push((MenuItem::item(&tr!("start-jump-unpin")), row(Unpin)));
+    } else {
+        v.push((MenuItem::item(&tr!("start-jump-pin")), row(Pin)));
+        v.push((MenuItem::item(&tr!("start-remove-from-list")), row(Remove)));
+    }
+    v.into_iter().unzip()
 }
 
 /// The kind of a two-column Start menu place with a context menu: a folder, or Computer.
@@ -776,6 +814,31 @@ mod tests {
                 .flatten()
                 .any(|r| matches!(r, StartRow::Forget(_)))
         );
+    }
+
+    #[test]
+    fn a_jump_list_files_menu_pins_a_recent_file_and_unpins_a_pinned_one() {
+        let path = std::path::Path::new("/home/u/notes.txt");
+        let (items, rows) = jump_file_menu("mail.desktop", path, false);
+        assert_eq!(
+            labels(&items),
+            [
+                "&Open",
+                "Open f&ile location",
+                "",
+                "Pi&n to this list",
+                "Remove from this &list"
+            ]
+        );
+        let row = |r| Some(StartRow::JumpFile(r, "mail.desktop".into(), path.into()));
+        assert_eq!(rows[3], row(JumpFileRow::Pin));
+        assert_eq!(rows[4], row(JumpFileRow::Remove));
+        let (items, rows) = jump_file_menu("mail.desktop", path, true);
+        assert_eq!(
+            labels(&items),
+            ["&Open", "Open f&ile location", "", "Unpi&n from this list"]
+        );
+        assert_eq!(rows[3], row(JumpFileRow::Unpin));
     }
 
     #[test]

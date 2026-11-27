@@ -291,8 +291,6 @@ pub fn record_in(
 /// How long a writer tries for the lock before it gives up on its record.
 const LOCK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Read, edit and replace `xbel` in one rename under its lock, so a reader sees the old file or
-/// the new one. GLib's writers take no lock, so a bookmark one writes meanwhile is lost.
 fn record_locked(
     xbel: &Path,
     opened: &[Opening],
@@ -300,25 +298,108 @@ fn record_locked(
     patience: std::time::Duration,
     busy: impl FnMut(),
 ) -> std::io::Result<()> {
+    let edit = |old: String| {
+        let stamp = iso8601(now());
+        let mut new = old;
+        for &(path, app, mime) in opened {
+            let app = app.map(|e| (e.name.as_str(), format!("'{}'", e.exec_line)));
+            let app = app.as_ref().map(|(n, e)| (*n, e.as_str()));
+            new = recorded(&new, path, app, mime, &stamp)?;
+        }
+        Some(new)
+    };
+    rewrite_locked(xbel, patience, busy, |held| edited(held, edit))
+}
+
+/// Take `path` off the jump list of the program `entry`: its bookmark loses the application
+/// entries [`used_by_app`] matches, and goes once no program is left on it.
+pub fn forget_at(xbel: &Path, path: &Path, entry: &AppEntry) -> std::io::Result<()> {
+    let edit = |old: String| forgotten(&old, path, |name, exec| used_by_app(name, exec, entry));
+    rewrite_locked(xbel, LOCK_PATIENCE, || {}, |held| edited(held, edit))
+}
+
+/// `old` with the application entries `used` picks (by name and exec) taken off `path`'s
+/// bookmarks, one left with none taken out whole, every other byte kept; None for no xbel.
+pub fn forgotten(old: &str, path: &Path, used: impl Fn(&str, &str) -> bool) -> Option<String> {
+    let uri = crate::thumbnails::file_uri(path);
+    let mut out = String::with_capacity(old.len());
+    let mut at = 0;
+    for span in bookmark_spans(old)? {
+        let el = &old[span.clone()];
+        let tag = &el[..el.find('>').unwrap_or(el.len())];
+        if tag_attr(tag, "href").as_deref() != Some(&uri) {
+            continue;
+        }
+        let mut kept = el.to_string();
+        let (mut left, mut taken) = (0, 0);
+        let mut from = 0;
+        while let Some(i) = kept[from..].find("<bookmark:application ") {
+            let start = from + i;
+            let end = start + kept[start..].find("/>")? + 2;
+            let entry = &kept[start..end];
+            let name = tag_attr(entry, "name").unwrap_or_default();
+            let exec = tag_attr(entry, "exec").unwrap_or_default();
+            if used(&name, &exec) {
+                let line = kept[..start]
+                    .rfind('\n')
+                    .filter(|&n| kept[n..start].trim().is_empty());
+                kept.replace_range(line.unwrap_or(start)..end, "");
+                from = line.unwrap_or(start);
+                taken += 1;
+            } else {
+                left += 1;
+                from = end;
+            }
+        }
+        if taken == 0 {
+            continue;
+        }
+        let cut = if left == 0 {
+            let before = old[..span.start].trim_end_matches([' ', '\t']);
+            let before = before.strip_suffix('\n').unwrap_or(before);
+            out.push_str(&old[at..before.len().max(at)]);
+            ""
+        } else {
+            out.push_str(&old[at..span.start]);
+            kept.as_str()
+        };
+        out.push_str(cut);
+        at = span.end;
+    }
+    out.push_str(&old[at..]);
+    Some(out)
+}
+
+/// Replace `xbel` with what `edit` makes of it in one rename under its lock, so a reader sees
+/// the old file or the new one. GLib's writers take no lock, so a bookmark one writes meanwhile
+/// is lost.
+fn rewrite_locked(
+    xbel: &Path,
+    patience: std::time::Duration,
+    busy: impl FnMut(),
+    edit: impl FnOnce(&std::fs::File) -> std::io::Result<String>,
+) -> std::io::Result<()> {
     let held = locked(xbel, patience, busy)?;
     sweep_temps(xbel);
-    let bytes = crate::ops::read_opened(&held, MAX_XBEL_BYTES)?;
+    let new = edit(&held)?;
+    let mode = held.metadata()?.permissions();
+    replace(xbel, mode, &new)
+}
+
+/// The held xbel's text run through `edit`; InvalidData when it is no readable xbel.
+fn edited(
+    held: &std::fs::File,
+    edit: impl FnOnce(String) -> Option<String>,
+) -> std::io::Result<String> {
+    let bytes = crate::ops::read_opened(held, MAX_XBEL_BYTES)?;
     let old = String::from_utf8(bytes)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let mode = held.metadata()?.permissions();
-    let stamp = iso8601(now());
-    let mut new = old;
-    for &(path, app, mime) in opened {
-        let app = app.map(|e| (e.name.as_str(), format!("'{}'", e.exec_line)));
-        let app = app.as_ref().map(|(n, e)| (*n, e.as_str()));
-        new = recorded(&new, path, app, mime, &stamp).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "unreadable recently-used.xbel",
-            )
-        })?;
-    }
-    replace(xbel, mode, &new)
+    edit(old).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unreadable recently-used.xbel",
+        )
+    })
 }
 
 /// Forget every recently used file: the session's `recently-used.xbel` is left with no
@@ -328,12 +409,11 @@ pub fn clear() -> std::io::Result<()> {
     clear_at(&xbel)
 }
 
-/// [`clear`] the xbel file at `xbel`, under its lock as [`record`] writes it.
+/// [`clear`] the xbel file at `xbel`, under its lock as [`record`] writes it; what it held is
+/// not read.
 pub fn clear_at(xbel: &Path) -> std::io::Result<()> {
-    let held = locked(xbel, LOCK_PATIENCE, || {})?;
-    sweep_temps(xbel);
-    let mode = held.metadata()?.permissions();
-    replace(xbel, mode, &format!("{XBEL_HEAD}\n</xbel>\n"))
+    let empty = format!("{XBEL_HEAD}\n</xbel>\n");
+    rewrite_locked(xbel, LOCK_PATIENCE, || {}, |_| Ok(empty))
 }
 
 /// Replace `xbel` with `text` in one rename, keeping `mode`.
@@ -1310,6 +1390,50 @@ mod tests {
             out.contains(r#"count="7""#),
             "Gimp's 2 + 4 + this use: {out}"
         );
+    }
+
+    #[test]
+    fn forgetting_a_file_takes_only_that_programs_entry_off_its_bookmark() {
+        let mail = "<bookmark:application name=\"Mail\" exec=\"&apos;mail %u&apos;\" modified=\"2026-01-01T00:00:00Z\" count=\"1\"/>";
+        let mark = |file: &str, apps: &str| {
+            format!(
+                "  <bookmark href=\"file:///home/u/{file}\" added=\"2026-01-01T00:00:00Z\" modified=\"2026-01-01T00:00:00Z\">\n    <info>\n      <metadata owner=\"http://freedesktop.org\">\n          <bookmark:applications>{apps}\n          </bookmark:applications>\n      </metadata>\n    </info>\n  </bookmark>\n"
+            )
+        };
+        let paint = "\n            <bookmark:application name=\"Paint\" exec=\"&apos;paint %u&apos;\" modified=\"2026-01-01T00:00:00Z\" count=\"2\"/>";
+        let doc = |marks: &str| format!("{XBEL_HEAD}\n{marks}</xbel>\n");
+        let both = format!("\n            {mail}{paint}");
+        let old = doc(&(mark("a.txt", &format!("\n            {mail}")) + &mark("b.png", &both)));
+        let is_mail = |name: &str, _: &str| name == "Mail";
+        let a = forgotten(&old, Path::new("/home/u/a.txt"), is_mail).unwrap();
+        assert_eq!(
+            a,
+            doc(&mark("b.png", &both)),
+            "a bookmark left with no program goes whole"
+        );
+        let b = forgotten(&old, Path::new("/home/u/b.png"), is_mail).unwrap();
+        assert_eq!(
+            b,
+            doc(&(mark("a.txt", &format!("\n            {mail}")) + &mark("b.png", paint))),
+            "another program's entry stays"
+        );
+        let parsed = parse_xbel(&b);
+        assert_eq!(
+            parsed
+                .iter()
+                .find(|m| m.path.ends_with("b.png"))
+                .unwrap()
+                .apps
+                .len(),
+            1
+        );
+        let none = forgotten(&old, Path::new("/home/u/c.txt"), is_mail).unwrap();
+        assert_eq!(
+            none, old,
+            "a file it holds no bookmark of leaves every byte"
+        );
+        let other = forgotten(&old, Path::new("/home/u/a.txt"), |n, _| n == "Paint").unwrap();
+        assert_eq!(other, old, "a program that never used the file leaves it");
     }
 
     #[test]

@@ -91,7 +91,7 @@ impl State {
         output: &Output,
     ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>, RowIcons) {
         let recent = self.jump_recent(target);
-        let [files, _] = crate::taskbar::jump_sections(&recent, &[]);
+        let [_, files, _] = crate::taskbar::jump_sections(&recent, 0, &[]);
         let px = self.context_icon_px(output);
         let mut waits = RowIcons::default();
         let entry = target.entry.as_ref();
@@ -131,7 +131,13 @@ impl State {
         target: &JumpTarget,
         output: &Output,
     ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>, RowIcons) {
-        let recent = self.jump_recent(target);
+        let (files, pinned) = match &target.entry {
+            Some(e) => {
+                let on = self.config.recent_files;
+                crate::jumppins::files_for(&self.jump_pins, &self.recent, on, e)
+            }
+            None => (Vec::new(), 0),
+        };
         let titles: Vec<String> = (target.windows.iter())
             .filter_map(|&w| self.win(w))
             .map(|w| w.title())
@@ -139,7 +145,7 @@ impl State {
         let entry = target.entry.as_ref();
         let tasks = entry.map_or(&[][..], crate::taskbar::jump_tasks);
         let (items, rows) = crate::taskbar::jump_list(
-            &crate::taskbar::jump_sections(&recent, tasks),
+            &crate::taskbar::jump_sections(&files, pinned, tasks),
             &target.name,
             target.pin_file.is_some(),
             target.source.is_some(),
@@ -180,6 +186,17 @@ impl State {
         };
         self.push_context_menu(at, items, kind, MenuFrom::Bar);
         self.set_row_icons(0, waits);
+    }
+
+    /// A right press on file `path` of a jump list of program `app`: the jump list gives way to
+    /// the file's menu at the pointer.
+    pub(crate) fn open_jump_file_menu(&mut self, app: &str, path: &std::path::Path) {
+        let pinned = self.jump_pins.is_pinned(app, path);
+        let (items, rows) = crate::startmenu::jump_file_menu(app, path, pinned);
+        self.close_menu();
+        let p = self.pointer_location();
+        let kind = MenuKind::StartPanel { rows };
+        self.push_context_menu((p.x as i32, p.y as i32), items, kind, MenuFrom::Bar);
     }
 
     pub(super) fn jump_activate(&mut self, row: JumpRow, target: &JumpTarget) {
@@ -310,6 +327,71 @@ mod tests {
             crate::menuview::MenuKind::JumpList { rows, .. }
                 if rows[..] == [Some(crate::taskbar::JumpRow::Recent(notes.clone()))]
         ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A right press on a file of a task button's jump list opens the file's menu; Pin to this
+    /// list puts the file under Pinned the next time the list opens.
+    #[test]
+    fn a_task_buttons_jump_list_file_pins_from_its_menu() {
+        let dir = std::env::temp_dir().join(format!("reprise-jump-pin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let notes = dir.join("notes.txt");
+        std::fs::write(&notes, "x").unwrap();
+        let xbel = dir.join("recently-used.xbel");
+        std::fs::write(
+            &xbel,
+            format!(
+                "<xbel><bookmark href=\"file://{}\" modified=\"2026-01-01T00:00:00Z\">\
+                 <bookmark:application name=\"Mail\" exec=\"'mail %u'\" \
+                 modified=\"2026-01-01T00:00:00Z\" count=\"1\"/></bookmark></xbel>",
+                notes.display()
+            ),
+        )
+        .unwrap();
+        let text = "[Desktop Entry]\nType=Application\nName=Mail\nExec=mail %f\n";
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 1024, 768);
+        h.state.app_index =
+            vec![reprisefs::apps::parse_desktop(text, &"mail.desktop".parse().unwrap()).unwrap()];
+        h.state.recent = crate::recentdocs::RecentDocs::reading(xbel);
+        h.state.refresh_recent();
+        h.until("the recent files read", |s| {
+            !s.recent.current(10).is_empty()
+        });
+        let mut c = h.connect();
+        let w = h.map_toplevel(&mut c, "mail", 400, 300);
+        let bar = &h.state.bars[0];
+        let i = (bar.slots.iter())
+            .position(|s| s.windows == [w.id])
+            .expect("the mail window's task button");
+        let tree = bar.tree;
+        let labels = |h: &crate::harness::Harness| -> Vec<String> {
+            (h.state.menus[0].items.iter())
+                .map(|i| match i {
+                    MenuItem::Entry { label, .. } => label.clone(),
+                    MenuItem::Separator => "-".into(),
+                    MenuItem::Heading(t) => format!("[{t}]"),
+                })
+                .collect()
+        };
+        h.state.open_jump_list(tree, i, (100, 700));
+        assert_eq!(labels(&h)[..2], ["[Recent]", "notes.txt"]);
+        h.state.menu_row_press(0, Some(1), crate::input::BTN_RIGHT);
+        assert_eq!(
+            labels(&h),
+            [
+                "Open",
+                "Open file location",
+                "-",
+                "Pin to this list",
+                "Remove from this list"
+            ]
+        );
+        h.state.menu_activate(0, 3);
+        assert!(h.state.menus.is_empty(), "the pick closes the menu");
+        h.state.open_jump_list(tree, i, (100, 700));
+        assert_eq!(labels(&h)[..3], ["[Pinned]", "notes.txt", "-"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

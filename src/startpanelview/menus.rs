@@ -11,7 +11,7 @@ use crate::dragview::DropOp;
 use crate::lockview::Origin;
 use crate::menuview::{MenuKind, Skin};
 use crate::raster::Rect;
-use crate::startmenu::{MenuItem, StartRow, place_popup};
+use crate::startmenu::{JumpFileRow, MenuItem, StartRow, place_popup};
 use reprisekit::controls::endsession::Goal;
 
 /// The narrowest Recent Items gets to stand beside its row, at 100% text: an icon and about 20
@@ -100,6 +100,7 @@ impl State {
     pub(super) fn open_start_context(&mut self, s: Spot) {
         let menu = match s {
             Spot::Place(i) => self.start_place_menu(i),
+            Spot::Jump(k) => self.start_jump_file_menu(k),
             _ => (self.start_spot_app(s))
                 .and_then(|(app, launched)| self.program_menu_of(app, launched)),
         };
@@ -117,6 +118,18 @@ impl State {
         };
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         self.push_start_popup(at, items, kind, place_popup, Skin::Theme);
+    }
+
+    /// The menu of jump list row `k`, a file ([`crate::startmenu::jump_file_menu`]).
+    fn start_jump_file_menu(&self, k: usize) -> Option<(Vec<MenuItem>, Vec<Option<StartRow>>)> {
+        let v = self.start_panel.as_ref()?;
+        let reprisekit::startpanel::Mode::Jump(i) = v.model.mode() else {
+            return None;
+        };
+        let path = super::lists::jump_file(&v.jumps, v.model.mode(), k)?;
+        let id = self.app_index.get(*v.programs.get(i)?)?.id.as_str();
+        let pinned = self.jump_pins.is_pinned(id, path);
+        Some(crate::startmenu::jump_file_menu(id, path, pinned))
     }
 
     fn start_place_menu(&self, i: usize) -> Option<(Vec<MenuItem>, Vec<Option<StartRow>>)> {
@@ -297,6 +310,41 @@ impl State {
             .map(|q| q.file.clone())
     }
 
+    /// Row `r` of the menu of file `path` on the jump list of program `app` (`entry`).
+    fn jump_file_row(
+        &mut self,
+        r: JumpFileRow,
+        app: &str,
+        path: &std::path::Path,
+        entry: Option<reprisefs::apps::AppEntry>,
+    ) {
+        match r {
+            JumpFileRow::Open => {
+                self.close_start_panel();
+                self.open_recent_with(entry.as_ref(), path);
+            }
+            JumpFileRow::OpenLocation => {
+                self.close_start_panel();
+                self.open_file_location(path);
+            }
+            JumpFileRow::Pin | JumpFileRow::Unpin => {
+                let changed = match r {
+                    JumpFileRow::Pin => self.jump_pins.pin(app, path),
+                    _ => self.jump_pins.unpin(app, path),
+                };
+                if changed {
+                    crate::state::save_jump_pins(&self.jump_pins);
+                    self.relist_start_jumps();
+                }
+            }
+            JumpFileRow::Remove => {
+                if let Some(e) = entry {
+                    self.forget_recent(path.to_path_buf(), e);
+                }
+            }
+        }
+    }
+
     pub(crate) fn start_row(&mut self, row: StartRow) {
         let entry = |s: &State, id: &str| s.app_index.iter().find(|a| a.id == id).cloned();
         match &row {
@@ -349,6 +397,10 @@ impl State {
                 }
             }
             StartRow::CannotUninstall | StartRow::OnDesktop => {}
+            StartRow::JumpFile(r, a, path) => {
+                let e = entry(self, a);
+                self.jump_file_row(*r, a, path, e);
+            }
             StartRow::OpenFileLocation(a) => {
                 let file = entry(self, a).and_then(|e| reprisefs::apps::find_file(&e.id));
                 self.close_start_panel();

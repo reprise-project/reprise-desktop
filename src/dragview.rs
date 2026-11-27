@@ -334,6 +334,17 @@ impl State {
         }
         if button == BTN_RIGHT
             && let Some(row) = row
+            && let Some(MenuKind::JumpList { rows, target, .. }) =
+                self.menus.get(depth).map(|m| &m.kind)
+            && let Some(Some(crate::taskbar::JumpRow::Recent(path))) = rows.get(row)
+            && let Some(e) = &target.entry
+        {
+            let (app, path) = (e.id.as_str().to_string(), path.clone());
+            self.open_jump_file_menu(&app, &path);
+            return;
+        }
+        if button == BTN_RIGHT
+            && let Some(row) = row
             && let Some(MenuKind::Programs(apps)) = self.menus.get(depth).map(|m| &m.kind)
             && let Some(app) = apps
                 .get(row)

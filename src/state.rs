@@ -64,6 +64,8 @@ pub struct Persisted {
     pub start_pins: Vec<String>,
     /// Launched programs' desktop file ids, newest first.
     pub launches: Vec<String>,
+    /// The files pinned to each program's jump list, by desktop file id (`jumppins`).
+    pub jump_pins: BTreeMap<String, Vec<String>>,
     /// The tray Customize dialog's choices, by tray item key.
     pub tray_icons: BTreeMap<String, crate::tray::Remembered>,
     /// Tray item keys in the order the tray first saw them: the order its cells keep.
@@ -302,6 +304,21 @@ fn start_keys(l: &crate::launches::Launches) -> toml::Table {
         ("start_pins".to_string(), list(&l.pins)),
         ("launches".to_string(), list(&l.recent)),
     ])
+}
+
+/// Queue a write of the jump lists' pinned files (`jump_pins`), leaving every other key as it is.
+pub fn save_jump_pins(pins: &crate::jumppins::JumpPins) {
+    let path = path();
+    let keys = jump_pins_keys(pins);
+    run_in_order(move || patch(&path, keys));
+}
+
+fn jump_pins_keys(pins: &crate::jumppins::JumpPins) -> toml::Table {
+    let files = |v: &[String]| toml::Value::Array(v.iter().map(|f| f.as_str().into()).collect());
+    let table: toml::Table = (pins.saved().iter())
+        .map(|(id, v)| (id.clone(), files(v)))
+        .collect();
+    toml::Table::from_iter([("jump_pins".to_string(), table.into())])
 }
 
 /// Queue a write of the tray's choices (`tray_icons`), leaving every other key as it is.
@@ -738,6 +755,22 @@ mod tests {
         assert_eq!(back.launches, ["b.desktop", "a.desktop"]);
         let again = crate::launches::Launches::from_saved(&back.start_pins, &back.launches);
         assert_eq!(again, l, "the ids load back as saved");
+        assert_eq!(back.run_history, ["calc"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn jump_pins_save_and_load_back() {
+        let dir = scratch("jump-pins");
+        let path = dir.join("state.toml");
+        std::fs::write(&path, "run_history = [\"calc\"]\n").unwrap();
+        let mut pins = crate::jumppins::JumpPins::default();
+        pins.pin("org.reprise.Notepad.desktop", Path::new("/home/u/todo.txt"));
+        let (p, keys) = (path.clone(), jump_pins_keys(&pins));
+        run_in_order(move || patch(&p, keys));
+        flush();
+        let back = load_from(&path);
+        assert_eq!(crate::jumppins::JumpPins::from_saved(&back.jump_pins), pins);
         assert_eq!(back.run_history, ["calc"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -174,6 +174,8 @@ start-unpin-start = Unpin from Start Men&u
 start-pin-start = Pin to Start Men&u
 start-add-to-desktop = Add to &desktop
 start-remove-from-list = Remove from this &list
+start-jump-pin = Pi&n to this list
+start-jump-unpin = Unpi&n from this list
 start-uninstall = U&ninstall...
 start-properties = P&roperties
 
@@ -253,6 +255,7 @@ bar-quick-open = &Open
 bar-quick-delete = &Delete
 
 ## Jump lists
+bar-jump-pinned = Pinned
 bar-jump-recent = Recent
 bar-jump-tasks = Tasks
 bar-jump-pin = Pin this program to taskbar
