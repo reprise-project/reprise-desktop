@@ -278,6 +278,7 @@ impl Place {
             return Some((here.clone(), None));
         }
         if let Some(dir) = named_path(s, shares) {
+            let dir: PathBuf = dir.components().collect();
             return Some((Place::from_path(&dir), Some(dir)));
         }
         let expanded = if s == "~" {
@@ -287,6 +288,8 @@ impl Place {
         } else {
             PathBuf::from(s)
         };
+        // Collected from its components, a typed `~/Music/` reads as browsing writes it.
+        let expanded: PathBuf = expanded.components().collect();
         expanded
             .is_absolute()
             .then(|| (Place::from_path(&expanded), Some(expanded)))
@@ -998,6 +1001,21 @@ mod tests {
             Place::parse_address("/tmp", None),
             Some(Place::from_path(Path::new("/tmp")))
         );
+    }
+
+    #[test]
+    fn a_typed_path_drops_its_trailing_slash() {
+        let shares = [share()];
+        let docs = format!("{}/docs", share().path.display());
+        for (typed, want) in [
+            ("/tmp/", "/tmp"),
+            ("/usr//share/./", "/usr/share"),
+            ("public on nas/docs/", docs.as_str()),
+        ] {
+            let (place, dir) = Place::read_address(typed, None, &shares).expect(typed);
+            assert_eq!(dir.as_deref(), Some(Path::new(want)), "{typed}");
+            assert_eq!(place.address_in(&[]), want, "{typed}");
+        }
     }
 
     /// What the address bar puts in the box when the text is nowhere.
