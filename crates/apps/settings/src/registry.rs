@@ -76,21 +76,22 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     }
 }
 
-/// Each heading of [`GROUPS`] with its rows, in list order.
-fn page_rows() -> Vec<(&'static str, Vec<pagelist::Item<'static>>)> {
+/// A list row's text and, for a program link, the name a screen reader reads.
+type PageRow = (String, Option<&'static str>);
+
+/// Each heading of [`GROUPS`] with its rows, in list order: a page's label, or a program's row
+/// label and screen reader name.
+fn page_rows() -> Vec<(&'static str, Vec<PageRow>)> {
     GROUPS
         .iter()
         .map(|(heading, entries)| {
             let labels = entries
                 .iter()
                 .map(|e| match e {
-                    Entry::Page(p) => pagelist::Item::Page(p.label()),
+                    Entry::Page(p) => (p.label(), None),
                     Entry::Program(id) => {
                         let p = repriseconf::pages::program(id).expect("every link is in PROGRAMS");
-                        pagelist::Item::Link {
-                            label: p.row_label(),
-                            name: p.label,
-                        }
+                        (p.row_label().to_string(), Some(p.label))
                     }
                 })
                 .collect();
@@ -102,8 +103,21 @@ fn page_rows() -> Vec<(&'static str, Vec<pagelist::Item<'static>>)> {
 /// The whole sheet at [`Area::MIN`] with `s` pushed in ([`pages::write`]).
 pub fn sheet(s: &Settings, src: &Sources) -> PropSheet {
     let rows = page_rows();
+    let items: Vec<(&str, Vec<pagelist::Item>)> = rows
+        .iter()
+        .map(|(h, labels)| {
+            let items = labels
+                .iter()
+                .map(|(label, name)| match name {
+                    None => pagelist::Item::Page(label),
+                    Some(name) => pagelist::Item::Link { label, name },
+                })
+                .collect();
+            (*h, items)
+        })
+        .collect();
     let groups: Vec<(&str, &[pagelist::Item])> =
-        rows.iter().map(|(h, l)| (*h, l.as_slice())).collect();
+        items.iter().map(|(h, l)| (*h, l.as_slice())).collect();
     let forms = Page::all().map(|p| build(p, src, Area::MIN)).collect();
     let mut sheet = PropSheet::with_list(&groups, forms, pages::CLIENT);
     pages::write(&mut sheet, s, src.layouts, src.system_layout);
@@ -141,7 +155,8 @@ mod tests {
 
     #[test]
     fn seven_headings_over_the_pages() {
-        let labels: Vec<&str> = Page::all().map(Page::label).collect();
+        let labels: Vec<String> = Page::all().map(Page::label).collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
         assert_eq!(
             labels,
             [
@@ -795,7 +810,8 @@ mod tests {
         let unfound: Vec<&(Page, String)> = titles
             .iter()
             .filter(|(p, t)| {
-                let hay: Vec<&str> = [p.label()]
+                let label = p.label();
+                let hay: Vec<&str> = [label.as_str()]
                     .into_iter()
                     .chain(p.keywords().iter().copied())
                     .chain(p.terms().iter().map(|&(_, l)| l))

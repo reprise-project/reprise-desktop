@@ -131,7 +131,7 @@ fn keybind_parsing() {
 #[test]
 fn every_listed_action_parses_and_names_itself() {
     use repriseconf::keybind::{ACTION_NAMES, DESKTOP_CARRY_ITEMS, DESKTOP_ITEMS, TASKBAR_ITEMS};
-    for (id, _, _) in ACTION_NAMES {
+    for (id, _) in ACTION_NAMES {
         let a = Action::from_parts(id, None).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(a.name(), Some(*id));
     }

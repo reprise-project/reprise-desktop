@@ -1104,7 +1104,7 @@ fn shortcuts_default_to_the_compositors_list() {
 
 #[test]
 fn every_compositor_action_bound_in_the_file_lets_apply_through() {
-    for (id, _, _) in repriseconf::keybind::ACTION_NAMES {
+    for (id, _) in repriseconf::keybind::ACTION_NAMES {
         let s = load(&format!(
             "[[keybinds]]\nkeys = \"Super+F9\"\naction = \"{id}\"\n"
         ));

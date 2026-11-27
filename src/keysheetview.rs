@@ -114,7 +114,7 @@ fn describe(a: &Action) -> (&'static str, String) {
 /// The group and row text of action id `name`; an id `ACTION_NAMES` lacks shows as itself under
 /// System.
 fn named(name: &str) -> (&'static str, String) {
-    keybind::describe(name).map_or((SYSTEM, name.to_string()), |(g, w)| (g, w.to_string()))
+    keybind::describe(name).unwrap_or((SYSTEM, name.to_string()))
 }
 
 /// A chord as the sheet lists it ([`hotkey::chord_text`]).
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn every_named_action_parses_and_names_itself() {
-        for (id, _, _) in repriseconf::keybind::ACTION_NAMES {
+        for (id, _) in repriseconf::keybind::ACTION_NAMES {
             let a = Action::from_parts(id, None).unwrap();
             assert_eq!(a.name(), Some(*id));
         }
