@@ -1,9 +1,11 @@
 //! The Rename dialog for several items in Classic, Blue and Glass light and dark, replacing with
-//! a clash and numbering, written to `target/reprisekit-gallery-rename@<scale>.png`.
+//! a clash and numbering, then a drive name's limit balloon with its stem up and down, written to
+//! `target/reprisekit-gallery-rename@<scale>.png`.
 
 use crate::interfaces;
 use reprisekit::controls::batchrename::{self, Fields, Row};
 use reprisekit::controls::form;
+use reprisekit::controls::tooltip::{self, Stem};
 use reprisekit::interface::Interface;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
@@ -77,10 +79,8 @@ pub fn render(s: i32) -> Canvas {
     let looks = looks();
     let forms = forms();
     let label_w = 90;
-    let (w, h) = (
-        label_w + forms.len() as i32 * (cw + 10),
-        looks.len() as i32 * (ch + 10),
-    );
+    let balloons_x = label_w + forms.len() as i32 * (cw + 10);
+    let (w, h) = (balloons_x + 360, looks.len() as i32 * (ch + 10));
     let mut c = super::blurred_stripes(w * s, h * s);
     let head = TextRenderer::load(&FontConfig::default());
     for (i, (name, base)) in looks.iter().enumerate() {
@@ -102,6 +102,16 @@ pub fn render(s: i32) -> Canvas {
             d.fill_rect(d.bounds(), p.cs.button_face);
             form::draw(&mut d, &text, &p, f, true, theme.fonts.size_px);
             c.blit_canvas((label_w + j as i32 * (cw + 10)) * s, y * s, &d);
+        }
+        let (title, body) = (
+            "Name too long",
+            "This drive's name can be at most 11 characters long.",
+        );
+        let mut by = y;
+        for stem in [Stem::Up, Stem::Down] {
+            let b = tooltip::draw_balloon_tip_at(&theme, &text, title, body, 1, stem);
+            c.blit_over(balloons_x * s, by * s, &b);
+            by += b.height as i32 / s + 10;
         }
     }
     c
