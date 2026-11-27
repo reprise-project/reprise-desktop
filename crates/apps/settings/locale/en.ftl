@@ -302,6 +302,7 @@ pages-bind-seconds = { $whole }.{ $tenth } seconds
 pages-bind-key-switches-them = { $keys } switches them.
 pages-bind-system-default = { $name } (system default)
 pages-bind-percent = { $n }%
+pages-bind-speed = { NUMBER($n, minimumFractionDigits: 1, maximumFractionDigits: 1) }
 pages-bind-kelvin = { $n } K
 
 ## pages/desktop.rs
