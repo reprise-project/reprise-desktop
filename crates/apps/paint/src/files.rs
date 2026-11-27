@@ -231,7 +231,8 @@ impl Paint {
         }
     }
 
-    /// The picture's file as the desktop background, saved first when it has changes.
+    /// The picture's file as the desktop background, saved first when it has changes; a copy out
+    /// of a compressed folder is kept elsewhere first.
     pub(crate) fn set_background(&mut self) -> Reply {
         self.commit_text();
         self.doc.finish();
@@ -249,7 +250,8 @@ impl Paint {
                 return Reply::redraw_all();
             }
         };
-        if let Err(e) = set_wallpaper(&repriseconf::config_path(), &path) {
+        let kept = reprisefs::archivecopy::lasting_background(&path).map_err(|e| e.to_string());
+        if let Err(e) = kept.and_then(|kept| set_wallpaper(&repriseconf::config_path(), &kept)) {
             log::warn!("background {}: {e}", path.display());
             self.error(tr!("background-failed", error = e));
         }

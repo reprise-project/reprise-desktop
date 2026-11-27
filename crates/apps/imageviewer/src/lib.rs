@@ -356,12 +356,14 @@ impl Viewer {
         }
     }
 
-    /// Point `[wallpaper] image` at the current picture, ending a wallpaper slideshow.
+    /// Point `[wallpaper] image` at the current picture, ending a wallpaper slideshow; a copy out
+    /// of a compressed folder is kept elsewhere first.
     fn set_background(&mut self) -> Reply {
         let Some(path) = self.folder.current().map(Path::to_path_buf) else {
             return Reply::none();
         };
-        if let Err(e) = set_wallpaper(&self.config, &path) {
+        let kept = reprisefs::archivecopy::lasting_background(&path).map_err(|e| e.to_string());
+        if let Err(e) = kept.and_then(|kept| set_wallpaper(&self.config, &kept)) {
             log::warn!("set {} as the background: {e}", path.display());
             self.fail(&tr!("background-failed", error = e));
             return Reply::redraw_all();
