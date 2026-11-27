@@ -210,6 +210,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
     match sym {
         keysym::LEFT if alt => Command::Back,
         keysym::RIGHT if alt => Command::Forward,
+        keysym::UP | keysym::KP_UP if alt => Command::Up,
         keysym::RETURN | keysym::KP_ENTER if alt => Command::Properties,
         // Alt+D: "put the caret in the Address field". No menu
         // title answers to D, so the bar never wanted this one.
@@ -260,7 +261,9 @@ pub fn command_for_key_in(
         return Command::Nothing;
     }
     let cmd = command_for_key(sym, ctrl, shift, alt);
-    if matches!(focus, Focus::Address | Focus::Search) && !address_allows(&cmd) {
+    // Alt+Up edits nothing, so it leaves a field for the parent as Alt+Left does for Back.
+    let alt_up = alt && matches!(sym, keysym::UP | keysym::KP_UP);
+    if matches!(focus, Focus::Address | Focus::Search) && !alt_up && !address_allows(&cmd) {
         return Command::Nothing;
     }
     cmd
@@ -637,6 +640,8 @@ mod tests {
         assert_eq!(k(keysym::LEFT, false, false, true), Command::Back);
         assert_eq!(k(keysym::RIGHT, false, false, true), Command::Forward);
         assert_eq!(k(keysym::BACKSPACE, false, false, false), Command::Up);
+        assert_eq!(k(keysym::UP, false, false, true), Command::Up);
+        assert_eq!(k(keysym::KP_UP, false, false, true), Command::Up);
         assert_eq!(k(F5, false, false, false), Command::Refresh);
         assert_eq!(k(F2, false, false, false), Command::Rename);
         assert_eq!(
@@ -734,6 +739,11 @@ mod tests {
             assert_eq!(in_address(sym, ctrl, false, false), Command::Nothing);
         }
         assert_eq!(in_address(keysym::LEFT, false, false, true), Command::Back);
+        assert_eq!(
+            in_address(keysym::UP, false, false, true),
+            Command::Up,
+            "Alt+Up goes up from the Address field, where Backspace edits"
+        );
         assert_eq!(
             in_address(keysym::RIGHT, false, false, true),
             Command::Forward
