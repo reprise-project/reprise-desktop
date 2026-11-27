@@ -1,7 +1,7 @@
 //! The Startup, Shortcuts and App Permissions lists.
 
 use super::{COLUMNS, PERMISSION_COLUMNS, SHORTCUT_COLUMNS};
-use crate::model::Settings;
+use crate::model::{Label, Settings};
 use reprisefs::autostart::Entry;
 use reprisekit::controls::form;
 use reprisekit::controls::listview::{self, Column, IconRows, ListView, Row, Rows};
@@ -9,10 +9,11 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
-fn columns(cols: &[(&str, i32)]) -> Vec<Column> {
+fn columns(cols: &[(Label, i32)]) -> Vec<Column> {
     cols.iter()
-        .map(|(title, w)| Column::new(title, *w))
+        .map(|(title, w)| Column::new(&title(), *w))
         .collect()
 }
 
@@ -90,7 +91,7 @@ pub fn fill_shortcuts(lv: &mut ListView<IconRows>, s: &Settings, name: &dyn Fn(&
     });
     let programs = s.programs.iter().map(|p| {
         let keys = if p.keys.is_empty() {
-            "None".into()
+            tr!("pages-lists-none")
         } else {
             crate::model::chord_text(&p.keys)
         };
@@ -126,7 +127,11 @@ pub fn fill_permissions(lv: &mut ListView<IconRows>, answers: &[(String, &str, b
             cells: vec![
                 name.clone(),
                 (*what).into(),
-                if *allow { "Allowed" } else { "Denied" }.into(),
+                if *allow {
+                    tr!("pages-lists-allowed")
+                } else {
+                    tr!("pages-lists-denied")
+                },
             ],
         })
         .collect();
@@ -137,7 +142,7 @@ pub fn fill_permissions(lv: &mut ListView<IconRows>, answers: &[(String, &str, b
 pub fn show_permissions_loading(lv: &mut ListView<IconRows>) {
     lv.rows = IconRows(vec![Row {
         icon: None,
-        cells: vec!["Loading...".into(), String::new(), String::new()],
+        cells: vec![tr!("pages-lists-loading"), String::new(), String::new()],
     }]);
     lv.selection.set_only(None);
     lv.top = 0;

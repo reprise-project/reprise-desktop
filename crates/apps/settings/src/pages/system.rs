@@ -7,6 +7,7 @@ use super::{
     combo, combo_of, edit, ends_track, field, grey_choices, group, list, permissions, radio, spin,
     time,
 };
+use crate::model::Label;
 use crate::model::{
     FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
     keys_for,
@@ -18,6 +19,7 @@ use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 use reprisekit::trackbar::TrackBar;
 
 /// The task manager, the switches with no page of their own, the Turn Off commands, the low
@@ -32,49 +34,73 @@ pub fn advanced(a: Area) -> Form {
         X,
         44,
         a.w,
-        "Task &manager (empty runs Task Manager):",
+        &tr!("pages-system-task-manager-empty-runs-task-manager"),
     ));
     items.push(Item::check(
         "restart_notice",
         X,
         90,
-        "Tell me when an &update needs a restart",
+        &tr!("pages-system-tell-me-when-an-update-needs"),
     ));
 
     let half = (gw - 8) / 2;
-    let command = |label_id, id, x, y, text| {
+    let command = |label_id, id, x, y, text: &str| {
         [
             Item::label_at(label_id, x, y, 60, text),
             edit(id, x + 62, y - 4, half - 62),
         ]
     };
     let right = GX + half + 8;
-    items.push(group(a, "turnoff_group", 112, 74, "Turn Off Computer"));
-    items.extend(command("standby_label", "standby", GX, 134, "Stand &by:"));
+    items.push(group(
+        a,
+        "turnoff_group",
+        112,
+        74,
+        &tr!("pages-system-turn-off-computer"),
+    ));
+    items.extend(command(
+        "standby_label",
+        "standby",
+        GX,
+        134,
+        &tr!("pages-system-stand-by"),
+    ));
     items.extend(command(
         "poweroff_label",
         "poweroff",
         right,
         134,
-        "Tur&n off:",
+        &tr!("pages-system-turn-off"),
     ));
-    items.extend(command("reboot_label", "reboot", GX, 160, "Rest&art:"));
+    items.extend(command(
+        "reboot_label",
+        "reboot",
+        GX,
+        160,
+        &tr!("pages-system-restart"),
+    ));
     items.extend(command(
         "hibernate_label",
         "hibernate",
         right,
         160,
-        "&Hibernate:",
+        &tr!("pages-system-hibernate"),
     ));
 
-    items.push(group(a, "storage_group", 194, 66, "Low Disk Space"));
+    items.push(group(
+        a,
+        "storage_group",
+        194,
+        66,
+        &tr!("pages-system-low-disk-space"),
+    ));
     items.extend(spin(
         "low_space_label",
         "low_space_percent",
         GX,
         216,
         114,
-        "Warn bel&ow:",
+        &tr!("pages-system-warn-below"),
         (0, repriseconf::LOW_SPACE_MAX.into()),
     ));
     items.push(Item::label_at(
@@ -82,18 +108,29 @@ pub fn advanced(a: Area) -> Form {
         GX + 174,
         216,
         gw - 174,
-        "% free",
+        &tr!("pages-system-free"),
     ));
     items.push(Item::label_at(
         "low_space_note",
         GX,
         236,
         gw,
-        "For the disks of your home folder and /. 0 turns it off.",
+        &tr!("pages-system-for-the-disks-of-your-home"),
     ));
 
-    items.push(group(a, "thumbs_group", 268, 92, "Thumbnails"));
-    items.push(Item::check(THUMBS, GX, 290, "Keep &thumbnails of pictures"));
+    items.push(group(
+        a,
+        "thumbs_group",
+        268,
+        92,
+        &tr!("pages-system-thumbnails"),
+    ));
+    items.push(Item::check(
+        THUMBS,
+        GX,
+        290,
+        &tr!("pages-system-keep-thumbnails-of-pictures"),
+    ));
     let cleared_x = GX + 184;
     items.push(Item::value_at(
         THUMBS_CLEARED,
@@ -102,7 +139,12 @@ pub fn advanced(a: Area) -> Form {
         a.gright() - cleared_x,
         "",
     ));
-    items.push(button(THUMBS_CLEAR, a.gright() - BUTTON_W, 308, "Clea&r"));
+    items.push(button(
+        THUMBS_CLEAR,
+        a.gright() - BUTTON_W,
+        308,
+        &tr!("pages-system-clear"),
+    ));
     let mb = ThumbnailCache::MAX_MB;
     items.extend(
         spin(
@@ -111,31 +153,33 @@ pub fn advanced(a: Area) -> Form {
             GX,
             314,
             40,
-            "Si&ze:",
+            &tr!("pages-system-size"),
             (*mb.start() as i32, *mb.end() as i32),
         )
         .map(Item::under_check),
     );
-    items.push(Item::label_at(THUMBS_SIZE[2], GX + 98, 314, 20, "MB").under_check());
+    items.push(
+        Item::label_at(THUMBS_SIZE[2], GX + 98, 314, 20, &tr!("pages-system-mb")).under_check(),
+    );
     items.push(Item::check(
         THUMBNAILERS,
         GX,
         338,
-        "Ma&ke thumbnails of documents and videos",
+        &tr!("pages-system-make-thumbnails-of-documents-and-videos"),
     ));
 
     items.push(Item::check(
         DEBUG_OVERLAY,
         X,
         368,
-        "Show a &debug overlay (frame rate, render times)",
+        &tr!("pages-system-show-a-debug-overlay-frame-rate"),
     ));
     items.push(
         Item::check(
             DEBUG_IN_CAPTURES,
             X,
             386,
-            "Show it in screenshots and screen &sharing",
+            &tr!("pages-system-show-it-in-screenshots-and-screen"),
         )
         .under_check(),
     );
@@ -144,15 +188,15 @@ pub fn advanced(a: Area) -> Form {
         "note",
         Rect::new(X, 404, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
-            "Keys no page sets are edited in".into(),
-            "config.toml itself.".into(),
+            tr!("pages-system-keys-no-page-sets-are-edited"),
+            tr!("pages-system-config-toml-itself"),
         ]),
     ));
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
         404,
-        "&Edit File...",
+        &tr!("pages-system-edit-file"),
     ));
     Form::new(items)
 }
@@ -170,7 +214,7 @@ pub(super) fn clipboard_label(binds: &[Shortcut]) -> String {
             "Keep a &clipboard history ({} opens it)",
             reprisekit::text::escape_mnemonic(&k)
         ),
-        None => "Keep a &clipboard history".into(),
+        None => tr!("pages-system-keep-a-clipboard-history"),
     }
 }
 
@@ -190,28 +234,33 @@ pub fn privacy(a: Area) -> Form {
             "permissions_group",
             44,
             permissions_end - 44,
-            "App Permissions",
+            &tr!("pages-system-app-permissions"),
         ),
         Item::check(
             PRIVACY_LOCATION,
             GX,
             66,
-            "Let programs ask for your &location",
+            &tr!("pages-system-let-programs-ask-for-your-location"),
         ),
-        button(FORGET, a.gright() - BUTTON_W, 61, "F&orget"),
+        button(
+            FORGET,
+            a.gright() - BUTTON_W,
+            61,
+            &tr!("pages-system-forget"),
+        ),
         group(
             a,
             "clip_access_group",
             clip_y,
             clip_end - clip_y,
-            "Clipboard Access",
+            &tr!("pages-system-clipboard-access"),
         ),
         Item::new(
             "clip_access_note",
             Rect::new(GX, clip_y + 22, a.gw(), 2 * LINE_H),
             Control::Lines(vec![
-                "A ticked program can read and replace what you copy,".into(),
-                "even in the background. Changes apply when it restarts.".into(),
+                tr!("pages-system-a-ticked-program-can-read-and"),
+                tr!("pages-system-even-in-the-background-changes-apply"),
             ]),
         ),
         Item::new(
@@ -222,13 +271,13 @@ pub fn privacy(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named("Clipboard Access"),
-        group(a, "history_group", y, 88, "History"),
+        .named(&tr!("pages-system-clipboard-access")),
+        group(a, "history_group", y, 88, &tr!("pages-system-history")),
         Item::check(
             "recent_files",
             GX,
             y + 22,
-            "Show recently used &files in menus and file dialogs",
+            &tr!("pages-system-show-recently-used-files-in-menus"),
         ),
         Item::check(CLIPBOARD_HISTORY, GX, y + 44, &clipboard_label(&[])),
         Item::label_at(
@@ -236,16 +285,22 @@ pub fn privacy(a: Area) -> Form {
             GX,
             y + 64,
             158,
-            "Paste with Ctrl+Shift+V &into:",
+            &tr!("pages-system-paste-with-ctrl-shift-v-into"),
         )
         .under_check(),
         edit(TERMINAL_APPS[1], GX + 162, y + 60, a.gw() - 180).under_check(),
-        group(a, "sharing_group", y + 98, 48, "Screen Sharing"),
+        group(
+            a,
+            "sharing_group",
+            y + 98,
+            48,
+            &tr!("pages-system-screen-sharing"),
+        ),
         Item::check(
             "capture_border",
             GX,
             y + 120,
-            "Show a red &border around what is being shared",
+            &tr!("pages-system-show-a-red-border-around-what"),
         ),
     ])
 }
@@ -267,7 +322,7 @@ pub fn backup(a: Area) -> Form {
             X,
             44,
             a.w,
-            "Export saves these in one file; Import puts them back:",
+            &tr!("pages-system-export-saves-these-in-one-file"),
         ),
         Item::new(
             "backup_list",
@@ -278,17 +333,17 @@ pub fn backup(a: Area) -> Form {
             "backup_left_out",
             Rect::new(X, note_y, a.w, 3 * LINE_H),
             Control::Lines(vec![
-                "Not included: the programs a session reopens, the Run".into(),
-                "and clipboard histories, and the location answers given".into(),
-                "on this computer.".into(),
+                tr!("pages-system-not-included-the-programs-a-session"),
+                tr!("pages-system-and-clipboard-histories-and-the-location"),
+                tr!("pages-system-on-this-computer"),
             ]),
         ),
-        button(BACKUP_EXPORT, X, buttons_y, "&Export..."),
+        button(BACKUP_EXPORT, X, buttons_y, &tr!("pages-system-export")),
         button(
             BACKUP_IMPORT,
             X + BUTTON_W + BUTTON_GAP,
             buttons_y,
-            "&Import...",
+            &tr!("pages-system-import"),
         ),
         Item::new(
             BACKUP_STATUS,
@@ -298,14 +353,17 @@ pub fn backup(a: Area) -> Form {
         Item::lines(
             "backup_desktop_label",
             Rect::new(X, desktop_y + 1, desktop_x - X - 6, 2 * LINE_H),
-            &["Coming from GNOME or Plasma?", "Bring its settings over."],
+            &[
+                &tr!("pages-system-coming-from-gnome-or-plasma"),
+                &tr!("pages-system-bring-its-settings-over"),
+            ],
         ),
         Item::button_at(
             BACKUP_FROM_DESKTOP,
             desktop_x,
             desktop_y,
             FROM_DESKTOP_W,
-            "From Another &Desktop...",
+            &tr!("pages-system-from-another-desktop"),
             true,
         ),
     ])
@@ -320,20 +378,32 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
         Item::new(
             "audio_devices_note",
             Rect::new(X, 44, a.w - 118, 2 * LINE_H),
-            Control::Lines(vec![
-                "To pick speakers and microphones or set each program's volume, open".into(),
-            ]),
+            Control::Lines(vec![tr!(
+                "pages-system-to-pick-speakers-and-microphones-or"
+            )]),
         ),
         Item::button_at(
             AUDIO_DEVICES,
             a.right() - 110,
             44,
             110,
-            "Au&dio Devices...",
+            &tr!("pages-system-audio-devices"),
             true,
         ),
-        group(a, "sound_theme_group", 80, 52, "Sound Theme"),
-        Item::label_at(SOUND_CONTROLS[0], GX, 106, 80, "Sound th&eme:"),
+        group(
+            a,
+            "sound_theme_group",
+            80,
+            52,
+            &tr!("pages-system-sound-theme"),
+        ),
+        Item::label_at(
+            SOUND_CONTROLS[0],
+            GX,
+            106,
+            80,
+            &tr!("pages-system-sound-theme-2"),
+        ),
         combo(
             SOUND_CONTROLS[1],
             GX + 84,
@@ -342,17 +412,38 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
             sound_themes,
             sound_themes.len().clamp(1, 8),
         ),
-        group(a, "sound_events_group", 142, 72, "Play Sounds"),
-        Item::check(BELL, GX, 164, "Play a &sound when a program rings the bell"),
-        Item::check(SOUND_EVENTS, GX, 188, "Play sounds for desktop e&vents"),
-        group(a, "volume_group", 224, 74, "Volume"),
-        Item::check(ALLOW_BOOST, GX, 246, "Allow volume &above 100%"),
+        group(
+            a,
+            "sound_events_group",
+            142,
+            72,
+            &tr!("pages-system-play-sounds"),
+        ),
+        Item::check(
+            BELL,
+            GX,
+            164,
+            &tr!("pages-system-play-a-sound-when-a-program"),
+        ),
+        Item::check(
+            SOUND_EVENTS,
+            GX,
+            188,
+            &tr!("pages-system-play-sounds-for-desktop-events"),
+        ),
+        group(a, "volume_group", 224, 74, &tr!("pages-system-volume")),
+        Item::check(
+            ALLOW_BOOST,
+            GX,
+            246,
+            &tr!("pages-system-allow-volume-above-100"),
+        ),
         Item::label_at(
             "allow_boost_note",
             GX + 18,
             266,
             a.gw() - 18,
-            "Sliders and the volume keys go on to 150%.",
+            &tr!("pages-system-sliders-and-the-volume-keys-go"),
         ),
     ])
 }
@@ -361,14 +452,20 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
 /// switches ([`notifypage`]). The program list takes the page's extra height.
 pub fn notifications(a: Area) -> Form {
     let mut items = vec![
-        group(a, "balloons_group", 44, 92, "Balloons"),
+        group(a, "balloons_group", 44, 92, &tr!("pages-system-balloons")),
         Item::check(
             NOTIFICATION_SOUND,
             GX,
             66,
-            "&Play a sound for notifications",
+            &tr!("pages-system-play-a-sound-for-notifications"),
         ),
-        Item::label_at("notify_style_label", GX, 92, 84, "Balloon st&yle:"),
+        Item::label_at(
+            "notify_style_label",
+            GX,
+            92,
+            84,
+            &tr!("pages-system-balloon-style"),
+        ),
         choice(
             "glass_notification_style",
             GX + 88,
@@ -381,26 +478,39 @@ pub fn notifications(a: Area) -> Form {
             GX,
             114,
             a.gw(),
-            "Only Glass draws balloons in a style.",
+            &tr!("pages-system-only-glass-draws-balloons-in-a"),
         ),
-        group(a, "dnd_group", 146, 116, "Do Not Disturb"),
+        group(
+            a,
+            "dnd_group",
+            146,
+            116,
+            &tr!("pages-system-do-not-disturb"),
+        ),
         Item::check(
             notifypage::AUTO_DND,
             GX,
             168,
-            "Hold balloons during &full screen and screen sharing",
+            &tr!("pages-system-hold-balloons-during-full-screen-and"),
         ),
         Item::check(
             notifypage::QUIET,
             GX,
             192,
-            "Hold balloons during &quiet hours",
+            &tr!("pages-system-hold-balloons-during-quiet-hours"),
         ),
     ];
     let [from_label, from, to_label, to] = notifypage::QUIET_TIMES;
-    let times = time(from_label, from, GX, 216, 36, "F&rom:")
+    let times = time(from_label, from, GX, 216, 36, &tr!("pages-system-from"))
         .into_iter()
-        .chain(time(to_label, to, GX + 132, 216, 24, "&To:"));
+        .chain(time(
+            to_label,
+            to,
+            GX + 132,
+            216,
+            24,
+            &tr!("pages-system-to"),
+        ));
     items.extend(times.map(Item::under_check));
     items.extend([
         Item::label_at(
@@ -408,9 +518,15 @@ pub fn notifications(a: Area) -> Form {
             GX,
             242,
             a.gw(),
-            "Held balloons show afterwards; critical ones always show.",
+            &tr!("pages-system-held-balloons-show-afterwards-critical-ones"),
         ),
-        group(a, "notify_group", 272, 144 + a.dh, "Program Notifications"),
+        group(
+            a,
+            "notify_group",
+            272,
+            144 + a.dh,
+            &tr!("pages-system-program-notifications"),
+        ),
         Item::new(
             notifypage::PROGRAMS,
             Rect::new(
@@ -424,9 +540,21 @@ pub fn notifications(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named("Program Notifications"),
-        Item::check(notifypage::BALLOONS, GX, 389 + a.dh, "Show &balloons").enabled(false),
-        Item::check(notifypage::SOUNDS, GX + 140, 389 + a.dh, "Play s&ounds").enabled(false),
+        .named(&tr!("pages-system-program-notifications")),
+        Item::check(
+            notifypage::BALLOONS,
+            GX,
+            389 + a.dh,
+            &tr!("pages-system-show-balloons"),
+        )
+        .enabled(false),
+        Item::check(
+            notifypage::SOUNDS,
+            GX + 140,
+            389 + a.dh,
+            &tr!("pages-system-play-sounds-2"),
+        )
+        .enabled(false),
     ]);
     Form::new(items)
 }
@@ -447,22 +575,45 @@ pub fn startup(a: Area) -> Form {
     let list = list(a);
     let (y, dh) = (list.bottom() + 8, a.dh);
     Form::new(vec![
-        button(ADD, list.right() - 2 * BUTTON_W - BUTTON_GAP, y, "&Add..."),
-        button(REMOVE, list.right() - BUTTON_W, y, "&Remove"),
-        group(a, "session_group", 343 + dh, 92, "Session"),
+        button(
+            ADD,
+            list.right() - 2 * BUTTON_W - BUTTON_GAP,
+            y,
+            &tr!("pages-system-add"),
+        ),
+        button(
+            REMOVE,
+            list.right() - BUTTON_W,
+            y,
+            &tr!("pages-system-remove"),
+        ),
+        group(
+            a,
+            "session_group",
+            343 + dh,
+            92,
+            &tr!("pages-system-session"),
+        ),
         Item::check(
             "session_restore",
             GX,
             365 + dh,
-            "Re&open the programs that were open at the last log off",
+            &tr!("pages-system-reopen-the-programs-that-were-open"),
         ),
-        Item::label_at(SESSION_EXCLUDE[0], GX, 389 + dh, 90, "E&xcept app ids:").under_check(),
+        Item::label_at(
+            SESSION_EXCLUDE[0],
+            GX,
+            389 + dh,
+            90,
+            &tr!("pages-system-except-app-ids"),
+        )
+        .under_check(),
         edit(SESSION_EXCLUDE[1], GX + 94, 385 + dh, a.gw() - 112).under_check(),
         Item::check(
             "session_end_processes",
             GX,
             413 + dh,
-            "&End the programs still running when I log off",
+            &tr!("pages-system-end-the-programs-still-running-when"),
         ),
     ])
 }
@@ -491,14 +642,19 @@ pub(super) const REMOTE_SECOND_JOIN: &str = "second_client_join";
 pub(super) const REMOTE_SECOND_REPLACE: &str = "second_client_replace";
 /// Stands in for [`REMOTE_ALLOW`] while the login manager runs remote logins.
 const MANAGED_NOTE: &str = "managed_note";
-pub(super) const LOCKER_NOTE: &str = "Lock mode is off while an external screen locker is set.";
+pub(super) fn locker_note() -> String {
+    tr!("pages-system-lock-mode-is-off-while-an")
+}
 /// Which print of the certificate [`REMOTE_FINGERPRINT`] shows, a row of [`PRINTS`].
 pub const REMOTE_PRINT: &str = "print";
 /// The certificate's print [`REMOTE_PRINT`] picks: a read-only edit, so it can be selected and
 /// copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
 /// [`REMOTE_PRINT`]'s rows, each also the print's access name.
-const PRINTS: [&str; 2] = ["SHA-256 fingerprint", "SHA-1 thumbprint"];
+const PRINTS: [(u8, Label); 2] = [
+    (0, || tr!("pages-system-sha-256-fingerprint")),
+    (1, || tr!("pages-system-sha-1-thumbprint")),
+];
 const PRINT_W: i32 = 120;
 pub const REMOTE_REGENERATE: &str = "regenerate";
 const CLIENTS: &str = "clients";
@@ -566,7 +722,7 @@ pub fn remote_desktop(
             a.right() - 86,
             y,
             32,
-            "&Port:",
+            &tr!("pages-system-port"),
             (1024, 65535),
         )
     };
@@ -577,21 +733,21 @@ pub fn remote_desktop(
             X,
             44,
             a.w,
-            "Remote logins are set on the Login Manager page.",
+            &tr!("pages-system-remote-logins-are-set-on-the"),
         ));
         let button_x = a.right() - ACCOUNTS_W;
         items.extend([
             Item::lines(
                 "rd_password_label",
                 Rect::new(X, RD_PASSWORD_Y - 1, button_x - X - 6, 2 * LINE_H),
-                &["Your Remote Desktop password is set in User Accounts."],
+                &[&tr!("pages-system-your-remote-desktop-password-is-set")],
             ),
             Item::button_at(
                 RD_PASSWORD_ACCOUNTS,
                 button_x,
                 RD_PASSWORD_Y,
                 ACCOUNTS_W,
-                "&User Accounts...",
+                &tr!("pages-system-user-accounts"),
                 true,
             ),
         ]);
@@ -600,7 +756,7 @@ pub fn remote_desktop(
             REMOTE_ALLOW,
             X,
             44,
-            "Allow remote &connections to this computer",
+            &tr!("pages-system-allow-remote-connections-to-this-computer"),
         ));
         items.extend(port(44));
         items.extend([
@@ -609,7 +765,7 @@ pub fn remote_desktop(
                 X,
                 64,
                 a.w - 18,
-                "Turning this on or off takes effect at once.",
+                &tr!("pages-system-turning-this-on-or-off-takes"),
             )
             .under_check(),
             Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
@@ -621,7 +777,8 @@ pub fn remote_desktop(
     };
     let print_x = X + PRINT_W + 4;
     items.extend([
-        Item::combo(REMOTE_PRINT, X, 100 + dy, PRINT_W, &PRINTS, PRINTS.len()).named("Certificate"),
+        combo_of(REMOTE_PRINT, X, 100 + dy, PRINT_W, &PRINTS)
+            .named(&tr!("pages-system-certificate")),
         edit(
             REMOTE_FINGERPRINT,
             print_x,
@@ -629,13 +786,13 @@ pub fn remote_desktop(
             a.right() - print_x - NEW_CERTIFICATE_W - 6,
         )
         .read_only()
-        .named(PRINTS[0]),
+        .named(PRINTS[0].1()),
         Item::button_at(
             REMOTE_REGENERATE,
             a.right() - NEW_CERTIFICATE_W,
             98 + dy,
             NEW_CERTIFICATE_W,
-            "&New Certificate...",
+            &tr!("pages-system-new-certificate"),
             true,
         ),
     ]);
@@ -644,7 +801,7 @@ pub fn remote_desktop(
         X,
         130 + dy,
         200,
-        "Picture &quality:",
+        &tr!("pages-system-picture-quality"),
     ));
     let (left, right) = ((REMOTE_QUALITIES[0].1)(), (REMOTE_QUALITIES[2].1)());
     items.extend(ends_track(
@@ -655,7 +812,7 @@ pub fn remote_desktop(
             "quality_sharp",
             QUALITY_VALUE,
         ],
-        "Picture quality",
+        &tr!("pages-system-picture-quality-2"),
         157 + dy,
         27,
         (&left, &right),
@@ -663,14 +820,20 @@ pub fn remote_desktop(
         TrackBar::new(1, REMOTE_QUALITIES.len()),
     ));
     items.extend([
-        Item::label_at("frame_rate_label", X, 184 + dy, 160, "Frame &rate:"),
+        Item::label_at(
+            "frame_rate_label",
+            X,
+            184 + dy,
+            160,
+            &tr!("pages-system-frame-rate"),
+        ),
         combo_of(REMOTE_FRAME_RATE, X, 200 + dy, 160, FRAME_RATES),
         Item::label_at(
             "video_encoder_label",
             ENCODER_X,
             184 + dy,
             ENCODER_W,
-            "Video &encoder:",
+            &tr!("pages-system-video-encoder"),
         ),
         combo_of(
             REMOTE_ENCODER,
@@ -683,10 +846,16 @@ pub fn remote_desktop(
             REMOTE_SOUND,
             X,
             230 + dy,
-            "Play &sound on the remote computer",
+            &tr!("pages-system-play-sound-on-the-remote-computer"),
         ),
         Item::label_at(ENCODER, ENCODER_X, 230 + dy, a.right() - ENCODER_X, ""),
-        Item::label_at("clients_label", X, 252 + dy, 200, "Connected computers:"),
+        Item::label_at(
+            "clients_label",
+            X,
+            252 + dy,
+            200,
+            &tr!("pages-system-connected-computers"),
+        ),
         Item::new(
             CLIENTS,
             Rect::new(X, 268 + dy, a.w - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
@@ -699,13 +868,13 @@ pub fn remote_desktop(
             REMOTE_DISCONNECT,
             a.right() - BUTTON_W,
             268 + dy,
-            "&Disconnect",
+            &tr!("pages-system-disconnect"),
         ),
         Item::check(
             REMOTE_LOCK_ON_LEAVE,
             X,
             312 + dy,
-            "&Lock this computer when the last one disconnects",
+            &tr!("pages-system-lock-this-computer-when-the-last"),
         ),
     ]);
     let grace_x = a.right() - LOCK_GRACE_W;
@@ -715,7 +884,7 @@ pub fn remote_desktop(
             X,
             333 + dy,
             grace_x - 6 - X - 18,
-            "&Wait before locking on a screen change:",
+            &tr!("pages-system-wait-before-locking-on-a-screen"),
         )
         .under_check(),
         combo_of(
@@ -729,28 +898,28 @@ pub fn remote_desktop(
             REMOTE_BORDER,
             X,
             355 + dy,
-            "Show a red &border while a remote computer is connected",
+            &tr!("pages-system-show-a-red-border-while-a"),
         ),
         Item::label_at(
             "remote_screen_label",
             X,
             377 + dy,
             a.w,
-            "While connected, this computer's screen:",
+            &tr!("pages-system-while-connected-this-computers-screen"),
         ),
         radio(
             REMOTE_SCREEN_SHOW,
             "remote_screen",
             X,
             395 + dy,
-            "Stays &on",
+            &tr!("pages-system-stays-on"),
         ),
         radio(
             REMOTE_SCREEN_LOCK,
             "remote_screen",
             X + 80,
             395 + dy,
-            "Loc&ks and fits the remote window",
+            &tr!("pages-system-locks-and-fits-the-remote-window"),
         ),
         Item::label_at(REMOTE_SCREEN_NOTE, X + 18, 413 + dy, a.w - 18, ""),
         Item::label_at(
@@ -758,21 +927,21 @@ pub fn remote_desktop(
             X,
             431 + dy,
             SECOND_CLIENT_X - X - 6,
-            "When another client connects:",
+            &tr!("pages-system-when-another-client-connects"),
         ),
         radio(
             REMOTE_SECOND_JOIN,
             "second_client",
             SECOND_CLIENT_X,
             431 + dy,
-            "&Join it",
+            &tr!("pages-system-join-it"),
         ),
         radio(
             REMOTE_SECOND_REPLACE,
             "second_client",
             SECOND_CLIENT_X + 70,
             431 + dy,
-            "Replace &it",
+            &tr!("pages-system-replace-it"),
         ),
     ]);
     let mut page = Form::new(items);
@@ -825,7 +994,7 @@ pub fn show_remote(
     };
     page.show_edit_text(REMOTE_FINGERPRINT, print);
     if let Some(it) = page.item_mut(REMOTE_FINGERPRINT) {
-        it.name = Some(PRINTS[usize::from(sha1)]);
+        it.name = Some(PRINTS[usize::from(sha1)].1());
     }
     let clients = shown.map_or(&[][..], |s| s.clients.as_slice());
     let items: Vec<String> = clients
@@ -871,7 +1040,7 @@ pub(super) fn follow_lock(page: &mut Form) {
 }
 
 /// Grey the Lock radio while the Stays on radio is greyed or [`REMOTE_SCREEN_NOTE`] shows
-/// [`LOCKER_NOTE`].
+/// [`locker_note()`].
 pub(super) fn follow_screen(page: &mut Form) {
     let lit = matches!(
         page.item(REMOTE_SCREEN_SHOW).map(|i| &i.control),
@@ -879,7 +1048,7 @@ pub(super) fn follow_screen(page: &mut Form) {
     );
     let held = matches!(
         page.item(REMOTE_SCREEN_NOTE).map(|i| &i.control),
-        Some(Control::Label { text, .. }) if text == LOCKER_NOTE
+        Some(Control::Label { text, .. }) if text == &locker_note()
     );
     page.set_enabled(REMOTE_SCREEN_LOCK, lit && !held);
 }
@@ -905,7 +1074,11 @@ pub(super) fn remote_status(
     address: Option<&str>,
 ) -> String {
     let Some(s) = status.filter(|_| enabled) else {
-        return if enabled { "Not answering" } else { "Off" }.into();
+        return if enabled {
+            tr!("pages-system-not-answering")
+        } else {
+            tr!("pages-system-off")
+        };
     };
     if let Some(why) = s.listening.strip_prefix("error: ") {
         return format!("Not listening: {why}");

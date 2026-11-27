@@ -8,12 +8,15 @@ use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::updown::WIDTH as PORT_W;
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 
 pub const AIRPLANE: &str = "airplane";
 const AIRPLANE_NOTE: &str = "airplane_note";
 const AIRPLANE_STATUS: &str = "airplane_status";
 
-pub const NO_RADIO: &str = "This computer has no radio to turn off.";
+pub fn no_radio() -> String {
+    tr!("pages-network-this-computer-has-no-radio-to")
+}
 
 pub const PROXY_NONE: &str = "proxy_none";
 pub const PROXY_MANUAL: &str = "proxy_manual";
@@ -69,13 +72,13 @@ const PORT_LABEL_W: i32 = 30;
 /// until [`show_proxy`].
 pub fn network(a: Area) -> Form {
     let mut items = vec![
-        Item::check(AIRPLANE, X, 44, "&Airplane mode"),
+        Item::check(AIRPLANE, X, 44, &tr!("pages-network-airplane-mode")),
         Item::label_at(
             AIRPLANE_NOTE,
             X,
             64,
             a.w - 18,
-            "Turns off Wi-Fi, mobile broadband and Bluetooth.",
+            &tr!("pages-network-turns-off-wi-fi-mobile-broadband"),
         )
         .under_check(),
         Item::label_at(AIRPLANE_STATUS, X, 80, a.w - 18, "").under_check(),
@@ -92,16 +95,27 @@ fn proxy(a: Area) -> Vec<Item> {
     let port_label_x = port_x - 4 - PORT_LABEL_W;
     let host_x = INDENT + ROW_LABEL_W + 4;
     let host_w = port_label_x - 8 - host_x;
-    let hosts = ["&HTTP:", "HTTP&S:", "&FTP:", "S&OCKS:"];
+    let hosts = [
+        &tr!("pages-network-http"),
+        &tr!("pages-network-https"),
+        &tr!("pages-network-ftp"),
+        &tr!("pages-network-socks"),
+    ];
     let mut items = vec![
-        group(a, PROXY_GROUP, PROXY_Y, 282, "Proxy"),
-        radio(PROXY_NONE, PROXY_GROUP, GX, PROXY_Y + 22, "&No proxy"),
+        group(a, PROXY_GROUP, PROXY_Y, 282, &tr!("pages-network-proxy")),
+        radio(
+            PROXY_NONE,
+            PROXY_GROUP,
+            GX,
+            PROXY_Y + 22,
+            &tr!("pages-network-no-proxy"),
+        ),
         radio(
             PROXY_MANUAL,
             PROXY_GROUP,
             GX,
             PROXY_Y + 44,
-            "&Manual configuration",
+            &tr!("pages-network-manual-configuration"),
         ),
     ];
     for i in 0..4 {
@@ -109,7 +123,13 @@ fn proxy(a: Area) -> Vec<Item> {
         items.extend([
             Item::label_at(HOST_LABELS[i], INDENT, y, ROW_LABEL_W, hosts[i]),
             edit(PROXY_HOSTS[i], host_x, y - 4, host_w),
-            Item::label_at(PORT_LABELS[i], port_label_x, y, PORT_LABEL_W, "Port:"),
+            Item::label_at(
+                PORT_LABELS[i],
+                port_label_x,
+                y,
+                PORT_LABEL_W,
+                &tr!("pages-network-port"),
+            ),
             updown(PROXY_PORTS[i], port_x, y - 4, 0, u16::MAX as i32),
         ]);
     }
@@ -121,7 +141,7 @@ fn proxy(a: Area) -> Vec<Item> {
             INDENT,
             ignore_y,
             a.gright() - INDENT,
-            "&Ignore hosts (separated by commas):",
+            &tr!("pages-network-ignore-hosts-separated-by-commas"),
         ),
         edit(PROXY_IGNORE, INDENT, ignore_y + 16, a.gright() - INDENT),
         radio(
@@ -129,16 +149,22 @@ fn proxy(a: Area) -> Vec<Item> {
             PROXY_GROUP,
             GX,
             ignore_y + 48,
-            "Au&tomatic configuration",
+            &tr!("pages-network-automatic-configuration"),
         ),
-        Item::label_at(PROXY_PAC_LABEL, INDENT, pac_y, ROW_LABEL_W, "Script &URL:"),
+        Item::label_at(
+            PROXY_PAC_LABEL,
+            INDENT,
+            pac_y,
+            ROW_LABEL_W,
+            &tr!("pages-network-script-url"),
+        ),
         edit(PROXY_PAC, host_x, pac_y - 4, a.gright() - host_x),
         Item::new(
             PROXY_NOTE,
             Rect::new(X, PROXY_Y + 292, a.w, 2 * LINE_H),
             Control::Lines(vec![
-                "Programs started after Apply use the proxy; those".into(),
-                "already running use it once restarted.".into(),
+                tr!("pages-network-programs-started-after-apply-use-the"),
+                tr!("pages-network-already-running-use-it-once-restarted"),
             ]),
         ),
     ]);
@@ -217,9 +243,9 @@ pub fn show_airplane(page: &mut Form, state: Option<airplane::Mode>, busy: bool)
     );
     page.set_enabled(AIRPLANE_NOTE, state.is_some());
     let status = match state {
-        None => NO_RADIO,
-        Some(airplane::Mode::Killed) => airplane::KILLED,
-        Some(_) => "",
+        None => no_radio(),
+        Some(airplane::Mode::Killed) => airplane::KILLED.to_string(),
+        Some(_) => String::new(),
     };
-    page.set_text(AIRPLANE_STATUS, status);
+    page.set_text(AIRPLANE_STATUS, &status);
 }

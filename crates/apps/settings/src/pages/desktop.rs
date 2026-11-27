@@ -13,6 +13,7 @@ use crate::model::{
     PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX, SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES,
     SWITCHER_STYLES, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS, keys_for,
 };
+use reprisekit::tr;
 
 const CUSTOMIZE_W: i32 = 84;
 
@@ -25,24 +26,24 @@ const CUSTOMIZE_W: i32 = 84;
 pub fn window_behavior(a: Area) -> Form {
     let gw = a.gw();
     let mut items = vec![
-        group(a, "snap_group", 44, 172, "Snapping"),
+        group(a, "snap_group", 44, 172, &tr!("pages-desktop-snapping")),
         Item::check(
             "snap_enabled",
             GX,
             66,
-            "Snap a &dragged window to screen edges and layouts",
+            &tr!("pages-desktop-snap-a-dragged-window-to-screen"),
         ),
         Item::check(
             "snap_picker",
             GX,
             90,
-            "Show snap &layouts when resting on a maximize button",
+            &tr!("pages-desktop-show-snap-layouts-when-resting-on"),
         ),
         Item::check(
             "snap_bar",
             GX,
             114,
-            "Show snap layouts in a &bar when dragging a title bar up",
+            &tr!("pages-desktop-show-snap-layouts-in-a-bar"),
         ),
     ];
     items.extend(spin(
@@ -51,37 +52,49 @@ pub fn window_behavior(a: Area) -> Form {
         GX,
         142,
         150,
-        "Snap distance from &edges:",
+        &tr!("pages-desktop-snap-distance-from-edges"),
         (1, SNAP_DISTANCE_MAX as i32),
     ));
     items.extend([
         Item::label_at("snap_distance_units", GX + 210, 142, 30, "px"),
-        Item::label_at("snap_layouts_label", GX, 170, 84, "&Custom layouts:"),
+        Item::label_at(
+            "snap_layouts_label",
+            GX,
+            170,
+            84,
+            &tr!("pages-desktop-custom-layouts"),
+        ),
         edit("snap_layouts", GX + 88, 166, gw - 88),
         Item::label_at(
             "snap_layouts_note",
             GX,
             192,
             gw,
-            "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
+            &tr!("pages-desktop-empty-for-the-built-in-six"),
         ),
-        group(a, "tabs_group", 228, 210, "Tabs and Placement"),
+        group(
+            a,
+            "tabs_group",
+            228,
+            210,
+            &tr!("pages-desktop-tabs-and-placement"),
+        ),
         Item::check(
             "window_tabs",
             GX,
             250,
-            "Drop a window on a title bar to group them as &tabs",
+            &tr!("pages-desktop-drop-a-window-on-a-title"),
         ),
         Item::check(
             "remember_windows",
             GX,
             274,
-            "Re&member where each program's window was closed",
+            &tr!("pages-desktop-remember-where-each-programs-window-was"),
         ),
         Item::button(
             FORGET_FRAMES,
             Rect::new(GX, 296, 110, BUTTON_H),
-            "&Forget Positions",
+            &tr!("pages-desktop-forget-positions"),
             true,
             false,
         )
@@ -90,14 +103,14 @@ pub fn window_behavior(a: Area) -> Form {
             "window_shake",
             GX,
             328,
-            "&Shake a window by its title bar to minimize the others",
+            &tr!("pages-desktop-shake-a-window-by-its-title"),
         ),
         Item::label_at(
             "title_double_click_label",
             GX,
             356,
             150,
-            "Double-clic&king a title bar:",
+            &tr!("pages-desktop-double-clicking-a-title-bar"),
         ),
         choice(
             "title_double_click",
@@ -113,7 +126,7 @@ pub fn window_behavior(a: Area) -> Form {
         GX,
         384,
         230,
-        "Dim &windows that don't have the focus:",
+        &tr!("pages-desktop-dim-windows-that-dont-have-the"),
         (0, DIM_INACTIVE_MAX as i32),
     ));
     items.push(Item::label_at("dim_inactive_units", GX + 290, 384, 20, "%"));
@@ -123,7 +136,7 @@ pub fn window_behavior(a: Area) -> Form {
         GX,
         412,
         170,
-        "Frame &rate of hidden windows:",
+        &tr!("pages-desktop-frame-rate-of-hidden-windows"),
         (0, HIDDEN_FRAME_RATE_MAX as i32),
     ));
     items.push(Item::label_at(
@@ -131,7 +144,7 @@ pub fn window_behavior(a: Area) -> Form {
         GX + 230,
         412,
         gw - 230,
-        "(0: no limit)",
+        &tr!("pages-desktop-0-no-limit"),
     ));
     Form::new(items)
 }
@@ -170,8 +183,12 @@ pub(super) const DURATION_CONTROLS: [&str; 3] =
 /// note while reduce motion greys those rows.
 pub(super) const DESKTOP_MOTION_NOTE: &str = "desktop_animation_note";
 pub(super) const SLIDE_MOTION_NOTE: &str = "taskbar_slide_note";
-pub(super) const MOTION_NOTE: &str = "Off while Reduce motion is on (Effects page)";
-pub(super) const SLIDE_MOTION_TEXT: &str = "(Reduce motion)";
+pub(super) fn motion_note() -> String {
+    tr!("pages-desktop-off-while-reduce-motion-is-on")
+}
+pub(super) fn slide_motion_text() -> String {
+    tr!("pages-desktop-reduce-motion")
+}
 
 /// The Taskbar page's window picture rate, greyed while nothing shows a live picture.
 pub(super) const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_units"];
@@ -180,8 +197,19 @@ pub(super) const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_un
 pub const DESKTOP_NAMES: &str = "desktop_names";
 
 pub fn virtual_desktops(a: Area) -> Form {
-    let mut items = vec![group(a, "desktops_group", 44, 244, "Virtual Desktops")];
-    items.push(Item::check("use_desktops", GX, 64, "&Use virtual desktops"));
+    let mut items = vec![group(
+        a,
+        "desktops_group",
+        44,
+        244,
+        &tr!("pages-desktop-virtual-desktops"),
+    )];
+    items.push(Item::check(
+        "use_desktops",
+        GX,
+        64,
+        &tr!("pages-desktop-use-virtual-desktops"),
+    ));
     // Indented under the check box they depend on: `ix` is the box's x, and each item starts at its label's column.
     let ix = GX;
     let mut indented = Vec::new();
@@ -191,7 +219,7 @@ pub fn virtual_desktops(a: Area) -> Form {
         ix,
         88,
         206,
-        "&Number of desktops:",
+        &tr!("pages-desktop-number-of-desktops"),
         (2, DESKTOPS_MAX as i32),
     ));
     indented.push(Item::label_at(
@@ -199,7 +227,7 @@ pub fn virtual_desktops(a: Area) -> Form {
         ix,
         114,
         110,
-        "Switch &animation:",
+        &tr!("pages-desktop-switch-animation"),
     ));
     indented.push(choice(
         "desktop_animation",
@@ -214,7 +242,7 @@ pub fn virtual_desktops(a: Area) -> Form {
         ix,
         140,
         110,
-        "&Duration:",
+        &tr!("pages-desktop-duration"),
         (0, SWITCH_MS_MAX as i32),
     ));
     indented.push(Item::label_at("duration_units", ix + 170, 140, 60, "ms"));
@@ -223,14 +251,14 @@ pub fn virtual_desktops(a: Area) -> Form {
         ix,
         166,
         190,
-        "Current desktop on the &Glass taskbar:",
+        &tr!("pages-desktop-current-desktop-on-the-glass-taskbar"),
     ));
     indented.push(choice("pager_mark", ix, 184, 134, PAGER_MARKS));
     indented.push(Item::check(
         "wheel_on_desktop",
         ix,
         214,
-        "Switch desktops with the wheel over the des&ktop",
+        &tr!("pages-desktop-switch-desktops-with-the-wheel-over"),
     ));
     let iw = a.gw() - 18;
     indented.push(Item::label_at(
@@ -238,7 +266,7 @@ pub fn virtual_desktops(a: Area) -> Form {
         ix,
         242,
         90,
-        "Desktop na&mes:",
+        &tr!("pages-desktop-desktop-names"),
     ));
     indented.push(edit(DESKTOP_NAMES, ix + 94, 238, iw - 94));
     indented.push(Item::label_at(
@@ -246,7 +274,7 @@ pub fn virtual_desktops(a: Area) -> Form {
         ix,
         264,
         iw,
-        "Apart by commas; an empty one keeps its number",
+        &tr!("pages-desktop-apart-by-commas-an-empty-one"),
     ));
     items.extend(indented.into_iter().map(Item::under_check));
     items.push(Item::label_at(DESKTOP_MOTION_NOTE, X, 296, a.w, ""));
@@ -258,7 +286,13 @@ pub fn virtual_desktops(a: Area) -> Form {
 /// window pictures and their rate, and the Start button's logo and glow.
 pub fn taskbar(a: Area) -> Form {
     let mut items = vec![
-        Item::label_at("location_label", X, 48, 100, "Taskbar l&ocation:"),
+        Item::label_at(
+            "location_label",
+            X,
+            48,
+            100,
+            &tr!("pages-desktop-taskbar-location"),
+        ),
         choice("taskbar_position", X + 104, 44, 120, TASKBAR_POSITIONS),
     ];
     items.extend(spin(
@@ -267,40 +301,52 @@ pub fn taskbar(a: Area) -> Form {
         X + 234,
         48,
         44,
-        "Hei&ght:",
+        &tr!("pages-desktop-height"),
         (8, 256),
     ));
     items.extend([
         Item::label_at("taskbar_height_units", X + 338, 48, 20, "px"),
-        Item::label_at("buttons_label", X, 76, 100, "Taskbar &buttons:"),
+        Item::label_at(
+            "buttons_label",
+            X,
+            76,
+            100,
+            &tr!("pages-desktop-taskbar-buttons"),
+        ),
         choice("taskbar_buttons", X + 104, 72, 230, TASKBAR_BUTTONS),
     ]);
     let checks = [
         (
             "taskbar_small_icons",
-            "Use &small icons on a shorter Glass taskbar",
+            &tr!("pages-desktop-use-small-icons-on-a-shorter"),
         ),
         (
             "taskbar_show_desktop",
-            "Show &desktop button at the taskbar's end",
+            &tr!("pages-desktop-show-desktop-button-at-the-taskbars"),
         ),
         (
             "taskbar_peek",
-            "Pee&k at the desktop or a window from the taskbar",
+            &tr!("pages-desktop-peek-at-the-desktop-or-a"),
         ),
-        ("taskbar_badges", "Show unread &counts on task buttons"),
+        (
+            "taskbar_badges",
+            &tr!("pages-desktop-show-unread-counts-on-task-buttons"),
+        ),
         (
             "taskbar_per_monitor",
-            "Show each window's button onl&y on its monitor",
+            &tr!("pages-desktop-show-each-windows-button-only-on"),
         ),
-        ("taskbar_tray_overflow", "Hide &idle notification icons"),
+        (
+            "taskbar_tray_overflow",
+            &tr!("pages-desktop-hide-idle-notification-icons"),
+        ),
         (
             "taskbar_network_meter",
-            "Show n&etwork speed beside the clock",
+            &tr!("pages-desktop-show-network-speed-beside-the-clock"),
         ),
         (
             "taskbar_slide",
-            "Slide taskbar buttons as they are d&ragged",
+            &tr!("pages-desktop-slide-taskbar-buttons-as-they-are"),
         ),
     ];
     let slide_y = 100 + 18 * (checks.len() as i32 - 1);
@@ -318,7 +364,7 @@ pub fn taskbar(a: Area) -> Form {
         EVENTS_CHECK,
         X,
         slide_y + 18,
-        "Show calendar e&vents",
+        &tr!("pages-desktop-show-calendar-events"),
     ));
     items.push(Item::label_at(
         EVENTS_NOTE,
@@ -330,25 +376,27 @@ pub fn taskbar(a: Area) -> Form {
     items.push(Item::button(
         TRAY_CUSTOMIZE,
         Rect::new(a.right() - CUSTOMIZE_W, 185, CUSTOMIZE_W, BUTTON_H),
-        "C&ustomize...",
+        &tr!("pages-desktop-customize"),
         true,
         false,
     ));
     items.push(Item::new(
         "taskbar_note",
         Rect::new(X, 262, a.w, LINE_H),
-        Control::Lines(vec!["Left unchanged, these follow the interface.".into()]),
+        Control::Lines(vec![tr!(
+            "pages-desktop-left-unchanged-these-follow-the-interface"
+        )]),
     ));
     items.push(Item::check(
         "taskbar_auto_hide",
         X,
         280,
-        "Auto-&hide the taskbar",
+        &tr!("pages-desktop-auto-hide-the-taskbar"),
     ));
     let reveals = [
-        "Show when the pointer &touches the edge",
-        "Show for the Start menu and window s&witching",
-        "Show when a window needs &attention",
+        &tr!("pages-desktop-show-when-the-pointer-touches-the"),
+        &tr!("pages-desktop-show-for-the-start-menu-and"),
+        &tr!("pages-desktop-show-when-a-window-needs-attention"),
     ];
     for (i, (id, text)) in REVEAL_CONTROLS.into_iter().zip(reveals).enumerate() {
         items.push(Item::check(id, X, 298 + 18 * i as i32, text).under_check());
@@ -357,7 +405,7 @@ pub fn taskbar(a: Area) -> Form {
         "preview_taskbar",
         X,
         352,
-        "Show live window &pictures over taskbar buttons",
+        &tr!("pages-desktop-show-live-window-pictures-over-taskbar"),
     ));
     let [fps_label, fps] = spin(
         "fps_label",
@@ -365,7 +413,7 @@ pub fn taskbar(a: Area) -> Form {
         X,
         372,
         110,
-        "Re&fresh rate:",
+        &tr!("pages-desktop-refresh-rate"),
         (1, PREVIEW_FPS_MAX as i32),
     );
     // Under the check, 18 px in: the units' width gives that back to stay on the page.
@@ -374,7 +422,7 @@ pub fn taskbar(a: Area) -> Form {
         X + 170,
         372,
         a.w - 188,
-        "times a second, Alt+Tab too",
+        &tr!("pages-desktop-times-a-second-alt-tab-too"),
     );
     items.extend([fps_label, fps, fps_units].map(Item::under_check));
     let glow_w = a.track(150);
@@ -383,9 +431,15 @@ pub fn taskbar(a: Area) -> Form {
             "start_icon",
             X,
             394,
-            "Show the icon theme's &logo on the Start button",
+            &tr!("pages-desktop-show-the-icon-themes-logo-on"),
         ),
-        Item::label_at("orb_glow_label", X, 418, 110, "Start butto&n glow:"),
+        Item::label_at(
+            "orb_glow_label",
+            X,
+            418,
+            110,
+            &tr!("pages-desktop-start-button-glow"),
+        ),
         Item::new(
             "glass_orb_glow",
             Rect::new(X + 114, 412, glow_w, trackbar::HEIGHT),
@@ -396,7 +450,7 @@ pub fn taskbar(a: Area) -> Form {
             X + GLOW_NOTE_X + glow_w,
             418,
             a.w - GLOW_NOTE_X - glow_w,
-            "(Glass only)",
+            &tr!("pages-desktop-glass-only"),
         ),
     ]);
     Form::new(items)
@@ -442,7 +496,13 @@ pub fn search(a: Area) -> Form {
     let programs_end = list_y + list_h + 10;
     let bx = a.gright() - BUTTON_W;
     Form::new(vec![
-        group(a, "launcher_search_group", 44, 174, "Search"),
+        group(
+            a,
+            "launcher_search_group",
+            44,
+            174,
+            &tr!("pages-desktop-search"),
+        ),
         Item::new(
             SEARCH_NOTE,
             Rect::new(GX, 66, a.gw(), SEARCH_LINES as i32 * LINE_H),
@@ -452,10 +512,20 @@ pub fn search(a: Area) -> Form {
             "launcher_files",
             GX,
             117,
-            "Also find &files and folders in my home folder",
+            &tr!("pages-desktop-also-find-files-and-folders-in"),
         ),
-        Item::check("launcher_windows", GX, 139, "Also find open &windows"),
-        Item::check(CONTENTS, GX, 161, "Find files by their &contents"),
+        Item::check(
+            "launcher_windows",
+            GX,
+            139,
+            &tr!("pages-desktop-also-find-open-windows"),
+        ),
+        Item::check(
+            CONTENTS,
+            GX,
+            161,
+            &tr!("pages-desktop-find-files-by-their-contents"),
+        ),
         Item::new(
             CONTENTS_NOTE,
             Rect::new(GX + 18, 179, a.gw() - 18, 2 * LINE_H),
@@ -466,14 +536,14 @@ pub fn search(a: Area) -> Form {
             "search_providers_group",
             programs_y,
             programs_end - programs_y,
-            "Program Results",
+            &tr!("pages-desktop-program-results"),
         ),
         Item::new(
             "search_providers_note",
             Rect::new(GX, programs_y + 22, a.gw(), 2 * LINE_H),
             Control::Lines(vec![
-                "A ticked program is sent what you type and lists its".into(),
-                "results under its name, in this order.".into(),
+                tr!("pages-desktop-a-ticked-program-is-sent-what"),
+                tr!("pages-desktop-results-under-its-name-in-this"),
             ]),
         ),
         Item::new(
@@ -484,9 +554,14 @@ pub fn search(a: Area) -> Form {
                 icons: Vec::new(),
             },
         )
-        .named("Program Results"),
-        button(providerpage::UP, bx, list_y, "Move &Up"),
-        button(providerpage::DOWN, bx, list_y + BUTTON_H + 4, "Move &Down"),
+        .named(&tr!("pages-desktop-program-results")),
+        button(providerpage::UP, bx, list_y, &tr!("pages-desktop-move-up")),
+        button(
+            providerpage::DOWN,
+            bx,
+            list_y + BUTTON_H + 4,
+            &tr!("pages-desktop-move-down"),
+        ),
     ])
 }
 
@@ -495,10 +570,8 @@ pub fn search(a: Area) -> Form {
 pub fn show_contents(page: &mut Form, installed: Option<bool>) {
     let note = match installed {
         None => "",
-        Some(true) => {
-            "The first search starts localsearch, which then indexes your files in the background."
-        }
-        Some(false) => "Install localsearch to find files by their contents.",
+        Some(true) => &tr!("pages-desktop-the-first-search-starts-localsearch-which"),
+        Some(false) => &tr!("pages-desktop-install-localsearch-to-find-files-by"),
     };
     let lines = match note.is_empty() {
         true => Vec::new(),
@@ -528,7 +601,7 @@ pub(super) fn follow_contents(page: &mut Form, files: bool) {
 /// while evolution-data-server is not installed; blank otherwise.
 pub fn show_events(page: &mut Form, installed: Option<bool>) {
     let note = match installed {
-        Some(false) => "(install evolution-data-server)",
+        Some(false) => &tr!("pages-desktop-install-evolution-data-server"),
         _ => "",
     };
     page.set_text(EVENTS_NOTE, note);
@@ -539,14 +612,14 @@ pub fn show_events(page: &mut Form, installed: Option<bool>) {
 /// The Search note's lines: the keys bound to the launcher, what it finds, and that the Start
 /// menu's search follows the checks. Keys too long for the note drop the Start menu sentence.
 pub fn search_note(binds: &[Shortcut]) -> Vec<String> {
-    const FINDS: &str = "finds installed programs as you type their names.";
-    const START: &str = "The Start menu's search box follows these too.";
+    let finds = tr!("pages-desktop-finds-installed-programs-as-you-type");
+    let start = tr!("pages-desktop-the-start-menus-search-box-follows");
     let wrap = |body: &str| reprisekit::text::wrap_chars(body, SEARCH_COLS);
     let Some(keys) = keys_for(binds, "launcher") else {
-        return wrap(&format!("The launcher {FINDS} {START}"));
+        return wrap(&format!("The launcher {finds} {start}"));
     };
-    let opens = format!("{keys} opens the launcher, which {FINDS}");
-    let mut lines = wrap(&format!("{opens} {START}"));
+    let opens = format!("{keys} opens the launcher, which {finds}");
+    let mut lines = wrap(&format!("{opens} {start}"));
     if lines.len() > SEARCH_LINES {
         lines = wrap(&opens);
     }
@@ -556,14 +629,14 @@ pub fn search_note(binds: &[Shortcut]) -> Vec<String> {
 
 /// The 3D switcher check's note: the keys bound to it, and that it runs under Glass alone.
 pub fn flip_note(binds: &[Shortcut]) -> String {
-    let keys = keys_for(binds, "flip").unwrap_or_else(|| "No key".into());
+    let keys = keys_for(binds, "flip").unwrap_or_else(|| tr!("pages-desktop-no-key"));
     format!("{keys} shows them; Glass only.")
 }
 
 /// The Window Overview note, naming the keys bound to the overview.
 pub fn overview_note(binds: &[Shortcut]) -> String {
     keys_for(binds, "overview").map_or_else(
-        || "Every window of this desktop side by side.".into(),
+        || tr!("pages-desktop-every-window-of-this-desktop-side"),
         |k| format!("{k} shows this desktop's windows side by side."),
     )
 }
@@ -573,28 +646,67 @@ pub fn overview_note(binds: &[Shortcut]) -> String {
 /// overview's hot corner under it. [`super::show_keys`] fills the notes.
 pub fn switcher(a: Area) -> Form {
     Form::new(vec![
-        group(a, "switcher_group", 44, 186, "Alt+Tab"),
-        Item::label_at("switcher_style_label", GX, 68, 110, "Alt+Tab &shows:"),
+        group(a, "switcher_group", 44, 186, &tr!("pages-desktop-alt-tab")),
+        Item::label_at(
+            "switcher_style_label",
+            GX,
+            68,
+            110,
+            &tr!("pages-desktop-alt-tab-shows"),
+        ),
         choice("switcher_style", GX + 114, 64, 130, SWITCHER_STYLES),
-        Item::label_at("switcher_size_label", GX, 94, 110, "Picture si&ze:"),
+        Item::label_at(
+            "switcher_size_label",
+            GX,
+            94,
+            110,
+            &tr!("pages-desktop-picture-size"),
+        ),
         choice("switcher_size", GX + 114, 90, 130, SWITCHER_SIZES),
         Item::check(
             "switcher_preview",
             GX,
             118,
-            "Show a live &preview of the selected window",
+            &tr!("pages-desktop-show-a-live-preview-of-the"),
         ),
-        Item::check("switcher_desktop", GX, 140, "Show the &desktop in Alt+Tab"),
-        Item::check("switcher_peek", GX, 162, "Pee&k at the selected window"),
-        Item::check("switcher_flip", GX, 184, "Show windows in &3D"),
+        Item::check(
+            "switcher_desktop",
+            GX,
+            140,
+            &tr!("pages-desktop-show-the-desktop-in-alt-tab"),
+        ),
+        Item::check(
+            "switcher_peek",
+            GX,
+            162,
+            &tr!("pages-desktop-peek-at-the-selected-window"),
+        ),
+        Item::check(
+            "switcher_flip",
+            GX,
+            184,
+            &tr!("pages-desktop-show-windows-in-3d"),
+        ),
         Item::label_at(FLIP_NOTE, GX + 18, 202, a.gw() - 18, &flip_note(&[])),
-        group(a, "overview_group", 240, 76, "Window Overview"),
+        group(
+            a,
+            "overview_group",
+            240,
+            76,
+            &tr!("pages-desktop-window-overview"),
+        ),
         Item::new(
             OVERVIEW_NOTE,
             Rect::new(GX, 262, a.gw(), LINE_H),
             Control::Lines(vec![overview_note(&[])]),
         ),
-        Item::label_at("hot_corner_label", GX, 288, 110, "Hot &corner:"),
+        Item::label_at(
+            "hot_corner_label",
+            GX,
+            288,
+            110,
+            &tr!("pages-desktop-hot-corner"),
+        ),
         choice("hot_corner", GX + 114, 284, 130, HOT_CORNERS),
     ])
 }

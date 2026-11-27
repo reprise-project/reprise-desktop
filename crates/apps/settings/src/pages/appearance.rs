@@ -13,6 +13,7 @@ use reprisekit::trackbar::TrackBar;
 use crate::model::{
     EFFECTS_MS_MAX, FONT_SMOOTHINGS, MENU_ANIMATIONS, QT_PLATFORM_THEMES, reprise_toolkit_row,
 };
+use reprisekit::tr;
 
 /// `qt_tools` is whether qt6ct or qt5ct is installed, which the Qt combo's Reprise row needs; without either it is greyed.
 pub fn fonts_and_icons(
@@ -22,7 +23,13 @@ pub fn fonts_and_icons(
     qt_tools: bool,
 ) -> Form {
     let gw = a.gw();
-    let mut items = vec![group(a, "fonts_group", 44, 102, "Fonts")];
+    let mut items = vec![group(
+        a,
+        "fonts_group",
+        44,
+        102,
+        &tr!("pages-appearance-fonts"),
+    )];
     let half = (gw - 8) / 2;
     items.extend(field(
         "family_label",
@@ -30,7 +37,7 @@ pub fn fonts_and_icons(
         GX,
         62,
         half,
-        "&Family (comma separated):",
+        &tr!("pages-appearance-family-comma-separated"),
     ));
     items.extend(field(
         "shell_dlg_label",
@@ -38,7 +45,7 @@ pub fn fonts_and_icons(
         a.gright() - half,
         62,
         half,
-        "Second dialo&g font:",
+        &tr!("pages-appearance-second-dialog-font"),
     ));
     items.extend(spin(
         "size_label",
@@ -46,7 +53,7 @@ pub fn fonts_and_icons(
         GX,
         108,
         44,
-        "Si&ze:",
+        &tr!("pages-appearance-size"),
         (
             FontConfig::SIZE_PX_MIN as i32,
             FontConfig::SIZE_PX_MAX as i32,
@@ -60,31 +67,49 @@ pub fn fonts_and_icons(
     ));
 
     let cw = a.combo(Area::MIN.gw() - 88);
-    items.push(group(a, "smoothing_group", 154, 72, "Font Smoothing"));
+    items.push(group(
+        a,
+        "smoothing_group",
+        154,
+        72,
+        &tr!("pages-appearance-font-smoothing"),
+    ));
     items.push(Item::label_at(
         "reprise_text_label",
         GX,
         176,
         84,
-        "Reprise text:",
+        &tr!("pages-appearance-reprise-text"),
     ));
     items.push(Item::check(
         "font_antialias",
         GX + 88,
         176,
-        "S&mooth the edges",
+        &tr!("pages-appearance-smooth-the-edges"),
     ));
     items.push(Item::label_at(
         "smoothing_label",
         GX,
         202,
         84,
-        "&Other programs:",
+        &tr!("pages-appearance-other-programs"),
     ));
     items.push(choice("font_smoothing", GX + 88, 198, cw, FONT_SMOOTHINGS));
 
-    items.push(group(a, "icons_group", 234, 48, "Icons"));
-    items.push(Item::label_at("theme_label", GX, 258, 56, "&Theme:"));
+    items.push(group(
+        a,
+        "icons_group",
+        234,
+        48,
+        &tr!("pages-appearance-icons"),
+    ));
+    items.push(Item::label_at(
+        "theme_label",
+        GX,
+        258,
+        56,
+        &tr!("pages-appearance-theme"),
+    ));
     items.push(combo(
         "icon_theme",
         GX + 60,
@@ -94,14 +119,20 @@ pub fn fonts_and_icons(
         icon_themes.len().clamp(1, 8),
     ));
 
-    items.push(group(a, "windows_group", 290, 46, "Window Frames"));
+    items.push(group(
+        a,
+        "windows_group",
+        290,
+        46,
+        &tr!("pages-appearance-window-frames"),
+    ));
     items.extend(spin(
         "frame_label",
         "frame_width",
         GX,
         312,
         76,
-        "Frame &width:",
+        &tr!("pages-appearance-frame-width"),
         (0, 32),
     ));
     items.push(Item::label_at("frame_units", GX + 136, 312, 20, "px"));
@@ -111,15 +142,27 @@ pub fn fonts_and_icons(
         GX + 164,
         312,
         88,
-        "Caption &height:",
+        &tr!("pages-appearance-caption-height"),
         (12, 128),
     ));
     items.push(Item::label_at("caption_units", GX + 312, 312, 20, "px"));
 
     let mut gtk: Vec<String> = GTK_FIXED_ROWS.iter().map(|(_, row)| row()).collect();
     gtk.extend(gtk_themes.iter().cloned());
-    items.push(group(a, "toolkits_group", 344, 86, "Programs"));
-    items.push(Item::label_at("gtk_label", GX, 368, 84, "GTK th&eme:"));
+    items.push(group(
+        a,
+        "toolkits_group",
+        344,
+        86,
+        &tr!("pages-appearance-programs"),
+    ));
+    items.push(Item::label_at(
+        "gtk_label",
+        GX,
+        368,
+        84,
+        &tr!("pages-appearance-gtk-theme"),
+    ));
     items.push(combo(
         "gtk_theme",
         GX + 88,
@@ -128,7 +171,13 @@ pub fn fonts_and_icons(
         &gtk,
         gtk.len().clamp(1, 8),
     ));
-    items.push(Item::label_at("qt_label", GX, 394, 84, "&Qt style:"));
+    items.push(Item::label_at(
+        "qt_label",
+        GX,
+        394,
+        84,
+        &tr!("pages-appearance-qt-style"),
+    ));
     let mut qt = choice("qt_platform_theme", GX + 88, 390, cw, QT_PLATFORM_THEMES);
     if let Control::Combo(c) = &mut qt.control
         && let Some(row) = c.items.iter_mut().find(|i| i.text == reprise_toolkit_row())
@@ -140,14 +189,12 @@ pub fn fonts_and_icons(
         "gtk4_colors",
         GX,
         416,
-        "GTK&4 and libadwaita in the look's colours",
+        &tr!("pages-appearance-gtk4-and-libadwaita-in-the-looks"),
     ));
     items.push(Item::new(
         "toolkits_note",
         Rect::new(X, 434, a.w, LINE_H),
-        Control::Lines(vec![
-            "Qt and GTK4 programs take a new style when they next start.".into(),
-        ]),
+        Control::Lines(vec![tr!("pages-appearance-qt-and-gtk4-programs-take-a")]),
     ));
 
     Form::new(items)
@@ -171,47 +218,82 @@ pub fn night_light(a: Area) -> Form {
         "nl_enabled",
         X,
         44,
-        "&Warm the screen's colors at night",
+        &tr!("pages-appearance-warm-the-screens-colors-at-night"),
     )];
-    items.push(group(a, "nl_color_group", 70, 76, "Color Temperature"));
+    items.push(group(
+        a,
+        "nl_color_group",
+        70,
+        76,
+        &tr!("pages-appearance-color-temperature"),
+    ));
     items.push(Item::label_at(
         "nl_temp_label",
         GX,
         90,
         200,
-        "Screen &color at night:",
+        &tr!("pages-appearance-screen-color-at-night"),
     ));
     items.extend(ends_track(
         a,
         ["nl_warm", "nl_temperature", "nl_cool", "nl_temp_value"],
-        "Color temperature",
+        &tr!("pages-appearance-color-temperature-2"),
         117,
         27,
-        ("Warmer", "Cooler"),
+        (
+            &tr!("pages-appearance-warmer"),
+            &tr!("pages-appearance-cooler"),
+        ),
         GX,
         TrackBar::new(0, KELVIN_STEPS),
     ));
-    items.push(group(a, "nl_schedule_group", 156, 104, "Schedule"));
+    items.push(group(
+        a,
+        "nl_schedule_group",
+        156,
+        104,
+        &tr!("pages-appearance-schedule"),
+    ));
     items.push(radio(
         "nl_sun",
         "nl_schedule",
         GX,
         178,
-        "From &sunset to sunrise",
+        &tr!("pages-appearance-from-sunset-to-sunrise"),
     ));
-    items.push(radio("nl_fixed", "nl_schedule", GX, 200, "At &fixed times"));
+    items.push(radio(
+        "nl_fixed",
+        "nl_schedule",
+        GX,
+        200,
+        &tr!("pages-appearance-at-fixed-times"),
+    ));
     // The times row starts at the choices' label column: the check box's, which is the radio's too in looks that draw them alike.
-    let times = time("nl_from_label", "nl_from", GX, 230, 36, "F&rom:")
-        .into_iter()
-        .chain(time("nl_to_label", "nl_to", GX + 132, 230, 24, "&To:"));
+    let times = time(
+        "nl_from_label",
+        "nl_from",
+        GX,
+        230,
+        36,
+        &tr!("pages-appearance-from"),
+    )
+    .into_iter()
+    .chain(time(
+        "nl_to_label",
+        "nl_to",
+        GX + 132,
+        230,
+        24,
+        &tr!("pages-appearance-to"),
+    ));
     items.extend(times.map(Item::under_check));
     items.push(Item::new(
         "nl_note",
         Rect::new(X, 272, a.w, 4 * LINE_H),
         Control::Lines(vec![
-            "Sunset and sunrise are worked out for the time zone's city, or for".into(),
-            "the latitude and longitude in config.toml. Each change of color".into(),
-            "fades over 30 minutes. The tray icon pauses it until morning.".into(),
+            tr!("pages-appearance-sunset-and-sunrise-are-worked-out"),
+            tr!("pages-appearance-the-latitude-and-longitude-in-config"),
+            tr!("pages-appearance-fades-over-30-minutes-the-tray"),
         ]),
     ));
     Form::new(items)
@@ -221,73 +303,85 @@ pub fn night_light(a: Area) -> Form {
 /// hovered buttons, each a check with its two durations indented under it, the screen's fade and the
 /// lock screen's motion; then the menus' shadow, timings and opening.
 pub fn effects(a: Area) -> Form {
-    let mut items = vec![group(a, "effects_group", 44, 202, "Animation")];
+    let mut items = vec![group(
+        a,
+        "effects_group",
+        44,
+        202,
+        &tr!("pages-appearance-animation"),
+    )];
     items.push(Item::check(
         "reduce_motion",
         GX,
         66,
-        "&Reduce motion everywhere",
+        &tr!("pages-appearance-reduce-motion-everywhere"),
     ));
     items.push(Item::check(
         "window_animation",
         GX,
         88,
-        "&Animate windows opening and closing",
+        &tr!("pages-appearance-animate-windows-opening-and-closing"),
     ));
     let mut anim = Vec::new();
     anim.extend(ms_spin(
         ["open_label", "window_open_ms", "open_units"],
         GX,
         114,
-        "&Open:",
+        &tr!("pages-appearance-open"),
     ));
     anim.extend(ms_spin(
         ["close_label", "window_close_ms", "close_units"],
         GX + 140,
         114,
-        "&Close:",
+        &tr!("pages-appearance-close"),
     ));
     items.extend(anim.into_iter().map(Item::under_check));
     items.push(Item::check(
         "hover_fade",
         GX,
         144,
-        "Fade button &highlights",
+        &tr!("pages-appearance-fade-button-highlights"),
     ));
     let mut hover = Vec::new();
     hover.extend(ms_spin(
         ["in_label", "hover_in_ms", "in_units"],
         GX,
         170,
-        "&In:",
+        &tr!("pages-appearance-in"),
     ));
     hover.extend(ms_spin(
         ["out_label", "hover_out_ms", "out_units"],
         GX + 140,
         170,
-        "O&ut:",
+        &tr!("pages-appearance-out"),
     ));
     items.extend(hover.into_iter().map(Item::under_check));
     items.push(Item::check(
         "session_fade",
         GX,
         200,
-        "&Fade the screen at log on and log off",
+        &tr!("pages-appearance-fade-the-screen-at-log-on"),
     ));
     items.push(Item::check(
         "logon_animation",
         GX,
         222,
-        "Animate the &lock screen",
+        &tr!("pages-appearance-animate-the-lock-screen"),
     ));
-    items.push(group(a, "menus_group", 256, 74, "Menus"));
+    items.push(group(
+        a,
+        "menus_group",
+        256,
+        74,
+        &tr!("pages-appearance-menus"),
+    ));
     items.extend(spin(
         "shadow_label",
         "menu_shadow",
         GX,
         278,
         60,
-        "&Shadow:",
+        &tr!("pages-appearance-shadow"),
         (0, 32),
     ));
     items.push(Item::label_at("shadow_units", GX + 118, 278, 20, "px"));
@@ -297,7 +391,7 @@ pub fn effects(a: Area) -> Form {
         GX + 140,
         278,
         70,
-        "Ho&ver:",
+        &tr!("pages-appearance-hover"),
         (0, 9999),
     ));
     items.push(Item::label_at("menu_hover_units", GX + 268, 278, 20, "ms"));
@@ -307,7 +401,7 @@ pub fn effects(a: Area) -> Form {
         GX,
         304,
         60,
-        "Ti&me:",
+        &tr!("pages-appearance-time"),
         (0, 9999),
     ));
     items.push(Item::label_at("menu_fade_units", GX + 118, 304, 20, "ms"));
@@ -316,7 +410,7 @@ pub fn effects(a: Area) -> Form {
         GX + 140,
         304,
         70,
-        "A&nimation:",
+        &tr!("pages-appearance-animation-2"),
     ));
     items.push(choice(
         "menu_animation",

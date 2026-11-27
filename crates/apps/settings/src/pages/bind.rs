@@ -3,18 +3,18 @@
 use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, MOTION_CONTROLS, NL_CONTROLS, NL_TIMES};
 use super::desktop::{
     DESKTOP_CONTROLS, DESKTOP_MOTION_NOTE, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FLIP_NOTE,
-    FPS_CONTROLS, GLOW_CONTROLS, MOTION_NOTE, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE,
-    SLIDE_MOTION_NOTE, SLIDE_MOTION_TEXT, flip_note, follow_contents, overview_note, search_note,
+    FPS_CONTROLS, GLOW_CONTROLS, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE, SLIDE_MOTION_NOTE,
+    flip_note, follow_contents, motion_note, overview_note, search_note, slide_motion_text,
 };
 use super::input::{
     BOUNCE_CONTROLS, MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS, TOUCHPAD_CONTROLS,
 };
 use super::system::{
-    ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, LOCKER_NOTE, NOTIFICATION_SOUND, QUALITY_VALUE,
-    REMOTE_BORDER, REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE,
-    REMOTE_PORT, REMOTE_QUALITY, REMOTE_SCREEN_LOCK, REMOTE_SCREEN_NOTE, REMOTE_SCREEN_SHOW,
-    REMOTE_SECOND_JOIN, REMOTE_SECOND_REPLACE, REMOTE_SOUND, SESSION_EXCLUDE, SOUND_CONTROLS,
-    SOUND_EVENTS, TERMINAL_APPS, clipboard_label, follow_lock, follow_screen,
+    ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, NOTIFICATION_SOUND, QUALITY_VALUE, REMOTE_BORDER,
+    REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE, REMOTE_PORT,
+    REMOTE_QUALITY, REMOTE_SCREEN_LOCK, REMOTE_SCREEN_NOTE, REMOTE_SCREEN_SHOW, REMOTE_SECOND_JOIN,
+    REMOTE_SECOND_REPLACE, REMOTE_SOUND, SESSION_EXCLUDE, SOUND_CONTROLS, SOUND_EVENTS,
+    TERMINAL_APPS, clipboard_label, follow_lock, follow_screen, locker_note,
 };
 use super::{
     BOUNCE_DELAY, CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN,
@@ -45,6 +45,7 @@ use crate::model::{
     Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, VIDEO_CODECS,
     VISUAL_BELLS, WATER_STYLES, XkbPick, keys_for, remote_quality_row,
 };
+use reprisekit::tr;
 
 pub(super) enum Bind {
     Text(&'static str, Lens<Settings, String>),
@@ -833,7 +834,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in DURATION_CONTROLS {
         dp.set_enabled(id, many && moving && s.desktop_animation != "none");
     }
-    dp.set_text(DESKTOP_MOTION_NOTE, if moving { "" } else { MOTION_NOTE });
+    dp.set_text(
+        DESKTOP_MOTION_NOTE,
+        &if moving { String::new() } else { motion_note() },
+    );
     let nl = &mut sheet.pages[Page::NightLight.index()];
     for id in NL_CONTROLS {
         nl.set_enabled(id, s.nl_enabled);
@@ -917,7 +921,11 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     tb.set_enabled("taskbar_slide", moving);
     tb.set_text(
         SLIDE_MOTION_NOTE,
-        if moving { "" } else { SLIDE_MOTION_TEXT },
+        &if moving {
+            String::new()
+        } else {
+            slide_motion_text()
+        },
     );
     for id in FPS_CONTROLS {
         tb.set_enabled(id, live);
@@ -942,7 +950,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     rd.set_text(QUALITY_VALUE, &quality);
     follow_lock(rd);
     let held = !s.power_locker.trim().is_empty();
-    rd.set_text(REMOTE_SCREEN_NOTE, if held { LOCKER_NOTE } else { "" });
+    rd.set_text(
+        REMOTE_SCREEN_NOTE,
+        &if held { locker_note() } else { String::new() },
+    );
     follow_screen(rd);
     let adv = &mut sheet.pages[Page::Advanced.index()];
     adv.set_enabled(DEBUG_IN_CAPTURES, s.debug_overlay);
@@ -971,7 +982,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
 /// the screen reader's, the launcher's, the 3D switcher's, the overview's and the clipboard history's.
 pub fn show_keys(sheet: &mut PropSheet, binds: &[Shortcut]) {
     let switch = keys_for(binds, "next-layout").map_or_else(
-        || "No key switches them.".to_string(),
+        || tr!("pages-bind-no-key-switches-them"),
         |k| format!("{k} switches them."),
     );
     sheet.pages[Page::Keyboard.index()].set_text(KB_SWITCH_NOTE, &escape_mnemonic(&switch));
