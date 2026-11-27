@@ -178,6 +178,75 @@ pub fn dialog_label(dir: &Path) -> String {
         .unwrap_or_else(|| dir.display().to_string())
 }
 
+/// What a Look in row stands for, which picks its icon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkKind {
+    Recent,
+    Home,
+    Computer,
+    Drive,
+    Folder,
+}
+
+/// One row of a dialog's Look in list ([`dialog_chain`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChainLink {
+    pub dir: PathBuf,
+    pub label: String,
+    pub depth: usize,
+    pub kind: LinkKind,
+}
+
+/// A dialog's Look in rows for folder `dir`: Recent Items while it is shown, then Home, then
+/// Computer (`/`) with each of `drives` under it. The deepest of Home, a drive and `/` that holds
+/// `dir` gets the folders down to `dir` beneath it, one level deeper each.
+pub fn dialog_chain(dir: &Path, home: Option<&Path>, drives: &[PathBuf]) -> Vec<ChainLink> {
+    let link = |dir: &Path, label: String, depth, kind| ChainLink {
+        dir: dir.to_path_buf(),
+        label,
+        depth,
+        kind,
+    };
+    let root = Path::new("/");
+    let home = home.filter(|h| h.is_absolute() && *h != root);
+    let holder = (home.iter().copied())
+        .chain(drives.iter().map(PathBuf::as_path))
+        .chain([root])
+        .filter(|base| dir.starts_with(base))
+        .max_by_key(|base| base.components().count());
+    let below = |base: &Path, depth: usize| -> Vec<ChainLink> {
+        if holder != Some(base) {
+            return Vec::new();
+        }
+        let mut at = base.to_path_buf();
+        let rest = dir.strip_prefix(base).unwrap_or(Path::new(""));
+        (rest.components().enumerate())
+            .map(|(i, c)| {
+                at.push(c);
+                let label = c.as_os_str().to_string_lossy().into_owned();
+                link(&at, label, depth + i, LinkKind::Folder)
+            })
+            .collect()
+    };
+    let mut rows = Vec::new();
+    if is_recent(dir) {
+        rows.push(link(dir, RECENT_LABEL.to_string(), 0, LinkKind::Recent));
+    } else if holder.is_none() {
+        return vec![link(dir, dialog_label(dir), 0, LinkKind::Folder)];
+    }
+    if let Some(h) = home {
+        rows.push(link(h, home_label(), 0, LinkKind::Home));
+        rows.extend(below(h, 1));
+    }
+    rows.push(link(root, "Computer".to_string(), 0, LinkKind::Computer));
+    rows.extend(below(root, 1));
+    for d in drives {
+        rows.push(link(d, dialog_label(d), 1, LinkKind::Drive));
+        rows.extend(below(d, 2));
+    }
+    rows
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DialogPlace {
     pub label: String,
@@ -1119,6 +1188,59 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
             Some(Path::new("/")),
             "Computer is /"
         );
+    }
+
+    #[test]
+    fn look_in_hangs_the_shown_folders_parents_under_home_computer_or_its_drive() {
+        let home = Some(Path::new("/home/u"));
+        let drives = [PathBuf::from("/run/media/u/STICK")];
+        let rows = |dir: &str| -> Vec<(String, usize, LinkKind)> {
+            (dialog_chain(Path::new(dir), home, &drives).into_iter())
+                .map(|l| (l.dir.display().to_string(), l.depth, l.kind))
+                .collect()
+        };
+        let row = |dir: &str, depth, kind| (dir.to_string(), depth, kind);
+        use LinkKind::*;
+        assert_eq!(
+            rows("/home/u/Documents/Letters"),
+            [
+                row("/home/u", 0, Home),
+                row("/home/u/Documents", 1, Folder),
+                row("/home/u/Documents/Letters", 2, Folder),
+                row("/", 0, Computer),
+                row("/run/media/u/STICK", 1, Drive),
+            ]
+        );
+        assert_eq!(
+            rows("/usr/share"),
+            [
+                row("/home/u", 0, Home),
+                row("/", 0, Computer),
+                row("/usr", 1, Folder),
+                row("/usr/share", 2, Folder),
+                row("/run/media/u/STICK", 1, Drive),
+            ]
+        );
+        assert_eq!(
+            rows("/run/media/u/STICK/photos"),
+            [
+                row("/home/u", 0, Home),
+                row("/", 0, Computer),
+                row("/run/media/u/STICK", 1, Drive),
+                row("/run/media/u/STICK/photos", 2, Folder),
+            ]
+        );
+        assert_eq!(rows("/"), rows("/home/u"), "Home and / add no folders");
+        assert_eq!(
+            rows(RECENT)[..2],
+            [row(RECENT, 0, Recent), row("/home/u", 0, Home)]
+        );
+        let labels: Vec<String> = dialog_chain(Path::new("/home/u/x"), home, &drives)
+            .into_iter()
+            .map(|l| l.label)
+            .collect();
+        assert_eq!(labels[1..], ["x", "Computer", "STICK"]);
+        assert!(labels[0].ends_with("Home"), "got {}", labels[0]);
     }
 
     #[test]

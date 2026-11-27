@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::{Event, PointerInput};
 use reprisefs::listing::{Item, Row};
 use reprisefs::pins::{Pin, Pins};
-use reprisefs::places::DialogPlace;
+use reprisefs::places::{DialogPlace, LinkKind, MountedDrives};
 use reprisekit::controls::filedlg::DlgMode;
 use reprisekit::controls::form;
 use reprisekit::raster::Rect;
@@ -74,6 +74,13 @@ const PINS_WAIT: std::time::Duration = if cfg!(test) {
 const TOOLBAR_ICONS: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-list"];
 const TOOLBAR_VIEWS: usize = 3;
 const TOOLBAR_PX: i32 = 16;
+/// The Look in icons [`Icons::link`] gives: Recent Items, Home, Computer and a drive.
+const LINK_ICONS: [&str; 4] = [
+    "document-open-recent",
+    "user-home",
+    "computer",
+    "drive-removable-media",
+];
 
 #[derive(Default)]
 pub struct Icons {
@@ -83,6 +90,8 @@ pub struct Icons {
     pub toolbar: [Option<Canvas>; 4],
     /// The Look in field's folder, grown with the text like the toolbar's.
     pub folder: Option<Canvas>,
+    /// Look in's Recent Items, Home, Computer and drive rows ([`LINK_ICONS`]), grown like `folder`.
+    links: [Option<Canvas>; 4],
     /// The cache's scale and theme and the text size when they were fetched.
     scale: i32,
     theme: Option<Arc<IconTheme>>,
@@ -148,12 +157,19 @@ impl Icons {
         if self.folder.is_none() {
             self.folder = get(icons, "folder", px);
         }
+        for (icon, name) in self.links.iter_mut().zip(LINK_ICONS) {
+            if icon.is_none() {
+                *icon = get(icons, name, px);
+            }
+        }
         self.waiting = waiting;
         self.landed |= worn.is_some_and(|w| w != self.worn());
     }
 
     fn worn(&self) -> (Vec<Option<Canvas>>, Option<Canvas>) {
-        let mut worn: Vec<_> = self.places.iter().chain(&self.toolbar).cloned().collect();
+        let mut worn: Vec<_> = (self.places.iter().chain(&self.toolbar).chain(&self.links))
+            .cloned()
+            .collect();
         worn.push(self.pinned.clone());
         (worn, self.folder.clone())
     }
@@ -165,6 +181,18 @@ impl Icons {
                 .theme
                 .as_ref()
                 .is_some_and(|t| Arc::ptr_eq(t, &icons.theme()))
+    }
+
+    /// The icon a Look in row of `kind` wears; None for a folder, which wears `folder`.
+    fn link(&self, kind: LinkKind) -> Option<Canvas> {
+        let i = match kind {
+            LinkKind::Recent => 0,
+            LinkKind::Home => 1,
+            LinkKind::Computer => 2,
+            LinkKind::Drive => 3,
+            LinkKind::Folder => return None,
+        };
+        self.links[i].clone()
     }
 
     /// The icon of each of `places`' tiles.
@@ -357,17 +385,11 @@ fn listing(
         })
         .collect();
     let parent = reprisefs::places::dialog_parent(&path).map(|p| folders.id(p));
-    let label = reprisefs::places::dialog_label(&path);
     Listing {
         folder: Folder {
             id,
             parent,
-            crumbs: vec![Crumb {
-                id,
-                label,
-                depth: 0,
-                icon: None,
-            }],
+            crumbs: Vec::new(),
             entries,
         },
         aliases,
@@ -620,6 +642,10 @@ pub struct Host {
     pins_at: Option<PathBuf>,
     /// Every file with an execute bit wears the program icon, whatever its type.
     pub exec_icon: bool,
+    /// The drives Look in lists under Computer.
+    drives: MountedDrives,
+    /// The kind of each Look in row the shown folder's listing gave, for their icons.
+    chain: Vec<LinkKind>,
 }
 
 /// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
@@ -1000,6 +1026,7 @@ impl Host {
         dlg.set_place_icons(self.icons.place_icons(&self.tiles()));
         self.icons.set_toolbar(dlg);
         dlg.set_folder_icon(self.icons.folder.clone());
+        dlg.set_crumb_icons(self.chain.iter().map(|k| self.icons.link(*k)).collect());
         self.icons.landed = false;
     }
 
@@ -1608,9 +1635,21 @@ impl Host {
     fn show_read(&mut self, dlg: &mut FileDlg, id: FolderId, read: Read, icons: &mut IconCache) {
         let path = read.path.clone();
         let mut l = listing(&mut self.folders, id, read, icons, self.exec_icon);
-        for c in &mut l.folder.crumbs {
-            c.icon = self.icons.folder.clone();
-        }
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let chain = reprisefs::places::dialog_chain(&path, home.as_deref(), self.drives.listed());
+        self.chain = chain.iter().map(|link| link.kind).collect();
+        l.folder.crumbs = (chain.into_iter())
+            .map(|link| Crumb {
+                id: if link.dir == path {
+                    id
+                } else {
+                    self.folders.id(&link.dir)
+                },
+                label: link.label,
+                depth: link.depth,
+                icon: self.icons.link(link.kind),
+            })
+            .collect();
         self.folder = Some(id);
         if let Some(w) = &mut self.watch
             && self.watched.as_ref() != Some(&path)

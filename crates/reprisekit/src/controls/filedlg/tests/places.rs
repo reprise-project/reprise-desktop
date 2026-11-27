@@ -222,6 +222,56 @@ fn look_in_lists_the_pinned_folders_under_the_shown_one() {
     );
 }
 
+#[test]
+fn look_in_picks_the_shown_folders_crumb_and_crumbs_without_an_icon_wear_the_folders() {
+    let mut d = bookmarked();
+    let icon = |w: u32| Some(Canvas::new(w, w));
+    let crumb = |id, label: &str, depth, icon| Crumb {
+        id,
+        label: label.into(),
+        depth,
+        icon,
+    };
+    let mut f = folder(31, Some(30), vec![]);
+    f.crumbs = vec![
+        crumb(30, "Home", 0, icon(3)),
+        crumb(31, "Letters", 1, None),
+        crumb(40, "Computer", 0, icon(4)),
+    ];
+    d.set_listing(f);
+    d.set_folder_icon(icon(2));
+    let rows: Vec<_> = (d.lookin.items.iter())
+        .map(|it| {
+            (
+                it.text.as_str(),
+                it.indent,
+                it.icon.as_ref().map(|c| c.width),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("Home", 0, Some(3)),
+            ("Letters", 1, Some(2)),
+            ("Computer", 0, Some(4)),
+            ("Work", 0, Some(2)),
+            ("Stick", 0, Some(2)),
+        ]
+    );
+    assert_eq!(d.lookin.selected, 1, "the shown folder is picked");
+
+    d.set_crumb_icons(vec![icon(5), None, icon(6)]);
+    let widths: Vec<_> = (d.lookin.items.iter().take(3))
+        .map(|it| it.icon.as_ref().map(|c| c.width))
+        .collect();
+    assert_eq!(widths, [Some(5), Some(2), Some(6)]);
+
+    d.click(R, Some(Hit::LookIn(combo::Hit::Drop)), Mods::default());
+    let ev = d.click(R, Some(Hit::LookIn(combo::Hit::Row(2))), Mods::default());
+    assert!(matches!(ev, Event::NeedListing(40)), "got {ev:?}");
+}
+
 /// The dialog with two pinned folders, the second missing: the places bar scrolled to them and
 /// Look in open on them, under each interface at 1x and 2x.
 #[test]
