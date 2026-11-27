@@ -1,6 +1,7 @@
 use super::Settings;
 use repriseconf::{Key, key as k};
 use reprisekit::controls::hotkey::Chord;
+use reprisekit::keycap::shown_chord;
 use reprisekit::tr;
 use toml_edit::{ArrayOfTables, Item, Table};
 
@@ -92,7 +93,13 @@ pub fn check_program_keys(keys: &str, shown: &str) -> Result<(), String> {
         ));
     }
     if repriseconf::keybind::types_text(keys) {
-        return Err(tr!("model-shortcuts-types-text", shown = shown.to_string()));
+        return Err(tr!(
+            "model-shortcuts-types-text",
+            shown = shown.to_string(),
+            ctrl = shown_chord("Ctrl"),
+            alt = shown_chord("Alt"),
+            super_key = shown_chord("Super")
+        ));
     }
     Ok(())
 }

@@ -28,8 +28,14 @@ pub const CANCEL: &str = "cancel";
 
 fn hint() -> [String; 2] {
     [
-        tr!("shortcutdlg-press-the-keys-in-the-field"),
-        tr!("shortcutdlg-backspace-or-clear-empties-it"),
+        tr!(
+            "shortcutdlg-press-the-keys-in-the-field",
+            keys = reprisekit::keycap::shown_chord("Super+Shift+B")
+        ),
+        tr!(
+            "shortcutdlg-backspace-or-clear-empties-it",
+            backspace = reprisekit::keycap::shown_chord("Backspace")
+        ),
     ]
 }
 

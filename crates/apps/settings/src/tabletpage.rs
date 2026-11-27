@@ -409,10 +409,30 @@ pub fn write(doc: &mut DocumentMut, want: &[PadEntry], base: &[PadEntry]) {
 /// as `[[keybinds]]` spell them.
 pub const CHOICES: &[(&str, Label)] = &[
     ("", || tr!("tabletpage-none")),
-    ("ctrl+z", || tr!("tabletpage-undo-ctrl-z")),
-    ("ctrl+shift+z", || tr!("tabletpage-redo-ctrl-shift-z")),
-    ("ctrl+plus", || tr!("tabletpage-zoom-in-ctrl")),
-    ("ctrl+minus", || tr!("tabletpage-zoom-out-ctrl")),
+    ("ctrl+z", || {
+        tr!(
+            "tabletpage-undo-ctrl-z",
+            keys = reprisekit::keycap::shown_chord("Ctrl+Z")
+        )
+    }),
+    ("ctrl+shift+z", || {
+        tr!(
+            "tabletpage-redo-ctrl-shift-z",
+            keys = reprisekit::keycap::shown_chord("Ctrl+Shift+Z")
+        )
+    }),
+    ("ctrl+plus", || {
+        tr!(
+            "tabletpage-zoom-in-ctrl",
+            keys = reprisekit::keycap::shown_chord("Ctrl++")
+        )
+    }),
+    ("ctrl+minus", || {
+        tr!(
+            "tabletpage-zoom-out-ctrl",
+            keys = reprisekit::keycap::shown_chord("Ctrl+-")
+        )
+    }),
     ("zoom-in", || tr!("tabletpage-magnify")),
     ("zoom-out", || tr!("tabletpage-magnify-less")),
     ("showdesktop", || tr!("tabletpage-show-desktop")),

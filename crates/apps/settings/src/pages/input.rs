@@ -13,6 +13,7 @@ use crate::model::{
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::ListBox;
+use reprisekit::keycap::shown_chord;
 use reprisekit::raster::Rect;
 use reprisekit::tr;
 use reprisekit::trackbar::{self, TrackBar};
@@ -161,7 +162,10 @@ pub fn keyboard(a: Area) -> Form {
         "shortcut_overlay",
         GX,
         280,
-        &tr!("pages-input-hold-super-to-show-them-after"),
+        &tr!(
+            "pages-input-hold-super-to-show-them-after",
+            super_key = shown_chord("Super")
+        ),
     ));
     let (min, max) = repriseconf::config::ShortcutOverlay::DELAY_MS.into_inner();
     items.push(updown(SC_OVERLAY_MS, GX + 218, 276, min as i32, max as i32));
@@ -572,7 +576,13 @@ pub fn text_and_keys(a: Area) -> Form {
     items.push(note(
         "sticky_note",
         88,
-        &tr!("pages-input-shift-ctrl-alt-and-the-super"),
+        &tr!(
+            "pages-input-shift-ctrl-alt-and-the-super",
+            shift = shown_chord("Shift"),
+            ctrl = shown_chord("Ctrl"),
+            alt = shown_chord("Alt"),
+            super_key = shown_chord("Super")
+        ),
     ));
     items.push(Item::check(
         "sticky_keys",
@@ -641,8 +651,16 @@ pub fn text_and_keys(a: Area) -> Form {
             "shortcuts_note",
             Rect::new(X, 418, a.w - 18, 2 * LINE_H),
             Control::Lines(vec![
-                tr!("pages-input-shift-5-times-toggles-stickykeys-right"),
-                tr!("pages-input-slowkeys-and-left-alt-left-shift"),
+                tr!(
+                    "pages-input-shift-5-times-toggles-stickykeys-right",
+                    shift = shown_chord("Shift")
+                ),
+                tr!(
+                    "pages-input-slowkeys-and-left-alt-left-shift",
+                    alt = shown_chord("Alt"),
+                    shift = shown_chord("Shift"),
+                    num_lock = shown_chord("Num Lock")
+                ),
             ]),
         )
         .under_check(),
