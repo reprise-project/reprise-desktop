@@ -236,13 +236,10 @@ pub async fn apply(conn: &Connection, d: &Device, change: Change) -> zbus::Resul
         Change::Authorize => authorize(conn, d).await,
         Change::Always if !d.stored => {
             let m = manager(conn).await?;
-            m.call_with_flags::<_, _, OwnedObjectPath>(
-                "EnrollDevice",
-                interactive,
-                &(&d.uid, AUTO, ""),
-            )
-            .await
-            .map(|_| ())
+            let body = (&d.uid, AUTO, "");
+            let call =
+                m.call_with_flags::<_, _, OwnedObjectPath>("EnrollDevice", interactive, &body);
+            asking(call).await.map(|_| ())
         }
         Change::Always => {
             let p = zbus::proxy::Builder::<Proxy>::new(conn)
@@ -252,12 +249,9 @@ pub async fn apply(conn: &Connection, d: &Device, change: Change) -> zbus::Resul
                 .cache_properties(CacheProperties::No)
                 .build()
                 .await?;
-            p.call_with_flags::<_, _, ()>(
-                "Set",
-                interactive,
-                &(DEVICE, "Policy", Variant::from(AUTO)),
-            )
-            .await?;
+            let body = (DEVICE, "Policy", Variant::from(AUTO));
+            let call = p.call_with_flags::<_, _, ()>("Set", interactive, &body);
+            asking(call).await?;
             if d.status == Status::Connected {
                 authorize(conn, d).await?;
             }
@@ -265,9 +259,9 @@ pub async fn apply(conn: &Connection, d: &Device, change: Change) -> zbus::Resul
         }
         Change::Forget => {
             let m = manager(conn).await?;
-            m.call_with_flags::<_, _, ()>("ForgetDevice", interactive, &(&d.uid,))
-                .await
-                .map(|_| ())
+            let body = (&d.uid,);
+            let call = m.call_with_flags::<_, _, ()>("ForgetDevice", interactive, &body);
+            asking(call).await.map(|_| ())
         }
     }
 }
@@ -280,13 +274,18 @@ async fn authorize(conn: &Connection, d: &Device) -> zbus::Result<()> {
         .cache_properties(CacheProperties::No)
         .build()
         .await?;
-    p.call_with_flags::<_, _, ()>("Authorize", MethodFlags::ALLOW_INTERACTIVE_AUTH, &("",))
-        .await
-        .map(|_| ())
+    let call =
+        p.call_with_flags::<_, _, ()>("Authorize", MethodFlags::ALLOW_INTERACTIVE_AUTH, &("",));
+    asking(call).await.map(|_| ())
 }
 
-/// [`apply`] on a system bus connection of its own, blocking until polkit and boltd answer. The
-/// error is what to tell the user; None when they dismissed the password prompt.
+async fn asking<T>(call: impl Future<Output = zbus::Result<T>>) -> zbus::Result<T> {
+    crate::polkit::asking(crate::polkit::PROMPT_TIMEOUT, true, call).await
+}
+
+/// [`apply`] on a system bus connection of its own, blocking until polkit and boltd answer or
+/// [`crate::polkit::PROMPT_TIMEOUT`] passes. The error is what to tell the user; None when they
+/// dismissed the password prompt.
 pub fn carry_out(d: &Device, change: Change) -> Result<(), Option<String>> {
     let e = match zbus::block_on(async {
         let conn = Connection::system().await?;
