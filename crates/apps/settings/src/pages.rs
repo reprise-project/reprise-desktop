@@ -281,7 +281,11 @@ pub const REMOVE: &str = "remove";
 pub fn list(a: Area) -> Rect {
     Rect::new(X, 44, a.w, 259 + a.dh)
 }
-pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), ("Location", 60)];
+pub const COLUMNS: [(Label, i32); 3] = [
+    (|| tr!("pages-startup-item"), 164),
+    (|| tr!("pages-command"), 114),
+    (|| tr!("pages-location"), 60),
+];
 
 /// The Privacy page's App Permissions list, under the location check and Forget. It takes half
 /// the page's extra height; rows past its foot scroll, so Program takes what the other
@@ -289,8 +293,11 @@ pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), 
 pub fn permissions(a: Area) -> Rect {
     Rect::new(GX, 88, a.gw(), 85 + a.dh / 2)
 }
-pub const PERMISSION_COLUMNS: [(&str, i32); 3] =
-    [("Program", 106), ("Permission", 156), ("Answer", 52)];
+pub const PERMISSION_COLUMNS: [(Label, i32); 3] = [
+    (|| tr!("pages-program"), 106),
+    (|| tr!("pages-permission"), 156),
+    (|| tr!("pages-answer"), 52),
+];
 pub const PRIVACY_LOCATION: &str = "privacy_location";
 /// The Advanced page's debug overlay check and the one indented under it, greyed while the overlay is off.
 pub const DEBUG_OVERLAY: &str = "debug_overlay";
@@ -326,9 +333,9 @@ pub fn show_clearing(page: &mut Form, state: Clearing) {
 
 fn cleared_text(state: Clearing) -> String {
     match state {
-        Clearing::Running => "Clearing...".into(),
-        Clearing::Failed => "Couldn't clear the thumbnails.".into(),
-        Clearing::Done(Cleared { files: 0, .. }) => "Nothing to remove.".into(),
+        Clearing::Running => tr!("pages-clearing"),
+        Clearing::Failed => tr!("pages-couldnt-clear-the-thumbnails"),
+        Clearing::Done(Cleared { files: 0, .. }) => tr!("pages-nothing-to-remove"),
         Clearing::Done(Cleared { files: 1, bytes }) => {
             format!("Removed 1 file, {}.", short_size(bytes))
         }
@@ -345,7 +352,8 @@ fn cleared_text(state: Clearing) -> String {
 pub fn shortcuts(a: Area) -> Rect {
     Rect::new(GX, 298, a.gw(), 74 + a.dh)
 }
-pub const SHORTCUT_COLUMNS: [(&str, i32); 2] = [("Keys", 120), ("Action", 194)];
+pub const SHORTCUT_COLUMNS: [(Label, i32); 2] =
+    [(|| tr!("pages-keys"), 120), (|| tr!("pages-action"), 194)];
 /// The Super-hold delay, the tab stop before the Shortcuts list.
 pub const SC_OVERLAY_MS: &str = "shortcut_overlay_ms";
 pub const SC_ADD: &str = "sc_add";
@@ -473,7 +481,7 @@ pub fn time_edit(id: &'static str, x: i32, y: i32, w: i32) -> Item {
 fn ends_track(
     a: Area,
     ids: [&'static str; 4],
-    name: &'static str,
+    name: &str,
     y: i32,
     value_dy: i32,
     ends: (&str, &str),

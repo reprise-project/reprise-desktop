@@ -1,5 +1,5 @@
 use super::*;
-use crate::pages::thunderbolt::{NO_BOLT, NO_DEVICE, NO_PORT, detail};
+use crate::pages::thunderbolt::{detail, no_bolt, no_device, no_port};
 use reprisebus::bolt::{Device, Found, Status};
 use reprisekit::controls::listbox::ListBox;
 
@@ -76,17 +76,17 @@ fn the_page_greys_until_read_and_says_why_it_is_empty() {
 
     show_thunderbolt(&mut f, None, None, false);
     assert!(list(&f).items.is_empty());
-    assert_eq!(status(&f), NO_BOLT);
+    assert_eq!(status(&f), &no_bolt());
     assert!(!enabled(&f, TB_AUTHORIZE) && !enabled(&f, TB_FORGET));
 
     show_thunderbolt(&mut f, Some(&Found::default()), None, false);
-    assert_eq!(status(&f), NO_PORT);
+    assert_eq!(status(&f), &no_port());
     let empty = Found {
         domains: 1,
         devices: Vec::new(),
     };
     show_thunderbolt(&mut f, Some(&empty), None, false);
-    assert_eq!(status(&f), NO_DEVICE);
+    assert_eq!(status(&f), &no_device());
     show_thunderbolt(&mut f, Some(&found()), None, false);
     assert_eq!(status(&f), "");
 }

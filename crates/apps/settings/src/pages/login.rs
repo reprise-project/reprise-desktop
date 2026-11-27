@@ -1,10 +1,12 @@
 //! The Login Manager page: the login screen and remote logins, held in the machine settings
 //! (`repriselogin::machine`) rather than in `config.toml`.
 
-use super::{Area, GX, edit, group, spin};
+use super::{Area, GX, combo_of, edit, group, spin};
+use crate::model::Label;
 use reprisekit::classic::widgets::{BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 use reprisekit::wallpapers::{Builtin, Design};
 use repriselogin::Interface;
 use repriselogin::machine::{Background, MachineConfig};
@@ -27,7 +29,9 @@ pub const LOGIN_USE_DISPLAYS: &str = "login_use_displays";
 pub const LOGIN_RESET_DISPLAYS: &str = "login_reset_displays";
 
 /// What the fingerprint field shows while the Remote Desktop front has none to give.
-pub const NOT_RUNNING: &str = "Not running";
+pub fn not_running() -> String {
+    tr!("pages-login-not-running")
+}
 
 /// A certificate's SHA-256 fingerprint and SHA-1 thumbprint.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -52,35 +56,41 @@ impl Prints {
     /// What the fields show while the front has no certificate to give.
     pub fn not_running() -> Prints {
         Prints {
-            fingerprint: NOT_RUNNING.into(),
+            fingerprint: not_running().into(),
             thumbprint: String::new(),
         }
     }
 }
 
 /// The interface combo's rows; `None` shows the login screen in the last one used.
-const INTERFACES: [(Option<Interface>, &str); 4] = [
-    (Some(Interface::Classic), "Classic"),
-    (Some(Interface::Blue), "Blue"),
-    (Some(Interface::Glass), "Glass"),
-    (None, "The last one used"),
+const INTERFACES: [(Option<Interface>, Label); 4] = [
+    (Some(Interface::Classic), || tr!("pages-login-classic")),
+    (Some(Interface::Blue), || tr!("pages-login-blue")),
+    (Some(Interface::Glass), || tr!("pages-login-glass")),
+    (None, || tr!("pages-login-the-last-one-used")),
 ];
 
 /// The first row of the automatic logon combo; the listed users follow it.
-const NOBODY: &str = "Nobody";
+fn nobody() -> String {
+    tr!("pages-login-nobody")
+}
 /// The background combo's first row: the interface's own backdrop.
-const DEFAULT_BACKGROUND: &str = "Default";
+fn default_background() -> String {
+    tr!("pages-login-default")
+}
 /// The background row of a picture already copied for the login screen.
-const PICTURE: &str = "Picture";
+fn picture_row() -> String {
+    tr!("pages-login-picture")
+}
 const DROP_ROWS: usize = 8;
 
 /// The end disconnected sessions combo's rows, in minutes; `None` never ends them.
-const END_AFTER: [(Option<u32>, &str); 5] = [
-    (None, "Never"),
-    (Some(15), "15 minutes"),
-    (Some(60), "1 hour"),
-    (Some(240), "4 hours"),
-    (Some(1440), "1 day"),
+const END_AFTER: [(Option<u32>, Label); 5] = [
+    (None, || tr!("pages-login-never")),
+    (Some(15), || tr!("pages-login-15-minutes")),
+    (Some(60), || tr!("pages-login-1-hour")),
+    (Some(240), || tr!("pages-login-4-hours")),
+    (Some(1440), || tr!("pages-login-1-day")),
 ];
 
 /// What greys with remote logins off, [`LOGIN_GROUP_NOTE`] too.
@@ -103,43 +113,57 @@ const COMBO_W: i32 = 150;
 
 /// The page before the machine settings are read; [`show_login`] fills it in.
 pub fn login_manager(a: Area) -> Form {
-    let interfaces: Vec<&str> = INTERFACES.iter().map(|i| i.1).collect();
-    let ends: Vec<&str> = END_AFTER.iter().map(|e| e.1).collect();
     let mut items = vec![
-        group(a, "login_screen_group", 44, 98 + REMOTE_DY, "Login Screen"),
-        Item::label_at("login_interface_label", GX, 70, LABEL_W, "&Interface:"),
-        Item::combo(
-            LOGIN_INTERFACE,
-            COMBO_X,
-            66,
-            a.combo(COMBO_W),
-            &interfaces,
-            interfaces.len(),
+        group(
+            a,
+            "login_screen_group",
+            44,
+            98 + REMOTE_DY,
+            &tr!("pages-login-login-screen"),
         ),
-        Item::check(LOGIN_SHOW_USERS, GX, 92, "&Show users"),
-        Item::check(LOGIN_ANIMATION, COMBO_X, 92, "A&nimate the screen"),
+        Item::label_at(
+            "login_interface_label",
+            GX,
+            70,
+            LABEL_W,
+            &tr!("pages-login-interface"),
+        ),
+        combo_of(LOGIN_INTERFACE, COMBO_X, 66, a.combo(COMBO_W), &INTERFACES),
+        Item::check(LOGIN_SHOW_USERS, GX, 92, &tr!("pages-login-show-users")),
+        Item::check(
+            LOGIN_ANIMATION,
+            COMBO_X,
+            92,
+            &tr!("pages-login-animate-the-screen"),
+        ),
         Item::label_at(
             "login_autologin_label",
             GX,
             116,
             LABEL_W,
-            "Log on a&utomatically as:",
+            &tr!("pages-login-log-on-automatically-as"),
         ),
         Item::combo(
             LOGIN_AUTOLOGIN,
             COMBO_X,
             112,
             a.combo(COMBO_W),
-            &[NOBODY],
+            &[&nobody()],
             1,
         ),
-        Item::label_at("login_background_label", GX, 146, LABEL_W, "&Background:"),
+        Item::label_at(
+            "login_background_label",
+            GX,
+            146,
+            LABEL_W,
+            &tr!("pages-login-background"),
+        ),
         Item::combo(
             LOGIN_BACKGROUND,
             COMBO_X,
             142,
             a.combo(COMBO_W),
-            &[DEFAULT_BACKGROUND],
+            &[&default_background()],
             1,
         ),
         Item::button_at(
@@ -147,7 +171,7 @@ pub fn login_manager(a: Area) -> Form {
             a.gright() - BUTTON_W,
             168,
             BUTTON_W,
-            "Bro&wse...",
+            &tr!("pages-login-browse"),
             true,
         ),
         Item::label_at(LOGIN_SCREENS, GX, 202, a.gw() - 18, ""),
@@ -156,7 +180,7 @@ pub fn login_manager(a: Area) -> Form {
             GX,
             220,
             170,
-            "Use M&y Display Settings",
+            &tr!("pages-login-use-my-display-settings"),
             true,
         ),
         Item::button_at(
@@ -164,7 +188,7 @@ pub fn login_manager(a: Area) -> Form {
             GX + 176,
             220,
             BUTTON_W,
-            "R&eset",
+            &tr!("pages-login-reset"),
             false,
         ),
         group(
@@ -172,13 +196,13 @@ pub fn login_manager(a: Area) -> Form {
             "login_remote_group",
             152 + REMOTE_DY,
             182,
-            "Remote Logins",
+            &tr!("pages-login-remote-logins"),
         ),
         Item::check(
             LOGIN_REMOTE,
             GX,
             174 + REMOTE_DY,
-            "Allow &remote logins to this computer",
+            &tr!("pages-login-allow-remote-logins-to-this-computer"),
         ),
     ];
     items.extend(spin(
@@ -187,7 +211,7 @@ pub fn login_manager(a: Area) -> Form {
         a.gright() - 86,
         174 + REMOTE_DY,
         32,
-        "&Port:",
+        &tr!("pages-login-port"),
         (1, 65535),
     ));
     items.push(
@@ -204,7 +228,7 @@ pub fn login_manager(a: Area) -> Form {
         GX,
         230 + REMOTE_DY,
         LABEL_W,
-        "Sessions at &most:",
+        &tr!("pages-login-sessions-at-most"),
         (1, 50),
     ));
     items.extend([
@@ -213,22 +237,21 @@ pub fn login_manager(a: Area) -> Form {
             GX,
             256 + REMOTE_DY,
             LABEL_W + 60,
-            "End &disconnected sessions after:",
+            &tr!("pages-login-end-disconnected-sessions-after"),
         ),
-        Item::combo(
+        combo_of(
             LOGIN_END_AFTER,
             COMBO_X + 60,
             252 + REMOTE_DY,
             a.combo(COMBO_W - 60),
-            &ends,
-            ends.len(),
+            &END_AFTER,
         ),
         Item::label_at(
             "login_fingerprint_label",
             GX,
             282 + REMOTE_DY,
             LABEL_W,
-            "Certificate &fingerprint:",
+            &tr!("pages-login-certificate-fingerprint"),
         ),
         edit(
             LOGIN_FINGERPRINT,
@@ -242,7 +265,7 @@ pub fn login_manager(a: Area) -> Form {
             GX,
             306 + REMOTE_DY,
             LABEL_W,
-            "&Thumbprint (SHA-1):",
+            &tr!("pages-login-thumbprint-sha-1"),
         ),
         edit(
             LOGIN_THUMBPRINT,
@@ -266,7 +289,7 @@ pub fn login_manager(a: Area) -> Form {
 /// The background combo's rows: the interface's own, each built-in by name, then a built-in
 /// `c` names that they lack, and the picture `picked` names, else the one `c` or the file shows.
 fn background_rows(c: &MachineConfig, picture: Picture<'_>) -> Vec<(Option<Background>, String)> {
-    let mut rows = vec![(None, DEFAULT_BACKGROUND.to_string())];
+    let mut rows = vec![(None, default_background().to_string())];
     rows.extend(Design::ALL.iter().flat_map(|&d| {
         (d.variants().iter()).filter_map(move |v| {
             let b = Builtin::named(d, v)?;
@@ -284,7 +307,7 @@ fn background_rows(c: &MachineConfig, picture: Picture<'_>) -> Vec<(Option<Backg
     let shows = picture.saved || c.login.background == Some(Background::Picture);
     match picture.picked {
         Some(name) => rows.push((Some(Background::Picture), name.to_string())),
-        None if shows => rows.push((Some(Background::Picture), PICTURE.to_string())),
+        None if shows => rows.push((Some(Background::Picture), picture_row())),
         None => {}
     }
     rows
@@ -302,15 +325,15 @@ pub struct Picture<'a> {
 /// What the Screens line says of `c`'s outputs.
 fn screens_note(c: &MachineConfig) -> String {
     match c.outputs.len() {
-        0 => "Screens: automatic".into(),
-        1 => "Screens: 1, from your display settings".into(),
+        0 => tr!("pages-login-screens-automatic"),
+        1 => tr!("pages-login-screens-1-from-your-display-settings"),
         n => format!("Screens: {n}, from your display settings"),
     }
 }
 
 /// The automatic logon combo's users: `users`, then the one `c` names when they lack it.
 fn autologin_rows(c: &MachineConfig, users: &[String]) -> Vec<String> {
-    let mut rows = vec![NOBODY.to_string()];
+    let mut rows = vec![nobody()];
     rows.extend(users.iter().cloned());
     if let Some(u) = &c.login.autologin_user
         && !users.contains(u)
@@ -322,8 +345,7 @@ fn autologin_rows(c: &MachineConfig, users: &[String]) -> Vec<String> {
 
 /// The end disconnected sessions rows, with a row for a time `c` holds that they lack.
 fn end_rows(c: &MachineConfig) -> Vec<(Option<u32>, String)> {
-    let mut rows: Vec<(Option<u32>, String)> =
-        END_AFTER.iter().map(|&(m, l)| (m, l.to_string())).collect();
+    let mut rows: Vec<(Option<u32>, String)> = END_AFTER.iter().map(|&(m, l)| (m, l())).collect();
     let min = c.remote.end_disconnected_after_min;
     if !rows.iter().any(|r| r.0 == min)
         && let Some(n) = min
@@ -460,7 +482,10 @@ pub fn read_login(page: &Form, id: &str, c: &mut MachineConfig) -> bool {
             if let Some((row, text)) = combo(id) {
                 let minutes = match END_AFTER.get(row) {
                     Some(e) => Ok(e.0),
-                    None => text.trim_end_matches(" minutes").parse().map(Some),
+                    None => text
+                        .trim_end_matches(&tr!("pages-login-minutes"))
+                        .parse()
+                        .map(Some),
                 };
                 if let Ok(m) = minutes {
                     c.remote.end_disconnected_after_min = m;

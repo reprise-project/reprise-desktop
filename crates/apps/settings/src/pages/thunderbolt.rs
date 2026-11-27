@@ -7,6 +7,7 @@ use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 
 pub const TB_LIST: &str = "thunderbolt_devices";
 pub const TB_AUTHORIZE: &str = "thunderbolt_authorize";
@@ -17,9 +18,15 @@ const TB_STATUS: &str = "thunderbolt_status";
 /// The list's rows at [`Area::MIN`]; it takes all the page's extra height.
 const ROWS: i32 = 12;
 
-pub const NO_BOLT: &str = "The bolt service isn't available, so no device can be listed.";
-pub const NO_PORT: &str = "This computer has no Thunderbolt or USB4 controller.";
-pub const NO_DEVICE: &str = "No Thunderbolt or USB4 device has been connected.";
+pub fn no_bolt() -> String {
+    tr!("pages-thunderbolt-the-bolt-service-isnt-available-so")
+}
+pub fn no_port() -> String {
+    tr!("pages-thunderbolt-this-computer-has-no-thunderbolt-or")
+}
+pub fn no_device() -> String {
+    tr!("pages-thunderbolt-no-thunderbolt-or-usb4-device-has")
+}
 
 fn list_rect(a: Area) -> Rect {
     let y = 44 + 2 * LINE_H + 8;
@@ -36,8 +43,8 @@ pub fn thunderbolt(a: Area) -> Form {
             TB_NOTE,
             Rect::new(X, 44, a.w, 2 * LINE_H),
             Control::Lines(vec![
-                "A device you authorize can reach this computer's memory.".into(),
-                "Authorize lets it in from now on; Forget makes it ask again.".into(),
+                tr!("pages-thunderbolt-a-device-you-authorize-can-reach"),
+                tr!("pages-thunderbolt-authorize-lets-it-in-from-now"),
             ]),
         ),
         Item::new(
@@ -46,19 +53,24 @@ pub fn thunderbolt(a: Area) -> Form {
             Control::ListBox {
                 list: ListBox {
                     greyed: vec![true],
-                    ..ListBox::new(vec!["Loading...".into()], None)
+                    ..ListBox::new(vec![tr!("pages-thunderbolt-loading")], None)
                 },
                 icons: Vec::new(),
             },
         )
-        .named("Devices"),
+        .named(&tr!("pages-thunderbolt-devices")),
         button(
             TB_AUTHORIZE,
             list.right() - 2 * BUTTON_W - BUTTON_GAP,
             y,
-            "&Authorize",
+            &tr!("pages-thunderbolt-authorize"),
         ),
-        button(TB_FORGET, list.right() - BUTTON_W, y, "&Forget"),
+        button(
+            TB_FORGET,
+            list.right() - BUTTON_W,
+            y,
+            &tr!("pages-thunderbolt-forget"),
+        ),
         Item::label_at(TB_STATUS, X, y + 30, a.w, ""),
     ]);
     for id in [TB_AUTHORIZE, TB_FORGET] {
@@ -70,16 +82,16 @@ pub fn thunderbolt(a: Area) -> Form {
 /// A row's dimmed second text: how the device stands now, and whether boltd authorizes it itself.
 pub fn detail(d: &Device) -> String {
     let now = match d.status {
-        Status::Connected => "Waiting for authorization",
-        Status::Authorized => "Connected",
-        Status::Disconnected => "Not connected",
-        Status::Connecting => "Connecting...",
-        Status::Authorizing => "Authorizing...",
-        Status::AuthError => "Authorization failed",
+        Status::Connected => &tr!("pages-thunderbolt-waiting-for-authorization"),
+        Status::Authorized => &tr!("pages-thunderbolt-connected"),
+        Status::Disconnected => &tr!("pages-thunderbolt-not-connected"),
+        Status::Connecting => &tr!("pages-thunderbolt-connecting"),
+        Status::Authorizing => &tr!("pages-thunderbolt-authorizing"),
+        Status::AuthError => &tr!("pages-thunderbolt-authorization-failed"),
         Status::Unknown => "",
     };
     match (d.auto, now.is_empty()) {
-        (true, true) => "Always authorized".into(),
+        (true, true) => tr!("pages-thunderbolt-always-authorized"),
         (true, false) => format!("{now}, always authorized"),
         (false, _) => now.into(),
     }
@@ -97,10 +109,10 @@ pub fn show_thunderbolt(page: &mut Form, found: Option<&Found>, shown: Option<&F
     let devices = found.map_or(&[][..], |f| &f.devices[..]);
     let shown = shown.map_or(devices, |f| &f.devices[..]);
     let status = match found {
-        None => NO_BOLT,
-        Some(f) if f.domains == 0 && devices.is_empty() => NO_PORT,
-        Some(_) if devices.is_empty() => NO_DEVICE,
-        Some(_) => "",
+        None => no_bolt(),
+        Some(f) if f.domains == 0 && devices.is_empty() => no_port(),
+        Some(_) if devices.is_empty() => no_device(),
+        Some(_) => String::new(),
     };
     let picked = selected(page, shown).map(|d| d.uid.clone());
     if let Some(Control::ListBox { list, .. }) = page.item_mut(TB_LIST).map(|i| &mut i.control) {
@@ -117,7 +129,7 @@ pub fn show_thunderbolt(page: &mut Form, found: Option<&Found>, shown: Option<&F
     let d = selected(page, devices);
     page.set_enabled(TB_AUTHORIZE, !busy && d.is_some_and(can_authorize));
     page.set_enabled(TB_FORGET, !busy && d.is_some_and(|d| d.stored));
-    page.set_text(TB_STATUS, status);
+    page.set_text(TB_STATUS, &status);
 }
 
 /// The device picked in the list, if the list shows `devices`.

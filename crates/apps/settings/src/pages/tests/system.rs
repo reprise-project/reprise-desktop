@@ -469,7 +469,7 @@ fn privacy_holds_app_permissions_history_and_the_sharing_border() {
         privacy(tall).item("sharing_group").unwrap().rect.bottom(),
         449 + 41
     );
-    assert_eq!(PERMISSION_COLUMNS[2].0, "Answer");
+    assert_eq!(PERMISSION_COLUMNS[2].0(), "Answer");
     inside_page(&s, p);
 }
 
@@ -1164,14 +1164,14 @@ fn the_print_row_shows_the_thumbprint_once_sha1_is_picked() {
     let mut page = remote_desktop(Area::MIN, Some(&s), true, None);
     assert_eq!(page.edit_text("fingerprint"), s.fingerprint);
     assert_eq!(
-        page.item("fingerprint").unwrap().name,
+        page.item("fingerprint").unwrap().name.as_deref(),
         Some("SHA-256 fingerprint")
     );
     page.set_combo("print", 1);
     show_remote(&mut page, Some(&s), true, None, None, None);
     assert_eq!(page.edit_text("fingerprint"), s.thumbprint);
     assert_eq!(
-        page.item("fingerprint").unwrap().name,
+        page.item("fingerprint").unwrap().name.as_deref(),
         Some("SHA-1 thumbprint")
     );
     let machine = prints();

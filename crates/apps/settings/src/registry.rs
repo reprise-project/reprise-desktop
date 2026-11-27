@@ -637,7 +637,7 @@ mod tests {
                 | C::Memo(_)
                 | C::IconList(_)
                 | C::Arrange(_)
-                | C::Progress { .. } => it.name.map(str::to_string).or(label),
+                | C::Progress { .. } => it.name.clone().or(label),
             };
             label = None;
             out.extend(named.map(|l| (it.id, l)));
