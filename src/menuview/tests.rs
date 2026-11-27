@@ -760,3 +760,61 @@ fn a_start_folder_too_wide_for_columns_scrolls_by_keys_wheel_and_arrows() {
         "the up arrow scrolls a row"
     );
 }
+
+#[test]
+fn every_window_menu_and_window_list_row_with_an_arrow_opens_a_submenu() {
+    use crate::winmenu::{OpenHereState, TabRows, WindowMenuState};
+    let arrows = |items: &[MenuItem]| -> Vec<bool> {
+        let arrow = |i: &MenuItem| matches!(i, MenuItem::Entry { submenu: true, .. });
+        items.iter().map(arrow).collect()
+    };
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let st = WindowMenuState {
+        maximized: false,
+        minimized: false,
+        from_taskbar: true,
+        owned: false,
+        resizable: true,
+        on_top: false,
+        open_here: OpenHereState::Off,
+        mini: false,
+        desktops: 2,
+        sticky: false,
+        tabs: Some(TabRows {
+            targets: true,
+            grouped: false,
+        }),
+        shade: Some(false),
+    };
+    let (items, rows) = crate::winmenu::with_recent(crate::winmenu::window_menu(st, None));
+    let window = WindowId::next();
+    let kind = MenuKind::Window { window, rows };
+    (h.state).push_context_menu((10, 10), items.clone(), kind, MenuFrom::Elsewhere);
+    let opens: Vec<bool> = (0..items.len())
+        .map(|i| h.state.row_opens_submenu(0, i))
+        .collect();
+    assert_eq!(
+        opens,
+        arrows(&items),
+        "Recent Files, Move to Desktop and Add to Tabs of open submenus"
+    );
+    h.state.close_menu();
+
+    let titles = ["a".to_string(), "b".to_string()];
+    let (items, rows) = crate::taskbar::window_list(&titles, 2, true);
+    let kind = MenuKind::WindowList {
+        windows: vec![window, WindowId::next()],
+        rows,
+        button: 0,
+    };
+    (h.state).push_context_menu((10, 10), items.clone(), kind, MenuFrom::Elsewhere);
+    let opens: Vec<bool> = (0..items.len())
+        .map(|i| h.state.row_opens_submenu(0, i))
+        .collect();
+    assert_eq!(
+        opens,
+        arrows(&items),
+        "Recent Files and Move to Desktop open submenus"
+    );
+}

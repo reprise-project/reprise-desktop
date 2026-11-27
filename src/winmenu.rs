@@ -33,6 +33,12 @@ pub enum WindowMenuRow {
     RecentMenu,
 }
 
+impl WindowMenuRow {
+    pub fn opens_submenu(self) -> bool {
+        matches!(self, Self::MoveToMenu | Self::TabsOfMenu | Self::RecentMenu)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TabRows {
     /// Another window could take this one as a tab: Add to Tabs of opens a submenu of them.
@@ -203,7 +209,7 @@ pub fn window_menu(
                         || (row == MiniView && state.mini)
                         || (row == AllDesktops && state.sticky),
                 )
-                .submenu(matches!(row, MoveToMenu | TabsOfMenu))
+                .submenu(row.opens_submenu())
                 .mnemonic(mnemonic)
                 .bold(row == default)
                 .shortcut(shortcut)
