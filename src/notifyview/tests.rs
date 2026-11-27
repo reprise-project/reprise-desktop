@@ -282,6 +282,44 @@ fn a_balloon_arriving_over_a_focused_modal_dialog_waits_until_it_loses_the_focus
 }
 
 #[test]
+fn over_a_focused_modal_dialog_queued_balloons_wait_and_a_shown_one_updates_in_place() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let paint = h.map_toplevel(&mut c, "paint", 400, 300);
+    let other = h.map_toplevel(&mut c, "notepad", 300, 200);
+    let full = cap(&h.state) as u32;
+    for id in 1..=full + 1 {
+        show(&mut h.state, note(id, &format!("App{id}")));
+    }
+    assert_eq!(h.state.notify.queue.len(), 1, "one waits for a slot");
+    let save = h.map_modal(&mut c, "paint", paint, (300, 200));
+    assert_eq!(h.state.focused, Some(save.id));
+    let mut update = note(1, "App1");
+    update.summary = "updated".into();
+    show(&mut h.state, update);
+    let summary_of_1 = (h.state.notify.stack.iter()).find_map(|b| {
+        b.item
+            .note()
+            .filter(|n| n.id == 1)
+            .map(|n| n.summary.clone())
+    });
+    assert_eq!(summary_of_1.as_deref(), Some("updated"), "updated in place");
+    assert!(h.state.notify.log.held.is_empty());
+    close(&mut h.state, 1, REASON_EXPIRED);
+    assert_eq!(
+        h.state.notify.queue.len(),
+        1,
+        "the queued one stays queued over the dialog"
+    );
+    h.state.focus_window(other.id);
+    assert!(
+        h.state.notify.queue.is_empty(),
+        "it comes up once the dialog loses the focus"
+    );
+}
+
+#[test]
 fn the_queue_drops_its_oldest_past_the_cap() {
     let mut q = VecDeque::new();
     let mut dropped = Vec::new();

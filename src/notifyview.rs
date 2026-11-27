@@ -294,7 +294,14 @@ pub fn suppress_changed(state: &mut State) {
         && !s.automatic()
         && !crate::notifycenter::is_open(state)
         && state.focused_modal().is_none();
-    if !idle || state.notify.log.held.is_empty() {
+    if !idle {
+        return;
+    }
+    if state.notify.log.held.is_empty() {
+        // The queue a modal dialog kept back.
+        if !state.notify.queue.is_empty() {
+            display_next(state);
+        }
         return;
     }
     for n in state.notify.log.release() {
@@ -338,7 +345,7 @@ pub fn config_changed(state: &mut State) {
 /// Disturb or `[notifications] no_balloons` holds it back or the history is open, where it shows as
 /// a row instead. One the automatic Do Not Disturb holds back waits to show until it ends, and so
 /// does one arriving while a modal dialog has the focus, unless it is critical or transient. A
-/// replace swaps in place, keeping a reply being typed.
+/// replace swaps in place, keeping a reply being typed, over a modal dialog too.
 pub fn show(state: &mut State, n: Notification) {
     let looking = crate::notifycenter::is_open(state);
     if !n.transient {
@@ -350,8 +357,12 @@ pub fn show(state: &mut State, n: Notification) {
     let s = suppress(state);
     let allowed = state.config.notifications.shows_balloons(&n.key);
     let shows = shows_balloon(&n, s, allowed);
-    let waits =
-        shows && n.urgency != Urgency::Critical && !n.transient && state.focused_modal().is_some();
+    let on_screen = state.notify.stack.iter().any(|b| b.item.is(n.id));
+    let waits = shows
+        && n.urgency != Urgency::Critical
+        && !n.transient
+        && !on_screen
+        && state.focused_modal().is_some();
     if looking || !shows || waits {
         drop_balloon(state, n.id);
         if !looking && (waits || s.holds(&n, allowed)) {
