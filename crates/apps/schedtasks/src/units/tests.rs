@@ -157,6 +157,11 @@ fn each_schedule_maps_to_one_timer_setting() {
         .setting(),
         "OnCalendar=2027-01-31 00:30:00"
     );
+    assert_eq!(Schedule::Hourly.setting(), "OnCalendar=*-*-* *:00:00");
+    assert_eq!(
+        Schedule::Minutes { every: 15 }.setting(),
+        "OnCalendar=*-*-* *:00/15:00"
+    );
     assert_eq!(Schedule::AtLogOn.setting(), "OnStartupSec=30s");
 }
 

@@ -1,5 +1,5 @@
 //! New Task: the box behind New Task.... Create stays greyed until the fields make a task; a line
-//! says what is missing, and another shows the timer setting the schedule writes.
+//! says what is missing, and another the schedule in words.
 
 use crate::model;
 use crate::units::{self, NewTask, Problem, Schedule, WEEKDAYS};
@@ -35,6 +35,8 @@ pub const CANCEL: &str = "cancel";
 /// The Run combo's rows, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
+    Minutes(u32),
+    Hourly,
     Daily,
     Weekly,
     Monthly,
@@ -42,13 +44,43 @@ enum Kind {
     AtLogOn,
 }
 
-const KINDS: [Kind; 5] = [
+const KINDS: [Kind; 10] = [
+    Kind::Minutes(5),
+    Kind::Minutes(10),
+    Kind::Minutes(15),
+    Kind::Minutes(30),
+    Kind::Hourly,
     Kind::Daily,
     Kind::Weekly,
     Kind::Monthly,
     Kind::Once,
     Kind::AtLogOn,
 ];
+
+fn kind_row(kind: Kind) -> usize {
+    KINDS.iter().position(|k| *k == kind).unwrap_or(0)
+}
+
+impl Kind {
+    fn label(self) -> String {
+        match self {
+            Kind::Minutes(n) => tr!("kind-minutes", n = n as i64),
+            Kind::Hourly => tr!("kind-hourly"),
+            Kind::Daily => tr!("kind-daily"),
+            Kind::Weekly => tr!("kind-weekly"),
+            Kind::Monthly => tr!("kind-monthly"),
+            Kind::Once => tr!("kind-once"),
+            Kind::AtLogOn => tr!("kind-logon"),
+        }
+    }
+
+    fn timed(self) -> bool {
+        matches!(
+            self,
+            Kind::Daily | Kind::Weekly | Kind::Monthly | Kind::Once
+        )
+    }
+}
 
 /// A local date and time: (year, month, day, hour, minute).
 pub type Local = (i32, u32, u32, u32, u32);
@@ -66,6 +98,7 @@ pub struct NewTaskBox {
     pub form: Form,
     /// The time now ([`now`]), which a once task must come after.
     clock: fn() -> Local,
+    twelve: bool,
     /// The Run row the Day combo holds rows for, and the day picked for weekly and monthly.
     shown: Kind,
     weekday: usize,
@@ -123,13 +156,7 @@ fn parse_date(s: &str) -> Option<(i32, u32, u32)> {
 impl NewTaskBox {
     /// The box reading the time from `clock`, its time field in 12-hour form when `twelve`.
     pub fn new(clock: fn() -> Local, twelve: bool) -> NewTaskBox {
-        let kinds = [
-            tr!("kind-daily"),
-            tr!("kind-weekly"),
-            tr!("kind-monthly"),
-            tr!("kind-once"),
-            tr!("kind-logon"),
-        ];
+        let kinds = KINDS.map(Kind::label);
         let kinds: Vec<&str> = kinds.iter().map(String::as_str).collect();
         let (y, mo, d) = next_day(clock());
         let row = |i: i32| X + i * PITCH;
@@ -190,10 +217,12 @@ impl NewTaskBox {
         let mut b = NewTaskBox {
             form: Form::new(items),
             clock,
+            twelve,
             shown: Kind::AtLogOn,
             weekday: 0,
             month_day: 0,
         };
+        b.form.set_combo(KIND, kind_row(Kind::Daily));
         b.form
             .show_edit_text(DATE, &format!("{y:04}-{mo:02}-{d:02}"));
         b.form.focus_id(NAME);
@@ -202,8 +231,8 @@ impl NewTaskBox {
     }
 
     fn kind(&self) -> Kind {
-        let i = self.form.combo_selected(KIND).unwrap_or(0);
-        KINDS.get(i).copied().unwrap_or(Kind::Daily)
+        let i = self.form.combo_selected(KIND);
+        i.and_then(|i| KINDS.get(i)).copied().unwrap_or(Kind::Daily)
     }
 
     fn at(&self) -> (u32, u32) {
@@ -233,6 +262,8 @@ impl NewTaskBox {
                 }
                 Schedule::Once { date, at }
             }
+            Kind::Hourly => Schedule::Hourly,
+            Kind::Minutes(every) => Schedule::Minutes { every },
             Kind::AtLogOn => Schedule::AtLogOn,
         })
     }
@@ -285,9 +316,10 @@ impl NewTaskBox {
         f.set_enabled("day_label", matches!(kind, Kind::Weekly | Kind::Monthly));
         f.set_enabled(DATE, kind == Kind::Once);
         f.set_enabled("date_label", kind == Kind::Once);
-        f.set_enabled(TIME, kind != Kind::AtLogOn);
-        f.set_enabled("time_label", kind != Kind::AtLogOn);
-        let setting = self.schedule().map(|s| s.setting()).unwrap_or_default();
+        f.set_enabled(TIME, kind.timed());
+        f.set_enabled("time_label", kind.timed());
+        let setting = self.schedule().map(|s| words(&s, self.twelve));
+        let setting = setting.unwrap_or_default();
         let task = self.task();
         let hint = match &task {
             Err(why) => why.clone(),
@@ -330,6 +362,14 @@ impl NewTaskBox {
         };
         self.sync();
         out
+    }
+}
+
+/// `s` as the list's Schedule column words it.
+fn words(s: &Schedule, twelve: bool) -> String {
+    match s.calendar() {
+        Some(spec) => model::calendar(&spec, twelve),
+        None => model::after("OnStartupUSec", units::LOGON_DELAY_S * 1_000_000),
     }
 }
 
@@ -379,8 +419,8 @@ mod tests {
         b.sync();
     }
 
-    fn pick(b: &mut NewTaskBox, kind: usize) {
-        b.form.set_combo(KIND, kind);
+    fn pick(b: &mut NewTaskBox, kind: Kind) {
+        b.form.set_combo(KIND, kind_row(kind));
         b.sync();
     }
 
@@ -443,36 +483,44 @@ mod tests {
     }
 
     #[test]
-    fn each_run_row_shows_its_setting_and_greys_the_rest() {
+    fn each_run_row_shows_its_schedule_and_greys_the_rest() {
         let mut b = filled();
-        assert_eq!(label(&b, SETTING), "OnCalendar=*-*-* 09:00:00");
+        let day = |d| model::day_name(d).unwrap();
+        assert_eq!(label(&b, SETTING), "Every day at 9:00", "Daily at first");
         assert!(!enabled(&b, DAY) && !enabled(&b, DATE) && enabled(&b, TIME));
-        pick(&mut b, 1);
+        pick(&mut b, Kind::Weekly);
         assert!(enabled(&b, DAY));
         b.form.set_combo(DAY, 2);
         b.sync();
-        assert_eq!(label(&b, SETTING), "OnCalendar=Wed *-*-* 09:00:00");
-        pick(&mut b, 2);
-        assert_eq!(label(&b, SETTING), "OnCalendar=*-*-01 09:00:00");
+        assert_eq!(label(&b, SETTING), format!("Every {} at 9:00", day("Wed")));
+        pick(&mut b, Kind::Monthly);
+        assert_eq!(label(&b, SETTING), "Day 1 of every month at 9:00");
         b.form.set_combo(DAY, 14);
         b.sync();
-        assert_eq!(label(&b, SETTING), "OnCalendar=*-*-15 09:00:00");
-        pick(&mut b, 1);
+        assert_eq!(label(&b, SETTING), "Day 15 of every month at 9:00");
+        pick(&mut b, Kind::Weekly);
         assert_eq!(
             label(&b, SETTING),
-            "OnCalendar=Wed *-*-* 09:00:00",
+            format!("Every {} at 9:00", day("Wed")),
             "the weekday picked comes back"
         );
-        pick(&mut b, 3);
+        pick(&mut b, Kind::Once);
         assert!(enabled(&b, DATE) && !enabled(&b, DAY));
         assert_eq!(
-            label(&b, SETTING),
+            b.schedule().unwrap().setting(),
             "OnCalendar=2026-11-27 09:00:00",
             "tomorrow"
         );
-        pick(&mut b, 4);
+        pick(&mut b, Kind::Hourly);
+        assert!(!enabled(&b, TIME) && !enabled(&b, DAY) && !enabled(&b, DATE));
+        assert_eq!(label(&b, SETTING), "Every hour");
+        pick(&mut b, Kind::Minutes(15));
+        assert!(!enabled(&b, TIME));
+        assert_eq!(label(&b, SETTING), "Every 15 minutes");
+        assert_eq!(b.schedule(), Ok(Schedule::Minutes { every: 15 }));
+        pick(&mut b, Kind::AtLogOn);
         assert!(!enabled(&b, TIME) && !enabled(&b, DATE));
-        assert_eq!(label(&b, SETTING), "OnStartupSec=30s");
+        assert_eq!(label(&b, SETTING), "30 s after logging on");
         assert_eq!(
             label(&b, HINT),
             "The task also runs once now, when it is made."
@@ -491,7 +539,7 @@ mod tests {
     #[test]
     fn a_once_task_takes_a_real_date_still_to_come() {
         let mut b = filled();
-        pick(&mut b, 3);
+        pick(&mut b, Kind::Once);
         for (date, hint) in [
             ("2026-02-29", "Type the date as 2026-12-31."),
             ("27.11.2026", "Type the date as 2026-12-31."),
