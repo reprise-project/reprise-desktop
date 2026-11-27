@@ -81,34 +81,40 @@ impl State {
         })
     }
 
-    /// Whether the program of window `w`'s task button had recent files at the last read; asks for
-    /// another.
+    /// Whether the program of window `w`'s task button had pinned or recent files at the last
+    /// read; asks for another.
     pub(crate) fn has_recent(&mut self, w: WindowId) -> bool {
         let Some((target, _)) = self.jump_target_of(w) else {
             return false;
         };
         self.refresh_recent();
-        !self.jump_recent(&target).is_empty()
+        !self.jump_files(&target).0.is_empty()
     }
 
-    /// The Recent Files submenu of `target` on `output`: its recent files with their icons, or a
-    /// greyed (Empty) once none are left.
+    /// The Recent Files submenu of `target` on `output`: its files with their icons, under
+    /// Pinned and Recent headings when some are pinned, or a greyed (Empty) once none are left.
     pub(crate) fn recent_menu(
         &mut self,
         target: &JumpTarget,
         output: &Output,
     ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>, RowIcons) {
-        let recent = self.jump_recent(target);
-        let [_, files, _] = crate::taskbar::jump_sections(&recent, 0, &[]);
+        let (files, pinned) = self.jump_files(target);
+        let [pins, recent, _] = crate::taskbar::jump_sections(&files, pinned, &[]);
         let px = self.context_icon_px(output);
         let mut waits = RowIcons::default();
         let entry = target.entry.as_ref();
         let (mut items, mut rows) = (Vec::new(), Vec::new());
-        for (n, (label, row)) in files.rows.into_iter().enumerate() {
-            let icon = crate::taskbar::jump_icon(entry, &row)
-                .and_then(|name| self.menu_icon(n, name, px, &mut waits));
-            items.push(MenuItem::entry(label).icon(icon));
-            rows.push(Some(row));
+        for section in [pins, recent] {
+            if pinned > 0 && !section.rows.is_empty() {
+                items.push(MenuItem::heading(section.title));
+                rows.push(None);
+            }
+            for (label, row) in section.rows {
+                let icon = crate::taskbar::jump_icon(entry, &row)
+                    .and_then(|name| self.menu_icon(items.len(), name, px, &mut waits));
+                items.push(MenuItem::entry(label).icon(icon));
+                rows.push(Some(row));
+            }
         }
         if items.is_empty() {
             items.push(MenuItem::entry(tr!("start-empty")).enabled(false));
@@ -123,13 +129,15 @@ impl State {
             .map(Arc::unwrap_or_clone)
     }
 
-    /// The recent files a jump list for `target` lists, from the last recent read and check.
-    pub(crate) fn jump_recent(&mut self, target: &JumpTarget) -> Vec<PathBuf> {
+    /// The files a jump list for `target` lists ([`crate::jumppins::files_for`]) and how many
+    /// lead as pinned, from the last recent read and check.
+    fn jump_files(&self, target: &JumpTarget) -> (Vec<PathBuf>, usize) {
         match &target.entry {
-            Some(e) if self.config.recent_files => {
-                self.recent.for_app(crate::taskbar::JUMP_RECENT, e)
+            Some(e) => {
+                let on = self.config.recent_files;
+                crate::jumppins::files_for(&self.jump_pins, &self.recent, on, e)
             }
-            _ => Vec::new(),
+            None => (Vec::new(), 0),
         }
     }
 
@@ -139,13 +147,7 @@ impl State {
         target: &JumpTarget,
         output: &Output,
     ) -> (Vec<MenuItem>, Vec<Option<JumpRow>>, RowIcons) {
-        let (files, pinned) = match &target.entry {
-            Some(e) => {
-                let on = self.config.recent_files;
-                crate::jumppins::files_for(&self.jump_pins, &self.recent, on, e)
-            }
-            None => (Vec::new(), 0),
-        };
+        let (files, pinned) = self.jump_files(target);
         let titles: Vec<String> = (target.windows.iter())
             .filter_map(|&w| self.win(w))
             .map(|w| w.title())
@@ -276,9 +278,10 @@ mod tests {
     use reprisekit::controls::menu::MenuItem;
 
     /// With `[taskbar] pinned` off, a task button's window menu opens on Recent Files when the
-    /// program has recent files, its submenu listing them; another program's menu has no such row.
+    /// program has pinned or recent files, its submenu listing them, under Pinned and Recent
+    /// headings once one is pinned; a program with neither has no such row.
     #[test]
-    fn a_task_buttons_window_menu_offers_the_programs_recent_files() {
+    fn a_task_buttons_window_menu_offers_the_programs_pinned_and_recent_files() {
         let dir = std::env::temp_dir().join(format!("reprise-recent-menu-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let notes = dir.join("notes.txt");
@@ -342,6 +345,23 @@ mod tests {
             crate::menuview::MenuKind::JumpList { rows, .. }
                 if rows[..] == [Some(crate::taskbar::JumpRow::Recent(notes.clone()))]
         ));
+        let plan = dir.join("plan.txt");
+        h.state.jump_pins.pin("mail.desktop", &plan);
+        h.state.jump_pins.pin("paint.desktop", &plan);
+        h.state.open_window_menu(mail.id, (100, 700), true);
+        h.state.open_submenu(0, 0);
+        assert_eq!(
+            labels(&h.state.menus[1]),
+            ["Pinned", "plan.txt", "Recent", "notes.txt"]
+        );
+        h.state.open_window_menu(paint.id, (100, 700), true);
+        assert_eq!(
+            labels(&h.state.menus[0])[0],
+            "Recent Files",
+            "a pinned file alone"
+        );
+        h.state.open_submenu(0, 0);
+        assert_eq!(labels(&h.state.menus[1]), ["Pinned", "plan.txt"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
