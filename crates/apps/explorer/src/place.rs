@@ -245,7 +245,8 @@ impl Place {
     }
 
     /// Typed address-bar text or a command-line place: "Computer", "Recycle Bin" and "Network"
-    /// (case-insensitive), the text the address bar shows for `here`, a mounted share's or
+    /// or their URIs `computer:`, `trash:` and `network:` (`computer:///` and so on), all
+    /// case-insensitive, the text the address bar shows for `here`, a mounted share's or
     /// device's name with a path below it, `~`/`~/...`, or an absolute existing directory.
     pub fn parse_address(s: &str, here: Option<&Place>) -> Option<Place> {
         let (place, dir) = Self::read_address(s, here, &[])?;
@@ -261,12 +262,15 @@ impl Place {
     ) -> Option<(Place, Option<PathBuf>)> {
         let s = s.trim();
         let lower = s.to_lowercase();
-        for (name, place) in [
-            ("computer", Place::Computer),
-            ("recycle bin", Place::RecycleBin),
-            ("network", Place::network()),
+        let scheme = (lower.split_once(':'))
+            .filter(|(_, rest)| rest.bytes().all(|b| b == b'/'))
+            .map(|(scheme, _)| scheme);
+        for (name, uri, place) in [
+            ("computer", "computer", Place::Computer),
+            ("recycle bin", "trash", Place::RecycleBin),
+            ("network", "network", Place::network()),
         ] {
-            if lower == name {
+            if lower == name || scheme == Some(uri) {
                 return Some((place, None));
             }
         }
@@ -959,6 +963,30 @@ mod tests {
             Place::parse_address(&home_label(), Some(&home)),
             Some(Place::Home)
         );
+    }
+
+    #[test]
+    fn parse_address_maps_place_uris_to_their_places() {
+        for (uri, place) in [
+            ("computer:", Place::Computer),
+            ("computer:///", Place::Computer),
+            ("Computer:///", Place::Computer),
+            ("trash:", Place::RecycleBin),
+            ("TRASH:///", Place::RecycleBin),
+            ("network:", Place::network()),
+            ("network:///", Place::network()),
+        ] {
+            assert_eq!(Place::parse_address(uri, None), Some(place), "{uri}");
+        }
+        for not in [
+            "computer:///x",
+            "trash:/a",
+            "recycle bin:",
+            "home:",
+            "trash",
+        ] {
+            assert_eq!(Place::parse_address(not, None), None, "{not}");
+        }
     }
 
     #[test]
