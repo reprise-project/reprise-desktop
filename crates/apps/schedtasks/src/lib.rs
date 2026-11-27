@@ -150,6 +150,7 @@ struct SchedTasks {
     /// The timer New Task just made, picked once the list shows it.
     want_pick: Option<String>,
     big_icon: Option<Canvas>,
+    warn_icon: Option<Canvas>,
     is_12h: bool,
     /// The main window had its first configure ([`SchedTasks::widened`]).
     configured: bool,
@@ -211,6 +212,7 @@ impl SchedTasks {
             asking: Asks::default(),
             want_pick: None,
             big_icon: None,
+            warn_icon: None,
             is_12h: reprisefs::locale::is_12h(),
             configured: false,
         }
@@ -367,14 +369,15 @@ impl SchedTasks {
             tr!("delete-title"),
             Fields {
                 text: tr!("delete-text", name = t.name(), unit = t.timer.as_str()),
-                icon: None,
+                icon: self.warn_icon.clone(),
                 buttons: vec![tr!("delete-yes"), tr!("delete-no")],
                 default: 1,
                 min_text_h: None,
                 min_w: 0,
                 max_w: repriseapp::dialog_max_w(),
             },
-        );
+        )
+        .sounding(repriseapp::sound::Event::Warning);
         self.asking.ask(b, DeleteAsk(t.timer.clone()));
     }
 
@@ -731,6 +734,7 @@ impl SchedTasks {
         if self.list.view.rows.icon.is_none() {
             self.list.view.rows.icon = ctx.icons.get(ICON, 16);
             self.big_icon = ctx.icons.get(ICON, 32);
+            self.warn_icon = ctx.icons.get("dialog-warning", 32);
             self.browse_host.icons.prime(&mut ctx.icons);
         }
     }
