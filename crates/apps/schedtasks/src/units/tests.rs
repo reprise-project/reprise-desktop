@@ -190,7 +190,7 @@ fn the_files_carry_the_marker_name_command_and_schedule() {
         texts(&odd)
             .unwrap()
             .0
-            .contains("\nDescription=100%% done \n")
+            .contains("\nDescription=100%% done\n")
     );
     let broken = NewTask {
         name: "a\nExecStart=/bin/rm".into(),
@@ -431,4 +431,136 @@ fn a_path_entry_with_dot_dot_is_passed_over_for_the_next() {
     let up = bin.join("../bin");
     let path = std::env::join_paths([&up, &bin]).unwrap();
     assert_eq!(find_program("tool", Some(&path)), Some(tool));
+}
+
+#[test]
+fn a_pair_new_task_wrote_reads_back_as_its_task() {
+    let schedules = [
+        Schedule::Minutes { every: 5 },
+        Schedule::Minutes { every: 30 },
+        Schedule::Hourly,
+        Schedule::Daily { at: (0, 0) },
+        Schedule::Daily { at: (23, 59) },
+        Schedule::Weekly { day: 6, at: (9, 5) },
+        Schedule::Monthly {
+            day: 31,
+            at: (12, 0),
+        },
+        Schedule::Once {
+            date: (2027, 1, 2),
+            at: (8, 30),
+        },
+        Schedule::AtLogOn,
+    ];
+    for schedule in schedules {
+        let t = NewTask {
+            name: "100% \"done\"".into(),
+            args: args(&["-c", "echo \"%h\" \\ 'x'", ""]),
+            schedule,
+            ..task()
+        };
+        let (service, timer) = texts(&t).unwrap();
+        assert_eq!(parse(&service, &timer), Some(t), "{schedule:?}");
+    }
+}
+
+#[test]
+fn a_pair_changed_by_hand_does_not_read_as_a_task() {
+    let (service, timer) = texts(&task()).unwrap();
+    for (service, timer) in [
+        (
+            service.replace("Type=oneshot", "Type=simple"),
+            timer.clone(),
+        ),
+        (
+            service.clone() + "ExecStart=:\"/bin/true\"\n",
+            timer.clone(),
+        ),
+        (service.replace("ExecStart=:", "ExecStart="), timer.clone()),
+        (service.clone(), timer.replace("09:05:00", "09:05:30")),
+        (service.clone(), timer.replace("*-*-* 09", "*-*-1 09")),
+        (
+            service.clone(),
+            timer.replace("OnCalendar=*-*-* 09:05:00", "OnCalendar=*-*-* *:00/7:00"),
+        ),
+        (
+            service.clone(),
+            timer.replace("OnCalendar=*-*-* 09:05:00", "OnStartupSec=1min"),
+        ),
+    ] {
+        assert_eq!(parse(&service, &timer), None, "{service}{timer}");
+    }
+}
+
+#[test]
+fn the_arguments_field_reads_back_the_words_it_shows() {
+    let words = args(&[
+        "-a",
+        "My Photos",
+        "",
+        "it's",
+        "say \"hi\"",
+        "back\\slash",
+        "%h",
+    ]);
+    let shown = join_args(&words);
+    assert_eq!(
+        shown,
+        r#"-a 'My Photos' '' "it's" 'say "hi"' 'back\slash' %h"#
+    );
+    assert_eq!(split_args(&shown), Ok(words));
+    let both = args(&["it's \"x\" \\"]);
+    assert_eq!(split_args(&join_args(&both)), Ok(both));
+}
+
+#[test]
+fn rewrite_replaces_the_pair_in_place() {
+    let tmp = tempfile::tempdir().unwrap();
+    let timer = write(&own(tmp.path()), &task(), &[]).unwrap();
+    let changed = NewTask {
+        name: "Back up all".into(),
+        schedule: Schedule::Hourly,
+        ..task()
+    };
+    rewrite(tmp.path(), &timer, &changed).unwrap();
+    assert_eq!(read(tmp.path(), &timer), Some(changed));
+    assert_eq!(
+        names(tmp.path()),
+        [
+            "reprise-task-back-up-photos.service",
+            "reprise-task-back-up-photos.timer"
+        ],
+        "the unit names stay, and no temporary file is left"
+    );
+    assert!(rewrite(tmp.path(), "backup.timer", &task()).is_err());
+}
+
+#[test]
+fn a_name_ending_in_a_backslash_is_kept_without_it_and_reads_back() {
+    assert_eq!(kept_name(" a \\ \\ "), "a");
+    let t = NewTask {
+        name: "Back up \\".into(),
+        ..task()
+    };
+    let (service, timer) = texts(&t).unwrap();
+    assert!(service.contains("\nDescription=Back up\n"), "{service}");
+    let read = parse(&service, &timer).unwrap();
+    assert_eq!(read.name, "Back up");
+    assert_eq!(texts(&read).unwrap(), (service, timer));
+}
+
+#[test]
+fn a_timer_that_cannot_be_rewritten_puts_the_service_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let timer = write(&own(tmp.path()), &task(), &[]).unwrap();
+    let service = tmp.path().join(timer.replace(".timer", ".service"));
+    let before = std::fs::read_to_string(&service).unwrap();
+    std::fs::remove_file(tmp.path().join(&timer)).unwrap();
+    std::fs::create_dir(tmp.path().join(&timer)).unwrap();
+    let changed = NewTask {
+        name: "Back up all".into(),
+        ..task()
+    };
+    assert!(rewrite(tmp.path(), &timer, &changed).is_err());
+    assert_eq!(std::fs::read_to_string(&service).unwrap(), before);
 }

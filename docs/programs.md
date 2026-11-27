@@ -142,7 +142,7 @@ Open from Explorer, low-disk-space balloons or `reprise-diskusage FOLDER` to sca
 
 Open from `Start > All Programs > System Tools` to manage systemd user timers with live status (`Ready`, `Running`, `Failed`, `Stopped`, `Disabled`), `Run Now`, `Stop`, `Enable`, `Disable`, `Properties` and `View Output` (last 200 `journalctl --user-unit` lines).
 
-`New Task...` writes `reprise-task-NAME.timer` and `.service` in `~/.config/systemd/user` (`$XDG_CONFIG_HOME/systemd/user`) for every 5, 10, 15 or 30 minutes, hourly, daily, weekly, monthly, one-time or at-log-on (30 s delay) schedules, passing arguments literally. Tasks run while logged in unless `loginctl enable-linger` is set, skip missed runs, and can be deleted only if created via `New Task...`.
+`New Task...` writes `reprise-task-NAME.timer` and `.service` in `~/.config/systemd/user` (`$XDG_CONFIG_HOME/systemd/user`) for every 5, 10, 15 or 30 minutes, hourly, daily, weekly, monthly, one-time or at-log-on (30 s delay) schedules, passing arguments literally. Tasks run while logged in unless `loginctl enable-linger` is set, and skip missed runs. `Edit...` (the same box; unit names stay) and `Delete` act only on tasks created via `New Task...`, and Edit refuses one whose files were changed by hand.
 
 ## Font Viewer
 

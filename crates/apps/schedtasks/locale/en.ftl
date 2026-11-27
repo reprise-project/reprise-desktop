@@ -17,6 +17,7 @@ disable = &Disable
 properties = &Properties
 view-output = View &Output
 new-task = &New Task...
+edit = Ed&it...
 delete = De&lete
 
 ## A task's shortcut menu
@@ -25,6 +26,7 @@ menu-stop = &Stop
 menu-enable = &Enable
 menu-disable = &Disable
 menu-output = View &Output
+menu-edit = Ed&it...
 menu-delete = De&lete
 menu-properties = &Properties
 
@@ -85,6 +87,7 @@ result-timeout = Timed out
 refused-run = { $unit } did not start: { $why }
 refused-stop = { $unit } did not stop: { $why }
 refused-create = The task was not made: { $why }
+refused-edit = { $unit } was not changed: { $why }
 refused-delete = { $unit } was not deleted: { $why }
 refused-enable = { $unit } was not enabled: { $why }
 refused-disable = { $unit } was not disabled: { $why }
@@ -144,6 +147,12 @@ new-logon-now = The task also runs once now, when it is made.
 browse-title = Browse
 browse-open = Open
 browse-all = All Files (*.*)
+
+## Edit, in the New Task box
+edit-title = Edit Task
+edit-ok = OK
+# $name is the task's name.
+edit-unread = The files of the task '{ $name }' were changed outside Scheduled Tasks, so it cannot be edited here.
 
 ## Delete; $name is the task's name, $unit its timer
 delete-title = Delete Task

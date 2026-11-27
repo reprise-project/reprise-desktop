@@ -1,5 +1,5 @@
-//! New Task: the box behind New Task.... Create stays greyed until the fields make a task; a line
-//! says what is missing, and another the schedule in words.
+//! New Task: the box behind New Task... and Edit.... Create (OK for Edit) stays greyed until the
+//! fields make a task; a line says what is missing, and another the schedule in words.
 
 use crate::model;
 use crate::units::{self, NewTask, Problem, Schedule, WEEKDAYS};
@@ -99,6 +99,8 @@ pub struct NewTaskBox {
     /// The time now ([`now`]), which a once task must come after.
     clock: fn() -> Local,
     twelve: bool,
+    /// The timer Edit opened the box for and the task its files held then; None for New Task.
+    pub editing: Option<(String, NewTask)>,
     /// The Run row the Day combo holds rows for, and the day picked for weekly and monthly.
     shown: Kind,
     weekday: usize,
@@ -218,6 +220,7 @@ impl NewTaskBox {
             form: Form::new(items),
             clock,
             twelve,
+            editing: None,
             shown: Kind::AtLogOn,
             weekday: 0,
             month_day: 0,
@@ -226,6 +229,50 @@ impl NewTaskBox {
         b.form
             .show_edit_text(DATE, &format!("{y:04}-{mo:02}-{d:02}"));
         b.form.focus_id(NAME);
+        b.sync();
+        b
+    }
+
+    /// The box for Edit on timer `timer`, holding `task` as [`units::read`] read it.
+    pub fn edit(clock: fn() -> Local, twelve: bool, timer: &str, task: &NewTask) -> NewTaskBox {
+        let mut b = NewTaskBox::new(clock, twelve);
+        b.editing = Some((timer.to_string(), task.clone()));
+        if let Some(Control::Button { label, .. }) = b.form.item_mut(CREATE).map(|i| &mut i.control)
+        {
+            *label = tr!("edit-ok");
+        }
+        b.form.show_edit_text(NAME, &task.name);
+        b.form
+            .show_edit_text(PROGRAM, &task.program.to_string_lossy());
+        b.form.show_edit_text(ARGS, &units::join_args(&task.args));
+        let (kind, at) = match task.schedule {
+            Schedule::Minutes { every } => (Kind::Minutes(every), None),
+            Schedule::Hourly => (Kind::Hourly, None),
+            Schedule::Daily { at } => (Kind::Daily, Some(at)),
+            Schedule::Weekly { day, at } => {
+                b.weekday = day;
+                (Kind::Weekly, Some(at))
+            }
+            Schedule::Monthly { day, at } => {
+                b.month_day = day.saturating_sub(1) as usize;
+                (Kind::Monthly, Some(at))
+            }
+            Schedule::Once {
+                date: (y, mo, d),
+                at,
+            } => {
+                b.form
+                    .show_edit_text(DATE, &format!("{y:04}-{mo:02}-{d:02}"));
+                (Kind::Once, Some(at))
+            }
+            Schedule::AtLogOn => (Kind::AtLogOn, None),
+        };
+        if let (Some((h, m)), Some(Control::Time(t))) =
+            (at, b.form.item_mut(TIME).map(|i| &mut i.control))
+        {
+            (t.h, t.m) = (h, m);
+        }
+        b.form.set_combo(KIND, kind_row(kind));
         b.sync();
         b
     }
@@ -323,7 +370,7 @@ impl NewTaskBox {
         let task = self.task();
         let hint = match &task {
             Err(why) => why.clone(),
-            Ok(_) if kind == Kind::AtLogOn => tr!("new-logon-now"),
+            Ok(_) if kind == Kind::AtLogOn && self.editing.is_none() => tr!("new-logon-now"),
             Ok(_) => String::new(),
         };
         let f = &mut self.form;
@@ -580,6 +627,39 @@ mod tests {
                 "{name}"
             );
             assert!(!enabled(&b, CREATE));
+        }
+    }
+
+    #[test]
+    fn edit_opens_on_the_task_and_gives_it_back_unchanged() {
+        for schedule in [
+            Schedule::Minutes { every: 10 },
+            Schedule::Hourly,
+            Schedule::Daily { at: (7, 45) },
+            Schedule::Weekly { day: 4, at: (9, 5) },
+            Schedule::Monthly {
+                day: 31,
+                at: (23, 0),
+            },
+            Schedule::Once {
+                date: (2027, 3, 1),
+                at: (6, 0),
+            },
+            Schedule::AtLogOn,
+        ] {
+            let task = NewTask {
+                name: "Back up".into(),
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), "echo 'hi there'".into(), String::new()],
+                schedule,
+            };
+            let mut b = NewTaskBox::edit(|| NOW, false, "reprise-task-back-up.timer", &task);
+            assert_eq!(label(&b, HINT), "", "{schedule:?}");
+            assert_eq!(
+                b.event(form::Event::Pressed(CREATE)),
+                Outcome::Create(task),
+                "{schedule:?}"
+            );
         }
     }
 
