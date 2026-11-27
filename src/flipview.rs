@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use reprisekit::anim::{Ease, Tween};
 use reprisekit::controls::flip::{self, Card, GEOMETRY, Homography};
 use reprisekit::switcher;
+use reprisekit::tr;
 use reprisescene::{CustomElement, CustomNode, Input, RectId, TreeId};
 use smithay::{
     backend::{
@@ -997,7 +998,7 @@ impl State {
         use reprisekit::access::{ROOT, accesskit::Role};
         let st = self.switcher.stack.as_ref()?;
         let titles: Vec<String> = st.entries.iter().map(|&e| self.entry_title(e)).collect();
-        let mut tree = crate::access::root(Role::Window, "Task Switcher", st.area);
+        let mut tree = crate::access::root(Role::Window, &tr!("bar-switcher-name"), st.area);
         let local = Rect::new(0, 0, st.area.width, st.area.height);
         let focus = flip::access(&titles, st.selected, &st.cards, local, &mut tree, ROOT);
         tree.set_focus(focus);

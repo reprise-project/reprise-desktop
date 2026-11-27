@@ -9,6 +9,7 @@ use crate::output::upload_scaled;
 use crate::raster::Rect;
 use reprisekit::icon::ICON_SIZE;
 use reprisekit::taskbar::Edge;
+use reprisekit::tr;
 use reprisekit::trayflyout::{self, FlyoutLayout};
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
@@ -176,7 +177,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     let tray = state.tray.as_ref()?;
     let v = tray.flyout.as_ref()?;
     let rect = Rect::new(v.at.0, v.at.1, v.layout.width, v.layout.height);
-    let mut tree = crate::access::root(Role::Window, "Hidden icons", rect);
+    let mut tree = crate::access::root(Role::Window, &tr!("bar-flyout-name"), rect);
     let names: Vec<String> = tray
         .hidden
         .iter()

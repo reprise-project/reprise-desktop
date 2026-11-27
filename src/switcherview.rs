@@ -6,6 +6,7 @@ use reprisekit::controls::switcher::{self, SwitcherLayout, ThumbCell};
 use reprisekit::interfaces;
 use reprisekit::taskpreview::fit;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::{backend::input::InputTime, output::Output, utils::Rectangle};
 
@@ -844,7 +845,7 @@ impl State {
     pub(crate) fn entry_title(&self, e: Entry) -> String {
         match e {
             Entry::Window(w) => self.win(w).map(|x| x.title()).unwrap_or_default(),
-            Entry::Desktop => "Desktop".into(),
+            Entry::Desktop => tr!("bar-switcher-desktop"),
             Entry::Dialog(id) => self
                 .dialogs
                 .views
@@ -862,11 +863,15 @@ impl State {
         }
         let sw = self.switcher.panel.as_ref()?;
         let titles: Vec<String> = sw.entries.iter().map(|&e| self.entry_title(e)).collect();
-        let mut tree = crate::access::root(Role::Window, "Task Switcher", sw.layout.rect);
+        let mut tree = crate::access::root(Role::Window, &tr!("bar-switcher-name"), sw.layout.rect);
         let focus = switcher::access(&titles, sw.selected, &sw.layout, &mut tree, ROOT);
         let media = self.switcher_media(sw.entries.get(sw.selected).copied());
         if let (Some(playing), Some(n)) = (media, tree.get_mut(focus)) {
-            n.set_description(if playing { "Playing" } else { "Paused" });
+            n.set_description(if playing {
+                tr!("bar-media-playing")
+            } else {
+                tr!("bar-media-paused")
+            });
         }
         tree.set_focus(focus);
         Some(tree)
