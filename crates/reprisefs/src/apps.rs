@@ -1587,9 +1587,30 @@ const GROUPS: &[(&str, &str)] = &[
 
 const OTHER: &str = "Other";
 
+/// Which of `apps` the menus and search list: the shown entries, one per name. Of entries that
+/// share a name, Reprise's own program is listed, else the one with the lowest id.
+pub fn one_per_name(apps: &[AppEntry]) -> Vec<bool> {
+    let rank = |a: &AppEntry| {
+        let own = crate::multicall::PROGRAMS.contains(&a.id.stem());
+        (!own, a.id.clone())
+    };
+    let mut first: HashMap<&str, usize> = HashMap::new();
+    for (i, a) in apps.iter().enumerate().filter(|(_, a)| a.shown) {
+        let k = first.entry(a.name.as_str()).or_insert(i);
+        if rank(a) < rank(&apps[*k]) {
+            *k = i;
+        }
+    }
+    (0..apps.len())
+        .map(|i| first.get(apps[i].name.as_str()) == Some(&i))
+        .collect()
+}
+
+/// The program folders of the menus, each with the entries [`one_per_name`] lists in it.
 pub fn group(apps: &[AppEntry]) -> Vec<Group> {
+    let listed = one_per_name(apps);
     let mut folders: Vec<Group> = Vec::new();
-    for (i, app) in apps.iter().enumerate().filter(|(_, a)| a.shown) {
+    for (i, app) in apps.iter().enumerate().filter(|&(i, _)| listed[i]) {
         let name = GROUPS
             .iter()
             .find(|(cat, _)| app.in_category(cat))
