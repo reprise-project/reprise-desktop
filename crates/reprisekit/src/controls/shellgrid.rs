@@ -75,7 +75,7 @@ impl Grid {
                 TILE_TOP,
             ),
             _ => {
-                let c = iconview::Cell::grown(u);
+                let c = iconview::Cell::folder(u);
                 ((c.w, c.h), GRID_TOP)
             }
         };
@@ -434,10 +434,7 @@ pub(crate) fn draw_grid(
                 iconview::draw_cell_at(
                     &mut bc,
                     (cell.x, cell.y),
-                    iconview::Cell {
-                        w: at.width,
-                        h: at.height,
-                    },
+                    icons_cell(at, u),
                     &theme,
                     text,
                     &e.name,
@@ -495,6 +492,15 @@ pub(crate) fn draw_grid(
     c.blit_canvas(body.x, body.y, &bc);
 }
 
+/// An Icons view's `cell` (logical) at text size `u` as [`iconview`] draws it.
+pub(crate) fn icons_cell(cell: Rect, u: TextUnits) -> iconview::Cell {
+    iconview::Cell {
+        w: cell.width,
+        h: cell.height,
+        icon: iconview::grid_icon_px(u),
+    }
+}
+
 /// The label rect for the icon-mode `cell` (logical) at text size `u`, in device px at paint
 /// scale `s`, `px` being the font as drawn: what `draw` highlights and where a rename box goes.
 pub(crate) fn label_of(
@@ -508,7 +514,7 @@ pub(crate) fn label_of(
 ) -> Rect {
     match mode {
         Mode::Icons => {
-            let r = iconview::label_layout(text, &e.name, px, s, cell.width, u).rect;
+            let r = iconview::label_layout(text, &e.name, px, s, icons_cell(cell, u), u).rect;
             Rect::new(cell.x * s + r.x, cell.y * s + r.y, r.width, r.height)
         }
         Mode::Tiles => {
@@ -1113,7 +1119,7 @@ mod tests {
     #[test]
     fn the_icon_modes_cells_grow_with_the_text_size() {
         const EXPECTED: [(Mode, [(i32, i32); 3]); 3] = [
-            (Mode::Icons, [(75, 75), (116, 95), (150, 112)]),
+            (Mode::Icons, [(75, 75), (116, 112), (150, 144)]),
             (Mode::Tiles, [(218, 56), (305, 87), (378, 112)]),
             (Mode::Thumbnails, [(125, 139), (177, 160), (221, 177)]),
         ];
@@ -1215,29 +1221,31 @@ mod tests {
         }
     }
 
-    /// An icon cell's label wraps in the grown width and centres under the 32 px icon, which keeps its place.
+    /// An icon cell's icon grows with the text, 49 px at 150% and 64 at 200%, its label wrapping
+    /// in the grown width and centred 4 px under it.
     #[test]
-    fn a_grown_icon_cell_centres_its_label_under_the_icon() {
+    fn a_grown_icon_cell_centres_its_label_under_the_grown_icon() {
         let mut sv = iconed(2, Mode::Icons);
         sv.entries[0].name = "Holiday photos from the hills".into();
-        for pct in [150, 200] {
+        for (pct, side) in [(150, 49), (200, 64)] {
+            let u = Theme::default().with_text_size(pct).text;
+            assert_eq!(iconview::grid_icon_px(u), side, "{pct}%");
+            let red = Color::rgb(255, 0, 0);
+            for e in &mut sv.entries {
+                e.icon32 = Some(std::rc::Rc::new(square(side as u32, red)));
+            }
             let (c, lay, theme) = render_at(&sv, Rect::new(0, 0, 600, 400), pct);
             let text = TextRenderer::load(&theme.fonts);
             let cell = lay.cells[0];
-            let ix = cell.x + (cell.width - iconview::ICON_PX + 1) / 2;
-            let red = Color::rgb(255, 0, 0).argb();
+            let ix = cell.x + (cell.width - side + 1) / 2;
+            let red = red.argb();
             assert_eq!(c.get(ix, cell.y + iconview::ICON_TOP), red, "{pct}%");
-            assert_ne!(
-                c.get(ix + iconview::ICON_PX, cell.y + iconview::ICON_TOP),
-                red
-            );
+            let (right, below) = (ix + side, cell.y + iconview::ICON_TOP + side);
+            assert_eq!(c.get(right - 1, below - 1), red, "{pct}%");
+            assert_ne!(c.get(right, cell.y + iconview::ICON_TOP), red, "{pct}%");
             let label =
                 crate::controls::shellview::label_rect(&sv, &lay, 0, &text, theme.fonts.size_px);
-            assert_eq!(
-                label.y - cell.y,
-                iconview::ICON_TOP + iconview::ICON_PX + 4,
-                "{pct}%"
-            );
+            assert_eq!(label.y - cell.y, iconview::ICON_TOP + side + 4, "{pct}%");
             assert!(
                 (label.x + label.width / 2 - (cell.x + cell.width / 2)).abs() <= 1,
                 "{pct}%"
@@ -1302,7 +1310,7 @@ mod tests {
         use crate::selection::Mods;
         // Room for 200%'s 32 px scrollbar past three grown columns.
         let r = Rect::new(0, 0, 3 * 150 + 2 * FIELD_PAD + 36, 200);
-        for (pct, per_row, pitch) in [(100, 6, 75), (200, 3, 112)] {
+        for (pct, per_row, pitch) in [(100, 6, 75), (200, 3, 144)] {
             let mut sv = iconed(30, Mode::Icons);
             sv.selection.set_only(Some(0));
             let cm = Theme::default().with_text_size(pct).controls();
@@ -1341,8 +1349,13 @@ mod tests {
         let (c, lay, theme) = render(&sv, Rect::new(0, 0, 300, 300));
         let (text, px) = rend();
         let _ = px;
-        let box_r =
-            iconview::edit_layout(&theme, &text, &sv.edit.as_ref().unwrap().1, iconview::CELL).rect;
+        let box_r = iconview::edit_layout(
+            &theme,
+            &text,
+            &sv.edit.as_ref().unwrap().1,
+            iconview::Cell::square(iconview::CELL),
+        )
+        .rect;
         let cell = lay.cells[0];
         let black = Color::rgb(0, 0, 0).argb();
         assert_eq!(

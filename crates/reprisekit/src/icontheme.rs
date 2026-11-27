@@ -17,7 +17,7 @@ pub use decode::{
 };
 pub use extra::{EXTRA_MAX_ENTRIES, EXTRA_MAX_FILES, EXTRA_MAX_FOLDERS, ExtraTree};
 pub use index::{DirEntry, DirKind};
-pub use listing::{LISTING_PX, ListingIcons, ListingSizes, listing_px};
+pub use listing::{LISTING_PX, ListingIcons, ListingSizes};
 
 use crate::mutex::lock;
 use crate::themecache::{self, ThemeCache};

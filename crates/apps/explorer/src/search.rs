@@ -216,7 +216,7 @@ impl Explorer {
         let globs = self.globs.clone();
         let place = self.place.clone();
         let scale = ctx.icons.scale();
-        let list = shellview::list_icon_px(ctx.theme.text);
+        let sizes = shellview::listing_px(ctx.theme.text);
         let read = move || {
             let Started {
                 serial,
@@ -228,7 +228,7 @@ impl Explorer {
             let items: Vec<_> = (paths.iter().flatten())
                 .map(|p| reprisefs::listing::item_at(p, &globs))
                 .collect();
-            let icons = ReadIcons::read(&items, reprisekit::icontheme::listing_px(list), scale);
+            let icons = ReadIcons::read(&items, sizes, scale);
             Found {
                 serial,
                 no_tool,
@@ -240,7 +240,7 @@ impl Explorer {
                         drives: Vec::new(),
                     },
                     icons,
-                    list,
+                    sizes,
                     tree: Vec::new(),
                     templates: None,
                 },

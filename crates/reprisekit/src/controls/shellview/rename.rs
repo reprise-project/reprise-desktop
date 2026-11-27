@@ -23,7 +23,13 @@ pub fn edit_index_at(
     let text_x = match sv.mode {
         Mode::Icons => {
             let cell = *lay.cells.get(*i)?;
-            let el = iconview::edit_layout_at(1, px, text, ed, cell.width);
+            let el = iconview::edit_layout_at(
+                1,
+                px,
+                text,
+                ed,
+                shellgrid::icons_cell(cell, lay.controls.text),
+            );
             return Some(el.index_at(text, px, x - cell.x, y - cell.y));
         }
         Mode::Details => label_rect(sv, lay, *i, text, px).x + listview::EDIT_PAD_L,
@@ -92,7 +98,7 @@ fn wrapped_box(
         }
         _ => room + iconview::EDIT_WRAP_INSET,
     };
-    let mut el = iconview::edit_layout_at(s, px, text, ed, wide);
+    let mut el = iconview::edit_layout_at(s, px, text, ed, iconview::Cell::square(wide));
     let dx = match mode {
         Mode::Tiles => label.x - listview::EDIT_BACK * s - el.rect.x,
         _ => label.x + label.width / 2 - (el.rect.x + el.rect.width / 2),
@@ -153,7 +159,14 @@ pub fn rename_rect(
         Mode::Details => Some(label_rect(sv, lay, i, text, px)),
         Mode::Icons => {
             let cell = *lay.cells.get(i)?;
-            let r = iconview::edit_layout_at(1, px, text, ed, cell.width).rect;
+            let r = iconview::edit_layout_at(
+                1,
+                px,
+                text,
+                ed,
+                shellgrid::icons_cell(cell, lay.controls.text),
+            )
+            .rect;
             Some(Rect::new(cell.x + r.x, cell.y + r.y, r.width, r.height))
         }
         Mode::Thumbnails | Mode::Tiles => Some(grid_box(sv, lay, i, ed, text, px)?.rect),

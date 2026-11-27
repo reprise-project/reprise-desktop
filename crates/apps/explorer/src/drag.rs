@@ -316,7 +316,7 @@ impl Explorer {
         let flat = matches!(self.sv.mode, Mode::List | Mode::Details);
         let px = match self.sv.mode {
             Mode::Tiles => 48,
-            Mode::Thumbnails | Mode::Icons => 32,
+            Mode::Thumbnails | Mode::Icons => iconview::grid_icon_px(sl.controls.text),
             Mode::List | Mode::Details => shellview::list_icon_px(sl.controls.text),
         };
         let mode = self.sv.mode;
@@ -389,7 +389,7 @@ impl Explorer {
                 })
             })
             .collect();
-        let cell = iconview::Cell::grown(ctx.theme.text);
+        let cell = iconview::Cell::folder(ctx.theme.text);
         let ground = iconview::Ground::Window;
         let (image, grab) =
             iconview::drag_image(&theme, &ctx.text, &ghosts, cell, d.origin, ground)?;

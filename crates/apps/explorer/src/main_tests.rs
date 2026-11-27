@@ -127,14 +127,13 @@ pub(crate) fn rows_over(dir: &Path, ctx: &mut Ctx) -> Explorer {
     let place = Place::Folder(dir.to_path_buf());
     let mut ex = test_explorer(place.clone(), ctx);
     let listed = place::desktop_listing(Some(dir), &reprisefs::apps::MimeDb::empty(), true);
-    let list = shellview::list_icon_px(ctx.theme.text);
-    let sizes = reprisekit::icontheme::listing_px(list);
+    let sizes = shellview::listing_px(ctx.theme.text);
     let icons = ReadIcons::read(&listed.items, sizes, ctx.icons.scale());
     let read = Read {
         place,
         listed,
         icons,
-        list,
+        sizes,
         tree: Vec::new(),
         templates: None,
     };

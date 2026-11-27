@@ -84,7 +84,7 @@ use reprisekit::controls::statusbar::{self, StatusBar};
 use reprisekit::controls::taskpane::TaskPane;
 use reprisekit::controls::toolbar::ToolBar;
 use reprisekit::controls::treeview::{Style, TreeView};
-use reprisekit::icontheme::{ListingIcons, listing_px};
+use reprisekit::icontheme::ListingIcons;
 use reprisekit::look::widgets::item;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
@@ -206,8 +206,8 @@ pub(crate) struct Read {
     place: Place,
     listed: Listed,
     icons: ReadIcons,
-    /// List and Details' icon size the icon files were decoded at.
-    list: i32,
+    /// The sizes the icon files were decoded at ([`shellview::listing_px`]).
+    sizes: [i32; 3],
     tree: Vec<(Place, foldertree::Kids)>,
     /// The Templates folder's files, read with a folder's listing; None for search results.
     templates: Option<Vec<reprisefs::templates::Template>>,
@@ -1224,7 +1224,7 @@ impl Explorer {
         let mounts = self.drive_mounts.clone();
         let to_fill = foldertree::to_fill(&self.tree, &self.tree_places, &place, &mounts);
         let scale = ctx.icons.scale();
-        let list_px = shellview::list_icon_px(ctx.theme.text);
+        let sizes = shellview::listing_px(ctx.theme.text);
         let tree_px = self.tree_places.px;
         let specials = self.specials.clone();
         move || {
@@ -1235,7 +1235,6 @@ impl Explorer {
                 portable: &portable,
             };
             let listed = list(&place, &globs, show_hidden, devices);
-            let sizes = reprisekit::icontheme::listing_px(list_px);
             let icons = ReadIcons::read(&listed.items, sizes, scale);
             let inp = foldertree::Inputs {
                 show_hidden,
@@ -1256,7 +1255,7 @@ impl Explorer {
                 place,
                 listed,
                 icons,
-                list: list_px,
+                sizes,
                 tree,
                 templates: Some(templates.unwrap_or_default()),
             }
@@ -1285,7 +1284,7 @@ impl Explorer {
             place,
             listed: Listed { items, groups, .. },
             icons: read_icons,
-            list,
+            sizes,
             tree,
             templates,
         } = read;
@@ -1297,13 +1296,12 @@ impl Explorer {
         let is_12h = reprisefs::locale::is_12h();
         let searched = self.search.shown().is_some();
         read_icons.put(&mut ctx.icons);
-        let drawn = shellview::drawn_sizes(self.sv.mode, list);
+        let drawn = shellview::drawn_sizes(self.sv.mode, sizes[0]);
         let first = drawn.iter().position(|&d| d).unwrap_or(0);
         let probe = ctx.icons.probe_px();
         // `has_unread` decodes each small PNG at the size the view draws, which the fetch below
         // then reuses.
-        ctx.icons
-            .set_probe_px(listing_px(list)[first] * ctx.icons.scale());
+        ctx.icons.set_probe_px(sizes[first] * ctx.icons.scale());
         // Resolved up front: `item_icon_with` asks what the theme carries, and the icons below want the cache mutable.
         let names: Vec<String> = items
             .iter()
@@ -1328,7 +1326,7 @@ impl Explorer {
             }
         }
         let shown: Vec<String> = items.iter().map(|it| self.shown_name(it)).collect();
-        let mut icons = (ListingIcons::default().with_list(list))
+        let mut icons = (ListingIcons::default().with_sizes(sizes))
             .drawing(drawn)
             .unread();
         self.sv.hot = None;
