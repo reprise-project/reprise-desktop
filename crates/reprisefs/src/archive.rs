@@ -768,11 +768,14 @@ impl Scratch {
 
     /// Lets go of the folder without removing it, for a program that may read it at any later
     /// time (the target of a drop): no holder removes it from then on, and it goes with the
-    /// sweep [`SCRATCH_KEEP_SECS`] after its copies were made.
+    /// sweep [`SCRATCH_KEEP_SECS`] after the hand-over.
     pub fn hand_over(self) {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::Permissions::from_mode(0o1700);
-        if let Err(e) = std::fs::set_permissions(self.path(), mode) {
+        // The sweep ages a folder by its mtime, which the chmod leaves alone.
+        let touched =
+            (self.0.dir.as_ref()).map_or(Ok(()), |d| d.set_modified(std::time::SystemTime::now()));
+        if let Err(e) = touched.and_then(|()| std::fs::set_permissions(self.path(), mode)) {
             log::debug!("archive: cannot hand over {}: {e}", self.path().display());
         }
     }
@@ -2026,9 +2029,19 @@ mod tests {
         let dir = owner.path().to_path_buf();
         std::fs::write(dir.join("a.txt"), "a").unwrap();
         let reader = Scratch::hold_in(&base, &dir.join("a.txt")).expect("held");
+        let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(day_ago)
+            .unwrap();
         owner.hand_over();
         drop(reader);
         assert!(dir.join("a.txt").exists(), "no holder removes it");
+        sweep_scratch(&base, 3600).unwrap();
+        assert!(
+            dir.exists(),
+            "its age counts from the hand-over, not its last copy"
+        );
         let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
         std::fs::File::open(&dir)
             .unwrap()
@@ -2036,7 +2049,6 @@ mod tests {
             .unwrap();
         sweep_scratch(&base, 3600).unwrap();
         assert!(dir.exists(), "nor does the sweep of folders nobody holds");
-        let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
         std::fs::File::open(&dir)
             .unwrap()
             .set_modified(day_ago)
