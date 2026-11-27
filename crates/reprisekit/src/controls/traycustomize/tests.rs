@@ -176,7 +176,7 @@ fn the_selected_page_rows_open_combo_keeps_its_name_and_its_rows_theirs() {
     assert_eq!(tree.get(combo).unwrap().is_expanded(), Some(true));
     for b in Wording::Glass.choices() {
         let label = Wording::Glass.label(*b);
-        assert!(tree.find(Role::ListBoxOption, label).is_some(), "{label}");
+        assert!(tree.find(Role::ListBoxOption, &label).is_some(), "{label}");
     }
 }
 
@@ -331,7 +331,7 @@ fn classic_behaviour_labels_fit_their_combo_field() {
     let w = Wording::Classic;
     for &b in w.choices() {
         let label = w.label(b);
-        let need = text.measure(label, false, px);
+        let need = text.measure(&label, false, px);
         assert!(need <= cl.text.width, "{label}: {need} > {}", cl.text.width);
     }
 }

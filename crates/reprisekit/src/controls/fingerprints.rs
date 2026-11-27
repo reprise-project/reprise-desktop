@@ -14,16 +14,30 @@ pub const DELETE: &str = "finger_delete";
 pub const CLEAR: &str = "finger_clear";
 pub const NOTE: &str = "finger_note";
 
-pub const ABOUT: &str = "Your fingerprints can unlock the screen and answer administrator \
-                         password prompts in place of your password.";
-pub const LOOKING: &str = "Looking for a fingerprint reader...";
-pub const NO_SERVICE: &str = "Fingerprints need fprintd, which isn't installed on this computer.";
-pub const NO_READER: &str = "No fingerprint reader is connected to this computer.";
-pub const SILENT: &str = "The fingerprint service isn't answering. Close Properties and open it \
-                          again to retry.";
-pub const NONE_ADDED: &str = "You haven't added a fingerprint yet. Click Add to add one.";
-pub const ALL_ADDED: &str = "All ten fingers are added. Delete one to add it again.";
-pub const NOT_YOURS: &str = "Each user adds their own fingerprints. You can only change yours.";
+pub fn about() -> String {
+    tr!("fingerprints-about")
+}
+pub fn looking() -> String {
+    tr!("fingerprints-looking")
+}
+pub fn no_service() -> String {
+    tr!("fingerprints-no-service")
+}
+pub fn no_reader() -> String {
+    tr!("fingerprints-no-reader")
+}
+pub fn silent() -> String {
+    tr!("fingerprints-silent")
+}
+pub fn none_added() -> String {
+    tr!("fingerprints-none-added")
+}
+pub fn all_added() -> String {
+    tr!("fingerprints-all-added")
+}
+pub fn not_yours() -> String {
+    tr!("fingerprints-not-yours")
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Hand {
@@ -163,7 +177,7 @@ pub struct Section {
     pub add: bool,
     /// Delete All; Delete also needs a row picked ([`follow`]).
     pub delete: bool,
-    pub note: Option<&'static str>,
+    pub note: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,39 +198,39 @@ pub fn section(f: &Facts) -> Section {
         note: None,
     };
     if !f.yours {
-        s.note = Some(NOT_YOURS);
+        s.note = Some(not_yours());
         return s;
     }
     let (name, fingers) = match &f.reader {
         Reader::Looking => {
             return Section {
-                note: Some(LOOKING),
+                note: Some(looking()),
                 ..s
             };
         }
         Reader::NoService => {
             return Section {
-                note: Some(NO_SERVICE),
+                note: Some(no_service()),
                 ..s
             };
         }
         Reader::NoReader => {
             return Section {
-                note: Some(NO_READER),
+                note: Some(no_reader()),
                 ..s
             };
         }
         Reader::Silent => {
             return Section {
-                note: Some(SILENT),
+                note: Some(silent()),
                 ..s
             };
         }
         Reader::Found { name, fingers } => (name, fingers),
     };
     let note = match fingers.len() {
-        0 => Some(NONE_ADDED),
-        n if n >= Finger::ALL.len() => Some(ALL_ADDED),
+        0 => Some(none_added()),
+        n if n >= Finger::ALL.len() => Some(all_added()),
         _ => None,
     };
     Section {
@@ -276,22 +290,22 @@ fn cut_short(name: &str) -> std::borrow::Cow<'_, str> {
 /// `s` laid out from `(x, y)`, `w` wide, as form items, and the bottom of the last.
 pub fn items(s: &Section, x: i32, y: i32, w: i32) -> (Vec<Item>, i32) {
     if !s.yours {
-        let note = s.note.unwrap_or(NOT_YOURS);
+        let note = s.note.clone().unwrap_or_else(not_yours);
         let r = Rect::new(x, y, w, NOTE_LINES * LINE_H);
         return (
-            vec![Item::lines(NOTE, r, &[note]).enabled(false)],
+            vec![Item::lines(NOTE, r, &[&note]).enabled(false)],
             r.bottom(),
         );
     }
     let mut out = vec![Item::lines(
         INTRO,
         Rect::new(x, y, w, ABOUT_LINES * LINE_H),
-        &[ABOUT],
+        &[&about()],
     )];
     let mut cy = y + ABOUT_LINES * LINE_H + GAP;
     let reader = match &s.reader {
-        Some(name) => format!("Reader: {}", cut_short(name)),
-        None => "Reader: none".into(),
+        Some(name) => tr!("fingerprints-reader", name = cut_short(name)),
+        None => tr!("fingerprints-reader-none"),
     };
     out.push(Item::label_at(READER, x, cy, w, &reader).enabled(s.reader.is_some()));
     cy += LINE_H + GAP;
@@ -300,7 +314,7 @@ pub fn items(s: &Section, x: i32, y: i32, w: i32) -> (Vec<Item>, i32) {
         x,
         cy,
         w - SIDE_W - SIDE_GAP,
-        "&Fingerprints you've added:",
+        &tr!("fingerprints-list-label"),
     ));
     cy += LINE_H + 3;
     let list_w = w - SIDE_W - SIDE_GAP;
@@ -317,12 +331,26 @@ pub fn items(s: &Section, x: i32, y: i32, w: i32) -> (Vec<Item>, i32) {
     let bx = x + w - SIDE_W;
     let step = BUTTON_H + BUTTON_GAP;
     out.extend([
-        Item::button_at(ADD, bx, cy, SIDE_W, "A&dd...", s.add),
-        Item::button_at(DELETE, bx, cy + step, SIDE_W, "D&elete", false),
-        Item::button_at(CLEAR, bx, cy + 2 * step, SIDE_W, "Delete A&ll", s.delete),
+        Item::button_at(ADD, bx, cy, SIDE_W, &tr!("fingerprints-add"), s.add),
+        Item::button_at(
+            DELETE,
+            bx,
+            cy + step,
+            SIDE_W,
+            &tr!("fingerprints-delete"),
+            false,
+        ),
+        Item::button_at(
+            CLEAR,
+            bx,
+            cy + 2 * step,
+            SIDE_W,
+            &tr!("fingerprints-delete-all"),
+            s.delete,
+        ),
     ]);
     cy += list_h;
-    if let Some(note) = s.note {
+    if let Some(note) = &s.note {
         cy += GAP;
         out.push(Item::lines(
             NOTE,

@@ -48,7 +48,7 @@ pub fn checksums_page() -> Form {
     Form::new(vec![
         Item::label_at("sums_l0", X, SHA_Y, BUTTON_X - X, "SHA-256:"),
         Item::lines_at(SUMS_SHA256, X, SHA_Y + VALUE_DY, W, &["", ""]),
-        copy(SUMS_COPY_SHA256, SHA_Y, "&Copy"),
+        copy(SUMS_COPY_SHA256, SHA_Y, &tr!("filesheet-checksums-copy")),
         Item::label_at("sums_l1", X, MD5_Y, BUTTON_X - X, "MD5:"),
         Item::lines_at(SUMS_MD5, X, MD5_Y + VALUE_DY, W, &[""]),
         copy(SUMS_COPY_MD5, MD5_Y, "Co&py"),
@@ -60,7 +60,13 @@ pub fn checksums_page() -> Form {
             true,
         ),
         sep("sums_sep", SEP_Y, X + W),
-        Item::label_at("sums_l2", X, COMPARE_Y, W, "Co&mpare with:"),
+        Item::label_at(
+            "sums_l2",
+            X,
+            COMPARE_Y,
+            W,
+            &tr!("filesheet-checksums-compare-with"),
+        ),
         Item::edit(
             SUMS_COMPARE,
             Rect::new(X, COMPARE_Y + FIELD_DY, W, FIELD_H),
@@ -103,7 +109,7 @@ pub fn show_sums(page: &mut Form, state: &SumsState) {
     }
     page.set_enabled(SUMS_CALCULATE, calculate);
     let status = match state {
-        SumsState::Working(p) => format!("Calculating... {p}%"),
+        SumsState::Working(p) => tr!("filesheet-checksums-working", percent = *p as i64),
         SumsState::Failed(why) => why.clone(),
         SumsState::Idle | SumsState::Done { .. } => String::new(),
     };

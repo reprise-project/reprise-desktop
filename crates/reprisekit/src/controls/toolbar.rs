@@ -410,15 +410,15 @@ fn draw_strip(
     }
 }
 
-fn spoken_name(id: &str) -> &str {
+fn spoken_name(id: &str) -> String {
     match id {
-        BACK => "Back",
-        FORWARD => "Forward",
-        UP => "Up",
-        FOLDERS => "Folders",
-        VIEWS => "Views",
-        "newfolder" => "Create New Folder",
-        other => other,
+        BACK => tr!("toolbar-back"),
+        FORWARD => tr!("toolbar-forward"),
+        UP => tr!("toolbar-up"),
+        FOLDERS => tr!("toolbar-folders"),
+        VIEWS => tr!("toolbar-views"),
+        "newfolder" => tr!("toolbar-create-new-folder"),
+        other => other.to_string(),
     }
 }
 
@@ -448,8 +448,8 @@ pub fn access(
             .as_deref()
             .filter(|l| !l.is_empty())
             .or_else(|| names.get(i).map(String::as_str))
-            .unwrap_or_else(|| spoken_name(id));
-        let mut n = access::button(*rect, label, enabled, false);
+            .map_or_else(|| spoken_name(id), str::to_string);
+        let mut n = access::button(*rect, &label, enabled, false);
         if drop {
             n.set_has_popup(accesskit::HasPopup::Menu);
         }

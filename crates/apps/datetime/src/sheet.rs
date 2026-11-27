@@ -15,7 +15,7 @@
 //! owns the zone.
 
 use reprisekit::art::clockface::Face;
-use reprisekit::controls::calendar::{self, Calendar, MONTHS};
+use reprisekit::controls::calendar::{self, Calendar, months};
 use reprisekit::controls::combo::Combo;
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
@@ -430,13 +430,15 @@ impl Sheet {
 }
 
 fn date_page(now: Local, first_weekday: u32, twelve: bool, system: &System) -> Form {
+    let month_names = months();
+    let month_refs: Vec<&str> = month_names.iter().map(String::as_str).collect();
     let mut items = vec![
         Item::group(
             "date_group",
             Rect::new(16, 39, 183, 197),
             &tr!("group-date"),
         ),
-        Item::combo("month", 27, 58, 75, &MONTHS, 12),
+        Item::combo("month", 27, 58, 75, &month_refs, 12),
         Item::new(
             "year",
             Rect::new(112, 58, 79, 21),

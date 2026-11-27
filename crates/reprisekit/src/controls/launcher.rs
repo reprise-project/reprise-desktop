@@ -35,8 +35,8 @@ use crate::controls::scrollbar::{RowBar, RowScroll};
 use crate::look::panel;
 use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text, draw_scrollbar};
 use crate::raster::{Canvas, EdgeStyle, Rect};
-use crate::startpanel::NO_RESULTS;
 use crate::startpanel::layout::{GROUP_GAP, HEADER_H, RESULT_H};
+use crate::startpanel::no_results;
 use crate::startpanel::search;
 use crate::style::{Part, State, Style};
 use crate::text::TextRenderer;
@@ -47,11 +47,19 @@ pub const MAX_ROWS: usize = 8;
 pub const MAX_SETTINGS: usize = 4;
 pub const MAX_FILES: usize = 8;
 pub const MAX_WINDOWS: usize = 5;
-pub const WINDOWS_HEADING: &str = "Windows";
-pub const PROGRAMS_HEADING: &str = "Programs";
-pub const SETTINGS_HEADING: &str = "Settings";
+pub fn windows_heading() -> String {
+    tr!("launcher-windows-heading")
+}
+pub fn programs_heading() -> String {
+    tr!("launcher-programs-heading")
+}
+pub fn settings_heading() -> String {
+    tr!("launcher-settings-heading")
+}
 /// What a reader calls the field.
-pub const SEARCH: &str = "Search";
+pub fn search() -> String {
+    tr!("launcher-search")
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -262,19 +270,19 @@ impl Launcher {
         v
     }
 
-    fn heading(&self, i: usize) -> Option<&str> {
+    fn heading(&self, i: usize) -> Option<String> {
         match self.lines().get(i) {
             Some(Line::Heading(g)) => Some(self.title(*g)),
             _ => None,
         }
     }
 
-    fn title(&self, g: Group) -> &str {
+    fn title(&self, g: Group) -> String {
         match g {
-            Group::Windows => WINDOWS_HEADING,
-            Group::Programs => PROGRAMS_HEADING,
-            Group::Settings => SETTINGS_HEADING,
-            Group::Found(s) => &self.found[s].heading,
+            Group::Windows => windows_heading(),
+            Group::Programs => programs_heading(),
+            Group::Settings => settings_heading(),
+            Group::Found(s) => self.found[s].heading.clone(),
         }
     }
 
@@ -332,7 +340,7 @@ impl Launcher {
         for line in &lines {
             let (name, icon, dim) = match *line {
                 Line::Heading(g) => (self.title(g).to_string(), None, String::new()),
-                Line::NoMatch => (NO_RESULTS.to_string(), None, String::new()),
+                Line::NoMatch => (no_results().to_string(), None, String::new()),
                 Line::Row(Pick::Calc) => {
                     let r = self.calc.as_ref().expect("a calc line has its row");
                     (r.name.clone(), r.icon.clone(), String::new())
@@ -992,9 +1000,18 @@ fn glass_body(
         }
         if l.pick(i).is_none() {
             let size = g.px(search::TEXT_PX);
-            let x = r.x + (r.width - face.measure(NO_RESULTS, false, size)) / 2;
+            let x = r.x + (r.width - face.measure(&no_results(), false, size)) / 2;
             let y = r.y + g.len(search::at::RESULT_BASE);
-            search::line(c, &face, x, y, r, NO_RESULTS, style.pane_inks.greyed, size);
+            search::line(
+                c,
+                &face,
+                x,
+                y,
+                r,
+                &no_results(),
+                style.pane_inks.greyed,
+                size,
+            );
             continue;
         }
         let (name, lit) = (&l.list.items[i], l.list.selected == Some(i));
@@ -1070,7 +1087,7 @@ fn body(
         for (h, label) in shown.filter_map(|i| Some((i, l.heading(i)?))) {
             // From past the heading's label to the list's right edge, on
             // the row's middle.
-            let label_w = text.measure(label, false, px) / s;
+            let label_w = text.measure(&label, false, px) / s;
             let x0 = ll.inner.x + listbox::text_x(&l.list, &ll, &l.icons) + label_w + RULE_GAP;
             let y = ll.inner.y + (h - l.list.top) as i32 * ll.row_h + ll.row_h / 2 - 1;
             c.etched_hline_t(x0 * s, (ll.inner.right() - RULE_GAP) * s, y * s, cs, s);
@@ -1094,7 +1111,7 @@ pub fn access(
     let ll = lay.list.map(|frame| listbox::layout(&l.list, frame, &cm));
     let focus = listbox::access_filtered(
         &l.edit,
-        SEARCH,
+        &search(),
         lay.field,
         &l.list,
         ll.as_ref(),
@@ -1386,7 +1403,7 @@ mod tests {
             accesskit::Role::TextInput,
             "with no rows the field has the focus"
         );
-        assert_eq!(t.get(focus).unwrap().label(), Some(SEARCH));
+        assert_eq!(t.get(focus).unwrap().label(), Some(search().as_str()));
         typed(&mut l, "n");
         l.set_rows(rows(&["Notepad", "Notion"]));
         set_files(
@@ -1578,7 +1595,7 @@ mod tests {
         assert!(l.list.items.is_empty(), "an empty field shows no list");
         typed(&mut l, "zzqx");
         nothing_found(&mut l);
-        assert_eq!(l.list.items, [NO_RESULTS]);
+        assert_eq!(l.list.items, [no_results()]);
         assert_eq!(l.list.greyed, [true]);
         assert_eq!(l.list.selected, None);
         l.key(Key::Down);
@@ -2335,7 +2352,7 @@ mod tests {
             "nothing above but the heading"
         );
         set_files(&mut l, Vec::new());
-        assert_eq!(l.list.items, [NO_RESULTS], "no files, no heading");
+        assert_eq!(l.list.items, [no_results()], "no files, no heading");
         assert_eq!(l.key(Key::Enter), Event::Close);
     }
 
@@ -2415,7 +2432,7 @@ mod tests {
             [
                 "= 14",
                 "2048",
-                SETTINGS_HEADING,
+                &settings_heading(),
                 "Mouse",
                 FILES,
                 "2+3*4.txt"
@@ -2451,9 +2468,9 @@ mod tests {
         assert_eq!(
             l.list.items,
             [
-                WINDOWS_HEADING,
+                &windows_heading(),
                 "Mozilla Firefox",
-                PROGRAMS_HEADING,
+                &programs_heading(),
                 "Firefox"
             ]
         );
@@ -2481,9 +2498,9 @@ mod tests {
             l.list.items,
             [
                 "Terminal",
-                WINDOWS_HEADING,
+                &windows_heading(),
                 "notes.txt - Editor",
-                SETTINGS_HEADING,
+                &settings_heading(),
                 "Keyboard"
             ]
         );
@@ -2496,7 +2513,7 @@ mod tests {
             !l.list
                 .items
                 .iter()
-                .any(|i| i == WINDOWS_HEADING || i == PROGRAMS_HEADING),
+                .any(|i| i == &windows_heading() || i == &programs_heading()),
             "no window rows, no headings for them"
         );
     }
@@ -2555,7 +2572,7 @@ mod tests {
         l.set_calc(None);
         l.set_settings(settings(&["Network Connections"]));
         l.set_rows(Vec::new());
-        assert_eq!(l.list.items, [SETTINGS_HEADING, "Network Connections"]);
+        assert_eq!(l.list.items, [&settings_heading(), "Network Connections"]);
         assert_eq!(l.picked(), Some(Pick::Setting(0)));
         l.key(Key::Up);
         assert_eq!(l.picked(), Some(Pick::Setting(0)), "only the heading above");
@@ -2571,7 +2588,7 @@ mod tests {
         rows[0].detail = "low disk space".into();
         l.set_settings(rows);
         l.set_rows(Vec::new());
-        assert_eq!(l.list.items, [SETTINGS_HEADING, "Advanced", "Keyboard"]);
+        assert_eq!(l.list.items, [&settings_heading(), "Advanced", "Keyboard"]);
         assert_eq!(l.list.detail, ["", "low disk space", ""]);
     }
 
@@ -2597,7 +2614,7 @@ mod tests {
         );
         assert_eq!(c.get(text_x, inner.1 + row_h + 2), cs.window.argb());
         let rule_y = inner.1 + 2 * row_h + 7;
-        let label_w = text.measure(SETTINGS_HEADING, false, theme.fonts.size_px);
+        let label_w = text.measure(&settings_heading(), false, theme.fonts.size_px);
         let x0 = text_x + label_w + 6;
         assert_eq!(c.get(x0, rule_y), cs.button_shadow.argb(), "the rule");
         assert_eq!(c.get(x0, rule_y + 1), cs.button_hilight.argb());
@@ -2675,7 +2692,7 @@ mod tests {
         let mut t = crate::access::Tree::window("", (W, 300));
         let focus = access(&l, &text, 11, &mut t, crate::access::ROOT, &theme);
         assert_eq!(t.get(focus).unwrap().label(), Some("= 14"));
-        for h in [SETTINGS_HEADING, FILES] {
+        for h in [&settings_heading(), FILES] {
             let n = t.find(accesskit::Role::ListBoxOption, h).unwrap();
             assert!(t.get(n).unwrap().is_disabled(), "{h} is greyed");
         }

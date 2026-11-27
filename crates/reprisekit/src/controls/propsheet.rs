@@ -208,19 +208,19 @@ impl PropSheet {
     /// A sheet of `pages`, one per label, at client `size`. Each page gains the
     /// sheet's buttons; Apply starts greyed. Panics unless there is one page per
     /// label.
-    pub fn new(labels: &[&str], pages: Vec<Form>, size: (i32, i32)) -> PropSheet {
+    pub fn new(labels: &[impl AsRef<str>], pages: Vec<Form>, size: (i32, i32)) -> PropSheet {
         PropSheet::with_buttons(labels, pages, size, Buttons::OkCancelApply)
     }
 
     pub fn with_buttons(
-        labels: &[&str],
+        labels: &[impl AsRef<str>],
         pages: Vec<Form>,
         size: (i32, i32),
         buttons: Buttons,
     ) -> PropSheet {
         assert_eq!(labels.len(), pages.len(), "one page per tab");
         let mut sheet = PropSheet {
-            tabs: TabStrip::new(labels, 0),
+            tabs: TabStrip::new(&labels.iter().map(AsRef::as_ref).collect::<Vec<_>>(), 0),
             pages: Vec::new(),
             size,
             buttons,

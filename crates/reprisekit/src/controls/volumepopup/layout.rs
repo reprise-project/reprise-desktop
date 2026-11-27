@@ -11,10 +11,10 @@ use crate::trackbar;
 
 use super::{
     BAR_GAP, COL_GAP, COL_H, COL_W, COMBO_GAP, COMBO_H, Column, DEVICE_GAP, DEVICE_INSET,
-    DIVIDER_GAP, Dir, FIELD_W, ICON, INPUT, LABEL_GAP, LABEL_W, LEVEL_Y, LINK_GAP, MARGIN,
-    MAX_SHOWN, MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H, MUTE_W, MUTE_Y, NAME_Y, NowPlaying, OUTPUT,
-    Pick, ROW_H, SEP_GAP, SEP_H, SETTINGS, STRIP_H, THUMB_H, THUMB_WIDER, TRACK_H, TRACK_Y,
-    Transport, VolumePopup,
+    DIVIDER_GAP, Dir, FIELD_W, ICON, LABEL_GAP, LABEL_W, LEVEL_Y, LINK_GAP, MARGIN, MAX_SHOWN,
+    MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H, MUTE_W, MUTE_Y, NAME_Y, NowPlaying, Pick, ROW_H, SEP_GAP,
+    SEP_H, STRIP_H, THUMB_H, THUMB_WIDER, TRACK_H, TRACK_Y, Transport, VolumePopup, input, output,
+    settings,
 };
 
 #[derive(Clone, Debug)]
@@ -165,8 +165,8 @@ pub fn layout(
         0
     };
     let label_w = text
-        .measure(OUTPUT, false, px)
-        .max(text.measure(INPUT, false, px))
+        .measure(&output(), false, px)
+        .max(text.measure(&input(), false, px))
         .max(l(LABEL_W));
     let rows_w = label_w + l(LABEL_GAP) + l(FIELD_W);
     let w = 2 * margin + (col_w + divider_w + programs_w).max(rows_w);
@@ -226,7 +226,7 @@ pub fn layout(
         .collect();
     let field = |fy: i32| Rect::new(fx, fy, l(FIELD_W), combo_h);
     let foot = cy + col_h + bar_h;
-    let lw = text.measure(SETTINGS, false, px);
+    let lw = text.measure(&settings(), false, px);
     let ly = foot + strip_h + l(LINK_GAP);
     let settings = Rect::new(x + w - margin - lw, ly, lw, l(ROW_H));
     Layout {

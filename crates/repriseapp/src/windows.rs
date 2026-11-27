@@ -694,7 +694,7 @@ impl Host {
             f.id,
             Shell::Layer(layer),
             scaling,
-            f.title.into(),
+            f.title,
             (0, 0),
             Caption::Window,
         );

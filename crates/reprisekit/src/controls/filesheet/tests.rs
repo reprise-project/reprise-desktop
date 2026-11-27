@@ -153,7 +153,7 @@ fn a_reader_calls_the_name_field_name() {
         .nodes()
         .find(|(_, n)| n.role() == crate::access::accesskit::Role::TextInput)
         .expect("the name field");
-    assert_eq!(field.label(), Some(NAME_FIELD));
+    assert_eq!(field.label(), Some(name_field().as_str()));
 }
 
 #[test]
@@ -382,11 +382,11 @@ fn a_sets_boxes_speak_of_the_selected_items() {
     }
     let set = Subject::Set { has_dir: true };
     let f = attr_form("set read-only", set, &t, px, TextUnits::ONE);
-    assert_eq!(line(&f, ATTR_ONLY), SET_ATTR_LABELS[0]);
-    assert_eq!(line(&f, ATTR_TREE), SET_ATTR_LABELS[1]);
+    assert_eq!(line(&f, ATTR_ONLY), set_attr_labels()[0]);
+    assert_eq!(line(&f, ATTR_TREE), set_attr_labels()[1]);
     assert!(line(&f, "attr_q0").contains("the selected items only"));
     let folder = attr_form("set read-only", Subject::Folder, &t, px, TextUnits::ONE);
-    assert_eq!(line(&folder, ATTR_ONLY), ATTR_LABELS[0]);
+    assert_eq!(line(&folder, ATTR_ONLY), attr_labels()[0]);
 }
 
 #[test]

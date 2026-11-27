@@ -675,7 +675,7 @@ pub fn access<S: AsRef<str>>(
             .filter(|_| close)
             .and_then(|(at, g, j)| Some(at(grids[g].assist_close(j)?)));
         if let Some(r) = button {
-            let name = format!("Close {}", title.as_ref());
+            let name = tr!("overview-close", title = title.as_ref());
             tree.push(id, "close", access::button(r, &name, true, false));
         }
         if i == selected {

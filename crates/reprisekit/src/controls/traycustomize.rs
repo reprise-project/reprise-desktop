@@ -107,59 +107,55 @@ impl Wording {
     }
 
     /// The label of combo row `b`.
-    pub fn label(self, b: Behaviour) -> &'static str {
+    pub fn label(self, b: Behaviour) -> String {
         match (self, b) {
-            (Wording::Classic, Behaviour::Auto) => "Hide when inactive",
-            (Wording::Classic, Behaviour::Hide) => "Always hide",
-            (Wording::Classic, Behaviour::Show) => "Always show",
-            (Wording::Classic, Behaviour::Mute) => "Hide, no balloons",
-            (Wording::Glass, Behaviour::Show | Behaviour::Auto) => "Show icon and notifications",
-            (Wording::Glass, Behaviour::Mute) => "Hide icon and notifications",
-            (Wording::Glass, Behaviour::Hide) => "Only show notifications",
+            (Wording::Classic, Behaviour::Auto) => tr!("traycustomize-classic-auto"),
+            (Wording::Classic, Behaviour::Hide) => tr!("traycustomize-classic-hide"),
+            (Wording::Classic, Behaviour::Show) => tr!("traycustomize-classic-show"),
+            (Wording::Classic, Behaviour::Mute) => tr!("traycustomize-classic-mute"),
+            (Wording::Glass, Behaviour::Show | Behaviour::Auto) => tr!("traycustomize-glass-show"),
+            (Wording::Glass, Behaviour::Mute) => tr!("traycustomize-glass-mute"),
+            (Wording::Glass, Behaviour::Hide) => tr!("traycustomize-glass-hide"),
         }
     }
 
-    pub fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            Wording::Classic => "Customize Notifications",
-            Wording::Glass => "Notification Area Icons",
+            Wording::Classic => tr!("traycustomize-title-classic"),
+            Wording::Glass => tr!("traycustomize-title-glass"),
         }
     }
 
-    fn intro(self) -> &'static str {
+    fn intro(self) -> String {
         match self {
-            Wording::Classic => {
-                "Reprise keeps the icons of busy and urgent items on the taskbar and \
-                 keeps the idle ones behind the arrow. Pick another behavior for any item below."
-            }
-            Wording::Glass => {
-                "A hidden icon and its notifications won't tell you about changes. To \
-                 see hidden icons at any time, click the arrow beside the notification area."
-            }
+            Wording::Classic => tr!("traycustomize-intro-classic"),
+            Wording::Glass => tr!("traycustomize-intro-glass"),
         }
     }
 
     /// Glass's page heading.
-    const HEADING: &'static str = "Choose which icons and notifications appear on the taskbar";
+    fn heading() -> String {
+        tr!("traycustomize-heading")
+    }
 
-    fn prompt(self) -> &'static str {
+    fn prompt(self) -> String {
         match self {
-            Wording::Classic => "Select an item, then choose how it behaves:",
-            Wording::Glass => "Select an item, then choose its behavior:",
+            Wording::Classic => tr!("traycustomize-prompt-classic"),
+            Wording::Glass => tr!("traycustomize-prompt-glass"),
         }
     }
 
-    fn columns(self) -> [&'static str; 2] {
+    fn columns(self) -> [String; 2] {
         match self {
-            Wording::Classic => ["Name", "Behavior"],
-            Wording::Glass => ["Icons", "Behaviors"],
+            Wording::Classic => [tr!("traycustomize-name"), tr!("traycustomize-behavior")],
+            Wording::Glass => [tr!("traycustomize-icons"), tr!("traycustomize-behaviors")],
         }
     }
 
-    fn restore(self) -> &'static str {
+    fn restore(self) -> String {
         match self {
-            Wording::Classic => "&Restore Defaults",
-            Wording::Glass => "Restore default icon behaviors",
+            Wording::Classic => tr!("traycustomize-restore-classic"),
+            Wording::Glass => tr!("traycustomize-restore-glass"),
         }
     }
 
@@ -171,10 +167,21 @@ impl Wording {
     }
 }
 
+/// `labels` as the `&str`s a combo takes.
+fn refs(labels: &[String]) -> Vec<&str> {
+    labels.iter().map(String::as_str).collect()
+}
+
 /// The Glass check box's label.
-pub const ALL_ICONS: &str = "&Always show all icons and notifications on the taskbar";
-pub const CURRENT: &str = "Current Items";
-pub const PAST: &str = "Past Items";
+pub fn all_icons() -> String {
+    tr!("traycustomize-all-icons")
+}
+pub fn current() -> String {
+    tr!("traycustomize-current")
+}
+pub fn past() -> String {
+    tr!("traycustomize-past")
+}
 
 /// One tray item on the list.
 #[derive(Clone, Debug, PartialEq)]
@@ -441,8 +448,12 @@ impl TrayCustomize {
             return;
         };
         let w = self.wording;
-        let labels: Vec<&str> = w.choices().iter().map(|&b| w.label(b)).collect();
-        self.combo = Combo::new(&labels, w.index(e.behaviour, e.passive), labels.len());
+        let labels: Vec<String> = w.choices().iter().map(|&b| w.label(b)).collect();
+        self.combo = Combo::new(
+            &refs(&labels),
+            w.index(e.behaviour, e.passive),
+            labels.len(),
+        );
     }
 
     /// Select entry `i`, scrolled into view.

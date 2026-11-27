@@ -81,13 +81,23 @@ impl Wizard {
     pub fn new(style: Style, items: Vec<Item>, first: bool, last: bool) -> Wizard {
         let mut items = items;
         let at = |x| Rect::new(x, BUTTON_Y, BUTTON_W, BUTTON_H);
-        items.push(Item::button(BACK, at(BACK_X), "< &Back", !first, false));
-        let next = if last { "Finish" } else { "&Next >" };
+        items.push(Item::button(
+            BACK,
+            at(BACK_X),
+            &tr!("wizard-back"),
+            !first,
+            false,
+        ));
+        let next = if last {
+            &tr!("wizard-finish")
+        } else {
+            &tr!("wizard-next")
+        };
         items.push(Item::button(NEXT, at(BACK_X + BUTTON_W), next, true, true));
         items.push(Item::button(
             CANCEL,
             at(BACK_X + 2 * BUTTON_W + CANCEL_GAP),
-            "Cancel",
+            &tr!("cancel"),
             true,
             false,
         ));

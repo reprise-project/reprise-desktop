@@ -459,7 +459,11 @@ pub fn access(
     parent: NodeId,
     key: impl std::hash::Hash + Copy,
 ) -> NodeId {
-    let mut n = access::named(Role::ListBox, lay.frame, "Monitor arrangement");
+    let mut n = access::named(
+        Role::ListBox,
+        lay.frame,
+        &tr!("arrange-monitor-arrangement"),
+    );
     access::focusable(&mut n, a.enabled);
     let id = tree.push(parent, (key, "arrange"), n);
     for (k, t) in a.tiles.iter().enumerate() {

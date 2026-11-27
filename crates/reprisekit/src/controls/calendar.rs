@@ -26,20 +26,14 @@ pub const H: i32 = 130;
 pub const ROW_H: i32 = 18;
 pub const ROWS: usize = 6;
 
-pub const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
+/// Month `m` (1 to 12, clamped) by name.
+pub fn month_name(m: u32) -> String {
+    tr!("calendar-month", month = m.clamp(1, 12) as i64)
+}
+
+pub fn months() -> [String; 12] {
+    std::array::from_fn(|i| month_name(i as u32 + 1))
+}
 
 const LETTERS: [&str; 7] = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -165,7 +159,11 @@ impl Calendar {
     }
 
     pub fn title(&self) -> String {
-        format!("{} {}", MONTHS[self.month as usize - 1], self.year)
+        tr!(
+            "calendar-title",
+            month = month_name(self.month).as_str(),
+            year = self.year as i64
+        )
     }
 }
 
@@ -333,7 +331,9 @@ const LINK_H: i32 = 16;
 /// The title row: two 16x16 arrow buttons and the month between them.
 const TITLE_H: i32 = 16;
 /// The link at the popup's foot, which opens Date and Time Properties.
-pub const SETTINGS: &str = "Date and Time settings...";
+pub fn settings() -> String {
+    tr!("calendar-settings")
+}
 const ARROW_W: i32 = 16;
 
 /// From the grid's right edge to the analog clock's.
@@ -561,14 +561,22 @@ pub fn draw_popup_base(
         );
     }
     let link = lay.settings.scaled(s);
-    let lw = text.measure(SETTINGS, false, px);
+    let lw = text.measure(&settings(), false, px);
     let at = Rect::new(
         link.x + (link.width - lw).max(0) / 2,
         link.y,
         lw,
         link.height,
     );
-    draw_link(&mut c, text, p, at, SETTINGS, hot == PopupHit::Settings, px);
+    draw_link(
+        &mut c,
+        text,
+        p,
+        at,
+        &settings(),
+        hot == PopupHit::Settings,
+        px,
+    );
     draw(&mut c, text, p, &picked(cal), &lay.grid, false, px);
     if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
         let bold = flyout::look(theme).is_none();
@@ -617,9 +625,13 @@ pub fn access(
     let mut n = access::node(Role::DateInput, lay.frame);
     access::focusable(&mut n, cal.enabled);
     let id = tree.push(parent, key, n);
-    let month = MONTHS[(cal.month.clamp(1, 12) - 1) as usize];
     let value = match cal.day {
-        Some(d) => format!("{month} {d}, {}", cal.year),
+        Some(d) => tr!(
+            "calendar-date",
+            month = month_name(cal.month).as_str(),
+            day = d as i64,
+            year = cal.year as i64
+        ),
         None => cal.title(),
     };
     access::value_run(tree, id, lay.band, &value, 0..0, text, px);
@@ -643,15 +655,19 @@ pub fn popup_access(
         tree.push(parent, "date", access::named(Role::Label, lay.date, date));
     }
     for (key, r, name) in [
-        ("prev", lay.prev, "Previous month"),
-        ("next", lay.next, "Next month"),
+        ("prev", lay.prev, tr!("calendar-previous-month")),
+        ("next", lay.next, tr!("calendar-next-month")),
     ] {
-        let mut n = access::named(Role::Button, r, name);
+        let mut n = access::named(Role::Button, r, &name);
         n.add_action(accesskit::Action::Click);
         tree.push(parent, key, n);
     }
     if let Some(r) = lay.clock {
-        tree.push(parent, "clock", access::named(Role::Image, r, "Clock"));
+        tree.push(
+            parent,
+            "clock",
+            access::named(Role::Image, r, &tr!("calendar-clock")),
+        );
     }
     if let (Some(r), Some(time)) = (lay.time, &cal.time) {
         tree.push(parent, "time", access::named(Role::Label, r, time));
@@ -666,7 +682,7 @@ pub fn popup_access(
     if let (Some(a), Some(list)) = (&cal.agenda, &lay.agenda) {
         agenda::access(a, cal.today, list, tree, parent);
     }
-    let mut link = access::named(Role::Link, lay.settings, SETTINGS);
+    let mut link = access::named(Role::Link, lay.settings, &settings());
     link.add_action(accesskit::Action::Click);
     tree.push(parent, "settings", link);
     grid
@@ -674,6 +690,20 @@ pub fn popup_access(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn month_and_date_texts_read_from_the_messages() {
+        assert_eq!(month_name(1), "January");
+        assert_eq!(month_name(12), "December");
+        assert_eq!(month_name(0), "January", "clamped");
+        assert_eq!(months()[8], "September");
+        assert_eq!(
+            tr!("calendar-date", month = "March", day = 5, year = 2026),
+            "March 5, 2026",
+            "no digit grouping in a year"
+        );
+        assert_eq!(agenda::weekday_name(0), "Sunday");
+    }
+
     use super::*;
     use crate::look::classic_paint;
     use crate::theme::FontConfig;
@@ -1268,7 +1298,7 @@ mod tests {
         );
         let mut tree = Tree::new(access::node(Role::Window, Rect::new(0, 0, 174, 202)));
         popup_access(&cal, &cm, &text, 11, &mut tree, crate::access::ROOT);
-        let link = tree.find(Role::Link, SETTINGS).expect("the link's node");
+        let link = tree.find(Role::Link, &settings()).expect("the link's node");
         assert!(
             tree.get(link)
                 .unwrap()

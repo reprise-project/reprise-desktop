@@ -86,8 +86,12 @@ pub struct DisplayPanel {
 }
 
 pub const BODY_W: i32 = 314;
-pub const SETTINGS: &str = "Settings...";
-pub const NIGHT_LIGHT: &str = "Night light";
+pub fn settings() -> String {
+    tr!("displaypanel-settings")
+}
+pub fn night_light() -> String {
+    tr!("displaypanel-night-light")
+}
 
 const PAD: i32 = 6;
 const LINE: i32 = 13;
@@ -335,7 +339,7 @@ pub fn layout(cm: &ControlMetrics, panel: &DisplayPanel, text: &TextRenderer, px
             y += h;
             let icon = Rect::new(left, ly + (line - ICON) / 2, ICON, ICON);
             let pw = if fixed {
-                text.measure(osd::NOT_ADJUSTABLE, false, px)
+                text.measure(&osd::not_adjustable(), false, px)
             } else {
                 u.len(PERCENT_W)
             };
@@ -367,11 +371,11 @@ pub fn layout(cm: &ControlMetrics, panel: &DisplayPanel, text: &TextRenderer, px
     let side = u.small() * BOX;
     let night_box = Rect::new(left, y + (line - side) / 2, side, side);
     let nx = night_box.right() + u.len(BOX_GAP);
-    let night_label = Rect::new(nx, y, text.measure(NIGHT_LIGHT, false, px), line);
+    let night_label = Rect::new(nx, y, text.measure(&night_light(), false, px), line);
     let sw = text.measure(&panel.night.state, false, px);
     let night_state = Rect::new(right - sw, y, sw, line);
     y += line + ABOVE;
-    let lw = text.measure(SETTINGS, false, px);
+    let lw = text.measure(&settings(), false, px);
     let settings = Rect::new(right - lw, y, lw, line);
     y += line + FOOT + e + PAD;
     Layout {
@@ -444,7 +448,13 @@ pub fn draw(theme: &Theme, text: &TextRenderer, panel: &DisplayPanel) -> Canvas 
         text.draw(&mut c, lr, &label, false, label_ink, Align::Left, px);
         match row.level {
             Level::At(v) => put(&mut c, rl.percent, &format!("{v}%"), cs.button_text, true),
-            Level::Fixed => put(&mut c, rl.percent, osd::NOT_ADJUSTABLE, cs.gray_text, true),
+            Level::Fixed => put(
+                &mut c,
+                rl.percent,
+                &osd::not_adjustable(),
+                cs.gray_text,
+                true,
+            ),
             Level::Unread => {}
         }
         if let Some(sl) = &rl.slider {
@@ -478,10 +488,10 @@ pub fn draw(theme: &Theme, text: &TextRenderer, panel: &DisplayPanel) -> Canvas 
         draw_checkbox_disabled(&mut c, p, b, night.on);
         cs.gray_text
     };
-    put(&mut c, lay.night_label, NIGHT_LIGHT, night_ink, false);
+    put(&mut c, lay.night_label, &night_light(), night_ink, false);
     put(&mut c, lay.night_state, &night.state, cs.gray_text, true);
-    let link = fit(lay.settings, SETTINGS, true);
-    draw_link(&mut c, text, p, link, SETTINGS, true, px);
+    let link = fit(lay.settings, &settings(), true);
+    draw_link(&mut c, text, p, link, &settings(), true, px);
     if panel.cues {
         match panel.focus {
             Focus::Night => ring(&mut c, lay.night_label),
@@ -513,7 +523,7 @@ pub fn access(panel: &DisplayPanel, lay: &Layout, tree: &mut Tree, parent: NodeI
             }
             (Level::Fixed, _) => {
                 let mut n = access::node(Role::Label, line);
-                n.set_label(format!("{}: {}", row.label, osd::NOT_ADJUSTABLE));
+                n.set_label(format!("{}: {}", row.label, osd::not_adjustable()));
                 n.set_disabled();
                 tree.push(parent, row.label.as_str(), n)
             }
@@ -535,7 +545,7 @@ pub fn access(panel: &DisplayPanel, lay: &Layout, tree: &mut Tree, parent: NodeI
     } else {
         accesskit::Toggled::False
     };
-    let mut n = access::toggle(Role::CheckBox, r, NIGHT_LIGHT, toggled, night.enabled);
+    let mut n = access::toggle(Role::CheckBox, r, &night_light(), toggled, night.enabled);
     if !night.state.is_empty() {
         n.set_description(night.state.as_str());
     }
@@ -543,7 +553,7 @@ pub fn access(panel: &DisplayPanel, lay: &Layout, tree: &mut Tree, parent: NodeI
     if panel.focus == Focus::Night {
         focused = id;
     }
-    let mut n = access::named(Role::Link, lay.settings, SETTINGS);
+    let mut n = access::named(Role::Link, lay.settings, &settings());
     access::focusable(&mut n, true);
     let id = tree.push(parent, "settings", n);
     if panel.focus == Focus::Settings {
@@ -763,7 +773,7 @@ mod tests {
         assert_eq!(f.percent.right(), 318);
         assert_eq!(
             f.percent.width,
-            text.measure(osd::NOT_ADJUSTABLE, false, 11)
+            text.measure(&osd::not_adjustable(), false, 11)
         );
         assert_eq!(f.label.right(), f.percent.x - 10);
         assert!(f.slider.is_none());

@@ -50,12 +50,12 @@ pub enum Install {
 }
 
 impl Install {
-    fn label(&self) -> &'static str {
+    fn label(&self) -> String {
         match self {
-            Install::No | Install::Failed(_) => "&Install",
-            Install::Running => "Installing...",
-            Install::User => "Installed",
-            Install::System => "Installed (system)",
+            Install::No | Install::Failed(_) => tr!("fontview-install"),
+            Install::Running => tr!("fontview-installing"),
+            Install::User => tr!("fontview-installed"),
+            Install::System => tr!("fontview-installed-system"),
         }
     }
 }
@@ -67,7 +67,7 @@ pub fn form(faces: &[FaceNames], picked: usize, install: &Install) -> Form {
     let mut items = vec![Item::button(
         INSTALL,
         Rect::new(MARGIN, MARGIN, INSTALL_W, BUTTON_H),
-        install.label(),
+        &install.label(),
         live,
         live,
     )];
@@ -79,7 +79,7 @@ pub fn form(faces: &[FaceNames], picked: usize, install: &Install) -> Form {
             FACE_LABEL_X,
             MARGIN + 5,
             34,
-            "&Face:",
+            &tr!("fontview-face"),
         ));
         let mut combo = Item::combo(
             FACE,
@@ -108,16 +108,12 @@ pub fn form(faces: &[FaceNames], picked: usize, install: &Install) -> Form {
             items.push(line(NAME, 0, f.title()));
             items.push(line(VERSION, 1, f.version.clone()));
             let second = match install {
-                Install::Failed(why) => format!("Could not install the font: {why}"),
+                Install::Failed(why) => tr!("fontview-failed", why = why.as_str()),
                 _ => f.copyright.clone(),
             };
             items.push(line(COPYRIGHT, 2, second));
         }
-        None => items.push(line(
-            NAME,
-            0,
-            "This file is not a font Reprise can read.".into(),
-        )),
+        None => items.push(line(NAME, 0, tr!("fontview-this-file-is-not-a-font"))),
     }
     Form::new(items)
 }

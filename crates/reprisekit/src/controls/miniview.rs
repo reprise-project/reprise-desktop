@@ -198,7 +198,11 @@ pub fn access(l: &Layout, title: &str, hot: bool, tree: &mut Tree, parent: NodeI
     let name = format!("Mini View: {title}");
     let id = tree.push(parent, "mini", access::named(Role::Window, all, &name));
     if hot {
-        tree.push(id, "close", access::named(Role::Button, l.close, "Close"));
+        tree.push(
+            id,
+            "close",
+            access::named(Role::Button, l.close, &tr!("close")),
+        );
     }
 }
 

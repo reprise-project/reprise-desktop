@@ -139,7 +139,7 @@ fn create_sends_the_login_and_remote_passwords_and_shows_done() {
     let (socket, seen) = account_daemon(&dir, vec![status_is(false), AccountReply::Done]);
     let mut a = app_with(running(socket), true);
     assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
-    assert_eq!(status(&a), [remotepassword::HAS_NONE]);
+    assert_eq!(status(&a), [remotepassword::has_none()]);
     assert!(lit(&a, remotepassword::CREATE));
     assert!(
         page(&a).item(remotepassword::REMOVE).is_none(),
@@ -160,7 +160,7 @@ fn create_sends_the_login_and_remote_passwords_and_shows_done() {
         })
     );
     assert!(a.rd_password.is_none(), "Done closes the dialog");
-    assert_eq!(status(&a), [remotepassword::HAS_ONE]);
+    assert_eq!(status(&a), [remotepassword::has_one()]);
     assert!(lit(&a, remotepassword::CHANGE) && lit(&a, remotepassword::REMOVE));
 }
 
@@ -190,7 +190,7 @@ fn a_wrong_login_password_is_said_in_the_dialog() {
     let d = a.rd_password.as_ref().expect("the dialog stays open");
     assert_eq!(d.why(), "The password is incorrect.");
     assert_eq!(d.form.edit_text(LOGIN), "", "emptied to type again");
-    assert_eq!(status(&a), [remotepassword::HAS_ONE], "still set");
+    assert_eq!(status(&a), [remotepassword::has_one()], "still set");
 }
 
 #[test]
@@ -216,7 +216,7 @@ fn a_change_that_failed_reads_the_password_again() {
     a.wake();
     assert_eq!(
         status(&a),
-        [remotepassword::HAS_ONE],
+        [remotepassword::has_one()],
         "the password the daemon stored after all"
     );
 }
@@ -239,7 +239,7 @@ fn a_stopped_login_manager_is_not_asked_and_says_it_is_not_running() {
         .map(|i| i.control.clone());
     assert_eq!(
         note,
-        Some(Control::Lines(vec![remotepassword::NO_MANAGER.into()]))
+        Some(Control::Lines(vec![remotepassword::no_manager()]))
     );
 }
 
@@ -268,7 +268,7 @@ fn another_accounts_page_says_only_that_each_user_sets_their_own() {
         .map(|i| i.control.clone());
     assert_eq!(
         note,
-        Some(Control::GreyedLines(vec![remotepassword::NOT_YOURS.into()]))
+        Some(Control::GreyedLines(vec![remotepassword::not_yours()]))
     );
     for id in [
         remotepassword::CREATE,
@@ -307,10 +307,7 @@ fn a_failed_status_says_the_login_manager_is_not_answering_and_asks_again() {
     let note = page(&a)
         .item(remotepassword::NOTE)
         .map(|i| i.control.clone());
-    assert_eq!(
-        note,
-        Some(Control::Lines(vec![remotepassword::SILENT.into()]))
-    );
+    assert_eq!(note, Some(Control::Lines(vec![remotepassword::silent()])));
     assert!(a.remote.reading.is_some(), "asked again");
     a.wake();
     assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
@@ -342,7 +339,7 @@ fn outside_the_group_change_greys_and_remove_stays_lit() {
         panic!("a note says why: {note:?}");
     };
     assert!(l[0].contains("aren't in the staff group"), "{l:?}");
-    assert_eq!(status(&a), [remotepassword::HAS_ONE_SHORT]);
+    assert_eq!(status(&a), [remotepassword::has_one_short()]);
 }
 
 #[test]
@@ -354,10 +351,7 @@ fn roots_own_page_greys_create_and_says_root_never_logs_on_remotely() {
     let note = page(&a)
         .item(remotepassword::NOTE)
         .map(|i| i.control.clone());
-    assert_eq!(
-        note,
-        Some(Control::Lines(vec![remotepassword::ROOT.into()]))
-    );
+    assert_eq!(note, Some(Control::Lines(vec![remotepassword::root()])));
 }
 
 #[test]
@@ -372,7 +366,7 @@ fn the_actions_grey_while_a_request_is_out_and_its_done_still_shows() {
     assert!(a.rd_password.is_none());
     assert!(!lit(&a, remotepassword::CREATE), "Create waits");
     a.wake();
-    assert_eq!(status(&a), [remotepassword::HAS_ONE]);
+    assert_eq!(status(&a), [remotepassword::has_one()]);
     assert!(lit(&a, remotepassword::CHANGE));
     assert!(lit(&a, remotepassword::REMOVE));
 }
@@ -396,7 +390,7 @@ fn a_late_done_leaves_a_dialog_that_never_sent_it_open() {
         .expect("the Remove dialog stays open");
     assert_eq!(d.why(), "");
     assert_eq!(d.form.edit_text(LOGIN), "hunter3");
-    assert_eq!(status(&a), [remotepassword::HAS_ONE]);
+    assert_eq!(status(&a), [remotepassword::has_one()]);
 }
 
 #[test]
@@ -442,7 +436,7 @@ fn a_done_outdates_a_read_under_way() {
     a.wake();
     let _ = tx.send(stale);
     a.wake();
-    assert_eq!(status(&a), [remotepassword::HAS_ONE]);
+    assert_eq!(status(&a), [remotepassword::has_one()]);
 }
 
 #[test]
@@ -460,7 +454,7 @@ fn typing_on_the_page_survives_the_section_changing() {
     );
     press(&mut a, remotepassword::CREATE);
     send(&mut a, &SET_NEW);
-    assert_eq!(status(&a), [remotepassword::HAS_ONE]);
+    assert_eq!(status(&a), [remotepassword::has_one()]);
     assert_eq!(page_text(&a, "current"), "x");
 }
 

@@ -3,9 +3,10 @@
 use super::{
     ADVANCED, APP_ICON_X, APP_NAME_X, CHANGE, CHECK_DY, CHECK_PITCH, CHECK_X, COUNT, EXECUTABLE,
     Executable, FIELD, FIELD_TO_SEP, FILE_ADVANCED_RIGHT, FILE_HIDDEN_X, Facts, HIDDEN,
-    HIDDEN_NOTE, ICON_PX, ICON_Y, LABEL_X, NAME, NAME_FIELD, PAGE_BOTTOM, READ_ONLY, ROW_BUTTON_DY,
+    HIDDEN_NOTE, ICON_PX, ICON_Y, LABEL_X, NAME, PAGE_BOTTOM, READ_ONLY, ROW_BUTTON_DY,
     ROW_BUTTON_RIGHT, ROW_BUTTON_W, ROW_PITCH, Row, SEP_IDS, SEP_RIGHT, SEP_TO_ROW, SET_SHEET_H,
-    SetFacts, Subject, TAIL_INLINE, TAIL_STACKED, button, check, check_enabled, sep, tick,
+    SetFacts, Subject, TAIL_INLINE, TAIL_STACKED, button, check, check_enabled, name_field, sep,
+    tick,
 };
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, CheckState};
 use crate::controls::form::{Control, Form, Item};
@@ -14,13 +15,13 @@ use crate::text::escape_mnemonic;
 use crate::textedit::TextEdit;
 
 pub fn rows(facts: &Facts) -> Vec<Row> {
-    let pair = |ids, label, value: String| Row::Pair {
+    let pair = |ids, label: String, value: String| Row::Pair {
         ids,
         label,
         value,
         wraps: false,
     };
-    let date = |ids, label, value: String| Row::Pair {
+    let date = |ids, label: String, value: String| Row::Pair {
         ids,
         label,
         value,
@@ -32,9 +33,9 @@ pub fn rows(facts: &Facts) -> Vec<Row> {
         pair(
             ("l_type", "v_type"),
             if facts.is_dir {
-                "Type:"
+                tr!("filesheet-general-type")
             } else {
-                "Type of file:"
+                tr!("filesheet-general-type-of-file")
             },
             facts.type_name.clone(),
         ),
@@ -42,38 +43,54 @@ pub fn rows(facts: &Facts) -> Vec<Row> {
     if let Some(app) = &facts.opens_with {
         rows.push(Row::OpensWith { name: app.clone() });
     } else if let Some(d) = &facts.description {
-        rows.push(pair(("l_desc", "v_desc"), "Description:", d.clone()));
+        rows.push(pair(
+            ("l_desc", "v_desc"),
+            tr!("filesheet-general-description"),
+            d.clone(),
+        ));
     }
     if !facts.is_dir {
         rows.push(Row::Separator);
     }
     rows.push(pair(
         ("l_loc", "v_loc"),
-        "Location:",
+        tr!("filesheet-general-location"),
         facts.location.clone(),
     ));
-    rows.push(pair(("l_size", "v_size"), "Size:", facts.size.clone()));
+    rows.push(pair(
+        ("l_size", "v_size"),
+        tr!("filesheet-general-size"),
+        facts.size.clone(),
+    ));
     rows.push(pair(
         ("l_disk", "v_disk"),
-        "Size on disk:",
+        tr!("filesheet-general-size-on-disk"),
         facts.on_disk.clone(),
     ));
     if let Some(has) = &facts.contains {
-        rows.push(pair(("l_has", "v_has"), "Contains:", has.clone()));
+        rows.push(pair(
+            ("l_has", "v_has"),
+            tr!("filesheet-general-contains"),
+            has.clone(),
+        ));
     }
     rows.push(Row::Separator);
     if let Some(created) = &facts.created {
-        rows.push(date(("l_made", "v_made"), "Created:", created.clone()));
+        rows.push(date(
+            ("l_made", "v_made"),
+            tr!("filesheet-general-created"),
+            created.clone(),
+        ));
     }
     if !facts.is_dir {
         rows.push(date(
             ("l_mod", "v_mod"),
-            "Modified:",
+            tr!("filesheet-general-modified"),
             facts.modified.clone(),
         ));
         rows.push(date(
             ("l_acc", "v_acc"),
-            "Accessed:",
+            tr!("filesheet-general-accessed"),
             facts.accessed.clone(),
         ));
     }
@@ -99,7 +116,7 @@ pub fn rows(facts: &Facts) -> Vec<Row> {
 }
 
 pub fn set_rows(facts: &SetFacts) -> Vec<Row> {
-    let pair = |ids, label, value: &String| Row::Pair {
+    let pair = |ids, label: String, value: &String| Row::Pair {
         ids,
         label,
         value: value.clone(),
@@ -110,10 +127,26 @@ pub fn set_rows(facts: &SetFacts) -> Vec<Row> {
             text: facts.count.clone(),
         },
         Row::Separator,
-        pair(("l_type", "v_type"), "Type:", &facts.type_text),
-        pair(("l_loc", "v_loc"), "Location:", &facts.location),
-        pair(("l_size", "v_size"), "Size:", &facts.size),
-        pair(("l_disk", "v_disk"), "Size on disk:", &facts.on_disk),
+        pair(
+            ("l_type", "v_type"),
+            tr!("filesheet-general-type"),
+            &facts.type_text,
+        ),
+        pair(
+            ("l_loc", "v_loc"),
+            tr!("filesheet-general-location"),
+            &facts.location,
+        ),
+        pair(
+            ("l_size", "v_size"),
+            tr!("filesheet-general-size"),
+            &facts.size,
+        ),
+        pair(
+            ("l_disk", "v_disk"),
+            tr!("filesheet-general-size-on-disk"),
+            &facts.on_disk,
+        ),
         Row::Separator,
         Row::Attributes {
             read_only: facts.read_only,
@@ -177,7 +210,7 @@ pub fn general_page(
                             enabled: true,
                         },
                     )
-                    .named(NAME_FIELD),
+                    .named(name_field()),
                 });
                 y = FIELD.bottom() + FIELD_TO_SEP;
             }
@@ -208,7 +241,7 @@ pub fn general_page(
                     LABEL_X,
                     y,
                     value_x - LABEL_X,
-                    "Opens with:",
+                    &tr!("filesheet-general-opens-with"),
                 ));
                 items.push(Item::picture(
                     "opens_icon",
@@ -225,7 +258,7 @@ pub fn general_page(
                 items.push(button(
                     CHANGE,
                     Rect::new(change_x, y - ROW_BUTTON_DY, ROW_BUTTON_W, BUTTON_H),
-                    "&Change...",
+                    &tr!("filesheet-general-change"),
                     true,
                 ));
                 y += ROW_PITCH;
@@ -238,25 +271,37 @@ pub fn general_page(
             } => {
                 // A set with a folder in it drops the label's colon.
                 let label = match subject {
-                    Subject::Set { has_dir: true } => "Attributes",
-                    _ => "Attributes:",
+                    Subject::Set { has_dir: true } => tr!("filesheet-general-attributes"),
+                    _ => tr!("filesheet-general-attributes-colon"),
                 };
                 items.push(Item::label_at(
                     "l_attr",
                     LABEL_X,
                     y,
                     value_x - LABEL_X,
-                    label,
+                    &label,
                 ));
                 let by = y + CHECK_DY;
-                items.push(check(READ_ONLY, CHECK_X, by, "&Read-only", *read_only));
+                items.push(check(
+                    READ_ONLY,
+                    CHECK_X,
+                    by,
+                    &tr!("filesheet-general-read-only"),
+                    *read_only,
+                ));
                 // Hidden stands for the dot in front of the name: a host
                 // renames the file to set or clear it.
                 let (hx, hy) = match subject {
                     Subject::File => (FILE_HIDDEN_X, by),
                     _ => (CHECK_X, by + CHECK_PITCH),
                 };
-                items.push(check(HIDDEN, hx, hy, "&Hidden", *hidden));
+                items.push(check(
+                    HIDDEN,
+                    hx,
+                    hy,
+                    &tr!("filesheet-general-hidden"),
+                    *hidden,
+                ));
                 let mut last = hy;
                 if let Some(x) = executable {
                     last += CHECK_PITCH;
@@ -264,7 +309,7 @@ pub fn general_page(
                         EXECUTABLE,
                         CHECK_X,
                         last,
-                        "&Executable",
+                        &tr!("filesheet-general-executable"),
                         tick(x.on),
                         x.enabled,
                     ));
@@ -274,7 +319,7 @@ pub fn general_page(
                     LABEL_X,
                     last + CHECK_PITCH,
                     SEP_RIGHT - LABEL_X,
-                    "Hidden items show with View > Hidden Items.",
+                    &tr!("filesheet-general-hidden-items-show-with-view-hidden"),
                 ));
                 let (right, w) = match subject {
                     Subject::Folder => (ROW_BUTTON_RIGHT, ROW_BUTTON_W),

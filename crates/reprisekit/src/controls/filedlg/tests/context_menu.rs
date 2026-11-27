@@ -431,7 +431,7 @@ fn the_boxes_over_the_dialog_are_drawn_as_pinned() {
     use crate::theme::TextUnits;
     crate::pins::fonts();
     let text = text();
-    let yes_no = [dlgtemplate::YES.to_string(), dlgtemplate::NO.to_string()];
+    let yes_no = [dlgtemplate::yes().to_string(), dlgtemplate::no()];
     let mut icon = Canvas::new(32, 32);
     icon.fill_rect(icon.bounds(), crate::theme::Color::rgb(0xc0, 0x40, 0x20));
     let prompt = |template, question: &str, text_h| {

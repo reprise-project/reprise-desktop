@@ -297,7 +297,7 @@ impl DiskUsage {
         let kind = ConfirmKind::of(1, is_dir);
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         let (title, text) = bincap::delete_prompt(kind, &name, 1, false, BinLack::None);
-        let buttons = [dlgtemplate::YES, dlgtemplate::NO];
+        let buttons = [dlgtemplate::yes(), dlgtemplate::no()];
         let fields = Fields {
             text,
             icon: self.trash_icon.clone(),

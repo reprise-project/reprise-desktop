@@ -852,7 +852,7 @@ mod tests {
                 .list
                 .items
                 .iter()
-                .any(|i| i == launcher::WINDOWS_HEADING)
+                .any(|i| i == &launcher::windows_heading())
         );
     }
 

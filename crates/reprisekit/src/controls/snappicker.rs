@@ -153,9 +153,17 @@ pub fn access(
     let mut focus = parent;
     for (l, (cell, tiles)) in layout.cells.iter().zip(&layout.tiles).enumerate() {
         let name = if layout.suggestion[l] {
-            format!("Layout {} of {n}, suggestion", l + 1)
+            tr!(
+                "snappicker-layout-suggestion",
+                index = (l + 1) as i64,
+                count = n as i64
+            )
         } else {
-            format!("Layout {} of {n}", l + 1)
+            tr!(
+                "snappicker-layout",
+                index = (l + 1) as i64,
+                count = n as i64
+            )
         };
         let group = tree.push(parent, l, access::named(Role::Group, *cell, &name));
         for (z, r) in tiles.iter().enumerate() {
@@ -163,8 +171,17 @@ pub fn access(
                 .and_then(|s| s.filled.iter().find(|f| f.0 == z))
                 .map(|f| f.1.as_str());
             let label = match title {
-                Some(t) => format!("Zone {} of {}, {t}", z + 1, tiles.len()),
-                None => format!("Zone {} of {}", z + 1, tiles.len()),
+                Some(t) => tr!(
+                    "snappicker-zone-titled",
+                    index = (z + 1) as i64,
+                    count = tiles.len() as i64,
+                    title = t
+                ),
+                None => tr!(
+                    "snappicker-zone",
+                    index = (z + 1) as i64,
+                    count = tiles.len() as i64
+                ),
             };
             let mut node = access::named(Role::Button, *r, &label);
             access::focusable(&mut node, title.is_none());

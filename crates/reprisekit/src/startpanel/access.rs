@@ -3,8 +3,8 @@
 
 use super::layout::Layout;
 use super::{
-    ALL_PROGRAMS, BACK, CLEAR, LOG_OFF, Mode, SEARCH_CUE, SHUT_DOWN, SHUT_DOWN_OPTIONS, Shape,
-    Spot, StartPanel, TURN_OFF, TreeRow, USER_ACCOUNTS,
+    Mode, Shape, Spot, StartPanel, TreeRow, all_programs, back, clear, log_off, search_cue,
+    shut_down, shut_down_options, turn_off, user_accounts,
 };
 use crate::access::accesskit::{HasPopup, Node, NodeId, Role};
 use crate::access::{self, Tree};
@@ -16,7 +16,7 @@ pub fn access(p: &StartPanel, l: &Layout, tree: &mut Tree, parent: NodeId) -> No
     let menu = tree.push(
         parent,
         "start",
-        access::named(Role::Menu, l.panel, "Start Menu"),
+        access::named(Role::Menu, l.panel, &tr!("startpanel-access-start-menu")),
     );
     let groups: Vec<(usize, NodeId)> = l
         .headers
@@ -88,16 +88,16 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
             n
         }
         Spot::AllPrograms if p.shape == Shape::Blue => {
-            let mut n = item(r, ALL_PROGRAMS);
+            let mut n = item(r, &all_programs());
             n.set_has_popup(HasPopup::Menu);
             n
         }
         Spot::AllPrograms => item(
             r,
-            if p.mode() == Mode::Programs {
-                BACK
+            &if p.mode() == Mode::Programs {
+                back()
             } else {
-                ALL_PROGRAMS
+                all_programs()
             },
         ),
         Spot::Tree(i) => match p.tree.get(i)? {
@@ -125,20 +125,20 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
             }
             n
         }
-        Spot::Picture => access::button(r, USER_ACCOUNTS, true, false),
+        Spot::Picture => access::button(r, &user_accounts(), true, false),
         Spot::Search => {
             let mut n = access::node(Role::SearchInput, r);
             n.set_value(p.query());
-            n.set_placeholder(SEARCH_CUE);
+            n.set_placeholder(search_cue());
             access::focusable(&mut n, true);
             n
         }
-        Spot::Clear => access::button(r, CLEAR, true, false),
-        Spot::Shutdown if p.shape == Shape::Blue => access::button(r, TURN_OFF, true, false),
-        Spot::Shutdown => access::button(r, SHUT_DOWN, true, false),
-        Spot::LogOff => access::button(r, LOG_OFF, true, false),
+        Spot::Clear => access::button(r, &clear(), true, false),
+        Spot::Shutdown if p.shape == Shape::Blue => access::button(r, &turn_off(), true, false),
+        Spot::Shutdown => access::button(r, &shut_down(), true, false),
+        Spot::LogOff => access::button(r, &log_off(), true, false),
         Spot::ShutdownArrow => {
-            let mut n = access::button(r, SHUT_DOWN_OPTIONS, true, false);
+            let mut n = access::button(r, &shut_down_options(), true, false);
             n.set_has_popup(HasPopup::Menu);
             n
         }
@@ -169,15 +169,15 @@ mod tests {
         let (t, focus) = build(&p);
         let n = t.get(focus).unwrap();
         assert_eq!(n.role(), Role::SearchInput);
-        assert_eq!(n.placeholder(), Some(SEARCH_CUE));
+        assert_eq!(n.placeholder(), Some(search_cue().as_str()));
         let notepad = t.find(Role::MenuItem, "Notepad").expect("the program row");
         assert_eq!(t.get(notepad).unwrap().has_popup(), Some(HasPopup::Menu));
-        assert!(t.find(Role::MenuItem, ALL_PROGRAMS).is_some());
+        assert!(t.find(Role::MenuItem, &all_programs()).is_some());
         assert!(t.find(Role::MenuItem, "Documents").is_some());
-        assert!(t.find(Role::Button, SHUT_DOWN).is_some());
-        assert!(t.find(Role::Button, SHUT_DOWN_OPTIONS).is_some());
+        assert!(t.find(Role::Button, &shut_down()).is_some());
+        assert!(t.find(Role::Button, &shut_down_options()).is_some());
         let picture = t
-            .find(Role::Button, USER_ACCOUNTS)
+            .find(Role::Button, &user_accounts())
             .expect("the user picture");
         assert!(t.get(picture).unwrap().supports_action(Action::Click));
         p.key(Key::Down);
@@ -219,7 +219,7 @@ mod tests {
             .unwrap()
             .1;
         assert_eq!(field.value(), Some("no"));
-        assert!(t.find(Role::Button, CLEAR).is_some());
+        assert!(t.find(Role::Button, &clear()).is_some());
     }
 
     #[test]
@@ -257,11 +257,11 @@ mod tests {
             !t.nodes().any(|(_, n)| n.role() == Role::SearchInput),
             "no search field"
         );
-        let all = t.find(Role::MenuItem, ALL_PROGRAMS).unwrap();
+        let all = t.find(Role::MenuItem, &all_programs()).unwrap();
         assert_eq!(t.get(all).unwrap().has_popup(), Some(HasPopup::Menu));
-        assert!(t.find(Role::Button, LOG_OFF).is_some());
-        assert!(t.find(Role::Button, TURN_OFF).is_some());
-        assert!(t.find(Role::Button, SHUT_DOWN).is_none());
+        assert!(t.find(Role::Button, &log_off()).is_some());
+        assert!(t.find(Role::Button, &turn_off()).is_some());
+        assert!(t.find(Role::Button, &shut_down()).is_none());
         p.key(Key::Down);
         let (t, focus) = build(&p);
         assert_eq!(Some(focus), t.find(Role::MenuItem, "Notepad"));

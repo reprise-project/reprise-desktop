@@ -21,11 +21,19 @@ const SAMPLE: &str = "sample";
 /// The Appearance page's sample at its smallest, centred under the header band.
 const SAMPLE_RECT: Rect = Rect::new(73, 66, 350, 188);
 const ROW_Y: i32 = 268;
-const INTERFACES: [(&str, Interface, &str); 3] = [
-    ("classic", Interface::Classic, "Reprise &Classic"),
-    ("blue", Interface::Blue, "Reprise Bl&ue"),
-    ("glass", Interface::Glass, "Reprise &Glass"),
+const INTERFACES: [(&str, Interface); 3] = [
+    ("classic", Interface::Classic),
+    ("blue", Interface::Blue),
+    ("glass", Interface::Glass),
 ];
+
+fn interface_label(i: Interface) -> String {
+    match i {
+        Interface::Classic => tr!("welcome-interface-classic"),
+        Interface::Blue => tr!("welcome-interface-blue"),
+        Interface::Glass => tr!("welcome-interface-glass"),
+    }
+}
 const INTERFACE_W: i32 = 120;
 const LIGHT: &str = "light";
 const DARK: &str = "dark";
@@ -60,10 +68,10 @@ pub fn dark_offered(i: Interface) -> bool {
 }
 
 /// A program the last page offers as a button; `id` comes back in [`Outcome::Open`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Link {
     pub id: &'static str,
-    pub label: &'static str,
+    pub label: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,16 +160,16 @@ impl Welcome {
         let (style, items) = match page {
             Page::Interface => {
                 let mut items = vec![sample()];
-                for (i, (id, interface, label)) in INTERFACES.into_iter().enumerate() {
+                for (i, (id, interface)) in INTERFACES.into_iter().enumerate() {
                     let x = SAMPLE_RECT.x + i as i32 * INTERFACE_W;
                     items.push(
-                        Item::radio(id, x, ROW_Y, label, "interface")
+                        Item::radio(id, x, ROW_Y, &interface_label(interface), "interface")
                             .checked(self.picks.interface == interface),
                     );
                 }
                 let style = Style::Interior {
-                    title: "Welcome to Reprise".into(),
-                    subtitle: "Pick an interface. Settings > Appearance changes it later.".into(),
+                    title: tr!("welcome-interface-title"),
+                    subtitle: tr!("welcome-interface-subtitle"),
                     icon: None,
                 };
                 (style, items)
@@ -174,8 +182,9 @@ impl Welcome {
                 let combo_x = SAMPLE_RECT.right() - TEXT_SIZE_W;
                 let items = vec![
                     sample(),
-                    Item::radio(LIGHT, SAMPLE_RECT.x, ROW_Y, "&Light", "mode").checked(!dark),
-                    Item::radio(DARK, DARK_X, ROW_Y, "&Dark", "mode")
+                    Item::radio(LIGHT, SAMPLE_RECT.x, ROW_Y, &tr!("welcome-light"), "mode")
+                        .checked(!dark),
+                    Item::radio(DARK, DARK_X, ROW_Y, &tr!("welcome-dark"), "mode")
                         .checked(dark)
                         .enabled(offered),
                     Item::label_at(
@@ -183,7 +192,7 @@ impl Welcome {
                         combo_x - TEXT_LABEL_W - 4,
                         ROW_Y,
                         TEXT_LABEL_W,
-                        "&Text size:",
+                        &tr!("welcome-text-size"),
                     ),
                     Item::combo(
                         TEXT_SIZE,
@@ -195,15 +204,15 @@ impl Welcome {
                     ),
                 ];
                 let style = Style::Interior {
-                    title: "Light or dark".into(),
-                    subtitle: "And how large Reprise draws its text.".into(),
+                    title: tr!("welcome-look-title"),
+                    subtitle: tr!("welcome-look-subtitle"),
                     icon: None,
                 };
                 (style, items)
             }
             Page::Ready => (
                 Style::Exterior {
-                    title: "Reprise is ready".into(),
+                    title: tr!("welcome-ready-title"),
                 },
                 self.ready_items(text, forms),
             ),
@@ -212,7 +221,7 @@ impl Welcome {
         if let Some(Control::Button { label, .. }) =
             wizard.form.item_mut(wizard::CANCEL).map(|i| &mut i.control)
         {
-            *label = "S&kip".into();
+            *label = tr!("welcome-skip");
         }
         wizard.set_cancel_enabled(page != Page::Ready);
         let size = TEXT_SIZES.iter().position(|&p| p == self.picks.text_size);
@@ -257,7 +266,12 @@ impl Welcome {
         let mut y = body.y + LINE_H * lines.len() as i32 + 16;
         for link in &self.links {
             items.push(Item::button_at(
-                link.id, body.x, y, LINK_W, link.label, true,
+                link.id,
+                body.x,
+                y,
+                LINK_W,
+                &link.label,
+                true,
             ));
             y += BUTTON_H + 6;
         }
@@ -314,7 +328,7 @@ impl Welcome {
             wizard::Event::Page(form::Event::Changed(id)) => {
                 let form = &self.wizard.form;
                 let mut picks = self.picks;
-                if let Some((_, i, _)) = INTERFACES.iter().find(|i| i.0 == id) {
+                if let Some((_, i)) = INTERFACES.iter().find(|i| i.0 == id) {
                     picks.interface = *i;
                 } else if id == LIGHT || id == DARK {
                     picks.dark = form.checked(DARK).unwrap_or(false);
@@ -368,11 +382,11 @@ mod tests {
         vec![
             Link {
                 id: "settings",
-                label: "Open &Settings",
+                label: "Open &Settings".into(),
             },
             Link {
                 id: "import",
-                label: "&Import from Another Desktop",
+                label: "&Import from Another Desktop".into(),
             },
         ]
     }

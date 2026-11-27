@@ -13,24 +13,38 @@ pub const STATUS: &str = "remote_status";
 pub const NOTE: &str = "remote_note";
 const GROUP: &str = "remote_group";
 
-pub const TITLE: &str = "Remote Desktop password";
+pub fn title() -> String {
+    tr!("remotepassword-title")
+}
 
-pub const HAS_ONE: &str = "You have a Remote Desktop password. Clients that use Network Level \
-                           Authentication log on with it.";
-pub const HAS_NONE: &str = "You have no Remote Desktop password. Clients log on with your login \
-                            password over TLS.";
+pub fn has_one() -> String {
+    tr!("remotepassword-has-one")
+}
+pub fn has_none() -> String {
+    tr!("remotepassword-has-none")
+}
 /// The status while you can't set one, which the note explains.
-pub const HAS_ONE_SHORT: &str = "You have a Remote Desktop password.";
-pub const HAS_NONE_SHORT: &str = "You have no Remote Desktop password.";
-pub const REMOTE_OFF: &str = "Remote logins are turned off on this computer. An administrator \
-                              can turn them on in Settings > Login Manager.";
-pub const NO_MANAGER: &str =
-    "Reprise's login manager isn't running. Remote Desktop passwords need it.";
-pub const SILENT: &str = "Reprise's login manager isn't answering. Trying again...";
-pub const ROOT: &str = "The root account can't log on remotely, so it has no Remote Desktop \
-                        password.";
-pub const NOT_YOURS: &str =
-    "Each user sets their own Remote Desktop password. You can only change yours.";
+pub fn has_one_short() -> String {
+    tr!("remotepassword-has-one-short")
+}
+pub fn has_none_short() -> String {
+    tr!("remotepassword-has-none-short")
+}
+pub fn remote_off() -> String {
+    tr!("remotepassword-remote-off")
+}
+pub fn no_manager() -> String {
+    tr!("remotepassword-no-manager")
+}
+pub fn silent() -> String {
+    tr!("remotepassword-silent")
+}
+pub fn root() -> String {
+    tr!("remotepassword-root")
+}
+pub fn not_yours() -> String {
+    tr!("remotepassword-not-yours")
+}
 
 /// Reprise's login manager, which keeps the Remote Desktop passwords.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,11 +103,11 @@ impl Action {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Action::Create => "C&reate a Remote Desktop password...",
-            Action::Change => "C&hange my Remote Desktop password...",
-            Action::Remove => "Re&move my Remote Desktop password...",
+            Action::Create => tr!("remotepassword-create"),
+            Action::Change => tr!("remotepassword-change"),
+            Action::Remove => tr!("remotepassword-remove"),
         }
     }
 }
@@ -101,7 +115,7 @@ impl Action {
 /// What the section shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Section {
-    pub status: Option<&'static str>,
+    pub status: Option<String>,
     /// Each action shown, lit or greyed.
     pub actions: Vec<(Action, bool)>,
     pub note: Option<String>,
@@ -125,23 +139,23 @@ pub fn section(f: &Facts) -> Option<Section> {
             return Some(Section {
                 status: None,
                 actions: Vec::new(),
-                note: Some(NOT_YOURS.into()),
+                note: Some(not_yours()),
                 note_greyed: true,
             });
         }
         Manager::Stopped => {
-            return shown(None, vec![(Action::Create, false)], Some(NO_MANAGER.into()));
+            return shown(None, vec![(Action::Create, false)], Some(no_manager()));
         }
         Manager::Running(answer) => answer,
     };
     let has = match answer {
-        Answer::Silent => return shown(None, vec![(Action::Create, false)], Some(SILENT.into())),
+        Answer::Silent => return shown(None, vec![(Action::Create, false)], Some(silent())),
         Answer::Has(has) => has,
     };
     let why = match &f.access {
         Access::Allowed => None,
-        Access::Root => return shown(None, vec![(Action::Create, false)], Some(ROOT.into())),
-        Access::RemoteLoginsOff => Some(REMOTE_OFF.to_string()),
+        Access::Root => return shown(None, vec![(Action::Create, false)], Some(root())),
+        Access::RemoteLoginsOff => Some(remote_off()),
         Access::NotInGroup(group) => Some(format!(
             "You can't set a Remote Desktop password because you aren't in the {} group. An \
              administrator can add you.",
@@ -150,10 +164,10 @@ pub fn section(f: &Facts) -> Option<Section> {
     };
     let set = why.is_none() && !f.busy;
     let status = match (has, why.is_some()) {
-        (true, false) => HAS_ONE,
-        (true, true) => HAS_ONE_SHORT,
-        (false, false) => HAS_NONE,
-        (false, true) => HAS_NONE_SHORT,
+        (true, false) => has_one(),
+        (true, true) => has_one_short(),
+        (false, false) => has_none(),
+        (false, true) => has_none_short(),
     };
     let actions = if has {
         vec![(Action::Change, set), (Action::Remove, !f.busy)]
@@ -201,7 +215,7 @@ pub fn items(s: &Section, x: i32, y: i32, w: i32) -> (Vec<Item>, i32) {
     let (ix, iw) = (x + INSET, w - 2 * INSET);
     let mut out = Vec::new();
     let mut cy = y + TOP;
-    if let Some(status) = s.status {
+    if let Some(status) = &s.status {
         out.push(Item::lines(
             STATUS,
             Rect::new(ix, cy, iw, STATUS_LINES * LINE_H),
@@ -213,7 +227,7 @@ pub fn items(s: &Section, x: i32, y: i32, w: i32) -> (Vec<Item>, i32) {
         if i > 0 {
             cy += ACTION_GAP;
         }
-        out.push(Item::button_at(a.id(), ix, cy, ACTION_W, a.label(), *lit));
+        out.push(Item::button_at(a.id(), ix, cy, ACTION_W, &a.label(), *lit));
         cy += BUTTON_H;
     }
     if !s.actions.is_empty() && s.note.is_some() {
@@ -225,7 +239,10 @@ pub fn items(s: &Section, x: i32, y: i32, w: i32) -> (Vec<Item>, i32) {
         cy += NOTE_LINES * LINE_H;
     }
     let bottom = cy + BOTTOM;
-    out.insert(0, Item::group(GROUP, Rect::new(x, y, w, bottom - y), TITLE));
+    out.insert(
+        0,
+        Item::group(GROUP, Rect::new(x, y, w, bottom - y), &title()),
+    );
     (out, bottom)
 }
 

@@ -24,22 +24,24 @@ use std::rc::Rc;
 
 /// The last page's buttons and the desktop entries they start; a button shows only while its
 /// entry is installed and shown.
-const LINKS: [(Link, &str); 2] = [
-    (
-        Link {
-            id: "settings",
-            label: "Open &Settings",
-        },
-        "reprise-settings.desktop",
-    ),
-    (
-        Link {
-            id: "import",
-            label: "&Import from Another Desktop",
-        },
-        "reprise-import.desktop",
-    ),
-];
+fn links() -> [(Link, &'static str); 2] {
+    [
+        (
+            Link {
+                id: "settings",
+                label: reprisekit::tr!("link-settings"),
+            },
+            "reprise-settings.desktop",
+        ),
+        (
+            Link {
+                id: "import",
+                label: reprisekit::tr!("link-import"),
+            },
+            "reprise-import.desktop",
+        ),
+    ]
+}
 
 struct WelcomeApp {
     config: PathBuf,
@@ -79,7 +81,7 @@ impl WelcomeApp {
         let forms = ctx.forms();
         let w = self.welcome.get_or_insert_with(|| {
             let sample = settings::sample(&read(&self.config), &self.picks);
-            let links = self.entries.iter().map(|(l, _)| *l).collect();
+            let links = self.entries.iter().map(|(l, _)| l.clone()).collect();
             let mut w = Welcome::new(self.picks, sample, links, &ctx.text, &forms);
             w.keys = settings::ready_keys(&read(&self.config));
             w
@@ -258,9 +260,9 @@ pub fn main(args: Vec<OsString>) {
     if args.iter().any(|a| a == "--first-login") && !first_login() {
         return;
     }
-    let entries = LINKS
-        .iter()
-        .filter_map(|(l, id)| Some((*l, settings::entry(id)?)))
+    let entries = links()
+        .into_iter()
+        .filter_map(|(l, id)| Some((l, settings::entry(id)?)))
         .collect();
     let app = WelcomeApp::new(repriseconf::config_path(), entries);
     repriseapp::run(Box::new(app)).unwrap_or_else(|e| e.exit());

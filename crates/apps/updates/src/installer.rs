@@ -1021,7 +1021,7 @@ fn quit() -> Reply {
 
 impl App for Installer {
     fn title(&self) -> String {
-        self.sheet.title().into()
+        self.sheet.title()
     }
 
     fn app_id(&self) -> String {

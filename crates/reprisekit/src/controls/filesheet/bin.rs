@@ -56,7 +56,7 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
         items.push(sep(id, y, SEP_RIGHT));
     }
     // A row that wraps holds two lines; Size keeps one.
-    let mut row = |(l, v): (&'static str, &'static str), label, value: &str, x, y, wraps| {
+    let mut row = |(l, v): (&'static str, &'static str), label: &str, value: &str, x, y, wraps| {
         items.push(Item::label_at(l, LABEL_X, y, x - LABEL_X, label));
         let w = SEP_RIGHT - x;
         if wraps {
@@ -69,20 +69,42 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
     };
     let [first, second, attrs] = BIN_BLOCKS;
     let types = ("l_type", "v_type");
-    let y = row(types, "Type:", &facts.type_name, BIN_VALUE_X, first, true);
+    let y = row(
+        types,
+        &tr!("filesheet-bin-type"),
+        &facts.type_name,
+        BIN_VALUE_X,
+        first,
+        true,
+    );
     let origins = ("l_origin", "v_origin");
-    let y = row(origins, "Origin:", &facts.origin, BIN_VALUE_X, y, true);
+    let y = row(
+        origins,
+        &tr!("filesheet-bin-origin"),
+        &facts.origin,
+        BIN_VALUE_X,
+        y,
+        true,
+    );
     row(
         ("l_size", "v_size"),
-        "Size:",
+        &tr!("filesheet-bin-size"),
         &facts.size,
         BIN_VALUE_X,
         y,
         false,
     );
     let dates = [
-        (("l_deleted", "v_deleted"), "Deleted:", &facts.deleted),
-        (("l_made", "v_made"), "Created:", &facts.created),
+        (
+            ("l_deleted", "v_deleted"),
+            &tr!("filesheet-bin-deleted"),
+            &facts.deleted,
+        ),
+        (
+            ("l_made", "v_made"),
+            &tr!("filesheet-bin-created"),
+            &facts.created,
+        ),
     ];
     let mut y = second;
     for (ids, label, value) in dates {
@@ -95,7 +117,7 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
         LABEL_X,
         attrs,
         BIN_CHECK_X[0] - LABEL_X,
-        "Attributes",
+        &tr!("filesheet-bin-attributes"),
     ));
     let [left, right] = BIN_CHECK_X;
     for (id, x, y, label, checked) in [
@@ -103,16 +125,45 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
             READ_ONLY,
             left,
             BIN_CHECK_Y[0],
-            "&Read-only",
+            &tr!("filesheet-bin-read-only"),
             facts.read_only,
         ),
-        (HIDDEN, right, BIN_CHECK_Y[0], "&Hidden", facts.hidden),
-        ("archive", left, BIN_CHECK_Y[1], "Archi&ve", false),
-        ("compress", left, BIN_CHECK_Y[2], "Co&mpressed", false),
-        ("encrypt", left, BIN_CHECK_Y[3], "&Encrypt contents", false),
+        (
+            HIDDEN,
+            right,
+            BIN_CHECK_Y[0],
+            &tr!("filesheet-bin-hidden"),
+            facts.hidden,
+        ),
+        (
+            "archive",
+            left,
+            BIN_CHECK_Y[1],
+            &tr!("filesheet-bin-archive"),
+            false,
+        ),
+        (
+            "compress",
+            left,
+            BIN_CHECK_Y[2],
+            &tr!("filesheet-bin-compressed"),
+            false,
+        ),
+        (
+            "encrypt",
+            left,
+            BIN_CHECK_Y[3],
+            &tr!("filesheet-bin-encrypt-contents"),
+            false,
+        ),
     ] {
         items.push(check_enabled(id, x, y, label, tick(checked), false));
     }
-    items.push(button(RESTORE, BIN_RESTORE, "Restore", true));
+    items.push(button(
+        RESTORE,
+        BIN_RESTORE,
+        &tr!("filesheet-bin-restore"),
+        true,
+    ));
     Form::new(items)
 }

@@ -157,7 +157,7 @@ impl Choose {
 
 impl App for Choose {
     fn title(&self) -> String {
-        openwith::TITLE.into()
+        openwith::title()
     }
 
     fn app_id(&self) -> String {
@@ -413,7 +413,7 @@ mod tests {
         };
         let ow = chooser(&input, &apps, Some(&"zed.desktop".parse().unwrap()));
         let names: Vec<&str> = ow.list.rows.iter().map(|r| r.label()).collect();
-        assert_eq!(names, [openwith::RECOMMENDED, "Vim", "Zed"]);
+        assert_eq!(names, [&openwith::recommended(), "Vim", "Zed"]);
         assert_eq!(ow.chosen().map(|p| p.id.as_str()), Some("zed"));
         let ow = chooser(
             &Input {
@@ -468,7 +468,13 @@ mod tests {
         let names: Vec<&str> = app.ow.list.rows.iter().map(|r| r.label()).collect();
         assert_eq!(
             names,
-            [openwith::RECOMMENDED, "Vim", openwith::OTHERS, "ark", "Zed"]
+            [
+                &openwith::recommended(),
+                "Vim",
+                &openwith::others(),
+                "ark",
+                "Zed"
+            ]
         );
         assert_eq!(app.ow.chosen().map(|p| p.id.as_str()), Some("zed"));
         assert_eq!(app.input.choices, update.choices);

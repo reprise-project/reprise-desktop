@@ -44,7 +44,7 @@ fn another_users_page_shows_only_a_greyed_note() {
             yours: false,
             ..yours(reader)
         });
-        assert_eq!(s.note, Some(NOT_YOURS));
+        assert_eq!(s.note, Some(not_yours()));
         assert!(!s.add && !s.delete && s.fingers.is_empty());
         let (items, _) = items(&s, 0, 0, W);
         assert_eq!(items.len(), 1);
@@ -55,13 +55,13 @@ fn another_users_page_shows_only_a_greyed_note() {
 #[test]
 fn without_fprintd_or_a_reader_every_action_greys_and_says_why() {
     for (reader, why) in [
-        (Reader::Looking, LOOKING),
-        (Reader::NoService, NO_SERVICE),
-        (Reader::NoReader, NO_READER),
-        (Reader::Silent, SILENT),
+        (Reader::Looking, looking()),
+        (Reader::NoService, no_service()),
+        (Reader::NoReader, no_reader()),
+        (Reader::Silent, silent()),
     ] {
         let s = section(&yours(reader));
-        assert_eq!(s.note, Some(why));
+        assert_eq!(s.note, Some(why.clone()));
         assert!(!s.add && !s.delete, "{why}");
         assert_eq!(s.reader, None);
     }
@@ -71,14 +71,14 @@ fn without_fprintd_or_a_reader_every_action_greys_and_says_why() {
 fn with_a_reader_add_is_lit_and_delete_all_needs_a_finger() {
     let s = section(&yours(found(&[])));
     assert!(s.add && !s.delete);
-    assert_eq!(s.note, Some(NONE_ADDED));
+    assert_eq!(s.note, Some(none_added()));
     assert_eq!(s.reader.as_deref(), Some("Synaptics Sensors"));
     let s = section(&yours(found(&[Finger::RightIndex])));
     assert!(s.add && s.delete);
     assert_eq!(s.note, None);
     let s = section(&yours(found(&Finger::ALL)));
     assert!(!s.add && s.delete);
-    assert_eq!(s.note, Some(ALL_ADDED));
+    assert_eq!(s.note, Some(all_added()));
 }
 
 #[test]

@@ -57,7 +57,7 @@ fn forms() -> Vec<(form::Form, (i32, i32))> {
         },
         None,
     );
-    retry.set_text(netconnect::STATUS, netconnect::WRONG);
+    retry.set_text(netconnect::STATUS, &netconnect::wrong());
     let ssh = lines("Enter password for \u{201c}bob\u{201d} on \u{201c}box\u{201d}:");
     let sftp = netconnect::login_form(
         &Login {

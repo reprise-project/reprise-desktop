@@ -1115,7 +1115,7 @@ impl App for SettingsApp {
         if self.chooser.is_some() {
             kids.push(Child {
                 id: CHOOSER_WIN,
-                title: openwith::TITLE.into(),
+                title: openwith::title(),
                 size: self.units.size(openwith::CLIENT),
                 fixed: true,
                 modal: true,

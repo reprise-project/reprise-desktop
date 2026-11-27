@@ -33,7 +33,7 @@ impl NameBox {
         let mut edit = TextEdit::new(label, false);
         edit.select_all();
         let mut items = vec![
-            ROWS.label("name_l", MARGIN, "&Name:"),
+            ROWS.label("name_l", MARGIN, &tr!("namebox-name")),
             Item::new(
                 NAME,
                 ROWS.field(MARGIN, EDIT_H),

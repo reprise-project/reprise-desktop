@@ -222,8 +222,8 @@ fn the_combos_are_360_wide_right_of_the_widest_label() {
     let l = lay(&vp);
     let px = theme.fonts.size_px;
     let label_w = text
-        .measure(OUTPUT, false, px)
-        .max(text.measure(INPUT, false, px))
+        .measure(&output(), false, px)
+        .max(text.measure(&input(), false, px))
         .max(52);
     assert_eq!(
         l.output.field,
@@ -1362,8 +1362,8 @@ fn no_devices_draws_both_rows_greyed_saying_so() {
             "{name}: the field writes something, greyed"
         );
     }
-    assert_eq!(vp.output.items[0].text, NO_DEVICE);
-    assert_eq!(vp.input.items[0].text, NO_DEVICE);
+    assert_eq!(vp.output.items[0].text, no_device());
+    assert_eq!(vp.input.items[0].text, no_device());
     let (tree, _) = accessed(&vp, &l);
     for name in ["Output", "Input"] {
         let id = tree.find(Role::ComboBox, name).expect("the combo");
@@ -1373,7 +1373,7 @@ fn no_devices_draws_both_rows_greyed_saying_so() {
         );
     }
     assert!(
-        tree.find(Role::ListBoxOption, NO_DEVICE).is_some(),
+        tree.find(Role::ListBoxOption, &no_device()).is_some(),
         "a reader hears there is no device"
     );
 }
@@ -1501,7 +1501,7 @@ fn access_lists_the_choosers_and_each_column() {
     assert_eq!(role(&tree, focus), Some(Role::Slider));
     assert!(tree.find(Role::ComboBox, "Output").is_some());
     assert!(tree.find(Role::ComboBox, "Input").is_some());
-    for name in [VOLUME, "mpv", "Tom & Jerry"] {
+    for name in [&volume(), "mpv", "Tom & Jerry"] {
         let g = tree.find(Role::Group, name).expect("a group per column");
         let kids = tree
             .get(g)
@@ -1598,10 +1598,16 @@ fn with_track(apps: &[AppLevel], np: NowPlaying) -> Mix {
 fn the_middle_button_pauses_a_playing_track_and_plays_a_paused_one() {
     let mut np = track(true);
     np.can_play = false;
-    assert_eq!(np.glyph(Transport::PlayPause), (MediaGlyph::Pause, "Pause"));
+    assert_eq!(
+        np.glyph(Transport::PlayPause),
+        (MediaGlyph::Pause, "Pause".to_string())
+    );
     assert!(np.can(Transport::PlayPause), "Pause follows CanPause");
     np.playing = false;
-    assert_eq!(np.glyph(Transport::PlayPause), (MediaGlyph::Play, "Play"));
+    assert_eq!(
+        np.glyph(Transport::PlayPause),
+        (MediaGlyph::Play, "Play".to_string())
+    );
     assert!(!np.can(Transport::PlayPause), "Play follows CanPlay");
     np.can_previous = false;
     assert!(!np.can(Transport::Previous) && np.can(Transport::Next));
@@ -1685,7 +1691,7 @@ fn the_settings_link_ends_the_panel_and_acts_on_release_enter_and_a_reader() {
     assert!(r.x <= under.x && under.right() <= r.right());
     let mut tree = Tree::new(access::node(Role::Window, l.panel));
     vp.access(&l, &text, theme.fonts.size_px, &mut tree, access::ROOT);
-    let link = tree.find(Role::Link, SETTINGS).expect("the link's node");
+    let link = tree.find(Role::Link, &settings()).expect("the link's node");
     assert!(
         tree.get(link)
             .unwrap()
@@ -1918,7 +1924,7 @@ fn access_has_the_track_and_its_buttons() {
     let l = lay(&vp);
     let (tree, _) = accessed(&vp, &l);
     let g = tree
-        .find(Role::Group, NOW_PLAYING)
+        .find(Role::Group, &now_playing())
         .expect("a Now Playing group");
     let kids = tree
         .get(g)
@@ -2006,7 +2012,7 @@ fn the_speaker_button_is_a_toggle_named_mute() {
     let (tree, _) = accessed(&vp, &l);
     let toggled: Vec<_> = tree
         .nodes()
-        .filter(|(_, n)| n.role() == Role::Button && n.label() == Some(MUTE))
+        .filter(|(_, n)| n.role() == Role::Button && n.label() == Some(&mute()))
         .map(|(_, n)| n.toggled())
         .collect();
     assert_eq!(
@@ -2114,7 +2120,7 @@ fn with_two_outputs_a_program_column_ends_in_its_output_combo() {
         let texts: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
         (texts, c.selected)
     };
-    assert_eq!(rows(1), (vec![DEFAULT, "Speakers", "Headphones"], 0));
+    assert_eq!(rows(1), (vec![&default(), "Speakers", "Headphones"], 0));
     assert_eq!(rows(2).1, 2, "mpv plays to Headphones");
     let cl = col(&l, 1);
     let field = cl.output.as_ref().expect("laid out").field;

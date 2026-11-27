@@ -200,13 +200,12 @@ pub fn layout(
 
 /// What the mode tip says: what a pick does now and that V switches, or who the screenshot is for.
 pub fn mode_text(m: &RegionSelect) -> String {
-    let text = match (m.app.as_deref(), m.record) {
-        (Some(""), _) => "Screenshot for an app: drag an area or click a window.",
-        (Some(app), _) => return format!("Screenshot for {app}: drag an area or click a window."),
-        (None, false) => "Screenshot: drag an area or click a window. Press V to record instead.",
-        (None, true) => "Record: drag an area or click a window. Press V for a screenshot instead.",
-    };
-    text.to_string()
+    match (m.app.as_deref(), m.record) {
+        (Some(""), _) => tr!("regionselect-shot-app"),
+        (Some(app), _) => tr!("regionselect-shot-for", app = app),
+        (None, false) => tr!("regionselect-shot"),
+        (None, true) => tr!("regionselect-record"),
+    }
 }
 
 /// `MODE_TOP` below the top of `screen`, centred, kept inside it.

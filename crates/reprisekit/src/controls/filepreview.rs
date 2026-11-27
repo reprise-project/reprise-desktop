@@ -111,12 +111,15 @@ pub struct Facts {
 
 impl Facts {
     fn lines(&self) -> Vec<String> {
-        let mut out = vec![format!("Type: {}", self.kind)];
+        let mut out = vec![tr!("filepreview-type", kind = self.kind.as_str())];
         if let Some(s) = &self.size {
-            out.push(format!("Size: {s}"));
+            out.push(tr!("filepreview-size", size = s.as_str()));
         }
         if !self.modified.is_empty() {
-            out.push(format!("Modified: {}", self.modified));
+            out.push(tr!(
+                "filepreview-modified",
+                modified = self.modified.as_str()
+            ));
         }
         out
     }

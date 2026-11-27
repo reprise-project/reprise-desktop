@@ -196,7 +196,7 @@ impl Explorer {
                 let shown = self.progress(win)?.shown.as_ref()?;
                 Some(Child {
                     id: win,
-                    title: shown.cp.title().into(),
+                    title: shown.cp.title(),
                     size: self.forms.text.size(shown.cp.client()),
                     fixed: true,
                     modal: false,

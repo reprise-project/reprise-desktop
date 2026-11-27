@@ -16,9 +16,9 @@ mod links;
 mod summary;
 
 pub use attrs::{
-    ADV_ARCHIVE, ADV_CANCEL, ADV_INDEX, ADV_OK, ATTR_CANCEL, ATTR_LABELS, ATTR_OK, ATTR_ONLY,
-    ATTR_SIZE, ATTR_TREE, SET_ATTR_LABELS, advanced_form, advanced_size, attr_form,
-    attr_tree_picked, robots_chosen, robots_moves, robots_states,
+    ADV_ARCHIVE, ADV_CANCEL, ADV_INDEX, ADV_OK, ATTR_CANCEL, ATTR_OK, ATTR_ONLY, ATTR_SIZE,
+    ATTR_TREE, advanced_form, advanced_size, attr_form, attr_labels, attr_tree_picked,
+    robots_chosen, robots_moves, robots_states, set_attr_labels,
 };
 pub use bin::{BIN_SHEET_H, BinFacts, RESTORE, bin_page};
 pub use checksums::{
@@ -79,11 +79,15 @@ pub struct SetFacts {
     pub hidden: CheckState,
 }
 
-pub const CALCULATING: &str = "Calculating...";
+pub fn calculating() -> String {
+    tr!("filesheet-calculating")
+}
 
 pub const NAME: &str = "name";
 /// What a reader calls the name field, which no label names.
-pub const NAME_FIELD: &str = "Name";
+pub fn name_field() -> String {
+    tr!("filesheet-name-field")
+}
 pub const READ_ONLY: &str = "readonly";
 pub const HIDDEN: &str = "hidden";
 /// The line under the attribute boxes saying where hidden items show again.
@@ -167,7 +171,7 @@ pub enum Row {
     Separator,
     Pair {
         ids: (&'static str, &'static str),
-        label: &'static str,
+        label: String,
         value: String,
         /// The value may run onto a second line, inside its row's pitch: a long date.
         wraps: bool,
@@ -267,15 +271,15 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Tab::Summary | Tab::NoSummary => "Summary",
-            Tab::Sharing => "Sharing",
-            Tab::Compatibility => "Compatibility",
-            Tab::Customize => "Customize",
-            Tab::Shortcut => "Shortcut",
-            Tab::WebDocument => "Web Document",
-            Tab::Checksums => "Checksums",
+            Tab::Summary | Tab::NoSummary => tr!("filesheet-tab-summary"),
+            Tab::Sharing => tr!("filesheet-tab-sharing"),
+            Tab::Compatibility => tr!("filesheet-tab-compatibility"),
+            Tab::Customize => tr!("filesheet-tab-customize"),
+            Tab::Shortcut => tr!("filesheet-tab-shortcut"),
+            Tab::WebDocument => tr!("filesheet-tab-web-document"),
+            Tab::Checksums => tr!("filesheet-tab-checksums"),
         }
     }
 
@@ -343,7 +347,7 @@ pub fn sheet(
     tabs: &[Tab],
     mut own: impl FnMut(Tab) -> Form,
 ) -> crate::controls::propsheet::PropSheet {
-    let mut labels = vec!["General"];
+    let mut labels = vec![tr!("filesheet-general")];
     let mut pages = vec![general];
     let mut h = height;
     for &tab in tabs {

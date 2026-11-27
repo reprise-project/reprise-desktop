@@ -46,12 +46,12 @@ impl NowPlaying {
         }
     }
 
-    pub fn glyph(&self, t: Transport) -> (MediaGlyph, &'static str) {
+    pub fn glyph(&self, t: Transport) -> (MediaGlyph, String) {
         match t {
-            Transport::Previous => (MediaGlyph::Previous, "Previous"),
-            Transport::Next => (MediaGlyph::Next, "Next"),
-            Transport::PlayPause if self.playing => (MediaGlyph::Pause, "Pause"),
-            Transport::PlayPause => (MediaGlyph::Play, "Play"),
+            Transport::Previous => (MediaGlyph::Previous, tr!("media-previous")),
+            Transport::Next => (MediaGlyph::Next, tr!("media-next")),
+            Transport::PlayPause if self.playing => (MediaGlyph::Pause, tr!("media-pause")),
+            Transport::PlayPause => (MediaGlyph::Play, tr!("media-play")),
         }
     }
 }

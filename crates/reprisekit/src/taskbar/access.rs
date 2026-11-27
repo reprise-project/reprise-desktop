@@ -28,14 +28,18 @@ pub struct TaskbarNames {
     pub focus: Option<TaskbarHit>,
 }
 
-pub const ATTENTION: &str = "Wants attention";
+pub fn attention() -> String {
+    tr!("access-attention")
+}
 
 /// A task button's name with its unread badge: "Mail, 3 unread".
 pub fn unread(title: &str, count: u32) -> String {
-    format!("{title}, {count} unread")
+    tr!("taskbar-unread", title = title, count = count as i64)
 }
 /// Name and tip of the Quick Launch band's » cell.
-pub const QUICK_MORE_NAME: &str = "Show more Quick Launch buttons";
+pub fn quick_more_name() -> String {
+    tr!("access-quick-more-name")
+}
 
 /// The taskbar's `access` part, in taskbar coordinates; titles and tips are taken as they are (an `&` is text).
 pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, parent: NodeId) {
@@ -56,7 +60,7 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
     let start_rect = layout
         .disc_past_bar()
         .map_or(layout.start, |d| layout.start.union(&d));
-    let mut start = button(start_rect, "Start");
+    let mut start = button(start_rect, &tr!("taskbar-access-start"));
     start.set_has_popup(HasPopup::Menu);
     start.set_expanded(names.start_open);
     mark(TaskbarHit::Start, tree.push(parent, "start", start));
@@ -71,7 +75,7 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
     };
     let wants = |n: &mut crate::access::accesskit::Node, on: Option<&bool>| {
         if on == Some(&true) {
-            n.set_description(ATTENTION);
+            n.set_description(attention());
         }
     };
     let quick_cells: Vec<Rect> = layout
@@ -84,10 +88,15 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
     // row before both when it is the first band.
     let tools = |tree: &mut Tree, mark: &mut dyn FnMut(TaskbarHit, NodeId)| {
         if !layout.pager.is_empty() {
-            let id = bar(tree, "pager", &layout.pager, "Desktops");
+            let id = bar(
+                tree,
+                "pager",
+                &layout.pager,
+                &tr!("taskbar-access-desktops"),
+            );
             for (i, r) in layout.pager.iter().enumerate() {
-                let name =
-                    (names.pager.get(i).cloned()).unwrap_or_else(|| format!("Desktop {}", i + 1));
+                let name = (names.pager.get(i).cloned())
+                    .unwrap_or_else(|| tr!("taskbar-desktop-n", n = (i + 1) as i64));
                 let mut n = button(*r, &name);
                 n.set_toggled((i == names.desktop).into());
                 wants(&mut n, names.pager_attention.get(i));
@@ -95,12 +104,17 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
             }
         }
         if !quick_cells.is_empty() {
-            let id = bar(tree, "quick", &quick_cells, "Quick Launch");
+            let id = bar(
+                tree,
+                "quick",
+                &quick_cells,
+                &tr!("taskbar-access-quick-launch"),
+            );
             for (i, (r, name)) in layout.quick.iter().zip(&names.quick).enumerate() {
                 mark(TaskbarHit::Quick(i), tree.push(id, i, button(*r, name)));
             }
             if let Some(r) = layout.quick_more {
-                let mut n = button(r, QUICK_MORE_NAME);
+                let mut n = button(r, &quick_more_name());
                 n.set_has_popup(HasPopup::Menu);
                 n.set_expanded(names.quick_more_open);
                 mark(TaskbarHit::QuickMore, tree.push(id, "more", n));
@@ -109,7 +123,12 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
     };
     let tasks = |tree: &mut Tree, mark: &mut dyn FnMut(TaskbarHit, NodeId)| {
         if !layout.tasks.is_empty() {
-            let id = bar(tree, "tasks", &layout.tasks, "Running Applications");
+            let id = bar(
+                tree,
+                "tasks",
+                &layout.tasks,
+                &tr!("taskbar-access-running-applications"),
+            );
             for (i, (r, (title, active))) in layout.tasks.iter().zip(&names.tasks).enumerate() {
                 let mut n = match names.badges.get(i).copied().flatten() {
                     Some(count) => button(*r, &unread(title, count)),
@@ -129,7 +148,7 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
         tasks(tree, &mut mark);
     }
     if let Some(r) = layout.more {
-        let mut n = button(r, "Show more windows");
+        let mut n = button(r, &tr!("taskbar-access-show-more-windows"));
         n.set_has_popup(HasPopup::Menu);
         n.set_expanded(names.more_open);
         mark(TaskbarHit::More, tree.push(parent, "more", n));
@@ -138,26 +157,31 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
         // A tray arrow opens the run in place: no popup, and named for
         // what pressing it does.
         let mut n = if !layout.tray_arrow {
-            let mut n = button(r, "Show hidden icons");
+            let mut n = button(r, &tr!("taskbar-access-show-hidden-icons"));
             n.set_has_popup(HasPopup::Dialog);
             n
         } else if names.hidden_open {
-            button(r, "Hide")
+            button(r, &tr!("taskbar-access-hide"))
         } else {
-            button(r, "Show hidden icons")
+            button(r, &tr!("taskbar-access-show-hidden-icons"))
         };
         n.set_expanded(names.hidden_open);
         mark(TaskbarHit::Chevron, tree.push(parent, "chevron", n));
     }
     if !layout.tray.is_empty() {
-        let id = bar(tree, "tray", &layout.tray, "Notification Area");
+        let id = bar(
+            tree,
+            "tray",
+            &layout.tray,
+            &tr!("taskbar-access-notification-area"),
+        );
         for (i, (r, name)) in layout.tray.iter().zip(&names.tray).enumerate() {
             mark(TaskbarHit::Tray(i), tree.push(id, i, button(*r, name)));
         }
     }
     if let Some(r) = layout.meter {
         let mut n = access::node(Role::Label, r);
-        n.set_label("Network speed");
+        n.set_label(tr!("taskbar-access-network-speed"));
         if !names.meter.is_empty() {
             n.set_description(names.meter.as_str());
         }
@@ -169,7 +193,11 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
     }
     mark(TaskbarHit::Clock, tree.push(parent, "clock", clock));
     if let Some(r) = layout.show_desktop {
-        let id = tree.push(parent, "show_desktop", button(r, "Show desktop"));
+        let id = tree.push(
+            parent,
+            "show_desktop",
+            button(r, &tr!("taskbar-access-show-desktop")),
+        );
         mark(TaskbarHit::ShowDesktop, id);
     }
     if let Some(id) = focus {

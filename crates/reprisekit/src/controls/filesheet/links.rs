@@ -64,7 +64,11 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
         SC_VALUE_X,
         SC_FIELDS[3],
         SC_FIELD_W,
-        &["Normal window", "Minimized", "Maximized"],
+        &[
+            &tr!("filesheet-links-normal-window"),
+            &tr!("filesheet-links-minimized"),
+            &tr!("filesheet-links-maximized"),
+        ],
         3,
     );
     if let Control::Combo(c) = &mut run.control {
@@ -90,7 +94,13 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
             &escape_mnemonic(&facts.name),
         ),
         sep("sc_sep0", SC_SEPS[0].0, SC_SEPS[0].1),
-        Item::label_at("sc_type_l", LABEL_X, SC_ROWS[0], label_w, "Target type:"),
+        Item::label_at(
+            "sc_type_l",
+            LABEL_X,
+            SC_ROWS[0],
+            label_w,
+            &tr!("filesheet-links-target-type"),
+        ),
         Item::label_at(
             "sc_type",
             SC_VALUE_X,
@@ -103,7 +113,7 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
             LABEL_X,
             SC_ROWS[1],
             label_w,
-            "Target location:",
+            &tr!("filesheet-links-target-location"),
         ),
         Item::label_at(
             "sc_where",
@@ -112,24 +122,24 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
             value_w,
             &escape_mnemonic(&facts.target_location),
         ),
-        label("sc_target_l", 0, "&Target:"),
+        label("sc_target_l", 0, &tr!("filesheet-links-target")),
         edit(SHORTCUT_IDS[0], 0, target, true, true),
         sep("sc_sep1", SC_SEPS[1].0, SC_SEPS[1].1),
-        label("sc_start_l", 1, "&Start in:").enabled(own),
+        label("sc_start_l", 1, &tr!("filesheet-links-start-in")).enabled(own),
         edit(SHORTCUT_IDS[1], 1, start, false, own),
-        label("sc_key_l", 2, "Shortcut &key:").enabled(false),
+        label("sc_key_l", 2, &tr!("filesheet-links-shortcut-key")).enabled(false),
         Item::new(
             "sc_key",
             field(2),
             Control::HotKey(crate::controls::hotkey::HotKey::new(None)),
         )
         .enabled(false),
-        label("sc_run_l", 3, "&Run:").enabled(false),
+        label("sc_run_l", 3, &tr!("filesheet-links-run")).enabled(false),
         run,
         label("sc_comment_l", 4, "C&omment:").enabled(own),
         edit(SHORTCUT_IDS[2], 4, comment, false, own),
-        sc_button(FIND_TARGET, 0, "&Find Target...", true),
-        sc_button(CHANGE_ICON, 1, "&Change Icon...", own),
+        sc_button(FIND_TARGET, 0, &tr!("filesheet-links-find-target"), true),
+        sc_button(CHANGE_ICON, 1, &tr!("filesheet-links-change-icon"), own),
         sc_button("sc_advanced", 2, "A&dvanced...", false),
     ]);
     form.focus_id(SHORTCUT_IDS[0]);
@@ -194,23 +204,34 @@ pub fn web_page(facts: &WebFacts, icon: Option<Canvas>) -> Form {
                 enabled: true,
             },
         ),
-        label("wd_key_l", 1, "Shortcut &key:").enabled(false),
+        label("wd_key_l", 1, &tr!("filesheet-links-shortcut-key")).enabled(false),
         Item::new(
             "wd_key",
             field(1),
             Control::HotKey(crate::controls::hotkey::HotKey::new(None)),
         )
         .enabled(false),
-        Item::label_at("wd_visits_l", LABEL_X, WD_VISITS_Y, label_w, "Visits:"),
+        Item::label_at(
+            "wd_visits_l",
+            LABEL_X,
+            WD_VISITS_Y,
+            label_w,
+            &tr!("filesheet-links-visits"),
+        ),
         Item::label_at(
             "wd_visits",
             WD_VALUE_X,
             WD_VISITS_Y,
             SEP_RIGHT - WD_VALUE_X,
-            "Unknown",
+            &tr!("filesheet-links-unknown"),
         ),
         sep("wd_sep1", WD_SEPS[1], SEP_RIGHT),
-        button(CHANGE_ICON, WD_CHANGE_ICON, "&Change Icon...", true),
+        button(
+            CHANGE_ICON,
+            WD_CHANGE_ICON,
+            &tr!("filesheet-links-change-icon"),
+            true,
+        ),
     ]);
     form.focus_id(SHORTCUT_IDS[0]);
     form

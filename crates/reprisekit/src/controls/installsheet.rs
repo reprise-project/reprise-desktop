@@ -79,27 +79,43 @@ pub struct Sheet {
 
 impl Sheet {
     /// The caption the host puts on the frame.
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self.verb {
-            Verb::Install => "Install Software",
-            Verb::Uninstall => "Uninstall Software",
+            Verb::Install => tr!("installsheet-title-install"),
+            Verb::Uninstall => tr!("installsheet-title-uninstall"),
         }
     }
 
     fn headline(&self) -> String {
         let n = &self.name;
         match (&self.stage, self.verb) {
-            (Stage::Reading, _) => format!("Looking up {n}..."),
-            (Stage::Asking { .. }, Verb::Install) => format!("Do you want to install {n}?"),
-            (Stage::Asking { .. }, Verb::Uninstall) => format!("Do you want to uninstall {n}?"),
-            (Stage::Running { .. }, Verb::Install) => format!("Installing {n}..."),
-            (Stage::Running { .. }, Verb::Uninstall) => format!("Uninstalling {n}..."),
-            (Stage::Done, Verb::Install) => format!("{n} was installed."),
-            (Stage::Done, Verb::Uninstall) => format!("{n} was uninstalled."),
-            (Stage::Failed(_), Verb::Install) => format!("{n} was not installed."),
-            (Stage::Failed(_), Verb::Uninstall) => format!("{n} was not uninstalled."),
-            (Stage::Refused, Verb::Install) => format!("Reprise cannot install {n}."),
-            (Stage::Refused, Verb::Uninstall) => format!("Reprise cannot uninstall {n}."),
+            (Stage::Reading, _) => tr!("installsheet-reading", name = n.as_str()),
+            (Stage::Asking { .. }, Verb::Install) => {
+                tr!("installsheet-ask-install", name = n.as_str())
+            }
+            (Stage::Asking { .. }, Verb::Uninstall) => {
+                tr!("installsheet-ask-uninstall", name = n.as_str())
+            }
+            (Stage::Running { .. }, Verb::Install) => {
+                tr!("installsheet-installing", name = n.as_str())
+            }
+            (Stage::Running { .. }, Verb::Uninstall) => {
+                tr!("installsheet-uninstalling", name = n.as_str())
+            }
+            (Stage::Done, Verb::Install) => tr!("installsheet-installed", name = n.as_str()),
+            (Stage::Done, Verb::Uninstall) => tr!("installsheet-uninstalled", name = n.as_str()),
+            (Stage::Failed(_), Verb::Install) => {
+                tr!("installsheet-not-installed", name = n.as_str())
+            }
+            (Stage::Failed(_), Verb::Uninstall) => {
+                tr!("installsheet-not-uninstalled", name = n.as_str())
+            }
+            (Stage::Refused, Verb::Install) => {
+                tr!("installsheet-cannot-install", name = n.as_str())
+            }
+            (Stage::Refused, Verb::Uninstall) => {
+                tr!("installsheet-cannot-uninstall", name = n.as_str())
+            }
         }
     }
 
@@ -227,21 +243,27 @@ pub fn form(s: &Sheet, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     let by = button_y(s);
     let right = Rect::new(W - MARGIN - BUTTON_W, by, BUTTON_W, BUTTON_H);
     let focus = if s.ended() {
-        items.push(Item::button(CLOSE, right, "Close", true, true));
+        items.push(Item::button(CLOSE, right, &tr!("close"), true, true));
         CLOSE
     } else {
         let left = Rect::new(right.x - BUTTON_GAP - BUTTON_W, by, BUTTON_W, BUTTON_H);
         let act = match s.verb {
-            Verb::Install => "&Install",
-            Verb::Uninstall => "&Uninstall",
+            Verb::Install => tr!("installsheet-install"),
+            Verb::Uninstall => tr!("installsheet-uninstall"),
         };
         let ready = s.stage == Stage::Asking { ready: true };
         let cancellable = match &s.stage {
             Stage::Running { cancellable, .. } => *cancellable,
             _ => true,
         };
-        items.push(Item::button(ACT, left, act, ready, false));
-        items.push(Item::button(CANCEL, right, "Cancel", cancellable, true));
+        items.push(Item::button(ACT, left, &act, ready, false));
+        items.push(Item::button(
+            CANCEL,
+            right,
+            &tr!("cancel"),
+            cancellable,
+            true,
+        ));
         CANCEL
     };
     let mut f = Form::new(items);

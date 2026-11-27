@@ -20,14 +20,14 @@ pub fn customize_page() -> Form {
         Item::group(
             "cu_g0",
             Rect::new(21, 47, 319, 90),
-            "What kind of folder do you want?",
+            &tr!("filesheet-customize-what-kind-of-folder-do-you"),
         ),
         Item::label_at(
             "cu_template_l",
             32,
             60,
             290,
-            "Use this folder type as a &template:",
+            &tr!("filesheet-customize-use-this-folder-type-as-a"),
         )
         .enabled(false),
     ];
@@ -41,14 +41,14 @@ pub fn customize_page() -> Form {
             "cu_all",
             31,
             113,
-            "Also apply this template to all &subfolders",
+            &tr!("filesheet-customize-also-apply-this-template-to-all"),
         )
         .enabled(false),
     );
     items.push(Item::group(
         "cu_g1",
         Rect::new(21, 151, 319, 134),
-        "Folder pictures",
+        &tr!("filesheet-customize-folder-pictures"),
     ));
     items.push(Item::lines_at(
         "cu_pic_text",
@@ -56,12 +56,18 @@ pub fn customize_page() -> Form {
         162,
         185,
         &[
-            "For Thumbnails view, you can put a",
-            "picture on this folder to remind you of",
-            "the contents.",
+            &tr!("filesheet-customize-for-thumbnails-view-you-can-put"),
+            &tr!("filesheet-customize-picture-on-this-folder-to-remind"),
+            &tr!("filesheet-customize-the-contents"),
         ],
     ));
-    items.push(Item::label_at("cu_preview_l", 226, 162, 100, "Preview:"));
+    items.push(Item::label_at(
+        "cu_preview_l",
+        226,
+        162,
+        100,
+        &tr!("filesheet-customize-preview"),
+    ));
     items.push(Item::picture(
         CUSTOM_PREVIEW,
         Rect::new(225, 181, PREVIEW_PX, PREVIEW_PX),
@@ -70,19 +76,19 @@ pub fn customize_page() -> Form {
     items.push(button(
         "cu_choose",
         Rect::new(31, 222, 98, BUTTON_H),
-        "Choose &Picture...",
+        &tr!("filesheet-customize-choose-picture"),
         false,
     ));
     items.push(button(
         "cu_restore",
         Rect::new(31, 251, 98, BUTTON_H),
-        "&Restore Default",
+        &tr!("filesheet-customize-restore-default"),
         false,
     ));
     items.push(Item::group(
         "cu_g2",
         Rect::new(21, 299, 319, 78),
-        "Folder icons",
+        &tr!("filesheet-customize-folder-icons"),
     ));
     items.push(Item::lines_at(
         "cu_icon_text",
@@ -90,14 +96,14 @@ pub fn customize_page() -> Form {
         312,
         300,
         &[
-            "For all views except Thumbnails, you can change the standard",
-            "\"folder\" icon to another icon.",
+            &tr!("filesheet-customize-for-all-views-except-thumbnails-you"),
+            &tr!("filesheet-customize-folder-icon"),
         ],
     ));
     items.push(button(
         CHANGE_ICON,
         Rect::new(31, 345, 98, BUTTON_H),
-        "Change &Icon...",
+        &tr!("filesheet-customize-change-icon"),
         true,
     ));
     items.push(Item::picture(
@@ -164,12 +170,19 @@ pub fn change_icon_form(
     let list_rect = Rect::new(11, 77, 267, 198);
     icons.follow(&crate::controls::iconlist::layout(list_rect, &cm));
     let mut items = vec![
-        Item::label_at("ci_file_l", 11, 11, 270, "&Look for icons in this file:").enabled(false),
+        Item::label_at(
+            "ci_file_l",
+            11,
+            11,
+            270,
+            &tr!("filesheet-customize-look-for-icons-in-this-file"),
+        )
+        .enabled(false),
         Item::edit("ci_file", Rect::new(11, 29, 185, 21), source, false),
         button(
             "ci_browse",
             Rect::new(203, 29, BUTTON_W, BUTTON_H),
-            "&Browse...",
+            &tr!("filesheet-customize-browse"),
             false,
         ),
         Item::label_at(
@@ -177,7 +190,7 @@ pub fn change_icon_form(
             11,
             59,
             270,
-            "&Select an icon from the list below:",
+            &tr!("filesheet-customize-select-an-icon-from-the-list"),
         ),
         Item::new(
             CHANGE_ICON_LIST,
@@ -187,7 +200,7 @@ pub fn change_icon_form(
         button(
             CHANGE_ICON_RESTORE,
             Rect::new(11, 292, 105, BUTTON_H),
-            "&Restore Defaults",
+            &tr!("filesheet-customize-restore-defaults"),
             true,
         ),
         Item::button(
@@ -200,7 +213,7 @@ pub fn change_icon_form(
         button(
             CHANGE_ICON_CANCEL,
             Rect::new(203, 292, BUTTON_W, BUTTON_H),
-            "Cancel",
+            &tr!("cancel"),
             true,
         ),
     ];

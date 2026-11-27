@@ -1085,7 +1085,7 @@ fn enter_typed_ahead_of_a_paste_does_not_answer_the_replace_prompt_it_raises() {
     }
     assert_eq!(
         asked(&ex),
-        Some(("Confirm File Replace", "a.txt".to_string()))
+        Some(("Confirm File Replace".to_string(), "a.txt".to_string()))
     );
     ex.finish_puts(&mut ctx);
     assert_eq!(

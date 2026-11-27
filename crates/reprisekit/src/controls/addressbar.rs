@@ -19,7 +19,9 @@ use accesskit::{NodeId, Role};
 
 pub const LABEL_X: i32 = 6;
 
-pub const ADDRESS: &str = "Address";
+pub fn address() -> String {
+    tr!("addressbar-address")
+}
 
 /// Where the field's sunken frame starts, from the band's left edge, unless the label's text
 /// and [`LABEL_GAP`] need more room: then the field starts after them.
@@ -254,7 +256,7 @@ pub fn layout(
     // The label's and Go's room grows with the text; the band's height is the caller's.
     let label_x = r.x + LABEL_X;
     let field_x =
-        (r.x + cm.text.len(FIELD_X)).max(label_x + text.measure(ADDRESS, false, px) + LABEL_GAP);
+        (r.x + cm.text.len(FIELD_X)).max(label_x + text.measure(&address(), false, px) + LABEL_GAP);
     let label = Rect::new(label_x, r.y, field_x - LABEL_GAP - label_x, r.height);
     let go_w = cm.text.len(cm.address.go_w);
     let go = Rect::new(r.right() - RIGHT_PAD - go_w, r.y, go_w, r.height);
@@ -347,7 +349,7 @@ pub fn draw_label_and_go(
     text.draw(
         c,
         lay.label.scaled(s),
-        ADDRESS,
+        &address(),
         false,
         label_ink,
         Align::Left,
@@ -464,14 +466,14 @@ pub fn access(
 ) -> NodeId {
     let all = lay.label.union(&lay.field).union(&lay.go);
     let bar = tree.push(parent, "address", access::node(Role::Toolbar, all));
-    let label = tree.push(bar, "label", access::label(lay.label, ADDRESS, true));
+    let label = tree.push(bar, "label", access::label(lay.label, &address(), true));
     let focus = combo::access(&ab.combo, &lay.combo, text, px, tree, bar, "combo");
     let combo = Tree::id_of(bar, "combo");
     if let Some(n) = tree.get_mut(combo) {
         n.push_labelled_by(label);
     }
     if let Some(n) = tree.get_mut(Tree::id_of(combo, "edit")) {
-        n.set_label(ADDRESS);
+        n.set_label(address());
     }
     pathcomplete::access(&ab.complete, &lay.complete, tree, combo);
     tree.push(bar, "go", access::button(lay.go, "Go", true, false));
@@ -937,7 +939,7 @@ mod tests {
         let focus = access(&ab, &lay, &text, 11, &mut t, access::ROOT);
         let field = t.get(focus).unwrap();
         assert_eq!(field.role(), accesskit::Role::TextInput);
-        assert_eq!(field.label(), Some(ADDRESS));
+        assert_eq!(field.label(), Some(address().as_str()));
     }
 
     #[test]

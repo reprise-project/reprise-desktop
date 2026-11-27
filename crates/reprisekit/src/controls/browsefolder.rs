@@ -31,8 +31,12 @@ pub fn client(cm: &ControlMetrics) -> (i32, i32) {
 pub fn min(cm: &ControlMetrics) -> (i32, i32) {
     cm.text.size(MIN)
 }
-pub const HINT: &str = "Click a plus sign to see the folders inside.";
-pub const NEW_FOLDER_LABEL: &str = "&Make New Folder";
+pub fn hint() -> String {
+    tr!("browsefolder-hint")
+}
+pub fn new_folder_label() -> String {
+    tr!("browsefolder-new-folder-label")
+}
 
 const PROMPT: Rect = Rect::new(15, 12, 290, 39);
 const TREE: Rect = Rect::new(17, 60, 286, 208);
@@ -545,7 +549,7 @@ impl BrowseFolder {
         let line_h = p.text.len(LINE_H);
         draw_lines(c, text, cs, lay.prompt, &self.prompt, line_h, px, s);
         treeview::draw(c, text, &Paint { s, ..*p }, &self.tree, &lay.tree, None, px);
-        draw_lines(c, text, cs, lay.hint, HINT, line_h, px, s);
+        draw_lines(c, text, cs, lay.hint, &hint(), line_h, px, s);
         draw_size_grip(c, &Paint { s, ..*p }, lay.grip.scaled(s));
         let ring = |f: Focus| match self.focus {
             Focus::Tree | Focus::NewFolder => f == self.default,
@@ -554,17 +558,12 @@ impl BrowseFolder {
         let buttons = [
             (
                 lay.new_folder,
-                NEW_FOLDER_LABEL,
+                &new_folder_label(),
                 self.new_folder_enabled,
                 Focus::NewFolder,
             ),
-            (
-                lay.accept,
-                self.accept.as_str(),
-                self.accept_enabled,
-                Focus::Accept,
-            ),
-            (lay.cancel, "Cancel", true, Focus::Cancel),
+            (lay.accept, &self.accept, self.accept_enabled, Focus::Accept),
+            (lay.cancel, &tr!("cancel"), true, Focus::Cancel),
         ];
         for (r, label, enabled, f) in buttons {
             draw_button(
@@ -596,7 +595,7 @@ impl BrowseFolder {
             "new folder",
             access::button(
                 lay.new_folder,
-                NEW_FOLDER_LABEL,
+                &new_folder_label(),
                 self.new_folder_enabled,
                 false,
             ),
@@ -609,9 +608,9 @@ impl BrowseFolder {
         let cancel = tree.push(
             root,
             "cancel",
-            access::button(lay.cancel, "Cancel", true, false),
+            access::button(lay.cancel, &tr!("cancel"), true, false),
         );
-        tree.push(root, "hint", access::label(lay.hint, HINT, true));
+        tree.push(root, "hint", access::label(lay.hint, &hint(), true));
         tree.set_focus(match self.focus {
             Focus::Tree => tv,
             Focus::NewFolder => new_folder,

@@ -61,20 +61,54 @@ fn field(label_id: &'static str, label: &str, id: &'static str, y: i32, text: &s
 /// The dialog as `f` sets it, its preview empty and OK greyed until [`set_preview`].
 pub fn form(f: &Fields) -> Form {
     let right = CLIENT.0 - MARGIN;
-    let mut items =
-        vec![Item::radio(REPLACE, MARGIN, 11, "&Replace text", "scheme").checked(!f.number)];
+    let mut items = vec![
+        Item::radio(
+            REPLACE,
+            MARGIN,
+            11,
+            &tr!("batchrename-replace-text"),
+            "scheme",
+        )
+        .checked(!f.number),
+    ];
     items.extend(field("findlabel", "Fi&nd:", FIND, 29, &f.find));
-    items.extend(field("withlabel", "Replace &with:", WITH, 54, &f.with));
-    items.push(Item::check(IGNORE_CASE, FIELD_X, 80, "&Ignore case").checked(f.ignore_case));
-    items.push(Item::radio(NUMBER, MARGIN, 104, "N&umber the names", "scheme").checked(f.number));
-    items.extend(field("baselabel", "&Base name:", BASE, 122, &f.base));
-    items.push(Item::check(KEEP_EXT, MARGIN, 152, "Keep &extensions").checked(f.keep_ext));
+    items.extend(field(
+        "withlabel",
+        &tr!("batchrename-replace-with"),
+        WITH,
+        54,
+        &f.with,
+    ));
+    items.push(
+        Item::check(IGNORE_CASE, FIELD_X, 80, &tr!("batchrename-ignore-case"))
+            .checked(f.ignore_case),
+    );
+    items.push(
+        Item::radio(
+            NUMBER,
+            MARGIN,
+            104,
+            &tr!("batchrename-number-the-names"),
+            "scheme",
+        )
+        .checked(f.number),
+    );
+    items.extend(field(
+        "baselabel",
+        &tr!("batchrename-base-name"),
+        BASE,
+        122,
+        &f.base,
+    ));
+    items.push(
+        Item::check(KEEP_EXT, MARGIN, 152, &tr!("batchrename-keep-extensions")).checked(f.keep_ext),
+    );
     items.push(Item::label_at(
         "previewlabel",
         MARGIN,
         176,
         200,
-        "&Preview:",
+        &tr!("batchrename-preview"),
     ));
     items.push(Item::new(
         PREVIEW,
@@ -97,7 +131,7 @@ pub fn form(f: &Fields) -> Form {
     items.push(Item::button(
         CANCEL,
         Rect::new(cancel_x, BUTTONS_Y, BUTTON_W, BUTTON_H),
-        "Cancel",
+        &tr!("cancel"),
         true,
         false,
     ));
@@ -147,8 +181,7 @@ pub fn set_preview(form: &mut Form, rows: &[Row], ok: bool) {
     let bad = rows.iter().filter(|r| r.problem.is_some()).count();
     let status = match bad {
         0 => String::new(),
-        1 => "1 new name cannot be used.".to_string(),
-        n => format!("{n} new names cannot be used."),
+        n => tr!("batchrename-bad-names", count = n as i64),
     };
     form.set_text(STATUS, &status);
     form.set_enabled(OK, ok);

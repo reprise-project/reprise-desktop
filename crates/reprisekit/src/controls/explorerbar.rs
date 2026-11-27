@@ -167,7 +167,11 @@ pub fn access(eb: &ExplorerBar, lay: &Layout, tree: &mut Tree, parent: NodeId) -
         access::named(Role::Pane, lay.frame, &eb.title),
     );
     let close = lay.close.intersect(&lay.frame);
-    tree.push(pane, "close", access::named(Role::Button, close, "Close"));
+    tree.push(
+        pane,
+        "close",
+        access::named(Role::Button, close, &tr!("close")),
+    );
     pane
 }
 

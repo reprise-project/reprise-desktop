@@ -1337,7 +1337,7 @@ impl Host {
                     ConfirmKind::Multiple => Template::MultiDelete,
                     ConfirmKind::File | ConfirmKind::Folder => Template::MessageBox,
                 };
-                let buttons = [dlgtemplate::YES, dlgtemplate::NO];
+                let buttons = [dlgtemplate::yes(), dlgtemplate::no()];
                 let fields = msgbox::Fields {
                     min_text_h: (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H),
                     default: dlgtemplate::delete_default_index(&buttons, mode.erase),
@@ -1396,14 +1396,19 @@ impl Host {
             true => "Confirm Folder Delete",
             false => "Confirm File Delete",
         };
-        let buttons: &[&str] = match asker.many() {
-            true => &[dlgtemplate::YES, "Yes to &All", dlgtemplate::NO, "Cancel"],
-            false => &[dlgtemplate::YES, dlgtemplate::NO],
+        let buttons: Vec<String> = match asker.many() {
+            true => vec![
+                dlgtemplate::yes(),
+                "Yes to &All".to_string(),
+                dlgtemplate::no(),
+                "Cancel".to_string(),
+            ],
+            false => vec![dlgtemplate::yes(), dlgtemplate::no()],
         };
         let text = bincap::too_big_text(&bincap::label(&path));
         let fields = msgbox::Fields {
-            default: dlgtemplate::delete_default_index(buttons, true),
-            ..box_fields(text, buttons)
+            default: dlgtemplate::delete_default_index(&buttons, true),
+            ..box_fields(text, &buttons)
         };
         let msg = MsgBox::on_template(title, Template::MessageBox, fields);
         (self.ask).ask_held(msg, Pending::new(ERASE_ICON, Then::TooBig(asker, dirs)));
@@ -1824,11 +1829,11 @@ const ERROR_ICON: &str = "dialog-error";
 
 /// A box's fields: `text` over `buttons`, the first the default; its icon comes later
 /// ([`Host::prime_box`]).
-fn box_fields(text: String, buttons: &[&str]) -> msgbox::Fields {
+fn box_fields(text: String, buttons: &[impl AsRef<str>]) -> msgbox::Fields {
     msgbox::Fields {
         text,
         icon: None,
-        buttons: buttons.iter().map(|b| b.to_string()).collect(),
+        buttons: buttons.iter().map(|b| b.as_ref().to_string()).collect(),
         default: 0,
         min_text_h: None,
         min_w: 0,

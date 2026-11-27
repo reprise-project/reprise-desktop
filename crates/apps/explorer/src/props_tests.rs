@@ -2,7 +2,7 @@
 //! geometry, what Apply writes, and the writes on a temporary folder.
 
 use super::*;
-use reprisekit::controls::filesheet::{ATTR_LABELS, ATTR_ONLY, ATTR_TREE, HIDDEN, NAME};
+use reprisekit::controls::filesheet::{ATTR_ONLY, ATTR_TREE, HIDDEN, NAME, attr_labels};
 
 const FOLDER: reprisekit::controls::filesheet::Subject =
     reprisekit::controls::filesheet::Subject::Folder;
@@ -271,7 +271,11 @@ fn a_folders_totals_arrive_after_the_sheet_opens() {
     ex.open_properties(&sub, "sub", "sub", &mut ctx);
     let size = ex.props.as_ref().expect("the sheet").size();
     for id in ["v_size", "v_disk", "v_has"] {
-        assert_eq!(row_value(&ex, id), CALCULATING, "{id} before the walk");
+        assert_eq!(
+            row_value(&ex, id),
+            filesheet::calculating(),
+            "{id} before the walk"
+        );
     }
 
     ex.finish_puts(&mut ctx);
@@ -734,8 +738,8 @@ fn the_attribute_question_names_the_change_and_the_scope() {
         "You have chosen to make the following attribute changes:"
     );
     assert_eq!(label_of("attr_verb"), "set read-only");
-    assert_eq!(label_of(ATTR_TREE), ATTR_LABELS[1]);
-    assert_eq!(label_of(ATTR_ONLY), ATTR_LABELS[0]);
+    assert_eq!(label_of(ATTR_TREE), attr_labels()[1]);
+    assert_eq!(label_of(ATTR_ONLY), attr_labels()[0]);
     assert!(attr_tree_picked(&f), "opens on the tree radio");
     assert_eq!(
         attr_form(&RO_FALSE, None, FOLDER, &text(), px(), TextUnits::ONE)
@@ -1040,7 +1044,7 @@ fn properties_over_a_multi_selection_opens_the_combined_sheet() {
         "the focused one leads"
     );
     assert_eq!(row_value(&ex, "v_type"), "Multiple Types");
-    assert_eq!(row_value(&ex, filesheet::COUNT), CALCULATING);
+    assert_eq!(row_value(&ex, filesheet::COUNT), filesheet::calculating());
     ex.finish_puts(&mut ctx);
     assert_eq!(row_value(&ex, filesheet::COUNT), format_contains(3, 1));
 

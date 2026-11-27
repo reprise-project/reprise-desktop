@@ -13,7 +13,7 @@ mod draw;
 mod hit;
 mod layout;
 
-pub use access::{ATTENTION, QUICK_MORE_NAME, TaskbarNames, access};
+pub use access::{TaskbarNames, access, attention, quick_more_name};
 pub use attention::{Attention, FLASH_HALF};
 pub use badge::BadgeArt;
 pub use draw::{

@@ -59,6 +59,7 @@ picker-screens = Screens:
 picker-windows = Windows:
 picker-delay = &Delay:
 picker-delay-units = seconds
+picker-delay-name = Delay
 
 ## Account (GetUserInformation)
 account-title = Your account

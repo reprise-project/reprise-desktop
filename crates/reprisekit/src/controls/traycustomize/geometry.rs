@@ -444,8 +444,8 @@ impl TrayCustomize {
         if !self.is_page() {
             let u = self.metrics.text;
             let width = u.len(CLASSIC.intro.width);
-            self.intro = text::wrap(text, self.wording.intro(), width, px);
-            let label = split_mnemonic(self.wording.restore()).0;
+            self.intro = text::wrap(text, &self.wording.intro(), width, px);
+            let label = split_mnemonic(&self.wording.restore()).0;
             let need = u.design(text.measure(&label, false, px) + u.len(6));
             self.restore_w = Some(need.max(CLASSIC.restore.width));
             return;
@@ -453,10 +453,10 @@ impl TrayCustomize {
         let g = self.page_geo();
         let width = g.u.len(g.list_w());
         let heading_px = px * HEADING_SCALE.0 / HEADING_SCALE.1;
-        if text.measure(Wording::HEADING, false, heading_px) > width {
-            self.heading = text::wrap(text, Wording::HEADING, width, heading_px);
+        if text.measure(&Wording::heading(), false, heading_px) > width {
+            self.heading = text::wrap(text, &Wording::heading(), width, heading_px);
         }
-        let intro = self.wording.intro();
+        let intro = &self.wording.intro();
         if text.measure(intro, false, px) > width {
             self.intro = text::wrap(text, intro, width, px);
         }

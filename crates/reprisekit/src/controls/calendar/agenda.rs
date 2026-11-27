@@ -1,7 +1,7 @@
 //! The clock popup's event list: the listed day's heading over [`AGENDA_ROWS`] rows of time and
 //! summary, the last counting the rest when they overflow. The host reads and words the events.
 
-use super::{MONTHS, PopupHit, weekday};
+use super::{PopupHit, month_name, weekday};
 use crate::access::{self, Tree, accesskit};
 use crate::look::Paint;
 use crate::look::widgets::item::{self, Mark};
@@ -18,15 +18,10 @@ const INSET: i32 = 4;
 /// Between the time column and the summary.
 const GAP: i32 = 8;
 
-const WEEKDAYS: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
+/// Weekday `n` (0 is Sunday) by name.
+pub(super) fn weekday_name(n: u32) -> String {
+    tr!("calendar-weekday", day = n as i64)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DayEvent {
@@ -96,16 +91,21 @@ impl Agenda {
     /// "Today", else the day's weekday and date, with its year when that is not this year.
     pub fn heading(&self, today: Option<(i32, u32, u32)>) -> String {
         if Some(self.day) == today {
-            return "Today".into();
+            return tr!("calendar-today");
         }
         let (y, m, d) = self.day;
-        let name = format!(
-            "{}, {} {d}",
-            WEEKDAYS[weekday(y, m, d) as usize],
-            MONTHS[(m.clamp(1, 12) - 1) as usize]
+        let name = tr!(
+            "calendar-agenda-day",
+            weekday = weekday_name(weekday(y, m, d)).as_str(),
+            month = month_name(m).as_str(),
+            day = d as i64
         );
         match today {
-            Some((year, ..)) if year != y => format!("{name}, {y}"),
+            Some((year, ..)) if year != y => tr!(
+                "calendar-agenda-year",
+                date = name.as_str(),
+                year = y as i64
+            ),
             _ => name,
         }
     }
@@ -114,9 +114,8 @@ impl Agenda {
 fn row_label(row: Row<'_>) -> String {
     match row {
         Row::Event(e) => format!("{} {}", e.when, e.summary),
-        Row::More(1) => "1 more event".into(),
-        Row::More(n) => format!("{n} more events"),
-        Row::Empty => "No events".into(),
+        Row::More(n) => tr!("calendar-more-events", count = n as i64),
+        Row::Empty => tr!("calendar-no-events"),
     }
 }
 

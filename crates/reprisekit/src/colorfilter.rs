@@ -51,14 +51,14 @@ impl Filter {
         Filter::ALL.into_iter().find(|f| f.name() == name)
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Filter::None => "None",
-            Filter::Grayscale => "Grayscale",
-            Filter::Invert => "Inverted",
-            Filter::Deuteranopia => "Red-green (deutan)",
-            Filter::Protanopia => "Red-green (protan)",
-            Filter::Tritanopia => "Blue-yellow (tritan)",
+            Filter::None => tr!("colorfilter-none"),
+            Filter::Grayscale => tr!("colorfilter-grayscale"),
+            Filter::Invert => tr!("colorfilter-inverted"),
+            Filter::Deuteranopia => tr!("colorfilter-deuteranopia"),
+            Filter::Protanopia => tr!("colorfilter-protanopia"),
+            Filter::Tritanopia => tr!("colorfilter-tritanopia"),
         }
     }
 

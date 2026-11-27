@@ -959,24 +959,27 @@ fn a_flyout_is_made_dropped_or_left() {
     let f = Flyout {
         id: WinId::named("flyout"),
         at: (10, 20),
-        title: "Volume",
+        title: "Volume".into(),
     };
-    assert_eq!(flyout_wanted(Some(f), None), (None, Some(f)));
+    assert_eq!(
+        flyout_wanted(Some(f.clone()), None),
+        (None, Some(f.clone()))
+    );
     assert_eq!(
         flyout_wanted(None, Some(WinId::named("flyout"))),
         (Some(WinId::named("flyout")), None)
     );
     assert_eq!(
-        flyout_wanted(Some(f), Some(WinId::named("flyout"))),
+        flyout_wanted(Some(f.clone()), Some(WinId::named("flyout"))),
         (None, None)
     );
     let g = Flyout {
         id: WinId::named("other"),
         at: (0, 0),
-        title: "Other",
+        title: "Other".into(),
     };
     assert_eq!(
-        flyout_wanted(Some(g), Some(WinId::named("flyout"))),
+        flyout_wanted(Some(g.clone()), Some(WinId::named("flyout"))),
         (Some(WinId::named("flyout")), Some(g))
     );
 }

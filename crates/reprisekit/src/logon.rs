@@ -977,7 +977,7 @@ impl Logon {
             Part::PowerMenu => text::power_options(),
             Part::Layout => self.layout.clone().unwrap_or_default(),
             Part::Media(t) => (self.media.as_ref())
-                .map(|np| np.glyph(t).1.to_owned())
+                .map(|np| np.glyph(t).1)
                 .unwrap_or_default(),
         }
     }

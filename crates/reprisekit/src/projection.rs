@@ -22,18 +22,18 @@ impl Projection {
     /// The switcher tile's caption.
     pub fn label(self) -> String {
         match self {
-            Projection::Extend => "Extend".into(),
-            Projection::Duplicate => "Duplicate".into(),
-            Projection::Only(i) => format!("Only {}", i + 1),
+            Projection::Extend => tr!("projection-extend"),
+            Projection::Duplicate => tr!("projection-duplicate"),
+            Projection::Only(i) => tr!("projection-only", display = (i + 1) as i64),
         }
     }
 
     /// The Display page combo's row.
     pub fn row(self) -> String {
         match self {
-            Projection::Extend => "Extend these displays".into(),
-            Projection::Duplicate => "Duplicate these displays".into(),
-            Projection::Only(i) => format!("Show only on {}", i + 1),
+            Projection::Extend => tr!("projection-row-extend"),
+            Projection::Duplicate => tr!("projection-row-duplicate"),
+            Projection::Only(i) => tr!("projection-row-only", display = (i + 1) as i64),
         }
     }
 

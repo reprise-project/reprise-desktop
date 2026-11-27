@@ -17,10 +17,18 @@ pub const STATUS: &str = "status";
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
 
-pub const CONNECT_TITLE: &str = "Connect to Server";
-pub const LOGIN_TITLE: &str = "Connect As";
-pub const CONNECT_MESSAGE: &str = "Type the address of a shared folder or a server, for example smb://server/share or sftp://user@server/folder.";
-pub const WRONG: &str = "The user name or password is not correct.";
+pub fn connect_title() -> String {
+    tr!("netconnect-connect-title")
+}
+pub fn login_title() -> String {
+    tr!("netconnect-login-title")
+}
+pub fn connect_message() -> String {
+    tr!("netconnect-connect-message")
+}
+pub fn wrong() -> String {
+    tr!("netconnect-wrong")
+}
 pub const CONNECT_ICON: &str = "network-server";
 pub const LOGIN_ICON: &str = "dialog-password";
 
@@ -88,7 +96,7 @@ fn buttons(ok: &str, (w, h): (i32, i32)) -> [Item; 2] {
         Item::button(
             CANCEL,
             Rect::new(cancel_x, y, BUTTON_W, BUTTON_H),
-            "Cancel",
+            &tr!("cancel"),
             true,
             false,
         ),
@@ -108,7 +116,12 @@ pub fn connect_form(lines: &[String], address: &str, icon: Option<Canvas>) -> Fo
             enabled: true,
         },
     );
-    items.extend(field("address_l", "&Address:", address, FIRST_Y + 8));
+    items.extend(field(
+        "address_l",
+        &tr!("netconnect-address"),
+        address,
+        FIRST_Y + 8,
+    ));
     items.push(
         Item::label(
             STATUS,
@@ -143,7 +156,7 @@ pub fn login_form(l: &Login, icon: Option<Canvas>) -> Form {
     let mut y = FIRST_Y;
     items.extend(field(
         "user_l",
-        "&User name:",
+        &tr!("netconnect-user-name"),
         Item::edit(USER, Rect::default(), l.user, l.asks_user),
         y,
     ));
@@ -151,7 +164,7 @@ pub fn login_form(l: &Login, icon: Option<Canvas>) -> Form {
         y += ROW;
         items.extend(field(
             "domain_l",
-            "&Domain:",
+            &tr!("netconnect-domain"),
             Item::edit(DOMAIN, Rect::default(), domain, true),
             y,
         ));
@@ -166,13 +179,13 @@ pub fn login_form(l: &Login, icon: Option<Canvas>) -> Form {
             enabled: true,
         },
     );
-    items.extend(field("password_l", "&Password:", secret, y));
+    items.extend(field("password_l", &tr!("netconnect-password"), secret, y));
     let (check_y, status_y) = login_rows(l.domain.is_some());
     let remember = match l.can_remember {
-        true => "&Remember this password",
-        false => "&Remember this password (needs a keyring)",
+        true => tr!("netconnect-remember"),
+        false => tr!("netconnect-remember-keyring"),
     };
-    items.push(Item::check(REMEMBER, LABEL_X, check_y, remember).enabled(l.can_remember));
+    items.push(Item::check(REMEMBER, LABEL_X, check_y, &remember).enabled(l.can_remember));
     items.push(
         Item::label(
             STATUS,
@@ -357,7 +370,7 @@ mod tests {
     fn the_boxes_fit_their_text_under_every_interface() {
         let over = interfaces::form_overflows(|_, _, _| {
             let mut retry = smb();
-            retry.set_text(STATUS, WRONG);
+            retry.set_text(STATUS, &wrong());
             vec![
                 ("connect".into(), connect()),
                 ("smb".into(), retry),
@@ -416,7 +429,7 @@ mod tests {
         busy.show_edit_text(ADDRESS, "smb://nas/public");
         set_busy(&mut busy, true, "Connecting to nas...");
         let mut retry = smb();
-        retry.set_text(STATUS, WRONG);
+        retry.set_text(STATUS, &wrong());
         let states = [
             ("connect", connect(), CONNECT_CLIENT),
             ("connecting", busy, CONNECT_CLIENT),

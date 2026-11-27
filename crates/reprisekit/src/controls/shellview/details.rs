@@ -11,14 +11,14 @@ use std::borrow::Cow;
 /// Type 118 wide, Size aligned right, Date Modified 120.
 pub fn details_columns() -> Vec<listview::Column> {
     vec![
-        listview::Column::new("Name", 178),
+        listview::Column::new(&tr!("details-name"), 178),
         listview::Column {
-            title: "Size".into(),
+            title: tr!("details-size"),
             width: 94,
             right: true,
         },
-        listview::Column::new("Type", 118),
-        listview::Column::new("Date Modified", 120),
+        listview::Column::new(&tr!("details-type"), 118),
+        listview::Column::new(&tr!("details-date-modified"), 120),
     ]
 }
 
@@ -59,10 +59,10 @@ pub fn computer_columns() -> Vec<listview::Column> {
         right: true,
     };
     vec![
-        listview::Column::new("Name", 178),
-        listview::Column::new("Type", 118),
-        right("Total Size"),
-        right("Free Space"),
+        listview::Column::new(&tr!("details-name"), 178),
+        listview::Column::new(&tr!("details-type"), 118),
+        right(&tr!("details-total-size")),
+        right(&tr!("details-free-space")),
     ]
 }
 
@@ -74,16 +74,16 @@ pub fn computer_fields() -> Vec<Field> {
 /// Deleted 120, Size 96 (right-aligned), Type 120, Date Modified 120.
 pub fn bin_columns() -> Vec<listview::Column> {
     vec![
-        listview::Column::new("Name", 178),
-        listview::Column::new("Original Location", 180),
-        listview::Column::new("Date Deleted", 120),
+        listview::Column::new(&tr!("details-name"), 178),
+        listview::Column::new(&tr!("details-original-location"), 180),
+        listview::Column::new(&tr!("details-date-deleted"), 120),
         listview::Column {
-            title: "Size".into(),
+            title: tr!("details-size"),
             width: 96,
             right: true,
         },
-        listview::Column::new("Type", 120),
-        listview::Column::new("Date Modified", 120),
+        listview::Column::new(&tr!("details-type"), 120),
+        listview::Column::new(&tr!("details-date-modified"), 120),
     ]
 }
 
@@ -102,7 +102,7 @@ pub fn bin_fields() -> Vec<Field> {
 /// Date Modified 120.
 pub fn search_columns() -> Vec<listview::Column> {
     let mut cols = details_columns();
-    cols.insert(1, listview::Column::new("In Folder", 180));
+    cols.insert(1, listview::Column::new(&tr!("details-in-folder"), 180));
     cols
 }
 

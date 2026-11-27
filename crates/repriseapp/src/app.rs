@@ -348,12 +348,12 @@ pub struct Child {
 /// is a click outside. An `at` on no output, such as
 /// [`Flyout::UNDER_POINTER`], leaves the output to the compositor, which
 /// takes the one under the pointer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Flyout {
     pub id: WinId,
     pub at: (i32, i32),
     /// What a screen reader calls the flyout's window.
-    pub title: &'static str,
+    pub title: String,
 }
 
 impl Flyout {
