@@ -27,6 +27,7 @@ fn looks() -> Vec<Theme> {
         out.push(interfaces::theme_with(
             Interface::Glass,
             Default::default(),
+            false,
             &g,
         ));
     }

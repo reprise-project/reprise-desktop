@@ -283,7 +283,8 @@ mod tests {
             mode: glass::Mode::Dark,
             ..Default::default()
         };
-        let cs = interfaces::theme_with(Interface::Glass, blue::Variant::Blue, &settings).colors;
+        let cs =
+            interfaces::theme_with(Interface::Glass, blue::Variant::Blue, false, &settings).colors;
         assert!(cs.is_dark());
         let at = |n| get(&cs, Interface::Glass, n);
         assert_eq!(at("window_bg_color"), cs.button_face);
@@ -463,7 +464,8 @@ mod tests {
                 mode,
                 ..Default::default()
             };
-            let cs = interfaces::theme_with(Interface::Glass, blue::Variant::Blue, &settings);
+            let cs =
+                interfaces::theme_with(Interface::Glass, blue::Variant::Blue, false, &settings);
             looks.push((format!("Glass {mode:?}"), cs.colors, Interface::Glass));
         }
         looks

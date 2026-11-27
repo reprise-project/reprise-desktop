@@ -131,8 +131,13 @@ pub fn render(scale: i32) -> Canvas {
     );
     c.fill_rect(c.bounds(), Color::rgb(0x60, 0x60, 0x60));
     for (i, (m, v, picture)) in screens.iter().enumerate() {
-        let theme =
-            theme_with(m.interface, *v, &reprisekit::glass::Settings::default()).scaled(scale);
+        let theme = theme_with(
+            m.interface,
+            *v,
+            false,
+            &reprisekit::glass::Settings::default(),
+        )
+        .scaled(scale);
         let text = TextRenderer::load(&theme.fonts);
         let l = logon_layout(m, &theme, &text, OUTPUT);
         let (w, h) = (

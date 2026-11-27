@@ -1296,6 +1296,7 @@ mod tests {
         let theme = crate::interfaces::theme_with(
             crate::interface::Interface::Glass,
             crate::blue::Variant::default(),
+            false,
             &s,
         );
         let st = theme.look.style().unwrap();

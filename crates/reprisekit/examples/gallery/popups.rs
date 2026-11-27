@@ -1164,6 +1164,7 @@ pub fn render_glass_launcher_dark(n: i32) -> Canvas {
     let theme = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
+        false,
         &g,
     ))
     .scaled(n);

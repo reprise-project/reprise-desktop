@@ -169,6 +169,7 @@ mod tests {
         theme_with(
             Interface::Glass,
             crate::blue::Variant::Blue,
+            false,
             &glass::Settings::default(),
         )
     }
@@ -286,7 +287,7 @@ mod tests {
                 transparency: false,
                 ..glass::Settings::default()
             };
-            let base = theme_with(Interface::Glass, crate::blue::Variant::Blue, &g);
+            let base = theme_with(Interface::Glass, crate::blue::Variant::Blue, false, &g);
             let l = FlyoutLayout::compute(&base, 2);
             for s in [1, 2] {
                 let theme = base.scaled(s);

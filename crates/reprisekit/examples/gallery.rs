@@ -352,6 +352,7 @@ fn write_scale(n: i32) {
         let theme = cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
+            false,
             &g,
         ))
         .scaled(n.max(1));

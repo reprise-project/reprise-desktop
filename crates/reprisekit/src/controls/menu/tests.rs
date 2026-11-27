@@ -442,6 +442,7 @@ fn half_unrolled_menus_at_scale_1_and_2() {
     let glass = crate::interfaces::theme_with(
         crate::interface::Interface::Glass,
         Default::default(),
+        false,
         &Default::default(),
     );
     let mut got = Vec::new();
@@ -2649,6 +2650,7 @@ fn a_scrolling_menu_pins_in_each_look_at_scale_1_and_2() {
     let glass = crate::interfaces::theme_with(
         crate::interface::Interface::Glass,
         Default::default(),
+        false,
         &Default::default(),
     );
     let looks = [

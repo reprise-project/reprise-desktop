@@ -197,6 +197,7 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
     let glass_theme = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
+        false,
         &glass,
     ))
     .scaled(n);

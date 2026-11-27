@@ -49,22 +49,33 @@ pub fn resolve_wallpaper(b: Builtin, glass: &glass::Settings) -> Builtin {
 }
 
 pub fn theme_for(i: Interface) -> Theme {
-    theme_with(i, blue::Variant::Blue, &glass::Settings::default())
+    theme_with(i, blue::Variant::Blue, false, &glass::Settings::default())
 }
 
 /// The theme an interface starts from, before the config's overrides;
-/// Blue paints in `variant`'s colour scheme, Glass in `glass`'s colour.
-/// Each interface ignores the other's argument.
-pub fn theme_with(i: Interface, variant: blue::Variant, glass: &glass::Settings) -> Theme {
+/// Blue paints in `variant`'s colour scheme (its dark twin when `dark`),
+/// Glass in `glass`'s colour and mode. Each interface ignores the others'
+/// arguments.
+pub fn theme_with(
+    i: Interface,
+    variant: blue::Variant,
+    dark: bool,
+    glass: &glass::Settings,
+) -> Theme {
     match i {
         Interface::Classic => Theme::default(),
-        Interface::Blue => blue_theme(variant),
+        Interface::Blue => blue_theme_in(variant, dark),
         Interface::Glass => styled(glass::style(glass)),
     }
 }
 
 pub fn blue_theme(v: blue::Variant) -> Theme {
-    styled(blue::style_for(v))
+    blue_theme_in(v, false)
+}
+
+/// Blue in `v`'s scheme, or its dark twin when `dark`.
+pub fn blue_theme_in(v: blue::Variant, dark: bool) -> Theme {
+    styled(blue::style_in(v, dark))
 }
 
 pub fn sample_theme(
@@ -74,7 +85,7 @@ pub fn sample_theme(
     background: Option<Color>,
 ) -> Theme {
     let variant = blue::Variant::from_name(scheme).unwrap_or_default();
-    let mut t = theme_with(i, variant, glass);
+    let mut t = theme_with(i, variant, false, glass);
     if i == Interface::Classic
         && let Some(colors) = crate::schemes::scheme(scheme)
     {
@@ -508,7 +519,7 @@ mod tests {
         };
         assert_eq!(
             sample_theme(Interface::Glass, "Brick", &ruby, None),
-            theme_with(Interface::Glass, blue::Variant::Blue, &ruby),
+            theme_with(Interface::Glass, blue::Variant::Blue, false, &ruby),
             "Glass has no scheme; its colour is the glass's"
         );
     }
@@ -570,19 +581,19 @@ mod tests {
     fn theme_with_blue_takes_the_variants_look() {
         let d = glass::Settings::default();
         for v in blue::Variant::ALL {
-            let t = theme_with(Interface::Blue, v, &d);
+            let t = theme_with(Interface::Blue, v, false, &d);
             assert_eq!(t.look, blue_theme(v).look, "{v:?}");
         }
         assert_eq!(
-            theme_with(Interface::Blue, blue::Variant::Blue, &d).look,
+            theme_with(Interface::Blue, blue::Variant::Blue, false, &d).look,
             theme_for(Interface::Blue).look
         );
         assert_ne!(
-            theme_with(Interface::Blue, blue::Variant::Silver, &d).look,
+            theme_with(Interface::Blue, blue::Variant::Silver, false, &d).look,
             theme_for(Interface::Blue).look
         );
         assert_eq!(
-            theme_with(Interface::Classic, blue::Variant::Olive, &d),
+            theme_with(Interface::Classic, blue::Variant::Olive, false, &d),
             Theme::default()
         );
     }
@@ -609,13 +620,14 @@ mod tests {
         let a = theme_with(
             Interface::Glass,
             blue::Variant::Blue,
+            false,
             &glass::Settings::default(),
         );
         let opaque = glass::Settings {
             transparency: false,
             ..Default::default()
         };
-        let b = theme_with(Interface::Glass, blue::Variant::Blue, &opaque);
+        let b = theme_with(Interface::Glass, blue::Variant::Blue, false, &opaque);
         // Row 10 of the caption atlas's stretched middle: plain glass,
         // clear of the outline and the light line.
         let fa = a
@@ -643,7 +655,8 @@ mod tests {
 
     #[test]
     fn glass_themes_built_from_different_art_settings_differ() {
-        let theme = |g: &glass::Settings| theme_with(Interface::Glass, blue::Variant::Blue, g);
+        let theme =
+            |g: &glass::Settings| theme_with(Interface::Glass, blue::Variant::Blue, false, g);
         let sky = glass::Settings {
             color: glass::swatch("sky").unwrap(),
             ..glass::Settings::default()

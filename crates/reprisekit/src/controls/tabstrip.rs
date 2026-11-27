@@ -1271,7 +1271,7 @@ mod tests {
                 mode,
                 ..Default::default()
             };
-            let t = interfaces::theme_with(Interface::Glass, Default::default(), &g);
+            let t = interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
             looks.push((format!("Glass {mode:?} on glass"), t.clone(), true));
             looks.push((format!("Glass {mode:?} on face"), t, false));
         }

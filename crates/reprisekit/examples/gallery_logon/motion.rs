@@ -70,7 +70,8 @@ pub fn render(scale: i32) -> Canvas {
         m.take_motion();
         act(&mut m);
         let motion = m.take_motion().expect("a change");
-        let theme = theme_with(m.interface, Variant::Blue, &Default::default()).scaled(scale);
+        let theme =
+            theme_with(m.interface, Variant::Blue, false, &Default::default()).scaled(scale);
         let text = TextRenderer::load(&theme.fonts);
         let l = logon_layout(&m, &theme, &text, OUTPUT);
         let d = Drawn {
@@ -90,7 +91,8 @@ pub fn render(scale: i32) -> Canvas {
     }
     let mut busy = start(Interface::Glass);
     busy.set_busy(true);
-    let theme = theme_with(Interface::Glass, Variant::Blue, &Default::default()).scaled(scale);
+    let theme =
+        theme_with(Interface::Glass, Variant::Blue, false, &Default::default()).scaled(scale);
     let text = TextRenderer::load(&theme.fonts);
     let l = logon_layout(&busy, &theme, &text, OUTPUT);
     for k in 0..COLS as u32 {

@@ -499,7 +499,7 @@ mod tests {
             mode: crate::glass::Mode::Dark,
             ..Default::default()
         };
-        let dark = crate::interfaces::theme_with(Interface::Glass, Default::default(), &g);
+        let dark = crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
         for scale in [1, 2] {
             let c = drawn_in(dark.clone(), scale).0;
             got.push((format!("Glass Dark {scale}"), hash(&c)));

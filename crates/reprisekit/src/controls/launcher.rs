@@ -2069,7 +2069,7 @@ mod tests {
         for scale in [1, 2] {
             let theme = Theme {
                 scale,
-                ..crate::interfaces::theme_with(Interface::Glass, Default::default(), &g)
+                ..crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g)
             };
             let window = theme.look.style().unwrap().colors.window.argb();
             let c = draw(&theme, &text, &l, None, false, None);

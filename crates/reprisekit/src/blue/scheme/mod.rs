@@ -46,6 +46,16 @@ pub fn scheme(v: Variant) -> &'static Scheme {
     }
 }
 
+/// `v`'s scheme, or its dark twin when `dark`.
+pub fn scheme_in(v: Variant, dark: bool) -> &'static Scheme {
+    if dark { twin(v) } else { scheme(v) }
+}
+
+/// `v`'s dark twin; a variant without one yet keeps its light scheme.
+fn twin(v: Variant) -> &'static Scheme {
+    scheme(v)
+}
+
 impl Variant {
     pub fn scheme(self) -> &'static Scheme {
         scheme(self)

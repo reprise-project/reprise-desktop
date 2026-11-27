@@ -2117,7 +2117,12 @@ mod tests {
             ),
             (interfaces::theme_for(Interface::Blue), Settings::default()),
             (
-                interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, &opaque_glass),
+                interfaces::theme_with(
+                    Interface::Glass,
+                    crate::blue::Variant::Blue,
+                    false,
+                    &opaque_glass,
+                ),
                 opaque_glass,
             ),
         ];

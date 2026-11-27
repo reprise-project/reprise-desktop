@@ -280,6 +280,7 @@ mod tests {
         theme_with(
             Interface::Glass,
             crate::blue::Variant::default(),
+            false,
             &Settings {
                 mode: Mode::Dark,
                 ..Settings::default()
@@ -527,6 +528,7 @@ mod tests {
         theme_with(
             Interface::Glass,
             crate::blue::Variant::default(),
+            false,
             &Settings {
                 material: Material::Smoked,
                 ..Settings::default()

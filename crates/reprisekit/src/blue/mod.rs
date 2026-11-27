@@ -137,6 +137,13 @@ pub fn style() -> Arc<Style> {
     style_for(Variant::Blue)
 }
 
+/// Blue's style in `v`'s scheme, or its dark twin when `dark`.
+pub fn style_in(v: Variant, dark: bool) -> Arc<Style> {
+    // Until a twin is drawn it is its light scheme, so the light style serves both.
+    debug_assert!(std::ptr::eq(scheme::scheme_in(v, dark), v.scheme()));
+    style_for(v)
+}
+
 /// Blue's style in `v`'s scheme, built on first use and shared. At another scale it is built
 /// again ([`Style::at_scale`]).
 pub fn style_for(v: Variant) -> Arc<Style> {

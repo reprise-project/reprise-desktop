@@ -15,6 +15,7 @@ pub fn render_task_progress(scale: i32) -> Canvas {
     let glass_dark = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
+        false,
         &reprisekit::glass::Settings {
             mode: reprisekit::glass::Mode::Dark,
             ..reprisekit::glass::Settings::default()
@@ -111,6 +112,7 @@ pub fn render_task_attention(scale: i32) -> Canvas {
         cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
+            false,
             &s,
         ))
     };
@@ -990,6 +992,7 @@ pub fn render_orb_glow(n: i32) -> Canvas {
         let one = cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
+            false,
             &reprisekit::glass::Settings {
                 mode,
                 ..reprisekit::glass::Settings::default()

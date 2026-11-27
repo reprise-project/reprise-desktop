@@ -72,6 +72,7 @@ pub(crate) fn theme_from_env(
     let mut theme = reprisekit::interfaces::theme_with(
         reprisekit::interface::Interface::from_env_value(interface),
         reprisekit::blue::Variant::from_env_value(variant),
+        false,
         &reprisekit::glass::Settings {
             mode: glass_mode
                 .and_then(reprisekit::glass::Mode::parse)

@@ -225,6 +225,7 @@ mod tests {
         theme_with(
             Interface::Glass,
             crate::blue::Variant::default(),
+            false,
             &crate::glass::Settings {
                 mode: crate::glass::Mode::Dark,
                 ..crate::glass::Settings::default()

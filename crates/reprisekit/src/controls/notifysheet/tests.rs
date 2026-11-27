@@ -64,7 +64,7 @@ fn glass(dark: bool, scale: i32) -> Theme {
         },
         ..glass::Settings::default()
     };
-    theme_with(Interface::Glass, blue::Variant::Blue, &g).scaled(scale)
+    theme_with(Interface::Glass, blue::Variant::Blue, false, &g).scaled(scale)
 }
 
 fn fnv(c: &Canvas) -> u64 {
