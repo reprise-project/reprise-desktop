@@ -96,9 +96,13 @@ impl SettingsApp {
                 }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
                 let from = self.want.interface.clone();
+                let from_style = self.want.glass_style.clone();
                 pages::read_one(&self.sheet, id, &mut self.want);
                 if self.want.interface != from {
                     self.interface_moved(&from);
+                }
+                if self.want.glass_style != from_style {
+                    self.style_moved(&from_style);
                 }
                 if id == saverpage::SAVER {
                     let row = self.sheet.pages[Page::ScreenSaverLock.index()].combo_selected(id);

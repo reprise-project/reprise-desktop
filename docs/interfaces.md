@@ -56,6 +56,7 @@ Glass uses `[glass]` instead of colour schemes (see `config.example.toml`). Conf
 - Smoked glass reduces transparency and uses white titles.
 - Molten glass blurs less, boosts colour and refracts edges.
 - Square frames use square corners, centred titles and flat caption buttons.
+- The Onyx style (`[glass] style = "onyx"`, Settings > Appearance > Style: Glass: Onyx) draws a near-black 30 px taskbar with one labelled button per window, the Quick Launch toolbar and no Show desktop strip. Frames stay Glass's.
 
 ![Reprise Glass in dark mode, Ruby and Molten, with the calendar open](screenshots/glass-dark.png)
 
@@ -77,12 +78,14 @@ The Shut down arrow lists Log off, Lock, Restart, Restart into (if logind provid
 
 ## Defaults by interface
 
-Unset keys follow the active interface when you switch.
+Unset keys follow the active interface, and under Glass its style, when you switch.
 
 | Key | Classic and Blue | Glass |
 | --- | --- | --- |
-| `[taskbar] buttons` | `when_full` | `combine` |
-| `[taskbar] pinned`, `show_desktop_button`, `peek` | off | on |
+| `[taskbar] buttons` | `when_full` | `combine` (`never` in Onyx) |
+| `[taskbar] pinned`, `show_desktop_button` | off | on (off in Onyx) |
+| `[taskbar] peek` | off | on |
+| `[taskbar] small_icons` | off | off (on in Onyx) |
 | `startmenu_style` | `classic` / `blue` | `glass` |
 | `[switcher] style` | `icons` | `thumbnails` |
 | `[switcher] desktop`, `peek`, `flip` | off | on |

@@ -405,6 +405,68 @@ fn taskbar_defaults_follow_the_interface() {
 }
 
 #[test]
+fn glass_style_parses_its_names() {
+    use reprisekit::glass::Style;
+    assert_eq!(Config::parse("").unwrap().glass.style, Style::Glass);
+    let c = Config::parse("[glass]\nstyle = \"onyx\"\n").unwrap();
+    assert_eq!(c.glass.style, Style::Onyx);
+    assert_eq!(
+        Config::parse("[glass]\nstyle = \"marble\"\n").unwrap_err(),
+        "[glass] style = \"marble\" is not glass or onyx"
+    );
+}
+
+#[test]
+fn onyx_takes_the_small_bar_with_a_labelled_button_per_window() {
+    let onyx =
+        Config::parse("[appearance]\ninterface = \"glass\"\n[glass]\nstyle = \"onyx\"\n").unwrap();
+    let want = TaskbarConfig {
+        buttons: TaskbarButtons::Never,
+        pinned: false,
+        small_icons: true,
+        show_desktop_button: false,
+        ..TaskbarConfig::default_for(Interface::Glass)
+    };
+    assert_eq!(onyx.taskbar, want);
+    assert_eq!(
+        TaskbarConfig::default_for_style(Interface::Glass, reprisekit::glass::Style::Onyx),
+        want
+    );
+    assert_eq!(
+        onyx.theme.metrics.taskbar_height,
+        reprisekit::glass::SMALL_TASKBAR_HEIGHT
+    );
+}
+
+#[test]
+fn onyx_counts_only_under_glass() {
+    for i in [Interface::Classic, Interface::Blue] {
+        let c = Config::parse(&format!(
+            "[appearance]\ninterface = \"{}\"\n[glass]\nstyle = \"onyx\"\n",
+            i.as_str()
+        ))
+        .unwrap();
+        assert_eq!(c.taskbar, TaskbarConfig::default_for(i), "{i:?}");
+    }
+}
+
+#[test]
+fn taskbar_keys_win_over_onyxs_defaults() {
+    let c = Config::parse(
+        "[appearance]\ninterface = \"glass\"\n[glass]\nstyle = \"onyx\"\n\
+         [taskbar]\nbuttons = \"combine\"\nsmall_icons = false\npinned = true\nshow_desktop_button = true\n",
+    )
+    .unwrap();
+    assert_eq!(c.taskbar, TaskbarConfig::default_for(Interface::Glass));
+    assert_eq!(
+        c.theme.metrics.taskbar_height,
+        reprisekit::interfaces::theme_for(Interface::Glass)
+            .metrics
+            .taskbar_height
+    );
+}
+
+#[test]
 fn per_monitor_buttons_are_off_by_default_and_take_their_key() {
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         assert!(!TaskbarConfig::default_for(i).per_monitor_buttons, "{i:?}");

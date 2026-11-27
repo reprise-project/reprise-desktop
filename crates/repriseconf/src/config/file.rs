@@ -710,6 +710,7 @@ pub struct FileGlass {
     pub material: Option<String>,
     pub frame: Option<String>,
     pub notification_style: Option<String>,
+    pub style: Option<String>,
 }
 
 #[derive(Deserialize, Default)]

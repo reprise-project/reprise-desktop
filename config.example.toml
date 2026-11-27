@@ -143,13 +143,18 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 #                            # apply to Glass where [appearance] leaves them out
 # material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
 # frame = "rounded"          # rounded | square (flat, separate caption buttons)
+# style = "glass"           # glass | onyx: a near-black 30 px taskbar with a labelled
+#                            # button per window; onyx's [taskbar] defaults are
+#                            # buttons = "never", small_icons = true and false for
+#                            # pinned and show_desktop_button; a key set there wins
 # notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge, the glass washed in its colour) | droplet (one row, opens on hover)
 # orb_glow = 100             # 0 to 100: how strongly the Start button's icon glows; 0: none
 
 # [taskbar]                  # a key left out follows the interface: Glass's
 #                            # defaults are shown; Classic and Blue use
 #                            # buttons = "when_full" and false for pinned,
-#                            # show_desktop_button and peek
+#                            # show_desktop_button and peek; [glass] style =
+#                            # "onyx" has its own
 # position = "bottom"        # bottom | top | left | right: the output edge
 #                            # every bar sits on, under every interface
 # side_width = 0             # a left or right bar's width; 0: the

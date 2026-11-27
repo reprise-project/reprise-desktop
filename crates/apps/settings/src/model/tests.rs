@@ -1,12 +1,17 @@
-use super::fields::{INTERFACE, fields};
+use super::fields::{GLASS_STYLE, INTERFACE, fields};
 use super::shortcuts::default_shortcuts;
 use super::*;
 use repriseconf::config::Config;
 
 #[test]
 fn every_default_the_sheet_shows_reads_back_as_the_compositors() {
-    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
-        let shown = Settings::for_interface(interface.as_str());
+    use reprisekit::glass::Style;
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass]
+        .map(|i| (i, Style::Glass))
+        .into_iter()
+        .chain([(Interface::Glass, Style::Onyx)]);
+    for (interface, style) in looks {
+        let shown = Settings::for_look(interface.as_str(), style.as_str());
         let mut doc = toml_edit::DocumentMut::new();
         for f in fields() {
             let v = f.value(&shown).expect("the sheet leaves no key out");
@@ -16,10 +21,11 @@ fn every_default_the_sheet_shows_reads_back_as_the_compositors() {
             }
         }
         repriseconf::set(&mut doc, &INTERFACE, interface.as_str().into()).unwrap();
+        repriseconf::set(&mut doc, &GLASS_STYLE, style.as_str().into()).unwrap();
         assert_eq!(
             Config::parse(&doc.to_string()),
-            Ok(Config::default_for(interface)),
-            "{interface:?}: every key written as the sheet shows it parses to the defaults"
+            Ok(Config::default_for_style(interface, style)),
+            "{interface:?} {style:?}: every key written as the sheet shows it parses to the defaults"
         );
     }
 }
@@ -866,6 +872,7 @@ fn save_round_trips_every_field() {
         dark_color_scheme: "Nord".into(),
         glass_material: "smoked".into(),
         glass_frame: "square".into(),
+        glass_style: "onyx".into(),
         glass_notification_style: "lozenge".into(),
         glass_custom: "#102030".into(),
         glass_intensity: 70,
@@ -1537,6 +1544,40 @@ fn taskbar_keys_are_written_against_the_interfaces_defaults() {
     let out = saved("", &classic);
     assert!(out.contains("buttons = \"combine\""), "{out}");
     assert!(out.contains("peek = true"), "{out}");
+}
+
+#[test]
+fn onyxs_taskbar_defaults_follow_the_files_style() {
+    let onyx = load("[appearance]\ninterface = \"glass\"\n[glass]\nstyle = \"onyx\"\n");
+    assert_eq!(onyx.glass_style, "onyx");
+    assert_eq!(onyx.taskbar_buttons, "never");
+    assert!(onyx.taskbar_small_icons && !onyx.taskbar_pinned && !onyx.taskbar_show_desktop);
+    assert!(onyx.taskbar_peek, "Onyx keeps Glass's peek");
+}
+
+#[test]
+fn picking_onyx_moves_the_unset_taskbar_defaults_and_writes_only_the_style() {
+    let glass = "[appearance]\ninterface = \"glass\"\n[taskbar]\npinned = true\n";
+    let base = load(glass);
+    let mut want = base.clone();
+    want.glass_style = "onyx".into();
+    switch_style(&mut want, "glass", glass);
+    assert_eq!(want.taskbar_buttons, "never", "unset: Onyx's default");
+    assert!(want.taskbar_small_icons && !want.taskbar_show_desktop);
+    assert!(want.taskbar_pinned, "the file sets it");
+    let out = save(glass, &want, &base).expect("parses");
+    assert_eq!(
+        out,
+        "[appearance]\ninterface = \"glass\"\n[taskbar]\npinned = true\n\n[glass]\nstyle = \"onyx\"\n",
+        "no Onyx default is pinned"
+    );
+    assert_eq!(load(&out), want);
+    let base = want.clone();
+    want.glass_style = "glass".into();
+    switch_style(&mut want, "onyx", &out);
+    assert_eq!(want.taskbar_buttons, "combine");
+    assert!(!want.taskbar_small_icons && want.taskbar_show_desktop);
+    assert_eq!(save(&out, &want, &base).expect("parses"), glass);
 }
 
 /// Keys are written against the defaults of the interface in the file at Apply, which another writer may have switched.

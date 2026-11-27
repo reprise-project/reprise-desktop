@@ -5,6 +5,7 @@
 use repriseconf::config::{
     FontSmoothing, StartMenuStyle, TaskbarButtons, TitleDoubleClick, switcher_size,
 };
+use reprisekit::glass;
 use reprisekit::interface::Interface;
 use shortcuts::default_shortcuts;
 
@@ -19,7 +20,7 @@ pub(crate) use fields::INTERFACE;
 pub use io::keys;
 pub use io::{
     copy_keys, keys_apart, keys_in, load, rebase, save, snap_layouts_problem, switch_interface,
-    validate, without_keys,
+    switch_style, validate, without_keys,
 };
 pub(crate) use repriseconf::fields::text_to_list;
 pub use shortcuts::{
@@ -139,6 +140,9 @@ pub struct Settings {
     pub glass_material: String,
     /// `[glass] frame`: one of [`GLASS_FRAMES`]' values.
     pub glass_frame: String,
+    /// `[glass] style`: one of [`GLASS_STYLES`]' values. [`Settings::for_look`] leaves it at
+    /// Glass, so "onyx" is written whenever it is picked.
+    pub glass_style: String,
     /// `[glass] notification_style`: one of [`GLASS_NOTIFY_STYLES`]' values.
     pub glass_notification_style: String,
     /// Not a key: `glass_color` as the file had it when it names no
@@ -493,16 +497,21 @@ impl Default for Settings {
     }
 }
 
-/// [`Settings::for_interface`], built once per interface for the code that runs on each event.
-pub fn defaults(interface: &str) -> &'static Settings {
-    static BUILT: [std::sync::OnceLock<Settings>; 3] = [const { std::sync::OnceLock::new() }; 3];
+/// [`Settings::for_look`], built once per interface and Glass style for the code that runs on
+/// each event.
+pub fn defaults(interface: &str, style: &str) -> &'static Settings {
+    const LOOKS: usize = 3 * glass::Style::ALL.len();
+    static BUILT: [std::sync::OnceLock<Settings>; LOOKS] =
+        [const { std::sync::OnceLock::new() }; LOOKS];
     let i = Interface::parse(interface).unwrap_or(Interface::Classic);
+    let st = glass::Style::parse(style).unwrap_or_default();
     let at = match i {
         Interface::Classic => 0,
         Interface::Blue => 1,
         Interface::Glass => 2,
-    };
-    BUILT[at].get_or_init(|| Settings::for_interface(i.as_str()))
+    } * glass::Style::ALL.len()
+        + glass::Style::ALL.iter().position(|v| *v == st).unwrap_or(0);
+    BUILT[at].get_or_init(|| Settings::for_look(i.as_str(), st.as_str()))
 }
 
 /// The value `choices` lists for `v`, as `parse` reads the values.
@@ -518,13 +527,19 @@ fn tenths(v: f64) -> i64 {
 }
 
 impl Settings {
-    /// The defaults under `[appearance] interface` = `interface`: the compositor's own
-    /// ([`repriseconf::config::Config::default_for`]), with the wallpaper as the file names it.
-    /// `interface` itself stays Classic's, the compositor's default, so the key is written for
-    /// either of the others.
+    /// [`Settings::for_look`] under the Glass style.
     pub fn for_interface(interface: &str) -> Settings {
+        Settings::for_look(interface, "")
+    }
+
+    /// The defaults under `[appearance] interface` = `interface` and `[glass] style` = `style`:
+    /// the compositor's own ([`repriseconf::config::Config::default_for_style`]), with the
+    /// wallpaper as the file names it. `interface` itself stays Classic's and `glass_style`
+    /// Glass, the compositor's defaults, so either key is written when it differs.
+    pub fn for_look(interface: &str, style: &str) -> Settings {
         let interface = Interface::parse(interface).unwrap_or(Interface::Classic);
-        let c = repriseconf::config::Config::default_for(interface);
+        let style = glass::Style::parse(style).unwrap_or_default();
+        let c = repriseconf::config::Config::default_for_style(interface, style);
         let m = &c.theme.metrics;
         let fonts = &c.theme.fonts;
         let a = &c.accessibility;
@@ -613,6 +628,7 @@ impl Settings {
             dark_color_scheme: c.dark_color_scheme.clone().unwrap_or_default(),
             glass_material: c.glass.material.as_str().into(),
             glass_frame: c.glass.frame.as_str().into(),
+            glass_style: glass::Style::default().as_str().into(),
             glass_notification_style: c.glass.notification.as_str().into(),
             glass_custom: String::new(),
             glass_intensity: c.glass.intensity.into(),

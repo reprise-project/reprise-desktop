@@ -4,6 +4,7 @@ use repriseconf::{Key, key as k, lens};
 pub(super) type Field = repriseconf::fields::Field<Settings>;
 
 pub(crate) const INTERFACE: Key = k("appearance", "interface");
+pub(crate) const GLASS_STYLE: Key = k("glass", "style");
 
 pub(super) fn fields() -> Vec<Field> {
     vec![
@@ -98,6 +99,7 @@ pub(super) fn fields() -> Vec<Field> {
         ),
         Field::Text(k("glass", "material"), lens!(glass_material)),
         Field::Text(k("glass", "frame"), lens!(glass_frame)),
+        Field::Text(GLASS_STYLE, lens!(glass_style)),
         Field::Text(
             k("glass", "notification_style"),
             lens!(glass_notification_style),

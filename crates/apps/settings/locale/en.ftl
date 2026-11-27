@@ -125,6 +125,9 @@ choices-glass-notify-styles-droplet = Droplet
 # glass-frames
 choices-glass-frames-rounded = Rounded
 choices-glass-frames-square = Square
+# glass-styles
+choices-glass-styles-glass = Glass
+choices-glass-styles-onyx = Glass: Onyx
 # interfaces
 choices-interfaces-classic = Reprise Classic
 choices-interfaces-blue = Reprise Blue
@@ -754,6 +757,7 @@ appearancepage-mode = &Mode:
 appearancepage-dark-hours-to = to
 appearancepage-material = M&aterial:
 appearancepage-frame = &Frame:
+appearancepage-style = &Style:
 appearancepage-enable-transparency = Enable &transparency
 appearancepage-faster-glass-while-dragging = Faster &glass while dragging
 appearancepage-show-frames-behind-glass = Sho&w frames behind glass
