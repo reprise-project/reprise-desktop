@@ -340,7 +340,7 @@ fn listed_time(month: &str, day: &str, third: &str, now: i64) -> Option<i64> {
 
 /// A listed name with bsdtar's escapes read back to bytes: `\\`, the C control letters and
 /// `\ooo` octal for every other byte it does not print.
-fn unescape(name: &[u8]) -> Vec<u8> {
+pub(crate) fn unescape(name: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(name.len());
     let mut i = 0;
     while i < name.len() {
