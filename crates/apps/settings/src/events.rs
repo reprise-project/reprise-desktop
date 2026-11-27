@@ -14,6 +14,7 @@ use reprisekit::controls::form;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet;
 use reprisekit::textedit::EditKey;
+use reprisekit::tr;
 
 impl SettingsApp {
     pub(crate) fn sheet_event(&mut self, ev: propsheet::Event) -> Reply {
@@ -205,12 +206,7 @@ impl SettingsApp {
                     Reply::redraw()
                 }
                 pages::REMOTE_REGENERATE => {
-                    self.ask(
-                        "Make a new certificate? Computers that connected before will warn that \
-                         this computer's certificate changed."
-                            .into(),
-                        Then::NewCertificate,
-                    );
+                    self.ask(tr!("events-new-certificate-question"), Then::NewCertificate);
                     Reply::redraw_all()
                 }
                 saverpage::SETTINGS => {

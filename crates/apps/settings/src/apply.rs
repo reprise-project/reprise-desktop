@@ -13,8 +13,11 @@ use reprisekit::controls::propsheet;
 use std::path::PathBuf;
 
 use repriseapp::{Ctx, Event, Reply, WinId};
+use reprisekit::tr;
 
-pub(crate) const RUN_AS_QUESTION: &str = "Turn off Run As?\nFrom the next log on, programs that need an administrator password (Software Updates, Network Connections, drives) cannot ask for one.";
+pub(crate) fn run_as_question() -> String {
+    tr!("apply-run-as-question")
+}
 
 /// What Restore Defaults takes out of `config.toml` on a page: its keys off their defaults or set
 /// in the file (on Start Menu, the menu's too) and, on Background, the connected monitors' own
@@ -34,10 +37,8 @@ impl Restorable {
 /// The question Restore Defaults asks on page `p` before taking `r` out of `config.toml`; a
 /// monitor's own key reads "outputs.wallpaper (DP-1)".
 pub(crate) fn restore_question(p: Page, r: &Restorable) -> String {
-    let mut text = format!(
-        "Restore the defaults on the {} page?\nThese settings are taken out of config.toml:\n",
-        p.label()
-    );
+    let mut text = tr!("apply-restore-question", page = p.label().to_string());
+    text.push('\n');
     for k in &r.keys {
         match k.table {
             "" => text.push_str(&format!("    {}\n", k.name)),
@@ -132,7 +133,7 @@ impl SettingsApp {
             return;
         }
         self.list.toggle(row);
-        self.ask(RUN_AS_QUESTION.into(), Then::StopAutostart(row));
+        self.ask(run_as_question(), Then::StopAutostart(row));
     }
 
     fn checks(&self) -> Vec<bool> {
@@ -309,11 +310,11 @@ impl SettingsApp {
                     "{} does not parse, refusing to rewrite it: {e}",
                     self.path.display()
                 );
-                return self.fail("config.toml does not parse; nothing was written.");
+                return self.fail(&tr!("apply-config-toml-does-not-parse-nothing"));
             }
             Err(e) => {
                 log::warn!("write {}: {e}", self.path.display());
-                return self.fail("config.toml could not be written.");
+                return self.fail(&tr!("apply-config-toml-could-not-be-written"));
             }
         }
         model::copy_keys(&keys, def, &mut self.want);
@@ -351,7 +352,7 @@ impl SettingsApp {
                         "{} does not parse, refusing to rewrite it: {e}",
                         self.path.display()
                     );
-                    self.fail("config.toml does not parse; nothing was written.");
+                    self.fail(&tr!("apply-config-toml-does-not-parse-nothing"));
                     ok = false;
                 }
                 Ok(Ok(text)) => {
@@ -360,7 +361,7 @@ impl SettingsApp {
                 }
                 Err(e) => {
                     log::warn!("write {}: {e}", self.path.display());
-                    self.fail("config.toml could not be written.");
+                    self.fail(&tr!("apply-config-toml-could-not-be-written"));
                     ok = false;
                 }
             }
@@ -387,7 +388,7 @@ impl SettingsApp {
             }
         }
         if failed_autostart {
-            self.fail("The autostart entry could not be written.");
+            self.fail(&tr!("apply-the-autostart-entry-could-not-be"));
         }
         if changed {
             self.rescan();
@@ -424,7 +425,7 @@ impl SettingsApp {
             }
             Err(e) => {
                 log::warn!("mimeapps.list: {e}");
-                self.fail("The default programs could not be written to mimeapps.list.");
+                self.fail(&tr!("apply-the-default-programs-could-not-be"));
                 false
             }
         }
@@ -436,8 +437,12 @@ impl SettingsApp {
         // first event primed it and the box draws without a column.
         let icon = self.err_icon.clone();
         let over = self.dialog_up().unwrap_or(repriseapp::MAIN);
-        self.error
-            .show_over(over, "Reprise Settings", reason.to_string(), icon);
+        self.error.show_over(
+            over,
+            &tr!("apply-reprise-settings"),
+            reason.to_string(),
+            icon,
+        );
     }
 
     pub(crate) fn error_event(&mut self, win: WinId, ev: Event, ctx: &Ctx) -> Reply {

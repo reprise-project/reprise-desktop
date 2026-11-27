@@ -5,6 +5,7 @@ use reprisefs::xkb::Layout;
 use reprisekit::controls::combo::{Combo, ListItem};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::rowsdlg::{COMBO_H, MARGIN, Rows};
+use reprisekit::tr;
 
 pub const CLIENT: (i32, i32) = (320, 104);
 
@@ -48,7 +49,7 @@ fn combo(id: &'static str, y: i32, items: Vec<ListItem>, selected: usize) -> Ite
 
 /// The Variant combo's rows for `l`: "None", then its variants.
 fn variant_items(l: Option<&Layout>) -> Vec<ListItem> {
-    std::iter::once(ListItem::new("None"))
+    std::iter::once(ListItem::new(&tr!("layoutdlg-none")))
         .chain(
             l.into_iter()
                 .flat_map(|l| &l.variants)
@@ -67,9 +68,9 @@ impl LayoutDialog {
             .map(|l| ListItem::new(l.description.as_str()))
             .collect();
         let mut items = vec![
-            ROWS.label("layout_l", ROW_Y[0], "&Layout:"),
+            ROWS.label("layout_l", ROW_Y[0], &tr!("layoutdlg-layout")),
             combo(LAYOUT, ROW_Y[0], names, first),
-            ROWS.label("variant_l", ROW_Y[1], "&Variant:"),
+            ROWS.label("variant_l", ROW_Y[1], &tr!("layoutdlg-variant")),
             combo(VARIANT, ROW_Y[1], variant_items(layouts.get(first)), 0),
         ];
         items.extend(ROWS.ok_cancel(OK, CANCEL));

@@ -12,7 +12,6 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::saver::{self, Kind, Options, Saver};
 use reprisekit::text::TextRenderer;
 
-use crate::model::Label;
 use crate::model::{LOCK_MEDIA, Settings};
 use crate::pages::{Area, GX, X, button, choice, spin};
 use reprisekit::tr;

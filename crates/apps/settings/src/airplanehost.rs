@@ -4,6 +4,7 @@
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
 use reprisebus::airplane::{self, Mode};
+use reprisekit::tr;
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_secs(2);
@@ -34,10 +35,15 @@ fn set(on: bool) -> Reading {
         Ok(conn) => reprisebus::wait(airplane::set(&conn, on)).err(),
         Err(e) => Some(e.to_string()),
     };
-    let to = if on { "turned on" } else { "turned off" };
     Reading {
         state: read(),
-        failed: failed.map(|why| format!("Airplane mode could not be {to}.\n\n{why}")),
+        failed: failed.map(|why| {
+            if on {
+                tr!("airplanehost-failed-on", why = why)
+            } else {
+                tr!("airplanehost-failed-off", why = why)
+            }
+        }),
     }
 }
 

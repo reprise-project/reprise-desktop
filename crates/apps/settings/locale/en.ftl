@@ -953,3 +953,105 @@ tabletpage-strip-step = Strip step:
 tabletpage-per-mode-bindings-go-in-config = Per-mode bindings go in config.toml.
 tabletpage-none = (None)
 tabletpage-button = Button { $n }:
+
+## additem.rs
+additem-pick-a-program-or-type-a = &Pick a program, or type a name and a command:
+additem-name = &Name:
+additem-command = &Command:
+
+## airplanehost.rs
+airplanehost-failed-on =
+    Airplane mode could not be turned on.
+
+    { $why }
+airplanehost-failed-off =
+    Airplane mode could not be turned off.
+
+    { $why }
+
+## apply.rs
+apply-config-toml-does-not-parse-nothing = config.toml does not parse; nothing was written.
+apply-config-toml-could-not-be-written = config.toml could not be written.
+apply-the-autostart-entry-could-not-be = The autostart entry could not be written.
+apply-the-default-programs-could-not-be = The default programs could not be written to mimeapps.list.
+apply-reprise-settings = Reprise Settings
+apply-run-as-question =
+    Turn off Run As?
+    From the next log on, programs that need an administrator password (Software Updates, Network Connections, drives) cannot ask for one.
+apply-restore-question =
+    Restore the defaults on the { $page } page?
+    These settings are taken out of config.toml:
+
+## autostart.rs
+autostart-user = User
+autostart-system = System
+autostart-screen-reader = Screen Reader
+autostart-a-system-entry-has-no-user = a system entry has no user file to remove
+autostart-its-name-is-not-valid-utf = its name is not valid UTF-8
+autostart-no-file-name = no file name
+autostart-the-file-name-holds-a-control = the file name holds a control character
+autostart-already-an-entry = { $path } is already an autostart entry
+
+## backup.rs
+backup-settings-and-keyboard-shortcuts-config-toml = Settings and keyboard shortcuts (config.toml)
+backup-terminal-options = Terminal options
+backup-quick-launch-buttons = Quick Launch buttons
+backup-where-each-programs-windows-open = Where each program's windows open
+backup-display-arrangements = Display arrangements
+backup-file-dialog-folders-views-and-sizes = File dialog folders, views and sizes
+backup-explorer-view-settings = Explorer view settings
+backup-cannot-read-settings = Cannot read the settings: { $why }.
+backup-cannot-write = Cannot write { $path }: { $why }.
+backup-cannot-read = Cannot read { $path }: { $why }.
+backup-cannot-import = The settings could not be imported: { $why }.
+
+## backuphost.rs
+backuphost-it-replaces = It replaces:
+backuphost-it-removes = It removes:
+backuphost-reprise-settings = Reprise Settings
+backuphost-ok = OK
+backuphost-cancel = Cancel
+backuphost-import-question = Import { $name }? { $lists }The current files are kept in { $kept }.
+backuphost-replace-question =
+    { $path } already exists.
+    Do you want to replace it?
+backuphost-exported = Exported to { $path }.
+backuphost-imported = Imported { $path }.
+
+## clipaccess.rs
+clipaccess-loading = Loading...
+clipaccess-not-installed = not installed
+
+## displayflow.rs
+displayflow-this-monitor-did-not-accept-variable = This monitor did not accept variable refresh rate.
+displayflow-the-old-display-settings-could-not = The old display settings could not be put back.
+displayflow-the-display-settings-could-not-be = The display settings could not be applied.
+
+## displayhost.rs
+displayhost-the-desktop-did-not-answer-the = The desktop did not answer; the primary display was not changed.
+displayhost-that-display-is-no-longer-shown = That display is no longer shown, so it was not made the primary one.
+
+## filepick.rs
+filepick-reprise-settings-toml = Reprise Settings (*.toml)
+filepick-add = Add
+filepick-open = Open
+filepick-desktop-entries-desktop = Desktop Entries (*.desktop)
+filepick-all-files = All Files (*.*)
+filepick-browse = Browse
+filepick-browse-for-folder = Browse for Folder
+filepick-ok = OK
+filepick-export = Export
+filepick-import = Import
+filepick-save = Save
+filepick-cannot-add = Cannot add '{ $path }': { $why }.
+
+## layoutdlg.rs
+layoutdlg-none = None
+layoutdlg-layout = &Layout:
+layoutdlg-variant = &Variant:
+
+## defaultshost.rs
+defaultshost-cannot-use = Cannot use '{ $id }': { $why }.
+
+## events.rs
+events-new-certificate-question = Make a new certificate? Computers that connected before will warn that this computer's certificate changed.

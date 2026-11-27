@@ -4,17 +4,18 @@
 use reprisefs::apps;
 use reprisefs::autostart::{self, Entry};
 use reprisefs::screenreader;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// The id of the session's polkit agent, the only one it starts.
 pub const RUN_AS: &str = "reprise-polkit";
 
 /// A user file standing in for a system entry reads System: it is that entry, unchecked.
-pub fn location(e: &Entry) -> &'static str {
+pub fn location(e: &Entry) -> String {
     if e.user && !e.stand_in {
-        "User"
+        tr!("autostart-user")
     } else {
-        "System"
+        tr!("autostart-system")
     }
 }
 
@@ -116,7 +117,7 @@ pub fn set_reader_at_logon(
     }
     let e = Entry {
         id: READER.into(),
-        name: "Screen Reader".into(),
+        name: tr!("autostart-screen-reader"),
         exec: screenreader::PROGRAM.into(),
         exec_line: screenreader::PROGRAM.into(),
         hidden: false,
@@ -141,7 +142,7 @@ pub fn remove(dir: &Path, e: &Entry) -> std::io::Result<()> {
     if !e.user || e.stand_in {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            "a system entry has no user file to remove",
+            tr!("autostart-a-system-entry-has-no-user"),
         ));
     }
     std::fs::remove_file(dir.join(format!("{}.desktop", e.id)))
@@ -154,11 +155,11 @@ pub fn remove(dir: &Path, e: &Entry) -> std::io::Result<()> {
 /// entry), and a name that is not UTF-8, since the id and `Exec=` are text.
 pub fn add(dir: &Path, path: &Path) -> std::io::Result<String> {
     let invalid = |why: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, why);
-    let not_utf8 = || invalid("its name is not valid UTF-8");
+    let not_utf8 = || invalid(&tr!("autostart-its-name-is-not-valid-utf"));
     let stem = path
         .file_stem()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| invalid("no file name"))?
+        .ok_or_else(|| invalid(&tr!("autostart-no-file-name")))?
         .to_str()
         .ok_or_else(not_utf8)?
         .to_string();
@@ -169,7 +170,7 @@ pub fn add(dir: &Path, path: &Path) -> std::io::Result<String> {
         apps::launcher_text(&stem, None, apps::Launch::Exec(&exec)).ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "the file name holds a control character",
+                tr!("autostart-the-file-name-holds-a-control"),
             )
         })?
     };
@@ -177,7 +178,10 @@ pub fn add(dir: &Path, path: &Path) -> std::io::Result<String> {
     if target.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            format!("{} is already an autostart entry", target.display()),
+            tr!(
+                "autostart-already-an-entry",
+                path = target.display().to_string()
+            ),
         ));
     }
     std::fs::create_dir_all(dir)?;

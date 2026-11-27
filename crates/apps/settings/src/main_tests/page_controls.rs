@@ -340,7 +340,7 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     );
     assert_eq!(
         a.asking.up().map(|(b, _)| b.fields.text.as_str()),
-        Some(apply::RUN_AS_QUESTION)
+        Some(apply::run_as_question().as_str())
     );
     let win = a.asking.win().expect("the question is up");
     a.event(win, Event::Key(key(keysym::ESCAPE)), &mut ctx);

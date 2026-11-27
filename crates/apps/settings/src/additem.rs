@@ -6,6 +6,7 @@ use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::controls::rowsdlg::{MARGIN, Rows};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
+use reprisekit::tr;
 
 pub const CLIENT: (i32, i32) = (340, 319);
 
@@ -66,7 +67,7 @@ impl AddItemDialog {
             Item::label(
                 "intro",
                 Rect::new(MARGIN, MARGIN, ROWS.inner_w(), 13),
-                "&Pick a program, or type a name and a command:",
+                &tr!("additem-pick-a-program-or-type-a"),
             ),
             Item::new(
                 PROGRAMS,
@@ -76,9 +77,9 @@ impl AddItemDialog {
                     icons: Vec::new(),
                 },
             ),
-            ROWS.label("name_l", ROW_Y[0], "&Name:"),
+            ROWS.label("name_l", ROW_Y[0], &tr!("additem-name")),
             ROWS.edit(NAME, ROW_Y[0], "", true),
-            ROWS.label("command_l", ROW_Y[1], "&Command:"),
+            ROWS.label("command_l", ROW_Y[1], &tr!("additem-command")),
             ROWS.edit(COMMAND, ROW_Y[1], "", true),
         ];
         items.extend(ROWS.ok_cancel(OK, CANCEL));
