@@ -32,6 +32,29 @@ compress-failed-title = Error Compressing File
 compress-failed = Cannot compress { $name }: { $why }
 compress-cancelled = the operation was cancelled.
 extract-failed-title = Error Extracting File
+extract-failed = Cannot extract { $name }: { $why }
+extract-cancelled = the operation was cancelled.
+extract-too-many = it holds { NUMBER($entries, useGrouping: "false") } entries, more than the { NUMBER($most, useGrouping: "false") } one extraction here takes.
+extract-no-room = it expands to { $size }, more than the { $room } the free space here allows.
+extract-climbs = it holds { $entry }, which would land outside the folder.
+extract-link-out = it holds { $entry }, a link to outside the folder.
+extract-not-a-folder = it holds the folder { $folder }, which is not a folder here.
+# $why is why the merge stopped, a sentence of its own.
+extract-kept = { $why } Some of its entries stay in place, and the rest in { $folder }.
+extract-no-folder = it has no folder
+extract-no-output = bsdtar gave no output
+extract-no-bsdtar = bsdtar cannot start ({ $why }); is libarchive installed?
+# $why is the first entry's reason; $others counts the entries that failed after it.
+extract-and-others =
+    { $others ->
+        [one] { $why }, and 1 other item could not be extracted
+       *[other] { $why }, and { NUMBER($others, useGrouping: "false") } other items could not be extracted
+    }
+compress-and-others =
+    { $others ->
+        [one] { $why }, and 1 other item could not be read
+       *[other] { $why }, and { NUMBER($others, useGrouping: "false") } other items could not be read
+    }
 archive-unread = bsdtar could not read it.
 archive-too-many = it holds more than { NUMBER($most, useGrouping: "false") } items.
 archive-no-room = it takes { $size }, more than the free space here allows.
