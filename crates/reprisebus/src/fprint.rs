@@ -72,6 +72,7 @@ fn error_name(e: &zbus::Error) -> Option<String> {
 const NO_SERVICE: &str = "org.freedesktop.DBus.Error.ServiceUnknown";
 const NO_DEVICE: &str = "net.reactivated.Fprint.Error.NoSuchDevice";
 const NO_PRINTS: &str = "net.reactivated.Fprint.Error.NoEnrolledPrints";
+const DENIED: &str = "net.reactivated.Fprint.Error.PermissionDenied";
 
 /// The default reader.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,6 +92,8 @@ pub enum Found {
     /// fprintd isn't installed.
     NoService,
     NoReader,
+    /// polkit refused the read: the caller is outside the seat's active session.
+    NotAuthorized,
     /// fprintd failed or gave no answer in time.
     Silent,
     Reader(Reader),
@@ -118,6 +121,7 @@ pub async fn read_on(conn: &Connection) -> Found {
     let missing = |e: zbus::Error| match error_name(&e).as_deref() {
         Some(NO_SERVICE) => Found::NoService,
         Some(NO_DEVICE) => Found::NoReader,
+        Some(DENIED) => Found::NotAuthorized,
         _ => {
             log::warn!("fprint: the reader can't be read ({e})");
             Found::Silent
@@ -173,7 +177,7 @@ fn refusal(doing: &str, e: &zbus::Error) -> Refusal {
         return Refusal::TimedOut;
     }
     match error_name(e).as_deref() {
-        Some("net.reactivated.Fprint.Error.PermissionDenied") => Refusal::NotAuthorized,
+        Some(DENIED) => Refusal::NotAuthorized,
         Some("net.reactivated.Fprint.Error.AlreadyInUse") => Refusal::InUse,
         _ => {
             log::warn!("fprint: {doing}: {e}");
@@ -436,6 +440,9 @@ mod tests {
 
         fn list_enrolled_fingers(&self, user: &str) -> Result<Vec<String>, FprintError> {
             assert_eq!(user, "", "only the caller's own");
+            if self.deny {
+                return Err(FprintError::PermissionDenied("Not Authorized".into()));
+            }
             let f = self.fingers.lock().unwrap().clone();
             if f.is_empty() {
                 return Err(FprintError::NoEnrolledPrints("none".into()));
@@ -541,6 +548,18 @@ mod tests {
         assert!(
             matches!(found, Some(Found::Reader(super::Reader { fingers, .. })) if fingers == ["left-thumb"])
         );
+    }
+
+    #[test]
+    fn a_read_polkit_refuses_finds_not_authorized() {
+        let r = Reader {
+            deny: true,
+            ..Reader::default()
+        };
+        let Some(found) = with_reader(&r, async |c| read_on(c).await) else {
+            return;
+        };
+        assert_eq!(found, Found::NotAuthorized);
     }
 
     #[test]

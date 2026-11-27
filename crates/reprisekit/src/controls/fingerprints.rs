@@ -26,6 +26,9 @@ pub fn no_service() -> String {
 pub fn no_reader() -> String {
     tr!("fingerprints-no-reader")
 }
+pub fn not_authorized() -> String {
+    tr!("fingerprints-not-authorized")
+}
 pub fn silent() -> String {
     tr!("fingerprints-silent")
 }
@@ -143,6 +146,8 @@ pub enum Reader {
     /// fprintd isn't installed.
     NoService,
     NoReader,
+    /// fprintd refused to read the reader for this session.
+    NotAuthorized,
     /// fprintd is there but gave no answer.
     Silent,
     /// The reader's name and the fingers you have added on it, in [`Finger::ALL`]'s order.
@@ -212,6 +217,12 @@ pub fn section(f: &Facts) -> Section {
         Reader::NoReader => {
             return Section {
                 note: Some(no_reader()),
+                ..s
+            };
+        }
+        Reader::NotAuthorized => {
+            return Section {
+                note: Some(not_authorized()),
                 ..s
             };
         }

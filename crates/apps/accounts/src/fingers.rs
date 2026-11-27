@@ -95,6 +95,7 @@ impl Fingers {
             None => Reader::Looking,
             Some(Found::NoService) => Reader::NoService,
             Some(Found::NoReader) => Reader::NoReader,
+            Some(Found::NotAuthorized) => Reader::NotAuthorized,
             Some(Found::Silent) => Reader::Silent,
             Some(Found::Reader(r)) => Reader::Found {
                 name: r.name.clone(),

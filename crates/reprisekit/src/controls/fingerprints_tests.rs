@@ -58,6 +58,7 @@ fn without_fprintd_or_a_reader_every_action_greys_and_says_why() {
         (Reader::Looking, looking()),
         (Reader::NoService, no_service()),
         (Reader::NoReader, no_reader()),
+        (Reader::NotAuthorized, not_authorized()),
         (Reader::Silent, silent()),
     ] {
         let s = section(&yours(reader));
