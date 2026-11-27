@@ -551,7 +551,6 @@ fn extract(
         m,
         |line| {
             said_bytes.set(said_bytes.get() + line.len() as u64 + 1);
-            locked |= crate::archive::locked(line);
             match line.strip_prefix(b"x ") {
                 Some(entry) => {
                     n += 1;
@@ -568,6 +567,8 @@ fn extract(
                             .is_ok()
                     };
                     if entry.windows(2).any(|w| w == b": ") && !landed() {
+                        // Only a failed entry's line: a name that landed says nothing.
+                        locked |= crate::archive::locked(entry);
                         match first {
                             None => first = Some(entry.to_vec()),
                             Some(_) => others += 1,
@@ -575,6 +576,7 @@ fn extract(
                     }
                 }
                 None if !String::from_utf8_lossy(line).contains(DELAYED) => {
+                    locked |= crate::archive::locked(line);
                     first.get_or_insert_with(|| line.to_vec());
                 }
                 None => {}
