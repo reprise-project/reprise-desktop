@@ -125,6 +125,7 @@ impl App for Demo {
                         paths: self.paths.clone(),
                         image: self.image(ctx),
                         grab: (24, 24),
+                        staged: None,
                     })
                 }
                 _ => Reply::none(),

@@ -357,6 +357,7 @@ favorites-take-favorites-failed-explorer-cannot-save-your-favorites-e =
 
 ## extracting
 extracting-extract-label-folders = Folders
+extracting-to-clipboard = Clipboard
 
 ## props
 props-properties-properties = Properties
@@ -425,3 +426,4 @@ archive-open-failed = Cannot open { $name }: { $why }
 archive-copy-failed-title = Compressed (zipped) Folders
 archive-copy-failed = Cannot open { $name } from the compressed folder: { $why }
 archive-runs = { $name } is a program, and programs do not run from inside a compressed folder. Extract the folder first, then run it from there.
+archive-copy-out-failed = Cannot copy from { $name }: { $why }

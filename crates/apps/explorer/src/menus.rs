@@ -48,7 +48,7 @@ pub struct MenuState {
     pub can_forward: bool,
     /// The selection is archives: the item menu's Extract to row names this folder.
     pub extract: Option<String>,
-    /// The place is a compressed folder: the item menu holds only Open and Extract All.
+    /// The place is a compressed folder: the item menu holds only Open, Copy and Extract All.
     pub archive: bool,
     /// Every selected item has a local path, for Copy as Path.
     pub local_paths: bool,
@@ -781,11 +781,13 @@ pub fn shell_row_menu(place: &Place) -> Menu {
 
 /// The right-click menu of an item in the Recycle Bin: Restore, Cut and Copy as Path (greyed),
 /// Delete for good, then Properties as the default row.
-/// An entry of a compressed folder opens (a file as a read-only copy), or the whole archive
-/// extracts.
+/// An entry of a compressed folder opens (a file as a read-only copy) or copies out, or the
+/// whole archive extracts.
 fn archive_item_menu() -> Menu {
     let mut m = Menu::default();
     m.row(bold(tr!("menu-item-open"), true), Command::Open);
+    m.sep();
+    m.row(row(tr!("menu-item-copy"), true), Command::Copy);
     m.sep();
     m.row(row(tr!("menu-item-extract-all"), true), Command::ExtractAll);
     m

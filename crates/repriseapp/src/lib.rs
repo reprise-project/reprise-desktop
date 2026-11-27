@@ -123,7 +123,7 @@ pub use clipboard::{
 };
 pub use ctx::{Ctx, Poster, Waker};
 pub use deliver::TICK_MS;
-pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
+pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, Staged, Uri};
 pub use event::{BTN_LEFT, BTN_RIGHT, Event, KeyInput, Mods, PointerInput};
 pub use fielddrop::{DropForm, FileDrop};
 pub use input::caps_lock;
