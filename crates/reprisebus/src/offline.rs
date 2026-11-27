@@ -127,8 +127,8 @@ pub const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// is what to tell the user; None when the prompt was dismissed.
 pub fn trigger_now(after: After, interactive: bool) -> Result<(), Option<String>> {
     let call = async { trigger(&timed().await?, after, interactive).await };
-    let answer = zbus::block_on(within(CALL_TIMEOUT, call));
-    settled(answer, interactive, |s| s.triggered).map_err(|e| {
+    let answer = withdrawn(zbus::block_on(within(CALL_TIMEOUT, call)), interactive);
+    settled(answer, interactive, |s| s.triggered, read, SETTLE).map_err(|e| {
         log::warn!("offline update: Trigger({}): {e}", after.action());
         to_tell(&e)
     })
@@ -137,25 +137,46 @@ pub fn trigger_now(after: After, interactive: bool) -> Result<(), Option<String>
 /// [`cancel`], as [`trigger_now`] calls.
 pub fn cancel_now(interactive: bool) -> Result<(), Option<String>> {
     let call = async { cancel(&timed().await?, interactive).await };
-    let answer = zbus::block_on(within(CALL_TIMEOUT, call));
-    settled(answer, interactive, |s| !s.triggered).map_err(|e| {
+    let answer = withdrawn(zbus::block_on(within(CALL_TIMEOUT, call)), interactive);
+    settled(answer, interactive, |s| !s.triggered, read, SETTLE).map_err(|e| {
         log::warn!("offline update: Cancel: {e}");
         to_tell(&e)
     })
 }
 
-/// A Trigger or Cancel's `answer`. One that timed out withdraws its prompt, and stands as done
-/// when PackageKit's state then shows it `done`: a password typed just before went through.
+/// How long after a timed-out Trigger or Cancel PackageKit's state is read a second time: a
+/// password polkitd took just before the withdrawal reaches PackageKit a moment later.
+const SETTLE: Duration = Duration::from_secs(1);
+
+/// `answer`, its prompt withdrawn when it timed out.
+fn withdrawn(answer: zbus::Result<()>, interactive: bool) -> zbus::Result<()> {
+    if let Err(e) = &answer {
+        crate::polkit::withdraw_timed_out(e, interactive);
+    }
+    answer
+}
+
+/// A Trigger or Cancel's `answer`. One that timed out stands as done when PackageKit's state, as
+/// `read` now and again after `pause`, shows it `done`: a password typed just before the
+/// withdrawal went through.
 fn settled(
     answer: zbus::Result<()>,
     interactive: bool,
-    done: impl FnOnce(Status) -> bool,
+    done: impl Fn(Status) -> bool,
+    read: impl Fn() -> Option<Status>,
+    pause: Duration,
 ) -> zbus::Result<()> {
     let Err(e) = answer else {
         return Ok(());
     };
-    crate::polkit::withdraw_timed_out(&e, interactive);
-    if interactive && crate::error::timed_out(&e) && read().is_some_and(done) {
+    if !(interactive && crate::error::timed_out(&e)) {
+        return Err(e);
+    }
+    let went_through = || read().is_some_and(&done);
+    if went_through() || {
+        std::thread::sleep(pause);
+        went_through()
+    } {
         log::info!("offline update: done as its prompt was withdrawn: {e}");
         return Ok(());
     }
@@ -303,6 +324,35 @@ mod tests {
             zbus::block_on(within(Duration::from_secs(60), async { Ok(7) })).unwrap(),
             7
         );
+    }
+
+    #[test]
+    fn a_timed_out_trigger_that_went_through_a_moment_later_stands() {
+        let timed_out = || {
+            let e = std::io::Error::from(std::io::ErrorKind::TimedOut);
+            Err(zbus::Error::InputOutput(std::sync::Arc::new(e)))
+        };
+        let reads = std::cell::Cell::new(0);
+        let later = || {
+            reads.set(reads.get() + 1);
+            Some(Status {
+                prepared: true,
+                triggered: reads.get() > 1,
+            })
+        };
+        let triggered = |s: Status| s.triggered;
+        let pause = Duration::from_millis(1);
+        assert!(settled(timed_out(), true, triggered, later, pause).is_ok());
+        assert_eq!(reads.get(), 2, "read again after the pause");
+        let never = || Some(Status::default());
+        assert!(settled(timed_out(), true, triggered, never, pause).is_err());
+        let unread = || -> Option<Status> { panic!("a refusal is not read again") };
+        let refused = Err(crate::error::reply(
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "no",
+        ));
+        assert!(settled(refused, true, triggered, unread, pause).is_err());
+        assert!(settled(timed_out(), false, triggered, unread, pause).is_err());
     }
 
     #[test]

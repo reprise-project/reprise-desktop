@@ -41,8 +41,9 @@ pub trait Bus: Send + Sync {
     fn cancel(&self, interactive: bool) -> Answer;
     /// Whether the computer is going down ([`crate::power::shutting_down`]).
     fn shutting_down(&self) -> bool;
-    /// Withdraw the password prompts polkit shows for Reprise ([`reprisebus::polkit::withdraw`]).
-    fn withdraw(&self) {}
+    /// Withdraw the password prompts polkit shows for Reprise, and those on their way when the
+    /// session is `ending` ([`reprisebus::polkit::withdraw`]).
+    fn withdraw(&self, _ending: bool) {}
 }
 
 #[cfg(not(test))]
@@ -62,8 +63,11 @@ impl Bus for PackageKit {
     fn shutting_down(&self) -> bool {
         crate::power::shutting_down()
     }
-    fn withdraw(&self) {
-        reprisebus::polkit::withdraw();
+    fn withdraw(&self, ending: bool) {
+        match ending {
+            true => reprisebus::polkit::withdraw_ending(),
+            false => reprisebus::polkit::withdraw(),
+        }
     }
 }
 

@@ -160,8 +160,8 @@ impl Dismissed {
 
 type Dismissals = Arc<Mutex<Dismissed>>;
 
-/// How long a withdrawal also withdraws a request polkitd sends for the same pid: one already on
-/// its way from the service when the program withdrew.
+/// How long a withdrawal as its session ends also withdraws a request polkitd sends for the same
+/// pid: one already on its way from the service when the program withdrew.
 const WITHDRAWN_FOR: Duration = Duration::from_secs(3);
 
 /// The requests under way, each cookie with the pid polkitd names as its subject, and the pids
@@ -203,11 +203,13 @@ impl Open {
         open
     }
 
-    /// Withdraws `pid`'s requests, running `cancel` on each open one's cookie, and marks `pid` for
-    /// [`WITHDRAWN_FOR`]. The number withdrawn.
-    fn withdraw(&self, pid: u32, now: Instant, cancel: impl Fn(String)) -> usize {
+    /// Withdraws `pid`'s requests, running `cancel` on each open one's cookie, and when `marked`
+    /// at that instant also those that arrive within [`WITHDRAWN_FOR`]. The number withdrawn.
+    fn withdraw(&self, pid: u32, marked: Option<Instant>, cancel: impl Fn(String)) -> usize {
         let mut r = lock(&self.0);
-        r.withdrawn.push((pid, now));
+        if let Some(now) = marked {
+            r.withdrawn.push((pid, now));
+        }
         let mut n = 0;
         r.open.retain(|(c, p)| {
             let mine = *p == pid;
@@ -261,6 +263,10 @@ impl Agent {
         let entry = match pid.map(|pid| self.open.add(cookie, pid, Instant::now())) {
             Some(None) => {
                 log::info!("{action_id}: its program withdrew its prompts");
+                // A retry from a session end cancelled meanwhile then comes back without a box.
+                if let Some(pid) = pid {
+                    lock(&self.dismissed).record(pid, Instant::now());
+                }
                 return Err(Error::Cancelled("withdrawn".into()));
             }
             entry => entry.flatten(),
@@ -360,16 +366,37 @@ impl DismissalsIface {
         Ok(lock(&self.dismissed).take(pid, Instant::now()))
     }
 
-    /// Withdraws the caller's prompts, open or on their way ([`WITHDRAWN_FOR`]), the number
-    /// withdrawn. A program withdraws only its own, so no other program's prompt goes.
+    /// Withdraws the caller's open prompts, the number withdrawn. A program withdraws only its
+    /// own, so no other program's prompt goes.
     async fn withdraw(
         &self,
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] hdr: Header<'_>,
     ) -> zbus::fdo::Result<u32> {
-        let pid = caller_pid(conn, &hdr).await?;
+        self.withdraw_for(conn, &hdr, None).await
+    }
+
+    /// [`Self::withdraw`] as the caller's session ends: prompts on their way are withdrawn too
+    /// ([`WITHDRAWN_FOR`]).
+    async fn withdraw_ending(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> zbus::fdo::Result<u32> {
+        self.withdraw_for(conn, &hdr, Some(Instant::now())).await
+    }
+}
+
+impl DismissalsIface {
+    async fn withdraw_for(
+        &self,
+        conn: &zbus::Connection,
+        hdr: &Header<'_>,
+        marked: Option<Instant>,
+    ) -> zbus::fdo::Result<u32> {
+        let pid = caller_pid(conn, hdr).await?;
         let cancel = |cookie| self.poster.post(Msg::Cancel(cookie));
-        let n = self.open.withdraw(pid, Instant::now(), cancel);
+        let n = self.open.withdraw(pid, marked, cancel);
         log::info!("pid {pid} withdraws {n} prompt(s)");
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
@@ -597,7 +624,7 @@ mod tests {
         let t0 = Instant::now();
         let entry = open.add("c", 10, t0).expect("nothing withdrawn yet");
         let cancelled = std::cell::RefCell::new(Vec::new());
-        let n = open.withdraw(10, t0, |c| cancelled.borrow_mut().push(c));
+        let n = open.withdraw(10, None, |c| cancelled.borrow_mut().push(c));
         assert_eq!((n, cancelled.take()), (1, vec!["c".to_string()]));
         let mut opened = false;
         assert!(!open.post_unless_withdrawn("c", || opened = true));
@@ -609,7 +636,12 @@ mod tests {
     fn a_request_on_its_way_when_its_program_withdrew_is_withdrawn_too() {
         let open = Open::default();
         let t0 = Instant::now();
-        assert_eq!(open.withdraw(10, t0, |_| ()), 0, "nothing open yet");
+        assert_eq!(open.withdraw(10, None, |_| ()), 0, "nothing open yet");
+        let retry = open
+            .add("retry", 10, t0)
+            .expect("a plain withdrawal marks nothing");
+        drop(retry);
+        assert_eq!(open.withdraw(10, Some(t0), |_| ()), 0, "the session ends");
         assert!(open.add("late", 10, t0 + Duration::from_secs(1)).is_none());
         assert!(open.add("other", 20, t0).is_some(), "another program's");
         let after = t0 + WITHDRAWN_FOR;
