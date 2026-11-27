@@ -4,6 +4,7 @@
 //! ("Ctrl+Alt+space"), "" when unassigned. The compositor takes the same entries' chords
 //! (`globalshortcuts`).
 
+use reprisekit::tr;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, Value, value};
 
 const LIST: &str = "global_shortcuts";
@@ -197,7 +198,7 @@ pub fn preview(doc: &DocumentMut, app: &str, wanted: &[Wanted]) -> Vec<String> {
         })
         .map(|e| {
             let keys = if e.keys.is_empty() {
-                "no key".to_string()
+                tr!("shortcut-no-key")
             } else {
                 e.keys
             };
@@ -206,7 +207,7 @@ pub fn preview(doc: &DocumentMut, app: &str, wanted: &[Wanted]) -> Vec<String> {
             } else {
                 e.description
             };
-            format!("{what}: {keys}")
+            tr!("shortcut-line", what = what, keys = keys)
         })
         .collect()
 }

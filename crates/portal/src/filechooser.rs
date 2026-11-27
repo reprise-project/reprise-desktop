@@ -5,6 +5,7 @@ use crate::choices;
 use crate::dialog;
 use crate::filters::{self, Filter};
 pub use reprisefs::filechild::{Input, Kind, Output};
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -193,9 +194,9 @@ fn base_input(
     let folder_mode =
         kind == Kind::SaveFiles || (kind == Kind::Open && opt_bool(o, "directory") == Some(true));
     let default_label = match (kind, folder_mode) {
-        (_, true) => "&Select Folder",
-        (Kind::Open, _) => "&Open",
-        _ => "&Save",
+        (_, true) => tr!("chooser-select-folder"),
+        (Kind::Open, _) => tr!("chooser-open"),
+        _ => tr!("chooser-save"),
     };
     let (filters, filter) = filters::with_current(
         o.get("filters")

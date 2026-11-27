@@ -4,6 +4,7 @@
 //! `$XDG_DATA_HOME/reprise/wallpapers`, so a document portal path that goes
 //! away with the app does not take the background with it.
 
+use reprisekit::tr;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -265,7 +266,7 @@ fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| crate::dialog::one_line(&n.to_string_lossy()))
         .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| "Wallpaper".into())
+        .unwrap_or_else(|| tr!("wallpaper-default-name"))
 }
 
 /// The regular file at `path` in a sealed memfd when its content is of a format the desktop shows

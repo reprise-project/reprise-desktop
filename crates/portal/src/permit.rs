@@ -10,6 +10,7 @@ use reprisekit::classic::assets::MONITOR_SIZE;
 use reprisekit::classic::widgets::LINE_H;
 use reprisekit::controls::form::{Control, Form, Item, Screen};
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::tr;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
@@ -70,11 +71,11 @@ impl Devices {
         }
     }
 
-    fn noun(self) -> &'static str {
+    fn arg(self) -> &'static str {
         match self {
             Devices::Keyboard => "keyboard",
-            Devices::Pointer => "mouse",
-            Devices::Both => "keyboard and mouse",
+            Devices::Pointer => "pointer",
+            Devices::Both => "both",
         }
     }
 }
@@ -112,14 +113,14 @@ impl Kind {
         Kind::ALL.into_iter().find(|k| k.arg() == arg)
     }
 
-    fn title(self) -> &'static str {
+    fn title(self) -> String {
         match self {
-            Kind::RemoteControl(_) => "Remote control",
-            Kind::Screenshot => "Screenshot",
-            Kind::InputCapture(_) => "Input capture",
-            Kind::Shortcuts => "Keyboard shortcuts",
-            Kind::Background => "Running in the background",
-            Kind::Wallpaper => "Desktop background",
+            Kind::RemoteControl(_) => tr!("permit-remote-title"),
+            Kind::Screenshot => tr!("permit-screenshot-title"),
+            Kind::InputCapture(_) => tr!("permit-capture-title"),
+            Kind::Shortcuts => tr!("permit-shortcuts-title"),
+            Kind::Background => tr!("permit-background-title"),
+            Kind::Wallpaper => tr!("permit-wallpaper-title"),
         }
     }
 
@@ -136,30 +137,26 @@ impl Kind {
 
     fn prompt(self, who: &str) -> String {
         match self {
-            Kind::RemoteControl(d) => format!("{who} wants to control your {}.", d.noun()),
-            Kind::Screenshot => format!("{who} wants to take a picture of your screen."),
-            Kind::InputCapture(d) => format!("{who} wants to capture your {}.", d.noun()),
-            Kind::Shortcuts => format!("{who} wants to use keyboard shortcuts."),
-            Kind::Background => format!("{who} is running in the background."),
-            Kind::Wallpaper => format!("{who} wants to change your desktop background."),
+            Kind::RemoteControl(d) => tr!("permit-remote-prompt", who = who, devices = d.arg()),
+            Kind::Screenshot => tr!("permit-screenshot-prompt", who = who),
+            Kind::InputCapture(d) => tr!("permit-capture-prompt", who = who, devices = d.arg()),
+            Kind::Shortcuts => tr!("permit-shortcuts-prompt", who = who),
+            Kind::Background => tr!("permit-background-prompt", who = who),
+            Kind::Wallpaper => tr!("permit-wallpaper-prompt", who = who),
         }
     }
 
-    fn note(self) -> &'static str {
+    fn note(self) -> String {
         match self {
-            Kind::RemoteControl(Devices::Keyboard) => "It will be able to type as if you did.",
-            Kind::RemoteControl(Devices::Pointer) => "It will be able to click as if you did.",
-            Kind::RemoteControl(Devices::Both) => {
-                "It will be able to type and click as if you did."
-            }
-            Kind::Screenshot => "It will get a copy of everything the screen shows.",
-            Kind::InputCapture(Devices::Both) => {
-                "At a screen edge it takes both. Super+Shift+Esc ends it."
-            }
-            Kind::InputCapture(_) => "At a screen edge it takes it. Super+Shift+Esc ends it.",
-            Kind::Shortcuts => "Change the keys on Reprise Settings' Keyboard page.",
-            Kind::Background => "It has no open window. Deny closes it.",
-            Kind::Wallpaper => "The picture goes behind the desktop icons.",
+            Kind::RemoteControl(Devices::Keyboard) => tr!("permit-remote-note-keyboard"),
+            Kind::RemoteControl(Devices::Pointer) => tr!("permit-remote-note-pointer"),
+            Kind::RemoteControl(Devices::Both) => tr!("permit-remote-note-both"),
+            Kind::Screenshot => tr!("permit-screenshot-note"),
+            Kind::InputCapture(Devices::Both) => tr!("permit-capture-note-both"),
+            Kind::InputCapture(_) => tr!("permit-capture-note-one"),
+            Kind::Shortcuts => tr!("permit-shortcuts-note"),
+            Kind::Background => tr!("permit-background-note"),
+            Kind::Wallpaper => tr!("permit-wallpaper-note"),
         }
     }
 }
@@ -323,8 +320,13 @@ pub struct Input {
 }
 
 /// The preview's status line while the picture decodes, and when it cannot be shown.
-const LOADING: &str = "Loading the picture...";
-const CANNOT_SHOW: &str = "This picture cannot be shown, so it cannot be set.";
+fn loading() -> String {
+    tr!("permit-preview-loading")
+}
+
+fn cannot_show() -> String {
+    tr!("permit-preview-cannot-show")
+}
 
 /// The picture at `path` fitted inside [`PREVIEW_MAX`], None where the desktop would show none.
 fn preview(path: &std::path::Path) -> Option<Canvas> {
@@ -346,7 +348,7 @@ fn show_preview(form: &mut Form, picture: Option<Canvas>) {
             form.set_enabled("allow", true);
             Vec::new()
         }
-        None => vec![CANNOT_SHOW.to_string()],
+        None => vec![cannot_show()],
     };
     form.set_lines("status", &status);
 }
@@ -392,7 +394,7 @@ pub fn run_dialog() {
 /// for an unsandboxed client, which sends none.
 pub fn who(app: &str) -> String {
     if app.is_empty() {
-        "A program".to_string()
+        tr!("permit-unknown-app")
     } else {
         app.to_string()
     }
@@ -407,7 +409,7 @@ fn listed(items: &[String]) -> Vec<String> {
         .map(|i| i.replace('\n', " "))
         .collect();
     if items.len() > MAX_ITEMS {
-        shown.push(format!("and {} more", items.len() - MAX_ITEMS));
+        shown.push(tr!("permit-more", count = items.len() - MAX_ITEMS));
     }
     shown
 }
@@ -433,13 +435,12 @@ fn client_size(input: &Input) -> (i32, i32) {
 /// The dialog's controls: who is asking, the listed lines, the preview, what it gets, the
 /// Remember check box when offered, Allow and Deny. Deny is the default button, so Enter never
 /// grants by accident, and Remember starts off. A consent form ([`Form::set_consent`]): a bare
-/// letter presses nothing. A preview starts black beside [`LOADING`], with Allow greyed until
+/// letter presses nothing. A preview starts black beside [`loading`], with Allow greyed until
 /// [`show_preview`] shows the picture.
 fn build_form(kind: Kind, input: &Input) -> Form {
     let (w, _) = CLIENT;
     let dy = grown_h(input);
-    let [prompt, mut note] =
-        dialog::header(w, kind.prompt(&who(input.app.trim())), kind.note().into());
+    let [prompt, mut note] = dialog::header(w, kind.prompt(&who(input.app.trim())), kind.note());
     note.rect.y += dy;
     let mut items = vec![prompt];
     for (i, (id, line)) in ITEM_IDS.into_iter().zip(listed(&input.items)).enumerate() {
@@ -453,7 +454,7 @@ fn build_form(kind: Kind, input: &Input) -> Form {
         items.push(Item::new("preview", at, Control::Monitor(Screen::Black)));
         let x = at.right() + STATUS_GAP;
         let status = Rect::new(x, at.y + STATUS_DY, w - 11 - x, STATUS_LINES * LINE_H);
-        let loading = Control::Lines(vec![LOADING.into()]);
+        let loading = Control::Lines(vec![loading()]);
         items.push(Item::new("status", status, loading).live());
     }
     items.push(note);
@@ -462,7 +463,7 @@ fn build_form(kind: Kind, input: &Input) -> Form {
             "remember",
             Rect::new(TEXT_X, REMEMBER_Y + dy, 13, 13),
             Control::Check {
-                label: "&Remember this choice".into(),
+                label: tr!("remember-choice"),
                 checked: false,
                 enabled: true,
                 mixed: None,
@@ -472,8 +473,8 @@ fn build_form(kind: Kind, input: &Input) -> Form {
     items.extend(dialog::buttons(
         w - 11,
         BUTTON_Y + dy,
-        ("allow", "&Allow"),
-        ("deny", "&Deny"),
+        ("allow", &tr!("allow")),
+        ("deny", &tr!("deny")),
     ));
     let mut f = Form::new(items);
     f.focus_id("deny");
@@ -506,7 +507,7 @@ fn prompt(
                 }
             }
         }),
-        title: kind.title().into(),
+        title: kind.title(),
         size,
         form,
         icon,
@@ -547,10 +548,10 @@ mod tests {
             preview: Some("/proc/1/fd/9".into()),
             ..input
         };
-        for status in [LOADING, CANNOT_SHOW] {
+        for status in [loading(), cannot_show()] {
             let over = crate::dialog::overflows(|_, _| {
                 let mut f = build_form(Kind::Wallpaper, &previewed);
-                if status == CANNOT_SHOW {
+                if status == cannot_show() {
                     show_preview(&mut f, None);
                 }
                 f
@@ -890,7 +891,7 @@ mod tests {
         use reprisekit::controls::form::{Event, Key};
         let (_, mut f) = wallpaper();
         assert!(!allow_enabled(&f));
-        assert_eq!(status(&f), [LOADING]);
+        assert_eq!(status(&f), [loading()]);
         assert_ne!(f.key(Key::Access('a')), Event::Pressed("allow"));
         assert_eq!(allow_answers(f.clone()), Answer::Dismissed);
         show_preview(&mut f, Some(picture()));
@@ -910,7 +911,7 @@ mod tests {
         let (_, mut f) = wallpaper();
         show_preview(&mut f, None);
         assert!(!allow_enabled(&f));
-        assert_eq!(status(&f), [CANNOT_SHOW]);
+        assert_eq!(status(&f), [cannot_show()]);
         assert_eq!(
             f.item("preview").unwrap().control,
             Control::Monitor(Screen::Black)

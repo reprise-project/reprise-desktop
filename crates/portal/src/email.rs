@@ -3,6 +3,7 @@
 //! most once a minute per app.
 
 use reprisefs::apps::{AppEntry, AppId, ExecRefused};
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -69,7 +70,7 @@ impl Email {
                     let who = crate::permit::who(&crate::remotedesktop::display_name(&id));
                     let (summary, body) = failure.balloon(&who);
                     if let Err(e) =
-                        reprisebus::notify::notify("Reprise", "internet-mail", summary, &body)
+                        reprisebus::notify::notify("Reprise", "internet-mail", &summary, &body)
                     {
                         log::warn!("ComposeEmail: no balloon: {e}");
                     }
@@ -218,19 +219,20 @@ impl std::fmt::Display for Failure {
 
 impl Failure {
     /// The balloon's summary and body; `who` is the app that asked.
-    fn balloon(&self, who: &str) -> (&'static str, String) {
+    fn balloon(&self, who: &str) -> (String, String) {
         match self {
             Failure::NoProgram => (
-                "No mail program",
-                format!(
-                    "{who} wanted to write an email. Choose a mail program on the Default \
-                     Programs page of Reprise Settings."
-                ),
+                tr!("email-no-program"),
+                tr!("email-no-program-body", who = who),
             ),
-            Failure::Refused(e) => ("The email did not open", e.to_string()),
+            Failure::Refused(e) => (tr!("email-not-opened"), e.to_string()),
             Failure::Start { name, error } => (
-                "The email did not open",
-                format!("Reprise could not start {name}: {error}."),
+                tr!("email-not-opened"),
+                tr!(
+                    "email-start-failed",
+                    name = name.as_str(),
+                    error = error.to_string()
+                ),
             ),
         }
     }

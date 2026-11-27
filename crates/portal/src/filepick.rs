@@ -18,6 +18,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -62,11 +63,11 @@ fn decide(
     match kind {
         Kind::SaveFiles => match paths.first().and_then(|d| save_files_paths(d, files)) {
             Some(p) => Decision::Done(p),
-            None => Decision::Error("These files cannot be saved here.".into()),
+            None => Decision::Error(tr!("chooser-cannot-save-here")),
         },
-        Kind::Save if paths.len() > 1 => Decision::Error("Type one file name.".into()),
+        Kind::Save if paths.len() > 1 => Decision::Error(tr!("chooser-one-name")),
         Kind::Save if paths.len() == 1 && taken(&paths[0]) => Decision::Confirm(paths[0].clone()),
-        _ if paths.is_empty() => Decision::Error("Type a file name.".into()),
+        _ if paths.is_empty() => Decision::Error(tr!("chooser-type-name")),
         _ => Decision::Done(paths),
     }
 }
@@ -135,9 +136,12 @@ impl Pick {
         ctx: &mut Ctx,
     ) -> Reply {
         let (buttons, default) = if yes_no {
-            (vec!["&Yes".into(), "&No".into()], 1)
+            (
+                vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
+                1,
+            )
         } else {
-            (vec!["OK".into()], 0)
+            (vec![reprisekit::kit_tr!("ok")], 0)
         };
         let fields = msgbox::Fields {
             text,
@@ -173,10 +177,7 @@ impl Pick {
                 Reply::redraw()
             }
             Decision::Confirm(p) => {
-                let text = format!(
-                    "{} already exists.\nDo you want to replace it?",
-                    p.display()
-                );
+                let text = tr!("chooser-replace", path = p.display().to_string());
                 self.message(text, "dialog-warning", true, Some(p), ctx)
             }
             Decision::Error(text) => self.message(text, "dialog-error", false, None, ctx),
@@ -332,7 +333,7 @@ impl repriseapp::Extended for Pick {
 /// folder mode). The own row is never reported back.
 fn type_rows(input: &Input) -> Vec<String> {
     if input.filters.is_empty() && !input.folder_mode {
-        return vec!["All Files".into()];
+        return vec![tr!("chooser-all-files")];
     }
     input.filters.iter().map(|f| f.label.clone()).collect()
 }

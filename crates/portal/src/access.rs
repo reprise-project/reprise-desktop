@@ -12,6 +12,7 @@ use reprisekit::metrics::ControlMetrics;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -195,11 +196,11 @@ pub fn build_form(
     let grant = input
         .grant_label
         .as_deref()
-        .map_or("&Allow".to_string(), dialog::mnemonic);
+        .map_or_else(|| tr!("allow"), dialog::mnemonic);
     let deny = input
         .deny_label
         .as_deref()
-        .map_or("&Deny".to_string(), dialog::mnemonic);
+        .map_or_else(|| tr!("deny"), dialog::mnemonic);
     items.extend(dialog::buttons(
         CLIENT_W - MARGIN,
         button_y,

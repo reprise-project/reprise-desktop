@@ -13,6 +13,7 @@ use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::controls::updown::{self, UpDown};
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::tr;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
@@ -56,31 +57,31 @@ pub enum Purpose {
 }
 
 impl Purpose {
-    fn title(self) -> &'static str {
+    fn title(self) -> String {
         match self {
-            Purpose::Share => "Share your screen",
-            Purpose::Screenshot => "Screenshot",
+            Purpose::Share => tr!("picker-share-title"),
+            Purpose::Screenshot => tr!("picker-screenshot-title"),
         }
     }
 
     fn prompt(self, who: &str) -> String {
         match self {
-            Purpose::Share => format!("{who} wants to see your screen or a window."),
-            Purpose::Screenshot => format!("{who} wants a picture of a screen or a window."),
+            Purpose::Share => tr!("picker-share-prompt", who = who),
+            Purpose::Screenshot => tr!("picker-screenshot-prompt", who = who),
         }
     }
 
-    fn note(self) -> &'static str {
+    fn note(self) -> String {
         match self {
-            Purpose::Share => "Choose one to share. It will see everything shown on it.",
-            Purpose::Screenshot => "Choose one. It will get a copy of what it shows.",
+            Purpose::Share => tr!("picker-share-note"),
+            Purpose::Screenshot => tr!("picker-screenshot-note"),
         }
     }
 
-    fn accept(self) -> &'static str {
+    fn accept(self) -> String {
         match self {
-            Purpose::Share => "&Share",
-            Purpose::Screenshot => "&Take",
+            Purpose::Share => tr!("picker-share"),
+            Purpose::Screenshot => tr!("picker-take"),
         }
     }
 }
@@ -244,6 +245,11 @@ pub fn run_dialog() {
     }
 }
 
+/// The tree's Screens branch label, which also tells the branches apart.
+fn screens_label() -> String {
+    tr!("picker-screens")
+}
+
 fn build_tree(
     rows: &[Row],
     mut icon_for: impl FnMut(&str) -> Option<Canvas>,
@@ -251,8 +257,8 @@ fn build_tree(
     let mut roots = Vec::new();
     let mut at = vec![0usize; rows.len()];
     let folder = icon_for("folder");
-    for (screen, title) in [(true, "Screens:"), (false, "Windows:")] {
-        let mut branch = Node::new(title, true);
+    for (screen, title) in [(true, screens_label()), (false, tr!("picker-windows"))] {
+        let mut branch = Node::new(&title, true);
         branch.icon = folder.clone();
         branch.expanded = true;
         for (i, r) in rows.iter().enumerate().filter(|(_, r)| r.screen == screen) {
@@ -271,7 +277,7 @@ fn build_tree(
         let branch = tv
             .roots
             .iter()
-            .position(|b| (b.label == "Screens:") == r.screen)
+            .position(|b| (b.label == screens_label()) == r.screen)
             .expect("branch");
         let before: usize = tv.roots[..branch]
             .iter()
@@ -301,10 +307,10 @@ fn build_form(
     let mut items = Vec::from(dialog::wrapping_header(
         w,
         purpose.prompt(&crate::permit::who(app)),
-        purpose.note().into(),
+        purpose.note(),
     ));
     items.extend([
-        Item::new("group", GROUP, Control::Group("Sources".into())),
+        Item::new("group", GROUP, Control::Group(tr!("picker-sources"))),
         Item::new("tree", TREE, Control::Tree(tree)),
     ]);
     if offer_remember {
@@ -312,7 +318,7 @@ fn build_form(
             "remember",
             REMEMBER,
             Control::Check {
-                label: "&Remember this choice".into(),
+                label: tr!("remember-choice"),
                 checked: false,
                 enabled: true,
                 mixed: None,
@@ -322,21 +328,21 @@ fn build_form(
     if let Some(s) = delay {
         let max = repriseconf::config::SHOT_DELAY_MAX.into();
         items.extend([
-            Item::label("delay_label", DELAY_LABEL, "&Delay:"),
+            Item::label("delay_label", DELAY_LABEL, &tr!("picker-delay")),
             Item::new(
                 "delay",
                 DELAY,
                 Control::UpDown(UpDown::new(s.into(), 0, max)),
             )
             .named("Delay"),
-            Item::label("delay_units", DELAY_UNITS, "seconds"),
+            Item::label("delay_units", DELAY_UNITS, &tr!("picker-delay-units")),
         ]);
     }
     items.extend(dialog::buttons(
         GROUP.right() - 11,
         BUTTON_Y,
-        ("share", purpose.accept()),
-        ("cancel", "Cancel"),
+        ("share", &purpose.accept()),
+        ("cancel", &reprisekit::kit_tr!("cancel")),
     ));
     let mut f = Form::new(items);
     f.focus_id("tree");
@@ -417,7 +423,7 @@ fn prompt(
         parent,
         modal: true,
         on_cancel: Box::new(|_, _| {}),
-        title: purpose.title().into(),
+        title: purpose.title(),
         size: CLIENT,
         form,
         icon,
@@ -453,7 +459,7 @@ fn selection(rows: &[Row], form: &Form) -> Option<usize> {
     let [branch, child] = path[..] else {
         return None;
     };
-    let screen = tree.roots.get(branch)?.label == "Screens:";
+    let screen = tree.roots.get(branch)?.label == screens_label();
     rows.iter()
         .enumerate()
         .filter(|(_, r)| r.screen == screen)
