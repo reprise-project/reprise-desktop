@@ -43,6 +43,9 @@ const WRITES_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
 /// Bytes an extraction may write past its listing: its stderr not yet read, with room to spare.
 const WRITE_SLACK: u64 = 1 << 20;
 
+/// How often an extraction whose write count cannot be read measures what has landed instead.
+const LANDED_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// The share of a folder's free space one extraction may fill, in percent.
 pub const FREE_SHARE_PERCENT: u64 = 90;
 
@@ -527,15 +530,24 @@ fn extract(
         let allowed = (listed.bytes)
             .saturating_add(said_bytes.get())
             .saturating_add(WRITE_SLACK);
-        io_count(pid, "wchar").is_some_and(|w| w > allowed)
+        io_count(pid, "wchar").map(|w| w > allowed)
     };
+    // Without a write count (no /proc, or one that does not show it), what landed is measured.
     let mut sampled = std::time::Instant::now();
+    let mut measured = std::time::Instant::now();
     let tick = || {
         if sampled.elapsed() < WRITES_EVERY || past.get() {
             return;
         }
         sampled = std::time::Instant::now();
-        if wrote_past() {
+        let over = wrote_past().unwrap_or_else(|| {
+            if measured.elapsed() < LANDED_EVERY {
+                return false;
+            }
+            measured = std::time::Instant::now();
+            landed_bytes(&into).is_ok_and(|b| b > listed.bytes)
+        });
+        if over {
             past.set(true);
             // SAFETY: `pid` is our own unreaped child, so the id names no other process.
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
@@ -586,7 +598,7 @@ fn extract(
         tick,
     );
     // The child is unreaped, so its count is still there when it ended between samples.
-    if !past.get() && matches!(read, Ok(true)) && wrote_past() {
+    if !past.get() && matches!(read, Ok(true)) && wrote_past() == Some(true) {
         past.set(true);
     }
     let status = finish_status(child, &read).map_err(undo)?;
@@ -612,6 +624,10 @@ fn extract(
     }
     let io = |e: std::io::Error| Failure::Tool(e.to_string());
     let modes = open_up(&into).map_err(io).map_err(undo)?;
+    // What landed holds whatever the write count missed.
+    if landed_bytes(&into).map_err(io).map_err(undo)? > listed.bytes {
+        return Err(undo(Failure::Refused(tr!("archive-more-than-listed"))));
+    }
     let reach = leads_out(&into).map_err(io).map_err(undo)?;
     if let Some(entry) = reach.out {
         return Err(undo(Failure::Refused(tr!(
@@ -1152,9 +1168,39 @@ fn finish_status(
     child.wait().map_err(|e| Failure::Tool(e.to_string()))
 }
 
+/// The bytes the files under `root` hold, each file once however many links it has.
+fn landed_bytes(root: &Path) -> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    let mut seen = std::collections::HashSet::new();
+    let mut bytes = 0u64;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for e in std::fs::read_dir(&dir)? {
+            let e = e?;
+            let m = e.path().symlink_metadata()?;
+            if m.is_dir() {
+                pending.push(e.path());
+            } else if m.is_file() && (m.nlink() == 1 || seen.insert((m.dev(), m.ino()))) {
+                bytes = bytes.saturating_add(m.len());
+            }
+        }
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Set by a test to read no write counts, as on a system without `/proc/<pid>/io`.
+    static NO_IO_COUNTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// The count `field` (`rchar`, `wchar`) of process `pid` and its reaped children, from
 /// `/proc/<pid>/io`.
 pub(crate) fn io_count(pid: u32, field: &str) -> Option<u64> {
+    #[cfg(test)]
+    if NO_IO_COUNTS.with(|c| c.get()) {
+        return None;
+    }
     let io = std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
     io.lines()
         .find_map(|l| l.strip_prefix(field)?.strip_prefix(':'))?
@@ -1248,8 +1294,14 @@ mod tests {
     #[test]
     fn an_extraction_writing_past_its_listing_is_stopped_and_leaves_nothing() {
         let room = |_: &Path| Limits::from_free(u64::MAX, None);
-        // One file over the listing's total, and files each under it that pass it together.
-        for (files, size, listed) in [(1u64, 8usize << 20, 1000u64), (8, 1 << 20, 3 << 20)] {
+        // One file over the listing's total, and files each under it that pass it together, with
+        // the write count read and without it.
+        let cases = [(1u64, 8usize << 20, 1000u64), (8, 1 << 20, 3 << 20)];
+        for (counted, (files, size, listed)) in [true, false]
+            .into_iter()
+            .flat_map(|c| cases.map(|case| (c, case)))
+        {
+            NO_IO_COUNTS.with(|c| c.set(!counted));
             let t = tempfile::tempdir().unwrap();
             let src = t.path().join("src");
             std::fs::create_dir_all(&src).unwrap();
@@ -1278,7 +1330,7 @@ mod tests {
                 Err(Failure::Refused(
                     "it holds more than its listing says.".into()
                 )),
-                "{files} files"
+                "{files} files, write count read: {counted}"
             );
             assert_eq!(
                 std::fs::read_dir(&out).unwrap().count(),
@@ -1286,6 +1338,7 @@ mod tests {
                 "nothing is left"
             );
         }
+        NO_IO_COUNTS.with(|c| c.set(false));
     }
 
     #[test]
