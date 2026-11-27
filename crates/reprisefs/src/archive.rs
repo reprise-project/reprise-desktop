@@ -132,6 +132,9 @@ fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failur
 /// Every file and folder `archive` holds, read from its headers. An archive of more than
 /// [`MAX_ENTRIES`] entries is refused as soon as the listing passes them; cancelling `m` stops it.
 pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
+    if zip_encrypted(archive) {
+        return Err(tr!("archive-locked"));
+    }
     let why = |f: Failure| f.why();
     let budget = cpu_secs(archive_bytes(archive));
     let mut child = spawn(&extract::list_argv(archive), budget).map_err(why)?;
@@ -162,8 +165,84 @@ pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
     match status? {
         s if s.success() => Ok(entries),
         s if ran_out(&s) => Err(tr!("archive-too-long")),
+        _ if locked(&stderr) => Err(tr!("archive-locked")),
         _ => Err(extract::said(&stderr, &tr!("archive-unread"))),
     }
+}
+
+/// Whether bsdtar's `stderr` says an entry or the archive's header is encrypted: it wanted a
+/// passphrase it had no way to read, or the format's decryption is not supported.
+pub(crate) fn locked(stderr: &[u8]) -> bool {
+    const SAID: [&str; 5] = [
+        "Couldn't read passphrase",
+        "Incorrect passphrase",
+        "Passphrase required",
+        "header is encrypted",
+        "content is encrypted",
+    ];
+    let text = String::from_utf8_lossy(stderr);
+    SAID.iter().any(|s| text.contains(s))
+}
+
+/// The most central directory bytes [`zip_encrypted`] reads: about a million entries.
+const MAX_ZIP_DIRECTORY: u64 = 64 << 20;
+
+/// Whether `file` is a zip with an encrypted entry, by bit 0 of an entry's flags in its central
+/// directory. A file that does not start as a zip, or whose end records do not read, is not.
+pub(crate) fn zip_encrypted(file: &Path) -> bool {
+    zip_flags_encrypted(file).unwrap_or(false)
+}
+
+fn zip_flags_encrypted(file: &Path) -> Option<bool> {
+    use std::io::{Seek, SeekFrom};
+    const EOCD: usize = 22;
+    let le = |b: &[u8], at: usize, n: usize| {
+        let bytes = b.get(at..at.checked_add(n)?)?;
+        Some(bytes.iter().rev().fold(0u64, |v, &x| v << 8 | u64::from(x)))
+    };
+    let mut f = std::fs::File::open(file).ok()?;
+    let len = f.metadata().ok()?.len();
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).ok()?;
+    if magic != *b"PK\x03\x04" {
+        return None;
+    }
+    let tail_len = len.min((EOCD + 0xffff) as u64);
+    let mut tail = vec![0; tail_len as usize];
+    f.seek(SeekFrom::Start(len - tail_len)).ok()?;
+    f.read_exact(&mut tail).ok()?;
+    let end = (0..=tail.len().checked_sub(EOCD)?)
+        .rev()
+        .find(|&i| tail[i..i + 4] == *b"PK\x05\x06")?;
+    let (mut size, mut offset) = (le(&tail, end + 12, 4)?, le(&tail, end + 16, 4)?);
+    if size == 0xffff_ffff || offset == 0xffff_ffff {
+        let locator = end.checked_sub(20)?;
+        if tail.get(locator..locator + 4)? != b"PK\x06\x07" {
+            return None;
+        }
+        let mut record = [0u8; 56];
+        f.seek(SeekFrom::Start(le(&tail, locator + 8, 8)?)).ok()?;
+        f.read_exact(&mut record).ok()?;
+        if record[..4] != *b"PK\x06\x06" {
+            return None;
+        }
+        (size, offset) = (le(&record, 40, 8)?, le(&record, 48, 8)?);
+    }
+    if size > MAX_ZIP_DIRECTORY || offset.checked_add(size)? > len {
+        return None;
+    }
+    let mut dir = vec![0; size as usize];
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    f.read_exact(&mut dir).ok()?;
+    let mut at = 0usize;
+    while dir.get(at..at + 4) == Some(b"PK\x01\x02") {
+        if le(&dir, at + 8, 2)? & 1 != 0 {
+            return Some(true);
+        }
+        let names = le(&dir, at + 28, 2)? + le(&dir, at + 30, 2)? + le(&dir, at + 32, 2)?;
+        at = at.checked_add(46 + names as usize)?;
+    }
+    Some(false)
 }
 
 fn now() -> i64 {
@@ -563,6 +642,9 @@ fn copy_out_within(
         && ran_out(s)
     {
         return Err(failed(tr!("archive-too-long")));
+    }
+    if status.as_ref().is_ok_and(|s| !s.success()) && locked(&stderr) {
+        return Err(failed(tr!("archive-locked")));
     }
     copied.map_err(failed)?;
     if written != entry.size {
@@ -979,5 +1061,93 @@ mod tests {
         scratch_in(&base, 3600).unwrap();
         assert!(!one.exists(), "an older folder goes");
         assert!(two.exists());
+    }
+
+    /// A zip of `a.txt` encrypted with `how` (`zipcrypt` or `aes256`), in `dir`.
+    fn locked_zip(dir: &Path, how: &str, extra: &str) -> PathBuf {
+        std::fs::write(dir.join("a.txt"), "secret").unwrap();
+        let options = format!("zip:encryption={how}{extra}");
+        let args = [
+            "--options",
+            &options,
+            "--passphrase",
+            "pw",
+            "-a",
+            "-cf",
+            "locked.zip",
+        ];
+        bsdtar(dir, &[&args[..], &["a.txt"]].concat());
+        dir.join("locked.zip")
+    }
+
+    #[test]
+    fn an_encrypted_zip_lists_and_opens_as_password_protected_at_once() {
+        for how in ["zipcrypt", "aes256"] {
+            let t = tempfile::tempdir().unwrap();
+            let zip = locked_zip(t.path(), how, "");
+            assert!(zip_encrypted(&zip), "{how}");
+            let started = std::time::Instant::now();
+            assert_eq!(
+                list(&zip, &Meter::default()),
+                Err("it is password-protected.".into()),
+                "{how}"
+            );
+            let into = tempfile::tempdir().unwrap();
+            let e = entry("a.txt", Kind::File, 6);
+            assert_eq!(
+                copy_out(&zip, &e, into.path()),
+                Err("it is password-protected.".into()),
+                "bsdtar asks for no passphrase ({how})"
+            );
+            assert!(
+                started.elapsed().as_secs() < 10,
+                "{how} took {:?}",
+                started.elapsed()
+            );
+            assert!(!into.path().join("a.txt").exists());
+        }
+    }
+
+    #[test]
+    fn a_zip64_directory_is_read_for_encrypted_entries() {
+        let t = tempfile::tempdir().unwrap();
+        let zip = locked_zip(t.path(), "zipcrypt", ",zip:zip64");
+        let mut bytes = std::fs::read(&zip).unwrap();
+        let end = bytes.len() - 22;
+        assert_eq!(&bytes[end..end + 4], b"PK\x05\x06");
+        bytes[end + 12..end + 20].fill(0xff);
+        std::fs::write(&zip, &bytes).unwrap();
+        assert!(zip_encrypted(&zip), "found through the zip64 record");
+    }
+
+    #[test]
+    fn plain_zips_tars_and_truncated_files_are_not_encrypted() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a.txt"), "plain").unwrap();
+        bsdtar(t.path(), &["-a", "-cf", "plain.zip", "a.txt"]);
+        bsdtar(t.path(), &["-czf", "plain.tar.gz", "a.txt"]);
+        for name in ["plain.zip", "plain.tar.gz", "a.txt"] {
+            assert!(!zip_encrypted(&t.path().join(name)), "{name}");
+        }
+        let zip = std::fs::read(t.path().join("plain.zip")).unwrap();
+        for cut in [4, 30, zip.len() - 10] {
+            std::fs::write(t.path().join("cut.zip"), &zip[..cut]).unwrap();
+            assert!(!zip_encrypted(&t.path().join("cut.zip")), "cut at {cut}");
+        }
+    }
+
+    #[test]
+    fn bsdtar_saying_a_passphrase_or_encryption_reads_as_locked() {
+        for said in [
+            "bsdtar: Couldn't read passphrase: Bad file descriptor",
+            "a.txt: Incorrect passphrase: Unknown error -1",
+            "bsdtar: The archive header is encrypted, but currently not supported",
+            "a.txt: The file content is encrypted, but currently not supported",
+        ] {
+            assert!(locked(said.as_bytes()), "{said}");
+        }
+        assert!(!locked(
+            b"bsdtar: Error opening archive: Unrecognized archive format"
+        ));
     }
 }
