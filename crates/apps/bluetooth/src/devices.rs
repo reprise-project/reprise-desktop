@@ -398,6 +398,14 @@ impl Devices {
         if *key == form::Key::Enter {
             return self.selected_path().map(Outcome::Properties);
         }
+        if let Some(form::Key::Char(c)) = crate::typed(key)
+            && reprisekit::selection::types_ahead(c)
+        {
+            if self.list.jump(c, self.list_rect(), cm) {
+                self.write();
+            }
+            return Some(Outcome::Redraw);
+        }
         if self.list.key(key, self.list_rect(), cm) {
             self.write();
             return Some(Outcome::Redraw);
@@ -636,6 +644,28 @@ mod tests {
         assert_eq!(label(&d, CONNECT), "&Disconnect", "Cans is connected");
         d.list_key(&form::Key::Down, &ControlMetrics::CLASSIC);
         assert_eq!(label(&d, CONNECT), "&Connect", "Mouse is not");
+    }
+
+    #[test]
+    fn a_letter_no_device_starts_with_stays_on_the_list() {
+        let mut d = Devices::new(15, true);
+        d.refresh(&four());
+        let cm = ControlMetrics::CLASSIC;
+        let picked = |d: &Devices| d.list.selected_row().map(|i| d.rows[i].alias.clone());
+        d.list_key(
+            &form::Key::Edit(reprisekit::textedit::EditKey::Insert("p".into())),
+            &cm,
+        );
+        assert_eq!(picked(&d).as_deref(), Some("Pad"));
+        assert_eq!(
+            d.list_key(
+                &form::Key::Edit(reprisekit::textedit::EditKey::Insert("a".into())),
+                &cm
+            ),
+            Some(Outcome::Redraw),
+            "the list takes it, so Add... is not pressed"
+        );
+        assert_eq!(picked(&d).as_deref(), Some("Pad"));
     }
 
     #[test]

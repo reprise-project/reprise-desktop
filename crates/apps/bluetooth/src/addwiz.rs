@@ -512,8 +512,22 @@ impl AddWizard {
         }
     }
 
+    /// A key on the Search page's list. A typed letter stays on the list whether or not a device
+    /// starts with it, so it never reaches a button's access key.
     pub fn list_key(&mut self, key: &form::Key, cm: &ControlMetrics) -> bool {
-        if self.step != Step::Search || !self.list.key(key, self.list_rect(), cm) {
+        if self.step != Step::Search {
+            return false;
+        }
+        let rect = self.list_rect();
+        if let Some(form::Key::Char(c)) = crate::typed(key)
+            && reprisekit::selection::types_ahead(c)
+        {
+            if self.list.jump(c, rect, cm) {
+                self.sync_search();
+            }
+            return true;
+        }
+        if !self.list.key(key, rect, cm) {
             return false;
         }
         self.sync_search();
@@ -751,6 +765,39 @@ mod tests {
             "paired, nameless and out-of-range devices are left out"
         );
         assert_eq!(w.status(), "Searching for Bluetooth devices...");
+    }
+
+    #[test]
+    fn a_letter_no_device_starts_with_stays_on_the_found_list() {
+        let t = t();
+        let mut w = at_search(&t);
+        let mut s = snap(true, true);
+        s.devices.push(dev("/a/mouse", Some("Mouse"), false, true));
+        s.devices.push(dev("/a/buds", Some("Buds"), false, true));
+        w.refresh(&s, &t.text, &t.forms);
+        let cm = ControlMetrics::CLASSIC;
+        let picked = |w: &AddWizard| w.list.selected_row().map(|i| w.found[i].path.clone());
+        assert!(
+            w.list_key(
+                &form::Key::Edit(reprisekit::textedit::EditKey::Insert("b".into())),
+                &cm
+            ),
+            "B is Buds, not < Back"
+        );
+        assert_eq!(w.step, Step::Search);
+        assert_eq!(picked(&w).as_deref(), Some("/a/buds"));
+        assert!(
+            w.list_key(
+                &form::Key::Edit(reprisekit::textedit::EditKey::Insert("n".into())),
+                &cm
+            ),
+            "no device starts with N"
+        );
+        assert_eq!(
+            (w.step, picked(&w).as_deref()),
+            (Step::Search, Some("/a/buds")),
+            "and Next is not pressed"
+        );
     }
 
     #[test]
