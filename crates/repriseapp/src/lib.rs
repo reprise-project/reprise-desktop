@@ -337,8 +337,8 @@ struct Host {
     /// The last input was a key, not a pointer press, counting a start from the keyboard: a window
     /// opened now underlines its access keys.
     key_last: bool,
-    /// The activation token this process was started with, presented once for the main window
-    /// before it maps, so a launch from the focused program opens in front.
+    /// The activation token this process was started with, presented once for the first toplevel
+    /// before it maps (the main window, or another while that one stays hidden), so a launch opens in front.
     start_token: Option<String>,
     /// The tokens `Reply::handoffs` asked for, given as `Event::Handoff` ([`Host::hand`]).
     hands: hands::Hands,

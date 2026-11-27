@@ -3,6 +3,7 @@ Type=Application
 Name=Volume Control
 Comment=Adjust the volume and balance of your speakers, each program playing sound and each recording device.
 Exec=reprise-volume
+StartupNotify=true
 Icon=multimedia-volume-control
 Categories=AudioVideo;Audio;Mixer;
 StartupWMClass=reprise.volume

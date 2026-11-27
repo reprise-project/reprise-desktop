@@ -3,6 +3,7 @@ Type=Application
 Name=Terminal
 Comment=Runs programs from a command line.
 Exec=reprise-terminal
+StartupNotify=true
 Icon=utilities-terminal
 Categories=System;TerminalEmulator;
 StartupWMClass=reprise.terminal

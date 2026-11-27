@@ -3,6 +3,7 @@ Type=Application
 Name=Character Map
 Comment=Selects special characters and copies them to your document.
 Exec=reprise-charmap
+StartupNotify=true
 Icon=accessories-character-map
 Categories=Utility;
 StartupWMClass=reprise.charmap

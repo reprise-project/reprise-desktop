@@ -3,6 +3,7 @@ Type=Application
 Name=Bluetooth Devices
 Comment=Add, connect and remove Bluetooth devices
 Exec=reprise-bluetooth
+StartupNotify=true
 Icon=bluetooth
 Categories=Settings;
 StartupWMClass=reprise.bluetooth

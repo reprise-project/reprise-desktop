@@ -4,6 +4,7 @@ Type=Application
 Name=Paint
 Comment=Draws and edits pictures.
 Exec=reprise-paint %f
+StartupNotify=true
 Icon=applications-graphics
 Categories=Graphics;2DGraphics;RasterGraphics;
 MimeType=image/png;image/jpeg;image/bmp;
