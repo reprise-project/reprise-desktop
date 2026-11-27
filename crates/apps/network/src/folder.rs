@@ -13,6 +13,7 @@ use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
 use reprisekit::tr;
+use std::ffi::OsString;
 
 use crate::nm;
 use crate::status;
@@ -39,7 +40,48 @@ fn type_vpn() -> String {
 }
 
 const TASKS: usize = 0;
-const DETAILS: usize = 3;
+const OTHER: usize = 1;
+const DETAILS: usize = 2;
+
+/// Other Places' links in order: each one's icon, and the program and argument it opens.
+const OTHER_PLACES: [(&str, Opens); 4] = [
+    ("preferences-system", Opens::Settings),
+    ("user-home", Opens::Home),
+    ("folder-documents", Opens::Documents),
+    ("computer", Opens::Computer),
+];
+
+#[derive(Clone, Copy)]
+enum Opens {
+    Settings,
+    Home,
+    Documents,
+    Computer,
+}
+
+impl Opens {
+    fn label(self) -> String {
+        match self {
+            Opens::Settings => tr!("folder-control-panel"),
+            Opens::Home => reprisefs::places::home_label(),
+            Opens::Documents => tr!("folder-documents"),
+            Opens::Computer => tr!("folder-computer"),
+        }
+    }
+
+    fn argv(self) -> Vec<OsString> {
+        let explorer = |at: OsString| vec!["reprise-explorer".into(), at];
+        match self {
+            Opens::Settings => vec!["reprise-settings".into()],
+            Opens::Home => explorer(std::env::var_os("HOME").unwrap_or_else(|| "/".into())),
+            Opens::Documents => explorer(
+                reprisefs::places::user_dir("DOCUMENTS", "Documents")
+                    .map_or_else(|| "~".into(), Into::into),
+            ),
+            Opens::Computer => explorer("Computer".into()),
+        }
+    }
+}
 
 /// One line of the list: a device or a saved VPN, by the object path it came from so a refresh can find it again.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,6 +114,8 @@ pub enum Outcome {
     Import,
     CreateHotspot(String),
     StopHotspot(String),
+    /// Another program to start, from Other Places.
+    Spawn(Vec<OsString>),
 }
 
 /// The list's rows, cells and groups from a snapshot: adapters first, saved VPNs under their own heading; empty without NetworkManager. Icons are left to [`Folder::refresh`], which has the icon theme.
@@ -231,28 +275,14 @@ fn task_links(s: &nm::Snapshot) -> Vec<taskpane::Row> {
     ]
 }
 
-/// The pane's four sections. Links past Network Tasks open nothing this applet has, so they are drawn greyed. Rows carry no icon: this pure builder has no icon theme.
+/// The pane's three sections. Other Places' rows get their icons from [`Folder::wear_icons`].
 fn pane_sections() -> Vec<Section> {
-    let link = |text: &str| taskpane::Row {
-        icon: None,
-        text: text.into(),
-        enabled: false,
-    };
+    let other = (OTHER_PLACES.iter())
+        .map(|(_, o)| taskpane::Row::new(o.label(), None))
+        .collect();
     vec![
         Section::links(tr!("folder-tasks"), task_links(&nm::Snapshot::default())),
-        Section::links(
-            tr!("folder-see-also"),
-            vec![link(&tr!("folder-troubleshooter"))],
-        ),
-        Section::links(
-            tr!("folder-other-places"),
-            vec![
-                link(&tr!("folder-control-panel")),
-                link(&reprisefs::places::home_label()),
-                link(&tr!("folder-documents")),
-                link(&tr!("folder-computer")),
-            ],
-        ),
+        Section::links(tr!("folder-other-places"), other),
         Section::lines(tr!("folder-details"), folder_lines()),
     ]
 }
@@ -319,6 +349,15 @@ impl Folder {
             ]),
             rows: Vec::new(),
             popup: None,
+        }
+    }
+
+    /// Other Places' icons, each the `icon` it names.
+    pub fn wear_icons(&mut self, mut icon: impl FnMut(&str) -> Option<Canvas>) {
+        if let Some(Body::Links(rows)) = self.pane.sections.get_mut(OTHER).map(|s| &mut s.body) {
+            for (row, (name, _)) in rows.iter_mut().zip(OTHER_PLACES) {
+                row.icon = icon(name);
+            }
         }
     }
 
@@ -436,8 +475,10 @@ impl Folder {
                 &ctx.theme.controls(),
             );
             let hit = taskpane::hit(&self.pane, &lay, x, y);
-            // Only the Network Tasks links are live; any other click opens or shuts a section.
             return match self.pane.click(hit) {
+                taskpane::Event::Row(OTHER, i) => OTHER_PLACES
+                    .get(i)
+                    .map_or(Outcome::None, |(_, o)| Outcome::Spawn(o.argv())),
                 taskpane::Event::None => Outcome::None,
                 taskpane::Event::Row(TASKS, TASK_WIREGUARD) => Outcome::NewWireGuard,
                 taskpane::Event::Row(TASKS, TASK_IMPORT) => Outcome::Import,
@@ -977,7 +1018,7 @@ mod tests {
         assert_eq!(pl.headers[0].x, SECTION_X);
         assert_eq!(pl.headers[0].right(), SECTION_RIGHT);
         assert_eq!(pl.headers[0].y, PANE_HEADER_Y);
-        assert_eq!(f.pane.sections.len(), 4);
+        assert_eq!(f.pane.sections.len(), 3);
         // The borderless list puts its header's face, body, group rule and the group's first row on their rows. The header's rect leads with a highlight row, so it starts a px above the face.
         let ll = listview::layout(&f.list.view, list_r, &ctx.theme.look.controls_at_100());
         assert_eq!(ll.header.y + 1, LIST_HEADER_Y);
@@ -1194,7 +1235,7 @@ mod tests {
     }
 
     #[test]
-    fn the_network_tasks_are_live_the_rest_inert_and_headers_fold() {
+    fn the_network_tasks_and_other_places_are_live_and_headers_fold() {
         let ctx = ctx();
         let s = snapshot();
         let mut f = folder();
@@ -1217,7 +1258,15 @@ mod tests {
             Outcome::CreateHotspot("/dev/2".into()),
             "the radio"
         );
-        assert_eq!(click(lay.rows[1][0]), Outcome::None, "See Also is greyed");
+        assert_eq!(
+            click(lay.rows[OTHER][0]),
+            Outcome::Spawn(vec!["reprise-settings".into()]),
+            "Control Panel opens Settings"
+        );
+        assert_eq!(
+            click(lay.rows[OTHER][3]),
+            Outcome::Spawn(vec!["reprise-explorer".into(), "Computer".into()])
+        );
         let mut on = s.clone();
         on.devices[1].hotspot = Some("Desk".into());
         on.devices[1].state = nm::State::Connected;
