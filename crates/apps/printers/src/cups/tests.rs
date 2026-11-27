@@ -1,4 +1,5 @@
 use super::*;
+use repriseapp::print::cups::user_default;
 
 fn group(attrs: Vec<(&str, Vec<Value>)>) -> ipp::Group {
     ipp::Group {
@@ -210,7 +211,7 @@ fn a_printer_address_loses_its_user_and_password_in_logs_and_messages() {
         "cupsd's and cups-pk-helper's messages"
     );
     assert!(
-        !Error::from(http::Error::Failed("smb://alice:hunter2@srv/q".into()))
+        !Error::from(http::Error::Io("smb://alice:hunter2@srv/q".into()))
             .text()
             .contains("hunter2")
     );

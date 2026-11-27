@@ -11,6 +11,9 @@ use crate::http::{self, Server};
 use crate::ipp::{self, JOB, OPERATION, PRINTER, Request, Response, Value};
 use crate::pkhelper::{self, Call, Helper};
 use crate::ppd;
+use repriseapp::print::cups::escape;
+pub use repriseapp::print::cups::printer_uri;
+use repriseapp::print::login_name;
 
 const PRINT_JOB: u16 = 0x0002;
 const CANCEL_JOB: u16 = 0x0008;
@@ -85,7 +88,9 @@ impl From<http::Error> for Error {
         match e {
             http::Error::Unreachable(_) => Error::NotRunning,
             http::Error::Denied => Error::Denied,
-            http::Error::Failed(why) => Error::Refused(without_userinfo(&why)),
+            http::Error::Io(why) => Error::Refused(without_userinfo(&why)),
+            http::Error::Status(code) => Error::Refused(format!("HTTP {code}")),
+            http::Error::BadReply(what) => Error::Refused(format!("bad HTTP reply: {what}")),
         }
     }
 }
@@ -155,19 +160,6 @@ impl Default for Client {
     }
 }
 
-fn login_name() -> String {
-    if let Ok(u) = std::env::var("USER")
-        && !u.is_empty()
-    {
-        return u;
-    }
-    // SAFETY: getuid cannot fail and touches no memory of ours.
-    let uid = unsafe { libc::getuid() };
-    reprisefs::sysinfo::account(uid)
-        .map(|(login, _)| login)
-        .unwrap_or_default()
-}
-
 /// `s` with the user name and password taken out of every URL in it (`smb://user:pass@host`
 /// reads `smb://host`), for the log and the message boxes.
 pub fn without_userinfo(s: &str) -> String {
@@ -204,24 +196,8 @@ pub fn sentence(s: &str) -> String {
     out
 }
 
-pub fn printer_uri(name: &str) -> String {
-    format!("ipp://localhost/printers/{}", escape(name))
-}
-
 fn job_uri(id: i32) -> String {
     format!("ipp://localhost/jobs/{id}")
-}
-
-fn escape(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
 }
 
 #[cfg(test)]

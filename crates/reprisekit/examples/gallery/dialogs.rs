@@ -4,7 +4,7 @@ use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameStat
 use reprisekit::controls::form::{self};
 use reprisekit::controls::{
     aboutbox, endsession, favorites, filedlg, fontdlg, importsheet, installsheet, locationprompt,
-    namebox, shellview,
+    namebox, pagesetup, printdlg, shellview,
 };
 use reprisekit::interface::Interface;
 use reprisekit::look;
@@ -963,6 +963,57 @@ pub fn render_font_dialog(with_blue: bool, scale: i32) -> Canvas {
         };
         fontdlg::draw(&mut box_c, &text, &p, &f, theme.fonts.size_px, &s);
         c.blit_canvas(10 + i as i32 * (w + 10), 10, &box_c);
+    }
+    c
+}
+
+/// Page Setup on Letter landscape over Print with two printers, at `scale`; Classic then Blue and
+/// Glass.
+pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
+    let mut themes = vec![cued(interfaces::classic())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let setup = pagesetup::PageSetup {
+        landscape: true,
+        ..pagesetup::PageSetup::on(&pagesetup::PAPERS[0])
+    };
+    let dests = [
+        printdlg::Dest {
+            name: "Laser".into(),
+            info: "Office laser".into(),
+            location: "Second floor".into(),
+            state: printdlg::DestState::Ready,
+        },
+        printdlg::Dest {
+            name: "PDF".into(),
+            info: "Virtual PDF Printer".into(),
+            ..Default::default()
+        },
+    ];
+    let (sw, sh) = (pagesetup::CLIENT.0 * scale, pagesetup::CLIENT.1 * scale);
+    let (pw, ph) = (printdlg::CLIENT.0 * scale, printdlg::CLIENT.1 * scale);
+    let col = sw.max(pw) + 10;
+    let mut c = Canvas::new(
+        (themes.len() as i32 * col + 10) as u32,
+        (sh + ph + 30) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (i, theme) in themes.iter().enumerate() {
+        let theme = theme.scaled(scale);
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let px = theme.fonts.size_px;
+        let mut setup_c = Canvas::new(sw as u32, sh as u32);
+        setup_c.fill_rect(setup_c.bounds(), p.cs.button_face);
+        pagesetup::draw(&mut setup_c, &text, &p, &pagesetup::form(&setup), px);
+        c.blit_canvas(10 + i as i32 * col, 10, &setup_c);
+        let mut print_c = Canvas::new(pw as u32, ph as u32);
+        print_c.fill_rect(print_c.bounds(), p.cs.button_face);
+        let f = printdlg::form(Ok(&dests), 0, 4);
+        form::draw(&mut print_c, &text, &p, &f, true, px);
+        c.blit_canvas(10 + i as i32 * col, sh + 20, &print_c);
     }
     c
 }

@@ -954,7 +954,7 @@ impl Metrics {
     }
 }
 
-fn expand(line: &str, tab_cols: usize) -> String {
+pub(crate) fn expand(line: &str, tab_cols: usize) -> String {
     let tab_cols = tab_cols.max(1);
     let mut out = String::with_capacity(line.len());
     let mut col = 0;

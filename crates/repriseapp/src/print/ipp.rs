@@ -2,7 +2,7 @@
 //! attribute groups and encoded to bytes, and a response parsed back into
 //! its status and groups. Only what a print manager reads and writes:
 //! integers, booleans, enums, the string types, ranges, resolutions,
-//! dates and collections. The HTTP around them is `cups::Conn`'s.
+//! dates and collections. The HTTP around them is [`super::http`]'s.
 
 pub const OPERATION: u8 = 0x01;
 pub const JOB: u8 = 0x02;
@@ -200,9 +200,16 @@ impl Request {
         self
     }
 
-    /// The message: version 2.0, request id 1, the groups, the
-    /// end-of-attributes tag, then the document.
+    /// The message: [`Request::encode_head`], then the document.
     pub fn encode(&self) -> Vec<u8> {
+        let mut out = self.encode_head();
+        out.extend_from_slice(&self.data);
+        out
+    }
+
+    /// Version 2.0, request id 1, the groups and the end-of-attributes tag: the message up to
+    /// the document.
+    pub fn encode_head(&self) -> Vec<u8> {
         let mut out = vec![2, 0];
         out.extend_from_slice(&self.op.to_be_bytes());
         out.extend_from_slice(&1i32.to_be_bytes());
@@ -213,7 +220,6 @@ impl Request {
             }
         }
         out.push(END);
-        out.extend_from_slice(&self.data);
         out
     }
 }
@@ -309,7 +315,12 @@ pub struct ParseError(pub &'static str);
 struct Reader<'a> {
     b: &'a [u8],
     at: usize,
+    /// Collections open around the value being read.
+    depth: u8,
 }
+
+/// The deepest collection nesting read; IPP's own go two or three deep.
+const MAX_DEPTH: u8 = 8;
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], ParseError> {
@@ -358,12 +369,22 @@ fn decode_value(tag: u8, body: &[u8], r: &mut Reader) -> Result<Value, ParseErro
         DATE => Value::Date(body.to_vec()),
         TEXT_LANG | NAME_LANG => {
             // language length, language, text length, text
-            let mut inner = Reader { b: body, at: 0 };
+            let mut inner = Reader {
+                b: body,
+                at: 0,
+                depth: 0,
+            };
             inner.chunk()?;
             let t = if tag == TEXT_LANG { TEXT } else { NAME };
             Value::Str(t, utf8(inner.chunk()?))
         }
-        BEG_COLLECTION => Value::Collection(decode_members(r)?),
+        BEG_COLLECTION if r.depth >= MAX_DEPTH => return Err(ParseError("collections too deep")),
+        BEG_COLLECTION => {
+            r.depth += 1;
+            let members = decode_members(r)?;
+            r.depth -= 1;
+            Value::Collection(members)
+        }
         0x10..=0x1f => Value::Empty(tag),
         0x40..=0x5f => Value::Str(tag, utf8(body)),
         _ => Value::Octets(body.to_vec()),
@@ -394,7 +415,7 @@ fn decode_members(r: &mut Reader) -> Result<Vec<Attr>, ParseError> {
 }
 
 pub fn parse(b: &[u8]) -> Result<Response, ParseError> {
-    let mut r = Reader { b, at: 0 };
+    let mut r = Reader { b, at: 0, depth: 0 };
     r.take(2)?; // version
     let status = r.u16()?;
     r.take(4)?; // request id
@@ -551,5 +572,19 @@ mod tests {
         let mut b = Request::new(0).encode();
         b.truncate(20);
         assert!(parse(&b).is_err());
+    }
+
+    #[test]
+    fn collections_nested_past_the_limit_are_refused() {
+        let mut b = vec![2, 0, 0, 0, 0, 0, 0, 1, PRINTER];
+        for i in 0..=MAX_DEPTH {
+            b.push(BEG_COLLECTION);
+            let name: &[u8] = if i == 0 { b"c" } else { b"" };
+            b.extend_from_slice(&(name.len() as u16).to_be_bytes());
+            b.extend_from_slice(name);
+            b.extend_from_slice(&[0, 0]);
+            b.extend_from_slice(&[MEMBER, 0, 0, 0, 1, b'm']);
+        }
+        assert_eq!(parse(&b), Err(ParseError("collections too deep")));
     }
 }

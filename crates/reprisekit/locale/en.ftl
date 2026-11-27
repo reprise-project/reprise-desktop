@@ -60,6 +60,59 @@ fontdlg-italic = Italic
 fontdlg-bold = Bold
 fontdlg-bold-italic = Bold Italic
 
+## Page Setup
+pagesetup-title = Page Setup
+pagesetup-paper = Paper
+pagesetup-size = Si&ze:
+pagesetup-orientation = Orientation
+pagesetup-portrait = P&ortrait
+pagesetup-landscape = L&andscape
+pagesetup-margins = Margins (millimeters)
+pagesetup-left = &Left:
+pagesetup-right = &Right:
+pagesetup-top = &Top:
+pagesetup-bottom = &Bottom:
+pagesetup-preview = Preview
+pagesetup-not-a-number = Enter each margin as a number of millimeters.
+# mm is a whole number of millimeters.
+pagesetup-no-room = The margins overlap or run off the paper. Leave at least { $mm } mm for the page between them.
+paper-letter = Letter
+paper-legal = Legal
+paper-executive = Executive
+paper-a3 = A3
+paper-a4 = A4
+paper-a5 = A5
+paper-envelope-10 = Envelope #10
+paper-envelope-dl = Envelope DL
+
+## Print
+printdlg-title = Print
+printdlg-printer = Printer
+printdlg-name = &Name:
+printdlg-status = Status:
+printdlg-where = Where:
+printdlg-comment = Comment:
+printdlg-ready = Ready
+printdlg-printing = Printing
+printdlg-stopped = Paused
+printdlg-stopped-why = Paused: { $why }
+printdlg-refusing = Not accepting documents
+printdlg-none-installed = No printers are installed
+printdlg-not-running = The printing service is not running
+printdlg-looking = Looking for printers...
+printdlg-unlisted = The printers could not be listed
+printdlg-range = Print range
+printdlg-all = &All
+printdlg-pages = Pa&ges
+printdlg-from = &from:
+printdlg-to = &to:
+printdlg-copies = Copies
+printdlg-number-of-copies = Number of &copies:
+printdlg-print = Print
+printdlg-bad-range = Enter pages from 1 to { $pages }, the first no later than the last.
+# most is a whole number of pages.
+printdlg-too-many = Reprise prints at most { $most } pages at a time. Pick Pages and print the document in parts.
+
 ## The file dialog
 filedlg-look-in = Look &in:
 filedlg-file-name = File &name:

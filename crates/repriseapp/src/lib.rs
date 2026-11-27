@@ -46,6 +46,7 @@ mod pastewait;
 pub mod pathjob;
 mod pool;
 mod primary;
+pub mod print;
 pub mod recent;
 mod reopen;
 mod reply;

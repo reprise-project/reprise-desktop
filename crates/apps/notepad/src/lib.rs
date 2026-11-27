@@ -11,6 +11,7 @@ mod font;
 mod input;
 mod menu;
 mod pending;
+mod print;
 mod settings;
 mod window;
 
@@ -29,6 +30,7 @@ use repriseapp::filedlg::{Driven, Host, taken};
 use repriseapp::keys::AltArm;
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::print::Printing;
 use repriseapp::recent::Recent;
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, Extended, FileDrop, KeyInput, MAIN,
@@ -142,6 +144,8 @@ struct Notepad {
     hover: Option<Hover>,
     /// The text box's right-click menu while it is open.
     context: Option<editmenu::Menu>,
+    /// File > Page Setup and Print, and the job last sent.
+    printing: Printing,
 }
 
 impl Notepad {
@@ -209,6 +213,7 @@ impl Notepad {
             host: Host::default(),
             hover: None,
             context: None,
+            printing: Printing::new(&tr!("name")),
         };
         if let Some((p, e)) = failed {
             np.open_failed(&p, &e);
@@ -366,6 +371,7 @@ impl App for Notepad {
                 modal: true,
             });
         }
+        kids.extend(self.printing.children());
         kids.extend(self.asks.child(&self.dialog_text, &self.forms));
         kids
     }
@@ -394,6 +400,7 @@ impl App for Notepad {
         if let Some(on) = find_focus {
             self.find_focused = on.then_some(win);
         }
+        let printed = win == MAIN && matches!(ev, Event::Wake) && self.printing.wake();
         self.event_win = match win {
             GOTO | FIND | REPLACE_WIN | FONT | OPEN | SAVEAS => win,
             w if self.asks.owns(w) => self.parent(w).unwrap_or(MAIN),
@@ -404,6 +411,7 @@ impl App for Notepad {
             FIND => self.find_event(ev, ctx),
             REPLACE_WIN => self.replace_event(ev, ctx),
             FONT => self.font_event(ev, ctx),
+            w if self.printing.owns(w) => self.print_event(w, ev, ctx),
             w if self.asks.owns(w) => self.ask_event(w, ev),
             ABOUT => self.about_event(ev),
             OPEN => self.open_event(ev, ctx),
@@ -416,7 +424,7 @@ impl App for Notepad {
             None => reply,
         };
         let reply = Reply {
-            redraw_all: reply.redraw_all || find_focus.is_some(),
+            redraw_all: reply.redraw_all || find_focus.is_some() || printed,
             ..reply
         };
         self.sync_menus();
@@ -462,6 +470,7 @@ impl App for Notepad {
                 }
             }
             FONT => self.draw_font(c, ctx),
+            w if self.printing.owns(w) => self.printing.draw(w, c, ctx),
             w if self.asks.owns(w) => self.asks.draw(c, &self.forms, &self.dialog_text),
             ABOUT => {
                 c.fill_rect(c.bounds(), cs.button_face);
@@ -515,6 +524,9 @@ impl Extended for Notepad {
 
     /// A box covers the window it was raised over while that window is open, else `MAIN`.
     fn parent(&self, win: WinId) -> Option<WinId> {
+        if self.printing.owns(win) {
+            return self.printing.parent(win);
+        }
         let open = |w: WinId| match w {
             GOTO => self.goto.is_some(),
             FIND | REPLACE_WIN => self.find_form(w).is_some(),
@@ -546,6 +558,7 @@ impl Extended for Notepad {
             FIND => (self.find.as_mut()?, Some(self.forms.fonts.size_px)),
             REPLACE_WIN => (self.replace.as_mut()?, Some(self.forms.fonts.size_px)),
             FONT => (self.font.as_mut()?, Some(self.forms.fonts.size_px)),
+            w if self.printing.owns(w) => return self.printing.drop_form(w),
             _ => return None,
         };
         Some(DropForm { form, px })
@@ -583,6 +596,7 @@ impl Extended for Notepad {
                 }
             }
             FONT => self.access_font(tree),
+            w if self.printing.owns(w) => self.printing.access(w, tree, ctx),
             w if self.asks.owns(w) => self.asks.access(tree, dt, forms),
             ABOUT => {
                 built(&self.about_form(), tree);

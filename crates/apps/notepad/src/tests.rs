@@ -63,6 +63,8 @@ fn menu_constants_point_at_their_rows() {
     assert_eq!(label_at(title::FILE, row::NEW), "New");
     assert_eq!(label_at(title::FILE, row::SAVE), "Save");
     assert_eq!(label_at(title::FILE, row::EXIT), "Exit");
+    assert_eq!(label_at(title::FILE, row::PAGE_SETUP), "Page Setup...");
+    assert_eq!(label_at(title::FILE, row::PRINT), "Print...");
     assert_eq!(label_at(title::EDIT, row::UNDO), "Undo");
     assert_eq!(label_at(title::EDIT, row::FIND), "Find...");
     assert_eq!(label_at(title::EDIT, row::FIND_NEXT), "Find Next");
@@ -3079,4 +3081,58 @@ fn a_window_reopens_with_its_files_absolute_path_and_an_untitled_one_with_none()
         cwd.join("notes.txt").to_str().map(String::from)
     );
     assert_eq!(np.reopen(ABOUT), None, "only the main window");
+}
+
+fn enter() -> Event {
+    typed(keysym::RETURN, None, false)
+}
+
+#[test]
+fn page_setup_ok_keeps_the_page_in_the_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut np = Notepad::new(None);
+    np.settings_path = Some(dir.path().join("notepad.toml"));
+    let mut ctx = test_ctx();
+    np.command(title::FILE, row::PAGE_SETUP, &ctx);
+    let win = repriseapp::print::PAGE_SETUP;
+    assert!(
+        np.children().iter().any(|c| c.id == win),
+        "Page Setup opens as a child"
+    );
+    np.event(win, typed(keysym::DOWN, None, false), &mut ctx);
+    np.event(win, enter(), &mut ctx);
+    assert!(np.children().is_empty(), "OK closes it");
+    let kept = settings::load(np.settings_path.as_ref().unwrap());
+    assert_eq!(kept.page.as_ref(), Some(&np.printing.setup));
+}
+
+#[test]
+fn a_bad_page_value_drops_only_that_value_and_keeps_the_other_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notepad.toml");
+    let text = "font = \"Mono\"\nsize = 14\n[page]\npaper = \"na_legal_8.5x14in\"\n\
+                landscape = \"yes\"\nmargins = [10, 10, 10]\n";
+    std::fs::write(&path, text).unwrap();
+    let s = settings::load(&path);
+    assert_eq!((s.font.as_str(), s.size), ("Mono", 14));
+    let page = s.page.expect("the page block is kept");
+    assert_eq!(page.paper, "na_legal_8.5x14in");
+    assert!(
+        !page.landscape,
+        "a landscape that is no bool reads as portrait"
+    );
+    assert!(
+        page.fits(),
+        "margins that are no four numbers read as the defaults"
+    );
+    std::fs::write(
+        &path,
+        "size = 9\n[page]\nmargins = [0, 0, 200000, 200000]\n",
+    )
+    .unwrap();
+    let page = settings::load(&path).page.unwrap();
+    assert!(
+        page.fits(),
+        "margins with no room between them read as the defaults"
+    );
 }
