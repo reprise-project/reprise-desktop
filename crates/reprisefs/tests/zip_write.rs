@@ -87,7 +87,7 @@ fn temps(zip: &Path) -> Vec<PathBuf> {
         .map(|e| e.path())
         .filter(|p| {
             let n = p.file_name().unwrap_or_default().to_string_lossy();
-            n.starts_with(&format!(".{name}.")) && n.ends_with(".tmp")
+            n.starts_with(&format!(".{name}.")) && n.ends_with(".zipwrite")
         })
         .collect()
 }
@@ -535,13 +535,23 @@ fn a_rewrite_sweeps_stale_temp_files_of_any_zip_in_its_folder() {
         f.set_modified(stale).expect("age it");
         p
     };
-    let other = made(".Other.ZIP.0123456789abcdef.tmp");
-    let text = made(".notes.txt.0123456789abcdef.tmp");
-    let fresh_one = dir.join(".Third.zip.fedcba9876543210.tmp");
+    let other = made(".Other.ZIP.0123456789abcdef.zipwrite");
+    let text = made(".notes.txt.0123456789abcdef.zipwrite");
+    let (f, saved) = reprisefs::ops::create_temp_beside(&zip, None).expect("a save's temp file");
+    f.set_modified(stale).expect("age it");
+    drop(f);
+    let fresh_one = dir.join(".Third.zip.fedcba9876543210.zipwrite");
     std::fs::write(&fresh_one, b"").expect("create");
     rewrite(&zip, &add(&dir.join("src"), &["a.txt"])).expect("rewritten");
     assert!(!other.exists(), "another zip's stale temp file goes");
-    assert!(text.exists(), "a document's temp file stays");
+    assert!(
+        text.exists(),
+        "a rewrite's temp file of a file not named as a zip stays"
+    );
+    assert!(
+        saved.exists(),
+        "a document save's temp file beside the zip stays"
+    );
     assert!(
         fresh_one.exists(),
         "a temp file written to within the deadline stays"
