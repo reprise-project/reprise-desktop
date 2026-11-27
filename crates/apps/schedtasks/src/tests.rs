@@ -545,6 +545,11 @@ fn delete_asks_first_and_only_for_a_task_new_task_made() {
     assert!(enabled(&w.app, DELETE));
     w.press(DELETE);
     let question = w.app.asking.win().expect("Delete asks");
+    let (b, _) = w.app.asking.up().unwrap();
+    assert_eq!(
+        b.fields.text,
+        "Delete the task 'Back up'? Its timer and service (reprise-task-back-up.timer) are stopped and their files removed."
+    );
     assert_eq!(w.sent(), [], "nothing before the answer");
     w.app.event(question, key(keysym::RETURN, None), &mut ctx());
     assert_eq!(w.sent(), [], "Enter is Cancel");

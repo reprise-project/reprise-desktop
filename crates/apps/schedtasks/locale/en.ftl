@@ -141,6 +141,6 @@ browse-all = All Files (*.*)
 
 ## Delete; $name is the task's name, $unit its timer
 delete-title = Delete Task
-delete-text = Delete the task { $name }? Its timer and service ({ $unit }) are stopped and their files removed.
+delete-text = Delete the task '{ $name }'? Its timer and service ({ $unit }) are stopped and their files removed.
 delete-yes = &Delete
 delete-no = Cancel
