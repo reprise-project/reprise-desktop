@@ -1,6 +1,6 @@
 //! The two-column Start panel as a model: the rows it lists in each mode, the
 //! keyboard's walk over them, the pointer's hot spot and its hover delays.
-//! [`Shape`] picks the Glass or the Blue menu.
+//! [`Shape`] picks the Glass, Onyx or Blue menu.
 
 pub mod access;
 pub mod bluelayout;
@@ -56,12 +56,15 @@ impl PowerButton {
         match self {
             PowerButton::ShutDown => shut_down(),
             PowerButton::LogOff => tr!("startpanel-power-log-off"),
-            PowerButton::Lock => tr!("startpanel-power-lock"),
+            PowerButton::Lock => lock(),
             PowerButton::Restart => tr!("startpanel-power-restart"),
         }
     }
 }
 
+pub fn lock() -> String {
+    tr!("startpanel-power-lock")
+}
 pub fn shut_down_options() -> String {
     tr!("startpanel-shut-down-options")
 }
@@ -150,11 +153,14 @@ pub struct ResultGroup {
 /// (an index into [`StartPanel::programs`]); that row is drawn lit for as
 /// long as the mode lasts, whatever else is lit.
 /// Which Start menu the panel is. Blue has no search, jump lists or tree: it stays in
-/// [`Mode::Home`], All Programs and Recent Items open menus, a letter jumps to a row.
+/// [`Mode::Home`], All Programs and Recent Items open menus, a letter jumps to a row. Onyx is
+/// Glass's menu without jump lists, its places kept beside the results in Search mode, and a
+/// power button, a lock button and an arrow at the foot of its right column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Shape {
     #[default]
     Glass,
+    Onyx,
     Blue,
 }
 
@@ -179,6 +185,8 @@ pub enum Spot {
     Clear,
     Shutdown,
     ShutdownArrow,
+    /// Onyx's lock button.
+    Lock,
     LogOff,
 }
 
@@ -308,8 +316,8 @@ impl StartPanel {
     /// rows come off until it is no taller.
     pub fn fit(&mut self, text: TextUnits, room: (i32, i32)) {
         self.text = match self.shape {
-            Shape::Glass => text
-                .fitting(layout::W, room.0)
+            Shape::Glass | Shape::Onyx => text
+                .fitting(layout::width(self), room.0)
                 .fitting(layout::least_height(self), room.1),
             Shape::Blue => text
                 .fitting(bluelayout::W, room.0)
@@ -336,8 +344,8 @@ impl StartPanel {
     }
 
     /// The keyboard's stop: `Search` (typing goes into the field) while it
-    /// walks the left pane, the results or a jump list; a place, `Shutdown`
-    /// or `ShutdownArrow` once it moved there.
+    /// walks the left pane, the results or a jump list; a place, `Shutdown`,
+    /// `Lock` or `ShutdownArrow` once it moved there.
     pub fn focus(&self) -> Spot {
         self.focus
     }
@@ -469,15 +477,18 @@ impl StartPanel {
             Some(Spot::AllPrograms) if self.mode != Mode::Programs => {
                 Event::ArmHover(Spot::AllPrograms)
             }
-            Some(Spot::ShutdownArrow) => Event::ArmHover(Spot::ShutdownArrow),
+            Some(Spot::ShutdownArrow) if self.shape == Shape::Glass => {
+                Event::ArmHover(Spot::ShutdownArrow)
+            }
             Some(s @ Spot::Place(i)) if self.opens_on_hover(i) => Event::ArmHover(s),
             _ => Event::Redraw,
         }
     }
 
-    /// Whether place `i` opens its menu after the hover delay: the Blue menu's Recent Items.
+    /// Whether place `i` opens its menu after the hover delay: the Blue and Onyx menus' Recent
+    /// Items.
     pub fn opens_on_hover(&self, i: usize) -> bool {
-        self.shape == Shape::Blue && self.places.get(i).is_some_and(|p| p.submenu)
+        self.shape != Shape::Glass && self.places.get(i).is_some_and(|p| p.submenu)
     }
 
     pub fn press(&mut self, at: Spot, button: Button) -> Event {
@@ -724,7 +735,7 @@ impl StartPanel {
         self.lit = Some(s);
         self.follow_lit();
         self.focus = match s {
-            Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow | Spot::LogOff => s,
+            Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow | Spot::Lock | Spot::LogOff => s,
             _ => Spot::Search,
         };
         if let Spot::Tree(i) = s {
@@ -766,7 +777,11 @@ impl StartPanel {
     }
 
     fn right_column(&self) -> Vec<Spot> {
-        let places = matches!(self.mode, Mode::Home | Mode::Programs);
+        let places = match self.mode {
+            Mode::Home | Mode::Programs => true,
+            Mode::Search => layout::places_in_search(self),
+            Mode::Jump(_) => false,
+        };
         let mut col: Vec<Spot> = if places {
             (0..self.places.len()).map(Spot::Place).collect()
         } else {
@@ -781,7 +796,7 @@ impl StartPanel {
 
     fn programs_shown(&self) -> usize {
         match self.shape {
-            Shape::Glass => layout::programs_shown(self),
+            Shape::Glass | Shape::Onyx => layout::programs_shown(self),
             Shape::Blue => bluelayout::programs_shown(self),
         }
     }
@@ -789,9 +804,9 @@ impl StartPanel {
     fn walk(&mut self, step: Step) -> Event {
         let from = self.lit();
         let col = match from {
-            Some(Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow | Spot::LogOff) => {
-                self.right_column()
-            }
+            Some(
+                Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow | Spot::Lock | Spot::LogOff,
+            ) => self.right_column(),
             Some(Spot::Jump(_)) => layout::jumps_shown(self).map(Spot::Jump).collect(),
             _ => self.left_column(),
         };
@@ -799,7 +814,7 @@ impl StartPanel {
             return Event::None;
         }
         let from = from.map(|s| match s {
-            Spot::ShutdownArrow => Spot::Shutdown,
+            Spot::ShutdownArrow | Spot::Lock => Spot::Shutdown,
             s => s,
         });
         let at = from.and_then(|s| col.iter().position(|&c| c == s));
@@ -819,7 +834,8 @@ impl StartPanel {
 
     fn left(&mut self) -> Event {
         match self.lit() {
-            Some(Spot::ShutdownArrow) => self.light(Spot::Shutdown),
+            Some(Spot::ShutdownArrow) if self.shape == Shape::Onyx => self.light(Spot::Lock),
+            Some(Spot::ShutdownArrow | Spot::Lock) => self.light(Spot::Shutdown),
             Some(Spot::Place(_) | Spot::Shutdown) => match self.left_column().first() {
                 Some(&s) => self.light(s),
                 None => return Event::None,
@@ -869,7 +885,8 @@ impl StartPanel {
             Some(Spot::Place(i)) if self.places.get(i).is_some_and(|p| p.submenu) => {
                 return Event::Activate(Spot::Place(i));
             }
-            Some(Spot::Shutdown) => self.light(Spot::ShutdownArrow),
+            Some(Spot::Shutdown) if self.shape == Shape::Onyx => self.light(Spot::Lock),
+            Some(Spot::Shutdown | Spot::Lock) => self.light(Spot::ShutdownArrow),
             Some(Spot::ShutdownArrow) => return Event::Activate(Spot::ShutdownArrow),
             Some(Spot::Place(_) | Spot::Jump(_) | Spot::AllPrograms | Spot::Result(..)) => {
                 return Event::None;
@@ -886,7 +903,8 @@ impl StartPanel {
         let next = match self.focus {
             Spot::Search => self.right_column()[0],
             Spot::Place(_) => Spot::Shutdown,
-            Spot::Shutdown => Spot::ShutdownArrow,
+            Spot::Shutdown if self.shape == Shape::Onyx => Spot::Lock,
+            Spot::Shutdown | Spot::Lock => Spot::ShutdownArrow,
             _ => Spot::Search,
         };
         if next == Spot::Search {
@@ -1850,6 +1868,82 @@ pub(crate) mod tests {
             p.hover_fired(Spot::Place(1)),
             Event::None,
             "the pointer left"
+        );
+    }
+
+    fn onyx() -> StartPanel {
+        let mut p = StartPanel::new();
+        p.shape = Shape::Onyx;
+        p.frequent = vec![prow("Notepad", false)];
+        p.places = vec![place("Documents"), place("Computer")];
+        p
+    }
+
+    #[test]
+    fn onyx_tabs_and_arrows_through_power_lock_and_the_arrow() {
+        let mut p = onyx();
+        let mut stops = Vec::new();
+        for _ in 0..5 {
+            p.key(Key::Tab);
+            stops.push(p.focus());
+        }
+        assert_eq!(
+            stops,
+            [
+                Spot::Place(0),
+                Spot::Shutdown,
+                Spot::Lock,
+                Spot::ShutdownArrow,
+                Spot::Search
+            ]
+        );
+        p.focus_on(Spot::Shutdown);
+        p.key(Key::Right);
+        assert_eq!(p.lit(), Some(Spot::Lock));
+        p.key(Key::Right);
+        assert_eq!(p.lit(), Some(Spot::ShutdownArrow));
+        p.key(Key::Left);
+        assert_eq!(p.lit(), Some(Spot::Lock));
+        p.key(Key::Up);
+        assert_eq!(
+            p.lit(),
+            Some(Spot::Place(1)),
+            "up from the buttons to the last place"
+        );
+        p.focus_on(Spot::Lock);
+        assert_eq!(p.key(Key::Enter), Event::Activate(Spot::Lock));
+    }
+
+    #[test]
+    fn onyx_opens_its_arrow_on_a_click_only_and_keeps_its_places_while_searching() {
+        let mut p = onyx();
+        assert_eq!(p.pointer(Some(Spot::ShutdownArrow)), Event::Redraw);
+        let mut glass = StartPanel::new();
+        assert_eq!(
+            glass.pointer(Some(Spot::ShutdownArrow)),
+            Event::ArmHover(Spot::ShutdownArrow)
+        );
+        p.key(Key::Char(EditKey::Insert("no".into())));
+        assert_eq!(p.mode(), Mode::Search);
+        p.key(Key::Tab);
+        assert_eq!(
+            p.focus(),
+            Spot::Place(0),
+            "Tab reaches the places in Search"
+        );
+    }
+
+    #[test]
+    fn onyxs_recent_items_opens_on_hover() {
+        let mut p = onyx();
+        p.places[1].submenu = true;
+        assert_eq!(
+            p.pointer(Some(Spot::Place(1))),
+            Event::ArmHover(Spot::Place(1))
+        );
+        assert_eq!(
+            p.hover_fired(Spot::Place(1)),
+            Event::Activate(Spot::Place(1))
         );
     }
 }

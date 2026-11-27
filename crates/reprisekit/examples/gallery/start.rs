@@ -10,15 +10,38 @@ use reprisekit::theme::{Color, FontConfig};
 /// The Start panel over a flat blue desktop at `pct` text: Home, the program tree, Search, a jump
 /// list, and Home under Classic.
 pub fn render_start_panel(pct: u32) -> Canvas {
-    start_panels(pct, reprisekit::glass::Mode::Light, 1)
+    start_panels(
+        pct,
+        reprisekit::glass::Mode::Light,
+        1,
+        reprisekit::glass::Style::Glass,
+    )
 }
 
 /// [`render_start_panel`]'s Glass panels in dark Glass at scale `n`, Shut down keyed in the last.
 pub fn render_start_panel_dark(n: i32) -> Canvas {
-    start_panels(100, reprisekit::glass::Mode::Dark, n)
+    start_panels(
+        100,
+        reprisekit::glass::Mode::Dark,
+        n,
+        reprisekit::glass::Style::Glass,
+    )
 }
 
-fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
+/// The Onyx Start menu in `mode` at scale `n`: a lit program, a lit place showing its picture,
+/// the program tree, Search beside the places, the power button hot, and the lock button keyed
+/// with the arrow held.
+pub fn render_onyx_start_panel(n: i32, mode: reprisekit::glass::Mode) -> Canvas {
+    start_panels(100, mode, n, reprisekit::glass::Style::Onyx)
+}
+
+fn start_panels(
+    pct: u32,
+    mode: reprisekit::glass::Mode,
+    n: i32,
+    style: reprisekit::glass::Style,
+) -> Canvas {
+    use reprisekit::glass::Style;
     use reprisekit::startpanel::{
         self as sp, Mode, PlaceRow, ProgramRow, ResultGroup, ResultRow, Spot, StartPanel, TreeRow,
     };
@@ -48,10 +71,17 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
         icon: Some(square(grown(16), blue)),
         depth,
     };
+    let onyx = style == Style::Onyx;
     let base = || {
         let mut p = StartPanel::new();
+        if onyx {
+            p.shape = sp::Shape::Onyx;
+        }
         p.text = u;
         p.pinned = vec![prog("Text Editor", false)];
+        if onyx {
+            p.pinned[0].detail = Some("Plain text".into());
+        }
         p.frequent = [
             ("Calculator", false),
             ("Getting Started", true),
@@ -64,7 +94,7 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
             ("Solitaire", false),
         ]
         .iter()
-        .map(|&(n, j)| prog(n, j))
+        .map(|&(n, j)| prog(n, j && !onyx))
         .collect();
         p.places = [
             "user",
@@ -190,8 +220,19 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
         p.pointer(Some(Spot::Jump(2)));
         p
     };
+    let power_hot = {
+        let mut p = base();
+        p.pointer(Some(Spot::Shutdown));
+        p
+    };
+    let lock_keyed = {
+        let mut p = base();
+        p.focus_on(Spot::Lock);
+        p
+    };
     let glass = reprisekit::glass::Settings {
         mode,
+        style,
         ..reprisekit::glass::Settings::default()
     };
     let glass_theme = cued(interfaces::theme_with(
@@ -203,7 +244,8 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
     .scaled(n);
     let classic = cued(interfaces::theme_for(Interface::Classic));
     let text = interfaces::start_panel_text(&glass_theme);
-    let (cell_w, cell_h) = (u.len(520) * n, u.len(540) * n);
+    let tall = if onyx { 560 } else { 540 };
+    let (cell_w, cell_h) = (u.len(520) * n, u.len(tall) * n);
     let mut c = Canvas::new(3 * cell_w as u32, 2 * cell_h as u32);
     c.fill_rect(c.bounds(), Color::rgb(67, 149, 209));
     let search_keyed = {
@@ -211,23 +253,26 @@ fn start_panels(pct: u32, mode: reprisekit::glass::Mode, n: i32) -> Canvas {
         p.focus_on(Spot::Shutdown);
         p
     };
-    let last = if mode == reprisekit::glass::Mode::Dark {
-        (&search_keyed, &glass_theme)
+    let last = if onyx {
+        (&lock_keyed, &glass_theme, Some(Spot::ShutdownArrow))
+    } else if mode == reprisekit::glass::Mode::Dark {
+        (&search_keyed, &glass_theme, None)
     } else {
-        (&home_lit, &classic)
+        (&home_lit, &classic, None)
     };
+    let fifth = if onyx { &power_hot } else { &jump };
     let panels = [
-        (&home_lit, &glass_theme),
-        (&place_lit, &glass_theme),
-        (&programs, &glass_theme),
-        (&search, &glass_theme),
-        (&jump, &glass_theme),
+        (&home_lit, &glass_theme, None),
+        (&place_lit, &glass_theme, None),
+        (&programs, &glass_theme, None),
+        (&search, &glass_theme, None),
+        (fifth, &glass_theme, None),
         last,
     ];
-    for (k, (p, theme)) in panels.into_iter().enumerate() {
+    for (k, (p, theme, pressed)) in panels.into_iter().enumerate() {
         let l = sp::layout::layout(p).scaled(n);
         let mut panel = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
-        interfaces::draw_start_panel(&mut panel, theme, &glass, &text, p, &l, None, true);
+        interfaces::draw_start_panel(&mut panel, theme, &glass, &text, p, &l, pressed, true);
         let (x, y) = ((k % 3) as i32 * cell_w + 10, (k / 3) as i32 * cell_h + 10);
         c.blit_over(x, y + sp::layout::OVERHANG * n + l.canvas.y, &panel);
     }

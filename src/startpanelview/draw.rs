@@ -21,6 +21,10 @@ use crate::raster::{Canvas, Rect};
 use super::StartPanelView;
 
 const CROSSFADE: Duration = Duration::from_millis(350);
+/// How long the Onyx picture holds the last one while the pointer rests on a place, then how long
+/// it fades to the place's.
+const ONYX_PICTURE_HOLD: Duration = Duration::from_millis(470);
+const ONYX_PICTURE_FADE: Duration = Duration::from_millis(250);
 
 /// What a panel canvas is drawn from, besides the look.
 #[derive(Clone, PartialEq)]
@@ -69,10 +73,25 @@ impl Drawn {
     }
 }
 
+/// `from` shown over `rect` for `hold`, then fading out over `fade`.
 pub(super) struct Crossfade {
     from: Rc<Canvas>,
     rect: Rect,
     start: Instant,
+    hold: Duration,
+    fade: Duration,
+}
+
+impl Crossfade {
+    /// How much of `from` shows at `now`: 1 through the hold, then falling to 0.
+    fn weight(&self, now: Instant) -> f32 {
+        let t = now.saturating_duration_since(self.start + self.hold);
+        1.0 - (t.as_secs_f32() / self.fade.as_secs_f32()).min(1.0)
+    }
+
+    fn done(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.start) >= self.hold + self.fade
+    }
 }
 
 /// Where a `w` x `h` panel by bar `p` stands on `area`, its picture `overhang` px above its top.
@@ -228,10 +247,7 @@ impl State {
         let p = self.bar_placement(&v.output);
         let area = self.usable_area(Some(&v.output));
         let dock = self.config.theme.taskbar_shape().start_menu;
-        let overhang = match v.model.shape {
-            Shape::Glass => layout::OVERHANG,
-            Shape::Blue => 0,
-        };
+        let overhang = layout::overhang(&v.model);
         let room = (area.width, panel_room(dock, &p, area, overhang));
         let text = self.config.theme.text;
         let scale = self.draw_scale_at(Some(&v.output)).max(1);
@@ -352,29 +368,35 @@ impl State {
                 (old.mode, mode),
                 (Mode::Home, Mode::Programs) | (Mode::Programs, Mode::Home)
             ) {
-                rects.push(inside(sl.pane));
+                rects.push((inside(sl.pane), Duration::ZERO, CROSSFADE));
             }
             if old.picture != picture
                 && let Some(r) = sl.picture
             {
-                rects.push(inside(r));
+                let (hold, fade) = match v.model.shape {
+                    Shape::Onyx => (ONYX_PICTURE_HOLD, ONYX_PICTURE_FADE),
+                    _ => (Duration::ZERO, CROSSFADE),
+                };
+                rects.push((inside(r), hold, fade));
             }
-            v.crossfades.extend(rects.into_iter().map(|rect| Crossfade {
-                from: old.canvas.clone(),
-                rect,
-                start: now,
-            }));
+            v.crossfades
+                .extend(rects.into_iter().map(|(rect, hold, fade)| Crossfade {
+                    from: old.canvas.clone(),
+                    rect,
+                    start: now,
+                    hold,
+                    fade,
+                }));
         }
         let size = (raster.width, raster.height);
         v.crossfades
-            .retain(|f| now - f.start < CROSSFADE && (f.from.width, f.from.height) == size);
+            .retain(|f| !f.done(now) && (f.from.width, f.from.height) == size);
         let canvas = if v.crossfades.is_empty() {
             raster
         } else {
             let mut canvas = (*raster).clone();
             for f in &v.crossfades {
-                let t = (now - f.start).as_secs_f32() / CROSSFADE.as_secs_f32();
-                canvas.mix(&f.from, f.rect, 1.0 - t);
+                canvas.mix(&f.from, f.rect, f.weight(now));
             }
             Rc::new(canvas)
         };
@@ -419,5 +441,33 @@ impl State {
         let focus = startpanel::access::access(&v.model, &lay, &mut tree, ROOT);
         tree.set_focus(focus);
         Some(tree)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_onyx_picture_holds_then_fades_and_glass_fades_at_once() {
+        let start = Instant::now();
+        let fade = |hold, fade| Crossfade {
+            from: Rc::new(Canvas::new(1, 1)),
+            rect: Rect::new(0, 0, 1, 1),
+            start,
+            hold,
+            fade,
+        };
+        let ms = |n| start + Duration::from_millis(n);
+        let onyx = fade(ONYX_PICTURE_HOLD, ONYX_PICTURE_FADE);
+        assert_eq!(onyx.weight(ms(460)), 1.0, "the old picture holds");
+        assert!(
+            (onyx.weight(ms(595)) - 0.5).abs() < 0.01,
+            "halfway through its fade"
+        );
+        assert!(!onyx.done(ms(700)) && onyx.done(ms(720)));
+        let glass = fade(Duration::ZERO, CROSSFADE);
+        assert!((glass.weight(ms(175)) - 0.5).abs() < 0.01);
+        assert!(glass.done(ms(350)));
     }
 }

@@ -152,7 +152,12 @@ impl State {
             !self.boot_targets.is_empty(),
             self.offline.known.prepared,
         );
+        let onyx = self
+            .start_panel
+            .as_ref()
+            .is_some_and(|v| v.model.shape == Shape::Onyx);
         let (items, rows) = match self.config.startmenu_power {
+            _ if onyx => crate::startmenu::with_shut_down_last(menu),
             PowerButton::ShutDown => menu,
             _ => crate::startmenu::with_shut_down(menu),
         };

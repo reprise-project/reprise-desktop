@@ -1,9 +1,9 @@
 //! The Start panel's `access` part: a menu filling the panel with an item per row, the search field,
-//! and the Shut down button and its arrow. Results and a jump list hang in groups named by their headers.
+//! and the Shut down button, Onyx's lock button and the arrow. Results and a jump list hang in groups named by their headers.
 
 use super::layout::Layout;
 use super::{
-    Mode, Shape, Spot, StartPanel, TreeRow, all_programs, back, clear, log_off, search_cue,
+    Mode, Shape, Spot, StartPanel, TreeRow, all_programs, back, clear, lock, log_off, search_cue,
     shut_down_options, turn_off, user_accounts,
 };
 use crate::access::accesskit::{HasPopup, Node, NodeId, Role};
@@ -136,6 +136,7 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
         Spot::Clear => access::button(r, &clear(), true, false),
         Spot::Shutdown if p.shape == Shape::Blue => access::button(r, &turn_off(), true, false),
         Spot::Shutdown => access::button(r, &p.power.label(), true, false),
+        Spot::Lock => access::button(r, &lock(), true, false),
         Spot::LogOff => access::button(r, &log_off(), true, false),
         Spot::ShutdownArrow => {
             let mut n = access::button(r, &shut_down_options(), true, false);
@@ -274,5 +275,15 @@ mod tests {
         p.key(Key::Down);
         let (t, focus) = build(&p);
         assert_eq!(Some(focus), t.find(Role::MenuItem, "Notepad"));
+    }
+
+    #[test]
+    fn onyx_names_its_lock_button() {
+        let mut p = StartPanel::new();
+        p.shape = Shape::Onyx;
+        p.focus_on(Spot::Lock);
+        let (t, focus) = build(&p);
+        assert_eq!(Some(focus), t.find(Role::Button, "Lock"));
+        assert!(t.find(Role::Button, &shut_down_options()).is_some());
     }
 }

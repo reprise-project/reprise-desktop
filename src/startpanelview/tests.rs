@@ -2334,3 +2334,33 @@ fn a_start_jump_list_file_pins_unpins_and_leaves_the_list_from_its_menu() {
     assert!(notes.exists(), "the file itself stays");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn onyx_opens_under_glass_in_the_onyx_style_only() {
+    use crate::config::{Config, StartMenuStyle};
+    use reprisekit::glass::Style;
+    use reprisekit::interface::Interface;
+    use reprisekit::startpanel::Shape;
+    let under = |interface, startmenu_style, style| {
+        let mut c = Config::default();
+        c.base = repriseconf::config::Config {
+            interface,
+            startmenu_style,
+            glass: reprisekit::glass::Settings {
+                style,
+                ..c.base.glass
+            },
+            ..c.base
+        };
+        start_shape(&c)
+    };
+    let (glass, menu) = (Interface::Glass, StartMenuStyle::Glass);
+    assert_eq!(under(glass, menu, Style::Glass), Shape::Glass);
+    assert_eq!(under(glass, menu, Style::Onyx), Shape::Onyx);
+    assert_eq!(under(glass, StartMenuStyle::Blue, Style::Onyx), Shape::Blue);
+    assert_eq!(
+        under(Interface::Classic, menu, Style::Onyx),
+        Shape::Glass,
+        "the style counts under Glass only"
+    );
+}

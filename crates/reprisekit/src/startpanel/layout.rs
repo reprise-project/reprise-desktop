@@ -1,8 +1,9 @@
 //! Where the Start panel's parts go in each mode, and which spot a point falls on. Panel coordinates: the glass's top-left is (0, 0); the user picture stands above it, so the canvas starts above 0.
-//! The panel stands 411x476 at 100% text and grows with the text size ([`StartPanel::text`]).
-//! With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown.
+//! The Glass panel stands 411x476 at 100% text, the Onyx one 406x498, and both grow with the text size ([`StartPanel::text`]).
+//! Onyx's search field and buttons stand on the frame below its pane, and its pane keeps its width in Search mode, where the places stay.
+//! With both pinned and frequent programs the rule between them adds 4 px and everything from All Programs down moves with it; program rows that do not fit above the All Programs rule are not shown. Onyx's rule takes 8 px.
 //! On a screen too short for the panel ([`StartPanel::room`]) program rows come off the list, 38 px each, and everything from All Programs down moves up with them; the places close up to fit above Shut down.
-//! On a screen too narrow for it, or too short to hold its places at their closest, the text size steps down ([`StartPanel::fit`]); on a narrow one the jump pane narrows too; at 100% the right column narrows by up to 40 px, then the left one by up to 51 px.
+//! On a screen too narrow for it, or too short to hold its places at their closest, the text size steps down ([`StartPanel::fit`]); on a narrow one the jump pane narrows too; at 100% the right column narrows by up to 40 px (Onyx's by 8), then the left one by up to 51 px.
 
 use super::{Mode, Shape, Spot, StartPanel};
 use crate::raster::Rect;
@@ -78,6 +79,119 @@ const PLACE_RULE_LINE: i32 = 2;
 const NARROW_MOST: i32 = 40;
 /// The most the left column narrows past that: the panel stands 320 px wide.
 const SHIFT_MOST: i32 = 51;
+
+/// A panel's sizes at 100% text, design px: the Glass one's from the constants above, and Onyx's.
+struct Geo {
+    w: i32,
+    h: i32,
+    overhang: i32,
+    picture_frame: Rect,
+    pane: Rect,
+    pin_rule_h: i32,
+    pin_rule_down: i32,
+    all_rule_y: i32,
+    all_programs: Rect,
+    search: Rect,
+    clear: Rect,
+    shutdown: Rect,
+    /// Onyx's lock button, between the power button and the arrow.
+    lock: Option<Rect>,
+    shutdown_arrow: Rect,
+    /// The pane's width in Search mode; a pane that keeps its width keeps the places beside it.
+    search_pane_w: i32,
+    header_w: i32,
+    result_w: i32,
+    place_x: i32,
+    place_w: i32,
+    place_rule_x: i32,
+    place_rule_w: i32,
+    narrow_most: i32,
+}
+
+const GLASS: Geo = Geo {
+    w: W,
+    h: H,
+    overhang: OVERHANG,
+    picture_frame: PICTURE_FRAME,
+    pane: PANE,
+    pin_rule_h: PIN_RULE_H,
+    pin_rule_down: PIN_RULE_DOWN,
+    all_rule_y: ALL_RULE_Y,
+    all_programs: ALL_PROGRAMS,
+    search: SEARCH,
+    clear: CLEAR,
+    shutdown: SHUTDOWN,
+    lock: None,
+    shutdown_arrow: SHUTDOWN_ARROW,
+    search_pane_w: SEARCH_PANE_W,
+    header_w: HEADER_W,
+    result_w: RESULT_W,
+    place_x: PLACE_X,
+    place_w: PLACE_W,
+    place_rule_x: PLACE_RULE_X,
+    place_rule_w: PLACE_RULE_W,
+    narrow_most: NARROW_MOST,
+};
+
+const ONYX_OVERHANG: i32 = 24;
+// Onyx's bottom band: the field under the pane, then the power, lock and arrow buttons, one
+// outlined group.
+const ONYX_BAND_Y: i32 = 468;
+const ONYX: Geo = Geo {
+    w: 406,
+    h: 498,
+    overhang: ONYX_OVERHANG,
+    picture_frame: Rect::new(304, -ONYX_OVERHANG, 58, 58),
+    pane: Rect::new(9, 9, 250, 450),
+    pin_rule_h: 8,
+    pin_rule_down: 4,
+    all_rule_y: 429,
+    all_programs: Rect::new(ROW_X, 434, ROW_W, 23),
+    search: Rect::new(8, ONYX_BAND_Y, 252, 22),
+    clear: Rect::new(237, ONYX_BAND_Y + 1, 21, 20),
+    shutdown: Rect::new(267, ONYX_BAND_Y, 52, 22),
+    lock: Some(Rect::new(319, ONYX_BAND_Y, 53, 22)),
+    shutdown_arrow: Rect::new(372, ONYX_BAND_Y, 22, 22),
+    search_pane_w: 250,
+    header_w: 238,
+    result_w: 230,
+    place_x: 267,
+    place_w: 132,
+    place_rule_x: 270,
+    place_rule_w: 126,
+    narrow_most: 8,
+};
+
+fn geo(p: &StartPanel) -> &'static Geo {
+    match p.shape {
+        Shape::Onyx => &ONYX,
+        Shape::Glass | Shape::Blue => &GLASS,
+    }
+}
+
+/// The panel's width at 100% text, before it narrows to fit a room.
+pub fn width(p: &StartPanel) -> i32 {
+    geo(p).w
+}
+
+/// How far the user picture stands above the panel's top; the Blue panel has none.
+pub fn overhang(p: &StartPanel) -> i32 {
+    match p.shape {
+        Shape::Blue => 0,
+        _ => geo(p).overhang,
+    }
+}
+
+/// How much narrower `p`'s place rows are than the Glass panel's, so their arrows keep their
+/// distance from the rows' right edge.
+pub fn place_inset(p: &StartPanel) -> i32 {
+    PLACE_W - geo(p).place_w
+}
+
+/// Whether `p` keeps its places and picture in Search mode, its results in the pane's width.
+pub fn places_in_search(p: &StartPanel) -> bool {
+    geo(p).search_pane_w == geo(p).pane.width
+}
 
 /// Where the parts go, in the layout's pixels (`scale` device pixels per
 /// logical one). `spots` lists every spot shown, the clear button before
@@ -160,7 +274,7 @@ fn pin_rule(p: &StartPanel) -> i32 {
     if p.pinned.is_empty() || p.frequent.is_empty() {
         0
     } else {
-        PIN_RULE_H
+        geo(p).pin_rule_h
     }
 }
 
@@ -170,8 +284,8 @@ fn rows_cut(p: &StartPanel) -> i32 {
     let Some((_, room)) = p.room else {
         return 0;
     };
-    let tall = H + pin_rule(p);
-    let most = (ALL_RULE_Y - PROGRAM_TOP) / PROGRAM_H - 1;
+    let tall = geo(p).h + pin_rule(p);
+    let most = (geo(p).all_rule_y - PROGRAM_TOP) / PROGRAM_H - 1;
     (0..most)
         .find(|n| p.text.len(tall - n * PROGRAM_H) <= room)
         .unwrap_or(most)
@@ -183,13 +297,14 @@ pub fn least_height(p: &StartPanel) -> i32 {
     let n = p.places.len() as i32;
     let rules = p.places.iter().skip(1).filter(|pl| pl.rule_before).count() as i32;
     let gap = PLACE_PITCH - PLACE_H;
-    let places = PLACE_TOP + rules * PLACE_RULE_H + n * PLACE_PITCH_LEAST - gap - SHUTDOWN.y;
-    let most = (ALL_RULE_Y - PROGRAM_TOP) / PROGRAM_H - 1;
+    let g = geo(p);
+    let places = PLACE_TOP + rules * PLACE_RULE_H + n * PLACE_PITCH_LEAST - gap - g.shutdown.y;
+    let most = (g.all_rule_y - PROGRAM_TOP) / PROGRAM_H - 1;
     let cut = (0..=most)
         .rev()
         .find(|k| pin_rule(p) - k * PROGRAM_H >= places)
         .unwrap_or(0);
-    H + pin_rule(p) - cut * PROGRAM_H
+    g.h + pin_rule(p) - cut * PROGRAM_H
 }
 
 /// The places' pitch: 35, closer on a panel too short to stack them all above Shut down, but
@@ -198,7 +313,7 @@ fn place_pitch(p: &StartPanel) -> i32 {
     let n = p.places.len() as i32;
     let rules = p.places.iter().skip(1).filter(|pl| pl.rule_before).count() as i32;
     let gap = PLACE_PITCH - PLACE_H;
-    let room = SHUTDOWN.y + grow(p) - PLACE_TOP - rules * PLACE_RULE_H + gap;
+    let room = geo(p).shutdown.y + grow(p) - PLACE_TOP - rules * PLACE_RULE_H + gap;
     (room / n.max(1)).clamp(PLACE_PITCH_LEAST, PLACE_PITCH)
 }
 
@@ -208,22 +323,24 @@ pub fn place_lift(p: &StartPanel) -> i32 {
 }
 
 /// How much narrower the right column is so the panel stands in [`StartPanel::room`]'s width once
-/// the text is down to 100%; never more than [`NARROW_MOST`].
+/// the text is down to 100%; never more than [`NARROW_MOST`], Onyx's 8.
 pub fn narrow(p: &StartPanel) -> i32 {
     let Some((room, _)) = p.room else {
         return 0;
     };
-    (W - p.text.within(room)).clamp(0, NARROW_MOST)
+    let g = geo(p);
+    (g.w - p.text.within(room)).clamp(0, g.narrow_most)
 }
 
 /// How much narrower the left column is, and how far left everything right of it moves, so the
-/// panel stands in [`StartPanel::room`]'s width once the right column is [`NARROW_MOST`] narrower;
+/// panel stands in [`StartPanel::room`]'s width once the right column is as narrow as it gets;
 /// never more than [`SHIFT_MOST`].
 pub fn shift(p: &StartPanel) -> i32 {
     let Some((room, _)) = p.room else {
         return 0;
     };
-    (W - NARROW_MOST - p.text.within(room)).clamp(0, SHIFT_MOST)
+    let g = geo(p);
+    (g.w - g.narrow_most - p.text.within(room)).clamp(0, SHIFT_MOST)
 }
 
 /// How much narrower the jump pane is so the Jump panel stands in [`StartPanel::room`]'s width;
@@ -232,7 +349,7 @@ fn jump_squeeze(p: &StartPanel) -> i32 {
     let Some((room, _)) = p.room else {
         return 0;
     };
-    (JUMP_W - p.text.within(room)).clamp(0, JUMP_W - W + narrow(p) + shift(p))
+    (JUMP_W - p.text.within(room)).clamp(0, JUMP_W - geo(p).w + narrow(p) + shift(p))
 }
 
 fn down(r: Rect, by: i32) -> Rect {
@@ -250,7 +367,8 @@ fn narrower(r: Rect, by: i32) -> Rect {
 fn program_rows(p: &StartPanel) -> (Vec<Rect>, Option<Rect>) {
     let g = grow(p);
     let shift = shift(p);
-    let bottom = ALL_RULE_Y + g;
+    let at = geo(p);
+    let bottom = at.all_rule_y + g;
     let mut y = PROGRAM_TOP;
     let mut rows = Vec::new();
     let mut rule = None;
@@ -258,11 +376,11 @@ fn program_rows(p: &StartPanel) -> (Vec<Rect>, Option<Rect>) {
         if i == p.pinned.len() && g > 0 {
             rule = Some(Rect::new(
                 LEFT_RULE_X,
-                y + PIN_RULE_DOWN,
+                y + at.pin_rule_down,
                 LEFT_RULE_W - shift,
                 RULE_H,
             ));
-            y += PIN_RULE_H;
+            y += at.pin_rule_h;
         }
         if y + PROGRAM_H > bottom {
             break;
@@ -278,7 +396,7 @@ pub fn programs_shown(p: &StartPanel) -> usize {
 }
 
 pub fn tree_capacity(p: &StartPanel) -> usize {
-    ((ALL_RULE_Y + grow(p) - TREE_TOP) / TREE_ROW_H).max(0) as usize
+    ((geo(p).all_rule_y + grow(p) - TREE_TOP) / TREE_ROW_H).max(0) as usize
 }
 
 fn jump_pane(p: &StartPanel) -> Rect {
@@ -332,7 +450,7 @@ pub fn jumps_shown(p: &StartPanel) -> impl Iterator<Item = usize> {
 /// size, centred where the grown frame would be.
 pub fn layout(p: &StartPanel) -> Layout {
     let l = match p.shape {
-        Shape::Glass => layout_100(p),
+        Shape::Glass | Shape::Onyx => layout_100(p),
         Shape::Blue => super::bluelayout::layout_100(p),
     };
     let u = p.text;
@@ -392,27 +510,32 @@ fn layout_100(p: &StartPanel) -> Layout {
     let squeeze = jump_squeeze(p);
     let narrow = narrow(p);
     let shift = shift(p);
+    let at = geo(p);
+    // Results wider than the pane leave the right column; in a pane that keeps its width they
+    // keep it too.
+    let wide = !places_in_search(p);
+    let result_narrow = if wide { narrow } else { 0 };
     let panel = Rect::new(
         0,
         0,
         if let Mode::Jump(_) = mode {
             JUMP_W - squeeze
         } else {
-            W - narrow - shift
+            at.w - narrow - shift
         },
-        H + g,
+        at.h + g,
     );
     let pane_w = match mode {
-        Mode::Search => SEARCH_PANE_W - narrow - shift,
+        Mode::Search => at.search_pane_w - result_narrow - shift,
         Mode::Jump(_) => JUMP_PANE_W - squeeze,
-        Mode::Home | Mode::Programs => PANE.width - shift,
+        Mode::Home | Mode::Programs => at.pane.width - shift,
     };
-    let pane = Rect::new(PANE.x, PANE.y, pane_w, PANE.height + g);
+    let pane = Rect::new(at.pane.x, at.pane.y, pane_w, at.pane.height + g);
     let mut spots = Vec::new();
     let mut rules = Vec::new();
     let mut headers = Vec::new();
     let mut tree_bar = None;
-    let all_rule = Rect::new(LEFT_RULE_X, ALL_RULE_Y + g, LEFT_RULE_W - shift, RULE_H);
+    let all_rule = Rect::new(LEFT_RULE_X, at.all_rule_y + g, LEFT_RULE_W - shift, RULE_H);
 
     match mode {
         Mode::Home | Mode::Jump(_) => {
@@ -424,7 +547,7 @@ fn layout_100(p: &StartPanel) -> Layout {
             );
             rules.extend(rule);
             rules.push(all_rule);
-            spots.push((Spot::AllPrograms, down(narrower(ALL_PROGRAMS, shift), g)));
+            spots.push((Spot::AllPrograms, down(narrower(at.all_programs, shift), g)));
         }
         Mode::Programs => {
             let rows = p.tree_rows();
@@ -446,10 +569,10 @@ fn layout_100(p: &StartPanel) -> Layout {
                 (Spot::Tree(i), Rect::new(ROW_X, y, w, TREE_ROW_H))
             }));
             rules.push(all_rule);
-            spots.push((Spot::AllPrograms, down(narrower(ALL_PROGRAMS, shift), g)));
+            spots.push((Spot::AllPrograms, down(narrower(at.all_programs, shift), g)));
         }
         Mode::Search => {
-            let bottom = ALL_PROGRAMS.bottom() + g;
+            let bottom = at.all_programs.bottom() + g;
             let mut y = RESULTS_TOP;
             'groups: for (gi, grp) in p.results.iter().enumerate() {
                 if grp.rows.is_empty() {
@@ -460,14 +583,14 @@ fn layout_100(p: &StartPanel) -> Layout {
                 }
                 headers.push((
                     gi,
-                    Rect::new(HEADER_X, y, HEADER_W - narrow - shift, HEADER_H),
+                    Rect::new(HEADER_X, y, at.header_w - result_narrow - shift, HEADER_H),
                 ));
                 y += HEADER_H;
                 for ri in 0..grp.rows.len() {
                     if y + RESULT_H > bottom {
                         break 'groups;
                     }
-                    let r = Rect::new(RESULT_X, y, RESULT_W - narrow - shift, RESULT_H);
+                    let r = Rect::new(RESULT_X, y, at.result_w - result_narrow - shift, RESULT_H);
                     spots.push((Spot::Result(gi, ri), r));
                     y += RESULT_H;
                 }
@@ -477,39 +600,36 @@ fn layout_100(p: &StartPanel) -> Layout {
     }
 
     if !p.query().is_empty() {
-        spots.push((Spot::Clear, down(left(CLEAR, shift), g)));
+        spots.push((Spot::Clear, down(left(at.clear, shift), g)));
     }
-    spots.push((Spot::Search, down(narrower(SEARCH, shift), g)));
+    spots.push((Spot::Search, down(narrower(at.search, shift), g)));
 
     let mut picture = None;
     let mut jump = None;
     match mode {
-        Mode::Home | Mode::Programs => {
+        Mode::Search if wide => {}
+        Mode::Home | Mode::Programs | Mode::Search => {
             let mut y = PLACE_TOP;
             let pitch = place_pitch(p);
             let h = pitch - (PLACE_PITCH - PLACE_H);
             for (i, place) in p.places.iter().enumerate() {
                 let rule = place.rule_before && i > 0;
                 let top = if rule { y + PLACE_RULE_H } else { y };
-                if top + h > SHUTDOWN.y + g {
+                if top + h > at.shutdown.y + g {
                     break;
                 }
                 if rule {
-                    let w = PLACE_RULE_W - narrow;
-                    rules.push(Rect::new(PLACE_RULE_X - shift, y, w, PLACE_RULE_LINE));
+                    let w = at.place_rule_w - narrow;
+                    rules.push(Rect::new(at.place_rule_x - shift, y, w, PLACE_RULE_LINE));
                 }
                 spots.push((
                     Spot::Place(i),
-                    Rect::new(PLACE_X - shift, top, PLACE_W - narrow, h),
+                    Rect::new(at.place_x - shift, top, at.place_w - narrow, h),
                 ));
                 y = top + pitch;
             }
-            let frame = Rect::new(
-                PICTURE_FRAME.x - narrow / 2 - shift,
-                PICTURE_FRAME.y,
-                PICTURE_FRAME.width,
-                PICTURE_FRAME.height,
-            );
+            let pf = at.picture_frame;
+            let frame = Rect::new(pf.x - narrow / 2 - shift, pf.y, pf.width, pf.height);
             picture = Some(frame);
             spots.push((Spot::Picture, frame));
         }
@@ -529,10 +649,12 @@ fn layout_100(p: &StartPanel) -> Layout {
                 y += JUMP_SECTION_GAP;
             }
         }
-        Mode::Search => {}
     }
-    spots.push((Spot::Shutdown, down(left(SHUTDOWN, shift), g)));
-    spots.push((Spot::ShutdownArrow, down(left(SHUTDOWN_ARROW, shift), g)));
+    spots.push((Spot::Shutdown, down(left(at.shutdown, shift), g)));
+    if let Some(lock) = at.lock {
+        spots.push((Spot::Lock, down(left(lock, shift), g)));
+    }
+    spots.push((Spot::ShutdownArrow, down(left(at.shutdown_arrow, shift), g)));
 
     let canvas = picture.map_or(panel, |r| panel.union(&r));
     Layout {
@@ -1145,5 +1267,85 @@ mod tests {
         assert_eq!(l.rect(Spot::Tree(1)), Some(Rect::new(22, 58, 462, 38)));
         p.text = TextUnits::new(19, 11);
         assert_eq!(layout(&p).tree_bar.unwrap().width, 16, "175% keeps 16 px");
+    }
+
+    fn onyx(pinned: usize, frequent: usize) -> StartPanel {
+        let mut p = StartPanel::new();
+        p.shape = Shape::Onyx;
+        p.pinned = (0..pinned)
+            .map(|k| prow(&format!("Pin {k}"), false))
+            .collect();
+        p.frequent = (0..frequent)
+            .map(|k| prow(&format!("App {k}"), false))
+            .collect();
+        p.places = (0..4).map(|k| place(&format!("Place {k}"))).collect();
+        p
+    }
+
+    #[test]
+    fn onyx_puts_its_field_and_buttons_on_the_frame_under_its_pane() {
+        let p = onyx(2, 12);
+        let l = layout(&p);
+        assert_eq!(l.panel, Rect::new(0, 0, 406, 506));
+        assert_eq!(l.pane, Rect::new(9, 9, 250, 458));
+        assert_eq!(l.rect(Spot::Program(1)), Some(Rect::new(11, 48, 246, 38)));
+        assert_eq!(
+            l.rect(Spot::Program(2)),
+            Some(Rect::new(11, 94, 246, 38)),
+            "8 px for the rule under the pinned rows"
+        );
+        assert_eq!(
+            programs_shown(&p),
+            11,
+            "nine frequent rows under two pinned"
+        );
+        assert_eq!(l.rect(Spot::AllPrograms), Some(Rect::new(11, 442, 246, 23)));
+        assert_eq!(
+            l.rules[..2],
+            [Rect::new(20, 90, 232, 1), Rect::new(20, 437, 232, 1)]
+        );
+        assert_eq!(l.rect(Spot::Search), Some(Rect::new(8, 476, 252, 22)));
+        assert_eq!(l.rect(Spot::Shutdown), Some(Rect::new(267, 476, 52, 22)));
+        assert_eq!(l.rect(Spot::Lock), Some(Rect::new(319, 476, 53, 22)));
+        assert_eq!(
+            l.rect(Spot::ShutdownArrow),
+            Some(Rect::new(372, 476, 22, 22))
+        );
+        assert_eq!(l.rect(Spot::Place(0)), Some(Rect::new(267, 44, 132, 33)));
+        assert_eq!(l.picture, Some(Rect::new(304, -24, 58, 58)));
+        assert_eq!(l.canvas, Rect::new(0, -24, 406, 530));
+        assert_eq!(overhang(&p), 24);
+    }
+
+    #[test]
+    fn onyx_keeps_its_pane_and_places_in_search_mode() {
+        let mut p = onyx(1, 3);
+        p.key(Key::Char(EditKey::Insert("no".into())));
+        p.set_results(vec![ResultGroup {
+            title: "Programs".into(),
+            rows: vec![row("Notepad")],
+        }]);
+        let l = layout(&p);
+        assert_eq!(l.pane.width, 250);
+        assert_eq!(l.headers, [(0, Rect::new(17, 26, 238, 21))]);
+        assert_eq!(l.rect(Spot::Result(0, 0)), Some(Rect::new(25, 47, 230, 21)));
+        assert!(l.rect(Spot::Place(3)).is_some(), "the places stay");
+        assert!(l.picture.is_some(), "the picture stays");
+    }
+
+    #[test]
+    fn a_narrow_room_narrows_onyx_by_8_then_its_left_column() {
+        let mut p = onyx(1, 3);
+        p.room = Some((400, 1000));
+        assert_eq!((narrow(&p), shift(&p)), (6, 0));
+        p.room = Some((380, 1000));
+        let l = layout(&p);
+        assert_eq!((narrow(&p), shift(&p)), (8, 18));
+        assert_eq!(l.panel.width, 380);
+        let arrow = l.rect(Spot::ShutdownArrow).unwrap();
+        assert!(
+            arrow.right() < l.panel.right(),
+            "{arrow:?} stays on the panel"
+        );
     }
 }

@@ -1,5 +1,6 @@
 //! Reprise Glass's Start panel: [`parts`] makes the `Part::Start*` parts (the panel's glass here,
-//! the rest in [`super::startparts`]); [`draw`] lays them out per `crate::startpanel::layout`.
+//! the rest in [`super::startparts`], Onyx's own in [`super::onyxstart`]); [`draw`] lays them out
+//! per `crate::startpanel::layout`.
 
 use super::glyph;
 use super::panel::{Corners, Panel};
@@ -13,7 +14,8 @@ pub use crate::startpanel::search::{
     TEXT_PX,
 };
 use crate::startpanel::{
-    Mode, PROGRAM_ICON, SMALL_ICON, Spot, StartPanel, TreeRow, all_programs, back, no_results,
+    Mode, PROGRAM_ICON, SMALL_ICON, Shape, Spot, StartPanel, TreeRow, all_programs, back,
+    no_results,
 };
 use crate::style::{Layout as Stack, Part, PartImage, State, Style};
 use crate::text::TextRenderer;
@@ -104,6 +106,9 @@ pub fn lit_colours(s: &Settings) -> Vec<Color> {
 
 pub fn right_ink(s: &Settings) -> Color {
     let white = ink(INK_RIGHT);
+    if s.style == super::Style::Onyx {
+        return white;
+    }
     let reads = |c: Color| contrast(c, white) >= INK_CONTRAST;
     if reads(glass_colour(s)) && lit_colours(s).into_iter().all(reads) {
         white
@@ -155,7 +160,10 @@ pub(crate) const PARTS: [Part; 25] = [
 pub(crate) fn parts(s: &Settings, d: i32) -> Vec<(Part, PartImage)> {
     let mut parts = vec![(Part::StartPanel, panel(s, d))];
     parts.extend(super::startparts::parts(s, d));
-    parts
+    match s.style {
+        super::Style::Glass => parts,
+        super::Style::Onyx => super::onyxstart::parts(s, d, parts),
+    }
 }
 
 mod at {
@@ -166,6 +174,9 @@ mod at {
     pub const PROGRAM_ICON: (i32, i32) = (2, 3);
     pub const PROGRAM_PEN: i32 = 40;
     pub const PROGRAM_BASE: i32 = 23;
+    /// An Onyx pinned row's bold name and the grey line under it.
+    pub const NAME_BASE: i32 = 16;
+    pub const DETAIL_BASE: i32 = 31;
     pub const ROW_ARROW: (i32, i32) = (231, 15);
     pub const TRIANGLE: (i32, i32) = (8, 5);
     pub const ALL_PEN: i32 = 38;
@@ -200,6 +211,7 @@ pub struct Backing(Option<Backed>);
 
 struct Backed {
     style: Arc<Style>,
+    shape: Shape,
     panel: Rect,
     pane: Rect,
     canvas: Canvas,
@@ -222,10 +234,17 @@ pub fn draw(
     caret: bool,
 ) {
     let (panel, pane) = backing_rects(l);
-    let s = l.scale.max(1);
-    style.draw(canvas, panel, Part::StartPanel, State::Normal, s);
-    style.draw(canvas, pane, Part::StartPane, State::Normal, s);
+    draw_frame(canvas, style, p.shape, panel, pane, l.scale.max(1));
     draw_contents(canvas, style, text, p, l, pressed, caret);
+}
+
+/// The panel's frame and glass over `panel` and its left pane over `pane`, on `canvas`.
+fn draw_frame(canvas: &mut Canvas, style: &Style, shape: Shape, panel: Rect, pane: Rect, s: i32) {
+    match shape {
+        Shape::Onyx => super::onyxstart::panel(canvas, panel, s),
+        _ => style.draw(canvas, panel, Part::StartPanel, State::Normal, s),
+    }
+    style.draw(canvas, pane, Part::StartPane, State::Normal, s);
 }
 
 /// [`draw`] onto a clear `canvas`, its frame and left pane copied from `back` when `back` holds
@@ -244,6 +263,7 @@ pub fn draw_backed(
     let (panel, pane) = backing_rects(l);
     let fits = |b: &Backed| {
         Arc::ptr_eq(&b.style, style)
+            && b.shape == p.shape
             && (b.panel, b.pane) == (panel, pane)
             && b.canvas.pixels.len() == canvas.pixels.len()
             && (b.canvas.width, b.canvas.height) == (canvas.width, canvas.height)
@@ -251,11 +271,10 @@ pub fn draw_backed(
     match &back.0 {
         Some(b) if fits(b) => canvas.pixels.copy_from_slice(&b.canvas.pixels),
         _ => {
-            let s = l.scale.max(1);
-            style.draw(canvas, panel, Part::StartPanel, State::Normal, s);
-            style.draw(canvas, pane, Part::StartPane, State::Normal, s);
+            draw_frame(canvas, style, p.shape, panel, pane, l.scale.max(1));
             back.0 = Some(Backed {
                 style: style.clone(),
+                shape: p.shape,
                 panel,
                 pane,
                 canvas: canvas.clone(),
@@ -362,8 +381,18 @@ fn draw_contents(
                     r.width - 4 * s
                 };
                 let clip = at(Rect::new(r.x, r.y, right, r.height));
-                let (x, y) = off(r, (at::PROGRAM_PEN, at::PROGRAM_BASE));
-                d.line(text, x, y, clip, &row.name, inks.program, size);
+                match row.detail.as_deref().filter(|_| p.shape == Shape::Onyx) {
+                    Some(detail) => {
+                        let (x, y) = off(r, (at::PROGRAM_PEN, at::NAME_BASE));
+                        d.bold_line(text, x, y, clip, &row.name, inks.program, size);
+                        let (x, y) = off(r, (at::PROGRAM_PEN, at::DETAIL_BASE));
+                        d.line(text, x, y, clip, detail, inks.greyed, size);
+                    }
+                    None => {
+                        let (x, y) = off(r, (at::PROGRAM_PEN, at::PROGRAM_BASE));
+                        d.line(text, x, y, clip, &row.name, inks.program, size);
+                    }
+                }
                 if row.jump {
                     let arrow = Part::StartRowArrow;
                     let (ax, ay) = at::ROW_ARROW;
@@ -438,7 +467,7 @@ fn draw_contents(
                 if place.submenu {
                     let size = (glyph::ARROW.w, glyph::ARROW.h);
                     let (ax, ay) = at::PLACE_ARROW;
-                    let ax = ax - layout::narrow(p);
+                    let ax = ax - layout::narrow(p) - layout::place_inset(p);
                     d.inked(stepped(r, (ax, ay - lift), size), &glyph::ARROW, right);
                 }
             }
@@ -456,6 +485,21 @@ fn draw_contents(
                     caret,
                     g,
                 );
+            }
+            Spot::Shutdown if p.shape == Shape::Onyx => {
+                let spots = [Spot::Shutdown, Spot::Lock, Spot::ShutdownArrow];
+                let [Some(power), Some(lock), Some(arrow)] = spots.map(|k| l.rect(k).map(at))
+                else {
+                    continue;
+                };
+                let state = |k: Spot| match (pressed == Some(k), lit == Some(k)) {
+                    (true, _) => State::Pressed,
+                    (false, true) => State::Hot,
+                    (false, false) => State::Normal,
+                };
+                let group = power.union(&arrow);
+                let states = spots.map(state);
+                super::onyxstart::buttons(d.canvas, group, [lock.x, arrow.x], states, s, s * k);
             }
             Spot::Shutdown => {
                 // The pointer lights both halves; a key lights the half it stands on.
@@ -507,7 +551,11 @@ fn draw_contents(
                     .and_then(|i| p.places.get(i))
                     .and_then(|pl| pl.picture.as_ref());
                 // The frame keeps its size, so the picture keeps its place in it.
-                let (fx, fy) = (r.x - o.x + at::PICTURE.0 * s, r.y - o.y + at::PICTURE.1 * s);
+                let (px, py) = match p.shape {
+                    Shape::Onyx => super::onyxstart::PICTURE_AT,
+                    _ => at::PICTURE,
+                };
+                let (fx, fy) = (r.x - o.x + px * s, r.y - o.y + py * s);
                 let pic = |c: &Canvas| {
                     let (x, y) = (fx, fy);
                     let half = |n: u32| (at::PICTURE_PX * s - n as i32) / 2;
@@ -533,7 +581,7 @@ fn draw_contents(
                     }
                 }
             }
-            Spot::Clear | Spot::ShutdownArrow | Spot::LogOff => {}
+            Spot::Clear | Spot::ShutdownArrow | Spot::Lock | Spot::LogOff => {}
         }
     }
 
@@ -611,6 +659,21 @@ impl Draw<'_> {
         size: u32,
     ) -> i32 {
         search::line(self.canvas, face, x, y, clip, line, color, size)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn bold_line(
+        &mut self,
+        face: &TextRenderer,
+        x: i32,
+        y: i32,
+        clip: Rect,
+        line: &str,
+        color: Color,
+        size: u32,
+    ) {
+        let shown = face.ellipsize(line, clip.right() - x, true, size);
+        face.draw_run_over(self.canvas, x, y, clip, &shown, true, color, size);
     }
 }
 
@@ -2209,5 +2272,97 @@ mod tests {
         for (part, _) in parts(&Settings::default(), 1) {
             assert!(st.part(part).is_some(), "{part:?}");
         }
+    }
+
+    fn onyx() -> Settings {
+        Settings {
+            style: crate::glass::Style::Onyx,
+            ..Settings::default()
+        }
+    }
+
+    /// [`sample`] as the Onyx menu: no jump lists, a grey line under each pinned name.
+    fn onyx_sample(mode: Mode, hot: Option<Spot>) -> StartPanel {
+        let mut p = sample(mode, None);
+        p.shape = Shape::Onyx;
+        p.jump.clear();
+        for (k, r) in p.pinned.iter_mut().enumerate() {
+            r.detail = Some(format!("Pinned {k}"));
+        }
+        for r in &mut p.frequent {
+            r.jump = false;
+        }
+        p.pointer(hot);
+        p
+    }
+
+    /// The Onyx panel at scale 1 and 2: Home with a program lit, a place lit (its picture in the
+    /// frame's place), the tree, Search beside the places, the power button hot, the lock button
+    /// keyed with the arrow held. Its place text is white and its pinned names bold over grey.
+    #[test]
+    fn onyx_panels_pin_at_scale_1_and_2() {
+        crate::pins::fonts();
+        let mut programs = onyx_sample(Mode::Home, None);
+        programs.tree = ["Calculator", "Notepad", "Paint"]
+            .map(|name| TreeRow::App {
+                name: name.into(),
+                icon: None,
+                depth: 0,
+            })
+            .into();
+        programs.set_mode(Mode::Programs);
+        programs.pointer(Some(Spot::Tree(1)));
+        let mut keyed = onyx_sample(Mode::Home, None);
+        keyed.focus_on(Spot::Lock);
+        let mut place_lit = onyx_sample(Mode::Home, None);
+        place_lit.places[1].picture = Some({
+            let mut c = Canvas::new(48, 48);
+            c.fill_rect(Rect::new(8, 8, 32, 32), Color::rgb(230, 200, 90));
+            c
+        });
+        place_lit.pointer(Some(Spot::Place(1)));
+        let states = [
+            (
+                "home",
+                onyx_sample(Mode::Home, Some(Spot::Program(3))),
+                None,
+            ),
+            ("place", place_lit, None),
+            ("programs", programs, None),
+            ("search", onyx_sample(Mode::Search, None), None),
+            (
+                "power hot",
+                onyx_sample(Mode::Home, Some(Spot::Shutdown)),
+                None,
+            ),
+            ("lock keyed arrow held", keyed, Some(Spot::ShutdownArrow)),
+        ];
+        let text = TextRenderer::load(&font());
+        let mut got = Vec::new();
+        for d in [1, 2] {
+            let style = super::super::style(&onyx()).at_scale(d);
+            for (name, p, pressed) in &states {
+                let l = layout(p).scaled(d);
+                let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+                draw(&mut c, &style, &text, p, &l, *pressed, true);
+                let drawn = Drawn { c, l };
+                let place = drawn.l.rect(Spot::Place(2)).unwrap();
+                assert!(
+                    inks_near(&drawn, place, 0xFF_FFFF),
+                    "{name} at {d}: white places"
+                );
+                assert_eq!(drawn.at(0, 0), 0, "{name} at {d}: the top corner is clear");
+                got.push((format!("{name} {d}"), fnv(&drawn.c)));
+            }
+        }
+        let home = &states[0].1;
+        let drawn = render_in(&onyx(), home, None);
+        let pinned = drawn.l.rect(Spot::Program(0)).unwrap();
+        let grey = super::super::startpanel::INK_GREYED;
+        assert!(
+            inks_near(&drawn, pinned, grey),
+            "the pinned row's grey line"
+        );
+        crate::pins::check("glass/onyx_start_panel", &got);
     }
 }

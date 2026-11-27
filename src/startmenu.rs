@@ -523,6 +523,21 @@ pub fn with_shut_down(
     (items, rows)
 }
 
+/// `menu` with Shut down after its last row, in Sleep's group when it has one, else in a group
+/// of its own: the Onyx menu's arrow, whose buttons hold no Shut down.
+pub fn with_shut_down_last(
+    menu: (Vec<MenuItem>, Vec<Option<StartRow>>),
+) -> (Vec<MenuItem>, Vec<Option<StartRow>>) {
+    let (mut items, mut rows) = menu;
+    if !rows.contains(&Some(StartRow::Sleep)) {
+        items.push(MenuItem::Separator);
+        rows.push(None);
+    }
+    items.push(MenuItem::item(&tr!("start-shut-down")));
+    rows.push(Some(StartRow::ShutDown));
+    (items, rows)
+}
+
 /// The Shut down options: Install updates and shut down and Install updates and restart while an
 /// offline update is prepared (`updates`), Disconnect or a live Switch user (`leave`), Log off,
 /// Lock, Restart, Restart into with `restart_into`, then, unless Disconnect is offered, Sleep, and
@@ -1040,6 +1055,33 @@ mod tests {
             ]
         );
         assert_eq!(rows[3], Some(StartRow::ShutDown));
+    }
+
+    #[test]
+    fn onyxs_arrow_ends_with_shut_down_in_sleeps_group_or_its_own() {
+        let (items, rows) = with_shut_down_last(shutdown_menu(
+            true,
+            Leave::SwitchUser { live: true },
+            false,
+            false,
+        ));
+        assert_eq!(
+            labels(&items),
+            [
+                "S&witch user",
+                "&Log off",
+                "L&ock",
+                "",
+                "&Restart",
+                "",
+                "&Sleep",
+                "&Hibernate",
+                "Shu&t down"
+            ]
+        );
+        assert_eq!(rows.last(), Some(&Some(StartRow::ShutDown)));
+        let (items, _) = with_shut_down_last(shutdown_menu(false, Leave::Disconnect, false, false));
+        assert_eq!(labels(&items)[items.len() - 2..], ["", "Shu&t down"]);
     }
 
     #[test]
