@@ -16,6 +16,7 @@ pub mod binage;
 pub mod bincap;
 mod bindir;
 pub mod checksum;
+pub mod cleanup;
 pub mod complete;
 pub mod compress;
 pub mod configfile;

@@ -194,7 +194,8 @@ Missing packages disable only their feature.
 - **cups-filters:** Driverless IPP Everywhere and AirPrint printers.
 - **cups-pk-helper:** Admin-prompted printer management outside CUPS's admin group.
 - **avahi-daemon:** Passwordless printer discovery in Add Printer, plus SMB and SFTP discovery in the Network place.
-- **PackageKit, Flatpak, and fwupd:** System, Flatpak, and firmware updates in Software Updates. PackageKit handles downloaded packages, offline updates, and Start menu uninstalls (Arch uses `pkexec` and `pacman`). Flatpak installs `.flatpakref` and `.flatpak` files.
+- **PackageKit, Flatpak, and fwupd:** System, Flatpak, and firmware updates in Software Updates. PackageKit handles downloaded packages, offline updates, and Start menu uninstalls (Arch uses `pkexec` and `pacman`). Flatpak installs `.flatpakref` and `.flatpak` files, and Disk Usage's Clean Up removes unused runtimes through it.
+- **systemd-coredump** (part of systemd on Arch, its own package on Ubuntu; systemd 251 or newer): the size of your crash dumps in Disk Usage's Clean Up.
 - **AccountsService:** User Accounts, login screen pictures, Account portal pictures, and language sharing with other login managers.
 
 **Security**
