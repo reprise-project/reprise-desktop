@@ -545,6 +545,8 @@ fn is_boot(s: &str) -> bool {
 
 /// The `ExecStartPre=` of an at-startup task: stamps boot `boot` (`%b`) for task `stem` in `dir`
 /// and drops its stamps of other boots. Refuses arguments the unit [`texts`] wrote never passes.
+/// A stamp of another boot that cannot go is logged and does not fail the run, which this boot's
+/// stamp already counts.
 pub fn stamp_run(dir: &Path, stem: &str, boot: &str) -> io::Result<()> {
     if !dir.is_absolute() || !is_our_stem(stem) || !is_boot(boot) {
         return Err(io::Error::new(
@@ -554,27 +556,37 @@ pub fn stamp_run(dir: &Path, stem: &str, boot: &str) -> io::Result<()> {
     }
     std::fs::create_dir_all(dir)?;
     put_over(&dir.join(format!("{stem}.{boot}")), "")?;
-    forget_runs(dir, stem, Some(boot))
+    if let Err(e) = forget_runs(dir, stem, Some(boot)) {
+        log::warn!("{stem}: a stamp of an earlier boot stays: {e}");
+    }
+    Ok(())
 }
 
 /// Removes task `stem`'s stamps from `dir`, but the one of boot `keep`, so the task runs at its
-/// next log on. A folder already gone is no error.
+/// next log on. A folder already gone is no error; one stamp that cannot go does not keep the
+/// rest, and the error is the first.
 pub fn forget_runs(dir: &Path, stem: &str, keep: Option<&str>) -> io::Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         r => r?,
     };
+    let mut first = None;
     for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name();
-        let boot = name
-            .to_str()
-            .and_then(|n| n.strip_prefix(stem)?.strip_prefix('.'));
-        if boot.is_some_and(|b| is_boot(b) && Some(b) != keep) {
-            gone(std::fs::remove_file(entry.path()))?;
+        let removed = entry.and_then(|entry| {
+            let name = entry.file_name();
+            let boot = name
+                .to_str()
+                .and_then(|n| n.strip_prefix(stem)?.strip_prefix('.'));
+            match boot.is_some_and(|b| is_boot(b) && Some(b) != keep) {
+                true => gone(std::fs::remove_file(entry.path())),
+                false => Ok(()),
+            }
+        });
+        if let Err(e) = removed {
+            first.get_or_insert(e);
         }
     }
-    Ok(())
+    first.map_or(Ok(()), Err)
 }
 
 /// The folder of task `stem`'s stamps, from `condition`: the path its unit's
