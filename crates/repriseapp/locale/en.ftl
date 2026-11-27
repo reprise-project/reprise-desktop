@@ -79,5 +79,8 @@ print-status = The printing service refused the document (status { $status }).
 print-http-status = The printing service answered with HTTP status { NUMBER($status, useGrouping: "false") }.
 print-bad-reply = The printing service sent a reply Reprise cannot read.
 print-broken = The connection to the printing service broke off.
+print-not-ready = The printer did not get ready to print.
+# why is the printing service's own message.
+print-not-ready-why = The printer did not get ready to print: { $why }
 # why is one of the print-* messages above.
 print-failed = The document was not printed. { $why }

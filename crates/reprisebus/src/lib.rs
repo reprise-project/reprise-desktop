@@ -50,10 +50,12 @@
 //! [`follow`] reruns a source on a thread with a backoff, sending only what changed.
 //! [`mpris`] follows the media players and calls their transport methods.
 //! [`offline`] reads, triggers and cancels PackageKit's offline update.
+//! [`avahi`] browses and resolves the printers avahi-daemon finds over DNS-SD.
 
 pub mod a11y;
 pub mod airplane;
 pub mod appearance;
+pub mod avahi;
 pub mod bluez;
 pub mod bolt;
 pub mod bounded;
