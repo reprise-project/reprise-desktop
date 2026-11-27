@@ -2103,20 +2103,25 @@ fn every_read_of_a_drag_out_of_a_compressed_folder_gets_its_copies_once_out_and_
 }
 
 #[test]
-fn a_drag_out_of_a_compressed_folder_past_its_most_starts_no_drag_and_says_what_to_use() {
+fn a_drag_out_of_a_compressed_folder_past_its_most_sends_nothing_and_says_what_to_use() {
     let mut ctx = test_ctx();
     let (_dir, mut ex, at) = archive_view(&mut ctx);
     ex.drag_most = 5;
-    press(&mut ex, &mut ctx, at, BTN_LEFT);
-    let r = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
-    assert!(r.start_drag.is_none(), "nothing is dragged out");
-    assert!(ex.drag_copies.is_empty() && ex.drag.is_none());
+    let out = drag_out(&mut ex, &mut ctx, at, 5000);
+    let staged = out.staged.expect("staged");
+    let (read, fd) = drop_pipe();
+    staged.send(fd, b"x".as_slice().into(), true);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
     assert!(
         matches!(ex.dialog(), Some(crate::dialogs::Dialog::Message { text, .. })
-            if text == "The items picked in pack.tar.gz take 6 bytes, more than a drag copies \
-                out of a compressed folder (5 bytes). Use Copy To Folder... or Extract All... \
-                instead."),
+            if text == "Cannot copy from pack.tar.gz: the items picked take 6 bytes, more than a \
+                drag copies out of a compressed folder (5 bytes). Use Copy To Folder... or \
+                Extract All... instead."),
         "{:?}",
         ex.dialog().map(|_| ())
     );
+    assert_eq!(read_all(read), "", "the target gets nothing");
+    assert!(!out.paths[0].exists(), "nothing came out");
+    staged.end(false);
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies.is_empty());
 }

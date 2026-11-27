@@ -305,7 +305,7 @@ impl Explorer {
                     entries,
                     picked,
                 } = picks;
-                let job = archive::copy_job(archive, entries, picked, (scratch, dest), wake);
+                let job = archive::copy_job(archive, entries, picked, (scratch, dest), None, wake);
                 (job, Kind::Extract, from, to)
             }
         };
