@@ -19,11 +19,52 @@ fn bar_rows(state: &MenuState, t: usize) -> Vec<MenuItem> {
 #[test]
 fn every_row_with_no_linux_counterpart_is_greyed() {
     let s = MenuState::default();
-    let edit = bar_rows(&s, 1);
-    for i in [7, 8] {
-        assert!(!enabled(&edit, i), "edit row {i}");
-    }
     assert!(!enabled(&bar_rows(&s, 2), 12));
+}
+
+#[test]
+fn copy_and_move_to_folder_take_the_selected_files_to_the_folder_picker() {
+    let rows = |s: &MenuState| {
+        let edit = bar_rows(s, 1);
+        [enabled(&edit, 7), enabled(&edit, 8)]
+    };
+    let file = MenuState {
+        selection: 1,
+        ..Default::default()
+    };
+    assert_eq!(label(&bar_rows(&file, 1), 7), "Copy To Folder...");
+    assert_eq!(label(&bar_rows(&file, 1), 8), "Move To Folder...");
+    assert_eq!(command_for(1, &[7], &file), Command::CopyTo);
+    assert_eq!(command_for(1, &[8], &file), Command::MoveTo);
+    assert_eq!(rows(&file), [true, true]);
+    assert_eq!(
+        rows(&MenuState::default()),
+        [false, false],
+        "nothing selected"
+    );
+    let read_only = MenuState {
+        read_only: true,
+        ..file.clone()
+    };
+    assert_eq!(
+        rows(&read_only),
+        [true, false],
+        "a read-only place copies out"
+    );
+    let shell = MenuState {
+        shell_rows: 1,
+        ..file.clone()
+    };
+    assert_eq!(rows(&shell), [false, false], "only desktop rows selected");
+    let bin = MenuState {
+        bin: Some(1),
+        ..read_only
+    };
+    assert_eq!(
+        rows(&bin),
+        [false, false],
+        "the Recycle Bin restores instead"
+    );
 }
 
 #[test]

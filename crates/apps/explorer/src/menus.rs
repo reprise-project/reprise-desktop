@@ -464,23 +464,32 @@ fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
     edit.row(keyed(tr!("menu-bar-cut"), writable, "Ctrl+X"), Command::Cut);
     // An item in the Recycle Bin is not copied out; Restore brings it
     // back.
+    let copyable = files && state.bin.is_none();
     edit.row(
-        keyed(tr!("menu-bar-copy"), files && state.bin.is_none(), "Ctrl+C"),
+        keyed(tr!("menu-bar-copy"), copyable, "Ctrl+C"),
         Command::Copy,
     );
-    let writable = !state.read_only;
-    let pasteable = (state.can_paste || state.can_paste_image) && writable;
+    let pasteable = (state.can_paste || state.can_paste_image) && !state.read_only;
     edit.row(
         keyed(tr!("menu-bar-paste"), pasteable, "Ctrl+V"),
         Command::Paste,
     );
     edit.row(
-        row(tr!("menu-bar-paste-shortcut"), state.can_paste && writable),
+        row(
+            tr!("menu-bar-paste-shortcut"),
+            state.can_paste && !state.read_only,
+        ),
         Command::PasteShortcut,
     );
     edit.sep();
-    edit.row(row(tr!("menu-bar-copy-to-folder"), false), Command::Nothing);
-    edit.row(row(tr!("menu-bar-move-to-folder"), false), Command::Nothing);
+    edit.row(
+        row(tr!("menu-bar-copy-to-folder"), copyable),
+        Command::CopyTo,
+    );
+    edit.row(
+        row(tr!("menu-bar-move-to-folder"), writable),
+        Command::MoveTo,
+    );
     edit.sep();
     edit.row(
         keyed(tr!("menu-bar-select-all"), true, "Ctrl+A"),
