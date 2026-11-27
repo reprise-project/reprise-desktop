@@ -383,6 +383,8 @@ pub struct Explorer {
     rename_drag: bool,
     /// For the double click that takes a list row as the default button, keyed by the form item.
     dialog_clicks: DoubleClick<Option<usize>>,
+    /// For the double click on a Details column divider that fits the column.
+    divider_clicks: DoubleClick<usize>,
     alt_arm: AltArm,
     /// The main window holds the keyboard, so a focused field's caret shows and blinks.
     keyboard: bool,
@@ -688,6 +690,7 @@ impl Explorer {
             rename_clicks: DoubleClick::default(),
             rename_drag: false,
             dialog_clicks: DoubleClick::default(),
+            divider_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
             keyboard: false,
             keyed: false,
@@ -1274,7 +1277,8 @@ impl Explorer {
         if let Some(templates) = templates {
             self.templates = templates;
         }
-        self.set_columns(&place);
+        // A place, a kind of listing or a folder seen empty opens afresh; a re-listing keeps Name.
+        let fresh = self.set_columns(&place) || place != self.place || self.items.is_empty();
         let is_12h = reprisefs::locale::is_12h();
         let searched = self.search.shown().is_some();
         read_icons.put(&mut ctx.icons);
@@ -1399,6 +1403,9 @@ impl Explorer {
             true => self.close_props(ctx),
             false => Reply::none(),
         };
+        if fresh {
+            self.fit_name(ctx);
+        }
         self.place = place.clone();
         self.tabs.set_label(self.title_of(&place));
         self.resort();
@@ -1436,9 +1443,9 @@ impl Explorer {
 
     /// Details' columns for the Recycle Bin (with Original Location and Date
     /// Deleted) or for a folder (the user's widths), switched only when the kind
-    /// of listing changes. The bin keeps the mode and sorts by name without
+    /// of listing changes, which returns `true`. The bin keeps the mode and sorts by name without
     /// touching the saved sort.
-    fn set_columns(&mut self, place: &Place) {
+    fn set_columns(&mut self, place: &Place) -> bool {
         let bin = *place == Place::RecycleBin;
         let computer = *place == Place::Computer;
         let searched = self.search.shown().is_some();
@@ -1452,7 +1459,7 @@ impl Explorer {
             shellview::details_fields()
         };
         if self.sv.fields == want {
-            return;
+            return false;
         }
         if bin {
             self.sv.columns = shellview::bin_columns();
@@ -1474,11 +1481,43 @@ impl Explorer {
             self.sv.sort = Some(self.settings.sort);
         }
         self.sv.fields = want;
+        true
     }
 
     /// Column widths and the sort are saved only for a folder's own columns, never the bin's.
     pub(crate) fn folder_columns(&self) -> bool {
         self.sv.fields == shellview::details_fields()
+    }
+
+    /// A newly opened listing's Name starts at its saved width and grows to its longest name
+    /// where the window has the room.
+    fn fit_name(&mut self, ctx: &Ctx) {
+        let default = shellview::details_columns()[0].width;
+        let base = match self.folder_columns() {
+            true => self.settings.columns.first().copied().unwrap_or(default),
+            false => default,
+        };
+        let frame = self.layout(ctx).view;
+        let (cm, px) = (ctx.theme.controls(), ctx.theme.fonts.size_px);
+        shellview::fit_name(&mut self.sv, base, frame, &cm, &ctx.text, px);
+    }
+
+    /// Fits Details' column `col` to its title and cells, keeping the width for a folder's own
+    /// columns.
+    pub(crate) fn fit_column(&mut self, col: usize, ctx: &Ctx) -> bool {
+        let (p, px, u) = (
+            ctx.theme.paint(),
+            ctx.theme.fonts.size_px,
+            ctx.theme.controls().text,
+        );
+        if !shellview::fit_column(&mut self.sv, col, &ctx.text, &p, px, u) {
+            return false;
+        }
+        if self.folder_columns() {
+            self.settings.columns = self.sv.columns.iter().map(|c| c.width).collect();
+            self.settings_dirty = true;
+        }
+        true
     }
 
     /// Rescan the drives when `/proc/mounts` changed: the tree, address drop and Recycle Bin

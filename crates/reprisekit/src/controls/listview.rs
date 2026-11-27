@@ -805,13 +805,8 @@ impl<R: Rows> ListView<R> {
     /// header items, so a wider face keeps whole titles. Columns grown by `u`; a host calls it
     /// before [`Self::fill_column`].
     pub fn fit_titles(&mut self, text: &TextRenderer, p: &Paint, px: u32, u: TextUnits) {
-        let probe = Rect::new(0, 0, 1000, HEADER_H);
-        let p1 = Paint { s: 1, ..*p };
-        let item = header_widgets::item_title_rect(&p1, probe, Interaction::Idle, false);
-        let inset = probe.width - item.width + 2 * HEADER_TEXT_X;
         for col in &mut self.columns {
-            let need = text.measure(&col.title, false, px) + inset;
-            col.width = col.width.max(u.design(need));
+            col.width = col.width.max(title_width(&col.title, text, p, px, u));
         }
     }
 
@@ -819,17 +814,9 @@ impl<R: Rows> ListView<R> {
     /// to `max` 100% px, so its rows show whole where the list has the room. Columns grown by
     /// `u`; a host calls it before [`Self::fill_column`] fills another column.
     pub fn fit_cells(&mut self, i: usize, text: &TextRenderer, px: u32, u: TextUnits, max: i32) {
-        let inset = if i == 0 {
-            name_x(self.rows.icon_slot(u)) + 2
-        } else {
-            2 * CELL_X
-        };
-        let widest = (0..self.rows.len())
-            .map(|row| text.measure(&self.rows.cell(row, i), false, px))
-            .max()
-            .unwrap_or(0);
+        let need = cells_width(&self.rows, i, text, px, u);
         if let Some(col) = self.columns.get_mut(i) {
-            col.width = col.width.max(u.design(widest + inset).min(max));
+            col.width = col.width.max(need.min(max));
         }
     }
 
@@ -851,6 +838,31 @@ impl<R: Rows> ListView<R> {
         self.follow(lay);
         changed
     }
+}
+
+/// The 100% width that shows a header's unsorted `title` whole in `text` at `px` in `p`'s
+/// header items, columns grown by `u`.
+pub fn title_width(title: &str, text: &TextRenderer, p: &Paint, px: u32, u: TextUnits) -> i32 {
+    let probe = Rect::new(0, 0, 1000, HEADER_H);
+    let p1 = Paint { s: 1, ..*p };
+    let item = header_widgets::item_title_rect(&p1, probe, Interaction::Idle, false);
+    let inset = probe.width - item.width + 2 * HEADER_TEXT_X;
+    u.design(text.measure(title, false, px) + inset)
+}
+
+/// The 100% width that shows every cell of column `i` of `rows` (a list without check boxes)
+/// whole in `text` at `px`, columns grown by `u`.
+pub fn cells_width<R: Rows>(rows: &R, i: usize, text: &TextRenderer, px: u32, u: TextUnits) -> i32 {
+    let inset = if i == 0 {
+        name_x(rows.icon_slot(u)) + 2
+    } else {
+        2 * CELL_X
+    };
+    let widest = (0..rows.len())
+        .map(|row| text.measure(&rows.cell(row, i), false, px))
+        .max()
+        .unwrap_or(0);
+    u.design(widest + inset)
 }
 
 /// The header strip, clipped to itself so a scrolled column does not spill over the frame.

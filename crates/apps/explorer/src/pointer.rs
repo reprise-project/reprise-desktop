@@ -384,6 +384,15 @@ impl Explorer {
                 }
                 shellview::Hit::Header(_) => return Reply::redraw(),
                 shellview::Hit::Divider(i) => {
+                    if self
+                        .divider_clicks
+                        .press(i, ctx.theme.metrics.click(x, y, time))
+                    {
+                        return match self.fit_column(i, ctx) {
+                            true => Reply::redraw(),
+                            false => Reply::none(),
+                        };
+                    }
                     let width = self.sv.columns.get(i).map_or(0, |c| c.width);
                     self.resizing = Some((i, x, width));
                     return Reply::none();
