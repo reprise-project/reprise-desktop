@@ -28,11 +28,12 @@ impl Stamp {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Encoding {
+pub enum Encoding {
     #[default]
     Utf8,
     Utf16Le,
     Utf16Be,
+    Cp1252,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,12 +83,23 @@ pub(crate) struct Format {
     pub(crate) line_end: LineEnd,
 }
 
+const CP1252_NAME: &str = "Western (CP1252)";
+
 /// The Save As encoding rows, in the combo's order.
-pub(crate) const ENCODINGS: [(&str, Encoding, bool); 4] = [
+pub(crate) const ENCODINGS: [(&str, Encoding, bool); 5] = [
     ("UTF-8", Encoding::Utf8, false),
     ("UTF-8 with BOM", Encoding::Utf8, true),
     ("UTF-16 LE", Encoding::Utf16Le, true),
     ("UTF-16 BE", Encoding::Utf16Be, true),
+    (CP1252_NAME, Encoding::Cp1252, false),
+];
+
+/// The Open encoding rows under Auto-Detect, in the combo's order.
+pub(crate) const READ_AS: [(&str, Encoding); 4] = [
+    ("UTF-8", Encoding::Utf8),
+    ("UTF-16 LE", Encoding::Utf16Le),
+    ("UTF-16 BE", Encoding::Utf16Be),
+    (CP1252_NAME, Encoding::Cp1252),
 ];
 
 impl Format {
@@ -108,13 +120,28 @@ impl Format {
             ..self
         }
     }
+
+    /// Whether every character of `lines` has bytes in this format's encoding.
+    pub(crate) fn holds(self, lines: &[impl AsRef<str>]) -> bool {
+        self.encoding != Encoding::Cp1252
+            || (lines.iter()).all(|l| l.as_ref().chars().all(|c| cp1252::byte(c).is_some()))
+    }
+
+    /// This format in UTF-8 without a BOM, which holds any text.
+    pub(crate) fn utf8(self) -> Format {
+        Format {
+            encoding: Encoding::Utf8,
+            bom: false,
+            ..self
+        }
+    }
 }
 
 const BOM_UTF8: &[u8] = b"\xEF\xBB\xBF";
 const BOM_UTF16LE: &[u8] = b"\xFF\xFE";
 const BOM_UTF16BE: &[u8] = b"\xFE\xFF";
 
-/// A file whose bytes do not decode in the encoding its BOM, or the lack of one, names.
+/// A file whose bytes do not decode in the encoding it was read as.
 #[derive(Debug)]
 pub(crate) struct Undecodable {
     pub(crate) encoding: Encoding,
@@ -134,22 +161,37 @@ pub(crate) fn encoding_name(e: Encoding) -> &'static str {
     match e {
         Encoding::Utf8 => "UTF-8",
         Encoding::Utf16Le | Encoding::Utf16Be => "UTF-16",
+        Encoding::Cp1252 => CP1252_NAME,
     }
 }
 
-/// A file's text and format: a UTF-8 or UTF-16 BOM picks the encoding and is not part of the
-/// text; without one the file is UTF-8.
-pub(crate) fn decode(bytes: Vec<u8>) -> Result<(String, Format), Undecodable> {
-    let (encoding, bom) = if bytes.starts_with(BOM_UTF8) {
-        (Encoding::Utf8, BOM_UTF8.len())
-    } else if bytes.starts_with(BOM_UTF16LE) {
-        (Encoding::Utf16Le, BOM_UTF16LE.len())
-    } else if bytes.starts_with(BOM_UTF16BE) {
-        (Encoding::Utf16Be, BOM_UTF16BE.len())
-    } else {
-        (Encoding::Utf8, 0)
+fn bom_of(e: Encoding) -> &'static [u8] {
+    match e {
+        Encoding::Utf8 => BOM_UTF8,
+        Encoding::Utf16Le => BOM_UTF16LE,
+        Encoding::Utf16Be => BOM_UTF16BE,
+        Encoding::Cp1252 => b"",
+    }
+}
+
+/// A file's text and format, read as `read_as`, or with `None` as its UTF-8 or UTF-16 BOM says,
+/// else as UTF-8 when it is valid UTF-8, else as CP1252. A BOM of the encoding read is not part
+/// of the text. CP1252 gives every byte a character, so a file read as it always decodes.
+pub(crate) fn decode(
+    bytes: &[u8],
+    read_as: Option<Encoding>,
+) -> Result<(String, Format), Undecodable> {
+    let sniffed = [Encoding::Utf8, Encoding::Utf16Le, Encoding::Utf16Be]
+        .into_iter()
+        .find(|&e| bytes.starts_with(bom_of(e)));
+    let encoding = match read_as.or(sniffed) {
+        Some(e) => e,
+        None if std::str::from_utf8(bytes).is_ok() => Encoding::Utf8,
+        None => Encoding::Cp1252,
     };
-    let body = &bytes[bom..];
+    let bom = bom_of(encoding);
+    let has_bom = !bom.is_empty() && bytes.starts_with(bom);
+    let body = &bytes[if has_bom { bom.len() } else { 0 }..];
     let text = match encoding {
         Encoding::Utf8 => std::str::from_utf8(body)
             .map(str::to_string)
@@ -167,25 +209,23 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<(String, Format), Undecodable> {
                 Err(_) => Err(String::from_utf16_lossy(&units)),
             }
         }
+        Encoding::Cp1252 => Ok(body.iter().map(|&b| cp1252::char(b)).collect()),
     }
     .map_err(|lossy| Undecodable { encoding, lossy })?;
     let format = Format {
         encoding,
-        bom: bom > 0,
+        bom: has_bom || matches!(encoding, Encoding::Utf16Le | Encoding::Utf16Be),
         line_end: LineEnd::of(&text),
     };
     Ok((text, format))
 }
 
-/// `lines` joined by `format`'s line end, in its encoding, after its BOM.
-pub(crate) fn encode(lines: &[impl AsRef<str>], format: Format) -> Vec<u8> {
+/// `lines` joined by `format`'s line end, in its encoding, after its BOM; `None` when the
+/// encoding cannot hold a character of them.
+pub(crate) fn encode(lines: &[impl AsRef<str>], format: Format) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     if format.bom {
-        out.extend_from_slice(match format.encoding {
-            Encoding::Utf8 => BOM_UTF8,
-            Encoding::Utf16Le => BOM_UTF16LE,
-            Encoding::Utf16Be => BOM_UTF16BE,
-        });
+        out.extend_from_slice(bom_of(format.encoding));
     }
     for (i, line) in lines.iter().enumerate() {
         let sep = if i > 0 { format.line_end.sep() } else { "" };
@@ -198,20 +238,69 @@ pub(crate) fn encode(lines: &[impl AsRef<str>], format: Format) -> Vec<u8> {
                 Encoding::Utf16Be => part
                     .encode_utf16()
                     .for_each(|u| out.extend_from_slice(&u.to_be_bytes())),
+                Encoding::Cp1252 => {
+                    for c in part.chars() {
+                        out.push(cp1252::byte(c)?);
+                    }
+                }
             }
         }
     }
-    out
+    Some(out)
+}
+
+/// Code page 1252. Its five unassigned bytes stand for the C1 controls of the same number, so
+/// every byte reads as a character and writes back as itself.
+mod cp1252 {
+    /// The characters of 0x80..=0x9F; 0x00..=0x7F and 0xA0..=0xFF are U+0000..=U+00FF.
+    const HIGH: [char; 32] = [
+        '\u{20AC}', '\u{0081}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}',
+        '\u{2021}', '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{008D}',
+        '\u{017D}', '\u{008F}', '\u{0090}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}',
+        '\u{2022}', '\u{2013}', '\u{2014}', '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}',
+        '\u{0153}', '\u{009D}', '\u{017E}', '\u{0178}',
+    ];
+
+    pub(super) fn char(b: u8) -> char {
+        match b {
+            0x80..=0x9F => HIGH[usize::from(b - 0x80)],
+            _ => char::from(b),
+        }
+    }
+
+    pub(super) fn byte(c: char) -> Option<u8> {
+        match u32::from(c) {
+            n @ (0..=0x7F | 0xA0..=0xFF) => u8::try_from(n).ok(),
+            _ => (HIGH.iter().position(|&h| h == c)).and_then(|i| u8::try_from(0x80 + i).ok()),
+        }
+    }
+}
+
+/// The error of a write `encode` refused.
+pub(crate) fn unheld(format: Format) -> std::io::Error {
+    let name = encoding_name(format.encoding);
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("{name} cannot hold the text"),
+    )
 }
 
 /// Largest file Notepad opens: the whole text lives in one edit buffer.
 pub(crate) const MAX_OPEN_BYTES: u64 = 32 << 20;
 
+/// [`read_text_as`] detecting the encoding.
+pub(crate) fn read_text(path: &Path) -> std::io::Result<(String, Format)> {
+    read_text_as(path, None)
+}
+
 /// Only a regular file up to `MAX_OPEN_BYTES` that `decode` reads, which an [`Undecodable`] inside
 /// the error says otherwise; a FIFO or device fails without blocking.
-pub(crate) fn read_text(path: &Path) -> std::io::Result<(String, Format)> {
+pub(crate) fn read_text_as(
+    path: &Path,
+    read_as: Option<Encoding>,
+) -> std::io::Result<(String, Format)> {
     let bytes = reprisefs::ops::read_regular(path, MAX_OPEN_BYTES)?;
-    decode(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    decode(&bytes, read_as).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 /// Command-line open: a missing file is a new one at that path; other failures must not adopt the path, or a save would overwrite the original.
@@ -239,7 +328,8 @@ pub(crate) fn recovery_dir() -> Option<PathBuf> {
     reprisefs::recovery::dir("notepad")
 }
 
-/// Write `lines` to `recovery-<pid>-<stem>.txt` in `dir`, made 0700 if missing.
+/// Write `lines` to `recovery-<pid>-<stem>.txt` in `dir`, made 0700 if missing, in `format`
+/// unless that is CP1252: then in UTF-8, which holds whatever was typed.
 pub(crate) fn write_recovery(
     dir: &Path,
     pid: u32,
@@ -247,7 +337,12 @@ pub(crate) fn write_recovery(
     lines: &[impl AsRef<str>],
     format: Format,
 ) -> std::io::Result<PathBuf> {
-    reprisefs::recovery::write(dir, pid, stem, "txt", &encode(lines, format))
+    let format = match format.encoding {
+        Encoding::Cp1252 => format.utf8(),
+        _ => format,
+    };
+    let bytes = encode(lines, format).ok_or_else(|| unheld(format))?;
+    reprisefs::recovery::write(dir, pid, stem, "txt", &bytes)
 }
 
 /// The recovery files in `dir`, by name.
@@ -259,50 +354,104 @@ pub(crate) fn recovered_in(dir: &Path) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
+    fn auto(bytes: &[u8]) -> Result<(String, Format), Undecodable> {
+        decode(bytes, None)
+    }
+
     #[test]
     fn decode_reads_each_bom_and_leaves_it_out_of_the_text() {
         let utf8 = Format {
             bom: true,
             ..Format::default()
         };
-        assert_eq!(
-            decode(b"\xEF\xBB\xBFhi".to_vec()).unwrap(),
-            ("hi".into(), utf8)
-        );
+        assert_eq!(auto(b"\xEF\xBB\xBFhi").unwrap(), ("hi".into(), utf8));
         let le = Format {
             encoding: Encoding::Utf16Le,
             bom: true,
             line_end: LineEnd::Crlf,
         };
-        assert_eq!(
-            decode(b"\xFF\xFEh\0\r\0\n\0".to_vec()).unwrap(),
-            ("h\r\n".into(), le)
-        );
+        assert_eq!(auto(b"\xFF\xFEh\0\r\0\n\0").unwrap(), ("h\r\n".into(), le));
         let be = Format {
             encoding: Encoding::Utf16Be,
             ..le
         };
-        assert_eq!(
-            decode(b"\xFE\xFF\0h\0\r\0\n".to_vec()).unwrap(),
-            ("h\r\n".into(), be)
-        );
-        assert_eq!(decode(b"a\rb".to_vec()).unwrap().1.line_end, LineEnd::Cr);
+        assert_eq!(auto(b"\xFE\xFF\0h\0\r\0\n").unwrap(), ("h\r\n".into(), be));
+        assert_eq!(auto(b"a\rb").unwrap().1.line_end, LineEnd::Cr);
     }
 
     #[test]
     fn decode_refuses_a_lone_surrogate_and_an_odd_byte() {
-        let lone = decode(b"\xFF\xFEa\0\x00\xD8".to_vec()).unwrap_err();
+        let lone = auto(b"\xFF\xFEa\0\x00\xD8").unwrap_err();
         assert_eq!(
             (lone.encoding, lone.lossy.as_str()),
             (Encoding::Utf16Le, "a\u{fffd}")
         );
-        let odd = decode(b"\xFE\xFF\0a\0".to_vec()).unwrap_err();
+        let odd = auto(b"\xFE\xFF\0a\0").unwrap_err();
         assert_eq!(odd.lossy, "a\u{fffd}");
-        let bad = decode(b"\xEF\xBB\xBFcaf\xe9".to_vec()).unwrap_err();
+        let bad = auto(b"\xEF\xBB\xBFcaf\xe9").unwrap_err();
         assert_eq!(
             (bad.encoding, bad.lossy.as_str()),
             (Encoding::Utf8, "caf\u{fffd}")
         );
+    }
+
+    #[test]
+    fn without_a_bom_valid_utf8_reads_as_utf8_and_anything_else_as_cp1252() {
+        let (text, format) = auto("caf\u{e9}".as_bytes()).unwrap();
+        assert_eq!((text.as_str(), format), ("caf\u{e9}", Format::default()));
+        let (text, format) = auto(b"caf\xe9 \x80\x93\r\n").unwrap();
+        assert_eq!(text, "caf\u{e9} \u{20AC}\u{201C}\r\n");
+        let cp1252 = Format {
+            encoding: Encoding::Cp1252,
+            bom: false,
+            line_end: LineEnd::Crlf,
+        };
+        assert_eq!(format, cp1252);
+    }
+
+    #[test]
+    fn decode_reads_the_encoding_picked_over_the_one_detected() {
+        let (text, format) = decode("caf\u{e9}".as_bytes(), Some(Encoding::Cp1252)).unwrap();
+        assert_eq!(
+            (text.as_str(), format.encoding),
+            ("caf\u{c3}\u{a9}", Encoding::Cp1252)
+        );
+        let (text, format) = decode(b"h\0i\0", Some(Encoding::Utf16Le)).unwrap();
+        assert_eq!(
+            (text.as_str(), format.bom),
+            ("hi", true),
+            "UTF-16 saves a BOM"
+        );
+        let (text, format) = decode(b"\xEF\xBB\xBFhi", Some(Encoding::Utf8)).unwrap();
+        assert_eq!((text.as_str(), format.bom), ("hi", true));
+        let bad = decode(b"caf\xe9", Some(Encoding::Utf8)).unwrap_err();
+        assert_eq!(bad.lossy, "caf\u{fffd}");
+    }
+
+    #[test]
+    fn every_byte_reads_as_cp1252_and_writes_back_as_itself() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let (text, format) = decode(&bytes, Some(Encoding::Cp1252)).unwrap();
+        assert_eq!(text.chars().count(), 256);
+        let lf = Format {
+            line_end: LineEnd::Lf,
+            ..format
+        };
+        let lines: Vec<&str> = text.split('\n').collect();
+        assert_eq!(encode(&lines, lf).as_deref(), Some(bytes.as_slice()));
+    }
+
+    #[test]
+    fn cp1252_refuses_a_character_it_cannot_hold() {
+        let cp1252 = Format::default().with_encoding_row(4);
+        assert_eq!(cp1252.encoding, Encoding::Cp1252);
+        assert!(cp1252.holds(&["caf\u{e9} \u{20AC}"]));
+        assert_eq!(encode(&["\u{20AC}"], cp1252), Some(vec![0x80]));
+        for c in ["\u{151}", "\u{80}", "\u{1F600}"] {
+            assert!(!cp1252.holds(&["a", c]), "{c:?}");
+            assert_eq!(encode(&["a", c], cp1252), None, "{c:?}");
+        }
+        assert!(Format::default().holds(&["\u{151}"]));
     }
 
     #[test]
@@ -312,22 +461,26 @@ mod tests {
             line_end: LineEnd::Cr,
             ..Format::default()
         };
-        assert_eq!(encode(&lines, cr), b"a\rb");
-        assert_eq!(encode(&lines, cr.with_encoding_row(1)), b"\xEF\xBB\xBFa\rb");
-        assert_eq!(
-            encode(&lines, cr.with_encoding_row(2)),
-            b"\xFF\xFEa\0\r\0b\0"
-        );
+        let bytes = |f: Format| encode(&lines, f).expect("holds");
+        assert_eq!(bytes(cr), b"a\rb");
+        assert_eq!(bytes(cr.with_encoding_row(1)), b"\xEF\xBB\xBFa\rb");
+        assert_eq!(bytes(cr.with_encoding_row(2)), b"\xFF\xFEa\0\r\0b\0");
         let crlf = Format {
             line_end: LineEnd::Crlf,
             ..Format::default()
         };
-        assert_eq!(
-            encode(&lines, crlf.with_encoding_row(3)),
-            b"\xFE\xFF\0a\0\r\0\n\0b"
-        );
+        assert_eq!(bytes(crlf.with_encoding_row(3)), b"\xFE\xFF\0a\0\r\0\n\0b");
+        assert_eq!(bytes(crlf.with_encoding_row(4)), b"a\r\nb");
         for row in 0..ENCODINGS.len() {
             assert_eq!(Format::default().with_encoding_row(row).encoding_row(), row);
         }
+    }
+
+    #[test]
+    fn a_cp1252_document_is_kept_for_recovery_in_utf8() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cp1252 = Format::default().with_encoding_row(4);
+        let kept = write_recovery(tmp.path(), 1, "a", &["\u{151}"], cp1252).expect("write");
+        assert_eq!(std::fs::read(kept).expect("read"), "\u{151}".as_bytes());
     }
 }

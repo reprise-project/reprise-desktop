@@ -11,9 +11,9 @@ const ENCODING_ROW_H: i32 = combo::COMBO_H + 8;
 /// The Encoding label sits as far below its combo's top as the Files of type label does.
 const ENCODING_LABEL_DY: i32 = 3;
 
-/// Save As's Encoding row: its label under Files of type's, its combo under that field, on `format`'s row.
-fn encoding_row(format: Format) -> Form {
-    let names = ENCODINGS.map(|(name, _, _)| name);
+/// The Encoding row of Open and Save As: its label under Files of type's, its combo of `names`
+/// under that field, on `selected`.
+fn encoding_row(names: &[&str], selected: usize) -> Form {
     let field = Rect::new(
         filedlg::FIELD_X,
         filedlg::EXTRA_Y,
@@ -23,7 +23,7 @@ fn encoding_row(format: Format) -> Form {
     let combo = Item::new(
         ENCODING,
         field,
-        Control::Combo(Combo::new(&names, format.encoding_row(), names.len())),
+        Control::Combo(Combo::new(names, selected, names.len())),
     );
     Form::new(vec![
         Item::label_at(
@@ -67,16 +67,35 @@ impl Notepad {
         }
     }
 
-    /// Declares the Open dialog open, on `start_dir()`. The listing waits for the first event, which has the icon cache.
+    /// Declares the Open dialog open, on `start_dir()`, its Encoding on Auto-Detect. The listing
+    /// waits for the first event, which has the icon cache.
     pub(crate) fn open_dialog(&mut self) {
-        let dlg = self.open_at_start(Fields {
+        let mut dlg = self.open_at_start(Fields {
             title: tr!("title-open"),
             accept_label: tr!("open-button"),
             mode: DlgMode::Open,
             multiple: false,
             filters: vec![tr!("filter-text"), tr!("filter-all")],
         });
+        let auto = tr!("encoding-auto");
+        let names: Vec<&str> = [auto.as_str()]
+            .into_iter()
+            .chain(READ_AS.iter().map(|&(name, _)| name))
+            .collect();
+        dlg.set_extra(
+            encoding_row(&names, 0),
+            ENCODING_ROW_H,
+            &self.forms.look.controls_at_100(),
+        );
         self.open = Some(dlg);
+    }
+
+    /// The encoding picked in Open, `None` for Auto-Detect.
+    fn read_as(&self) -> Option<Encoding> {
+        let row = (self.open.as_ref())
+            .and_then(FileDlg::extra)
+            .and_then(|f| f.combo_selected(ENCODING))?;
+        READ_AS.get(row.checked_sub(1)?).map(|&(_, e)| e)
     }
 
     pub(crate) fn saveas_dialog(&mut self) {
@@ -87,8 +106,9 @@ impl Notepad {
             multiple: false,
             filters: vec![tr!("filter-text"), tr!("filter-all")],
         });
+        let names = ENCODINGS.map(|(name, _, _)| name);
         dlg.set_extra(
-            encoding_row(self.format),
+            encoding_row(&names, self.format.encoding_row()),
             ENCODING_ROW_H,
             &self.forms.look.controls_at_100(),
         );
@@ -115,11 +135,12 @@ impl Notepad {
                 return Reply::redraw_all();
             }
         };
-        self.confirm_then(PendingAction::Pick(path))
+        let read_as = self.read_as();
+        self.confirm_then(PendingAction::Pick(path, read_as))
     }
 
-    pub(crate) fn open_picked(&mut self, path: &Path) -> Reply {
-        match read_text(path) {
+    pub(crate) fn open_picked(&mut self, path: &Path, read_as: Option<Encoding>) -> Reply {
+        match read_text_as(path, read_as) {
             Ok((text, format)) => self.show_document(&text, format, Some(path.to_path_buf())),
             Err(e) => self.open_failed(path, &e),
         }
@@ -185,6 +206,16 @@ impl Notepad {
             .and_then(FileDlg::extra)
             .and_then(|f| f.combo_selected(ENCODING));
         let format = picked.map_or(self.format, |row| self.format.with_encoding_row(row));
+        self.saveas_write_in(path, format)
+    }
+
+    /// Save As's write in `format`; one that cannot hold the text asks over Save As first.
+    pub(crate) fn saveas_write_in(&mut self, path: PathBuf, format: Format) -> Reply {
+        if !format.holds(self.edit.lines()) {
+            let b = self.unheld_box(&path, format);
+            self.asks.ask_over(SAVEAS, b, Ask::Unheld(Some(path)));
+            return Reply::redraw_all();
+        }
         match self.write_to(&path, format) {
             Ok(()) => {
                 self.recent.record(&path);

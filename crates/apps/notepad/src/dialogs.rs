@@ -13,6 +13,9 @@ pub(crate) enum Ask {
     Lossy(String),
     /// A recovery file; Yes opens its text.
     Recovered(PathBuf),
+    /// The encoding picked cannot hold the text; Yes saves in UTF-8 to Save As's pick, or with
+    /// `None` over the document's file.
+    Unheld(Option<PathBuf>),
     /// Save As picked a name another file has; Yes writes over it.
     Overwrite(PathBuf),
     NotFound,
@@ -251,6 +254,7 @@ impl Notepad {
             Ask::Lossy(text) if button == Some(0) => self.confirm_then(PendingAction::Lossy(text)),
             Ask::Lossy(_) => Reply::redraw_all(),
             Ask::Recovered(file) => self.recovered_answered(file, button),
+            Ask::Unheld(save_as) => self.unheld_answered(save_as, button),
             Ask::Overwrite(path) if button == Some(0) => self.saveas_write(path),
             Ask::Overwrite(_) | Ask::NotFound | Ask::Error => Reply::redraw_all(),
         }

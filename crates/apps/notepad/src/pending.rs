@@ -1,6 +1,7 @@
 //! The save prompt's bookkeeping: one action waits at a time and runs exactly once, after the document is saved
 //! or discarded; any Cancel on the way drops it.
 
+use crate::document::Encoding;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -9,8 +10,8 @@ pub enum PendingAction {
     New,
     Open,
     OpenFile(PathBuf),
-    /// A name picked in the Open dialog.
-    Pick(PathBuf),
+    /// A name picked in the Open dialog, with the encoding picked there (`None` detects it).
+    Pick(PathBuf, Option<Encoding>),
     /// The undecodable file's Yes, with its lossy copy.
     Lossy(String),
 }

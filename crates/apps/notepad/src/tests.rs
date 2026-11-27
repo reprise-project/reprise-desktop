@@ -1064,7 +1064,11 @@ fn the_bars_and_the_file_dialog_grow_with_the_text_size() {
     assert_eq!(panels[1].width, 712);
     np.open_dialog();
     let kid = np.children().into_iter().find(|c| c.id == OPEN).unwrap();
-    assert_eq!(kid.size, (2 * CLIENT.0, 2 * CLIENT.1));
+    np.open = None;
+    np.saveas_dialog();
+    let saveas = np.children().into_iter().find(|c| c.id == SAVEAS).unwrap();
+    assert_eq!(kid.size.0, 2 * CLIENT.0);
+    assert_eq!(kid.size, saveas.size, "both have the Encoding row");
 }
 
 #[test]
@@ -1376,7 +1380,7 @@ fn a_crlf_file_is_saved_with_its_breaks() {
 }
 
 #[test]
-fn bom_utf16_and_cr_files_save_back_byte_for_byte() {
+fn bom_utf16_cp1252_and_cr_files_save_back_byte_for_byte() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let utf16le: Vec<u8> = [0xFF, 0xFE]
         .into_iter()
@@ -1394,8 +1398,13 @@ fn bom_utf16_and_cr_files_save_back_byte_for_byte() {
                 .flat_map(u16::to_be_bytes),
         )
         .collect();
-    let cases: [(&str, Vec<u8>, &str); 4] = [
+    let cases: [(&str, Vec<u8>, &str); 5] = [
         ("bom.txt", b"\xEF\xBB\xBFone\r\ntwo".to_vec(), "one\ntwo"),
+        (
+            "cp1252.txt",
+            b"caf\xe9\r\n\x93\x80\x94".to_vec(),
+            "caf\u{e9}\n\u{201C}\u{20AC}\u{201D}",
+        ),
         ("le.txt", utf16le, "h\u{e9}\n\u{1F600}"),
         ("be.txt", utf16be, "h\u{e9}\n\u{1F600}\n"),
         ("cr.txt", b"one\rtwo\r".to_vec(), "one\ntwo\n"),
@@ -1460,6 +1469,102 @@ fn save_as_writes_the_encoding_picked_and_the_document_keeps_it() {
     );
 }
 
+fn pick_encoding(dlg: Option<&mut FileDlg>, row: usize) {
+    let form = dlg.and_then(FileDlg::extra_mut).expect("the Encoding row");
+    if let Some(Control::Combo(c)) = form.item_mut("encoding").map(|i| &mut i.control) {
+        c.selected = row;
+    }
+}
+
+#[test]
+fn open_reads_the_encoding_picked_and_starts_on_auto_detect() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    std::fs::write(dir.join("u.txt"), "caf\u{e9}").expect("write");
+    let mut np = Notepad::new(None);
+    np.open_dialog();
+    let picked = |np: &Notepad| {
+        (np.open.as_ref())
+            .and_then(FileDlg::extra)
+            .and_then(|f| f.combo_selected("encoding"))
+    };
+    assert_eq!(picked(&np), Some(0), "Open starts on Auto-Detect");
+    np.host.folder = Some(np.host.folders.id(dir));
+    np.open_accept("u.txt", &mut test_icons());
+    assert_eq!(np.edit.text(), "caf\u{e9}");
+    assert_eq!(np.format.encoding, Encoding::Utf8);
+
+    np.open_dialog();
+    np.host.folder = Some(np.host.folders.id(dir));
+    let cp1252 = READ_AS.iter().position(|&(_, e)| e == Encoding::Cp1252);
+    pick_encoding(np.open.as_mut(), 1 + cp1252.expect("a CP1252 row"));
+    np.open_accept("u.txt", &mut test_icons());
+    assert_eq!(np.edit.text(), "caf\u{c3}\u{a9}");
+    assert_eq!(np.format.encoding, Encoding::Cp1252);
+    assert!(np.save());
+    assert_eq!(
+        std::fs::read(dir.join("u.txt")).expect("read"),
+        "caf\u{e9}".as_bytes(),
+        "a save writes the bytes it read"
+    );
+}
+
+#[test]
+fn saving_a_cp1252_document_it_cannot_hold_asks_before_utf8_and_no_writes_nothing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("l.txt");
+    std::fs::write(&path, b"caf\xe9").expect("write");
+    let mut np = Notepad::new(Some(path.clone()));
+    assert_eq!(np.format.encoding, Encoding::Cp1252);
+    np.edit = MultiEdit::new("\u{151}");
+    np.edit.mark_unsaved();
+
+    assert!(!np.save());
+    assert!(matches!(np.asks.up(), Some((_, Ask::Unheld(None)))));
+    np.answer_box(Some(1));
+    assert_eq!(std::fs::read(&path).expect("read"), b"caf\xe9", "No");
+    assert!(np.dirty());
+    assert_eq!(np.format.encoding, Encoding::Cp1252);
+
+    np.confirm_then(PendingAction::Quit);
+    np.answer_box(Some(0));
+    assert!(matches!(np.asks.up(), Some((_, Ask::Unheld(None)))));
+    assert!(
+        np.pending.is_waiting(),
+        "Exit waits on the encoding question"
+    );
+    let reply = np.answer_box(Some(0));
+    assert!(reply.quit, "Yes saved and ran Exit");
+    assert_eq!(std::fs::read(&path).expect("read"), "\u{151}".as_bytes());
+    assert_eq!(np.format.encoding, Encoding::Utf8);
+    assert!(!np.dirty());
+}
+
+#[test]
+fn save_as_cp1252_that_cannot_hold_the_text_asks_over_save_as() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut np = Notepad::new(None);
+    np.edit = MultiEdit::new("\u{151}");
+    np.saveas_dialog();
+    let cp1252 = ENCODINGS
+        .iter()
+        .position(|&(_, e, _)| e == Encoding::Cp1252);
+    pick_encoding(np.saveas.as_mut(), cp1252.expect("a CP1252 row"));
+    let out = tmp.path().join("out.txt");
+    np.saveas_write(out.clone());
+    assert!(matches!(np.asks.up(), Some((_, Ask::Unheld(Some(_))))));
+    assert_eq!(np.parent(box_win(&np)), Some(SAVEAS));
+    np.answer_box(Some(1));
+    assert!(np.saveas.is_some(), "No goes back to Save As");
+    assert!(!out.exists());
+
+    np.saveas_write(out.clone());
+    np.answer_box(Some(0));
+    assert!(np.saveas.is_none());
+    assert_eq!(std::fs::read(&out).expect("read"), "\u{151}".as_bytes());
+    assert_eq!(np.format.encoding, Encoding::Utf8);
+}
+
 /// Yes on the save prompt with a path that cannot be written raises the error box and forgets
 /// the action, so Exit does not sit armed.
 #[test]
@@ -1484,12 +1589,12 @@ fn failed_save_on_the_prompt_raises_the_box_and_drops_the_action() {
 }
 
 #[test]
-fn a_file_that_is_not_utf8_opens_as_an_untitled_copy() {
+fn a_file_that_does_not_decode_opens_as_an_untitled_copy() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path();
-    let latin1 = dir.join("latin1.txt");
-    std::fs::write(&latin1, b"caf\xe9").expect("write");
-    let mut np = Notepad::new(Some(latin1.clone()));
+    let bad = dir.join("bad.txt");
+    std::fs::write(&bad, b"\xEF\xBB\xBFcaf\xe9").expect("write");
+    let mut np = Notepad::new(Some(bad.clone()));
     assert_eq!(np.path, None);
     assert_eq!(np.edit.text(), "");
     let win = box_win(&np);
@@ -1505,7 +1610,7 @@ fn a_file_that_is_not_utf8_opens_as_an_untitled_copy() {
     assert!(np.asks.is_empty(), "Yes closed the prompt");
     assert_eq!(np.edit.text(), "caf\u{fffd}");
     assert_eq!(np.path, None);
-    assert_eq!(std::fs::read(&latin1).expect("read"), b"caf\xe9");
+    assert_eq!(std::fs::read(&bad).expect("read"), b"\xEF\xBB\xBFcaf\xe9");
 
     let missing = dir.join("missing.txt");
     let np = Notepad::new(Some(missing.clone()));
@@ -1539,11 +1644,11 @@ fn a_paste_landing_under_the_open_dialog_asks_to_save_before_the_pick_replaces_i
 fn a_paste_landing_under_the_untitled_copy_question_asks_to_save_before_yes_replaces_it() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path();
-    std::fs::write(dir.join("latin1.txt"), b"caf\xe9").expect("write");
+    std::fs::write(dir.join("bad.txt"), b"\xEF\xBB\xBFcaf\xe9").expect("write");
     let mut np = Notepad::new(None);
     np.open_dialog();
     np.host.folder = Some(np.host.folders.id(dir));
-    np.open_accept("latin1.txt", &mut test_icons());
+    np.open_accept("bad.txt", &mut test_icons());
     let win = box_win(&np);
     assert!(matches!(np.asks.up(), Some((_, Ask::Lossy(_)))));
     let mut ctx = test_ctx();
