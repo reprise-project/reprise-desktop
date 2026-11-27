@@ -16,11 +16,27 @@ pow-act-title-turn-off = Turn Off Computer
 pow-act-title-restart = Restart Computer
 pow-act-title-stand-by = Stand By
 pow-act-title-hibernate = Hibernate
-# The determiner is "the" or "this".
-pow-act-on-turn-off = turn off { $the } computer
-pow-act-on-restart = restart { $the } computer
-pow-act-on-stand-by = put { $the } computer on stand by
-pow-act-on-hibernate = hibernate { $the } computer
+# $the is "the" or "this".
+pow-act-on-turn-off =
+    turn off { $the ->
+        [this] this
+       *[the] the
+    } computer
+pow-act-on-restart =
+    restart { $the ->
+        [this] this
+       *[the] the
+    } computer
+pow-act-on-stand-by =
+    put { $the ->
+        [this] this
+       *[the] the
+    } computer on stand by
+pow-act-on-hibernate =
+    hibernate { $the ->
+        [this] this
+       *[the] the
+    } computer
 pow-act-anyway-turn-off = &Turn Off Anyway
 pow-act-anyway-restart = &Restart Anyway
 pow-act-anyway-stand-by = &Stand By Anyway
@@ -319,14 +335,25 @@ dlg-icons-text =
     { $restore }
 
 ## Accessibility key shortcut prompts
-dlg-key-aid-sticky = Pressing the Shift key five times is the shortcut for StickyKeys. With StickyKeys, Shift, Ctrl, Alt and the Super key work one key at a time.
-dlg-key-aid-slow = Holding down the right Shift key for eight seconds is the shortcut for SlowKeys. With SlowKeys, a key counts only once it has been held down for a moment, so brief keystrokes are ignored.
-dlg-key-aid-mouse = Pressing left Alt, left Shift and Num Lock together is the shortcut for MouseKeys. With MouseKeys, the keypad moves the pointer and clicks.
-# The what variable is one of the three sentences above, name the aid.
-dlg-key-aid-text =
-    { $what }
+dlg-key-aid-sticky-title = StickyKeys
+dlg-key-aid-sticky-text =
+    Pressing the Shift key five times is the shortcut for StickyKeys. With StickyKeys, Shift, Ctrl, Alt and the Super key work one key at a time.
 
-    Turn on { $name }?
+    Turn on StickyKeys?
+    To leave it off, click No.
+    To turn off this shortcut, click Settings...
+dlg-key-aid-slow-title = SlowKeys
+dlg-key-aid-slow-text =
+    Holding down the right Shift key for eight seconds is the shortcut for SlowKeys. With SlowKeys, a key counts only once it has been held down for a moment, so brief keystrokes are ignored.
+
+    Turn on SlowKeys?
+    To leave it off, click No.
+    To turn off this shortcut, click Settings...
+dlg-key-aid-mouse-title = MouseKeys
+dlg-key-aid-mouse-text =
+    Pressing left Alt, left Shift and Num Lock together is the shortcut for MouseKeys. With MouseKeys, the keypad moves the pointer and clicks.
+
+    Turn on MouseKeys?
     To leave it off, click No.
     To turn off this shortcut, click Settings...
 dlg-key-aid-settings = &Settings...
@@ -561,8 +588,12 @@ misc-aid-mouse-what = The keypad moves the pointer. Hold { $ctrl } to go faster 
 misc-aid-on-body-shortcut = { $what } { $keys } turns it off.
 misc-aid-off-body-shortcut = { $keys } turns it on again.
 misc-aid-off-body-settings = Click here to turn it on again in Settings.
-misc-aid-on-title = { $name } is on
-misc-aid-off-title = { $name } is off
+misc-aid-sticky-on-title = StickyKeys is on
+misc-aid-sticky-off-title = StickyKeys is off
+misc-aid-slow-on-title = SlowKeys is on
+misc-aid-slow-off-title = SlowKeys is off
+misc-aid-mouse-on-title = MouseKeys is on
+misc-aid-mouse-off-title = MouseKeys is off
 # $keys is a comma-separated list of modifier names
 misc-sticky-tip-held = Held for the next key: { $keys }
 misc-sticky-tip-locked = Locked: { $keys }

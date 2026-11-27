@@ -49,6 +49,7 @@ impl Aid {
         }
     }
 
+    /// The aid's English name, for logs; the UI uses the `*-title` messages.
     pub fn name(self) -> &'static str {
         match self {
             Aid::StickyKeys => "StickyKeys",
@@ -104,7 +105,6 @@ impl Aid {
 /// `[accessibility] shortcuts` switch, without which the body names no shortcut. `settings`:
 /// whether a click on the balloon can open Settings.
 fn switched_notice(aid: Aid, on: bool, shortcuts: bool, settings: bool) -> (String, String) {
-    let name = aid.name();
     let keys = aid.shortcut_keys();
     let body = match (on, shortcuts) {
         (true, true) => tr!("misc-aid-on-body-shortcut", what = aid.what(), keys = keys),
@@ -113,10 +113,13 @@ fn switched_notice(aid: Aid, on: bool, shortcuts: bool, settings: bool) -> (Stri
         (false, false) if settings => tr!("misc-aid-off-body-settings"),
         (false, false) => String::new(),
     };
-    let summary = if on {
-        tr!("misc-aid-on-title", name = name)
-    } else {
-        tr!("misc-aid-off-title", name = name)
+    let summary = match (aid, on) {
+        (Aid::StickyKeys, true) => tr!("misc-aid-sticky-on-title"),
+        (Aid::StickyKeys, false) => tr!("misc-aid-sticky-off-title"),
+        (Aid::SlowKeys, true) => tr!("misc-aid-slow-on-title"),
+        (Aid::SlowKeys, false) => tr!("misc-aid-slow-off-title"),
+        (Aid::MouseKeys, true) => tr!("misc-aid-mouse-on-title"),
+        (Aid::MouseKeys, false) => tr!("misc-aid-mouse-off-title"),
     };
     (summary, body)
 }

@@ -238,14 +238,19 @@ impl Dialog {
     /// turned off. Without `settings` (the login screen) Settings... is greyed.
     pub fn key_aid_prompt(aid: crate::keyfilter::Aid, settings: bool) -> Dialog {
         use crate::keyfilter::Aid;
-        let what = match aid {
-            Aid::StickyKeys => tr!("dlg-key-aid-sticky"),
-            Aid::SlowKeys => tr!("dlg-key-aid-slow"),
-            Aid::MouseKeys => tr!("dlg-key-aid-mouse"),
+        let (title, text) = match aid {
+            Aid::StickyKeys => (
+                tr!("dlg-key-aid-sticky-title"),
+                tr!("dlg-key-aid-sticky-text"),
+            ),
+            Aid::SlowKeys => (tr!("dlg-key-aid-slow-title"), tr!("dlg-key-aid-slow-text")),
+            Aid::MouseKeys => (
+                tr!("dlg-key-aid-mouse-title"),
+                tr!("dlg-key-aid-mouse-text"),
+            ),
         };
-        let name = aid.name();
         Dialog {
-            text: tr!("dlg-key-aid-text", what = what, name = name),
+            text,
             buttons: vec![
                 button(&kit_tr!("yes"), DialogAction::TurnOn(aid), true),
                 button(&kit_tr!("no"), DialogAction::Cancel, false),
@@ -259,7 +264,7 @@ impl Dialog {
                 },
             ],
             ..Dialog::new(
-                name,
+                title,
                 Style::Classic {
                     template: Template::KeyAid,
                     text_h: Some(KEY_AID_TEXT_H),
