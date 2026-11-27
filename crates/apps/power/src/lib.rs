@@ -13,6 +13,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("power");
+
 mod alarms;
 mod awake;
 mod logind;
@@ -35,6 +37,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -105,16 +108,14 @@ struct Waiting {
     until: Instant,
 }
 
-fn low_balloon(pct: u8, saving: bool) -> (&'static str, String) {
-    let saver = if saving {
-        " The power saver profile is on until then."
+fn low_balloon(pct: u8, saving: bool) -> (String, String) {
+    let pct = pct.to_string();
+    let body = if saving {
+        tr!("low-battery-saver", pct = pct)
     } else {
-        ""
+        tr!("low-battery-text", pct = pct)
     };
-    (
-        "Low battery",
-        format!("{pct}% of battery power remains. Plug the computer in.{saver}"),
-    )
+    (tr!("low-battery-title"), body)
 }
 
 /// The icon for a snapshot under these alarm thresholds, for the tray and the Power Meter alike; an alarm at 0 is off, never "low".
@@ -181,10 +182,11 @@ impl PowerApp {
                 log::info!("critical battery: {pct}%");
                 if let Some(t) = &self.tray {
                     t.notify(
-                        "Critical battery",
-                        &format!(
-                            "{pct}% of battery power remains. The computer is about to {}.",
-                            critical_verb(action)
+                        &tr!("critical-battery-title"),
+                        &tr!(
+                            "critical-battery-text",
+                            pct = pct.to_string(),
+                            action = action
                         ),
                     );
                 }
@@ -224,19 +226,13 @@ impl PowerApp {
 
     /// The hold thread answered a take. A refused hold is asked for again on the next snapshot; the
     /// balloon that waited goes out, naming power saver only when the hold took.
-    fn hold_answered(&mut self, held: bool) -> Option<(&'static str, String)> {
+    fn hold_answered(&mut self, held: bool) -> Option<(String, String)> {
         if !held {
             self.saver = alarms::Saver::default();
         }
         match self.waiting.take()?.low {
             Some(pct) => Some(low_balloon(pct, held)),
-            None => held.then(|| {
-                (
-                    "Power saver on",
-                    "The battery is low, so the power saver profile is on until the computer is plugged in."
-                        .to_string(),
-                )
-            }),
+            None => held.then(|| (tr!("saver-on-title"), tr!("saver-on-text"))),
         }
     }
 
@@ -261,15 +257,15 @@ impl PowerApp {
 
     /// The hold did not answer by `now`: the low balloon goes out without power saver, and the
     /// late answer shows nothing.
-    fn hold_overdue(&mut self, now: Instant) -> Option<(&'static str, String)> {
+    fn hold_overdue(&mut self, now: Instant) -> Option<(String, String)> {
         let low = self.waiting.as_ref().filter(|w| now >= w.until)?.low;
         self.waiting = None;
         low.map(|pct| low_balloon(pct, false))
     }
 
-    fn notify(&self, (title, body): (&str, String)) {
+    fn notify(&self, (title, body): (String, String)) {
         if let Some(t) = &self.tray {
-            t.notify(title, &body);
+            t.notify(&title, &body);
         }
     }
 
@@ -347,7 +343,7 @@ impl PowerApp {
             if let Some(s) = &mut self.sheet {
                 s.unapplied(&self.settings);
             }
-            self.fail(format!("{} could not be written.", self.path.display()));
+            self.fail(tr!("write-failed", path = self.path.display().to_string()));
         }
         ok
     }
@@ -357,7 +353,7 @@ impl PowerApp {
         match reprisebus::session() {
             Ok(conn) => self.switch_awake(&conn, on),
             Err(e) => {
-                self.fail(format!("Keep Awake cannot reach the session bus: {e}"));
+                self.fail(tr!("awake-no-bus", error = e.to_string()));
                 self.show_awake();
             }
         }
@@ -370,7 +366,7 @@ impl PowerApp {
             (false, Some(cookie)) => awake::release(conn, cookie),
             (true, None) => match awake::hold(conn) {
                 Ok(cookie) => self.awake = Some(cookie),
-                Err(e) => self.fail(format!("Reprise could not keep the computer awake: {e}")),
+                Err(e) => self.fail(tr!("awake-failed", error = e.to_string())),
             },
             (_, held) => self.awake = held,
         }
@@ -385,7 +381,7 @@ impl PowerApp {
     }
 
     fn fail(&mut self, text: String) {
-        self.error.show("Power Options", text, None);
+        self.error.show(&tr!("error-title"), text, None);
     }
 
     /// Turn the charge limit on or off on a thread; a change while one runs shows the known limit again.
@@ -423,7 +419,7 @@ impl PowerApp {
             s.charge_done(self.power.limit.clone());
         }
         if let Some(Some(why)) = done.failed {
-            self.fail(format!("The charge limit could not be changed.\n\n{why}"));
+            self.fail(tr!("charge-failed", error = why.to_string()));
         }
     }
 
@@ -582,18 +578,9 @@ impl PowerApp {
     }
 }
 
-fn critical_verb(action: &str) -> &'static str {
-    match action {
-        "standby" => "stand by",
-        "hibernate" => "hibernate",
-        "turnoff" => "shut down",
-        _ => "keep running",
-    }
-}
-
 impl App for PowerApp {
     fn title(&self) -> String {
-        "Power Options Properties".into()
+        tr!("title")
     }
 
     fn app_id(&self) -> String {
@@ -736,6 +723,27 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn critical_text_names_the_action_and_failures_keep_their_paragraph_break() {
+        let text = |action| tr!("critical-battery-text", pct = "3", action = action);
+        assert_eq!(
+            text("turnoff"),
+            "3% of battery power remains. The computer is about to shut down."
+        );
+        assert_eq!(
+            text("standby"),
+            "3% of battery power remains. The computer is about to stand by."
+        );
+        assert_eq!(
+            text("nothing"),
+            "3% of battery power remains. The computer is about to keep running."
+        );
+        assert_eq!(
+            tr!("charge-failed", error = "denied"),
+            "The charge limit could not be changed.\n\ndenied"
+        );
+    }
+
     use super::*;
     use reprisekit::controls::form;
     use upower::Battery;

@@ -1,6 +1,7 @@
 //! power-profiles-daemon over the system bus. The daemon is optional; without it the profiles are empty.
 
 use futures_util::stream::StreamExt;
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 use zbus::OwnedVariant;
@@ -32,9 +33,9 @@ pub struct Profiles {
 
 pub fn label(profile: &str) -> String {
     match profile {
-        "power-saver" => "Power saver".into(),
-        "balanced" => "Balanced".into(),
-        "performance" => "Performance".into(),
+        "power-saver" => tr!("profile-power-saver"),
+        "balanced" => tr!("profile-balanced"),
+        "performance" => tr!("profile-performance"),
         other => other.into(),
     }
 }

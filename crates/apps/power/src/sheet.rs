@@ -11,6 +11,7 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::DialogFont;
+use reprisekit::tr;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::profiles::{self, Profiles};
@@ -22,7 +23,15 @@ use reprisebus::charge::ChargeLimit;
 /// The sheet's fixed client size: a 404x448 window less the frame.
 pub const CLIENT: (i32, i32) = (398, 424);
 
-pub const TABS: [&str; 4] = ["Power Schemes", "Alarms", "Power Meter", "Advanced"];
+pub fn tabs() -> [String; 4] {
+    [
+        tr!("tab-schemes"),
+        tr!("tab-alarms"),
+        tr!("tab-meter"),
+        tr!("tab-advanced"),
+    ]
+}
+
 pub const TAB_SCHEMES: usize = 0;
 pub const TAB_ALARMS: usize = 1;
 pub const TAB_METER: usize = 2;
@@ -48,11 +57,11 @@ const COL_W: i32 = 108;
 
 pub fn minutes_label(minutes: u32) -> String {
     match minutes {
-        0 => "Never".into(),
-        1 => "After 1 min".into(),
-        m if m < 60 => format!("After {m} mins"),
-        60 => "After 1 hour".into(),
-        m => format!("After {} hours", m / 60),
+        0 => tr!("minutes-never"),
+        1 => tr!("minutes-one"),
+        m if m < 60 => tr!("minutes", count = m.to_string()),
+        60 => tr!("hours-one"),
+        m => tr!("hours", count = (m / 60).to_string()),
     }
 }
 
@@ -73,23 +82,32 @@ pub fn minutes_index(seconds: i64) -> usize {
         .unwrap_or(0)
 }
 
-/// A combo row's actions: the config name and its label. `ACTIONS` is the compositor's whole set, accepted by the lid and both buttons.
-pub const ACTIONS: [(&str, &str); 7] = [
-    ("nothing", "Do nothing"),
-    ("ask", "Ask me what to do"),
-    ("screen_off", "Turn off the screen"),
-    ("lock", "Lock computer"),
-    ("standby", "Stand by"),
-    ("hibernate", "Hibernate"),
-    ("turnoff", "Shut down"),
+/// A combo row's actions, by config name. `ACTIONS` is the compositor's whole set, accepted by the lid and both buttons.
+pub const ACTIONS: [&str; 7] = [
+    "nothing",
+    "ask",
+    "screen_off",
+    "lock",
+    "standby",
+    "hibernate",
+    "turnoff",
 ];
 
-pub const CRITICAL_ACTIONS: [(&str, &str); 4] = [
-    ("nothing", "Do nothing"),
-    ("standby", "Stand by"),
-    ("hibernate", "Hibernate"),
-    ("turnoff", "Shut down"),
-];
+pub const CRITICAL_ACTIONS: [&str; 4] = ["nothing", "standby", "hibernate", "turnoff"];
+
+/// The label of action `name`; a name this build does not know shows as itself.
+fn action_label(name: &str) -> String {
+    match name {
+        "nothing" => tr!("action-nothing"),
+        "ask" => tr!("action-ask"),
+        "screen_off" => tr!("action-screen-off"),
+        "lock" => tr!("action-lock"),
+        "standby" => tr!("action-standby"),
+        "hibernate" => tr!("action-hibernate"),
+        "turnoff" => tr!("action-turnoff"),
+        other => other.to_string(),
+    }
+}
 
 /// What the host does after an event. An apply carries the settings to write and the power profile to switch to, if picked.
 #[derive(Clone, Debug, PartialEq)]
@@ -138,7 +156,7 @@ impl Sheet {
             advanced_page(),
         ];
         let mut s = Sheet {
-            sheet: PropSheet::new(&TABS, pages, CLIENT),
+            sheet: PropSheet::new(&tabs().each_ref().map(String::as_str), pages, CLIENT),
             applied: settings.clone(),
             pending: settings.clone(),
             low_level: remembered(settings.battery_low, 10),
@@ -223,7 +241,7 @@ impl Sheet {
     }
 
     pub fn open_tab(&mut self, tab: usize) {
-        self.sheet.tabs.open = tab.min(TABS.len() - 1);
+        self.sheet.tabs.open = tab.min(TAB_ADVANCED);
     }
 
     pub fn dirty(&self) -> bool {
@@ -306,7 +324,7 @@ impl Sheet {
         let pos = |id| page.track_pos(id);
         let checked = |id| page.checked(id);
         let seconds = |id| combo(id).map(|i| i64::from(MINUTES[i.min(MINUTES.len() - 1)]) * 60);
-        let action = |id, list: &[(&str, &str)]| action_name(page, id, list);
+        let action = |id, list: &[&str]| action_name(page, id, list);
         if id == "profile" {
             if let Some(i) = combo(id)
                 && let Some(name) = self.profiles.available.get(i)
@@ -423,7 +441,7 @@ impl Sheet {
             page.set_check("crit_check", crit_on);
             set_track(page, "crit_track", critical_level, crit_on);
             set_text(page, "crit_pct", &format!("{critical_level}%"), crit_on);
-            set_text(page, "crit_action_label", "&Action:", crit_on);
+            set_text(page, "crit_action_label", &tr!("alarm-action"), crit_on);
             set_action(
                 page,
                 "crit_action",
@@ -482,46 +500,42 @@ impl Sheet {
     fn write_saver(&mut self) {
         let offered = self.profiles.available.iter().any(|p| p == profiles::SAVER);
         let note = if self.profiles.available.is_empty() {
-            "Install power-profiles-daemon to switch to power saver."
+            tr!("saver-note")
         } else {
-            ""
+            String::new()
         };
         let page = &mut self.sheet.pages[TAB_ALARMS];
         page.set_check(LOW_SAVER, self.pending.low_battery_saver);
         page.set_enabled(LOW_SAVER, offered && self.pending.battery_low > 0);
-        page.set_text("saver_note", note);
+        page.set_text("saver_note", &note);
     }
 
     fn write_meter(&mut self) {
         let power = self.power.clone();
         let page = &mut self.sheet.pages[TAB_METER];
         let source = if power.on_battery {
-            "Batteries"
+            tr!("source-batteries")
         } else {
-            "AC power"
+            tr!("source-ac")
         };
-        set_text(page, "source_value", source, true);
+        set_text(page, "source_value", &source, true);
         let (status, charge, remaining) = match &power.battery {
-            None => (
-                "No battery is present".to_string(),
-                "-".to_string(),
-                "-".to_string(),
-            ),
+            None => (tr!("status-no-battery"), "-".to_string(), "-".to_string()),
             Some(b) => {
                 let status = match b.state {
                     _ if b.held => held(b),
-                    State::Charging => "Charging".into(),
-                    State::Discharging => "Discharging".into(),
-                    State::Full => "Fully charged".into(),
-                    State::Unknown => "Unknown".into(),
+                    State::Charging => tr!("status-charging"),
+                    State::Discharging => tr!("status-discharging"),
+                    State::Full => tr!("status-full"),
+                    State::Unknown => tr!("unknown"),
                 };
                 let remaining = match b.state {
                     State::Discharging if b.time_to_empty > 0 => clock(b.time_to_empty),
                     State::Charging if b.time_to_full > 0 => {
-                        format!("{} to full", clock(b.time_to_full))
+                        tr!("remaining-to-full", time = clock(b.time_to_full))
                     }
                     State::Full => "-".to_string(),
-                    _ => "Unknown".to_string(),
+                    _ => tr!("unknown"),
                 };
                 (status, format!("{}%", b.percent), remaining)
             }
@@ -547,12 +561,12 @@ fn remembered(level: i64, last: i64) -> i64 {
 /// Fill action combo `id` with `list`'s labels, then one row per name in `pending` or `applied` the
 /// list lacks, labelled with the name itself, and select `pending`. A name a newer compositor accepts
 /// thus survives an Apply of another control.
-fn set_action(page: &mut Form, id: &str, list: &[(&str, &str)], pending: &str, applied: &str) {
-    let mut rows: Vec<&str> = list.iter().map(|(_, l)| *l).collect();
-    let mut names: Vec<&str> = list.iter().map(|(n, _)| *n).collect();
+fn set_action(page: &mut Form, id: &str, list: &[&str], pending: &str, applied: &str) {
+    let mut rows: Vec<String> = list.iter().map(|n| action_label(n)).collect();
+    let mut names: Vec<&str> = list.to_vec();
     for extra in [applied, pending] {
         if !names.contains(&extra) {
-            rows.push(extra);
+            rows.push(extra.to_string());
             names.push(extra);
         }
     }
@@ -561,20 +575,23 @@ fn set_action(page: &mut Form, id: &str, list: &[(&str, &str)], pending: &str, a
             .items
             .iter()
             .map(|i| i.text.as_str())
-            .eq(rows.iter().copied())
+            .eq(rows.iter().map(String::as_str))
     {
-        c.items = rows.iter().map(|&r| combo::ListItem::new(r)).collect();
+        c.items = rows
+            .iter()
+            .map(|r| combo::ListItem::new(r.as_str()))
+            .collect();
     }
     page.set_combo(id, names.iter().position(|n| *n == pending).unwrap_or(0));
 }
 
 /// The config name behind action combo `id`'s selected row: `list`'s, or the extra row's own text past its end.
-fn action_name(page: &Form, id: &str, list: &[(&str, &str)]) -> Option<String> {
+fn action_name(page: &Form, id: &str, list: &[&str]) -> Option<String> {
     let Some(Control::Combo(c)) = page.item(id).map(|i| &i.control) else {
         return None;
     };
     match list.get(c.selected) {
-        Some((name, _)) => Some(name.to_string()),
+        Some(name) => Some(name.to_string()),
         None => c.items.get(c.selected).map(|i| i.text.clone()),
     }
 }
@@ -641,35 +658,30 @@ fn schemes_page(icon: Option<Canvas>) -> Form {
             X + 46,
             50,
             &[
-                "Select the power-saving settings you want to use.",
-                "The second column applies while the computer runs",
-                "on its batteries.",
+                &tr!("schemes-intro-1"),
+                &tr!("schemes-intro-2"),
+                &tr!("schemes-intro-3"),
             ],
         ),
-        group("schemes_g", 106, 52, "Power schemes"),
+        group("schemes_g", 106, 52, &tr!("schemes-group")),
         combo("profile", GX, 126, GW, &[]),
-        group("settings_g", 170, 130, "Settings"),
-        Item::label_at("col_ac", COL_AC, 190, COL_W, "Plugged in"),
-        Item::label_at("col_bat", COL_BAT, 190, COL_W, "On batteries"),
-        Item::label_at("monitor_l", GX, 218, 110, "Turn off &monitor:"),
+        group("settings_g", 170, 130, &tr!("settings-group")),
+        Item::label_at("col_ac", COL_AC, 190, COL_W, &tr!("column-ac")),
+        Item::label_at("col_bat", COL_BAT, 190, COL_W, &tr!("column-battery")),
+        Item::label_at("monitor_l", GX, 218, 110, &tr!("monitor-label")),
         minutes_combo("ac_monitor", COL_AC, 214),
         minutes_combo("bat_monitor", COL_BAT, 214),
-        Item::label_at("standby_l", GX, 250, 110, "System &stand by:"),
+        Item::label_at("standby_l", GX, 250, 110, &tr!("standby-label")),
         minutes_combo("ac_standby", COL_AC, 246),
         minutes_combo("bat_standby", COL_BAT, 246),
     ];
-    items.push(Item::check(
-        KEEP_AWAKE,
-        X,
-        314,
-        "&Keep Awake: no screen saver, lock or stand by",
-    ));
+    items.push(Item::check(KEEP_AWAKE, X, 314, &tr!("keep-awake")));
     items.push(Item::label_at(
         "schemes_note",
         X,
         340,
         W,
-        "Screen saver and lock times are in Reprise Settings.",
+        &tr!("schemes-note"),
     ));
     Form::new(items)
 }
@@ -681,34 +693,20 @@ pub const KEEP_AWAKE: &str = "keep_awake";
 pub const LOW_SAVER: &str = "low_saver";
 
 fn alarms_page() -> Form {
-    let actions: Vec<&str> = CRITICAL_ACTIONS.iter().map(|(_, l)| *l).collect();
+    let actions: Vec<String> = CRITICAL_ACTIONS.iter().map(|n| action_label(n)).collect();
+    let actions: Vec<&str> = actions.iter().map(String::as_str).collect();
     Form::new(vec![
-        group("low_g", 48, 108, "Low battery alarm"),
-        Item::check(
-            "low_check",
-            GX,
-            68,
-            "Activate &low battery alarm when power level reaches:",
-        ),
+        group("low_g", 48, 108, &tr!("low-group")),
+        Item::check("low_check", GX, 68, &tr!("low-check")),
         Item::new(
             "low_track",
             Rect::new(GX, 90, 240, trackbar::HEIGHT),
             Control::TrackBar(TrackBar::new(2, ALARM_STEPS)),
         ),
         Item::label_at("low_pct", GX + 252, 96, 50, "10%"),
-        Item::check(
-            LOW_SAVER,
-            GX,
-            124,
-            "&Switch to the power saver profile at this level",
-        ),
-        group("crit_g", 168, 130, "Critical battery alarm"),
-        Item::check(
-            "crit_check",
-            GX,
-            188,
-            "Activate &critical battery alarm when power level reaches:",
-        ),
+        Item::check(LOW_SAVER, GX, 124, &tr!("low-saver")),
+        group("crit_g", 168, 130, &tr!("critical-group")),
+        Item::check("crit_check", GX, 188, &tr!("critical-check")),
         Item::new(
             "crit_track",
             Rect::new(GX, 210, 240, trackbar::HEIGHT),
@@ -726,22 +724,22 @@ pub const CHARGE_LIMIT: &str = "charge_limit";
 
 pub fn charge_label(limit: &ChargeLimit) -> String {
     match limit.end {
-        Some(end) => format!("Limit charging to protect the &battery (stops at {end}%)"),
-        None => "Limit charging to protect the &battery".to_string(),
+        Some(end) => tr!("charge-limit-stops", end = end.to_string()),
+        None => tr!("charge-limit"),
     }
 }
 
 fn meter_page(limit: Option<&ChargeLimit>) -> Form {
     let mut items = vec![
-        Item::label_at("source_l", X, 50, 150, "Current power source:"),
+        Item::label_at("source_l", X, 50, 150, &tr!("source-label")),
         Item::label_at("source_value", X + 150, 50, 200, ""),
-        group("battery_g", 76, 110, "Battery"),
+        group("battery_g", 76, 110, &tr!("battery-group")),
         picture("battery_icon", GX, 100, ICON_PX, None),
-        Item::label_at("status_l", GX + 50, 100, 80, "Status:"),
+        Item::label_at("status_l", GX + 50, 100, 80, &tr!("status-label")),
         Item::label_at("status_value", GX + 130, 100, 190, ""),
-        Item::label_at("charge_l", GX + 50, 122, 80, "Charge:"),
+        Item::label_at("charge_l", GX + 50, 122, 80, &tr!("charge-label")),
         Item::label_at("charge_value", GX + 130, 122, 190, ""),
-        Item::label_at("remaining_l", GX + 50, 144, 80, "Remaining:"),
+        Item::label_at("remaining_l", GX + 50, 144, 80, &tr!("remaining-label")),
         Item::label_at("remaining_value", GX + 130, 144, 190, ""),
     ];
     if let Some(l) = limit {
@@ -751,34 +749,17 @@ fn meter_page(limit: Option<&ChargeLimit>) -> Form {
 }
 
 fn advanced_page() -> Form {
-    let actions: Vec<&str> = ACTIONS.iter().map(|(_, l)| *l).collect();
+    let actions: Vec<String> = ACTIONS.iter().map(|n| action_label(n)).collect();
+    let actions: Vec<&str> = actions.iter().map(String::as_str).collect();
     Form::new(vec![
-        group("options_g", 48, 52, "Options"),
-        Item::check("show_icon", GX, 70, "&Always show icon on the taskbar"),
-        group("buttons_g", 112, 196, "Power buttons"),
-        Item::label_at(
-            "lid_l",
-            GX,
-            132,
-            GW,
-            "When I close the lid of my portable computer:",
-        ),
+        group("options_g", 48, 52, &tr!("options-group")),
+        Item::check("show_icon", GX, 70, &tr!("show-icon")),
+        group("buttons_g", 112, 196, &tr!("buttons-group")),
+        Item::label_at("lid_l", GX, 132, GW, &tr!("lid-label")),
         combo("lid", GX, 150, GW, &actions),
-        Item::label_at(
-            "power_l",
-            GX,
-            190,
-            GW,
-            "When I press the power button on my computer:",
-        ),
+        Item::label_at("power_l", GX, 190, GW, &tr!("power-button-label")),
         combo("power_btn", GX, 208, GW, &actions),
-        Item::label_at(
-            "sleep_l",
-            GX,
-            248,
-            GW,
-            "When I press the sleep button on my computer:",
-        ),
+        Item::label_at("sleep_l", GX, 248, GW, &tr!("sleep-button-label")),
         combo("sleep_btn", GX, 266, GW, &actions),
     ])
 }
@@ -849,11 +830,8 @@ mod tests {
     /// Apply of an alarm level leaves the action keys as the file has them.
     #[test]
     fn every_action_name_survives_an_unrelated_apply() {
-        let buttons = ACTIONS.iter().map(|(n, _)| *n).chain(["hybrid_sleep"]);
-        let critical = CRITICAL_ACTIONS
-            .iter()
-            .map(|(n, _)| *n)
-            .chain(["hybrid_sleep"]);
+        let buttons = ACTIONS.iter().copied().chain(["hybrid_sleep"]);
+        let critical = CRITICAL_ACTIONS.iter().copied().chain(["hybrid_sleep"]);
         for (button, critical) in buttons.zip(critical.cycle()) {
             let text = format!(
                 "[power]\nlid_close = \"{button}\"\npower_button = \"{button}\"\n\

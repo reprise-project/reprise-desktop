@@ -1,6 +1,7 @@
 //! The battery in the notification area: what reprise-power shows on its `reprisetray` item (icon,
 //! tooltip, menu rows) and what a click on it means. The D-Bus side is `reprisetray`'s.
 
+use reprisekit::tr;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::profiles::{self, Profiles};
@@ -16,9 +17,6 @@ pub enum TrayMsg {
     Exit,
     Profile(usize),
 }
-
-/// The tooltip's line while Keep Awake holds.
-pub const AWAKE_TIP: &str = "Keep Awake is on";
 
 /// What `msg` means while the menu shows `p`'s profiles.
 pub fn translate(msg: Msg, p: &Profiles) -> Option<TrayMsg> {
@@ -41,16 +39,16 @@ pub fn menu(p: &Profiles, awake: bool) -> Rows<TrayMsg> {
     if !p.available.is_empty() {
         rows.separator();
     }
-    rows.add(TrayMsg::OpenMeter, |id| Node::row(id, "Open Power Meter"))
+    rows.add(TrayMsg::OpenMeter, |id| Node::row(id, tr!("menu-meter")))
         .add(TrayMsg::OpenProperties, |id| {
-            Node::row(id, "Adjust Power Properties")
+            Node::row(id, tr!("menu-properties"))
         })
         .separator()
         .add(TrayMsg::KeepAwake, |id| {
-            Node::toggle(id, "Keep Awake", awake)
+            Node::toggle(id, tr!("menu-keep-awake"), awake)
         })
         .separator()
-        .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
+        .add(TrayMsg::Exit, |id| Node::row(id, tr!("menu-exit")));
     rows
 }
 
@@ -66,26 +64,30 @@ pub fn clock(seconds: u64) -> String {
 /// What a battery the charge limit holds is doing: "Charging limited to 80%".
 pub fn held(b: &Battery) -> String {
     match b.stops_at {
-        Some(end) => format!("Charging limited to {end}%"),
-        None => "Charging limited".to_string(),
+        Some(end) => tr!("limited-to", end = end.to_string()),
+        None => tr!("limited"),
     }
 }
 
 pub fn tooltip(p: &Power) -> String {
     let Some(b) = &p.battery else {
-        return "On AC power".to_string();
+        return tr!("tip-ac");
     };
     match b.state {
         _ if b.held && b.stops_at.is_some() => held(b),
-        _ if b.held => format!("{} ({}%)", held(b), b.percent),
-        State::Full => format!("Fully charged ({}%)", b.percent),
-        State::Charging => format!("Charging ({}%)", b.percent),
+        _ if b.held => tr!("tip-held", state = held(b), percent = b.percent.to_string()),
+        State::Full => tr!("tip-full", percent = b.percent.to_string()),
+        State::Charging => tr!("tip-charging", percent = b.percent.to_string()),
         State::Discharging if b.time_to_empty > 0 => {
-            format!("{} remaining ({}%)", clock(b.time_to_empty), b.percent)
+            tr!(
+                "tip-remaining-time",
+                time = clock(b.time_to_empty),
+                percent = b.percent.to_string()
+            )
         }
-        State::Discharging => format!("{}% remaining", b.percent),
-        State::Unknown if p.on_battery => format!("{}% remaining", b.percent),
-        State::Unknown => format!("On AC power ({}%)", b.percent),
+        State::Discharging => tr!("tip-remaining", percent = b.percent.to_string()),
+        State::Unknown if p.on_battery => tr!("tip-remaining", percent = b.percent.to_string()),
+        State::Unknown => tr!("tip-ac-percent", percent = b.percent.to_string()),
     }
 }
 
@@ -104,7 +106,7 @@ pub fn shown(
             argb: pixmap,
         },
         tip: match awake {
-            true => format!("{tip}\n{AWAKE_TIP}"),
+            true => format!("{tip}\n{}", tr!("tip-awake")),
             false => tip,
         },
         active: active || awake,
@@ -125,7 +127,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     };
     let initial = shown(
         reprisekit::art::powericon::draw(reprisekit::art::powericon::Source::Ac).to_argb_be(),
-        "On AC power".to_string(),
+        tr!("tip-ac"),
         false,
         &Profiles::default(),
         false,
