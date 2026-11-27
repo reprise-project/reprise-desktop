@@ -1,8 +1,10 @@
 //! Pages to print: a text cut into pages of wrapped rows, each page's rows drawn black on white
 //! with its header and footer, and a picture's place on a page.
 //!
-//! A header or footer is one row in the text's font, centred top to bottom in its margin and
-//! kept inside it, from the left margin to the right one. Its codes, which take either case:
+//! A header or footer is one row in the text's font, centred top to bottom in its margin, from
+//! the left margin to the right one; a margin thinner than the row prints none. Its left, centre
+//! and right parts each keep to their own room ([`band_rooms`]), and control characters print as
+//! spaces. Its codes, which take either case:
 //! `&f` the file name, `&p` the page number, `&d` the date, `&t` the time, `&&` an ampersand;
 //! `&l`, `&c` and `&r` put what follows at the row's left, centre or right. Text before any of
 //! them is centred, and an unknown code prints as typed.
@@ -138,7 +140,31 @@ pub fn band(codes: &str, s: &Stamp) -> Band {
             }
         }
     }
+    for part in [&mut b.left, &mut b.centre, &mut b.right] {
+        *part = part
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+    }
     b
+}
+
+/// The room each part of a band takes in a row `width` px wide, as (x, width), given the parts'
+/// widths: the centre part centred, the left part up to `gap` before it and the right part from
+/// `gap` after it. With no centre part the right one keeps its width and the left one ends
+/// `gap` before it. A part is drawn only inside its room, so long parts are cut, never overprinted.
+pub fn band_rooms(width: i32, gap: i32, [_, centre, right]: [i32; 3]) -> [(i32, i32); 3] {
+    let right_room = |from: i32| (from, width - from);
+    if centre > 0 {
+        let w = centre.min(width);
+        let x = (width - w) / 2;
+        return [(0, x - gap), (x, w), right_room(x + w + gap)];
+    }
+    if right > 0 {
+        let x = width - right.min(width);
+        return [(0, x - gap), (x, 0), right_room(x)];
+    }
+    [(0, width), (0, 0), (width, 0)]
 }
 
 /// A text page with its header and footer: a page `height` px tall whose margins above and below
@@ -152,27 +178,30 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// The header's row and the margin it is kept in, rows `line_h` tall.
-    pub fn header(&self, line_h: i32) -> (Rect, Rect) {
-        let margin = Rect::new(0, 0, self.width, self.top.max(0));
-        (centred_row(margin, line_h), margin)
+    /// The header's row, `line_h` tall; none when the top margin is thinner than a row.
+    pub fn header(&self, line_h: i32) -> Option<Rect> {
+        centred_row(Rect::new(0, 0, self.width, self.top.max(0)), line_h)
     }
 
-    /// The footer's row and the margin it is kept in.
-    pub fn footer(&self, line_h: i32) -> (Rect, Rect) {
+    /// The footer's row; none when the bottom margin is thinner than a row.
+    pub fn footer(&self, line_h: i32) -> Option<Rect> {
         let bottom = self.bottom.clamp(0, self.height);
-        let margin = Rect::new(0, self.height - bottom, self.width, bottom);
-        (centred_row(margin, line_h), margin)
+        centred_row(
+            Rect::new(0, self.height - bottom, self.width, bottom),
+            line_h,
+        )
     }
 }
 
-fn centred_row(margin: Rect, line_h: i32) -> Rect {
-    Rect::new(
-        margin.x,
-        margin.y + (margin.height - line_h) / 2,
-        margin.width,
-        line_h,
-    )
+fn centred_row(margin: Rect, line_h: i32) -> Option<Rect> {
+    (margin.height >= line_h).then(|| {
+        Rect::new(
+            margin.x,
+            margin.y + (margin.height - line_h) / 2,
+            margin.width,
+            line_h,
+        )
+    })
 }
 
 /// One page of [`text_pages`] on a white canvas the frame's size: its rows below the top margin,
@@ -189,17 +218,25 @@ pub fn draw_framed_page(
     let mut c = Canvas::new(frame.width.max(1) as u32, frame.height.max(1) as u32);
     c.fill_rect(c.bounds(), PAPER);
     draw_rows(&mut c, text, m, lines, rows, frame.top, frame.width);
-    for (band, (row, margin)) in [
+    let rows = [
         (header, frame.header(m.line_h)),
         (footer, frame.footer(m.line_h)),
-    ] {
-        for (part, align) in [
-            (&band.left, Align::Left),
-            (&band.centre, Align::Center),
-            (&band.right, Align::Right),
-        ] {
-            if !part.is_empty() {
-                text.draw_clipped(&mut c, row, margin, part, m.bold, INK, align, m.font_px);
+    ];
+    for (band, row) in rows {
+        let Some(row) = row else {
+            continue;
+        };
+        let parts = [&band.left, &band.centre, &band.right];
+        let widths = parts.map(|p| match p.is_empty() {
+            true => 0,
+            false => text.measure(p, m.bold, m.font_px),
+        });
+        let rooms = band_rooms(row.width, m.font_px as i32, widths);
+        let aligns = [Align::Left, Align::Center, Align::Right];
+        for ((part, (x, w)), align) in parts.into_iter().zip(rooms).zip(aligns) {
+            if !part.is_empty() && w > 0 {
+                let room = Rect::new(row.x + x, row.y, w, row.height);
+                text.draw(&mut c, room, part, m.bold, INK, align, m.font_px);
             }
         }
     }
@@ -313,32 +350,67 @@ mod tests {
     }
 
     #[test]
-    fn header_and_footer_rows_sit_centred_in_their_margins() {
+    fn header_and_footer_rows_sit_centred_in_their_margins_and_skip_thin_ones() {
         let frame = Frame {
             width: 200,
             height: 1000,
             top: 100,
             bottom: 60,
         };
+        assert_eq!(frame.header(20), Some(Rect::new(0, 40, 200, 20)));
+        assert_eq!(frame.footer(20), Some(Rect::new(0, 960, 200, 20)));
+        let tight = Frame { top: 19, ..frame };
         assert_eq!(
-            frame.header(20),
-            (Rect::new(0, 40, 200, 20), Rect::new(0, 0, 200, 100))
+            tight.header(20),
+            None,
+            "a margin thinner than a row prints none"
+        );
+    }
+
+    #[test]
+    fn band_parts_keep_to_rooms_that_never_overlap() {
+        assert_eq!(
+            band_rooms(300, 10, [500, 40, 60]),
+            [(0, 120), (130, 40), (180, 120)],
+            "a long left part is cut before the centred one"
         );
         assert_eq!(
-            frame.footer(20),
-            (Rect::new(0, 960, 200, 20), Rect::new(0, 940, 200, 60))
-        );
-        let tight = Frame { top: 10, ..frame };
-        let (row, margin) = tight.header(20);
-        assert_eq!(
-            row.y, -5,
-            "a row taller than its margin overhangs both ways"
+            band_rooms(300, 10, [500, 0, 60]),
+            [(0, 230), (240, 0), (240, 60)],
+            "with no centre part the right one keeps its width"
         );
         assert_eq!(
-            margin,
-            Rect::new(0, 0, 200, 10),
-            "and is drawn only inside it"
+            band_rooms(300, 10, [500, 0, 0]),
+            [(0, 300), (0, 0), (300, 0)]
         );
+        let [l, c, r] = band_rooms(300, 10, [0, 400, 50]);
+        assert_eq!(
+            c,
+            (0, 300),
+            "a centre part wider than the row takes all of it"
+        );
+        assert!(l.1 <= 0 && r.1 <= 0);
+        for widths in [[90, 120, 90], [10, 280, 10], [0, 0, 400]] {
+            let rooms = band_rooms(300, 10, widths);
+            let used: Vec<(i32, i32)> = rooms.into_iter().filter(|r| r.1 > 0).collect();
+            for (i, a) in used.iter().enumerate() {
+                for b in &used[i + 1..] {
+                    assert!(
+                        a.0 + a.1 <= b.0 || b.0 + b.1 <= a.0,
+                        "{widths:?}: {a:?} {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn control_characters_in_a_header_print_as_spaces() {
+        let s = Stamp {
+            file: "a\tb\nc.txt",
+            ..stamp(1)
+        };
+        assert_eq!(band("&f\u{7}", &s), centred("a b c.txt "));
     }
 
     #[test]
