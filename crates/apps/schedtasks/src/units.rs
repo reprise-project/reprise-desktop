@@ -170,8 +170,8 @@ pub fn find_program(typed: &str, path: Option<&OsStr>) -> Option<PathBuf> {
         Some(rest) => home()?.join(rest.trim_start_matches('/')),
         None if typed.contains('/') => PathBuf::from(typed),
         None => std::env::split_paths(path?)
-            .map(|dir| dir.join(typed))
-            .find(|p| p.is_absolute() && runs(p))?,
+            .filter_map(|dir| normal(&dir.join(typed)))
+            .find(|p| runs(p))?,
     };
     let found = normal(&found)?;
     runs(&found).then_some(found)

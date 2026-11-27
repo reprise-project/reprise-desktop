@@ -358,3 +358,17 @@ fn a_program_is_an_executable_path_or_a_name_on_path() {
         "~// stays under home"
     );
 }
+
+#[test]
+fn a_path_entry_with_dot_dot_is_passed_over_for_the_next() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let tool = bin.join("tool");
+    std::fs::write(&tool, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let up = bin.join("../bin");
+    let path = std::env::join_paths([&up, &bin]).unwrap();
+    assert_eq!(find_program("tool", Some(&path)), Some(tool));
+}
