@@ -4,6 +4,7 @@ use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
+use reprisekit::{kit_tr, tr};
 
 use crate::nm::{Band, Psk};
 
@@ -25,8 +26,17 @@ const START_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 const WARNING_COLS: usize = 60;
 const WARNING_GAP: i32 = 8;
 
-const SECURITY: [&str; 2] = ["WPA2 Personal", "WPA3 Personal"];
-const BANDS: [&str; 3] = ["Automatic", "2.4 GHz", "5 GHz"];
+fn security() -> [String; 2] {
+    [tr!("hotspot-security-wpa2"), tr!("hotspot-security-wpa3")]
+}
+
+fn bands() -> [String; 3] {
+    [
+        tr!("hotspot-band-automatic"),
+        tr!("hotspot-band-24"),
+        tr!("hotspot-band-5"),
+    ]
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -61,13 +71,7 @@ type Values = (String, String, Option<usize>, Option<usize>);
 
 /// The lines saying that starting the hotspot takes the radio off `joined`.
 fn warning(joined: &str) -> Vec<String> {
-    reprisekit::text::wrap_chars(
-        &format!(
-            "Starting the hotspot disconnects this computer from {joined}. It stays off that \
-             network until the hotspot stops."
-        ),
-        WARNING_COLS,
-    )
+    reprisekit::text::wrap_chars(&tr!("hotspot-warning", joined = joined), WARNING_COLS)
 }
 
 impl HotspotDialog {
@@ -101,31 +105,52 @@ impl HotspotDialog {
             Item::lines(
                 "intro",
                 Rect::new(MARGIN, MARGIN, CLIENT.0 - 2 * MARGIN, 2 * LINE_H),
-                &["Share this computer's connection with other devices over Wi-Fi."],
+                &[&tr!("hotspot-intro")],
             ),
-            label("ssid_l", 0, "Network &name:"),
+            label("ssid_l", 0, &tr!("hotspot-ssid")),
             ssid_field,
-            label("password_l", 1, "&Password:"),
+            label("password_l", 1, &tr!("hotspot-password")),
             password_field,
-            label("security_l", 2, "Se&curity:"),
-            Item::combo("security", FIELD_X, ROW_Y[2], FIELD_W, &SECURITY, 2),
-            label("band_l", 3, "&Band:"),
-            Item::combo("band", FIELD_X, ROW_Y[3], FIELD_W, &BANDS, 3),
+            label("security_l", 2, &tr!("hotspot-security")),
+            Item::combo(
+                "security",
+                FIELD_X,
+                ROW_Y[2],
+                FIELD_W,
+                &security().each_ref().map(String::as_str),
+                2,
+            ),
+            label("band_l", 3, &tr!("hotspot-band")),
+            Item::combo(
+                "band",
+                FIELD_X,
+                ROW_Y[3],
+                FIELD_W,
+                &bands().each_ref().map(String::as_str),
+                3,
+            ),
             Item::lines_at(
                 "hint",
                 MARGIN,
                 HINT_Y,
                 CLIENT.0 - 2 * MARGIN,
-                &["The password takes 8 to 63 characters."],
+                &[&tr!("hotspot-hint")],
             ),
             Item::button(
                 "start",
                 Rect::new(START_X, btn_y, BUTTON_W, BUTTON_H),
-                "&Start",
+                &tr!("hotspot-start"),
                 false,
                 true,
             ),
-            Item::button_at("cancel", CANCEL_X, btn_y, BUTTON_W, "Cancel", true),
+            Item::button_at(
+                "cancel",
+                CANCEL_X,
+                btn_y,
+                BUTTON_W,
+                &kit_tr!("cancel"),
+                true,
+            ),
         ];
         if !warning.is_empty() {
             let lines: Vec<&str> = warning.iter().map(String::as_str).collect();
@@ -151,7 +176,7 @@ impl HotspotDialog {
     }
 
     pub fn window_title() -> String {
-        "Create Hotspot".into()
+        tr!("hotspot-title")
     }
 
     fn values(&self) -> Values {

@@ -6,6 +6,7 @@ use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
+use reprisekit::{kit_tr, tr};
 
 use crate::nm::{Key, Psk, Security, Ssid};
 
@@ -31,11 +32,16 @@ const CONNECT_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 /// The hidden-network dialog: the name and security rows above the two key rows.
 pub const HIDDEN_CLIENT: (i32, i32) = (CLIENT.0, 204);
 const HIDDEN_ROW_Y: [i32; 4] = [48, 76, 104, 132];
-const HIDDEN_INTRO: [&str; 2] = [
-    "Type the name of a network that does not broadcast it, and choose",
-    "the security it uses.",
-];
-const HIDDEN_SECURITY: [&str; 4] = ["Open", "WPA-PSK", "WPA3-SAE", "Enterprise (802.1X)"];
+const HIDDEN_SECURITY_COUNT: usize = 4;
+
+fn hidden_security() -> [String; HIDDEN_SECURITY_COUNT] {
+    [
+        tr!("key-security-open"),
+        tr!("key-security-psk"),
+        tr!("key-security-sae"),
+        tr!("key-security-enterprise"),
+    ]
+}
 const HIDDEN_KINDS: [Security; 4] = [
     Security::Open,
     Security::Psk,
@@ -94,7 +100,7 @@ impl KeyDialog {
                 LABEL_X,
                 ROW_Y[0] + LABEL_DY,
                 LABEL_W,
-                "Network &key:",
+                &tr!("key-network-key"),
             ),
             field("key", ROW_Y[0]),
             Item::label_at(
@@ -102,11 +108,18 @@ impl KeyDialog {
                 LABEL_X,
                 ROW_Y[1] + LABEL_DY,
                 LABEL_W,
-                "C&onfirm network key:",
+                &tr!("key-confirm"),
             ),
             field("confirm", ROW_Y[1]),
             connect_button(false),
-            Item::button_at("cancel", CANCEL_X, BTN_Y, BUTTON_W, "Cancel", true),
+            Item::button_at(
+                "cancel",
+                CANCEL_X,
+                BTN_Y,
+                BUTTON_W,
+                &kit_tr!("cancel"),
+                true,
+            ),
         ];
         KeyDialog {
             device: device.into(),
@@ -128,30 +141,44 @@ impl KeyDialog {
         let btn_y = HIDDEN_CLIENT.1 - MARGIN - BUTTON_H;
         let mut connect = connect_button(false);
         connect.rect.y = btn_y;
+        let intro = tr!("key-hidden-intro");
         let items = vec![
-            Item::lines_at("intro", MARGIN, INTRO_Y, INTRO_W, &HIDDEN_INTRO),
-            label("ssid_l", 0, "Network &name (SSID):"),
+            Item::lines_at(
+                "intro",
+                MARGIN,
+                INTRO_Y,
+                INTRO_W,
+                &intro.lines().collect::<Vec<_>>(),
+            ),
+            label("ssid_l", 0, &tr!("key-ssid")),
             Item::edit(
                 "ssid",
                 Rect::new(FIELD_X, HIDDEN_ROW_Y[0], FIELD_W, FIELD_H),
                 "",
                 true,
             ),
-            label("security_l", 1, "&Security:"),
+            label("security_l", 1, &tr!("key-security")),
             Item::combo(
                 "security",
                 FIELD_X,
                 HIDDEN_ROW_Y[1],
                 FIELD_W,
-                &HIDDEN_SECURITY,
-                HIDDEN_SECURITY.len(),
+                &hidden_security().each_ref().map(String::as_str),
+                HIDDEN_SECURITY_COUNT,
             ),
-            label("key_l", 2, "Network &key:"),
+            label("key_l", 2, &tr!("key-network-key")),
             key,
-            label("confirm_l", 3, "C&onfirm network key:"),
+            label("confirm_l", 3, &tr!("key-confirm")),
             confirm,
             connect,
-            Item::button_at("cancel", CANCEL_X, btn_y, BUTTON_W, "Cancel", true),
+            Item::button_at(
+                "cancel",
+                CANCEL_X,
+                btn_y,
+                BUTTON_W,
+                &kit_tr!("cancel"),
+                true,
+            ),
         ];
         let mut d = KeyDialog {
             device: device.into(),
@@ -233,15 +260,15 @@ impl KeyDialog {
             self.form.set_enabled(id, keyed);
         }
         let word = if security == Security::Enterprise {
-            "&Next >"
+            tr!("key-next")
         } else {
-            "&Connect"
+            tr!("key-connect")
         };
         if let Some(Control::Button { enabled, label, .. }) =
             self.form.item_mut("connect").map(|i| &mut i.control)
         {
             *enabled = valid;
-            *label = word.into();
+            *label = word;
         }
         // A greyed button is no tab stop, so the focus cannot stay on it.
         if focused && !valid {
@@ -263,7 +290,7 @@ impl KeyDialog {
     }
 
     pub fn window_title() -> String {
-        "Wireless Network Key".into()
+        tr!("key-title")
     }
 }
 
@@ -275,15 +302,9 @@ impl Drop for KeyDialog {
 }
 
 pub fn intro_lines(ssid: &str) -> Vec<String> {
-    let mut out = reprisekit::text::wrap_chars(
-        &format!(
-            "The network '{ssid}' requires a network key (also called a WEP key or WPA key). \
-             A network key helps prevent unknown intruders from connecting to this network."
-        ),
-        INTRO_COLS,
-    );
+    let mut out = reprisekit::text::wrap_chars(&tr!("key-intro", ssid = ssid), INTRO_COLS);
     out.push(String::new());
-    out.push("Type the key, and then click Connect.".into());
+    out.push(tr!("key-type-key"));
     out
 }
 
@@ -304,7 +325,7 @@ fn connect_button(enabled: bool) -> Item {
         "connect",
         Rect::new(CONNECT_X, BTN_Y, BUTTON_W, BUTTON_H),
         Control::Button {
-            label: "&Connect".into(),
+            label: tr!("key-connect"),
             enabled,
             default: true,
         },

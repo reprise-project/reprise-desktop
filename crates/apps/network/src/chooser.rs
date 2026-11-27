@@ -14,6 +14,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
 use reprisekit::textedit::keysym::{self, SPACE};
 use reprisekit::theme::{Color, TextUnits};
+use reprisekit::tr;
 
 use crate::nm;
 
@@ -40,12 +41,9 @@ const BARS_RIGHT: i32 = 8;
 const STAR_W: i32 = 10;
 const TAG_GAP: i32 = 8;
 
-const HIDDEN_ROW: &str = "Connect to a hidden network...";
-
-const INTRO: [&str; 2] = [
-    "Click an item in the list below to connect to a wireless network in range",
-    "or to get more information.",
-];
+fn hidden_row() -> String {
+    tr!("chooser-hidden-network")
+}
 
 const PADLOCK: [&str; 9] = [
     "..###..", ".#...#.", ".#...#.", "#######", "#######", "##...##", "##...##", "#######",
@@ -120,7 +118,7 @@ pub fn rows_for(w: &nm::Wifi, state: nm::State, connecting: &Option<nm::Ssid>) -
         }
     }
     for row in &mut rows {
-        row.tag = tag(row, state, connecting).into();
+        row.tag = tag(row, state, connecting);
     }
     rows.sort_by(|a, b| {
         b.active
@@ -134,29 +132,29 @@ pub fn rows_for(w: &nm::Wifi, state: nm::State, connecting: &Option<nm::Ssid>) -
 
 /// The network being dialled wins over the one NetworkManager still calls
 /// active: the device is on its way off that one.
-fn tag(row: &NetRow, state: nm::State, connecting: &Option<nm::Ssid>) -> &'static str {
+fn tag(row: &NetRow, state: nm::State, connecting: &Option<nm::Ssid>) -> String {
     if state == nm::State::Connecting && connecting.as_ref() == Some(&row.ssid) {
-        return "Connecting";
+        return tr!("chooser-connecting");
     }
     if row.active {
-        return "Connected";
+        return tr!("chooser-connected");
     }
     if row.known {
-        return "Automatic";
+        return tr!("chooser-automatic");
     }
-    ""
+    String::new()
 }
 
 /// The second line of a row: what it says about the network's
 /// security. WEP needs a profile this applet cannot build, so it sends the
 /// user to NetworkManager's own editor.
-pub fn caption(sec: nm::Security) -> &'static str {
+pub fn caption(sec: nm::Security) -> String {
     match sec {
-        nm::Security::Open => "Unsecured wireless network",
-        nm::Security::Psk => "Security-enabled wireless network (WPA2)",
-        nm::Security::Sae => "Security-enabled wireless network (WPA3)",
-        nm::Security::Enterprise => "Security-enabled wireless network (802.1X)",
-        nm::Security::Wep => "This network requires configuration",
+        nm::Security::Open => tr!("chooser-security-open"),
+        nm::Security::Psk => tr!("chooser-security-wpa2"),
+        nm::Security::Sae => tr!("chooser-security-wpa3"),
+        nm::Security::Enterprise => tr!("chooser-security-enterprise"),
+        nm::Security::Wep => tr!("chooser-security-wep"),
     }
 }
 
@@ -179,6 +177,7 @@ pub struct Chooser {
 
 impl Chooser {
     pub fn new(d: &nm::Device, units: TextUnits) -> Chooser {
+        let intro = tr!("chooser-intro");
         let mut c = Chooser {
             device_path: d.path.clone(),
             name: d.shell_name.clone(),
@@ -194,15 +193,17 @@ impl Chooser {
                 "connect",
                 Rect::new(BTN_X, BTN_Y, BTN_W, BUTTON_H),
                 Control::Button {
-                    label: "&Connect".into(),
+                    label: tr!("chooser-connect"),
                     enabled: false,
                     default: true,
                 },
             )]),
-            intro: Form::new(vec![Item::lines(
+            intro: Form::new(vec![Item::lines_at(
                 "intro",
-                Rect::new(BODY_X, INTRO_Y, BODY_W, LINE_H * INTRO.len() as i32),
-                &INTRO,
+                BODY_X,
+                INTRO_Y,
+                BODY_W,
+                &intro.lines().collect::<Vec<_>>(),
             )]),
             units,
         };
@@ -404,14 +405,14 @@ impl Chooser {
         let row = self.selected();
         let live = self.hidden_picked() || row.is_some_and(|r| r.security != nm::Security::Wep);
         let word = if row.is_some_and(|r| r.active) {
-            "&Disconnect"
+            tr!("chooser-disconnect")
         } else {
-            "&Connect"
+            tr!("chooser-connect")
         };
         if let Some(Control::Button { label, enabled, .. }) =
             self.button.item_mut("connect").map(|i| &mut i.control)
         {
-            *label = word.into();
+            *label = word;
             *enabled = live;
         }
         self.button.set_focus(live.then_some(0));
@@ -443,7 +444,7 @@ impl Chooser {
         ctx.text.draw(
             c,
             u.rect(Rect::new(BODY_X, HEAD_Y, BODY_W, LINE_H)),
-            "Choose a wireless network",
+            &tr!("chooser-heading"),
             true,
             cs.window_text,
             Align::Left,
@@ -489,7 +490,7 @@ impl Chooser {
         let u = self.units;
         let mut head = access::label(
             u.rect(Rect::new(BODY_X, HEAD_Y, BODY_W, LINE_H)),
-            "Choose a wireless network",
+            &tr!("chooser-heading"),
             true,
         );
         head.set_role(accesskit::Role::Heading);
@@ -501,9 +502,9 @@ impl Chooser {
             &lay,
             |i| {
                 let Some(r) = self.rows.get(i) else {
-                    return (HIDDEN_ROW.to_string(), String::new());
+                    return (hidden_row(), String::new());
                 };
-                let mut about = caption(r.security).to_string();
+                let mut about = caption(r.security);
                 if !r.tag.is_empty() {
                     about = format!("{about}, {}", r.tag);
                 }
@@ -570,7 +571,7 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
         c,
         ctx.text
             .line_box(Rect::new(cap_x, caption_y, r.width, line_h), false, px),
-        caption(row.security),
+        &caption(row.security),
         false,
         ink,
         Align::Left,
@@ -593,7 +594,7 @@ fn draw_hidden_row(c: &mut Canvas, ctx: &Ctx, r: Rect, selected: bool) {
     ctx.text.draw(
         c,
         ctx.text.line_box(line, false, px),
-        HIDDEN_ROW,
+        &hidden_row(),
         false,
         ink,
         Align::Left,
@@ -623,21 +624,18 @@ fn pane_sections() -> Vec<Section> {
     };
     vec![
         Section::links(
-            "Network Tasks",
+            tr!("chooser-tasks"),
             vec![
-                link("Refresh network list", true),
-                link(
-                    "Set up a wireless network for a home or small office",
-                    false,
-                ),
+                link(&tr!("chooser-refresh"), true),
+                link(&tr!("chooser-set-up"), false),
             ],
         ),
         Section::links(
-            "Related Tasks",
+            tr!("chooser-related"),
             vec![
-                link("Learn about wireless networking", false),
-                link("Change the order of preferred networks", false),
-                link("Change advanced settings", false),
+                link(&tr!("chooser-learn"), false),
+                link(&tr!("chooser-order"), false),
+                link(&tr!("chooser-advanced"), false),
             ],
         ),
     ]

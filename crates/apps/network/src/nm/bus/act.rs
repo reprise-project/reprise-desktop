@@ -5,6 +5,7 @@ use super::follow::{Joining, follow};
 use super::snapshot::{get_all, object, saved};
 use super::wifi::{ap_key_mgmt, connection_for, new_profile_owner, rekey, wifi_settings};
 use super::*;
+use reprisekit::tr;
 use zbus::Variant;
 
 /// `Device.Disconnect`; Disable and Repair only log its error, since a device already down refuses
@@ -82,7 +83,7 @@ pub(super) async fn command(
             Ok(None)
         }
         Cmd::VpnUp(connection) => {
-            needs_no_agent(conn, connection, VPN_NEEDS_AGENT).await?;
+            needs_no_agent(conn, connection, &vpn_needs_agent()).await?;
             let active = activate(conn, connection, "/", "/").await?;
             follow(conn, active, None, Joining::Vpn, wakes.clone());
             Ok(None)
@@ -106,7 +107,7 @@ pub(super) async fn join_wifi(conn: &Connection, cmd: &Cmd) -> Result<String, Fa
     let known = connection_for(conn, device, ssid).await;
     match connect_plan(known.as_deref(), key.as_ref()) {
         ConnectPlan::Activate(connection) => {
-            needs_no_agent(conn, &connection, WIFI_NEEDS_AGENT).await?;
+            needs_no_agent(conn, &connection, &wifi_needs_agent()).await?;
             activate(conn, &connection, device, ap).await
         }
         ConnectPlan::Rekey { conn_path, key } => {
@@ -129,7 +130,7 @@ pub(super) async fn join_wifi(conn: &Connection, cmd: &Cmd) -> Result<String, Fa
             )
             .await?
             .map(|(_, active)| active.as_str().to_string())
-            .ok_or_else(|| "NetworkManager answered with no active connection.".into())
+            .ok_or_else(|| tr!("nm-no-active-connection").into())
         }
     }
 }
@@ -261,8 +262,8 @@ pub(super) fn import_error(stderr: &str) -> String {
         .lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
-        .unwrap_or("The file could not be imported.");
-    line.strip_prefix("Error: ").unwrap_or(line).to_string()
+        .map_or_else(|| tr!("nm-import-failed"), str::to_string);
+    line.strip_prefix("Error: ").unwrap_or(&line).to_string()
 }
 
 /// `nmcli connection import type KIND file PATH`: importers live in libnm and each VPN plugin's
@@ -280,7 +281,7 @@ async fn nmcli_import(path: &std::path::Path, kind: &str) -> Result<(), Failure>
             let _ = tx.send_blocking(match out {
                 Ok(o) if o.status.success() => Ok(()),
                 Ok(o) => Err(import_error(&String::from_utf8_lossy(&o.stderr))),
-                Err(e) => Err(format!("nmcli could not be started: {e}")),
+                Err(e) => Err(tr!("nm-nmcli-failed", why = e.to_string())),
             });
         })
         .map_err(|e| e.to_string())?;
@@ -336,14 +337,14 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             });
             match up {
                 Some((active, _)) => deactivate(conn, active).await,
-                None => Err("That connection is not active.".into()),
+                None => Err(tr!("nm-not-active").into()),
             }
         }
         Cmd::StopHotspot(device) => {
             let (actives, saved) = futures_util::join!(actives(conn), saved(conn));
             match hotspot_on(&actives?, device, &hotspot_profiles(&saved)) {
                 Some(active) => deactivate(conn, active).await,
-                None => Err("The hotspot is not running.".into()),
+                None => Err(tr!("nm-hotspot-not-running").into()),
             }
         }
         Cmd::SaveWireGuard { conn_path, cfg } => {
@@ -378,7 +379,7 @@ pub(super) async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             call_auth::<_, ()>(&p, "Delete", &()).await.map(|_| ())
         }
         Cmd::Import { path, kinds } => {
-            let mut last = Err("No VPN plugin for NetworkManager is installed.".into());
+            let mut last = Err(tr!("nm-no-vpn-plugin").into());
             for kind in kinds {
                 last = nmcli_import(path, kind).await;
                 if last.is_ok() {

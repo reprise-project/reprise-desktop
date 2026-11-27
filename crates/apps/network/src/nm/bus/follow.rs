@@ -3,6 +3,7 @@
 
 use super::snapshot::get_all;
 use super::*;
+use reprisekit::tr;
 
 /// `NMActiveConnectionState`.
 const ACTIVATED: u32 = 2;
@@ -88,14 +89,14 @@ fn active_why(reason: u32) -> Option<Why> {
 /// The balloon text for a failed activation of `name`.
 pub(super) fn not_joined(joining: &Joining, name: &str, why: Why) -> String {
     match (why, joining) {
-        (Why::Secrets, Joining::Wifi(_)) => format!("The key for {name} was not accepted."),
+        (Why::Secrets, Joining::Wifi(_)) => tr!("nm-key-rejected", name = name),
         (Why::Secrets, Joining::Vpn) => {
-            format!("{name} asked for a password or key, and none is saved.")
+            tr!("nm-no-saved-secret", name = name)
         }
-        (Why::Login, _) => format!("The server for {name} did not accept the login."),
-        (Why::NotFound, _) => format!("{name} could not be found."),
-        (Why::NoAddress, _) => format!("{name} did not give this computer an address."),
-        (Why::Other, _) => format!("Reprise could not connect to {name}."),
+        (Why::Login, _) => tr!("nm-login-rejected", name = name),
+        (Why::NotFound, _) => tr!("nm-not-found", name = name),
+        (Why::NoAddress, _) => tr!("nm-no-address", name = name),
+        (Why::Other, _) => tr!("nm-could-not-connect", name = name),
     }
 }
 

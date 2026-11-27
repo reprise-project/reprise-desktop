@@ -12,13 +12,16 @@ use reprisekit::controls::listbox::ListBox;
 use reprisekit::controls::propsheet::{self, Buttons, PropSheet};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
+use reprisekit::tr;
 
 use crate::nm::{self, Psk};
 use crate::ovpn;
 use crate::wg::{self, Field};
 
 pub const CLIENT: (i32, i32) = (420, 384);
-pub const TABS: [&str; 2] = ["WireGuard", "Peers"];
+pub fn tabs() -> [String; 2] {
+    [tr!("vpn-tab-wireguard"), tr!("vpn-tab-peers")]
+}
 const TAB_IFACE: usize = 0;
 const TAB_PEERS: usize = 1;
 
@@ -43,9 +46,14 @@ const PEER_LABEL_X: i32 = 26;
 const PEER_FIELD_X: i32 = FIELD_X;
 const PEER_FIELD_W: i32 = CLIENT.0 - 26 - PEER_FIELD_X;
 const PEER_ROW_Y: i32 = GROUP.y + 22;
-pub const KEEP_CUE: &str = "Leave empty to keep the saved key";
+pub fn keep_cue() -> String {
+    tr!("vpn-keep-key-cue")
+}
+
 /// The cue of a greyed secret field whose flags leave the secret to a secret agent.
-pub const AGENT_CUE: &str = "Asked each time; Reprise can't ask yet";
+pub fn agent_cue() -> String {
+    tr!("vpn-agent-cue")
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
@@ -122,16 +130,13 @@ fn label(id: &'static str, i: i32, text: &str) -> Item {
 
 fn iface_page(cfg: &wg::Config) -> Form {
     let port = cfg.listen_port.map(|p| p.to_string()).unwrap_or_default();
-    let note = [
-        "Separate several addresses or servers with commas.",
-        "Search domains may go among the DNS servers.",
-    ];
+    let note = tr!("wg-note");
     let mut f = Form::new(vec![
-        label("name_l", 0, "Connection &name:"),
+        label("name_l", 0, &tr!("vpn-connection-name")),
         edit("name", FIELD_X, row_y(0), FIELD_W, &cfg.name, false),
-        label("iface_l", 1, "&Interface:"),
+        label("iface_l", 1, &tr!("wg-interface")),
         edit("iface", FIELD_X, row_y(1), FIELD_W, &cfg.iface, false),
-        label("key_l", 2, "Private &key:"),
+        label("key_l", 2, &tr!("wg-private-key")),
         edit(
             "key",
             FIELD_X,
@@ -145,10 +150,10 @@ fn iface_page(cfg: &wg::Config) -> Form {
             FIELD_RIGHT - GEN_W,
             row_y(2) - (BUTTON_H - FIELD_H) / 2,
             GEN_W,
-            "&Generate",
+            &tr!("wg-generate"),
             true,
         ),
-        label("pub_l", PUB_ROW, "Public key:"),
+        label("pub_l", PUB_ROW, &tr!("wg-public-key")),
         Item::new(
             "pub",
             Rect::new(FIELD_X, row_y(PUB_ROW) + LABEL_DY, FIELD_W, 2 * LINE_H),
@@ -156,7 +161,7 @@ fn iface_page(cfg: &wg::Config) -> Form {
                 &wg::public_key(&cfg.private_key).unwrap_or_default(),
             )),
         ),
-        label("addr_l", 4, "&Addresses:"),
+        label("addr_l", 4, &tr!("wg-addresses")),
         edit(
             "addr",
             FIELD_X,
@@ -165,7 +170,7 @@ fn iface_page(cfg: &wg::Config) -> Form {
             &wg::join(&cfg.addresses),
             false,
         ),
-        label("dns_l", 5, "&DNS servers:"),
+        label("dns_l", 5, &tr!("wg-dns")),
         edit(
             "dns",
             FIELD_X,
@@ -174,23 +179,29 @@ fn iface_page(cfg: &wg::Config) -> Form {
             &wg::join(&cfg.dns),
             false,
         ),
-        label("port_l", 6, "&Listen port:"),
+        label("port_l", 6, &tr!("wg-listen-port")),
         edit("port", FIELD_X, row_y(6), 70, &port, false),
         Item::label_at(
             "port_hint",
             FIELD_X + 80,
             row_y(6) + LABEL_DY,
             FIELD_W - 80,
-            "Blank picks a free port.",
+            &tr!("wg-port-hint"),
         ),
-        Item::lines_at("note", LABEL_X, row_y(7) + 8, FIELD_RIGHT - LABEL_X, &note),
+        Item::lines_at(
+            "note",
+            LABEL_X,
+            row_y(7) + 8,
+            FIELD_RIGHT - LABEL_X,
+            &note.lines().collect::<Vec<_>>(),
+        ),
     ]);
     if cfg.key_flags != 0 {
-        set_cue(&mut f, "key", AGENT_CUE);
+        set_cue(&mut f, "key", &agent_cue());
         f.set_enabled("key", false);
         f.set_enabled("generate", false);
     } else if cfg.stored_key {
-        set_cue(&mut f, "key", KEEP_CUE);
+        set_cue(&mut f, "key", &keep_cue());
     }
     f
 }
@@ -201,9 +212,9 @@ pub fn peer_line(i: usize, p: &wg::Peer) -> String {
     } else if !p.public_key.is_empty() {
         p.public_key.chars().take(16).collect::<String>() + "..."
     } else {
-        "(new peer)".into()
+        tr!("wg-peer-new")
     };
-    format!("Peer {}: {what}", i + 1)
+    tr!("wg-peer-line", number = (i + 1).to_string(), what = what)
 }
 
 fn peer_label(id: &'static str, i: i32, text: &str) -> Item {
@@ -232,19 +243,19 @@ fn peers_page(peers: &[wg::Peer]) -> Form {
                 icons: vec![],
             },
         ),
-        Item::button_at("add", SIDE_X, LIST.y, SIDE_W, "A&dd", true),
+        Item::button_at("add", SIDE_X, LIST.y, SIDE_W, &tr!("wg-add"), true),
         Item::button_at(
             "remove",
             SIDE_X,
             LIST.y + BUTTON_H + 6,
             SIDE_W,
-            "&Remove",
+            &tr!("wg-remove"),
             selected.is_some(),
         ),
-        Item::group("peer_g", GROUP, "Peer"),
-        peer_label("pk_l", 0, "P&ublic key:"),
+        Item::group("peer_g", GROUP, &tr!("wg-peer-group")),
+        peer_label("pk_l", 0, &tr!("wg-peer-public-key")),
         edit("pk", PEER_FIELD_X, PEER_ROW_Y, PEER_FIELD_W, "", false),
-        peer_label("psk_l", 1, "Pre&shared key:"),
+        peer_label("psk_l", 1, &tr!("wg-peer-preshared")),
         edit(
             "psk",
             PEER_FIELD_X,
@@ -253,7 +264,7 @@ fn peers_page(peers: &[wg::Peer]) -> Form {
             "",
             true,
         ),
-        peer_label("endpoint_l", 2, "&Endpoint:"),
+        peer_label("endpoint_l", 2, &tr!("wg-peer-endpoint")),
         edit(
             "endpoint",
             PEER_FIELD_X,
@@ -262,7 +273,7 @@ fn peers_page(peers: &[wg::Peer]) -> Form {
             "",
             false,
         ),
-        peer_label("allowed_l", 3, "Allowed &IPs:"),
+        peer_label("allowed_l", 3, &tr!("wg-peer-allowed")),
         edit(
             "allowed",
             PEER_FIELD_X,
@@ -271,7 +282,7 @@ fn peers_page(peers: &[wg::Peer]) -> Form {
             "",
             false,
         ),
-        peer_label("keepalive_l", 4, "Keep&alive:"),
+        peer_label("keepalive_l", 4, &tr!("wg-peer-keepalive")),
         edit(
             "keepalive",
             PEER_FIELD_X,
@@ -285,7 +296,7 @@ fn peers_page(peers: &[wg::Peer]) -> Form {
             PEER_FIELD_X + 70,
             PEER_ROW_Y + 4 * PITCH + LABEL_DY,
             PEER_FIELD_W - 70,
-            "seconds; blank for none",
+            &tr!("wg-keepalive-hint"),
         ),
     ])
 }
@@ -310,7 +321,12 @@ impl WgSheet {
     pub fn new(cfg: &wg::Config, conn_path: Option<String>) -> WgSheet {
         let pages = vec![iface_page(cfg), peers_page(&cfg.peers)];
         let mut s = WgSheet {
-            sheet: PropSheet::with_buttons(&TABS, pages, CLIENT, Buttons::OkCancel),
+            sheet: PropSheet::with_buttons(
+                &tabs().each_ref().map(String::as_str),
+                pages,
+                CLIENT,
+                Buttons::OkCancel,
+            ),
             conn_path,
             peers: cfg.peers.clone(),
             shown: None,
@@ -342,11 +358,11 @@ impl WgSheet {
 
     pub fn window_title(&self) -> String {
         if self.conn_path.is_none() {
-            "New WireGuard Connection".into()
+            tr!("vpn-wg-title-new")
         } else {
-            format!(
-                "{} Properties",
-                self.sheet.pages[TAB_IFACE].edit_text("name")
+            tr!(
+                "vpn-wg-title",
+                name = self.sheet.pages[TAB_IFACE].edit_text("name")
             )
         }
     }
@@ -366,13 +382,13 @@ impl WgSheet {
         set_field(f, "pk", &peer.public_key);
         set_field(f, "psk", &peer.preshared_key);
         let cue = if peer.psk_flags != 0 {
-            AGENT_CUE
+            agent_cue()
         } else if peer.stored_psk {
-            KEEP_CUE
+            keep_cue()
         } else {
-            ""
+            String::new()
         };
-        set_cue(f, "psk", cue);
+        set_cue(f, "psk", &cue);
         set_field(f, "endpoint", &peer.endpoint);
         set_field(f, "allowed", &wg::join(&peer.allowed_ips));
         set_field(
@@ -591,9 +607,9 @@ impl PluginSheet {
     pub fn new(conn_path: &str, name: &str, kind: &str, data: &[(String, String)]) -> PluginSheet {
         let w = PLUGIN_CLIENT.0 - 18 - FIELD_X;
         let page = Form::new(vec![
-            label("name_l", 0, "Connection &name:"),
+            label("name_l", 0, &tr!("vpn-connection-name")),
             edit("name", FIELD_X, row_y(0), w, name, false),
-            label("kind_l", 1, "Type:"),
+            label("kind_l", 1, &tr!("plugin-type")),
             Item::label_at(
                 "kind",
                 FIELD_X,
@@ -606,7 +622,7 @@ impl PluginSheet {
                 LABEL_X,
                 ROW_Y + 2 * PITCH,
                 PLUGIN_CLIENT.0 - 36,
-                "&Settings, one key = value a line:",
+                &tr!("plugin-settings"),
             ),
             Item::memo("data", MEMO, &data_text(data), true),
             Item::lines_at(
@@ -614,11 +630,15 @@ impl PluginSheet {
                 LABEL_X,
                 MEMO.bottom() + 6,
                 PLUGIN_CLIENT.0 - 36,
-                &["Passwords and keys are kept as they are."],
+                &[&tr!("plugin-note")],
             ),
         ]);
-        let mut sheet =
-            PropSheet::with_buttons(&["General"], vec![page], PLUGIN_CLIENT, Buttons::OkCancel);
+        let mut sheet = PropSheet::with_buttons(
+            &[&tr!("vpn-tab-general")],
+            vec![page],
+            PLUGIN_CLIENT,
+            Buttons::OkCancel,
+        );
         sheet.pages[0].focus_id("name");
         PluginSheet {
             sheet,
@@ -627,7 +647,10 @@ impl PluginSheet {
     }
 
     pub fn window_title(&self) -> String {
-        format!("{} Properties", self.sheet.pages[0].edit_text("name"))
+        tr!(
+            "vpn-plugin-title",
+            name = self.sheet.pages[0].edit_text("name")
+        )
     }
 
     /// The name and settings as OK would save them.
@@ -644,7 +667,7 @@ impl PluginSheet {
         let save = || {
             let (name, data) = self.values();
             if name.is_empty() {
-                return Outcome::Problem("Type a name for the connection.".into());
+                return Outcome::Problem(tr!("plugin-need-name"));
             }
             Outcome::SavePlugin { name, data }
         };
@@ -661,17 +684,21 @@ impl PluginSheet {
     }
 }
 
-pub const OVPN_TABS: [&str; 2] = ["General", "Authentication"];
+pub fn ovpn_tabs() -> [String; 2] {
+    [tr!("vpn-tab-general"), tr!("vpn-tab-authentication")]
+}
 const TAB_GENERAL: usize = 0;
 const TAB_AUTH: usize = 1;
 const BROWSE_W: i32 = 75;
-pub const KEEP_PASSWORD_CUE: &str = "Leave empty to keep the saved password";
+pub fn keep_password_cue() -> String {
+    tr!("vpn-keep-password-cue")
+}
 
-fn password_cue(cfg: &ovpn::Config, flags_key: &str) -> &'static str {
+fn password_cue(cfg: &ovpn::Config, flags_key: &str) -> String {
     if cfg.asked(flags_key) {
-        AGENT_CUE
+        agent_cue()
     } else {
-        KEEP_PASSWORD_CUE
+        keep_password_cue()
     }
 }
 const STATIC_GROUP: Rect = Rect::new(12, ROW_Y + 4 * PITCH + 2, CLIENT.0 - 24, 4 * PITCH + 34);
@@ -694,7 +721,7 @@ fn file_row(id: &'static str, browse: &'static str, y: i32, text: &str) -> [Item
             FIELD_RIGHT - BROWSE_W,
             y - (BUTTON_H - FIELD_H) / 2,
             BROWSE_W,
-            "Browse...",
+            &tr!("ovpn-browse"),
             true,
         ),
     ]
@@ -711,52 +738,54 @@ fn static_label(id: &'static str, i: i32, text: &str) -> Item {
 }
 
 fn general_page(cfg: &ovpn::Config) -> Form {
-    let types: Vec<&str> = ovpn::Auth::ALL.iter().map(|a| a.label()).collect();
+    let labels: Vec<String> = ovpn::Auth::ALL.iter().map(|a| a.label()).collect();
+    let types: Vec<&str> = labels.iter().map(String::as_str).collect();
     let mut f = Form::new(vec![
-        olabel("name_l", 0, "Connection &name:"),
+        olabel("name_l", 0, &tr!("vpn-connection-name")),
         edit("name", FIELD_X, orow(0), FIELD_W, &cfg.name, false),
-        olabel("gateway_l", 1, "&Gateway:"),
+        olabel("gateway_l", 1, &tr!("ovpn-gateway")),
         edit("gateway", FIELD_X, orow(1), FIELD_W, &cfg.gateway, false),
-        olabel("type_l", 2, "&Type:"),
+        olabel("type_l", 2, &tr!("ovpn-type")),
         Item::combo("type", FIELD_X, orow(2), FIELD_W, &types, types.len()),
-        olabel("user_l", 3, "&User name:"),
+        olabel("user_l", 3, &tr!("ovpn-user")),
         edit("user", FIELD_X, orow(3), FIELD_W, &cfg.user, false),
-        olabel("password_l", 4, "&Password:"),
+        olabel("password_l", 4, &tr!("ovpn-password")),
         edit("password", FIELD_X, orow(4), FIELD_W, "", true),
         Item::lines_at(
             "note",
             LABEL_X,
             orow(5) + 8,
             FIELD_RIGHT - LABEL_X,
-            &[
-                "Separate several gateways with commas.",
-                "Settings not shown here are kept as they are.",
-            ],
+            &tr!("ovpn-note").lines().collect::<Vec<_>>(),
         ),
     ]);
     f.set_combo("type", cfg.auth.index());
-    set_cue(&mut f, "password", password_cue(cfg, "password-flags"));
+    set_cue(&mut f, "password", &password_cue(cfg, "password-flags"));
     f
 }
 
 fn auth_page(cfg: &ovpn::Config) -> Form {
-    let mut items = vec![olabel("ca_l", 0, "&CA certificate:")];
+    let mut items = vec![olabel("ca_l", 0, &tr!("ovpn-ca"))];
     items.extend(file_row("ca", "ca_browse", orow(0), &cfg.ca));
-    items.push(olabel("cert_l", 1, "&User certificate:"));
+    items.push(olabel("cert_l", 1, &tr!("ovpn-cert")));
     items.extend(file_row("cert", "cert_browse", orow(1), &cfg.cert));
-    items.push(olabel("key_l", 2, "Private &key:"));
+    items.push(olabel("key_l", 2, &tr!("ovpn-key")));
     items.extend(file_row("key", "key_browse", orow(2), &cfg.key));
-    items.push(olabel("keypass_l", 3, "Key &password:"));
+    items.push(olabel("keypass_l", 3, &tr!("ovpn-key-password")));
     items.push(edit("keypass", FIELD_X, orow(3), FIELD_W, "", true));
-    items.push(Item::group("static_g", STATIC_GROUP, "Static key"));
-    items.push(static_label("static_l", 0, "Key &file:"));
+    items.push(Item::group(
+        "static_g",
+        STATIC_GROUP,
+        &tr!("ovpn-static-group"),
+    ));
+    items.push(static_label("static_l", 0, &tr!("ovpn-static-file")));
     items.extend(file_row(
         "static",
         "static_browse",
         STATIC_ROW_Y,
         &cfg.static_key,
     ));
-    items.push(static_label("direction_l", 1, "&Direction:"));
+    items.push(static_label("direction_l", 1, &tr!("ovpn-direction")));
     items.push(Item::combo(
         "direction",
         FIELD_X,
@@ -765,7 +794,7 @@ fn auth_page(cfg: &ovpn::Config) -> Form {
         &ovpn::DIRECTIONS,
         ovpn::DIRECTIONS.len(),
     ));
-    items.push(static_label("local_l", 2, "&Local IP:"));
+    items.push(static_label("local_l", 2, &tr!("ovpn-local-ip")));
     items.push(edit(
         "local",
         FIELD_X,
@@ -774,7 +803,7 @@ fn auth_page(cfg: &ovpn::Config) -> Form {
         &cfg.local_ip,
         false,
     ));
-    items.push(static_label("remote_l", 3, "&Remote IP:"));
+    items.push(static_label("remote_l", 3, &tr!("ovpn-remote-ip")));
     items.push(edit(
         "remote",
         FIELD_X,
@@ -785,7 +814,7 @@ fn auth_page(cfg: &ovpn::Config) -> Form {
     ));
     let mut f = Form::new(items);
     f.set_combo("direction", cfg.direction);
-    set_cue(&mut f, "keypass", password_cue(cfg, "cert-pass-flags"));
+    set_cue(&mut f, "keypass", &password_cue(cfg, "cert-pass-flags"));
     f
 }
 
@@ -811,7 +840,12 @@ impl OvpnSheet {
     pub fn new(conn_path: &str, cfg: &ovpn::Config) -> OvpnSheet {
         let pages = vec![general_page(cfg), auth_page(cfg)];
         let mut s = OvpnSheet {
-            sheet: PropSheet::with_buttons(&OVPN_TABS, pages, CLIENT, Buttons::OkCancel),
+            sheet: PropSheet::with_buttons(
+                &ovpn_tabs().each_ref().map(String::as_str),
+                pages,
+                CLIENT,
+                Buttons::OkCancel,
+            ),
             conn_path: conn_path.to_string(),
             rest: cfg.rest.clone(),
             asked: (cfg.asked("password-flags"), cfg.asked("cert-pass-flags")),
@@ -822,9 +856,9 @@ impl OvpnSheet {
     }
 
     pub fn window_title(&self) -> String {
-        format!(
-            "{} Properties",
-            self.sheet.pages[TAB_GENERAL].edit_text("name")
+        tr!(
+            "vpn-ovpn-title",
+            name = self.sheet.pages[TAB_GENERAL].edit_text("name")
         )
     }
 
@@ -924,7 +958,7 @@ impl OvpnSheet {
                         };
                         self.sheet.open_tab(tab);
                         self.sheet.pages[tab].focus_id(id);
-                        Outcome::Problem(text.into())
+                        Outcome::Problem(text)
                     }
                     None => Outcome::SaveOpenVpn(Box::new(cfg)),
                 }
@@ -998,11 +1032,11 @@ mod tests {
                 .sheet
                 .pages;
             let openvpn = OvpnSheet::new("/Settings/5", &ovpn_cfg()).sheet.pages;
-            TABS.iter()
-                .map(|t| t.to_string())
+            tabs()
+                .into_iter()
                 .zip(wg)
                 .chain(plugin.into_iter().map(|p| ("plugin".into(), p)))
-                .chain(OVPN_TABS.iter().map(|t| t.to_string()).zip(openvpn))
+                .chain(ovpn_tabs().into_iter().zip(openvpn))
                 .collect()
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
@@ -1011,8 +1045,8 @@ mod tests {
     #[test]
     fn empty_stored_key_fields_say_they_keep_the_saved_key() {
         let s = WgSheet::new(&kept(), Some("/Settings/4".into()));
-        assert_eq!(cue_of(&s.sheet.pages[TAB_IFACE], "key"), KEEP_CUE);
-        assert_eq!(cue_of(&s.sheet.pages[TAB_PEERS], "psk"), KEEP_CUE);
+        assert_eq!(cue_of(&s.sheet.pages[TAB_IFACE], "key"), keep_cue());
+        assert_eq!(cue_of(&s.sheet.pages[TAB_PEERS], "psk"), keep_cue());
         let s = WgSheet::new(&cfg(), Some("/Settings/4".into()));
         assert_eq!(cue_of(&s.sheet.pages[TAB_IFACE], "key"), "");
         assert_eq!(cue_of(&s.sheet.pages[TAB_PEERS], "psk"), "");
@@ -1325,7 +1359,7 @@ mod tests {
         );
         assert_eq!(
             cue_of(&s.sheet.pages[TAB_GENERAL], "password"),
-            KEEP_PASSWORD_CUE
+            keep_password_cue()
         );
     }
 
@@ -1335,10 +1369,10 @@ mod tests {
         cfg.rest.push(("password-flags".into(), "1".into()));
         let mut s = OvpnSheet::new("/Settings/5", &cfg);
         let g = &s.sheet.pages[TAB_GENERAL];
-        assert_eq!(cue_of(g, "password"), AGENT_CUE);
+        assert_eq!(cue_of(g, "password"), agent_cue());
         assert!(!live(g, "password"));
         let a = &s.sheet.pages[TAB_AUTH];
-        assert_eq!(cue_of(a, "keypass"), KEEP_PASSWORD_CUE);
+        assert_eq!(cue_of(a, "keypass"), keep_password_cue());
         assert!(live(a, "keypass"));
         assert!(
             matches!(s.event(propsheet::Event::Ok), Outcome::SaveOpenVpn(_)),
@@ -1353,10 +1387,10 @@ mod tests {
         c.peers[0].psk_flags = 1;
         let mut s = WgSheet::new(&c, Some("/Settings/4".into()));
         let f = &s.sheet.pages[TAB_IFACE];
-        assert_eq!(cue_of(f, "key"), AGENT_CUE);
+        assert_eq!(cue_of(f, "key"), agent_cue());
         assert!(!live(f, "key") && !live(f, "generate"));
         let p = &s.sheet.pages[TAB_PEERS];
-        assert_eq!(cue_of(p, "psk"), AGENT_CUE);
+        assert_eq!(cue_of(p, "psk"), agent_cue());
         assert!(!live(p, "psk"));
         s.take_peer_fields();
         assert_eq!(s.config().key_flags, 2);

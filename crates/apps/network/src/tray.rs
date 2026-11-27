@@ -5,6 +5,8 @@
 use reprisebus::airplane::Mode;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
+use reprisekit::tr;
+
 use crate::nm;
 use reprisekit::art::neticon::{NetIcon, bars};
 
@@ -45,7 +47,7 @@ pub fn translate(msg: Msg, shape: &MenuShape) -> Option<TrayMsg> {
 pub struct MenuShape {
     /// "Disable" or "Enable". The compositor's menu host strips `_`, not `&`, so
     /// these are plain words.
-    pub enabled_label: &'static str,
+    pub enabled_label: String,
     pub has_wifi: bool,
     pub has_device: bool,
     pub hotspot_on: bool,
@@ -58,7 +60,7 @@ pub struct MenuShape {
 impl Default for MenuShape {
     fn default() -> Self {
         MenuShape {
-            enabled_label: "Disable",
+            enabled_label: tr!("tray-disable"),
             has_wifi: false,
             has_device: false,
             hotspot_on: false,
@@ -73,20 +75,20 @@ impl Default for MenuShape {
 /// together, so two separators never meet.
 pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
     let mut rows = Rows::default();
-    let row = |label: &'static str| move |id| Node::row(id, label);
+    let row = |label: String| move |id| Node::row(id, label);
     if shape.has_device {
-        rows.add(TrayMsg::Toggle, row(shape.enabled_label))
-            .add(TrayMsg::Status, row("Status"))
-            .add(TrayMsg::Repair, row("Repair"))
+        rows.add(TrayMsg::Toggle, row(shape.enabled_label.clone()))
+            .add(TrayMsg::Status, row(tr!("tray-status")))
+            .add(TrayMsg::Repair, row(tr!("tray-repair")))
             .separator();
     }
     if shape.has_wifi {
         let hotspot = if shape.hotspot_on {
-            "Stop Hotspot"
+            tr!("tray-stop-hotspot")
         } else {
-            "Create Hotspot..."
+            tr!("tray-create-hotspot")
         };
-        rows.add(TrayMsg::Wireless, row("View Available Wireless Networks"))
+        rows.add(TrayMsg::Wireless, row(tr!("tray-view-wireless")))
             .add(TrayMsg::Hotspot, row(hotspot))
             .separator();
     }
@@ -106,9 +108,9 @@ pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
         )
         .separator();
     }
-    rows.add(TrayMsg::Folder, row("Open Network Connections"))
+    rows.add(TrayMsg::Folder, row(tr!("tray-open-folder")))
         .separator()
-        .add(TrayMsg::Exit, row("Exit"));
+        .add(TrayMsg::Exit, row(tr!("tray-exit")));
     rows
 }
 
@@ -131,8 +133,8 @@ pub fn menu_shape(s: &nm::Snapshot) -> MenuShape {
     let primary = primary(s);
     MenuShape {
         enabled_label: match primary {
-            Some(d) if !d.managed => "Enable",
-            _ => "Disable",
+            Some(d) if !d.managed => tr!("tray-enable"),
+            _ => tr!("tray-disable"),
         },
         has_wifi: wifi_device(s).is_some(),
         has_device: primary.is_some(),
@@ -183,13 +185,13 @@ pub fn primary(s: &nm::Snapshot) -> Option<&nm::Device> {
         .or_else(|| s.devices.first())
 }
 
-pub fn signal_word(strength: u8) -> &'static str {
+pub fn signal_word(strength: u8) -> String {
     match strength {
-        80..=u8::MAX => "Excellent",
-        60..=79 => "Very Good",
-        40..=59 => "Good",
-        20..=39 => "Low",
-        _ => "Very Low",
+        80..=u8::MAX => tr!("tray-signal-excellent"),
+        60..=79 => tr!("tray-signal-very-good"),
+        40..=59 => tr!("tray-signal-good"),
+        20..=39 => tr!("tray-signal-low"),
+        _ => tr!("tray-signal-very-low"),
     }
 }
 
@@ -197,8 +199,11 @@ pub fn signal_word(strength: u8) -> &'static str {
 pub fn speed_text(mbit: u32) -> String {
     match mbit {
         0 => String::new(),
-        m if m >= 1000 => format!("{:.1} Gbps", m as f32 / 1000.0),
-        m => format!("{:.1} Mbps", m as f32),
+        m if m >= 1000 => tr!(
+            "tray-speed-gbps",
+            value = format!("{:.1}", m as f32 / 1000.0)
+        ),
+        m => tr!("tray-speed-mbps", value = format!("{:.1}", m as f32)),
     }
 }
 
@@ -207,36 +212,48 @@ pub fn speed_text(mbit: u32) -> String {
 pub fn tooltip(s: &nm::Snapshot) -> String {
     let link = link_tip(s);
     match s.airplane {
-        Some(Mode::On) => return format!("{link}\nAirplane mode is on"),
-        Some(Mode::Killed) => return format!("{link}\n{}", reprisekit::kit_tr!("airplane-killed")),
+        Some(Mode::On) => {
+            return format!(
+                "{link}
+{}",
+                tr!("tray-airplane-on")
+            );
+        }
+        Some(Mode::Killed) => {
+            return format!(
+                "{link}
+{}",
+                reprisekit::kit_tr!("airplane-killed")
+            );
+        }
         _ => {}
     }
     if !limited(s) {
         return link;
     }
     let why = if s.connectivity == nm::Connectivity::Portal {
-        "Sign in to the network"
+        tr!("tray-sign-in")
     } else {
-        "Limited or no connectivity"
+        tr!("tray-limited")
     };
     format!("{link}\n{why}")
 }
 
 fn link_tip(s: &nm::Snapshot) -> String {
     if !s.nm_running {
-        return "NetworkManager is not running".to_string();
+        return tr!("tray-nm-not-running");
     }
     let Some(d) = primary(s) else {
-        return "No network adapters".to_string();
+        return tr!("tray-no-adapters");
     };
     if let Some(line) = d.hotspot_line() {
         return format!("{}\n{line}", d.shell_name);
     }
     if !d.managed {
-        return format!("{}\nDisabled", d.shell_name);
+        return format!("{}\n{}", d.shell_name, tr!("tray-disabled"));
     }
     if d.kind == nm::Kind::Wired && !d.carrier {
-        return format!("{}\nA network cable is unplugged.", d.shell_name);
+        return format!("{}\n{}", d.shell_name, tr!("tray-cable-unplugged"));
     }
     let speed = speed_text(d.speed_mbit);
     let ssid = d.wifi.as_ref().and_then(|w| w.active_ssid.clone());
@@ -244,21 +261,25 @@ fn link_tip(s: &nm::Snapshot) -> String {
         (nm::Kind::Wired, nm::State::Connected, _) => {
             let mut lines = vec![d.shell_name.clone()];
             if !speed.is_empty() {
-                lines.push(format!("Speed: {speed}"));
+                lines.push(tr!("tray-speed-line", speed = speed.as_str()));
             }
-            lines.push("Status: Connected".to_string());
+            lines.push(tr!("tray-status-connected"));
             lines.join("\n")
         }
         (nm::Kind::Wifi, nm::State::Connected, Some(ssid)) => {
             let strength = d.wifi.as_ref().map(|w| w.strength).unwrap_or(0);
-            let mut lines = vec![format!("{} ({ssid})", d.shell_name)];
+            let mut lines = vec![tr!(
+                "tray-wifi-name",
+                name = d.shell_name.as_str(),
+                ssid = ssid.to_string()
+            )];
             if !speed.is_empty() {
-                lines.push(format!("Speed: {speed}"));
+                lines.push(tr!("tray-speed-line", speed = speed.as_str()));
             }
-            lines.push(format!("Signal Strength: {}", signal_word(strength)));
+            lines.push(tr!("tray-signal-line", word = signal_word(strength)));
             lines.join("\n")
         }
-        _ => format!("{}\nNot connected", d.shell_name),
+        _ => format!("{}\n{}", d.shell_name, tr!("tray-not-connected")),
     }
 }
 
@@ -322,10 +343,8 @@ impl Edges {
         let mut out = self.links(s);
         if s.connectivity == nm::Connectivity::Portal && was != nm::Connectivity::Portal {
             out.push(Balloon {
-                summary: "Sign in to the network".into(),
-                body: "This network asks you to sign in before it lets you on the internet. \
-                       Click here to open its sign-in page."
-                    .into(),
+                summary: tr!("tray-sign-in"),
+                body: tr!("tray-sign-in-body"),
                 tag: Some(TAG_PORTAL),
             });
         }
@@ -362,27 +381,27 @@ impl Edges {
             if !was_connected && d.state == nm::State::Connected {
                 let body = match d.kind {
                     nm::Kind::Wired => match speed_text(d.speed_mbit) {
-                        s if s.is_empty() => "Connected".to_string(),
-                        s => format!("Speed: {s}"),
+                        s if s.is_empty() => tr!("tray-balloon-connected"),
+                        s => tr!("tray-speed-line", speed = s),
                     },
                     nm::Kind::Wifi => {
                         let w = d.wifi.clone().unwrap_or_default();
-                        format!(
-                            "Connected to: {}\nSignal Strength: {}",
-                            w.active_ssid.unwrap_or_default(),
-                            signal_word(w.strength)
+                        tr!(
+                            "tray-balloon-connected-to",
+                            ssid = w.active_ssid.unwrap_or_default().to_string(),
+                            word = signal_word(w.strength)
                         )
                     }
                 };
                 out.push(Balloon::new(
-                    format!("{} is now connected", d.shell_name),
+                    tr!("tray-balloon-now-connected", name = d.shell_name.as_str()),
                     body,
                 ));
             }
             if d.kind == nm::Kind::Wired && was_carrier && !d.carrier {
                 out.push(Balloon::new(
                     d.shell_name.clone(),
-                    "A network cable is unplugged.".to_string(),
+                    tr!("tray-cable-unplugged"),
                 ));
             }
         }
@@ -416,7 +435,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
     };
     let initial = shown(
         reprisekit::art::neticon::draw(NetIcon::WiredUnplugged, false).to_argb_be(),
-        "No network adapters".to_string(),
+        tr!("tray-no-adapters"),
         false,
         &MenuShape::default(),
     );
@@ -476,7 +495,7 @@ mod tests {
         assert_eq!(
             menu_shape(&snap(vec![])),
             MenuShape {
-                enabled_label: "Disable",
+                enabled_label: "Disable".into(),
                 has_wifi: false,
                 has_device: false,
                 ..MenuShape::default()
@@ -487,7 +506,7 @@ mod tests {
         assert_eq!(
             menu_shape(&wire),
             MenuShape {
-                enabled_label: "Disable",
+                enabled_label: "Disable".into(),
                 has_wifi: false,
                 has_device: true,
                 ..MenuShape::default()
@@ -657,7 +676,7 @@ mod tests {
         let sep = || (None, String::new(), true);
         assert_eq!(
             rows(MenuShape {
-                enabled_label: "Disable",
+                enabled_label: "Disable".into(),
                 has_wifi: true,
                 has_device: true,
                 ..MenuShape::default()
@@ -679,7 +698,7 @@ mod tests {
         // separators never meet. The first row says what it does.
         assert_eq!(
             rows(MenuShape {
-                enabled_label: "Enable",
+                enabled_label: "Enable".into(),
                 has_wifi: false,
                 has_device: true,
                 ..MenuShape::default()

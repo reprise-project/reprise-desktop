@@ -5,6 +5,7 @@ mod bus;
 
 pub use bus::{NmHandle, watch};
 
+use reprisekit::tr;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use zbus::OwnedVariant;
@@ -184,7 +185,8 @@ impl Device {
     /// "Hotspot: Desk (2 devices)" while the hotspot is up, without the count when it is not
     /// known.
     pub fn hotspot_line(&self) -> Option<String> {
-        self.hotspot_summary().map(|h| format!("Hotspot: {h}"))
+        self.hotspot_summary()
+            .map(|h| tr!("hotspot-line", summary = h))
     }
 
     /// [`Device::hotspot_line`] without its "Hotspot: " label.
@@ -192,9 +194,8 @@ impl Device {
         let ssid = self.hotspot.as_ref()?;
         Some(match self.hotspot_clients {
             None => ssid.clone(),
-            Some(0) => format!("{ssid} (no devices)"),
-            Some(1) => format!("{ssid} (1 device)"),
-            Some(n) => format!("{ssid} ({n} devices)"),
+            Some(0) => tr!("hotspot-no-devices", ssid = ssid.as_str()),
+            Some(n) => tr!("hotspot-clients", ssid = ssid.as_str(), count = n),
         })
     }
 }
@@ -278,17 +279,17 @@ pub fn shell_names(kinds: &[Kind]) -> Vec<String> {
             let (stem, n) = match k {
                 Kind::Wired => {
                     wired += 1;
-                    ("Local Area Connection", wired)
+                    (tr!("device-wired"), wired)
                 }
                 Kind::Wifi => {
                     wifi += 1;
-                    ("Wireless Network Connection", wifi)
+                    (tr!("device-wifi"), wifi)
                 }
             };
             if n == 1 {
-                stem.to_string()
+                stem
             } else {
-                format!("{stem} {n}")
+                tr!("device-numbered", name = stem, number = n.to_string())
             }
         })
         .collect()
@@ -868,11 +869,13 @@ pub fn plugin_update(
 pub const AGENT_FLAGS: u32 = 0x1 | 0x2;
 
 /// The message for a Wi-Fi profile whose key [`AGENT_FLAGS`] leave to a secret agent.
-pub const WIFI_NEEDS_AGENT: &str =
-    "This network asks for its key each time it connects, and Reprise can't ask for it yet.";
+pub fn wifi_needs_agent() -> String {
+    tr!("wifi-needs-agent")
+}
 /// The message for a VPN whose password or key [`AGENT_FLAGS`] leave to a secret agent.
-pub const VPN_NEEDS_AGENT: &str = "This connection asks for its password or key each time it \
-     connects, and Reprise can't ask for it yet.";
+pub fn vpn_needs_agent() -> String {
+    tr!("vpn-needs-agent")
+}
 
 /// `flags` when they leave their secret to a secret agent, else 0.
 pub fn agent_flags(flags: u32) -> u32 {
