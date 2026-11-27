@@ -12,6 +12,14 @@ pub const PANEL_RADIUS: i32 = 8;
 pub const PANEL_CORNER: &[i32] = &[6, 4, 3, 2, 1, 1, 1];
 pub const COLS: usize = 3;
 pub const ICON_PX: i32 = 16;
+/// The picker's own layouts, which `[window_snapping] layouts` replaces.
+pub const PICKER_SPECS: [&str; 6] = ["1|1", "2|1", "1|1|1", "1|1:2", "1:2|1:2", "1|2|1"];
+/// [`PickerLayout::preview`]'s cell, gap and padding, logical px, and the
+/// work area its cells stand for.
+pub const PREVIEW_CELL: (i32, i32) = (26, 17);
+pub const PREVIEW_GAP: i32 = 8;
+pub const PREVIEW_PAD: i32 = 4;
+const PREVIEW_WORK: (i32, i32) = (1600, 1000);
 
 pub type Zone = (usize, usize);
 
@@ -41,6 +49,29 @@ pub struct PickerLayout {
 
 impl PickerLayout {
     pub fn compute(shape: Shape, work: (i32, i32), specs: &[CellSpec]) -> PickerLayout {
+        PickerLayout::sized(shape, work, specs, (CELL, GAP, PAD))
+    }
+
+    /// `layouts` in one row of small cells, each over a 16:10 screen: how
+    /// Settings shows what a layouts setting offers.
+    pub fn preview(layouts: &[ZoneLayout]) -> PickerLayout {
+        let work = Rect::new(0, 0, PREVIEW_WORK.0, PREVIEW_WORK.1);
+        let specs: Vec<CellSpec> = (layouts.iter())
+            .map(|l| CellSpec {
+                zones: l.zones(work),
+                ..CellSpec::default()
+            })
+            .collect();
+        let sizes = (PREVIEW_CELL, PREVIEW_GAP, PREVIEW_PAD);
+        PickerLayout::sized(Shape::Row, PREVIEW_WORK, &specs, sizes)
+    }
+
+    fn sized(
+        shape: Shape,
+        work: (i32, i32),
+        specs: &[CellSpec],
+        ((cw, ch), gap, pad): ((i32, i32), i32, i32),
+    ) -> PickerLayout {
         let n = specs.len().max(1);
         let cols = match shape {
             Shape::Grid => n.min(COLS),
@@ -48,12 +79,11 @@ impl PickerLayout {
         };
         let rows = n.div_ceil(cols) as i32;
         let cols = cols as i32;
-        let (cw, ch) = CELL;
         let cells: Vec<Rect> = (0..specs.len() as i32)
             .map(|i| {
                 Rect::new(
-                    PAD + (i % cols) * (cw + GAP),
-                    PAD + (i / cols) * (ch + GAP),
+                    pad + (i % cols) * (cw + gap),
+                    pad + (i / cols) * (ch + gap),
                     cw,
                     ch,
                 )
@@ -70,8 +100,8 @@ impl PickerLayout {
             })
             .collect();
         PickerLayout {
-            width: 2 * PAD + cols * cw + (cols - 1) * GAP,
-            height: 2 * PAD + rows * ch + (rows - 1) * GAP,
+            width: 2 * pad + cols * cw + (cols - 1) * gap,
+            height: 2 * pad + rows * ch + (rows - 1) * gap,
             cells,
             tiles,
             filled,
@@ -312,6 +342,22 @@ mod tests {
         let stack = &l.tiles[3];
         assert_eq!((stack[1].height, stack[2].height), (30, 30));
         assert_eq!(stack[2].y - stack[1].bottom(), TILE_GAP);
+    }
+
+    #[test]
+    fn the_preview_sets_the_picker_layouts_in_one_row_of_small_cells() {
+        let six: Vec<ZoneLayout> = (PICKER_SPECS.iter())
+            .map(|s| ZoneLayout::parse(s).unwrap())
+            .collect();
+        let l = PickerLayout::preview(&six);
+        assert_eq!((l.width, l.height), (204, 25));
+        assert_eq!(l.cells[1], Rect::new(38, 4, 26, 17));
+        assert_eq!(
+            l.tiles[0],
+            vec![Rect::new(4, 4, 11, 17), Rect::new(19, 4, 11, 17)]
+        );
+        assert_eq!(l.tiles[3].len(), 3, "a half and two quarters");
+        assert_eq!(l.scaled(2).cells[1], Rect::new(76, 8, 52, 34));
     }
 
     #[test]

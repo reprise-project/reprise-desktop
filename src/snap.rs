@@ -137,7 +137,7 @@ pub fn drag_out_grab(cur: Rect, restored: Rect, press: (f64, f64)) -> (f64, f64)
 }
 
 pub fn picker_layouts(work: Rect) -> Vec<ZoneLayout> {
-    layouts_of(work, &["1|1", "2|1", "1|1|1", "1|1:2", "1:2|1:2", "1|2|1"])
+    layouts_of(work, &reprisekit::snaplayouts::PICKER_SPECS)
 }
 
 pub fn bar_layouts(work: Rect) -> Vec<ZoneLayout> {

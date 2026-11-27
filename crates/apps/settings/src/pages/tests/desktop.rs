@@ -1,4 +1,4 @@
-use super::super::desktop::{CONTENTS, CONTENTS_NOTE, GLOW_CONTROLS};
+use super::super::desktop::{CONTENTS, CONTENTS_NOTE, GLOW_CONTROLS, snap_preview};
 use super::*;
 
 #[test]
@@ -886,23 +886,63 @@ fn the_hidden_frame_rate_row_pins_its_pixels_in_every_look() {
 }
 
 #[test]
+fn the_layouts_preview_draws_what_the_field_names_and_nothing_while_it_does_not_parse() {
+    let theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Classic);
+    reprisekit::pins::fonts();
+    let size = |text: &str, scale: i32| {
+        snap_preview(&theme, text, scale).map(|c| (c.width, c.height, c.device_size()))
+    };
+    assert_eq!(
+        size("", 1),
+        Some((204, 25, (204, 25))),
+        "the picker's own six"
+    );
+    assert_eq!(size("1|1 2-1:2", 1), Some((68, 25, (68, 25))));
+    assert_eq!(size("1|1 2-1:2", 2), Some((68, 25, (136, 50))));
+    assert_eq!(size("1|1 2|x", 1), None);
+    assert_eq!(size("1 1 1 1 1 1 1", 1), None, "seven layouts");
+    use reprisekit::interface::Interface;
+    let hash = |c: &Canvas| {
+        (c.pixels.iter()).fold(0xcbf29ce484222325, |h, p| {
+            (h ^ *p as u64).wrapping_mul(0x100000001b3)
+        })
+    };
+    let pins: Vec<(String, u64)> = [Interface::Classic, Interface::Blue, Interface::Glass]
+        .into_iter()
+        .flat_map(|i| {
+            let theme = reprisekit::interfaces::theme_for(i);
+            [1, 2].map(|s| {
+                let c = snap_preview(&theme.scaled(s), "1|1:2 1-1 2|1|1", s).unwrap();
+                (format!("{i:?} x{s}"), hash(&c))
+            })
+        })
+        .collect();
+    pin("snap_layouts_preview", &pins);
+}
+
+#[test]
 fn the_window_behavior_page_geometry() {
     let s = built();
     let p = Page::WindowBehavior;
     assert_eq!(rect(&s, p, "snap_group"), Rect::new(20, 44, 358, 172));
     assert_eq!(rect(&s, p, "snap_enabled"), Rect::new(32, 66, 13, 13));
-    assert_eq!(rect(&s, p, "snap_picker"), Rect::new(32, 90, 13, 13));
-    assert_eq!(rect(&s, p, "snap_bar"), Rect::new(32, 114, 13, 13));
+    assert_eq!(rect(&s, p, "snap_picker"), Rect::new(32, 84, 13, 13));
+    assert_eq!(rect(&s, p, "snap_bar"), Rect::new(32, 102, 13, 13));
     assert_eq!(
         rect(&s, p, "snap_distance_label"),
-        Rect::new(32, 142, 150, 13)
+        Rect::new(32, 126, 150, 13)
     );
-    assert_eq!(rect(&s, p, "snap_distance").y, 138);
+    assert_eq!(rect(&s, p, "snap_distance").y, 122);
     assert_eq!(
         rect(&s, p, "snap_distance_units"),
-        Rect::new(242, 142, 30, 13)
+        Rect::new(242, 126, 30, 13)
     );
-    assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 166, 246, 20));
+    assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 150, 246, 20));
+    assert_eq!(rect(&s, p, SNAP_PREVIEW), Rect::new(32, 178, 204, 25));
+    assert_eq!(
+        rect(&s, p, "snap_layouts_note"),
+        Rect::new(244, 178, 122, 26)
+    );
     assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 210));
     assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 250, 13, 13));
     assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 274, 13, 13));
