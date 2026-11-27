@@ -187,7 +187,13 @@ pub fn form(dests: Result<&[Dest], NoDest>, at: usize, pages: u32) -> Form {
     if let Ok(d) = dests {
         follow(&mut f, d);
     }
-    f.focus_id(if live { PRINTER } else { CANCEL });
+    // While it looks, the focus stays on the first stop (All), so Enter asks greyed Print and
+    // does nothing; Cancel takes it only once there is nothing to print on.
+    match dests {
+        _ if live => f.focus_id(PRINTER),
+        Err(NoDest::Looking) => {}
+        _ => f.focus_id(CANCEL),
+    }
     f
 }
 

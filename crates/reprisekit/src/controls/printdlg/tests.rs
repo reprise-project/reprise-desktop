@@ -126,6 +126,24 @@ fn with_no_printer_print_is_greyed_and_the_box_says_why() {
     ));
 }
 
+/// While it looks for printers Enter neither prints nor cancels: the focus is off Cancel and
+/// greyed Print is the default button. Once a printer is listed Enter is Print's.
+#[test]
+fn enter_while_looking_does_nothing_and_prints_once_a_printer_is_listed() {
+    use crate::controls::form::Event;
+    let mut f = form(Err(NoDest::Looking), 0, 1);
+    assert_eq!(f.focus(), f.index_of(ALL), "the first stop");
+    assert_eq!(f.default_button(), None, "Print is greyed");
+    assert_eq!(f.key(Key::Enter), Event::Default);
+    let d = dests();
+    let mut f = form(Ok(&d), 0, 1);
+    assert_eq!(f.focus(), f.index_of(PRINTER));
+    assert_eq!(f.default_button(), f.index_of(PRINT));
+    assert_eq!(f.key(Key::Enter), Event::Default);
+    let f = form(Err(NoDest::NoneInstalled), 0, 1);
+    assert_eq!(f.focus(), f.index_of(CANCEL), "nothing to print on");
+}
+
 #[test]
 fn a_one_page_document_greys_pages_and_its_boxes() {
     let d = dests();

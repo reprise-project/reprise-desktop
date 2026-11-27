@@ -4,29 +4,29 @@ Classic one page 1 281d41edfebb014a
 Classic one page 2 ea0eb0c27b81e636
 Classic not running 1 4b6be1168c2b2e1f
 Classic not running 2 c32c60c539122127
-Classic looking 1 7b8b0c1c0cef5b53
-Classic looking 2 3ab4a71238114717
+Classic looking 1 21806ea526f7c153
+Classic looking 2 fdb618ef70bc2247
 Blue two printers 1 e66fcc47edde2981
 Blue two printers 2 35c6fd687978c02f
 Blue one page 1 1865908031e81f64
 Blue one page 2 cec79edc952a57b7
 Blue not running 1 5ef388986c876cfb
 Blue not running 2 823dc89f2608653d
-Blue looking 1 15eac949c7706bfe
-Blue looking 2 fede70e406e5a2ed
+Blue looking 1 d717175dbdc3a234
+Blue looking 2 5b0e02d871805aef
 Glass Light two printers 1 1cada598771390cb
 Glass Light two printers 2 8485fdccf2b4d9d1
 Glass Light one page 1 903f164ecd3ea369
 Glass Light one page 2 74fab5e7c4c0040d
 Glass Light not running 1 840209d036a732ce
 Glass Light not running 2 3d5c4555d25e659c
-Glass Light looking 1 82cc2b44751136a2
-Glass Light looking 2 c7261b04b4ceae06
+Glass Light looking 1 970b8244524402c0
+Glass Light looking 2 c4ed9c2da9c2b786
 Glass Dark two printers 1 6f360fdae19d5ea8
 Glass Dark two printers 2 3b36fa4468414cab
 Glass Dark one page 1 4adbf9fd180b132c
 Glass Dark one page 2 4351b27562c73414
 Glass Dark not running 1 86b9a33da4483617
 Glass Dark not running 2 36eb73effc9eb141
-Glass Dark looking 1 fea7ae64e9e85cf8
-Glass Dark looking 2 19a37ee375765279
+Glass Dark looking 1 40d87c2ec40aa724
+Glass Dark looking 2 2d0558d62369c909
