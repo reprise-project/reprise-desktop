@@ -6,6 +6,7 @@ use repriseapp::keys::form_input;
 use repriseapp::{Ctx, Event, Reply};
 use reprisekit::controls::openwith;
 use reprisekit::controls::{grouplist, listbox, listview, treeview};
+use reprisekit::tr;
 
 impl SettingsApp {
     pub(crate) fn menu_button(&mut self, id: &str) -> Reply {
@@ -214,7 +215,7 @@ impl SettingsApp {
             Ok(f) => Some(f),
             Err(e) => {
                 log::warn!("quick launch add {:?}: {e}", v.name);
-                self.fail("The Quick Launch button could not be written.");
+                self.fail(&tr!("menuhost-button-not-written"));
                 None
             }
         };
@@ -254,7 +255,7 @@ impl SettingsApp {
         };
         if let Err(e) = done {
             log::warn!("quick launch {id} {file}: {e}");
-            self.fail("The Quick Launch folder could not be written.");
+            self.fail(&tr!("menuhost-folder-not-written"));
         }
         self.quick_reload(pick.as_deref());
         self.sync_apply();

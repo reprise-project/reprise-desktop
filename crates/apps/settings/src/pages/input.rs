@@ -142,7 +142,13 @@ pub fn keyboard(a: Area) -> Form {
         &tr!("pages-input-delay"),
         (0, 9999),
     ));
-    items.push(Item::label_at("delay_units", GX + 296, 222, 20, "ms"));
+    items.push(Item::label_at(
+        "delay_units",
+        GX + 296,
+        222,
+        20,
+        &tr!("units-ms"),
+    ));
     // The Shortcuts list is a `ListView` the host draws over the page; the page carries its buttons only.
     items.push(group(
         a,
@@ -164,7 +170,7 @@ pub fn keyboard(a: Area) -> Form {
         GX + 272,
         280,
         20,
-        "ms",
+        &tr!("units-ms"),
     ));
     let y = shortcuts(a).bottom() + 4;
     let r = shortcuts(a).right();

@@ -11,6 +11,7 @@ use reprisefs::quicklaunch as ql;
 use reprisekit::controls::importsheet::{Line, Source};
 use reprisekit::controls::welcome::TEXT_SIZES;
 use reprisekit::interface::Interface;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -80,17 +81,25 @@ pub enum Setting {
     Other {
         what: String,
         value: String,
-        why: &'static str,
+        why: String,
     },
 }
 
-const NO_SETTING: &str = "no setting";
+fn no_setting() -> String {
+    tr!("import-no-setting")
+}
 /// `[metrics] double_click_ms`'s largest value.
-const CLOCK: &str = "the clock follows the formats locale";
-const LOOK: &str = "Reprise's look sets it";
-const IME: &str = "set up in the input method";
+fn clock_why() -> String {
+    tr!("import-clock-why")
+}
+fn look() -> String {
+    tr!("import-look-why")
+}
+fn ime() -> String {
+    tr!("import-ime-why")
+}
 
-fn other(what: &str, value: &str, why: &'static str) -> Setting {
+fn other(what: &str, value: &str, why: String) -> Setting {
     Setting::Other {
         what: what.into(),
         value: value.into(),
@@ -111,7 +120,11 @@ fn percent(p: f64) -> u32 {
 }
 
 fn on(b: bool) -> String {
-    if b { "On" } else { "Off" }.into()
+    if b {
+        tr!("import-on")
+    } else {
+        tr!("import-off")
+    }
 }
 
 fn label(choices: &Choices, v: &str) -> String {
@@ -123,7 +136,7 @@ fn label(choices: &Choices, v: &str) -> String {
 /// "us,de" with ",nodeadkeys" as "us, de (nodeadkeys)".
 fn layouts_text(layout: &str, variant: &str) -> String {
     if layout.is_empty() {
-        return "System default".into();
+        return tr!("import-system-default");
     }
     let mut variants = variant.split(',');
     let parts: Vec<String> = layout
@@ -140,7 +153,7 @@ fn speed_text(t: i64) -> String {
     format!("{:.1}", t as f64 / 10.0)
 }
 
-fn device(d: Device, mouse: &'static str, pad: &'static str) -> &'static str {
+fn device(d: Device, mouse: String, pad: String) -> String {
     match d {
         Device::Mouse => mouse,
         Device::Touchpad => pad,
@@ -151,43 +164,50 @@ impl Setting {
     fn what(&self) -> String {
         use Setting::*;
         match self {
-            Wallpaper { .. } => "Wallpaper",
-            Dark(_) => "Dark style",
-            Layouts { .. } => "Keyboard layouts",
-            KbModel(_) => "Keyboard model",
-            KbOptions(_) => "Keyboard options",
-            LayoutPerWindow(_) => "Layout per window",
-            RepeatRate(_) => "Key repeat rate",
-            RepeatDelay(_) => "Key repeat delay",
-            Speed(d, _) => device(*d, "Mouse speed", "Touchpad speed"),
-            Accel(d, _) => device(*d, "Mouse acceleration", "Touchpad acceleration"),
-            Natural(d, _) => device(*d, "Mouse natural scrolling", "Touchpad natural scrolling"),
+            Wallpaper { .. } => tr!("import-wallpaper"),
+            Dark(_) => tr!("import-dark-style"),
+            Layouts { .. } => tr!("import-keyboard-layouts"),
+            KbModel(_) => tr!("import-keyboard-model"),
+            KbOptions(_) => tr!("import-keyboard-options"),
+            LayoutPerWindow(_) => tr!("import-layout-per-window"),
+            RepeatRate(_) => tr!("import-key-repeat-rate"),
+            RepeatDelay(_) => tr!("import-key-repeat-delay"),
+            Speed(d, _) => device(*d, tr!("import-mouse-speed"), tr!("import-touchpad-speed")),
+            Accel(d, _) => device(
+                *d,
+                tr!("import-mouse-acceleration"),
+                tr!("import-touchpad-acceleration"),
+            ),
+            Natural(d, _) => device(
+                *d,
+                tr!("import-mouse-natural-scrolling"),
+                tr!("import-touchpad-natural-scrolling"),
+            ),
             LeftHanded(d, _) => device(
                 *d,
-                "Mouse left-handed buttons",
-                "Touchpad left-handed buttons",
+                tr!("import-mouse-left-handed-buttons"),
+                tr!("import-touchpad-left-handed-buttons"),
             ),
-            TapToClick(_) => "Tap to click",
-            TwoFingerScroll(_) => "Two-finger scrolling",
-            TwoFingerTapRight(_) => "Two-finger tap right-clicks",
-            DisableWhileTyping(_) => "Touchpad off while typing",
-            ClickMethod(_) => "Touchpad click method",
-            TouchpadEnabled(_) => "Touchpad",
-            DisableWithMouse(_) => "Touchpad off with a mouse",
-            TextSize(_) => "Text size",
-            NightLight(_) => "Night light",
-            NightTemperature(_) => "Night light warmth",
-            NightSchedule(_) => "Night light hours",
-            CursorTheme(_) => "Pointer theme",
-            CursorSize(_) => "Pointer size",
-            DoubleClick(_) => "Double-click time",
-            Desktops(_) => "Virtual desktops",
-            HotCorner(_) => "Hot corner",
-            Favourite(_) => "Quick Launch",
-            Pinned(_) => "Quick Launch as task buttons",
+            TapToClick(_) => tr!("import-tap-to-click"),
+            TwoFingerScroll(_) => tr!("import-two-finger-scrolling"),
+            TwoFingerTapRight(_) => tr!("import-two-finger-tap-right-clicks"),
+            DisableWhileTyping(_) => tr!("import-touchpad-off-while-typing"),
+            ClickMethod(_) => tr!("import-touchpad-click-method"),
+            TouchpadEnabled(_) => tr!("import-touchpad"),
+            DisableWithMouse(_) => tr!("import-touchpad-off-with-a-mouse"),
+            TextSize(_) => tr!("import-text-size"),
+            NightLight(_) => tr!("import-night-light"),
+            NightTemperature(_) => tr!("import-night-light-warmth"),
+            NightSchedule(_) => tr!("import-night-light-hours"),
+            CursorTheme(_) => tr!("import-pointer-theme"),
+            CursorSize(_) => tr!("import-pointer-size"),
+            DoubleClick(_) => tr!("import-double-click-time"),
+            Desktops(_) => tr!("import-virtual-desktops"),
+            HotCorner(_) => tr!("import-hot-corner"),
+            Favourite(_) => tr!("import-quick-launch"),
+            Pinned(_) => tr!("import-quick-launch-as-task-buttons"),
             Other { what, .. } => return what.clone(),
         }
-        .into()
     }
 
     /// Lay the setting over `s`. Favourites and greyed rows touch nothing.
@@ -252,7 +272,7 @@ impl Setting {
     fn shown(&self, s: &Settings) -> String {
         use Setting::*;
         match self {
-            Wallpaper { .. } if s.wallpaper.is_empty() => "None".into(),
+            Wallpaper { .. } if s.wallpaper.is_empty() => tr!("import-none"),
             // A built-in picture always fills the screen.
             Wallpaper { .. } if s.wallpaper.starts_with("reprise:") => s.wallpaper.clone(),
             Wallpaper { .. } => format!(
@@ -262,13 +282,13 @@ impl Setting {
             ),
             Dark(_) => on(welcome::dark(s)),
             Layouts { .. } => layouts_text(&s.kb_layout, &s.kb_variant),
-            KbModel(_) if s.kb_model.is_empty() => "System default".into(),
+            KbModel(_) if s.kb_model.is_empty() => tr!("import-system-default"),
             KbModel(_) => s.kb_model.clone(),
-            KbOptions(_) if s.kb_options.is_empty() => "None".into(),
+            KbOptions(_) if s.kb_options.is_empty() => tr!("import-none"),
             KbOptions(_) => s.kb_options.clone(),
             LayoutPerWindow(_) => on(s.layout_per_window),
-            RepeatRate(_) => format!("{} a second", s.repeat_rate),
-            RepeatDelay(_) => format!("{} ms", s.repeat_delay),
+            RepeatRate(_) => tr!("import-per-second", n = s.repeat_rate.to_string()),
+            RepeatDelay(_) => tr!("import-ms", n = s.repeat_delay.to_string()),
             Speed(Device::Mouse, _) => speed_text(s.mouse_speed),
             Speed(Device::Touchpad, _) => speed_text(s.touchpad_speed),
             Accel(Device::Mouse, _) => on(s.mouse_accel),
@@ -284,16 +304,20 @@ impl Setting {
             ClickMethod(_) => label(CLICK_METHODS, &s.click_method),
             TouchpadEnabled(_) => on(s.touchpad_enabled),
             DisableWithMouse(_) => on(s.disable_with_mouse),
-            TextSize(_) => format!("{}%", s.text_size),
+            TextSize(_) => tr!("import-percent", n = s.text_size.to_string()),
             NightLight(_) => on(s.nl_enabled),
-            NightTemperature(_) => format!("{} K", s.nl_temperature),
-            NightSchedule(_) if s.nl_schedule == "sun" => "Sunset to sunrise".into(),
-            NightSchedule(_) => format!("{} to {}", s.nl_from, s.nl_to),
-            CursorTheme(_) if s.cursor_theme.is_empty() => "The session's".into(),
+            NightTemperature(_) => tr!("import-kelvin", n = s.nl_temperature.to_string()),
+            NightSchedule(_) if s.nl_schedule == "sun" => tr!("import-sunset-to-sunrise"),
+            NightSchedule(_) => tr!(
+                "import-night-range",
+                from = s.nl_from.to_string(),
+                to = s.nl_to.to_string()
+            ),
+            CursorTheme(_) if s.cursor_theme.is_empty() => tr!("import-the-sessions"),
             CursorTheme(_) => s.cursor_theme.clone(),
-            CursorSize(_) if s.cursor_size == 0 => "The session's".into(),
-            CursorSize(_) => format!("{} px", s.cursor_size),
-            DoubleClick(_) => format!("{} ms", s.double_click_ms),
+            CursorSize(_) if s.cursor_size == 0 => tr!("import-the-sessions"),
+            CursorSize(_) => tr!("import-px", n = s.cursor_size.to_string()),
+            DoubleClick(_) => tr!("import-ms", n = s.double_click_ms.to_string()),
             Desktops(_) => s.desktops.to_string(),
             HotCorner(_) => label(HOT_CORNERS, &s.hot_corner),
             Pinned(_) => on(s.taskbar_pinned),
@@ -379,11 +403,11 @@ impl Plan {
 }
 
 /// Why a found wallpaper can't be taken, if it can't.
-fn picture_refused(path: &str, sys: &dyn System) -> Option<&'static str> {
+fn picture_refused(path: &str, sys: &dyn System) -> Option<String> {
     if !reprisefs::pictures::is_picture(Path::new(path)) {
-        return Some("Reprise shows JPEG, PNG, BMP, JPEG XL and AVIF pictures");
+        return Some(tr!("import-reprise-shows-jpeg-png-bmp-jpeg"));
     }
-    (!sys.is_file(Path::new(path))).then_some("the file is missing")
+    (!sys.is_file(Path::new(path))).then(|| tr!("import-the-file-is-missing"))
 }
 
 /// Why Apply would refuse `want` when it takes `base` (the file's settings) as they are.
@@ -425,9 +449,11 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
                 let Some((app, file)) = app else {
                     let value = match l {
                         Launcher::Id(id) => id.stem().to_string(),
-                        Launcher::Default(mime) => format!("the default program for {mime}"),
+                        Launcher::Default(mime) => {
+                            tr!("import-default-program-for", mime = mime.to_string())
+                        }
                     };
-                    greyed.push(grey(what, "not installed", value));
+                    greyed.push(grey(what, &tr!("import-not-installed"), value));
                     continue;
                 };
                 let taken = quick.iter().any(|q| app.id == *q)
@@ -453,7 +479,7 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
                 let why = match f {
                     Setting::Wallpaper { path, .. } => picture_refused(path, sys).map(String::from),
                     Setting::Dark(_) if crate::appearancepage::interface(&s) == Interface::Blue => {
-                        Some("Blue comes in light colours only".into())
+                        Some(tr!("import-blue-comes-in-light-colours-only"))
                     }
                     _ => refused(&t, &s),
                 };
@@ -511,7 +537,7 @@ pub fn write(config: &Path, quick: Option<&Path>, picked: &[&Write]) -> Result<(
         .collect::<Result<_, String>>()?;
     let dir = match apps.is_empty() {
         true => None,
-        false => Some(quick.ok_or("there is no Quick Launch folder")?),
+        false => Some(quick.ok_or(&tr!("import-there-is-no-quick-launch-folder"))?),
     };
     if !settings.is_empty() {
         let written = repriseconf::edit(config, |text| {

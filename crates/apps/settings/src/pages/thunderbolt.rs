@@ -92,7 +92,10 @@ pub fn detail(d: &Device) -> String {
     };
     match (d.auto, now.is_empty()) {
         (true, true) => tr!("pages-thunderbolt-always-authorized"),
-        (true, false) => format!("{now}, always authorized"),
+        (true, false) => tr!(
+            "pages-thunderbolt-now-always-authorized",
+            now = now.to_string()
+        ),
         (false, _) => now.into(),
     }
 }

@@ -337,10 +337,14 @@ fn cleared_text(state: Clearing) -> String {
         Clearing::Failed => tr!("pages-couldnt-clear-the-thumbnails"),
         Clearing::Done(Cleared { files: 0, .. }) => tr!("pages-nothing-to-remove"),
         Clearing::Done(Cleared { files: 1, bytes }) => {
-            format!("Removed 1 file, {}.", short_size(bytes))
+            tr!("pages-removed-one", size = short_size(bytes))
         }
         Clearing::Done(Cleared { files, bytes }) => {
-            format!("Removed {files} files, {}.", short_size(bytes))
+            tr!(
+                "pages-removed-many",
+                files = files.to_string(),
+                size = short_size(bytes)
+            )
         }
     }
 }

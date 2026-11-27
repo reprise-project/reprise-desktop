@@ -777,7 +777,7 @@ pub fn row_scale(i: usize) -> f64 {
 fn scale_label(pick: Pick, scale: f64) -> String {
     let percent = (scale * 100.0).round();
     match logical_size(pick.mode, pick.transform, scale) {
-        (0, _) | (_, 0) => tr!("displaypage-scale", percent = percent.to_string()),
+        (0, _) | (_, 0) => tr!("displaypage-scale-percent", percent = percent.to_string()),
         (w, h) => tr!(
             "displaypage-scale-size",
             percent = percent.to_string(),

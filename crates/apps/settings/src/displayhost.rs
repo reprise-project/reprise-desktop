@@ -218,7 +218,7 @@ impl SettingsApp {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
                 log::warn!("{}: {e}", self.display.layouts.display());
-                self.fail("The saved layouts could not be forgotten.");
+                self.fail(&tr!("displayhost-layouts-not-forgotten"));
                 return Reply::redraw();
             }
         }

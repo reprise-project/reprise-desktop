@@ -327,7 +327,7 @@ fn screens_note(c: &MachineConfig) -> String {
     match c.outputs.len() {
         0 => tr!("pages-login-screens-automatic"),
         1 => tr!("pages-login-screens-1-from-your-display-settings"),
-        n => format!("Screens: {n}, from your display settings"),
+        n => tr!("pages-login-screens-n", n = n.to_string()),
     }
 }
 
@@ -350,7 +350,7 @@ fn end_rows(c: &MachineConfig) -> Vec<(Option<u32>, String)> {
     if !rows.iter().any(|r| r.0 == min)
         && let Some(n) = min
     {
-        rows.push((min, format!("{n} minutes")));
+        rows.push((min, tr!("pages-login-minutes-n", n = n.to_string())));
     }
     rows
 }
@@ -400,10 +400,7 @@ pub fn show_login(
     set_updown(page, LOGIN_PORT, r.port.into());
     page.set_lines(
         LOGIN_GROUP_NOTE,
-        &[format!(
-            "Members of the group {} can log on remotely.",
-            r.group
-        )],
+        &[tr!("pages-login-group-note", group = r.group.to_string())],
     );
     set_updown(page, LOGIN_SESSIONS, r.max_sessions);
     let ends = end_rows(c);

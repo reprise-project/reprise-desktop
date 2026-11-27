@@ -218,6 +218,8 @@ choices-software-row = Software ({ $codec })
 ## pages.rs
 pages-cursor-default-row = (Default)
 pages-gtk-auto-row = (Automatic)
+pages-removed-one = Removed 1 file, { $size }.
+pages-removed-many = Removed { $files } files, { $size }.
 
 ## magnifierpage.rs (rows)
 magnifierpage-filter-none = None
@@ -291,9 +293,16 @@ pages-appearance-shadow = &Shadow:
 pages-appearance-hover = Ho&ver:
 pages-appearance-time = Ti&me:
 pages-appearance-animation-2 = A&nimation:
+pages-appearance-text-size-note = Text size on the { $page } page enlarges all text.
 
 ## pages/bind.rs
 pages-bind-no-key-switches-them = No key switches them.
+pages-bind-ms = { $n } ms
+pages-bind-seconds = { $whole }.{ $tenth } seconds
+pages-bind-key-switches-them = { $keys } switches them.
+pages-bind-system-default = { $name } (system default)
+pages-bind-percent = { $n }%
+pages-bind-kelvin = { $n } K
 
 ## pages/desktop.rs
 pages-desktop-snapping = Snapping
@@ -372,6 +381,11 @@ pages-desktop-peek-at-the-selected-window = Pee&k at the selected window
 pages-desktop-show-windows-in-3d = Show windows in &3D
 pages-desktop-window-overview = Window Overview
 pages-desktop-hot-corner = Hot &corner:
+pages-desktop-search-no-key = The launcher { $finds } { $start }
+pages-desktop-search-opens = { $keys } opens the launcher, which { $finds }
+pages-desktop-search-opens-start = { $opens } { $start }
+pages-desktop-flip-note = { $keys } shows them; Glass only.
+pages-desktop-overview-keys = { $keys } shows this desktop's windows side by side.
 
 ## pages/input.rs
 pages-input-keyboard = Keyboard
@@ -469,6 +483,7 @@ pages-lists-none = None
 pages-lists-allowed = Allowed
 pages-lists-denied = Denied
 pages-lists-loading = Loading...
+pages-lists-not-allowed = { $name }: not allowed
 
 ## pages/login.rs
 pages-login-not-running = Not running
@@ -503,6 +518,9 @@ pages-login-thumbprint-sha-1 = &Thumbprint (SHA-1):
 pages-login-screens-automatic = Screens: automatic
 pages-login-screens-1-from-your-display-settings = Screens: 1, from your display settings
 pages-login-minutes = { " minutes" }
+pages-login-screens-n = Screens: { $n }, from your display settings
+pages-login-minutes-n = { $n } minutes
+pages-login-group-note = Members of the group { $group } can log on remotely.
 
 ## pages/network.rs
 pages-network-this-computer-has-no-radio-to = This computer has no radio to turn off.
@@ -624,6 +642,13 @@ pages-system-join-it = &Join it
 pages-system-replace-it = Replace &it
 pages-system-not-answering = Not answering
 pages-system-off = Off
+pages-system-clipboard-history-keys = Keep a &clipboard history ({ $keys } opens it)
+pages-system-video = Video: { $encoder }
+pages-system-client-since = { $user }, since { $since }
+pages-system-not-running = Not running. { $why }
+pages-system-not-listening = Not listening: { $why }
+pages-system-listening-at = Listening on port { $port } at { $at }
+pages-system-listening = Listening on port { $port }
 
 ## pages/thunderbolt.rs
 pages-thunderbolt-the-bolt-service-isnt-available-so = The bolt service isn't available, so no device can be listed.
@@ -642,6 +667,7 @@ pages-thunderbolt-connecting = Connecting...
 pages-thunderbolt-authorizing = Authorizing...
 pages-thunderbolt-authorization-failed = Authorization failed
 pages-thunderbolt-always-authorized = Always authorized
+pages-thunderbolt-now-always-authorized = { $now }, always authorized
 
 ## capturepage.rs
 capturepage-screenshots = Screenshots
@@ -780,7 +806,7 @@ displaypage-color-profile = Co&lor profile:
 displaypage-rotating-needs-iio-sensor-proxy-and = Rotating needs iio-sensor-proxy and an accelerometer.
 displaypage-profile-missing = { $file } (missing)
 displaypage-mode-pixels = { $width } by { $height } pixels
-displaypage-scale = { $percent }%
+displaypage-scale-percent = { $percent }%
 displaypage-scale-size = { $percent }% ({ $w } x { $h })
 displaypage-scale-warning = At { $percent }% the desktop is { $w } x { $h }, too small for many windows.
 displaypage-head-name = { $number }. { $name }
@@ -1030,6 +1056,7 @@ displayflow-the-display-settings-could-not-be = The display settings could not b
 ## displayhost.rs
 displayhost-the-desktop-did-not-answer-the = The desktop did not answer; the primary display was not changed.
 displayhost-that-display-is-no-longer-shown = That display is no longer shown, so it was not made the primary one.
+displayhost-layouts-not-forgotten = The saved layouts could not be forgotten.
 
 ## filepick.rs
 filepick-reprise-settings-toml = Reprise Settings (*.toml)
@@ -1249,3 +1276,89 @@ lib-imported =
     Imported { $path }: { $what }.
     The files it replaced are in { $kept }.
 lib-cannot-remove = Cannot remove '{ $name }': { $why }.
+
+## menuhost.rs
+menuhost-button-not-written = The Quick Launch button could not be written.
+menuhost-folder-not-written = The Quick Launch folder could not be written.
+
+## import.rs
+import-on = On
+import-off = Off
+import-system-default = System default
+import-wallpaper = Wallpaper
+import-dark-style = Dark style
+import-keyboard-layouts = Keyboard layouts
+import-keyboard-model = Keyboard model
+import-keyboard-options = Keyboard options
+import-layout-per-window = Layout per window
+import-key-repeat-rate = Key repeat rate
+import-key-repeat-delay = Key repeat delay
+import-mouse-speed = Mouse speed
+import-touchpad-speed = Touchpad speed
+import-mouse-acceleration = Mouse acceleration
+import-touchpad-acceleration = Touchpad acceleration
+import-mouse-natural-scrolling = Mouse natural scrolling
+import-touchpad-natural-scrolling = Touchpad natural scrolling
+import-mouse-left-handed-buttons = Mouse left-handed buttons
+import-touchpad-left-handed-buttons = Touchpad left-handed buttons
+import-tap-to-click = Tap to click
+import-two-finger-scrolling = Two-finger scrolling
+import-two-finger-tap-right-clicks = Two-finger tap right-clicks
+import-touchpad-off-while-typing = Touchpad off while typing
+import-touchpad-click-method = Touchpad click method
+import-touchpad = Touchpad
+import-touchpad-off-with-a-mouse = Touchpad off with a mouse
+import-text-size = Text size
+import-night-light = Night light
+import-night-light-warmth = Night light warmth
+import-night-light-hours = Night light hours
+import-pointer-theme = Pointer theme
+import-pointer-size = Pointer size
+import-double-click-time = Double-click time
+import-virtual-desktops = Virtual desktops
+import-hot-corner = Hot corner
+import-quick-launch = Quick Launch
+import-quick-launch-as-task-buttons = Quick Launch as task buttons
+import-none = None
+import-sunset-to-sunrise = Sunset to sunrise
+import-the-sessions = The session's
+import-reprise-shows-jpeg-png-bmp-jpeg = Reprise shows JPEG, PNG, BMP, JPEG XL and AVIF pictures
+import-the-file-is-missing = the file is missing
+import-not-installed = not installed
+import-blue-comes-in-light-colours-only = Blue comes in light colours only
+import-there-is-no-quick-launch-folder = there is no Quick Launch folder
+import-no-setting = no setting
+import-clock-why = the clock follows the formats locale
+import-look-why = Reprise's look sets it
+import-ime-why = set up in the input method
+import-per-second = { $n } a second
+import-ms = { $n } ms
+import-percent = { $n }%
+import-kelvin = { $n } K
+import-night-range = { $from } to { $to }
+import-px = { $n } px
+import-default-program-for = the default program for { $mime }
+
+## import/gnome.rs
+import-12-hour = 12-hour
+import-24-hour = 24-hour
+import-always-on = Always on
+import-clock = Clock
+import-font = Font
+import-gtk-theme = GTK theme
+import-icon-theme = Icon theme
+import-input-method = Input method
+import-key-repeat = Key repeat
+import-title-bar-buttons = Title bar buttons
+
+## thunderbolthost.rs
+thunderbolthost-forgotten = forgotten
+thunderbolthost-authorized = authorized
+thunderbolthost-failed =
+    { $device } could not be { $what }.
+
+    { $why }
+
+## units
+units-px = px
+units-ms = ms
