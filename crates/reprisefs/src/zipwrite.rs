@@ -389,7 +389,8 @@ fn rewrite_watched(
     for a in adds {
         for name in &a.names {
             if let Some(&mode) = modes.get(name) {
-                let mode = std::fs::Permissions::from_mode(mode & 0o777);
+                // bsdtar reads the staged file, so it keeps owner read and write.
+                let mode = std::fs::Permissions::from_mode(mode & 0o777 | 0o600);
                 std::fs::set_permissions(a.dir.join(name), mode).map_err(io)?;
             }
         }
@@ -475,26 +476,31 @@ fn rewrite_watched(
     Ok(())
 }
 
-/// The temp file a rewrite of `zip` (as `before`) writes, locked while it lives: the zip's mode,
-/// its group where this user may give it (else no group bits), and its xattrs and ACLs.
+/// The temp file a rewrite of `zip` (as `before`) writes, locked while it lives: the zip's
+/// xattrs and ACLs, then its group where this user may give it (else no group bits and no access
+/// ACL), then its mode.
 fn temp_beside(
     zip: &Path,
     before: &std::fs::Metadata,
 ) -> std::io::Result<(std::fs::File, PathBuf)> {
+    use std::os::fd::AsRawFd;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let mut mode = before.mode() & 0o777;
-    let (out, tmp) = crate::ops::create_temp_beside(zip, Some(Permissions::from_mode(mode)))?;
+    let (out, tmp) = crate::ops::create_temp_beside(zip, Some(Permissions::from_mode(0o600)))?;
     let made = (|| {
         if !archive::flock(&out, libc::LOCK_EX) {
             return Err(std::io::Error::last_os_error());
         }
+        // Copied while the temp file is still the owner's to write, before its mode.
+        crate::ops::copy_xattrs(zip, &out);
         if std::os::unix::fs::fchown(&out, None, Some(before.gid())).is_err()
             && out.metadata()?.gid() != before.gid()
         {
             mode &= !0o070;
+            // SAFETY: the fd is open and the name is NUL-terminated.
+            unsafe { libc::fremovexattr(out.as_raw_fd(), c"system.posix_acl_access".as_ptr()) };
         }
         out.set_permissions(Permissions::from_mode(mode))?;
-        crate::ops::copy_xattrs(zip, &out);
         Ok(())
     })();
     match made {
@@ -506,14 +512,12 @@ fn temp_beside(
     }
 }
 
-/// Removes what rewrites of `zip` whose process died left in its folder `dir`: this user's
-/// `.<name>.<tag>.tmp` files that no rewrite holds locked and nothing wrote to for `stale`.
+/// Removes what rewrites whose process died left in the folder `dir` of `zip`: this user's
+/// `.<name>.<tag>.tmp` files, of `zip` or of any `.zip`, that no rewrite holds locked and nothing
+/// wrote to for `stale`.
 fn sweep_temps(dir: &Path, zip: &Path, stale: Duration) {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let Some(name) = zip.file_name() else {
-        return;
-    };
-    let prefix = format!(".{}.", name.to_string_lossy());
+    let own = zip.file_name().map(|n| n.to_string_lossy().into_owned());
     let Ok(kids) = std::fs::read_dir(dir) else {
         return;
     };
@@ -521,9 +525,10 @@ fn sweep_temps(dir: &Path, zip: &Path, stale: Duration) {
     let me = unsafe { libc::geteuid() };
     for kid in kids.flatten() {
         let file = kid.file_name();
-        let tag =
-            (file.to_str()).and_then(|f| f.strip_prefix(prefix.as_str())?.strip_suffix(".tmp"));
-        if !tag.is_some_and(|t| t.len() == 16 && t.bytes().all(|b| b.is_ascii_hexdigit())) {
+        let Some(of) = file.to_str().and_then(temp_of) else {
+            continue;
+        };
+        if Some(of) != own.as_deref() && !of.to_ascii_lowercase().ends_with(".zip") {
             continue;
         }
         let path = kid.path();
@@ -555,8 +560,16 @@ fn sweep_temps(dir: &Path, zip: &Path, stale: Duration) {
     }
 }
 
+/// The name of the file whose temp file `name` is (`.<name>.<16 hex digits>.tmp`).
+fn temp_of(name: &str) -> Option<&str> {
+    let inner = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    let (of, tag) = inner.rsplit_once('.')?;
+    let tagged = tag.len() == 16 && tag.bytes().all(|b| b.is_ascii_hexdigit());
+    (tagged && !of.is_empty()).then_some(of)
+}
+
 /// The zip at `zip` opened to read, never through a link, with its metadata: refused unless it
-/// is a regular file this user owns that starts as a zip does.
+/// is a regular file this user owns and may write that starts as a zip does.
 fn open_zip(zip: &Path) -> Result<(std::fs::File, std::fs::Metadata), String> {
     use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt};
     let file = std::fs::OpenOptions::new()
@@ -571,6 +584,9 @@ fn open_zip(zip: &Path) -> Result<(std::fs::File, std::fs::Metadata), String> {
     // SAFETY: geteuid has no preconditions.
     if !meta.is_file() || meta.uid() != unsafe { libc::geteuid() } {
         return Err(tr!("archive-update-not-own"));
+    }
+    if meta.mode() & 0o200 == 0 {
+        return Err(tr!("archive-update-read-only"));
     }
     let mut head = [0u8; 4];
     let read = file.read_exact_at(&mut head, 0);

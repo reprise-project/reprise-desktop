@@ -1,6 +1,6 @@
 //! A program's progress box for an [`ArchiveJob`] it waits on, such as a save into a zip: modal
 //! over its window once the job has run [`SHOW_AFTER`], with Pause and Cancel, and its close box
-//! cancels. The program takes no input in its window while [`JobBox::running`].
+//! cancels. The program takes no input in any of its other windows while [`JobBox::running`].
 
 use crate::{Child, Ctx, Event, PointerInput, Reply, Waker, WinId};
 use reprisefs::extract::{ArchiveEvent, ArchiveJob};
@@ -35,6 +35,19 @@ pub enum Woke {
 #[derive(Default)]
 pub struct JobBox(Option<Running>);
 
+/// How long a program quitting mid-job waits for the job to stop and remove its temp files.
+const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Dropped with its program, after the windows are gone: a running job is cancelled and waited
+/// for up to [`QUIT_WAIT`].
+impl Drop for JobBox {
+    fn drop(&mut self) {
+        if let Some(r) = &mut self.0 {
+            r.job.stop_and_wait(QUIT_WAIT);
+        }
+    }
+}
+
 struct Running {
     job: ArchiveJob,
     kind: Kind,
@@ -46,8 +59,8 @@ struct Running {
     landed: bool,
 }
 
-/// Whether `ev` is input a window waiting on its [`JobBox`] ignores: keys, the pointer, pastes,
-/// drops and its close box.
+/// Whether `ev` is input a program's windows ignore while it waits on its [`JobBox`]: keys, the
+/// pointer, pastes, drops and close boxes.
 pub fn is_input(ev: &Event) -> bool {
     matches!(
         ev,
@@ -88,18 +101,28 @@ pub fn status(s: Snapshot, waiting: usize) -> Status {
 
 impl JobBox {
     /// Waits on `job`, a `kind` job from `from` to `to`; `wake` brings its box up on time.
+    /// Refused, the job let go, while another runs.
     pub fn start(
         &mut self,
         job: ArchiveJob,
         kind: Kind,
         (from, to): (String, String),
         wake: Option<&Waker>,
-    ) {
+    ) -> bool {
+        if self.running() {
+            return false;
+        }
         if let Some(wake) = wake.cloned() {
-            std::thread::spawn(move || {
-                std::thread::sleep(SHOW_AFTER);
+            let later = wake.clone();
+            let spawned = std::thread::Builder::new()
+                .name("jobbox-show".into())
+                .spawn(move || {
+                    std::thread::sleep(SHOW_AFTER);
+                    later.wake();
+                });
+            if spawned.is_err() {
                 wake.wake();
-            });
+            }
         }
         self.0 = Some(Running {
             job,
@@ -111,6 +134,7 @@ impl JobBox {
             failed: None,
             landed: false,
         });
+        true
     }
 
     pub fn running(&self) -> bool {
