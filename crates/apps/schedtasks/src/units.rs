@@ -90,12 +90,14 @@ pub enum Problem {
 
 /// The user's own unit folder in the manager's search path `search` (its `UnitPath`): the first
 /// `<config>/systemd/user` listed with its `user.control` beside it, which only
-/// `$XDG_CONFIG_HOME` and `$XDG_RUNTIME_DIR` have, the first before the second.
+/// `$XDG_CONFIG_HOME` and `$XDG_RUNTIME_DIR` have, the first before the second. A folder under
+/// `/run/` is refused: a task written there would be gone at the next boot.
 pub fn config_dir(search: &[String]) -> Option<PathBuf> {
     search
         .iter()
         .find(|p| {
             p.starts_with('/')
+                && !p.starts_with("/run/")
                 && p.ends_with("/systemd/user")
                 && search.iter().any(|c| *c == format!("{p}.control"))
         })

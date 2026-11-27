@@ -278,10 +278,7 @@ fn the_folder_is_the_config_one_in_the_managers_search_path() {
         "/usr/lib/systemd/user",
     ];
     assert_eq!(search(&user), Some("/home/u/.config/systemd/user".into()));
-    assert_eq!(
-        search(&user[1..]),
-        Some("/run/user/1000/systemd/user".into())
-    );
+    assert_eq!(search(&user[1..]), None, "the runtime pair alone");
     assert_eq!(
         search(&["/etc/systemd/user", "/usr/lib/systemd/user"]),
         None
