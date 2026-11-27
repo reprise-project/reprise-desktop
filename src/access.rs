@@ -734,10 +734,14 @@ fn act(state: &mut State, surface: Surface, req: Request) {
 }
 
 /// What a reader's `act` at layout point `at` on `surface` lands on, once what covers it there
-/// is out of the way: a frame another window covers comes up, and a client's flyout closes on
-/// a click, where a user's click would only close it. None when the click is spent closing a
+/// is out of the way: a frame another window covers comes up, a kept touchpad swipe springs
+/// back on a click with the overview it was fading in, and a client's flyout closes on a
+/// click, where a user's click would only close it. None when the click is spent closing a
 /// flyout over its own tray icon, all a user's click there does.
 fn uncover(state: &mut State, surface: Surface, act: Act, at: (f64, f64)) -> Option<Hit> {
+    if matches!(act, Act::Click | Act::ContextMenu) {
+        state.drop_kept_swipe();
+    }
     let mut hit = state.scene_hit(Point::from(at));
     if let Surface::Frame(w) = surface
         && !lands_on(state, surface, &hit)
@@ -1257,6 +1261,64 @@ mod tests {
             "the window stays where it was moved"
         );
         assert!(start_open(&h.state), "the click opens Start");
+    }
+
+    #[test]
+    fn a_readers_click_mid_swipe_springs_the_swipe_back_and_clicks() {
+        for (what, step) in [
+            ("a desktop swipe", (60.0, 0.0)),
+            ("an overview swipe", (0.0, -60.0)),
+        ] {
+            let config = crate::config::Config {
+                base: repriseconf::config::Config {
+                    workspaces: 4,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", 1024, 768);
+            let start = start_button(&h);
+            h.swipe_with(3, &[step; 6], |h| {
+                assert!(
+                    h.state.pointers.swipe.is_some(),
+                    "{what}: the swipe is kept"
+                );
+                if step.1 != 0.0 {
+                    assert!(
+                        h.state.overview.view.is_some(),
+                        "{what}: the overview fades in"
+                    );
+                }
+                let bar = Surface::Taskbar(h.state.bars[0].tree);
+                uncover(&mut h.state, bar, Act::Focus, start);
+                assert!(
+                    h.state.pointers.swipe.is_some(),
+                    "{what}: a focus leaves the swipe"
+                );
+                let hit = uncover(&mut h.state, bar, Act::Click, start).expect("a hit");
+                assert!(
+                    h.state.pointers.swipe.is_none(),
+                    "{what}: the click drops the swipe"
+                );
+                assert!(h.state.overview.view.is_none(), "{what}: and its overview");
+                assert!(
+                    lands_on(&h.state, bar, &hit),
+                    "{what}: the click lands on the bar"
+                );
+                click(&mut h.state, start, BTN_LEFT);
+                assert!(start_open(&h.state), "{what}: the click opens Start");
+            });
+            assert_eq!(
+                h.state.desktops.current, 0,
+                "{what}: the lift switches nothing"
+            );
+            assert!(
+                h.state.overview.view.is_none(),
+                "{what}: the lift opens nothing"
+            );
+            assert!(start_open(&h.state), "{what}: Start stays open");
+        }
     }
 
     #[test]

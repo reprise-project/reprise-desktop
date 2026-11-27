@@ -307,12 +307,18 @@ impl State {
         true
     }
 
-    /// Forget the swipe the compositor keeps and take down the desktop slide it drags,
-    /// uncommitted, when the lock takes the input.
+    /// Forget the swipe the compositor keeps, uncommitted and at once, when the lock takes the
+    /// input or a reader clicks: its desktop slide comes down and the overview it fades is back
+    /// as the swipe found it.
     pub fn drop_kept_swipe(&mut self) {
-        self.pointers.swipe = None;
+        let fade = self.pointers.swipe.take().and_then(|k| k.fading_overview());
         if self.switch_anim.drag.is_some() {
             self.cancel_switch_anim();
+        }
+        match fade {
+            Some(true) => self.set_overview_fade(1.0),
+            Some(false) => self.close_overview(),
+            None => {}
         }
     }
 
