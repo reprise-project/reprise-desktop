@@ -6,7 +6,7 @@ pub mod motion;
 
 use crate::interfaces::{default_wallpaper, theme_with};
 use reprisekit::art::userpic;
-use reprisekit::blue::Variant;
+use reprisekit::blue::{Tone, Variant};
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::logon::{draw_logon, logon_layout};
 use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, PowerAction, UserNote, text};
@@ -40,7 +40,7 @@ pub fn users() -> Vec<LogonUser> {
 }
 
 /// Each screen, its Blue scheme and the built-in wallpaper standing in for a picture beneath.
-fn screens() -> Vec<(Logon, Variant, Option<&'static str>)> {
+fn screens() -> Vec<(Logon, Tone, Option<&'static str>)> {
     let empty = Logon::new(Interface::Classic, Vec::new(), false, None);
     let mut filled = Logon::new(Interface::Classic, Vec::new(), false, Some("alice"));
     filled.key(LogonKey::Text("hunter2"));
@@ -66,7 +66,7 @@ fn screens() -> Vec<(Logon, Variant, Option<&'static str>)> {
     ]
     .map(|(mut m, picture)| {
         m.over_picture = true;
-        (m, Variant::Blue, Some(picture))
+        (m, Variant::Blue.into(), Some(picture))
     });
     let locks = [Interface::Classic, Interface::Blue, Interface::Glass]
         .map(|i| Logon::locked(i, users().remove(0), true, true));
@@ -89,17 +89,22 @@ fn screens() -> Vec<(Logon, Variant, Option<&'static str>)> {
         .chain(admins)
         .chain(locks)
         .chain(playing)
-        .map(|m| (m, Variant::Blue))
+        .map(|m| (m, Variant::Blue.into()))
         .chain(blue_screens())
-        .chain(glass::screens().into_iter().map(|m| (m, Variant::Blue)))
+        .chain(
+            glass::screens()
+                .into_iter()
+                .map(|m| (m, Variant::Blue.into())),
+        )
         .map(|(m, v)| (m, v, None))
         .chain(pictured)
         .collect()
 }
 
 /// Blue's tiles with one hot, a tile open empty, with a message, Caps Lock and the badge, and
-/// busy, the typed screen, then the open tile with its message in Olive Green and Silver.
-fn blue_screens() -> Vec<(Logon, Variant)> {
+/// busy, the typed screen, then the open tile with its message in Olive Green and Silver, and the
+/// hot tile and the open tile with its message in Blue's dark twin.
+fn blue_screens() -> Vec<(Logon, Tone)> {
     let rest = Logon::new(Interface::Blue, users(), true, Some("carol"));
     let mut hot = rest.clone();
     hot.lit = Some((Part::Tile(0), Interaction::Hot));
@@ -114,10 +119,12 @@ fn blue_screens() -> Vec<(Logon, Variant)> {
     busy.key(LogonKey::Text("hunter2"));
     busy.set_busy(true);
     let typed = Logon::new(Interface::Blue, Vec::new(), false, None);
-    [hot, open, message.clone(), busy, typed]
-        .map(|m| (m, Variant::Blue))
+    let dark = Tone::new(Variant::Blue, true);
+    [hot.clone(), open, message.clone(), busy, typed]
+        .map(|m| (m, Variant::Blue.into()))
         .into_iter()
-        .chain([Variant::Olive, Variant::Silver].map(|v| (message.clone(), v)))
+        .chain([Variant::Olive, Variant::Silver].map(|v| (message.clone(), v.into())))
+        .chain([(hot, dark), (message, dark)])
         .collect()
 }
 
@@ -133,8 +140,8 @@ pub fn render(scale: i32) -> Canvas {
     for (i, (m, v, picture)) in screens.iter().enumerate() {
         let theme = theme_with(
             m.interface,
-            *v,
-            false,
+            v.variant,
+            v.dark,
             &reprisekit::glass::Settings::default(),
         )
         .scaled(scale);

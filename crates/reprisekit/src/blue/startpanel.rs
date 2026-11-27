@@ -26,7 +26,8 @@ const PICTURE_CORNER: f64 = 3.0;
 pub const PLACE_ICON_PX: i32 = 24;
 const TILE_PX: i32 = 24;
 const ARROW: (i32, i32) = (16, 18);
-const DETAIL: Color = Color::rgb(0x80, 0x80, 0x80);
+/// How far a pinned row's detail line goes from the row's ink toward the column, out of 255.
+const DETAIL: u8 = 0x80;
 const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 
 /// Where things sit in their rects at 100% text, in design px from the rect's top-left.
@@ -183,7 +184,11 @@ pub fn draw(
                             ink,
                             true,
                         );
-                        let grey = if is_lit { hot_ink } else { DETAIL };
+                        let grey = if is_lit {
+                            hot_ink
+                        } else {
+                            s.system.menu_text.toward(s.system.window, DETAIL)
+                        };
                         line(
                             canvas,
                             at::PROGRAM_PEN,
@@ -496,7 +501,7 @@ fn tile_image(choice: Choice, size: i32, d: i32, state: State) -> Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blue::Variant;
+    use crate::blue::{Tone, Variant};
     use crate::startpanel::layout::layout;
     use crate::startpanel::{PlaceRow, ProgramRow, Shape};
     use crate::theme::TextUnits;
@@ -539,14 +544,19 @@ mod tests {
         p
     }
 
-    fn render(v: Variant, p: &StartPanel, d: i32, pressed: Option<Spot>) -> (Canvas, Layout) {
+    fn render(
+        v: impl Into<Tone>,
+        p: &StartPanel,
+        d: i32,
+        pressed: Option<Spot>,
+    ) -> (Canvas, Layout) {
         let text = TextRenderer::stub(TEXT_PX * d as u32, |_| 6);
         let mut p = p.clone();
         p.foot_labels = foot_labels(&text, Grow::at(d));
         let p = &p;
         let l = layout(p).scaled(d);
         let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
-        draw(&mut c, v.scheme(), &text, p, &l, pressed);
+        draw(&mut c, v.into().scheme(), &text, p, &l, pressed);
         (c, l)
     }
 
@@ -572,7 +582,7 @@ mod tests {
         (Some(Spot::Shutdown), Some(Spot::Shutdown)),
     ];
 
-    fn hashes(v: Variant, d: i32) -> Vec<u64> {
+    fn hashes(v: Tone, d: i32) -> Vec<u64> {
         STATES
             .iter()
             .map(|&(hot, pressed)| fnv(&render(v, &sample(hot), d, pressed).0))
@@ -617,11 +627,15 @@ mod tests {
     }
 
     #[test]
-    fn every_state_draws_its_own_pixels_in_blue_and_olive_at_scale_1_and_2() {
-        let cases: Vec<_> = [Variant::Blue, Variant::Olive]
-            .into_iter()
-            .flat_map(|v| [1, 2].map(|d| (v, d)))
-            .collect();
+    fn every_state_draws_its_own_pixels_in_blue_olive_and_the_navy_twin_at_scale_1_and_2() {
+        let cases: Vec<_> = [
+            Variant::Blue.into(),
+            Variant::Olive.into(),
+            Tone::new(Variant::Blue, true),
+        ]
+        .into_iter()
+        .flat_map(|v| [1, 2].map(|d| (v, d)))
+        .collect();
         let got: Vec<Vec<u64>> = cases.iter().map(|&(v, d)| hashes(v, d)).collect();
         for h in &got {
             let mut seen = h.clone();
@@ -629,6 +643,7 @@ mod tests {
             assert_eq!(seen.len(), STATES.len(), "every state differs");
         }
         assert_ne!(got[0], got[2], "Olive draws its own colours");
+        assert_ne!(got[0], got[4], "the twin draws its own colours");
         let keyed: Vec<_> = cases
             .iter()
             .zip(&got)

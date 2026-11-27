@@ -1,6 +1,6 @@
 use super::*;
-use crate::blue::Variant;
 use crate::blue::powerpanel::TILE_STATES;
+use crate::blue::{Tone, Variant};
 use crate::interface::Interface;
 use crate::interfaces::blue_theme;
 use crate::logon::{LogonKey, LogonUser, PowerAction, hit};
@@ -102,18 +102,21 @@ fn remote() -> Logon {
     m
 }
 
-fn drawn(m: &Logon, v: Variant, s: i32) -> (Canvas, LogonLayout) {
+fn drawn(m: &Logon, v: impl Into<Tone>, s: i32) -> (Canvas, LogonLayout) {
     shown(m, v, s, Show::All)
 }
 
 /// Draws the wordmark in Tahoma Bold, since its own faces are whichever the machine installs.
-fn shown(m: &Logon, v: Variant, s: i32, show: Show) -> (Canvas, LogonLayout) {
+fn shown(m: &Logon, v: impl Into<Tone>, s: i32, show: Show) -> (Canvas, LogonLayout) {
     shown_at(m, v, s, 100, show)
 }
 
 /// [`shown`] with the text at `pct` percent.
-fn shown_at(m: &Logon, v: Variant, s: i32, pct: u32, show: Show) -> (Canvas, LogonLayout) {
-    let theme = blue_theme(v).with_text_size(pct).scaled(s);
+fn shown_at(m: &Logon, v: impl Into<Tone>, s: i32, pct: u32, show: Show) -> (Canvas, LogonLayout) {
+    let t = v.into();
+    let theme = crate::interfaces::blue_theme_in(t.variant, t.dark)
+        .with_text_size(pct)
+        .scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let title = TextRenderer::load(
         &TextSpec {
@@ -130,10 +133,11 @@ fn shown_at(m: &Logon, v: Variant, s: i32, pct: u32, show: Show) -> (Canvas, Log
 }
 
 #[test]
-fn blue_logon_pins_per_scheme_at_scale_1_and_2() {
+fn blue_logon_pins_per_scheme_and_the_navy_twin_at_scale_1_and_2() {
     crate::pins::fonts();
     let mut got = Vec::new();
-    for v in Variant::ALL {
+    let twin = Tone::new(Variant::Blue, true);
+    for v in Variant::ALL.map(Tone::from).into_iter().chain([twin]) {
         for (name, m) in states() {
             for s in [1, 2] {
                 got.push((format!("{v:?} {name} @{s}"), fnv(&drawn(&m, v, s).0)));
@@ -198,6 +202,16 @@ fn blue_tiles_have_clear_corners_and_soft_edges_at_2() {
             assert!(soft(&all[0]) >= 4, "the arrow's edge is smooth at 2");
         }
     }
+}
+
+#[test]
+fn the_navy_twin_draws_its_own_backdrop_after_the_light_scheme() {
+    let m = remote();
+    let twin = Tone::new(Variant::Blue, true);
+    let (light, _) = drawn(&m, Variant::Blue, 1);
+    let (dark, _) = drawn(&m, twin, 1);
+    assert_eq!(light.get(2, 2), Variant::Blue.scheme().welcome_band.argb());
+    assert_eq!(dark.get(2, 2), twin.scheme().welcome_band.argb());
 }
 
 #[test]

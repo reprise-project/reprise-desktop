@@ -1553,3 +1553,35 @@ fn a_form_tip_at_the_window_corner_keeps_its_shadow_inside() {
         );
     }
 }
+
+/// The tip, the balloon tip and the notification balloon in Blue's navy scheme and its dark twin,
+/// at scale 1 and 2.
+#[test]
+fn blue_tips_and_balloons_pin_light_and_dark() {
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for dark in [false, true] {
+        for s in [1, 2] {
+            let theme =
+                crate::interfaces::blue_theme_in(crate::blue::Variant::Blue, dark).scaled(s);
+            let t = TextRenderer::load(&theme.fonts);
+            let tip = draw_tip(&theme, &t, "Click here to begin");
+            let balloon = draw_balloon_tip(&theme, &t, "Turn Off", "Ends your session.");
+            let lay = notify_layout(
+                &theme,
+                &t,
+                "Low Disk Space",
+                "The disk of / has only 812 MB free of 20.0 GB.",
+                &LONG_ACTS[..2],
+                &[],
+                None,
+            );
+            let hot = Some(NotifyHit::Button(1));
+            let notify = draw_notify_balloon(&theme, &t, &lay, None, &[], None, hot, None);
+            for (what, c) in [("tip", tip), ("balloon tip", balloon), ("notify", notify)] {
+                got.push((format!("{what} dark={dark} x{s}"), fnv(&c)));
+            }
+        }
+    }
+    crate::pins::check("controls/blue_tips", &got);
+}

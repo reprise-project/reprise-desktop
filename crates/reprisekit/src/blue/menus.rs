@@ -1,5 +1,5 @@
 //! The menus the Blue Start menu opens beside it (All Programs, Recent Items and their folders):
-//! white in a thin frame of the Start menu's edge colour, a strip of its band down the left, rows
+//! the scheme's menu colour in a thin frame of the Start menu's edge colour, a strip of its band down the left, rows
 //! lit in the scheme's selection colour.
 
 use crate::blue::scheme::Scheme;
@@ -8,7 +8,6 @@ use crate::shape::{self, Px, Stops, mix, premul};
 use crate::style::{DropShadow, Layout, MenuLook, Part, PartImage, State};
 use crate::theme::Color;
 
-const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 /// The frame's line and the strip inside it down the left edge (its sheen line included), design px.
 const LINE: i32 = 1;
 const STRIP: i32 = 5;
@@ -31,17 +30,18 @@ const SHADOW: DropShadow = DropShadow {
 
 /// The menu look of the Start menu's menus in `s`; [`parts`] paints its frame and lit rows.
 pub fn look(s: &Scheme) -> MenuLook {
+    let face = s.system.menu;
     MenuLook {
         frame: s.start_menu.edge,
         ring: None,
-        face: Some(WHITE),
+        face: Some(face),
         inset: INSET,
         row: 23,
         separator: 9,
         gutter: 0,
-        gutter_fill: WHITE,
-        divider: (WHITE, WHITE),
-        rule: (s.start_menu.rule, WHITE),
+        gutter_fill: face,
+        divider: (face, face),
+        rule: (s.start_menu.rule, face),
         text_x: 28,
         icon_x: 5,
         right_pad: 28,
@@ -71,7 +71,7 @@ fn frame(s: &Scheme, d: i32) -> PartImage {
         .map(|&(t, c)| (f64::from(t), opaque(c)))
         .collect();
     let band = Stops(&band);
-    let (edge, face) = (opaque(m.edge), opaque(WHITE));
+    let (edge, face) = (opaque(m.edge), opaque(s.system.menu));
     let (w, h) = (INSET.left + 1 + INSET.right, INSET.top + 1 + INSET.bottom);
     let (k, line) = (f64::from(d), f64::from(LINE));
     let c = shape::draw(w, h, d, |x, y| {
@@ -97,7 +97,7 @@ fn frame(s: &Scheme, d: i32) -> PartImage {
 
 fn lit(s: &Scheme, d: i32) -> PartImage {
     let hot = opaque(s.system.menu_hilight);
-    let greyed = mix(hot, opaque(WHITE), GREYED_LIT);
+    let greyed = mix(hot, opaque(s.system.menu), GREYED_LIT);
     let c = shape::draw(1, 2, d, |_, y| if y < f64::from(d) { hot } else { greyed });
     PartImage::new(c, &[State::Hot, State::Disabled], Layout::Vertical).at_scale(d)
 }

@@ -133,13 +133,13 @@ mod tests {
         h
     }
 
-    fn atlas(v: Variant, d: i32) -> Canvas {
+    fn atlas(v: impl Into<Tone>, d: i32) -> Canvas {
         parts(v.into(), d).remove(0).1.atlas
     }
 
     #[test]
     fn places_bar_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&atlas(v, d)))))
             .collect();

@@ -105,6 +105,32 @@ pub fn render_glass_dark() -> Canvas {
     all
 }
 
+/// Blue's navy scheme beside its dark twin: a property sheet's buttons, group box and tabs, menus,
+/// balloons and the tray's notification balloon, a light column then a dark one.
+pub fn render_blue_dark_surfaces() -> Canvas {
+    let columns = [false, true].map(|dark| {
+        let theme = cued(interfaces::blue_theme_in(
+            reprisekit::blue::Variant::Blue,
+            dark,
+        ));
+        [
+            render_glass_sheet(&theme),
+            render_glass_menus(&theme),
+            render_glass_balloons(&theme),
+        ]
+    });
+    let height = columns[0].iter().map(|p| p.height).sum::<u32>();
+    let mut all = Canvas::new(2 * 950, height);
+    for (i, parts) in columns.iter().enumerate() {
+        let mut y = 0;
+        for p in parts {
+            all.blit_canvas(i as i32 * 950, y, p);
+            y += p.height as i32;
+        }
+    }
+    all
+}
+
 /// Glass windows at scale 2 over the stripes, 1300x700 device px, then the Start panel and popups ([`glass_popups_at_2`]) and lit and held caption buttons ([`render_glass_scale2_buttons`]).
 pub fn render_glass_scale2() -> Canvas {
     use reprisekit::glass::{self, Frame, Material, Settings};
