@@ -52,6 +52,13 @@ pub fn big_icon(u: TextUnits) -> i32 {
     u.icon_within(BIG_ICON, u.len(line) - line)
 }
 
+/// [`big_icon`] in a strip `strip_h` px tall whose look stands `h100` px at 100% text: held to
+/// the strip's own growth, so `layout` and `draw` agree when a host lays a strip out at 100%
+/// and paints it at a grown text size.
+fn icon_side(u: TextUnits, strip_h: i32, h100: i32) -> i32 {
+    u.icon_within(BIG_ICON, strip_h - h100)
+}
+
 /// A big button's left inset, from its frame to its icon box.
 pub const BIG_PAD: i32 = 3;
 
@@ -129,6 +136,7 @@ fn pads(drop: bool, label: Option<&str>, m: &ToolbarMetrics) -> ButtonPads {
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 fn main_width(
     big: bool,
     drop: bool,
@@ -137,6 +145,7 @@ fn main_width(
     px: u32,
     m: &ToolbarMetrics,
     u: TextUnits,
+    icon: i32,
 ) -> i32 {
     if !big {
         return u.len(BUTTON);
@@ -146,7 +155,7 @@ fn main_width(
         Some(l) if !l.is_empty() => pads.gap + text.measure(l, false, px),
         _ => 0,
     };
-    pads.inset + big_icon(u) + label + pads.trail
+    pads.inset + icon + label + pads.trail
 }
 
 fn drop_width(big: bool, item: &Item, m: &ToolbarMetrics, u: TextUnits) -> i32 {
@@ -176,14 +185,18 @@ pub fn layout(
     cm: &ControlMetrics,
 ) -> Vec<Rect> {
     let (m, u) = (&cm.toolbar, cm.text);
+    let line = ToolbarMetrics::LINE;
+    let icon = icon_side(u, r.height, m.height - (u.len(line) - line));
     let mut x = r.x + if tb.big { m.lead } else { 0 };
     tb.items
         .iter()
         .map(|item| {
             let w = match item {
-                Item::Button { .. } => main_width(tb.big, false, label_of(item), text, px, m, u),
+                Item::Button { .. } => {
+                    main_width(tb.big, false, label_of(item), text, px, m, u, icon)
+                }
                 Item::DropButton { .. } => {
-                    main_width(tb.big, true, label_of(item), text, px, m, u)
+                    main_width(tb.big, true, label_of(item), text, px, m, u, icon)
                         + drop_width(tb.big, item, m, u)
                 }
                 Item::Separator => {
@@ -325,6 +338,7 @@ fn draw_strip(
 ) {
     let (s, u) = (p.s, p.text);
     let m = &p.look.controls_at_100().toolbar;
+    let icon_px = icon_side(u, r.height, m.height);
     look::draw_background(c, p, r.scaled(s));
     for (i, (item, &rect)) in tb.items.iter().zip(rects).enumerate() {
         let sr = rect.scaled(s);
@@ -359,10 +373,10 @@ fn draw_strip(
         look::draw_button(c, p, sr, split, state);
         let off = look::content_shift(p, state);
 
-        let main_w = main_width(tb.big, drop, label, text, px, m, u) * s;
+        let main_w = main_width(tb.big, drop, label, text, px, m, u, icon_px) * s;
         let pads = pads(drop, label, m);
         let icon_box = if tb.big {
-            let px = big_icon(u) * s;
+            let px = icon_px * s;
             Rect::new(sr.x + pads.inset * s, sr.y + (sr.height - px) / 2, px, px)
         } else {
             Rect::new(sr.x, sr.y, main_w, sr.height)
