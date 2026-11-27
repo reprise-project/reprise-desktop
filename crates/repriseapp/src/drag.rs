@@ -664,15 +664,10 @@ impl DataSourceHandler for Host {
                 let Some(bytes) = dnd::encode_files(&out.paths, &mime) else {
                     return;
                 };
-                let fd: std::os::fd::OwnedFd = fd.into();
-                let waits = std::thread::Builder::new().name("repriseapp-staged".into());
-                let spawned = waits.spawn(move || {
-                    if staged.wait(reprisefs::pipe::PASTE_TIMEOUT) {
-                        reprisefs::pipe::write_detached(fd, bytes.into());
-                    }
-                });
-                if let Err(e) = spawned {
-                    log::warn!("drag: cannot wait for the staged files: {e}");
+                // Before the drop a target only looks at the paths; the drop waits for the files.
+                match out.dropped {
+                    true => staged.send(fd.into(), bytes.into()),
+                    false => reprisefs::pipe::write_detached(fd.into(), bytes.into()),
                 }
                 return;
             }
@@ -696,6 +691,9 @@ impl DataSourceHandler for Host {
     fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &WlDataSource) {
         if self.drag_of(source).is_some() {
             if let Some(out) = self.drag_out.take() {
+                if let Some(staged) = out.staged.as_ref().filter(|_| out.dropped) {
+                    staged.abandon();
+                }
                 self.drag_ended(out, false);
             }
         } else if self

@@ -272,3 +272,59 @@ fn copy_to_folder_out_of_a_compressed_folder_asks_before_replacing_as_a_copy_doe
         "old"
     );
 }
+
+#[test]
+fn a_cancelled_copy_out_of_a_compressed_folder_puts_nothing_on_the_clipboard() {
+    let (_dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    ex.select_paths(&[zip.join("docs"), zip.join("top.txt")]);
+    ex.run(Command::Copy, &mut ctx);
+    let ex_job = ex.extracting.as_ref().expect("the copy runs");
+    let scratch = ex_job.scratch.clone().expect("a scratch folder");
+    ex_job.job.meter().cancel();
+    let got = finish_copies(&mut ex, &mut ctx);
+    assert!(got.copy_files.is_none(), "nothing goes on the clipboard");
+    wake_until(&mut ex, &mut ctx, |_| !scratch.exists());
+}
+
+#[test]
+fn a_second_copy_out_onto_the_clipboard_removes_the_first_ones_copies() {
+    let (_dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    ex.select_paths(&[zip.join("top.txt")]);
+    ex.run(Command::Copy, &mut ctx);
+    finish_copies(&mut ex, &mut ctx);
+    let first = ex.clip_scratch.clone().expect("the clipboard's copies");
+    assert!(first.join("top.txt").exists());
+    ex.run(Command::Copy, &mut ctx);
+    finish_copies(&mut ex, &mut ctx);
+    assert_ne!(ex.clip_scratch.as_ref(), Some(&first));
+    wake_until(&mut ex, &mut ctx, |_| !first.exists());
+}
+
+#[test]
+fn copy_to_folder_out_of_a_compressed_folder_removes_its_scratch_copies_once_put() {
+    let (dir, zip) = pack();
+    let to = dir.path().join("to");
+    std::fs::create_dir(&to).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    ex.copy_out(
+        (zip.clone(), vec![PathBuf::from("docs")]),
+        crate::extracting::Then::Into(to.clone()),
+        &mut ctx,
+    );
+    let scratch = (ex.extracting.as_ref())
+        .and_then(|e| e.scratch.clone())
+        .expect("a scratch folder");
+    finish_copies(&mut ex, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |_| {
+        to.join("docs/a.txt").exists() && !scratch.exists()
+    });
+    assert_eq!(
+        std::fs::read_to_string(to.join("docs/a.txt")).expect("put"),
+        "inside"
+    );
+}

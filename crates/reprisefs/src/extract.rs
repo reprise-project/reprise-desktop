@@ -952,6 +952,9 @@ pub(crate) fn spawn_with(
     })
 }
 
+/// The longest line [`lines`] takes: an output with a longer one is no listing.
+const MAX_LINE: usize = 1 << 20;
+
 /// Feeds each line of `out` to `each` until it ends, `each` says stop or `m` is cancelled
 /// (`Ok(false)`). The child is stopped while `m` is paused.
 pub(crate) fn lines(
@@ -963,8 +966,46 @@ pub(crate) fn lines(
     lines_ticking(child, out, m, each, || {})
 }
 
-/// [`lines`], calling `tick` at least every [`SLICE_MS`] while the child is unreaped.
+/// [`lines`], calling `tick` at least every [`SLICE_MS`] while the child is unreaped. A line
+/// past [`MAX_LINE`] fails the read.
 pub(crate) fn lines_ticking(
+    child: &mut Child,
+    out: impl Read + AsRawFd,
+    m: &Meter,
+    mut each: impl FnMut(&[u8]) -> bool,
+    tick: impl FnMut(),
+) -> std::io::Result<bool> {
+    let mut pending: Vec<u8> = Vec::new();
+    let mut long = false;
+    let read = chunks(
+        child,
+        out,
+        m,
+        |chunk| {
+            pending.extend_from_slice(chunk);
+            let mut start = 0;
+            while let Some(nl) = pending[start..].iter().position(|&b| b == b'\n') {
+                if !each(&pending[start..start + nl]) {
+                    return false;
+                }
+                start += nl + 1;
+            }
+            pending.drain(..start);
+            long = pending.len() > MAX_LINE;
+            !long
+        },
+        tick,
+    )?;
+    if long {
+        return Err(std::io::Error::other(tr!("archive-line-too-long")));
+    }
+    Ok(read && (pending.is_empty() || each(&pending)))
+}
+
+/// Feeds what `out` reads to `each` until it ends (`Ok(true)`), `each` says stop or `m` is
+/// cancelled (`Ok(false)`), calling `tick` at least every [`SLICE_MS`] while the child is
+/// unreaped. The child is stopped while `m` is paused.
+pub(crate) fn chunks(
     child: &mut Child,
     mut out: impl Read + AsRawFd,
     m: &Meter,
@@ -974,11 +1015,10 @@ pub(crate) fn lines_ticking(
     let fd = out.as_raw_fd();
     let pid = child.id() as libc::pid_t;
     let mut stopped = false;
-    let mut pending: Vec<u8> = Vec::new();
-    let mut buf = [0u8; 8192];
-    let ended = loop {
+    let mut buf = vec![0u8; 64 * 1024];
+    let read = loop {
         if m.cancelled() {
-            break false;
+            break Ok(false);
         }
         if m.paused() != stopped {
             stopped = !stopped;
@@ -1006,30 +1046,21 @@ pub(crate) fn lines_ticking(
             if e.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return Err(e);
+            break Err(e);
         }
-        let n = match out.read(&mut buf) {
-            Ok(0) => break true,
-            Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(e),
-        };
-        pending.extend_from_slice(&buf[..n]);
-        while let Some(nl) = pending.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = pending.drain(..=nl).collect();
-            if !each(&line[..nl]) {
-                return Ok(false);
-            }
+        match out.read(&mut buf) {
+            Ok(0) => break Ok(true),
+            Ok(n) if !each(&buf[..n]) => break Ok(false),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => break Err(e),
         }
     };
-    if ended && !pending.is_empty() && !each(&pending) {
-        return Ok(false);
-    }
     if stopped {
         // SAFETY: as above.
         unsafe { libc::kill(pid, libc::SIGCONT) };
     }
-    Ok(ended)
+    read
 }
 
 /// Reaps `child` after [`lines`] read it to `read`: whether it exited cleanly. A child cut
