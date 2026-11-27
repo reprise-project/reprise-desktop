@@ -34,7 +34,7 @@ Window rules (Settings > Window Rules) match by app ID and title to set size, po
 
 ## Snapping
 
-Drag a window to a side to fill half the screen, to the top to maximize, or into a corner for a quarter (`[window_snapping] distance`). Hover a maximize button, press `Super+Z`, or drag toward the top edge for snap layouts (customizable via `[window_snapping] layouts`) and recent screen arrangements.
+Drag a window to a side to fill half the screen, to the top to maximize, or into a corner for a quarter (`[window_snapping] distance`). Hover a maximize button, press `Super+Z`, or drag toward the top edge for snap layouts (customizable via `[window_snapping] layouts`) and recent screen arrangements. A custom layout that does not parse is refused in Settings with the layout's name and the reason.
 
 After snapping, snap assist offers live thumbnails of other windows for empty zones. Drag the shared edge between snapped windows to resize both together. Use `Super+Arrow` keys to snap across zones and monitors, and `Super+Shift+Left`/`Right` to move a window proportionally to another monitor.
 
