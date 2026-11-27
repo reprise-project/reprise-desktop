@@ -4,6 +4,7 @@
 //! the Explorer's tree to `reprisekit::controls::treeview`, and `place` decides what a place is.
 
 use crate::place::{self, Place, list};
+use reprisefs::places::DriveKind;
 use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::icontheme::IconCache;
 use reprisekit::raster::Canvas;
@@ -138,13 +139,13 @@ fn unread(icons: &mut IconCache, name: &str, px: i32) -> Result<Option<Canvas>, 
     Ok(icon.map(Arc::unwrap_or_clone))
 }
 
-/// A folder node's own icon (`meta::folder_icon`) or special-folder icon, read with its parent's
-/// children.
+/// A folder node's own icon (`meta::folder_icon`) or special-folder icon, or a drive's kind's,
+/// read with its parent's children.
 #[derive(Clone, Default)]
 pub enum Own {
     #[default]
     None,
-    /// Theme names, best first: the folder's own, then its special-folder icon.
+    /// Theme names, best first: the folder's own, then its special-folder icon, or a drive's.
     Named(Vec<String>),
     /// An icon file, decoded at the read's size and scale.
     File(Option<Canvas>),
@@ -223,8 +224,8 @@ fn wear(places: &mut Places, place: &Place, own: &Own, icons: &mut IconCache) ->
 }
 
 /// Every node fetches its icons again from `icons`, now at another scale or size
-/// ([`Places::px`]). A folder's own or special-folder icon gives way to the plain folder until
-/// its parent is filled again.
+/// ([`Places::px`]). A folder's own, special-folder or drive icon gives way to the plain folder
+/// until its parent is filled again.
 pub fn refetch_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) {
     places.waiting.clear();
     walk_icons(&mut tree.roots, places, icons, &mut |_| Some(Own::None));
@@ -336,8 +337,9 @@ pub type Chain = Vec<(Place, Kids)>;
 pub type Kids = Vec<(String, Place, Option<bool>, Own)>;
 
 /// The file system half of [`fill`]: `place`'s children with their own icons (icon files decoded
-/// at `art`, logical px and scale) or their icons among `specials`, and for those not in `known`
-/// whether they hold a folder. A host reads them off its loop for [`follow_with`].
+/// at `art`, logical px and scale), their icons among `specials` or a drive's kind's, and for
+/// those not in `known` whether they hold a folder. A host reads them off its loop for
+/// [`follow_with`].
 pub fn read_kids(
     place: &Place,
     inp: &Inputs,
@@ -345,10 +347,10 @@ pub fn read_kids(
     art: (i32, i32),
     specials: &[(PathBuf, &str)],
 ) -> Kids {
-    let mut kids: Vec<(String, Place)> = Vec::new();
+    let mut kids: Vec<(String, Place, Option<DriveKind>)> = Vec::new();
     match place {
         Place::Computer => {
-            kids.extend(place::computer_tree_children(&list(
+            let drives = place::computer_tree_children(&list(
                 &Place::Computer,
                 &reprisefs::apps::MimeDb::empty(),
                 inp.show_hidden,
@@ -358,16 +360,24 @@ pub fn read_kids(
                     shares: inp.shares,
                     portable: &[],
                 },
-            )));
+            ));
+            kids.extend(drives.into_iter().map(|(n, p, k)| (n, p, Some(k))));
         }
         Place::RecycleBin | Place::Network(_) => {}
-        _ => kids.extend(subfolders(place, inp)),
+        _ => kids.extend(
+            subfolders(place, inp)
+                .into_iter()
+                .map(|(n, p)| (n, p, None)),
+        ),
     }
     let known: HashSet<&Place> = known.iter().copied().collect();
     kids.into_iter()
-        .map(|(label, p)| {
+        .map(|(label, p, drive)| {
             let opens = (!known.contains(&&p)).then(|| opens(&p, inp));
-            let own = Own::read(&p, inp, art, specials);
+            let own = match drive {
+                Some(k) => Own::Named(vec![k.icon().to_string()]),
+                None => Own::read(&p, inp, art, specials),
+            };
             (label, p, opens, own)
         })
         .collect()
@@ -672,6 +682,41 @@ mod tests {
         assert!(!opens(&Place::Folder(folder.clone()), &inp));
         std::fs::create_dir(folder.join("sub")).expect("mkdir sub");
         assert!(opens(&Place::Folder(folder), &inp));
+    }
+
+    #[test]
+    fn computers_drives_wear_drive_icons() {
+        let drive = |mount: &str, device: &str, removable| Drive {
+            mount: PathBuf::from(mount),
+            device: device.into(),
+            fs: "ext4".into(),
+            label: None,
+            removable,
+            optical: false,
+            total: 1,
+            free: 1,
+        };
+        let drives = [
+            drive("/", "/dev/sda1", false),
+            drive("/run/media/u/STICK", "/dev/sdb1", true),
+        ];
+        let volumes = Snapshot::default();
+        let mounts = drives.each_ref().map(|d| d.mount.clone());
+        let inp = Inputs {
+            show_hidden: false,
+            drives: &drives,
+            volumes: &volumes,
+            shares: &[],
+            drive_mounts: &mounts,
+        };
+        let worn: Vec<Vec<String>> = read_kids(&Place::Computer, &inp, &[], (16, 1), &[])
+            .into_iter()
+            .map(|(.., own)| match own {
+                Own::Named(names) => names,
+                _ => Vec::new(),
+            })
+            .collect();
+        assert_eq!(worn, [["drive-harddisk"], ["drive-removable-media"]]);
     }
 
     /// Re-reading an open folder keeps what was open below it and the selection on its node, when a new sibling sorts ahead of both.
