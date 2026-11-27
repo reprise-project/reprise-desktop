@@ -25,6 +25,9 @@ const TOKENS_PER_CLIENT: usize = 32;
 
 struct Trusted;
 
+/// Set on every live token when a lock engages: trust minted before the lock is over.
+struct Revoked;
+
 /// A client's new token earns trust only with an input serial on our seat from the client's
 /// [`KeyboardTurn`] and a surface of the client holding keyboard focus; a pointer enter alone
 /// yields a valid serial.
@@ -66,8 +69,8 @@ impl KeyboardTurn {
     }
 }
 
-/// How long the client a drag was dropped on, or the last finger landed on, may raise a window:
-/// the drop or the tap is the user's intent, though the keyboard is elsewhere.
+/// How long the client a drag was dropped on, or the seat's newest press went to, may raise a
+/// window: the drop or the press is the user's intent, though the keyboard is elsewhere.
 const PICK_GRACE: Duration = Duration::from_secs(3);
 
 fn picked_trusted<C: PartialEq>(
@@ -80,8 +83,62 @@ fn picked_trusted<C: PartialEq>(
     })
 }
 
-/// Trusted tokens one tap may mint; a launcher may ask twice for one start.
-const TOKENS_PER_TAP: u8 = 2;
+/// Trusted tokens one press may mint; a launcher may ask twice for one start.
+const TOKENS_PER_PRESS: u8 = 2;
+
+/// The seat's newest press (a finger down or a pointer button) and the client that heard it, until
+/// input goes to another client or to Reprise, or a lock engages. A panel that takes no keyboard
+/// may raise a window on that press's serial.
+#[derive(Default)]
+pub struct LastPress(Option<Press>);
+
+struct Press {
+    client: ClientId,
+    serial: Serial,
+    at: Instant,
+    /// Trusted tokens minted on it so far.
+    spent: u8,
+}
+
+impl LastPress {
+    /// `client` heard a press on `serial`; None, a press Reprise kept, ends the last.
+    pub fn heard(&mut self, client: Option<ClientId>, serial: Serial) {
+        self.0 = client.map(|client| Press {
+            client,
+            serial,
+            at: Instant::now(),
+            spent: 0,
+        });
+    }
+
+    /// Input went to `client`, or to Reprise itself for None: a press on any other client is over.
+    pub fn input_to(&mut self, client: Option<&ClientId>) {
+        if self.0.as_ref().is_some_and(|p| Some(&p.client) != client) {
+            self.0 = None;
+        }
+    }
+
+    pub fn end(&mut self) {
+        self.0 = None;
+    }
+
+    /// Whether the press trusts `client`'s token on `serial`: the exact serial it was sent, within
+    /// [`PICK_GRACE`], fewer than [`TOKENS_PER_PRESS`] minted on it.
+    fn trusts(&mut self, serial: Option<Serial>, client: Option<&ClientId>, now: Instant) -> bool {
+        let Some(press) = self.0.as_mut() else {
+            return false;
+        };
+        let picked = (press.client.clone(), press.at);
+        if serial != Some(press.serial) || !picked_trusted(Some(&picked), client, now) {
+            return false;
+        }
+        press.spent += 1;
+        if press.spent >= TOKENS_PER_PRESS {
+            self.0 = None;
+        }
+        true
+    }
+}
 
 /// Programs Reprise just asked to act, by desktop id, for those the token never reaches: a search
 /// provider call carries none, and some programs drop a notification action's. The next
@@ -133,7 +190,11 @@ impl XdgActivationHandler for State {
             .map(|(serial, _)| *serial);
         let serial_ok = (serial.zip(since)).is_some_and(|(s, since)| s.is_no_older_than(&since));
         let now = Instant::now();
-        let tapped = self.tap_trusted(serial, data.client_id.as_ref(), now);
+        // The client is checked, not the token's surface: a launcher panel without the keyboard
+        // names none. In lock mode the console stays locked while the remote side's presses reach
+        // the desktop, so the desktop's lock decides.
+        let pressed = !self.desktop_locked()
+            && (self.last_press).trusts(serial, data.client_id.as_ref(), now);
         let token_client = data
             .surface
             .as_ref()
@@ -143,7 +204,7 @@ impl XdgActivationHandler for State {
         if dropped {
             self.dnd.dropped_on = None;
         }
-        if dropped || tapped || client_token_trusted(serial_ok, token_client, focus_client) {
+        if dropped || pressed || client_token_trusted(serial_ok, token_client, focus_client) {
             data.user_data.insert_if_missing(|| Trusted);
         }
         true
@@ -158,7 +219,9 @@ impl XdgActivationHandler for State {
         surface: WlSurface,
     ) {
         let live = data.timestamp.elapsed() < TOKEN_LIFETIME;
-        let minted_trusted = live && data.user_data.get::<Trusted>().is_some();
+        let minted_trusted = live
+            && data.user_data.get::<Trusted>().is_some()
+            && data.user_data.get::<Revoked>().is_none();
         self.activation.remove_token(&token);
         let mut root = surface;
         while let Some(parent) = get_parent(&root) {
@@ -201,32 +264,10 @@ impl XdgActivationHandler for State {
     }
 }
 
-impl State {
-    /// Whether the newest tap trusts `client`'s token on `serial`: it was sent that down within
-    /// [`PICK_GRACE`] and the tap minted fewer than [`TOKENS_PER_TAP`]. The client is checked, not
-    /// the token's surface: a launcher panel without the keyboard names none.
-    fn tap_trusted(
-        &mut self,
-        serial: Option<Serial>,
-        client: Option<&ClientId>,
-        now: Instant,
-    ) -> bool {
-        if self.console_locked() || self.desktop_locked() {
-            return false;
-        }
-        let touch = &mut self.devices.touch;
-        let Some(tap) = touch.tapped.as_mut() else {
-            return false;
-        };
-        let picked = (tap.client.clone(), tap.at);
-        if serial != Some(tap.serial) || !picked_trusted(Some(&picked), client, now) {
-            return false;
-        }
-        tap.spent += 1;
-        if tap.spent >= TOKENS_PER_TAP {
-            touch.tapped = None;
-        }
-        true
+/// A lock engaged: no token minted before it focuses a window; each still flags its window.
+pub fn revoke_trust(activation: &XdgActivationState) {
+    for (_, data) in activation.tokens() {
+        data.user_data.insert_if_missing(|| Revoked);
     }
 }
 
@@ -459,7 +500,7 @@ const PROGRAM_TYPES: [&str; 5] = [
 ];
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use smithay::reexports::wayland_server::Display;
 
@@ -558,16 +599,16 @@ mod tests {
 
     /// On a touchscreen: a program's `target` window behind `busy`, another program's, which holds
     /// the keyboard, and a launcher whose 200x30 panel in the top-left corner takes no keyboard.
-    struct Launcher {
-        h: Harness,
+    pub(crate) struct Launcher {
+        pub h: Harness,
         launcher: TestClient,
         app: TestClient,
         target: Toplevel,
         /// Its client stays connected while the test runs.
-        busy: (TestClient, Toplevel),
+        pub busy: (TestClient, Toplevel),
     }
 
-    fn launcher() -> Launcher {
+    pub(crate) fn launcher() -> Launcher {
         let mut h = Harness::new();
         h.output("TEST-1", 1024, 768);
         h.add_touchscreen();
@@ -592,10 +633,21 @@ mod tests {
 
     impl Launcher {
         /// A tap on the panel; the down's serial the launcher heard.
-        fn tap_panel(&mut self) -> u32 {
+        pub(crate) fn tap_panel(&mut self) -> u32 {
             self.h.tap(100.0, 15.0);
             self.h.roundtrip(&mut self.launcher);
             self.launcher.side.touch_down_serial
+        }
+
+        /// A click on the panel; the press's and the release's serials the launcher heard.
+        fn click_panel(&mut self) -> (u32, u32) {
+            self.h.pointer_to(100.0, 15.0);
+            self.h.button(crate::harness::LEFT, true);
+            self.h.roundtrip(&mut self.launcher);
+            let press = self.launcher.side.button_serial;
+            self.h.button(crate::harness::LEFT, false);
+            self.h.roundtrip(&mut self.launcher);
+            (press, self.launcher.side.button_serial)
         }
 
         /// A token the launcher asks on `serial`, naming no surface as GTK does without the
@@ -613,19 +665,19 @@ mod tests {
         }
 
         /// [`Launcher::mint`] on `serial`, presented for `target`.
-        fn raise_on(&mut self, serial: u32) {
+        pub(crate) fn raise_on(&mut self, serial: u32) {
             let token = self.mint(serial);
             self.present(&token);
         }
 
         /// A point inside `busy`'s window, clear of the panel.
-        fn busy_point(&self) -> (f64, f64) {
+        pub(crate) fn busy_point(&self) -> (f64, f64) {
             let w = self.h.state.win(self.busy.1.id).expect("busy");
             let (x, y) = (w.x + w.geom.client.x + 20, w.y + w.geom.client.y + 40);
             (f64::from(x), f64::from(y))
         }
 
-        fn keyboard_on_busy(&self) -> bool {
+        pub(crate) fn keyboard_on_busy(&self) -> bool {
             self.h.state.focused == Some(self.busy.1.id)
         }
     }
@@ -785,6 +837,165 @@ mod tests {
         l.h.state.focus_window(l.busy.1.id);
         l.present(&token);
         assert!(l.keyboard_on_busy());
+    }
+
+    #[test]
+    fn a_click_on_a_launcher_without_the_keyboard_lets_it_raise_a_window_on_the_press() {
+        let mut l = launcher();
+        let (press, _) = l.click_panel();
+        assert_ne!(press, 0, "the panel hears the button");
+        assert!(l.keyboard_on_busy(), "the panel takes no keyboard");
+        l.raise_on(press);
+        assert_eq!(l.h.state.focused, Some(l.target.id));
+    }
+
+    #[test]
+    fn a_click_on_a_launcher_raises_nothing_on_the_release() {
+        let mut l = launcher();
+        let (_, release) = l.click_panel();
+        l.raise_on(release);
+        assert!(l.keyboard_on_busy());
+    }
+
+    #[test]
+    fn a_click_on_a_launcher_raises_nothing_after_a_click_elsewhere() {
+        let mut l = launcher();
+        let (press, _) = l.click_panel();
+        let (x, y) = l.busy_point();
+        l.h.click(x, y);
+        l.raise_on(press);
+        assert!(l.keyboard_on_busy());
+    }
+
+    #[test]
+    fn a_click_on_a_launcher_raises_nothing_after_a_key_another_program_hears() {
+        let mut l = launcher();
+        let (press, _) = l.click_panel();
+        l.h.key(30, true);
+        l.h.key(30, false);
+        l.raise_on(press);
+        assert!(l.keyboard_on_busy());
+    }
+
+    #[test]
+    fn only_the_newest_press_on_a_launcher_lets_it_raise_a_window() {
+        let mut l = launcher();
+        let down = l.tap_panel();
+        let (press, _) = l.click_panel();
+        l.raise_on(down);
+        assert!(l.keyboard_on_busy(), "on the tap before the click");
+        l.raise_on(press);
+        assert_eq!(l.h.state.focused, Some(l.target.id), "on the click");
+    }
+
+    #[test]
+    fn a_click_on_a_launcher_raises_nothing_once_the_session_locked() {
+        let mut l = launcher();
+        let (press, _) = l.click_panel();
+        crate::lockview::lock(&mut l.h.state);
+        l.h.dispatch();
+        let token = l.mint(press);
+        crate::lockview::unlock(&mut l.h.state);
+        l.h.dispatch();
+        l.h.state.focus_window(l.busy.1.id);
+        l.present(&token);
+        assert!(l.keyboard_on_busy());
+    }
+
+    #[test]
+    fn a_token_minted_on_a_click_before_a_lock_raises_nothing_after_the_unlock() {
+        let mut l = launcher();
+        let (press, _) = l.click_panel();
+        let token = l.mint(press);
+        crate::lockview::lock(&mut l.h.state);
+        l.h.dispatch();
+        crate::lockview::unlock(&mut l.h.state);
+        l.h.dispatch();
+        l.h.state.focus_window(l.busy.1.id);
+        l.present(&token);
+        assert!(l.keyboard_on_busy());
+        assert!(
+            l.h.state
+                .win(l.target.id)
+                .is_some_and(|w| w.attention.is_some()),
+            "the window asks for attention"
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_launcher_raises_nothing_after_a_press_on_an_overlay_above_it() {
+        let mut l = launcher();
+        let (press, _) = l.click_panel();
+        l.h.state.open_region(false);
+        assert!(
+            l.h.state.panels.region.is_some(),
+            "the region overlay is up"
+        );
+        l.h.button(crate::harness::LEFT, true);
+        l.raise_on(press);
+        assert_ne!(l.h.state.focused, Some(l.target.id));
+    }
+
+    #[test]
+    fn in_lock_mode_a_remote_click_on_a_launcher_lets_it_raise_a_window() {
+        use crate::inputproto::InputSource;
+        use smithay::backend::input::{ButtonState, InputTime};
+        let mut h = Harness::new();
+        h.output("eDP-1", 1920, 1080);
+        let mut portal = h.connect_portal();
+        let lock = portal.lock_screen();
+        lock.set_layout(&[(0, 0, 1280, 720, 100)]);
+        h.roundtrip(&mut portal);
+        assert!(crate::console::remote_side(&h.state));
+        h.remote_pointer_to(2400.0, 400.0);
+        let mut app = h.connect();
+        let target = h.map_toplevel(&mut app, "test.app", 300, 200);
+        let mut other = h.connect();
+        let busy = h.map_toplevel(&mut other, "test.busy", 300, 200);
+        let mut launcher = h.connect();
+        h.map_panel(&mut launcher);
+        h.state.focus_window(busy.id);
+        h.roundtrip(&mut other);
+        h.remote_pointer_to(2020.0, 15.0);
+        h.from(InputSource::Remote, |s| {
+            s.handle_button(crate::harness::LEFT, ButtonState::Pressed, InputTime::now())
+        });
+        h.roundtrip(&mut launcher);
+        let press = launcher.side.button_serial;
+        assert_ne!(press, 0, "the panel on the remote side hears the button");
+        assert_eq!(
+            h.state.focused,
+            Some(busy.id),
+            "the panel takes no keyboard"
+        );
+        launcher.token_from(press, None);
+        h.roundtrip(&mut launcher);
+        let token = launcher.side.tokens.last().expect("a token").clone();
+        app.activate(&token, target);
+        h.roundtrip(&mut app);
+        assert_eq!(h.state.focused, Some(target.id));
+    }
+
+    #[test]
+    fn a_press_trusts_its_client_on_its_serial_for_a_moment_and_two_tokens() {
+        let (a, b) = two_clients();
+        let mut p = LastPress::default();
+        p.heard(Some(a.clone()), Serial::from(7));
+        let now = Instant::now();
+        let on = |s: u32| Some(Serial::from(s));
+        assert!(!p.trusts(on(7), Some(&b), now), "another client");
+        assert!(!p.trusts(on(8), Some(&a), now), "another serial");
+        assert!(!p.trusts(on(7), Some(&a), now + PICK_GRACE), "too late");
+        p.input_to(Some(&a));
+        assert!(p.trusts(on(7), Some(&a), now), "input to its own client");
+        assert!(p.trusts(on(7), Some(&a), now));
+        assert!(!p.trusts(on(7), Some(&a), now), "a third token");
+        p.heard(Some(a.clone()), Serial::from(9));
+        p.input_to(Some(&b));
+        assert!(!p.trusts(on(9), Some(&a), now), "input to another client");
+        p.heard(Some(a.clone()), Serial::from(10));
+        p.heard(None, Serial::from(11));
+        assert!(!p.trusts(on(10), Some(&a), now), "a press Reprise kept");
     }
 
     /// A click in the middle of window `t`, given the keyboard first; the serial `c` heard for it.

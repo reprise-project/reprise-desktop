@@ -460,6 +460,7 @@ impl State {
             handle.up(self, &UpEvent { serial, time });
             return;
         }
+        self.tool_pressed(desc);
         if let Hit::Surface {
             window, surface, ..
         } = self.scene_hit(pos)
@@ -488,6 +489,9 @@ impl State {
         {
             self.emulate(&desc, b, false, time);
         } else if tool.focused.is_some() {
+            if pressed {
+                self.tool_pressed(&desc);
+            }
             handle.button(
                 self,
                 &ButtonEvent {
@@ -503,6 +507,15 @@ impl State {
             self.emulate(&desc, b, true, time);
         }
         handle.frame(self, time);
+    }
+
+    /// The tool presses on the surface it is on: a press another client heard is over.
+    fn tool_pressed(&mut self, desc: &TabletToolDescriptor) {
+        let client = (self.tool(desc))
+            .and_then(|t| t.focused.as_ref())
+            .and_then(|s| s.client())
+            .map(|c| c.id());
+        self.last_press.input_to(client.as_ref());
     }
 
     /// Press or release pointer `button` for the tool, remembered until its release.
@@ -574,6 +587,30 @@ mod tests {
         };
         assert_eq!(at((0.0, 0.0)), (1920.0, 120.0));
         assert_eq!(at((1.0, 1.0)), (3840.0, 1080.0));
+    }
+
+    #[test]
+    fn a_stylus_tip_on_another_programs_window_ends_a_taps_trust() {
+        use smithay::backend::input::{TabletToolCapabilities, TabletToolType};
+        let mut l = crate::activation::tests::launcher();
+        let down = l.tap_panel();
+        let desc = TabletToolDescriptor {
+            tool_type: TabletToolType::Pen,
+            hardware_serial: 1,
+            hardware_id_wacom: 0,
+            capabilities: TabletToolCapabilities::empty(),
+        };
+        let handle = l.h.state.tool_handle(&desc);
+        let busy = (l.h.state.win(l.busy.1.id))
+            .expect("busy")
+            .wl_surface()
+            .clone();
+        l.h.state.tool_mut(&desc).expect("the pen").focused = Some(busy);
+        let (x, y) = l.busy_point();
+        l.h.pointer_to(x, y);
+        l.h.state.tip(&desc, &handle, true, InputTime::now());
+        l.raise_on(down);
+        assert!(l.keyboard_on_busy(), "busy keeps the keyboard");
     }
 
     #[test]

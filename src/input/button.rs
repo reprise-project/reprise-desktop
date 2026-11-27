@@ -42,12 +42,9 @@ impl State {
 
     fn apply_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
         self.settle_pointer();
+        // Every press ends the last; one a client hears records itself below.
         if state == ButtonState::Pressed {
-            let under = (self.seat.get_pointer())
-                .and_then(|p| p.current_focus())
-                .and_then(|f| f.surface().and_then(|s| s.client()))
-                .map(|c| c.id());
-            self.devices.touch.input_to(under.as_ref());
+            self.last_press.end();
         }
         if self.capture_button(button, state) {
             return;
@@ -133,6 +130,12 @@ impl State {
                 },
             );
             pointer.frame(self);
+            if state == ButtonState::Pressed {
+                let heard = (pointer.current_focus())
+                    .and_then(|f| f.surface().and_then(|s| s.client()))
+                    .map(|c| c.id());
+                self.last_press.heard(heard, serial);
+            }
         }
         if state == ButtonState::Pressed {
             self.keys_saw_button();

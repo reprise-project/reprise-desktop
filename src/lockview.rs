@@ -554,7 +554,6 @@ pub fn engage(state: &mut State) {
     crate::state::save_screen_locked(true);
     crate::idle::end_dim(state);
     let_go_now(state);
-    state.devices.touch.tapped = None;
     // A modifier StickyKeys latched would eat the password's first letter.
     state.aids_reset();
     seal(state, |s| raise(s, Side::Console));
@@ -597,6 +596,8 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.cancel_client_gesture();
     state.drop_kept_swipe();
     state.caption_clicks.reset();
+    state.last_press.end();
+    crate::activation::revoke_trust(&state.activation);
     raise(state);
     crate::saverview::locked(state);
     // A client's popup grab keeps the keyboard on its popup, refuses the focus changes below and would
