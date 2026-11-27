@@ -69,6 +69,8 @@ pub enum OpenHereState {
 pub struct WindowMenuState {
     pub maximized: bool,
     pub minimized: bool,
+    /// Snapped into a zone: Restore gives back its size from before the snap.
+    pub snapped: bool,
     /// Opened from the taskbar button: the bold default row is then Maximize
     /// (or Restore); from the caption it is Close.
     pub from_taskbar: bool,
@@ -113,7 +115,7 @@ pub fn window_menu(
         (
             Restore,
             tr!("start-win-restore"),
-            !normal && !state.owned,
+            (!normal || state.snapped) && !state.owned,
             Some(MenuGlyph::Restore),
         ),
         (Move, tr!("start-win-move"), normal, None),
@@ -348,6 +350,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,
@@ -365,6 +368,18 @@ mod tests {
         assert_eq!(actions[5], None);
         assert_eq!(actions[8], None);
         assert_eq!(row(&items, 0), ("Restore", false, false));
+        let (snapped, _) = window_menu(
+            WindowMenuState {
+                snapped: true,
+                ..st
+            },
+            None,
+        );
+        assert_eq!(
+            row(&snapped, 0),
+            ("Restore", true, false),
+            "a snapped window restores"
+        );
         assert_eq!(row(&items, 1), ("Move", true, false));
         assert_eq!(row(&items, 2), ("Size", true, false));
         assert_eq!(row(&items, 3), ("Minimize", true, false));
@@ -399,6 +414,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: true,
             minimized: false,
+            snapped: false,
             from_taskbar: true,
             owned: false,
             resizable: true,
@@ -425,6 +441,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: true,
+            snapped: false,
             from_taskbar: true,
             owned: false,
             resizable: true,
@@ -448,6 +465,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: true,
             resizable: false,
@@ -475,6 +493,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,
@@ -503,6 +522,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,
@@ -558,6 +578,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,
@@ -601,6 +622,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,
@@ -649,6 +671,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,
@@ -761,6 +784,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: false,
@@ -792,6 +816,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,
@@ -822,6 +847,7 @@ mod tests {
         let st = WindowMenuState {
             maximized: false,
             minimized: false,
+            snapped: false,
             from_taskbar: false,
             owned: false,
             resizable: true,

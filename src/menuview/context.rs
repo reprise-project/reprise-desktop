@@ -84,6 +84,7 @@ impl State {
         Some(WindowMenuState {
             maximized: win.maximized,
             minimized: win.minimized,
+            snapped: win.snapped.is_some(),
             from_taskbar,
             owned: win.is_owned() || win.dialog_tag != crate::window::DialogTag::None,
             resizable: win.is_resizable(),
@@ -140,13 +141,15 @@ impl State {
         let Some(win) = self.win(w) else {
             return;
         };
-        let minimized = win.minimized;
+        let (minimized, maximized) = (win.minimized, win.maximized);
         match row {
             WindowMenuRow::Restore => {
                 if minimized {
                     self.set_minimized(w, false);
-                } else {
+                } else if maximized {
                     self.set_maximized(w, false);
+                } else {
+                    self.unsnap(w);
                 }
             }
             WindowMenuRow::Minimize => self.set_minimized(w, true),

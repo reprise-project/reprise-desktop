@@ -773,6 +773,7 @@ fn every_window_menu_and_window_list_row_with_an_arrow_opens_a_submenu() {
     let st = WindowMenuState {
         maximized: false,
         minimized: false,
+        snapped: false,
         from_taskbar: true,
         owned: false,
         resizable: true,
