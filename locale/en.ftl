@@ -212,6 +212,8 @@ start-win-recent-files = Recent &Files
 # The desktop's number; the keyed form marks it as the access key.
 start-win-desktop-keyed = Desktop &{ $number }
 start-win-desktop = Desktop { $number }
+start-win-screen-keyed = &{ $number }. { $name }
+start-win-screen = { $number }. { $name }
 
 ## Menus
 start-menu-start = Start Menu
