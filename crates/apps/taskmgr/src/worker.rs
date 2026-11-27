@@ -155,6 +155,14 @@ pub fn open_process(pid: i32, start: u64) -> std::io::Result<OwnedFd> {
     }
 }
 
+/// The program file process `pid` runs, while it is there to show: None for another user's
+/// process, one whose file was replaced or deleted, or a sandbox's own file.
+pub fn exe_of(pid: i32) -> Option<std::path::PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .filter(|p| p.is_file())
+}
+
 /// Sends `sig` to the process `fd` names; ESRCH once it has ended.
 pub fn signal(fd: &OwnedFd, sig: i32) -> std::io::Result<()> {
     // SAFETY: pidfd_send_signal takes an open fd, a signal, a null siginfo and no flags.
