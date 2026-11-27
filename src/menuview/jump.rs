@@ -12,6 +12,14 @@ use crate::{
 
 use super::*;
 
+/// Where a task button's jump list opened: its bar, the button and the press it opened at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JumpListAt {
+    pub tree: TreeId,
+    pub button: usize,
+    pub at: (i32, i32),
+}
+
 impl State {
     fn jump_target(&self, tree: TreeId, i: usize) -> Option<JumpTarget> {
         let bar = self.bar(tree)?;
@@ -186,13 +194,20 @@ impl State {
         };
         self.push_context_menu(at, items, kind, MenuFrom::Bar);
         self.set_row_icons(0, waits);
+        self.jump_list_at = Some(JumpListAt {
+            tree,
+            button: i,
+            at,
+        });
     }
 
-    /// A right press on file `path` of a jump list of program `app`: the jump list gives way to
-    /// the file's menu at the pointer.
-    pub(crate) fn open_jump_file_menu(&mut self, app: &str, path: &std::path::Path) {
+    /// A right press on file `path` of the jump list at `depth` of program `app`: the jump list
+    /// gives way to the file's menu at the pointer. A task button's list (depth 0) opens again
+    /// after a pin, unpin or removal.
+    pub(crate) fn open_jump_file_menu(&mut self, depth: usize, app: &str, path: &std::path::Path) {
         let pinned = self.jump_pins.is_pinned(app, path);
-        let (items, rows) = crate::startmenu::jump_file_menu(app, path, pinned);
+        let list = self.jump_list_at.filter(|_| depth == 0);
+        let (items, rows) = crate::startmenu::jump_file_menu(app, path, pinned, list);
         self.close_menu();
         let p = self.pointer_location();
         let kind = MenuKind::StartPanel { rows };
@@ -331,9 +346,9 @@ mod tests {
     }
 
     /// A right press on a file of a task button's jump list opens the file's menu; Pin to this
-    /// list puts the file under Pinned the next time the list opens.
+    /// list, Unpin from this list and Remove from this list each open the list again, changed.
     #[test]
-    fn a_task_buttons_jump_list_file_pins_from_its_menu() {
+    fn a_task_buttons_jump_list_file_pins_unpins_and_leaves_from_its_menu() {
         let dir = std::env::temp_dir().join(format!("reprise-jump-pin-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let notes = dir.join("notes.txt");
@@ -388,10 +403,29 @@ mod tests {
                 "Remove from this list"
             ]
         );
+        let listed = |h: &crate::harness::Harness| {
+            assert_eq!(h.state.menus.len(), 1, "only the jump list is open");
+            assert!(matches!(
+                h.state.menus[0].kind,
+                crate::menuview::MenuKind::JumpList { button, .. } if button == i
+            ));
+        };
         h.state.menu_activate(0, 3);
-        assert!(h.state.menus.is_empty(), "the pick closes the menu");
-        h.state.open_jump_list(tree, i, (100, 700));
+        listed(&h);
         assert_eq!(labels(&h)[..3], ["[Pinned]", "notes.txt", "-"]);
+        h.state.menu_row_press(0, Some(1), crate::input::BTN_RIGHT);
+        assert_eq!(labels(&h)[3], "Unpin from this list");
+        h.state.menu_activate(0, 3);
+        listed(&h);
+        assert_eq!(labels(&h)[..3], ["[Recent]", "notes.txt", "-"]);
+        h.state.menu_row_press(0, Some(1), crate::input::BTN_RIGHT);
+        h.state.menu_activate(0, 4);
+        listed(&h);
+        h.until("the file leaves the list", |s| {
+            !(s.menus[0].items.iter())
+                .any(|i| matches!(i, MenuItem::Entry { label, .. } if label == "notes.txt"))
+        });
+        listed(&h);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

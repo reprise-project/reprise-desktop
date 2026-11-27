@@ -362,6 +362,8 @@ pub struct State {
     pub search_providers: Vec<reprisefs::searchproviders::Provider>,
     pub launches: crate::launches::Launches,
     pub jump_pins: crate::jumppins::JumpPins,
+    /// The task button jump list opened last ([`State::open_jump_list`]).
+    pub jump_list_at: Option<crate::menuview::JumpListAt>,
     /// Keeps `app_index` current as programs come and go (`appindex`).
     pub apps_watch: crate::appindex::AppIndexWatch,
     /// Reloads `config.toml` when it changes (`configwatch`).
@@ -833,6 +835,7 @@ impl State {
                 &persisted.launches,
             ),
             jump_pins: crate::jumppins::JumpPins::from_saved(&persisted.jump_pins),
+            jump_list_at: None,
             apps_watch: Default::default(),
             config_watch: Default::default(),
             config_notice: None,
