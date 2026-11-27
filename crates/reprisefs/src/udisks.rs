@@ -582,6 +582,8 @@ pub struct Error {
     pub message: String,
     /// The volumes a removal had unmounted before it stopped, by [`Volume::name`].
     pub came_off: Vec<String>,
+    /// The volume a removal stopped at, by [`Volume::name`].
+    pub stuck: Option<String>,
 }
 
 impl std::fmt::Display for Error {
@@ -603,6 +605,7 @@ pub fn classify(name: &str, message: &str) -> Error {
         kind,
         message: message.trim().to_string(),
         came_off: Vec::new(),
+        stuck: None,
     }
 }
 
@@ -615,6 +618,7 @@ impl From<zbus::Error> for Error {
                 kind: ErrorKind::Other,
                 message: reprisekit::kit_tr!("polkit-timed-out"),
                 came_off: Vec::new(),
+                stuck: None,
             };
         }
         match reprisebus::error::name(&e) {
@@ -623,6 +627,7 @@ impl From<zbus::Error> for Error {
                 kind: ErrorKind::Other,
                 message: e.to_string(),
                 came_off: Vec::new(),
+                stuck: None,
             },
         }
     }
@@ -633,6 +638,7 @@ fn io_error(e: std::io::Error) -> Error {
         kind: ErrorKind::Other,
         message: e.to_string(),
         came_off: Vec::new(),
+        stuck: None,
     }
 }
 
@@ -865,6 +871,7 @@ impl Udisks {
                     file.file_name().unwrap_or_default().to_string_lossy()
                 ),
                 came_off: Vec::new(),
+                stuck: None,
             },
         };
         if let Err(e) = self.delete_loop(&loop_path) {
@@ -909,7 +916,8 @@ impl Udisks {
     }
 
     /// Eject a disk image: unmount every file system on loop device `loop_path`, partitions
-    /// first, then remove the loop device.
+    /// first, then remove the loop device. A refusal names the volume it stopped at and those
+    /// that had come off.
     pub fn eject_image(&self, snap: &Snapshot, loop_path: &str) -> Result<(), Error> {
         let mut on: Vec<&Volume> = snap
             .volumes
@@ -918,8 +926,11 @@ impl Udisks {
             .filter(|v| !v.mounts.is_empty())
             .collect();
         on.sort_by_key(|v| v.path == loop_path);
+        let mut came_off = Vec::new();
         for v in on {
-            self.unmount(&v.path)?;
+            self.unmount(&v.path)
+                .map_err(|e| stopped(e, v.name(None), &came_off))?;
+            came_off.push(v.name(None));
         }
         self.delete_loop(loop_path)
     }
@@ -935,6 +946,7 @@ impl Udisks {
             kind: ErrorKind::Other,
             message: message.into(),
             came_off: Vec::new(),
+            stuck: None,
         };
         let Some(d) = snap.disk(disk).filter(|d| d.removable) else {
             return Err(refused(&tr!("eject-not-removable")));
@@ -956,19 +968,15 @@ impl Udisks {
         let (clear, plain): (Vec<&&Volume>, Vec<&&Volume>) =
             on.iter().partition(|v| v.backing.is_some());
         let mut came_off = Vec::new();
-        let stopped = |mut e: Error, came_off: &[String]| {
-            e.came_off = came_off.to_vec();
-            e
-        };
         for v in clear.iter().chain(plain.iter()) {
             if !v.mounts.is_empty() {
-                self.unmount(&v.path).map_err(|e| stopped(e, &came_off))?;
+                (self.unmount(&v.path)).map_err(|e| stopped(e, v.name(Some(d)), &came_off))?;
                 came_off.push(v.name(Some(d)));
             }
         }
         for v in &on {
             if v.cleartext.is_some() {
-                self.lock(&v.path).map_err(|e| stopped(e, &came_off))?;
+                (self.lock(&v.path)).map_err(|e| stopped(e, v.name(Some(d)), &came_off))?;
             }
         }
         // A USB optical drive can power off too; Eject is what brings its disc out.
@@ -989,6 +997,7 @@ impl Udisks {
                         .trim_end()
                         .into(),
                     came_off: Vec::new(),
+                    stuck: None,
                 },
                 _ => e,
             }
@@ -1004,9 +1013,18 @@ fn holders(sys: &Path, name: &std::ffi::OsStr) -> Vec<std::ffi::OsString> {
     entries.map(|e| e.file_name()).collect()
 }
 
-/// Why `volume` stayed in after Eject or Safely Remove Hardware, in words, naming the volumes
-/// that had already come off; `None` when the user dismissed the prompt.
+/// `e` from a removal that stopped at volume `stuck` after `came_off` had come off.
+fn stopped(mut e: Error, stuck: String, came_off: &[String]) -> Error {
+    e.stuck = Some(stuck);
+    e.came_off = came_off.to_vec();
+    e
+}
+
+/// Why `volume`, or the volume the removal stopped at, stayed in after Eject or Safely Remove
+/// Hardware, in words, naming the volumes that had already come off; `None` when the user
+/// dismissed the prompt.
 pub fn eject_failed_text(volume: &str, e: &Error) -> Option<String> {
+    let volume = e.stuck.as_deref().unwrap_or(volume);
     let why = match e.kind {
         ErrorKind::Cancelled => return None,
         ErrorKind::Busy => tr!("eject-busy", volume = volume),
@@ -1671,6 +1689,7 @@ pub(crate) mod tests {
                 kind,
                 message: message.into(),
                 came_off: Vec::new(),
+                stuck: None,
             };
             eject_failed_text("STICK", &e)
         };
@@ -1709,6 +1728,7 @@ pub(crate) mod tests {
                 kind: ErrorKind::Busy,
                 message: String::new(),
                 came_off: came_off.iter().map(|n| n.to_string()).collect(),
+                stuck: None,
             };
             let text = eject_failed_text("STICK", &e).unwrap();
             text.strip_prefix(
@@ -1795,6 +1815,8 @@ pub(crate) mod tests {
             file: String,
             set_up: bool,
             mounted: Vec<String>,
+            /// The volume whose unmount UDisks2 refuses as busy.
+            busy: Option<&'static str>,
             calls: Vec<String>,
         }
 
@@ -1821,8 +1843,10 @@ pub(crate) mod tests {
             }
             m.insert(path(&format!("{BD}/loop0")), whole);
             if st.image == Image::Partitioned {
-                for p in ["loop0p1", "loop0p2"] {
+                for (p, label) in [("loop0p1", "NEWDATA"), ("loop0p2", "PHOTOS")] {
                     let mut part = partition(p, "loop0", "vfat", &[]);
+                    let block = part.get_mut(BLOCK_IFACE).unwrap();
+                    block.insert("IdLabel".into(), s(label));
                     let fs = part.get_mut(FILESYSTEM_IFACE).unwrap();
                     fs.insert("MountPoints".into(), mounts_of(st, p));
                     m.insert(path(&format!("{BD}/{p}")), part);
@@ -1873,10 +1897,17 @@ pub(crate) mod tests {
                 format!("/run/media/u/{}", self.1)
             }
 
-            fn unmount(&self, _options: HashMap<String, OwnedVariant>) {
+            fn unmount(&self, _options: HashMap<String, OwnedVariant>) -> Result<(), FakeError> {
                 let mut st = self.0.lock().unwrap();
+                if st.busy == Some(self.1) {
+                    return Err(FakeError::DeviceBusy(format!(
+                        "Error unmounting /dev/{}: target is busy",
+                        self.1
+                    )));
+                }
                 st.calls.push(format!("Unmount {}", self.1));
                 st.mounted.retain(|m| m != self.1);
+                Ok(())
             }
 
             /// Refuses as UDisks2 does a VFAT label past 11 characters, and polkit "deny".
@@ -1906,6 +1937,7 @@ pub(crate) mod tests {
         enum FakeError {
             #[zbus(error)]
             ZBus(zbus::Error),
+            DeviceBusy(String),
             Failed(String),
             NotAuthorizedCanObtain(String),
         }
@@ -1942,6 +1974,7 @@ pub(crate) mod tests {
                 file: file.to_string_lossy().into_owned(),
                 set_up,
                 mounted: Vec::new(),
+                busy: None,
                 calls: Vec::new(),
             }));
             let service = zbus::block_on(async {
@@ -2069,6 +2102,29 @@ pub(crate) mod tests {
             assert_eq!(
                 calls(&f),
                 ["Unmount loop0p1", "Unmount loop0p2", "Delete loop0"]
+            );
+        }
+
+        #[test]
+        fn a_busy_partition_stops_the_eject_and_is_named_after_those_that_came_off() {
+            let Some(f) = fake(Image::Partitioned, false) else {
+                return;
+            };
+            f.udisks.mount_image(&f.file).expect("mounted");
+            f.state.lock().unwrap().calls.clear();
+            f.state.lock().unwrap().busy = Some("loop0p2");
+            let snap = f.udisks.snapshot();
+            let e = f
+                .udisks
+                .eject_image(&snap, &format!("{BD}/loop0"))
+                .expect_err("PHOTOS is busy");
+            assert_eq!(calls(&f), ["Unmount loop0p1"], "the loop device stays");
+            assert_eq!(
+                eject_failed_text("NEWDATA", &e).as_deref(),
+                Some(
+                    "'PHOTOS' is in use: a program is using a file on it. Close any program or \
+                     window using it, and then try again. 'NEWDATA' was already unmounted."
+                )
             );
         }
     }
@@ -2462,6 +2518,7 @@ pub(crate) mod tests {
             assert_eq!(e.kind, ErrorKind::Busy);
             assert_eq!(e.message, "Error unmounting /dev/sdb2: target is busy");
             assert_eq!(e.came_off, ["Removable Disk"], "sdb1 came off first");
+            assert_eq!(e.stuck.as_deref(), Some("Removable Disk"), "at sdb2");
             assert_eq!(f.calls(), ["Unmount sdb1"], "the stick stays powered");
         }
 

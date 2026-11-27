@@ -79,7 +79,8 @@ enum Unlocked {
 /// A pending safe removal's names, read before the drive goes away.
 struct Removing {
     disk: String,
-    /// What a refusal names: a drive's one mounted volume, or else the drive or share.
+    /// What a refusal no volume answers for names: a drive's one mounted volume, or else the
+    /// drive or share.
     named: String,
 }
 
