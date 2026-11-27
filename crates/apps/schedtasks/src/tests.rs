@@ -426,9 +426,10 @@ fn view_output_shows_the_services_journal_read_only() {
     assert_eq!(text(&w), "Reading the journal...", "another unit's lines");
     w.tell(Update::Output(
         "backup.service".into(),
-        Ok("Nov 26 03:00:01 rsync[12]: sent 4 files\n".into()),
+        Ok(r#"{"__REALTIME_TIMESTAMP":"1764126001000000","MESSAGE":"sent 4 files"}"#.into()),
     ));
-    assert_eq!(text(&w), "Nov 26 03:00:01 rsync[12]: sent 4 files");
+    let line = format!("{} sent 4 files", model::when(1_764_126_001_000_000, false));
+    assert_eq!(text(&w), line);
     let mut ctx = ctx();
     let a = KeyInput {
         sym: 'a' as u32,
@@ -437,11 +438,7 @@ fn view_output_shows_the_services_journal_read_only() {
         edit: Some(reprisekit::textedit::EditKey::Insert("a".into())),
     };
     w.app.event(OUTPUT, Event::Key(a), &mut ctx);
-    assert_eq!(
-        text(&w),
-        "Nov 26 03:00:01 rsync[12]: sent 4 files",
-        "read only"
-    );
+    assert_eq!(text(&w), line, "read only");
     w.tell(Update::Output("backup.service".into(), Ok(" \n".into())));
     assert_eq!(text(&w), "The journal holds no lines for this task yet.");
     w.tell(Update::Output(
@@ -580,10 +577,9 @@ fn drawn() -> Vec<(String, Canvas)> {
     w.app.act(Act::Properties);
     w.app.act(Act::Output);
     w.app.new_task = Some(newtask::NewTaskBox::new(|| (2026, 11, 26, 10, 30), false));
-    w.tell(Update::Output(
-        "backup.service".into(),
-        Ok("Nov 26 03:00:01 rsync[12]: sent 4 files\nNov 26 03:00:02 systemd[1]: Finished.".into()),
-    ));
+    // The local time zone moves a journal time, so the pin shows fixed lines.
+    let o = w.app.output.as_mut().unwrap();
+    o.put("2026-11-26 3:00 sent 4 files\n2026-11-26 3:00 Finished.");
     let mut out = Vec::new();
     use reprisekit::interface::Interface;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
@@ -649,7 +645,7 @@ fn the_buttons_fit_their_labels() {
             ("enable".to_string(), form),
             (
                 "output".to_string(),
-                output::Output::new("backup.service", "Copy the photos").form,
+                output::Output::new("backup.service", "Copy the photos", false).form,
             ),
         ]
     });
