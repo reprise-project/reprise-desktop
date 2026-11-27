@@ -1612,6 +1612,9 @@ pub fn draw(
     // A row's first glyph may ink into the inset left of it, unless the view is scrolled across.
     let left = if view.left > 0 { clip.x } else { inner.x };
     let ink_clip = Rect::new(left, clip.y, clip.right() - left, clip.height);
+    // A glyph taller than its row (an accent over a capital, a descender) inks into the rows
+    // beside it and the inset above and below.
+    let glyph_clip = Rect::new(left, inner.y, ink_clip.width, inner.height);
     let mut caret_bar = None;
     let total = edit.row_count(text, m, lay.wrap);
     let caret_row = edit.row_of(text, m, lay.wrap, edit.caret);
@@ -1705,8 +1708,8 @@ pub fn draw(
         text.draw_in(
             c,
             r,
-            line_r,
-            ink_clip,
+            Rect::new(line_r.x, inner.y, line_r.width, inner.height),
+            glyph_clip,
             &shown,
             m.bold,
             cs.button_text,

@@ -269,11 +269,6 @@ reprisekit-gallery.png "Image Editor" x1
 reprisekit-gallery.png "Image Viewer" x1
 reprisekit-gallery.png "Input" x1
 reprisekit-gallery.png "JPEG Im..." x1
-reprisekit-gallery.png "Line 2: the quick brown fox jumps over the lazy dog" x1
-reprisekit-gallery.png "Line 3: the quick brown fox jumps over the lazy dog" x1
-reprisekit-gallery.png "Line 4: the quick brown fox jumps over the lazy dog" x1
-reprisekit-gallery.png "Line 5: the quick brown fox jumps over the lazy dog" x1
-reprisekit-gallery.png "Line 6: the quick brown fox jumps over the lazy dog" x1
 reprisekit-gallery.png "Make New Folder" x1
 reprisekit-gallery.png "Music" x2
 reprisekit-gallery.png "My Music" x3
@@ -323,6 +318,6 @@ reprisekit-gallery.png "notepad readme.txt" x2
 reprisekit-gallery.png "notes.txt" x3
 reprisekit-gallery.png "report" x1
 reprisekit-gallery.png "report.odt" x4
-reprisekit-gallery.png "say nihao to all" x2
+reprisekit-gallery.png "say nihao to all" x1
 reprisekit-gallery.png "setup.exe" x3
 reprisekit-gallery.png "user@repris..." x1

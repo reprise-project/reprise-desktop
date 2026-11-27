@@ -1862,3 +1862,41 @@ fn an_unfocused_box_hides_its_selection() {
         "drawn as the caret alone"
     );
 }
+
+/// The fixed-pitch face's accented capitals stand taller than a 13 px row: their accents ink the
+/// pixel row above each line, the inset over the first.
+#[test]
+fn accents_over_capitals_ink_above_a_row_shorter_than_them() {
+    crate::pins::fonts();
+    let cs = &Theme::default().colors;
+    let text = TextRenderer::monospace(13);
+    let m = Metrics {
+        font_px: 13,
+        line_h: 13,
+        ..Metrics::default()
+    };
+    let t = e("ŐÉÁőűé\nŐÉÁőűé");
+    let lay = layout(&text, &m, &t, Rect::new(0, 0, 120, 50), 1);
+    let (paint, paper) = (classic_paint(cs, 1), cs.window.argb());
+    let mut got = Vec::new();
+    for s in [1, 2] {
+        let mut c = Canvas::with_scale(120, 50, s);
+        let (v, caret) = (View::default(), Caret::Hidden);
+        draw(&mut c, &text, &paint, &m, &t, v, &lay, caret, None);
+        let x0 = lay.inner.x + 1;
+        let caps = (x0 * s)..(x0 + text.measure("ŐÉÁ", false, 13)) * s;
+        for row in 0..2 {
+            let above = (lay.inner.y + 1 + row * m.line_h) * s - 1;
+            let ink = caps
+                .clone()
+                .filter(|&x| c.pixels[(above * 120 * s + x) as usize] != paper)
+                .count();
+            assert!(
+                ink > 0,
+                "scale {s}, row {row}: the accents ink the row above"
+            );
+        }
+        got.push((format!("scale {s}"), crate::pins::fnv(&c)));
+    }
+    crate::pins::check("controls/multiedit_accents", &got);
+}
