@@ -362,6 +362,7 @@ fingerprints-about = Your fingerprints can unlock the screen and answer administ
 fingerprints-looking = Looking for a fingerprint reader...
 fingerprints-no-service = Fingerprints need fprintd, which isn't installed on this computer.
 fingerprints-no-reader = No fingerprint reader is connected to this computer.
+fingerprints-not-authorized = You aren't allowed to read fingerprints from this session.
 fingerprints-silent = The fingerprint service isn't answering. Close Properties and open it again to retry.
 fingerprints-none-added = You haven't added a fingerprint yet. Click Add to add one.
 fingerprints-all-added = All ten fingers are added. Delete one to add it again.
