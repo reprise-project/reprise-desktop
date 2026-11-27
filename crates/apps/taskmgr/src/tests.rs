@@ -1112,6 +1112,19 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
             ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
             got.push((format!("{i:?} Applications windows @{d}"), fnv(&c)));
         }
+        t.exe_of = ark_file;
+        open(&mut t, &mut ctx, Page::Processes);
+        click_row(&mut t, &mut ctx, 0);
+        t.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+        for d in [1, 2] {
+            t.follow_scale(MAIN, d, &mut ctx);
+            t.event(MAIN, key(keysym::MENU), &mut ctx);
+            let (w, h) = ctx.size;
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
+            got.push((format!("{i:?} Processes menu @{d}"), fnv(&c)));
+            t.event(MAIN, key(keysym::ESCAPE), &mut ctx);
+        }
         t.act(Act::SelectColumns);
         let main = ctx.size;
         ctx.size = ctx.forms().text.size(selectcols::CLIENT);
@@ -1239,7 +1252,10 @@ fn shift_f10_opens_the_graph_menu_and_f10_still_opens_the_menu_bar() {
     t.event(MAIN, key(keysym::ESCAPE), &mut ctx);
     open(&mut t, &mut ctx, Page::Processes);
     t.event(MAIN, key(keysym::MENU), &mut ctx);
-    assert!(t.popup.is_none(), "only on the Performance page");
+    assert!(
+        t.popup.is_none(),
+        "on Processes the menu is a selected process's"
+    );
 }
 
 thread_local! {
@@ -1259,6 +1275,77 @@ fn new_task_opens_the_run_box_from_the_file_menu_and_the_applications_page() {
     click(&mut t, &mut ctx, centre(b));
     assert_eq!(RUNS.get(), 2);
     assert_eq!(t.menu_act(0, &[2]), Some(Act::Quit), "Exit stays last");
+}
+
+/// Ark (pid 41) runs `/usr/bin/ark`; the other processes' files cannot be read.
+fn ark_file(pid: i32) -> Option<PathBuf> {
+    (pid == 41).then(|| PathBuf::from("/usr/bin/ark"))
+}
+
+/// What the selected process's menu rows do, None for a greyed one.
+fn live_rows(t: &TaskMgr) -> Vec<Option<Act>> {
+    (t.proc_menu().expect("a menu").into_iter())
+        .filter(|(i, _)| !matches!(i, MenuItem::Separator))
+        .map(|(_, a)| a)
+        .collect()
+}
+
+#[test]
+fn a_process_menu_opens_its_files_folder_or_its_properties_and_ends_it() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.exe_of = ark_file;
+    t.open_process = |_, _| reprisebus::pidfd::open(std::process::id());
+    open(&mut t, &mut ctx, Page::Processes);
+    assert_eq!(t.proc_rows[0].pid, 41);
+    let at = row_point(&t, &ctx, 0);
+    right_click(&mut t, &mut ctx, at);
+    assert_eq!(
+        t.selected_proc().map(|p| p.pid),
+        Some(41),
+        "the click selects"
+    );
+    assert!(t.popup.is_some());
+    assert_eq!(
+        live_rows(&t),
+        [
+            Some(Act::OpenLocation),
+            Some(Act::EndProcess),
+            Some(Act::Properties)
+        ]
+    );
+    let r = t.event(MAIN, key(keysym::RETURN), &mut ctx);
+    assert!(
+        r.spawn.is_empty(),
+        "a pointer-opened menu has no row picked"
+    );
+    t.popup = None;
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    let r = t.event(MAIN, key(keysym::RETURN), &mut ctx);
+    assert_eq!(
+        r.spawn,
+        [reprisefs::apps::open_location_argv("/usr/bin/ark".as_ref())],
+        "Open File Location is the first row"
+    );
+    assert_eq!(
+        t.act(Act::Properties).spawn,
+        [reprisefs::apps::properties_argv("/usr/bin/ark".as_ref())]
+    );
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    for k in [keysym::DOWN, keysym::RETURN] {
+        t.event(MAIN, key(k), &mut ctx);
+    }
+    assert!(
+        matches!(t.asks.up(), Some((_, Ask::EndProcess { pid: 41, .. }))),
+        "End Process asks as the button does"
+    );
+    t.asks.close();
+    click_row(&mut t, &mut ctx, 1);
+    assert_eq!(
+        live_rows(&t),
+        [None, Some(Act::EndProcess), None],
+        "a process whose file cannot be read has only End Process"
+    );
 }
 
 /// Task Manager on the Processes page with more rows than fit, the point on its thumb and the

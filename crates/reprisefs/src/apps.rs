@@ -918,6 +918,15 @@ pub fn open_location_argv(path: &Path) -> Vec<OsString> {
     vec!["reprise-explorer".into(), "--select".into(), path.into()]
 }
 
+/// Explorer's Properties sheet for `path`.
+pub fn properties_argv(path: &Path) -> Vec<OsString> {
+    vec![
+        "reprise-explorer".into(),
+        "--properties".into(),
+        path.into(),
+    ]
+}
+
 pub fn split_list(v: Option<&str>) -> Vec<String> {
     v.map(|v| {
         v.split(';')

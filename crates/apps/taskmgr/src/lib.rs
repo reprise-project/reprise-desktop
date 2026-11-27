@@ -32,7 +32,9 @@ use repriseapp::detailslist::{List, Press};
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::tip::Rest;
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
+use repriseapp::{
+    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId,
+};
 use reprisebus::tray::{AppWindow, Hung};
 use reprisefs::apps::{AppEntry, AppId};
 use reprisekit::access::Tree;
@@ -222,6 +224,10 @@ enum Act {
     PerCore(bool),
     SelectColumns,
     OnTop(bool),
+    /// The process menu's rows, on the selected process.
+    OpenLocation,
+    EndProcess,
+    Properties,
 }
 
 /// The pointer resting on a process row, by pid; `shown` once its command line is up. `pointer`
@@ -265,7 +271,7 @@ pub struct TaskMgr {
     /// Options > Always On Top.
     on_top: bool,
     perf: perf::Perf,
-    /// The CPU history graph's menu.
+    /// The CPU history graph's menu, or a process's.
     popup: Option<Popup<Act>>,
     bar: Bar,
     form: Form,
@@ -284,6 +290,8 @@ pub struct TaskMgr {
     new_task: fn(),
     /// A pidfd for a process End Process asks about ([`worker::open_process`]).
     open_process: fn(i32, u64) -> std::io::Result<OwnedFd>,
+    /// The program file a process runs ([`worker::exe_of`]).
+    exe_of: fn(i32) -> Option<PathBuf>,
     entries: Arc<Vec<AppEntry>>,
     icons: HashMap<String, Option<Rc<Canvas>>>,
     tip: Option<Tip>,
@@ -322,6 +330,7 @@ impl TaskMgr {
             close_window: worker::close_window,
             new_task: worker::new_task,
             open_process: worker::open_process,
+            exe_of: worker::exe_of,
             procs: List::new(Vec::new()),
             proc_rows: Vec::new(),
             starts: HashMap::new(),
@@ -430,7 +439,44 @@ impl TaskMgr {
         Reply::redraw()
     }
 
-    fn popup_event(&mut self, ev: &Event, ctx: &Ctx) -> Option<Reply> {
+    /// The selected process's menu; the file rows grey when its program file cannot be read
+    /// (another user's process, or one whose file is gone).
+    fn proc_menu(&self) -> Option<Vec<(MenuItem, Option<Act>)>> {
+        let p = self.selected_proc()?;
+        let file = (self.exe_of)(p.pid).is_some();
+        let own = p.uid == self.uid;
+        let row = |label: String, live: bool, act: Act| {
+            (MenuItem::item(&label).enabled(live), live.then_some(act))
+        };
+        Some(vec![
+            row(tr!("menu-open-location"), file, Act::OpenLocation),
+            (MenuItem::Separator, None),
+            row(tr!("menu-end-process"), own, Act::EndProcess),
+            (MenuItem::Separator, None),
+            row(tr!("menu-properties"), file, Act::Properties),
+        ])
+    }
+
+    fn open_proc_menu(&mut self, x: i32, y: i32, ctx: &Ctx, by_keyboard: bool) -> Reply {
+        let Some(rows) = self.proc_menu() else {
+            return Reply::none();
+        };
+        self.popup = Popup::open(rows, x, y, ctx, by_keyboard);
+        Reply::redraw()
+    }
+
+    /// The selected process's program file, to open its folder or its Properties.
+    fn proc_file(&self, argv: fn(&std::path::Path) -> Vec<std::ffi::OsString>) -> Reply {
+        match self.selected_proc().and_then(|p| (self.exe_of)(p.pid)) {
+            Some(exe) => Reply {
+                spawn: vec![argv(&exe)],
+                ..Reply::none()
+            },
+            None => Reply::none(),
+        }
+    }
+
+    fn popup_event(&mut self, ev: &Event, ctx: &mut Ctx) -> Option<Reply> {
         let popup = self.popup.as_mut()?;
         let step = match ev {
             Event::Pointer(PointerInput::Press { x, y, .. }) => popup.press(*x, *y, ctx),
@@ -445,7 +491,11 @@ impl TaskMgr {
             ctxmenu::Step::Chosen(act) => {
                 self.popup = None;
                 match act {
-                    Some(a) => self.act(a),
+                    Some(Act::EndProcess) => self.ask_end_process(ctx),
+                    Some(a) => Reply {
+                        redraw: true,
+                        ..self.act(a)
+                    },
                     None => Reply::redraw(),
                 }
             }
@@ -489,6 +539,9 @@ impl TaskMgr {
                 self.pick = Some(selectcols::form(&self.columns));
                 return Reply::redraw_all();
             }
+            Act::OpenLocation => return self.proc_file(reprisefs::apps::open_location_argv),
+            Act::Properties => return self.proc_file(reprisefs::apps::properties_argv),
+            Act::EndProcess => return Reply::none(),
         }
         self.set_menus();
         self.persist();
@@ -1036,6 +1089,9 @@ impl TaskMgr {
             let press = list.press(at, button, r, ctx);
             return match press {
                 Press::Activate(_) if page == Page::Applications => self.switch_to(),
+                Press::Row(_) if page == Page::Processes && button == BTN_RIGHT => {
+                    self.open_proc_menu(x, y, ctx, false)
+                }
                 Press::None => Reply::none(),
                 _ => Reply::redraw(),
             };
@@ -1141,6 +1197,16 @@ impl TaskMgr {
             && let Some(r) = self.perf_key(k, pl, ctx)
         {
             return r;
+        }
+        let menu_key = k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift);
+        if menu_key && self.page() == Page::Processes {
+            let Some(r) = lay.list else {
+                return Reply::none();
+            };
+            let l = self.procs.layout(r, ctx);
+            let row = self.procs.selected().unwrap_or(0) as i32;
+            let y = l.body.y + (row - self.procs.view.top as i32 + 1) * l.row_h();
+            return self.open_proc_menu(l.body.x + 20, y, ctx, true);
         }
         match (k.sym, self.page()) {
             (keysym::F5, _) => self.act(Act::Refresh),

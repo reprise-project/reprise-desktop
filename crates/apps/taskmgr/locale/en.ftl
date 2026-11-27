@@ -42,6 +42,11 @@ status-processes = Processes: { $count }
 status-cpu = CPU Usage: { $percent }%
 status-memory = Memory: { $percent }%
 
+## Process menu
+menu-open-location = Open File &Location
+menu-end-process = &End Process
+menu-properties = P&roperties
+
 ## Processes columns
 col-name = Image Name
 col-pid = PID
