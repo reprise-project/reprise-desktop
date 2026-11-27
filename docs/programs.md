@@ -48,7 +48,7 @@ Notes auto-save in `~/.local/share/reprise/notes/` and reopen at login via `repr
 
 Image Viewer opens PNG, JPEG, GIF, BMP, WebP, TIFF, ICO, QOI, PNM, HDR, OpenEXR, JPEG XL and AVIF files (including animated GIF, PNG and WebP), refusing images over one-eighth of RAM or 512 MiB. The window opens large enough to show the picture at 100% where the screen has room.
 
-Step through folders with `Left`/`Right`, `Page Up`/`Page Down`, scroll wheel, `Home` or `End`. Zoom with `+`, `-`, `Ctrl`+wheel, `Ctrl+0` (fit) or `Ctrl+1` (100%). Rotate view with `Ctrl+R`/`Ctrl+L`, toggle fullscreen with `F11` and run a 3-second slideshow with `F5`. Use `Ctrl+O`, `Ctrl+C`, `Delete`, `Edit` (Paint), `Show in Folder` and `Set as Desktop Background` (PNG, JPEG, BMP, JPEG XL, AVIF). `File > Print...` (`Ctrl+P`) prints the picture as it is turned, as large as fits between the margins `File > Page Setup...` sets for the session.
+Step through folders with `Left`/`Right`, `Page Up`/`Page Down`, scroll wheel, `Home` or `End`. Zoom with `+`, `-`, `Ctrl`+wheel, `Ctrl+0` (fit) or `Ctrl+1` (100%). Rotate view with `Ctrl+R`/`Ctrl+L`, toggle fullscreen with `F11` and run a 3-second slideshow with `F5`. Use `Ctrl+O`, `Ctrl+C`, `Delete`, `Edit` (Paint), `Show in Folder` and `Set as Desktop Background` (PNG, JPEG, BMP, JPEG XL, AVIF; a picture opened from a compressed folder is first copied to `~/.local/share/reprise/backgrounds`, since its read-only copy is removed a day later). `File > Print...` (`Ctrl+P`) prints the picture as it is turned, as large as fits between the margins `File > Page Setup...` sets for the session.
 
 ## Paint
 

@@ -1,7 +1,7 @@
 //! What the programs do with a file copied out of a compressed folder. Its own binary: it points
 //! `$XDG_CACHE_HOME` and `$XDG_DATA_HOME` at a scratch home before anything reads them.
 
-use reprisefs::{archive, recent};
+use reprisefs::{archive, archivecopy, recent};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
@@ -46,4 +46,16 @@ fn a_copy_out_of_a_compressed_folder_is_not_recorded() {
     recent::record_at(&xbel, &[(&copy, None, None), (&own, None, None)]).expect("record");
     let got = recent::RecentFiles::at(Some(xbel)).current(10);
     assert_eq!(got, vec![own]);
+}
+
+#[test]
+fn a_background_from_a_compressed_folder_is_kept_in_the_data_dir() {
+    let kept_dir = home().join("data/reprise/backgrounds");
+    let first = archivecopy::lasting_background(&copy("dunes.png", b"one")).expect("kept");
+    assert_eq!(first, kept_dir.join("dunes.png"));
+    let again = archivecopy::lasting_background(&copy("dunes.png", b"two")).expect("kept again");
+    assert_eq!(again, first);
+    assert_eq!(std::fs::read(&again).expect("read"), b"two");
+    let own = plain("dunes.png", b"mine");
+    assert_eq!(archivecopy::lasting_background(&own).expect("own"), own);
 }
