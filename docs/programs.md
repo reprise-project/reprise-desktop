@@ -54,7 +54,7 @@ Step through folders with `Left`/`Right`, `Page Up`/`Page Down`, scroll wheel, `
 
 Paint provides select, eraser, fill, colour picker, magnifier, pencil, brush, airbrush, text, line, curve and shape tools (left-click draws primary colour, right-click draws secondary). `Colors > Edit Colors...` offers 48 basic and 16 custom colours.
 
-Move selections, Cut/Copy/Paste PNG data, flip, rotate, resize, skew, invert, crop, zoom 1x to 8x with pixel grid and undo up to 50 steps (`Ctrl+Z`). Paint reads all Reprise image formats, saves PNG, JPEG and BMP atomically (a read-only file through `Save As`, which starts in the archive's folder for a picture opened from a compressed folder), and stores crash recovery PNGs in `~/.local/state/reprise/paint/`. `File > Print...` (`Ctrl+P`) prints the picture as large as fits between the margins `File > Page Setup...` sets for the session.
+Move selections, Cut/Copy/Paste PNG data, flip, rotate, resize, skew, invert, crop, zoom 1x to 8x with pixel grid and undo up to 50 steps (`Ctrl+Z`). Paint reads all Reprise image formats, saves PNG, JPEG and BMP atomically (a read-only file through `Save As`; for a picture opened from a compressed folder, `Open` and `Save As` start in the folder holding the archive, and `Set as Desktop Background` first copies it to `~/.local/share/reprise/backgrounds`), and stores crash recovery PNGs in `~/.local/state/reprise/paint/`. `File > Print...` (`Ctrl+P`) prints the picture as large as fits between the margins `File > Page Setup...` sets for the session.
 
 ## Calculator
 
