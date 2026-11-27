@@ -16,6 +16,8 @@ use crate::model::{
 use reprisekit::tr;
 
 const CUSTOMIZE_W: i32 = 84;
+/// The Taskbar page's first part check box, under the note on what follows the interface.
+const CHECKS_Y: i32 = 118;
 
 /// The Alt+Tab chord as the switcher's labels name it.
 fn alt_tab() -> String {
@@ -292,9 +294,11 @@ pub fn virtual_desktops(a: Area) -> Form {
     Form::new(items)
 }
 
-/// The edge the bar sits on, its height and how windows become task buttons, then one check box
-/// per optional part of the taskbar with the calendar events' note ([`show_events`]), auto-hide with its three triggers indented under it, the live
-/// window pictures and their rate, and the Start button's logo and glow.
+/// The edge the bar sits on, its height and how windows become task buttons, the note that the
+/// page follows the interface, then one check box per optional part of the taskbar (Customize...
+/// beside the idle icons' row, which stays put on a wide page) with the calendar events' note
+/// ([`show_events`]), auto-hide with its three triggers indented under it, the live window
+/// pictures and their rate, and the Start button's logo and glow.
 pub fn taskbar(a: Area) -> Form {
     let mut items = vec![
         Item::label_at(
@@ -360,9 +364,19 @@ pub fn taskbar(a: Area) -> Form {
             &tr!("pages-desktop-slide-taskbar-buttons-as-they-are"),
         ),
     ];
-    let slide_y = 100 + 18 * (checks.len() as i32 - 1);
+    items.push(Item::new(
+        "taskbar_note",
+        Rect::new(X, 100, a.w, LINE_H),
+        Control::Lines(vec![tr!(
+            "pages-desktop-left-unchanged-the-settings-on-this"
+        )]),
+    ));
+    let row_y = |i: usize| CHECKS_Y + 18 * i as i32;
+    let tray = checks.iter().position(|c| c.0 == "taskbar_tray_overflow");
+    let tray_y = row_y(tray.expect("the idle icons have a row"));
+    let slide_y = row_y(checks.len() - 1);
     for (i, (id, text)) in checks.into_iter().enumerate() {
-        items.push(Item::check(id, X, 100 + 18 * i as i32, text));
+        items.push(Item::check(id, X, row_y(i), text));
     }
     items.push(Item::label_at(
         SLIDE_MOTION_NOTE,
@@ -386,17 +400,15 @@ pub fn taskbar(a: Area) -> Form {
     ));
     items.push(Item::button(
         TRAY_CUSTOMIZE,
-        Rect::new(a.right() - CUSTOMIZE_W, 185, CUSTOMIZE_W, BUTTON_H),
+        Rect::new(
+            Area::MIN.right() - CUSTOMIZE_W,
+            tray_y - 5,
+            CUSTOMIZE_W,
+            BUTTON_H,
+        ),
         &tr!("pages-desktop-customize"),
         true,
         false,
-    ));
-    items.push(Item::new(
-        "taskbar_note",
-        Rect::new(X, 262, a.w, LINE_H),
-        Control::Lines(vec![tr!(
-            "pages-desktop-left-unchanged-these-follow-the-interface"
-        )]),
     ));
     items.push(Item::check(
         "taskbar_auto_hide",
