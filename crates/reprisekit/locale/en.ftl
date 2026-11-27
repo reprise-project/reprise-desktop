@@ -853,32 +853,7 @@ notifyhistory-dnd-until = { $dnd } until { $time }
 filesheet-general-attributes = Attributes
 filesheet-general-attributes-colon = Attributes:
 
-## calendar: month and weekday names, dates
-calendar-month =
-    { $month ->
-        [1] January
-        [2] February
-        [3] March
-        [4] April
-        [5] May
-        [6] June
-        [7] July
-        [8] August
-        [9] September
-        [10] October
-        [11] November
-       *[12] December
-    }
-calendar-weekday =
-    { $day ->
-        [0] Sunday
-        [1] Monday
-        [2] Tuesday
-        [3] Wednesday
-        [4] Thursday
-        [5] Friday
-       *[6] Saturday
-    }
+## calendar: titles and dates (month and weekday names follow LC_TIME)
 calendar-title = { $month } { NUMBER($year, useGrouping: "false") }
 calendar-date = { $month } { NUMBER($day, useGrouping: "false") }, { NUMBER($year, useGrouping: "false") }
 calendar-previous-month = Previous month

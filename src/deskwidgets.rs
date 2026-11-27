@@ -112,6 +112,7 @@ fn calendar_now() -> Calendar {
     let tm = local_now();
     let (y, m, d) = (tm.tm_year + 1900, (tm.tm_mon + 1) as u32, tm.tm_mday as u32);
     let mut cal = Calendar::new(y, m, None, reprisefs::locale::first_weekday());
+    cal.names = reprisefs::locale::date_names();
     cal.today = Some((y, m, d));
     cal
 }
