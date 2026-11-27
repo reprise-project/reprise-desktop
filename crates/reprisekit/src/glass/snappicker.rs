@@ -47,14 +47,15 @@ pub fn draw(
     let s = layout.scale.max(1);
     let whole = Rect::new(0, 0, layout.width, layout.height);
     style.draw(canvas, whole, Part::SnapFrame, State::Normal, s);
-    let radius = TILE_RADIUS * s;
+    // A small tile, as in Settings' preview, rounds by at most a quarter of its shorter side.
+    let radius = |r: Rect| (TILE_RADIUS * s).min(r.width.min(r.height) / 4);
     let faded = |canvas: &mut Canvas, r: Rect, (color, alpha): (Color, u32), rim: bool| {
         let mut t = Canvas::new(r.width.max(1) as u32, r.height.max(1) as u32);
         let local = Rect::new(0, 0, r.width, r.height);
         if rim {
-            rounded_border(&mut t, local, radius, color, s);
+            rounded_border(&mut t, local, radius(r), color, s);
         } else {
-            rounded_fill(&mut t, local, radius, color);
+            rounded_fill(&mut t, local, radius(r), color);
         }
         canvas.blit_over_faded(r.x, r.y, &t, alpha, 255);
     };
@@ -63,12 +64,12 @@ pub fn draw(
         for (z, r) in tiles.iter().enumerate() {
             let filled = layout.filled[l][z];
             if hot == Some((l, z)) {
-                rounded_fill(canvas, *r, radius, hilight);
+                rounded_fill(canvas, *r, radius(*r), hilight);
                 continue;
             }
             faded(canvas, *r, if filled { FILLED } else { TILE }, false);
             if filled && lit_cell {
-                rounded_border(canvas, *r, radius, hilight, s);
+                rounded_border(canvas, *r, radius(*r), hilight, s);
             } else {
                 faded(canvas, *r, RIM, true);
             }
@@ -88,6 +89,38 @@ mod tests {
 
     fn style() -> Arc<Style> {
         super::super::style(&Settings::default())
+    }
+
+    /// Settings' strip of the six layouts: each tile's sides and top run straight from a quarter
+    /// of the way along to the middle, so no tile, however thin, draws as an oval.
+    #[test]
+    fn a_previews_small_tiles_keep_straight_sides_at_both_scales() {
+        use crate::snaplayouts::{PICKER_SPECS, ZoneLayout};
+        let layouts: Vec<_> = (PICKER_SPECS.iter())
+            .map(|s| ZoneLayout::parse(s).unwrap())
+            .collect();
+        for sc in [1, 2] {
+            let l = PickerLayout::preview(&layouts).scaled(sc);
+            let mut c = Canvas::new(l.width as u32, l.height as u32);
+            draw(
+                &mut c,
+                &style(),
+                Color::rgb(0x33, 0x99, 0xFF),
+                &l,
+                &[],
+                None,
+            );
+            for t in l.tiles.iter().flatten() {
+                let side = |y: i32| c.get(t.x, t.y + y);
+                let top = |x: i32| c.get(t.x + x, t.y);
+                assert_eq!(
+                    side(t.height / 4),
+                    side(t.height / 2),
+                    "x{sc} {t:?} left side"
+                );
+                assert_eq!(top(t.width / 4), top(t.width / 2), "x{sc} {t:?} top");
+            }
+        }
     }
 
     #[test]
