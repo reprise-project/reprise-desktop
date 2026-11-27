@@ -1094,7 +1094,11 @@ fn the_window_rules_page_and_dialog_pin_their_pixels_in_every_look_at_both_scale
     let dialog = Rect::new(0, 0, CLIENT.0, CLIENT.1);
     rows.extend(both(&RuleDialog::new(None, Vec::new()).form, dialog));
     let mut d = RuleDialog::new(Some(&rules[1]), vec!["DP-1".into(), "HDMI-A-1".into()]);
-    d.offer_windows(vec!["foot".into(), "reprise.notepad".into()]);
+    let w = |id: &str, title: &str| (id.to_string(), title.to_string());
+    d.offer_windows(vec![
+        w("foot", "~"),
+        w("reprise.notepad", "Untitled - Notepad"),
+    ]);
     rows.extend(both(&d.form, dialog));
     let x1: Vec<_> = rows.iter().step_by(2).collect();
     for (i, r) in x1.iter().enumerate() {
