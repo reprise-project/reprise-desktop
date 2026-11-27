@@ -5,6 +5,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("phone");
+
 mod pick;
 mod tray;
 
@@ -58,8 +60,12 @@ impl PhoneApp {
                     .find(|d| d.id == id)
                     .map_or_else(|| id.clone(), |d| d.name.clone());
                 on_bus("send", move |conn| {
-                    let title = format!("Send Files to {name}");
-                    let urls = reprisebus::wait(pick::files(conn, &title, "Send"))?;
+                    let title = reprisekit::tr!("send-title", name = name.as_str());
+                    let urls = reprisebus::wait(pick::files(
+                        conn,
+                        &title,
+                        &reprisekit::tr!("send-accept"),
+                    ))?;
                     if urls.is_empty() {
                         return Ok(());
                     }
@@ -133,7 +139,7 @@ fn on_bus(
 
 impl App for PhoneApp {
     fn title(&self) -> String {
-        tray::TITLE.into()
+        reprisekit::tr!("title")
     }
 
     fn app_id(&self) -> String {
