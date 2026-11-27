@@ -1423,6 +1423,31 @@ pub fn user_applications_dir() -> Option<PathBuf> {
     reprisexdg::data_home().map(|d| d.join("applications"))
 }
 
+/// Whether `folder` is one of `apps_dirs` or below one, with links and `..` resolved; false when
+/// it does not resolve. Blocks on a dead mount, so a host calls it off its event loop.
+pub fn under_apps_dirs(apps_dirs: &[PathBuf], folder: &Path) -> bool {
+    let real = |d: &Path| std::fs::canonicalize(d).ok();
+    real(folder).is_some_and(|f| {
+        apps_dirs
+            .iter()
+            .filter_map(|d| real(d))
+            .any(|d| f.starts_with(d))
+    })
+}
+
+/// What a copy of `src` into `dir` reads when it takes a program out of the menu (a launcher,
+/// [`crate::ops::put_in`]'s `is_app`): `src` with its folder resolved, so a link swapped after this
+/// check cannot change what is copied. None unless a `.desktop` file under `apps_dirs` goes outside.
+pub fn program_source(apps_dirs: &[PathBuf], src: &Path, dir: &Path) -> Option<PathBuf> {
+    if src.extension()? != "desktop" {
+        return None;
+    }
+    let name = src.file_name()?;
+    let parent = std::fs::canonicalize(src.parent()?).ok()?;
+    (under_apps_dirs(apps_dirs, &parent) && !under_apps_dirs(apps_dirs, dir))
+        .then(|| parent.join(name))
+}
+
 /// Folder levels below an applications directory that [`scan`] reads.
 const MAX_DEPTH: usize = 8;
 

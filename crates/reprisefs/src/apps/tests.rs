@@ -1508,3 +1508,118 @@ fn an_action_runs_its_own_command_with_the_entrys_field_codes_and_terminal() {
         })
     );
 }
+
+#[test]
+fn only_a_desktop_file_copied_out_of_the_applications_dirs_copies_a_program() {
+    let t = tempfile::tempdir().unwrap();
+    let (user, system, folder) = (
+        t.path().join("user"),
+        t.path().join("system"),
+        t.path().join("docs"),
+    );
+    for d in [&user, &system.join("kde"), &folder] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let dirs = [user.clone(), system.clone()];
+    let menu = system.join("org.example.App.desktop");
+    let nested = system.join("kde/org.example.App.desktop");
+    let source = |src: &Path, dir: &Path| program_source(&dirs, src, dir);
+    let resolved = |p: &Path| {
+        p.parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .join(p.file_name().unwrap())
+    };
+    assert_eq!(source(&menu, &folder), Some(resolved(&menu)));
+    assert_eq!(source(&nested, &folder), Some(resolved(&nested)));
+    assert_eq!(source(&menu, &user), None, "into the menu");
+    assert_eq!(source(&menu, &system), None, "beside itself");
+    assert_eq!(
+        source(&system.join("notes.txt"), &folder),
+        None,
+        "not a .desktop file"
+    );
+    assert_eq!(
+        source(&folder.join("app.desktop"), &folder),
+        None,
+        "outside the menu"
+    );
+}
+
+#[test]
+fn a_desktop_file_reached_through_dot_dot_or_a_link_out_of_the_menu_is_not_a_program() {
+    let t = tempfile::tempdir().unwrap();
+    let (apps, outside, folder) = (
+        t.path().join("apps"),
+        t.path().join("dl"),
+        t.path().join("docs"),
+    );
+    for d in [&apps, &outside, &folder] {
+        std::fs::create_dir(d).unwrap();
+    }
+    let dirs = [apps.clone()];
+    let climbed = apps.join("../dl/evil.desktop");
+    assert_eq!(
+        program_source(&dirs, &climbed, &folder),
+        None,
+        "{}",
+        climbed.display()
+    );
+    std::os::unix::fs::symlink(&outside, apps.join("out")).unwrap();
+    let linked_out = apps.join("out/evil.desktop");
+    assert_eq!(
+        program_source(&dirs, &linked_out, &folder),
+        None,
+        "{}",
+        linked_out.display()
+    );
+    let to_apps = t.path().join("menu-link");
+    std::os::unix::fs::symlink(&apps, &to_apps).unwrap();
+    let linked_in = to_apps.join("org.example.App.desktop");
+    assert_eq!(
+        program_source(&dirs, &linked_in, &folder),
+        Some(apps.canonicalize().unwrap().join("org.example.App.desktop")),
+        "the folder resolved, the name kept"
+    );
+}
+
+#[test]
+fn a_link_repointed_after_the_check_copies_the_menus_file() {
+    let t = tempfile::tempdir().unwrap();
+    let (apps, own, folder) = (
+        t.path().join("apps"),
+        t.path().join("own"),
+        t.path().join("docs"),
+    );
+    for d in [&apps, &own, &folder] {
+        std::fs::create_dir(d).unwrap();
+    }
+    std::fs::write(apps.join("app.desktop"), FIREFOX).unwrap();
+    let swapped = "[Desktop Entry]\nType=Application\nName=Swapped\nExec=swapped\n";
+    std::fs::write(own.join("app.desktop"), swapped).unwrap();
+    let link = t.path().join("lnk");
+    std::os::unix::fs::symlink(&apps, &link).unwrap();
+
+    let src = program_source(
+        std::slice::from_ref(&apps),
+        &link.join("app.desktop"),
+        &folder,
+    )
+    .expect("a program while the link points into the menu");
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&own, &link).unwrap();
+    let landed = crate::ops::put_in(
+        &src,
+        "app",
+        true,
+        &folder,
+        crate::ops::DropOp::Copy,
+        &[],
+        &|_| None,
+    )
+    .unwrap();
+
+    let text = std::fs::read_to_string(folder.join(landed)).unwrap();
+    assert_eq!(text, FIREFOX, "expected the menu's file");
+}

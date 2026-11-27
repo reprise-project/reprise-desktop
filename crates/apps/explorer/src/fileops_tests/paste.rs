@@ -1093,3 +1093,30 @@ fn enter_typed_ahead_of_a_paste_does_not_answer_the_replace_prompt_it_raises() {
         "old"
     );
 }
+
+#[test]
+fn a_start_menu_program_dropped_in_a_folder_lands_as_a_launcher() {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = lock(&TRASH_ENV);
+    let home = tempfile::tempdir().expect("a temp dir");
+    let _data_home = DataHome::set(home.path());
+    let menu = home.path().join("applications");
+    std::fs::create_dir(&menu).expect("mkdir");
+    let entry = "[Desktop Entry]\nType=Application\nName=Calculator\nExec=calc\n";
+    std::fs::write(menu.join("calc.desktop"), entry).expect("write");
+    let dir = home.path().join("folder");
+    std::fs::create_dir(&dir).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+
+    ex.drop_into(&[menu.join("calc.desktop")], &dir, DropOp::Copy, &mut ctx);
+    ex.finish_puts(&mut ctx);
+
+    let landed = dir.join("calc.desktop");
+    let mode = std::fs::metadata(&landed)
+        .expect("landed")
+        .permissions()
+        .mode();
+    assert_ne!(mode & 0o111, 0, "expected executable, mode {mode:o}");
+    assert!(reprisefs::apps::is_trusted(&landed), "expected trusted");
+}
