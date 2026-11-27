@@ -155,6 +155,24 @@ fn double_click_speed_reads_slow_to_fast() {
 }
 
 #[test]
+fn pointer_speed_reads_the_configured_speed_from_minus_one_to_one() {
+    let mut s = built();
+    for (p, id, value) in [
+        (Page::Mouse, "mouse_speed", "mouse_speed_value"),
+        (Page::Touchpad, "touchpad_speed", "touchpad_speed_value"),
+    ] {
+        assert_eq!(lines(&s, p, value), ["0.0"], "{id}");
+        let mut got = Settings::default();
+        for (pos, shown) in [(0, "-1.0"), (7, "-0.3"), (20, "1.0")] {
+            s.pages[p.index()].set_track(id, pos);
+            read_one(&s, id, &mut got);
+            follow(&mut s, &got);
+            assert_eq!(lines(&s, p, value), [shown], "{id} at {pos}");
+        }
+    }
+}
+
+#[test]
 fn scroll_speed_reads_a_percent_from_a_fifth_to_four_times() {
     let mut s = built();
     for (p, id, value) in [
@@ -647,14 +665,18 @@ fn the_mouse_page_geometry() {
     );
     assert_eq!(
         rect(&s, p, "mouse_speed_label"),
-        Rect::new(32, 120, 334, 13)
+        Rect::new(32, 120, 200, 13)
     );
-    assert_eq!(rect(&s, p, "mouse_slow"), Rect::new(32, 141, 26, 13));
+    assert_eq!(
+        rect(&s, p, "mouse_speed_value"),
+        Rect::new(286, 120, 80, 13)
+    );
+    assert_eq!(rect(&s, p, "mouse_slow"), Rect::new(32, 141, 44, 13));
     assert_eq!(
         rect(&s, p, "mouse_speed"),
-        Rect::new(60, 135, 160, trackbar::HEIGHT)
+        Rect::new(78, 135, 238, trackbar::HEIGHT)
     );
-    assert_eq!(rect(&s, p, "mouse_fast"), Rect::new(224, 141, 26, 13));
+    assert_eq!(rect(&s, p, "mouse_fast"), Rect::new(322, 141, 44, 13));
     assert_eq!(rect(&s, p, "mouse_accel"), Rect::new(32, 169, 13, 13));
     assert_eq!(rect(&s, p, "mouse_middle"), Rect::new(32, 191, 13, 13));
     assert_eq!(rect(&s, p, "mouse_left_handed"), Rect::new(32, 213, 13, 13));
@@ -687,7 +709,11 @@ fn the_touchpad_page_geometry() {
     assert_eq!(rect(&s, p, "disable_with_mouse"), Rect::new(32, 88, 13, 13));
     assert_eq!(
         rect(&s, p, "touchpad_speed"),
-        Rect::new(60, 129, 160, trackbar::HEIGHT)
+        Rect::new(78, 129, 238, trackbar::HEIGHT)
+    );
+    assert_eq!(
+        rect(&s, p, "touchpad_speed_value"),
+        Rect::new(286, 114, 80, 13)
     );
     assert_eq!(rect(&s, p, "touchpad_accel"), Rect::new(32, 163, 13, 13));
     assert_eq!(

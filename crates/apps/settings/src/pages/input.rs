@@ -219,42 +219,36 @@ pub fn keyboard(a: Area) -> Form {
     Form::new(items)
 }
 
-/// A pointer speed: a "Select a pointer speed:" label, Slow and Fast around a
-/// trackbar, and "Enhance pointer precision" under it. `y` is the label's row;
-/// the items span 62 px. `ids` are the label, Slow, the trackbar, Fast and the
-/// check, and the trackbar is `name` to a reader.
-fn motion(a: Area, y: i32, ids: [&'static str; 5], name: &str) -> [Item; 5] {
-    let [label_id, slow_id, track_id, fast_id, check_id] = ids;
-    let track = Rect::new(GX + 28, y + 15, a.track(160), trackbar::HEIGHT);
-    [
-        Item::label_at(
-            label_id,
-            GX,
-            y,
-            a.gw(),
-            &tr!("pages-input-select-a-pointer-speed"),
-        ),
-        Item::label_at(slow_id, GX, y + 21, 26, &tr!("pages-input-slow")),
-        Item::new(
-            track_id,
-            track,
-            Control::TrackBar(TrackBar::new(SPEED_STEPS / 2, SPEED_STEPS)),
-        )
-        .named(name),
-        Item::label_at(
-            fast_id,
-            track.right() + 4,
-            y + 21,
-            26,
-            &tr!("pages-input-fast"),
-        ),
-        Item::check(
-            check_id,
-            GX,
-            y + 49,
-            &tr!("pages-input-enhance-pointer-precision"),
-        ),
-    ]
+/// A pointer speed: a "Select a pointer speed:" label at `y`, Slow and Fast around a trackbar
+/// under it, the speed at the label's right, and "Enhance pointer precision" under them; the
+/// items span 62 px. `ids` are the label, Slow, the trackbar, Fast, the speed and the check, and
+/// the trackbar is `name` to a reader.
+fn motion(a: Area, y: i32, ids: [&'static str; 6], name: &str) -> Vec<Item> {
+    let [label_id, slow_id, track_id, fast_id, value_id, check_id] = ids;
+    let mut items = vec![Item::label_at(
+        label_id,
+        GX,
+        y,
+        200,
+        &tr!("pages-input-select-a-pointer-speed"),
+    )];
+    items.extend(ends_track(
+        a,
+        [slow_id, track_id, fast_id, value_id],
+        name,
+        y + 21,
+        21,
+        (&tr!("pages-input-slow"), &tr!("pages-input-fast")),
+        GX,
+        TrackBar::new(SPEED_STEPS / 2, SPEED_STEPS),
+    ));
+    items.push(Item::check(
+        check_id,
+        GX,
+        y + 49,
+        &tr!("pages-input-enhance-pointer-precision"),
+    ));
+    items
 }
 
 /// A scroll speed: its label at `y`, Slow and Fast around a trackbar under it, the percent at the
@@ -313,6 +307,7 @@ pub fn mouse(a: Area) -> Form {
             "mouse_slow",
             "mouse_speed",
             "mouse_fast",
+            "mouse_speed_value",
             "mouse_accel",
         ],
         &tr!("pages-input-pointer-speed"),
@@ -351,7 +346,7 @@ pub fn mouse(a: Area) -> Form {
 }
 
 /// The Touchpad page's controls that grey while "Use the touchpad" is unticked.
-pub(super) const TOUCHPAD_CONTROLS: [&str; 21] = [
+pub(super) const TOUCHPAD_CONTROLS: [&str; 22] = [
     "gestures_enabled",
     "gesture_fingers",
     "disable_with_mouse",
@@ -359,6 +354,7 @@ pub(super) const TOUCHPAD_CONTROLS: [&str; 21] = [
     "touchpad_slow",
     "touchpad_speed",
     "touchpad_fast",
+    "touchpad_speed_value",
     "touchpad_accel",
     "disable_while_typing",
     "tap_to_click",
@@ -403,6 +399,7 @@ pub fn touchpad(a: Area) -> Form {
             "touchpad_slow",
             "touchpad_speed",
             "touchpad_fast",
+            "touchpad_speed_value",
             "touchpad_accel",
         ],
         &tr!("pages-input-touchpad-speed"),

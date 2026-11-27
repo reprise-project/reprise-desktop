@@ -458,6 +458,11 @@ fn percent(tenths: i64) -> String {
     tr!("pages-bind-percent", n = (tenths * 10).to_string())
 }
 
+/// A pointer speed in tenths as the config writes it, -1.0 to 1.0.
+fn speed(tenths: i64) -> String {
+    tr!("pages-bind-speed", n = tenths as f64 / 10.0)
+}
+
 /// Select the row of `pick` that `options` holds; an id of its family it lacks shows as itself after its rows.
 fn show_xkb_option(c: &mut combo::Combo, pick: &XkbPick, options: &str) {
     let want = pick.get(options);
@@ -869,6 +874,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         &tr!("pages-bind-ms", n = s.double_click_ms.to_string()),
     );
     mouse.set_text("mouse_scroll_value", &percent(s.mouse_scroll_speed));
+    mouse.set_text("mouse_speed_value", &speed(s.mouse_speed));
     let pad = &mut sheet.pages[Page::Touchpad.index()];
     for id in TOUCHPAD_CONTROLS {
         pad.set_enabled(id, s.touchpad_enabled);
@@ -879,6 +885,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     );
     pad.set_enabled("gesture_fingers", s.touchpad_enabled && s.gestures_enabled);
     pad.set_text("touchpad_scroll_value", &percent(s.touchpad_scroll_speed));
+    pad.set_text("touchpad_speed_value", &speed(s.touchpad_speed));
     let ax = &mut sheet.pages[Page::TextKeys.index()];
     for id in STICKY_CONTROLS {
         ax.set_enabled(id, s.sticky_keys);
