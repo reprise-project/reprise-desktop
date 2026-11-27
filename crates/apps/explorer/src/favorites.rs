@@ -31,11 +31,13 @@ pub struct Organize {
     shown: Vec<Favorite>,
 }
 
-/// A favorite's row in the Favorites menu: its label and what picking it does, `None` greyed.
+/// A favorite's row in the Favorites menu: its label, what picking it does (`None` greyed) and
+/// whether it is a server address, which wears a server's icon in place of a folder's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MenuRow {
     pub label: String,
     pub go: Option<Command>,
+    pub remote: bool,
 }
 
 /// What opening `f` does: a folder there goes to it, a server address connects through
@@ -60,6 +62,7 @@ pub fn menu_rows(favorites: &[Favorite]) -> Vec<MenuRow> {
         .map(|f| MenuRow {
             label: f.label.clone(),
             go: opening(f),
+            remote: matches!(f.target, Target::Uri(_)),
         })
         .collect()
 }
@@ -522,10 +525,10 @@ mod tests {
         let (_dir, file) = with_file("file:///nonexistent-fav/Gone\nsftp://h/srv Server\n");
         let ex = reading(&file, &mut ctx);
         let rows = ex.menu_state().favorites;
-        let got: Vec<(&str, bool)> = rows
+        let got: Vec<(&str, bool, bool)> = rows
             .iter()
-            .map(|r| (r.label.as_str(), r.go.is_some()))
+            .map(|r| (r.label.as_str(), r.go.is_some(), r.remote))
             .collect();
-        assert_eq!(got, [("Gone", false), ("Server", true)]);
+        assert_eq!(got, [("Gone", false, false), ("Server", true, true)]);
     }
 }

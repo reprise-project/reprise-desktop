@@ -288,6 +288,8 @@ pub struct Explorer {
     /// The icons the toolbar, address bar, status bar and task pane wear stand-ins for
     /// ([`Explorer::rewear_chrome`]).
     chrome_waits: repriseapp::iconjobs::IconWaits,
+    /// The Favorites menu's folder and server icons, at the menu's icon size.
+    favorite_icons: [Option<Canvas>; 2],
     pub status: StatusBar,
     pub settings: Settings,
     /// `settings` changed since the last write. A resize delivers a burst of
@@ -641,6 +643,7 @@ impl Explorer {
             pane_tips: Vec::new(),
             pane_key: None,
             chrome_waits: Default::default(),
+            favorite_icons: [None, None],
             status: StatusBar {
                 panels: Vec::new(),
                 grip: true,
@@ -902,6 +905,7 @@ impl Explorer {
             templates: self.templates.clone(),
             can_add_favorite: self.favorite_dir().is_some(),
             favorites: favorites::menu_rows(&self.favorites()),
+            favorite_icons: self.favorite_icons.clone(),
         }
     }
 
