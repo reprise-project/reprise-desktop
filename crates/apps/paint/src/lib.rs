@@ -11,6 +11,7 @@ mod files;
 mod history;
 mod input;
 mod menu;
+mod print;
 mod shapes;
 mod state;
 mod textbox;
@@ -26,6 +27,7 @@ use repriseapp::decode::Decoders;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
+use repriseapp::print::Printing;
 use repriseapp::recent::Recent;
 use repriseapp::{App, Child, Ctx, DropForm, Event, Extended, FileDrop, MAIN, Reply, WinId};
 use reprisekit::access::Tree;
@@ -126,6 +128,8 @@ struct Paint {
     families: Vec<String>,
     dialog: Option<(dialogs::Kind, Form)>,
     prompt: Asks<Prompt>,
+    /// File > Page Setup and Print, and the job last sent.
+    printing: Printing,
     /// What runs after the Save As that a Yes on the save prompt raised.
     after_save: Option<Then>,
     about: bool,
@@ -190,6 +194,7 @@ impl Paint {
             families: Vec::new(),
             dialog: None,
             prompt: Asks::new(PROMPT),
+            printing: Printing::new(&tr!("name")),
             after_save: None,
             about: false,
             open: None,
@@ -330,6 +335,7 @@ impl App for Paint {
                 });
             }
         }
+        kids.extend(self.printing.children());
         kids.extend(self.prompt.child(&self.dialog_text, &self.forms));
         kids
     }
@@ -340,7 +346,9 @@ impl App for Paint {
         if win != MAIN {
             self.alt_arm.interrupt();
         }
+        let printed = win == MAIN && matches!(ev, Event::Wake) && self.printing.wake();
         let reply = match win {
+            _ if self.printing.owns(win) => self.print_event(win, ev, ctx),
             _ if self.prompt.owns(win) => self.prompt_event(win, ev),
             DIALOG => self.dialog_event(ev, ctx),
             FONTS => self.fonts_event(ev, ctx),
@@ -351,7 +359,10 @@ impl App for Paint {
             _ => self.main_event(ev, ctx),
         };
         self.sync_menus();
-        reply
+        Reply {
+            redraw_all: reply.redraw_all || printed,
+            ..reply
+        }
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -360,6 +371,7 @@ impl App for Paint {
         let cs = &ctx.theme.colors;
         let px = self.forms.fonts.size_px;
         match win {
+            _ if self.printing.owns(win) => self.printing.draw(win, c, ctx),
             _ if self.prompt.owns(win) => self.prompt.draw(c, &self.forms, &self.dialog_text),
             DIALOG | FONTS => {
                 c.fill_rect(c.bounds(), cs.button_face);
@@ -409,6 +421,13 @@ impl Extended for Paint {
         Reply::redraw_all()
     }
 
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        if self.printing.owns(win) {
+            return self.printing.parent(win);
+        }
+        Some(MAIN)
+    }
+
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         if win == MAIN {
             return Some(view::MIN_SIZE);
@@ -431,7 +450,7 @@ impl Extended for Paint {
         let form = match win {
             DIALOG => self.dialog.as_mut().map(|(_, f)| f)?,
             FONTS => self.fonts.as_mut()?,
-            _ => return None,
+            _ => return self.printing.drop_form(win),
         };
         Some(DropForm { form, px })
     }
@@ -452,6 +471,7 @@ impl Extended for Paint {
         self.follow(ctx);
         let (dt, fpx) = (&self.dialog_text, self.forms.fonts.size_px);
         match win {
+            _ if self.printing.owns(win) => self.printing.access(win, tree, ctx),
             _ if self.prompt.owns(win) => self.prompt.access(tree, dt, &self.forms),
             DIALOG => {
                 if let Some((_, f)) = &self.dialog {

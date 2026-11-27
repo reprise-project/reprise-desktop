@@ -1187,3 +1187,15 @@ fn opened_and_saved_pictures_go_to_the_recent_files_as_paint_s() {
         );
     }
 }
+
+#[test]
+fn page_setup_and_print_sit_above_exit_in_the_file_menu() {
+    let file = &menu::menus()[menu::title::FILE].1;
+    let label = |r: usize| match &file[r] {
+        reprisekit::controls::menu::MenuItem::Entry { label, .. } => label.clone(),
+        _ => String::new(),
+    };
+    assert_eq!(label(menu::row::PAGE_SETUP), "Page Setup...");
+    assert_eq!(label(menu::row::PRINT), "Print...");
+    assert_eq!(label(menu::row::EXIT), "Exit");
+}
