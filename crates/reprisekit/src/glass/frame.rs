@@ -29,11 +29,12 @@ use std::sync::Mutex;
 
 use super::panel::{self, Corners, Ends, Glass};
 use super::tint::{self, Recolour, Surface};
-use super::{CORNER, Frame, Settings, art};
+use super::{CORNER, Frame, Settings, Style, art};
 use crate::backdrop::corner_radius;
 use crate::raster::{Canvas, Fill, Insets, Rect};
 use crate::shape::{self, Px, centre, mix, over, pack, smooth};
 use crate::style::{Layout, PartImage, State};
+use crate::theme::Color;
 
 /// The caption band's rows: outline, light line, 26 glass rows, the client's two edges.
 pub const BAND: i32 = 30;
@@ -368,11 +369,18 @@ fn caption_sheen(x: f64, y: f64, w: i32) -> f64 {
 
 /// What lies under the caption buttons (`super::buttons`): a caption band for
 /// one setting, unrounded and not yet opaque.
-pub(super) struct Under(Paint);
+pub(super) struct Under {
+    paint: Paint,
+    /// A maximized band's opaque colour, where it is drawn in one ([`onyx_band`]).
+    band: Option<u32>,
+}
 
 impl Under {
     pub(super) fn new(s: &Settings, surface: Surface) -> Under {
-        Under(Paint::new(s, surface))
+        Under {
+            paint: Paint::new(s, surface),
+            band: onyx_band(s).map(|[glass, ..]| glass),
+        }
     }
 
     /// The band `d` design px in from its right end at row `y`, both anywhere
@@ -380,9 +388,12 @@ impl Under {
     /// catching its extra), the light line on row 1. With `maximized`, a
     /// maximized band's plain glass.
     pub(super) fn at(&self, d: f64, y: f64, maximized: bool) -> Px {
-        let p = &self.0;
+        let p = &self.paint;
         if maximized {
-            return p.glass.at(0.0, 0.0);
+            return match self.band {
+                Some(px) => shape::unpack(px),
+                None => p.glass.at(0.0, 0.0),
+            };
         }
         let row = y.round() as i32;
         let mut sheen = CAPTION_SHEEN.at_point(d, y);
@@ -420,16 +431,52 @@ pub fn caption(s: &Settings, d: i32) -> PartImage {
 }
 
 /// A maximized window's caption band, [`MAX_BAND`] rows, Normal then Inactive,
-/// painted at `d`, stretched across.
+/// painted at `d`, stretched across. With `opaque_when_maximized` it is opaque:
+/// Onyx's [`ONYX_MAX_BAND`], Glass's glass with transparency off.
 pub fn max_caption(s: &Settings, d: i32) -> PartImage {
-    frames(s, (2, MAX_BAND), d, |p, _, y| {
+    let onyx = onyx_band(s);
+    frames(&maximized(s), (2, MAX_BAND), d, |p, _, y| {
         let ring = match MAX_BAND - 1 - y / d {
             0 => Ring::ClientDark,
             1 => Ring::ClientLight,
             _ => Ring::Glass,
         };
-        p.px(ring, 0.0)
+        match onyx {
+            Some([glass, light, dark]) => match ring {
+                Ring::ClientDark => dark,
+                Ring::ClientLight => light,
+                _ => glass,
+            },
+            None => p.px(ring, 0.0),
+        }
     })
+}
+
+/// Onyx's maximized band under `opaque_when_maximized`, focused or not: deep
+/// navy glass rows over the client's light and dark edges.
+pub const ONYX_MAX_BAND: [Color; 3] = [
+    Color::rgb(0x0C, 0x1F, 0x32),
+    Color::rgb(0x96, 0x9F, 0xA7),
+    Color::rgb(0x13, 0x1C, 0x24),
+];
+
+/// Whether `s` draws a maximized band in [`ONYX_MAX_BAND`].
+pub(super) fn onyx_max(s: &Settings) -> bool {
+    s.opaque_when_maximized && s.style == Style::Onyx
+}
+
+/// [`ONYX_MAX_BAND`] as opaque pixels when `s` draws it.
+fn onyx_band(s: &Settings) -> Option<[u32; 3]> {
+    onyx_max(s).then(|| ONYX_MAX_BAND.map(Color::argb))
+}
+
+/// The settings a maximized window's frame is drawn with: transparency off under
+/// `opaque_when_maximized`.
+pub fn maximized(s: &Settings) -> Settings {
+    Settings {
+        transparency: s.transparency && !s.opaque_when_maximized,
+        ..*s
+    }
 }
 
 /// A side border, [`SIDE`] px wide, Normal then Inactive, on the `right` or
@@ -530,7 +577,7 @@ pub fn client_glass(s: &Settings, d: i32) -> PartImage {
 /// A maximized window's glass under its top: [`max_caption`]'s plain glass, one design pixel
 /// stretched, Normal then Inactive, painted at `d`.
 pub fn max_client_glass(s: &Settings, d: i32) -> PartImage {
-    frames(s, (1, 1), d, |p, _, _| p.px(Ring::Glass, 0.0)).outset(client_outset())
+    frames(&maximized(s), (1, 1), d, |p, _, _| p.px(Ring::Glass, 0.0)).outset(client_outset())
 }
 
 /// How far in from each side the glass under a restored window's top turns from the side
@@ -1424,6 +1471,94 @@ mod tests {
             }
         }
         crate::pins::check("glass/frame_opaque", &got);
+    }
+
+    fn opaque_max(style: crate::glass::Style) -> Settings {
+        Settings {
+            style,
+            opaque_when_maximized: true,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn onyx_opaque_when_maximized_draws_the_maximized_band_in_navy() {
+        let s = opaque_max(crate::glass::Style::Onyx);
+        let [glass, light, dark] = ONYX_MAX_BAND.map(crate::theme::Color::argb);
+        for d in [1, 2] {
+            let max = max_caption(&s, d);
+            for state in [State::Normal, State::Inactive] {
+                assert_eq!(
+                    [0, MAX_BAND - 3, MAX_BAND - 2, MAX_BAND - 1].map(|y| at(
+                        &max,
+                        state,
+                        0,
+                        y * d
+                    )),
+                    [glass, glass, light, dark],
+                    "{state:?} at {d}: navy glass rows over the client's light and dark edges"
+                );
+            }
+            let group = crate::glass::buttons::max_caption_group(&s, d);
+            assert!(
+                group.atlas.pixels.contains(&glass),
+                "at {d}: the caption buttons stand on the navy band"
+            );
+            assert!(
+                (group.atlas.pixels.iter()).all(|p| p >> 24 == 0xFF || p >> 24 == 0),
+                "at {d}: the caption buttons are opaque"
+            );
+        }
+    }
+
+    #[test]
+    fn glass_opaque_when_maximized_draws_only_the_maximized_parts_with_transparency_off() {
+        let s = opaque_max(crate::glass::Style::Glass);
+        let off = Settings {
+            transparency: false,
+            ..Settings::default()
+        };
+        let on = Settings::default();
+        for d in [1, 2] {
+            assert_eq!(
+                fnv(&max_caption(&s, d)),
+                fnv(&max_caption(&off, d)),
+                "at {d}"
+            );
+            assert_eq!(
+                fnv(&max_client_glass(&s, d)),
+                fnv(&max_client_glass(&off, d)),
+                "at {d}"
+            );
+            assert_eq!(
+                fnv(&caption(&s, d)),
+                fnv(&caption(&on, d)),
+                "at {d}: restored stays glass"
+            );
+        }
+    }
+
+    #[test]
+    fn opaque_when_maximized_keeps_its_pixels() {
+        let mut got = Vec::new();
+        for style in crate::glass::Style::ALL {
+            for mode in Mode::ALL {
+                let s = Settings {
+                    mode,
+                    ..opaque_max(style)
+                };
+                for d in [1, 2] {
+                    for (name, img) in [
+                        ("max caption", max_caption(&s, d)),
+                        ("max client glass", max_client_glass(&s, d)),
+                        ("max group", crate::glass::buttons::max_caption_group(&s, d)),
+                    ] {
+                        got.push((format!("{style:?} {mode:?} {name} at {d}"), fnv(&img)));
+                    }
+                }
+            }
+        }
+        crate::pins::check("glass/frame_opaque_max", &got);
     }
 
     #[test]

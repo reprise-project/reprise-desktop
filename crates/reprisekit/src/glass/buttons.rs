@@ -1,6 +1,6 @@
 //! Glass caption buttons on the Rounded frame, drawn from the glass settings: the minimize/maximize/close strip, a dialog's close box, its ? box and a windowed dialog's minimize box.
 
-use super::frame::{BAND, Under};
+use super::frame::{self, BAND, Under};
 use super::glyph::{self, Glyph};
 use super::panel::Glass;
 use super::tint::{Recolour, Surface};
@@ -762,9 +762,15 @@ pub fn caption_group(s: &Settings, n: i32) -> PartImage {
     frames(s, &GROUP, &GROUP_FRAMES, false, (0, n))
 }
 
-/// The group on a maximized window, 105x19 (no row 0).
+/// The group on a maximized window, 105x19 (no row 0), drawn as its band ([`frame::maximized`]).
 pub fn max_caption_group(s: &Settings, n: i32) -> PartImage {
-    frames(s, &MAX_GROUP, &GROUP_FRAMES, true, (0, n))
+    frames(
+        &frame::maximized(s),
+        &MAX_GROUP,
+        &GROUP_FRAMES,
+        true,
+        (0, n),
+    )
 }
 
 pub fn dialog_close(s: &Settings, n: i32) -> PartImage {

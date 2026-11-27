@@ -198,10 +198,10 @@ pub const MATERIAL_ENV: &str = "REPRISE_GLASS_MATERIAL";
 
 /// `[glass]`: the colour, its intensity (0..100), translucency, `blur`, the
 /// reflection streaks, `fast_drag`, `blur_frames`, `blur_rate`, `orb_glow`,
-/// `mode`, `material`, `frame` and `style`. Opaque glass needs no backdrop.
-/// Defaults: Sky at 42, translucent, blur 2 with streaks, fast drag, frames
-/// behind glass shown, 30 re-blurs a second, full orb glow, light, Frosted,
-/// Rounded, Glass.
+/// `mode`, `material`, `frame`, `style` and `opaque_when_maximized`. Opaque
+/// glass needs no backdrop. Defaults: Sky at 42, translucent, blur 2 with
+/// streaks, fast drag, frames behind glass shown, 30 re-blurs a second, full
+/// orb glow, light, Frosted, Rounded, Glass, glass when maximized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Settings {
     pub color: Color,
@@ -230,6 +230,9 @@ pub struct Settings {
     pub frame: Frame,
     pub notification: NotifyStyle,
     pub style: Style,
+    /// A maximized window's frame is opaque ([`frame::maximized`]), and so is the taskbar of
+    /// an output showing one, which its host draws with [`opaque_bar`].
+    pub opaque_when_maximized: bool,
 }
 
 pub const BLUR_MAX: u8 = 5;
@@ -282,7 +285,17 @@ impl Default for Settings {
             frame: Frame::Rounded,
             notification: NotifyStyle::default(),
             style: Style::Glass,
+            opaque_when_maximized: false,
         }
+    }
+}
+
+/// The settings the taskbar of an output showing a maximized window is drawn with under
+/// `opaque_when_maximized`: `s` with transparency off.
+pub fn opaque_bar(s: &Settings) -> Settings {
+    Settings {
+        transparency: false,
+        ..*s
     }
 }
 
@@ -615,6 +628,15 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
         .with_notify(notify::look(s.mode))
         .with_flyout(flyouts::look(s.mode))
         .with_painted(Part::DesktopItem, move || items::desktop_part(scale))
+        .with_max_title_from(max_title(s))
+}
+
+/// A maximized frame's title over [`frame::ONYX_MAX_BAND`]: dark glass's white ink and black edge.
+fn max_title(s: &Settings) -> Option<([Color; 2], Option<TitleGlow>)> {
+    frame::onyx_max(s).then(|| {
+        let (ink, title) = caption_ink(Material::Smoked, Mode::Dark);
+        (ink, title.glow)
+    })
 }
 
 /// A group of control parts and the painter that draws them together at a scale.

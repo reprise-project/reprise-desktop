@@ -711,6 +711,7 @@ pub struct FileGlass {
     pub frame: Option<String>,
     pub notification_style: Option<String>,
     pub style: Option<String>,
+    pub opaque_when_maximized: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

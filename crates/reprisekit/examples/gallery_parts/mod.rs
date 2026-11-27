@@ -37,6 +37,11 @@ pub fn write_all(n: i32) {
             ),
         );
     }
+    let onyx_opaque = Settings {
+        style: reprisekit::glass::Style::Onyx,
+        opaque_when_maximized: true,
+        ..Settings::default()
+    };
     let glass = [
         ("sky", Settings::default()),
         (
@@ -52,6 +57,11 @@ pub fn write_all(n: i32) {
                 material: Material::Smoked,
                 ..Settings::default()
             },
+        ),
+        ("onyx-opaque", onyx_opaque),
+        (
+            "onyx-opaque-bar",
+            reprisekit::glass::opaque_bar(&onyx_opaque),
         ),
     ];
     for (name, s) in glass {

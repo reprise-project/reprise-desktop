@@ -189,6 +189,20 @@ pub fn small_bar(theme: &mut Theme, glass: &glass::Settings) {
     theme.look = Look::Styled(glass::small_bar_style(glass));
 }
 
+/// `theme`, Glass's as [`theme_with`] (and [`small_bar`] when `small`) built it from `glass`,
+/// with its taskbar over opaque glass ([`glass::opaque_bar`]).
+pub fn opaque_bar(theme: &Theme, glass: &glass::Settings, small: bool) -> Theme {
+    let g = glass::opaque_bar(glass);
+    let style = match small {
+        true => glass::small_bar_style(&g),
+        false => glass::style(&g),
+    };
+    Theme {
+        look: Look::Styled(style),
+        ..theme.clone()
+    }
+}
+
 fn styled(s: Arc<Style>) -> Theme {
     Theme {
         colors: s.colors.clone(),
@@ -467,6 +481,54 @@ pub fn draw_start_panel_backed(
 mod tests {
     use super::*;
     use crate::raster::Insets;
+
+    #[test]
+    fn an_opaque_bar_draws_its_taskbar_opaque_and_keeps_its_pixels() {
+        use crate::raster::{Canvas, Rect};
+        use crate::style::{Part, State};
+        let fnv = |px: &[u32]| {
+            px.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
+                p.to_le_bytes().iter().fold(h, |h, &b| {
+                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+                })
+            })
+        };
+        let mut got = Vec::new();
+        for style in glass::Style::ALL {
+            for small in [false, true] {
+                let g = glass::Settings {
+                    style,
+                    opaque_when_maximized: true,
+                    ..glass::Settings::default()
+                };
+                let mut base = theme_with(Interface::Glass, blue::Variant::default(), false, &g);
+                if small {
+                    small_bar(&mut base, &g);
+                }
+                let opaque = opaque_bar(&base, &g, small);
+                assert_eq!(opaque.metrics, base.metrics, "{style:?} small={small}");
+                for n in [1, 2] {
+                    let t = opaque.scaled(n);
+                    let (w, h) = (300 * n, base.metrics.taskbar_height * n);
+                    let mut c = Canvas::new(w as u32, h as u32);
+                    let st = t.look.style().unwrap();
+                    st.draw(
+                        &mut c,
+                        Rect::new(0, 0, w, h),
+                        Part::Taskbar,
+                        State::Normal,
+                        n,
+                    );
+                    assert!(
+                        c.pixels.iter().all(|p| p >> 24 == 0xFF),
+                        "{style:?} small={small} at {n}: opaque"
+                    );
+                    got.push((format!("{style:?} small={small} at {n}"), fnv(&c.pixels)));
+                }
+            }
+        }
+        crate::pins::check("glass/bar_opaque_max", &got);
+    }
 
     #[test]
     fn each_interface_has_its_own_default_wallpaper() {

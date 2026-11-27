@@ -183,11 +183,11 @@ fn draw_title(
         geom.caption.height,
     );
     let shown = caption_text.ellipsize(state.title, title_rect.width, spec.bold, size);
-    let ink = if state.active {
-        spec.color
-    } else {
-        spec.inactive
+    let ([focused, unfocused], glow) = match style.max_title.filter(|_| state.maximized) {
+        Some(max) => max,
+        None => ([spec.color, spec.inactive], t.glow),
     };
+    let ink = if state.active { focused } else { unfocused };
     let run = if translucent {
         let baseline = match t.baseline {
             Some(b) => Some(
@@ -210,8 +210,8 @@ fn draw_title(
     };
     let title = run
         .as_ref()
-        .and_then(|run| TitleMask::render(canvas, run, geom, t.glow.as_ref(), s, m));
-    if let (Some(title), Some(glow)) = (&title, t.glow) {
+        .and_then(|run| TitleMask::render(canvas, run, geom, glow.as_ref(), s, m));
+    if let (Some(title), Some(glow)) = (&title, glow) {
         title.glow(canvas, &glow, state.active);
     }
 
@@ -1206,6 +1206,46 @@ mod tests {
             crate::pins::skipped("none of Segoe UI, Noto Sans or DejaVu Sans is installed");
         }
         found
+    }
+
+    #[test]
+    fn onyx_opaque_when_maximized_draws_a_white_title_on_the_navy_band() {
+        if !glass_title_face() {
+            return;
+        }
+        let s = crate::glass::Settings {
+            style: crate::glass::Style::Onyx,
+            opaque_when_maximized: true,
+            ..crate::glass::Settings::default()
+        };
+        let theme = crate::theme::Theme {
+            look: crate::paint::Look::Styled(crate::glass::style(&s)),
+            ..theme_for(Interface::Glass)
+        };
+        let style = theme.look.style().unwrap();
+        let text = TextRenderer::load(&style.caption_text.font());
+        let navy = crate::glass::frame::ONYX_MAX_BAND[0].argb();
+        for maximized in [true, false] {
+            let g = FrameGeometry::layout(&theme.metrics, 400, 200, maximized, Chrome::WINDOW);
+            let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+            let st = FrameState {
+                title: "UU",
+                ..state(true, maximized)
+            };
+            draw_frame(&mut c, style, &theme, &text, &g, &st);
+            assert_eq!(
+                c.get(200, 4) == navy,
+                maximized,
+                "maximized {maximized}: the band is navy"
+            );
+            if maximized {
+                let white = (20..60)
+                    .flat_map(|x| (0..30).map(move |y| (x, y)))
+                    .filter(|&(x, y)| c.get(x, y).to_be_bytes().iter().all(|&v| v >= 0xE0))
+                    .count();
+                assert!(white > 4, "the title is white, {white} white pixels");
+            }
+        }
     }
 
     fn ink_box(c: &Canvas, x0: i32, x1: i32) -> Option<(i32, i32, i32, i32)> {
