@@ -511,10 +511,12 @@ fn pager_pushes_the_current_desktop_and_marks_attention() {
             PagerButton {
                 current: true,
                 attention: false,
+                occupied: false,
             },
             PagerButton {
                 current: false,
                 attention: true,
+                occupied: false,
             },
             PagerButton::default(),
         ],
@@ -1035,6 +1037,7 @@ fn classic_bar_on(edge: Edge, chevron: bool) -> (Canvas, TaskbarLayout) {
             PagerButton {
                 current: true,
                 attention: false,
+                occupied: false,
             },
             PagerButton::default(),
         ],
@@ -1319,6 +1322,7 @@ fn classic_side_with(
             PagerButton {
                 current: true,
                 attention: false,
+                occupied: false,
             },
             PagerButton::default(),
         ],

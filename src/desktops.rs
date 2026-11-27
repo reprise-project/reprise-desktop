@@ -61,6 +61,9 @@ pub fn wheel_target(d: Desktops, steps: i32) -> Option<usize> {
 }
 
 /// Which of `count` desktops hold a window asking for attention, other than `current`, whose own taskbar shows it. `windows` gives each window's desktop (None: all) and attention flag.
+/// The window titles a pager tip lists at most.
+pub const PAGER_TIP_WINDOWS: usize = 10;
+
 pub fn attention(
     count: usize,
     current: usize,
@@ -343,14 +346,40 @@ impl State {
             .iter()
             .filter(|w| w.mapped && w.attention.is_some())
             .map(|w| (self.desktop_of(w.id), true));
+        let mut occupied = vec![false; d.count];
+        for w in self.windows.iter().filter(|w| self.has_task_button(w)) {
+            if let Some(slot) = self.desktop_of(w.id).and_then(|n| occupied.get_mut(n)) {
+                *slot = true;
+            }
+        }
         attention(d.count, d.current, asks)
             .into_iter()
+            .zip(occupied)
             .enumerate()
-            .map(|(i, attention)| reprisekit::taskbar::PagerButton {
-                current: i == d.current,
-                attention,
-            })
+            .map(
+                |(i, (attention, occupied))| reprisekit::taskbar::PagerButton {
+                    current: i == d.current,
+                    attention,
+                    occupied,
+                },
+            )
             .collect()
+    }
+
+    /// The pager tip of desktop `n`: its name, then the title of each window it holds (one with a
+    /// task button, not on every desktop), the first [`PAGER_TIP_WINDOWS`] of them.
+    pub fn pager_tip(&self, n: usize) -> String {
+        let titles: Vec<String> = (self.windows.iter())
+            .filter(|w| self.has_task_button(w) && self.desktop_of(w.id) == Some(n))
+            .map(|w| crate::winmenu::short_title(w.title()))
+            .collect();
+        let mut lines = vec![self.desktop_name(n)];
+        lines.extend(titles.iter().take(PAGER_TIP_WINDOWS).cloned());
+        if titles.len() > PAGER_TIP_WINDOWS {
+            let count = titles.len() - PAGER_TIP_WINDOWS;
+            lines.push(reprisekit::tr!("bar-tip-pager-more", count = count));
+        }
+        lines.join("\n")
     }
 }
 

@@ -424,6 +424,7 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
                 PagerButton {
                     current: true,
                     attention: false,
+                    occupied: true,
                 },
             ],
             pager_hot: None,

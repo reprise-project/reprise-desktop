@@ -276,6 +276,8 @@ bar-tip-hide = Hide
 bar-tip-show-hidden-icons = Show hidden icons
 bar-tip-start = Click here to begin
 bar-tip-show-desktop = Show desktop
+# Ends a desktop's tip past the windows it lists.
+bar-tip-pager-more = and { $count } more
 bar-tip-more-windows = Show more windows
 bar-tip-network-speed = Network speed
 

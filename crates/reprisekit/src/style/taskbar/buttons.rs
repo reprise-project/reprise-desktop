@@ -286,6 +286,15 @@ pub(super) fn pager_tile_rect(r: Rect, s: i32) -> Rect {
 /// Ink alpha (70%) of a pager number for a desktop other than the current one.
 pub(super) const PAGER_DIM: u32 = 0xB3;
 
+/// A pager cell's dot `dot` in `ink` at `alpha`, laid over the bar.
+pub(super) fn draw_pager_dot(canvas: &mut Canvas, dot: Rect, ink: Color, alpha: u32) {
+    let cs = canvas.scale();
+    let (w, h) = ((dot.width * cs) as usize, (dot.height * cs) as usize);
+    let mask = vec![alpha.min(255) as u8; w * h];
+    let all = canvas.bounds();
+    canvas.blit_mask_over(dot.x * cs, dot.y * cs, w, h, &mask, ink, all);
+}
+
 /// `label` centred in `r` in `ink` at `alpha`; its colour glyphs keep their colours at that alpha.
 pub(super) fn draw_dimmed_number(
     canvas: &mut Canvas,

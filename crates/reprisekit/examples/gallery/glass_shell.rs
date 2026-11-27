@@ -505,6 +505,7 @@ pub fn render_glass_task_rows() -> Canvas {
                     .map(|i| PagerButton {
                         current: i == 1,
                         attention: false,
+                        occupied: i < 3,
                     })
                     .collect(),
                 None => vec![],

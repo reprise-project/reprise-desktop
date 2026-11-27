@@ -320,6 +320,7 @@ fn on_a_top_bar_the_glass_pager_lights_the_current_desktop_at_its_top() {
         .map(|i| PagerButton {
             current: i == 1,
             attention: false,
+            occupied: false,
         })
         .collect();
     st.pager_mark = PagerMark::Light;

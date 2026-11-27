@@ -2142,6 +2142,15 @@ fn a_window_framed_by_its_client_without_a_button_unmapping_by_a_null_buffer_ask
 #[test]
 fn a_window_framed_by_its_client_without_a_button_whose_client_exits_asks_its_output() {
     let (mut h, c, t) = framed_by_client_without_a_button();
+    // Another program's window keeps desktop 2 held, so no pager changes as the client's go.
+    let mut other = h.connect();
+    let keep = h.map_toplevel(&mut other, "other", 300, 200);
+    h.state.move_to(keep.id, 1200, 50);
+    h.state.move_to_desktop(&[keep.id], 1);
+    h.run_for(600);
+    h.show_frames();
+    crate::backend::take_asks();
+    crate::backend::take_scene_outputs();
     c.hang_up();
     h.run_for(50);
     assert!(h.state.win(t.id).is_none());

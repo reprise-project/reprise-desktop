@@ -234,6 +234,7 @@ fn pager_bar(
         .map(|i| crate::taskbar::PagerButton {
             current: i == 1,
             attention: false,
+            occupied: false,
         })
         .collect();
     st.pager_hot = hot;

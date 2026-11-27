@@ -300,7 +300,15 @@ pub fn move_to_screen_menu(
         .unzip()
 }
 
-/// A row per window in `targets`, titled (cut at 48 characters) with its icon, each joining that window's group.
+/// Window title `title` cut at 48 characters, as a menu row or a tip lists it.
+pub fn short_title(title: String) -> String {
+    match title.char_indices().nth(48) {
+        Some((i, _)) => format!("{}...", &title[..i]),
+        None => title,
+    }
+}
+
+/// A row per window in `targets`, titled ([`short_title`]) with its icon, each joining that window's group.
 pub fn tabs_of_menu(
     targets: Vec<(
         crate::window::WindowId,
@@ -311,12 +319,8 @@ pub fn tabs_of_menu(
     targets
         .into_iter()
         .map(|(w, title, icon)| {
-            let label = match title.char_indices().nth(48) {
-                Some((i, _)) => format!("{}...", &title[..i]),
-                None => title,
-            };
             (
-                MenuItem::entry(label).icon(icon),
+                MenuItem::entry(short_title(title)).icon(icon),
                 Some(WindowMenuRow::TabsOf(w)),
             )
         })
