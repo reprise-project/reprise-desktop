@@ -2219,7 +2219,15 @@ impl repriseapp::Extended for Lazy {
         self.inner.as_ref().and_then(|ex| ex.min_size(win))
     }
 
+    /// The main window shows the icon of the place it shows, as the address bar does.
     fn window_icon(&self, win: WinId) -> Option<&'static str> {
+        if win == MAIN {
+            let place = self
+                .inner
+                .as_ref()
+                .map_or(&self.start.place, |ex| &ex.place);
+            return Some(place.icon_name());
+        }
         let b = self.inner.as_ref()?.bin_props.as_ref()?;
         (win == bin_props::BIN_PROPS).then(|| b.icon())
     }

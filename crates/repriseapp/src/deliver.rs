@@ -318,6 +318,15 @@ impl Host {
                 send_tag(tags.as_ref(), w, tag);
             }
         }
+        let icon = self.app.window_icon(MAIN);
+        let (icons, qh) = (self.icon_manager.clone(), self.qh.clone());
+        if let Some(s) = self.slot_mut(MAIN)
+            && s.icon != icon
+            && let Some(w) = s.window.toplevel()
+        {
+            s.icon = icon;
+            crate::windows::send_icon(icons.as_ref(), &qh, w, icon);
+        }
         if let Some(text) = reply.copy {
             self.copy(text);
         }

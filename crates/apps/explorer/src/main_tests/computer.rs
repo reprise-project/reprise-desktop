@@ -1010,3 +1010,37 @@ fn a_relabel_refusal_reads_in_words() {
     assert_eq!(text("vfat", ""), "Cannot rename STICK.");
     assert_eq!(text("vfat", "Invalid label"), "Cannot rename STICK.");
 }
+
+#[test]
+fn the_main_window_icon_is_the_shown_places() {
+    use repriseapp::Extended;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let ex = test_explorer(Place::Computer, &mut ctx);
+    let mut app = Lazy {
+        start: Start {
+            place: Place::Computer,
+            dir: None,
+            select: Vec::new(),
+            alone: None,
+            connect: None,
+            search: false,
+            tabs: None,
+        },
+        inner: None,
+        units: TextUnits::ONE,
+    };
+    assert_eq!(
+        app.window_icon(MAIN),
+        Some("computer"),
+        "before the window loads"
+    );
+    app.inner = Some(ex);
+    assert_eq!(app.window_icon(MAIN), Some("computer"));
+    let ex = app.inner.as_mut().expect("the window");
+    ex.go(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    assert_eq!(app.window_icon(MAIN), Some("folder"));
+    let ex = app.inner.as_mut().expect("the window");
+    ex.go(Place::Computer, &mut ctx);
+    assert_eq!(app.window_icon(MAIN), Some("computer"), "back at Computer");
+}

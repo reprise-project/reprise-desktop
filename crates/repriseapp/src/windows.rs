@@ -17,6 +17,7 @@ use smithay_client_toolkit::reexports::protocols::xdg::{
     dialog::v1::client::{xdg_dialog_v1, xdg_wm_dialog_v1},
     foreign::{zv1::client::zxdg_imported_v1, zv2::client::zxdg_imported_v2},
     shell::client::xdg_toplevel,
+    toplevel_icon::v1::client::xdg_toplevel_icon_manager_v1,
     toplevel_tag::v1::client::xdg_toplevel_tag_manager_v1,
 };
 use smithay_client_toolkit::{
@@ -124,11 +125,8 @@ impl Host {
         if !tag.is_empty() {
             send_tag(self.tag_manager.as_ref(), window, &tag);
         }
-        if let (Some(m), Some(name)) = (&self.icon_manager, self.app.window_icon(id)) {
-            let icon = m.create_icon(&self.qh, NoEvents);
-            icon.set_name(wire::text(name).into());
-            m.set_icon(window.xdg_toplevel(), Some(&icon));
-            icon.destroy();
+        if let Some(name) = self.app.window_icon(id) {
+            send_icon(self.icon_manager.as_ref(), &self.qh, window, Some(name));
         }
     }
 
@@ -230,6 +228,7 @@ impl Host {
             tip: None,
             tip_waits: false,
             reopen: None,
+            icon: self.app.window_icon(id),
         }
     }
 
@@ -939,6 +938,28 @@ pub(crate) fn send_tag(
 ) {
     if let Some(m) = manager {
         m.set_toplevel_tag(window.xdg_toplevel(), wire::text(tag).into());
+    }
+}
+
+/// Sets `window`'s xdg-toplevel-icon to theme icon `name`; None unsets it, so the app id's
+/// icon shows again. The compositor applies it at the window's next commit.
+pub(crate) fn send_icon(
+    manager: Option<&xdg_toplevel_icon_manager_v1::XdgToplevelIconManagerV1>,
+    qh: &QueueHandle<Host>,
+    window: &Window,
+    name: Option<&str>,
+) {
+    let Some(m) = manager else {
+        return;
+    };
+    let icon = name.map(|name| {
+        let icon = m.create_icon(qh, NoEvents);
+        icon.set_name(wire::text(name).into());
+        icon
+    });
+    m.set_icon(window.xdg_toplevel(), icon.as_ref());
+    if let Some(icon) = icon {
+        icon.destroy();
     }
 }
 

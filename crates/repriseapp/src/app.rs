@@ -113,7 +113,8 @@ pub trait Extended {
         false
     }
     /// The icon theme name window `win` shows in its caption and on its task button in place of
-    /// the program's, sent through xdg-toplevel-icon when the window is made.
+    /// the program's, sent through xdg-toplevel-icon when the window is made. The main window's
+    /// is read again after every event and sent when it changes.
     fn window_icon(&self, _win: WinId) -> Option<&'static str> {
         None
     }
