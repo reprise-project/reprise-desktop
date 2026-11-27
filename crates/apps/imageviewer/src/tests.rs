@@ -766,6 +766,7 @@ fn page_setup_and_print_sit_above_exit_in_the_file_menu() {
         _ => String::new(),
     };
     assert_eq!(label(menu::row::PAGE_SETUP), "Page Setup...");
+    assert_eq!(label(menu::row::PREVIEW), "Print Preview...");
     assert_eq!(label(menu::row::PRINT), "Print...");
     assert_eq!(label(menu::row::EXIT), "Exit");
 }

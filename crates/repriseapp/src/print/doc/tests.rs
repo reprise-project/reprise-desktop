@@ -213,3 +213,39 @@ fn an_icon_prints_at_its_own_size_unless_page_setup_fits_it() {
         "fitted between 20 mm margins"
     );
 }
+
+#[test]
+fn print_preview_draws_the_pages_print_sends() {
+    let lines: Vec<String> = (0..150).map(|i| format!("line {i} of the notes")).collect();
+    let s = PageSetup {
+        header: "&f".into(),
+        footer: "Page &p".into(),
+        ..a4(20 * MM)
+    };
+    let doc = || Doc::Text {
+        font: mono(12),
+        lines: lines.clone(),
+    };
+    let laid = Laid::new(doc(), s.clone(), "notes.txt");
+    assert!(laid.pages() >= 3, "{} pages", laid.pages());
+    let again = Laid::new(doc(), s, "notes.txt");
+    assert_eq!(
+        again.rows, laid.rows,
+        "the same document cuts into the same pages"
+    );
+    let mut printed = Vec::new();
+    laid.render(Range::All, |p| printed.push((p.image, p.at)));
+    let mut previewed = Vec::new();
+    for i in 0..laid.pages() {
+        laid.draw(Range::Pages(i + 1, i + 1), |n, c, at| {
+            assert_eq!(n, i, "page {i} is the page asked for");
+            let p = page(laid.setup(), c, at);
+            previewed.push((p.image, p.at));
+        });
+    }
+    assert_eq!(previewed.len(), printed.len());
+    assert!(
+        previewed == printed,
+        "every page drawn alike and in the same place"
+    );
+}

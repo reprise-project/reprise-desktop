@@ -131,6 +131,13 @@ impl Laid {
 
     /// The pages `range` covers, drawn one after the other and each handed to `out` deflated.
     pub fn render(&self, range: Range, mut out: impl FnMut(pdf::Page)) {
+        self.draw(range, |_, c, at| out(page(&self.setup, c, at)));
+    }
+
+    /// The pages `range` covers, drawn one after the other at [`DPI`]: each page's number from
+    /// 0, its drawing and where that goes on the page (hundredths of a millimetre) handed to
+    /// `out`, then dropped. Printing and Print Preview both draw their pages here.
+    pub fn draw(&self, range: Range, mut out: impl FnMut(u32, &Canvas, Rect)) {
         let b = self.setup.body();
         match &self.doc {
             Doc::Text { font, lines } => {
@@ -150,7 +157,7 @@ impl Laid {
                     };
                     if !framed {
                         let raw = Raw::new(printpage::draw_text_page(face, &m, lines, rows, size));
-                        out(page(s, &raw.0, b));
+                        out(i, &raw.0, b);
                         continue;
                     }
                     let stamp = Stamp {
@@ -169,7 +176,7 @@ impl Laid {
                         &header,
                         &footer,
                     ));
-                    out(page(s, &raw.0, Rect::new(b.x, 0, b.width, s.size().1)));
+                    out(i, &raw.0, Rect::new(b.x, 0, b.width, s.size().1));
                 }
             }
             Doc::Picture { picture, turns, .. } => {
@@ -177,7 +184,7 @@ impl Laid {
                 let at = self.picture_at;
                 let drawn = fitted(size, at);
                 let raw = Raw::new(imageview::render(picture, *turns, drawn));
-                out(page(&self.setup, &raw.0, at));
+                out(0, &raw.0, at);
             }
         }
     }

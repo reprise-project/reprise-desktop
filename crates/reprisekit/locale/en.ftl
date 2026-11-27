@@ -118,6 +118,19 @@ printdlg-bad-range = Enter pages from 1 to { $pages }, the first no later than t
 # most is a whole number of pages.
 printdlg-too-many = Reprise prints at most { $most } pages at a time. Pick Pages and print the document in parts.
 
+## Print Preview
+printpreview-title = Print Preview
+printpreview-print = &Print...
+printpreview-next = &Next Page
+printpreview-previous = Pre&v Page
+printpreview-zoom-in = Zoom &In
+printpreview-zoom-out = Zoom &Out
+printpreview-close = &Close
+# page and pages are numbers: the page shown and the document's pages.
+printpreview-page = Page { $page } of { $pages }
+printpreview-laying-out = Laying out the pages...
+printpreview-drawing = Drawing the page...
+
 ## The file dialog
 filedlg-look-in = Look &in:
 filedlg-file-name = File &name:

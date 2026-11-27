@@ -77,6 +77,7 @@ pub mod perfgraph;
 pub mod placesbar;
 pub mod printdlg;
 pub mod printpage;
+pub mod printpreview;
 pub mod projector;
 pub mod propsheet;
 pub mod rebar;

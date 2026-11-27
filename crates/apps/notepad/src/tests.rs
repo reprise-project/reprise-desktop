@@ -65,6 +65,7 @@ fn menu_constants_point_at_their_rows() {
     assert_eq!(label_at(title::FILE, row::SAVE), "Save");
     assert_eq!(label_at(title::FILE, row::EXIT), "Exit");
     assert_eq!(label_at(title::FILE, row::PAGE_SETUP), "Page Setup...");
+    assert_eq!(label_at(title::FILE, row::PREVIEW), "Print Preview...");
     assert_eq!(label_at(title::FILE, row::PRINT), "Print...");
     assert_eq!(label_at(title::EDIT, row::UNDO), "Undo");
     assert_eq!(label_at(title::EDIT, row::FIND), "Find...");
