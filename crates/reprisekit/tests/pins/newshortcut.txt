@@ -1,12 +1,18 @@
 Classic Target 1 e9ed2964c34ab97c
 Classic Name 1 34516d17c4c7fcad
+Classic Name refused 1 3d6fa1642ceae935
 Classic Target 2 f0b7f1691cd2a640
 Classic Name 2 63d0c2eb0a5f6634
+Classic Name refused 2 7941d754969cdf75
 Blue Target 1 b3341ded19aa6b39
 Blue Name 1 f6c9d963b89f4833
+Blue Name refused 1 c07546207a93d2cb
 Blue Target 2 db0284a83184603b
 Blue Name 2 97f267f1cecd48d9
+Blue Name refused 2 fcde55965b89db2c
 Glass Target 1 cb2070be23ce7573
 Glass Name 1 d176aafc7fd4c9b4
+Glass Name refused 1 2b79ccb28daefd4e
 Glass Target 2 1c68910899922923
 Glass Name 2 cbbb89a5a1641142
+Glass Name refused 2 987f8b70a2dfe277

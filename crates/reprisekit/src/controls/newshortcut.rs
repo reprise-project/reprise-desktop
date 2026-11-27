@@ -35,6 +35,7 @@ const LIST_H: i32 = 116;
 /// Two lines under the list for why Next found nothing.
 const PROBLEM: &str = "problem";
 const PROBLEM_Y: i32 = LIST_Y + LIST_H + 6;
+const NAME_PROBLEM_Y: i32 = LIST_LABEL_Y + 2 * LINE_H;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -189,6 +190,11 @@ impl NewShortcut {
                         body.width,
                         &[&tr!("newshortcut-click-finish-to-create-the-shortcut")],
                     ),
+                    Item::lines(
+                        PROBLEM,
+                        Rect::new(body.x, NAME_PROBLEM_Y, body.width, 2 * LINE_H),
+                        &[name_problem(&self.name).as_str()],
+                    ),
                 ];
                 let style = Style::Interior {
                     title: tr!("newshortcut-name-the-shortcut"),
@@ -318,6 +324,7 @@ impl NewShortcut {
             }
             wizard::Event::Page(form::Event::Changed(NAME)) => {
                 self.name = self.wizard.form.edit_text(NAME).to_string();
+                (self.wizard.form).set_lines(PROBLEM, &[name_problem(&self.name)]);
                 self.gate();
                 Outcome::Redraw
             }
@@ -335,8 +342,17 @@ impl NewShortcut {
 
 /// A name a launcher file can take: something past the blanks, and no `/`.
 fn valid_name(name: &str) -> bool {
-    let name = name.trim();
-    !name.is_empty() && !name.contains('/') && name != "." && name != ".."
+    !name.trim().is_empty() && name_problem(name).is_empty()
+}
+
+/// Why the name page greys Finish for `name`, shown under the field; empty for a usable name
+/// or a blank one, which the field's label already asks to fill.
+fn name_problem(name: &str) -> String {
+    match name.trim() {
+        n if n.contains('/') => tr!("newshortcut-name-has-a-slash"),
+        "." | ".." => tr!("newshortcut-name-is-dots"),
+        _ => String::new(),
+    }
 }
 
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &NewShortcut, cues: bool, px: u32) {
@@ -439,10 +455,27 @@ mod tests {
         w.named("htop", &theme);
         assert_eq!((w.page, w.name()), (Page::Name, "htop"));
         assert!(next_live(&w));
-        for bad in ["", "   ", "a/b", ".."] {
+        let problem = |w: &NewShortcut| match &w.wizard.form.item(PROBLEM).unwrap().control {
+            Control::Lines(l) => l.join(" "),
+            _ => panic!("the problem lines"),
+        };
+        for (bad, why) in [
+            ("", ""),
+            ("   ", ""),
+            ("a/b", "A name cannot contain a slash (/)."),
+            ("..", "A name cannot be . or .. alone."),
+        ] {
             type_in(&mut w, NAME, bad, &theme);
             assert!(!next_live(&w), "{bad:?} greys Finish");
+            assert_eq!(problem(&w), why, "the line under the field for {bad:?}");
         }
+        w.named("https:--example.com/a", &theme);
+        assert!(!next_live(&w), "an offered name with a slash greys Finish");
+        assert_eq!(
+            problem(&w),
+            "A name cannot contain a slash (/).",
+            "and says why"
+        );
         type_in(&mut w, NAME, "Task Viewer", &theme);
         assert_eq!(
             w.event(form::Event::Pressed(wizard::NEXT), &theme),
@@ -470,6 +503,8 @@ mod tests {
             let mut out = vec![("Target".to_string(), w.wizard.form.clone())];
             w.named("Notepad", theme);
             out.push(("Name".to_string(), w.wizard.form.clone()));
+            w.named("a/b", theme);
+            out.push(("Name refused".to_string(), w.wizard.form.clone()));
             out
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
@@ -514,6 +549,8 @@ mod tests {
                 draw_page(&w, "Target");
                 w.named("Notepad", &theme);
                 draw_page(&w, "Name");
+                w.named("a/b", &theme);
+                draw_page(&w, "Name refused");
             }
         }
         crate::pins::check("newshortcut", &got);
