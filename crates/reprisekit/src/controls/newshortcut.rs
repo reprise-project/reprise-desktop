@@ -136,7 +136,7 @@ impl NewShortcut {
                     Item::button(
                         BROWSE,
                         Rect::new(BROWSE_X, FIELD_Y, BUTTON_W, BUTTON_H),
-                        "B&rowse...",
+                        &tr!("newshortcut-browse"),
                         true,
                         false,
                     ),
