@@ -10,6 +10,7 @@ use reprisekit::controls::combo::{self, Combo, ListItem};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
+use reprisekit::{kit_tr, tr};
 use zeroize::Zeroizing;
 
 use crate::helper::{Prompt, Tag};
@@ -45,11 +46,19 @@ const OK_X: i32 = 208;
 /// 4 px between these two, not the usual 6.
 const CANCEL_X: i32 = 287;
 
-pub const FAILED: &str = "The user name or password is incorrect.";
+pub fn failed() -> String {
+    tr!("run-as-failed")
+}
+
 /// The status area's first line while Caps Lock is on.
-pub const CAPS_LOCK: &str = "Caps Lock is on.";
+fn caps_lock() -> String {
+    tr!("run-as-caps-lock")
+}
+
 /// The label of [`Prompt::password`], with its access key.
-const PASSWORD_LABEL: &str = "&Password:";
+fn password_label() -> String {
+    tr!("run-as-password")
+}
 
 /// Rows the block under the message shifts down by: one per line past two.
 fn extra_rows(lines: usize) -> i32 {
@@ -139,12 +148,12 @@ impl RunAs {
             Item::label(
                 "following",
                 Rect::new(FOLLOWING_X, FOLLOWING_Y + extra, 200, LINE_H),
-                "The following user:",
+                &tr!("run-as-following-user"),
             ),
             Item::label(
                 "user_l",
                 Rect::new(LABEL_X, COMBO_Y + extra + LABEL_DY, 100, LINE_H),
-                "&User name:",
+                &tr!("run-as-user-name"),
             ),
             Item::new(
                 "user",
@@ -154,7 +163,7 @@ impl RunAs {
             Item::label(
                 "password_l",
                 Rect::new(LABEL_X, EDIT_Y + extra + LABEL_DY, 100, LINE_H),
-                PASSWORD_LABEL,
+                &password_label(),
             ),
             Item::new(
                 "password",
@@ -180,14 +189,14 @@ impl RunAs {
             Item::button(
                 "ok",
                 Rect::new(OK_X, BTN_Y + extra, BUTTON_W, BUTTON_H),
-                "OK",
+                &kit_tr!("ok"),
                 false,
                 true,
             ),
             Item::button(
                 "cancel",
                 Rect::new(CANCEL_X, BTN_Y + extra, BUTTON_W, BUTTON_H),
-                "Cancel",
+                &kit_tr!("cancel"),
                 true,
                 false,
             ),
@@ -260,7 +269,7 @@ impl RunAs {
     pub fn fail(&mut self, pam_text: Option<&str>) {
         self.set_busy(false);
         self.take_password();
-        self.set_status(pam_text.unwrap_or(FAILED));
+        self.set_status(pam_text.unwrap_or(&failed()));
         self.form.focus_id("password");
     }
 
@@ -269,7 +278,7 @@ impl RunAs {
     /// shown prompt (`ask`) makes it plain, so a stale or forged memory never shows a password.
     pub fn open(&mut self, prompt: &Prompt) {
         let label = if *prompt == Prompt::password() {
-            PASSWORD_LABEL.into()
+            password_label()
         } else {
             reprisekit::text::escape_mnemonic(&prompt.text)
         };
@@ -357,10 +366,10 @@ impl RunAs {
     fn show_status(&mut self) {
         match (self.caps_lock, self.status.is_empty()) {
             (false, _) => self.form.set_text("status", &self.status),
-            (true, true) => self.form.set_text("status", CAPS_LOCK),
+            (true, true) => self.form.set_text("status", &caps_lock()),
             (true, false) => self
                 .form
-                .set_lines("status", &[CAPS_LOCK.into(), self.status.clone()]),
+                .set_lines("status", &[caps_lock(), self.status.clone()]),
         }
     }
 
@@ -572,7 +581,7 @@ mod tests {
         let mut d = dialog(&["root"]);
         assert_eq!(label(&d), "&Password:");
         assert_eq!(
-            reprisekit::text::split_mnemonic(PASSWORD_LABEL).0,
+            reprisekit::text::split_mnemonic(&password_label()).0,
             Prompt::password().text
         );
         let code = Prompt {
@@ -590,11 +599,11 @@ mod tests {
     fn caps_lock_puts_its_notice_above_the_status() {
         let mut d = dialog(&["root"]);
         d.set_caps_lock(true);
-        assert_eq!(d.status_lines(), [CAPS_LOCK]);
+        assert_eq!(d.status_lines(), [caps_lock()]);
         d.fail(None);
-        assert_eq!(d.status_lines(), [CAPS_LOCK, FAILED]);
+        assert_eq!(d.status_lines(), [caps_lock(), failed()]);
         d.set_caps_lock(false);
-        assert_eq!(d.status_lines(), [FAILED]);
+        assert_eq!(d.status_lines(), [failed()]);
         d.set_status("");
         assert_eq!(d.status_lines(), [""]);
     }
@@ -608,7 +617,7 @@ mod tests {
         d.fail(None);
         assert_eq!(d.password(), "");
         assert!(!button_enabled(&d, "ok"));
-        assert_eq!(d.status(), FAILED);
+        assert_eq!(d.status(), failed());
         assert_eq!(d.form.focus(), d.form.index_of("password"));
         d.set_status("Try again");
         assert_eq!(d.status(), "Try again");
@@ -682,7 +691,7 @@ mod tests {
         let message = "Authentication is required to mount Kingston DataTraveler 3.0 \
             (/dev/sdc1) referenced in the /etc/fstab file as a removable drive";
         let statuses = [
-            FAILED,
+            &failed(),
             "The account is locked due to 3 failed logins.",
             "(9 minutes left to unlock)",
             "Place your finger on the fingerprint reader",
