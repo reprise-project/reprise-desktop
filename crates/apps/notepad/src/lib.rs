@@ -240,7 +240,7 @@ impl Notepad {
         let px = ((px * self.zoom + 50) / 100).max(1);
         self.metrics.font_px = px;
         self.metrics.bold = self.settings.bold;
-        self.metrics.line_h = px as i32;
+        self.metrics.line_h = Metrics::for_font(self.mono.get(), px).line_h;
     }
 
     /// Whether the edit draws as focused: its window, or its open Find or Replace window, holds

@@ -676,6 +676,7 @@ fn a_selection_drag_held_below_the_edit_scrolls_on_ticks_until_released() {
     let mut ctx = test_ctx();
     let mut np = Notepad::new(None);
     np.edit = MultiEdit::new(&"line\n".repeat(200));
+    np.follow(&ctx);
     let lay = np.edit_layout(&ctx);
     let x = lay.inner.x + 20;
     np.pointer(
@@ -1037,6 +1038,17 @@ fn dialogs_grow_with_the_text_size() {
     let size = |id| np.children().into_iter().find(|c| c.id == id).unwrap().size;
     assert_eq!(size(FIND), (547, 158));
     assert_eq!(size(GOTO), (414, 147));
+}
+
+/// Rows are as tall as the edit font's line, so an accent over a capital clears the row above:
+/// DejaVu Sans Mono's line at 13 px is 15 px.
+#[test]
+fn rows_are_as_tall_as_the_edit_fonts_line() {
+    reprisekit::pins::fonts();
+    let mut np = Notepad::new(None);
+    np.follow(&test_ctx());
+    assert_eq!(np.metrics.font_px, EDIT_PX);
+    assert_eq!(np.metrics.line_h, 15);
 }
 
 #[test]
