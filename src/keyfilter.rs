@@ -15,6 +15,8 @@ use smithay::{
     },
 };
 
+use reprisekit::tr;
+
 use crate::compositor::State;
 use crate::config::AccessibilityConfig;
 use crate::inputproto::InputSource;
@@ -63,21 +65,19 @@ impl Aid {
         ["reprise-settings", "--page", page, "--focus", self.key()]
     }
 
-    fn shortcut_keys(self) -> &'static str {
+    fn shortcut_keys(self) -> String {
         match self {
-            Aid::StickyKeys => "Pressing Shift five times",
-            Aid::SlowKeys => "Holding the right Shift key for eight seconds",
-            Aid::MouseKeys => "Left Alt+left Shift+Num Lock",
+            Aid::StickyKeys => tr!("misc-aid-sticky-shortcut"),
+            Aid::SlowKeys => tr!("misc-aid-slow-shortcut"),
+            Aid::MouseKeys => tr!("misc-aid-mouse-shortcut"),
         }
     }
 
-    fn what(self) -> &'static str {
+    fn what(self) -> String {
         match self {
-            Aid::StickyKeys => "Shift, Ctrl, Alt and the Super key work one key at a time.",
-            Aid::SlowKeys => "A key counts only once it has been held down for a moment.",
-            Aid::MouseKeys => {
-                "The keypad moves the pointer. Hold Ctrl to go faster or Shift to creep."
-            }
+            Aid::StickyKeys => tr!("misc-aid-sticky-what"),
+            Aid::SlowKeys => tr!("misc-aid-slow-what"),
+            Aid::MouseKeys => tr!("misc-aid-mouse-what"),
         }
     }
 }
@@ -89,14 +89,18 @@ fn switched_notice(aid: Aid, on: bool, shortcuts: bool, settings: bool) -> (Stri
     let name = aid.name();
     let keys = aid.shortcut_keys();
     let body = match (on, shortcuts) {
-        (true, true) => format!("{} {keys} turns it off.", aid.what()),
-        (true, false) => aid.what().to_string(),
-        (false, true) => format!("{keys} turns it on again."),
-        (false, false) if settings => "Click here to turn it on again in Settings.".to_string(),
+        (true, true) => tr!("misc-aid-on-body-shortcut", what = aid.what(), keys = keys),
+        (true, false) => aid.what(),
+        (false, true) => tr!("misc-aid-off-body-shortcut", keys = keys),
+        (false, false) if settings => tr!("misc-aid-off-body-settings"),
         (false, false) => String::new(),
     };
-    let state = if on { "on" } else { "off" };
-    (format!("{name} is {state}"), body)
+    let summary = if on {
+        tr!("misc-aid-on-title", name = name)
+    } else {
+        tr!("misc-aid-off-title", name = name)
+    };
+    (summary, body)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -718,10 +722,12 @@ pub fn tip(aids: &KeyAids) -> String {
     };
     let mut tip = "StickyKeys".to_string();
     if f.latched() != 0 {
-        tip += &format!("\nHeld for the next key: {}", names(f.latched()));
+        tip += "\n";
+        tip += &tr!("misc-sticky-tip-held", keys = names(f.latched()));
     }
     if f.locked() != 0 {
-        tip += &format!("\nLocked: {}", names(f.locked()));
+        tip += "\n";
+        tip += &tr!("misc-sticky-tip-locked", keys = names(f.locked()));
     }
     tip
 }
@@ -1252,7 +1258,7 @@ mod tests {
         ] {
             let (summary, body) = switched_notice(aid, true, true, true);
             assert_eq!(summary, format!("{} is on", aid.name()));
-            assert!(body.starts_with(aid.what()), "{body}");
+            assert!(body.starts_with(&aid.what()), "{body}");
             assert!(body.ends_with(&format!("{keys} turns it off.")), "{body}");
             let (summary, body) = switched_notice(aid, false, true, true);
             assert_eq!(summary, format!("{} is off", aid.name()));

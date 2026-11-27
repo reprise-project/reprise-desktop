@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use reprisekit::controls::statspanel::{self, Row, StatsPanel};
 use reprisekit::look::panel;
+use reprisekit::tr;
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
@@ -167,17 +168,17 @@ pub fn rows(stats: &FrameStats, secs: f64, own: u32, pixels: u64, totals: &Total
         .map_or_else(none, |b| format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)));
     vec![
         Row::new(
-            "Renders/s",
+            &tr!("misc-debug-renders"),
             format!("{:.0}", f64::from(renders) / secs.max(1e-3)),
         ),
-        Row::new("CPU/render", cpu),
-        Row::new("Flip interval", flips),
-        Row::new("Handoff + commit", commits),
-        Row::new("Damage", damage),
-        Row::new("Clients", totals.clients.to_string()),
-        Row::new("Windows", totals.windows.to_string()),
-        Row::new("Surfaces", totals.surfaces.to_string()),
-        Row::new("Memory", rss),
+        Row::new(&tr!("misc-debug-cpu-render"), cpu),
+        Row::new(&tr!("misc-debug-flip-interval"), flips),
+        Row::new(&tr!("misc-debug-handoff-commit"), commits),
+        Row::new(&tr!("misc-debug-damage"), damage),
+        Row::new(&tr!("misc-debug-clients"), totals.clients.to_string()),
+        Row::new(&tr!("misc-debug-windows"), totals.windows.to_string()),
+        Row::new(&tr!("misc-debug-surfaces"), totals.surfaces.to_string()),
+        Row::new(&tr!("misc-debug-memory"), rss),
     ]
 }
 

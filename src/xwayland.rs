@@ -12,6 +12,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use reprisekit::frame::{Chrome, Edges};
+use reprisekit::tr;
 use smithay::{
     reexports::{
         calloop::{
@@ -364,8 +365,8 @@ fn give_up(state: &mut State, why: &str) {
     log::warn!("{why}; X11 programs will not run");
     crate::notifyview::notice(
         state,
-        "X11 programs cannot run",
-        "Xwayland would not start. Programs that need X11 will not open until you log on again.",
+        &tr!("misc-xwayland-down-title"),
+        &tr!("misc-xwayland-down-body"),
     );
     for token in state.xwayland.watches.drain(..) {
         state.handle.remove(token);
