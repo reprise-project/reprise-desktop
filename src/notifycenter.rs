@@ -584,6 +584,26 @@ mod tests {
     }
 
     #[test]
+    fn a_group_with_a_picture_heads_with_its_app_icon() {
+        let solid = |w: u32, argb: u32| reprisekit::icon::IconSource {
+            width: w,
+            height: w,
+            pixels: vec![argb; (w * w) as usize],
+        };
+        let mut h = crate::harness::Harness::new();
+        let out = h.output("TEST-1", 1024, 768);
+        let mut shot = mail(1);
+        shot.app_icon = vec![solid(16, 0xFF00_00FF)];
+        shot.image = vec![solid(64, 0xFFFF_FFFF)];
+        shot.picture = Some(std::sync::Arc::new(solid(64, 0xFFFF_FFFF)));
+        crate::notifyview::show(&mut h.state, shot);
+        toggle(&mut h.state, &out, Rect::new(1000, 740, 16, 28));
+        let icon = header(&h);
+        let mid = icon.get(icon.width as i32 / 2, icon.height as i32 / 2);
+        assert_eq!(mid, 0xFF00_00FF, "the app icon, not the picture");
+    }
+
+    #[test]
     fn a_groups_menu_flips_its_programs_switches_live() {
         let mut h = crate::harness::Harness::new();
         let out = h.output("TEST-1", 1024, 768);

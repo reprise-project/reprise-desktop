@@ -102,14 +102,20 @@ impl Log {
     /// screen, where nothing is unseen. Returns the ids that fell off the
     /// end, or past their program's [`MAX_PER_PROGRAM`], while still open,
     /// which expire; an open critical one goes only when nothing else can. The history keeps
-    /// no [`Notification::picture`]: only a balloon shows it.
+    /// no [`Notification::picture`] nor its icon sizes: only a balloon shows it, and a stored
+    /// one shows its app icon.
     pub fn record(&mut self, n: &Notification, time: i64, looking: bool) -> Vec<u32> {
         self.entries.retain(|e| e.n.id != n.id);
+        let image = match n.picture {
+            Some(_) => Vec::new(),
+            None => n.image.clone(),
+        };
         self.entries.insert(
             0,
             Entry {
                 n: Notification {
                     picture: None,
+                    image,
                     ..n.clone()
                 },
                 time,
