@@ -522,6 +522,9 @@ impl Config {
                 cfg.glass.style = reprisekit::glass::Style::parse(&v)
                     .ok_or_else(|| format!("[glass] style = {v:?} is not glass or onyx"))?;
             }
+            cfg.glass.opaque_when_maximized = g
+                .opaque_when_maximized
+                .unwrap_or(cfg.glass.style == reprisekit::glass::Style::Onyx);
             if let Some(n) = g.notification_style {
                 cfg.glass.notification =
                     reprisekit::glass::NotifyStyle::parse(&n).ok_or_else(|| {

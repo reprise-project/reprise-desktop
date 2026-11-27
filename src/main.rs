@@ -98,6 +98,7 @@ mod notifyview;
 mod offlineupdate;
 mod offscreen;
 mod ontopproto;
+mod opaquebar;
 mod outputmgmt;
 mod outputpower;
 mod outputtrial;

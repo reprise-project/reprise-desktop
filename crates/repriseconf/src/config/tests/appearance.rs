@@ -1170,3 +1170,18 @@ fn an_output_s_glass_built_in_resolves_like_the_main_one() {
         Some(Path::new("reprise:flow/night"))
     );
 }
+
+#[test]
+fn onyx_is_opaque_when_maximized_unless_the_file_says_otherwise() {
+    let opaque = |text: &str| Config::parse(text).unwrap().glass.opaque_when_maximized;
+    assert!(!opaque(""), "Glass: glass when maximized");
+    assert!(opaque("[glass]\nstyle = \"onyx\"\n"), "Onyx: opaque");
+    assert!(
+        !opaque("[glass]\nstyle = \"onyx\"\nopaque_when_maximized = false\n"),
+        "Onyx, set false"
+    );
+    assert!(
+        opaque("[glass]\nopaque_when_maximized = true\n"),
+        "Glass, set true"
+    );
+}

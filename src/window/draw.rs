@@ -366,10 +366,12 @@ impl State {
     fn place_backdrop(&mut self, w: WindowId) {
         let sheet = self.is_sheet(w);
         self.place_client_glass(w, sheet);
+        let opaque_max = self.config.glass.opaque_when_maximized;
         let pane = match self.config.theme.glass() {
             Some(g) if self.config.glass.transparency => self
                 .win(w)
                 .filter(|win| sheet || win.has_frame())
+                .filter(|win| sheet || !(win.maximized && opaque_max))
                 .map(|win| match sheet {
                     true => sheet_pane(win.geom.total, g.corner),
                     false => {

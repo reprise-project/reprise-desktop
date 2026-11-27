@@ -82,6 +82,14 @@ parts-glass-dark cut "StartShutdownArrowLight" x1  # the gallery's own caption
 parts-glass-dark cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-glass-dark cut "Unchecked Normal" x2  # the gallery's own caption
 parts-glass-dark cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-glass-onyx-opaque cut "StartShutdownArrowLight" x1  # the gallery's own caption
+parts-glass-onyx-opaque cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-glass-onyx-opaque cut "Unchecked Normal" x2  # the gallery's own caption
+parts-glass-onyx-opaque cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-glass-onyx-opaque-bar cut "StartShutdownArrowLight" x1  # the gallery's own caption
+parts-glass-onyx-opaque-bar cut "Unchecked Disabled" x2  # the gallery's own caption
+parts-glass-onyx-opaque-bar cut "Unchecked Normal" x2  # the gallery's own caption
+parts-glass-onyx-opaque-bar cut "Unchecked Pressed" x2  # the gallery's own caption
 parts-glass-sky cut "StartShutdownArrowLight" x1  # the gallery's own caption
 parts-glass-sky cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-glass-sky cut "Unchecked Normal" x2  # the gallery's own caption

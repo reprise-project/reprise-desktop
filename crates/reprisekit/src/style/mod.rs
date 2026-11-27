@@ -43,6 +43,9 @@ pub struct Style {
     pub taskbar: TaskbarShape,
     pub glass: Option<GlassSpec>,
     pub caption_title: CaptionTitle,
+    /// A maximized frame's title ink, focused then not, and the glow under it, where they
+    /// differ from [`Style::caption_text`]'s and [`Style::caption_title`]'s.
+    pub max_title: Option<([Color; 2], Option<TitleGlow>)>,
     /// The halo under labels a client draws over its frame's glass ([`Part::ClientGlass`]).
     pub label_glow: Option<TitleGlow>,
     /// The halo under the white text of a panel that must read over any backdrop
@@ -199,6 +202,7 @@ impl Style {
             taskbar,
             glass: None,
             caption_title: CaptionTitle::CENTRED,
+            max_title: None,
             label_glow: None,
             panel_halo: None,
             task_glow: None,
@@ -488,6 +492,11 @@ impl Style {
 
     pub fn with_caption_title(mut self, t: CaptionTitle) -> Style {
         self.caption_title = t;
+        self
+    }
+
+    pub fn with_max_title_from(mut self, t: Option<([Color; 2], Option<TitleGlow>)>) -> Style {
+        self.max_title = t;
         self
     }
 

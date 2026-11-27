@@ -49,6 +49,7 @@ pub fn render_glass() -> Canvas {
         render_glass_client_glass(&theme),
         render_glass_toolbar_on_glass(&theme),
         render_glass_peek_sheet(&theme),
+        render_glass_opaque_max(),
     ];
     let height = frames.height + parts.iter().map(|p| p.height).sum::<u32>();
     let mut all = Canvas::new(950, height);
@@ -955,4 +956,49 @@ pub fn stretched(piece: &Canvas, p: &shadow::Placed) -> Canvas {
         }
     }
     out
+}
+
+/// Onyx under `opaque_when_maximized` over the stripes, 950x300: a maximized window's frame,
+/// focused then not, its navy band under a white title, then the bar over glass and over opaque
+/// glass ([`interfaces::opaque_bar`]).
+fn render_glass_opaque_max() -> Canvas {
+    use reprisekit::glass;
+    let g = glass::Settings {
+        style: glass::Style::Onyx,
+        opaque_when_maximized: true,
+        ..glass::Settings::default()
+    };
+    let mut theme = interfaces::theme_with(
+        Interface::Glass,
+        reprisekit::blue::Variant::default(),
+        false,
+        &g,
+    );
+    interfaces::small_bar(&mut theme, &g);
+    let theme = cued(theme);
+    let text = TextRenderer::load(&FontConfig::default());
+    let caption_text = TextRenderer::load(&theme.look.style().unwrap().caption_text.font());
+    let mut c = blurred_stripes(950, 300);
+    for (i, active) in [true, false].into_iter().enumerate() {
+        let geom = FrameGeometry::layout(&theme.metrics, 930, 60, true, Chrome::WINDOW);
+        let mut f = Canvas::new(geom.total.0 as u32, geom.total.1 as u32);
+        let st = FrameState {
+            title: "Untitled - Notes",
+            active,
+            maximized: true,
+            pressed: None,
+            glow: Glow::lit(None),
+            icon: None,
+            tabbed: false,
+        };
+        look::draw_frame(&mut f, &theme, &text, &caption_text, &geom, &st);
+        f.fill_rect(geom.client, Color::rgb(0xFF, 0xFF, 0xFF));
+        c.blit_over(10, 10 + 90 * i as i32, &f);
+    }
+    let opaque = interfaces::opaque_bar(&theme, &g, true);
+    for (i, t) in [&theme, &opaque].into_iter().enumerate() {
+        let bar = render_glass_dark_bar(t);
+        c.blit_canvas(0, 180 + 60 * i as i32, &bar);
+    }
+    c
 }

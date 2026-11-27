@@ -59,6 +59,7 @@ pub const EDGE_GAIN: f32 = 3.0;
 /// beside close, and the title centred.
 pub fn frame(mut st: Style, n: i32) -> Style {
     let ink = Ink::of(&st);
+    let max_ink = Ink::maximized(&st);
     if let Some(g) = st.glass.as_mut() {
         g.corner = &[];
     }
@@ -67,7 +68,7 @@ pub fn frame(mut st: Style, n: i32) -> Style {
     st.buttons_over_caption = true;
     st.centred_title = true;
     st.with_part(Part::CaptionGroup, group(&ink, false, 0, n))
-        .with_part(Part::MaxCaptionGroup, group(&ink, true, 0, n))
+        .with_part(Part::MaxCaptionGroup, group(&max_ink, true, 0, n))
         .with_part(Part::CloseButton, lone(&ink, Glyph::Close, 0, n))
         .with_part(Part::HelpButton, lone(&ink, Glyph::Help, 0, n))
         .with_part(Part::MinCloseGroup, min_close(&ink, 0, n))
@@ -87,6 +88,18 @@ impl Ink {
             active: premul(st.caption_text.color, 0xFF),
             inactive: premul(st.caption_text.inactive, DIM_ALPHA),
             edge: st.caption_title.glow.map(|g| g.color),
+        }
+    }
+
+    /// A maximized frame's ink: [`Style::max_title`]'s where it has one.
+    fn maximized(st: &Style) -> Ink {
+        match st.max_title {
+            Some(([active, inactive], glow)) => Ink {
+                active: premul(active, 0xFF),
+                inactive: premul(inactive, DIM_ALPHA),
+                edge: glow.map(|g| g.color),
+            },
+            None => Ink::of(st),
         }
     }
 }

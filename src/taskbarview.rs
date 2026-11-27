@@ -187,6 +187,8 @@ pub struct Bar {
     start_mix: Option<StartMix>,
     /// The last bar picture, so a redraw on the same layout draws again only the cells that changed.
     pub(crate) drawn: Option<DrawnBar>,
+    /// Drawn over opaque glass: its output shows a maximized window ([`crate::opaquebar`]).
+    pub(crate) opaque: bool,
     /// By key, so a button closing under the pointer lights no neighbour that
     /// slides into its place.
     task_hot: Option<TaskKey<WindowId>>,
@@ -510,6 +512,7 @@ impl State {
             start_glow: HoverFade::default(),
             start_mix: None,
             drawn: None,
+            opaque: false,
             task_hot: None,
             task_held: None,
             task_hot_x: None,

@@ -955,6 +955,7 @@ impl State {
         self.popups.cleanup();
         self.refresh_toplevels();
         self.refresh_workspaces();
+        self.refresh_opaque_bars();
         crate::sessionend::tick(self);
         crate::session::settle(self);
         crate::tray::publish_lock(self);

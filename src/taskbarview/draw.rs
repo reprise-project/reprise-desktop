@@ -123,7 +123,8 @@ impl State {
         );
         let mut tray_icons =
             crate::tray::bar_icons(self, self.config.theme.icon_size() * scale, revealed);
-        let base = &self.config.theme;
+        let base = crate::opaquebar::bar_theme(&self.config, bar.opaque);
+        let base = base.as_ref();
         let m = &base.metrics;
         let (locked, bands) = (self.bar_shared.locked, self.bar_shared.bands);
         let show_desktop = self.config.taskbar.show_desktop_button;
@@ -501,7 +502,7 @@ impl State {
         let rows = self.shown_rows(bar);
         let orb = crate::barplace::orb_opacity(self.bar_hide.drawn(&bar.output));
         let scale = bar.buffer_scale;
-        let wanted = glass::wanted(&self.config);
+        let wanted = glass::wanted(&self.config) && !bar.opaque;
         let scene = &mut self.scene;
         scene.set_position(bar.tree, p.shown.x, p.shown.y);
         scene.set_position(bar.orb_tree, p.shown.x, p.shown.y);

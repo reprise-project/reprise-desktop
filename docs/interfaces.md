@@ -57,6 +57,7 @@ Glass uses `[glass]` instead of colour schemes (see `config.example.toml`). Conf
 - Molten glass blurs less, boosts colour and refracts edges.
 - Square frames use square corners, centred titles and flat caption buttons.
 - The Onyx style (`[glass] style = "onyx"`, Settings > Appearance > Style: Glass: Onyx) draws a near-black 30 px taskbar with one labelled button per window, the Quick Launch toolbar and no Show desktop strip. Its Start orb is a 41 px disc of dark blue glass standing 4 px over the bar's top edge; the screen's corner pixel opens Start. Frames stay Glass's.
+- `[glass] opaque_when_maximized` (on by default under Onyx, off under Glass) makes a maximized window's frame opaque, deep navy with a white title under Onyx, and a screen's taskbar opaque while that screen shows a maximized or fullscreen window that is not minimized and is on the current desktop. The switch is immediate, with no fade.
 
 ![Reprise Glass in dark mode, Ruby and Molten, with the calendar open](screenshots/glass-dark.png)
 
