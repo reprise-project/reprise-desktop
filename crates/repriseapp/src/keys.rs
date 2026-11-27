@@ -285,10 +285,11 @@ fn form_event(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
             x,
             y,
             button: BTN_LEFT,
+            time,
             ..
         }) => {
             let hit = form.hit(*x, *y, &ctx.text, px);
-            form.click(hit)
+            form.press(hit, ctx.theme.metrics.click(*x, *y, *time))
         }
         Event::Pointer(PointerInput::Press {
             x,
@@ -478,26 +479,7 @@ mod tests {
         use reprisekit::controls::form::{Control, Item};
         use reprisekit::controls::hotkey::HotKey;
         use reprisekit::raster::Rect;
-        let ctx = Ctx {
-            theme: reprisekit::theme::Theme::default(),
-            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
-                &reprisekit::theme::FontConfig::default(),
-            )),
-            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
-                "test",
-                &[],
-            )),
-            caret_on: true,
-            size: (200, 100),
-            maximized: false,
-            origin: (0, 0),
-            wake: crate::Waker::noop(),
-            heads: Default::default(),
-            want_tick: Default::default(),
-            output_size: None,
-            at_pick: false,
-            text_size: 100,
-        };
+        let ctx = test_ctx();
         let mut form = Form::new(vec![Item::new(
             "keys",
             Rect::new(10, 10, 150, 20),
@@ -538,26 +520,7 @@ mod tests {
         use reprisekit::controls::form::{Control, Item};
         use reprisekit::controls::hotkey::HotKey;
         use reprisekit::raster::Rect;
-        let ctx = Ctx {
-            theme: reprisekit::theme::Theme::default(),
-            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
-                &reprisekit::theme::FontConfig::default(),
-            )),
-            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
-                "test",
-                &[],
-            )),
-            caret_on: true,
-            size: (200, 100),
-            maximized: false,
-            origin: (0, 0),
-            wake: crate::Waker::noop(),
-            heads: Default::default(),
-            want_tick: Default::default(),
-            output_size: None,
-            at_pick: false,
-            text_size: 100,
-        };
+        let ctx = test_ctx();
         let mut form = Form::new(vec![Item::new(
             "keys",
             Rect::new(10, 10, 150, 20),
@@ -744,12 +707,8 @@ mod tests {
 
     /// A dialog that feeds its form through `form_input` alone gets the clipboard: the copy
     /// and the paste request ride on the program's reply, and the pasted text lands.
-    #[test]
-    fn form_input_copies_cuts_and_pastes_for_a_spinner() {
-        use reprisekit::controls::form::{Control, Item};
-        use reprisekit::controls::updown::UpDown;
-        use reprisekit::raster::Rect;
-        let ctx = Ctx {
+    fn test_ctx() -> Ctx {
+        Ctx {
             theme: reprisekit::theme::Theme::default(),
             text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
                 &reprisekit::theme::FontConfig::default(),
@@ -768,7 +727,68 @@ mod tests {
             output_size: None,
             at_pick: false,
             text_size: 100,
+        }
+    }
+
+    /// A double click on a spinner's number selects all of it, so a digit typed then replaces
+    /// it; two presses further apart in time only place the caret.
+    #[test]
+    fn a_double_click_on_a_spinners_number_selects_it() {
+        use reprisekit::controls::form::{Control, Item};
+        use reprisekit::controls::updown::UpDown;
+        use reprisekit::raster::Rect;
+        let ctx = test_ctx();
+        let press = |time| {
+            Event::Pointer(PointerInput::Press {
+                x: 30,
+                y: 10,
+                button: BTN_LEFT,
+                time,
+                mods: Default::default(),
+            })
         };
+        let release = Event::Pointer(PointerInput::Release {
+            x: 30,
+            y: 10,
+            button: BTN_LEFT,
+            mods: Default::default(),
+        });
+        let two = Event::Key(KeyInput {
+            sym: u32::from(b'2'),
+            utf8: Some("2".into()),
+            mods: Default::default(),
+            edit: reprisekit::textedit::key_for(u32::from(b'2'), false, false, Some("2")),
+        });
+        let typed_after = |gap: u32| {
+            let mut form = Form::new(vec![Item::new(
+                "copies",
+                Rect::new(0, 0, 50, 20),
+                Control::UpDown(UpDown::new(1, 1, 99)),
+            )]);
+            for time in [1000, 1000 + gap] {
+                form_input(&mut form, &press(time), &ctx);
+                form_input(&mut form, &release, &ctx);
+            }
+            form_input(&mut form, &two, &ctx);
+            match &form.items[0].control {
+                Control::UpDown(u) => u.value(),
+                _ => unreachable!(),
+            }
+        };
+        assert_eq!(typed_after(100), 2, "a double click selects the number");
+        assert_ne!(
+            typed_after(2000),
+            2,
+            "two slow presses only place the caret"
+        );
+    }
+
+    #[test]
+    fn form_input_copies_cuts_and_pastes_for_a_spinner() {
+        use reprisekit::controls::form::{Control, Item};
+        use reprisekit::controls::updown::UpDown;
+        use reprisekit::raster::Rect;
+        let ctx = test_ctx();
         let ctrl = |ch: u8| {
             Event::Key(KeyInput {
                 sym: u32::from(ch),
@@ -885,26 +905,7 @@ mod tests {
         use reprisekit::controls::multiedit::Pos;
         use reprisekit::raster::{Canvas, Rect};
         use reprisekit::textedit::keysym::{END, HOME};
-        let ctx = Ctx {
-            theme: reprisekit::theme::Theme::default(),
-            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
-                &reprisekit::theme::FontConfig::default(),
-            )),
-            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
-                "test",
-                &[],
-            )),
-            caret_on: true,
-            size: (200, 100),
-            maximized: false,
-            origin: (0, 0),
-            wake: crate::Waker::noop(),
-            heads: Default::default(),
-            want_tick: Default::default(),
-            output_size: None,
-            at_pick: false,
-            text_size: 100,
-        };
+        let ctx = test_ctx();
         let px = ctx.theme.fonts.size_px;
         let mut form = Form::new(vec![Item::memo("m", Rect::new(0, 0, 200, 80), "", true)]);
         form.focus_id("m");
@@ -943,26 +944,7 @@ mod tests {
     fn a_consent_form_ignores_keys_and_presses_right_after_its_window_gets_the_keyboard() {
         use reprisekit::controls::form::Item;
         use reprisekit::raster::Rect;
-        let ctx = Ctx {
-            theme: reprisekit::theme::Theme::default(),
-            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
-                &reprisekit::theme::FontConfig::default(),
-            )),
-            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
-                "test",
-                &[],
-            )),
-            caret_on: true,
-            size: (200, 100),
-            maximized: false,
-            origin: (0, 0),
-            wake: crate::Waker::noop(),
-            heads: Default::default(),
-            want_tick: Default::default(),
-            output_size: None,
-            at_pick: false,
-            text_size: 100,
-        };
+        let ctx = test_ctx();
         let build = |consent: bool| {
             let mut f = Form::new(vec![
                 Item::button("allow", Rect::new(10, 10, 75, 23), "&Allow", true, false),

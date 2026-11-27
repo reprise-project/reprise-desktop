@@ -20,7 +20,7 @@ use crate::controls::timefield::{self, TimeField};
 use crate::controls::treeview::{self, TreeView};
 use crate::controls::updown::{self, UpDown};
 use crate::look::Paint;
-use crate::pointer::Pointer;
+use crate::pointer::{DoubleClick, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont};
 use crate::textedit::TextEdit;
@@ -253,6 +253,9 @@ pub struct Form {
     consent: Option<consent::Gate>,
     /// The edit the last paste key was pressed in, by index and id ([`Form::ask_paste`]).
     paste_to: Option<(usize, &'static str)>,
+    /// The last left press on a field, by item, pairing the next into a double click
+    /// ([`Form::press`]).
+    clicks: DoubleClick<usize>,
 }
 
 /// A scrolled form's window onto the surface: every item but those in `keep` draws and takes
@@ -505,6 +508,7 @@ impl Form {
             hosted: false,
             consent: None,
             paste_to: None,
+            clicks: DoubleClick::default(),
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
         form.set_focus(first);

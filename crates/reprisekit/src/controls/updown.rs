@@ -111,9 +111,9 @@ impl UpDown {
         self.edit_mut().place(at, false);
     }
 
-    /// A double click at byte `at`: the digits there are selected.
-    pub fn select_word_at(&mut self, at: usize) {
-        self.edit_mut().select_word_at(at);
+    /// A double click on the number: all of it is selected, its sign too, so typing replaces it.
+    pub fn select_number(&mut self) {
+        self.edit_mut().select_all();
     }
 
     pub fn editing(&self) -> bool {
