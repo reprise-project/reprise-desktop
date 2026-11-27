@@ -10,6 +10,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use reprisekit::tr;
 use zeroize::Zeroizing;
 
 #[link(name = "crypt")]
@@ -30,7 +31,7 @@ unsafe extern "C" {
 
 pub fn crypt(password: &str) -> Result<String, String> {
     if password.contains('\0') {
-        return Err("The password holds a NUL.".into());
+        return Err(tr!("passwd-has-nul"));
     }
     let mut phrase = Zeroizing::new(Vec::with_capacity(password.len() + 1));
     phrase.extend_from_slice(password.as_bytes());
@@ -40,7 +41,7 @@ pub fn crypt(password: &str) -> Result<String, String> {
     // and freed below.
     let setting = unsafe { crypt_gensalt_ra(std::ptr::null(), 0, std::ptr::null(), 0) };
     if setting.is_null() {
-        return Err("No password hashing method is available.".into());
+        return Err(tr!("passwd-no-hash-method"));
     }
     let mut data: *mut libc::c_void = std::ptr::null_mut();
     let mut size: libc::c_int = 0;
@@ -65,7 +66,7 @@ pub fn crypt(password: &str) -> Result<String, String> {
     }
     match hash {
         Some(h) if !h.starts_with('*') => Ok(h),
-        _ => Err("The password could not be hashed.".into()),
+        _ => Err(tr!("passwd-hash-failed")),
     }
 }
 
@@ -138,7 +139,7 @@ impl Dialogue {
         } else if new && self.asked_new > 0 {
             Step::Refused(self.why())
         } else {
-            Step::Refused("The password cannot be changed here.".into())
+            Step::Refused(tr!("passwd-cannot-change"))
         }
     }
 
@@ -152,7 +153,7 @@ impl Dialogue {
         if all().any(|l| {
             l.contains("Authentication token manipulation") || l.contains("Authentication failure")
         }) {
-            return "The current password is not correct.".into();
+            return tr!("passwd-current-incorrect");
         }
         let last = self
             .said
@@ -171,7 +172,7 @@ impl Dialogue {
         let last = last.strip_prefix("passwd: ").unwrap_or(last);
         let last = last.strip_prefix("BAD PASSWORD: ").unwrap_or(last);
         if last.is_empty() {
-            "The password was not changed.".into()
+            tr!("passwd-not-changed")
         } else {
             let mut s = last.to_string();
             if let Some(c) = s.get(0..1) {
@@ -222,7 +223,7 @@ pub fn change_own(current: &str, new: &str) -> Result<(), String> {
 }
 
 fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
-    let (master, slave) = open_pty().map_err(|e| format!("No terminal for passwd: {e}"))?;
+    let (master, slave) = open_pty().map_err(|e| tr!("passwd-no-terminal", why = e.to_string()))?;
     let tty = |fd: &OwnedFd| fd.try_clone().map(Stdio::from);
     cmd.env("LC_ALL", "C")
         .stdin(tty(&slave).map_err(|e| e.to_string())?)
@@ -240,7 +241,7 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
     }
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("passwd could not start: {e}"))?;
+        .map_err(|e| tr!("passwd-start-failed", why = e.to_string()))?;
     // The command keeps its copies of the slave until dropped; any left open here
     // stop the master hanging up when passwd exits.
     drop(cmd);
@@ -262,7 +263,7 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
                 break None;
             }
             if last.elapsed() > QUIET {
-                break Some("passwd stopped answering.".to_string());
+                break Some(tr!("passwd-stopped"));
             }
             continue;
         }
@@ -466,13 +467,13 @@ mod tests {
         let mut d = Dialogue::default();
         assert_eq!(
             d.feed("Verification code: "),
-            Step::Refused("The password cannot be changed here.".into())
+            Step::Refused(tr!("passwd-cannot-change"))
         );
         let mut d = Dialogue::default();
         d.feed("Current password: ");
         assert_eq!(
             d.feed("\nCurrent password: "),
-            Step::Refused("The password cannot be changed here.".into()),
+            Step::Refused(tr!("passwd-cannot-change")),
             "the current password is typed once"
         );
     }

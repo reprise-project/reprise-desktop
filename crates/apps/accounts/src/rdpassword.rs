@@ -10,6 +10,7 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::remotepassword::Action;
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
+use reprisekit::{kit_tr, tr};
 use repriselogin::account::{AccountRefusal, AccountRequest, MIN_REMOTE_PASSWORD};
 use zeroize::Zeroizing;
 
@@ -59,24 +60,26 @@ impl fmt::Debug for RdPasswordDialog {
 }
 
 /// What the dialog says for a refusal.
-pub fn refusal_text(r: AccountRefusal) -> &'static str {
+pub fn refusal_text(r: AccountRefusal) -> String {
     match r {
-        AccountRefusal::WrongPassword => "The password is incorrect.",
-        AccountRefusal::TooShort => "Use 8 or more characters.",
-        AccountRefusal::SameAsLogin => "Use a password other than your login password.",
-        AccountRefusal::NotRemoteUser => "Your account is not allowed to log on remotely.",
-        AccountRefusal::Busy | AccountRefusal::Failed => "The password could not be changed.",
+        AccountRefusal::WrongPassword => tr!("rdpassword-wrong-password"),
+        AccountRefusal::TooShort => tr!("rdpassword-too-short"),
+        AccountRefusal::SameAsLogin => tr!("rdpassword-same-as-login"),
+        AccountRefusal::NotRemoteUser => tr!("rdpassword-not-remote-user"),
+        AccountRefusal::Busy | AccountRefusal::Failed => tr!("rdpassword-failed"),
     }
 }
 
 /// A field's label id, the field's id and the label's text.
-const FIELDS: [(&str, &str, &str); 3] = [
-    ("login_label", LOGIN, "&Your login password:"),
-    ("remote_label", NEW, "&New Remote Desktop password:"),
-    ("confirm_label", CONFIRM, "&Confirm:"),
-];
+fn fields() -> [(&'static str, &'static str, String); 3] {
+    [
+        ("login_label", LOGIN, tr!("rdpassword-login-password")),
+        ("remote_label", NEW, tr!("rdpassword-new-password")),
+        ("confirm_label", CONFIRM, tr!("rdpassword-confirm")),
+    ]
+}
 
-fn secret((label_id, id, label): (&'static str, &'static str, &str), row: i32) -> [Item; 2] {
+fn secret((label_id, id, label): &(&'static str, &'static str, String), row: i32) -> [Item; 2] {
     let y = MARGIN + row * ROW_H;
     [
         Item::label_at(label_id, MARGIN, y + LABEL_DY, LABEL_W, label),
@@ -94,13 +97,14 @@ fn secret((label_id, id, label): (&'static str, &'static str, &str), row: i32) -
 
 impl RdPasswordDialog {
     pub fn new(action: Action, generation: u64) -> RdPasswordDialog {
+        let all = fields();
         let fields = match action {
-            Action::Create | Action::Change => &FIELDS[..],
-            Action::Remove => &FIELDS[..1],
+            Action::Create | Action::Change => &all[..],
+            Action::Remove => &all[..1],
         };
         let mut items: Vec<Item> = (0..)
             .zip(fields)
-            .flat_map(|(row, f)| secret(*f, row))
+            .flat_map(|(row, f)| secret(f, row))
             .collect();
         let rows = fields.len() as i32;
         let why_y = MARGIN + rows * ROW_H;
@@ -110,14 +114,14 @@ impl RdPasswordDialog {
             Item::button(
                 OK,
                 Rect::new(OK_X, btn_y, BUTTON_W, BUTTON_H),
-                "OK",
+                &kit_tr!("ok"),
                 false,
                 true,
             ),
             Item::button(
                 CANCEL,
                 Rect::new(CANCEL_X, btn_y, BUTTON_W, BUTTON_H),
-                "Cancel",
+                &kit_tr!("cancel"),
                 true,
                 false,
             ),
@@ -132,11 +136,11 @@ impl RdPasswordDialog {
         }
     }
 
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self.action {
-            Action::Create => "Create Remote Desktop Password",
-            Action::Change => "Change Remote Desktop Password",
-            Action::Remove => "Remove Remote Desktop Password",
+            Action::Create => tr!("rdpassword-title-create"),
+            Action::Change => tr!("rdpassword-title-change"),
+            Action::Remove => tr!("rdpassword-title-remove"),
         }
     }
 
@@ -170,7 +174,7 @@ impl RdPasswordDialog {
     /// The daemon refused the request: say why, and empty the fields it was about.
     pub fn refused(&mut self, r: AccountRefusal) {
         self.waiting = false;
-        self.form.set_text(WHY, refusal_text(r));
+        self.form.set_text(WHY, &refusal_text(r));
         let wrong: &[&str] = match r {
             AccountRefusal::WrongPassword => &[LOGIN],
             AccountRefusal::TooShort | AccountRefusal::SameAsLogin => &[NEW, CONFIRM],
@@ -366,7 +370,7 @@ mod tests {
                 .map(|a| {
                     let mut d = RdPasswordDialog::new(a, 1);
                     d.refused(AccountRefusal::SameAsLogin);
-                    (d.title().into(), d.form)
+                    (d.title(), d.form)
                 })
                 .collect()
         });

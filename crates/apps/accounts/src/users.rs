@@ -14,6 +14,7 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::Align;
+use reprisekit::{kit_tr, tr};
 
 use crate::acct::User;
 
@@ -57,9 +58,9 @@ pub fn entries(rows: &[User]) -> Vec<Entry> {
     let mut others = false;
     for (i, u) in rows.iter().enumerate() {
         if u.you {
-            out.push(Entry::Header("Your account".into()));
+            out.push(Entry::Header(tr!("accounts-your-account")));
         } else if !others {
-            out.push(Entry::Header("Other accounts".into()));
+            out.push(Entry::Header(tr!("accounts-other-accounts")));
             others = true;
         }
         out.push(Entry::Row(i));
@@ -70,20 +71,14 @@ pub fn entries(rows: &[User]) -> Vec<Entry> {
 fn window_form() -> Form {
     let gap = 6;
     Form::new(vec![
-        Item::label_at(
-            "intro",
-            MARGIN,
-            12,
-            LIST.width,
-            "Pick an account to change, or add one for someone new.",
-        ),
-        Item::button_at(ADD, MARGIN, ROW_Y, BUTTON_W, "&Add...", true),
+        Item::label_at("intro", MARGIN, 12, LIST.width, &tr!("accounts-intro")),
+        Item::button_at(ADD, MARGIN, ROW_Y, BUTTON_W, &tr!("accounts-add"), true),
         Item::button_at(
             REMOVE,
             MARGIN + BUTTON_W + gap,
             ROW_Y,
             BUTTON_W,
-            "&Remove",
+            &tr!("accounts-remove"),
             false,
         ),
         Item::button_at(
@@ -91,14 +86,14 @@ fn window_form() -> Form {
             LIST.right() - BUTTON_W,
             ROW_Y,
             BUTTON_W,
-            "&Properties",
+            &tr!("accounts-properties"),
             false,
         ),
         Item::rule("rule", Rect::new(MARGIN, CLOSE_Y - 10, LIST.width, 1)),
         Item::button(
             CLOSE,
             Rect::new(LIST.right() - BUTTON_W, CLOSE_Y, BUTTON_W, BUTTON_H),
-            "Close",
+            &kit_tr!("close"),
             true,
             true,
         ),
@@ -161,10 +156,10 @@ impl Users {
         self.write();
     }
 
-    pub fn blank_text(&self) -> Option<&str> {
+    pub fn blank_text(&self) -> Option<String> {
         match &self.failed {
-            Some(why) => Some(why),
-            None if !self.loaded => Some("Reading the accounts..."),
+            Some(why) => Some(why.clone()),
+            None if !self.loaded => Some(tr!("accounts-reading")),
             None => None,
         }
     }
@@ -254,7 +249,7 @@ impl Users {
         let root = access::ROOT;
         let list = self.list_rect();
         if let Some(line) = self.blank_text() {
-            tree.push(root, "empty", access::label(list, line, true));
+            tree.push(root, "empty", access::label(list, &line, true));
             return;
         }
         let lay = tilelist::layout(&self.list, list, &ctx.theme.controls());
@@ -302,7 +297,7 @@ impl Users {
             let u = ctx.theme.text;
             let r = Rect::new(list.x, list.y + u.len(24), list.width, u.len(LINE_H));
             ctx.text
-                .draw(c, r, line, false, cs.gray_text, Align::Center, px);
+                .draw(c, r, &line, false, cs.gray_text, Align::Center, px);
             return;
         }
         let lay = tilelist::layout(&self.list, list, &cm);
@@ -330,7 +325,11 @@ impl Users {
 }
 
 pub fn caption(u: &User) -> String {
-    format!("{} - {}", u.kind(), u.login)
+    tr!(
+        "accounts-caption",
+        kind = u.kind(),
+        login = u.login.as_str()
+    )
 }
 
 #[cfg(test)]
@@ -380,9 +379,9 @@ pub(crate) mod tests {
         assert_eq!(
             entries(&three()),
             vec![
-                Entry::Header("Your account".into()),
+                Entry::Header(tr!("accounts-your-account")),
                 Entry::Row(0),
-                Entry::Header("Other accounts".into()),
+                Entry::Header(tr!("accounts-other-accounts")),
                 Entry::Row(1),
                 Entry::Row(2),
             ]
@@ -392,7 +391,7 @@ pub(crate) mod tests {
     #[test]
     fn your_account_is_picked_first_and_cannot_be_removed() {
         let mut u = Users::new();
-        assert_eq!(u.blank_text(), Some("Reading the accounts..."));
+        assert_eq!(u.blank_text().as_deref(), Some("Reading the accounts..."));
         u.refresh(three(), vec![None; 3]);
         assert_eq!(u.selected().map(|s| s.login.as_str()), Some("jo"));
         assert!(enabled(&u, PROPS) && enabled(&u, ADD));
@@ -446,7 +445,10 @@ pub(crate) mod tests {
     fn a_failed_read_says_why_and_greys_the_buttons() {
         let mut u = Users::new();
         u.fail("AccountsService is not running.".into());
-        assert_eq!(u.blank_text(), Some("AccountsService is not running."));
+        assert_eq!(
+            u.blank_text().as_deref(),
+            Some("AccountsService is not running.")
+        );
         assert!(!enabled(&u, ADD) && !enabled(&u, PROPS));
         assert_eq!(caption(&three()[0]), "Administrator - jo");
     }
