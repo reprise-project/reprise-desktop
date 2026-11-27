@@ -1116,6 +1116,19 @@ fn a_paste_question_shows_the_first_lines() {
 }
 
 #[test]
+fn the_paste_and_close_questions_keep_their_wording() {
+    assert_eq!(
+        paste_question("a\nb\n"),
+        "The text you are pasting holds line ends, so the program may run each line as it \
+         arrives:\n\na\nb\n\nPaste it anyway?"
+    );
+    assert_eq!(
+        tr!("close-tab-text"),
+        "A program is still running in this tab.\nClose the tab anyway?"
+    );
+}
+
+#[test]
 fn big_paste_chunks() {
     paste_arrives(false);
     paste_arrives(true);

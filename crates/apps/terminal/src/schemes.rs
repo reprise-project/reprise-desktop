@@ -3,6 +3,7 @@
 use reprisekit::controls::termgrid::{Accents, Rgb};
 use reprisekit::interface::Interface;
 use reprisekit::theme::Color;
+use reprisekit::tr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scheme {
@@ -38,7 +39,13 @@ const DARK: [u32; 16] = [
 ];
 
 /// The names the Options sheet lists, with their labels. "reprise" follows the interface.
-pub const NAMES: [(&str, &str); 3] = [("reprise", "Reprise"), ("light", "Light"), ("dark", "Dark")];
+pub type Label = fn() -> String;
+
+pub const NAMES: [(&str, Label); 3] = [
+    ("reprise", || tr!("scheme-reprise")),
+    ("light", || tr!("scheme-light")),
+    ("dark", || tr!("scheme-dark")),
+];
 
 fn build(fg: u32, bg: u32, ansi: [u32; 16], cursor: u32, selection: (u32, u32)) -> Scheme {
     Scheme {

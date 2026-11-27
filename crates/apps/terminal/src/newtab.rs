@@ -1,5 +1,6 @@
 //! What the new-tab button's menu offers and what each row starts.
 
+use reprisekit::tr;
 use std::ffi::OsString;
 
 use reprisekit::controls::menu::MenuItem;
@@ -25,7 +26,7 @@ pub struct Launch {
 /// row opens, `None` for the separator.
 pub fn menu(s: &Settings, hosts: &[String]) -> (Vec<MenuItem>, Vec<Option<Choice>>) {
     let shell = match s.shell.is_empty() {
-        true => "Login Shell".to_owned(),
+        true => tr!("login-shell"),
         false => file_name(&s.shell),
     };
     let mut rows = vec![(MenuItem::entry(shell), Some(Choice::Shell))];

@@ -13,6 +13,7 @@ use reprisekit::controls::toolbar::{self, Item, Part, ToolBar};
 use reprisekit::look::{self, Paint};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
 use crate::Terminal;
 use crate::newtab::{self, Choice};
@@ -106,7 +107,7 @@ pub fn toolbar_items(ctx: &mut Ctx, caption: bool) -> Vec<Item> {
     let new = Item::DropButton {
         id: NEW,
         icon: icon(&["tab-new", "list-add"]),
-        label: Some("New Tab".into()),
+        label: Some(tr!("new-tab")),
         enabled: true,
     };
     let mut button = |id, label: &str, icons: &[&str]| Item::Button {
@@ -121,12 +122,12 @@ pub fn toolbar_items(ctx: &mut Ctx, caption: bool) -> Vec<Item> {
     };
     lead.into_iter()
         .chain([
-            button(COPY, "Copy", &["edit-copy"]),
-            button(PASTE, "Paste", &["edit-paste"]),
-            button(FIND, "Find", &["edit-find", "system-search"]),
+            button(COPY, &tr!("copy"), &["edit-copy"]),
+            button(PASTE, &tr!("paste"), &["edit-paste"]),
+            button(FIND, &tr!("find"), &["edit-find", "system-search"]),
             button(
                 SETTINGS,
-                "Settings",
+                &tr!("settings"),
                 &["preferences-system", "preferences-other"],
             ),
         ])
@@ -409,11 +410,11 @@ impl Terminal {
         let target = links::target(&uri, &cwd::hostname());
         let rows = vec![
             (
-                ctxmenu::item("&Open Link", target.is_some()),
+                ctxmenu::item(&tr!("link-open"), target.is_some()),
                 target.map(Pick::Open),
             ),
             (
-                ctxmenu::item("Copy &Link Address", true),
+                ctxmenu::item(&tr!("link-copy"), true),
                 Some(Pick::Copy(uri)),
             ),
         ];

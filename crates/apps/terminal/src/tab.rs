@@ -22,6 +22,7 @@ use alacritty_terminal::vte::ansi::{CursorShape as TermCursor, CursorStyle, Name
 use polling::{PollMode, Poller};
 use repriseapp::Waker;
 use reprisekit::controls::termgrid::{Scrollback, Snapshot};
+use reprisekit::tr;
 
 use crate::cwd;
 use crate::find::{Marks, Search};
@@ -169,7 +170,7 @@ impl Tab {
         let program = launch.name.clone().unwrap_or_else(|| {
             Path::new(&program)
                 .file_name()
-                .map_or_else(|| "Terminal".into(), |n| n.to_string_lossy().into_owned())
+                .map_or_else(|| tr!("tab-name"), |n| n.to_string_lossy().into_owned())
         });
         let options = tty::Options {
             shell,

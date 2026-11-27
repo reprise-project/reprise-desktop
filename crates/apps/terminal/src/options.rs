@@ -5,6 +5,7 @@ use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::updown::UpDown;
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
+use reprisekit::{kit_tr, tr};
 
 use crate::schemes;
 use crate::settings::{Cursor, Profile, SCROLLBACK_MAX, Settings, TabPosition};
@@ -12,16 +13,22 @@ use crate::settings::{Cursor, Profile, SCROLLBACK_MAX, Settings, TabPosition};
 pub const CLIENT: (i32, i32) = (398, 317);
 pub const PROFILE_CLIENT: (i32, i32) = (300, 112);
 
-const TABS: [&str; 3] = ["General", "Appearance", "Profiles"];
+fn tabs() -> [String; 3] {
+    [
+        tr!("tab-general"),
+        tr!("tab-appearance"),
+        tr!("tab-profiles"),
+    ]
+}
 const GENERAL: usize = 0;
 const APPEARANCE: usize = 1;
 const PROFILES: usize = 2;
 
 const SCROLLBACK: (i32, i32) = (0, SCROLLBACK_MAX as i32);
 /// The tab position combo's rows, in [`TabPosition`] order.
-const TAB_POSITIONS: [(&str, TabPosition); 2] = [
-    ("Below the toolbar", TabPosition::Below),
-    ("In the title bar", TabPosition::Caption),
+const TAB_POSITIONS: [(fn() -> String, TabPosition); 2] = [
+    (|| tr!("tabs-below"), TabPosition::Below),
+    (|| tr!("tabs-caption"), TabPosition::Caption),
 ];
 const SIZE_PX: (i32, i32) = (crate::ZOOM.0 as i32, crate::ZOOM.1 as i32);
 /// The trackbar's first position is this opacity, in percent.
@@ -60,7 +67,7 @@ impl Options {
             profiles_page(&s.profiles),
         ];
         let mut o = Options {
-            sheet: PropSheet::new(&TABS, pages, CLIENT),
+            sheet: PropSheet::new(&tabs().each_ref().map(String::as_str), pages, CLIENT),
             editing: None,
             applied: s.clone(),
             profiles: s.profiles.clone(),
@@ -219,12 +226,32 @@ impl ProfileForm {
     fn new(at: Option<usize>, p: &Profile) -> ProfileForm {
         let mut f = ProfileForm {
             form: Form::new(vec![
-                Item::label("name_label", Rect::new(12, 16, 60, 13), "&Name:"),
+                Item::label(
+                    "name_label",
+                    Rect::new(12, 16, 60, 13),
+                    &tr!("profile-name"),
+                ),
                 Item::edit("name", Rect::new(76, 12, 212, 21), &p.name, true),
-                Item::label("command_label", Rect::new(12, 46, 60, 13), "&Command:"),
+                Item::label(
+                    "command_label",
+                    Rect::new(12, 46, 60, 13),
+                    &tr!("profile-command"),
+                ),
                 Item::edit("command", Rect::new(76, 42, 212, 21), &p.command, true),
-                Item::button("ok", Rect::new(132, 80, 75, 23), "OK", false, true),
-                Item::button("cancel", Rect::new(213, 80, 75, 23), "Cancel", true, false),
+                Item::button(
+                    "ok",
+                    Rect::new(132, 80, 75, 23),
+                    &kit_tr!("ok"),
+                    false,
+                    true,
+                ),
+                Item::button(
+                    "cancel",
+                    Rect::new(213, 80, 75, 23),
+                    &kit_tr!("cancel"),
+                    true,
+                    false,
+                ),
             ]),
             at,
         };
@@ -275,7 +302,8 @@ fn spin(id: &'static str, rect: Rect, value: i32, (lo, hi): (i32, i32)) -> Item 
 }
 
 fn general_page(s: &Settings) -> Form {
-    let positions: Vec<&str> = TAB_POSITIONS.iter().map(|p| p.0).collect();
+    let positions: Vec<String> = TAB_POSITIONS.iter().map(|p| (p.0)()).collect();
+    let positions: Vec<&str> = positions.iter().map(String::as_str).collect();
     let mut tabs = Item::combo("tab_position", 140, 236, 160, &positions, positions.len());
     if let Control::Combo(c) = &mut tabs.control {
         c.selected = TAB_POSITIONS
@@ -287,21 +315,26 @@ fn general_page(s: &Settings) -> Form {
         Item::label(
             "shell_label",
             Rect::new(16, 40, 366, 13),
-            "&Shell (empty runs your login shell):",
+            &tr!("shell-label"),
         ),
         Item::edit("shell", Rect::new(16, 56, 366, 21), &s.shell, true),
-        Item::group("cursor_group", Rect::new(16, 90, 366, 52), "Cursor"),
-        Item::radio("block", 30, 110, "&Block", "cursor").checked(s.cursor == Cursor::Block),
-        Item::radio("bar", 140, 110, "Ba&r", "cursor").checked(s.cursor == Cursor::Bar),
-        Item::radio("underline", 250, 110, "&Underline", "cursor")
+        Item::group(
+            "cursor_group",
+            Rect::new(16, 90, 366, 52),
+            &tr!("cursor-group"),
+        ),
+        Item::radio("block", 30, 110, &tr!("cursor-block"), "cursor")
+            .checked(s.cursor == Cursor::Block),
+        Item::radio("bar", 140, 110, &tr!("cursor-bar"), "cursor").checked(s.cursor == Cursor::Bar),
+        Item::radio("underline", 250, 110, &tr!("cursor-underline"), "cursor")
             .checked(s.cursor == Cursor::Underline),
-        Item::check("blink", 16, 156, "Blin&king cursor").checked(s.blink),
-        Item::check("confirm_paste", 200, 156, "Confirm &multi-line pastes")
+        Item::check("blink", 16, 156, &tr!("blink")).checked(s.blink),
+        Item::check("confirm_paste", 200, 156, &tr!("confirm-paste"))
             .checked(s.confirm_multiline_paste),
         Item::label(
             "scrollback_label",
             Rect::new(16, 186, 200, 13),
-            "S&crollback lines:",
+            &tr!("scrollback"),
         ),
         spin(
             "scrollback",
@@ -312,22 +345,19 @@ fn general_page(s: &Settings) -> Form {
         Item::label(
             "tab_position_label",
             Rect::new(16, 240, 120, 13),
-            "&Tabs (new windows):",
+            &tr!("tabs-position"),
         ),
         tabs,
     ])
 }
 
 fn appearance_page(s: &Settings) -> Form {
-    let labels: Vec<&str> = schemes::NAMES.iter().map(|n| n.1).collect();
+    let labels: Vec<String> = schemes::NAMES.iter().map(|n| (n.1)()).collect();
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
     let mut items = vec![
-        Item::label(
-            "font_label",
-            Rect::new(16, 40, 250, 13),
-            "&Font family (empty picks a monospace face):",
-        ),
+        Item::label("font_label", Rect::new(16, 40, 250, 13), &tr!("font-label")),
         Item::edit("font", Rect::new(16, 56, 250, 21), &s.font, true),
-        Item::label("size_label", Rect::new(284, 40, 90, 13), "Si&ze in pixels:"),
+        Item::label("size_label", Rect::new(284, 40, 90, 13), &tr!("size-label")),
         spin(
             "size",
             Rect::new(284, 56, 79, 21),
@@ -337,12 +367,16 @@ fn appearance_page(s: &Settings) -> Form {
         Item::label(
             "scheme_label",
             Rect::new(16, 92, 250, 13),
-            "Colour &scheme:",
+            &tr!("scheme-label"),
         ),
         Item::combo("scheme", 16, 108, 200, &labels, labels.len()),
-        Item::group("background", Rect::new(16, 146, 366, 96), "Background"),
-        Item::check("see_through", 30, 168, "S&ee-through under Glass").checked(s.see_through),
-        Item::label("opacity_label", Rect::new(30, 200, 56, 13), "&Opacity:"),
+        Item::group(
+            "background",
+            Rect::new(16, 146, 366, 96),
+            &tr!("background-group"),
+        ),
+        Item::check("see_through", 30, 168, &tr!("see-through")).checked(s.see_through),
+        Item::label("opacity_label", Rect::new(30, 200, 56, 13), &tr!("opacity")),
         Item::new(
             "opacity",
             Rect::new(88, 192, 230, trackbar::HEIGHT),
@@ -379,7 +413,7 @@ fn profiles_page(profiles: &[Profile]) -> Form {
         Item::label(
             "profiles_label",
             Rect::new(16, 40, 366, 13),
-            "Each profile is an entry in the + menu that runs its command.",
+            &tr!("profiles-intro"),
         ),
         Item::new(
             "profiles",
@@ -389,9 +423,9 @@ fn profiles_page(profiles: &[Profile]) -> Form {
                 icons: Vec::new(),
             },
         ),
-        Item::button_at("add", 298, 62, 84, "&Add...", true),
-        Item::button_at("edit", 298, 92, 84, "&Edit...", false),
-        Item::button_at("remove", 298, 122, 84, "&Remove", false),
+        Item::button_at("add", 298, 62, 84, &tr!("profile-add"), true),
+        Item::button_at("edit", 298, 92, 84, &tr!("profile-edit"), false),
+        Item::button_at("remove", 298, 122, 84, &tr!("profile-remove"), false),
     ])
 }
 
