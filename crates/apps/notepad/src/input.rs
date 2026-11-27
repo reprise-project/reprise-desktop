@@ -347,7 +347,6 @@ impl Notepad {
             Event::Pointer(p) => self.pointer(p, ctx),
             Event::Pasted(text) => {
                 if self.edit.paste(&text) {
-                    self.dirty = true;
                     self.scroll_to_caret(ctx);
                 }
                 Reply::redraw()

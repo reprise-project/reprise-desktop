@@ -136,7 +136,6 @@ impl Notepad {
         self.view = View::default();
         self.stamp = path.as_deref().and_then(Stamp::of);
         self.path = path;
-        self.dirty = false;
         self.open = None;
         self.sync_menus();
     }
@@ -192,7 +191,7 @@ impl Notepad {
                 self.format = format;
                 self.stamp = Stamp::of(&path);
                 self.path = Some(path);
-                self.dirty = false;
+                self.edit.mark_saved();
                 self.forget_rescued();
                 self.close_saveas();
                 match self.pending.saved(true) {

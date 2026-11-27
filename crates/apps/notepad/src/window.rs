@@ -128,9 +128,7 @@ impl Notepad {
     }
 
     pub(crate) fn edit_key(&mut self, key: MultiKey, ctx: &Ctx) {
-        if self.edit.key(key, self.mono.get(), &self.metrics).edited() {
-            self.dirty = true;
-        }
+        self.edit.key(key, self.mono.get(), &self.metrics);
         self.scroll_to_caret(ctx);
     }
 
@@ -141,7 +139,6 @@ impl Notepad {
             .unwrap_or(0);
         let stamp = local_stamp(now);
         self.edit.paste(&stamp);
-        self.dirty = true;
         self.scroll_to_caret(ctx);
     }
 

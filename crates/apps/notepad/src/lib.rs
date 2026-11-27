@@ -120,8 +120,6 @@ struct Notepad {
     event_win: WinId,
     app_icon: Option<Canvas>,
     warn_icon: Option<Canvas>,
-    /// Any edit sets it; undoing back to the saved text does not clear it.
-    dirty: bool,
     pending: Pending,
     /// The message boxes, in turn: questions, Not found and errors.
     asks: Asks<Ask>,
@@ -147,6 +145,12 @@ struct Notepad {
 }
 
 impl Notepad {
+    /// Whether the text differs from the file's: closing asks to save it, and a kill leaves a
+    /// recovery file.
+    pub(crate) fn dirty(&self) -> bool {
+        self.edit.modified()
+    }
+
     fn new(path: Option<PathBuf>) -> Notepad {
         let mut failed = None;
         let ((text, format), path) = match path {
@@ -192,7 +196,6 @@ impl Notepad {
             event_win: MAIN,
             app_icon: None,
             warn_icon: None,
-            dirty: false,
             pending: Pending::default(),
             asks: Asks::new(ASK),
             rescue_dir: recovery_dir(),

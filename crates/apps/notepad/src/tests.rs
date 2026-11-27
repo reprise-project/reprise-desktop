@@ -497,7 +497,7 @@ fn the_context_menu_runs_the_edit_commands() {
     open(&mut np, &mut ctx);
     np.event(MAIN, typed(0x64, Some("d"), false), &mut ctx);
     assert_eq!(np.edit.text(), "", "Delete");
-    assert!(np.dirty);
+    assert!(np.dirty());
 
     open(&mut np, &mut ctx);
     np.event(MAIN, typed(0x75, Some("u"), false), &mut ctx);
@@ -1070,13 +1070,13 @@ fn the_bars_and_the_file_dialog_grow_with_the_text_size() {
 #[test]
 fn typing_marks_the_document_dirty() {
     let mut np = Notepad::new(None);
-    assert!(!np.dirty, "a fresh document is clean");
+    assert!(!np.dirty(), "a fresh document is clean");
     np.edit = MultiEdit::new("x");
-    np.dirty = true;
+    np.edit.mark_unsaved();
     let tmp = tempfile::tempdir().expect("tempdir");
     np.path = Some(tmp.path().join("dirty.txt"));
     np.save();
-    assert!(!np.dirty, "a successful save cleans it");
+    assert!(!np.dirty(), "a successful save cleans it");
 }
 
 #[test]
@@ -1142,22 +1142,53 @@ fn moving_the_caret_or_selection_leaves_a_saved_document_clean() {
         np.event(MAIN, Event::Pointer(p), &mut ctx);
     }
     assert_eq!(np.edit.selected_text(), "pha ", "the drag selected");
-    assert!(!np.dirty, "no key or click changed the text");
+    assert!(!np.dirty(), "no key or click changed the text");
     assert!(np.event(MAIN, Event::CloseRequest, &mut ctx).quit);
     np.rescue();
     assert!(recovered_in(&dir).is_empty(), "nothing to recover");
 
     let ch = key(0x78, false, false, Some(EditKey::Insert("x".into())));
     np.event(MAIN, ch, &mut ctx);
-    assert!(np.dirty, "typing is a change");
+    assert!(np.dirty(), "typing is a change");
     np.rescue();
     assert_eq!(recovered_in(&dir).len(), 1);
 }
 
 #[test]
+fn undoing_back_to_the_saved_text_leaves_the_document_clean() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("recovery");
+    let mut ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.edit = MultiEdit::new("note 1\n");
+    np.event(MAIN, Event::Focus(true), &mut ctx);
+    np.event(MAIN, Event::Pasted("\u{1f600}".into()), &mut ctx);
+    assert!(np.dirty(), "the paste is a change");
+    let undo = Event::Key(KeyInput {
+        sym: 0x7a,
+        utf8: None,
+        mods: repriseapp::Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+        edit: Some(EditKey::Undo),
+    });
+    np.event(MAIN, undo, &mut ctx);
+    assert_eq!(np.edit.text(), "note 1\n");
+    assert!(!np.dirty(), "the text is the saved one again");
+    np.rescue();
+    assert!(recovered_in(&dir).is_empty(), "nothing to recover");
+    assert!(
+        np.event(MAIN, Event::CloseRequest, &mut ctx).quit,
+        "closing asks nothing"
+    );
+}
+
+#[test]
 fn new_on_a_dirty_document_prompts() {
     let mut np = Notepad::new(None);
-    np.dirty = true;
+    np.edit.mark_unsaved();
     let kids_before = np.children().len();
     np.confirm_then(PendingAction::New);
     assert_eq!(np.children().len(), kids_before + 1);
@@ -1168,7 +1199,7 @@ fn new_on_a_dirty_document_prompts() {
 #[test]
 fn no_discards_and_runs_the_pending_action() {
     let mut np = Notepad::new(None);
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
     let reply = np.answer_box(Some(1));
     assert!(reply.quit);
@@ -1178,7 +1209,7 @@ fn no_discards_and_runs_the_pending_action() {
 #[test]
 fn arrows_move_the_save_prompt_s_focus_and_enter_presses_it() {
     let mut np = Notepad::new(None);
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
     let win = box_win(&np);
     let key = |sym, edit| KeyInput {
@@ -1201,25 +1232,25 @@ fn arrows_move_the_save_prompt_s_focus_and_enter_presses_it() {
     assert_eq!(focus(&np), 2, "Right stops at Cancel");
     np.event(win, Event::Key(key(keysym::RETURN, None)), &mut ctx);
     assert!(np.asks.is_empty(), "Enter on Cancel closed the prompt");
-    assert!(np.dirty, "Cancel kept the changes");
+    assert!(np.dirty(), "Cancel kept the changes");
     assert!(!np.pending.is_waiting(), "Cancel abandoned the quit");
 }
 
 #[test]
 fn cancel_on_the_prompt_abandons_the_action() {
     let mut np = Notepad::new(None);
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
     let reply = np.answer_box(Some(2));
     assert!(!reply.quit);
-    assert!(np.dirty, "still dirty");
+    assert!(np.dirty(), "still dirty");
     assert!(!np.pending.is_waiting());
 }
 
 #[test]
 fn a_clean_document_exits_without_a_prompt() {
     let mut np = Notepad::new(None);
-    assert!(!np.dirty);
+    assert!(!np.dirty());
     let reply = np.confirm_then(PendingAction::Quit);
     assert!(reply.quit, "a clean document quits immediately");
     assert!(np.children().is_empty(), "no prompt opens");
@@ -1435,12 +1466,12 @@ fn save_as_writes_the_encoding_picked_and_the_document_keeps_it() {
 fn failed_save_on_the_prompt_raises_the_box_and_drops_the_action() {
     let mut np = Notepad::new(None);
     np.path = Some(std::env::temp_dir().join("reprise-no-such-dir/x.txt"));
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
     let reply = np.answer_box(Some(0));
     assert!(!reply.quit);
     assert!(!np.pending.is_waiting());
-    assert!(np.dirty);
+    assert!(np.dirty());
     assert!(
         np.asks
             .up()
@@ -1689,7 +1720,7 @@ fn save_as_writes_adopts_the_path_and_runs_the_pending_action() {
     let dir = tmp.path();
     let mut np = Notepad::new(None);
     np.edit = MultiEdit::new("hello");
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.pending = Pending::waiting(PendingAction::Quit);
     np.saveas = Some(sample_filedlg());
     let id = np.host.folders.id(dir);
@@ -1701,7 +1732,7 @@ fn save_as_writes_adopts_the_path_and_runs_the_pending_action() {
     let written = dir.join("out.txt");
     assert_eq!(std::fs::read_to_string(&written).expect("written"), "hello");
     assert_eq!(np.path.as_deref(), Some(written.as_path()));
-    assert!(!np.dirty);
+    assert!(!np.dirty());
     assert!(reply.quit, "the pending quit runs once the save succeeds");
 }
 
@@ -1755,7 +1786,7 @@ fn save_as_onto_an_existing_file_asks_before_replacing() {
     let name = taken.file_name().unwrap().to_string_lossy().into_owned();
     let mut np = Notepad::new(None);
     np.edit = MultiEdit::new("new");
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.saveas = Some(sample_filedlg());
     let id = np.host.folders.id(&dir);
     np.host.folder = Some(id);
@@ -1913,14 +1944,14 @@ fn open_replaces_the_buffer() {
     );
     assert_eq!(np.edit.text(), "loaded");
     assert_eq!(np.path.as_deref(), Some(p.as_path()));
-    assert!(!np.dirty);
+    assert!(!np.dirty());
 }
 
 #[test]
 fn cancelling_save_as_abandons_the_pending_quit() {
     let mut np = Notepad::new(None);
     np.edit = MultiEdit::new("hello");
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
     assert!(
         matches!(np.asks.up(), Some((_, Ask::SaveChanges))),
@@ -2381,7 +2412,7 @@ fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved(
     let mut np = Notepad::new(None);
     np.rescue_dir = Some(dir.clone());
     np.edit = MultiEdit::new("unsaved");
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.rescue();
     let kept = recovered_in(&dir);
     assert_eq!(kept.len(), 1);
@@ -2395,7 +2426,7 @@ fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved(
     assert!(next.asks.is_empty(), "Yes closed the prompt");
     assert_eq!(next.edit.text(), "unsaved");
     assert_eq!(next.path, None);
-    assert!(next.dirty);
+    assert!(next.dirty());
     assert!(kept[0].exists(), "kept until the text is saved");
 
     next.saveas_write(tmp.path().join("saved.txt"));
@@ -2530,13 +2561,13 @@ fn a_save_over_a_file_changed_on_disk_asks_first() {
     f.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1))
         .expect("set mtime");
     np.edit = MultiEdit::new("edited");
-    np.dirty = true;
+    np.edit.mark_unsaved();
 
     assert!(!np.save());
     box_win(&np);
     assert!(matches!(np.asks.up(), Some((_, Ask::Changed))));
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "theirs");
-    assert!(np.dirty);
+    assert!(np.dirty());
 
     let mut ctx = test_ctx();
     np.asks.up_mut().expect("the prompt").fields.default = 0;
@@ -2547,7 +2578,7 @@ fn a_save_over_a_file_changed_on_disk_asks_first() {
     );
     assert!(np.asks.is_empty(), "Yes closed the prompt");
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "edited");
-    assert!(!np.dirty);
+    assert!(!np.dirty());
     assert!(np.save(), "the save took the file's new stamp");
 }
 
@@ -2708,7 +2739,7 @@ fn save_changes_with_an_error_raised_behind_it_keeps_the_pending_action_and_yes_
     std::fs::write(&path, "old").expect("write");
     let mut np = Notepad::new(Some(path.clone()));
     np.edit = MultiEdit::new("new");
-    np.dirty = true;
+    np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
     np.confirm_then(PendingAction::Quit);
     assert_eq!(np.asks.len(), 1, "Save changes is asked once");
@@ -2886,7 +2917,7 @@ fn opened_and_saved_files_go_to_the_recent_files_as_notepad_s() {
 
     std::fs::remove_file(&xbel).expect("remove");
     np.edit = MultiEdit::new("edited");
-    np.dirty = true;
+    np.edit.mark_unsaved();
     assert!(np.save());
     np.saveas = Some(sample_filedlg());
     np.host.folder = Some(id);
@@ -2925,7 +2956,7 @@ fn an_alt_letter_no_menu_title_owns_types_nothing() {
     };
     np.event(MAIN, letter('q', true), &mut ctx);
     assert_eq!(np.edit.text(), "", "Alt+Q types nothing");
-    assert!(!np.dirty);
+    assert!(!np.dirty());
     np.event(MAIN, letter('q', false), &mut ctx);
     assert_eq!(np.edit.text(), "q");
 }

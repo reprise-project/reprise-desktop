@@ -64,7 +64,7 @@ impl Notepad {
             Ok(()) => {
                 self.recent.record(&p);
                 self.stamp = Stamp::of(&p);
-                self.dirty = false;
+                self.edit.mark_saved();
                 self.forget_rescued();
                 true
             }
@@ -123,7 +123,7 @@ impl Notepad {
 
     /// Leaves unsaved text in the recovery dir, in place of the recovery file it was opened from.
     pub(crate) fn rescue(&mut self) {
-        let Some(dir) = self.rescue_dir.as_deref().filter(|_| self.dirty) else {
+        let Some(dir) = self.rescue_dir.as_deref().filter(|_| self.dirty()) else {
             return;
         };
         let stem = self
@@ -188,7 +188,7 @@ impl Notepad {
                 match read_text(&file) {
                     Ok((text, format)) => {
                         self.show_document(&text, format, None);
-                        self.dirty = true;
+                        self.edit.mark_unsaved();
                         self.rescued = Some(file);
                     }
                     Err(e) => self.open_failed(&file, &e),
@@ -241,7 +241,7 @@ impl Notepad {
     /// asked once however often the action is. Open closes first, since the prompt's Yes may
     /// open Save As.
     pub(crate) fn confirm_then(&mut self, action: PendingAction) -> Reply {
-        let Some(action) = self.pending.ask(action, self.dirty) else {
+        let Some(action) = self.pending.ask(action, self.dirty()) else {
             self.open = None;
             if !(self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::SaveChanges)) {
                 let b = self.savechanges_box();
@@ -263,7 +263,6 @@ impl Notepad {
                 self.format = Format::default();
                 self.view = View::default();
                 self.path = None;
-                self.dirty = false;
                 Reply::redraw_all()
             }
             PendingAction::Open => {
@@ -307,7 +306,7 @@ impl Notepad {
         match button {
             Some(0) => self.savechanges_yes(),
             Some(1) => {
-                self.dirty = false;
+                self.edit.mark_saved();
                 self.forget_rescued();
                 match self.pending.discarded() {
                     Some(action) => self.run_pending(action),

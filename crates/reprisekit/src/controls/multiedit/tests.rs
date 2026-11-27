@@ -113,6 +113,42 @@ fn dropped_text_lands_at_the_drop_point_selected() {
 }
 
 #[test]
+fn undo_and_redo_back_to_the_saved_text_leave_it_unmodified() {
+    let mut t = e("note");
+    let typed = |t: &mut MultiEdit, s: &str| t.edit_key(EditKey::Insert(s.into()));
+    assert!(!t.modified(), "fresh text is as made");
+    typed(&mut t, "a");
+    assert!(t.modified());
+    t.mark_saved();
+    typed(&mut t, "b");
+    assert!(t.modified(), "typing on after a save");
+    t.edit_key(EditKey::Undo);
+    assert_eq!(t.text(), "anote", "the save split the typing run");
+    assert!(!t.modified(), "undone to the saved text");
+    t.edit_key(EditKey::Undo);
+    assert!(t.modified(), "undone past it");
+    t.edit_key(EditKey::Redo);
+    assert!(!t.modified(), "redone to it");
+    t.edit_key(EditKey::Undo);
+    typed(&mut t, "c");
+    t.edit_key(EditKey::Undo);
+    assert_eq!(t.text(), "note");
+    assert!(
+        t.modified(),
+        "an edit after undoing past the save drops the way back to it"
+    );
+}
+
+#[test]
+fn text_marked_unsaved_stays_modified_whatever_is_undone() {
+    let mut t = e("recovered");
+    t.mark_unsaved();
+    t.edit_key(EditKey::Insert("x".into()));
+    t.edit_key(EditKey::Undo);
+    assert!(t.modified());
+}
+
+#[test]
 fn one_undo_takes_a_drop_back_and_restores_the_selection() {
     let mut t = e("one two\nthree");
     t.place(p(1, 0), false);

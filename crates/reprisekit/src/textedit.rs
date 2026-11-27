@@ -126,9 +126,11 @@ impl<P> Op<P> {
     }
 }
 
-/// One undo step: its ops in order, and the caret and anchor before the first.
+/// One undo step: its ops in order, and the caret and anchor before the first. `id` names the
+/// text after it ([`Undo::mark_saved`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Step<P> {
+    id: u64,
     ops: Vec<Op<P>>,
     caret: P,
     anchor: P,
@@ -156,6 +158,11 @@ pub(crate) struct Undo<P> {
     /// The caret and anchor a fresh step starts from, set by a checkpoint that begins one.
     fresh: Option<(P, P)>,
     pub last: Edit,
+    /// The id of the text with no step done: 0, or the last step dropped for room.
+    base: u64,
+    next_id: u64,
+    /// The id of the text last saved; None when no undo or redo reaches it.
+    saved: Option<u64>,
 }
 
 impl<P> Default for Undo<P> {
@@ -166,6 +173,9 @@ impl<P> Default for Undo<P> {
             bytes: 0,
             fresh: None,
             last: Edit::None,
+            base: 0,
+            next_id: 1,
+            saved: Some(0),
         }
     }
 }
@@ -187,13 +197,17 @@ impl<P: Spot> Undo<P> {
         }
         self.undone.clear();
         self.bytes += op.text().len();
+        let saved = self.saved;
         let step = match (self.fresh.take(), self.done.back_mut()) {
-            (None, Some(step)) => step,
+            // The saved step stays as saved: what follows it is a step of its own.
+            (None, Some(step)) if saved != Some(step.id) => step,
             (fresh, _) => {
                 let (caret, anchor) = fresh.unwrap_or(match &op {
                     Op::Insert { at, .. } | Op::Delete { at, .. } => (*at, *at),
                 });
+                self.next_id += 1;
                 self.done.push_back(Step {
+                    id: self.next_id - 1,
                     ops: Vec::new(),
                     caret,
                     anchor,
@@ -221,7 +235,27 @@ impl<P: Spot> Undo<P> {
         while self.done.len() > 1 && (self.done.len() > UNDO_STEPS || self.bytes > UNDO_BYTES) {
             let old = self.done.pop_front().expect("more than one step");
             self.bytes -= old.bytes();
+            self.base = old.id;
         }
+    }
+
+    fn now(&self) -> u64 {
+        self.done.back().map_or(self.base, |s| s.id)
+    }
+
+    /// The text now is the saved one, which undo and redo find again.
+    pub fn mark_saved(&mut self) {
+        self.saved = Some(self.now());
+    }
+
+    /// No undo or redo reaches the saved text, as when the text was not loaded from the file.
+    pub fn mark_unsaved(&mut self) {
+        self.saved = None;
+    }
+
+    /// Whether the text differs from the one last marked saved.
+    pub fn modified(&self) -> bool {
+        self.saved != Some(self.now())
     }
 
     pub fn can_undo(&self) -> bool {
@@ -282,7 +316,11 @@ impl<P: Spot> Undo<P> {
                 }
             }
         }
+        let modified = self.modified();
         *self = Undo::default();
+        if modified {
+            self.mark_unsaved();
+        }
     }
 
     #[cfg(test)]
