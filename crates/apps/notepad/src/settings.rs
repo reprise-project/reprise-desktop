@@ -83,6 +83,7 @@ fn page_from(v: &toml::Value) -> PageSetup {
         margins: margins.unwrap_or(base.margins),
         header: text("header"),
         footer: text("footer"),
+        ..base
     };
     if !page.fits() {
         page.margins = base.margins;

@@ -1,6 +1,6 @@
 //! Page Setup: the paper a program prints on, its orientation and margins, a text's header and
-//! footer, the page's geometry at a printer's resolution, and the dialog that picks them with a
-//! preview of the page.
+//! footer or a picture's scaling, the page's geometry at a printer's resolution, and the dialog
+//! that picks them with a preview of the page.
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BUTTON_H, BUTTON_W};
@@ -95,6 +95,27 @@ pub struct PageSetup {
     /// [`printpage::band`]: crate::controls::printpage::band
     pub header: String,
     pub footer: String,
+    pub scaling: Scaling,
+}
+
+/// How a picture prints. Either way a picture larger than the margins leave is shrunk to fit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scaling {
+    /// At the size its own resolution gives it.
+    #[default]
+    Actual,
+    /// As large as the margins hold.
+    Fit,
+}
+
+/// What a program prints, which decides the dialog's last rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// Header and Footer boxes.
+    Text,
+    /// Actual size and Fit to page.
+    Picture,
 }
 
 impl Default for PageSetup {
@@ -111,6 +132,7 @@ impl PageSetup {
             margins: DEFAULT_MARGINS,
             header: String::new(),
             footer: String::new(),
+            scaling: Scaling::Actual,
         }
     }
 
@@ -169,6 +191,12 @@ pub fn px(v: i32, dpi: i32) -> i32 {
     ((v as i64 * dpi as i64 + INCH as i64 / 2) / INCH as i64) as i32
 }
 
+/// `v` device pixels at `dpi` in hundredths of a millimetre.
+pub fn from_px(v: i32, dpi: i32) -> i32 {
+    let dpi = dpi.max(1) as i64;
+    ((v as i64 * INCH as i64 + dpi / 2) / dpi) as i32
+}
+
 /// `v` hundredths of a millimetre in points (1/72 inch).
 pub fn points(v: i32) -> f64 {
     v as f64 * 72.0 / INCH as f64
@@ -183,14 +211,14 @@ pub const TOP: &str = "top";
 pub const BOTTOM: &str = "bottom";
 pub const HEADER: &str = "header";
 pub const FOOTER: &str = "footer";
+pub const ACTUAL: &str = "actual";
+pub const FIT: &str = "fit";
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
 const PREVIEW: &str = "preview";
 const MARGIN_IDS: [&str; 4] = [LEFT, RIGHT, TOP, BOTTOM];
 
-pub const CLIENT: (i32, i32) = (348, 312);
-/// The rows Header and Footer add below the margins.
-const HEADERS_H: i32 = 52;
+pub const CLIENT: (i32, i32) = (348, 364);
 const PAD: i32 = 8;
 const WIDE: i32 = CLIENT.0 - 2 * PAD;
 const PREVIEW_RECT: Rect = Rect::new(PAD, PAD, WIDE, 124);
@@ -200,18 +228,14 @@ const MARGIN_GROUP: Rect = Rect::new(124, 198, CLIENT.0 - 124 - PAD, 70);
 const EDIT_W: i32 = 48;
 const EDIT_H: i32 = 20;
 const PAPER_ROWS: usize = 8;
-const BUTTONS_Y: i32 = 280;
+const BUTTONS_Y: i32 = 332;
 const HEADER_Y: i32 = 276;
 const ROW_GAP: i32 = 26;
+const SCALING_GROUP: Rect = Rect::new(PAD, 272, WIDE, 44);
 
-/// The dialog's client size, with the Header and Footer rows when `headers`.
-pub fn client(headers: bool) -> (i32, i32) {
-    (CLIENT.0, CLIENT.1 + if headers { HEADERS_H } else { 0 })
-}
-
-/// The dialog's form for `s`: Size, Orientation and the four margins in millimetres, and with
-/// `headers` the Header and Footer boxes.
-pub fn form(s: &PageSetup, headers: bool) -> Form {
+/// The dialog's form for `s`: Size, Orientation and the four margins in millimetres, then a
+/// text's Header and Footer boxes or a picture's Scaling.
+pub fn form(s: &PageSetup, kind: Kind) -> Form {
     let labels: Vec<String> = PAPERS.iter().map(Paper::label).collect();
     let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
     let mut paper = Item::combo(PAPER, 76, 158, 252, &labels, PAPER_ROWS);
@@ -228,7 +252,6 @@ pub fn form(s: &PageSetup, headers: bool) -> Form {
     };
     let label = |id, x, y, text: String| Item::label_at(id, x, y + 4, 50, &text);
     let (mx, my) = (MARGIN_GROUP.x, MARGIN_GROUP.y);
-    let buttons_y = BUTTONS_Y + client(headers).1 - CLIENT.1;
     let mut items = vec![
         Item::new(PREVIEW, PREVIEW_RECT, Control::Blank),
         Item::group("papergroup", PAPER_GROUP, &tr!("pagesetup-paper")),
@@ -247,7 +270,7 @@ pub fn form(s: &PageSetup, headers: bool) -> Form {
         label("bottomlabel", mx + 112, my + 42, tr!("pagesetup-bottom")),
         margin(3, mx + 160, my + 42),
     ];
-    if headers {
+    if kind == Kind::Text {
         for (i, (label, id, text, value)) in [
             ("headerlabel", HEADER, tr!("pagesetup-header"), &s.header),
             ("footerlabel", FOOTER, tr!("pagesetup-footer"), &s.footer),
@@ -259,13 +282,21 @@ pub fn form(s: &PageSetup, headers: bool) -> Form {
             items.push(Item::label_at(label, 20, y + 4, 54, &text));
             items.push(Item::edit(id, Rect::new(76, y, 252, EDIT_H), value, true));
         }
+    } else {
+        let fit = s.scaling == Scaling::Fit;
+        let y = SCALING_GROUP.y + 20;
+        items.extend([
+            Item::group("scalinggroup", SCALING_GROUP, &tr!("pagesetup-scaling")),
+            Item::radio(ACTUAL, 20, y, &tr!("pagesetup-actual-size"), "scaling").checked(!fit),
+            Item::radio(FIT, 134, y, &tr!("pagesetup-fit-to-page"), "scaling").checked(fit),
+        ]);
     }
     items.extend([
         Item::button(
             OK,
             Rect::new(
                 CLIENT.0 - PAD - 2 * BUTTON_W - 6,
-                buttons_y,
+                BUTTONS_Y,
                 BUTTON_W,
                 BUTTON_H,
             ),
@@ -275,7 +306,7 @@ pub fn form(s: &PageSetup, headers: bool) -> Form {
         ),
         Item::button(
             CANCEL,
-            Rect::new(CLIENT.0 - PAD - BUTTON_W, buttons_y, BUTTON_W, BUTTON_H),
+            Rect::new(CLIENT.0 - PAD - BUTTON_W, BUTTONS_Y, BUTTON_W, BUTTON_H),
             &tr!("cancel"),
             true,
             false,
@@ -365,7 +396,8 @@ pub fn read(f: &Form) -> Result<PageSetup, Refusal> {
 }
 
 /// What the preview draws: the paper and orientation picked, and each margin whose box holds a
-/// number (else none). The header and footer as typed; empty without their boxes.
+/// number (else none). The header and footer as typed; empty without their boxes, and the
+/// scaling actual size without its buttons.
 fn shown(f: &Form) -> PageSetup {
     let paper = f.combo_selected(PAPER).unwrap_or(A4).min(PAPERS.len() - 1);
     PageSetup {
@@ -374,6 +406,10 @@ fn shown(f: &Form) -> PageSetup {
         margins: MARGIN_IDS.map(|id| parse_mm(f.edit_text(id)).unwrap_or(0)),
         header: f.edit_text(HEADER).into(),
         footer: f.edit_text(FOOTER).into(),
+        scaling: match f.checked(FIT) {
+            Some(true) => Scaling::Fit,
+            _ => Scaling::Actual,
+        },
     }
 }
 

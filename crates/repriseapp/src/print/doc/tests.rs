@@ -1,5 +1,5 @@
 use super::*;
-use reprisekit::controls::pagesetup::{MM, PAPERS};
+use reprisekit::controls::pagesetup::{MM, PAPERS, Scaling};
 use std::cell::Cell;
 
 thread_local! {
@@ -115,12 +115,14 @@ fn a_header_or_footer_prints_the_strip_between_the_side_margins_top_to_bottom() 
 #[test]
 fn a_large_picture_is_drawn_at_300_dpi_of_its_place_and_a_small_one_at_its_own_size() {
     let s = a4(25 * MM);
-    assert_eq!(picture_size(&s, (8000, 2000)), (1890, 472));
-    assert_eq!(picture_size(&s, (40, 10)), (40, 10));
+    let drawn = |size| fitted(size, picture_place(&s, size, 0, 96));
+    assert_eq!(drawn((8000, 2000)), (1890, 472));
+    assert_eq!(drawn((40, 10)), (40, 10));
     let laid = Laid::new(
         Doc::Picture {
             picture: Arc::new(Canvas::new(4000, 1000)),
             turns: 1,
+            dpi: 96,
         },
         s,
         "notes.txt",
@@ -148,6 +150,7 @@ fn laying_out_a_large_picture_shrinks_it_and_lets_the_full_one_go() {
         Doc::Picture {
             picture: full.clone(),
             turns: 0,
+            dpi: 96,
         },
         a4(25 * MM),
         "notes.txt",
@@ -166,6 +169,7 @@ fn laying_out_a_large_picture_shrinks_it_and_lets_the_full_one_go() {
         Doc::Picture {
             picture: small.clone(),
             turns: 1,
+            dpi: 96,
         },
         a4(25 * MM),
         "notes.txt",
@@ -176,5 +180,36 @@ fn laying_out_a_large_picture_shrinks_it_and_lets_the_full_one_go() {
     assert!(
         Arc::ptr_eq(picture, &small),
         "a small picture is kept as it is"
+    );
+}
+
+#[test]
+fn an_icon_prints_at_its_own_size_unless_page_setup_fits_it() {
+    let icon = Arc::new(Canvas::new(48, 48));
+    let at = |scaling| {
+        let s = PageSetup {
+            scaling,
+            ..a4(20 * MM)
+        };
+        let laid = Laid::new(
+            Doc::Picture {
+                picture: icon.clone(),
+                turns: 0,
+                dpi: 96,
+            },
+            s,
+            "icon.png",
+        );
+        let mut got = Vec::new();
+        laid.render(Range::All, |p| got.push(p));
+        (got[0].at[2], (got[0].image.width, got[0].image.height))
+    };
+    let (w, px) = at(Scaling::Actual);
+    assert!((w - points(1270)).abs() < 0.01, "12.7 mm wide, not {w} pt");
+    assert_eq!(px, (48, 48), "drawn from its own pixels");
+    let (w, _) = at(Scaling::Fit);
+    assert!(
+        (w - points(170 * MM)).abs() < 0.01,
+        "fitted between 20 mm margins"
     );
 }

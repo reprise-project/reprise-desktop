@@ -10,6 +10,7 @@
 //! them is centred, and an unknown code prints as typed.
 
 use crate::controls::multiedit::{self, Metrics, Row};
+use crate::controls::pagesetup::{self, Scaling};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::Color;
@@ -241,6 +242,24 @@ pub fn draw_framed_page(
         }
     }
     c
+}
+
+/// Where a picture `size` px at `dpi` goes in `room` (hundredths of a millimetre), centred: at
+/// the size its resolution gives it unless `scaling` fits it to the room or it is larger than
+/// the room, then as large as fits.
+pub fn place(size: (u32, u32), dpi: u32, room: Rect, scaling: Scaling) -> Rect {
+    let own = |n: u32| pagesetup::from_px(n.min(i32::MAX as u32) as i32, dpi as i32).max(1);
+    let (w, h) = (own(size.0), own(size.1));
+    if scaling == Scaling::Fit || w > room.width || h > room.height {
+        let px = |n: u32| n.min(i32::MAX as u32) as i32;
+        return fit(px(size.0), px(size.1), room);
+    }
+    Rect::new(
+        room.x + (room.width - w) / 2,
+        room.y + (room.height - h) / 2,
+        w,
+        h,
+    )
 }
 
 /// Where a picture `w` by `h` goes in `room`: as large as fits with its shape kept, centred.
@@ -475,6 +494,40 @@ mod tests {
             fit(1, 1, room),
             Rect::new(60, 20, 100, 100),
             "small ones grow"
+        );
+    }
+
+    #[test]
+    fn a_picture_that_fits_prints_at_its_own_resolution_unless_fitted() {
+        let a4_body = Rect::new(2000, 2500, 17000, 24700);
+        let icon = place((48, 48), 96, a4_body, Scaling::Actual);
+        assert_eq!(
+            (icon.width, icon.height),
+            (1270, 1270),
+            "48 px at 96 dpi is 12.7 mm"
+        );
+        assert_eq!(
+            (icon.x, icon.y),
+            (2000 + (17000 - 1270) / 2, 2500 + (24700 - 1270) / 2),
+            "centred between the margins"
+        );
+        let scan = place((1800, 600), 300, a4_body, Scaling::Actual);
+        assert_eq!(
+            (scan.width, scan.height),
+            (15240, 5080),
+            "1800 px at 300 dpi is 152.4 mm"
+        );
+        let photo = place((4000, 3000), 72, a4_body, Scaling::Actual);
+        assert_eq!(
+            photo,
+            fit(4000, 3000, a4_body),
+            "a picture larger than the body is fitted"
+        );
+        let fitted = place((48, 48), 96, a4_body, Scaling::Fit);
+        assert_eq!(
+            (fitted.width, fitted.height),
+            (17000, 17000),
+            "Fit to page fills the width"
         );
     }
 }

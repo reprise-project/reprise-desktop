@@ -2,7 +2,7 @@
 //! and the timer slideshows and moving pictures step on.
 
 use repriseapp::Poster;
-use repriseapp::decode::{Budget, Decoders, Unread, frames, read_capped_from};
+use repriseapp::decode::{Budget, Decoders, Unread, dpi, frames, read_capped_from};
 use reprisefs::bincap::Fate;
 use reprisekit::raster::Canvas;
 use reprisekit::tr;
@@ -11,10 +11,12 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Instant;
 
-/// A decoded picture: its frames (one for a still) and the file's size in bytes.
+/// A decoded picture: its frames (one for a still), the file's size in bytes and the
+/// resolution it states.
 pub struct Picture {
     pub frames: Vec<(Arc<Canvas>, u32)>,
     pub bytes: u64,
+    pub dpi: Option<u32>,
 }
 
 impl Picture {
@@ -113,7 +115,11 @@ fn picture(bytes: &[u8], budget: Budget) -> Result<Picture, String> {
             .into_iter()
             .map(|f| (Arc::new(f.canvas), f.delay_ms))
             .collect();
-        return Ok(Picture { frames, bytes: len });
+        return Ok(Picture {
+            frames,
+            bytes: len,
+            dpi: dpi(bytes),
+        });
     }
     let d = Decoders::default_set()
         .decode(bytes, (u32::MAX, u32::MAX), budget)
@@ -124,6 +130,7 @@ fn picture(bytes: &[u8], budget: Budget) -> Result<Picture, String> {
     Ok(Picture {
         frames: vec![(Arc::new(d.canvas), 0)],
         bytes: len,
+        dpi: dpi(bytes),
     })
 }
 

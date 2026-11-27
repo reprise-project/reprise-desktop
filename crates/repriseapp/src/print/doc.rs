@@ -1,7 +1,8 @@
 //! What a program prints, cut into pages and drawn away from its event loop: a text wrapped
-//! between the margins, or a picture fitted to them. Pages are drawn one at a time and deflated
-//! before the next is drawn, so a long document holds one raw page at once, and a picture larger
-//! than it prints is shrunk as it is laid out, so the job does not keep it whole.
+//! between the margins, or a picture placed between them as Page Setup's scaling says. Pages are
+//! drawn one at a time and deflated before the next is drawn, so a long document holds one raw
+//! page at once, and a picture larger than it prints is shrunk as it is laid out, so the job does
+//! not keep it whole.
 
 use super::{DPI, pdf};
 use reprisekit::controls::imageview;
@@ -61,11 +62,12 @@ pub enum Doc {
         font: TextFont,
         lines: Vec<String>,
     },
-    /// A picture turned `turns` quarter turns clockwise. A program hands over its own pixels
-    /// at full size; laying it out shrinks it.
+    /// A picture turned `turns` quarter turns clockwise, made at `dpi` dots per inch. A program
+    /// hands over its own pixels at full size; laying it out shrinks it.
     Picture {
         picture: Arc<Canvas>,
         turns: u8,
+        dpi: u32,
     },
 }
 
@@ -77,11 +79,14 @@ pub struct Laid {
     title: String,
     /// A text's rows, page by page; a picture is one page.
     rows: Vec<Vec<Row>>,
+    /// Where a picture goes on its page, hundredths of a millimetre.
+    picture_at: Rect,
 }
 
 impl Laid {
     /// `doc`, titled `title`, cut into pages of `setup`.
     pub fn new(doc: Doc, setup: PageSetup, title: &str) -> Laid {
+        let mut picture_at = Rect::default();
         let (doc, rows) = match doc {
             Doc::Text { font, lines } => {
                 let face = font.load();
@@ -90,9 +95,21 @@ impl Laid {
                     printpage::text_pages(face_of(&face, &font), &font.metrics(), &lines, w, h);
                 (Doc::Text { font, lines }, rows)
             }
-            Doc::Picture { picture, turns } => {
-                let picture = shrunk(picture, turns, &setup);
-                (Doc::Picture { picture, turns }, vec![Vec::new()])
+            Doc::Picture {
+                picture,
+                turns,
+                dpi,
+            } => {
+                picture_at = picture_place(&setup, (picture.width, picture.height), turns, dpi);
+                let picture = shrunk(picture, turns, picture_at);
+                (
+                    Doc::Picture {
+                        picture,
+                        turns,
+                        dpi,
+                    },
+                    vec![Vec::new()],
+                )
             }
         };
         Laid {
@@ -100,6 +117,7 @@ impl Laid {
             setup,
             title: title.into(),
             rows,
+            picture_at,
         }
     }
 
@@ -154,9 +172,9 @@ impl Laid {
                     out(page(s, &raw.0, Rect::new(b.x, 0, b.width, s.size().1)));
                 }
             }
-            Doc::Picture { picture, turns } => {
+            Doc::Picture { picture, turns, .. } => {
                 let size = imageview::turned((picture.width, picture.height), *turns);
-                let at = printpage::fit(size.0 as i32, size.1 as i32, b);
+                let at = self.picture_at;
                 let drawn = fitted(size, at);
                 let raw = Raw::new(imageview::render(picture, *turns, drawn));
                 out(page(&self.setup, &raw.0, at));
@@ -215,16 +233,17 @@ fn fitted(size: (u32, u32), at: Rect) -> (u32, u32) {
     }
 }
 
-/// The size a picture `size` px is drawn at on a page of `s`.
-fn picture_size(s: &PageSetup, size: (u32, u32)) -> (u32, u32) {
-    fitted(size, printpage::fit(size.0 as i32, size.1 as i32, s.body()))
+/// Where a picture `size` px at `dpi`, turned `turns`, goes on a page of `s`.
+fn picture_place(s: &PageSetup, size: (u32, u32), turns: u8, dpi: u32) -> Rect {
+    let shown = imageview::turned(size, turns);
+    printpage::place(shown, dpi, s.body(), s.scaling)
 }
 
-/// `picture` shrunk to the size it prints at on a page of `s` when it is larger, unturned.
-fn shrunk(picture: Arc<Canvas>, turns: u8, s: &PageSetup) -> Arc<Canvas> {
+/// `picture` shrunk to the size it prints at in `at` when it is larger, unturned.
+fn shrunk(picture: Arc<Canvas>, turns: u8, at: Rect) -> Arc<Canvas> {
     let size = (picture.width, picture.height);
     let shown = imageview::turned(size, turns);
-    let drawn = picture_size(s, shown);
+    let drawn = fitted(shown, at);
     if drawn == shown {
         return picture;
     }

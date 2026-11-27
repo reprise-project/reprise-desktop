@@ -278,6 +278,7 @@ fn a_moving_picture_steps_its_frames_as_they_come_due() {
         picture: Ok(Picture {
             frames: vec![frame(100), frame(250)],
             bytes: 10,
+            dpi: None,
         }),
     });
     let first = v.frame_due.expect("the first frame ends");
@@ -291,6 +292,7 @@ fn a_moving_picture_steps_its_frames_as_they_come_due() {
         picture: Ok(Picture {
             frames: vec![frame(0)],
             bytes: 1,
+            dpi: None,
         }),
     });
     assert_eq!(
@@ -369,6 +371,7 @@ fn a_format_the_desktop_cannot_show_greys_set_as_background() {
     v.picture = Some(Picture {
         frames: vec![(Arc::new(Canvas::new(1, 1)), 0)],
         bytes: 0,
+        dpi: None,
     });
     v.sync_menus();
     let row = &v.bar.menus[menu::title::FILE][menu::row::BACKGROUND];

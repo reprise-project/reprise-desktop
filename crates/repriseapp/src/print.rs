@@ -37,6 +37,10 @@ pub const PRINT: WinId = WinId::named("print");
 /// Device pixels per inch the pages are drawn at.
 pub const DPI: i32 = 300;
 
+/// The resolution a picture prints at when it states none: a picture pixel the size of a
+/// logical pixel on screen at scale 1.
+pub const SCREEN_DPI: u32 = 96;
+
 /// How long the Print dialog looks for driverless printers on the network.
 const BROWSE_BUDGET: Duration = Duration::from_secs(2);
 
@@ -103,8 +107,8 @@ pub struct Printing {
     /// The forms theme and font of the last event or draw, for [`Printing::children`].
     forms: Theme,
     text: Rc<TextRenderer>,
-    /// Page Setup offers a header and footer.
-    headers: bool,
+    /// What Page Setup offers past the margins.
+    kind: pagesetup::Kind,
 }
 
 impl Printing {
@@ -122,20 +126,21 @@ impl Printing {
             sending: Vec::new(),
             forms: crate::start_forms(),
             text: crate::start_text(),
-            headers: false,
+            kind: pagesetup::Kind::Picture,
         }
     }
 
-    /// Page Setup with Header and Footer boxes, for a program that prints text.
+    /// Page Setup with Header and Footer boxes, for a program that prints text; else it offers
+    /// a picture's scaling.
     pub fn with_headers(mut self) -> Printing {
-        self.headers = true;
+        self.kind = pagesetup::Kind::Text;
         self
     }
 
     /// Open Page Setup on [`Printing::setup`].
     pub fn page_setup(&mut self, ctx: &Ctx) {
         self.follow_forms(ctx);
-        self.open = Some(Open::Setup(pagesetup::form(&self.setup, self.headers)));
+        self.open = Some(Open::Setup(pagesetup::form(&self.setup, self.kind)));
     }
 
     /// Open Print for `doc`, titled `title` in the print queue. The dialog looks for printers
@@ -211,7 +216,7 @@ impl Printing {
             Some(Open::Setup(_)) => vec![Child {
                 id: PAGE_SETUP,
                 title: kit_tr!("pagesetup-title"),
-                size: units.size(pagesetup::client(self.headers)),
+                size: units.size(pagesetup::CLIENT),
                 fixed: true,
                 modal: true,
             }],

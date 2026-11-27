@@ -4,11 +4,11 @@ use crate::controls::form::Key;
 use crate::interfaces;
 use crate::theme::Theme;
 
-fn hash(theme: &Theme, f: &Form, headers: bool, s: i32) -> u64 {
+fn hash(theme: &Theme, f: &Form, s: i32) -> u64 {
     let theme = theme.scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let p = theme.paint();
-    let (w, h) = client(headers);
+    let (w, h) = CLIENT;
     let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), p.cs.button_face);
     draw(&mut c, &text, &p, f, theme.fonts.size_px);
@@ -19,6 +19,7 @@ fn landscape_letter() -> PageSetup {
     PageSetup {
         landscape: true,
         margins: [1905, 1905, 2540, 2540],
+        scaling: Scaling::Fit,
         ..PageSetup::on(&PAPERS[LETTER])
     }
 }
@@ -35,9 +36,9 @@ fn with_headers() -> PageSetup {
 fn the_dialog_fits_its_text_under_every_interface() {
     let over = interfaces::form_overflows(|_, _, _| {
         vec![
-            ("A4".into(), form(&PageSetup::default(), false)),
-            ("Letter".into(), form(&landscape_letter(), false)),
-            ("Headers".into(), form(&with_headers(), true)),
+            ("A4".into(), form(&PageSetup::default(), Kind::Picture)),
+            ("Letter".into(), form(&landscape_letter(), Kind::Picture)),
+            ("Headers".into(), form(&with_headers(), Kind::Text)),
         ]
     });
     assert!(over.is_empty(), "{}", over.join("\n"));
@@ -48,15 +49,15 @@ fn the_dialog_pins_its_pixels_portrait_and_landscape_in_every_look() {
     crate::pins::fonts();
     let mut got = Vec::new();
     for (look, base) in looks() {
-        for (state, s, headers) in [
-            ("A4 portrait", PageSetup::default(), false),
-            ("Letter landscape", landscape_letter(), false),
-            ("A4 with header and footer", with_headers(), true),
+        for (state, s, kind) in [
+            ("A4 portrait", PageSetup::default(), Kind::Picture),
+            ("Letter landscape fitted", landscape_letter(), Kind::Picture),
+            ("A4 with header and footer", with_headers(), Kind::Text),
         ] {
             for scale in [1, 2] {
                 got.push((
                     format!("{look} {state} {scale}"),
-                    hash(&base, &form(&s, headers), headers, scale),
+                    hash(&base, &form(&s, kind), scale),
                 ));
             }
         }
@@ -96,7 +97,7 @@ fn the_preview_lays_the_page_on_its_side_for_landscape() {
 
 #[test]
 fn ok_reads_the_paper_orientation_and_margins_back() {
-    let mut f = form(&PageSetup::default(), false);
+    let mut f = form(&PageSetup::default(), Kind::Picture);
     f.set_combo(PAPER, LETTER);
     f.set_check(PORTRAIT, false);
     f.set_check(LANDSCAPE, true);
@@ -115,7 +116,7 @@ fn ok_reads_the_paper_orientation_and_margins_back() {
 
 #[test]
 fn ok_reads_the_header_and_footer_back_and_only_their_boxes_set_them() {
-    let mut f = form(&with_headers(), true);
+    let mut f = form(&with_headers(), Kind::Text);
     f.focus_id(FOOTER);
     f.select_edit_text(FOOTER);
     for k in "&p of &d".chars() {
@@ -123,18 +124,17 @@ fn ok_reads_the_header_and_footer_back_and_only_their_boxes_set_them() {
     }
     let s = read(&f).unwrap();
     assert_eq!((s.header.as_str(), s.footer.as_str()), ("&f", "&p of &d"));
-    let s = read(&form(&with_headers(), false)).unwrap();
+    let s = read(&form(&with_headers(), Kind::Picture)).unwrap();
     assert_eq!(
         (s.header.as_str(), s.footer.as_str()),
         ("", ""),
         "a dialog without the boxes prints neither"
     );
-    assert_eq!(client(true).1 - client(false).1, HEADERS_H);
 }
 
 #[test]
 fn ok_refuses_a_margin_that_is_no_number_or_leaves_no_room() {
-    let mut f = form(&PageSetup::default(), false);
+    let mut f = form(&PageSetup::default(), Kind::Picture);
     f.focus_id(TOP);
     f.select_edit_text(TOP);
     f.key(Key::Char('x'));
@@ -200,4 +200,26 @@ fn margins_out_of_range_never_fit_and_never_overflow() {
         ..PageSetup::default()
     };
     assert!(!negative.fits());
+}
+
+#[test]
+fn a_picture_reads_its_scaling_back_and_a_text_keeps_actual_size() {
+    let mut f = form(&PageSetup::default(), Kind::Picture);
+    assert_eq!(f.checked(ACTUAL), Some(true), "actual size unless picked");
+    f.set_check(ACTUAL, false);
+    f.set_check(FIT, true);
+    assert_eq!(read(&f).unwrap().scaling, Scaling::Fit);
+    let fitted = PageSetup {
+        scaling: Scaling::Fit,
+        ..PageSetup::default()
+    };
+    assert_eq!(
+        form(&fitted, Kind::Picture).checked(FIT),
+        Some(true),
+        "the dialog opens on the scaling set"
+    );
+    assert_eq!(
+        read(&form(&fitted, Kind::Text)).unwrap().scaling,
+        Scaling::Actual
+    );
 }

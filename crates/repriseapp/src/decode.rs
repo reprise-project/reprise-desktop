@@ -9,7 +9,9 @@ use std::path::Path;
 use reprisekit::icon::premultiply;
 use reprisekit::raster::Canvas;
 
+mod dpi;
 pub(crate) mod helper;
+pub use dpi::dpi;
 pub use helper::HelperDecoder;
 pub use reprise_decode_protocol::Format;
 
