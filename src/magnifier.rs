@@ -409,7 +409,7 @@ impl State {
     /// caret; leave it otherwise, as entering takes a client's own compose handling away in
     /// some toolkits.
     pub fn sync_caret_reports(&mut self) {
-        use smithay::wayland::text_input::TextInputSeat;
+        use smithay::wayland::{input_method::InputMethodSeat, text_input::TextInputSeat};
         let zoomed =
             self.config.accessibility.magnifier_follow.focus() && self.magnifier.any_zoomed();
         let want = zoomed || self.panels.emoji_wait.is_some();
@@ -417,6 +417,10 @@ impl State {
         if ti.compositor_input_method() != want {
             log::info!("magnifier: text inputs report their caret: {want}");
             ti.set_compositor_input_method(want);
+            // Leaving took the text input from an input method that bound in the meantime.
+            if !want && self.seat.input_method().has_instance() {
+                ti.enter();
+            }
         }
     }
 

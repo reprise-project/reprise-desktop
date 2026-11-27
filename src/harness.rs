@@ -34,7 +34,8 @@ use wayland_protocols::{
     wp::fifo::v1::client::{wp_fifo_manager_v1, wp_fifo_v1},
     wp::presentation_time::client::{wp_presentation, wp_presentation_feedback},
     wp::text_input::zv3::client::{
-        zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::ZwpTextInputV3,
+        zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+        zwp_text_input_v3::{self, ZwpTextInputV3},
     },
     xdg::{
         activation::v1::client::{
@@ -1490,8 +1491,9 @@ impl TestClient {
         let qh = self.qh();
         let ti = (self.side.ti_manager.as_ref())
             .expect("zwp_text_input_manager_v3")
-            .get_text_input(self.seat(), &qh, ());
+            .get_text_input(self.seat(), &qh, self.side.text_inputs.len());
         self.side.text_inputs.push(ti);
+        self.side.text_input_entered.push(false);
         self.side.text_inputs.len() - 1
     }
 
@@ -1702,6 +1704,8 @@ pub struct ClientSide {
     vp_manager: Option<ZwlrVirtualPointerManagerV1>,
     pub ims: Vec<InputMethod>,
     pub text_inputs: Vec<ZwpTextInputV3>,
+    /// Whether each of `text_inputs` heard an `enter` it has not heard a `leave` after.
+    pub text_input_entered: Vec<bool>,
     pub vks: Vec<ZwpVirtualKeyboardV1>,
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
@@ -2375,7 +2379,22 @@ wc::delegate_noop!(ClientSide: ignore xdg_positioner::XdgPositioner);
 wc::delegate_noop!(ClientSide: ignore xdg_popup::XdgPopup);
 wc::delegate_noop!(ClientSide: ignore ZwpInputMethodManagerV2);
 wc::delegate_noop!(ClientSide: ignore ZwpTextInputManagerV3);
-wc::delegate_noop!(ClientSide: ignore ZwpTextInputV3);
+impl wc::Dispatch<ZwpTextInputV3, usize> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &ZwpTextInputV3,
+        ev: zwp_text_input_v3::Event,
+        &i: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match ev {
+            zwp_text_input_v3::Event::Enter { .. } => st.text_input_entered[i] = true,
+            zwp_text_input_v3::Event::Leave { .. } => st.text_input_entered[i] = false,
+            _ => {}
+        }
+    }
+}
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardManagerV1);
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardV1);
 wc::delegate_noop!(ClientSide: ignore ZwlrVirtualPointerManagerV1);

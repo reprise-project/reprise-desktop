@@ -572,6 +572,31 @@ mod tests {
         assert!(!reports_caret(&h), "the text input is left");
     }
 
+    /// An input method that binds while the picker waits keeps the client's text input entered
+    /// once the wait ends, so the text input it activated on stays the one it types into.
+    #[test]
+    fn an_input_method_bound_during_the_wait_keeps_the_text_input_entered() {
+        let (mut h, mut c, ti) = window_with_text_input();
+        h.state.toggle_emoji();
+        h.roundtrip(&mut c);
+        assert!(c.side.text_input_entered[ti], "entered for the wait");
+        let mut m = h.connect();
+        m.input_method();
+        h.roundtrip(&mut m);
+        let text_input = &c.side.text_inputs[ti];
+        text_input.enable();
+        text_input.commit();
+        h.roundtrip(&mut c);
+        h.roundtrip(&mut m);
+        h.until("the picker opens", |s| s.panels.emojiview.is_some());
+        h.roundtrip(&mut c);
+        assert!(!reports_caret(&h), "the compositor stops reporting");
+        assert!(
+            c.side.text_input_entered[ti],
+            "the text input stays entered under the input method"
+        );
+    }
+
     #[test]
     fn a_second_press_while_waiting_opens_nothing() {
         let (mut h, _c, _) = window_with_text_input();
