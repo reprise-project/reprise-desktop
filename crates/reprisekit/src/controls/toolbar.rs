@@ -251,8 +251,8 @@ pub fn hit_part(
         })
 }
 
-/// The icon centred in `r`, shifted `off` (a held button's content moves a pixel), faded by
-/// `greyed` (num, den) when disabled.
+/// The icon centred in `r`, shifted `off` (a held button's content moves a pixel), in greys
+/// faded by `greyed` (num, den) when disabled.
 fn draw_icon(
     c: &mut Canvas,
     r: Rect,
@@ -269,7 +269,7 @@ fn draw_icon(
     if enabled {
         c.blit_over(x, y, icon);
     } else {
-        c.blit_over_faded(x, y, icon, greyed.0, greyed.1);
+        c.blit_over_greyed(x, y, icon, greyed.0, greyed.1);
     }
 }
 
@@ -1116,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn over_glass_a_disabled_button_greys_its_ink_and_fades_its_icon_less() {
+    fn over_glass_a_disabled_button_greys_its_ink_and_its_icon_and_fades_the_icon_less() {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
         let p = theme.paint();
         let text = renderer();
@@ -1146,14 +1146,14 @@ mod tests {
         let rects = layout(&tb, &text, 11, r, &theme.controls());
         let mut c = Canvas::new(80, BIG_HEIGHT as u32);
         draw_over_glass(&mut c, &text, &p, &tb, r, &rects, ink, 11);
-        let mut faded = Canvas::new(1, 1);
-        faded.fill_rect(faded.bounds(), red);
-        faded.fade(2, 3);
+        let (mut red_px, mut faded) = (Canvas::new(1, 1), Canvas::new(1, 1));
+        red_px.fill_rect(red_px.bounds(), red);
+        faded.blit_over_greyed(0, 0, &red_px, 2, 3);
         let shown = c.pixels.iter().filter(|&&px| px == faded.pixels[0]).count();
         assert_eq!(
             shown,
             (BIG_ICON * BIG_ICON) as usize,
-            "the icon shows at two thirds"
+            "the icon shows in greys at two thirds"
         );
         let inks: std::collections::BTreeSet<u32> = c
             .pixels
