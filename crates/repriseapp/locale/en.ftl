@@ -1,4 +1,4 @@
-# repriseapp's strings: the About boxes.
+# repriseapp's strings: the About boxes and Open With's Browse...
 
 ## A program's About box
 about-version = Version { $version }
@@ -91,3 +91,9 @@ print-name-taken = Another printer is already called { $name }.
 print-network-printer = { $name } on { $host }
 # why is one of the print-* messages above.
 print-failed = The document was not printed. { $why }
+
+## Open With's Browse...: the file dialog for a program
+browse-programs-title = Browse
+browse-programs-open = Open
+browse-programs-programs = Programs
+browse-programs-all-files = All Files
