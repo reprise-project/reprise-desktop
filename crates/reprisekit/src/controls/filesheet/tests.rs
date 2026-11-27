@@ -1653,3 +1653,71 @@ fn the_checksums_page_pins_in_each_look_at_scale_1_and_2() {
     }
     crate::pins::check("checksums_page", &got);
 }
+
+#[test]
+fn choose_picture_and_restore_default_follow_the_picture_shown() {
+    let mut sheet = crate::controls::propsheet::PropSheet::new(
+        &["General", "Customize"],
+        vec![Form::new(Vec::new()), customize_page()],
+        (SHEET_W, FOLDER_SHEET_H),
+    );
+    let page = |s: &crate::controls::propsheet::PropSheet| s.pages[1].clone();
+    assert!(
+        !enabled_of(&page(&sheet), CHOOSE_PICTURE),
+        "greyed until a host turns it on"
+    );
+    set_picture_buttons(&mut sheet, true, false);
+    assert!(enabled_of(&page(&sheet), CHOOSE_PICTURE));
+    assert!(
+        !enabled_of(&page(&sheet), RESTORE_PICTURE),
+        "no picture to restore"
+    );
+    set_picture_buttons(&mut sheet, true, true);
+    sheet.pages[1].focus_id(RESTORE_PICTURE);
+    assert!(enabled_of(&page(&sheet), RESTORE_PICTURE));
+    set_picture_buttons(&mut sheet, true, false);
+    let p = page(&sheet);
+    assert_eq!(
+        p.focus().map(|i| p.items[i].id),
+        Some(CHOOSE_PICTURE),
+        "the focus leaves the greyed Restore Default"
+    );
+}
+
+#[test]
+fn the_customize_page_with_a_picture_pins_in_each_look_at_scale_1_and_2() {
+    use crate::interface::Interface;
+    use crate::theme::Color;
+    crate::pins::fonts();
+    let looks = [
+        ("Classic", crate::interfaces::theme_for(Interface::Classic)),
+        ("Blue", crate::interfaces::theme_for(Interface::Blue)),
+        ("Glass", crate::interfaces::theme_for(Interface::Glass)),
+    ];
+    let mut got = Vec::new();
+    for (name, theme) in &looks {
+        for s in [1, 2] {
+            let mut picture = Canvas::new((PREVIEW_PX * s) as u32, (72 * s) as u32);
+            picture.fill_rect(picture.bounds(), Color::rgb(40, 120, 200));
+            picture.fill_rect(
+                Rect::new(0, 40 * s, PREVIEW_PX * s, 32 * s),
+                Color::rgb(230, 200, 90),
+            );
+            let mut page = customize_page();
+            page.set_enabled(CHOOSE_PICTURE, true);
+            page.set_enabled(RESTORE_PICTURE, true);
+            page.set_picture(CUSTOM_PREVIEW, picture);
+            let theme = Theme {
+                access_keys: true,
+                ..theme.scaled(s)
+            };
+            let t = TextRenderer::load(&theme.fonts);
+            let p = theme.paint();
+            let mut c = Canvas::new((SHEET_W * s) as u32, (FOLDER_SHEET_H * s) as u32);
+            c.fill_rect(c.bounds(), p.cs.button_face);
+            crate::controls::form::draw(&mut c, &t, &p, &page, true, theme.fonts.size_px);
+            got.push((format!("{name} {s}"), fnv_in(&c, c.bounds())));
+        }
+    }
+    crate::pins::check("customize_page", &got);
+}

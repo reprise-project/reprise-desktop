@@ -86,9 +86,21 @@ pub fn item_icon(
 /// A folder row's own icon from its `.directory`. A drive row's or mount point's top is not read:
 /// the mount may never answer, and a drive wears its drive icon.
 pub fn own_icon(it: &Item) -> Option<String> {
-    (it.is_dir && it.shortcut.is_none() && it.drive.is_none() && !it.mount_root)
+    reads_own_look(it)
         .then(|| crate::meta::folder_icon(&it.path))
         .flatten()
+}
+
+/// A folder row's own icon and picture ([`crate::meta::folder_look`]), read as [`own_icon`] is.
+pub fn own_look(it: &Item) -> (Option<String>, Option<PathBuf>) {
+    match reads_own_look(it) {
+        true => crate::meta::folder_look(&it.path),
+        false => (None, None),
+    }
+}
+
+fn reads_own_look(it: &Item) -> bool {
+    it.is_dir && it.shortcut.is_none() && it.drive.is_none() && !it.mount_root
 }
 
 /// [`item_icon`] with the folder's own icon (`meta::folder_icon`) read beforehand, so a host that

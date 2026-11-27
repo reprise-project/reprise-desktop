@@ -388,6 +388,7 @@ impl Explorer {
             summary: None,
             own_icon: None,
             icon_chosen: None,
+            picture_chosen: None,
             picks: Default::default(),
             checksums: Default::default(),
             walk: Default::default(),
@@ -463,7 +464,7 @@ impl Explorer {
                 ctx,
             );
         }
-        Props {
+        let mut props = Props {
             opened_read_only: filesheet::read_only(&sheet.pages[0]),
             opened_name: shown,
             caption: title,
@@ -477,13 +478,18 @@ impl Explorer {
                 None => info.own_icon.clone(),
             },
             icon_chosen: None,
+            picture_chosen: None,
             picks: Default::default(),
             checksums: Default::default(),
             walk: Default::default(),
             opened: 0,
             info,
             sheet,
-        }
+        };
+        props.picks.picture.canvas = glanced.picture.clone();
+        crate::props_picture::wear_picture(&mut props);
+        crate::props_picture::show_picture_buttons(&mut props);
+        props
     }
 
     fn open_set_properties(&mut self, ctx: &mut Ctx) -> Reply {
@@ -586,6 +592,7 @@ impl Explorer {
             summary: None,
             own_icon: None,
             icon_chosen: None,
+            picture_chosen: None,
             picks: Default::default(),
             checksums: Default::default(),
             walk: Default::default(),
@@ -779,6 +786,12 @@ impl Explorer {
                 if let form::Event::Pressed(filesheet::CHANGE_ICON) = ev {
                     return self.change_icon(ctx);
                 }
+                if let form::Event::Pressed(filesheet::CHOOSE_PICTURE) = ev {
+                    return self.choose_picture(ctx);
+                }
+                if let form::Event::Pressed(filesheet::RESTORE_PICTURE) = ev {
+                    return self.picture_chosen(None, ctx);
+                }
                 if let form::Event::Pressed(filesheet::FIND_TARGET) = ev {
                     return self.find_target(ctx);
                 }
@@ -877,12 +890,14 @@ impl Explorer {
         let (attrs, hidden) = (p.attrs(), p.hidden());
         let summary = p.summary_moves();
         let folder_icon = p.folder_icon_move();
+        let picture = p.picture_move();
         let launcher = p.launcher_edits();
         if new_name.is_none()
             && attrs.is_empty()
             && hidden.is_none()
             && summary.is_empty()
             && folder_icon.is_none()
+            && picture.is_none()
             && launcher.is_empty()
         {
             if close {
@@ -916,14 +931,12 @@ impl Explorer {
                     e = e.to_string()
                 ));
             }
-            if let Some(icon) = &folder_icon
-                && let Err(e) = reprisefs::meta::set_folder_icon(&at, icon.as_deref())
-            {
-                return Err(tr!(
-                    "props-apply-props-cannot-change-the-icon-of-name",
-                    name = name,
-                    e = e.to_string()
-                ));
+            let look = reprisefs::meta::FolderLook {
+                icon: folder_icon.as_ref().map(|i| i.as_deref()),
+                picture: picture.as_ref().map(|p| p.as_deref()),
+            };
+            if let Err(e) = reprisefs::meta::set_folder_look(&at, look) {
+                return Err(look_failed_text(&name, picture.is_some(), &e));
             }
             Ok(look_inside && folder_has_contents(&at))
         };
@@ -1342,11 +1355,13 @@ pub(crate) struct Picks {
     /// The icon of the program Change... picked.
     opens_icon: Option<Option<String>>,
     waits: IconWaits,
+    pub(crate) picture: crate::props_picture::PicturePick,
 }
 
 /// The sheet wears the icons of its picks: Change Icon's on the Shortcut page or Customize's
-/// picture and preview, and Change...'s program beside its name. Stand-ins while they decode.
-fn wear_picks(p: &mut Props, ctx: &mut Ctx) {
+/// picture and preview (Choose Picture...'s picture over the preview), and Change...'s program
+/// beside its name. Stand-ins while they decode.
+pub(crate) fn wear_picks(p: &mut Props, ctx: &mut Ctx) {
     let shown = p.shown_icon();
     let waits = &mut p.picks.waits;
     *waits = IconWaits::default();
@@ -1364,7 +1379,7 @@ fn wear_picks(p: &mut Props, ctx: &mut Ctx) {
         }
     }
     let customize = (p.sheet.pages.iter()).any(|q| q.item(filesheet::CUSTOM_ICON).is_some());
-    if p.icon_chosen.is_some() && customize {
+    if (p.icon_chosen.is_some() || p.picture_chosen.is_some()) && customize {
         wear_folder_icon(&mut p.sheet, &shown, waits, ctx);
     }
     if let Some(icon) = &p.picks.opens_icon {
@@ -1375,6 +1390,9 @@ fn wear_picks(p: &mut Props, ctx: &mut Ctx) {
             *c = canvas;
         }
     }
+    if customize {
+        crate::props_picture::wear_picture(p);
+    }
 }
 
 fn shortcut_facts(info: &FileInfo, l: &reprisefs::launcher::Launcher) -> filesheet::ShortcutFacts {
@@ -1384,6 +1402,27 @@ fn shortcut_facts(info: &FileInfo, l: &reprisefs::launcher::Launcher) -> fileshe
         target_location: l.location.clone(),
         symlink: l.kind == reprisefs::launcher::Kind::Symlink,
         fields: l.fields(),
+    }
+}
+
+/// Why OK or Apply could not write the folder's icon or, with `picture`, its picture.
+fn look_failed_text(name: &str, picture: bool, e: &std::io::Error) -> String {
+    use std::io::ErrorKind::{PermissionDenied, ReadOnlyFilesystem};
+    match (picture, e.kind()) {
+        (true, PermissionDenied | ReadOnlyFilesystem) => tr!(
+            "props-apply-props-no-permission-for-the-picture-of-name",
+            name = name
+        ),
+        (true, _) => tr!(
+            "props-apply-props-cannot-change-the-picture-of-name",
+            name = name,
+            e = e.to_string()
+        ),
+        (false, _) => tr!(
+            "props-apply-props-cannot-change-the-icon-of-name",
+            name = name,
+            e = e.to_string()
+        ),
     }
 }
 
@@ -1428,6 +1467,8 @@ pub(crate) struct Glanced {
     info: FileInfo,
     icon: SheetIcon,
     files: Vec<(String, i32, Option<Canvas>)>,
+    /// Customize's preview of the folder's picture.
+    picture: Option<Canvas>,
     scale: i32,
 }
 
@@ -1489,10 +1530,13 @@ fn glance(
             files.push((f.to_string(), px, art));
         }
     }
+    let picture =
+        (info.own_picture.as_deref()).and_then(|p| crate::props_picture::preview_picture(p, scale));
     Ok(Glanced {
         info,
         icon,
         files,
+        picture,
         scale,
     })
 }
