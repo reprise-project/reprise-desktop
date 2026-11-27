@@ -1897,7 +1897,6 @@ impl Explorer {
                 };
                 if let Ok(open) = &open
                     && repriseconf::current().recent_files
-                    && !reprisefs::archive::is_copy(&path)
                 {
                     let app = (open.app.as_ref()).and_then(|id| apps.iter().find(|a| a.id == *id));
                     if let Err(e) = reprisefs::recent::record(&[(&path, app, mime.as_deref())]) {
