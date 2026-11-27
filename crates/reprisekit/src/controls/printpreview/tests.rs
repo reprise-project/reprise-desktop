@@ -101,6 +101,14 @@ fn a_page_is_asked_for_once_per_page_and_size() {
     pv.show(0, Canvas::new(first.1.0, first.1.1));
     assert!(pv.go(1));
     assert_eq!(pv.wanted(&lay).map(|w| w.0), Some(1));
+    assert!(pv.go(-1));
+    pv.show(1, Canvas::new(first.1.0, first.1.1));
+    assert_eq!(
+        pv.sheet.as_ref().map(|s| s.0),
+        Some(0),
+        "a late page 2 is dropped while page 1 shows"
+    );
+    assert!(pv.go(1));
     pv.zoom_to(Zoom::Actual);
     let lay = layout(&pv, r, 1, TextUnits::ONE, &cm);
     assert_eq!(

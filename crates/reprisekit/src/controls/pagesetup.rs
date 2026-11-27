@@ -95,6 +95,7 @@ pub struct PageSetup {
     /// [`printpage::band`]: crate::controls::printpage::band
     pub header: String,
     pub footer: String,
+    #[serde(skip_serializing_if = "Scaling::is_actual")]
     pub scaling: Scaling,
 }
 
@@ -107,6 +108,12 @@ pub enum Scaling {
     Actual,
     /// As large as the margins hold.
     Fit,
+}
+
+impl Scaling {
+    fn is_actual(&self) -> bool {
+        *self == Scaling::Actual
+    }
 }
 
 /// What a program prints, which decides the dialog's last rows.
@@ -191,10 +198,10 @@ pub fn px(v: i32, dpi: i32) -> i32 {
     ((v as i64 * dpi as i64 + INCH as i64 / 2) / INCH as i64) as i32
 }
 
-/// `v` device pixels at `dpi` in hundredths of a millimetre.
+/// `v` device pixels at `dpi` in hundredths of a millimetre, held to `i32`'s range.
 pub fn from_px(v: i32, dpi: i32) -> i32 {
     let dpi = dpi.max(1) as i64;
-    ((v as i64 * INCH as i64 + dpi / 2) / dpi) as i32
+    ((v as i64 * INCH as i64 + dpi / 2) / dpi).clamp(i32::MIN as i64, i32::MAX as i64) as i32
 }
 
 /// `v` hundredths of a millimetre in points (1/72 inch).

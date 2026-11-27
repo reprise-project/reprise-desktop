@@ -88,9 +88,8 @@ impl From<http::Error> for Error {
         match e {
             http::Error::Unreachable(_) => Error::NotRunning,
             http::Error::Denied => Error::Denied,
-            http::Error::Io(why) | http::Error::TimedOut(why) => {
-                Error::Refused(without_userinfo(&why))
-            }
+            http::Error::Io(why) => Error::Refused(without_userinfo(&why)),
+            http::Error::TimedOut(_) => Error::Refused(tr!("cups-timed-out")),
             http::Error::Status(code) => Error::Refused(format!("HTTP {code}")),
             http::Error::BadReply(what) => Error::Refused(format!("bad HTTP reply: {what}")),
         }

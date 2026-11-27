@@ -135,6 +135,7 @@ wizard-adding = Adding the printer...
 
 ## CUPS errors
 cups-not-running = The printing service (CUPS) is not running.
+cups-timed-out = The printing service (CUPS) did not answer in time.
 cups-denied = You are not allowed to change printers. CUPS lets the members of its admin group do this: SystemGroup in /etc/cups/cups-files.conf, wheel on most systems.
 cups-needs-helper = { $denied } Install cups-pk-helper to make changes with an administrator's password.
 cups-not-authorized = Nothing was changed: this needs an administrator's password.

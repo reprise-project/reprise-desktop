@@ -101,8 +101,12 @@ impl Preview {
         self.sync();
     }
 
-    /// Show `canvas`, the drawing of page `page` the host made for [`Preview::wanted`].
+    /// Show `canvas`, the drawing of page `page` the host made for [`Preview::wanted`]; a
+    /// drawing of a page no longer shown is dropped.
     pub fn show(&mut self, page: u32, canvas: Canvas) {
+        if page != self.page {
+            return;
+        }
         self.view.size = (canvas.width, canvas.height);
         self.sheet = Some((page, canvas));
     }
@@ -301,6 +305,21 @@ pub struct Layout {
     pub sheet: (u32, u32),
 }
 
+/// The part of the window under logical `(x, y)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Buttons,
+    /// The page's box and its scrollbars.
+    Page,
+}
+
+pub fn hit(lay: &Layout, x: i32, y: i32) -> Part {
+    match lay.bar.contains(x, y) {
+        true => Part::Buttons,
+        false => Part::Page,
+    }
+}
+
 /// Lay `pv` out in logical `r` at `s` device px per logical px, its buttons grown by `units`.
 pub fn layout(pv: &Preview, r: Rect, s: i32, units: TextUnits, cm: &ControlMetrics) -> Layout {
     let s = s.max(1);
@@ -363,7 +382,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pv: &Preview, lay: &
     c.fill_rect(lay.bar, p.cs.button_face);
     form::draw(c, text, p, &pv.form, true, px);
     let ground = p.cs.button_shadow;
-    let Some((_, sheet)) = &pv.sheet else {
+    let Some((_, sheet)) = pv.sheet.as_ref().filter(|(p, _)| *p == pv.page) else {
         let note = match pv.pages {
             0 => tr!("printpreview-laying-out"),
             _ => tr!("printpreview-drawing"),

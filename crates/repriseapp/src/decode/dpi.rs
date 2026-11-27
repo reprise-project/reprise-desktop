@@ -1,5 +1,5 @@
 //! The resolution a picture file states for itself: a PNG's pHYs chunk, a JPEG's JFIF density or
-//! its EXIF XResolution. Only the across resolution is read; pictures with unequal ones are rare
+//! its EXIF XResolution, a TIFF's XResolution. Only the across resolution is read; pictures with unequal ones are rare
 //! and print with square pixels.
 
 /// Resolutions outside this range are taken as no resolution: a file that says 1 dpi means none.
@@ -9,14 +9,17 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 /// The dots per inch `bytes` says it was made at; `None` when it says nothing usable.
 pub fn dpi(bytes: &[u8]) -> Option<u32> {
-    let dpi = if bytes.starts_with(PNG_SIGNATURE) {
-        png(&bytes[PNG_SIGNATURE.len()..])
+    if bytes.starts_with(PNG_SIGNATURE) {
+        png(&bytes[PNG_SIGNATURE.len()..]).filter(plausible)
     } else if bytes.starts_with(&[0xFF, 0xD8]) {
         jpeg(&bytes[2..])
     } else {
-        None
-    }?;
-    PLAUSIBLE.contains(&dpi).then_some(dpi)
+        exif(bytes).filter(plausible)
+    }
+}
+
+fn plausible(dpi: &u32) -> bool {
+    PLAUSIBLE.contains(dpi)
 }
 
 fn be16(b: &[u8], at: usize) -> Option<u32> {
@@ -44,11 +47,16 @@ fn png(mut b: &[u8]) -> Option<u32> {
     }
 }
 
-/// The first of JFIF and EXIF, in file order, that states a resolution, before the scan.
+/// The first of JFIF and EXIF, in file order, that states a plausible resolution, before the
+/// scan.
 fn jpeg(mut b: &[u8]) -> Option<u32> {
     loop {
         if b.first() != Some(&0xFF) {
             return None;
+        }
+        // Fill bytes: any number of 0xFF may come before a marker.
+        while b.get(1) == Some(&0xFF) {
+            b = &b[1..];
         }
         let marker = *b.get(1)?;
         if marker == 0xDA || marker == 0xD9 {
@@ -61,8 +69,8 @@ fn jpeg(mut b: &[u8]) -> Option<u32> {
             0xE1 => data.strip_prefix(b"Exif\0\0").and_then(exif),
             _ => None,
         };
-        if found.is_some() {
-            return found;
+        if let Some(d) = found.filter(plausible) {
+            return Some(d);
         }
         b = b.get(2 + len..)?;
     }
@@ -81,9 +89,11 @@ fn jfif(d: &[u8]) -> Option<u32> {
 
 const X_RESOLUTION: u16 = 0x011A;
 const RESOLUTION_UNIT: u16 = 0x0128;
+const LONG: u16 = 4;
 const RATIONAL: u16 = 5;
 
-/// IFD0's XResolution in its ResolutionUnit: 2 (the default) inches, 3 centimetres.
+/// IFD0's XResolution in its ResolutionUnit, 2 (the default) inches or 3 centimetres, of an
+/// EXIF block or a TIFF file, which share the layout.
 fn exif(t: &[u8]) -> Option<u32> {
     let little = match t.get(..4)? {
         b"II*\0" => true,
@@ -116,6 +126,7 @@ fn exif(t: &[u8]) -> Option<u32> {
                 let (num, den) = (u32_at(at)? as u64, u32_at(at + 4)? as u64);
                 res = (den > 0).then(|| (num + den / 2) / den);
             }
+            RESOLUTION_UNIT if u16_at(e + 2)? == LONG => unit = u32_at(e + 8)?.min(9) as u16,
             RESOLUTION_UNIT => unit = u16_at(e + 8)?,
             _ => {}
         }
@@ -223,6 +234,17 @@ mod tests {
         );
         assert_eq!(dpi(&jpeg_with(&[(0xE1, exif_res(1200, 10, 3))])), Some(305));
         assert_eq!(dpi(&jpeg_with(&[(0xE0, jfif_density(0, 1))])), None);
+    }
+
+    #[test]
+    fn an_implausible_jfif_density_defers_to_exif_and_a_tiff_states_its_own() {
+        let both = jpeg_with(&[(0xE0, jfif_density(1, 1)), (0xE1, exif_res(300, 1, 2))]);
+        assert_eq!(dpi(&both), Some(300), "JFIF's 1 dpi hides nothing");
+        let mut filled = jpeg_with(&[(0xE0, jfif_density(1, 150))]);
+        filled.splice(2..2, [0xFF, 0xFF]);
+        assert_eq!(dpi(&filled), Some(150), "fill bytes before a marker");
+        let tiff = exif_res(600, 1, 2)[6..].to_vec();
+        assert_eq!(dpi(&tiff), Some(600));
     }
 
     #[test]
