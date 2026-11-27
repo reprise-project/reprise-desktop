@@ -50,6 +50,7 @@ pub const PROMPT_TAG: &str = "prompt";
 pub const HELP_DIALOG_TAG: &str = "help-dialog";
 pub const FIXED_DIALOG_TAG: &str = "fixed-dialog";
 pub const FILE_DIALOG_TAG: &str = "file-dialog";
+pub const DEVICE_PROMPT_TAG: &str = "device-prompt";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DialogTag {
@@ -225,6 +226,8 @@ pub struct Window {
     pub dialog_tag: DialogTag,
     /// Tagged `file-dialog`: opens at and keeps its app's file dialog geometry (`filedlggeom`).
     pub file_dialog: bool,
+    /// Tagged `device-prompt`: a prompt a device asked for (`mapfocus::is_prompt_window`).
+    pub device_prompt: bool,
     /// A tag no caption reads (a sticky note's own name): the window keeps a frame of its own
     /// under it rather than its app's ([`Window::kept_key`]).
     pub place_tag: Option<String>,
@@ -630,13 +633,17 @@ impl State {
 
     pub fn set_tag(&mut self, w: WindowId, tag: &str) {
         let file_dialog = tag == FILE_DIALOG_TAG;
-        let place =
-            (!file_dialog && !tag.is_empty() && DialogTag::from_tag(tag) == DialogTag::None)
-                .then(|| capped(tag.to_string()));
+        let device_prompt = tag == DEVICE_PROMPT_TAG;
+        let place = (!file_dialog
+            && !device_prompt
+            && !tag.is_empty()
+            && DialogTag::from_tag(tag) == DialogTag::None)
+            .then(|| capped(tag.to_string()));
         let tag = DialogTag::from_tag(tag);
         let Some(win) = self.win_mut(w) else {
             return;
         };
+        win.device_prompt = device_prompt;
         let replan = std::mem::replace(&mut win.file_dialog, file_dialog) != file_dialog;
         if std::mem::replace(&mut win.place_tag, place.clone()) != place || replan {
             self.replan_unmapped(w);

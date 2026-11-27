@@ -106,6 +106,12 @@ pub trait Extended {
     fn place_tag(&self, _win: WinId) -> Option<String> {
         None
     }
+    /// Whether window `win` is a prompt another device asked for (a pairing request, a file
+    /// offer). Its xdg-toplevel-tag is then `device-prompt` in place of its caption's, and the
+    /// compositor focuses it as it maps when this program is one it trusts with the tag.
+    fn device_prompt(&self, _win: WinId) -> bool {
+        false
+    }
     /// The icon theme name window `win` shows in its caption and on its task button in place of
     /// the program's, sent through xdg-toplevel-icon when the window is made.
     fn window_icon(&self, _win: WinId) -> Option<&'static str> {

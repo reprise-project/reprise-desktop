@@ -175,7 +175,7 @@ A new window receives focus on map only if:
 - It presents a trusted `xdg_activation_v1` token (minted by Reprise on launch, tray/notification click, or by a focused app after input/drop/touch, or for installed `reprise-explorer`, `reprise-settings` and `reprise-notes` called from the focused process tree/multiplexer).
 - Reprise launched its program within the last 30 s.
 - It shares a Wayland connection, process, session or owner with the focused window, or launched from a multiplexer pane inside the focused terminal.
-- It is a prompt from `reprise-portal`, `reprise-polkit`, `reprise-drives` or `reprise-bluetooth`.
+- It is a prompt from `reprise-portal`, `reprise-polkit` or `reprise-drives`, or a `reprise-bluetooth` window tagged `device-prompt` (its pairing request and file offer). The tag from any other program is ignored.
 - No window currently has focus.
 
 Other windows open behind the focused window and flash their task button. No window takes focus while locked.

@@ -12,8 +12,6 @@ use reprisekit::tr;
 
 use crate::bz::Offer;
 
-/// The compositor focuses this program's window by this title (`mapfocus::DEVICE_PROMPTS`).
-pub const TITLE: &str = "Bluetooth File Transfer";
 pub const ACCEPT: usize = 0;
 pub fn buttons() -> Vec<String> {
     vec![tr!("offer-accept"), tr!("offer-decline")]

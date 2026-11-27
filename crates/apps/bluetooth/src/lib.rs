@@ -1017,7 +1017,7 @@ impl BtApp {
     /// The prompt starts on Decline and is a consent box, as a request the user did not start is.
     fn open_offer(&mut self, o: bz::Offer, ctx: &mut Ctx) {
         let b = MsgBox::new(
-            receive::TITLE,
+            tr!("offer-title"),
             Fields {
                 text: receive::prompt(&o),
                 icon: ctx.icons.get("dialog-question", 32),
@@ -1153,8 +1153,7 @@ impl App for BtApp {
         if self.pair.is_some() {
             out.push(Child {
                 id: PAIR,
-                // The compositor focuses the box by this title (`mapfocus::DEVICE_PROMPTS`).
-                title: "Bluetooth Pairing Request".into(),
+                title: tr!("pair-title"),
                 size: u.size(pairdlg::CLIENT),
                 fixed: true,
                 modal: true,
@@ -1270,6 +1269,10 @@ impl App for BtApp {
 impl repriseapp::Extended for BtApp {
     fn fixed(&self) -> bool {
         true
+    }
+
+    fn device_prompt(&self, win: WinId) -> bool {
+        matches!(win, PAIR | OFFER)
     }
 
     fn hidden(&self) -> bool {
@@ -2297,6 +2300,34 @@ mod tests {
     }
 
     #[test]
+    fn the_pairing_box_and_the_file_offer_are_the_device_prompts() {
+        let mut ctx = test_ctx();
+        let mut a = app();
+        a.snapshot_in(snap(true), 0);
+        a.open_props("/a/cans");
+        a.open_wizard();
+        a.agent(bz::AgentRequest {
+            device: "/a/other".into(),
+            ask: Ask::Authorize,
+            done: None,
+        });
+        let (o, _wait) = offer("/t/0");
+        a.offer_in(o, &mut ctx);
+        let prompts: Vec<_> = (a.children().into_iter())
+            .filter(|c| a.device_prompt(c.id))
+            .map(|c| c.title)
+            .collect();
+        assert_eq!(
+            prompts,
+            ["Bluetooth Pairing Request", "Bluetooth File Transfer"]
+        );
+        assert!(
+            !a.device_prompt(repriseapp::MAIN),
+            "the devices window stacks as usual"
+        );
+    }
+
+    #[test]
     fn the_offer_prompt_starts_on_decline_and_accept_answers_yes() {
         let mut ctx = test_ctx();
         let mut a = app();
@@ -2320,7 +2351,7 @@ mod tests {
         let mut a = app();
         let (o, _wait) = offer("/t/0");
         a.offer_in(o, &mut ctx);
-        let mut tree = Tree::window(receive::TITLE, (300, 150));
+        let mut tree = Tree::window(&tr!("offer-title"), (300, 150));
         a.access(OFFER, &mut tree, &ctx);
         for button in ["Accept", "Decline"] {
             let named = tree.nodes().any(|(_, n)| n.label() == Some(button));

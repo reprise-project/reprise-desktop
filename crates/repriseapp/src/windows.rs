@@ -132,9 +132,13 @@ impl Host {
         }
     }
 
-    /// Window `id`'s xdg-toplevel-tag: its caption's, or `file-dialog` for a file dialog with a
-    /// plain caption, whose size and place the compositor hands the next one.
+    /// Window `id`'s xdg-toplevel-tag: `device-prompt` for a
+    /// [`crate::Extended::device_prompt`], else its caption's, or `file-dialog` for a file dialog
+    /// with a plain caption, whose size and place the compositor hands the next one.
     pub(crate) fn tag_of(&mut self, id: WinId, caption: Caption) -> &'static str {
+        if self.app.device_prompt(id) {
+            return "device-prompt";
+        }
         match caption {
             Caption::Window if self.app.drop_file_dialog(id).is_some() => "file-dialog",
             Caption::Window | Caption::None => "",
