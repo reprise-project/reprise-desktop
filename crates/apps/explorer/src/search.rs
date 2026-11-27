@@ -10,6 +10,7 @@ use repriseapp::{Ctx, Reply};
 use reprisefs::netshare::Share;
 use reprisefs::search::Query;
 use reprisekit::controls::shellview;
+use reprisekit::tr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -168,7 +169,7 @@ impl Search {
     /// The window's title while results are shown.
     pub fn caption(&self, shares: &[Share]) -> Option<String> {
         let a = self.shown.as_ref()?;
-        Some(format!("Search results in {}", a.place.title_in(shares)))
+        Some(tr!("search-caption", place = a.place.title_in(shares)))
     }
 }
 

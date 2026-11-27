@@ -14,6 +14,7 @@ use reprisefs::listing::Item;
 use reprisefs::netshare::Unmount;
 use reprisefs::portable::{self, Device};
 use reprisefs::udisks::{BadLabelChar, Error, ErrorKind, Snapshot, Volume};
+use reprisekit::tr;
 
 impl Explorer {
     /// Take UDisks2's snapshots as it changes, so Computer gains and loses a
@@ -124,7 +125,14 @@ impl Explorer {
             let mounted = portable::mount(&d.uri);
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| match mounted {
                 Ok(at) => ex.go(Place::Folder(at), ctx),
-                Err(e) => ex.message_box(&format!("Could not open {}", d.name), e, ctx),
+                Err(e) => ex.message_box(
+                    &tr!(
+                        "volumes-mount-device-and-open-could-not-open-name",
+                        name = d.name.as_str()
+                    ),
+                    e,
+                    ctx,
+                ),
             })
         });
         Reply::redraw()
@@ -139,15 +147,14 @@ impl Explorer {
         self.spawn_job(ctx, move || {
             let done = reprisefs::netshare::unmount(&at, false);
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
-                let title = format!("Problem Ejecting {}", d.name);
+                let title = tr!(
+                    "volumes-eject-device-problem-ejecting-name",
+                    name = d.name.as_str()
+                );
                 match done {
                     Ok(()) => Reply::none(),
                     Err(Unmount::Busy) => {
-                        let text = format!(
-                            "'{}' is in use. Close any program or window using it, and then try \
-                             again.",
-                            d.name
-                        );
+                        let text = tr!("volumes-eject-device-in-use", name = d.name.as_str());
                         ex.message_box(&title, text, ctx)
                     }
                     Err(Unmount::Error(e)) => ex.message_box(&title, e, ctx),
@@ -170,7 +177,11 @@ impl Explorer {
             let mounted = udisks.mount(&v.path);
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| match mounted {
                 Ok(at) => ex.go(Place::Folder(at), ctx),
-                Err(e) => ex.udisks_failed(&format!("Could not open {name}"), &e, ctx),
+                Err(e) => ex.udisks_failed(
+                    &tr!("volumes-mount-and-open-could-not-open-name", name = name),
+                    &e,
+                    ctx,
+                ),
             })
         });
         Reply::redraw()
@@ -194,7 +205,7 @@ impl Explorer {
                     return Reply::none();
                 };
                 let name = self.volumes.volume(&volume).map_or_else(
-                    || "Removable Disk".into(),
+                    || tr!("volumes-unlock-event-removable-disk"),
                     |v| v.name(self.volumes.disk_of(v)),
                 );
                 self.spawn_job(ctx, move || {
@@ -234,7 +245,11 @@ impl Explorer {
                 }
                 let reply = match done {
                     Ok(Ok(at)) => self.go(Place::Folder(at), ctx),
-                    Ok(Err(e)) => self.udisks_failed(&format!("Could not open {name}"), &e, ctx),
+                    Ok(Err(e)) => self.udisks_failed(
+                        &tr!("volumes-unlocked-could-not-open-name", name = name),
+                        &e,
+                        ctx,
+                    ),
                     Err(_) => Reply::none(),
                 };
                 Reply {
@@ -284,7 +299,7 @@ impl Explorer {
         let path = it.path.clone();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         self.raise(Dialog::Confirm(crate::dialogs::Confirm {
-            title: reprisefs::udisks::MOUNT_TITLE,
+            title: reprisefs::udisks::MOUNT_TITLE.into(),
             text: reprisefs::udisks::mount_text(&name),
             min_text_h: None,
             template: reprisekit::controls::dlgtemplate::Template::MessageBox,
@@ -315,9 +330,13 @@ impl Explorer {
     /// [`Explorer::mount_image`] for the disk image at `path`.
     pub(crate) fn mount_image_at(&mut self, path: std::path::PathBuf, ctx: &mut Ctx) -> Reply {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let title = format!("Could not mount {name}");
+        let title = tr!("volumes-mount-image-at-could-not-mount-name", name = name);
         let Some(udisks) = self.udisks.clone() else {
-            return self.message_box(&title, "UDisks2 is not running.".into(), ctx);
+            return self.message_box(
+                &title,
+                tr!("volumes-mount-image-at-udisks2-is-not-running"),
+                ctx,
+            );
         };
         self.spawn_job(ctx, move || {
             let mounted = udisks.mount_image(&path);
@@ -354,9 +373,9 @@ impl Explorer {
         let Some((v, disk)) = place::eject_target(&self.volumes, it) else {
             return Reply::none();
         };
-        let title = format!(
-            "Problem Ejecting {}",
-            disk.map_or_else(|| v.name(None), |d| d.name())
+        let title = tr!(
+            "volumes-eject-selected-problem-ejecting-name",
+            name = disk.map_or_else(|| v.name(None), |d| d.name())
         );
         // The busy box names the drive when another of its volumes may be the one in use.
         let mounted_on = |d: &reprisefs::udisks::Disk| {
@@ -429,19 +448,23 @@ impl Explorer {
             return Reply::none();
         }
         if !(self.volumes.volume(&picked.path)).is_some_and(|v| v.same_as(&picked)) {
-            return self.message_box("Rename", DRIVE_CHANGED.into(), ctx);
+            return self.message_box(&tr!("volumes-relabel-rename"), drive_changed(), ctx);
         }
         // A label tool UDisks2 runs (e2label, fatlabel) may read a leading hyphen as an option.
         if label.starts_with('-') {
-            return self.message_box("Rename", LEADING_HYPHEN.into(), ctx);
+            return self.message_box(&tr!("volumes-relabel-rename"), leading_hyphen(), ctx);
         }
         if let Some(bad) = reprisefs::udisks::label_refuses(&picked.fs_type, &label) {
-            return self.message_box("Rename", bad_char_text(bad), ctx);
+            return self.message_box(&tr!("volumes-relabel-rename"), bad_char_text(bad), ctx);
         }
         if let Some(limit) =
             reprisefs::udisks::label_limit(&picked.fs_type).filter(|l| !l.fits(&label))
         {
-            return self.message_box("Rename", too_long_text(Some(limit.max())), ctx);
+            return self.message_box(
+                &tr!("volumes-relabel-rename"),
+                too_long_text(Some(limit.max())),
+                ctx,
+            );
         }
         let name = picked.name(self.volumes.disk_of(&picked));
         self.spawn_job(ctx, move || {
@@ -452,7 +475,7 @@ impl Explorer {
                 Err(e) => {
                     log::info!("explorer: relabelling {}: {e}", picked.path);
                     let text = relabel_failed_text(&name, &picked.fs_type, &e);
-                    ex.message_box("Rename", text, ctx)
+                    ex.message_box(&tr!("volumes-relabel-rename"), text, ctx)
                 }
             })
         });
@@ -478,9 +501,15 @@ impl Explorer {
     }
 }
 
-pub(crate) const SYSTEM_DRIVE: &str = "Reprise doesn't rename the system's own drives.";
-const DRIVE_CHANGED: &str = "The drive changed; nothing was renamed.";
-const LEADING_HYPHEN: &str = "A drive's name cannot start with a hyphen (-).";
+pub(crate) fn system_drive() -> String {
+    tr!("volumes-system-drive-reprise-doesn-t-rename-the-system")
+}
+fn drive_changed() -> String {
+    tr!("volumes-drive-changed-the-drive-changed-nothing-was-renamed")
+}
+fn leading_hyphen() -> String {
+    tr!("volumes-leading-hyphen-a-drive-s-name-cannot-start")
+}
 
 /// What the Rename box opens with: the file system's label, else the name the system gives the
 /// volume.
@@ -494,22 +523,22 @@ pub(crate) fn label_text(v: &Volume) -> String {
 /// Why a name with `bad` in it is refused before UDisks2 is asked: polkit would prompt first.
 pub(crate) fn bad_char_text(bad: BadLabelChar) -> String {
     match bad {
-        BadLabelChar::Control => "A drive's name cannot contain control characters.".into(),
-        BadLabelChar::Space => "This drive's name cannot contain spaces.".into(),
+        BadLabelChar::Control => tr!("volumes-bad-char-control"),
+        BadLabelChar::Space => tr!("volumes-bad-char-space"),
         BadLabelChar::Listed(chars) => {
             let spaced: Vec<String> = chars.chars().map(String::from).collect();
-            format!(
-                "A drive's name cannot contain any of the following characters:\n{}",
-                spaced.join(" ")
-            )
+            tr!("volumes-bad-char-listed", chars = spaced.join(" "))
         }
     }
 }
 
 fn too_long_text(limit: Option<usize>) -> String {
     match limit {
-        Some(n) => format!("The name is too long for this drive (at most {n} characters)."),
-        None => "The name is too long for this drive.".into(),
+        Some(n) => tr!(
+            "volumes-too-long-text-the-name-is-too-long-for",
+            n = n.to_string()
+        ),
+        None => tr!("volumes-too-long-text-the-name-is-too-long-for-2"),
     }
 }
 
@@ -517,12 +546,21 @@ fn too_long_text(limit: Option<usize>) -> String {
 /// UDisks2's own reason is put in words where its shape is known.
 pub(crate) fn relabel_failed_text(name: &str, fs_type: &str, e: &Error) -> String {
     match e.kind {
-        ErrorKind::NotAuthorized => format!("You do not have permission to rename {name}."),
+        ErrorKind::NotAuthorized => tr!(
+            "volumes-relabel-failed-text-you-do-not-have-permission-to",
+            name = name
+        ),
         ErrorKind::Busy => {
-            format!("{name} is in use. Close any program or window using it, and then try again.")
+            tr!(
+                "volumes-relabel-failed-text-name-is-in-use-close-any",
+                name = name
+            )
         }
         _ if label_too_long(&e.message) => too_long_text(label_limit(&e.message, fs_type)),
-        _ => format!("Cannot rename {name}."),
+        _ => tr!(
+            "volumes-relabel-failed-text-cannot-rename-name",
+            name = name
+        ),
     }
 }
 

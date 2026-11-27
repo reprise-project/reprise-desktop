@@ -7,6 +7,7 @@ use crate::place::{self, Place, list};
 use reprisekit::controls::treeview::{self, Node, TreeView};
 use reprisekit::icontheme::IconCache;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -283,7 +284,14 @@ pub fn build(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) {
         px: places.px,
         ..Places::default()
     };
-    let mut root = tree_node(places, "Desktop", Place::Desktop, true, &Own::None, icons);
+    let mut root = tree_node(
+        places,
+        &tr!("folder-tree-build-desktop"),
+        Place::Desktop,
+        true,
+        &Own::None,
+        icons,
+    );
     root.expanded = true;
     tree.roots = vec![root];
     tree.selected = Some(vec![0]);

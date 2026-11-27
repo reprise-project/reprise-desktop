@@ -10,6 +10,7 @@ use reprisefs::progress::{Meter, Phase as JobPhase, Snapshot};
 use reprisekit::controls::copyprogress::{CopyProgress, Kind, Outcome, Phase, SHOW_AFTER, Status};
 use reprisekit::look::Paint;
 use reprisekit::theme::Color;
+use reprisekit::tr;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -113,7 +114,7 @@ impl Progress {
 
     /// The job is over, having dealt with `done` items: a job whose dialog was up but not focused
     /// leaves a balloon with what was done or why it stopped. A cancelled job says nothing.
-    pub fn ended(&self, done: usize, failed: Option<&(&'static str, String)>) {
+    pub fn ended(&self, done: usize, failed: Option<&(String, String)>) {
         let Some(shown) = self.shown.as_ref().filter(|s| !s.focused) else {
             return;
         };
@@ -125,7 +126,9 @@ impl Progress {
             None => shown.cp.ended_note(done),
         };
         std::thread::spawn(move || {
-            if let Err(e) = reprisebus::notify::notify("Explorer", "folder", &summary, &body) {
+            if let Err(e) =
+                reprisebus::notify::notify(&tr!("copy-ended-explorer"), "folder", &summary, &body)
+            {
                 log::warn!("explorer: the job's balloon: {e}");
             }
         });
@@ -160,7 +163,7 @@ impl Explorer {
     }
 
     /// What Log Off waits for while a job runs: the first running job's work.
-    pub(crate) fn logout_reason(&self) -> Option<&'static str> {
+    pub(crate) fn logout_reason(&self) -> Option<String> {
         let running = [COPY, REMOVE, EXTRACT]
             .into_iter()
             .find_map(|w| self.progress(w));
@@ -172,8 +175,8 @@ impl Explorer {
     pub(crate) fn hold_logout(&mut self) {
         let reason = self.logout_reason();
         if reason != self.logout_held {
+            reprisebus::inhibit::hold_logout(reason.as_deref());
             self.logout_held = reason;
-            reprisebus::inhibit::hold_logout(reason);
         }
     }
 
@@ -367,15 +370,15 @@ impl Explorer {
 }
 
 /// The reason a job of `kind` gives for holding off log off.
-fn holds_off(kind: Kind) -> &'static str {
+fn holds_off(kind: Kind) -> String {
     match kind {
-        Kind::Copy => "Copying files",
-        Kind::Move => "Moving files",
-        Kind::Delete | Kind::Erase => "Deleting files",
-        Kind::Empty => "Emptying the Recycle Bin",
-        Kind::Restore => "Restoring files",
-        Kind::Extract => "Extracting files",
-        Kind::Compress => "Compressing files",
+        Kind::Copy => tr!("copy-holds-off-copying-files"),
+        Kind::Move => tr!("copy-holds-off-moving-files"),
+        Kind::Delete | Kind::Erase => tr!("copy-holds-off-deleting-files"),
+        Kind::Empty => tr!("copy-holds-off-emptying-the-recycle-bin"),
+        Kind::Restore => tr!("copy-holds-off-restoring-files"),
+        Kind::Extract => tr!("copy-holds-off-extracting-files"),
+        Kind::Compress => tr!("copy-holds-off-compressing-files"),
     }
 }
 

@@ -10,6 +10,7 @@ use reprisefs::places::{Drive, DriveKind, home_label};
 use reprisefs::portable::{self, Device};
 use reprisefs::udisks::{Disk, Snapshot, Volume};
 use reprisekit::controls::shellview::Field;
+use reprisekit::tr;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -128,12 +129,12 @@ impl Place {
                 Some(name) => name.to_string_lossy().into_owned(),
                 None => "/".to_string(),
             },
-            Place::Desktop => "Desktop".to_string(),
-            Place::Documents => "Documents".to_string(),
+            Place::Desktop => tr!("place-title-desktop"),
+            Place::Documents => tr!("place-title-documents"),
             Place::Home => home_label(),
-            Place::Computer => "Computer".to_string(),
-            Place::RecycleBin => "Recycle Bin".to_string(),
-            Place::Network(uri) if uri == ROOT => "Network".to_string(),
+            Place::Computer => tr!("place-title-computer"),
+            Place::RecycleBin => tr!("place-title-recycle-bin"),
+            Place::Network(uri) if uri == ROOT => tr!("place-title-network"),
             Place::Network(uri) => Address::parse(uri).map_or_else(|| uri.clone(), |a| a.host),
         }
     }
@@ -324,7 +325,10 @@ pub fn desktop_places() -> [Place; 5] {
 }
 
 pub fn not_found_text(typed: &str) -> String {
-    format!("Cannot find '{typed}'. Check the spelling and try again.")
+    tr!(
+        "place-not-found-text-cannot-find-typed-check-the-spelling",
+        typed = typed
+    )
 }
 
 /// A folder listing, or (for `Computer`) the three device groups: name and the
@@ -631,7 +635,7 @@ fn row_item(place: &Place) -> Option<Item> {
         size: 0,
         modified: None,
         mime: None,
-        kind: "System Folder".to_string(),
+        kind: tr!("place-row-item-system-folder"),
         drive: None,
         mount_root: false,
         trashed: None,
@@ -745,7 +749,10 @@ fn build_computer(
     let mut groups = Vec::new();
 
     if let Some((home, label)) = home {
-        groups.push(("Files Stored on This Computer".to_string(), items.len()));
+        groups.push((
+            tr!("place-build-computer-files-stored-on-this-computer"),
+            items.len(),
+        ));
         items.push(Item {
             name: label,
             path: home,
@@ -757,7 +764,7 @@ fn build_computer(
             size: 0,
             modified: None,
             mime: None,
-            kind: "File Folder".to_string(),
+            kind: tr!("place-build-computer-file-folder"),
             drive: None,
             mount_root: false,
             trashed: None,
@@ -768,7 +775,7 @@ fn build_computer(
     let (hard, removable): (Vec<&Drive>, Vec<&Drive>) =
         drives.iter().partition(|d| d.kind() == DriveKind::Local);
     if !hard.is_empty() {
-        groups.push(("Hard Disk Drives".to_string(), items.len()));
+        groups.push((tr!("place-build-computer-hard-disk-drives"), items.len()));
         items.extend(hard.into_iter().map(drive_item));
     }
     // A volume `drives` already lists as mounted stays out even when
@@ -780,13 +787,16 @@ fn build_computer(
         .map(|v| volume_item(volumes, v))
         .collect();
     if !removable.is_empty() || !unmounted.is_empty() {
-        groups.push(("Devices with Removable Storage".to_string(), items.len()));
+        groups.push((
+            tr!("place-build-computer-devices-with-removable-storage"),
+            items.len(),
+        ));
         items.extend(removable.into_iter().map(drive_item));
         items.extend(unmounted);
     }
     let portable = portable::with_mounts(portable, shares);
     if !portable.is_empty() {
-        groups.push(("Portable Devices".to_string(), items.len()));
+        groups.push((tr!("place-build-computer-portable-devices"), items.len()));
         items.extend(portable.iter().map(|d| {
             let path = d.mount.clone().unwrap_or_else(|| PathBuf::from(&d.uri));
             remote_item(&d.name, path, DriveKind::Portable(d.kind))
@@ -794,7 +804,7 @@ fn build_computer(
     }
     let shares: Vec<&Share> = shares.iter().filter(|s| !s.is_portable()).collect();
     if !shares.is_empty() {
-        groups.push(("Network Locations".to_string(), items.len()));
+        groups.push((tr!("place-build-computer-network-locations"), items.len()));
         items.extend(
             (shares.iter()).map(|s| remote_item(&s.name, s.path.clone(), DriveKind::Network)),
         );

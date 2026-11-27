@@ -2,6 +2,7 @@
 //! (`--new-shortcut DIR`): the kit's `newshortcut` pages, Browse... in the file dialog child
 //! (`PROGRAM_BROWSE`, as Open With's), and the launcher written as a New's item.
 
+use reprisekit::tr;
 use std::path::PathBuf;
 
 use repriseapp::filedlg::Driven;
@@ -95,9 +96,9 @@ impl Explorer {
                 let mut host = self.dialog_host();
                 host.icons.prime(&mut ctx.icons);
                 let fields = Fields {
-                    title: "Browse".into(),
-                    accept_label: "Open".into(),
-                    filters: vec!["All Files".into()],
+                    title: tr!("new-shortcut-answered-browse"),
+                    accept_label: tr!("new-shortcut-answered-open"),
+                    filters: vec![tr!("new-shortcut-answered-all-files")],
                     mode: DlgMode::Open,
                     multiple: false,
                 };
@@ -145,7 +146,7 @@ impl Explorer {
         let Some(text) = w.target.as_ref().and_then(|t| t.launcher(&name)) else {
             return self.message_box(
                 &newshortcut_title(),
-                "A shortcut cannot hold that name or location.".into(),
+                tr!("new-shortcut-write-shortcut-a-shortcut-cannot-hold-that-name"),
                 ctx,
             );
         };
@@ -159,9 +160,11 @@ impl Explorer {
         };
         self.act(
             ctx,
-            Action::changes("New Shortcut"),
+            Action::changes(tr!("new-shortcut-write-shortcut-new-shortcut")),
             work,
-            move |ex, made, ctx| ex.item_made("the shortcut", made, ctx),
+            move |ex, made, ctx| {
+                ex.item_made(&tr!("new-shortcut-write-shortcut-the-shortcut"), made, ctx)
+            },
         )
     }
 

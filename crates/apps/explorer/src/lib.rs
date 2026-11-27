@@ -5,6 +5,9 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("explorer");
+use reprisekit::tr;
+
 mod acting;
 mod bin_props;
 mod browse;
@@ -20,6 +23,8 @@ mod filemanager;
 mod fileops;
 mod folder_opts;
 mod foldertree;
+#[cfg(test)]
+mod i18n_tests;
 mod icons;
 mod keys;
 mod live;
@@ -413,7 +418,7 @@ pub struct Explorer {
     /// The whole percent and paused state last put on the task button.
     pub(crate) task_progress: Option<(u32, bool)>,
     /// The reason the process last held off log off with ([`Explorer::hold_logout`]).
-    pub(crate) logout_held: Option<&'static str>,
+    pub(crate) logout_held: Option<String>,
     /// Finished background jobs (deletes, the bin's Empty) waiting for a wake.
     jobs_tx: std::sync::mpsc::Sender<fileops::JobDone>,
     jobs_rx: std::sync::mpsc::Receiver<fileops::JobDone>,
@@ -614,7 +619,7 @@ impl Explorer {
             search_job: None,
             search_run: reprisefs::search::try_run,
             explorer_bar: ExplorerBar {
-                title: "Folders".to_string(),
+                title: tr!("explorer-unopened-folders"),
                 width: settings.bar_width,
                 hot_close: false,
                 greyed: false,

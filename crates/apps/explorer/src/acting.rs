@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 pub(crate) use reprisefs::deadline::ACTION_DEADLINE;
 
 /// What an action does to files, which decides what its give-up says.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Action {
     /// The error box's title.
-    pub title: &'static str,
+    pub title: String,
     /// The work changes files after [`Gate::change`].
     pub changes: bool,
     /// The sheet that asked for it, which the error box covers ([`Explorer::message_over`]).
@@ -24,17 +24,17 @@ pub(crate) struct Action {
 }
 
 impl Action {
-    pub(crate) fn reads(title: &'static str) -> Action {
+    pub(crate) fn reads(title: impl Into<String>) -> Action {
         Action {
-            title,
+            title: title.into(),
             changes: false,
             sheet: None,
         }
     }
 
-    pub(crate) fn changes(title: &'static str) -> Action {
+    pub(crate) fn changes(title: impl Into<String>) -> Action {
         Action {
-            title,
+            title: title.into(),
             changes: true,
             sheet: None,
         }
@@ -106,6 +106,7 @@ impl Explorer {
     ) -> Reply {
         let gate = Gate::default();
         let g = gate.clone();
+        let title = action.title.clone();
         let (late, wake) = (self.landed_late.clone(), ctx.wake.clone());
         let read = move || {
             if g.given_up() {
@@ -115,13 +116,13 @@ impl Explorer {
             match g.land() {
                 Landing::Landed => Some(answer),
                 Landing::Refresh => {
-                    log::info!("explorer: {} landed past its deadline", action.title);
+                    log::info!("explorer: {} landed past its deadline", title);
                     late.store(true, Ordering::Release);
                     wake.wake();
                     None
                 }
                 Landing::Dropped => {
-                    log::info!("explorer: {} answered past its deadline", action.title);
+                    log::info!("explorer: {} answered past its deadline", title);
                     None
                 }
             }
@@ -162,7 +163,7 @@ impl Explorer {
                     self.action_deadline
                 );
                 let text = reprisefs::deadline::not_responding(a.action.changes, changing);
-                let r = self.message_over(a.action.sheet, a.action.title, text, ctx);
+                let r = self.message_over(a.action.sheet, &a.action.title, text, ctx);
                 reply = Some(and(reply, r));
                 continue;
             }

@@ -17,6 +17,7 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
 use reprisekit::textedit::keysym;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 pub struct Browse {
@@ -42,8 +43,12 @@ pub struct Browse {
 }
 
 pub const ERROR: repriseapp::WinId = repriseapp::WinId::named("browse error");
-const RENAME_ERROR_TITLE: &str = "Error Renaming File or Folder";
-const MAKE_ERROR_TITLE: &str = "Error Creating Folder";
+fn rename_error_title() -> String {
+    tr!("browse-rename-error-title-error-renaming-file-or-folder")
+}
+fn make_error_title() -> String {
+    tr!("browse-make-error-title-error-creating-folder")
+}
 
 /// A picker write on a listing thread, with the children of the node it changed read after it.
 pub enum Making {
@@ -75,7 +80,7 @@ type Made = (PathBuf, Option<reprisefs::undo::FileId>, Kids);
 
 /// A picker write that failed, shown in the error box over the picker.
 pub struct Refused {
-    pub title: &'static str,
+    pub title: String,
     pub text: String,
     /// The node whose rename box OK opens again, and the name it held.
     pub rename: Option<(reprisekit::controls::treeview::Path, String)>,
@@ -106,9 +111,9 @@ impl Browse {
 
 pub fn prompt(mv: bool, items: &[PathBuf]) -> String {
     let (verb, button) = if mv {
-        ("move", "Move")
+        ("move", tr!("browse-prompt-move"))
     } else {
-        ("copy", "Copy")
+        ("copy", tr!("browse-prompt-copy"))
     };
     let what = match items {
         [one] => format!(
@@ -117,9 +122,17 @@ pub fn prompt(mv: bool, items: &[PathBuf]) -> String {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default()
         ),
-        many => format!("the {} selected items", many.len()),
+        many => tr!(
+            "browse-prompt-selected-items",
+            count = many.len().to_string()
+        ),
     };
-    format!("Pick the folder to {verb} {what} to, then click {button}.")
+    tr!(
+        "browse-prompt-pick-the-folder-to-verb-what",
+        verb = verb,
+        what = what,
+        button = button
+    )
 }
 
 /// A folder the picker can put things in: a place with a directory this process
@@ -165,7 +178,7 @@ pub fn rename_target(from: &Path, typed: &str) -> Option<Result<PathBuf, String>
 
 /// A new folder in `dir`, with its [`reprisefs::undo::file_id`] read right after it was made.
 pub fn make_new_folder(dir: &Path) -> std::io::Result<(PathBuf, Option<reprisefs::undo::FileId>)> {
-    let path = reprisefs::ops::unique_path(dir, "New Folder");
+    let path = reprisefs::ops::unique_path(dir, tr!("new-folder-name"));
     std::fs::create_dir(&path)?;
     let id = reprisefs::undo::file_id(&path);
     Ok((path, id))
@@ -209,9 +222,13 @@ impl Explorer {
             }
             Err(job) => walking = Some((walk_to, job)),
         }
-        let accept = if mv { "Move" } else { "Copy" };
+        let accept = if mv {
+            tr!("browse-items-move")
+        } else {
+            tr!("browse-items-copy")
+        };
         let mut b = Browse {
-            bf: BrowseFolder::new(prompt(mv, &items), accept.into(), tree),
+            bf: BrowseFolder::new(prompt(mv, &items), accept, tree),
             places,
             items,
             mv,
@@ -357,7 +374,10 @@ impl Explorer {
                     let dir = writable_dir(&at)?;
                     Some(match make_new_folder(&dir) {
                         Ok((made, id)) => Ok((made, id, kids())),
-                        Err(e) => Err(format!("Cannot create New Folder: {e}")),
+                        Err(e) => Err(tr!(
+                            "browse-event-cannot-create-new-folder-e",
+                            e = e.to_string()
+                        )),
                     })
                 };
                 match self.read_job(ctx, make) {
@@ -442,7 +462,7 @@ impl Explorer {
             Some(Err(text)) => {
                 self.wear_error_icon(ctx);
                 b.refused = Some(Refused {
-                    title: MAKE_ERROR_TITLE,
+                    title: make_error_title(),
                     text,
                     rename: None,
                 });
@@ -552,7 +572,7 @@ impl Explorer {
                 log::warn!("explorer: naming {} failed: {text}", from.display());
                 self.wear_error_icon(ctx);
                 b.refused = Some(Refused {
-                    title: RENAME_ERROR_TITLE,
+                    title: rename_error_title(),
                     text,
                     rename: Some((path, old)),
                 });
@@ -764,10 +784,10 @@ impl Explorer {
         Some(msgbox::Fields {
             text: r.text.clone(),
             icon: self.error_icon(),
-            buttons: vec!["OK".to_string()],
+            buttons: vec![reprisekit::kit_tr!("ok")],
             default: 0,
             min_text_h: None,
-            min_w: repriseapp::caption_fit(r.title),
+            min_w: repriseapp::caption_fit(&r.title),
             max_w: repriseapp::dialog_max_w(),
         })
     }

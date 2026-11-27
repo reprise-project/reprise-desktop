@@ -50,7 +50,7 @@ fn log_off_is_held_off_while_a_copy_runs_and_let_go_once_it_lands() {
     };
     ex.pasted(clip, &mut ctx);
     ex.hold_logout();
-    assert_eq!(ex.logout_held, Some("Copying files"));
+    assert_eq!(ex.logout_held, Some("Copying files".to_string()));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while ex.put.is_some() {
         assert!(std::time::Instant::now() < deadline, "the copy lands");

@@ -18,6 +18,7 @@ use reprisekit::controls::form::{Control, Form};
 use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// The sheet's own window; modeless, its boxes come up modal over it in the [`DIALOG`] child.
@@ -300,7 +301,7 @@ impl Props {
     }
 
     pub fn title(&self) -> String {
-        format!("{} Properties", self.caption)
+        tr!("props-dialog-title", caption = self.caption.as_str())
     }
 
     pub fn size(&self) -> (i32, i32) {

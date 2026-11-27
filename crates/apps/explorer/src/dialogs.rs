@@ -20,6 +20,7 @@ use reprisekit::controls::openwith::{self, OpenWith};
 use reprisekit::controls::replacebox;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::path::PathBuf;
 
 /// The dialog's own window; each is modal and one at a time.
@@ -38,7 +39,7 @@ pub const PROGRAM_BROWSE: WinId = WinId::named("program browse");
 pub use reprisefs::bincap::ConfirmKind;
 
 pub struct Confirm {
-    pub title: &'static str,
+    pub title: String,
     pub text: String,
     pub min_text_h: Option<i32>,
     pub template: Template,
@@ -72,7 +73,13 @@ pub struct Confirm {
 }
 
 /// The buttons of the box a failed item raises, in [`Explorer::ask_failed`]'s order.
-pub(crate) const FAILED_BUTTONS: [&str; 3] = ["&Skip", "&Retry", "Cancel"];
+pub(crate) fn failed_buttons() -> [String; 3] {
+    [
+        tr!("dialogs-failed-buttons-skip"),
+        tr!("dialogs-failed-buttons-retry"),
+        reprisekit::kit_tr!("cancel"),
+    ]
+}
 
 /// The icon of the error boxes, and of the questions before running or mounting a file.
 pub(crate) const ERROR_ICON: &[&str] = &["dialog-error", "dialog-warning"];
@@ -88,12 +95,17 @@ impl Confirm {
         if self.mount {
             return reprisefs::udisks::MOUNT_BUTTONS.map(String::from).to_vec();
         }
-        let labels: &[&str] = match &self.too_big {
-            _ if self.job.is_some() => &FAILED_BUTTONS,
-            Some(q) if q.many() => &[dlgtemplate::YES, "Yes to &All", dlgtemplate::NO, "Cancel"],
-            _ => &[dlgtemplate::YES, dlgtemplate::NO],
+        let labels: Vec<String> = match &self.too_big {
+            _ if self.job.is_some() => failed_buttons().to_vec(),
+            Some(q) if q.many() => vec![
+                dlgtemplate::YES.to_string(),
+                reprisekit::kit_tr!("yes-to-all"),
+                dlgtemplate::NO.to_string(),
+                reprisekit::kit_tr!("cancel"),
+            ],
+            _ => vec![dlgtemplate::YES.to_string(), dlgtemplate::NO.to_string()],
         };
-        labels.iter().map(|s| s.to_string()).collect()
+        labels
     }
 
     /// The button Enter presses when the box opens: No on a delete that erases, Cancel on the
@@ -323,23 +335,25 @@ impl Dialog {
             Dialog::Message { title, .. } => title.clone(),
             Dialog::Confirm(c) => c.title.to_string(),
             Dialog::Replace(r) => r.fields.title().to_string(),
-            Dialog::ChooseProgram(_) => "Open With".to_string(),
-            Dialog::AttrConfirm(_) => "Confirm Attribute Changes".to_string(),
-            Dialog::Advanced { .. } => "Advanced Attributes".to_string(),
+            Dialog::ChooseProgram(_) => tr!("dialogs-title-open-with"),
+            Dialog::AttrConfirm(_) => tr!("dialogs-title-confirm-attribute-changes"),
+            Dialog::Advanced { .. } => tr!("dialogs-title-advanced-attributes"),
             // A launcher's box has no Restore Defaults.
             Dialog::ChangeIcon { form, .. }
                 if form
                     .item(reprisekit::controls::filesheet::CHANGE_ICON_RESTORE)
                     .is_none() =>
             {
-                "Change Icon".to_string()
+                tr!("dialogs-title-change-icon")
             }
-            Dialog::ChangeIcon { name, .. } => format!("Change Icon for {name} Folder"),
-            Dialog::About(..) => "About Explorer".to_string(),
-            Dialog::Browse(b) if b.mv => "Move Items".to_string(),
-            Dialog::Browse(_) => "Copy Items".to_string(),
+            Dialog::ChangeIcon { name, .. } => {
+                tr!("dialogs-title-change-icon-for-name-folder", name = name)
+            }
+            Dialog::About(..) => tr!("dialogs-title-about-explorer"),
+            Dialog::Browse(b) if b.mv => tr!("dialogs-title-move-items"),
+            Dialog::Browse(_) => tr!("dialogs-title-copy-items"),
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
-            Dialog::BatchRename(_) => "Rename".to_string(),
+            Dialog::BatchRename(_) => tr!("dialogs-title-rename"),
             Dialog::NewShortcut(_) => reprisekit::controls::newshortcut::TITLE.to_string(),
             Dialog::AddFavorite(_) => favorites::ADD_TITLE.to_string(),
             Dialog::Organize(_) => favorites::ORGANIZE_TITLE.to_string(),
@@ -624,7 +638,7 @@ impl Explorer {
 
     pub fn not_found(&mut self, typed: &str, ctx: &mut Ctx) -> Reply {
         let text = place::not_found_text(typed);
-        self.message_box("Explorer", text, ctx)
+        self.message_box(&tr!("dialogs-not-found-explorer"), text, ctx)
     }
 
     pub fn advanced_attributes(
@@ -653,7 +667,7 @@ impl Explorer {
 
     pub fn about_box(&mut self, ctx: &mut Ctx) -> Reply {
         let icon = IconSlot::chrome(&mut ctx.icons, &["system-file-manager"], 32);
-        let fields = repriseapp::about::fields("Explorer", icon.icon());
+        let fields = repriseapp::about::fields(&tr!("dialogs-about-box-explorer"), icon.icon());
         let px = ctx.theme.fonts.size_px;
         let mut form = aboutbox::form(&fields, &ctx.text, px);
         let u = self.forms.text;
@@ -696,7 +710,7 @@ impl Explorer {
         let (title, text) = reprisefs::bincap::delete_prompt(kind, name, count, erase, no_bin);
         let min_text_h = (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H);
         Confirm {
-            title,
+            title: title.into(),
             text,
             min_text_h,
             template: match kind {
@@ -728,7 +742,7 @@ impl Explorer {
     pub(crate) fn ask_failed(
         &mut self,
         asked: reprisefs::progress::Asked,
-        title: &'static str,
+        title: &str,
         text: String,
         ctx: &mut Ctx,
     ) -> Reply {
@@ -737,7 +751,7 @@ impl Explorer {
         }
         repriseapp::sound::event(repriseapp::sound::Event::Error);
         self.raise(Dialog::Confirm(Confirm {
-            title,
+            title: title.to_string(),
             text,
             min_text_h: None,
             template: Template::MessageBox,
@@ -790,7 +804,7 @@ impl Explorer {
     ) -> Reply {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         self.raise(Dialog::Confirm(Confirm {
-            title: reprisefs::program::ASK_TITLE,
+            title: reprisefs::program::ASK_TITLE.into(),
             text: asked.text(&name),
             min_text_h: None,
             template: Template::MessageBox,
@@ -857,7 +871,7 @@ impl Explorer {
             Dialog::Message { title, text, .. } => Some(msgbox::Fields {
                 text: text.clone(),
                 icon: self.error_icon(),
-                buttons: vec!["OK".to_string()],
+                buttons: vec![reprisekit::kit_tr!("ok")],
                 default: 0,
                 min_text_h: None,
                 min_w: repriseapp::caption_fit(title),
@@ -1015,7 +1029,7 @@ impl Explorer {
         {
             out.push(Child {
                 id: crate::browse::ERROR,
-                title: r.title.into(),
+                title: r.title.clone(),
                 size: u.size(msgbox::client(&f, text, px, u)),
                 fixed: true,
                 modal: true,
@@ -1024,7 +1038,7 @@ impl Explorer {
         if let Some(b) = self.dialogs.up().and_then(crate::newshortcut::picker_of) {
             out.push(Child {
                 id: PROGRAM_BROWSE,
-                title: "Browse".into(),
+                title: tr!("dialogs-children-browse"),
                 size: b.dlg.min_client(),
                 fixed: false,
                 modal: true,

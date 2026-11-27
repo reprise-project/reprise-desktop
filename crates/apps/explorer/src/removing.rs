@@ -12,6 +12,7 @@ use reprisefs::removal::{Removal, RemoveEvent, RemoveJob, Removed};
 use reprisefs::trash::Bins;
 use reprisefs::undo::{Running, Undo, Undoable};
 use reprisekit::controls::copyprogress::Kind;
+use reprisekit::tr;
 use std::path::PathBuf;
 
 /// What a removal is for, which says what its end does with the results.
@@ -60,7 +61,7 @@ pub(crate) struct Removing {
     /// Paths whose undos no longer apply: purged to make room, erased or restored.
     gone: Vec<PathBuf>,
     done: usize,
-    failed: Option<(&'static str, String)>,
+    failed: Option<(String, String)>,
     undo: Option<Undoing>,
 }
 
@@ -249,16 +250,27 @@ impl Explorer {
                     let name = &r.names[index];
                     let failure = match r.purpose {
                         Purpose::Restore => (
-                            "Error Restoring File or Folder",
-                            format!("Cannot restore {name}: {error}"),
+                            tr!("removing-poll-removal-error-restoring-file-or-folder"),
+                            tr!(
+                                "removing-poll-removal-cannot-restore-name-error",
+                                name = name,
+                                error = error.to_string()
+                            ),
                         ),
                         Purpose::Empty => (
-                            "Error Deleting File or Folder",
-                            format!("Cannot empty the Recycle Bin: {error}"),
+                            tr!("removing-poll-removal-error-deleting-file-or-folder"),
+                            tr!(
+                                "removing-poll-removal-cannot-empty-the-recycle-bin-error",
+                                error = error.to_string()
+                            ),
                         ),
                         _ => (
-                            "Error Deleting File or Folder",
-                            format!("Cannot delete {name}: {error}"),
+                            tr!("removing-poll-removal-error-deleting-file-or-folder"),
+                            tr!(
+                                "removing-poll-removal-cannot-delete-name-error",
+                                name = name,
+                                error = error.to_string()
+                            ),
                         ),
                     };
                     if r.progress.meter.cancelled() || r.purpose == Purpose::Empty {
@@ -272,7 +284,12 @@ impl Explorer {
         }
         if !finished && let Some((title, text)) = ask {
             let meter = r.progress.meter.clone();
-            return Some(self.ask_failed(reprisefs::progress::Asked::new(meter), title, text, ctx));
+            return Some(self.ask_failed(
+                reprisefs::progress::Asked::new(meter),
+                &title,
+                text,
+                ctx,
+            ));
         }
         // A job that ended does not wait for an answer: its end tells the failure.
         if let Some(failure) = ask {
@@ -284,8 +301,14 @@ impl Explorer {
         let mut r = self.removing.take()?;
         self.job_ended(&r.progress.meter, ctx);
         let undo_failed = r.undo.as_ref().and_then(|u| u.error.as_ref());
-        let failed = (r.failed.as_ref().cloned())
-            .or_else(|| undo_failed.map(|e| ("Error", format!("Cannot undo: {e}"))));
+        let failed = (r.failed.as_ref().cloned()).or_else(|| {
+            undo_failed.map(|e| {
+                (
+                    tr!("removing-poll-removal-error"),
+                    tr!("removing-poll-removal-cannot-undo-e", e = e.to_string()),
+                )
+            })
+        });
         r.progress.ended(r.done, failed.as_ref());
         self.publish_task_progress();
         let emptied =
@@ -339,7 +362,7 @@ impl Explorer {
             self.select_once_listed(self.place.clone(), restored, ctx);
         }
         if let Some((title, text)) = r.failed {
-            reply = self.message_box(title, text, ctx);
+            reply = self.message_box(&title, text, ctx);
         }
         if let Some(next) = self.remove_queue.pop_front() {
             self.remove(next, ctx);

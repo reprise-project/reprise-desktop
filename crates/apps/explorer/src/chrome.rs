@@ -16,6 +16,7 @@ use reprisekit::controls::combo::ListItem;
 use reprisekit::controls::toolbar;
 use reprisekit::icontheme::IconCache;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::path::PathBuf;
 
 /// A selected shortcut's path and its status text, or the read of it still out.
@@ -46,7 +47,7 @@ impl Explorer {
             toolbar::Item::DropButton {
                 id: toolbar::BACK,
                 icon: back,
-                label: Some("Back".to_string()),
+                label: Some(tr!("chrome-build-toolbar-back")),
                 enabled: false,
             },
             toolbar::Item::DropButton {
@@ -65,7 +66,7 @@ impl Explorer {
             toolbar::Item::Button {
                 id: toolbar::FOLDERS,
                 icon: folders,
-                label: Some("Folders".to_string()),
+                label: Some(tr!("chrome-build-toolbar-folders")),
                 enabled: true,
             },
             toolbar::Item::Separator,
@@ -97,7 +98,7 @@ impl Explorer {
 
     fn address_rows(&mut self, ctx: &mut Ctx) -> (Vec<ListItem>, Vec<Place>) {
         let mut shell: Vec<(String, Place, i32, &'static str)> = vec![(
-            "Desktop".into(),
+            tr!("chrome-address-rows-desktop"),
             Place::Desktop,
             0,
             Place::Desktop.icon_name(),
@@ -176,8 +177,13 @@ impl Explorer {
             .path()
             .map(|_| sized.filter(|i| !i.is_folder()).map(|i| i.size).sum());
         let zone = self.chrome_waits.first(&mut ctx.icons, &["computer"], 16);
-        self.status.panels =
-            window::status_panels(self.items.len(), chosen.len(), bytes, "Computer", zone);
+        self.status.panels = window::status_panels(
+            self.items.len(),
+            chosen.len(),
+            bytes,
+            &tr!("chrome-refresh-chrome-computer"),
+            zone,
+        );
         if self.search.no_tool() {
             self.status.panels[0].text = reprisefs::search::NO_TOOL.into();
         }

@@ -5,6 +5,7 @@ use repriseapp::Ctx;
 use reprisefs::netshare::Share;
 use reprisefs::pins::Pin;
 use reprisekit::controls::taskpane::{Row, Section};
+use reprisekit::tr;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaneRow {
@@ -68,50 +69,60 @@ fn dead(text: &str, icons: &[&'static str]) -> PaneRow {
 pub fn tasks(place: &Place, sel: Sel, count: usize) -> PaneSection {
     let (title, rows) = match place {
         Place::Computer => (
-            "System Tasks",
+            tr!("pane-tasks-system-tasks"),
             vec![
                 row(
-                    "View system information",
+                    &tr!("pane-tasks-view-system-information"),
                     SYSINFO,
                     Command::SystemInformation,
                     true,
                 ),
-                dead("Add or remove programs", PROGRAMS),
-                dead("Change a setting", SETTINGS),
+                dead(&tr!("pane-tasks-add-or-remove-programs"), PROGRAMS),
+                dead(&tr!("pane-tasks-change-a-setting"), SETTINGS),
             ],
         ),
         Place::Network(_) => (
-            "Network Tasks",
+            tr!("pane-tasks-network-tasks"),
             vec![row(
-                "Connect to a server",
+                &tr!("pane-tasks-connect-to-a-server"),
                 SERVER,
                 Command::ConnectToServer,
                 true,
             )],
         ),
-        Place::RecycleBin if count == 0 => ("Recycle Bin Tasks", Vec::new()),
+        Place::RecycleBin if count == 0 => (tr!("pane-tasks-recycle-bin-tasks"), Vec::new()),
         Place::RecycleBin => (
-            "Recycle Bin Tasks",
+            tr!("pane-tasks-recycle-bin-tasks"),
             vec![
                 row(
-                    "Empty the Recycle Bin",
+                    &tr!("pane-tasks-empty-the-recycle-bin"),
                     EMPTY_BIN,
                     Command::EmptyRecycleBin,
                     true,
                 ),
                 match sel {
-                    Sel::None => row("Restore all items", RESTORE, Command::Restore, true),
-                    Sel::Many { .. } => row(
-                        "Restore the selected items",
+                    Sel::None => row(
+                        &tr!("pane-tasks-restore-all-items"),
                         RESTORE,
                         Command::Restore,
                         true,
                     ),
-                    _ => row("Restore this item", RESTORE, Command::Restore, true),
+                    Sel::Many { .. } => row(
+                        &tr!("pane-tasks-restore-the-selected-items"),
+                        RESTORE,
+                        Command::Restore,
+                        true,
+                    ),
+                    _ => row(
+                        &tr!("pane-tasks-restore-this-item"),
+                        RESTORE,
+                        Command::Restore,
+                        true,
+                    ),
                 },
             ],
         ),
-        _ => ("File and Folder Tasks", folder_tasks(sel)),
+        _ => (tr!("pane-tasks-file-and-folder-tasks"), folder_tasks(sel)),
     };
     PaneSection {
         title: title.to_string(),
@@ -122,43 +133,110 @@ pub fn tasks(place: &Place, sel: Sel, count: usize) -> PaneSection {
 fn folder_tasks(sel: Sel) -> Vec<PaneRow> {
     match sel {
         Sel::None => vec![
-            row("Make a new folder", NEW_FOLDER, Command::NewFolder, true),
-            dead("Publish this folder to the Web", PUBLISH),
-            dead("Share this folder", SHARE),
+            row(
+                &tr!("pane-folder-tasks-make-a-new-folder"),
+                NEW_FOLDER,
+                Command::NewFolder,
+                true,
+            ),
+            dead(
+                &tr!("pane-folder-tasks-publish-this-folder-to-the-web"),
+                PUBLISH,
+            ),
+            dead(&tr!("pane-folder-tasks-share-this-folder"), SHARE),
         ],
         Sel::File => vec![
-            row("Rename this file", RENAME, Command::Rename, true),
-            row("Move this file", MOVE, Command::MoveTo, true),
-            row("Copy this file", COPY, Command::CopyTo, true),
-            dead("Publish this file to the Web", PUBLISH),
-            row("E-mail this file", MAIL, Command::Mail, true),
             row(
-                "Delete this file",
+                &tr!("pane-folder-tasks-rename-this-file"),
+                RENAME,
+                Command::Rename,
+                true,
+            ),
+            row(
+                &tr!("pane-folder-tasks-move-this-file"),
+                MOVE,
+                Command::MoveTo,
+                true,
+            ),
+            row(
+                &tr!("pane-folder-tasks-copy-this-file"),
+                COPY,
+                Command::CopyTo,
+                true,
+            ),
+            dead(
+                &tr!("pane-folder-tasks-publish-this-file-to-the-web"),
+                PUBLISH,
+            ),
+            row(
+                &tr!("pane-folder-tasks-e-mail-this-file"),
+                MAIL,
+                Command::Mail,
+                true,
+            ),
+            row(
+                &tr!("pane-folder-tasks-delete-this-file"),
                 DELETE,
                 Command::Delete { erase: false },
                 true,
             ),
         ],
         Sel::Folder => vec![
-            row("Rename this folder", RENAME, Command::Rename, true),
-            row("Move this folder", MOVE, Command::MoveTo, true),
-            row("Copy this folder", COPY, Command::CopyTo, true),
-            dead("Publish this folder to the Web", PUBLISH),
-            dead("Share this folder", SHARE),
             row(
-                "Delete this folder",
+                &tr!("pane-folder-tasks-rename-this-folder"),
+                RENAME,
+                Command::Rename,
+                true,
+            ),
+            row(
+                &tr!("pane-folder-tasks-move-this-folder"),
+                MOVE,
+                Command::MoveTo,
+                true,
+            ),
+            row(
+                &tr!("pane-folder-tasks-copy-this-folder"),
+                COPY,
+                Command::CopyTo,
+                true,
+            ),
+            dead(
+                &tr!("pane-folder-tasks-publish-this-folder-to-the-web"),
+                PUBLISH,
+            ),
+            dead(&tr!("pane-folder-tasks-share-this-folder"), SHARE),
+            row(
+                &tr!("pane-folder-tasks-delete-this-folder"),
                 DELETE,
                 Command::Delete { erase: false },
                 true,
             ),
         ],
         Sel::Many { folder } => vec![
-            row("Move the selected items", MOVE, Command::MoveTo, true),
-            row("Copy the selected items", COPY, Command::CopyTo, true),
-            dead("Publish the selected items to the Web", PUBLISH),
-            row("E-mail the selected items", MAIL, Command::Mail, !folder),
             row(
-                "Delete the selected items",
+                &tr!("pane-folder-tasks-move-the-selected-items"),
+                MOVE,
+                Command::MoveTo,
+                true,
+            ),
+            row(
+                &tr!("pane-folder-tasks-copy-the-selected-items"),
+                COPY,
+                Command::CopyTo,
+                true,
+            ),
+            dead(
+                &tr!("pane-folder-tasks-publish-the-selected-items-to-the"),
+                PUBLISH,
+            ),
+            row(
+                &tr!("pane-folder-tasks-e-mail-the-selected-items"),
+                MAIL,
+                Command::Mail,
+                !folder,
+            ),
+            row(
+                &tr!("pane-folder-tasks-delete-the-selected-items"),
                 DELETE,
                 Command::Delete { erase: false },
                 true,
@@ -204,7 +282,7 @@ pub fn other_places(place: &Place, parent: Option<Place>, shares: &[Share]) -> P
         }
     };
     PaneSection {
-        title: "Other Places".to_string(),
+        title: tr!("pane-other-places-other-places"),
         rows,
     }
 }
@@ -222,7 +300,7 @@ pub fn pinned(pins: &[Pin]) -> PaneSection {
         })
         .collect();
     PaneSection {
-        title: "Pinned".to_string(),
+        title: tr!("pane-pinned-pinned"),
         rows,
     }
 }
@@ -265,7 +343,7 @@ impl Explorer {
             self.items.len(),
             icon_px,
         );
-        let mut details = Section::lines("Details", self.details_lines());
+        let mut details = Section::lines(tr!("pane-build-taskpane-details"), self.details_lines());
         details.open = self.pane_open(&details.title);
         if self.pane_key.as_ref() == Some(&key) {
             if let Some(last) = self.taskpane.sections.last_mut() {

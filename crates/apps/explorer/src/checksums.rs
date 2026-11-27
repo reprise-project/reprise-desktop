@@ -7,6 +7,7 @@ use repriseapp::{Ctx, Reply};
 use reprisefs::checksum::{Meter, Sums, compare, sums_of};
 use reprisekit::controls::filesheet::{self, SumsState};
 use reprisekit::controls::form;
+use reprisekit::tr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -121,7 +122,10 @@ impl Explorer {
             Err(e) => {
                 log::warn!("explorer: cannot start hashing ({e})");
                 p.checksums.started = true;
-                SumsState::Failed(format!("Cannot calculate the checksums: {e}"))
+                SumsState::Failed(tr!(
+                    "checksums-start-checksums-cannot-calculate-the-checksums-e",
+                    e = e.to_string()
+                ))
             }
         };
         if let Some(page) = filesheet::checksums_of(&mut p.sheet.pages) {
@@ -150,7 +154,10 @@ impl Explorer {
             }
             Ok(Err(e)) => {
                 c.answer = None;
-                SumsState::Failed(format!("Cannot read the file: {e}"))
+                SumsState::Failed(tr!(
+                    "checksums-take-checksums-cannot-read-the-file-e",
+                    e = e.to_string()
+                ))
             }
             Err(TryRecvError::Empty) => {
                 let now = percent(c.meter.done.load(Ordering::Relaxed), p.info.size);
