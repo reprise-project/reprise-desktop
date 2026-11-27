@@ -420,3 +420,53 @@ fn a_part_the_system_lacks_is_not_offered() {
     };
     assert_eq!(all.parts(), Part::ALL);
 }
+
+#[test]
+fn a_read_only_folder_deep_in_the_thumbnails_keeps_only_itself() {
+    let t = tempfile::tempdir().unwrap();
+    let cache = t.path().join("cache");
+    let large = cache.join("thumbnails/large");
+    let locked = large.join("locked");
+    fs::create_dir_all(&large).unwrap();
+    for i in 0..20 {
+        fs::write(large.join(format!("a{i}.png")), vec![1u8; 4096]).unwrap();
+    }
+    fs::create_dir(&locked).unwrap();
+    fs::write(locked.join("held.png"), vec![1u8; 4096]).unwrap();
+    for i in 0..20 {
+        fs::write(large.join(format!("b{i}.png")), vec![1u8; 4096]).unwrap();
+    }
+    fs::create_dir_all(cache.join("thumbnails/normal/inner")).unwrap();
+    fs::write(cache.join("thumbnails/normal/inner/c.png"), vec![1u8; 4096]).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    let p = places(&cache);
+    let got = p.empty(Part::Thumbnails);
+    let left = p.count(Part::Thumbnails).size;
+    let names: Vec<_> = fs::read_dir(&large)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    // SAFETY: geteuid cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    assert_eq!(got.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        names,
+        ["locked"],
+        "every file next to the read-only folder goes"
+    );
+    assert!(locked.join("held.png").exists());
+    assert!(
+        !cache.join("thumbnails/normal").exists(),
+        "the other folders go"
+    );
+    let blocks = |p: &Path| fs::symlink_metadata(p).unwrap().blocks() * 512;
+    assert_eq!(
+        left,
+        blocks(&large) + blocks(&locked) + blocks(&locked.join("held.png")),
+        "a count afterwards finds only what stayed"
+    );
+}

@@ -13,7 +13,7 @@
 //! dumps are only counted: the system owns their files.
 
 use crate::ops::at::{c_path, cwd, open_dir, stat_fd};
-use crate::ops::{entries_at, erase_at};
+use crate::ops::{entries_at, erase_all_at};
 use crate::subprocess;
 use crate::trash::Bins;
 use std::collections::HashSet;
@@ -359,23 +359,27 @@ fn contents_size(root: &Path, skip: Option<&OsStr>, stop: &AtomicBool) -> u64 {
 }
 
 /// Removes every entry of the folder open as `dir` (at `path`) but `keep`, through
-/// [`erase_at`]: links go as links, mounted drives are refused.
+/// [`erase_all_at`]: links go as links, mounted drives are refused, and an entry that fails at
+/// any depth keeps only itself and the folders above it. Each failure is logged; the error is
+/// the first.
 fn empty_folder(dir: BorrowedFd, path: &Path, keep: Option<&CStr>) -> io::Result<()> {
-    let mut first = None;
+    let mut failed = Vec::new();
     for (name, _) in entries_at(dir)? {
         if Some(name.as_c_str()) == keep {
             continue;
         }
         let at = path.join(OsStr::from_bytes(name.to_bytes()));
-        match erase_at(dir, &name, &at, None) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => {
-                log::warn!("clean up: {} stays: {e}", at.display());
-                first.get_or_insert(e);
-            }
-            _ => {}
+        let start = failed.len();
+        if let Err(e) = erase_all_at(dir, &name, &at, &mut failed)
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            failed.push(e);
+        }
+        for e in &failed[start..] {
+            log::warn!("clean up: {} stays: {e}", at.display());
         }
     }
-    first.map_or(Ok(()), Err)
+    failed.into_iter().next().map_or(Ok(()), Err)
 }
 
 /// `program ARGS` with nothing on its standard input, so a question it asks is answered no; in
