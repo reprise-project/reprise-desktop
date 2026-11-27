@@ -119,6 +119,11 @@ impl WindowId {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         WindowId(NEXT.fetch_add(1, Ordering::Relaxed))
     }
+
+    /// The number a bus peer knows the window by.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
 }
 
 pub enum Kind {

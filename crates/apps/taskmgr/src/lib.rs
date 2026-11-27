@@ -15,7 +15,7 @@ mod sample;
 mod scopes;
 mod selectcols;
 mod state;
-mod switchto;
+mod toplevel;
 mod worker;
 
 use std::collections::{HashMap, HashSet};
@@ -111,18 +111,29 @@ impl Page {
     const ALL: [Page; 3] = [Page::Applications, Page::Processes, Page::Performance];
 }
 
-/// A program on the Applications page: one app scope.
+/// A row on the Applications page: a window with a task button, or, while the compositor lists
+/// no windows, a program (one app scope).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppRow {
     pub unit: String,
     pub app: AppId,
+    /// The program's name, from its desktop entry.
     pub name: String,
     pub icon: Option<String>,
-    /// A window of it stopped answering pings.
+    pub window: Option<AppWindow>,
+    /// Its window, or a window of the program, stopped answering pings.
     pub hung: bool,
 }
 
 impl AppRow {
+    /// The Task column: the window's title, else the program's name.
+    pub fn task(&self) -> &str {
+        match &self.window {
+            Some(w) if !w.title.is_empty() => &w.title,
+            _ => &self.name,
+        }
+    }
+
     pub fn status(&self) -> String {
         if self.hung {
             tr!("status-not-responding")
@@ -136,6 +147,8 @@ impl AppRow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Scope(String),
+    /// One window of a program showing others, by its scope and the compositor's id for it.
+    Window(String, u64),
     /// A pid and the process's start time, so a reused pid is not taken for it.
     Process(i32, u64),
 }
@@ -173,13 +186,14 @@ impl Ask {
 /// Whether `t` is still running in the snapshot with these `scopes` and process `starts`.
 fn alive(starts: &HashMap<i32, u64>, scopes: &[Scope], t: &Target) -> bool {
     match t {
-        Target::Scope(unit) => scopes.iter().any(|s| &s.unit == unit),
+        Target::Scope(unit) | Target::Window(unit, _) => scopes.iter().any(|s| &s.unit == unit),
         Target::Process(pid, start) => starts.get(pid) == Some(start),
     }
 }
 
 /// Whether End Task or End Process still waits on `t`: it runs and, where `snap` knows the
-/// windows, a program still shows one, since End Task spares a tray program that closed them.
+/// windows, a program still shows one (since End Task spares a tray program that closed them),
+/// or the one window is still up.
 fn waits_on(starts: &HashMap<i32, u64>, snap: &Snapshot, entries: &[AppEntry], t: &Target) -> bool {
     let shows = |unit: &String| {
         let (Some(windows), Some(sc)) = (
@@ -190,9 +204,11 @@ fn waits_on(starts: &HashMap<i32, u64>, snap: &Snapshot, entries: &[AppEntry], t
         };
         has_window(sc, &snap.scopes, entries, windows, &snap.sandboxed)
     };
+    let up = |id: u64| (snap.windows.as_deref()).is_none_or(|ws| ws.iter().any(|w| w.id == id));
     alive(starts, &snap.scopes, t)
         && match t {
             Target::Scope(unit) => shows(unit),
+            Target::Window(_, id) => up(*id),
             Target::Process(..) => true,
         }
 }
@@ -261,6 +277,8 @@ pub struct TaskMgr {
     /// End Task on a program that answers ([`worker::end_task`]): its scope, the pids whose
     /// windows to close, and whether to spare the scope.
     end_task: fn(String, Vec<i32>, bool),
+    /// End Task on one window of a program that shows others ([`worker::close_window`]).
+    close_window: fn(AppWindow),
     /// A pidfd for a process End Process asks about ([`worker::open_process`]).
     open_process: fn(i32, u64) -> std::io::Result<OwnedFd>,
     entries: Arc<Vec<AppEntry>>,
@@ -298,6 +316,7 @@ impl TaskMgr {
             hung: Vec::new(),
             hung_rx: None,
             end_task: worker::end_task,
+            close_window: worker::close_window,
             open_process: worker::open_process,
             procs: List::new(Vec::new()),
             proc_rows: Vec::new(),
@@ -655,31 +674,51 @@ impl TaskMgr {
         }
     }
 
+    /// The Applications rows: each program's windows with a task button, in the order they
+    /// opened, or each program while the compositor lists no windows.
     fn refresh_apps(&mut self, ctx: &mut Ctx) {
+        let row_key = |r: &AppRow| (r.unit.clone(), r.window.as_ref().map(|w| w.id));
         let keep = (self.apps.selected())
             .and_then(|i| self.app_rows.get(i))
-            .map(|r| r.unit.clone());
+            .map(row_key);
         let entries = self.entries.clone();
         let (scopes, sandboxed) = (&self.snap.scopes, &self.snap.sandboxed);
-        let windows = self.snap.windows.as_deref();
-        self.app_rows = (scopes.iter())
-            .filter(|sc| windows.is_none_or(|w| has_window(sc, scopes, &entries, w, sandboxed)))
-            .map(|sc| AppRow {
-                hung: has_window(sc, scopes, &entries, &self.hung, sandboxed),
-                ..app_row(sc, &entries)
-            })
-            .collect();
+        let hung = |app_id: &str, pid: u32| self.hung.iter().any(|(a, p)| a == app_id && *p == pid);
+        self.app_rows = match self.snap.windows.as_deref() {
+            Some(windows) => (scopes.iter())
+                .flat_map(|sc| {
+                    (windows.iter())
+                        .filter(|w| w.button)
+                        .filter(|w| is_program_window(sc, scopes, &entries, w, sandboxed))
+                        .map(|w| AppRow {
+                            hung: hung(&w.app_id, w.pid),
+                            window: Some(w.clone()),
+                            ..app_row(sc, &entries)
+                        })
+                })
+                .collect(),
+            None => (scopes.iter())
+                .map(|sc| AppRow {
+                    hung: (self.hung.iter())
+                        .any(|(a, p)| is_client_of(sc, scopes, &entries, a, *p, sandboxed)),
+                    ..app_row(sc, &entries)
+                })
+                .collect(),
+        };
         let rows: Vec<listview::Row> = (0..self.app_rows.len())
             .map(|i| {
                 let icon = self.app_rows[i].icon.clone();
                 listview::Row {
                     icon: icon.and_then(|n| self.icon(&n, ctx)),
-                    cells: vec![self.app_rows[i].name.clone(), self.app_rows[i].status()],
+                    cells: vec![
+                        self.app_rows[i].task().to_string(),
+                        self.app_rows[i].status(),
+                    ],
                 }
             })
             .collect();
         self.apps.view.rows = rows;
-        let at = keep.and_then(|u| self.app_rows.iter().position(|r| r.unit == u));
+        let at = keep.and_then(|k| self.app_rows.iter().position(|r| row_key(r) == k));
         self.apps.view.selection.set_only(at);
         let n = self.app_rows.len();
         self.apps.view.top = self.apps.view.top.min(n.saturating_sub(1));
@@ -730,18 +769,30 @@ impl TaskMgr {
         }
     }
 
+    /// End Task: a window of a program showing others is asked to close alone; the last one
+    /// ends its program as [`worker::end_task`] does; one not answering offers End Now at once.
     fn end_task(&mut self) -> Reply {
         let Some(row) = self.selected_app().cloned() else {
             return Reply::none();
         };
+        let task = row.task().to_string();
         if row.hung {
             let target = Target::Scope(row.unit);
             self.ending.retain(|e| e.target != target);
             if !(self.asks.iter()).any(|(_, a)| matches!(a, Ask::EndNow(t) if *t == target)) {
                 self.asks
-                    .ask(end_now_box(&row.name, false), Ask::EndNow(target));
+                    .ask(end_now_box(&task, false), Ask::EndNow(target));
             }
             return Reply::redraw_all();
+        }
+        if let Some(w) = &row.window {
+            let others = (self.app_rows.iter())
+                .any(|r| r.unit == row.unit && r.window.as_ref().is_some_and(|o| o.id != w.id));
+            if others {
+                (self.close_window)(w.clone());
+                self.wait_for(Target::Window(row.unit, w.id), task);
+                return Reply::redraw();
+            }
         }
         let Some(sc) = self.snap.scopes.iter().find(|s| s.unit == row.unit) else {
             return Reply::none();
@@ -756,7 +807,7 @@ impl TaskMgr {
                     &self.snap.sandboxed,
                 )
             })
-            .map(|&(_, pid)| pid)
+            .map(|w| w.pid)
             .filter(|&pid| !i32::try_from(pid).is_ok_and(|p| sc.pids.contains(&p)))
             .collect();
         let mut pids = sc.pids.clone();
@@ -767,7 +818,7 @@ impl TaskMgr {
                 .filter(|&p| p != 0),
         );
         (self.end_task)(row.unit.clone(), pids, !outside.is_empty());
-        self.wait_for(Target::Scope(row.unit), row.name);
+        self.wait_for(Target::Scope(row.unit), task);
         Reply::redraw()
     }
 
@@ -792,7 +843,15 @@ impl TaskMgr {
         };
         let entries = self.entries.clone();
         std::thread::spawn(move || {
-            match switchto::activate(|id| window_of(&row.app, &entries, id)) {
+            let pick = |ws: &[toplevel::Toplevel]| {
+                (row.window.as_ref())
+                    .and_then(|w| toplevel::the_one(ws, w))
+                    .or_else(|| {
+                        ws.iter()
+                            .position(|t| window_of(&row.app, &entries, &t.app_id))
+                    })
+            };
+            match toplevel::on_window(pick, toplevel::Do::Activate) {
                 Ok(true) => {}
                 Ok(false) => log::info!("Switch To: no window of {}", row.app),
                 Err(e) => log::warn!("Switch To {}: {e}", row.app),
@@ -861,7 +920,9 @@ impl TaskMgr {
                 Ok(()) => self.wait_for(Target::Process(pid, start), name),
                 Err(e) => log::warn!("end process {pid}: {e}"),
             },
-            Ask::EndNow(Target::Scope(unit)) => worker::kill_scope(unit, SIGKILL),
+            Ask::EndNow(Target::Scope(unit) | Target::Window(unit, _)) => {
+                worker::kill_scope(unit, SIGKILL)
+            }
             Ask::EndNow(Target::Process(pid, start)) => {
                 if self.starts.get(&pid) == Some(&start)
                     && let Err(e) = worker::kill_pid(pid, SIGKILL)
@@ -1212,6 +1273,7 @@ fn app_row(sc: &scopes::Scope, entries: &[AppEntry]) -> AppRow {
         app: sc.app.clone(),
         name: e.map_or_else(|| sc.app.to_string(), |e| e.name.clone()),
         icon: e.and_then(|e| e.icon.clone()),
+        window: None,
         hung: false,
     }
 }
@@ -1227,20 +1289,33 @@ pub fn has_window(
     (windows.iter()).any(|w| is_program_window(sc, scopes, entries, w, sandboxed))
 }
 
-/// Whether window `w` is scope `sc`'s program's: its client runs in the scope, or in no scope and
-/// sandboxed (no pid, or in `sandboxed`; a sandbox leaves its scope) under the program's app id.
+/// Whether window `w` is scope `sc`'s program's ([`is_client_of`]).
 pub fn is_program_window(
     sc: &scopes::Scope,
     scopes: &[scopes::Scope],
     entries: &[AppEntry],
-    (id, pid): &AppWindow,
+    w: &AppWindow,
     sandboxed: &HashSet<u32>,
 ) -> bool {
-    let p = i32::try_from(*pid).unwrap_or(0);
+    is_client_of(sc, scopes, entries, &w.app_id, w.pid, sandboxed)
+}
+
+/// Whether a window with `app_id` from client `pid` is scope `sc`'s program's: its client runs in
+/// the scope, or in no scope and sandboxed (no pid, or in `sandboxed`; a sandbox leaves its scope)
+/// under the program's app id.
+pub fn is_client_of(
+    sc: &scopes::Scope,
+    scopes: &[scopes::Scope],
+    entries: &[AppEntry],
+    app_id: &str,
+    pid: u32,
+    sandboxed: &HashSet<u32>,
+) -> bool {
+    let p = i32::try_from(pid).unwrap_or(0);
     sc.pids.contains(&p)
-        || ((p == 0 || sandboxed.contains(pid))
+        || ((p == 0 || sandboxed.contains(&pid))
             && !scopes.iter().any(|s| s.pids.contains(&p))
-            && window_of(&sc.app, entries, id))
+            && window_of(&sc.app, entries, app_id))
 }
 
 /// Whether a window reporting app id `window` belongs to the program started as `app`: the same

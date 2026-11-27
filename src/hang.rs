@@ -869,18 +869,23 @@ impl State {
         self.end_process(pid);
     }
 
-    /// The mapped windows, by app id and client pid (0 when unknown): Task Manager lists a
-    /// program only while it shows one.
+    /// The mapped windows: Task Manager lists a program only while it shows one, and a row for
+    /// each window with a task button.
     pub fn windows_by_app(&self) -> Vec<reprisebus::tray::AppWindow> {
         let mut out: Vec<reprisebus::tray::AppWindow> = (self.windows.iter())
             .filter(|w| w.mapped && !w.override_redirect)
             .map(|w| {
                 let pid = self.client_pid(w.id).and_then(|p| u32::try_from(p).ok());
-                (w.app_id(), pid.unwrap_or(0))
+                reprisebus::tray::AppWindow {
+                    id: w.id.raw(),
+                    app_id: w.app_id(),
+                    pid: pid.unwrap_or(0),
+                    title: w.title(),
+                    button: self.has_task_button(w),
+                }
             })
             .collect();
-        out.sort();
-        out.dedup();
+        out.sort_by_key(|w| w.id);
         out
     }
 
@@ -1432,14 +1437,13 @@ mod tests {
         h.map_toplevel(&mut c, "app", 100, 80);
         h.map_toplevel(&mut other, "app", 200, 100);
         assert_eq!(h.state.end_task_windows(&[PID, 1], false), 2);
-        let pid = |p: i32| u32::try_from(p).unwrap();
+        let pids: Vec<i32> = (h.state.windows_by_app().iter())
+            .map(|w| i32::try_from(w.pid).unwrap())
+            .collect();
         assert_eq!(
-            h.state.windows_by_app(),
-            [
-                ("app".to_string(), pid(OTHER)),
-                ("app".to_string(), pid(PID))
-            ],
-            "each program's windows are listed once by app id and pid"
+            pids,
+            [PID, PID, OTHER],
+            "each window is listed with its pid"
         );
         h.roundtrip(&mut c);
         assert!(c.side.closes.is_empty(), "a count closes nothing");
@@ -1450,6 +1454,30 @@ mod tests {
         assert!(
             other.side.closes.is_empty(),
             "another process with the same app id keeps its window"
+        );
+    }
+
+    #[test]
+    fn the_task_window_list_names_each_window_by_id_and_title_in_the_order_they_opened() {
+        const PID: i32 = i32::MAX - 815;
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect_as(PID);
+        let a = h.map_titled(&mut c, "app", "a.txt - Notepad", (200, 100));
+        let b = h.map_titled(&mut c, "app", "b.txt - Notepad", (200, 100));
+        let save = h.map_dialog(&mut c, "app", Some(a), "save", (100, 80));
+        h.state.focus_window(a.id);
+        let listed: Vec<(u64, String, bool)> = (h.state.windows_by_app().into_iter())
+            .map(|w| (w.id, w.title, w.button))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (a.id.raw(), "a.txt - Notepad".into(), true),
+                (b.id.raw(), "b.txt - Notepad".into(), true),
+                (save.id.raw(), String::new(), false),
+            ],
+            "focus leaves the order alone; an owned dialog has no task button"
         );
     }
 

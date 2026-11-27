@@ -62,6 +62,17 @@ fn proc(pid: i32, name: &str, uid: u32, cpu: f64, mem_kb: u64) -> ProcRow {
     }
 }
 
+/// A window with a task button, its id the pid and no title.
+pub(crate) fn window(app_id: &str, pid: u32) -> AppWindow {
+    AppWindow {
+        id: pid.into(),
+        app_id: app_id.into(),
+        pid,
+        title: String::new(),
+        button: true,
+    }
+}
+
 pub(crate) fn snapshot() -> Snapshot {
     Snapshot {
         procs: vec![
@@ -704,7 +715,7 @@ fn applications_lists_only_programs_showing_a_window() {
     let mut t = mgr();
     t.take(
         Snapshot {
-            windows: Some(vec![("org.kde.ark".into(), 41)]),
+            windows: Some(vec![window("org.kde.ark", 41)]),
             ..snapshot()
         },
         &mut ctx,
@@ -713,7 +724,7 @@ fn applications_lists_only_programs_showing_a_window() {
     assert_eq!(names, ["Ark"], "a tray or background program is left out");
     t.take(
         Snapshot {
-            windows: Some(vec![("reprise.notepad".into(), 8888)]),
+            windows: Some(vec![window("reprise.notepad", 8888)]),
             ..snapshot()
         },
         &mut ctx,
@@ -721,6 +732,101 @@ fn applications_lists_only_programs_showing_a_window() {
     assert!(
         t.app_rows.is_empty(),
         "a host window outside every scope lists no scope of its app id"
+    );
+}
+
+fn titled(id: u64, app_id: &str, pid: u32, title: &str) -> AppWindow {
+    AppWindow {
+        id,
+        title: title.into(),
+        ..window(app_id, pid)
+    }
+}
+
+/// Two Notepad windows and its Save As box, and an untitled Ark window.
+fn notepads() -> Snapshot {
+    let save = AppWindow {
+        button: false,
+        ..titled(3, "reprise.notepad", 40, "Save As")
+    };
+    Snapshot {
+        windows: Some(vec![
+            titled(1, "reprise.notepad", 40, "a.txt - Notepad"),
+            titled(2, "reprise.notepad", 40, "b.txt - Notepad"),
+            save,
+            titled(4, "org.kde.ark", 41, ""),
+        ]),
+        ..snapshot()
+    }
+}
+
+fn tasks(t: &TaskMgr) -> Vec<String> {
+    t.apps
+        .view
+        .rows
+        .iter()
+        .map(|r| r.cells[0].clone())
+        .collect()
+}
+
+#[test]
+fn applications_lists_each_window_with_a_task_button_by_its_title() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.take(notepads(), &mut ctx);
+    t.event(MAIN, Event::Resized, &mut ctx);
+    assert_eq!(
+        tasks(&t),
+        ["Ark", "a.txt - Notepad", "b.txt - Notepad"],
+        "an untitled window shows its program's name; an owned box has no row"
+    );
+    click_row(&mut t, &mut ctx, 2);
+    let mut s = notepads();
+    s.windows.as_mut().unwrap()[1].title = "c.txt - Notepad".into();
+    t.take(s, &mut ctx);
+    assert_eq!(
+        t.selected_app()
+            .and_then(|r| r.window.as_ref())
+            .map(|w| w.id),
+        Some(2),
+        "the selection follows its window through a new title"
+    );
+}
+
+thread_local! {
+    static CLOSED: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record_close(w: AppWindow) {
+    CLOSED.with_borrow_mut(|c| c.push(w.id));
+}
+
+#[test]
+fn end_task_on_one_of_a_programs_windows_closes_only_that_one() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.end_task = record_end;
+    t.close_window = record_close;
+    t.take(notepads(), &mut ctx);
+    t.event(MAIN, Event::Resized, &mut ctx);
+    click_row(&mut t, &mut ctx, 1);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    assert_eq!(CLOSED.take(), [1], "a.txt's window is asked to close");
+    assert!(ENDED.take().is_empty(), "Notepad is not ended");
+    let unit = t.app_rows[1].unit.clone();
+    assert!(matches!(&t.ending[..], [e] if e.target == Target::Window(unit.clone(), 1)));
+    let mut s = notepads();
+    s.windows.as_mut().unwrap().remove(0);
+    t.take(s.clone(), &mut ctx);
+    assert!(t.ending.is_empty(), "done once that window is gone");
+    assert_eq!(tasks(&t), ["Ark", "b.txt - Notepad"]);
+    click_row(&mut t, &mut ctx, 1);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    assert!(CLOSED.take().is_empty());
+    assert_eq!(
+        ENDED.take(),
+        [(unit, vec![40], false)],
+        "the last window ends its program"
     );
 }
 
@@ -737,7 +843,7 @@ fn a_window_is_its_program_by_pid_and_a_sandboxed_one_by_app_id() {
             &s.scopes[sc],
             &s.scopes,
             &entries,
-            &[(id.into(), pid)],
+            &[window(id, pid)],
             &sandboxed,
         )
     };
@@ -794,7 +900,7 @@ fn end_task_on_a_program_listed_for_a_sandboxed_window_closes_it_and_spares_the_
     t.end_task = record_end;
     t.take(
         Snapshot {
-            windows: Some(vec![("org.kde.ark".into(), 9999)]),
+            windows: Some(vec![window("org.kde.ark", 9999)]),
             sandboxed: HashSet::from([9999]),
             ..snapshot()
         },
@@ -814,14 +920,14 @@ fn end_task_on_a_program_listed_for_a_sandboxed_window_closes_it_and_spares_the_
 
 #[test]
 fn end_task_is_done_once_the_program_shows_no_window_though_it_keeps_running() {
-    let showing = |windows: Vec<(String, u32)>| Snapshot {
+    let showing = |windows: Vec<AppWindow>| Snapshot {
         windows: Some(windows),
         ..snapshot()
     };
     let mut ctx = ctx();
     let mut t = mgr();
     t.end_task = record_end;
-    t.take(showing(vec![("org.kde.ark".into(), 41)]), &mut ctx);
+    t.take(showing(vec![window("org.kde.ark", 41)]), &mut ctx);
     t.event(MAIN, Event::Resized, &mut ctx);
     click_row(&mut t, &mut ctx, 0);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
@@ -834,11 +940,11 @@ fn end_task_is_done_once_the_program_shows_no_window_though_it_keeps_running() {
     );
     assert!(t.asks.is_empty(), "no End Now for a program left running");
 
-    t.take(showing(vec![("org.kde.ark".into(), 41)]), &mut ctx);
+    t.take(showing(vec![window("org.kde.ark", 41)]), &mut ctx);
     click_row(&mut t, &mut ctx, 0);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
     t.ending[0].since -= END_WAIT;
-    t.take(showing(vec![("org.kde.ark".into(), 41)]), &mut ctx);
+    t.take(showing(vec![window("org.kde.ark", 41)]), &mut ctx);
     assert!(
         matches!(t.asks.up(), Some((_, Ask::EndNow(Target::Scope(_))))),
         "a window still up after the wait is offered End Now"
@@ -995,6 +1101,17 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
             ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
             got.push((format!("{i:?} Applications not responding @{d}"), fnv(&c)));
         }
+        t.set_hung(Vec::new(), &mut ctx);
+        t.take(notepads(), &mut ctx);
+        click_row(&mut t, &mut ctx, 2);
+        t.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+        for d in [1, 2] {
+            t.follow_scale(MAIN, d, &mut ctx);
+            let (w, h) = ctx.size;
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
+            got.push((format!("{i:?} Applications windows @{d}"), fnv(&c)));
+        }
         t.act(Act::SelectColumns);
         let main = ctx.size;
         ctx.size = ctx.forms().text.size(selectcols::CLIENT);
@@ -1015,6 +1132,7 @@ fn render_pages() {
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let mut ctx = themed_ctx(reprisekit::interfaces::theme_for(i));
         let mut t = loaded(&mut ctx);
+        t.take(notepads(), &mut ctx);
         for k in 0..60 {
             t.cpu.push(0.4 + (f64::from(k) * 0.4).sin() * 0.3);
             t.mem.push(0.3);

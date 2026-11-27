@@ -56,7 +56,7 @@ impl SettingsApp {
                     log::warn!("open windows: {e}");
                     Vec::new()
                 });
-                found.into_iter().map(|(app_id, _)| app_id).collect()
+                found.into_iter().map(|w| w.app_id).collect()
             }));
         }
         Reply::redraw_all()

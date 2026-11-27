@@ -2874,7 +2874,18 @@ fn task_windows_answers_a_host_peer_and_fails_when_the_compositor_does_not() {
         return;
     };
     let host = std::path::Path::new("/proc");
-    let windows = vec![("org.kde.ark".to_string(), 41), ("foot".to_string(), 0)];
+    let window =
+        |id: u64, app_id: &str, pid: u32, title: &str, button: bool| reprisebus::tray::AppWindow {
+            id,
+            app_id: app_id.into(),
+            pid,
+            title: title.into(),
+            button,
+        };
+    let windows = vec![
+        window(3, "org.kde.ark", 41, "notes.zip - Ark", true),
+        window(7, "foot", 0, "", false),
+    ];
     assert_eq!(
         task_windows_call(&bus, host, Some(windows.clone())),
         Ok(windows.clone())
