@@ -269,10 +269,7 @@ impl AccountsApp {
             changed = true;
             reread = true;
             if let Err(r) = done {
-                self.fail_over(
-                    PROPS,
-                    fingers::refusal(r).text(&tr!("accounts-delete-fingerprint-verb")),
-                );
+                self.fail_over(PROPS, fingers::refusal(r).text(addfinger::Action::Delete));
             }
         }
         if let Some((from, steps, ended)) = self.fingers.add_landed() {
@@ -1179,7 +1176,7 @@ impl App for AccountsApp {
         if let Some(d) = &self.add_finger {
             out.push(Child {
                 id: ADD_FINGER,
-                title: addfinger::TITLE.into(),
+                title: addfinger::title(),
                 size: self.forms.text.size(d.client()),
                 fixed: true,
                 modal: true,

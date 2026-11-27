@@ -58,7 +58,7 @@ fn start_asks_for_the_picked_finger_and_waits_for_the_reader() {
         Outcome::Start(Finger::RightIndex)
     ));
     assert_eq!(d.step, Step::Waiting(Finger::RightIndex));
-    assert_eq!(d.shown_text(), WAITING);
+    assert_eq!(d.shown_text(), waiting());
     assert!(matches!(d.event(form::Event::Cancel), Outcome::Stop));
 }
 

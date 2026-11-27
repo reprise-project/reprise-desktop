@@ -46,10 +46,10 @@ pub enum Hand {
 }
 
 impl Hand {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Hand::Left => "Left hand",
-            Hand::Right => "Right hand",
+            Hand::Left => tr!("finger-hand-left"),
+            Hand::Right => tr!("finger-hand-right"),
         }
     }
 }
@@ -120,23 +120,18 @@ impl Finger {
     }
 
     /// The finger on its hand, "Index finger".
-    pub fn digit(self) -> &'static str {
-        [
-            "Thumb",
-            "Index finger",
-            "Middle finger",
-            "Ring finger",
-            "Little finger",
-        ][self.index() % 5]
+    pub fn digit(self) -> String {
+        tr!("finger-digit", finger = self.key())
     }
 
     /// "Right index finger".
     pub fn label(self) -> String {
-        let side = match self.hand() {
-            Hand::Left => "Left",
-            Hand::Right => "Right",
-        };
-        format!("{side} {}", self.digit().to_lowercase())
+        tr!("finger-name", finger = self.key())
+    }
+
+    /// "right index finger", as it reads inside a sentence.
+    pub fn mid_sentence(self) -> String {
+        tr!("finger-name-mid", finger = self.key())
     }
 }
 
