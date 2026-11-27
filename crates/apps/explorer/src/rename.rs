@@ -589,6 +589,14 @@ mod tests {
             ex.rename_balloon.as_deref(),
             Some("This drive's name can be at most 11 characters long.")
         );
+        let mut tree = reprisekit::access::Tree::window("", ctx.size);
+        crate::window::access(&ex, &mut tree, &ctx);
+        let said = "Name too long. This drive's name can be at most 11 characters long.";
+        let role = reprisekit::access::accesskit::Role::Alert;
+        assert!(
+            tree.find(role, said).is_some(),
+            "a reader hears the balloon"
+        );
         let left = KeyInput {
             sym: keysym::LEFT,
             utf8: None,

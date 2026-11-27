@@ -430,6 +430,32 @@ pub fn place_at_box(anchor: Rect, size: (i32, i32), room: (i32, i32)) -> (Rect, 
     }
 }
 
+/// A balloon tip's `access` part at `r`: a polite live alert reading "title. body", announced
+/// when added under a new `key` or when its text changes.
+pub fn access_balloon_tip(
+    key: impl std::hash::Hash,
+    r: Rect,
+    title: &str,
+    body: &str,
+    tree: &mut crate::access::Tree,
+    parent: crate::access::accesskit::NodeId,
+) -> crate::access::accesskit::NodeId {
+    use crate::access::{self, accesskit::Live, accesskit::Role};
+    let says = NotifySays {
+        app: "",
+        title,
+        body,
+        actions: &[],
+        opens: false,
+        urgent: false,
+        answer_key: None,
+    };
+    let mut alert = access::node(Role::Alert, r);
+    alert.set_label(says.spoken());
+    alert.set_live(Live::Polite);
+    tree.push(parent, ("balloon tip", key), alert)
+}
+
 pub fn place_balloon(cursor: (i32, i32), size: (i32, i32), screen: Rect) -> (i32, i32) {
     let (dx, dy) = STEM_BELOW_POINTER;
     keep_in(screen, (cursor.0 + dx - STEM_X, cursor.1 + dy), size)

@@ -464,6 +464,9 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
     if let Some(r) = lay.status {
         statusbar::access(&ex.status, r, ctx.theme.text, tree, ROOT);
     }
+    if let Some((title, body, at, _)) = rename_balloon(ex, &sl, ctx) {
+        tooltip::access_balloon_tip("rename", at, &title, body, tree, ROOT);
+    }
     let popup = ex
         .popup
         .as_ref()
