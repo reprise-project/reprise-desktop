@@ -136,16 +136,17 @@ impl Limits {
 
     pub(crate) fn admit(self, l: Listed) -> Result<(), Failure> {
         if l.entries > self.entries {
-            return Err(Failure::Refused(format!(
-                "it holds {} entries, more than the {} one extraction here takes.",
-                l.entries, self.entries
+            return Err(Failure::Refused(tr!(
+                "extract-too-many",
+                entries = l.entries,
+                most = self.entries
             )));
         }
         if l.bytes > self.bytes {
-            return Err(Failure::Refused(format!(
-                "it expands to {}, more than the {} the free space here allows.",
-                crate::props::short_size(l.bytes),
-                crate::props::short_size(self.bytes)
+            return Err(Failure::Refused(tr!(
+                "extract-no-room",
+                size = crate::props::short_size(l.bytes),
+                room = crate::props::short_size(self.bytes)
             )));
         }
         Ok(())
@@ -197,16 +198,14 @@ pub(crate) enum Failure {
 
 impl Failure {
     fn text(&self, name: &str) -> String {
-        format!("Cannot extract {name}: {}", self.why())
+        tr!("extract-failed", name = name, why = self.why())
     }
 
     pub(crate) fn why(&self) -> String {
         match self {
-            Failure::Climbs(entry) => {
-                format!("it holds {entry}, which would land outside the folder.")
-            }
+            Failure::Climbs(entry) => tr!("extract-climbs", entry = entry.as_str()),
             Failure::Tool(why) | Failure::Refused(why) | Failure::Kept(why) => why.clone(),
-            Failure::Cancelled => "the operation was cancelled.".into(),
+            Failure::Cancelled => tr!("extract-cancelled"),
         }
     }
 }
@@ -436,10 +435,10 @@ fn listing(argv: &[OsString], cpu_secs: u64, m: &Meter) -> Result<Listed, Failur
         return Err(Failure::Climbs(entry));
     }
     match status? {
-        s if s.success() && unread => Err(Failure::Tool(UNREAD.into())),
+        s if s.success() && unread => Err(Failure::Tool(tr!("archive-unread"))),
         s if s.success() => Ok(got),
         s if crate::archive::ran_out(&s) => Err(Failure::Refused(tr!("extract-list-too-long"))),
-        _ => Err(Failure::Tool(said(&stderr, UNREAD))),
+        _ => Err(Failure::Tool(said(&stderr, &tr!("archive-unread")))),
     }
 }
 
@@ -502,7 +501,7 @@ fn extract(
 ) -> Result<PathBuf, Failure> {
     let dir = (a.to.as_deref())
         .or(a.src.parent())
-        .ok_or_else(|| Failure::Tool("it has no folder".into()))?;
+        .ok_or_else(|| Failure::Tool(tr!("extract-no-folder")))?;
     limits(dir).admit(listed)?;
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let here = a.here && !kept_apart(listed, dir, home.as_deref());
@@ -603,9 +602,9 @@ fn extract(
     }
     if !ok {
         let why = and_others(
-            said(&first.unwrap_or_default(), UNREAD),
+            said(&first.unwrap_or_default(), &tr!("archive-unread")),
             others,
-            "extracted",
+            Others::Extracted,
         );
         return Err(undo(Failure::Tool(why)));
     }
@@ -613,8 +612,9 @@ fn extract(
     let modes = open_up(&into).map_err(io).map_err(undo)?;
     let reach = leads_out(&into).map_err(io).map_err(undo)?;
     if let Some(entry) = reach.out {
-        return Err(undo(Failure::Refused(format!(
-            "it holds {entry}, a link to outside the folder."
+        return Err(undo(Failure::Refused(tr!(
+            "extract-link-out",
+            entry = entry
         ))));
     }
     // Merged into `dir`, a link to nothing in the archive could name what `dir` already holds.
@@ -839,10 +839,10 @@ fn merge_into(from: &Path, to: &Path) -> Result<Vec<PathBuf>, Failure> {
     }
     Err(match stuck {
         false => why,
-        true => Failure::Kept(format!(
-            "{} Some of its entries stay in place, and the rest in {}.",
-            why.why(),
-            from.display()
+        true => Failure::Kept(tr!(
+            "extract-kept",
+            why = why.why(),
+            folder = from.display().to_string()
         )),
     })
 }
@@ -881,9 +881,9 @@ fn merge_at(
             continue;
         }
         let there = open_dir(to, &name, false).map_err(|_| {
-            Failure::Refused(format!(
-                "it holds the folder {}, which is not a folder here.",
-                rel.display()
+            Failure::Refused(tr!(
+                "extract-not-a-folder",
+                folder = rel.display().to_string()
             ))
         })?;
         let here = open_dir(from, &name, false).map_err(|e| io(&rel, e))?;
@@ -906,7 +906,7 @@ fn make_folder(dir: &Path, name: &OsStr) -> Result<PathBuf, Failure> {
 }
 
 pub(crate) fn no_pipe() -> Failure {
-    Failure::Tool("bsdtar gave no output".into())
+    Failure::Tool(tr!("extract-no-output"))
 }
 
 /// The bytes of a tool's stderr kept for [`said`], which reads only its last line.
@@ -932,8 +932,6 @@ pub(crate) fn tail(r: &mut impl Read, cap: usize) -> Vec<u8> {
     kept
 }
 
-const UNREAD: &str = "bsdtar could not read it.";
-
 /// The line bsdtar ends on after an error it went past, which says nothing of the error.
 pub(crate) const DELAYED: &str = "Error exit delayed from previous errors";
 
@@ -952,12 +950,19 @@ pub(crate) fn said(stderr: &[u8], fallback: &str) -> String {
     }
 }
 
-/// `why`, then how many `others` entries could not be `done` too.
-pub(crate) fn and_others(why: String, others: usize, done: &str) -> String {
-    match others {
-        0 => why,
-        1 => format!("{why}, and 1 other item could not be {done}"),
-        n => format!("{why}, and {n} other items could not be {done}"),
+/// What the other entries [`and_others`] counts could not be.
+#[derive(Clone, Copy)]
+pub(crate) enum Others {
+    Extracted,
+    Read,
+}
+
+/// `why`, then how many `others` entries could not be extracted or read too.
+pub(crate) fn and_others(why: String, others: usize, done: Others) -> String {
+    match (others, done) {
+        (0, _) => why,
+        (n, Others::Extracted) => tr!("extract-and-others", why = why, others = n),
+        (n, Others::Read) => tr!("compress-and-others", why = why, others = n),
     }
 }
 
@@ -1008,11 +1013,8 @@ pub(crate) fn spawn_with(
         true => Stdio::piped(),
         false => Stdio::null(),
     });
-    cmd.spawn().map_err(|e| {
-        Failure::Tool(format!(
-            "bsdtar cannot start ({e}); is libarchive installed?"
-        ))
-    })
+    cmd.spawn()
+        .map_err(|e| Failure::Tool(tr!("extract-no-bsdtar", why = e.to_string())))
 }
 
 /// The longest line [`lines`] takes: an output with a longer one is no listing.
