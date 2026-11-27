@@ -208,12 +208,7 @@ impl Explorer {
         if let Some(tl) = self.tree_layout(ctx) {
             self.tree.clamp_top(&tl);
         }
-        // The chain runs Desktop, Computer, then the mount.
-        let mount_listed = || {
-            let chain = self.place.chain_in(&self.drive_mounts);
-            chain.get(2).is_some_and(|m| self.tree_path_of(m).is_some())
-        };
-        if self.refollow && *place == Place::Computer && mount_listed() {
+        if self.refollow && *place == Place::Computer && self.mount_listed() {
             self.refollow = false;
             let here = self.place.clone();
             self.tree_follow(&here, ctx);
@@ -353,6 +348,16 @@ impl Explorer {
         if let Some(tl) = self.tree_layout(ctx) {
             self.tree.follow(&tl);
         }
+        if *place == self.place.in_tree() && self.mount_listed() {
+            self.refollow = false;
+        }
+    }
+
+    /// Whether the Folders tree holds the mount the place is on.
+    fn mount_listed(&self) -> bool {
+        // The chain runs Desktop, Computer, then the mount.
+        let chain = self.place.chain_in(&self.drive_mounts);
+        chain.get(2).is_some_and(|m| self.tree_path_of(m).is_some())
     }
 
     /// The Folders pane's layout, while it is shown.

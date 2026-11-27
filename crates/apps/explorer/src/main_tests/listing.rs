@@ -479,6 +479,11 @@ fn hiding_hidden_folders_scrolls_the_folders_pane_back_to_rows_it_still_holds() 
     }
     let shown = top.path().join("shown");
     std::fs::create_dir(&shown).expect("mkdir");
+    // Rows past the shown folder keep its pick out of the scrolled view, so a follow of the pick
+    // would move the view off the end.
+    for i in 0..30 {
+        std::fs::create_dir(top.path().join(format!("z{i:02}"))).expect("mkdir");
+    }
     let here = Place::Folder(shown);
     let mut ctx = test_ctx();
     let mut ex = test_explorer(here.clone(), &mut ctx);
