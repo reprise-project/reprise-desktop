@@ -88,7 +88,7 @@ mod tests {
             let draw = |ptr| {
                 let mut c = Canvas::new(20, 17);
                 c.fill_rect(c.bounds(), sentinel);
-                draw_close(&mut c, &p, Rect::new(0, 0, 20, 17), ptr);
+                draw_close(&mut c, &p, Rect::new(0, 0, 20, 17), ptr, 1);
                 c
             };
             let rest = draw(Interaction::Idle);
@@ -148,7 +148,7 @@ mod tests {
                 Rect::new(0, 0, 120, 60),
                 Rect::new(0, 0, 120, 44),
             );
-            draw_close(&mut c, &p, Rect::new(60, 0, 40, 34), Interaction::Hot);
+            draw_close(&mut c, &p, Rect::new(60, 0, 40, 34), Interaction::Hot, 1);
             let blocks = (0..17)
                 .flat_map(|y| (30..50).map(move |x| (2 * x, 2 * y)))
                 .filter(|&(x, y)| {

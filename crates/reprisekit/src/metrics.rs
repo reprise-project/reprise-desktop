@@ -468,8 +468,8 @@ impl ControlMetrics {
 
 impl ControlMetrics {
     /// These sizes for text grown by `u`: the rows that hold a line of text grow; check boxes,
-    /// radio buttons, scrollbars, drop buttons and spin columns (and their labels' offsets) grow
-    /// by [`TextUnits::small`](crate::theme::TextUnits::small); icons keep their size. A trackbar's
+    /// radio buttons, scrollbars, drop buttons, spin columns and the Explorer bar's close box (and
+    /// their offsets) grow by [`TextUnits::small`](crate::theme::TextUnits::small); icons keep their size. A trackbar's
     /// layout grows its own thumb ([`crate::trackbar::layout_grown`]), so `vtrack_thumb` stays.
     pub fn grown(self, u: crate::theme::TextUnits) -> ControlMetrics {
         let k = u.small();
@@ -508,6 +508,10 @@ impl ControlMetrics {
             },
             bar: BarMetrics {
                 header: u.len(self.bar.header),
+                close_w: k * self.bar.close_w,
+                close_h: k * self.bar.close_h,
+                close_right: k * self.bar.close_right,
+                close_top: k * self.bar.close_top,
                 ..self.bar
             },
             text: u,

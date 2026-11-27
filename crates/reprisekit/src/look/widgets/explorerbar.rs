@@ -21,7 +21,8 @@ pub fn draw_strip(c: &mut Canvas, p: &Paint, bar: Rect, header: Rect) {
     c.fill_rect(Rect::new(x + s, y + s, w - 3 * s, s), cs.button_hilight);
 }
 
-pub fn draw_close(c: &mut Canvas, p: &Paint, r: Rect, ptr: Interaction) {
+/// The close box in `r`, its Classic mark `k` times its 100% size; a style's part fills `r`.
+pub fn draw_close(c: &mut Canvas, p: &Paint, r: Rect, ptr: Interaction, k: i32) {
     if let Some(st) = p.look.style()
         && styled::explorerbar::draw_close(st, c, r, ptr, p.s)
     {
@@ -31,5 +32,13 @@ pub fn draw_close(c: &mut Canvas, p: &Paint, r: Rect, ptr: Interaction) {
     if ptr != Interaction::Idle {
         c.edge_t(r, EdgeStyle::ThinRaised, cs, s);
     }
-    draw_glyph_strokes(c, r.x, r.y, s, Glyph::Close, cs.button_text, cs.button_face);
+    draw_glyph_strokes(
+        c,
+        r.x,
+        r.y,
+        s * k,
+        Glyph::Close,
+        cs.button_text,
+        cs.button_face,
+    );
 }

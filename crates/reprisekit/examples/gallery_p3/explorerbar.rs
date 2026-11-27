@@ -23,7 +23,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
         let lay = explorerbar::layout(&eb, frame, &cm);
         c.fill_rect(lay.body, theme.colors.window);
         explorerbar::draw(c, text, &p, &eb, &lay, px);
-        draw_close(c, &p, lay.close, ptr);
+        draw_close(c, &p, lay.close, ptr, lay.close_k);
     }
     let pb = PlacesBar {
         places: ["Desktop", "Documents"]

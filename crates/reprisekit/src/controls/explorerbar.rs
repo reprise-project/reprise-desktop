@@ -71,6 +71,10 @@ pub struct Layout {
     /// Title text box start from the strip's left, and its line's offset below the strip's middle.
     pub title_x: i32,
     pub title_dy: i32,
+    /// How many times its 100% size the close box's mark is drawn: [`TextUnits::small`].
+    ///
+    /// [`TextUnits::small`]: crate::theme::TextUnits::small
+    pub close_k: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +130,7 @@ pub fn layout(eb: &ExplorerBar, r: Rect, cm: &ControlMetrics) -> Layout {
         splitter: Rect::new(r.x + width, r.y, SPLITTER_W, r.height),
         title_x,
         title_dy,
+        close_k: cm.text.small(),
     }
 }
 
@@ -210,7 +215,7 @@ pub fn draw(
         } else {
             Interaction::Idle
         };
-        look::draw_close(c, p, lay.close.scaled(s), ptr);
+        look::draw_close(c, p, lay.close.scaled(s), ptr, lay.close_k);
     });
 }
 
@@ -462,6 +467,60 @@ mod tests {
         assert!((85..105).all(|y| c.get(TITLE_X, y) != cs.button_text.argb()));
     }
 
+    /// At text 200 the close box and its Classic mark are twice their 100% size, in every look.
+    #[test]
+    fn the_close_box_doubles_at_text_200() {
+        use crate::interface::Interface;
+        use crate::interfaces::theme_for;
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let one = theme_for(i);
+            let two = one.with_text_size(200);
+            let r = Rect::new(0, 0, 204, 120);
+            let (a, b) = (
+                layout(&bar(), r, &one.controls()),
+                layout(&bar(), r, &two.controls()),
+            );
+            let at = format!("{i:?}");
+            assert_eq!(
+                (b.close.width, b.close.height),
+                (2 * a.close.width, 2 * a.close.height),
+                "{at}"
+            );
+            assert_eq!(b.close_k, 2, "{at}");
+            assert!(
+                b.close.y >= b.header.y && b.close.bottom() <= b.header.bottom(),
+                "{at}"
+            );
+            let p = two.paint();
+            for ptr in [Interaction::Idle, Interaction::Hot] {
+                let mut c = Canvas::new(b.close.width as u32, b.close.height as u32);
+                c.fill_rect(c.bounds(), two.colors.button_face);
+                let box_ = Rect::new(0, 0, b.close.width, b.close.height);
+                look::draw_close(&mut c, &p, box_, ptr, b.close_k);
+                got.push((format!("{at} {ptr:?}"), crate::pins::fnv(&c)));
+            }
+        }
+        let cs = Theme::default().colors;
+        let ink = |k: i32| {
+            let mut c = Canvas::new(32, 28);
+            c.fill_rect(c.bounds(), cs.button_face);
+            look::draw_close(
+                &mut c,
+                &classic_paint(&cs, 1),
+                Rect::new(0, 0, 32, 28),
+                Interaction::Idle,
+                k,
+            );
+            c.pixels
+                .iter()
+                .filter(|&&px| px == cs.button_text.argb())
+                .count()
+        };
+        assert_eq!(ink(2), 4 * ink(1), "the Classic mark's every pixel doubles");
+        crate::pins::check("explorerbar/close_text_200", &got);
+    }
+
     /// Writes target/explorerbar-blue-{blue,olive,silver}-preview.png.
     #[test]
     #[ignore]
@@ -482,7 +541,7 @@ mod tests {
                 );
                 c.fill_rect(lay.body, theme.colors.window);
                 draw(&mut c, &text, &p, &bar(), &lay, theme.fonts.size_px);
-                look::draw_close(&mut c, &p, lay.close, ptr);
+                look::draw_close(&mut c, &p, lay.close, ptr, lay.close_k);
             }
             crate::raster::write_preview(
                 &c,
