@@ -211,7 +211,9 @@ pub fn draw(
                 }
                 let ink = if is_lit { hot_ink } else { s.system.menu_text };
                 let w = text.measure(&all_programs(), true, size);
-                let (aw, ah) = (ARROW.0 * d, ARROW.1 * d);
+                // The arrows grow by whole steps with the text, each a fresh drawing.
+                let ad = d * p.text.small();
+                let (aw, ah) = (ARROW.0 * ad, ARROW.1 * ad);
                 let gap = g.len(at::ARROW_GAP);
                 let x = r.x + (r.width - w - gap - aw) / 2;
                 let clip = Rect::new(r.x, r.y, r.width, r.height);
@@ -232,7 +234,7 @@ pub fn draw(
                     );
                 }
                 let ay = r.y + (r.height - ah) / 2;
-                canvas.blit_over(x + w + gap, ay, &arrow(s, d));
+                canvas.blit_over(x + w + gap, ay, &arrow(s, ad));
             }
             Spot::Place(i) => {
                 let Some(place) = p.places.get(i) else {
@@ -257,10 +259,16 @@ pub fn draw(
                 );
                 if place.submenu {
                     let (ax, ay) = at::PLACE_ARROW;
-                    let mark =
-                        shape::glyph(shape::Glyph::ArrowRight, 7, d, 1.0, shape::premul(ink, 255));
+                    let ad = d * p.text.small();
+                    let mark = shape::glyph(
+                        shape::Glyph::ArrowRight,
+                        7,
+                        ad,
+                        1.0,
+                        shape::premul(ink, 255),
+                    );
                     let x = r.right() - g.len(ax);
-                    canvas.blit_over(x, r.y + g.kept(ay - 3, 7), &mark);
+                    canvas.blit_over(x, r.y + g.stepped(ay - 3, 7), &mark);
                 }
             }
             Spot::LogOff | Spot::Shutdown => {
@@ -491,6 +499,7 @@ mod tests {
     use crate::blue::Variant;
     use crate::startpanel::layout::layout;
     use crate::startpanel::{PlaceRow, ProgramRow, Shape};
+    use crate::theme::TextUnits;
 
     fn prog(name: &str, detail: Option<&str>) -> ProgramRow {
         ProgramRow {
@@ -568,6 +577,43 @@ mod tests {
             .iter()
             .map(|&(hot, pressed)| fnv(&render(v, &sample(hot), d, pressed).0))
             .collect()
+    }
+
+    /// All Programs' green arrow grows by whole steps with the text: twice as wide and tall at
+    /// 200% as at 100%, at scale 1 and 2.
+    #[test]
+    fn the_all_programs_arrow_grows_by_whole_steps_with_the_text() {
+        let green_box = |u: TextUnits, d: i32| {
+            let mut p = sample(None);
+            p.text = u;
+            let (c, l) = render(Variant::Blue, &p, d, None);
+            let (_, r) = *l
+                .spots
+                .iter()
+                .find(|(s, _)| *s == Spot::AllPrograms)
+                .unwrap();
+            let r = Rect::new(r.x - l.canvas.x, r.y - l.canvas.y, r.width, r.height);
+            let green: Vec<(i32, i32)> = (r.y..r.bottom())
+                .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let [b, g, r, a] = c.get(x, y).to_le_bytes();
+                    a == 0xFF && g as i32 > r as i32 + 40 && g as i32 > b as i32 + 40
+                })
+                .collect();
+            let extent = |f: fn(&(i32, i32)) -> i32| {
+                green.iter().map(f).max().unwrap() - green.iter().map(f).min().unwrap() + 1
+            };
+            (extent(|p| p.0), extent(|p| p.1))
+        };
+        for d in [1, 2] {
+            let one = green_box(TextUnits::ONE, d);
+            let two = green_box(TextUnits::new(22, 11), d);
+            assert!(one.0 >= 10 * d, "@{d}: the arrow inks {one:?}");
+            assert!(
+                (two.0 - 2 * one.0).abs() <= d && (two.1 - 2 * one.1).abs() <= d,
+                "@{d}: {two:?} at 200%, twice {one:?}"
+            );
+        }
     }
 
     #[test]

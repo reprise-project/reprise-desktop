@@ -311,16 +311,18 @@ impl Style {
     /// This style built at scale `n`. A style already built at a scale above 1 builds again at
     /// another, as a small control grown with the text asks for ([`crate::look::Paint::small`]).
     pub fn at_scale(self: &Arc<Style>, n: i32) -> Arc<Style> {
-        let Some(build) = self
+        self.rebuilt_at(n).unwrap_or_else(|| self.clone())
+    }
+
+    /// [`Style::at_scale`] where it builds anew: None when this style already draws at `n`.
+    pub fn rebuilt_at(&self, n: i32) -> Option<Arc<Style>> {
+        let build = self
             .rescale
             .as_ref()
-            .filter(|_| n > 1 && n != self.built_at)
-        else {
-            return self.clone();
-        };
+            .filter(|_| n > 1 && n != self.built_at)?;
         let mut kept = lock(&self.rescaled.0);
         if let Some((_, st)) = kept.iter().find(|(k, _)| *k == n) {
-            return st.clone();
+            return Some(st.clone());
         }
         let st = Arc::new(Style {
             built_at: n,
@@ -328,7 +330,7 @@ impl Style {
             ..build(n)
         });
         kept.push((n, st.clone()));
-        st
+        Some(st)
     }
 
     /// The art a first draw at scale `n` would paint: the parts, lit task buttons and orb blooms
