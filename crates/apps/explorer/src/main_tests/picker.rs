@@ -5,7 +5,7 @@ fn the_picker_resizes() {
     use reprisekit::controls::browsefolder::{CLIENT, MIN};
     let mut ctx = test_ctx();
     let (_dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     let child = ex
         .children()
         .into_iter()
@@ -57,7 +57,7 @@ fn the_status_bars_grip_resizes_the_window() {
 fn the_picker_has_the_help_caption() {
     let mut ctx = test_ctx();
     let (_dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     assert_eq!(ex.caption(DIALOG), repriseapp::Caption::Help);
     assert_eq!(
         ex.caption(MAIN),
@@ -75,13 +75,13 @@ fn the_pickers_cues_wait_for_a_key() {
         Some(Dialog::Browse(b)) => b.bf.cues(),
         _ => panic!("the picker is up"),
     };
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     assert_eq!(cues(&ex), Cues::NONE, "opened with the pointer");
     ex.dialog_event(Event::Key(key_in(keysym::ALT_L)), &mut ctx);
     assert_eq!(cues(&ex), Cues::ALL, "Alt brings out both");
     ex.take_up();
     ex.keyed = true;
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     assert_eq!(cues(&ex), Cues::ALL, "opened from the keyboard");
 }
 
@@ -89,7 +89,7 @@ fn the_pickers_cues_wait_for_a_key() {
 fn the_dialog_opens_on_the_items_folder() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
 
     let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the Browse dialog is what is up");
@@ -114,7 +114,7 @@ fn browsing_leaves_the_folders_pane_alone() {
     let (_dir, mut ex) = browse_fixture(&mut ctx);
     let tree = ex.tree.clone();
     let places = ex.tree_places.clone();
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
 
     ex.dialog_event(Event::Key(key_in(keysym::RIGHT)), &mut ctx);
     ex.dialog_event(Event::Key(key_in(keysym::DOWN)), &mut ctx);
@@ -134,7 +134,7 @@ fn the_picker_opens_at_once_and_walks_to_a_folder_that_answers_late() {
     let gate = Arc::new(std::sync::RwLock::new(()));
     let closed = gate.write().expect("lock");
     ex.held = Some(gate.clone());
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     let picked = |ex: &Explorer| {
         let Some(Dialog::Browse(b)) = ex.dialog() else {
             panic!("the Browse dialog is what is up");
@@ -156,7 +156,7 @@ fn the_picker_opens_at_once_and_walks_to_a_folder_that_answers_late() {
 fn accept_queues_a_move_into_the_pick() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
     let mounts = ex.drive_mounts.clone();
     let Some(Dialog::Browse(b)) = ex.dialogs.up_mut() else {
@@ -201,7 +201,11 @@ fn the_picker_opens_on_home_for_an_item_in_home() {
     let mut ctx = test_ctx();
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.browse_items(true, vec![home.join("a.txt")], &mut ctx);
+    ex.browse_items(
+        crate::browse::Pick::Move,
+        vec![home.join("a.txt")],
+        &mut ctx,
+    );
 
     let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the Browse dialog is what is up");
@@ -226,7 +230,11 @@ fn the_picker_focuses_the_tree_when_the_items_folder_is_hidden() {
     std::fs::create_dir(&hidden).expect("mkdir");
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.folders.show_hidden = false;
-    ex.browse_items(true, vec![hidden.join("a.txt")], &mut ctx);
+    ex.browse_items(
+        crate::browse::Pick::Move,
+        vec![hidden.join("a.txt")],
+        &mut ctx,
+    );
 
     let Some(Dialog::Browse(b)) = ex.dialog() else {
         panic!("the Browse dialog is what is up");
@@ -262,7 +270,11 @@ fn the_picker_tree_wears_a_folder_icon_set_while_it_is_open() {
     std::fs::create_dir(&sub).expect("mkdir");
     std::fs::write(dir.path().join("a.txt"), "").expect("write");
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    ex.browse_items(true, vec![dir.path().join("a.txt")], &mut ctx);
+    ex.browse_items(
+        crate::browse::Pick::Move,
+        vec![dir.path().join("a.txt")],
+        &mut ctx,
+    );
     let worn = |ex: &Explorer| {
         let Some(Dialog::Browse(b)) = ex.dialog() else {
             panic!("the Browse dialog is what is up");
@@ -308,7 +320,7 @@ fn make_new_folder_refills_the_folders_pane() {
         .position(|it| it.name == "a.txt")
         .expect("a.txt");
     ex.sv.selection.set_only(Some(a));
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     let pick = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Browse(b)) => b.bf.tree.selected.clone(),
         _ => None,
@@ -355,7 +367,7 @@ fn make_new_folder_keeps_open_subfolders_and_undoes() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
     std::fs::create_dir(dir.path().join("sub/inner")).expect("mkdir");
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
     let mounts = ex.drive_mounts.clone();
     let sub_open = |ex: &Explorer| match ex.dialog() {
@@ -390,7 +402,7 @@ fn make_new_folder_keeps_open_subfolders_and_undoes() {
 fn undo_of_the_pickers_new_folder_leaves_a_different_folder_that_took_its_name() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     let made = dir.path().join("New Folder");
     std::fs::rename(&made, dir.path().join("Renamed")).expect("rename");

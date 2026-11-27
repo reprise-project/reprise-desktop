@@ -238,6 +238,7 @@ impl Explorer {
                         items,
                         groups: Vec::new(),
                         drives: Vec::new(),
+                        error: None,
                     },
                     icons,
                     sizes,

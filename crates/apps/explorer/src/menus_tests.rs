@@ -493,7 +493,7 @@ fn a_folders_menu_explores_and_a_files_opens_with() {
 }
 
 #[test]
-fn an_archives_menu_extracts_here_or_into_its_folder() {
+fn an_archives_menu_extracts_all_here_or_into_its_folder() {
     let s = MenuState::default();
     let plain = item_menu(&s, ItemKind::File, &[], &[]);
     let rows = |m: &Menu| {
@@ -511,10 +511,28 @@ fn an_archives_menu_extracts_here_or_into_its_folder() {
         .iter()
         .position(|r| r == "Extract Here")
         .expect("Extract Here");
-    assert_eq!(label(m.items(), at - 1), "Open With", "under Open With");
+    assert_eq!(label(m.items(), at - 2), "Open With", "under Open With");
+    assert_eq!(label(m.items(), at - 1), "Extract All...");
+    assert_eq!(m.command(&[at - 1]), Command::ExtractAll);
     assert_eq!(m.command(&[at]), Command::Extract { here: true });
     assert_eq!(label(m.items(), at + 1), "Extract to pack/");
     assert_eq!(m.command(&[at + 1]), Command::Extract { here: false });
+}
+
+#[test]
+fn a_compressed_folders_entries_open_or_extract_the_archive_and_nothing_else() {
+    let s = MenuState {
+        archive: true,
+        read_only: true,
+        ..MenuState::default()
+    };
+    for kind in [ItemKind::File, ItemKind::Folder] {
+        let m = item_menu(&s, kind, &[], &[]);
+        let rows: Vec<&str> = (0..m.items().len()).map(|i| label(m.items(), i)).collect();
+        assert_eq!(rows, ["Open", "", "Extract All..."], "{kind:?}");
+        assert_eq!(m.command(&[0]), Command::Open);
+        assert_eq!(m.command(&[2]), Command::ExtractAll);
+    }
 }
 
 #[test]

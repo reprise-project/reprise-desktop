@@ -30,6 +30,11 @@ impl State {
         self.explorer_box("--open-with", &[path.to_path_buf()]);
     }
 
+    /// An Explorer window on the archive `path` as a compressed folder.
+    pub fn browse_archive(&mut self, path: &Path) {
+        self.explorer_box("--archive", &[path.to_path_buf()]);
+    }
+
     fn explorer_box(&mut self, flag: &str, paths: &[PathBuf]) {
         let argv: Vec<&std::ffi::OsStr> = [EXPLORER.as_ref(), flag.as_ref()]
             .into_iter()

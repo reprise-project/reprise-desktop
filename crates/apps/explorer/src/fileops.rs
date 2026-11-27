@@ -1843,9 +1843,12 @@ impl Explorer {
     }
 
     /// The selected files and folders with their indices: the selection without the Desktop's
-    /// rows for the shell places, which are not files to cut, delete or rename.
+    /// rows for the shell places, which are not files to cut, delete or rename. A compressed
+    /// folder's entries are not on disk, so none of them is picked.
     pub(crate) fn picked(&self) -> impl Iterator<Item = (usize, &reprisefs::listing::Item)> {
+        let on_disk = !matches!(self.place, Place::Archive(..));
         (self.sv.selection.set.iter())
+            .filter(move |_| on_disk)
             .filter_map(|&i| Some((i, self.items.get(i)?)))
             .filter(|(_, it)| Place::of_row(&it.path).is_none())
     }

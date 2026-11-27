@@ -42,7 +42,7 @@ fn picker_error(ex: &Explorer) -> Option<(String, String)> {
 fn the_pickers_new_folder_is_named_in_place() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     let made = dir.path().join("New Folder");
     assert_eq!(
@@ -100,7 +100,7 @@ fn picker_making(ex: &Explorer) -> bool {
 fn the_pickers_new_folder_and_rename_on_a_folder_that_answers_late_land_on_a_later_wake() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     let here = Some(Place::Folder(dir.path().to_path_buf()));
     let made = dir.path().join("New Folder");
 
@@ -150,7 +150,7 @@ fn a_pickers_new_folder_and_rename_landing_after_cancel_keep_their_undo() {
     let made = dir.path().join("New Folder");
     let gate = Arc::new(std::sync::RwLock::new(()));
 
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     let closed = gate.write().expect("lock");
     ex.held = Some(gate.clone());
     click_at(&mut ex, 60, 328, &mut ctx);
@@ -162,7 +162,7 @@ fn a_pickers_new_folder_and_rename_landing_after_cancel_keep_their_undo() {
     assert!(made.is_dir());
     assert_eq!(ex.undo, Some("New"));
 
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     let second = dir.path().join("New Folder (2)");
     assert!(second.is_dir());
@@ -185,7 +185,7 @@ fn a_pickers_new_folder_landing_after_its_close_box_keeps_its_undo() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
     let gate = Arc::new(std::sync::RwLock::new(()));
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     let closed = gate.write().expect("lock");
     ex.held = Some(gate.clone());
     click_at(&mut ex, 60, 328, &mut ctx);
@@ -204,7 +204,7 @@ fn a_pickers_new_folder_landing_after_its_close_box_keeps_its_undo() {
 fn closing_waits_for_a_pickers_rename_left_by_cancel() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     type_in(&mut ex, "Photos", &mut ctx);
     let gate = Arc::new(std::sync::RwLock::new(()));
@@ -237,7 +237,7 @@ fn closing_waits_for_a_pickers_rename_left_by_cancel() {
 fn a_pickers_rename_refused_late_shows_the_error_box() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     type_in(&mut ex, "sub", &mut ctx);
     let gate = Arc::new(std::sync::RwLock::new(()));
@@ -261,7 +261,7 @@ fn a_pickers_rename_refused_late_shows_the_error_box() {
 fn a_click_on_move_names_the_new_folder_and_moves() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     let (lay, _) = browse_state(&ex, &ctx);
     let (x, y) = (lay.accept.x + 10, lay.accept.y + 10);
@@ -289,7 +289,7 @@ fn a_click_on_move_names_the_new_folder_and_moves() {
 fn the_pickers_new_folder_has_no_plus_box() {
     let mut ctx = test_ctx();
     let (_dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
     let (lay, tree) = browse_state(&ex, &ctx);
@@ -323,7 +323,7 @@ fn the_pickers_buttons_act_on_the_release() {
     use repriseapp::PointerInput;
     let mut ctx = test_ctx();
     let (_dir, mut ex) = browse_fixture(&mut ctx);
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     let (lay, _) = browse_state(&ex, &ctx);
     let (x, y) = (lay.cancel.x + 10, lay.cancel.y + 10);
     ex.dialog_event(press_at(x, y, 5000), &mut ctx);
@@ -346,7 +346,7 @@ fn the_pickers_tree_takes_the_wheel_and_a_thumb_drag() {
     for i in 0..20 {
         std::fs::create_dir(dir.path().join(format!("folder {i:02}"))).expect("mkdir");
     }
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     let top = |ex: &Explorer| match ex.dialog() {
         Some(Dialog::Browse(b)) => b.bf.tree.top,
         _ => panic!("the picker is up"),
@@ -404,7 +404,7 @@ fn a_click_on_a_picker_row_opens_it() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
     std::fs::create_dir(dir.path().join("sub/inner")).expect("mkdir");
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
     let (_, tree) = browse_state(&ex, &ctx);
     let Some(Dialog::Browse(b)) = ex.dialog() else {
@@ -443,7 +443,7 @@ fn a_double_click_on_a_picker_plus_box_turns_it_once() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = browse_fixture(&mut ctx);
     std::fs::create_dir(dir.path().join("sub/inner")).expect("mkdir");
-    ex.open_browse(true, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Move, &mut ctx);
     let sub = Place::Folder(dir.path().join("sub"));
     let Some(Dialog::Browse(b)) = ex.dialogs.up_mut() else {
         panic!("the picker is up");
@@ -481,7 +481,7 @@ fn a_pickers_new_folder_that_fails_keeps_the_picker_and_says_why() {
     let (dir, mut ex) = browse_fixture(&mut ctx);
     std::os::unix::fs::symlink(dir.path().join("gone"), dir.path().join("New Folder"))
         .expect("a dangling link where the new folder would go");
-    ex.open_browse(false, &mut ctx);
+    ex.open_browse(crate::browse::Pick::Copy, &mut ctx);
     click_at(&mut ex, 60, 328, &mut ctx);
     assert!(
         matches!(ex.dialog(), Some(Dialog::Browse(_))),

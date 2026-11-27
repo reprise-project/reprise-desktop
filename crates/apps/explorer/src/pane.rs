@@ -51,6 +51,7 @@ const EMPTY_BIN: &[&str] = &["user-trash-full", "user-trash"];
 const RESTORE: &[&str] = &["edit-undo"];
 const FOLDER: &[&str] = &["folder"];
 const SERVER: &[&str] = &["network-server", "folder-remote"];
+const EXTRACT: &[&str] = &["archive-extract", "package-x-generic"];
 
 fn row(text: &str, icons: &[&'static str], cmd: Command, enabled: bool) -> PaneRow {
     PaneRow {
@@ -92,6 +93,15 @@ pub fn tasks(place: &Place, sel: Sel, count: usize) -> PaneSection {
                 &tr!("pane-tasks-connect-to-a-server"),
                 SERVER,
                 Command::ConnectToServer,
+                true,
+            )],
+        ),
+        Place::Archive(..) => (
+            tr!("pane-tasks-folder-tasks"),
+            vec![row(
+                &tr!("pane-tasks-extract-all-files"),
+                EXTRACT,
+                Command::ExtractAll,
                 true,
             )],
         ),
@@ -574,6 +584,9 @@ mod tests {
 
     #[test]
     fn the_recycle_bin_gets_its_own_tasks() {
+        let s = tasks(&Place::Archive("/d/a.zip".into(), "x".into()), Sel::File, 2);
+        assert_eq!(texts(&s), ["Extract all files"]);
+        assert_eq!(s.rows[0].cmd, Command::ExtractAll);
         let s = tasks(&Place::RecycleBin, Sel::None, 2);
         assert_eq!(
             table(&s),

@@ -25,6 +25,10 @@ pub enum Place {
     /// The servers on the network ([`reprisefs::netshare::browse::ROOT`]), or one SMB server's
     /// shares, by address.
     Network(String),
+    /// A compressed folder: the archive file and a folder inside it (empty at its top), listed
+    /// by [`reprisefs::archive`]. Its items' paths are the archive's path joined with theirs, so
+    /// a file operation a guard misses fails on the archive, a file, as a folder.
+    Archive(PathBuf, PathBuf),
 }
 
 fn home() -> Option<PathBuf> {
@@ -118,7 +122,7 @@ impl Place {
             Place::Documents => documents(),
             Place::Home => home(),
             Place::RecycleBin => reprisefs::places::trash_dir(),
-            Place::Computer | Place::Network(_) => None,
+            Place::Computer | Place::Network(_) | Place::Archive(..) => None,
         }
     }
 
@@ -136,6 +140,9 @@ impl Place {
             Place::RecycleBin => tr!("place-title-recycle-bin"),
             Place::Network(uri) if uri == ROOT => tr!("place-title-network"),
             Place::Network(uri) => Address::parse(uri).map_or_else(|| uri.clone(), |a| a.host),
+            Place::Archive(file, inner) => (inner.file_name().or(file.file_name()))
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         }
     }
 
@@ -153,6 +160,7 @@ impl Place {
         match self {
             Place::Folder(p) => named_address(p, shares),
             Place::Network(uri) if uri != ROOT => uri.clone(),
+            Place::Archive(file, inner) => named_address(&in_archive(file, inner), shares),
             _ => self.title(),
         }
     }
@@ -194,6 +202,8 @@ impl Place {
             Place::RecycleBin => "user-trash",
             Place::Network(uri) if uri == ROOT => "network-workgroup",
             Place::Network(_) => "network-server",
+            Place::Archive(_, inner) if inner.as_os_str().is_empty() => "package-x-generic",
+            Place::Archive(..) => "folder",
         }
     }
 
@@ -204,7 +214,7 @@ impl Place {
             Place::Computer => Some(ShellPlace::Computer),
             Place::Home => Some(ShellPlace::Home),
             Place::RecycleBin => Some(ShellPlace::RecycleBin),
-            Place::Folder(_) | Place::Desktop | Place::Network(_) => None,
+            Place::Folder(_) | Place::Desktop | Place::Network(_) | Place::Archive(..) => None,
         }
     }
 
@@ -218,6 +228,10 @@ impl Place {
             }
             Place::Folder(p) => p.parent().map(Place::from_path),
             Place::Network(uri) if uri != ROOT => Some(Place::network()),
+            Place::Archive(file, inner) => match inner.parent() {
+                Some(up) => Some(Place::Archive(file.clone(), up.to_path_buf())),
+                None => file.parent().map(Place::from_path),
+            },
             Place::Documents
             | Place::Home
             | Place::Computer
@@ -234,8 +248,26 @@ impl Place {
     pub fn read_only(&self) -> bool {
         matches!(
             self,
-            Place::Computer | Place::RecycleBin | Place::Network(_)
+            Place::Computer | Place::RecycleBin | Place::Network(_) | Place::Archive(..)
         )
+    }
+
+    /// The place the Folders tree selects for `self`: a compressed folder's is the folder
+    /// holding the archive.
+    pub fn in_tree(&self) -> Place {
+        match self {
+            Place::Archive(file, _) => file.parent().map_or(Place::Computer, Place::from_path),
+            _ => self.clone(),
+        }
+    }
+
+    /// The archive and the path inside it of an item listed in a compressed folder.
+    pub fn archive_entry(&self, item: &Path) -> Option<(&Path, PathBuf)> {
+        let Place::Archive(file, _) = self else {
+            return None;
+        };
+        let inner = item.strip_prefix(file).ok()?;
+        Some((file, inner.to_path_buf()))
     }
 
     /// Whether the Details pane calls this a "System Folder": every shell place,
@@ -345,6 +377,8 @@ pub struct Listed {
     pub groups: Vec<(String, usize)>,
     /// The drives behind Computer's rows, for Details, the status bar and the tree.
     pub drives: Vec<Drive>,
+    /// Why the place could not be read, for an error box: a compressed folder bsdtar cannot read.
+    pub error: Option<String>,
 }
 
 /// Mount points of the drives and network shares Computer lists. A subvolume on the root's
@@ -435,6 +469,7 @@ fn empty_listed() -> Listed {
         items: Vec::new(),
         groups: Vec::new(),
         drives: Vec::new(),
+        error: None,
     }
 }
 
@@ -578,6 +613,7 @@ pub fn list(
                 items: entries.iter().map(network_item).collect(),
                 groups: Vec::new(),
                 drives: Vec::new(),
+                error: None,
             }
         }
         Place::RecycleBin => {
@@ -590,6 +626,7 @@ pub fn list(
                 items,
                 groups: Vec::new(),
                 drives: Vec::new(),
+                error: None,
             }
         }
         Place::Desktop => desktop_listing(place.path().as_deref(), globs, show_hidden),
@@ -601,6 +638,7 @@ pub fn list(
                 items: read_folder(&dir, globs, show_hidden),
                 groups: Vec::new(),
                 drives: Vec::new(),
+                error: None,
             }
         }
     }
@@ -628,6 +666,7 @@ pub(crate) fn desktop_listing(
         items,
         groups: Vec::new(),
         drives: Vec::new(),
+        error: None,
     }
 }
 
@@ -649,6 +688,69 @@ fn row_item(place: &Place) -> Option<Item> {
         trashed: None,
         shortcut: None,
     })
+}
+
+/// The folder `inner` of the archive `file`, its entries read through `archives`.
+pub fn archive_listing(
+    archives: &reprisefs::archive::Listings,
+    (file, inner): (&Path, &Path),
+    globs: &reprisefs::apps::MimeDb,
+    show_hidden: bool,
+) -> Listed {
+    match archives.entries(file) {
+        Ok(entries) => Listed {
+            items: (reprisefs::archive::children(&entries, inner).iter())
+                .map(|c| archive_item(&in_archive(file, inner), c, globs))
+                .filter(|i| show_hidden || !i.hidden)
+                .collect(),
+            ..empty_listed()
+        },
+        Err(why) => Listed {
+            error: Some(why),
+            ..empty_listed()
+        },
+    }
+}
+
+/// The path standing for the folder `inner` of the archive `file`: the archive's own at its top.
+pub(crate) fn in_archive(file: &Path, inner: &Path) -> PathBuf {
+    match inner.as_os_str().is_empty() {
+        true => file.to_path_buf(),
+        false => file.join(inner),
+    }
+}
+
+/// An entry of a compressed folder's folder `dir` as a listing item: typed by its name, as
+/// nothing of it is on disk to read.
+fn archive_item(
+    dir: &Path,
+    c: &reprisefs::archive::Child,
+    globs: &reprisefs::apps::MimeDb,
+) -> Item {
+    let is_dir = c.kind == reprisefs::archive::Kind::Folder;
+    let path = dir.join(&c.name);
+    let name = c.name.to_string_lossy().into_owned();
+    let mime = match is_dir {
+        true => Some("inode/directory".to_string()),
+        false => globs.mime_of_name(&name),
+    };
+    Item {
+        kind: reprisefs::listing::kind_text_in(globs, &path, is_dir, mime.as_deref()),
+        hidden: name.starts_with('.'),
+        name,
+        path,
+        is_dir,
+        is_link: false,
+        exec: false,
+        program: None,
+        size: c.size,
+        modified: c.modified,
+        mime,
+        drive: None,
+        mount_root: false,
+        trashed: None,
+        shortcut: None,
+    }
 }
 
 fn drive_item(d: &Drive) -> Item {
@@ -822,6 +924,7 @@ fn build_computer(
         items,
         groups,
         drives,
+        error: None,
     }
 }
 
@@ -1132,6 +1235,7 @@ mod tests {
             items: vec![dir("home"), dir("usr"), link],
             groups: Vec::new(),
             drives: Vec::new(),
+            error: None,
         };
         assert_eq!(
             tree_subfolders(&listed, &mounts),

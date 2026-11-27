@@ -223,7 +223,7 @@ Missing packages disable only their feature.
 - **CJK fonts:** Noto Sans CJK (or similar) for CJK text. Add WenQuanYi Bitmap Song for crisp Chinese with `antialias = false`.
 - **Colour emoji font:** Noto Color Emoji (or similar) for colour emoji in text and the emoji picker.
 - **shared-mime-info:** File types and icons.
-- **xdg-utils and libarchive:** Web links, Explorer archives, network sign-in pages, and Send To > Mail Recipient (`xdg-email`). Also handles Send by Email attachments outside Thunderbird and Evolution.
+- **xdg-utils and libarchive:** Web links, Explorer archives and compressed folders, network sign-in pages, and Send To > Mail Recipient (`xdg-email`). Also handles Send by Email attachments outside Thunderbird and Evolution.
 - **plocate or fd:** File search in the launcher and Explorer. With both, `fd` adds files changed since the last `updatedb`.
 - **localsearch:** Full-text search in the launcher and Start menu (enable in Settings > Search).
 - **evolution-data-server:** Calendar events under the clock from GNOME Calendar, Evolution, or GNOME Online Accounts.

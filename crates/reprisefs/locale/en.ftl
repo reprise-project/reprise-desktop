@@ -32,6 +32,14 @@ compress-failed-title = Error Compressing File
 compress-failed = Cannot compress { $name }: { $why }
 compress-cancelled = the operation was cancelled.
 extract-failed-title = Error Extracting File
+archive-unread = bsdtar could not read it.
+archive-too-many = it holds more than { NUMBER($most, useGrouping: "false") } items.
+archive-no-room = it takes { $size }, more than the free space here allows.
+archive-more-than-listed = it holds more than its listing says.
+archive-other-size = it holds less than its listing says.
+archive-too-long = it took too long to read. Extract it to get at its files.
+archive-missing = the file cannot be found or read.
+archive-no-cache = there is no cache folder to copy it to.
 
 ## Copy, move and shortcut errors
 move-failed-title = Error Moving File or Folder

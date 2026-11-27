@@ -112,7 +112,7 @@ impl Limits {
     }
 
     /// [`Limits::from_free`] of the file system holding `dir`; none it cannot ask.
-    fn of(dir: &Path) -> Limits {
+    pub(crate) fn of(dir: &Path) -> Limits {
         let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
             return Limits::from_free(u64::MAX, None);
         };
@@ -146,11 +146,13 @@ impl Limits {
     }
 }
 
-/// One archive of a batch: into its own folder, or `here` beside it.
+/// One archive of a batch: into its own folder, or `here` beside it. Its own folder is made in
+/// `to` when set (Extract All), else beside it.
 #[derive(Clone, Debug)]
 pub struct Archive {
     pub src: PathBuf,
     pub here: bool,
+    pub to: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -192,7 +194,7 @@ impl Failure {
         format!("Cannot extract {name}: {}", self.why())
     }
 
-    fn why(&self) -> String {
+    pub(crate) fn why(&self) -> String {
         match self {
             Failure::Climbs(entry) => {
                 format!("it holds {entry}, which would land outside the folder.")
@@ -478,9 +480,8 @@ fn extract(
     listed: Listed,
     limits: fn(&Path) -> Limits,
 ) -> Result<PathBuf, Failure> {
-    let dir = a
-        .src
-        .parent()
+    let dir = (a.to.as_deref())
+        .or(a.src.parent())
         .ok_or_else(|| Failure::Tool("it has no folder".into()))?;
     limits(dir).admit(listed)?;
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -904,7 +905,7 @@ pub(crate) fn spawn(
 }
 
 /// [`spawn`], `env` setting the command's environment.
-fn spawn_with(
+pub(crate) fn spawn_with(
     argv: &[OsString],
     stdout: bool,
     env: impl FnOnce(&mut Command),
@@ -1146,6 +1147,7 @@ mod tests {
             vec![Archive {
                 src: t.path().join("evil.tar"),
                 here: false,
+                to: None,
             }],
             Decision::Abort,
         );
@@ -1176,10 +1178,12 @@ mod tests {
                 Archive {
                     src: d.join("broken.zip"),
                     here: false,
+                    to: None,
                 },
                 Archive {
                     src: d.join("pack.zip"),
                     here: false,
+                    to: None,
                 },
             ],
             Decision::Skip,
@@ -1216,6 +1220,7 @@ mod tests {
         let items = vec![Archive {
             src: d.join("pack.tar"),
             here: false,
+            to: None,
         }];
         let job = ArchiveJob::on_thread(
             "reprisefs-extract",
@@ -1261,6 +1266,7 @@ mod tests {
             vec![Archive {
                 src: d.join("pack.tar"),
                 here: false,
+                to: None,
             }],
             Decision::Skip,
         );
@@ -1286,9 +1292,35 @@ mod tests {
             vec![Archive {
                 src: src.to_path_buf(),
                 here,
+                to: None,
             }],
             Decision::Abort,
         )
+    }
+
+    #[test]
+    fn extract_all_makes_the_archives_folder_in_the_destination_numbered_past_a_taken_name() {
+        let t = tempfile::tempdir().unwrap();
+        let (d, to) = (t.path().join("d"), t.path().join("to"));
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::create_dir_all(to.join("pack")).unwrap();
+        std::fs::write(d.join("src/a.txt"), "a").unwrap();
+        bsdtar(&d.join("src"), &["-cf", "../pack.tar", "a.txt"]);
+        let got = run_job(
+            vec![Archive {
+                src: d.join("pack.tar"),
+                here: false,
+                to: Some(to.clone()),
+            }],
+            Decision::Abort,
+        );
+        assert!(
+            matches!(&got[..], [ArchiveEvent::Landed { into, .. }, ArchiveEvent::Finished]
+                if *into == to.join("pack (2)")),
+            "{got:?}"
+        );
+        assert_eq!(names_in(&to.join("pack (2)")), ["a.txt"]);
+        assert_eq!(names_in(&d), ["pack.tar", "src"], "nothing lands beside it");
     }
 
     fn names_in(dir: &Path) -> Vec<String> {
@@ -1637,6 +1669,7 @@ mod tests {
             let items = vec![Archive {
                 src: d.join("pack.tar"),
                 here,
+                to: None,
             }];
             let mut job = ArchiveJob::extract_within(
                 items,
@@ -1826,6 +1859,7 @@ mod tests {
             vec![Archive {
                 src: d.join("pack.tar"),
                 here: true,
+                to: None,
             }],
             Decision::Abort,
         );

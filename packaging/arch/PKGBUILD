@@ -15,7 +15,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'ffmpegthumbnailer: video thumbnails in Explorer and the file dialogs'
             'gnome-font-viewer: font thumbnails in Explorer and the file dialogs'
             'libgsf: OpenDocument and Office document thumbnails in Explorer and the file dialogs'
-            'libarchive: bsdtar, which Send To > Compressed (zipped) Folder, Extract Here and Extract to shell out to'
+            'libarchive: bsdtar, which compressed folders, Send To > Compressed (zipped) Folder and the Extract rows shell out to'
             'wireplumber: wpctl, which reprise-sound, reprise-volume, the volume keys and Remote Desktop sound set the default device, volume and mute with'
             'upower: the battery behind the reprise-power tray icon and the on-battery idle timeouts'
             'power-profiles-daemon: the power profile in Power Options and the battery icon menu'

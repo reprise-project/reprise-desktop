@@ -331,6 +331,7 @@ impl Explorer {
     /// [`Explorer::tree_follow`] with the children of some places on the way already read
     /// ([`foldertree::read_kids`]).
     pub fn tree_follow_with(&mut self, place: &Place, read: Vec<(Place, Kids)>, ctx: &mut Ctx) {
+        let place = &place.in_tree();
         let inp = Inputs {
             show_hidden: self.folders.show_hidden,
             drives: &self.drives,
