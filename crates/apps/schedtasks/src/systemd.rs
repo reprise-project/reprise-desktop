@@ -46,6 +46,13 @@ pub enum Cmd {
         task: NewTask,
         taken: Vec<String>,
     },
+    /// Rewrite the pair of a timer New Task wrote with `task` ([`units::rewrite`]) and reload; the
+    /// unit names stay. `was` is the task the files held when Edit opened them.
+    Edit {
+        timer: String,
+        was: NewTask,
+        task: NewTask,
+    },
     /// Disable and stop a timer New Task wrote and its service, remove both files and reload.
     Delete(String),
     /// Enable and start a timer (`on`), or disable and stop it. `file_state` is its
@@ -133,6 +140,9 @@ fn serve(rx: Receiver<Cmd>, post: Poster<Update>, shown: Arc<Mutex<HashSet<Strin
                 Cmd::Create { task, taken } => {
                     reprisebus::wait(create(&conn, folders.as_ref(), task, taken))
                         .map(|timer| post.post(Update::Created(timer)))
+                }
+                Cmd::Edit { timer, was, task } => {
+                    reprisebus::wait(edit(&conn, dir, timer, was, task))
                 }
                 Cmd::Delete(timer) => reprisebus::wait(delete(&conn, dir, timer)),
                 cmd => reprisebus::wait(act(&conn, cmd)),
@@ -358,7 +368,7 @@ fn command(exec: &Props) -> String {
 /// Runs `cmd` as `systemctl --user start`, `stop`, `enable --now` or `disable --now` would.
 pub async fn act(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
     match cmd {
-        Cmd::Refresh | Cmd::Output(_) | Cmd::Create { .. } | Cmd::Delete(_) => {}
+        Cmd::Refresh | Cmd::Output(_) | Cmd::Create { .. } | Cmd::Edit { .. } | Cmd::Delete(_) => {}
         Cmd::Run(service) => {
             call(conn, "StartUnit", &(service, "replace")).await?;
         }
@@ -420,23 +430,49 @@ async fn create(
     }
 }
 
+/// The pair of timer `timer` in `dir` is ours ([`units::ours`]) by the manager's current
+/// `FragmentPath`.
+async fn check_ours(conn: &Connection, dir: &Path, timer: &str) -> zbus::Result<()> {
+    let not_ours = || failed("Scheduled Tasks did not make this task");
+    if !timer.strip_suffix(".timer").is_some_and(units::is_our_stem) {
+        return Err(not_ours());
+    }
+    let fragment = get_all(conn, &load(conn, timer).await?, UNIT).await?;
+    let fragment = prop::<String>(&fragment, "FragmentPath").unwrap_or_default();
+    match units::ours(dir, timer, &fragment) {
+        true => Ok(()),
+        false => Err(not_ours()),
+    }
+}
+
+/// Rewrites the pair of timer `timer` in `dir` with `task` and reloads, when the pair is ours and
+/// still holds `was`, so a change made by hand while the box was open is never lost. The reload
+/// has a running timer work out its next run from the new schedule.
+async fn edit(
+    conn: &Connection,
+    dir: Option<&Path>,
+    timer: &str,
+    was: &NewTask,
+    task: &NewTask,
+) -> zbus::Result<()> {
+    let dir = dir.ok_or_else(no_folder)?;
+    check_ours(conn, dir, timer).await?;
+    if units::read(dir, timer).as_ref() != Some(was) {
+        return Err(failed("its files changed since Edit opened them"));
+    }
+    units::rewrite(dir, timer, task).map_err(|e| failed(&e.to_string()))?;
+    call(conn, "Reload", &()).await?;
+    Ok(())
+}
+
 /// Disables and stops timer `timer` and stops its service, removes their files from `dir` and
 /// reloads, when the pair is ours ([`units::ours`]) by the manager's current `FragmentPath`;
 /// anything else is refused untouched. The service goes first, so a Delete that stops between
 /// the two can be done again.
 async fn delete(conn: &Connection, dir: Option<&Path>, timer: &str) -> zbus::Result<()> {
     let dir = dir.ok_or_else(no_folder)?;
-    let not_ours = || failed("Scheduled Tasks did not make this task");
-    let stem = timer
-        .strip_suffix(".timer")
-        .filter(|s| units::is_our_stem(s));
-    let stem = stem.ok_or_else(not_ours)?;
-    let service = format!("{stem}.service");
-    let fragment = get_all(conn, &load(conn, timer).await?, UNIT).await?;
-    let fragment = prop::<String>(&fragment, "FragmentPath").unwrap_or_default();
-    if !units::ours(dir, timer, &fragment) {
-        return Err(not_ours());
-    }
+    check_ours(conn, dir, timer).await?;
+    let service = format!("{}.service", timer.strip_suffix(".timer").unwrap_or(timer));
     call(conn, "DisableUnitFiles", &(&[timer][..], false)).await?;
     call(conn, "StopUnit", &(timer, "replace")).await?;
     call(conn, "StopUnit", &(&service, "replace")).await?;

@@ -1,6 +1,7 @@
 //! reprise-schedtasks: the systemd user manager's timers with their schedule, next and last run
 //! and status; Run Now, Stop, Enable or Disable, Properties and View Output on the one picked;
-//! New Task writes a timer of its own, and Delete removes one it wrote ([`units`]).
+//! New Task writes a timer of its own, and Edit and Delete change or remove one it wrote
+//! ([`units`]).
 //! docs/programs.md covers what the window does.
 
 #[cfg(test)]
@@ -58,6 +59,7 @@ const TOGGLE: &str = "toggle";
 const PROPERTIES: &str = "properties";
 const VIEW_OUTPUT: &str = "output";
 const NEW: &str = "new";
+const EDIT: &str = "edit";
 const DELETE: &str = "delete";
 const STATUS: &str = "status";
 
@@ -123,6 +125,7 @@ enum Act {
     Toggle,
     Properties,
     Output,
+    Edit,
     Delete,
 }
 
@@ -166,6 +169,7 @@ fn buttons() -> Vec<Item> {
         (PROPERTIES, tr!("properties"), 85),
         (VIEW_OUTPUT, tr!("view-output"), 90),
         (NEW, tr!("new-task"), 85),
+        (EDIT, tr!("edit"), 75),
         (DELETE, tr!("delete"), 75),
     ] {
         items.push(Item::button(
@@ -303,6 +307,8 @@ impl SchedTasks {
         self.form.set_enabled(VIEW_OUTPUT, picked.is_some());
         self.form.set_enabled(NEW, self.bus.is_some());
         self.form
+            .set_enabled(EDIT, picked.as_ref().is_some_and(|t| t.ours));
+        self.form
             .set_enabled(DELETE, picked.as_ref().is_some_and(|t| t.ours));
         self.form
             .set_enabled(TOGGLE, picked.as_ref().is_some_and(Task::can_toggle));
@@ -355,6 +361,10 @@ impl SchedTasks {
                 self.send(Cmd::Output(t.service));
                 return Reply::redraw_all();
             }
+            Act::Edit if t.ours => {
+                self.open_edit(&t);
+                return Reply::redraw_all();
+            }
             Act::Delete if t.ours => {
                 self.ask_delete(&t);
                 return Reply::redraw_all();
@@ -379,6 +389,26 @@ impl SchedTasks {
         )
         .sounding(repriseapp::sound::Event::Warning);
         self.asking.ask(b, DeleteAsk(t.timer.clone()));
+    }
+
+    /// Opens the box on the task its files hold, or says they no longer read as New Task wrote
+    /// them.
+    fn open_edit(&mut self, t: &Task) {
+        if self.new_task.is_some() {
+            return;
+        }
+        let read = std::path::Path::new(&t.file)
+            .parent()
+            .and_then(|dir| units::read(dir, &t.timer));
+        match read {
+            Some(task) => {
+                let b = newtask::NewTaskBox::edit(newtask::now, self.is_12h, &t.timer, &task);
+                self.new_task = Some(b);
+            }
+            None => self
+                .note
+                .show(&tr!("name"), tr!("edit-unread", name = t.name()), None),
+        }
     }
 
     fn open_new(&mut self) {
@@ -416,6 +446,7 @@ impl SchedTasks {
                         }
                         Cmd::Turn { timer, .. } => tr!("refused-disable", unit = timer, why = why),
                         Cmd::Create { .. } => tr!("refused-create", why = why),
+                        Cmd::Edit { timer, .. } => tr!("refused-edit", unit = timer, why = why),
                         Cmd::Delete(timer) => tr!("refused-delete", unit = timer, why = why),
                         Cmd::Refresh | Cmd::Output(_) => continue,
                     };
@@ -440,6 +471,7 @@ impl SchedTasks {
             (item(&toggle, t.can_toggle()), Some(Act::Toggle)),
             (MenuItem::Separator, None),
             (item(&tr!("menu-output"), true), Some(Act::Output)),
+            (item(&tr!("menu-edit"), t.ours), Some(Act::Edit)),
             (item(&tr!("menu-delete"), t.ours), Some(Act::Delete)),
             (MenuItem::Separator, None),
             (item(&tr!("menu-properties"), true), Some(Act::Properties)),
@@ -589,6 +621,7 @@ impl SchedTasks {
             Some(form::Event::Pressed(RUN)) => self.act(Act::Run),
             Some(form::Event::Pressed(STOP)) => self.act(Act::Stop),
             Some(form::Event::Pressed(VIEW_OUTPUT)) => self.act(Act::Output),
+            Some(form::Event::Pressed(EDIT)) => self.act(Act::Edit),
             Some(form::Event::Pressed(DELETE)) => self.act(Act::Delete),
             Some(form::Event::Pressed(NEW)) => {
                 self.open_new();
@@ -654,8 +687,13 @@ impl SchedTasks {
                 Reply::redraw_all()
             }
             newtask::Outcome::Create(task) => {
-                let taken = self.tasks.iter().map(|t| t.timer.clone()).collect();
-                self.send(Cmd::Create { task, taken });
+                match d.editing.clone() {
+                    Some((timer, was)) => self.send(Cmd::Edit { timer, was, task }),
+                    None => {
+                        let taken = self.tasks.iter().map(|t| t.timer.clone()).collect();
+                        self.send(Cmd::Create { task, taken });
+                    }
+                }
                 self.new_task = None;
                 self.browse = None;
                 Reply::redraw_all()
@@ -831,10 +869,13 @@ impl App for SchedTasks {
                 modal: false,
             });
         }
-        if self.new_task.is_some() {
+        if let Some(d) = &self.new_task {
             out.push(Child {
                 id: NEW_TASK,
-                title: tr!("new-title"),
+                title: match d.editing {
+                    Some(_) => tr!("edit-title"),
+                    None => tr!("new-title"),
+                },
                 size: forms.text.size(newtask::CLIENT),
                 fixed: true,
                 modal: true,

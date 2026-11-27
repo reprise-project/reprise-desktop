@@ -1,7 +1,7 @@
-//! The unit files New Task writes and Delete removes: a `reprise-task-<slug>.timer` and
-//! `.service` pair in the user manager's own folder ([`config_dir`]), each opening with
-//! [`MARKER`]. Delete takes only a pair that is ours by [`is_ours`]; every other timer is
-//! never written or removed.
+//! The unit files New Task writes, Edit rewrites and Delete removes: a
+//! `reprise-task-<slug>.timer` and `.service` pair in the user manager's own folder
+//! ([`config_dir`]), each opening with [`MARKER`]. Edit and Delete take only a pair that is ours
+//! by [`ours`]; every other timer is never written or removed.
 
 use std::ffi::OsStr;
 use std::io::{self, Write};
@@ -49,6 +49,9 @@ pub enum Schedule {
 /// systemd's weekday names, Monday first.
 pub const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/// The minutes [`Schedule::Minutes`] repeats at.
+pub const EVERY: [u32; 4] = [5, 10, 15, 30];
+
 /// How long after the user manager starts an at-log-on task runs, so the desktop has handed its
 /// environment to the manager first.
 pub const LOGON_DELAY_S: u64 = 30;
@@ -81,6 +84,52 @@ impl Schedule {
             Some(spec) => format!("OnCalendar={spec}"),
             None => format!("OnStartupSec={LOGON_DELAY_S}s"),
         }
+    }
+
+    /// The schedule whose [`Schedule::setting`] is `setting`; None for any other line.
+    pub fn parse(setting: &str) -> Option<Schedule> {
+        let spec = setting.strip_prefix("OnCalendar=");
+        let Some(spec) = spec else {
+            return (setting == Schedule::AtLogOn.setting()).then_some(Schedule::AtLogOn);
+        };
+        let num = |s: &str| s.parse::<u32>().ok();
+        let at = |t: &str| {
+            let mut it = t.split(':');
+            Some((num(it.next()?)?, num(it.next()?)?))
+        };
+        let s = match spec.split(' ').collect::<Vec<_>>().as_slice() {
+            ["*-*-*", "*:00:00"] => Schedule::Hourly,
+            ["*-*-*", t] if t.starts_with("*:00/") => Schedule::Minutes {
+                every: num(t.strip_prefix("*:00/")?.strip_suffix(":00")?)?,
+            },
+            [day, "*-*-*", t] => Schedule::Weekly {
+                day: WEEKDAYS.iter().position(|d| d == day)?,
+                at: at(t)?,
+            },
+            ["*-*-*", t] => Schedule::Daily { at: at(t)? },
+            [date, t] if date.starts_with("*-*-") => Schedule::Monthly {
+                day: num(date.strip_prefix("*-*-")?)?,
+                at: at(t)?,
+            },
+            [date, t] => {
+                let mut it = date.split('-');
+                let (y, mo, d) = (it.next()?, it.next()?, it.next()?);
+                Schedule::Once {
+                    date: (y.parse().ok()?, num(mo)?, num(d)?),
+                    at: at(t)?,
+                }
+            }
+            _ => return None,
+        };
+        let fits = match s {
+            Schedule::Minutes { every } => EVERY.contains(&every),
+            Schedule::Daily { at }
+            | Schedule::Weekly { at, .. }
+            | Schedule::Monthly { at, .. }
+            | Schedule::Once { at, .. } => at.0 < 24 && at.1 < 60,
+            _ => true,
+        };
+        (fits && s.calendar().as_deref() == Some(spec)).then_some(s)
     }
 }
 
@@ -324,12 +373,18 @@ pub fn exec_start(program: &Path, args: &[String]) -> Result<String, Problem> {
     ))
 }
 
-/// `name` as a `Description=` value: trimmed, `%` doubled, no line-continuing `\` at its end.
+/// `name` as the unit files keep it: trimmed, with no line-continuing `\` at its end.
+pub fn kept_name(name: &str) -> &str {
+    name.trim()
+        .trim_end_matches(|c: char| c == '\\' || c.is_whitespace())
+}
+
+/// `name` as a `Description=` value: [`kept_name`] with `%` doubled.
 fn description(name: &str) -> Result<String, Problem> {
     if name.chars().any(char::is_control) {
         return Err(Problem::Control);
     }
-    Ok(name.trim().trim_end_matches('\\').replace('%', "%%"))
+    Ok(kept_name(name).replace('%', "%%"))
 }
 
 /// The `.service` and `.timer` files' text for `task`.
@@ -361,6 +416,108 @@ pub fn write(folders: &Folders, task: &NewTask, taken: &[String]) -> io::Result<
         return Err(e);
     }
     Ok(format!("{stem}.timer"))
+}
+
+/// The task the pair [`texts`] wrote for it holds: `service` and `timer` are the files' text.
+/// None when a line it writes is missing or reads otherwise, as after an edit by hand.
+pub fn parse(service: &str, timer: &str) -> Option<NewTask> {
+    let value = |text: &str, key: &str| {
+        let mut found = text.lines().filter_map(|l| l.strip_prefix(key));
+        let v = found.next()?;
+        found.next().is_none().then_some(v.to_string())
+    };
+    let name = value(service, "Description=")?.replace("%%", "%");
+    let mut words = unquote(value(service, "ExecStart=")?.strip_prefix(':')?)?.into_iter();
+    let program = PathBuf::from(words.next()?);
+    let task = NewTask {
+        name,
+        program,
+        args: words.collect(),
+        schedule: Schedule::parse(timer.lines().find(|l| l.starts_with("On"))?)?,
+    };
+    (texts(&task).ok()? == (service.to_string(), timer.to_string())).then_some(task)
+}
+
+/// The words of an `ExecStart=` value [`exec_start`] wrote, past its `:`.
+fn unquote(line: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut chars = line.chars().peekable();
+    while chars.peek().is_some() {
+        if !out.is_empty() && chars.next()? != ' ' {
+            return None;
+        }
+        if chars.next()? != '"' {
+            return None;
+        }
+        let mut w = String::new();
+        loop {
+            match chars.next()? {
+                '"' => break,
+                '\\' => w.push(chars.next()?),
+                '%' => match chars.next()? {
+                    '%' => w.push('%'),
+                    _ => return None,
+                },
+                c => w.push(c),
+            }
+        }
+        out.push(w);
+    }
+    Some(out)
+}
+
+/// The task timer `timer` and its service in `dir` hold ([`parse`]).
+pub fn read(dir: &Path, timer: &str) -> Option<NewTask> {
+    let stem = timer.strip_suffix(".timer").filter(|s| is_our_stem(s))?;
+    let service = std::fs::read_to_string(dir.join(format!("{stem}.service"))).ok()?;
+    let timer = std::fs::read_to_string(dir.join(timer)).ok()?;
+    parse(&service, &timer)
+}
+
+/// `args` as the Arguments field shows them, so [`split_args`] reads them back: a word holding a
+/// space, a quote or a `\`, or none at all, in single quotes, or double quotes when it holds `'`.
+pub fn join_args(args: &[String]) -> String {
+    let plain =
+        |a: &str| !a.is_empty() && !a.contains(|c: char| c.is_whitespace() || "'\"\\".contains(c));
+    args.iter()
+        .map(|a| match a {
+            a if plain(a) => a.clone(),
+            a if !a.contains('\'') => format!("'{a}'"),
+            a => format!("\"{}\"", a.replace('\\', "\\\\").replace('"', "\\\"")),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Rewrites timer `timer` and its service in `dir` with `task`'s text, the service first; each
+/// file is written beside its place, synced and renamed over it. When the timer cannot be
+/// written the service's old text goes back, so the pair never mixes two tasks. The caller has
+/// checked the pair is [`ours`].
+pub fn rewrite(dir: &Path, timer: &str, task: &NewTask) -> io::Result<()> {
+    let (service, timer_text) = texts(task).map_err(|p| io::Error::other(format!("{p:?}")))?;
+    let stem = timer.strip_suffix(".timer").filter(|s| is_our_stem(s));
+    let stem = stem.ok_or_else(|| io::Error::other("not a task New Task makes"))?;
+    let service_path = dir.join(format!("{stem}.service"));
+    let was = std::fs::read_to_string(&service_path)?;
+    put_over(&service_path, &service)?;
+    if let Err(e) = put_over(&dir.join(timer), &timer_text) {
+        let _ = put_over(&service_path, &was);
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn put_over(path: &Path, text: &str) -> io::Result<()> {
+    let (mut f, tmp) = reprisefs::ops::create_temp_beside(path, None)?;
+    let done = (|| {
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done
 }
 
 /// Writes `text` to the new file `path` whole or not at all.

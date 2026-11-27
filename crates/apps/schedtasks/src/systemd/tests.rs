@@ -705,3 +705,60 @@ fn delete_removes_only_a_pair_new_task_wrote() {
         );
     });
 }
+
+#[test]
+fn edit_rewrites_only_a_pair_new_task_wrote_unchanged_since_and_reloads() {
+    let Some(bus) = testbus::bus_with_no_services() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let timer = units::write(&own(&dir), &new_task(), &[]).unwrap();
+    let made = Spec {
+        load: "loaded",
+        fragment: dir.join(&timer).to_string_lossy().into_owned(),
+        ..Spec::default()
+    };
+    let theirs = dir.join("backup.timer");
+    std::fs::write(&theirs, format!("{}\n", units::MARKER)).unwrap();
+    std::fs::write(dir.join("backup.service"), format!("{}\n", units::MARKER)).unwrap();
+    let changed = NewTask {
+        name: "Back up hourly".into(),
+        schedule: units::Schedule::Hourly,
+        ..new_task()
+    };
+    zbus::block_on(async move {
+        let (_fake, conn, calls) =
+            manager_with(&bus, vec![("reprise-task-back-up.timer", made)]).await;
+        let was = new_task();
+        let refused = edit(&conn, Some(&dir), "backup.timer", &was, &changed).await;
+        assert_eq!(
+            refused.map_err(|e| told(&e)),
+            Err("Scheduled Tasks did not make this task".into())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&theirs).unwrap(),
+            format!("{}\n", units::MARKER)
+        );
+        let path = dir.join(&timer).with_extension("service");
+        let opened = std::fs::read_to_string(&path).unwrap();
+        let by_hand = opened.clone() + "Environment=A=1\n";
+        std::fs::write(&path, &by_hand).unwrap();
+        let refused = edit(&conn, Some(&dir), &timer, &was, &changed).await;
+        assert_eq!(
+            refused.map_err(|e| told(&e)),
+            Err("its files changed since Edit opened them".into())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            by_hand,
+            "a change made while the box was open stays"
+        );
+        std::fs::write(&path, &opened).unwrap();
+        edit(&conn, Some(&dir), &timer, &was, &changed)
+            .await
+            .unwrap();
+        assert_eq!(units::read(&dir, &timer), Some(changed));
+        assert_eq!(*lock(&calls), ["Reload"]);
+    });
+}

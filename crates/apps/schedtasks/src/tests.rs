@@ -558,6 +558,64 @@ fn delete_asks_first_and_only_for_a_task_new_task_made() {
 }
 
 #[test]
+fn edit_opens_new_task_on_a_task_it_wrote_and_sends_the_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let folders = units::Folders {
+        own: tmp.path().into(),
+        search: vec![],
+    };
+    let task = units::NewTask {
+        name: "Back up".into(),
+        program: "/bin/sh".into(),
+        args: vec!["-c".into(), "echo hi".into()],
+        schedule: units::Schedule::Weekly { day: 2, at: (3, 0) },
+    };
+    let timer = units::write(&folders, &task, &[]).unwrap();
+    let mut w = window();
+    let ours = Task {
+        file: tmp.path().join(&timer).to_string_lossy().into_owned(),
+        ..made()
+    };
+    w.tell(Update::Tasks(Ok(vec![backup(), ours])));
+    w.pick("backup.timer");
+    assert!(!enabled(&w.app, EDIT), "a timer New Task did not make");
+    w.pick(&timer);
+    w.press(EDIT);
+    let titles: Vec<String> = w.app.children().into_iter().map(|c| c.title).collect();
+    assert_eq!(titles, ["Edit Task"]);
+    let d = w.app.new_task.as_mut().unwrap();
+    d.form.show_edit_text(newtask::NAME, "Back up weekly");
+    w.app.event(NEW_TASK, key(keysym::RETURN, None), &mut ctx());
+    assert!(w.app.new_task.is_none(), "Enter is OK");
+    let changed = units::NewTask {
+        name: "Back up weekly".into(),
+        ..task.clone()
+    };
+    assert_eq!(
+        w.sent(),
+        [Cmd::Edit {
+            timer,
+            was: task,
+            task: changed
+        }]
+    );
+}
+
+#[test]
+fn edit_on_files_changed_by_hand_says_so() {
+    let mut w = window();
+    w.tell(Update::Tasks(Ok(vec![made()])));
+    w.pick("reprise-task-back-up.timer");
+    w.app.act(Act::Edit);
+    assert!(w.app.new_task.is_none());
+    let text = &w.app.note.shown().expect("a note").fields.text;
+    assert_eq!(
+        text,
+        "The files of the task 'Back up' were changed outside Scheduled Tasks, so it cannot be edited here."
+    );
+}
+
+#[test]
 fn a_refusal_is_told_in_a_box() {
     let mut w = window();
     w.tell(Update::Refused(
