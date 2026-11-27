@@ -650,7 +650,7 @@ impl DiskUsage {
                 self.open_menu(lay.body.x + 20, y, ctx, true)
             }
             _ if alt => return None,
-            sym => match self.list.key(sym, r, ctx) {
+            _ => match self.list.key(k, r, ctx) {
                 Some(true) => Reply::redraw(),
                 Some(false) => Reply::none(),
                 None => return None,

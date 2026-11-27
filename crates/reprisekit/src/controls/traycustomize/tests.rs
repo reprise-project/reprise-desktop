@@ -1288,6 +1288,7 @@ fn tab_closes_the_open_behaviour_list_and_a_letter_picks_on_the_closed_one() {
         [Behaviour::Mute, Behaviour::Auto],
         "h: Hide, no balloons, then Hide when inactive"
     );
+    t.combo.typed = Default::default();
     t.key(form::Key::Char('a'));
     let first_a = t.entries[i].behaviour;
     t.key(form::Key::Char('a'));

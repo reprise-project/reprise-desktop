@@ -606,7 +606,7 @@ impl Folder {
             return Outcome::Redraw;
         }
         let (_, r) = self.layout(ctx);
-        if let Some(moved) = self.list.key(k.sym, r, ctx) {
+        if let Some(moved) = self.list.key(k, r, ctx) {
             self.set_pane(s);
             return redraw(moved);
         }

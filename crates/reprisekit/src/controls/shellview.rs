@@ -207,6 +207,8 @@ pub struct ShellView {
     pub hot: Option<usize>,
     /// The view lacks the focus: a look that boxes its items greys the selection.
     pub inactive: bool,
+    /// The letters typed on the view in a row, for type-ahead.
+    pub typed: crate::selection::TypeAhead,
 }
 
 impl Default for ShellView {
@@ -229,6 +231,7 @@ impl Default for ShellView {
             header: Pointer::new(),
             hot: None,
             inactive: false,
+            typed: Default::default(),
         }
     }
 }

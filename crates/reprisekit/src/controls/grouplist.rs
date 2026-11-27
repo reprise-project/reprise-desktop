@@ -9,7 +9,7 @@ use crate::controls::scrollbar::RowScroll;
 use crate::look::Paint;
 use crate::look::widgets::{draw_field_frame, draw_scrollbar};
 use crate::raster::{Canvas, Rect};
-use crate::selection::{step_index, type_ahead};
+use crate::selection::{TypeAhead, step_index};
 use crate::text::{Align, TextRenderer};
 use crate::theme::TextUnits;
 
@@ -53,6 +53,8 @@ pub struct GroupList<T> {
     pub trail: Vec<i32>,
     /// Per row, grey text after its label, cut short of the trail; empty for none.
     pub detail: Vec<String>,
+    /// The letters typed on the list in a row, for type-ahead.
+    pub typed: TypeAhead,
 }
 
 impl<T> GroupList<T> {
@@ -65,6 +67,7 @@ impl<T> GroupList<T> {
             top: 0,
             trail: Vec::new(),
             detail: Vec::new(),
+            typed: TypeAhead::default(),
         }
     }
 
@@ -126,7 +129,10 @@ impl<T> GroupList<T> {
     /// A letter typed on the list: type-ahead over every row, the headers included ("o" lands on
     /// "Other Programs:").
     pub fn jump(&mut self, ch: char, visible: usize) -> bool {
-        match type_ahead(self.rows.iter().map(Row::label), self.selected, ch) {
+        match self
+            .typed
+            .find(self.rows.iter().map(Row::label), self.selected, ch)
+        {
             Some(k) if self.selected != Some(k) => {
                 self.select(k, visible);
                 true
@@ -459,8 +465,10 @@ mod tests {
         assert_eq!(g.top, 3, "the header above comes into view");
         assert!(g.jump('o', 11));
         assert_eq!(g.selected, Some(3));
+        g.typed = TypeAhead::default();
         assert!(g.jump('p', 11));
         assert_eq!(g.selected, Some(4));
+        g.typed = TypeAhead::default();
         assert!(!g.jump('z', 11));
         assert!(g.scroll(100, 11));
         assert_eq!(g.top, 5);

@@ -6,6 +6,7 @@
 
 use crate::raster::Rect;
 use std::collections::BTreeSet;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Mods {
@@ -185,25 +186,69 @@ pub fn step_index(cur: Option<usize>, delta: i64, n: usize) -> Option<usize> {
     Some((from + delta).clamp(0, last) as usize)
 }
 
-pub fn type_ahead<'a>(
-    names: impl IntoIterator<Item = &'a str>,
-    from: Option<usize>,
-    ch: char,
-) -> Option<usize> {
-    let names: Vec<&str> = names.into_iter().collect();
-    let n = names.len();
-    if n == 0 {
-        return None;
+/// How long after a letter typed on a list the next one still adds to the prefix: a word typed
+/// at any pace a reader keeps up stays one search, and a pause to read the list starts a new one.
+pub const TYPE_AHEAD_GAP: Duration = Duration::from_secs(1);
+
+/// The letters typed on a list in a row, each within [`TYPE_AHEAD_GAP`] of the last.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TypeAhead {
+    typed: String,
+    last: Option<Instant>,
+}
+
+impl TypeAhead {
+    /// [`TypeAhead::find_at`] for a letter typed now.
+    pub fn find<S: AsRef<str>>(
+        &mut self,
+        names: impl IntoIterator<Item = S>,
+        from: Option<usize>,
+        ch: char,
+    ) -> Option<usize> {
+        self.find_at(names, from, ch, Instant::now())
     }
-    let ch = ch.to_lowercase().next()?;
-    let start = from.map_or(0, |f| f + 1);
-    (0..n).map(|k| (start + k) % n).find(|&k| {
-        names[k]
-            .chars()
-            .next()
-            .and_then(|c| c.to_lowercase().next())
-            == Some(ch)
-    })
+
+    /// The row of `names` for `ch` typed at `now` with row `from` focused, matched without case.
+    /// One letter, or one letter typed again and again, steps to the next row after `from` that
+    /// starts with it, wrapping; a longer prefix takes the first row from `from` on that starts
+    /// with it, so `from` stays while it still matches.
+    pub fn find_at<S: AsRef<str>>(
+        &mut self,
+        names: impl IntoIterator<Item = S>,
+        from: Option<usize>,
+        ch: char,
+        now: Instant,
+    ) -> Option<usize> {
+        if self
+            .last
+            .is_none_or(|t| now.saturating_duration_since(t) > TYPE_AHEAD_GAP)
+        {
+            self.typed.clear();
+        }
+        self.last = Some(now);
+        self.typed.extend(ch.to_lowercase());
+        let names: Vec<S> = names.into_iter().collect();
+        let n = names.len();
+        let first = self.typed.chars().next()?;
+        let (prefix, start) = match self.typed.chars().all(|c| c == first) {
+            true => (&self.typed[..first.len_utf8()], from.map_or(0, |f| f + 1)),
+            false => (self.typed.as_str(), from.unwrap_or(0)),
+        };
+        (0..n)
+            .map(|k| (start + k) % n)
+            .find(|&k| starts_with_lower(names[k].as_ref(), prefix))
+    }
+}
+
+/// Whether a list takes `c` for type-ahead: any printing character but a space, which works the
+/// focused row.
+pub fn types_ahead(c: char) -> bool {
+    !c.is_control() && !c.is_whitespace()
+}
+
+fn starts_with_lower(name: &str, prefix: &str) -> bool {
+    let mut name = name.chars().flat_map(char::to_lowercase);
+    prefix.chars().all(|c| name.next() == Some(c))
 }
 
 fn range_between(a: usize, b: usize) -> std::ops::RangeInclusive<usize> {
@@ -250,24 +295,73 @@ mod tests {
         assert_eq!(step_index(Some(0), -1, 0), None);
     }
 
+    const ROWS: [&str; 7] = [
+        "Write",
+        "Other Programs:",
+        "Image Viewer",
+        "Notepad",
+        "Draw",
+        "Web Browser",
+        "Notes",
+    ];
+
     #[test]
-    fn type_ahead_takes_the_next_match_after_from_and_wraps() {
-        let rows = [
-            "Write",
-            "Other Programs:",
-            "Image Viewer",
-            "Notepad",
-            "Draw",
-            "Web Browser",
-        ];
-        let names = || rows.iter().copied();
-        assert_eq!(type_ahead(names(), Some(1), 'w'), Some(5));
-        assert_eq!(type_ahead(names(), Some(5), 'W'), Some(0));
-        assert_eq!(type_ahead(names(), Some(3), 'n'), Some(3));
-        assert_eq!(type_ahead(names(), Some(5), 'i'), Some(2));
-        assert_eq!(type_ahead(names(), None, 'o'), Some(1));
-        assert_eq!(type_ahead(names(), Some(0), 'z'), None);
-        assert_eq!(type_ahead(std::iter::empty(), None, 'a'), None);
+    fn one_letter_steps_to_the_next_row_starting_with_it_and_wraps() {
+        let t0 = Instant::now();
+        let mut at = 0;
+        let mut find = |from, ch| {
+            at += 2;
+            let now = t0 + Duration::from_secs(at);
+            TypeAhead::default().find_at(ROWS, from, ch, now)
+        };
+        assert_eq!(find(Some(1), 'w'), Some(5));
+        assert_eq!(find(Some(5), 'W'), Some(0));
+        assert_eq!(find(Some(3), 'n'), Some(6));
+        assert_eq!(find(Some(6), 'n'), Some(3));
+        assert_eq!(find(None, 'o'), Some(1));
+        assert_eq!(find(Some(0), 'z'), None);
+        let none: [&str; 0] = [];
+        assert_eq!(TypeAhead::default().find(none, None, 'a'), None);
+    }
+
+    #[test]
+    fn letters_typed_together_build_a_prefix() {
+        let t0 = Instant::now();
+        let ms = |m| t0 + Duration::from_millis(m);
+        let mut t = TypeAhead::default();
+        assert_eq!(t.find_at(ROWS, Some(0), 'n', ms(0)), Some(3));
+        assert_eq!(
+            t.find_at(ROWS, Some(3), 'o', ms(400)),
+            Some(3),
+            "\"no\" stays on Notepad"
+        );
+        assert_eq!(t.find_at(ROWS, Some(3), 't', ms(800)), Some(3));
+        assert_eq!(t.find_at(ROWS, Some(3), 'E', ms(1700)), Some(3));
+        assert_eq!(
+            t.find_at(ROWS, Some(3), 's', ms(2500)),
+            Some(6),
+            "\"notes\""
+        );
+        assert_eq!(
+            t.find_at(ROWS, Some(6), 'x', ms(3000)),
+            None,
+            "\"notesx\" matches nothing"
+        );
+        assert_eq!(
+            t.find_at(ROWS, Some(6), 'd', ms(4100)),
+            Some(4),
+            "after a pause over a second, \"d\" starts afresh"
+        );
+    }
+
+    #[test]
+    fn one_letter_typed_again_and_again_cycles() {
+        let t0 = Instant::now();
+        let ms = |m| t0 + Duration::from_millis(m);
+        let mut t = TypeAhead::default();
+        assert_eq!(t.find_at(ROWS, None, 'n', ms(0)), Some(3));
+        assert_eq!(t.find_at(ROWS, Some(3), 'n', ms(200)), Some(6));
+        assert_eq!(t.find_at(ROWS, Some(6), 'n', ms(400)), Some(3));
     }
 
     #[test]

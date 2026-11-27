@@ -34,11 +34,11 @@ fn details_step(sv: &mut ShellView, dir: IconMove, lay: &Layout, mods: Mods) -> 
     with_details(sv, lay, |lv, lv_lay| lv.step(row_step, lv_lay, mods))
 }
 
-/// Jump to the next entry whose name starts with `ch`, case-insensitively,
-/// searching from just after the focus and wrapping; `true` when something matched.
+/// Select the entry [`TypeAhead::find`](crate::selection::TypeAhead::find) picks for `ch`;
+/// `true` when something matched.
 pub fn type_ahead(sv: &mut ShellView, ch: char) -> bool {
     let names = sv.entries.iter().map(|e| e.name.as_str());
-    match crate::selection::type_ahead(names, sv.selection.focus, ch) {
+    match sv.typed.find(names, sv.selection.focus, ch) {
         Some(i) => {
             sv.selection.set_only(Some(i));
             true

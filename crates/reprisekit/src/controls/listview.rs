@@ -31,7 +31,7 @@ use crate::look::widgets::{
 };
 use crate::pointer::{Click, DoubleClick, Interaction, Lit, Pointer, Shape};
 use crate::raster::{Canvas, Rect};
-use crate::selection::{Mods, Selection, step_index};
+use crate::selection::{Mods, Selection, TypeAhead, step_index};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, TextEdit, TextSpot};
 use crate::theme::{Color, ColorScheme, TextUnits};
@@ -270,6 +270,8 @@ pub struct ListView<R: Rows = Vec<Row>, C = Vec<Column>, S = Selection> {
     pub clicks: DoubleClick<usize>,
     /// The vertical bar's thumb while [`ListView::pointer`] holds it.
     pub thumb: ThumbDrag,
+    /// The letters typed on the list in a row, for [`ListView::jump`].
+    pub typed: TypeAhead,
 }
 
 impl<R: Rows + Default> Default for ListView<R> {
@@ -295,6 +297,7 @@ impl<R: Rows + Default> Default for ListView<R> {
             inactive: false,
             clicks: DoubleClick::default(),
             thumb: ThumbDrag::default(),
+            typed: TypeAhead::default(),
         }
     }
 }
@@ -783,6 +786,19 @@ impl<R: Rows> ListView<R> {
     pub fn select(&mut self, i: Option<usize>, lay: &Layout) {
         self.selection.set_only(i.filter(|&i| i < self.rows.len()));
         self.follow(lay);
+    }
+
+    /// A letter typed on the list: selects the row [`TypeAhead::find`] picks by its first cell.
+    /// True when the selection moved.
+    pub fn jump(&mut self, ch: char, lay: &Layout) -> bool {
+        let names = (0..self.rows.len()).map(|i| self.rows.cell(i, 0));
+        let Some(i) = self.typed.find(names, self.selection.focus, ch) else {
+            return false;
+        };
+        let before = self.selection.clone();
+        self.focus_ring = true;
+        self.select(Some(i), lay);
+        self.selection != before
     }
 
     /// Set column `i` to `width` 100% px, held to [`MIN_COL_W`].

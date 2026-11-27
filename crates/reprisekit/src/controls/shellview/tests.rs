@@ -181,7 +181,8 @@ fn arrows_walk_the_columns() {
     assert_eq!(sv.selection.focus, Some(5), "the last column stays put");
 }
 
-/// Typing a letter jumps to the next entry starting with it, wrapping round.
+/// Typing a letter jumps to the next entry starting with it, wrapping round; the same letter
+/// again goes to the next.
 #[test]
 fn type_ahead_jumps_to_the_next_match() {
     let mut sv = ShellView {
@@ -195,6 +196,7 @@ fn type_ahead_jumps_to_the_next_match() {
     assert!(type_ahead(&mut sv, 'é'));
     assert_eq!(sv.selection.focus, Some(4));
     sv.selection.set_only(Some(0));
+    sv.typed = Default::default();
     assert!(type_ahead(&mut sv, 'b'));
     assert_eq!(sv.selection.focus, Some(1));
     assert!(type_ahead(&mut sv, 'b'));
