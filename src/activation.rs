@@ -318,8 +318,10 @@ impl State {
     /// The line typed in Run box `from`: one that names a folder opens it in Explorer, a document
     /// opens as its icon does ([`State::open_document`]), anything else runs as
     /// [`State::spawn_command_activated`]. Each closes the box. A line whose program is not there
-    /// keeps the box open under a notice. The paths are checked off the loop on a
-    /// [`State::spawn_job`], so a mount that does not answer stalls neither the loop nor the launch.
+    /// keeps the box open under a notice, unless its first word is a name typed from habit
+    /// ([`crate::spawn::habit_line`]), which runs the Reprise program instead. The paths are
+    /// checked off the loop on a [`State::spawn_job`], so a mount that does not answer stalls
+    /// neither the loop nor the launch.
     /// The box takes no second OK while its line is checked, and a check that lands after the box
     /// closed runs nothing.
     pub fn run_line_activated(&mut self, cmd: &str, from: u64) {
@@ -333,6 +335,7 @@ impl State {
         let mime = (folder.as_ref().and_then(|d| d.file_name()))
             .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
         let cmd = cmd.to_string();
+        let terminal = self.config.terminal.clone();
         self.dialogs.checking.push(from);
         let started = self.spawn_job(move || {
             let line = match (folder, program) {
@@ -350,7 +353,12 @@ impl State {
                     }
                     Err(_) => RunLine::Command,
                 },
-                (None, Some((word, p))) if p.missing(path.as_deref()) => RunLine::Missing(word),
+                (None, Some((word, p))) if p.missing(path.as_deref()) => {
+                    match crate::spawn::habit_line(&cmd, &word, &terminal) {
+                        Some(line) => RunLine::Habit(line),
+                        None => RunLine::Missing(word),
+                    }
+                }
                 (None, _) => RunLine::Command,
             };
             Box::new(move |state: &mut State| state.run_line_checked(&cmd, from, line))
@@ -379,6 +387,9 @@ impl State {
             RunLine::Document(path) => {
                 let how = reprisefs::program::Confirm::on_open(self.config.confirm_scripts);
                 self.open_document(&path, None, how, true);
+            }
+            RunLine::Habit(line) => {
+                self.spawn_command_activated(&line);
             }
             RunLine::Command | RunLine::Missing(_) => {
                 self.spawn_command_activated(cmd);
@@ -480,6 +491,8 @@ enum RunLine {
     Document(std::path::PathBuf),
     /// The program, as typed, is not there.
     Missing(String),
+    /// The line with its missing program swapped for the Reprise one.
+    Habit(String),
     /// Anything else, for `sh`.
     Command,
 }
@@ -1237,6 +1250,15 @@ pub(crate) mod tests {
         tap(&mut h, ENTER);
         h.until("the line is checked", |s| s.dialogs.checking.is_empty());
         assert_eq!(crate::spawn::recorded().len(), 1, "the line runs once");
+        assert!(h.state.dialogs.views.is_empty(), "Run closes");
+    }
+
+    #[test]
+    fn a_name_typed_from_habit_runs_its_reprise_program() {
+        let mut h = run_box("mspaint");
+        tap(&mut h, ENTER);
+        h.until("the line is checked", |s| s.dialogs.checking.is_empty());
+        assert_eq!(crate::spawn::recorded(), ["reprise-paint"]);
         assert!(h.state.dialogs.views.is_empty(), "Run closes");
     }
 
