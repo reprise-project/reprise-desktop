@@ -113,7 +113,9 @@ const SETUID_HELPER: &str = "/usr/lib/polkit-1/polkit-agent-helper-1";
 /// helper cannot hold the thread. Time waiting for the user's typing or finger does not count.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(120);
 /// The status line's start for a helper that cannot be reached, or went before it judged anything.
-pub const UNREACHABLE: &str = "Cannot reach the polkit helper";
+pub fn unreachable() -> String {
+    reprisekit::tr!("polkit-helper-unreachable")
+}
 
 /// How one attempt ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -646,7 +648,7 @@ fn run(
             converse_child(child, user, &mut password, HELPER_TIMEOUT, stop, report);
         }
         Err(e) => {
-            report(Report::Error(format!("{UNREACHABLE}: {e}")));
+            report(Report::Error(format!("{}: {e}", unreachable())));
             report(Report::Done(Verdict::Unreachable));
         }
     }

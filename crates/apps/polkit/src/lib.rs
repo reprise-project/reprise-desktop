@@ -12,6 +12,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("polkit");
+
 mod agent;
 mod dialog;
 mod first;
@@ -29,6 +31,7 @@ use reprisekit::controls::hosted::Hosted;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 
 use agent::{Msg, Outcome, Request};
 use dialog::RunAs;
@@ -118,8 +121,7 @@ impl Active {
                 self.reports = Some(rx);
             }
             None => {
-                self.dialog
-                    .set_status("The polkit helper could not be started.");
+                self.dialog.set_status(&tr!("polkit-helper-not-started"));
             }
         }
     }
@@ -264,7 +266,7 @@ impl PolkitApp {
                 // Nothing was judged, so no retry is spent. An end with no error is a
                 // helper that hung up or timed out.
                 if !a.explained {
-                    a.dialog.set_status(&format!("{}.", helper::UNREACHABLE));
+                    a.dialog.set_status(&format!("{}.", helper::unreachable()));
                 }
                 a.session = None;
                 a.reports = None;
@@ -387,7 +389,7 @@ impl PolkitApp {
 
 impl App for PolkitApp {
     fn title(&self) -> String {
-        "Run As".into()
+        tr!("run-as-title")
     }
 
     fn app_id(&self) -> String {
@@ -405,7 +407,7 @@ impl App for PolkitApp {
             .iter()
             .map(|a| Child {
                 id: RUNAS,
-                title: "Run As".into(),
+                title: tr!("run-as-dialog-title"),
                 size: self.units.size(a.dialog.size),
                 fixed: true,
                 modal: true,
@@ -651,7 +653,7 @@ mod tests {
             app.report(Report::Done(Verdict::Failed));
             let act = app.active.as_ref().expect("still open");
             assert_eq!(act.attempts, i);
-            assert_eq!(act.dialog.status(), dialog::FAILED);
+            assert_eq!(act.dialog.status(), dialog::failed());
         }
         app.report(Report::Done(Verdict::Failed));
         assert!(app.active.is_none());
@@ -735,7 +737,7 @@ mod tests {
         });
         app.report(Report::Done(Verdict::Failed));
         let act = app.active.as_ref().expect("still open");
-        assert_eq!(act.dialog.status(), dialog::FAILED);
+        assert_eq!(act.dialog.status(), dialog::failed());
     }
 
     /// After a failure the next conversation starts at once; its reader
@@ -754,7 +756,10 @@ mod tests {
         app.report(Report::Info(
             "Place your finger on the fingerprint reader".into(),
         ));
-        assert_eq!(app.active.as_ref().unwrap().dialog.status(), dialog::FAILED);
+        assert_eq!(
+            app.active.as_ref().unwrap().dialog.status(),
+            dialog::failed()
+        );
         app.report(Report::Error("Failed to match fingerprint".into()));
         assert_eq!(
             app.active.as_ref().unwrap().dialog.status(),
@@ -1211,7 +1216,10 @@ mod tests {
         let mut app = two_users();
         app.report(prompt(&Prompt::password()));
         app.report(Report::Done(Verdict::Failed));
-        assert_eq!(app.active.as_ref().unwrap().dialog.status(), dialog::FAILED);
+        assert_eq!(
+            app.active.as_ref().unwrap().dialog.status(),
+            dialog::failed()
+        );
         pick(&mut app, 1);
         let act = app.active.as_ref().unwrap();
         assert_eq!(act.dialog.status(), "");
