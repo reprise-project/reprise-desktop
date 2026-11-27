@@ -13,6 +13,7 @@ mod load;
 mod menu;
 mod print;
 mod toolbar;
+mod walk;
 mod window;
 
 use folder::{Folder, Step};
@@ -62,6 +63,8 @@ enum Blank {
 
 struct Viewer {
     folder: Folder,
+    /// The compressed folder's pictures, when the viewer was opened on a copy out of one.
+    walk: Option<walk::Walk>,
     picture: Option<Picture>,
     blank: Blank,
     /// Counts opens, so a decode that lands after the next open is dropped.
@@ -133,6 +136,7 @@ impl Viewer {
             None => Grow::Done,
         };
         let mut v = Viewer {
+            walk: path.as_deref().and_then(walk::Walk::of),
             folder: path.map(Folder::of).unwrap_or_default(),
             picture: None,
             blank: Blank::Nothing,
@@ -202,6 +206,9 @@ impl Viewer {
         self.rendered = None;
         self.asked = None;
         self.frame_due = None;
+        if let Some(w) = &mut self.walk {
+            w.leave(&mut self.folder.pictures, self.folder.at);
+        }
         let Some(path) = self.folder.current().map(Path::to_path_buf) else {
             self.blank = Blank::Nothing;
             self.arm();
@@ -209,10 +216,26 @@ impl Viewer {
         };
         self.blank = Blank::Loading;
         let generation = self.generation;
-        self.send(Job::Open { generation, path });
+        match self
+            .walk
+            .as_ref()
+            .and_then(|w| Some((w.zip.clone(), w.entry(&path)?.clone())))
+        {
+            Some((zip, entry)) => self.send(Job::OpenEntry {
+                generation,
+                zip,
+                entry,
+            }),
+            None => self.send(Job::Open { generation, path }),
+        }
     }
 
     fn list_folder(&mut self) {
+        if let Some(w) = &self.walk {
+            let (zip, inner_dir) = (w.zip.clone(), w.inner_dir.clone());
+            self.send(Job::ListArchive { zip, inner_dir });
+            return;
+        }
         if let Some(dir) = self.folder.current().and_then(Path::parent) {
             let dir = dir.to_path_buf();
             self.send(Job::List(dir));
@@ -222,6 +245,7 @@ impl Viewer {
     /// Show `path` and the pictures beside it.
     fn show(&mut self, path: PathBuf) {
         self.opening = Some(path.clone());
+        self.walk = walk::Walk::of(&path);
         self.folder = Folder::of(path);
         self.load_current();
         self.list_folder();
@@ -232,9 +256,13 @@ impl Viewer {
             Msg::Opened {
                 generation,
                 picture,
+                copied,
             } => {
                 if generation != self.generation {
                     return false;
+                }
+                if let (Some(w), Some(copied)) = (&mut self.walk, copied) {
+                    w.shown(&mut self.folder.pictures, self.folder.at, copied);
                 }
                 let opened = self.opening.take();
                 if self.grow == Grow::Waiting {
@@ -261,10 +289,27 @@ impl Viewer {
                 self.arm();
             }
             Msg::Listed { dir, pictures } => {
-                if self.folder.current().and_then(Path::parent) != Some(dir.as_path()) {
+                if self.walk.is_some()
+                    || self.folder.current().and_then(Path::parent) != Some(dir.as_path())
+                {
                     return false;
                 }
                 self.folder.listed(pictures);
+            }
+            Msg::ListedArchive {
+                zip,
+                inner_dir,
+                pictures,
+            } => {
+                let Some(w) = self
+                    .walk
+                    .as_mut()
+                    .filter(|w| (&w.zip, &w.inner_dir) == (&zip, &inner_dir))
+                else {
+                    return false;
+                };
+                let listed = w.listed(pictures);
+                self.folder.listed(listed);
             }
             Msg::Rendered { key, canvas } => {
                 if self.asked != Some(key) {
