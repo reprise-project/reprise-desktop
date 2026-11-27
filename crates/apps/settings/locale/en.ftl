@@ -457,8 +457,10 @@ pages-input-use-bouncekeys = Use &BounceKeys
 pages-input-ignore-a-key-pressed-again-within = &Ignore a key pressed again within:
 pages-input-bouncekeys-delay = BounceKeys delay
 pages-input-use-the-keyboard-shortcuts = Use the keyboard s&hortcuts
-pages-input-shift-5-times-toggles-stickykeys-right = { $shift } 5 times toggles StickyKeys, right { $shift } held 8 seconds
-pages-input-slowkeys-and-left-alt-left-shift = SlowKeys, and left { $alt }+left { $shift }+{ $num_lock } MouseKeys.
+# A line each; a line wider than the page rewraps the whole note.
+pages-input-key-aid-shortcuts =
+    { $shift } 5 times toggles StickyKeys, right { $shift } held 8 seconds
+    SlowKeys, and left { $alt }+left { $shift }+{ $num_lock } MouseKeys.
 pages-input-shorter = Shorter
 pages-input-longer = Longer
 pages-input-mousekeys = MouseKeys

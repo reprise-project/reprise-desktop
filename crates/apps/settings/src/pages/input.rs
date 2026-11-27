@@ -650,18 +650,17 @@ pub fn text_and_keys(a: Area) -> Form {
         Item::new(
             "shortcuts_note",
             Rect::new(X, 418, a.w - 18, 2 * LINE_H),
-            Control::Lines(vec![
+            Control::Lines(
                 tr!(
-                    "pages-input-shift-5-times-toggles-stickykeys-right",
-                    shift = shown_chord("Shift")
-                ),
-                tr!(
-                    "pages-input-slowkeys-and-left-alt-left-shift",
+                    "pages-input-key-aid-shortcuts",
                     alt = shown_chord("Alt"),
                     shift = shown_chord("Shift"),
                     num_lock = shown_chord("Num Lock")
-                ),
-            ]),
+                )
+                .lines()
+                .map(str::to_string)
+                .collect(),
+            ),
         )
         .under_check(),
     );
