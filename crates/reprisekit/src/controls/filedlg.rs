@@ -125,8 +125,12 @@ fn lookin_label() -> String {
     tr!("filedlg-look-in")
 }
 
-fn filename_label() -> String {
-    tr!("filedlg-file-name")
+/// The name field's label: a folder picker names a folder.
+fn filename_label(mode: DlgMode) -> String {
+    match mode {
+        DlgMode::Folder => tr!("filedlg-folder"),
+        DlgMode::Open | DlgMode::Save => tr!("filedlg-file-name"),
+    }
 }
 
 fn filetype_label() -> String {

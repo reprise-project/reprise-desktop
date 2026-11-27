@@ -55,7 +55,7 @@ fn alt_underlines_the_labels_and_the_accept_button() {
     // Each label's key is underlined one px under the baseline, and only with Alt.
     for (r, label) in [
         (lay.lookin_label, lookin_label()),
-        (lay.filename_label, filename_label()),
+        (lay.filename_label, filename_label(d.fields.mode)),
         (lay.filetype_label, filetype_label()),
     ] {
         let (plain, m) = split_mnemonic(&label);
