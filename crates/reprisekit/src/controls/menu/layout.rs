@@ -1,5 +1,6 @@
 use super::MenuItem;
 use crate::icon::ICON_SIZE;
+use crate::keycap;
 use crate::metrics::StartMenuMetrics;
 use crate::raster::{Insets, Rect};
 use crate::text::TextRenderer;
@@ -347,7 +348,9 @@ fn longest_row(
             } => {
                 let sc = shortcut
                     .as_deref()
-                    .map(|sc| measure(sc, false) + SHORTCUT_GAP + shortcut_pad)
+                    .map(|sc| {
+                        measure(&keycap::shown_chord(sc), false) + SHORTCUT_GAP + shortcut_pad
+                    })
                     .unwrap_or(right_pad);
                 measure(label, *bold) + sc
             }

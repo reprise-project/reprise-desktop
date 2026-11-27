@@ -111,7 +111,7 @@ impl State {
         let close_keys = close_binds()
             .find(|b| b.keysym == keys::KEY_F4 && b.mods == keys::MOD_ALT)
             .or_else(|| close_binds().next())
-            .map(|b| crate::keysheetview::chord_text(b.mods, b.keysym));
+            .map(|b| crate::keysheetview::chord_spelling(b.mods, b.keysym));
         let mut menu = crate::winmenu::window_menu(state, close_keys.as_deref());
         if from_taskbar && self.has_recent(w) {
             menu = crate::winmenu::with_recent(menu);

@@ -184,3 +184,34 @@ charmap-grid = Characters
 size-handle-right = Resize width
 size-handle-bottom = Resize height
 size-handle-corner = Resize width and height
+
+## Key names in a shown chord ("Ctrl+Z", "Super+Shift+Page Up"), and the mark between them. Letters,
+## signs and F1-F24 show as they are.
+key-separator = +
+key-ctrl = Ctrl
+key-shift = Shift
+key-alt = Alt
+key-super = Super
+key-del = Del
+key-delete = Delete
+key-ins = Ins
+key-insert = Insert
+key-enter = Enter
+key-esc = Esc
+key-tab = Tab
+key-space = Space
+key-backspace = Backspace
+key-home = Home
+key-end = End
+key-pgup = PgUp
+key-pgdn = PgDn
+key-page-up = Page Up
+key-page-down = Page Down
+key-left = Left
+key-right = Right
+key-up = Up
+key-down = Down
+key-plus = Plus
+key-minus = Minus
+## A shortcut box holding no chord
+hotkey-none = None
