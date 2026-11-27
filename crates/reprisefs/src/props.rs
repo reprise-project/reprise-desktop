@@ -211,6 +211,8 @@ pub fn glance_in(
     };
     // A program runs when opened, so it opens with nothing; its sheet names it instead.
     let program = !is_dir && crate::program::is_program(path, &meta);
+    // A type no program opens still gets its row, so Change... can pick one.
+    let typed = !is_dir && !program && mime.is_some();
     let opens_with_entry = if is_dir || program {
         None
     } else {
@@ -218,7 +220,10 @@ pub fn glance_in(
             .as_deref()
             .and_then(|m| default_app_entry(m, apps))
     };
-    let opens_with = opens_with_entry.map(|a| a.name.clone());
+    let opens_with = match opens_with_entry {
+        Some(a) => Some(a.name.clone()),
+        None => typed.then(|| tr!("props-no-program")),
+    };
     let opens_with_icon = opens_with_entry.and_then(|a| a.icon.clone());
     let description = match &launcher {
         Some(l) if opens_with.is_none() => Some(match l.kind {

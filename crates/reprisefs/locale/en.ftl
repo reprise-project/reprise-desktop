@@ -143,6 +143,8 @@ props-various-folders = Various Folders
 # $ext is the upper-case file extension.
 props-generic-type = { $ext } File
 props-generic-file = File
+# The Opens with line of a file whose type no program opens.
+props-no-program = No program chosen
 # $files and $folders are the grouped counts, $filesn and $foldersn the numbers that pick the plural.
 props-contains =
     { $files } { $filesn ->

@@ -584,6 +584,25 @@ fn glance_in_types_the_file_from_the_given_tables() {
 }
 
 #[test]
+fn a_type_no_program_opens_keeps_its_opens_with_line_and_an_unknown_type_has_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = apps::MimeDb::parse(["50:application/x-reprise-test:*.rtest\n"]);
+    let file = |name: &str| {
+        let p = dir.path().join(name);
+        std::fs::write(&p, "x").unwrap();
+        glance_in(&p, name, &[], &db).unwrap()
+    };
+    let typed = file("song.rtest");
+    assert_eq!(typed.opens_with.as_deref(), Some("No program chosen"));
+    assert_eq!(typed.opens_with_icon, None);
+    assert_eq!(
+        file("blob.zzq").opens_with,
+        None,
+        "no type to pick a program for"
+    );
+}
+
+#[test]
 fn a_symlink_to_a_document_shows_what_opens_its_target() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("song.rtest"), "x").unwrap();
