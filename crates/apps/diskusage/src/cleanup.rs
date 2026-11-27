@@ -29,7 +29,16 @@ const ABOUT: &str = "about";
 /// a removal left.
 pub enum Msg {
     Found(u64, Part, Found),
-    Cleaned(Vec<(Part, Result<(), String>)>),
+    Cleaned(Vec<Cleaned>),
+}
+
+/// One part's removal.
+pub struct Cleaned {
+    pub part: Part,
+    /// Bytes gone: the confirmed size, or for a part that failed what a count afterwards misses;
+    /// crash dumps and Flatpak runtimes are not counted again, so their failure frees 0.
+    pub freed: u64,
+    pub result: Result<(), String>,
 }
 
 fn check_id(p: Part) -> &'static str {
@@ -300,11 +309,26 @@ pub fn count(
 }
 
 /// Removes `parts` in turn, each as far as the count the confirm box named, posting what each
-/// left.
+/// freed and left.
 pub fn clean(places: Places, parts: Vec<(Part, Found)>, post: impl FnOnce(Msg) + Send + 'static) {
     std::thread::spawn(move || {
         let done = (parts.into_iter())
-            .map(|(p, f)| (p, places.clean(p, &f).map_err(|e| e.to_string())))
+            .map(|(part, f)| {
+                let result = places.clean(part, &f).map_err(|e| e.to_string());
+                let freed = match (&result, part) {
+                    (Ok(()), _) => f.size,
+                    (Err(_), Part::Coredumps | Part::Flatpak) => 0,
+                    (Err(_), _) => {
+                        let left = places.measure(part, &AtomicBool::new(false)).size;
+                        f.size.saturating_sub(left)
+                    }
+                };
+                Cleaned {
+                    part,
+                    freed,
+                    result,
+                }
+            })
             .collect();
         post(Msg::Cleaned(done));
     });

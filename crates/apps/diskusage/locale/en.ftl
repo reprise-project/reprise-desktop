@@ -73,6 +73,8 @@ cleanup-confirm-runtime = - { $runtime } ({ $installation ->
         [system] system installation
        *[user] your installation
     })
+# The box after a removal. $size is a file size such as "4.0 KB".
+cleanup-freed = Clean Up freed { $size }.
 cleanup-failed = Some files could not be removed.
 # $reason is the system's error message.
 cleanup-failed-row = { $part }: { $reason }

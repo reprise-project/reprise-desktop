@@ -415,6 +415,7 @@ fn clean_up_removes_only_the_checked_parts_and_only_after_a_yes() {
 
     d.ask_clean();
     let parts = d.clean_ask.close().unwrap();
+    let freed = parts.iter().map(|(_, f)| f.size).sum();
     d.clean_answered(parts, Some(0));
     assert!(d.cleanup.is_none() && d.cleaning);
     assert!(!on(&d.form, "cleanup"), "one removal at a time");
@@ -426,6 +427,49 @@ fn clean_up_removes_only_the_checked_parts_and_only_after_a_yes() {
     );
     assert!(cache.join("blob").exists(), "an unchecked part stays");
     assert!(!d.note.is_shown());
+    let (b, _) = d.cleaned_box.up().expect("a box says what went");
+    assert_eq!(
+        b.fields.text,
+        format!("Clean Up freed {}.", reprisefs::props::short_size(freed))
+    );
+}
+
+#[test]
+fn the_box_after_a_removal_names_the_parts_that_failed() {
+    let t = tempfile::tempdir().unwrap();
+    let data = t.path().join("data");
+    fs::create_dir(&data).unwrap();
+    let mut d = counted(&data);
+    counted_cleanup(&mut d, cleanup_places(t.path()));
+    let c = d.cleanup.as_ref().unwrap();
+    let mut parts: Vec<(Part, Found)> = (c.picked().into_iter())
+        .map(|(p, f)| (p, f.clone()))
+        .collect();
+    let freed = parts.iter().map(|(_, f)| f.size).sum();
+    let dumps = Found {
+        size: 1 << 20,
+        removable: false,
+        folder: None,
+        items: Vec::new(),
+    };
+    parts.push((Part::Coredumps, dumps));
+    d.clean_answered(parts, Some(0));
+    wake_until(&mut d, "the removal ends", |d| !d.cleaning);
+    let (b, _) = d.cleaned_box.up().expect("a box says what went");
+    let text = &b.fields.text;
+    let lines: Vec<&str> = text.lines().collect();
+    let size = reprisefs::props::short_size(freed);
+    assert_eq!(
+        lines[..4],
+        [
+            format!("Clean Up freed {size}.").as_str(),
+            "",
+            "Some files could not be removed.",
+            ""
+        ],
+        "a failed crash dump part frees nothing: {text}"
+    );
+    assert!(lines[4].starts_with("Crash dumps: "), "{text}");
 }
 
 #[test]

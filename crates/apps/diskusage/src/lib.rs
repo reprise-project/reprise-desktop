@@ -21,6 +21,7 @@ use repriseapp::{
 };
 use reprisefs::bincap::{self, BinLack, ConfirmKind};
 use reprisefs::cleanup::{Found, Part, Places};
+use reprisefs::props::short_size;
 use reprisefs::usage::{Kind, ROOT, Scan, Sort};
 use reprisekit::access::{ROOT as ACCESS_ROOT, Tree};
 use reprisekit::classic::widgets::BUTTON_H;
@@ -73,6 +74,7 @@ const CONFIRM: WinId = WinId::named("confirm");
 const PICK: WinId = WinId::named("pick");
 const CLEANUP: WinId = WinId::named("cleanup");
 const CLEAN_CONFIRM: WinId = WinId::named("clean-confirm");
+const CLEANED: WinId = WinId::named("cleaned");
 
 /// The rows the list draws: the folder's entries and the icons of each kind.
 #[derive(Default)]
@@ -133,10 +135,13 @@ struct DiskUsage {
     pick: Option<FileDlg>,
     host: Host,
     warning_icon: Option<Canvas>,
+    info_icon: Option<Canvas>,
     cleanup: Option<Cleanup>,
     /// The confirm box over Clean Up, with the parts it would remove.
     clean_ask: Asks<Vec<(Part, Found)>>,
     cleaned: Option<(Poster<Msg>, Receiver<Msg>)>,
+    /// The box saying what a removal freed and what it could not remove.
+    cleaned_box: Asks<()>,
     /// Counts the Clean Up boxes opened, so a count posted for a closed one is dropped.
     cleanups: u64,
     /// A removal is running: Clean Up stays grey until it ends.
@@ -197,9 +202,11 @@ impl DiskUsage {
             pick: None,
             host: Host::default(),
             warning_icon: None,
+            info_icon: None,
             cleanup: None,
             clean_ask: Asks::new(CLEAN_CONFIRM).over(CLEANUP),
             cleaned: None,
+            cleaned_box: Asks::new(CLEANED),
             cleanups: 0,
             cleaning: false,
         }
@@ -436,8 +443,8 @@ impl DiskUsage {
         Reply::redraw_all()
     }
 
-    /// Takes Clean Up's counts, and a removal's end: the folder is counted again and what could
-    /// not go is named in a box. True when one came.
+    /// Takes Clean Up's counts, and a removal's end: the folder is counted again and a box says
+    /// what was freed and names what could not go. True when one came.
     fn wake_cleanup(&mut self) -> bool {
         let msgs: Vec<Msg> = match &self.cleaned {
             Some((_, rx)) => rx.try_iter().collect(),
@@ -454,24 +461,7 @@ impl DiskUsage {
                 }
                 Msg::Cleaned(done) => {
                     self.cleaning = false;
-                    let failed: Vec<String> = (done.into_iter())
-                        .filter_map(|(p, r)| {
-                            let reason = r.err()?;
-                            Some(tr!(
-                                "cleanup-failed-row",
-                                part = cleanup::name(p, true),
-                                reason = reason
-                            ))
-                        })
-                        .collect();
-                    if !failed.is_empty() {
-                        let text = [tr!("cleanup-failed"), String::new()]
-                            .into_iter()
-                            .chain(failed);
-                        let text = text.collect::<Vec<_>>().join("\n");
-                        self.note
-                            .show(&tr!("cleanup-title"), text, self.warning_icon.clone());
-                    }
+                    self.show_cleaned(&done);
                     let (root, at) = (self.root.clone(), self.at.clone());
                     self.rescan(root);
                     self.at = at;
@@ -479,6 +469,42 @@ impl DiskUsage {
             }
         }
         came
+    }
+
+    /// The box after a removal: what it freed, then each part that failed with the reason.
+    fn show_cleaned(&mut self, done: &[cleanup::Cleaned]) {
+        let freed = done.iter().map(|c| c.freed).sum();
+        let failed: Vec<String> = (done.iter())
+            .filter_map(|c| {
+                let reason = c.result.as_ref().err()?;
+                Some(tr!(
+                    "cleanup-failed-row",
+                    part = cleanup::name(c.part, true),
+                    reason = reason.as_str()
+                ))
+            })
+            .collect();
+        let mut lines = vec![tr!("cleanup-freed", size = short_size(freed))];
+        let (icon, sound) = match failed.is_empty() {
+            true => (self.info_icon.clone(), None),
+            false => {
+                lines.extend([String::new(), tr!("cleanup-failed"), String::new()]);
+                lines.extend(failed);
+                let warning = repriseapp::sound::Event::Warning;
+                (self.warning_icon.clone(), Some(warning))
+            }
+        };
+        let fields = Fields {
+            text: lines.join("\n"),
+            icon,
+            buttons: vec![reprisekit::kit_tr!("ok")],
+            default: 0,
+            min_text_h: None,
+            min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
+        };
+        let msg = MsgBox::new(tr!("cleanup-title"), fields).sounding(sound);
+        self.cleaned_box.ask(msg, ());
     }
 
     /// The confirm box naming what Clean Up's OK removes.
@@ -794,6 +820,7 @@ impl DiskUsage {
             rows.drive = ctx.icons.get("drive-harddisk", 16);
             self.trash_icon = ctx.icons.get("user-trash-full", 32);
             self.warning_icon = ctx.icons.get("dialog-warning", 32);
+            self.info_icon = ctx.icons.get("dialog-information", 32);
         }
         self.host.icons.prime(&mut ctx.icons);
     }
@@ -844,6 +871,7 @@ impl App for DiskUsage {
         let mut out = Vec::new();
         out.extend(self.confirm.child(&text, &forms));
         out.extend(self.note.child(&text, &forms));
+        out.extend(self.cleaned_box.child(&text, &forms));
         if let Some(d) = &self.pick {
             out.push(repriseapp::Child {
                 id: PICK,
@@ -881,6 +909,13 @@ impl App for DiskUsage {
         match win {
             w if self.confirm.owns(w) => self.confirm_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
+            w if self.cleaned_box.owns(w) => {
+                match self.cleaned_box.event(w, &ev, &ctx.text, &ctx.forms()) {
+                    Answer::Closed(..) => Reply::redraw_all(),
+                    Answer::Redraw => Reply::redraw(),
+                    Answer::None => Reply::none(),
+                }
+            }
             PICK => self.pick_event(ev, ctx),
             w if self.clean_ask.owns(w) => self.clean_confirm_event(w, ev, ctx),
             CLEANUP => self.cleanup_event(ev, ctx),
@@ -893,6 +928,7 @@ impl App for DiskUsage {
         match win {
             w if self.confirm.owns(w) => self.confirm.draw(c, &forms, &ctx.text),
             w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
+            w if self.cleaned_box.owns(w) => self.cleaned_box.draw(c, &forms, &ctx.text),
             PICK => {
                 if let Some(d) = &self.pick {
                     let (w, h) = d.client();
@@ -947,6 +983,7 @@ impl repriseapp::Extended for DiskUsage {
         match win {
             w if self.confirm.owns(w) => self.confirm.access(tree, &ctx.text, &forms),
             w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
+            w if self.cleaned_box.owns(w) => self.cleaned_box.access(tree, &ctx.text, &forms),
             PICK => {
                 if let Some(d) = &self.pick {
                     let (w, h) = d.client();
