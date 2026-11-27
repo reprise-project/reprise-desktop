@@ -1580,6 +1580,35 @@ fn picking_onyx_moves_the_unset_taskbar_defaults_and_writes_only_the_style() {
     assert_eq!(save(&out, &want, &base).expect("parses"), glass);
 }
 
+#[test]
+fn a_taskbar_pick_equal_to_the_old_looks_default_is_written_after_a_switch() {
+    let glass = "[appearance]\ninterface = \"glass\"\n";
+    let base = load(glass);
+    let mut want = base.clone();
+    want.glass_style = "onyx".into();
+    switch_style(&mut want, "glass", glass);
+    want.taskbar_buttons = "combine".into();
+    want.taskbar_show_desktop = true;
+    let out = save(glass, &want, &base).expect("parses");
+    for line in [
+        "buttons = \"combine\"",
+        "show_desktop_button = true",
+        "style = \"onyx\"",
+    ] {
+        assert!(out.contains(line), "{line} is written: {out}");
+    }
+    assert_eq!(load(&out), want);
+
+    let base = load("");
+    let mut want = base.clone();
+    want.interface = "glass".into();
+    switch_interface(&mut want, "classic", "", &base);
+    want.taskbar_buttons = "when_full".into();
+    let out = save("", &want, &base).expect("parses");
+    assert!(out.contains("buttons = \"when_full\""), "{out}");
+    assert_eq!(load(&out).taskbar_buttons, "when_full");
+}
+
 /// Keys are written against the defaults of the interface in the file at Apply, which another writer may have switched.
 #[test]
 fn taskbar_keys_are_written_against_the_interface_on_disk_at_apply() {
