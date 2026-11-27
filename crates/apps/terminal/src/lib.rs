@@ -48,7 +48,7 @@ use reprisekit::pointer::Lit;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::TextSpot;
-use reprisekit::theme::{Color, FontConfig, Theme};
+use reprisekit::theme::{Color, FontConfig, Theme, text_px};
 use reprisekit::tr;
 
 use crate::chrome::Chrome;
@@ -157,8 +157,10 @@ struct Terminal {
     cmd: Option<Vec<OsString>>,
     waker: Option<repriseapp::Waker>,
     font: TextRenderer,
-    /// The text size, zoomed, px.
+    /// The font size at 100% text, zoomed, px.
     px: u32,
+    /// `[accessibility] text_size` in percent as last fitted: the cells grow by it.
+    text_size: u32,
     /// Cell metrics and the scale and size they were taken at.
     metrics: ((i32, u32), Metrics),
     /// The window the event or draw at hand is for (`enter`); the others wait in `parked`.
@@ -260,21 +262,29 @@ fn interface(theme: &Theme) -> Interface {
 
 impl Terminal {
     fn new(settings: Settings, cmd: Option<Vec<OsString>>) -> Terminal {
-        Terminal::with_state(settings, cmd, settings::state_path())
+        let text_size = repriseapp::start_text_size();
+        Terminal::with_state(settings, cmd, settings::state_path(), text_size)
     }
 
-    fn with_state(settings: Settings, cmd: Option<Vec<OsString>>, state_path: PathBuf) -> Terminal {
+    fn with_state(
+        settings: Settings,
+        cmd: Option<Vec<OsString>>,
+        state_path: PathBuf,
+        text_size: u32,
+    ) -> Terminal {
         let settings = in_range(settings);
         let font = load_font(&settings);
         let px = settings.size_px;
-        let metrics = termgrid::metrics(&font, px, 1);
+        let font_px = text_px(px, text_size);
+        let metrics = termgrid::metrics(&font, font_px, 1);
         Terminal {
             settings,
             cmd,
             waker: None,
             font,
             px,
-            metrics: ((1, px), metrics),
+            text_size,
+            metrics: ((1, font_px), metrics),
             w: Pane::new(MAIN, false, None),
             cur: MAIN,
             parked: Vec::new(),
@@ -393,18 +403,22 @@ impl Terminal {
         schemes::scheme(&self.settings.scheme, interface(theme))
     }
 
+    /// The cells' font size: the zoomed size at the text size, px.
+    fn font_px(&self) -> u32 {
+        text_px(self.px, self.text_size)
+    }
+
     fn metrics(&mut self, scale: i32) -> Metrics {
-        if self.metrics.0 != (scale, self.px) {
-            self.metrics = (
-                (scale, self.px),
-                termgrid::metrics(&self.font, self.px, scale),
-            );
+        let px = self.font_px();
+        if self.metrics.0 != (scale, px) {
+            self.metrics = ((scale, px), termgrid::metrics(&self.font, px, scale));
         }
         self.metrics.1
     }
 
     /// Hand every tab the grid the client holds under the chrome, when it changed.
     fn fit(&mut self, ctx: &Ctx) {
+        self.text_size = ctx.text_size;
         let m = self.metrics(self.w.scale);
         let (cols, rows) =
             termgrid::grid_size(&m, chrome::grid_rect(ctx, self.w.caption), self.w.scale);
@@ -951,7 +965,8 @@ impl Terminal {
         let cursor = self.cursor(ctx, preedit.is_some());
         snapshot::move_cursor(&mut self.w.snap, self.w.shown, cursor);
         self.w.shown = cursor;
-        let mut rects = termgrid::draw(c, &self.font, &m, lay.grid, &self.w.snap, self.px);
+        let px = self.font_px();
+        let mut rects = termgrid::draw(c, &self.font, &m, lay.grid, &self.w.snap, px);
         // The gap is drawn again with the first row, so it follows every alpha or scheme change.
         if full || self.w.snap.dirty.first().copied().unwrap_or(false) {
             rects.push(termgrid::draw_background(c, lay.gap, &self.w.snap));
@@ -1030,8 +1045,8 @@ impl App for Terminal {
 
     fn initial_size(&self) -> (i32, i32) {
         self.window.unwrap_or_else(|| {
-            let m = self.metrics.1;
-            let theme = repriseapp::start_theme();
+            let m = termgrid::metrics(&self.font, self.font_px(), 1);
+            let theme = repriseapp::start_theme().with_text_size(self.text_size);
             let top = chrome::grid_top(&theme, self.w.caption);
             let bar = theme.controls().scroll;
             (OPEN_CELLS.0 * m.cell_w + bar, OPEN_CELLS.1 * m.cell_h + top)
