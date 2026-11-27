@@ -43,9 +43,6 @@ const WRITES_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
 /// Bytes an extraction may write past its listing: its stderr not yet read, with room to spare.
 const WRITE_SLACK: u64 = 1 << 20;
 
-/// How often an extraction whose write count cannot be read measures what has landed instead.
-const LANDED_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
-
 /// The share of a folder's free space one extraction may fill, in percent.
 pub const FREE_SHARE_PERCENT: u64 = 90;
 
@@ -523,34 +520,37 @@ fn extract(
     .map_err(undo)?;
     let err = child.stderr.take().ok_or_else(no_pipe).map_err(undo)?;
     let pid = child.id();
+    let io = |e: std::io::Error| Failure::Tool(e.to_string());
+    let into_fd = crate::ops::at::c_path(&into)
+        .and_then(|p| crate::ops::at::open_dir(crate::ops::at::cwd(), &p, true))
+        .map_err(io)
+        .map_err(undo)?;
     // What bsdtar may write: the listed bytes, its stderr, and what that pipe still holds.
     let said_bytes = std::cell::Cell::new(0u64);
     let past = std::cell::Cell::new(false);
+    let stop = || {
+        past.set(true);
+        // SAFETY: `pid` is our own unreaped child, so the id names no other process.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    };
     let wrote_past = || {
         let allowed = (listed.bytes)
             .saturating_add(said_bytes.get())
             .saturating_add(WRITE_SLACK);
         io_count(pid, "wchar").map(|w| w > allowed)
     };
-    // Without a write count (no /proc, or one that does not show it), what landed is measured.
+    // Without a write count (no /proc, or one that does not show it), each entry bsdtar reports
+    // is measured once as it lands instead.
+    let counted = io_count(pid, "wchar").is_some();
+    let mut landed = Landed::default();
     let mut sampled = std::time::Instant::now();
-    let mut measured = std::time::Instant::now();
     let tick = || {
-        if sampled.elapsed() < WRITES_EVERY || past.get() {
+        if !counted || sampled.elapsed() < WRITES_EVERY || past.get() {
             return;
         }
         sampled = std::time::Instant::now();
-        let over = wrote_past().unwrap_or_else(|| {
-            if measured.elapsed() < LANDED_EVERY {
-                return false;
-            }
-            measured = std::time::Instant::now();
-            landed_bytes(&into).is_ok_and(|b| b > listed.bytes)
-        });
-        if over {
-            past.set(true);
-            // SAFETY: `pid` is our own unreaped child, so the id names no other process.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        if wrote_past() == Some(true) {
+            stop();
         }
     };
     let mut n = 0;
@@ -573,12 +573,19 @@ fn extract(
                     });
                     // bsdtar ends an entry's line once it is written, with `: why` when that failed.
                     // A name holding `: ` is told apart by having landed.
-                    let landed = || {
-                        into.join(OsStr::from_bytes(entry))
-                            .symlink_metadata()
-                            .is_ok()
-                    };
-                    if entry.windows(2).any(|w| w == b": ") && !landed() {
+                    let failed = entry.windows(2).any(|w| w == b": ");
+                    let stat = (failed || !counted && !past.get())
+                        .then(|| landed_at(into_fd.as_fd(), entry).ok())
+                        .flatten();
+                    // The entry past the listing has landed whole, and so have those whose lines
+                    // the pipe still holds: each under RLIMIT_FSIZE, which stops the one bsdtar
+                    // is writing at the listing's total.
+                    if let Some(st) = stat.as_ref().filter(|_| !counted && !past.get())
+                        && landed.add(st) > listed.bytes
+                    {
+                        stop();
+                    }
+                    if failed && stat.is_none() {
                         // Only a failed entry's line: a name that landed says nothing.
                         locked |= crate::archive::locked(entry);
                         match first {
@@ -622,9 +629,8 @@ fn extract(
         );
         return Err(undo(Failure::Tool(why)));
     }
-    let io = |e: std::io::Error| Failure::Tool(e.to_string());
     let modes = open_up(&into).map_err(io).map_err(undo)?;
-    // What landed holds whatever the write count missed.
+    // What landed holds whatever the write count or the reported entries missed.
     if landed_bytes(&into).map_err(io).map_err(undo)? > listed.bytes {
         return Err(undo(Failure::Refused(tr!("archive-more-than-listed"))));
     }
@@ -1168,24 +1174,84 @@ fn finish_status(
     child.wait().map_err(|e| Failure::Tool(e.to_string()))
 }
 
-/// The bytes the files under `root` hold, each file once however many links it has.
+/// The bytes the files under `root` hold, each file once however many links it has. No link is
+/// followed, and an entry gone before it is read holds none.
 fn landed_bytes(root: &Path) -> std::io::Result<u64> {
-    use std::os::unix::fs::MetadataExt;
+    use crate::ops::at::{c_path, cwd, open_dir, stat_at};
+    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let mut seen = std::collections::HashSet::new();
     let mut bytes = 0u64;
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        for e in std::fs::read_dir(&dir)? {
-            let e = e?;
-            let m = e.path().symlink_metadata()?;
-            if m.is_dir() {
-                pending.push(e.path());
-            } else if m.is_file() && (m.nlink() == 1 || seen.insert((m.dev(), m.ino()))) {
-                bytes = bytes.saturating_add(m.len());
+    // A folder still to list holds its parent's descriptor, so about one is open per level.
+    let mut pending = Vec::new();
+    let mut next = Some(std::rc::Rc::new(open_dir(cwd(), &c_path(root)?, true)?));
+    while let Some(fd) = next.take() {
+        for (name, _) in crate::ops::entries_at(fd.as_fd())? {
+            let st = match stat_at(fd.as_fd(), &name) {
+                Err(e) if gone(&e) => continue,
+                st => st?,
+            };
+            match st.st_mode & libc::S_IFMT {
+                libc::S_IFDIR => pending.push((fd.clone(), name)),
+                libc::S_IFREG if st.st_nlink == 1 || seen.insert((st.st_dev, st.st_ino)) => {
+                    bytes = bytes.saturating_add(st.st_size as u64);
+                }
+                _ => {}
+            }
+        }
+        while let Some((parent, name)) = pending.pop() {
+            match open_dir(parent.as_fd(), &name, false) {
+                Err(e) if gone(&e) => {}
+                fd => {
+                    next = Some(fd?.into());
+                    break;
+                }
             }
         }
     }
     Ok(bytes)
+}
+
+/// The bytes of the files an extraction reported landing, each file counted at the largest size
+/// it was seen at, however many of its links were reported.
+#[derive(Default)]
+struct Landed {
+    sizes: std::collections::HashMap<(libc::dev_t, libc::ino_t), u64>,
+    bytes: u64,
+}
+
+impl Landed {
+    /// Counts the entry `st` and returns the total.
+    fn add(&mut self, st: &libc::stat) -> u64 {
+        let size = st.st_size as u64;
+        if st.st_mode & libc::S_IFMT == libc::S_IFREG && size > 0 {
+            let was = self.sizes.entry((st.st_dev, st.st_ino)).or_insert(0);
+            self.bytes = self.bytes.saturating_add(size.saturating_sub(*was));
+            *was = size.max(*was);
+        }
+        self.bytes
+    }
+}
+
+/// What landed as `entry`, a name bsdtar reported, under the folder open as `into`, each step
+/// opened without following a link.
+fn landed_at(into: std::os::fd::BorrowedFd, entry: &[u8]) -> std::io::Result<libc::stat> {
+    use crate::ops::at::{c_name, open_dir, stat_at};
+    let name = crate::archive::unescape(entry);
+    let mut parts = Vec::new();
+    for c in Path::new(OsStr::from_bytes(&name)).components() {
+        match c {
+            Component::Normal(part) => parts.push(c_name(part)?),
+            Component::CurDir => {}
+            _ => return Err(std::io::ErrorKind::InvalidInput.into()),
+        }
+    }
+    let (leaf, steps) = parts.split_last().ok_or(std::io::ErrorKind::InvalidInput)?;
+    let mut at: Option<std::os::fd::OwnedFd> = None;
+    for step in steps {
+        let dir = at.as_ref().map_or(into, |fd| fd.as_fd());
+        at = Some(open_dir(dir, step, false)?);
+    }
+    stat_at(at.as_ref().map_or(into, |fd| fd.as_fd()), leaf)
 }
 
 #[cfg(test)]
@@ -1339,6 +1405,58 @@ mod tests {
             );
         }
         NO_IO_COUNTS.with(|c| c.set(false));
+    }
+
+    #[test]
+    fn without_a_write_count_an_extraction_past_its_listing_is_stopped_part_way() {
+        NO_IO_COUNTS.with(|c| c.set(true));
+        let t = tempfile::tempdir().unwrap();
+        let src = t.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        // Long names fill bsdtar's stderr pipe in a few hundred lines, so it cannot run ahead of
+        // the reader to the last entry.
+        let files = 2000;
+        let names: Vec<String> = (0..files).map(|i| format!("{i:0>200}")).collect();
+        for n in &names {
+            std::fs::write(src.join(n), vec![b'x'; 4096]).unwrap();
+        }
+        let tar = t.path().join("p.tar");
+        let list = t.path().join("names");
+        std::fs::write(&list, names.join("\n")).unwrap();
+        bsdtar(
+            &src,
+            &["-cf", tar.to_str().unwrap(), "-T", list.to_str().unwrap()],
+        );
+        let out = t.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let a = Archive {
+            src: tar,
+            here: false,
+            to: Some(out.clone()),
+        };
+        let lying = Listed {
+            entries: files as u64,
+            bytes: 100 << 10,
+            ..Listed::default()
+        };
+        let m = Meter::default();
+        assert_eq!(
+            extract(&a, &m, 0, lying, |_| Limits::from_free(u64::MAX, None)),
+            Err(Failure::Refused(
+                "it holds more than its listing says.".into()
+            ))
+        );
+        NO_IO_COUNTS.with(|c| c.set(false));
+        let reported = m.snapshot().items;
+        assert!(
+            reported < files as u64 / 2,
+            "bsdtar is stopped within a pipe's worth of entries of the 26th, not after all {files}: {reported}"
+        );
+        assert_eq!(
+            std::fs::read_dir(&out).unwrap().count(),
+            0,
+            "nothing is left"
+        );
     }
 
     #[test]
