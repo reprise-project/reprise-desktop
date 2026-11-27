@@ -271,10 +271,14 @@ pub fn render_taskbar_top() -> Canvas {
             quick_drop: None,
             quick_more: Default::default(),
             pager: vec![
-                PagerButton::default(),
+                PagerButton {
+                    occupied: true,
+                    ..PagerButton::default()
+                },
                 PagerButton {
                     current: true,
                     attention: false,
+                    occupied: true,
                 },
             ],
             pager_hot: None,
@@ -354,6 +358,7 @@ pub fn render_taskbar_edges() -> Canvas {
             PagerButton {
                 current: true,
                 attention: false,
+                occupied: true,
             },
         ],
         pager_hot: None,

@@ -44,7 +44,7 @@ After snapping, snap assist offers live thumbnails of other windows for empty zo
 
 `Alt+Tab` shows icons with a selected preview, or live thumbnails of all windows in four sizes, with media badges and active media keys. `Alt+\`` switches windows of the focused program only. Under Glass, `Super+Tab` opens the 3D switcher ([interfaces.md](interfaces.md#glass-only)).
 
-`Super+W`, a hot corner (`[overview] hot_corner`) or a three-finger swipe up opens the window overview. Virtual desktops default to four (up to 16), switched with `Super+Ctrl+Left`/`Right` or the taskbar pager (`[workspaces]`).
+`Super+W`, a hot corner (`[overview] hot_corner`) or a three-finger swipe up opens the window overview. Virtual desktops default to four (up to 16), switched with `Super+Ctrl+Left`/`Right` or the taskbar pager (`[workspaces]`). A dot under a pager number marks a desktop that holds windows; its tip lists them.
 
 ## Desktop
 

@@ -22,9 +22,9 @@ pub use buttons::{
     task_draws_spot,
 };
 use buttons::{
-    PAGER_DIM, Span, Spot, draw_dimmed_number, draw_labelled, draw_slot_edges, draw_slot_light,
-    draw_slot_light_foot, draw_spot, draw_task_button, is_lit, label_pair, lights_slots,
-    pager_tile_rect, stacked,
+    PAGER_DIM, Span, Spot, draw_dimmed_number, draw_labelled, draw_pager_dot, draw_slot_edges,
+    draw_slot_light, draw_slot_light_foot, draw_spot, draw_task_button, is_lit, label_pair,
+    lights_slots, pager_tile_rect, stacked,
 };
 pub use start::draw_start_above;
 use start::{draw_orb, draw_start_pill};
@@ -181,6 +181,14 @@ pub(crate) fn draw_taskbar_on(
             text.draw(canvas, *r, &label, false, ink, Align::Center, size);
         } else {
             draw_dimmed_number(canvas, text, *r, &label, ink, alpha, size);
+        }
+        if b.occupied {
+            draw_pager_dot(
+                canvas,
+                crate::taskbar::pager_dot(text, *r, size, s),
+                ink,
+                alpha,
+            );
         }
     }
 

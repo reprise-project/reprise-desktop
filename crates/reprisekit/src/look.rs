@@ -896,6 +896,81 @@ mod tests {
         }
     }
 
+    /// A desktop holding a window shows a dot under its number, current or not, and nothing else
+    /// of its cell changes.
+    #[test]
+    fn a_pager_cell_dots_the_desktop_that_holds_a_window() {
+        use crate::taskbar::{PagerButton, TaskbarCounts};
+        crate::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        let counts = TaskbarCounts {
+            pager: 3,
+            ..TaskbarCounts::default()
+        };
+        let mut got = Vec::new();
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme0 = theme_for(interface);
+            let start_text = match theme0.look.style() {
+                Some(st) => TextRenderer::load(&st.start_text.font()),
+                None => TextRenderer::load(&FontConfig::default()),
+            };
+            let shape = theme0.taskbar_shape();
+            let l = TaskbarLayout::compute(&theme0.metrics, &shape, 600, true, counts, 40);
+            for s in [1, 2] {
+                let theme = theme0.scaled(s);
+                let layout = l.scaled(s);
+                let draw = |occupied: [bool; 3]| {
+                    let mut st = empty_taskbar_state();
+                    st.pager = (0..3)
+                        .map(|i| PagerButton {
+                            current: i == 0,
+                            attention: false,
+                            occupied: occupied[i],
+                        })
+                        .collect();
+                    let mut c = Canvas::new(layout.width as u32, layout.height as u32);
+                    draw_taskbar(&mut c, &theme, &text, &start_text, &layout, &st);
+                    c
+                };
+                let (bare, dotted) = (draw([false; 3]), draw([true, true, false]));
+                let what = format!("{interface:?} s{s}");
+                let size = theme.fonts.size_px;
+                let tr = &text;
+                for (i, r) in layout.pager.iter().enumerate() {
+                    let label = if interface == Interface::Classic && i == 0 {
+                        Rect::new(r.x + s, r.y + s, r.width, r.height)
+                    } else {
+                        *r
+                    };
+                    let dot = crate::taskbar::pager_dot(tr, label, size, s);
+                    assert!(
+                        r.contains(dot.x, dot.y) && dot.bottom() < r.bottom(),
+                        "{what}"
+                    );
+                    let mut changed = 0;
+                    for y in r.y..r.bottom() {
+                        for x in r.x..r.right() {
+                            if bare.get(x, y) != dotted.get(x, y) {
+                                assert!(
+                                    dot.contains(x, y),
+                                    "{what} cell {i}: ({x}, {y}) is off the dot"
+                                );
+                                changed += 1;
+                            }
+                        }
+                    }
+                    let want = if i < 2 { dot.width * dot.height } else { 0 };
+                    assert_eq!(changed, want, "{what} cell {i}: the whole dot and only it");
+                }
+                let first = layout.pager[0];
+                let last = layout.pager[2];
+                let cells = Rect::new(first.x, 0, last.right() - first.x, layout.height);
+                got.push((what, crate::pins::fnv(&dotted.copy_rect(cells))));
+            }
+        }
+        crate::pins::check("look/pager_dot", &got);
+    }
+
     #[test]
     fn redrawing_the_damage_gives_the_bar_a_full_draw_gives() {
         use crate::taskbar::{Attention, BarSpan, ClockText, Edge, TaskEntry, TaskProgress};
@@ -968,6 +1043,7 @@ mod tests {
             ("Quick Launch lit", |st| st.quick_hot = Some(1)),
             ("Quick Launch held", |st| st.quick_pressed = Some(0)),
             ("pager lit", |st| st.pager_hot = Some(1)),
+            ("desktop holds a window", |st| st.pager[1].occupied = true),
             ("desktop switched", |st| {
                 st.pager[0].current = false;
                 st.pager[1].current = true;

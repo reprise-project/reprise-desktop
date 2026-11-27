@@ -487,7 +487,9 @@ fn a_button_added_or_closed_redraws_from_its_left_neighbour_to_the_end_of_the_ro
         h.map_titled(&mut c, "editor", "one", (300, 200));
         h.map_titled(&mut c, "other", "two", (300, 200));
         let three = h.map_titled(&mut c, "third", "three", (300, 200));
-        h.state.move_to_desktop(&[three.id], 1);
+        // Desktop 2 stays held, so the moves below change no pager cell.
+        let four = h.map_titled(&mut c, "fourth", "four", (300, 200));
+        h.state.move_to_desktop(&[three.id, four.id], 1);
         h.dispatch();
         h.state.redraw_taskbars();
         let focused = h.state.focused;
@@ -806,4 +808,40 @@ fn a_combined_button_clicked_while_a_box_of_one_window_has_the_keyboard_brings_u
     let tree = bar.tree;
     h.state.task_button_click(tree, i, false);
     assert_eq!(h.state.focused, Some(one.id), "the window after the box's");
+}
+
+#[test]
+fn the_pager_dots_the_desktops_holding_windows_and_its_tip_names_them() {
+    let config = crate::config::Config::parse("[workspaces]\ncount = 3").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let one = h.map_titled(&mut c, "editor", "Notes", (300, 200));
+    let two = h.map_titled(&mut c, "calc", "Calculator", (300, 200));
+    h.dispatch();
+    let drawn = |h: &crate::harness::Harness| -> Vec<bool> {
+        let bar = h.state.bars[0].drawn.as_ref().expect("a drawn bar");
+        bar.state.pager.iter().map(|p| p.occupied).collect()
+    };
+    assert_eq!(drawn(&h), [true, false, false]);
+    h.state.move_to_desktop(&[two.id], 1);
+    h.dispatch();
+    assert_eq!(drawn(&h), [true, true, false], "the window's new desktop");
+    assert_eq!(h.state.pager_tip(1), "Desktop 2\nCalculator");
+    assert_eq!(
+        h.state.pager_tip(2),
+        "Desktop 3",
+        "an empty desktop: its name alone"
+    );
+    c.destroy(two);
+    h.roundtrip(&mut c);
+    h.dispatch();
+    assert_eq!(drawn(&h), [true, false, false], "closed on another desktop");
+    h.state.set_all_desktops(one.id, true);
+    h.dispatch();
+    assert_eq!(
+        drawn(&h),
+        [false; 3],
+        "a window on every desktop marks none"
+    );
 }

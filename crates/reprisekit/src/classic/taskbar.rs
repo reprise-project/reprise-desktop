@@ -165,6 +165,9 @@ pub fn draw_taskbar(
             Align::Center,
             size,
         );
+        if b.occupied {
+            canvas.fill_rect(crate::taskbar::pager_dot(text, label, size, s), ink);
+        }
     }
 
     let count = layout.tasks.len().min(state.tasks.len());

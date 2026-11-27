@@ -81,6 +81,22 @@ pub struct TaskEntry {
 pub struct PagerButton {
     pub current: bool,
     pub attention: bool,
+    /// The desktop holds a window: a dot shows under its number ([`pager_dot`]).
+    pub occupied: bool,
+}
+
+/// Side of the dot under a pager number, in design px.
+const PAGER_DOT: i32 = 2;
+/// From a pager number's baseline to its dot, in design px.
+const PAGER_DOT_GAP: i32 = 2;
+
+/// The dot under the number of pager cell `r` (device px at `d`) at text `size_px`, kept a design
+/// px clear of the cell's foot.
+pub fn pager_dot(text: &crate::text::TextRenderer, r: Rect, size_px: u32, d: i32) -> Rect {
+    let side = PAGER_DOT * d;
+    let base = (text.baseline(r, false, size_px)).unwrap_or(r.y + r.height / 2);
+    let y = (base + PAGER_DOT_GAP * d).min(r.bottom() - d - side);
+    Rect::new(r.x + (r.width - side) / 2, y, side, side)
 }
 
 /// How a look with slot lights marks the current pager cell: a light along its foot or a glass tile behind its number.
