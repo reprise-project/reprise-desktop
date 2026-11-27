@@ -734,6 +734,11 @@ impl TextEdit {
         self.limit = Some(limit);
     }
 
+    /// Whether `s` typed or pasted over the selection goes in whole under the caps.
+    pub fn fits(&self, s: &str) -> bool {
+        self.room_for(s, self.selection()) == s.len()
+    }
+
     /// The most bytes the field holds: a UTF-16 unit is at most three bytes.
     fn max_len(&self) -> usize {
         match self.limit {

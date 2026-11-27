@@ -322,10 +322,22 @@ pub fn balloon_size(text: &TextRenderer, theme: &Theme, title: &str, body: &str)
 /// Classic's bubble is tooltip yellow with a bold title; a look with its own
 /// balloon draws as [`BalloonLook`] says, the text from the icon's left edge.
 pub fn draw_balloon_tip(theme: &Theme, text: &TextRenderer, title: &str, body: &str) -> Canvas {
+    draw_balloon_tip_at(theme, text, title, body, 1)
+}
+
+/// [`draw_balloon_tip`] on a canvas of `canvas_scale` device px per unit, as a program's window
+/// draws at a theme of scale 1.
+pub fn draw_balloon_tip_at(
+    theme: &Theme,
+    text: &TextRenderer,
+    title: &str,
+    body: &str,
+    canvas_scale: i32,
+) -> Canvas {
     let s = theme.scale.max(1);
     let size = theme.fonts.size_px;
     let (w, h) = balloon_size(text, theme, title, body);
-    let mut c = Canvas::new(w as u32, h as u32);
+    let mut c = Canvas::with_scale(w as u32, h as u32, canvas_scale);
     if let Some(b) = balloon_look(theme) {
         let shadow = b.shadow.map_or(0, |_| DropShadow::N as i32 * s);
         let stem = b.tail.2 * s;

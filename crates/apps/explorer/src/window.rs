@@ -46,7 +46,7 @@ use reprisekit::{
     controls::searchfield, controls::shellview, controls::statusbar, controls::taskpane,
     controls::toolbar,
 };
-use reprisekit::{controls::menu, controls::treeview};
+use reprisekit::{controls::menu, controls::tooltip, controls::treeview};
 
 /// The task pane's width and its gap to the view at 100% text; both grow with the text.
 const TASK_W: i32 = 200;
@@ -390,6 +390,19 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
     }
     if let Some(p) = &ex.popup {
         p.draw(c, ctx);
+    }
+    if let (Some(body), Some((i, _))) = (&ex.rename_balloon, &ex.sv.edit)
+        && let Some(r) = shellview::rename_rect(&ex.sv, &sl, *i, &ctx.text, px)
+    {
+        let title = crate::volumes::label_limit_title();
+        let b = tooltip::draw_balloon_tip_at(&ctx.theme, &ctx.text, &title, body, c.scale());
+        let x = r.x.min(c.width as i32 - b.width as i32).max(0);
+        // Above the box when the window ends before the balloon would.
+        let y = match r.bottom() + b.height as i32 > c.height as i32 {
+            true => (r.y - b.height as i32).max(0),
+            false => r.bottom(),
+        };
+        c.blit_over(x, y, &b);
     }
     if let Some(tip) = &ex.tip {
         let box_ = if tip.plain {

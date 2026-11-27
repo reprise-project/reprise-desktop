@@ -554,6 +554,15 @@ pub(crate) fn bad_char_text(bad: BadLabelChar) -> String {
     }
 }
 
+/// The Rename box's balloon on a key past a drive name's `n` characters.
+pub(crate) fn label_limit_text(n: usize) -> String {
+    tr!("volumes-label-limit", n = n.to_string())
+}
+
+pub(crate) fn label_limit_title() -> String {
+    tr!("volumes-label-limit-title")
+}
+
 fn too_long_text(limit: Option<usize>) -> String {
     match limit {
         Some(n) => tr!(

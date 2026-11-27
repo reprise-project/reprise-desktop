@@ -9,7 +9,7 @@ use reprisefs::names::{Verdict, failed_text, verdict};
 use reprisefs::undo::{FileId, Undoable, file_id};
 use reprisekit::controls::batchrename as renamebox;
 use reprisekit::controls::form::{self, Form};
-use reprisekit::textedit::{TextEdit, keysym};
+use reprisekit::textedit::{EditKey, TextEdit, keysym};
 use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
@@ -165,6 +165,7 @@ impl Explorer {
         self.focus = Focus::View;
         self.renames += 1;
         self.relabeling = None;
+        self.rename_balloon = None;
         self.sv.edit = Some((i, TextEdit::rename(text, whole)));
         self.refresh_chrome(ctx);
         Reply::redraw()
@@ -184,8 +185,14 @@ impl Explorer {
             return Some(Reply::redraw());
         }
         let key = k.edit.clone()?;
+        let limit =
+            (self.relabeling.as_ref()).and_then(|v| reprisefs::udisks::label_limit(&v.fs_type));
         if let Some((_, ed)) = self.sv.edit.as_mut() {
+            let full = matches!(&key, EditKey::Insert(s) if !s.is_empty() && !ed.fits(s));
             ed.key(key);
+            self.rename_balloon = limit
+                .filter(|_| full)
+                .map(|l| crate::volumes::label_limit_text(l.max()));
         }
         Some(Reply::redraw())
     }
@@ -552,6 +559,44 @@ mod tests {
             Control::ListBox { list, .. } => list.items.clone(),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn a_key_past_a_drive_names_limit_raises_the_balloon_and_the_next_key_drops_it() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(dir.path().join("a.txt"), "x").expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        let stick = reprisefs::udisks::Volume {
+            fs_type: "vfat".into(),
+            ..Default::default()
+        };
+        ex.open_relabel_box(0, stick, "HOLIDAY 202", &mut ctx);
+        let typed = |ex: &mut Explorer, ctx: &mut Ctx, s: &str| {
+            let k = KeyInput {
+                sym: 0,
+                utf8: Some(s.into()),
+                mods: repriseapp::Mods::default(),
+                edit: Some(EditKey::Insert(s.into())),
+            };
+            ex.rename_key(&k, ctx);
+        };
+        let (_, edit) = ex.sv.edit.as_mut().expect("the rename box");
+        edit.key(EditKey::End { select: false });
+        typed(&mut ex, &mut ctx, "6");
+        assert_eq!(ex.sv.edit.as_ref().unwrap().1.text, "HOLIDAY 202");
+        assert_eq!(
+            ex.rename_balloon.as_deref(),
+            Some("This drive's name can be at most 11 characters long.")
+        );
+        let left = KeyInput {
+            sym: keysym::LEFT,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: reprisekit::textedit::key_for(keysym::LEFT, false, false, None),
+        };
+        ex.rename_key(&left, &mut ctx);
+        assert_eq!(ex.rename_balloon, None, "the next key drops it");
     }
 
     #[test]
