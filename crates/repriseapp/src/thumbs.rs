@@ -33,6 +33,10 @@ const WITHIN: Duration = Duration::from_secs(3);
 /// one returns: each holds a thread.
 const MAX_STUCK: usize = 4;
 
+/// The reads of [`picture_in`], which may name a file on a mount that never answers.
+static NAMED_READS: std::sync::LazyLock<Deadlines> =
+    std::sync::LazyLock::new(|| Deadlines::new(WITHIN));
+
 struct Request {
     path: PathBuf,
     generation: u64,
@@ -318,7 +322,7 @@ fn decode_helper(helper: &std::path::Path) -> Option<Thumbnailer> {
 
 /// The picture file at `path` an app named, fitted inside `max`: a JPEG XL or AVIF by
 /// [`DECODE_FLAG`] in the thumbnailers' jail (none without one), anything else by
-/// [`Decoders::built_in`].
+/// [`Decoders::built_in`]. A read that does not answer within [`WITHIN`] gives none.
 pub fn picture(path: &std::path::Path, max: (u32, u32)) -> Option<Canvas> {
     picture_in(
         Runner::jailed().as_ref(),
@@ -336,9 +340,13 @@ pub fn picture_in(
     max: (u32, u32),
 ) -> Option<Canvas> {
     let budget = crate::decode::Budget::THUMBNAIL;
-    let bytes = std::fs::File::open(path)
-        .and_then(|f| crate::decode::read_capped_from(f, budget.file))
-        .ok()?;
+    let p = path.to_path_buf();
+    let bytes = (NAMED_READS.run(move || {
+        reprisefs::ops::open_regular(&p)
+            .and_then(|f| crate::decode::read_capped_from(f, budget.file))
+    }))
+    .map_err(|e| log::debug!("picture {}: {e}", path.display()))
+    .ok()?;
     if crate::decode::helper_format(&bytes).is_none() {
         let d = Decoders::built_in().decode(&bytes, max, budget).ok()?;
         return Some(d.canvas);
@@ -418,10 +426,7 @@ fn thumbnail(
     let p = path.to_path_buf();
     let (file, meta) = fs
         .run(move || {
-            if !std::fs::metadata(&p)?.is_file() {
-                return Err(io::ErrorKind::InvalidInput.into());
-            }
-            let f = std::fs::File::open(&p)?;
+            let f = reprisefs::ops::open_regular(&p)?;
             let meta = f.metadata()?;
             Ok((f, meta))
         })

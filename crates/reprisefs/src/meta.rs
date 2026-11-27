@@ -6,6 +6,7 @@
 use std::ffi::CString;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 pub const BACKUP: &str = "user.xdg.robots.backup";
@@ -151,9 +152,14 @@ fn icon_of(dir: &Path, text: Option<&str>) -> Option<String> {
     (text.and_then(|t| entry_value(t, ICON_KEY))).or_else(|| crate::gvfsmeta::custom_icon(dir))
 }
 
+/// A relative value with a `..` names nothing: Reprise writes a picture outside the folder whole.
 fn picture_of(dir: &Path, text: Option<&str>) -> Option<PathBuf> {
     match text.and_then(|t| entry_value(t, PICTURE_KEY)) {
-        Some(v) => Some(dir.join(unescape(&v))),
+        Some(v) => {
+            let v = PathBuf::from(unescape(&v));
+            let up = (v.components()).any(|c| c == std::path::Component::ParentDir);
+            (v.is_absolute() || !up).then(|| dir.join(v))
+        }
         None => crate::gvfsmeta::custom_picture(dir),
     }
 }
@@ -173,16 +179,18 @@ fn key_of(line: &str) -> Option<&str> {
 /// `key`'s value in the `[Desktop Entry]` group of desktop entry `text`, unless empty.
 fn entry_value(text: &str, key: &str) -> Option<String> {
     let mut in_entry = false;
+    // Only spaces and tabs: [`escape`] keeps every other character, at the ends too.
+    let blank = |s: &str| s.trim_matches([' ', '\t']).to_string();
     for line in text.lines() {
-        let line = line.trim();
+        let line = blank(line);
         if line.starts_with('[') {
             in_entry = line == "[Desktop Entry]";
         } else if in_entry
-            && key_of(line) == Some(key)
+            && key_of(&line) == Some(key)
             && let Some((_, v)) = line.split_once('=')
-            && !v.trim().is_empty()
+            && !blank(v).is_empty()
         {
-            return Some(v.trim().to_string());
+            return Some(blank(v));
         }
     }
     None
@@ -330,6 +338,18 @@ fn picture_value(dir: &Path, pic: &Path) -> io::Result<String> {
     Ok(escape(s))
 }
 
+/// A write refused because the folder's `.directory` is a symbolic link, which it never follows.
+#[derive(Debug)]
+pub struct DirectoryIsLink;
+
+impl std::fmt::Display for DirectoryIsLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the folder's .directory is a link")
+    }
+}
+
+impl std::error::Error for DirectoryIsLink {}
+
 fn set_directory_keys(dir: &Path, keys: &[(&str, Option<&str>)]) -> io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -343,11 +363,13 @@ fn set_directory_keys(dir: &Path, keys: &[(&str, Option<&str>)]) -> io::Result<(
             let bytes = crate::ops::read_opened(&f, DIRECTORY_MAX)?;
             let text = String::from_utf8(bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            (text, Some(f.metadata()?.permissions()))
+            // A `.directory` is never a program: setuid, setgid, sticky and exec bits stay behind.
+            let mode = f.metadata()?.permissions().mode() & 0o666;
+            (text, Some(std::fs::Permissions::from_mode(mode)))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => (String::new(), None),
         Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {
-            return Err(io::Error::other("the folder's .directory is a link"));
+            return Err(io::Error::other(DirectoryIsLink));
         }
         Err(e) => return Err(e),
     };
@@ -459,13 +481,43 @@ mod tests {
         assert_eq!(folder_picture(&d), Some(d.join(" beach.jpg")));
         set(Some(&d.join("best/b.jpg"))).unwrap();
         assert_eq!(read(), "[Desktop Entry]\nX-Reprise-Picture=best/b.jpg\n");
-        let outside = t.path().join("Trip 2/a\\b\n.png");
+        let outside = t.path().join("Trip 2/a\\b\n.png\u{a0}");
         set(Some(&outside)).unwrap();
         assert_eq!(folder_picture(&d), Some(outside), "escaped and read back");
         assert!(!read().contains("a\\b\n"), "no raw newline or backslash");
         set(None).unwrap();
         assert_eq!(folder_picture(&d), None);
         assert!(!d.join(DIRECTORY_FILE).exists(), "nothing left, no file");
+    }
+
+    #[test]
+    fn a_relative_picture_climbing_out_of_its_folder_names_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let at = |v: &str| {
+            let text = format!("[Desktop Entry]\nX-Reprise-Picture={v}\n");
+            std::fs::write(d.join(DIRECTORY_FILE), text).unwrap();
+            folder_picture(d)
+        };
+        assert_eq!(at("../Pictures/a.png"), None);
+        assert_eq!(at("pics/../a.png"), None);
+        assert_eq!(at("pics/a.png"), Some(d.join("pics/a.png")));
+        assert_eq!(
+            at("/srv/../a.png"),
+            Some(PathBuf::from("/srv/../a.png")),
+            "a whole path is taken as written"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_directory_file_keeps_only_its_read_and_write_bits() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(DIRECTORY_FILE);
+        std::fs::write(&file, "[Desktop Entry]\nName=Tunes\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o6755)).unwrap();
+        set_folder_icon(dir.path(), Some("folder-music")).unwrap();
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o644);
     }
 
     #[test]
@@ -563,7 +615,8 @@ mod tests {
         let victim = t.path().join("victim");
         std::fs::write(&victim, "keep\r\n").unwrap();
         std::os::unix::fs::symlink("../victim", linked.join(DIRECTORY_FILE)).unwrap();
-        assert!(set_folder_icon(&linked, Some("folder-music")).is_err());
+        let refused = set_folder_icon(&linked, Some("folder-music")).expect_err("a link");
+        assert!(refused.get_ref().is_some_and(|e| e.is::<DirectoryIsLink>()));
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep\r\n");
 
         let file = own.join(DIRECTORY_FILE);

@@ -261,6 +261,10 @@ pub fn glance_in(
         .filter(|ext| ext.starts_with('.'))
         .unwrap_or("")
         .to_string();
+    let (own_icon, own_picture) = match is_dir {
+        true => crate::meta::folder_look(path),
+        false => (None, None),
+    };
     Ok(FileInfo {
         name: name.to_string(),
         hidden_ext,
@@ -293,8 +297,8 @@ pub fn glance_in(
         summary: (!is_dir && !is_shortcut)
             .then(|| crate::meta::summary(path))
             .flatten(),
-        own_icon: is_dir.then(|| crate::meta::folder_icon(path)).flatten(),
-        own_picture: is_dir.then(|| crate::meta::folder_picture(path)).flatten(),
+        own_icon,
+        own_picture,
         launcher,
         description,
     })

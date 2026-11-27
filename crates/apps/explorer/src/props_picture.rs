@@ -9,7 +9,6 @@ use repriseapp::filedlg::{Driven, type_keep};
 use repriseapp::listjob::Job;
 use repriseapp::{Child, Ctx, Event, Reply, WinId};
 use reprisekit::controls::filedlg::{DlgMode, Fields};
-use reprisekit::controls::filepreview::Route;
 use reprisekit::controls::filesheet;
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
@@ -27,19 +26,26 @@ pub(crate) struct PicturePick {
 }
 
 /// Customize's preview of picture `path` drawn at `scale`: fitted inside the preview square and
-/// centred in it, read as Space's preview reads a picture ([`crate::preview::read`]).
-pub(crate) fn preview_picture(path: &Path, scale: i32) -> Option<Canvas> {
+/// centred in it ([`crate::preview::read_picture`]).
+fn preview_picture(path: &Path, scale: i32) -> Option<Canvas> {
     let px = filesheet::PREVIEW_PX;
     let edge = (px * scale) as u32;
     let jailed = crate::preview::Jailed::installed();
-    let read = crate::preview::read(path, Route::Picture, None, &jailed, (edge, edge), scale);
-    let crate::preview::Loaded::Picture(picture) = read else {
-        return None;
-    };
+    let picture = crate::preview::read_picture(path, &jailed, (edge, edge), scale)?;
     let mut square = Canvas::with_scale(px as u32, px as u32, scale);
     let (w, h) = (picture.width as i32, picture.height as i32);
     square.blit_over((px - w) / 2, (px - h) / 2, &picture);
     Some(square)
+}
+
+/// The sheet's preview shows the folder's icon until `picture` is read off the loop and lands
+/// ([`Explorer::take_sheet_picture`]); the sheet never waits for it.
+pub(crate) fn load_picture(p: &mut Props, picture: Option<PathBuf>, ctx: &Ctx) {
+    let scale = ctx.icons.scale();
+    let pick = &mut p.picks.picture;
+    pick.canvas = None;
+    pick.job =
+        picture.map(|path| Job::spawn(Some(&ctx.wake), move || preview_picture(&path, scale)));
 }
 
 /// The file dialog's Files of type: the pictures Reprise decodes, then everything.
@@ -138,24 +144,19 @@ impl Explorer {
         }
     }
 
-    /// The sheet shows `picture`, or the folder's icon for None, until OK or Apply writes it. The
-    /// picture is read off the loop; the icon shows until it lands.
+    /// The sheet shows `picture`, or the folder's icon for None, until OK or Apply writes it.
     pub(crate) fn picture_chosen(&mut self, picture: Option<PathBuf>, ctx: &mut Ctx) -> Reply {
         let Some(p) = self.props.as_mut() else {
             return Reply::none();
         };
         p.picture_chosen = Some(picture.clone());
-        let scale = ctx.icons.scale();
-        let pick = &mut p.picks.picture;
-        pick.canvas = None;
-        pick.job =
-            picture.map(|path| Job::spawn(Some(&ctx.wake), move || preview_picture(&path, scale)));
+        load_picture(p, picture, ctx);
         crate::props_host::wear_picks(p, ctx);
         show_picture_buttons(p);
         Reply::redraw_all()
     }
 
-    /// The preview of a picture chosen landed.
+    /// The preview of the folder's picture, or of one chosen, landed.
     pub(crate) fn take_sheet_picture(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let p = self.props.as_mut()?;
         let landed = p.picks.picture.job.as_ref()?.take()?;

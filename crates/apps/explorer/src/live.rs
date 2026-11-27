@@ -235,9 +235,8 @@ impl Explorer {
             | self.land_address_completion(ctx);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {
-            let folders = (self.pictures.iter())
-                .filter(|(_, p)| **p == done.path)
-                .filter_map(|(f, _)| self.item_index.get(f));
+            let folders = (self.picture_folders.get(&done.path).into_iter().flatten())
+                .filter_map(|f| self.item_index.get(f));
             for &i in folders {
                 if let Some(e) = self.sv.entries.get_mut(i) {
                     let thumb = done.thumb.clone();

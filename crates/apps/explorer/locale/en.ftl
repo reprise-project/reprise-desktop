@@ -380,6 +380,7 @@ props-apply-props-cannot-change-name-e = Cannot change { $name }: { $e }
 props-apply-props-cannot-change-the-icon-of-name = Cannot change the icon of { $name }: { $e }
 props-apply-props-cannot-change-the-picture-of-name = Cannot change the picture of { $name }: { $e }
 props-apply-props-no-permission-for-the-picture-of-name = You do not have permission to change the picture of { $name }.
+props-apply-props-directory-is-a-link = Cannot change { $name }: its .directory file is a link.
 props-apply-set-props-properties = Properties
 props-write-set-props-properties = Properties
 props-finish-set-props-properties = Properties
