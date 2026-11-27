@@ -11,7 +11,7 @@ use reprisekit::theme::FontConfig;
 use reprisekit::trackbar::TrackBar;
 
 use crate::model::{
-    EFFECTS_MS_MAX, FONT_SMOOTHINGS, MENU_ANIMATIONS, QT_PLATFORM_THEMES, REPRISE_TOOLKIT_ROW,
+    EFFECTS_MS_MAX, FONT_SMOOTHINGS, MENU_ANIMATIONS, QT_PLATFORM_THEMES, reprise_toolkit_row,
 };
 
 /// `qt_tools` is whether qt6ct or qt5ct is installed, which the Qt combo's Reprise row needs; without either it is greyed.
@@ -116,10 +116,7 @@ pub fn fonts_and_icons(
     ));
     items.push(Item::label_at("caption_units", GX + 312, 312, 20, "px"));
 
-    let mut gtk: Vec<String> = GTK_FIXED_ROWS
-        .iter()
-        .map(|(_, row)| row.to_string())
-        .collect();
+    let mut gtk: Vec<String> = GTK_FIXED_ROWS.iter().map(|(_, row)| row()).collect();
     gtk.extend(gtk_themes.iter().cloned());
     items.push(group(a, "toolkits_group", 344, 86, "Programs"));
     items.push(Item::label_at("gtk_label", GX, 368, 84, "GTK th&eme:"));
@@ -134,7 +131,7 @@ pub fn fonts_and_icons(
     items.push(Item::label_at("qt_label", GX, 394, 84, "&Qt style:"));
     let mut qt = choice("qt_platform_theme", GX + 88, 390, cw, QT_PLATFORM_THEMES);
     if let Control::Combo(c) = &mut qt.control
-        && let Some(row) = c.items.iter_mut().find(|i| i.text == REPRISE_TOOLKIT_ROW)
+        && let Some(row) = c.items.iter_mut().find(|i| i.text == reprise_toolkit_row())
     {
         row.greyed = !qt_tools;
     }

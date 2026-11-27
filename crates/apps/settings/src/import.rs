@@ -117,7 +117,7 @@ fn on(b: bool) -> String {
 fn label(choices: &Choices, v: &str) -> String {
     (choices.iter())
         .find(|(name, _)| *name == v)
-        .map_or_else(|| v.to_string(), |(_, l)| l.to_string())
+        .map_or_else(|| v.to_string(), |(_, l)| l())
 }
 
 /// "us,de" with ",nodeadkeys" as "us, de (nodeadkeys)".

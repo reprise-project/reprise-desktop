@@ -4,7 +4,8 @@ use super::{
     ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_FROM_DESKTOP, BACKUP_IMPORT, BACKUP_STATUS,
     DEBUG_IN_CAPTURES, DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE,
     THUMBNAILERS, THUMBS, THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice,
-    combo, edit, ends_track, field, grey_choices, group, list, permissions, radio, spin, time,
+    combo, combo_of, edit, ends_track, field, grey_choices, group, list, permissions, radio, spin,
+    time,
 };
 use crate::model::{
     FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
@@ -645,7 +646,7 @@ pub fn remote_desktop(
         200,
         "Picture &quality:",
     ));
-    let (left, right) = (REMOTE_QUALITIES[0].1, REMOTE_QUALITIES[2].1);
+    let (left, right) = ((REMOTE_QUALITIES[0].1)(), (REMOTE_QUALITIES[2].1)());
     items.extend(ends_track(
         a,
         [
@@ -657,15 +658,13 @@ pub fn remote_desktop(
         "Picture quality",
         157 + dy,
         27,
-        (left, right),
+        (&left, &right),
         X,
         TrackBar::new(1, REMOTE_QUALITIES.len()),
     ));
-    let rates: Vec<&str> = FRAME_RATES.iter().map(|r| r.1).collect();
-    let encoders: Vec<&str> = REMOTE_ENCODERS.iter().map(|e| e.1).collect();
     items.extend([
         Item::label_at("frame_rate_label", X, 184 + dy, 160, "Frame &rate:"),
-        Item::combo(REMOTE_FRAME_RATE, X, 200 + dy, 160, &rates, rates.len()),
+        combo_of(REMOTE_FRAME_RATE, X, 200 + dy, 160, FRAME_RATES),
         Item::label_at(
             "video_encoder_label",
             ENCODER_X,
@@ -673,13 +672,12 @@ pub fn remote_desktop(
             ENCODER_W,
             "Video &encoder:",
         ),
-        Item::combo(
+        combo_of(
             REMOTE_ENCODER,
             ENCODER_X,
             200 + dy,
             ENCODER_W,
-            &encoders,
-            encoders.len(),
+            REMOTE_ENCODERS,
         ),
         Item::check(
             REMOTE_SOUND,
@@ -711,7 +709,6 @@ pub fn remote_desktop(
         ),
     ]);
     let grace_x = a.right() - LOCK_GRACE_W;
-    let graces: Vec<&str> = LOCK_GRACES.iter().map(|g| g.1).collect();
     items.extend([
         Item::label_at(
             "lock_grace_label",
@@ -721,13 +718,12 @@ pub fn remote_desktop(
             "&Wait before locking on a screen change:",
         )
         .under_check(),
-        Item::combo(
+        combo_of(
             REMOTE_LOCK_GRACE,
             grace_x,
             329 + dy,
             LOCK_GRACE_W,
-            &graces,
-            graces.len(),
+            LOCK_GRACES,
         ),
         Item::check(
             REMOTE_BORDER,

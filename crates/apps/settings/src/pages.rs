@@ -18,7 +18,8 @@ use reprisekit::controls::updown::{self, UpDown};
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
 
-use crate::model::{Choices, REPRISE_TOOLKIT_ROW, TOOLKIT_AUTO, TOOLKIT_REPRISE};
+use crate::model::{Choices, Label, TOOLKIT_AUTO, TOOLKIT_REPRISE, reprise_toolkit_row};
+use reprisekit::tr;
 
 mod appearance;
 mod bind;
@@ -71,16 +72,20 @@ pub const CLIENT: (i32, i32) = (398, 528);
 
 /// The Cursor page's preview and the combo row standing for an empty `[cursor] theme`.
 pub const CURSOR_PREVIEW: &str = "cursor_preview";
-pub const CURSOR_DEFAULT_ROW: &str = "(Default)";
+pub fn cursor_default_row() -> String {
+    tr!("pages-cursor-default-row")
+}
 
-const CURSOR_FIXED_ROWS: &Choices = &[("", CURSOR_DEFAULT_ROW)];
+const CURSOR_FIXED_ROWS: &Choices = &[("", cursor_default_row)];
 
-pub const GTK_AUTO_ROW: &str = "(Automatic)";
+pub fn gtk_auto_row() -> String {
+    tr!("pages-gtk-auto-row")
+}
 
 /// The GTK theme combo's first rows: "auto", then "reprise", the theme generated from the look in force.
 const GTK_FIXED_ROWS: &Choices = &[
-    (TOOLKIT_AUTO, GTK_AUTO_ROW),
-    (TOOLKIT_REPRISE, REPRISE_TOOLKIT_ROW),
+    (TOOLKIT_AUTO, gtk_auto_row),
+    (TOOLKIT_REPRISE, reprise_toolkit_row),
 ];
 
 /// The night light trackbar's range and step, in kelvin: warmest on the left.
@@ -406,8 +411,14 @@ fn combo(id: &'static str, x: i32, y: i32, w: i32, items: &[String], rows: usize
 }
 
 pub(crate) fn choice(id: &'static str, x: i32, y: i32, w: i32, choices: &Choices) -> Item {
-    let labels: Vec<&str> = choices.iter().map(|c| c.1).collect();
-    Item::combo(id, x, y, w, &labels, choices.len())
+    combo_of(id, x, y, w, choices)
+}
+
+/// A combo with a row for each of `rows`, labelled in the language in force.
+pub(crate) fn combo_of<T>(id: &'static str, x: i32, y: i32, w: i32, rows: &[(T, Label)]) -> Item {
+    let texts: Vec<String> = rows.iter().map(|r| (r.1)()).collect();
+    let labels: Vec<&str> = texts.iter().map(String::as_str).collect();
+    Item::combo(id, x, y, w, &labels, rows.len())
 }
 
 /// Grey each row of combo `id`, built from `choices`, whose value is in neither `offered` nor

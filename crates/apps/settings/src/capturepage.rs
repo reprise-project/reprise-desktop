@@ -4,13 +4,14 @@
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
     AUDIO_CODECS, Choices, ENCODERS, PNG_COMPRESSIONS, RATE_MODES, RECORD_FRAME_RATES,
     SHOT_FORMATS, Settings, VIDEO_CODECS, software_row,
 };
-use crate::pages::{Area, GX, X, choice, grey_choices, group, spin, updown};
+use crate::pages::{Area, GX, X, choice, combo_of, grey_choices, group, spin, updown};
 use crate::registry::Page;
 use repriseconf::config::SHOT_DELAY_MAX;
 use repriseconf::recording::{AudioCodec, Codec, Probed};
@@ -76,7 +77,9 @@ const DELAY_X: i32 = X + 242;
 const MICROPHONE_X: i32 = X + 160;
 
 /// The screen rate row's text under Constant bitrate, which codes the screen at most this often.
-const CONSTANT_SCREEN_RATE: &str = "Screen rate (60 at most)";
+fn constant_screen_rate() -> String {
+    tr!("capturepage-screen-rate-60-at-most")
+}
 
 /// The 1..100 trackbar `track` on row `y` from [`CONTROL_X`], its value `value` right of it.
 fn bar(a: Area, track: &'static str, value: &'static str, name: &'static str, y: i32) -> [Item; 2] {
@@ -229,17 +232,9 @@ pub fn page(s: &Settings, a: Area) -> Form {
         }
         _ => items.extend(level(a, VIDEO_LEVEL, "Recording quality", 262, "Q&uality:")),
     }
-    let rates: Vec<&str> = RECORD_FRAME_RATES.iter().map(|r| r.1).collect();
     items.extend([
         Item::label_at("frame_rate_label", GX, 288, LABEL_W, "Frame ra&te:"),
-        Item::combo(
-            FRAME_RATE,
-            CONTROL_X,
-            284,
-            a.combo(160),
-            &rates,
-            rates.len(),
-        ),
+        combo_of(FRAME_RATE, CONTROL_X, 284, a.combo(160), RECORD_FRAME_RATES),
     ]);
     items.extend(spin(
         "keyframe_label",
@@ -358,10 +353,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         s.screenshot_record_sound && s.recording_audio_codec == "opus",
     );
     let screen_rate = match s.recording_rate.as_str() {
-        "constant" => CONSTANT_SCREEN_RATE,
-        _ => RECORD_FRAME_RATES[0].1,
+        "constant" => constant_screen_rate(),
+        _ => (RECORD_FRAME_RATES[0].1)(),
     };
-    set_row(form, FRAME_RATE, 0, screen_rate);
+    set_row(form, FRAME_RATE, 0, &screen_rate);
     let software = ENCODERS.len() - 1;
     set_row(form, ENCODER, software, &software_row(&s.recording_codec));
 }

@@ -1,48 +1,58 @@
 use repriseconf::recording::Codec;
+use reprisekit::tr;
+
+/// A row's text, looked up when the page is built.
+pub type Label = fn() -> String;
 
 /// A combo's items: the value the config takes, then the text the combo
 /// shows for it.
-pub type Choices = [(&'static str, &'static str)];
+pub type Choices = [(&'static str, Label)];
 
 /// The taskbar button modes. Mirrors `TaskbarButtons::parse` in
 /// `repriseconf::config`.
 pub const TASKBAR_BUTTONS: &Choices = &[
-    ("combine", "Combine, icons only"),
-    ("when_full", "Combine when the taskbar is full"),
-    ("never", "Never combine"),
-    ("group", "Group, never combine"),
+    ("combine", || tr!("choices-taskbar-buttons-combine")),
+    ("when_full", || tr!("choices-taskbar-buttons-when-full")),
+    ("never", || tr!("choices-taskbar-buttons-never")),
+    ("group", || tr!("choices-taskbar-buttons-group")),
 ];
 
 /// What a title bar double click does. Mirrors `TitleDoubleClick::parse` in `repriseconf::config`.
 pub const TITLE_DOUBLE_CLICKS: &Choices = &[
-    ("maximize", "Maximize"),
-    ("shade", "Roll up"),
-    ("minimize", "Minimize"),
-    ("none", "Do nothing"),
+    ("maximize", || tr!("choices-title-double-clicks-maximize")),
+    ("shade", || tr!("choices-title-double-clicks-shade")),
+    ("minimize", || tr!("choices-title-double-clicks-minimize")),
+    ("none", || tr!("choices-title-double-clicks-none")),
 ];
 
 /// The Start menu styles. Mirrors `StartMenuStyle::parse` in `repriseconf::config`.
-pub const STARTMENU_STYLES: &Choices =
-    &[("glass", "Glass"), ("blue", "Blue"), ("classic", "Classic")];
+pub const STARTMENU_STYLES: &Choices = &[
+    ("glass", || tr!("choices-startmenu-styles-glass")),
+    ("blue", || tr!("choices-startmenu-styles-blue")),
+    ("classic", || tr!("choices-startmenu-styles-classic")),
+];
 
 /// The edges the taskbar can sit on. Mirrors `Edge::name` in
 /// `crates/reprisekit/src/taskbar.rs`.
 pub const TASKBAR_POSITIONS: &Choices = &[
-    ("bottom", "Bottom"),
-    ("top", "Top"),
-    ("left", "Left"),
-    ("right", "Right"),
+    ("bottom", || tr!("choices-taskbar-positions-bottom")),
+    ("top", || tr!("choices-taskbar-positions-top")),
+    ("left", || tr!("choices-taskbar-positions-left")),
+    ("right", || tr!("choices-taskbar-positions-right")),
 ];
 
 /// What pressing a clickpad clicks. Mirrors `ClickMethod::parse` in `repriseconf::config`.
 pub const CLICK_METHODS: &Choices = &[
-    ("default", "The pad's own"),
-    ("areas", "Bottom areas"),
-    ("clickfinger", "Finger count"),
+    ("default", || tr!("choices-click-methods-default")),
+    ("areas", || tr!("choices-click-methods-areas")),
+    ("clickfinger", || tr!("choices-click-methods-clickfinger")),
 ];
 
 /// `[gestures] fingers`' rows.
-pub const GESTURE_FINGERS: &[(i64, &str)] = &[(3, "3 fingers"), (4, "4 fingers")];
+pub const GESTURE_FINGERS: &[(i64, Label)] = &[
+    (3, || tr!("choices-gesture-fingers-3")),
+    (4, || tr!("choices-gesture-fingers-4")),
+];
 
 /// A drop-down that edits part of `[keyboard] options`: each row an xkb option id ("" for none),
 /// and an id prefix whose other ids it shows as themselves and replaces when a row is picked.
@@ -83,17 +93,17 @@ impl XkbPick {
 /// Settings > Keyboard's Compose key.
 pub const COMPOSE_KEY: XkbPick = XkbPick {
     rows: &[
-        ("", "None"),
-        ("compose:ralt", "Right Alt"),
-        ("compose:rwin", "Right Win"),
-        ("compose:menu", "Menu"),
-        ("compose:rctrl", "Right Ctrl"),
-        ("compose:caps", "Caps Lock"),
-        ("compose:lwin", "Left Win"),
-        ("compose:prsc", "Print Screen"),
-        ("compose:sclk", "Scroll Lock"),
-        ("compose:paus", "Pause"),
-        ("compose:ins", "Insert"),
+        ("", || tr!("choices-compose-key-none")),
+        ("compose:ralt", || tr!("choices-compose-key-compose-ralt")),
+        ("compose:rwin", || tr!("choices-compose-key-compose-rwin")),
+        ("compose:menu", || tr!("choices-compose-key-compose-menu")),
+        ("compose:rctrl", || tr!("choices-compose-key-compose-rctrl")),
+        ("compose:caps", || tr!("choices-compose-key-compose-caps")),
+        ("compose:lwin", || tr!("choices-compose-key-compose-lwin")),
+        ("compose:prsc", || tr!("choices-compose-key-compose-prsc")),
+        ("compose:sclk", || tr!("choices-compose-key-compose-sclk")),
+        ("compose:paus", || tr!("choices-compose-key-compose-paus")),
+        ("compose:ins", || tr!("choices-compose-key-compose-ins")),
     ],
     family: Some("compose:"),
 };
@@ -101,149 +111,173 @@ pub const COMPOSE_KEY: XkbPick = XkbPick {
 /// Settings > Keyboard's Caps Lock key.
 pub const CAPS_LOCK: XkbPick = XkbPick {
     rows: &[
-        ("", "Caps Lock"),
-        ("ctrl:nocaps", "Ctrl"),
-        ("caps:escape", "Escape"),
-        ("caps:backspace", "Backspace"),
-        ("caps:none", "Off"),
+        ("", || tr!("choices-caps-lock-none")),
+        ("ctrl:nocaps", || tr!("choices-caps-lock-ctrl-nocaps")),
+        ("caps:escape", || tr!("choices-caps-lock-caps-escape")),
+        ("caps:backspace", || tr!("choices-caps-lock-caps-backspace")),
+        ("caps:none", || tr!("choices-caps-lock-caps-none")),
     ],
     family: None,
 };
 
 /// What flashes on the bell. Mirrors `VisualBell::parse` in `repriseconf::config`.
 pub const VISUAL_BELLS: &Choices = &[
-    ("none", "Nothing"),
-    ("window", "The window"),
-    ("screen", "The whole screen"),
+    ("none", || tr!("choices-visual-bells-none")),
+    ("window", || tr!("choices-visual-bells-window")),
+    ("screen", || tr!("choices-visual-bells-screen")),
 ];
 
-pub const SWITCHER_STYLES: &Choices = &[("icons", "Icons"), ("thumbnails", "Thumbnails")];
+pub const SWITCHER_STYLES: &Choices = &[
+    ("icons", || tr!("choices-switcher-styles-icons")),
+    ("thumbnails", || tr!("choices-switcher-styles-thumbnails")),
+];
 
 pub const SWITCHER_SIZES: &Choices = &[
-    ("small", "Small"),
-    ("medium", "Medium"),
-    ("large", "Large"),
-    ("huge", "Huge"),
+    ("small", || tr!("choices-switcher-sizes-small")),
+    ("medium", || tr!("choices-switcher-sizes-medium")),
+    ("large", || tr!("choices-switcher-sizes-large")),
+    ("huge", || tr!("choices-switcher-sizes-huge")),
 ];
 
 /// The overview's hot corner combo. Mirrors `HotCorner::name` in
 /// `repriseconf::config`.
 pub const HOT_CORNERS: &Choices = &[
-    ("none", "None"),
-    ("top-left", "Top left"),
-    ("top-right", "Top right"),
-    ("bottom-left", "Bottom left"),
-    ("bottom-right", "Bottom right"),
+    ("none", || tr!("choices-hot-corners-none")),
+    ("top-left", || tr!("choices-hot-corners-top-left")),
+    ("top-right", || tr!("choices-hot-corners-top-right")),
+    ("bottom-left", || tr!("choices-hot-corners-bottom-left")),
+    ("bottom-right", || tr!("choices-hot-corners-bottom-right")),
 ];
 
 /// The desktop switch animations. Mirrors `SwitchStyle::name` in
 /// `repriseconf::config`.
 pub const SWITCH_ANIMATIONS: &Choices = &[
-    ("none", "None"),
-    ("slide", "Slide"),
-    ("slide-vertical", "Slide vertically"),
-    ("fade", "Fade"),
-    ("zoom", "Zoom"),
-    ("wipe", "Wipe"),
+    ("none", || tr!("choices-switch-animations-none")),
+    ("slide", || tr!("choices-switch-animations-slide")),
+    ("slide-vertical", || {
+        tr!("choices-switch-animations-slide-vertical")
+    }),
+    ("fade", || tr!("choices-switch-animations-fade")),
+    ("zoom", || tr!("choices-switch-animations-zoom")),
+    ("wipe", || tr!("choices-switch-animations-wipe")),
 ];
 
 /// What the lock shows of the media playing. Mirrors `LockMedia::name` in `repriseconf::config`.
 pub const LOCK_MEDIA: &Choices = &[
-    ("title", "Title, artist and buttons"),
-    ("controls", "Buttons only"),
-    ("off", "Nothing"),
+    ("title", || tr!("choices-lock-media-title")),
+    ("controls", || tr!("choices-lock-media-controls")),
+    ("off", || tr!("choices-lock-media-off")),
 ];
 
 /// How menus open. Mirrors `MenuAnimation::name` in `repriseconf::config`.
-pub const MENU_ANIMATIONS: &Choices = &[("fade", "Fade"), ("slide", "Slide"), ("none", "None")];
+pub const MENU_ANIMATIONS: &Choices = &[
+    ("fade", || tr!("choices-menu-animations-fade")),
+    ("slide", || tr!("choices-menu-animations-slide")),
+    ("none", || tr!("choices-menu-animations-none")),
+];
 
 /// How the Glass taskbar marks the current desktop. Mirrors
 /// `PagerMark::name` in `crates/reprisekit/src/taskbar.rs`.
-pub const PAGER_MARKS: &Choices = &[("light", "Light under its number"), ("tile", "Glass tile")];
+pub const PAGER_MARKS: &Choices = &[
+    ("light", || tr!("choices-pager-marks-light")),
+    ("tile", || tr!("choices-pager-marks-tile")),
+];
 
 /// The text sizes `[accessibility] text_size` takes. Mirrors
 /// `TEXT_SIZE` in `repriseconf::config`.
-pub const TEXT_SIZES: &[(i64, &str)] = &[
-    (100, "100%"),
-    (125, "125%"),
-    (150, "150%"),
-    (175, "175%"),
-    (200, "200%"),
+pub const TEXT_SIZES: &[(i64, Label)] = &[
+    (100, || tr!("choices-text-sizes-100")),
+    (125, || tr!("choices-text-sizes-125")),
+    (150, || tr!("choices-text-sizes-150")),
+    (175, || tr!("choices-text-sizes-175")),
+    (200, || tr!("choices-text-sizes-200")),
 ];
 
-pub const CURSOR_SIZES: &[(i64, &str)] = &[
-    (0, "Default"),
-    (24, "24 px"),
-    (32, "32 px"),
-    (48, "48 px"),
-    (64, "64 px"),
-    (96, "96 px"),
+pub const CURSOR_SIZES: &[(i64, Label)] = &[
+    (0, || tr!("choices-cursor-sizes-0")),
+    (24, || tr!("choices-cursor-sizes-24")),
+    (32, || tr!("choices-cursor-sizes-32")),
+    (48, || tr!("choices-cursor-sizes-48")),
+    (64, || tr!("choices-cursor-sizes-64")),
+    (96, || tr!("choices-cursor-sizes-96")),
 ];
 
 pub use repriseconf::config::{TOOLKIT_AUTO, TOOLKIT_REPRISE};
 
-pub const REPRISE_TOOLKIT_ROW: &str = "Reprise (follows the look)";
+pub fn reprise_toolkit_row() -> String {
+    tr!("choices-reprise-toolkit-row")
+}
 
 /// `[toolkits] qt_platform_theme`: "auto", "reprise", then the Qt
 /// platform theme plugins a desktop Linux ships. Any other name shows as
 /// itself.
 pub const QT_PLATFORM_THEMES: &Choices = &[
-    (TOOLKIT_AUTO, "Automatic (desktop portal)"),
-    (TOOLKIT_REPRISE, REPRISE_TOOLKIT_ROW),
-    ("xdgdesktopportal", "Desktop portal"),
-    ("qt6ct", "qt6ct"),
-    ("qt5ct", "qt5ct"),
-    ("kde", "KDE Plasma"),
-    ("gtk3", "GTK 3"),
+    (TOOLKIT_AUTO, || {
+        tr!("choices-qt-platform-themes-toolkit-auto")
+    }),
+    (TOOLKIT_REPRISE, reprise_toolkit_row),
+    ("xdgdesktopportal", || {
+        tr!("choices-qt-platform-themes-xdgdesktopportal")
+    }),
+    ("qt6ct", || tr!("choices-qt-platform-themes-qt6ct")),
+    ("qt5ct", || tr!("choices-qt-platform-themes-qt5ct")),
+    ("kde", || tr!("choices-qt-platform-themes-kde")),
+    ("gtk3", || tr!("choices-qt-platform-themes-gtk3")),
 ];
 
 /// `[toolkits] font_smoothing`: how GTK and the browsers smooth their
 /// text. Mirrors `FontSmoothing::parse` in `repriseconf::config`.
 pub const FONT_SMOOTHINGS: &Choices = &[
-    ("grayscale", "Grayscale"),
-    ("subpixel", "Subpixel (RGB)"),
-    ("none", "None"),
+    ("grayscale", || tr!("choices-font-smoothings-grayscale")),
+    ("subpixel", || tr!("choices-font-smoothings-subpixel")),
+    ("none", || tr!("choices-font-smoothings-none")),
 ];
 
 /// `[glass] mode`: `glass::Mode::as_str`, then `DarkSchedule::name`.
 pub const GLASS_MODES: &Choices = &[
-    ("light", "Light"),
-    ("dark", "Dark"),
-    ("night", "Dark at night"),
-    ("hours", "Dark at set hours"),
+    ("light", || tr!("choices-glass-modes-light")),
+    ("dark", || tr!("choices-glass-modes-dark")),
+    ("night", || tr!("choices-glass-modes-night")),
+    ("hours", || tr!("choices-glass-modes-hours")),
 ];
 
 /// `[glass] material`. Mirrors `glass::Material::as_str`.
 pub const GLASS_MATERIALS: &Choices = &[
-    ("frosted", "Frosted"),
-    ("smoked", "Smoked"),
-    ("molten", "Molten"),
+    ("frosted", || tr!("choices-glass-materials-frosted")),
+    ("smoked", || tr!("choices-glass-materials-smoked")),
+    ("molten", || tr!("choices-glass-materials-molten")),
 ];
 
 /// `[glass] notification_style`, the values of `glass::NotifyStyle::as_str`.
 pub const GLASS_NOTIFY_STYLES: &Choices = &[
-    ("lozenge", "Lozenge"),
-    ("halo", "Halo"),
-    ("droplet", "Droplet"),
+    ("lozenge", || tr!("choices-glass-notify-styles-lozenge")),
+    ("halo", || tr!("choices-glass-notify-styles-halo")),
+    ("droplet", || tr!("choices-glass-notify-styles-droplet")),
 ];
 
 /// `[glass] frame`. Mirrors `glass::Frame::as_str`.
-pub const GLASS_FRAMES: &Choices = &[("rounded", "Rounded"), ("square", "Square")];
+pub const GLASS_FRAMES: &Choices = &[
+    ("rounded", || tr!("choices-glass-frames-rounded")),
+    ("square", || tr!("choices-glass-frames-square")),
+];
 
 /// The Interface combo's items. Mirrors `Interface::parse` in reprisekit.
 pub const INTERFACES: &Choices = &[
-    ("classic", "Reprise Classic"),
-    ("blue", "Reprise Blue"),
-    ("glass", "Reprise Glass"),
+    ("classic", || tr!("choices-interfaces-classic")),
+    ("blue", || tr!("choices-interfaces-blue")),
+    ("glass", || tr!("choices-interfaces-glass")),
 ];
 
-pub const WALLPAPER_MODES: &Choices = &[("picture", "Picture"), ("slideshow", "Slideshow")];
+pub const WALLPAPER_MODES: &Choices = &[
+    ("picture", || tr!("choices-wallpaper-modes-picture")),
+    ("slideshow", || tr!("choices-wallpaper-modes-slideshow")),
+];
 
 /// The Remote Desktop quality trackbar's stops, left to right, and the name above it.
 pub const REMOTE_QUALITIES: &Choices = &[
-    ("speed", "Speed"),
-    ("balanced", "Balanced"),
-    ("sharp", "Sharp"),
+    ("speed", || tr!("choices-remote-qualities-speed")),
+    ("balanced", || tr!("choices-remote-qualities-balanced")),
+    ("sharp", || tr!("choices-remote-qualities-sharp")),
 ];
 
 /// The [`REMOTE_QUALITIES`] row `v` names; a name the server does not know reads as its default.
@@ -256,12 +290,12 @@ pub fn remote_quality_row(v: &str) -> usize {
 
 /// The Remote Desktop video encoders; the server greys those that do not work there.
 pub const REMOTE_ENCODERS: &Choices = &[
-    ("auto", "Automatic"),
-    ("vaapi", "Hardware, VA-API"),
-    ("nvenc", "Hardware, NVENC"),
-    ("vulkan", "Hardware, Vulkan"),
-    ("software", "Software (x264)"),
-    ("none", "None (RemoteFX)"),
+    ("auto", || tr!("choices-remote-encoders-auto")),
+    ("vaapi", || tr!("choices-remote-encoders-vaapi")),
+    ("nvenc", || tr!("choices-remote-encoders-nvenc")),
+    ("vulkan", || tr!("choices-remote-encoders-vulkan")),
+    ("software", || tr!("choices-remote-encoders-software")),
+    ("none", || tr!("choices-remote-encoders-none")),
 ];
 
 /// The screen recording encoders: Remote Desktop's, less its RemoteFX row.
@@ -270,115 +304,128 @@ pub const ENCODERS: &Choices = REMOTE_ENCODERS.split_at(5).0;
 /// The [`ENCODERS`] row for the CPU encoder of `[recording] codec` = `codec`.
 pub fn software_row(codec: &str) -> String {
     let codec = Codec::from_name(codec).unwrap_or(Codec::H264);
-    format!("Software ({})", codec.software_name())
+    tr!("choices-software-row", codec = codec.software_name())
 }
 
 /// `[screenshot] format`. Mirrors `ShotFormat::extension` in `repriseconf::config`.
-pub const SHOT_FORMATS: &Choices = &[("png", "PNG"), ("jpg", "JPG"), ("jxl", "JPEG XL")];
+pub const SHOT_FORMATS: &Choices = &[
+    ("png", || tr!("choices-shot-formats-png")),
+    ("jpg", || tr!("choices-shot-formats-jpg")),
+    ("jxl", || tr!("choices-shot-formats-jxl")),
+];
 
 /// `[screenshot] png_compression`. Mirrors `PngCompression::name` in `repriseconf::config`.
 pub const PNG_COMPRESSIONS: &Choices = &[
-    ("fast", "Fast"),
-    ("default", "Default"),
-    ("best", "Smallest"),
+    ("fast", || tr!("choices-png-compressions-fast")),
+    ("default", || tr!("choices-png-compressions-default")),
+    ("best", || tr!("choices-png-compressions-best")),
 ];
 
 /// `[recording] codec`. Mirrors `recording::Codec::name`.
-pub const VIDEO_CODECS: &Choices = &[("h264", "H.264"), ("h265", "H.265 (HEVC)"), ("av1", "AV1")];
+pub const VIDEO_CODECS: &Choices = &[
+    ("h264", || tr!("choices-video-codecs-h264")),
+    ("h265", || tr!("choices-video-codecs-h265")),
+    ("av1", || tr!("choices-video-codecs-av1")),
+];
 
 /// `[recording] rate`. Mirrors `recording::RateMode::name`.
 pub const RATE_MODES: &Choices = &[
-    ("quality", "Constant quality"),
-    ("average", "Average bitrate"),
-    ("constant", "Constant bitrate"),
+    ("quality", || tr!("choices-rate-modes-quality")),
+    ("average", || tr!("choices-rate-modes-average")),
+    ("constant", || tr!("choices-rate-modes-constant")),
 ];
 
 /// `[recording] frame_rate`'s rows; 0 is the screen's refresh rate.
-pub const RECORD_FRAME_RATES: &[(i64, &str)] = &[
-    (0, "Screen rate"),
-    (60, "60 frames per second"),
-    (30, "30 frames per second"),
-    (24, "24 frames per second"),
-    (15, "15 frames per second"),
+pub const RECORD_FRAME_RATES: &[(i64, Label)] = &[
+    (0, || tr!("choices-record-frame-rates-0")),
+    (60, || tr!("choices-record-frame-rates-60")),
+    (30, || tr!("choices-record-frame-rates-30")),
+    (24, || tr!("choices-record-frame-rates-24")),
+    (15, || tr!("choices-record-frame-rates-15")),
 ];
 
 /// `[recording] audio_codec`. Mirrors `recording::AudioCodec::name`.
 pub const AUDIO_CODECS: &Choices = &[
-    ("aac", "AAC"),
-    ("opus", "Opus"),
-    ("flac", "FLAC (lossless)"),
+    ("aac", || tr!("choices-audio-codecs-aac")),
+    ("opus", || tr!("choices-audio-codecs-opus")),
+    ("flac", || tr!("choices-audio-codecs-flac")),
 ];
 
-pub const FRAME_RATES: &[(i64, &str)] = &[
-    (30, "30 frames per second"),
-    (60, "60 frames per second"),
-    (120, "120 frames per second"),
-    (144, "144 frames per second"),
+pub const FRAME_RATES: &[(i64, Label)] = &[
+    (30, || tr!("choices-frame-rates-30")),
+    (60, || tr!("choices-frame-rates-60")),
+    (120, || tr!("choices-frame-rates-120")),
+    (144, || tr!("choices-frame-rates-144")),
 ];
 
 /// How long the Remote Desktop lock waits when the last viewer's screen went.
-pub const LOCK_GRACES: &[(i64, &str)] = &[
-    (0, "Don't wait"),
-    (5, "5 seconds"),
-    (10, "10 seconds"),
-    (30, "30 seconds"),
+pub const LOCK_GRACES: &[(i64, Label)] = &[
+    (0, || tr!("choices-lock-graces-0")),
+    (5, || tr!("choices-lock-graces-5")),
+    (10, || tr!("choices-lock-graces-10")),
+    (30, || tr!("choices-lock-graces-30")),
 ];
 
-pub const SLIDE_INTERVALS: &[(i64, &str)] = &[
-    (1, "1 minute"),
-    (5, "5 minutes"),
-    (10, "10 minutes"),
-    (30, "30 minutes"),
-    (60, "1 hour"),
-    (360, "6 hours"),
-    (1440, "1 day"),
+pub const SLIDE_INTERVALS: &[(i64, Label)] = &[
+    (1, || tr!("choices-slide-intervals-1")),
+    (5, || tr!("choices-slide-intervals-5")),
+    (10, || tr!("choices-slide-intervals-10")),
+    (30, || tr!("choices-slide-intervals-30")),
+    (60, || tr!("choices-slide-intervals-60")),
+    (360, || tr!("choices-slide-intervals-360")),
+    (1440, || tr!("choices-slide-intervals-1440")),
 ];
 
 /// The wallpaper Position combo's items. Mirrors `Position::parse` in
 /// reprisekit.
 pub const POSITIONS: &Choices = &[
-    ("fill", "Fill"),
-    ("fit", "Fit"),
-    ("stretch", "Stretch"),
-    ("tile", "Tile"),
-    ("center", "Center"),
+    ("fill", || tr!("choices-positions-fill")),
+    ("fit", || tr!("choices-positions-fit")),
+    ("stretch", || tr!("choices-positions-stretch")),
+    ("tile", || tr!("choices-positions-tile")),
+    ("center", || tr!("choices-positions-center")),
 ];
 
 /// Settings > Background's desktop water styles; unchecked is "off".
 /// Mirrors `reprisekit::water::Water::parse`.
 pub const WATER_STYLES: &Choices = &[
-    ("calm", "Calm"),
-    ("lively", "Lively"),
-    ("rain", "Rain"),
-    ("ink", "Ink"),
-    ("glow", "Glow"),
-    ("sparks", "Sparks"),
-    ("neon", "Neon"),
+    ("calm", || tr!("choices-water-styles-calm")),
+    ("lively", || tr!("choices-water-styles-lively")),
+    ("rain", || tr!("choices-water-styles-rain")),
+    ("ink", || tr!("choices-water-styles-ink")),
+    ("glow", || tr!("choices-water-styles-glow")),
+    ("sparks", || tr!("choices-water-styles-sparks")),
+    ("neon", || tr!("choices-water-styles-neon")),
 ];
 
 /// The Background page's file name extensions combo. Mirrors `Extensions::parse` in
 /// `reprisefs::names`.
 pub const DESKTOP_EXTENSIONS: &Choices = &[
-    ("hide", "Hide"),
-    ("hide_launchers", "Hide for launchers only"),
-    ("show", "Show"),
+    ("hide", || tr!("choices-desktop-extensions-hide")),
+    ("hide_launchers", || {
+        tr!("choices-desktop-extensions-hide-launchers")
+    }),
+    ("show", || tr!("choices-desktop-extensions-show")),
 ];
 
 /// Default Programs' plugged-in drive combo. Mirrors `OnInsert::parse` in reprise-drives.
 pub const DRIVE_INSERTS: &Choices = &[
-    ("ask", "Ask what to do"),
-    ("mount", "Mount it"),
-    ("open", "Mount it and open a window"),
-    ("nothing", "Do nothing"),
+    ("ask", || tr!("choices-drive-inserts-ask")),
+    ("mount", || tr!("choices-drive-inserts-mount")),
+    ("open", || tr!("choices-drive-inserts-open")),
+    ("nothing", || tr!("choices-drive-inserts-nothing")),
 ];
 
 /// Default Programs' script opening combo. Mirrors `ScriptOpen::parse` in `reprisefs::program`.
-pub const SCRIPT_OPENS: &Choices = &[("run", "Run it"), ("terminal", "Run it in the terminal")];
+pub const SCRIPT_OPENS: &Choices = &[
+    ("run", || tr!("choices-script-opens-run")),
+    ("terminal", || tr!("choices-script-opens-terminal")),
+];
 
 /// Default Programs' script combo. Mirrors `ScriptEnd::parse` in `reprisefs::program`.
 pub const SCRIPT_ENDS: &Choices = &[
-    ("stay", "Keep its window open"),
-    ("close", "Close its window"),
+    ("stay", || tr!("choices-script-ends-stay")),
+    ("close", || tr!("choices-script-ends-close")),
 ];
 
 /// The Recycle Bin, which always follows the other system icons.

@@ -23,7 +23,7 @@ use reprisekit::wallpapers::{self, Builtin, Design, Variant};
 use crate::model::{
     DESKTOP_EXTENSIONS, POSITIONS, SLIDE_INTERVALS, Settings, WALLPAPER_MODES, WATER_STYLES,
 };
-use crate::pages::{Area, GX, WATER, WATER_STYLE, X, button, choice};
+use crate::pages::{Area, GX, WATER, WATER_STYLE, X, button, choice, combo_of};
 use crate::wallpapers::expand;
 
 pub const MONITOR: &str = "monitor";
@@ -152,7 +152,6 @@ pub fn label(path: &Path) -> String {
 pub fn page(a: Area) -> Form {
     let right = a.right() - BUTTON_W;
     let dh = a.dh;
-    let intervals: Vec<&str> = SLIDE_INTERVALS.iter().map(|c| c.1).collect();
     Form::new(vec![
         Item::new(MONITOR, MONITOR_RECT, Control::Monitor(Screen::Black)),
         Item::label_at("wallpaper_label", RX, 44, 66, "&Background:"),
@@ -201,14 +200,7 @@ pub fn page(a: Area) -> Form {
             130,
             "Change picture &every:",
         ),
-        Item::combo(
-            INTERVAL,
-            X + 134,
-            SLIDE_Y + dh,
-            120,
-            &intervals,
-            intervals.len(),
-        ),
+        combo_of(INTERVAL, X + 134, SLIDE_Y + dh, 120, SLIDE_INTERVALS),
         Item::check("slideshow_shuffle", X + 264, SLIDE_Y + 4 + dh, "Sh&uffle"),
         Item::check(WATER, X, SLIDE_Y + 32 + dh, "Desktop &water:"),
         choice(WATER_STYLE, X + 112, SLIDE_Y + 28 + dh, 80, WATER_STYLES).named("Water style"),

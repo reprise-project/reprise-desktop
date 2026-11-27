@@ -10,6 +10,7 @@ use reprisekit::colorfilter::{self, Filter};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::theme::Color;
+use reprisekit::tr;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{Choices, Settings, Shortcut, keys_for};
@@ -17,12 +18,12 @@ use crate::pages::{Area, GX, choice, group};
 
 /// The filters the combo lists, in the order of `colorfilter::Filter::ALL`.
 pub const FILTERS: &Choices = &[
-    ("none", "None"),
-    ("grayscale", "Grayscale"),
-    ("invert", "Inverted"),
-    ("deuteranopia", "Red-green (deutan)"),
-    ("protanopia", "Red-green (protan)"),
-    ("tritanopia", "Blue-yellow (tritan)"),
+    ("none", || tr!("magnifierpage-filter-none")),
+    ("grayscale", || tr!("magnifierpage-filter-grayscale")),
+    ("invert", || tr!("magnifierpage-filter-invert")),
+    ("deuteranopia", || tr!("magnifierpage-filter-deuteranopia")),
+    ("protanopia", || tr!("magnifierpage-filter-protanopia")),
+    ("tritanopia", || tr!("magnifierpage-filter-tritanopia")),
 ];
 
 pub const PREVIEW: &str = "cf_preview";
@@ -247,7 +248,7 @@ mod tests {
         let want: Vec<&str> = Filter::ALL.iter().map(|f| f.name()).collect();
         assert_eq!(names, want);
         for (name, label) in FILTERS {
-            assert_eq!(Filter::parse(name).unwrap().label(), *label);
+            assert_eq!(Filter::parse(name).unwrap().label(), label());
         }
     }
 
