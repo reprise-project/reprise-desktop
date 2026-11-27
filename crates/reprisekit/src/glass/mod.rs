@@ -20,6 +20,7 @@ mod items;
 pub mod logon;
 mod menus;
 pub mod notify;
+mod onyx;
 mod orb;
 pub mod overview;
 pub mod page;
@@ -330,10 +331,14 @@ fn made(s: &Settings, small_bar: bool, scale: i32) -> crate::style::Style {
     } else {
         full
     };
-    if small_bar {
+    let st = if small_bar {
         small(full, s, scale)
     } else {
         full
+    };
+    match s.style {
+        Style::Onyx => onyx::restyle(st, s, small_bar, scale),
+        Style::Glass => st,
     }
 }
 
@@ -965,6 +970,9 @@ const PALE_BAR_LUMA: f64 = 118.0;
 /// The ink of the taskbar's labels, clock, pager and arrows: white over glass and over a dark opaque
 /// bar, black over an opaque bar paler than [`PALE_BAR_LUMA`].
 pub fn bar_ink(s: &Settings) -> Color {
+    if s.style == Style::Onyx {
+        return Color::rgb(0xFF, 0xFF, 0xFF);
+    }
     let bar = tint::Surface::Taskbar;
     let px = tint::Recolour::new(s, bar).px(bar.plain_px());
     let [r, g, b] = [16, 8, 0].map(|sh| f64::from((px >> sh) & 0xFF));
