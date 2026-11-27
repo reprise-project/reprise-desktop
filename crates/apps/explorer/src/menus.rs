@@ -72,6 +72,8 @@ pub struct MenuState {
     pub can_add_favorite: bool,
     /// The Favorites menu's rows under its separator.
     pub favorites: Vec<crate::favorites::MenuRow>,
+    /// The icons of a folder favorite and a server one.
+    pub favorite_icons: [Option<Canvas>; 2],
 }
 
 impl Default for MenuState {
@@ -105,6 +107,7 @@ impl Default for MenuState {
             templates: Vec::new(),
             can_add_favorite: false,
             favorites: Vec::new(),
+            favorite_icons: [None, None],
         }
     }
 }
@@ -545,7 +548,11 @@ fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
     }
     for f in &state.favorites {
         let item = MenuItem::entry(f.label.as_str()).enabled(f.go.is_some());
-        favorites.row(item, f.go.clone().unwrap_or(Command::Nothing));
+        let icon = state.favorite_icons[usize::from(f.remote)].clone();
+        favorites.row(
+            with_icon(item, icon),
+            f.go.clone().unwrap_or(Command::Nothing),
+        );
     }
 
     let mut tools = Menu::default();

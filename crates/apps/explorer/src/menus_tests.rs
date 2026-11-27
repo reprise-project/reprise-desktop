@@ -94,13 +94,26 @@ fn favorites_rows_follow_the_bookmarks() {
         crate::favorites::MenuRow {
             label: "R&D".into(),
             go: Some(go.clone()),
+            remote: false,
         },
         crate::favorites::MenuRow {
             label: "Recent".into(),
             go: None,
+            remote: true,
         },
     ];
+    let (folder, server) = (Canvas::new(16, 16), Canvas::new(8, 8));
+    s.favorite_icons = [Some(folder.clone()), Some(server.clone())];
     let rows = bar_rows(&s, 3);
+    let icon = |i: usize| match &rows[i] {
+        MenuItem::Entry { icon, .. } => icon.as_ref().map(|c| c.width),
+        _ => None,
+    };
+    assert_eq!(
+        (icon(3), icon(4)),
+        (Some(folder.width), Some(server.width)),
+        "a folder wears the folder icon, a server address the server's"
+    );
     assert!(enabled(&rows, 0));
     assert_eq!(label(&rows, 3), "R&D", "an ampersand is no access key");
     assert!(enabled(&rows, 3) && !enabled(&rows, 4));

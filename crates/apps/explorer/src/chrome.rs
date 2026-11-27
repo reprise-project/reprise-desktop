@@ -151,6 +151,9 @@ impl Explorer {
         }
         self.address.combo.icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
         self.address.go_icon = self.go_icon(ctx);
+        let px = crate::fileops::menu_icon_px(&ctx.theme);
+        self.favorite_icons = [&["folder"][..], &["folder-remote", "network-server"]]
+            .map(|names| self.chrome_waits.first(&mut ctx.icons, names, px));
         self.pane_key = None;
         self.refresh_chrome(ctx);
     }
