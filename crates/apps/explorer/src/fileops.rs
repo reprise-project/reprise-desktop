@@ -124,10 +124,10 @@ impl PendingPut {
     }
 }
 
-/// A batch's items as (source, op, is a folder) and their clashes in the target folder, read on a
-/// listing thread before the replace prompt.
+/// A batch's items as (source, op, is a folder, is a program) and their clashes in the target
+/// folder, read on a listing thread before the replace prompt.
 pub struct Checked {
-    puts: Vec<(PathBuf, DropOp, bool)>,
+    puts: Vec<(PathBuf, DropOp, bool, bool)>,
     clashes: Vec<Option<replace::Found>>,
 }
 
@@ -365,12 +365,9 @@ impl Explorer {
         }
         let title = puts[0].1.failure_title();
         let into = dir.to_path_buf();
-        let read = move || Checked {
-            clashes: replace::clashes(
-                puts.iter().map(|(src, op)| (src.as_path(), *op, false)),
-                &into,
-            ),
-            puts: puts
+        let apps_dirs = apps::default_dirs();
+        let read = move || {
+            let puts: Vec<_> = puts
                 .into_iter()
                 .map(|(src, op)| {
                     // A moved link is renamed, never read through (its target may be a dead
@@ -380,9 +377,21 @@ impl Explorer {
                             .is_ok_and(|m| m.is_dir() || m.is_symlink()),
                         _ => src.is_dir(),
                     };
-                    (src, op, is_dir)
+                    let program = (op == DropOp::Copy)
+                        .then(|| apps::program_source(&apps_dirs, &src, &into))
+                        .flatten();
+                    let is_app = program.is_some();
+                    (program.unwrap_or(src), op, is_dir, is_app)
                 })
-                .collect(),
+                .collect();
+            Checked {
+                clashes: replace::clashes(
+                    puts.iter()
+                        .map(|(src, op, _, is_app)| (src.as_path(), *op, *is_app)),
+                    &into,
+                ),
+                puts,
+            }
         };
         let to = (dir.to_path_buf(), select_landed);
         let job = if self.clashing.is_empty() {
@@ -439,18 +448,18 @@ impl Explorer {
         let folders = c
             .puts
             .iter()
-            .map(|&(_, op, is_dir)| is_dir && op != DropOp::Shortcut)
+            .map(|&(_, op, is_dir, _)| is_dir && op != DropOp::Shortcut)
             .collect();
         let items = c
             .puts
             .into_iter()
-            .map(|(src, op, is_dir)| {
+            .map(|(src, op, is_dir, is_app)| {
                 let icon = self.icon_name_as(&src, is_dir, ctx);
                 let command = apps::open_command_as(&src, is_dir);
                 PutItem {
                     display_name: file_label(&src),
                     src,
-                    is_app: false,
+                    is_app,
                     op,
                     shortcut: Box::new(move |label| {
                         apps::launcher_text(label, Some(&icon), Launch::Exec(command.as_deref()?))

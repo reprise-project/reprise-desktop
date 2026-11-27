@@ -139,10 +139,7 @@ fn runs_as_is(src: &Path, dir: &Path, app_dirs: &[PathBuf]) -> bool {
         return false;
     };
     real(dir).is_some_and(|d| d == parent)
-        || app_dirs
-            .iter()
-            .filter_map(|d| real(d))
-            .any(|d| parent.starts_with(d))
+        || apps::under_apps_dirs(app_dirs, &parent)
         || apps::is_trusted(src)
 }
 
