@@ -59,7 +59,13 @@ pub fn fonts_and_icons(
             FontConfig::SIZE_PX_MAX as i32,
         ),
     ));
-    items.push(Item::label_at("font_size_units", GX + 104, 108, 20, "px"));
+    items.push(Item::label_at(
+        "font_size_units",
+        GX + 104,
+        108,
+        20,
+        &tr!("units-px"),
+    ));
     items.push(Item::new(
         "fonts_note",
         Rect::new(GX, 126, gw, LINE_H),
@@ -135,7 +141,13 @@ pub fn fonts_and_icons(
         &tr!("pages-appearance-frame-width"),
         (0, 32),
     ));
-    items.push(Item::label_at("frame_units", GX + 136, 312, 20, "px"));
+    items.push(Item::label_at(
+        "frame_units",
+        GX + 136,
+        312,
+        20,
+        &tr!("units-px"),
+    ));
     items.extend(spin(
         "caption_label",
         "caption_height",
@@ -145,7 +157,13 @@ pub fn fonts_and_icons(
         &tr!("pages-appearance-caption-height"),
         (12, 128),
     ));
-    items.push(Item::label_at("caption_units", GX + 312, 312, 20, "px"));
+    items.push(Item::label_at(
+        "caption_units",
+        GX + 312,
+        312,
+        20,
+        &tr!("units-px"),
+    ));
 
     let mut gtk: Vec<String> = GTK_FIXED_ROWS.iter().map(|(_, row)| row()).collect();
     gtk.extend(gtk_themes.iter().cloned());
@@ -384,7 +402,13 @@ pub fn effects(a: Area) -> Form {
         &tr!("pages-appearance-shadow"),
         (0, 32),
     ));
-    items.push(Item::label_at("shadow_units", GX + 118, 278, 20, "px"));
+    items.push(Item::label_at(
+        "shadow_units",
+        GX + 118,
+        278,
+        20,
+        &tr!("units-px"),
+    ));
     items.extend(spin(
         "hover_label",
         "menu_hover_ms",
@@ -394,7 +418,13 @@ pub fn effects(a: Area) -> Form {
         &tr!("pages-appearance-hover"),
         (0, 9999),
     ));
-    items.push(Item::label_at("menu_hover_units", GX + 268, 278, 20, "ms"));
+    items.push(Item::label_at(
+        "menu_hover_units",
+        GX + 268,
+        278,
+        20,
+        &tr!("units-ms"),
+    ));
     items.extend(spin(
         "fade_label",
         "menu_fade_ms",
@@ -404,7 +434,13 @@ pub fn effects(a: Area) -> Form {
         &tr!("pages-appearance-time"),
         (0, 9999),
     ));
-    items.push(Item::label_at("menu_fade_units", GX + 118, 304, 20, "ms"));
+    items.push(Item::label_at(
+        "menu_fade_units",
+        GX + 118,
+        304,
+        20,
+        &tr!("units-ms"),
+    ));
     items.push(Item::label_at(
         "menu_animation_label",
         GX + 140,
@@ -425,7 +461,11 @@ pub fn effects(a: Area) -> Form {
 /// A 40 px label, an up-down of milliseconds and its "ms" unit, starting at `x`.
 fn ms_spin(ids: [&'static str; 3], x: i32, y: i32, text: &str) -> [Item; 3] {
     let [label, updown] = spin(ids[0], ids[1], x, y, 40, text, (0, EFFECTS_MS_MAX as i32));
-    [label, updown, Item::label_at(ids[2], x + 98, y, 20, "ms")]
+    [
+        label,
+        updown,
+        Item::label_at(ids[2], x + 98, y, 20, &tr!("units-ms")),
+    ]
 }
 
 pub(super) const ANIM_CONTROLS: [&str; 6] = [
@@ -460,8 +500,8 @@ pub(super) const HOVER_CONTROLS: [&str; 6] = [
 
 /// The note sending a reader to the setting that enlarges all text.
 pub fn text_size_note() -> String {
-    format!(
-        "Text size on the {} page enlarges all text.",
-        crate::registry::Page::TextKeys.label()
+    tr!(
+        "pages-appearance-text-size-note",
+        page = crate::registry::Page::TextKeys.label().to_string()
     )
 }

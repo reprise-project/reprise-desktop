@@ -5,6 +5,7 @@ use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
 use repriseapp::Reply;
 use reprisebus::bolt::{self, Change, Found};
+use reprisekit::tr;
 use std::sync::mpsc::Receiver;
 
 /// A read or a change off the loop: what boltd knows afterwards (None: it can't be reached), and
@@ -35,10 +36,15 @@ fn carry_out(d: bolt::Device, change: Change) -> Reading {
         Ok(()) | Err(None) => None,
         Err(Some(why)) => {
             let what = match change {
-                Change::Forget => "forgotten",
-                Change::Authorize | Change::Always => "authorized",
+                Change::Forget => tr!("thunderbolthost-forgotten"),
+                Change::Authorize | Change::Always => tr!("thunderbolthost-authorized"),
             };
-            Some(format!("{} could not be {what}.\n\n{why}", d.label()))
+            Some(tr!(
+                "thunderbolthost-failed",
+                device = d.label().to_string(),
+                what = what,
+                why = why.to_string()
+            ))
         }
     };
     Reading {

@@ -3,6 +3,7 @@
 
 use super::{Device, Launcher, Setting, other};
 use reprisefs::apps::DesktopId;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// The largest Plasma config file read; a real one is a few KiB.
@@ -229,7 +230,7 @@ fn launchers(applets: &KConfig) -> Vec<Launcher> {
 }
 
 /// The digital clock's 12 or 24 hours, when set apart from the locale's.
-fn clock(applets: &KConfig) -> Option<&'static str> {
+fn clock(applets: &KConfig) -> Option<String> {
     applets.groups().find_map(|(g, entries)| {
         let [c, _, a, _, conf, appearance] = g else {
             return None;
@@ -243,8 +244,8 @@ fn clock(applets: &KConfig) -> Option<&'static str> {
         }
         let v = entries.iter().find(|(k, _)| k == "use24hFormat")?;
         match v.1.trim() {
-            "0" => Some("12-hour"),
-            "2" => Some("24-hour"),
+            "0" => Some(tr!("import-12-hour")),
+            "2" => Some(tr!("import-24-hour")),
             _ => None,
         }
     })
@@ -315,7 +316,11 @@ pub(super) fn settings(config: &Path, home: &str) -> Vec<Setting> {
         out.push(Setting::KbOptions(opts.to_string()));
     }
     if input.get(&["Keyboard"], "KeyRepeat") == Some("nothing") {
-        out.push(other("Key repeat", "Off", super::NO_SETTING));
+        out.push(other(
+            &tr!("import-key-repeat"),
+            &tr!("import-off"),
+            super::no_setting(),
+        ));
     }
     if let Some(r) = num(input.get(&["Keyboard"], "RepeatRate")) {
         out.push(Setting::RepeatRate(r.round() as i64));
@@ -385,7 +390,7 @@ pub(super) fn settings(config: &Path, home: &str) -> Vec<Setting> {
         out.push(Setting::TextSize(super::percent(d / 96.0 * 100.0)));
     }
     if let Some(c) = clock(&applets) {
-        out.push(other("Clock", c, super::CLOCK));
+        out.push(other(&tr!("import-clock"), &c, super::clock_why()));
     }
     if let Some(t) = input.get(&["Mouse"], "cursorTheme") {
         out.push(Setting::CursorTheme(t.to_string()));
@@ -394,11 +399,11 @@ pub(super) fn settings(config: &Path, home: &str) -> Vec<Setting> {
         out.push(Setting::CursorSize(n.round() as i64));
     }
     if let Some(t) = globals.get(&["Icons"], "Theme") {
-        out.push(other("Icon theme", t, super::LOOK));
+        out.push(other(&tr!("import-icon-theme"), t, super::look()));
     }
     if let Some(f) = globals.get(&["General"], "font") {
         let family = f.split(',').next().unwrap_or(f);
-        out.push(other("Font", family, super::LOOK));
+        out.push(other(&tr!("import-font"), family, super::look()));
     }
 
     let night = ["NightColor"];
@@ -417,7 +422,11 @@ pub(super) fn settings(config: &Path, home: &str) -> Vec<Setting> {
             let to = to.unwrap_or_else(|| "06:00".into());
             out.push(Setting::NightSchedule(Some((from, to))));
         }
-        Some("Constant") => out.push(other("Night light hours", "Always on", super::NO_SETTING)),
+        Some("Constant") => out.push(other(
+            &tr!("import-night-light-hours"),
+            &tr!("import-always-on"),
+            super::no_setting(),
+        )),
         _ => {}
     }
     if let Some(n) = num(kwin.get(&["Desktops"], "Number")) {

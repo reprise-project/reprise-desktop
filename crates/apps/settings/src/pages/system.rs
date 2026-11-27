@@ -210,9 +210,9 @@ pub(super) const SESSION_EXCLUDE: [&str; 2] = ["session_exclude_label", "session
 /// The clipboard history check's label, naming the keys that open the history.
 pub(super) fn clipboard_label(binds: &[Shortcut]) -> String {
     match keys_for(binds, "clipboard-history") {
-        Some(k) => format!(
-            "Keep a &clipboard history ({} opens it)",
-            reprisekit::text::escape_mnemonic(&k)
+        Some(k) => tr!(
+            "pages-system-clipboard-history-keys",
+            keys = reprisekit::text::escape_mnemonic(&k)
         ),
         None => tr!("pages-system-keep-a-clipboard-history"),
     }
@@ -979,7 +979,9 @@ pub fn show_remote(
     };
     page.set_text(REMOTE_STATUS, &line);
     let shown = status.filter(|_| on);
-    let encoder = shown.map_or(String::new(), |s| format!("Video: {}", s.encoder));
+    let encoder = shown.map_or(String::new(), |s| {
+        tr!("pages-system-video", encoder = s.encoder.to_string())
+    });
     page.set_text(ENCODER, &encoder);
     let offered: Vec<&str> = shown.map_or(Vec::new(), |s| {
         s.encoders.iter().map(String::as_str).collect()
@@ -1005,7 +1007,11 @@ pub fn show_remote(
         .iter()
         .map(|c| {
             let since = reprisefs::listing::date_text(c.since as i64, reprisefs::locale::is_12h());
-            format!("{}, since {since}", c.user)
+            tr!(
+                "pages-system-client-since",
+                user = c.user.to_string(),
+                since = since
+            )
         })
         .collect();
     let mut picked = false;
@@ -1064,7 +1070,10 @@ pub fn selected_client<'a>(page: &Form, status: Option<&'a Status>) -> Option<&'
 
 /// The status line of a server whose unit failed, `why` it stopped, in place of "Not answering".
 pub fn show_remote_stopped(page: &mut Form, why: &str) {
-    page.set_text(REMOTE_STATUS, &format!("Not running. {why}"));
+    page.set_text(
+        REMOTE_STATUS,
+        &tr!("pages-system-not-running", why = why.to_string()),
+    );
 }
 
 /// The status line: off, not answering, listening on its port at `address`, or why it cannot listen.
@@ -1081,12 +1090,16 @@ pub(super) fn remote_status(
         };
     };
     if let Some(why) = s.listening.strip_prefix("error: ") {
-        return format!("Not listening: {why}");
+        return tr!("pages-system-not-listening", why = why.to_string());
     }
     let port = s.listening.rsplit_once(':').map_or("", |(_, p)| p);
     match address {
-        Some(at) => format!("Listening on port {port} at {at}"),
-        None => format!("Listening on port {port}"),
+        Some(at) => tr!(
+            "pages-system-listening-at",
+            port = port.to_string(),
+            at = at.to_string()
+        ),
+        None => tr!("pages-system-listening", port = port.to_string()),
     }
 }
 

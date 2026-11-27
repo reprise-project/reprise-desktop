@@ -455,7 +455,7 @@ fn hhmm(s: &str) -> (u32, u32) {
 
 /// A speed in tenths as the percent beside its trackbar.
 fn percent(tenths: i64) -> String {
-    format!("{}%", tenths * 10)
+    tr!("pages-bind-percent", n = (tenths * 10).to_string())
 }
 
 /// Select the row of `pick` that `options` holds; an id of its family it lacks shows as itself after its rows.
@@ -845,7 +845,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in NL_TIMES {
         nl.set_enabled(id, s.nl_enabled && s.nl_schedule == "fixed");
     }
-    nl.set_text("nl_temp_value", &format!("{} K", s.nl_temperature));
+    nl.set_text(
+        "nl_temp_value",
+        &tr!("pages-bind-kelvin", n = s.nl_temperature.to_string()),
+    );
     let kb = &mut sheet.pages[Page::Keyboard.index()];
     for (id, pick) in [(KB_COMPOSE, &COMPOSE_KEY), (KB_CAPS, &CAPS_LOCK)] {
         if let Some(Control::Combo(c)) = kb.item_mut(id).map(|i| &mut i.control) {
@@ -861,7 +864,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         first.set(0);
     }
     let mouse = &mut sheet.pages[Page::Mouse.index()];
-    mouse.set_text("double_click_value", &format!("{} ms", s.double_click_ms));
+    mouse.set_text(
+        "double_click_value",
+        &tr!("pages-bind-ms", n = s.double_click_ms.to_string()),
+    );
     mouse.set_text("mouse_scroll_value", &percent(s.mouse_scroll_speed));
     let pad = &mut sheet.pages[Page::Touchpad.index()];
     for id in TOUCHPAD_CONTROLS {
@@ -883,7 +889,13 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in BOUNCE_CONTROLS {
         ax.set_enabled(id, s.bounce_keys);
     }
-    let seconds = |tenths: i64| format!("{}.{} seconds", tenths / 10, tenths % 10);
+    let seconds = |tenths: i64| {
+        tr!(
+            "pages-bind-seconds",
+            whole = (tenths / 10).to_string(),
+            tenth = (tenths % 10).to_string()
+        )
+    };
     ax.set_text("slow_delay_value", &seconds(s.slow_keys_delay));
     ax.set_text("bounce_delay_value", &seconds(s.bounce_keys_delay));
     let pointer = &mut sheet.pages[Page::PointerAlerts.index()];
@@ -983,7 +995,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
 pub fn show_keys(sheet: &mut PropSheet, binds: &[Shortcut]) {
     let switch = keys_for(binds, "next-layout").map_or_else(
         || tr!("pages-bind-no-key-switches-them"),
-        |k| format!("{k} switches them."),
+        |k| tr!("pages-bind-key-switches-them", keys = k),
     );
     sheet.pages[Page::Keyboard.index()].set_text(KB_SWITCH_NOTE, &escape_mnemonic(&switch));
     crate::magnifierpage::show_keys(&mut sheet.pages[Page::MagnifierFilters.index()], binds);
@@ -1019,7 +1031,10 @@ pub fn fill_layouts(
     let list = if layouts.is_empty() {
         let system = reprisefs::xkb::describe(reg, system, "");
         let mut list = ListBox::new(
-            vec![format!("{} (system default)", system.description)],
+            vec![tr!(
+                "pages-bind-system-default",
+                name = system.description.to_string()
+            )],
             None,
         );
         list.greyed = vec![true];

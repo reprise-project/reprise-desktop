@@ -56,7 +56,7 @@ pub fn window_behavior(a: Area) -> Form {
         (1, SNAP_DISTANCE_MAX as i32),
     ));
     items.extend([
-        Item::label_at("snap_distance_units", GX + 210, 142, 30, "px"),
+        Item::label_at("snap_distance_units", GX + 210, 142, 30, &tr!("units-px")),
         Item::label_at(
             "snap_layouts_label",
             GX,
@@ -245,7 +245,13 @@ pub fn virtual_desktops(a: Area) -> Form {
         &tr!("pages-desktop-duration"),
         (0, SWITCH_MS_MAX as i32),
     ));
-    indented.push(Item::label_at("duration_units", ix + 170, 140, 60, "ms"));
+    indented.push(Item::label_at(
+        "duration_units",
+        ix + 170,
+        140,
+        60,
+        &tr!("units-ms"),
+    ));
     indented.push(Item::label_at(
         "pager_mark_label",
         ix,
@@ -305,7 +311,7 @@ pub fn taskbar(a: Area) -> Form {
         (8, 256),
     ));
     items.extend([
-        Item::label_at("taskbar_height_units", X + 338, 48, 20, "px"),
+        Item::label_at("taskbar_height_units", X + 338, 48, 20, &tr!("units-px")),
         Item::label_at(
             "buttons_label",
             X,
@@ -616,10 +622,18 @@ pub fn search_note(binds: &[Shortcut]) -> Vec<String> {
     let start = tr!("pages-desktop-the-start-menus-search-box-follows");
     let wrap = |body: &str| reprisekit::text::wrap_chars(body, SEARCH_COLS);
     let Some(keys) = keys_for(binds, "launcher") else {
-        return wrap(&format!("The launcher {finds} {start}"));
+        return wrap(&tr!(
+            "pages-desktop-search-no-key",
+            finds = finds.clone(),
+            start = start.clone()
+        ));
     };
-    let opens = format!("{keys} opens the launcher, which {finds}");
-    let mut lines = wrap(&format!("{opens} {start}"));
+    let opens = tr!("pages-desktop-search-opens", keys = keys, finds = finds);
+    let mut lines = wrap(&tr!(
+        "pages-desktop-search-opens-start",
+        opens = opens.clone(),
+        start = start
+    ));
     if lines.len() > SEARCH_LINES {
         lines = wrap(&opens);
     }
@@ -630,14 +644,14 @@ pub fn search_note(binds: &[Shortcut]) -> Vec<String> {
 /// The 3D switcher check's note: the keys bound to it, and that it runs under Glass alone.
 pub fn flip_note(binds: &[Shortcut]) -> String {
     let keys = keys_for(binds, "flip").unwrap_or_else(|| tr!("pages-desktop-no-key"));
-    format!("{keys} shows them; Glass only.")
+    tr!("pages-desktop-flip-note", keys = keys)
 }
 
 /// The Window Overview note, naming the keys bound to the overview.
 pub fn overview_note(binds: &[Shortcut]) -> String {
     keys_for(binds, "overview").map_or_else(
         || tr!("pages-desktop-every-window-of-this-desktop-side"),
-        |k| format!("{k} shows this desktop's windows side by side."),
+        |k| tr!("pages-desktop-overview-keys", keys = k),
     )
 }
 

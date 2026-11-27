@@ -97,8 +97,12 @@ pub fn fill_shortcuts(lv: &mut ListView<IconRows>, s: &Settings, name: &dyn Fn(&
         };
         row(keys, crate::model::program_text(p, &name(&p.app)))
     });
-    let denied =
-        (s.denied.iter()).map(|app| row(String::new(), format!("{}: not allowed", name(app))));
+    let denied = (s.denied.iter()).map(|app| {
+        row(
+            String::new(),
+            tr!("pages-lists-not-allowed", name = name(app)),
+        )
+    });
     lv.rows = binds.chain(programs).chain(denied).collect();
     keep_in_rows(lv);
 }

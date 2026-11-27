@@ -2,6 +2,7 @@
 
 use super::{Device, Launcher, Setting, other};
 use reprisefs::apps::DesktopId;
+use reprisekit::tr;
 use std::collections::HashMap;
 
 /// A GVariant as `dconf dump` prints it, as far as the keys read here need.
@@ -243,7 +244,11 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
                     variants.push(v.to_string());
                 }
                 [Value::Str(kind), Value::Str(id)] => {
-                    out.push(other("Input method", &format!("{kind}: {id}"), super::IME));
+                    out.push(other(
+                        &tr!("import-input-method"),
+                        &format!("{kind}: {id}"),
+                        super::ime(),
+                    ));
                 }
                 _ => {}
             }
@@ -263,7 +268,11 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
         out.push(Setting::LayoutPerWindow(b));
     }
     if get(KEYBOARD, "repeat").and_then(Value::bool) == Some(false) {
-        out.push(other("Key repeat", "Off", super::NO_SETTING));
+        out.push(other(
+            &tr!("import-key-repeat"),
+            &tr!("import-off"),
+            super::no_setting(),
+        ));
     }
     if let Some(ms) = get(KEYBOARD, "repeat-interval").and_then(Value::num)
         && ms > 0.0
@@ -341,8 +350,12 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
         out.push(Setting::TextSize(super::percent(f * 100.0)));
     }
     if let Some(c) = get(INTERFACE, "clock-format").and_then(Value::str) {
-        let shown = if c == "12h" { "12-hour" } else { "24-hour" };
-        out.push(other("Clock", shown, super::CLOCK));
+        let shown = if c == "12h" {
+            &tr!("import-12-hour")
+        } else {
+            &tr!("import-24-hour")
+        };
+        out.push(other(&tr!("import-clock"), shown, super::clock_why()));
     }
     if let Some(t) = get(INTERFACE, "cursor-theme").and_then(Value::str) {
         out.push(Setting::CursorTheme(t.to_string()));
@@ -353,16 +366,19 @@ pub(super) fn settings(dump: &str) -> Vec<Setting> {
     if let Some(b) = get(INTERFACE, "enable-hot-corners").and_then(Value::bool) {
         out.push(Setting::HotCorner(b));
     }
-    for (key, what) in [("gtk-theme", "GTK theme"), ("icon-theme", "Icon theme")] {
+    for (key, what) in [
+        ("gtk-theme", tr!("import-gtk-theme")),
+        ("icon-theme", tr!("import-icon-theme")),
+    ] {
         if let Some(t) = get(INTERFACE, key).and_then(Value::str) {
-            out.push(other(what, t, super::LOOK));
+            out.push(other(&what, t, super::look()));
         }
     }
     if let Some(f) = get(INTERFACE, "font-name").and_then(Value::str) {
-        out.push(other("Font", f, super::LOOK));
+        out.push(other(&tr!("import-font"), f, super::look()));
     }
     if let Some(b) = get(WM, "button-layout").and_then(Value::str) {
-        out.push(other("Title bar buttons", b, super::LOOK));
+        out.push(other(&tr!("import-title-bar-buttons"), b, super::look()));
     }
 
     if let Some(b) = get(COLOR, "night-light-enabled").and_then(Value::bool) {
