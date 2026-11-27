@@ -329,7 +329,7 @@ fn checked_rows_land_in_the_config_file_and_quick_launch_and_the_rest_stays() {
             "06:00".into(),
         )))),
         Write::QuickLaunch(
-            entry("firefox.desktop", "Firefox"),
+            entry("firefox.desktop", "Firefox").into(),
             apps.join("firefox.desktop"),
         ),
     ];
@@ -629,7 +629,10 @@ fn a_program_that_cannot_be_read_writes_nothing() {
     let quick = dir.join("quicklaunch");
     let picked = [
         Write::Config(Setting::Dark(true)),
-        Write::QuickLaunch(entry("gone.desktop", "Gone"), dir.join("gone.desktop")),
+        Write::QuickLaunch(
+            entry("gone.desktop", "Gone").into(),
+            dir.join("gone.desktop"),
+        ),
     ];
     let refs: Vec<&Write> = picked.iter().collect();
     assert!(write(&config, Some(&quick), &refs).is_err());

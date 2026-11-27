@@ -32,7 +32,7 @@ fn next_generation() -> u64 {
 }
 
 pub fn rank_apps(query: &str, apps: &[AppEntry], max: usize) -> Vec<usize> {
-    reprisekit::fuzzy::rank(query, apps.iter().map(|a| a.name.as_str()))
+    reprisekit::fuzzy::rank_any(query, apps.iter().map(AppEntry::search_names))
         .into_iter()
         // A NoDisplay entry opens files but is not offered to launch.
         .filter(|&i| apps[i].shown)
@@ -853,6 +853,7 @@ mod tests {
 
     fn app(name: &str, shown: bool) -> AppEntry {
         AppEntry {
+            plain_name: None,
             name: name.into(),
             exec_line: name.to_lowercase(),
             terminal: false,
@@ -876,6 +877,16 @@ mod tests {
         ];
         assert_eq!(rank_apps("n", &apps, 1).len(), 1);
         assert!(!rank_apps("notes", &apps, 8).contains(&1));
+    }
+
+    #[test]
+    fn rank_apps_finds_a_translated_entry_by_its_plain_name_too() {
+        let apps = [AppEntry {
+            plain_name: Some("Calculator".into()),
+            ..app("Rechner", true)
+        }];
+        assert_eq!(rank_apps("calc", &apps, 8), [0]);
+        assert_eq!(rank_apps("rech", &apps, 8), [0]);
     }
 
     fn installed(id: &str, name: &str) -> AppEntry {

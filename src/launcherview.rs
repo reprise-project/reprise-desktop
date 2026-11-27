@@ -444,7 +444,11 @@ impl State {
         }));
         v.answer = calc.map(|(_, answer)| answer);
         let matches = rank_apps(&query, app_index, launcher::MAX_ROWS);
-        let best_app = (matches.first()).and_then(|&i| fuzzy::tier(&query, &app_index[i].name));
+        let best_app = (matches.first()).and_then(|&i| {
+            (app_index[i].search_names())
+                .filter_map(|n| fuzzy::tier(&query, n))
+                .max()
+        });
         let first = windows_first(found.first().map(|h| h.1), best_app);
         v.windows = found.iter().map(|&(i, _)| candidates[i]).collect();
         let window_rows = (found.iter())
@@ -890,6 +894,7 @@ mod tests {
             h.output("TEST-1", 1024, 768);
             h.state.icons = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
             h.state.app_index = vec![reprisefs::apps::AppEntry {
+                plain_name: None,
                 name: "Chess".into(),
                 exec_line: "chess".into(),
                 terminal: false,
@@ -924,6 +929,7 @@ mod tests {
         use smithay::output::Scale;
         let apps: Vec<_> = (1..=8)
             .map(|i| reprisefs::apps::AppEntry {
+                plain_name: None,
                 name: format!("Notes {i}"),
                 exec_line: "notes".into(),
                 terminal: false,
@@ -988,6 +994,7 @@ mod tests {
         use smithay::output::Scale;
         let apps: Vec<_> = (1..=8)
             .map(|i| reprisefs::apps::AppEntry {
+                plain_name: None,
                 name: format!("Notes {i}"),
                 exec_line: "notes".into(),
                 terminal: false,

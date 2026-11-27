@@ -11,7 +11,7 @@ use crate::apps::{self, AppEntry, Launch};
 /// What a new shortcut opens.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
-    App(AppEntry),
+    App(Box<AppEntry>),
     Path {
         path: PathBuf,
         is_dir: bool,
@@ -205,7 +205,7 @@ mod tests {
             &"notepad.desktop".parse().unwrap(),
         )
         .unwrap();
-        let app = Target::App(app);
+        let app = Target::App(Box::new(app));
         assert_eq!(app.default_name(), "Notepad");
         let text = app.launcher("Notes").unwrap();
         assert!(text.contains("Name=Notes\n") && text.contains("Icon=notepad\n"));

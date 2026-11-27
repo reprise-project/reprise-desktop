@@ -363,6 +363,7 @@ fn a_small_png_image_path_stays_an_icon() {
 fn a_terminal_scope_names_no_app() {
     let entry = |id: &str| {
         Some(reprisefs::apps::AppEntry {
+            plain_name: None,
             name: id.into(),
             exec_line: id.into(),
             terminal: false,
@@ -399,6 +400,7 @@ fn a_terminal_scope_names_no_app() {
 #[test]
 fn the_desktop_entry_icon_stands_in_for_a_missing_app_icon() {
     let entry = reprisefs::apps::AppEntry {
+        plain_name: None,
         name: "Mail".into(),
         exec_line: "mail".into(),
         terminal: false,

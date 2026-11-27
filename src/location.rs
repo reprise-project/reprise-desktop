@@ -695,6 +695,7 @@ mod tests {
     fn ask_about(h: &mut crate::harness::Harness, icon: &str) -> async_channel::Receiver<bool> {
         let id = "org.example.Maps";
         h.state.app_index = vec![reprisefs::apps::AppEntry {
+            plain_name: None,
             name: "Maps".into(),
             exec_line: "maps".into(),
             terminal: false,

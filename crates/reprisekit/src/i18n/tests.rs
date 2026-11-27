@@ -126,6 +126,18 @@ fn the_locale_comes_from_language_then_the_message_locale() {
 }
 
 #[test]
+fn the_message_locales_keep_their_country_and_modifier() {
+    let got = requested_locales(env_of(&[
+        ("LANGUAGE", "sr@latin::de"),
+        ("LC_MESSAGES", "de_AT.UTF-8@euro"),
+    ]));
+    assert_eq!(got, ["sr@latin", "de", "de_AT.UTF-8@euro"]);
+    let got = requested_locales(env_of(&[("LANG", "POSIX"), ("LANGUAGE", "de")]));
+    assert_eq!(got, ["POSIX"], "a POSIX locale silences LANGUAGE");
+    assert!(requested_locales(env_of(&[])).is_empty());
+}
+
+#[test]
 fn installed_files_load_for_the_negotiated_language_user_dir_first() {
     let root = std::env::temp_dir().join(format!("reprise-i18n-{}", std::process::id()));
     let user = root.join("user");

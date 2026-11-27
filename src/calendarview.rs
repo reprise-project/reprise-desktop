@@ -739,6 +739,7 @@ mod tests {
         open(&mut h.state, bar);
         assert_eq!(program(&h.state), None, "nothing installed");
         h.state.app_index = vec![reprisefs::apps::AppEntry {
+            plain_name: None,
             name: "Calendar".into(),
             exec_line: "gnome-calendar".into(),
             terminal: false,

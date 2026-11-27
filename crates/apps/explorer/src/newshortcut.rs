@@ -112,7 +112,7 @@ impl Explorer {
                 let home = std::env::var_os("HOME").map(PathBuf::from);
                 let read = match w.wizard.picked() {
                     Some(Picked::Program(i)) => match w.apps.get(i) {
-                        Some(app) => Ok(Target::App(app.clone())),
+                        Some(app) => Ok(Target::App(Box::new(app.clone()))),
                         None => return Reply::none(),
                     },
                     Some(Picked::Typed(text)) => newshortcut::read_typed(text, home.as_deref()),

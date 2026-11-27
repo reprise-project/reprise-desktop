@@ -737,6 +737,7 @@ pub(crate) mod tests {
 
     fn app(id: &str, name: &str, exec: &str, mimes: &[&str], categories: &[&str]) -> AppEntry {
         AppEntry {
+            plain_name: None,
             name: name.into(),
             exec_line: exec.into(),
             terminal: false,

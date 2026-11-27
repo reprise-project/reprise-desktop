@@ -20,9 +20,9 @@ pub(super) fn panel_matches(
     kept: &[bool],
     max: usize,
 ) -> Vec<usize> {
-    reprisekit::fuzzy::rank(query, apps.iter().map(|a| a.name.as_str()))
+    reprisekit::fuzzy::rank_any(query, apps.iter().map(AppEntry::search_names))
         .into_iter()
-        .filter(|&i| kept[i] && word_starts(query, &apps[i].name))
+        .filter(|&i| kept[i] && apps[i].search_names().any(|n| word_starts(query, n)))
         .take(max)
         .collect()
 }

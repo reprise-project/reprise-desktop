@@ -279,6 +279,7 @@ fn open_in_looks_up_the_types_default_program_and_runs_as_it() {
 
 fn app(id: &str, mimes: &[&str]) -> AppEntry {
     AppEntry {
+        plain_name: None,
         name: id.into(),
         exec_line: String::new(),
         terminal: false,
@@ -564,6 +565,7 @@ fn glance_in_types_the_file_from_the_given_tables() {
     std::fs::write(&file, "x").unwrap();
     let db = apps::MimeDb::parse(["50:application/x-reprise-test:*.rtest\n"]);
     let player = AppEntry {
+        plain_name: None,
         name: "Player".into(),
         exec_line: "player %f".into(),
         terminal: false,
@@ -589,6 +591,7 @@ fn a_symlink_to_a_document_shows_what_opens_its_target() {
     std::os::unix::fs::symlink("song.rtest", &link).unwrap();
     let db = apps::MimeDb::parse(["50:application/x-reprise-test:*.rtest\n"]);
     let player = AppEntry {
+        plain_name: None,
         name: "Player".into(),
         exec_line: "player %f".into(),
         terminal: false,
@@ -624,6 +627,7 @@ fn an_executable_script_opens_with_nothing_and_is_described_by_its_name() {
     std::fs::write(&f, "#!/bin/sh\n").unwrap();
     let db = apps::MimeDb::parse(["50:application/x-shellscript:*.sh\n"]);
     let editor = AppEntry {
+        plain_name: None,
         name: "Editor".into(),
         exec_line: "editor %f".into(),
         terminal: false,

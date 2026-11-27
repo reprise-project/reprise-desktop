@@ -380,7 +380,7 @@ impl System for Live {
 pub enum Write {
     Config(Setting),
     /// A program and its desktop entry's file.
-    QuickLaunch(AppEntry, PathBuf),
+    QuickLaunch(Box<AppEntry>, PathBuf),
 }
 
 /// A desktop's settings as the sheet lists them, each change with what it writes.
@@ -470,7 +470,7 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
                     new: app.name.clone(),
                     greyed: false,
                 };
-                changes.push((line, Write::QuickLaunch(app, file)));
+                changes.push((line, Write::QuickLaunch(Box::new(app), file)));
             }
             Setting::Pinned(_) if favourites == 0 => {}
             f => {
@@ -526,7 +526,7 @@ pub fn write(config: &Path, quick: Option<&Path>, picked: &[&Write]) -> Result<(
         .collect();
     let apps: Vec<(&AppEntry, String)> = (picked.iter())
         .filter_map(|w| match w {
-            Write::QuickLaunch(a, file) => Some((a, file)),
+            Write::QuickLaunch(a, file) => Some((&**a, file)),
             Write::Config(_) => None,
         })
         .map(|(a, file)| {

@@ -363,6 +363,7 @@ mod tests {
 
     fn entry(id: &str, exec: &str, icon: &str, class: Option<&str>) -> AppEntry {
         AppEntry {
+            plain_name: None,
             name: id.into(),
             exec_line: exec.into(),
             terminal: false,

@@ -547,6 +547,7 @@ pub(crate) mod tests {
         use reprisekit::icontheme::IconTheme;
         let file = "/srv/icons/viewer.png";
         let index = [reprisefs::apps::AppEntry {
+            plain_name: None,
             name: "Viewer".into(),
             exec_line: "viewer".into(),
             terminal: false,
@@ -587,6 +588,7 @@ pub(crate) mod tests {
         use reprisekit::icontheme::IconTheme;
         let file = "/srv/icons/viewer.png";
         let index = [reprisefs::apps::AppEntry {
+            plain_name: None,
             name: "Viewer".into(),
             exec_line: "viewer".into(),
             terminal: false,

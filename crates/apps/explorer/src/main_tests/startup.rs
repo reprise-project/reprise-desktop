@@ -297,6 +297,7 @@ fn a_start_menu_entrys_file_is_named_and_drawn_as_its_entry() {
     let calc = apps_dir.join("org/calc.desktop");
     std::fs::write(&calc, "[Desktop Entry]\nName=Calculator\nExec=calc\n").expect("write");
     let entry = |id: &str, name: &str| reprisefs::apps::AppEntry {
+        plain_name: None,
         name: name.into(),
         exec_line: "x".into(),
         terminal: false,

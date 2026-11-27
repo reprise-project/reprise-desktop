@@ -84,10 +84,22 @@ fn score_lowered(query: &[char], candidate: &str) -> Option<u32> {
 
 /// Matching indices, best first; ties keep input order.
 pub fn rank<'a>(query: &str, names: impl Iterator<Item = &'a str>) -> Vec<usize> {
+    rank_any(query, names.map(std::iter::once))
+}
+
+/// [`rank`] over items with several names each (a program's translated and plain name), each
+/// scored by its best match.
+pub fn rank_any<'a, N: IntoIterator<Item = &'a str>>(
+    query: &str,
+    items: impl Iterator<Item = N>,
+) -> Vec<usize> {
     let query = lower(query);
-    let mut hits: Vec<(u32, usize)> = names
+    let mut hits: Vec<(u32, usize)> = items
         .enumerate()
-        .filter_map(|(i, n)| score_lowered(&query, n).map(|s| (s, i)))
+        .filter_map(|(i, names)| {
+            let best = names.into_iter().filter_map(|n| score_lowered(&query, n));
+            best.max().map(|s| (s, i))
+        })
         .collect();
     hits.sort_by_key(|&(s, _)| std::cmp::Reverse(s));
     hits.into_iter().map(|(_, i)| i).collect()
@@ -172,6 +184,27 @@ mod tests {
         // Notion and Notice tie on score and length, so input order decides.
         let tied = ["Notion", "Notice", "Gnome Terminal", "Sunroof"];
         assert_eq!(rank("no", tied.iter().copied()), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn rank_any_finds_an_item_by_any_of_its_names_and_scores_its_best() {
+        let items = [
+            vec!["Rechner", "Calculator"],
+            vec!["Calendar"],
+            vec!["Editor"],
+        ];
+        let ranked = |q| rank_any(q, items.iter().map(|n| n.iter().copied()));
+        assert_eq!(
+            ranked("calc"),
+            [0],
+            "the plain name finds the translated entry"
+        );
+        assert_eq!(ranked("rech"), [0]);
+        assert_eq!(
+            ranked("cal"),
+            [1, 0],
+            "Calendar, the shorter name, wins the tie"
+        );
     }
 
     #[test]

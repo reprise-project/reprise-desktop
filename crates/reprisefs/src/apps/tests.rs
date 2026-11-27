@@ -704,6 +704,7 @@ fn a_symlink_loop_below_an_applications_dir_is_read_once() {
 #[test]
 fn group_files_apps_by_first_matching_category() {
     let app = |name: &str, cats: &[&str]| AppEntry {
+        plain_name: None,
         name: name.into(),
         exec_line: name.to_lowercase(),
         terminal: false,
@@ -892,6 +893,7 @@ fn mime_globs_parse_again_only_when_a_file_changes() {
 #[test]
 fn open_with_lists_the_handlers_by_name_and_text_editors_for_text() {
     let app = |name: &str, mimes: &[&str]| AppEntry {
+        plain_name: None,
         name: name.into(),
         exec_line: format!("{} %f", name.to_lowercase()),
         terminal: name == "Vim",
@@ -1050,6 +1052,7 @@ fn open_with_lists_a_browsed_program_for_its_types_only() {
 #[test]
 fn chooser_groups_put_the_type_s_programs_and_default_first_and_the_rest_by_name() {
     let e = |name: &str, id: &str, mimes: &[&str]| AppEntry {
+        plain_name: None,
         name: name.into(),
         exec_line: String::new(),
         terminal: false,
@@ -1222,7 +1225,7 @@ fn an_entry_shows_by_every_desktop_name_and_only_with_its_try_exec_program() {
     let on = |extra: &str, desktops: &[&str], installed: bool| {
         let text = format!("[Desktop Entry]\nType=Application\nName=x\nExec=x\n{extra}\n");
         let desktops: Vec<String> = desktops.iter().map(|d| d.to_string()).collect();
-        parse_desktop_on(&text, &"a.desktop".parse().unwrap(), &desktops, "", |_| {
+        parse_desktop_on(&text, &"a.desktop".parse().unwrap(), &desktops, &[], |_| {
             installed
         })
         .is_some()
@@ -1286,9 +1289,14 @@ Exec=mail -u
 ";
 
 fn mail_on(locale: &str) -> AppEntry {
-    parse_desktop_on(MAIL, &"mail.desktop".parse().unwrap(), &[], locale, |_| {
-        true
-    })
+    let locales = [locale.to_string()];
+    parse_desktop_on(
+        MAIL,
+        &"mail.desktop".parse().unwrap(),
+        &[],
+        &locales,
+        |_| true,
+    )
     .unwrap()
 }
 
@@ -1319,7 +1327,7 @@ fn actions_follow_the_actions_key_and_need_a_name_and_a_command() {
 }
 
 fn mail_on_text(text: &str) -> AppEntry {
-    parse_desktop_on(text, &"m.desktop".parse().unwrap(), &[], "", |_| true).unwrap()
+    parse_desktop_on(text, &"m.desktop".parse().unwrap(), &[], &[], |_| true).unwrap()
 }
 
 #[test]
@@ -1342,25 +1350,129 @@ fn an_actions_name_is_the_most_specific_one_the_locale_has() {
             "Name[sr_RS]",
             "Name[sr@latin]",
             "Name[sr]",
-            "Name"
         ]
     );
-    let env = |set: &[(&str, &str)]| {
-        let set: Vec<(String, String)> = set
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        messages_locale(|k| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()))
-    };
+}
+
+fn locales(list: &[&str]) -> Vec<String> {
+    list.iter().map(|l| l.to_string()).collect()
+}
+
+const VIEWER: &str = "\
+[Desktop Entry]
+Name=Viewer
+Name[de]=Betrachter
+Name[de_AT]=Anzeige
+Name[fr]=
+Name[pt_BR]=Visualizador
+Name[en_GB]=Viewer (GB)
+";
+
+fn viewer_in(list: &[&str]) -> Option<String> {
+    localized(&desktop_entry_kv(VIEWER), "Name", &locales(list)).map(str::to_string)
+}
+
+#[test]
+fn a_localized_value_comes_from_the_first_ui_locale_that_has_one() {
+    assert_eq!(viewer_in(&["de_AT.UTF-8"]).as_deref(), Some("Anzeige"));
     assert_eq!(
-        env(&[("LANG", "fr_FR.UTF-8"), ("LC_MESSAGES", "de_DE")]),
-        "de_DE"
+        viewer_in(&["de_CH.UTF-8"]).as_deref(),
+        Some("Betrachter"),
+        "lang, without the country"
     );
     assert_eq!(
-        env(&[("LANG", "fr_FR.UTF-8"), ("LC_ALL", "")]),
-        "fr_FR.UTF-8"
+        viewer_in(&["it", "pt_BR", "de"]).as_deref(),
+        Some("Visualizador"),
+        "LANGUAGE order"
     );
-    assert_eq!(env(&[]), "");
+    assert_eq!(
+        viewer_in(&["fr", "de"]).as_deref(),
+        Some("Betrachter"),
+        "a blank translation is none"
+    );
+    assert_eq!(
+        viewer_in(&["it"]).as_deref(),
+        Some("Viewer"),
+        "the plain key without one"
+    );
+    assert_eq!(viewer_in(&[]).as_deref(), Some("Viewer"));
+}
+
+#[test]
+fn an_english_or_posix_locale_without_its_own_value_takes_the_plain_key() {
+    assert_eq!(viewer_in(&["en_US", "de"]).as_deref(), Some("Viewer"));
+    assert_eq!(
+        viewer_in(&["en_GB.UTF-8", "de"]).as_deref(),
+        Some("Viewer (GB)")
+    );
+    assert_eq!(viewer_in(&["C.UTF-8"]).as_deref(), Some("Viewer"));
+    assert_eq!(viewer_in(&["POSIX", "de"]).as_deref(), Some("Viewer"));
+}
+
+#[test]
+fn a_translation_without_the_plain_key_is_none() {
+    let kv = desktop_entry_kv("[Desktop Entry]\nComment[de]=Nur Deutsch\n");
+    assert_eq!(localized(&kv, "Comment", &locales(&["de"])), None);
+}
+
+const ATLAS: &str = "[Desktop Entry]\nType=Application\nName=Atlas\nName[de]=Weltatlas\n\
+     GenericName=Map Viewer\nGenericName[de]=Kartenansicht\nComment=Maps\nComment[de]=Karten\n\
+     Exec=atlas\n";
+
+#[test]
+fn an_entry_shows_its_translated_name_and_keeps_the_plain_one_for_search() {
+    let id: DesktopId = "atlas.desktop".parse().unwrap();
+    let de = parse_desktop_on(ATLAS, &id, &[], &locales(&["de_DE.UTF-8"]), |_| true).unwrap();
+    assert_eq!(
+        (de.name.as_str(), de.plain_name.as_deref()),
+        ("Weltatlas", Some("Atlas"))
+    );
+    assert_eq!(
+        de.search_names().collect::<Vec<_>>(),
+        ["Weltatlas", "Atlas"]
+    );
+    let en = parse_desktop_on(ATLAS, &id, &[], &locales(&["en_US.UTF-8"]), |_| true).unwrap();
+    assert_eq!((en.name.as_str(), en.plain_name), ("Atlas", None));
+    assert_eq!(
+        parse_desktop_in(ATLAS, &id, &locales(&["de"]))
+            .unwrap()
+            .name,
+        "Weltatlas"
+    );
+}
+
+#[test]
+fn a_subtitle_is_in_the_ui_language() {
+    assert_eq!(
+        subtitle_in(ATLAS, &locales(&["de"])).as_deref(),
+        Some("Kartenansicht")
+    );
+    assert_eq!(
+        subtitle_in(ATLAS, &locales(&["C"])).as_deref(),
+        Some("Map Viewer")
+    );
+    let no_generic = ATLAS.replace("GenericName", "X-Generic");
+    assert_eq!(
+        subtitle_in(&no_generic, &locales(&["de"])).as_deref(),
+        Some("Karten")
+    );
+    let same = "[Desktop Entry]\nName=Atlas\nName[de]=Karten\nComment=Maps\nComment[de]=Karten\n";
+    assert_eq!(
+        subtitle_in(same, &locales(&["de"])),
+        None,
+        "the translated line says the translated name"
+    );
+}
+
+#[test]
+fn a_web_links_name_is_in_the_ui_language() {
+    let text =
+        "[Desktop Entry]\nType=Link\nName=News\nName[de]=Nachrichten\nURL=https://example.org\n";
+    assert_eq!(
+        parse_link_in(text, &locales(&["de"])).unwrap().name,
+        "Nachrichten"
+    );
+    assert_eq!(parse_link_in(text, &[]).unwrap().name, "News");
 }
 
 #[test]

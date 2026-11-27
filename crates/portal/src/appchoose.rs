@@ -326,6 +326,7 @@ mod tests {
 
     fn e(id: &str, name: &str, mimes: &[&str]) -> AppEntry {
         AppEntry {
+            plain_name: None,
             name: name.into(),
             exec_line: String::new(),
             terminal: false,

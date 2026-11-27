@@ -1219,6 +1219,7 @@ mod tests {
         let root = crate::icon::svg_theme(&["test-app"], &[]);
         let mut h = crate::icon::two_outputs("classic", &root);
         let entry = AppEntry {
+            plain_name: None,
             name: "Test".into(),
             exec_line: "true".into(),
             terminal: false,
@@ -1269,6 +1270,7 @@ mod tests {
         let root = crate::icon::svg_theme(&["test-app"], &[]);
         let mut h = crate::icon::two_outputs("classic", &root);
         let entry = AppEntry {
+            plain_name: None,
             name: "Test".into(),
             exec_line: "true".into(),
             terminal: false,

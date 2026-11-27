@@ -582,7 +582,8 @@ fn a_launchers_name_key_moves_to_its_file_name_once() {
                 &format!("[Desktop Entry]\nType=Application\nName={name}\nExec=x\n"),
                 &file.parse().unwrap(),
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         ),
         path: PathBuf::from(file),
         shortcut: true,

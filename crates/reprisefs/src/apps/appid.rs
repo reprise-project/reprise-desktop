@@ -111,6 +111,7 @@ mod tests {
 
     fn entry(file: &str, class: Option<&str>) -> AppEntry {
         AppEntry {
+            plain_name: None,
             name: file.into(),
             exec_line: "x".into(),
             terminal: false,

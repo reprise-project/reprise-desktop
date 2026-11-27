@@ -23,13 +23,23 @@ pub fn button(
     id: &crate::apps::DesktopId,
     is_action: impl Fn(&str) -> bool,
 ) -> Option<Button> {
-    if let Some(app) = crate::apps::parse_desktop(text, id) {
+    button_in(text, id, is_action, reprisekit::i18n::ui_locales())
+}
+
+/// [`button`] with names in `locales` ([`crate::apps::localized`]).
+fn button_in(
+    text: &str,
+    id: &crate::apps::DesktopId,
+    is_action: impl Fn(&str) -> bool,
+    locales: &[String],
+) -> Option<Button> {
+    if let Some(app) = crate::apps::parse_desktop_in(text, id, locales) {
         return Some(Button::App(app));
     }
     let kv = crate::apps::desktop_entry_kv(text);
     let action = kv.get(ACTION_KEY).filter(|a| is_action(a))?;
     Some(Button::Action {
-        name: kv.get("Name")?.to_string(),
+        name: crate::apps::localized(&kv, "Name", locales)?.to_string(),
         icon: kv
             .get("Icon")
             .filter(|v| !v.is_empty())
@@ -114,6 +124,22 @@ pub fn unique_name(dir: &Path, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_buttons_name_is_in_the_ui_language() {
+        let de = ["de_DE.UTF-8".to_string()];
+        let id = "a.desktop".parse().unwrap();
+        let action = "[Desktop Entry]\nName=Desktop\nName[de]=Desktop anzeigen\nX-Reprise-Action=showdesktop\n";
+        let Some(Button::Action { name, .. }) = button_in(action, &id, |_| true, &de) else {
+            panic!("an action button");
+        };
+        assert_eq!(name, "Desktop anzeigen");
+        let app = "[Desktop Entry]\nType=Application\nName=Editor\nName[de]=Bearbeiter\nExec=ed\n";
+        let Some(Button::App(app)) = button_in(app, &id, |_| false, &de) else {
+            panic!("a program button");
+        };
+        assert_eq!(app.name, "Bearbeiter");
+    }
 
     #[test]
     fn a_button_is_a_program_or_a_known_action() {

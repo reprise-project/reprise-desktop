@@ -133,6 +133,7 @@ fn own_entry(desktop: &DesktopId) -> AppEntry {
     installed.unwrap_or_else(|| {
         let stem = desktop.stem().to_string();
         AppEntry {
+            plain_name: None,
             exec_line: format!("{stem} %f"),
             name: stem,
             terminal: false,

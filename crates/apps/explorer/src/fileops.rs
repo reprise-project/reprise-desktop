@@ -48,7 +48,7 @@ pub enum PasteTo {
     /// A folder entry's Paste.
     Folder(PathBuf),
     /// A launcher's Paste: its program opens the clipboard's files.
-    App(apps::AppEntry),
+    App(Box<apps::AppEntry>),
 }
 
 pub(crate) struct Put {

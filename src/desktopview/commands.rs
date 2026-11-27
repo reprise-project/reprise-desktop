@@ -668,7 +668,7 @@ impl State {
                 let app = target
                     .and_then(|i| self.desktop.as_ref()?.entries.get(i))
                     .and_then(|e| match &e.target {
-                        Target::Launch(app) => Some(app.clone()),
+                        Target::Launch(app) => Some((**app).clone()),
                         _ => None,
                     });
                 if let Some(app) = app {

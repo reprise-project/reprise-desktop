@@ -746,6 +746,7 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         crate::desktopview::create(&mut h.state, "/d".into(), Default::default(), None);
         h.state.app_index = vec![AppEntry {
+            plain_name: None,
             name: "Zoom".into(),
             exec_line: "zoom".into(),
             terminal: false,

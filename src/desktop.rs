@@ -13,7 +13,7 @@ pub const DRAG_PX: i32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
-    Launch(AppEntry),
+    Launch(Box<AppEntry>),
     Open(PathBuf),
     /// A program file ([`reprisefs::program::program`]): opening runs it in its own folder.
     Run(PathBuf, Program),
@@ -384,7 +384,7 @@ fn plain_target(path: &Path, meta: &std::fs::Metadata) -> Target {
 
 fn shortcut_target(sc: apps::Shortcut) -> Target {
     match sc {
-        apps::Shortcut::App(app) => Target::Launch(app),
+        apps::Shortcut::App(app) => Target::Launch(Box::new(app)),
         apps::Shortcut::Link(link) => Target::Uri(link.url),
     }
 }

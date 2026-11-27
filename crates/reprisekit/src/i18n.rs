@@ -301,25 +301,50 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-/// The UI languages asked for, in order: `LANGUAGE`'s list, then the message locale
-/// (`LC_ALL`, `LC_MESSAGES`, `LANG`). As in gettext, a `C` or `POSIX` locale means English and
-/// silences `LANGUAGE`.
+/// The UI languages asked for, in order: [`requested_locales`] as language ids, a `C` or
+/// `POSIX` locale as English.
 pub fn requested(env: impl Fn(&str) -> Option<String>) -> Vec<LanguageIdentifier> {
+    (requested_locales(env).iter())
+        .filter_map(|l| {
+            if is_posix(l) {
+                Some(english())
+            } else {
+                langid(l)
+            }
+        })
+        .collect()
+}
+
+/// The message locales asked for as written (`de_AT.UTF-8@euro`), in order: `LANGUAGE`'s list,
+/// then the message locale (`LC_ALL`, `LC_MESSAGES`, `LANG`). As in gettext, a `C` or `POSIX`
+/// locale silences `LANGUAGE` and is the only one.
+pub fn requested_locales(env: impl Fn(&str) -> Option<String>) -> Vec<String> {
     let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
         .find_map(|n| env(n));
     let Some(locale) = locale else {
         return Vec::new();
     };
-    let base = locale.split(['.', '@']).next().unwrap_or("");
-    if base == "C" || base == "POSIX" {
-        return vec![english()];
+    if is_posix(&locale) {
+        return vec![locale];
     }
     let list = env("LANGUAGE").unwrap_or_default();
-    list.split(':')
-        .chain([locale.as_str()])
-        .filter_map(langid)
+    (list.split(':'))
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .chain([locale])
         .collect()
+}
+
+/// [`requested_locales`] of this process's environment, read once.
+pub fn ui_locales() -> &'static [String] {
+    static LOCALES: OnceLock<Vec<String>> = OnceLock::new();
+    LOCALES.get_or_init(|| requested_locales(env))
+}
+
+/// Whether `locale` is `C` or `POSIX`, with or without an encoding or modifier.
+pub fn is_posix(locale: &str) -> bool {
+    matches!(locale.split(['.', '@']).next(), Some("C" | "POSIX"))
 }
 
 /// `reprise/locale` under `$XDG_DATA_HOME`, then under each `$XDG_DATA_DIRS`.
