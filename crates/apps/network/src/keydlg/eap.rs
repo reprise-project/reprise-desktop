@@ -9,6 +9,7 @@ use reprisekit::controls::combo::ListItem;
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
+use reprisekit::{kit_tr, tr};
 
 use crate::nm::{CaSource, Eap, Enterprise, Inner, Psk, Ssid};
 
@@ -44,12 +45,6 @@ const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
 const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
 const CONNECT_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 
-const NO_CA_WARNING: &str = "Not using a Certificate Authority (CA) certificate can result in \
-                             connections to insecure, rogue Wi-Fi networks.";
-const DOMAIN_NEEDED: &str = "A domain is needed so this network's server can be told apart \
-                             from any other server the CA has certified.";
-const DOMAIN_PARTIAL: &str = "Enter the server's full domain, such as radius.example.org.";
-
 /// The path fields, each with its Browse... button `<id>_browse`.
 pub const PATHS: [&str; 3] = ["ca", "cert", "pkey"];
 const SECRETS: [&str; 2] = ["password", "pkey_pw"];
@@ -82,7 +77,7 @@ impl EapDialog {
         let label = |id, y, text: &str| Item::label_at(id, MARGIN, y + LABEL_DY, LABEL_W, text);
         let items = vec![
             Item::lines_at("intro", MARGIN, MARGIN, TEXT_W, &intro),
-            label("method_l", METHOD_Y, "&Authentication:"),
+            label("method_l", METHOD_Y, &tr!("eap-method")),
             Item::combo(
                 "method",
                 FIELD_X,
@@ -91,47 +86,49 @@ impl EapDialog {
                 &methods,
                 methods.len(),
             ),
-            label("anon_l", ANON_Y, "A&nonymous identity:"),
+            label("anon_l", ANON_Y, &tr!("eap-anonymous")),
             Item::edit("anon", field_r(ANON_Y, FIELD_W), "", true),
-            label("ca_l", CA_Y, "CA cer&tificate:"),
+            label("ca_l", CA_Y, &tr!("eap-ca")),
             Item::edit("ca", field_r(CA_Y, PATH_W), "", true),
             browse("ca_browse", CA_Y),
-            Item::check(
-                "system_ca",
-                FIELD_X,
-                SYSTEM_CA_Y,
-                "Use s&ystem CA certificates",
-            ),
-            Item::check("no_ca", FIELD_X, NO_CA_Y, "No CA certificate is re&quired"),
-            label("domain_l", DOMAIN_Y, "&Domain:"),
+            Item::check("system_ca", FIELD_X, SYSTEM_CA_Y, &tr!("eap-system-ca")),
+            Item::check("no_ca", FIELD_X, NO_CA_Y, &tr!("eap-no-ca")),
+            label("domain_l", DOMAIN_Y, &tr!("eap-domain")),
             Item::edit("domain", field_r(DOMAIN_Y, FIELD_W), "", true),
             Item::lines(
                 "warning",
                 Rect::new(MARGIN, WARNING_Y, TEXT_W, 2 * LINE_H),
                 &[],
             ),
-            label("inner_l", INNER_Y, "&Inner authentication:"),
+            label("inner_l", INNER_Y, &tr!("eap-inner")),
             Item::combo("inner", FIELD_X, INNER_Y, FIELD_W, &[], 3),
-            label("user_l", USER_Y, "&Username:"),
+            label("user_l", USER_Y, &tr!("eap-user")),
             Item::edit("user", field_r(USER_Y, FIELD_W), "", true),
-            label("password_l", PASSWORD_Y, "&Password:"),
+            label("password_l", PASSWORD_Y, &tr!("eap-password")),
             secret("password", PASSWORD_Y),
-            label("cert_l", CERT_Y, "Us&er certificate:"),
+            label("cert_l", CERT_Y, &tr!("eap-cert")),
             Item::edit("cert", field_r(CERT_Y, PATH_W), "", true),
             browse("cert_browse", CERT_Y),
-            label("pkey_l", PKEY_Y, "Private &key:"),
+            label("pkey_l", PKEY_Y, &tr!("eap-pkey")),
             Item::edit("pkey", field_r(PKEY_Y, PATH_W), "", true),
             browse("pkey_browse", PKEY_Y),
-            label("pkey_pw_l", PKEY_PW_Y, "Private key pass&word:"),
+            label("pkey_pw_l", PKEY_PW_Y, &tr!("eap-pkey-password")),
             secret("pkey_pw", PKEY_PW_Y),
             Item::button(
                 "connect",
                 Rect::new(CONNECT_X, BTN_Y, BUTTON_W, BUTTON_H),
-                "&Connect",
+                &tr!("eap-connect"),
                 false,
                 true,
             ),
-            Item::button_at("cancel", CANCEL_X, BTN_Y, BUTTON_W, "Cancel", true),
+            Item::button_at(
+                "cancel",
+                CANCEL_X,
+                BTN_Y,
+                BUTTON_W,
+                &kit_tr!("cancel"),
+                true,
+            ),
         ];
         let mut d = EapDialog {
             device: device.into(),
@@ -145,7 +142,7 @@ impl EapDialog {
     }
 
     pub fn window_title() -> String {
-        "Enterprise Network Login".into()
+        tr!("eap-title")
     }
 
     pub fn event(&mut self, ev: form::Event) -> Outcome {
@@ -252,11 +249,11 @@ impl EapDialog {
         }
         let ca_chosen = system_ca || !self.form.edit_text("ca").is_empty();
         let warning = if no_ca {
-            reprisekit::text::wrap_chars(NO_CA_WARNING, TEXT_COLS)
+            reprisekit::text::wrap_chars(&tr!("eap-no-ca-warning"), TEXT_COLS)
         } else if ca_chosen && self.domain().is_empty() {
-            reprisekit::text::wrap_chars(DOMAIN_NEEDED, TEXT_COLS)
+            reprisekit::text::wrap_chars(&tr!("eap-domain-needed"), TEXT_COLS)
         } else if ca_chosen && !full_domain(self.domain()) {
-            reprisekit::text::wrap_chars(DOMAIN_PARTIAL, TEXT_COLS)
+            reprisekit::text::wrap_chars(&tr!("eap-domain-partial"), TEXT_COLS)
         } else {
             Vec::new()
         };
@@ -365,13 +362,7 @@ impl Drop for EapDialog {
 }
 
 fn intro_lines(ssid: &str) -> Vec<String> {
-    reprisekit::text::wrap_chars(
-        &format!(
-            "The network '{ssid}' asks for an 802.1X login. Type the details your network \
-             administrator gave you, and then click Connect."
-        ),
-        TEXT_COLS,
-    )
+    reprisekit::text::wrap_chars(&tr!("eap-intro", ssid = ssid), TEXT_COLS)
 }
 
 fn field_r(y: i32, w: i32) -> Rect {
@@ -384,7 +375,7 @@ fn browse(id: &'static str, y: i32) -> Item {
         CLIENT.0 - MARGIN - BROWSE_W,
         y - 2,
         BROWSE_W,
-        "Browse...",
+        &tr!("eap-browse"),
         true,
     )
 }

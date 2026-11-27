@@ -8,6 +8,7 @@ mod x25519;
 use std::collections::HashMap;
 use std::net::IpAddr;
 
+use reprisekit::tr;
 use zbus::Variant;
 
 use crate::nm::{AGENT_FLAGS, Props, Psk, agent_flags};
@@ -180,7 +181,7 @@ pub fn parse_conf(text: &str, name: &str) -> Result<Config, String> {
         if line.is_empty() {
             continue;
         }
-        let at = |what: &str| format!("Line {}: {what}", n + 1);
+        let at = |what: &str| tr!("wg-parse-line", number = (n + 1).to_string(), what = what);
         if line.starts_with('[') {
             section = match line.to_ascii_lowercase().as_str() {
                 "[interface]" => {
@@ -191,18 +192,18 @@ pub fn parse_conf(text: &str, name: &str) -> Result<Config, String> {
                     cfg.peers.push(Peer::default());
                     Section::Peer
                 }
-                _ => return Err(at(&format!("{line} is not a WireGuard section."))),
+                _ => return Err(at(&tr!("wg-parse-section", line = line))),
             };
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
-            return Err(at("expected Key = Variant."));
+            return Err(at(&tr!("wg-parse-expected")));
         };
         let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
         let number = |what: &str| {
             value
                 .parse::<u32>()
-                .map_err(|_| at(&format!("{what} must be a number.")))
+                .map_err(|_| at(&tr!("wg-parse-number", what = what)))
         };
         match (&section, key.as_str()) {
             (Section::Interface, "privatekey") => cfg.private_key = Psk::new(value),
@@ -210,8 +211,7 @@ pub fn parse_conf(text: &str, name: &str) -> Result<Config, String> {
             (Section::Interface, "dns") => cfg.dns.extend(split(value)),
             (Section::Interface, "listenport") => {
                 cfg.listen_port = Some(
-                    u16::try_from(number("ListenPort")?)
-                        .map_err(|_| at("ListenPort must be a port number."))?,
+                    u16::try_from(number("ListenPort")?).map_err(|_| at(&tr!("wg-parse-port")))?,
                 )
             }
             (Section::Interface, "mtu") => cfg.mtu = Some(number("MTU")?),
@@ -232,20 +232,20 @@ pub fn parse_conf(text: &str, name: &str) -> Result<Config, String> {
                     "persistentkeepalive" => {
                         peer.keepalive = Some(
                             u16::try_from(number("PersistentKeepalive")?)
-                                .map_err(|_| at("PersistentKeepalive is too large."))?,
+                                .map_err(|_| at(&tr!("wg-parse-keepalive")))?,
                         )
                     }
-                    _ => return Err(at(&format!("{key} is not a peer setting."))),
+                    _ => return Err(at(&tr!("wg-parse-peer-setting", key = key.as_str()))),
                 }
             }
-            (Section::None, _) => return Err(at("a setting before [Interface].")),
+            (Section::None, _) => return Err(at(&tr!("wg-parse-before-interface"))),
             (Section::Interface, _) => {
-                return Err(at(&format!("{key} is not an interface setting.")));
+                return Err(at(&tr!("wg-parse-interface-setting", key = key.as_str())));
             }
         }
     }
     if !seen_interface {
-        return Err("The file has no [Interface] section.".into());
+        return Err(tr!("wg-parse-no-interface"));
     }
     Ok(cfg)
 }
@@ -314,7 +314,7 @@ pub fn check(cfg: &Config) -> Option<Problem> {
         })
     };
     if cfg.name.trim().is_empty() {
-        return bad(Field::Name, "Type a name for the connection.");
+        return bad(Field::Name, &tr!("wg-check-name"));
     }
     let iface = cfg.iface.as_str();
     if iface.is_empty()
@@ -324,27 +324,21 @@ pub fn check(cfg: &Config) -> Option<Problem> {
         || iface.contains(['/', ':'])
         || iface.contains(char::is_whitespace)
     {
-        return bad(
-            Field::Iface,
-            "The interface name must be 1 to 15 characters, with no spaces, / or :.",
-        );
+        return bad(Field::Iface, &tr!("wg-check-iface"));
     }
     if !matches!(cfg.private_secret(), Secret::Kept | Secret::Agent(_))
         && decode_key(&cfg.private_key).is_none()
     {
-        return bad(
-            Field::PrivateKey,
-            "The private key must be a 44-character WireGuard key. Click Generate for a new one.",
-        );
+        return bad(Field::PrivateKey, &tr!("wg-check-private-key"));
     }
     if let Some(a) = cfg.addresses.iter().find(|a| parse_cidr(a).is_none()) {
         return bad(
             Field::Addresses,
-            &format!("{a} is not an address such as 10.0.0.2/24."),
+            &tr!("wg-check-address", address = a.as_str()),
         );
     }
     if let Some(d) = cfg.dns.iter().find(|d| d.contains(char::is_whitespace)) {
-        return bad(Field::Dns, &format!("{d} is not a name server."));
+        return bad(Field::Dns, &tr!("wg-check-dns", dns = d.as_str()));
     }
     // NetworkManager carries the stored secrets over only into an update
     // that holds none, so keeping one key while changing another loses it.
@@ -359,39 +353,33 @@ pub fn check(cfg: &Config) -> Option<Problem> {
     if let Some(&(field, _)) = secrets.iter().find(|(_, s)| *s == Secret::Kept)
         && secrets.iter().any(|(_, s)| matches!(s, Secret::New(_)))
     {
-        return bad(
-            field,
-            "A saved key is kept only while every key is left as it is. Type this key \
-             again too, or clear the keys you changed.",
-        );
+        return bad(field, &tr!("wg-check-kept-key"));
     }
     for (i, p) in cfg.peers.iter().enumerate() {
         let n = i + 1;
         if decode_key(&p.public_key).is_none() {
             return bad(
                 Field::PublicKey(i),
-                &format!("Peer {n}'s public key must be a 44-character WireGuard key."),
+                &tr!("wg-check-peer-public-key", number = n.to_string()),
             );
         }
         if p.psk_flags == 0 && !p.preshared_key.is_empty() && decode_key(&p.preshared_key).is_none()
         {
             return bad(
                 Field::PresharedKey(i),
-                &format!(
-                    "Peer {n}'s preshared key must be a 44-character WireGuard key, or empty."
-                ),
+                &tr!("wg-check-peer-preshared", number = n.to_string()),
             );
         }
         if !p.endpoint.is_empty() && !endpoint_ok(&p.endpoint) {
             return bad(
                 Field::Endpoint(i),
-                &format!("Peer {n}'s endpoint must be host:port, such as vpn.example.org:51820."),
+                &tr!("wg-check-peer-endpoint", number = n.to_string()),
             );
         }
         if let Some(a) = p.allowed_ips.iter().find(|a| parse_cidr(a).is_none()) {
             return bad(
                 Field::AllowedIps(i),
-                &format!("{a} is not a network such as 0.0.0.0/0."),
+                &tr!("wg-check-allowed", network = a.as_str()),
             );
         }
     }
@@ -814,7 +802,7 @@ AllowedIPs = 0.0.0.0/0
         );
         assert_eq!(
             parse_conf("[Peer]\nPublicKey = a\n", "x"),
-            Err("The file has no [Interface] section.".into())
+            Err(tr!("wg-parse-no-interface"))
         );
         assert_eq!(
             parse_conf("client\ndev tun\n", "x"),

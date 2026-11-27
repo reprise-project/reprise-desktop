@@ -12,6 +12,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("network");
+
 mod chooser;
 mod folder;
 mod hotspot;
@@ -48,6 +50,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::{TextUnits, Theme};
+use reprisekit::{kit_tr, tr};
 
 /// The windows the folder and the tray open. One Status sheet and one VPN
 /// sheet at a time: opening another replaces it, except a VPN sheet with
@@ -59,7 +62,6 @@ const STATUS: WinId = WinId::named("status");
 const VPN: WinId = WinId::named("vpn");
 const IMPORT: WinId = WinId::named("import");
 const HOTSPOT: WinId = WinId::named("hotspot");
-const BROWSE_TITLE: &str = "Choose File";
 
 /// Where the sign-in balloon sends the browser when NetworkManager has no
 /// check address of its own.
@@ -407,11 +409,11 @@ impl NetApp {
             .map(|v| v.name.clone())
             .unwrap_or_default();
         let b = MsgBox::new(
-            "Confirm Connection Delete",
+            tr!("network-delete-title"),
             msgbox::Fields {
-                text: format!("Are you sure you want to delete the connection '{name}'?"),
+                text: tr!("network-delete-text", name = name.as_str()),
                 icon: None,
-                buttons: vec!["&Yes".into(), "&No".into()],
+                buttons: vec![kit_tr!("yes"), kit_tr!("no")],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
@@ -462,14 +464,11 @@ impl NetApp {
         self.import = Some(self.import_host.open_last(
             &home_dir(),
             Fields {
-                title: "Import".into(),
-                accept_label: "Open".into(),
+                title: tr!("network-import-title"),
+                accept_label: tr!("network-open"),
                 mode: DlgMode::Open,
                 multiple: false,
-                filters: vec![
-                    "VPN Files (*.conf;*.ovpn;*.pcf)".into(),
-                    "All Files (*.*)".into(),
-                ],
+                filters: vec![tr!("network-filter-vpn"), tr!("network-filter-all")],
             },
             u,
         ));
@@ -492,14 +491,11 @@ impl NetApp {
             .filter(|d| d.is_dir());
         self.browse_for = Some(to);
         let fields = Fields {
-            title: BROWSE_TITLE.into(),
-            accept_label: "Open".into(),
+            title: tr!("network-choose-file-title"),
+            accept_label: tr!("network-open"),
             mode: DlgMode::Open,
             multiple: false,
-            filters: vec![
-                "Certificates and Keys (*.crt;*.pem;*.key)".into(),
-                "All Files (*.*)".into(),
-            ],
+            filters: vec![tr!("network-filter-keys"), tr!("network-filter-all")],
         };
         self.import = Some(match start {
             Some(dir) => self.import_host.open(&dir, fields, u),
@@ -507,11 +503,11 @@ impl NetApp {
         });
     }
 
-    fn file_title(&self) -> &'static str {
+    fn file_title(&self) -> String {
         if self.browse_for.is_some() {
-            BROWSE_TITLE
+            tr!("network-choose-file-title")
         } else {
-            "Import"
+            tr!("network-import-title")
         }
     }
 
@@ -523,8 +519,12 @@ impl NetApp {
             Ok(bytes) => String::from_utf8(bytes).ok(),
             Err(e) => {
                 self.tell(
-                    "Import",
-                    &format!("{} could not be read: {e}.", path.display()),
+                    &tr!("network-import-title"),
+                    &tr!(
+                        "network-import-unreadable",
+                        path = path.display().to_string(),
+                        why = e.to_string()
+                    ),
                 );
                 return None;
             }
@@ -534,7 +534,7 @@ impl NetApp {
                 return self.show_vpn(VpnWin::WireGuard(vpnsheet::WgSheet::new(&cfg, None)));
             }
             Ok(import::Plan::Plugins(kinds)) => self.send(nm::Cmd::Import { path, kinds }),
-            Err(why) => self.tell("Import", &why),
+            Err(why) => self.tell(&tr!("network-import-title"), &why),
         }
         None
     }
@@ -1096,8 +1096,8 @@ impl NetApp {
                     .devices
                     .iter()
                     .find(|d| d.path == device)
-                    .map_or_else(|| "Network Connections".into(), |d| d.shell_name.clone());
-                self.tell_over(Over::Chooser(device), &title, nm::WIFI_NEEDS_AGENT);
+                    .map_or_else(|| tr!("network-title"), |d| d.shell_name.clone());
+                self.tell_over(Over::Chooser(device), &title, &nm::wifi_needs_agent());
                 Reply::redraw_all()
             }
             chooser::Outcome::Hidden => {
@@ -1274,7 +1274,7 @@ impl NetApp {
 
 impl App for NetApp {
     fn title(&self) -> String {
-        "Network Connections".into()
+        tr!("network-title")
     }
 
     fn app_id(&self) -> String {
@@ -1322,7 +1322,7 @@ impl App for NetApp {
                 .iter()
                 .find(|d| d.path == s.device_path)
                 .map(status::Status::window_title)
-                .unwrap_or_else(|| "Status".into());
+                .unwrap_or_else(|| tr!("network-status-title"));
             out.push(Child {
                 id: STATUS,
                 title,
@@ -1343,7 +1343,7 @@ impl App for NetApp {
         if self.import.is_some() {
             out.push(Child {
                 id: IMPORT,
-                title: self.file_title().into(),
+                title: self.file_title(),
                 size: self.import.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
                 fixed: false,
                 modal: true,
@@ -1660,7 +1660,7 @@ fn ok_box(title: &str, text: &str) -> MsgBox {
         msgbox::Fields {
             text: text.into(),
             icon: None,
-            buttons: vec!["OK".into()],
+            buttons: vec![kit_tr!("ok")],
             default: 0,
             min_text_h: None,
             min_w: 0,

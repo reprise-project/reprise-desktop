@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use reprisekit::tr;
+
 use crate::nm::vpn_kind_label;
 use crate::wg;
 
@@ -84,18 +86,12 @@ pub fn plan(path: &Path, text: Option<&str>, installed: &[String]) -> Result<Pla
     }
     match wanted(&ext) {
         Some(kind) if installed.iter().any(|p| p == kind) => Ok(Plan::Plugins(vec![kind.into()])),
-        Some(kind) => Err(format!(
-            "This is {} {} file, and NetworkManager's {} plugin is not installed. \
-             Install networkmanager-{kind}, then import the file again.",
-            if kind == "openvpn" { "an" } else { "a" },
-            vpn_kind_label(kind),
-            vpn_kind_label(kind),
+        Some(kind) => Err(tr!(
+            "import-plugin-missing",
+            kind = kind,
+            label = vpn_kind_label(kind)
         )),
-        None if installed.is_empty() => Err(
-            "No VPN plugin for NetworkManager is installed. Install the plugin for your VPN \
-             (networkmanager-openvpn, for one), then import the file again."
-                .into(),
-        ),
+        None if installed.is_empty() => Err(tr!("import-no-plugin")),
         None => Ok(Plan::Plugins(installed.to_vec())),
     }
 }

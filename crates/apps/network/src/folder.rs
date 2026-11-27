@@ -12,6 +12,7 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
+use reprisekit::tr;
 
 use crate::nm;
 use crate::status;
@@ -29,8 +30,13 @@ const TYPE_W: i32 = 144;
 const STATUS_W: i32 = 144;
 const DEVICE_W: i32 = CLIENT.0 - LIST_X - (NAME_W + TYPE_W + STATUS_W);
 
-const TYPE_LAN: &str = "LAN or High-Speed Internet";
-const TYPE_VPN: &str = "Virtual Private Network";
+fn type_lan() -> String {
+    tr!("folder-type-lan")
+}
+
+fn type_vpn() -> String {
+    tr!("folder-type-vpn")
+}
 
 const TASKS: usize = 0;
 const DETAILS: usize = 3;
@@ -78,7 +84,7 @@ pub fn rows_for(s: &nm::Snapshot) -> (Vec<Row>, Vec<listview::Row>, Vec<listview
     }
     if !s.devices.is_empty() {
         groups.push(listview::Group {
-            title: TYPE_LAN.into(),
+            title: type_lan(),
             first: 0,
         });
     }
@@ -88,7 +94,7 @@ pub fn rows_for(s: &nm::Snapshot) -> (Vec<Row>, Vec<listview::Row>, Vec<listview
             icon: None,
             cells: vec![
                 d.shell_name.clone(),
-                TYPE_LAN.into(),
+                type_lan(),
                 device_status(d),
                 d.product.clone(),
             ],
@@ -96,7 +102,7 @@ pub fn rows_for(s: &nm::Snapshot) -> (Vec<Row>, Vec<listview::Row>, Vec<listview
     }
     if !s.vpns.is_empty() {
         groups.push(listview::Group {
-            title: TYPE_VPN.into(),
+            title: type_vpn(),
             first: s.devices.len(),
         });
     }
@@ -106,8 +112,8 @@ pub fn rows_for(s: &nm::Snapshot) -> (Vec<Row>, Vec<listview::Row>, Vec<listview
             icon: None,
             cells: vec![
                 v.name.clone(),
-                TYPE_VPN.into(),
-                vpn_status(v).into(),
+                type_vpn(),
+                vpn_status(v),
                 nm::vpn_kind_label(&v.kind),
             ],
         });
@@ -118,16 +124,16 @@ pub fn rows_for(s: &nm::Snapshot) -> (Vec<Row>, Vec<listview::Row>, Vec<listview
 fn device_status(d: &nm::Device) -> String {
     match d.hotspot_line() {
         Some(line) if d.state == nm::State::Connected => line,
-        Some(_) => "Starting hotspot".into(),
-        None => status::status_word(d).into(),
+        Some(_) => tr!("folder-starting-hotspot"),
+        None => status::status_word(d),
     }
 }
 
-fn vpn_status(v: &nm::Vpn) -> &'static str {
+fn vpn_status(v: &nm::Vpn) -> String {
     if v.active {
-        "Connected"
+        tr!("folder-connected")
     } else {
-        "Disconnected"
+        tr!("folder-disconnected")
     }
 }
 
@@ -140,9 +146,16 @@ pub fn context_menu(row: &Row, s: &nm::Snapshot) -> (Vec<MenuItem>, Vec<Option<O
             };
             let live = d.managed;
             let mut items = vec![
-                item(if live { "&Disable" } else { "&Enable" }, true),
-                item("Stat&us", live),
-                item("&Repair", live),
+                item(
+                    &if live {
+                        tr!("folder-disable")
+                    } else {
+                        tr!("folder-enable")
+                    },
+                    true,
+                ),
+                item(&tr!("folder-status"), live),
+                item(&tr!("folder-repair"), live),
             ];
             let mut actions = vec![
                 Some(Outcome::Toggle(path.clone())),
@@ -151,14 +164,14 @@ pub fn context_menu(row: &Row, s: &nm::Snapshot) -> (Vec<MenuItem>, Vec<Option<O
             ];
             if d.kind == nm::Kind::Wifi {
                 items.push(MenuItem::Separator);
-                items.push(item("&View Available Wireless Networks", live));
+                items.push(item(&tr!("folder-view-wireless"), live));
                 actions.push(None);
                 actions.push(live.then(|| Outcome::ViewWireless(path.clone())));
                 if d.hotspot.is_some() {
-                    items.push(item("Stop &Hotspot", true));
+                    items.push(item(&tr!("folder-stop-hotspot"), true));
                     actions.push(Some(Outcome::StopHotspot(path.clone())));
                 } else {
-                    items.push(item("Create &Hotspot...", live));
+                    items.push(item(&tr!("folder-create-hotspot"), live));
                     actions.push(live.then(|| Outcome::CreateHotspot(path.clone())));
                 }
             }
@@ -171,16 +184,16 @@ pub fn context_menu(row: &Row, s: &nm::Snapshot) -> (Vec<MenuItem>, Vec<Option<O
                 .find(|v| &v.conn_path == conn)
                 .is_some_and(|v| v.active);
             let (label, out) = if active {
-                ("&Disconnect", Outcome::VpnDown(conn.clone()))
+                (tr!("folder-disconnect"), Outcome::VpnDown(conn.clone()))
             } else {
-                ("&Connect", Outcome::VpnUp(conn.clone()))
+                (tr!("folder-connect"), Outcome::VpnUp(conn.clone()))
             };
             (
                 vec![
-                    item(label, true),
+                    item(&label, true),
                     MenuItem::Separator,
-                    item("&Delete", true),
-                    item("P&roperties", true),
+                    item(&tr!("folder-delete"), true),
+                    item(&tr!("folder-properties"), true),
                 ],
                 vec![
                     Some(out),
@@ -212,9 +225,9 @@ fn task_links(s: &nm::Snapshot) -> Vec<taskpane::Row> {
         enabled,
     };
     vec![
-        link("Create a WireGuard connection", s.nm_running),
-        link("Import a VPN connection", s.nm_running),
-        link("Create a hotspot", hotspot_radio(s).is_some()),
+        link(&tr!("folder-task-wireguard"), s.nm_running),
+        link(&tr!("folder-task-import"), s.nm_running),
+        link(&tr!("folder-task-hotspot"), hotspot_radio(s).is_some()),
     ]
 }
 
@@ -226,30 +239,33 @@ fn pane_sections() -> Vec<Section> {
         enabled: false,
     };
     vec![
-        Section::links("Network Tasks", task_links(&nm::Snapshot::default())),
-        Section::links("See Also", vec![link("Network Troubleshooter")]),
+        Section::links(tr!("folder-tasks"), task_links(&nm::Snapshot::default())),
         Section::links(
-            "Other Places",
+            tr!("folder-see-also"),
+            vec![link(&tr!("folder-troubleshooter"))],
+        ),
+        Section::links(
+            tr!("folder-other-places"),
             vec![
-                link("Control Panel"),
+                link(&tr!("folder-control-panel")),
                 link(&reprisefs::places::home_label()),
-                link("Documents"),
-                link("Computer"),
+                link(&tr!("folder-documents")),
+                link(&tr!("folder-computer")),
             ],
         ),
-        Section::lines("Details", folder_lines()),
+        Section::lines(tr!("folder-details"), folder_lines()),
     ]
 }
 
 fn details_lines(row: Option<&Row>, s: &nm::Snapshot) -> Vec<(String, bool)> {
     if !s.nm_running {
-        return vec![("NetworkManager is not running".into(), true)];
+        return vec![(tr!("folder-nm-not-running"), true)];
     }
     match row {
         Some(Row::Device(path)) => match s.devices.iter().find(|d| &d.path == path) {
             Some(d) => vec![
                 (d.shell_name.clone(), true),
-                (TYPE_LAN.into(), false),
+                (tr!("folder-type-lan"), false),
                 (device_status(d), false),
             ],
             None => folder_lines(),
@@ -257,8 +273,8 @@ fn details_lines(row: Option<&Row>, s: &nm::Snapshot) -> Vec<(String, bool)> {
         Some(Row::Vpn(conn)) => match s.vpns.iter().find(|v| &v.conn_path == conn) {
             Some(v) => vec![
                 (v.name.clone(), true),
-                (TYPE_VPN.into(), false),
-                (vpn_status(v).into(), false),
+                (tr!("folder-type-vpn"), false),
+                (vpn_status(v), false),
             ],
             None => folder_lines(),
         },
@@ -268,8 +284,8 @@ fn details_lines(row: Option<&Row>, s: &nm::Snapshot) -> Vec<(String, bool)> {
 
 fn folder_lines() -> Vec<(String, bool)> {
     vec![
-        ("Network Connections".into(), true),
-        ("System Folder".into(), false),
+        (tr!("folder-name"), true),
+        (tr!("folder-system-folder"), false),
     ]
 }
 
@@ -296,10 +312,10 @@ impl Folder {
                 ..Default::default()
             },
             list: List::new(vec![
-                Column::new("Name", NAME_W),
-                Column::new("Type", TYPE_W),
-                Column::new("Status", STATUS_W),
-                Column::new("Device Name", DEVICE_W),
+                Column::new(&tr!("folder-column-name"), NAME_W),
+                Column::new(&tr!("folder-column-type"), TYPE_W),
+                Column::new(&tr!("folder-column-status"), STATUS_W),
+                Column::new(&tr!("folder-column-device"), DEVICE_W),
             ]),
             rows: Vec::new(),
             popup: None,
@@ -808,11 +824,11 @@ mod tests {
             groups,
             vec![
                 listview::Group {
-                    title: TYPE_LAN.into(),
+                    title: type_lan(),
                     first: 0
                 },
                 listview::Group {
-                    title: TYPE_VPN.into(),
+                    title: type_vpn(),
                     first: 2
                 },
             ]
@@ -841,7 +857,7 @@ mod tests {
             cells[0].cells,
             vec![
                 "Local Area Connection",
-                TYPE_LAN,
+                "LAN or High-Speed Internet",
                 "Connected",
                 "e1000e (enp3s0)"
             ]
@@ -850,14 +866,19 @@ mod tests {
             cells[1].cells,
             vec![
                 "Wireless Network Connection",
-                TYPE_LAN,
+                "LAN or High-Speed Internet",
                 "Not connected",
                 "iwlwifi (wlan0)"
             ]
         );
         assert_eq!(
             cells[2].cells,
-            vec!["Work VPN", TYPE_VPN, "Disconnected", "OpenVPN"]
+            vec![
+                "Work VPN",
+                "Virtual Private Network",
+                "Disconnected",
+                "OpenVPN"
+            ]
         );
         let mut s = snapshot();
         s.vpns[0].active = true;
@@ -1032,7 +1053,7 @@ mod tests {
             lines(&f),
             vec![
                 ("Wireless Network Connection".to_string(), true),
-                (TYPE_LAN.to_string(), false),
+                (type_lan(), false),
                 ("Not connected".to_string(), false)
             ]
         );

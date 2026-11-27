@@ -1,6 +1,8 @@
 //! An OpenVPN connection as NetworkManager's openvpn plugin keeps it: settings in `vpn.data`,
 //! the password and the private key's password in `vpn.secrets`.
 
+use reprisekit::tr;
+
 use crate::nm::Psk;
 
 /// `connection-type`: how the client proves who it is.
@@ -30,12 +32,12 @@ impl Auth {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Auth::Tls => "Certificates (TLS)",
-            Auth::Password => "Password",
-            Auth::PasswordTls => "Password with certificates (TLS)",
-            Auth::StaticKey => "Static key",
+            Auth::Tls => tr!("ovpn-auth-tls"),
+            Auth::Password => tr!("ovpn-auth-password"),
+            Auth::PasswordTls => tr!("ovpn-auth-password-tls"),
+            Auth::StaticKey => tr!("ovpn-auth-static-key"),
         }
     }
 
@@ -204,45 +206,25 @@ impl Config {
 }
 
 /// The first field the plugin cannot connect without, as its form id and what to say.
-pub fn check(cfg: &Config) -> Option<(&'static str, &'static str)> {
+pub fn check(cfg: &Config) -> Option<(&'static str, String)> {
     let a = cfg.auth;
     let missing = [
-        (
-            true,
-            cfg.name.as_str(),
-            "name",
-            "Type a name for the connection.",
-        ),
+        (true, cfg.name.as_str(), "name", tr!("ovpn-need-name")),
         (
             true,
             cfg.gateway.as_str(),
             "gateway",
-            "Type the gateway's address.",
+            tr!("ovpn-need-gateway"),
         ),
-        (a.user(), cfg.user.as_str(), "user", "Type the user name."),
-        (
-            a.ca(),
-            cfg.ca.as_str(),
-            "ca",
-            "Choose the CA certificate file.",
-        ),
-        (
-            a.certs(),
-            cfg.cert.as_str(),
-            "cert",
-            "Choose your certificate file.",
-        ),
-        (
-            a.certs(),
-            cfg.key.as_str(),
-            "key",
-            "Choose your private key file.",
-        ),
+        (a.user(), cfg.user.as_str(), "user", tr!("ovpn-need-user")),
+        (a.ca(), cfg.ca.as_str(), "ca", tr!("ovpn-need-ca")),
+        (a.certs(), cfg.cert.as_str(), "cert", tr!("ovpn-need-cert")),
+        (a.certs(), cfg.key.as_str(), "key", tr!("ovpn-need-key")),
         (
             a == Auth::StaticKey,
             cfg.static_key.as_str(),
             "static",
-            "Choose the static key file.",
+            tr!("ovpn-need-static-key"),
         ),
     ];
     missing

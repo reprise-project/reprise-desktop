@@ -9,12 +9,15 @@ use reprisekit::controls::form::{self, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::DialogFont;
+use reprisekit::tr;
 
 use crate::nm;
 use crate::tray::speed_text;
 
 pub const CLIENT: (i32, i32) = (361, 419);
-pub const TABS: [&str; 2] = ["General", "Support"];
+fn tabs() -> [String; 2] {
+    [tr!("status-tab-general"), tr!("status-tab-support")]
+}
 pub const TAB_GENERAL: usize = 0;
 pub const TAB_SUPPORT: usize = 1;
 
@@ -68,7 +71,7 @@ impl Status {
             support_page(d),
         ];
         let mut s = Status {
-            sheet: propsheet::close_only(&TABS, pages, CLIENT),
+            sheet: propsheet::close_only(&tabs().each_ref().map(String::as_str), pages, CLIENT),
             device_path: d.path.clone(),
             wifi,
             meter: Meter::default(),
@@ -82,20 +85,20 @@ impl Status {
 
     pub fn refresh(&mut self, d: &nm::Device) {
         let g = &mut self.sheet.pages[TAB_GENERAL];
-        g.set_text("status", status_word(d));
+        g.set_text("status", &status_word(d));
         g.set_text("duration", &duration_text(d.connected_since));
         g.set_text("speed", &speed_text(d.speed_mbit));
         if self.wifi {
             // A radio hosting a hotspot has no signal of its own: its row names the hotspot.
             match d.hotspot_summary() {
                 Some(hotspot) => {
-                    g.set_text("signal_l", "Hotspot:");
+                    g.set_text("signal_l", &tr!("status-hotspot"));
                     g.set_text("hotspot", &reprisekit::text::escape_mnemonic(&hotspot));
                     g.set_picture("signal", Canvas::new(0, 0));
                 }
                 None => {
                     let strength = d.wifi.as_ref().map(|w| w.strength).unwrap_or(0);
-                    g.set_text("signal_l", "Signal Strength:");
+                    g.set_text("signal_l", &tr!("status-signal"));
                     g.set_text("hotspot", "");
                     g.set_picture("signal", bars(strength));
                 }
@@ -111,7 +114,7 @@ impl Status {
         };
         let p = &mut self.sheet.pages[TAB_SUPPORT];
         p.set_picture("conn_icon", neticon::draw32(device_icon(d), false));
-        p.set_text("address_type", address_type(&d.ip4));
+        p.set_text("address_type", &address_type(&d.ip4));
         p.set_text("ip", &addr);
         p.set_text("mask", &mask);
         p.set_text("gateway", &gateway);
@@ -146,7 +149,7 @@ impl Status {
     }
 
     pub fn window_title(d: &nm::Device) -> String {
-        format!("{} Status", d.shell_name)
+        tr!("status-title", name = d.shell_name.as_str())
     }
 }
 
@@ -181,45 +184,39 @@ pub fn elapsed_text(secs: u64) -> String {
     );
     match days {
         0 => hms,
-        1 => format!("1 day {hms}"),
-        d => format!("{d} days {hms}"),
+        d => tr!("status-elapsed-days", days = d, time = hms),
     }
 }
 
-pub fn status_word(d: &nm::Device) -> &'static str {
+pub fn status_word(d: &nm::Device) -> String {
     if !d.managed {
-        return "Disabled";
+        return tr!("status-disabled");
     }
     if d.kind == nm::Kind::Wired && !d.carrier {
-        return "Network cable unplugged";
+        return tr!("status-cable-unplugged");
     }
     match d.state {
-        nm::State::Connected => "Connected",
-        nm::State::Connecting => "Acquiring network address",
-        nm::State::Failed => "Limited or no connectivity",
-        _ => "Not connected",
+        nm::State::Connected => tr!("status-connected"),
+        nm::State::Connecting => tr!("status-acquiring"),
+        nm::State::Failed => tr!("status-limited"),
+        _ => tr!("status-not-connected"),
     }
 }
 
-pub fn address_type(ip4: &Option<nm::Ip4>) -> &'static str {
+pub fn address_type(ip4: &Option<nm::Ip4>) -> String {
     match ip4 {
-        Some(ip) if ip.dhcp => "Assigned by DHCP",
-        Some(_) => "Manually Configured",
-        None => "",
+        Some(ip) if ip.dhcp => tr!("status-dhcp"),
+        Some(_) => tr!("status-manual"),
+        None => String::new(),
     }
 }
 
 fn note(d: &nm::Device) -> Vec<String> {
-    let text: &[&str] = if d.state == nm::State::Connected {
-        &[
-            "Reprise did not detect problems with this",
-            "connection. If you cannot connect, click",
-            "Repair.",
-        ]
+    if d.state == nm::State::Connected {
+        tr!("status-note-ok").lines().map(str::to_string).collect()
     } else {
-        &[status_word(d), "Click Repair to try this connection again."]
-    };
-    text.iter().map(|s| (*s).to_string()).collect()
+        vec![status_word(d), tr!("status-note-repair")]
+    }
 }
 
 fn bars(strength: u8) -> Canvas {
@@ -238,19 +235,19 @@ fn general_page(wifi: bool) -> Form {
     let mut items = vec![Item::group(
         "conn_g",
         Rect::new(GX, GY, GW, 135),
-        "Connection",
+        &tr!("status-connection"),
     )];
-    let [status_l, status] = row(0, "status_l", "status", "Status:");
+    let [status_l, status] = row(0, "status_l", "status", &tr!("status-status"));
     items.extend([status_l, status.live()]);
-    items.extend(row(1, "duration_l", "duration", "Duration:"));
-    items.extend(row(2, "speed_l", "speed", "Speed:"));
+    items.extend(row(1, "duration_l", "duration", &tr!("status-duration")));
+    items.extend(row(2, "speed_l", "speed", &tr!("status-speed")));
     if wifi {
         items.push(Item::label_at(
             "signal_l",
             ROW_X,
             ROWS[3],
             LABEL_W,
-            "Signal Strength:",
+            &tr!("status-signal"),
         ));
         items.push(Item::picture(
             "signal",
@@ -265,9 +262,13 @@ fn general_page(wifi: bool) -> Form {
         items.push(Item::value_at("hotspot", VALUE_X, ROWS[3], VALUE_W, ""));
     }
     items.extend([
-        Item::group("activity_g", Rect::new(GX, 195, GW, 135), "Activity"),
-        Item::value_at("sent_l", 93, 222, 60, "Sent"),
-        Item::label_at("received_l", 279, 222, 62, "Received"),
+        Item::group(
+            "activity_g",
+            Rect::new(GX, 195, GW, 135),
+            &tr!("status-activity"),
+        ),
+        Item::value_at("sent_l", 93, 222, 60, &tr!("status-sent")),
+        Item::label_at("received_l", 279, 222, 62, &tr!("status-received")),
         Item::picture(
             "activity_icon",
             Rect::new(PIC.0, PIC.1, 32, 32),
@@ -277,14 +278,21 @@ fn general_page(wifi: bool) -> Form {
             "divider",
             Rect::new(DIVIDER.0, DIVIDER.1, DIVIDER.2, DIVIDER.3),
         ),
-        Item::label_at("bytes_l", ROW_X, 269, 60, "Bytes:"),
+        Item::label_at("bytes_l", ROW_X, 269, 60, &tr!("status-bytes")),
         Item::value_at("sent", 103, 269, 80, ""),
         Item::value_at("received", 246, 269, 80, ""),
-        Item::label_at("rate_l", ROW_X, 291, 64, "Per second:"),
+        Item::label_at("rate_l", ROW_X, 291, 64, &tr!("status-per-second")),
         Item::value_at("rate_sent", 103, 291, 80, ""),
         Item::value_at("rate_received", 246, 291, 80, ""),
-        Item::button_at("properties", GX, BTN_Y, 75, "&Properties...", false),
-        Item::button_at("disable", 100, BTN_Y, BTN_W, "Disa&ble", true),
+        Item::button_at(
+            "properties",
+            GX,
+            BTN_Y,
+            75,
+            &tr!("status-properties"),
+            false,
+        ),
+        Item::button_at("disable", 100, BTN_Y, BTN_W, &tr!("status-disable"), true),
     ]);
     if wifi {
         items.push(Item::button_at(
@@ -292,7 +300,7 @@ fn general_page(wifi: bool) -> Form {
             187,
             BTN_Y,
             152,
-            "&View Wireless Networks",
+            &tr!("status-view-wireless"),
             true,
         ));
     }
@@ -307,21 +315,30 @@ fn support_page(d: &nm::Device) -> Form {
         ]
     };
     let mut items = vec![
-        Item::group("status_g", Rect::new(GX, GY, GW, 150), "Connection status"),
+        Item::group(
+            "status_g",
+            Rect::new(GX, GY, GW, 150),
+            &tr!("status-connection-status"),
+        ),
         Item::picture(
             "conn_icon",
             Rect::new(GX + 12, 64, 32, 32),
             Some(neticon::draw32(device_icon(d), false)),
         ),
     ];
-    items.extend(row(0, "address_type_l", "address_type", "Address Type:"));
-    items.extend(row(1, "ip_l", "ip", "IP Address:"));
-    items.extend(row(2, "mask_l", "mask", "Subnet Mask:"));
-    items.extend(row(3, "gateway_l", "gateway", "Default Gateway:"));
+    items.extend(row(
+        0,
+        "address_type_l",
+        "address_type",
+        &tr!("status-address-type"),
+    ));
+    items.extend(row(1, "ip_l", "ip", &tr!("status-ip")));
+    items.extend(row(2, "mask_l", "mask", &tr!("status-mask")));
+    items.extend(row(3, "gateway_l", "gateway", &tr!("status-gateway")));
     items.extend([
-        Item::button_at("details", 75, 162, BTN_W, "&Details...", false),
+        Item::button_at("details", 75, 162, BTN_W, &tr!("status-details"), false),
         Item::lines_at("note", 25, 214, 230, &["", "", ""]),
-        Item::button_at("repair", 256, 214, BTN_W, "&Repair", true),
+        Item::button_at("repair", 256, 214, BTN_W, &tr!("status-repair"), true),
     ]);
     Form::new(items)
 }

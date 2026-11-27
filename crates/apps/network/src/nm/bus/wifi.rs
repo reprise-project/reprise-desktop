@@ -288,7 +288,7 @@ pub(super) async fn rekey(
     let reply = p.call_method("GetSettings", &()).await.map_err(clean)?;
     let current: HashMap<String, Props> = reply.body().deserialize().map_err(clean)?;
     if agent_held(&current, key) {
-        return Err(WIFI_NEEDS_AGENT.into());
+        return Err(wifi_needs_agent().into());
     }
     call_auth::<_, ()>(&p, "Update", &(rekeyed(current, key, offered),))
         .await
