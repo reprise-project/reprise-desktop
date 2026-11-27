@@ -7,6 +7,7 @@ use reprisekit::controls::form::{self, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
 use crate::bz::{AgentRequest, Answer};
 use crate::passkey;
@@ -48,26 +49,21 @@ impl PairDialog {
                 .max()
                 .unwrap_or(BODY.y)
                 + 10;
-            items.push(Item::check(
-                TRUST,
-                BODY.x,
-                y,
-                "Connect to this device auto&matically",
-            ));
+            items.push(Item::check(TRUST, BODY.x, y, &tr!("pair-trust")));
         }
         let y = CLIENT.1 - 12 - BUTTON_H;
         let waits = req.done.is_some();
         items.push(Item::button(
             OK,
             Rect::new(CLIENT.0 - 12 - 2 * BUTTON_W - 6, y, BUTTON_W, BUTTON_H),
-            "OK",
+            &reprisekit::kit_tr!("ok"),
             true,
             true,
         ));
         items.push(Item::button(
             CANCEL,
             Rect::new(CLIENT.0 - 12 - BUTTON_W, y, BUTTON_W, BUTTON_H),
-            "Cancel",
+            &reprisekit::kit_tr!("cancel"),
             waits,
             false,
         ));

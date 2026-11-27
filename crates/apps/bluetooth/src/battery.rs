@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 
 use repriseconf::BT_BATTERY_REARM;
+use reprisekit::tr;
 
 use crate::bz::{Kind, Snapshot};
 
@@ -41,8 +42,12 @@ impl Warner {
 
 fn warning(alias: &str, kind: Kind, percent: u8) -> Warning {
     Warning {
-        summary: "Low Bluetooth battery".into(),
-        body: format!("{alias} has {percent}% battery left."),
+        summary: tr!("battery-low-summary"),
+        body: tr!(
+            "battery-low-body",
+            alias = alias,
+            percent = percent.to_string()
+        ),
         icon: kind.icon_name(),
     }
 }

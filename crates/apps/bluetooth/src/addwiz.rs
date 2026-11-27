@@ -14,6 +14,7 @@ use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{TextRenderer, wrap};
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
 use crate::bz::{AgentRequest, Ask, Device, Snapshot};
 use crate::icons::Icons;
@@ -124,7 +125,7 @@ impl AddWizard {
             .as_ref()
             .map(|d| (crate::bz::one_line(&d.alias), &d.address))
             .map_or_else(
-                || "The device".to_string(),
+                || tr!("wizard-the-device"),
                 |(alias, address)| match alias.is_empty() {
                     true => address.clone(),
                     false => alias,
@@ -139,13 +140,13 @@ impl AddWizard {
         }
     }
 
-    pub fn status(&self) -> &'static str {
+    pub fn status(&self) -> String {
         if self.discovering {
-            "Searching for Bluetooth devices..."
+            tr!("wizard-searching")
         } else if self.found.is_empty() {
-            "No devices were found."
+            tr!("wizard-none-found")
         } else {
-            "Search finished."
+            tr!("wizard-search-finished")
         }
     }
 
@@ -154,28 +155,12 @@ impl AddWizard {
         self.page = match step {
             Step::Welcome => {
                 let b = EXTERIOR_BODY;
-                let (intro, y) = para(
-                    "intro",
-                    "This wizard adds a Bluetooth device to this computer: headphones, a speaker, a keyboard, a mouse, a game controller or a phone.",
-                    b,
-                    b.y,
-                    text,
-                    forms,
-                );
-                let (how, y) = para(
-                    "how",
-                    "Turn the device on and make it discoverable. Its manual says how; many devices have a button to hold down until a light flashes.",
-                    b,
-                    y,
-                    text,
-                    forms,
-                );
-                let check =
-                    Item::check(READY, b.x, y, "&My device is set up and ready to be found.")
-                        .checked(self.ready);
+                let (intro, y) = para("intro", &tr!("wizard-intro"), b, b.y, text, forms);
+                let (how, y) = para("how", &tr!("wizard-how"), b, y, text, forms);
+                let check = Item::check(READY, b.x, y, &tr!("wizard-ready")).checked(self.ready);
                 let mut w = Wizard::new(
                     Style::Exterior {
-                        title: "Welcome to the Add Bluetooth Device Wizard".into(),
+                        title: tr!("wizard-welcome-title"),
                     },
                     vec![intro, how, check],
                     true,
@@ -193,14 +178,14 @@ impl AddWizard {
                         LIST.right() - AGAIN_W,
                         y,
                         AGAIN_W,
-                        "&Search Again",
+                        &tr!("wizard-search-again"),
                         true,
                     ),
                 ];
                 Wizard::new(
                     Style::Interior {
-                        title: "Select the Bluetooth device that you want to add.".into(),
-                        subtitle: "If it is not listed, make sure it is on and discoverable, then click Search Again.".into(),
+                        title: tr!("wizard-select-title"),
+                        subtitle: tr!("wizard-select-subtitle"),
                         icon: header_icon(),
                     },
                     items,
@@ -217,7 +202,7 @@ impl AddWizard {
                         vec![
                             para(
                                 "connecting",
-                                &format!("Connecting to {name}..."),
+                                &tr!("wizard-connecting", name = name.as_str()),
                                 b,
                                 b.y,
                                 text,
@@ -229,8 +214,8 @@ impl AddWizard {
                 };
                 let mut w = Wizard::new(
                     Style::Interior {
-                        title: format!("Adding {name}"),
-                        subtitle: "Follow any steps below to finish adding the device.".into(),
+                        title: tr!("wizard-adding-title", name = name.as_str()),
+                        subtitle: tr!("wizard-adding-subtitle"),
                         icon: header_icon(),
                     },
                     items,
@@ -257,17 +242,21 @@ impl AddWizard {
                 let name = self.target_name();
                 let lines: Vec<String> = match &self.result {
                     Some(Ok(None)) => vec![
-                        format!("{name} was added and is connected."),
-                        "It is ready to use.".into(),
+                        tr!("wizard-added", name = name.as_str()),
+                        tr!("wizard-added-ready"),
                     ],
                     Some(Ok(Some(e))) => vec![
-                        format!("{name} was added, but it could not connect: {e}"),
-                        "Turn it on and connect it from the Bluetooth Devices window.".into(),
+                        tr!(
+                            "wizard-added-unconnected",
+                            name = name.as_str(),
+                            error = e.as_str()
+                        ),
+                        tr!("wizard-added-unconnected-hint"),
                     ],
                     Some(Err(reason)) => vec![
-                        format!("{name} could not be added."),
+                        tr!("wizard-failed", name = name.as_str()),
                         reason.clone(),
-                        "Click Back to search again, or Finish to close this wizard.".into(),
+                        tr!("wizard-failed-hint"),
                     ],
                     None => vec![],
                 };
@@ -283,7 +272,7 @@ impl AddWizard {
                 let failed = matches!(self.result, Some(Err(_)));
                 let mut w = Wizard::new(
                     Style::Exterior {
-                        title: "Completing the Add Bluetooth Device Wizard".into(),
+                        title: tr!("wizard-finish-title"),
                     },
                     items,
                     !failed,
@@ -300,7 +289,7 @@ impl AddWizard {
 
     fn sync_search(&mut self) {
         let status = self.status();
-        self.page.form.set_text(STATUS, status);
+        self.page.form.set_text(STATUS, &status);
         let picked = self.list.selected_row().is_some();
         self.page.set_next_enabled(picked);
     }
@@ -314,9 +303,9 @@ impl AddWizard {
     pub fn refresh(&mut self, s: &Snapshot, text: &TextRenderer, forms: &Theme) {
         if matches!(self.step, Step::Search | Step::Pairing) {
             match &s.adapter {
-                None => return self.fail("The Bluetooth adapter was removed.", text, forms),
+                None => return self.fail(&tr!("wizard-adapter-removed"), text, forms),
                 Some(a) if !a.powered => {
-                    return self.fail("Bluetooth was turned off.", text, forms);
+                    return self.fail(&tr!("wizard-radio-off"), text, forms);
                 }
                 _ => {}
             }
@@ -590,7 +579,7 @@ impl AddWizard {
                     icon: Some(&icon),
                     title: &d.alias,
                     tag: "",
-                    caption: d.kind.name(),
+                    caption: &d.kind.name(),
                     greyed: false,
                 };
                 tilelist::draw_tile(c, &ctx.text, cs, r, &tile, sel, px, lay.text);

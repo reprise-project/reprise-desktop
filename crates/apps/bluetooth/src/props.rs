@@ -5,11 +5,11 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
+use reprisekit::tr;
 
 use crate::bz::{self, Device};
 
 pub const CLIENT: (i32, i32) = (361, 419);
-const TABS: [&str; 1] = ["General"];
 
 const ICON: &str = "icon";
 pub(crate) const NAME: &str = "name";
@@ -78,17 +78,17 @@ fn page(icon: Canvas) -> Form {
         Item::picture(ICON, Rect::new(18, 44, 32, 32), Some(icon)),
         Item::edit(NAME, Rect::new(70, 50, 272, 21), "", true),
         Item::new("sep1", Rect::new(18, 90, 324, 2), Control::Separator),
-        Item::label_at("type_label", LABEL_X, 102, 90, "Type:"),
+        Item::label_at("type_label", LABEL_X, 102, 90, &tr!("props-type")),
         Item::label_at(TYPE, VALUE_X, 102, VALUE_W, ""),
-        Item::label_at("address_label", LABEL_X, 124, 90, "Address:"),
+        Item::label_at("address_label", LABEL_X, 124, 90, &tr!("props-address")),
         Item::label_at(ADDRESS, VALUE_X, 124, VALUE_W, ""),
-        Item::label_at("status_label", LABEL_X, 146, 90, "Status:"),
+        Item::label_at("status_label", LABEL_X, 146, 90, &tr!("props-status")),
         Item::label_at(STATUS, VALUE_X, 146, VALUE_W, ""),
-        Item::label_at(BATTERY_LABEL, LABEL_X, 168, 90, "Battery:"),
+        Item::label_at(BATTERY_LABEL, LABEL_X, 168, 90, &tr!("props-battery")),
         Item::label_at(BATTERY, VALUE_X, 168, VALUE_W, ""),
         Item::new("sep2", Rect::new(18, 194, 324, 2), Control::Separator),
-        Item::check(AUTO, 18, 208, "Connect to this device auto&matically"),
-        Item::button_at(CONNECT, 18, 236, 88, "&Connect", true),
+        Item::check(AUTO, 18, 208, &tr!("pair-trust")),
+        Item::button_at(CONNECT, 18, 236, 88, &tr!("devices-connect"), true),
     ])
 }
 
@@ -100,7 +100,7 @@ impl PropsSheet {
         };
         let mut p = PropsSheet {
             path: d.path.clone(),
-            sheet: PropSheet::new(&TABS, vec![page(icon)], CLIENT),
+            sheet: PropSheet::new(&[&tr!("props-tab-general")], vec![page(icon)], CLIENT),
             device: s.clone(),
             sent: Change::default(),
             pending: s,
@@ -114,7 +114,7 @@ impl PropsSheet {
     }
 
     pub fn window_title(&self) -> String {
-        format!("{} Properties", self.device.alias)
+        tr!("props-title", name = self.device.alias.as_str())
     }
 
     /// The name an unedited field holds: the one sent, else the device's.
@@ -162,7 +162,7 @@ impl PropsSheet {
             self.pending.trusted = self.base_trusted();
         }
         let page = &mut self.sheet.pages[0];
-        page.set_text(TYPE, d.kind.name());
+        page.set_text(TYPE, &d.kind.name());
         page.set_text(ADDRESS, &d.address);
         page.set_text(
             STATUS,
@@ -173,8 +173,11 @@ impl PropsSheet {
         );
         match d.battery {
             Some(b) => {
-                page.set_text(BATTERY_LABEL, "Battery:");
-                page.set_text(BATTERY, &format!("{b}%"));
+                page.set_text(BATTERY_LABEL, &tr!("props-battery"));
+                page.set_text(
+                    BATTERY,
+                    &tr!("props-battery-value", percent = b.to_string()),
+                );
             }
             None => {
                 page.set_text(BATTERY_LABEL, "");
@@ -188,11 +191,10 @@ impl PropsSheet {
         }) = page.item_mut(CONNECT)
         {
             *label = if d.connected {
-                "&Disconnect"
+                tr!("devices-disconnect")
             } else {
-                "&Connect"
-            }
-            .into();
+                tr!("devices-connect")
+            };
         }
         self.sync();
     }
