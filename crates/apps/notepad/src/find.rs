@@ -74,7 +74,6 @@ impl Notepad {
         };
         if matches {
             self.edit.paste(with);
-            self.dirty = true;
         }
         self.find_next();
         matches
@@ -86,11 +85,7 @@ impl Notepad {
         with: &str,
         o: &multiedit::FindOpts,
     ) -> usize {
-        let n = self.edit.replace_all(query, with, o);
-        if n > 0 {
-            self.dirty = true;
-        }
-        n
+        self.edit.replace_all(query, with, o)
     }
 
     /// Opens Replace in Find's place; an open Replace keeps what was typed in it, takes the

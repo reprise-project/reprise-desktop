@@ -340,6 +340,22 @@ impl MultiEdit {
         self.undo.can_redo()
     }
 
+    /// The text now is the saved one: undoing or redoing back to it leaves it unmodified.
+    pub fn mark_saved(&mut self) {
+        self.undo.mark_saved();
+    }
+
+    /// The text is unsaved until the next [`Self::mark_saved`], whatever is undone.
+    pub fn mark_unsaved(&mut self) {
+        self.undo.mark_unsaved();
+    }
+
+    /// Whether the text differs from the one last marked saved, or from the text it was made
+    /// with when none was.
+    pub fn modified(&self) -> bool {
+        self.undo.modified()
+    }
+
     /// The selected range, ordered.
     pub fn selection(&self) -> (Pos, Pos) {
         (self.caret.min(self.anchor), self.caret.max(self.anchor))

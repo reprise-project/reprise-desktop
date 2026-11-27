@@ -107,7 +107,6 @@ impl Notepad {
                     Dropped::Text(text) => {
                         let at = self.drop_pos(x, y, ctx);
                         if self.edit.drop_text(at, &text) {
-                            self.dirty = true;
                             self.scroll_to_caret(ctx);
                             self.sync_menus();
                         }
@@ -363,7 +362,7 @@ mod tests {
             "head tail",
             "(0, 0) is the first line's start"
         );
-        assert!(np.dirty);
+        assert!(np.dirty());
         assert!(np.hover.is_none(), "the drop ends the hover");
     }
 
@@ -385,7 +384,7 @@ mod tests {
     fn a_file_dropped_on_unsaved_changes_asks_first() {
         let (mut np, mut ctx) = (Notepad::new(None), test_ctx());
         np.edit = reprisekit::controls::multiedit::MultiEdit::new("mine");
-        np.dirty = true;
+        np.edit.mark_unsaved();
         let p = temp_file("drop-dirty.txt", "theirs");
         np.event(
             MAIN,
