@@ -663,3 +663,16 @@ fn browse_shows_the_folder_its_dialog_picks() {
     d.button("back", &ctx);
     assert_eq!(d.at, r.join("a"), "Back returns to the folder before");
 }
+
+#[test]
+fn cleanup_before_the_folder_opens_clean_up() {
+    let args = |a: &[&str]| parse_args(a.iter().map(OsString::from).collect());
+    assert_eq!(args(&["--cleanup", "/home"]), (true, Some("/home".into())));
+    assert_eq!(args(&["/home"]), (false, Some("/home".into())));
+    assert_eq!(args(&["--cleanup"]), (true, None));
+    assert_eq!(
+        args(&["home"]),
+        (false, None),
+        "a relative folder is not taken"
+    );
+}

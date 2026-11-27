@@ -34,7 +34,7 @@ low-space-title = Low Disk Space
 # $free and $total are sizes such as "812 MB".
 low-space-body = The disk of { $mount } has only { $free } free of { $total }.
 low-space-open = Open
-show-usage = Show Usage
+low-space-clean-up = Clean Up...
 empty-bin = Empty Recycle Bin
 
 ## Thunderbolt devices

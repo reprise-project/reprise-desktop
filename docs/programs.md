@@ -137,7 +137,7 @@ Opening `.flatpakref`, `.flatpak`, `.pkg.tar.zst`, `.pkg.tar.xz` or `.deb` launc
 
 ## Disk Usage
 
-Open from Explorer, low-disk-space balloons or `reprise-diskusage FOLDER` to scan largest files and folders on the same mount (counting hard links once, skipping symlinks). Right-click for `Open in Explorer` or `Move to Recycle Bin`. `Browse...` scans another drive or folder.
+Open from Explorer or `reprise-diskusage FOLDER` to scan largest files and folders on the same mount (counting hard links once, skipping symlinks). Right-click for `Open in Explorer` or `Move to Recycle Bin`. `Browse...` scans another drive or folder. A low disk space balloon's `Clean Up...` opens it on that disk with Clean Up over it (`reprise-diskusage --cleanup FOLDER`).
 
 `Clean Up...` lists what can go, each with its size: the Recycle Bin (every drive's), the thumbnail cache (`$XDG_CACHE_HOME/thumbnails`), program caches (the rest of `$XDG_CACHE_HOME`), crash dumps (counted through `coredumpctl`, never removed: the system owns them) and the Flatpak runtimes `flatpak uninstall --unused` would remove. Only the Recycle Bin and thumbnails start checked. OK shows what goes, each folder by its path and each runtime by its ref, and asks again; nothing is removed before that Yes. At Yes, Flatpak is asked again and only the listed runtimes it still calls unused go; the system installation asks for a password. A box then says how much was freed and names each part that could not be removed, with the reason. A cache folder or thumbnail cache is left alone when it is a link, someone else's, a drive's root (other than `~/.cache` itself, which may be a subvolume or tmpfs), the home folder or above it, or holds the config, data or state folder or one of your folders (Documents, Pictures...) or where one of them links to, or when there is no home folder. Nothing under them is followed through a link or into another mounted drive.
 
@@ -181,7 +181,7 @@ Settings without a Reprise equivalent (12/24-hour clock, input methods, GTK/icon
 
 - **Safely Remove Hardware.** Ejects drives, phones and cameras. `[drives] on_insert` sets plug-in action (`"ask"`, `"mount"`, `"open"`, `"nothing"`).
 - **Phone.** KDE Connect tray battery, ring and file send.
-- **Low disk space.** Warns below `[storage] low_space_percent` (default 5%) or 1 GiB.
+- **Low disk space.** Warns below `[storage] low_space_percent` (default 5%) or 1 GiB, with Open, Clean Up... (Disk Usage's Clean Up on that disk) and, while the Recycle Bin holds something, Empty Recycle Bin.
 - **Thunderbolt devices.** Prompts to Authorize Once, Always Authorize or Ignore (manage in Settings > Thunderbolt).
 - **Run As.** Polkit password and fingerprint prompt.
 - **Remote Desktop server.** `reprise-rdp` (`app-org.reprise.RemoteDesktop`) serves RDP sessions ([remote-desktop.md](remote-desktop.md), [security.md](security.md#remote-desktop)).
