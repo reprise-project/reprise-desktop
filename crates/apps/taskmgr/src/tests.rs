@@ -2085,7 +2085,7 @@ fn backspace() -> Event {
     })
 }
 
-fn typed(ch: char) -> Event {
+pub(crate) fn typed(ch: char) -> Event {
     Event::Key(KeyInput {
         sym: ch as u32,
         utf8: Some(ch.to_string()),

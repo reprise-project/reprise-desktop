@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::devices::{self, DiskRates, DiskReading, GpuReading, NetReading, disk, gpu, net};
-use crate::tests::{centre, click, ctx, fnv, key, loaded, open, pins, snapshot, themed_ctx};
+use crate::tests::{centre, click, ctx, fnv, key, loaded, open, pins, snapshot, themed_ctx, typed};
 use crate::{Page, pages};
 use repriseapp::{App, Extended, MAIN};
 use reprisefs::netspeed::{Counters, Rate};
+use reprisekit::controls::form;
 use reprisekit::interface::Interface;
 
 fn chip(name: &str, readings: &[(&str, hwmon::Unit, f64)]) -> hwmon::Chip {
@@ -200,6 +201,25 @@ fn a_click_on_a_row_picks_its_device_and_the_arrows_move_down_the_list() {
     assert_eq!(t.perf.selected(), &Key::Net("enp4s0".into()));
     pages::follow_form(&mut t, &ctx);
     assert_eq!(text(&t, "net_kind"), "Ethernet");
+}
+
+#[test]
+fn letters_typed_on_the_device_list_pick_a_device_by_its_title() {
+    let mut ctx = ctx();
+    let mut t = perf_mgr(&mut ctx);
+    for c in "gg".chars() {
+        t.event(MAIN, typed(c), &mut ctx);
+    }
+    assert_eq!(
+        t.perf.selected(),
+        &Key::Gpu("card2".into()),
+        "g again steps to GPU 1"
+    );
+    t.perf.list.typed = Default::default();
+    for c in "eth".chars() {
+        t.event(MAIN, typed(c), &mut ctx);
+    }
+    assert_eq!(t.perf.selected(), &Key::Net("enp4s0".into()));
 }
 
 #[test]

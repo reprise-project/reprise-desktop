@@ -325,6 +325,7 @@ impl AddWizard {
                     .cloned()
                     .collect();
                 self.list.entries = (0..self.found.len()).map(Entry::Row).collect();
+                self.list.labels = self.found.iter().map(|d| d.alias.clone()).collect();
                 self.list
                     .select_row(keep.and_then(|p| self.found.iter().position(|d| d.path == p)));
                 self.list.clamp(self.list_rect(), self.page.form.units());

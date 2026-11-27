@@ -9,7 +9,7 @@ use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput, Reply};
 use reprisefs::netspeed;
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::LINE_H;
-use reprisekit::controls::form::{self, Item};
+use reprisekit::controls::form::Item;
 use reprisekit::controls::listview::{self, Column, Group};
 use reprisekit::controls::perfgraph::{self, History};
 use reprisekit::controls::tilelist::{self, TILE_H, Tile, TileList};
@@ -144,6 +144,7 @@ impl Perf {
     fn set_devices(&mut self, devices: Vec<Device>) {
         let keep = self.selected().clone();
         self.list.entries = (0..devices.len()).map(tilelist::Entry::Row).collect();
+        self.list.labels = devices.iter().map(|d| d.title.clone()).collect();
         let at = devices.iter().position(|d| d.key == keep).unwrap_or(0);
         self.list.select_row(Some(at));
         self.devices = devices;
@@ -1128,8 +1129,8 @@ impl TaskMgr {
         drag || bar || sensors
     }
 
-    /// A key on the Performance page: the arrows pick a device; the Menu key or Shift+F10 opens
-    /// the CPU history graph's menu while its pane shows.
+    /// A key on the Performance page: the arrows and type-ahead by title pick a device; the Menu
+    /// key or Shift+F10 opens the CPU history graph's menu while its pane shows.
     pub(crate) fn perf_key(&mut self, k: &KeyInput, lay: &Layout, ctx: &Ctx) -> Option<Reply> {
         let menu = k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift);
         if menu {
@@ -1139,7 +1140,7 @@ impl TaskMgr {
         if k.mods.alt || k.mods.ctrl {
             return None;
         }
-        let key = form::special_key(k.sym, k.mods.shift, false)?;
+        let key = repriseapp::keys::dialog_key(k)?;
         let moved = self.perf.list.key(&key, lay.list, &ctx.theme.controls());
         moved.then(Reply::redraw)
     }
