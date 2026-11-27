@@ -257,7 +257,7 @@ impl Form {
                 }
             };
             if let Some(n) = bare.and_then(|b| tree.get_mut(b)) {
-                match (it.name, label) {
+                match (it.name.as_deref(), label) {
                     (Some(name), _) => n.set_label(name),
                     (None, Some(l)) => n.push_labelled_by(l),
                     (None, None) => {}
