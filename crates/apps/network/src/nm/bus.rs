@@ -35,8 +35,8 @@ const LOGIND: &str = "org.freedesktop.login1";
 /// exit.
 const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// How long one call waits for NetworkManager; long enough to type an admin password at the
-/// authentication dialog.
+/// How long a plain call waits for NetworkManager; one that may open a password prompt waits
+/// [`reprisebus::polkit::PROMPT_TIMEOUT`] ([`call::call_auth`]).
 const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Debug)]

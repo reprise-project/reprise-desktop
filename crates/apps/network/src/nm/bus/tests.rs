@@ -180,13 +180,13 @@ fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
 }
 
 #[test]
-fn a_prompt_left_open_past_the_call_timeout_says_to_try_again() {
+fn a_prompt_left_open_past_the_call_timeout_says_to_check_and_try_again() {
     let io = zbus::Error::from(std::io::Error::new(
         std::io::ErrorKind::TimedOut,
         "timed out",
     ));
     let failure = auth_failure(io, || panic!("a timeout is no dismissal"));
-    assert_eq!(failure, Failure::Text(reprisebus::polkit::TIMED_OUT.into()));
+    assert_eq!(failure, Failure::Text(reprisebus::polkit::GAVE_UP.into()));
 }
 
 #[test]

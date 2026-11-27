@@ -101,7 +101,9 @@ pub(super) fn auth_failure(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> 
     let refused = |n: &str| n.ends_with(".PermissionDenied");
     match reprisebus::polkit::refusal(&e, refused, dismissed) {
         Some(reprisebus::polkit::Refusal::Dismissed) => Failure::Dismissed,
-        Some(reprisebus::polkit::Refusal::TimedOut) => reprisebus::polkit::TIMED_OUT.into(),
+        Some(reprisebus::polkit::Refusal::TimedOut) if reprisebus::polkit::gave_up(&e) => {
+            reprisebus::polkit::GAVE_UP.into()
+        }
         _ => clean(e),
     }
 }
@@ -138,7 +140,8 @@ pub(super) async fn proxy_on<'a>(
 }
 
 /// A call that may raise the admin password prompt: carries allow-interactive-authorization,
-/// without which polkit refuses outright.
+/// without which polkit refuses outright, and gives up after
+/// [`reprisebus::polkit::PROMPT_TIMEOUT`].
 pub(super) async fn call_auth<B, R>(
     p: &Proxy<'_>,
     method: &str,
@@ -148,13 +151,14 @@ where
     B: zbus::export::serde::Serialize + zbus::DynamicType,
     R: for<'d> zbus::wire::DynamicDeserialize<'d>,
 {
-    p.call_with_flags(
+    let call = p.call_with_flags(
         method,
         zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
         body,
-    )
-    .await
-    .map_err(|e| auth_failure(e, reprisebus::polkit::dismissed))
+    );
+    reprisebus::polkit::asking(reprisebus::polkit::PROMPT_TIMEOUT, true, call)
+        .await
+        .map_err(|e| auth_failure(e, reprisebus::polkit::dismissed))
 }
 
 /// `ActivateConnection(connection, device, specific)`; "/" means "any". Answers the active
