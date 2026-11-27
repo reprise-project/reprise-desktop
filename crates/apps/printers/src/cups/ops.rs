@@ -141,8 +141,13 @@ pub fn test_page(c: &Client, name: &str) -> Result<i32> {
         .find(|(p, _)| std::path::Path::new(p).exists())
         .copied()
         .unwrap_or(TEST_PAGES[TEST_PAGES.len() - 1]);
-    let data = std::fs::read(path)
-        .map_err(|e| Error::Refused(format!("The test page could not be read ({path}: {e}).")))?;
+    let data = std::fs::read(path).map_err(|e| {
+        Error::Refused(tr!(
+            "cups-test-page-unreadable",
+            path = path,
+            why = e.to_string()
+        ))
+    })?;
     let req = Request::new(PRINT_JOB)
         .op_attr("printer-uri", Value::uri(&printer_uri(name)))
         .op_attr("job-name", Value::name("Test Page"))

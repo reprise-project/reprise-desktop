@@ -3,10 +3,18 @@
 
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
+use reprisekit::tr;
+
 use crate::cups::{Job, JobState, Snapshot};
 
 pub const BUS_NAME: &str = "reprise.printers";
+/// The title the tray item is registered under; `reprisetray` takes a static string.
 pub const TITLE: &str = "Printers";
+
+/// The name the menu and tooltip show for the printers folder.
+pub fn title() -> String {
+    tr!("tray-title")
+}
 const ICON: &str = "printer";
 const ERROR_ICON: &str = "printer-error";
 
@@ -47,17 +55,15 @@ pub fn tip(s: &Snapshot, user: &str) -> String {
     let failed: Vec<_> = failed(s, user).collect();
     match failed.as_slice() {
         [] => {}
-        [one] => return format!("{} could not be printed", one.name),
-        jobs => return format!("{} documents could not be printed", jobs.len()),
+        [one] => return tr!("tray-could-not-print", name = one.name.as_str()),
+        jobs => return tr!("tray-could-not-print-many", count = jobs.len()),
     }
     let mine: Vec<_> = s.jobs.iter().filter(|j| j.owner == user).collect();
     match mine.as_slice() {
-        [] => TITLE.into(),
-        [one] if one.state == JobState::Printing => format!("Printing {}", one.name),
+        [] => title(),
+        [one] if one.state == JobState::Printing => tr!("tray-printing", name = one.name.as_str()),
         jobs => {
-            let n = jobs.len();
-            let docs = if n == 1 { "document" } else { "documents" };
-            format!("{n} {docs} pending for {user}")
+            tr!("tray-pending", count = jobs.len(), user = user)
         }
     }
 }
@@ -75,7 +81,7 @@ pub fn menu(s: &Snapshot, user: &str) -> Rows<TrayMsg> {
     if !busy.is_empty() {
         rows.separator();
     }
-    rows.add(TrayMsg::Folder, |id| Node::row(id, TITLE));
+    rows.add(TrayMsg::Folder, |id| Node::row(id, title()));
     rows
 }
 

@@ -59,13 +59,13 @@ impl Device {
         // already.
         let name = name.trim_end_matches(" (driverless)");
         let how = if self.driverless() {
-            "network, no driver needed"
+            tr!("device-network-driverless")
         } else if self.class == "network" {
-            "network"
+            tr!("device-network")
         } else {
-            "connected to this computer"
+            tr!("device-local")
         };
-        format!("{name} ({how})")
+        tr!("device-label", name = name, how = how)
     }
 }
 

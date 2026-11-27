@@ -263,7 +263,11 @@ pub fn add(c: &Client, p: &NewPrinter) -> Result<()> {
         Driver::Ppd(name) => req = req.op_attr("ppd-name", Value::name(name)),
         Driver::File(path) => {
             let data = std::fs::read(path).map_err(|e| {
-                Error::Refused(format!("{} could not be read: {e}.", path.display()))
+                Error::Refused(tr!(
+                    "cups-file-unreadable",
+                    path = path.display().to_string(),
+                    why = e.to_string()
+                ))
             })?;
             req = req.with_data(data);
         }
@@ -362,9 +366,9 @@ pub fn name_clash(old: &str, new: &str, s: &Snapshot) -> Option<String> {
         .iter()
         .find(|p| p.name.eq_ignore_ascii_case(new))?;
     Some(if p.name == old {
-        format!("{new} differs from {old} only in case, which printer names ignore.")
+        tr!("cups-case-clash", new = new, old = old)
     } else {
-        format!("There is already a printer called {}.", p.name)
+        tr!("cups-name-taken", name = p.name.as_str())
     })
 }
 
@@ -396,11 +400,7 @@ pub(super) fn helper_rename_calls(
 pub(super) fn helper_rename_refusal(old: &str, s: &Snapshot) -> Option<Error> {
     s.jobs_of(old)
         .any(|j| matches!(j.state, JobState::Pending | JobState::Printing))
-        .then(|| {
-            Error::Refused(format!(
-                "{old} can be renamed once no documents are waiting or printing on it."
-            ))
-        })
+        .then(|| Error::Refused(tr!("cups-rename-busy", old = old)))
 }
 
 /// The user's lpoptions `user` after printer `old` became `new`, when the default it or the
@@ -549,7 +549,7 @@ pub(super) fn rename_by_peer(
     defaults: &[(String, Value)],
 ) -> Result<()> {
     let Some(p) = s.printer(old) else {
-        return Err(Error::Refused(format!("{old} is no longer there.")));
+        return Err(Error::Refused(tr!("cups-gone", old = old)));
     };
     let settings = settings_of(c, old)?;
     // `new` is made stopped when `old` is, so no job starts on it as it moves over.
@@ -627,8 +627,7 @@ pub(super) fn finish_rename(
     let Some(Err(e)) = default else {
         return Ok(());
     };
-    let told =
-        format!("{old} is now called {new}, but {new} could not be made the default printer.");
+    let told = tr!("cups-rename-default-failed", old = old, new = new);
     Err(Error::Refused(match e.text() {
         why if why.is_empty() => told,
         why => format!("{told} {why}"),

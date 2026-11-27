@@ -11,6 +11,7 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
+use reprisekit::tr;
 
 use crate::cups::{Job, JobOp, JobState, PrinterState, Snapshot};
 use repriseapp::ctxmenu::{Popup, Step, item};
@@ -42,11 +43,11 @@ pub enum Outcome {
 pub fn cells(j: &Job, is_12h: bool) -> Vec<String> {
     vec![
         if j.name.is_empty() {
-            "Untitled".into()
+            tr!("queue-untitled")
         } else {
             j.name.clone()
         },
-        j.status_word().into(),
+        j.status_word(),
         j.owner.clone(),
         if j.pages > 0 {
             j.pages.to_string()
@@ -77,10 +78,10 @@ fn document_rows(j: Option<&Job>) -> Vec<(MenuItem, Option<Outcome>)> {
     let row =
         |label: &str, on: bool, op: JobOp| (item(label, on), on.then_some(Outcome::Job(id, op)));
     vec![
-        row("&Pause", can_pause, JobOp::Pause),
-        row("&Resume", can_resume, JobOp::Resume),
-        row("Res&tart", can_restart, JobOp::Restart),
-        row("&Cancel", live, cancel),
+        row(&tr!("queue-pause"), can_pause, JobOp::Pause),
+        row(&tr!("queue-resume"), can_resume, JobOp::Resume),
+        row(&tr!("queue-restart"), can_restart, JobOp::Restart),
+        row(&tr!("queue-cancel"), live, cancel),
     ]
 }
 
@@ -121,12 +122,12 @@ impl Queue {
             printer: printer.into(),
             icon: None,
             list: List::new(vec![
-                Column::new("Document Name", DOC_W),
-                Column::new("Status", STATUS_W),
-                Column::new("Owner", OWNER_W),
-                Column::new("Pages", PAGES_W),
-                Column::new("Size", SIZE_W),
-                Column::new("Submitted", SUBMITTED_W),
+                Column::new(&tr!("queue-column-document"), DOC_W),
+                Column::new(&tr!("queue-column-status"), STATUS_W),
+                Column::new(&tr!("queue-column-owner"), OWNER_W),
+                Column::new(&tr!("queue-column-pages"), PAGES_W),
+                Column::new(&tr!("queue-column-size"), SIZE_W),
+                Column::new(&tr!("queue-column-submitted"), SUBMITTED_W),
             ]),
             ids: Vec::new(),
             jobs: Vec::new(),
@@ -170,8 +171,7 @@ impl Queue {
         self.list.view.selection.set_only(at);
         let n = self.jobs.len();
         self.list.view.top = self.list.view.top.min(n.saturating_sub(1));
-        let docs = if n == 1 { "document" } else { "documents" };
-        self.status = format!("{n} {docs} in queue");
+        self.status = tr!("queue-status", count = n);
         self.set_menus(s);
     }
 
@@ -184,23 +184,32 @@ impl Queue {
         let is_default = s.default.as_deref() == Some(self.printer.as_str());
         let printer_rows: Vec<(MenuItem, Option<Outcome>)> = vec![
             (
-                item("Set as De&fault Printer", !is_default),
+                item(&tr!("queue-set-default"), !is_default),
                 (!is_default).then_some(Outcome::SetDefault),
             ),
             if stopped {
-                (item("Resume &Printing", true), Some(Outcome::Resume))
+                (
+                    item(&tr!("queue-resume-printing"), true),
+                    Some(Outcome::Resume),
+                )
             } else {
-                (item("Pa&use Printing", true), Some(Outcome::Pause))
+                (
+                    item(&tr!("queue-pause-printing"), true),
+                    Some(Outcome::Pause),
+                )
             },
             (
-                item("Ca&ncel All Documents", !self.jobs.is_empty()),
+                item(&tr!("queue-cancel-all"), !self.jobs.is_empty()),
                 (!self.jobs.is_empty()).then_some(Outcome::CancelAll),
             ),
-            (item("S&haring...", true), Some(Outcome::Sharing)),
+            (item(&tr!("queue-sharing"), true), Some(Outcome::Sharing)),
             (MenuItem::Separator, None),
-            (item("P&roperties", true), Some(Outcome::Properties)),
+            (
+                item(&tr!("queue-properties"), true),
+                Some(Outcome::Properties),
+            ),
             (MenuItem::Separator, None),
-            (item("&Close", true), Some(Outcome::Close)),
+            (item(&tr!("queue-close"), true), Some(Outcome::Close)),
         ];
         let doc_rows = document_rows(self.selected_job());
         let (pm, pa): (Vec<_>, Vec<_>) = printer_rows.into_iter().unzip();

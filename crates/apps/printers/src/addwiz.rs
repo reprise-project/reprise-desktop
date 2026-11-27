@@ -11,6 +11,7 @@ use reprisekit::controls::wizard::{self, INTERIOR_BODY, Style, Wizard};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::escape_mnemonic;
+use reprisekit::tr;
 
 use crate::cups::{self, Device, Driver, NewPrinter, Ppd, Snapshot};
 use crate::folder::check_name;
@@ -257,15 +258,14 @@ impl AddWizard {
             Some(_) => self.network == Network::Browsing,
         };
         let found = match n {
-            _ if searching => return "Searching for printers...".into(),
-            0 => "No printers were found".to_string(),
-            1 => "1 printer was found".into(),
-            n => format!("{n} printers were found"),
+            _ if searching => return tr!("wizard-searching"),
+            0 => tr!("wizard-none-found"),
+            n => tr!("wizard-found", count = n),
         };
         if network_only {
-            format!("{found} on the network.")
+            tr!("wizard-found-network", found = found)
         } else {
-            format!("{found}.")
+            tr!("wizard-found-local", found = found)
         }
     }
 
@@ -281,8 +281,7 @@ impl AddWizard {
         let y_status = B.y + 20 + list_h + 6;
         let y_typed = y_status + BUTTON_H + 8;
         let items = vec![
-            Item::radio(FOUND, B.x, B.y, "A printer &found by this computer:", "how")
-                .checked(!self.typed),
+            Item::radio(FOUND, B.x, B.y, &tr!("wizard-found-radio"), "how").checked(!self.typed),
             Item::new(
                 DEVICES,
                 Rect::new(B.x + 18, B.y + 20, B.width - 18, list_h),
@@ -297,17 +296,10 @@ impl AddWizard {
                 B.right() - 96,
                 y_status,
                 96,
-                "&Search Again",
+                &tr!("wizard-search-again"),
                 self.local.is_some(),
             ),
-            Item::radio(
-                TYPED,
-                B.x,
-                y_typed,
-                "The printer is not listed. Its &address:",
-                "how",
-            )
-            .checked(self.typed),
+            Item::radio(TYPED, B.x, y_typed, &tr!("wizard-typed-radio"), "how").checked(self.typed),
             Item::edit(
                 ADDRESS,
                 Rect::new(B.x + 18, y_typed + 18, B.width - 18, 21),
@@ -319,13 +311,13 @@ impl AddWizard {
                 B.x + 18,
                 y_typed + 44,
                 B.width - 18,
-                "A host name, an IP address or a URI (socket://host:9100)",
+                &tr!("wizard-address-hint"),
             )
             .enabled(false),
         ];
         let mut w = self.interior(
-            "Choose a printer",
-            "Pick a printer Reprise found, or type its address.",
+            &tr!("wizard-choose-title"),
+            &tr!("wizard-choose-subtitle"),
             items,
             true,
             false,
@@ -380,12 +372,15 @@ impl AddWizard {
 
     fn driver_status(&self) -> String {
         if let Some(f) = &self.file {
-            return format!("Driver file: {}", escape_mnemonic(&f.to_string_lossy()));
+            return tr!(
+                "wizard-driver-file",
+                file = escape_mnemonic(&f.to_string_lossy())
+            );
         }
         match &self.ppds {
-            None => "Reading the list of drivers...".into(),
+            None => tr!("wizard-reading-drivers"),
             Some(Err(why)) => why.clone(),
-            Some(Ok(_)) if self.shown.is_empty() => "No driver matches the search.".into(),
+            Some(Ok(_)) if self.shown.is_empty() => tr!("wizard-no-driver"),
             Some(Ok(_)) => String::new(),
         }
     }
@@ -402,7 +397,7 @@ impl AddWizard {
         let (rows, at) = self.driver_rows();
         let file = self.driver_status();
         let items = vec![
-            Item::label_at("search_label", B.x, B.y + 4, 50, "Sea&rch:"),
+            Item::label_at("search_label", B.x, B.y + 4, 50, &tr!("wizard-search")),
             Item::edit(
                 SEARCH,
                 Rect::new(B.x + 52, B.y, B.width - 52, 21),
@@ -418,11 +413,18 @@ impl AddWizard {
                 },
             ),
             Item::label_at(STATUS, B.x, B.y + 188, B.width - 106, &file),
-            Item::button_at(DISK, B.right() - 96, B.y + 184, 96, "&Have Disk...", true),
+            Item::button_at(
+                DISK,
+                B.right() - 96,
+                B.y + 184,
+                96,
+                &tr!("wizard-have-disk"),
+                true,
+            ),
         ];
         let mut w = self.interior(
-            "Install printer software",
-            "Pick the printer's maker and model, or a driver file.",
+            &tr!("wizard-driver-title"),
+            &tr!("wizard-driver-subtitle"),
             items,
             false,
             false,
@@ -451,24 +453,23 @@ impl AddWizard {
             self.named_for = uri;
         }
         let items = vec![
-            Item::label_at("name_label", B.x, B.y + 4, 90, "Printer &name:"),
+            Item::label_at("name_label", B.x, B.y + 4, 90, &tr!("wizard-name")),
             Item::edit(
                 NAME,
                 Rect::new(B.x + 92, B.y, B.width - 92, 21),
                 &self.name,
                 true,
             ),
-            Item::label_at("location_label", B.x, B.y + 34, 90, "&Location:"),
+            Item::label_at("location_label", B.x, B.y + 34, 90, &tr!("wizard-location")),
             Item::edit(
                 LOCATION,
                 Rect::new(B.x + 92, B.y + 30, B.width - 92, 21),
                 &self.location,
                 true,
             ),
-            para("hint", B.y + 58, "Spaces in the name become underscores.").enabled(false),
-            Item::check(DEFAULT, B.x, B.y + 90, "Set as the &default printer")
-                .checked(self.make_default),
-            Item::check(TEST, B.x, B.y + 114, "Print a &test page").checked(self.test_page),
+            para("hint", B.y + 58, &tr!("wizard-name-hint")).enabled(false),
+            Item::check(DEFAULT, B.x, B.y + 90, &tr!("wizard-default")).checked(self.make_default),
+            Item::check(TEST, B.x, B.y + 114, &tr!("wizard-test-page")).checked(self.test_page),
             Item::label_at(
                 ERROR,
                 B.x,
@@ -478,8 +479,8 @@ impl AddWizard {
             ),
         ];
         let mut w = self.interior(
-            "Name your printer",
-            "Programs show this name when you print.",
+            &tr!("wizard-name-title"),
+            &tr!("wizard-name-subtitle"),
             items,
             false,
             true,
@@ -673,7 +674,7 @@ impl AddWizard {
             }
         };
         self.adding = true;
-        self.error = "Adding the printer...".into();
+        self.error = tr!("wizard-adding");
         self.page
             .form
             .set_text(ERROR, &escape_mnemonic(&self.error));

@@ -749,7 +749,7 @@ fn each_job_state_has_its_status_word_and_restart_needs_kept_files() {
             ("job-preserved", vec![Value::Bool(true)]),
         ]);
         let j = Job::from_group(&g);
-        assert_eq!((j.state, j.status_word()), (state, word));
+        assert_eq!((j.state, j.status_word()), (state, word.to_string()));
         assert!(j.preserved);
         let restartable = matches!(
             state,

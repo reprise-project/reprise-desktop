@@ -11,6 +11,7 @@ use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::{TextEdit, keysym};
+use reprisekit::tr;
 
 use crate::cups::{self, Printer, PrinterState, Snapshot};
 use repriseapp::ctxmenu::{Popup, Step, item};
@@ -91,90 +92,90 @@ fn actions(p: &Printer, s: &Snapshot, menu: bool) -> Vec<(String, bool, Option<A
     let stopped = p.state == PrinterState::Stopped;
     let mut rows = Vec::new();
     if menu {
-        rows.push(("&Open".to_string(), true, out(Outcome::Open(name.clone()))));
+        rows.push((tr!("folder-open"), true, out(Outcome::Open(name.clone()))));
         rows.push((String::new(), false, None));
         rows.push((
-            "Set as De&fault Printer".into(),
+            tr!("folder-set-default"),
             !is_default,
             out(Outcome::SetDefault(name.clone())),
         ));
         rows.push(if stopped {
             (
-                "Resume &Printing".into(),
+                tr!("folder-resume"),
                 true,
                 out(Outcome::Resume(name.clone())),
             )
         } else {
-            (
-                "Pa&use Printing".into(),
-                true,
-                out(Outcome::Pause(name.clone())),
-            )
+            (tr!("folder-pause"), true, out(Outcome::Pause(name.clone())))
         });
         rows.push((
-            "Ca&ncel All Documents".into(),
+            tr!("folder-cancel-all"),
             jobs,
             out(Outcome::CancelAll(name.clone())),
         ));
         rows.push((
-            "S&haring...".into(),
+            tr!("folder-sharing"),
             true,
             out(Outcome::Sharing(name.clone())),
         ));
         rows.push((String::new(), false, None));
-        rows.push(("&Delete".into(), true, out(Outcome::Delete(name.clone()))));
-        rows.push(("Rena&me".into(), true, Some(Act::Rename)));
+        rows.push((
+            tr!("folder-delete"),
+            true,
+            out(Outcome::Delete(name.clone())),
+        ));
+        rows.push((tr!("folder-rename"), true, Some(Act::Rename)));
         rows.push((String::new(), false, None));
         rows.push((
-            "P&roperties".into(),
+            tr!("folder-properties"),
             true,
             out(Outcome::Properties(name.clone())),
         ));
         return rows;
     }
     rows.push((
-        "See what's printing".into(),
+        tr!("folder-task-open"),
         true,
         out(Outcome::Open(name.clone())),
     ));
     if !is_default {
         rows.push((
-            "Set as default printer".into(),
+            tr!("folder-task-set-default"),
             true,
             out(Outcome::SetDefault(name.clone())),
         ));
     }
     rows.push(if stopped {
         (
-            "Resume printing".into(),
+            tr!("folder-task-resume"),
             true,
             out(Outcome::Resume(name.clone())),
         )
     } else {
         (
-            "Pause printing".into(),
+            tr!("folder-task-pause"),
             true,
             out(Outcome::Pause(name.clone())),
         )
     });
     rows.push((
-        "Cancel all documents".into(),
+        tr!("folder-task-cancel-all"),
         jobs,
         out(Outcome::CancelAll(name.clone())),
     ));
     rows.push((
-        "Share this printer".into(),
+        tr!("folder-task-share"),
         true,
         out(Outcome::Sharing(name.clone())),
     ));
-    rows.push(("Rename this printer".into(), true, Some(Act::Rename)));
+    rows.push((tr!("folder-task-rename"), true, Some(Act::Rename)));
     rows.push((
-        "Delete this printer".into(),
+        tr!("folder-task-delete"),
         true,
         out(Outcome::Delete(name.clone())),
     ));
     rows.push((
-        "Set printer properties".into(),
+        tr!("folder-task-properties"),
         true,
         out(Outcome::Properties(name.clone())),
     ));
@@ -184,12 +185,9 @@ fn actions(p: &Printer, s: &Snapshot, menu: bool) -> Vec<(String, bool, Option<A
 fn details(p: Option<&Printer>, s: &Snapshot) -> Vec<(String, bool)> {
     if !s.running {
         return vec![
-            ("The printing service (CUPS) is not running".into(), true),
+            (tr!("folder-cups-not-running"), true),
             (String::new(), false),
-            (
-                "Install cups and enable cups.socket to manage printers.".into(),
-                false,
-            ),
+            (tr!("folder-cups-install"), false),
         ];
     }
     match p {
@@ -197,24 +195,36 @@ fn details(p: Option<&Printer>, s: &Snapshot) -> Vec<(String, bool)> {
             let docs = s.documents_of(&p.name).count();
             let mut l = vec![(p.name.clone(), true)];
             if s.default.as_deref() == Some(p.name.as_str()) {
-                l.push(("Default printer".into(), false));
+                l.push((tr!("folder-default-printer"), false));
             }
-            l.push((format!("Status: {}", p.status_word()), false));
-            l.push((format!("Documents: {docs}"), false));
+            l.push((tr!("folder-detail-status", status = p.status_word()), false));
+            l.push((
+                tr!("folder-detail-documents", count = docs.to_string()),
+                false,
+            ));
             if !p.make_model.is_empty() {
-                l.push((format!("Model: {}", p.make_model), false));
+                l.push((
+                    tr!("folder-detail-model", model = p.make_model.as_str()),
+                    false,
+                ));
             }
             if !p.location.is_empty() {
-                l.push((format!("Location: {}", p.location), false));
+                l.push((
+                    tr!("folder-detail-location", location = p.location.as_str()),
+                    false,
+                ));
             }
             l
         }
         None if s.printers.is_empty() => vec![
-            ("Printers".into(), true),
+            (tr!("folder-printers"), true),
             (String::new(), false),
-            ("There are no printers yet. Add one to print.".into(), false),
+            (tr!("folder-no-printers"), false),
         ],
-        None => vec![("Printers".into(), true), ("System Folder".into(), false)],
+        None => vec![
+            (tr!("folder-printers"), true),
+            (tr!("folder-system-folder"), false),
+        ],
     }
 }
 
@@ -227,13 +237,13 @@ pub fn check_name(old: &str, typed: &str, s: &Snapshot) -> Result<Option<String>
         return Ok(None);
     }
     if name.len() > 127 {
-        return Err("A printer name can be at most 127 characters long.".into());
+        return Err(tr!("folder-name-too-long"));
     }
     if name
         .chars()
         .any(|c| c.is_control() || matches!(c, '/' | '\\' | '#' | '?' | '\'' | '"' | '\t'))
     {
-        return Err("A printer name cannot contain any of these characters: / \\ # ? ' \"".into());
+        return Err(tr!("folder-name-characters"));
     }
     match cups::name_clash(old, &name, s) {
         Some(why) => Err(why),
@@ -266,18 +276,18 @@ impl Folder {
         Folder {
             pane: TaskPane {
                 sections: vec![
-                    Section::links("Printer Tasks", Vec::new()),
-                    Section::lines("Details", Vec::new()),
+                    Section::links(tr!("folder-tasks"), Vec::new()),
+                    Section::lines(tr!("folder-details"), Vec::new()),
                 ],
                 ..Default::default()
             },
             list: List::new(vec![
-                Column::new("Name", NAME_W),
-                Column::new("Documents", DOCS_W),
-                Column::new("Status", STATUS_W),
-                Column::new("Comments", COMMENT_W),
-                Column::new("Location", LOCATION_W),
-                Column::new("Model", MODEL_W),
+                Column::new(&tr!("folder-column-name"), NAME_W),
+                Column::new(&tr!("folder-column-documents"), DOCS_W),
+                Column::new(&tr!("folder-column-status"), STATUS_W),
+                Column::new(&tr!("folder-column-comments"), COMMENT_W),
+                Column::new(&tr!("folder-column-location"), LOCATION_W),
+                Column::new(&tr!("folder-column-model"), MODEL_W),
             ]),
             names: Vec::new(),
             popup: None,
@@ -333,7 +343,7 @@ impl Folder {
     fn set_pane(&mut self, s: &Snapshot) {
         let mut rows = vec![taskpane::Row {
             icon: None,
-            text: "Add a printer".into(),
+            text: tr!("folder-task-add"),
             enabled: s.running,
         }];
         let mut acts = vec![Some(Act::Out(Outcome::Add))];
@@ -499,7 +509,7 @@ impl Folder {
                         if label.is_empty() {
                             (MenuItem::Separator, None)
                         } else {
-                            let bold = label == "&Open";
+                            let bold = label == tr!("folder-open");
                             (item(&label, enabled).bold(bold), act.filter(|_| enabled))
                         }
                     })
@@ -508,10 +518,13 @@ impl Folder {
             },
             None => vec![
                 (
-                    item("&Add Printer", s.running),
+                    item(&tr!("folder-add-printer"), s.running),
                     s.running.then_some(Act::Out(Outcome::Add)),
                 ),
-                (item("R&efresh", true), Some(Act::Out(Outcome::Refresh))),
+                (
+                    item(&tr!("folder-refresh"), true),
+                    Some(Act::Out(Outcome::Refresh)),
+                ),
             ],
         };
         self.popup_for = row.and_then(|i| self.names.get(i).cloned());
