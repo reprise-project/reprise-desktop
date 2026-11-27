@@ -656,7 +656,7 @@ fn make_base(base: &Path) -> std::io::Result<()> {
 }
 
 /// Makes the private scratch folder `base`, removing the folders in it older than `keep_secs`
-/// and the ones a [`Scratch`] let go of, unless something holds them.
+/// and the ones a [`Scratch`] let go of, or whose holders all died, unless something holds them.
 fn sweep_scratch(base: &Path, keep_secs: u64) -> std::io::Result<()> {
     make_base(base)?;
     let now = std::time::SystemTime::now();
@@ -664,11 +664,15 @@ fn sweep_scratch(base: &Path, keep_secs: u64) -> std::io::Result<()> {
         if !e.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
-        let gone = e.file_name().as_bytes().ends_with(GONE_SUFFIX.as_bytes());
-        let old = (e.metadata().and_then(|m| m.modified()).ok())
+        let name = e.file_name();
+        let gone = name.as_bytes().ends_with(GONE_SUFFIX.as_bytes());
+        let age = (e.metadata().and_then(|m| m.modified()).ok())
             .and_then(|t| now.duration_since(t).ok())
-            .is_some_and(|age| age.as_secs() > keep_secs);
-        if (gone || old) && open_dir(&e.path()).is_some_and(|d| flock(&d, libc::LOCK_EX)) {
+            .map_or(0, |age| age.as_secs());
+        // A held folder is locked from a moment after it is made until its last holder ends.
+        let orphan = name.as_bytes().starts_with(HELD_PREFIX.as_bytes()) && age > ORPHAN_SECS;
+        let sweep = gone || orphan || age > keep_secs;
+        if sweep && open_dir(&e.path()).is_some_and(|d| flock(&d, libc::LOCK_EX)) {
             let _ = std::fs::remove_dir_all(e.path());
         }
     }
@@ -678,13 +682,17 @@ fn sweep_scratch(base: &Path, keep_secs: u64) -> std::io::Result<()> {
 /// Names of the folders a [`Scratch`] makes; other scratch folders hold copies opened in programs.
 const HELD_PREFIX: &str = "copy-";
 
+/// How old a [`Scratch`] folder nothing holds must be before a sweep takes it: one made this
+/// moment is not locked yet.
+const ORPHAN_SECS: u64 = 60;
+
 /// What a [`Scratch`]'s folder is renamed to end with while it is removed.
 const GONE_SUFFIX: &str = ".gone";
 
 /// A private folder under the scratch folder that copies out of an archive go into, held by each
 /// consumer of the copies: the job writing them, the clipboard or drag offering them, each put
 /// reading them, in this process or another ([`Scratch::hold`]). The folder is removed when the
-/// last holder anywhere lets go; the sweep [`SCRATCH_KEEP_SECS`] after only catches crashes.
+/// last holder anywhere lets go; the sweep only catches folders whose holders all died.
 #[derive(Clone)]
 pub struct Scratch(Arc<Held>);
 
@@ -1997,16 +2005,18 @@ mod tests {
         let held = Scratch::new_in(&base, 3600).unwrap();
         let dir = held.path().to_path_buf();
         let crashed = make_temp(&base, "copy-XXXXXX").unwrap();
+        let fresh = make_temp(&base, "copy-XXXXXX").unwrap();
         let removing = make_temp(&base, "copy-XXXXXX").unwrap();
         let left = PathBuf::from(format!("{}.gone", removing.display()));
         std::fs::rename(&removing, &left).unwrap();
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
         for d in [&dir, &crashed] {
             std::fs::File::open(d).unwrap().set_modified(old).unwrap();
         }
         sweep_scratch(&base, 3600).unwrap();
-        assert!(dir.exists(), "a held folder stays past its age");
-        assert!(!crashed.exists(), "an old one nobody holds goes");
+        assert!(dir.exists(), "a held folder stays");
+        assert!(!crashed.exists(), "one whose holders died goes");
+        assert!(fresh.exists(), "one being made is left to be locked");
         assert!(!left.exists(), "one a removal left goes at once");
     }
 
