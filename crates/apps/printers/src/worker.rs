@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
+use reprisekit::tr;
+
 use crate::avahi;
 use crate::cups::{self, Change, Client, Device, Job, JobOp, NewPrinter, Options, Ppd, Snapshot};
 use crate::lpwatch;
@@ -189,37 +191,37 @@ fn run(rx: Receiver<Cmd>, tx: Sender<Cmd>, poster: Poster) {
     }
 }
 
-fn title(cmd: &Cmd) -> &'static str {
+fn title(cmd: &Cmd) -> String {
     match cmd {
-        Cmd::Pause(_) => "Could not pause the printer",
-        Cmd::Resume(_) => "Could not resume printing",
-        Cmd::CancelAll(_) => "Could not cancel the documents",
-        Cmd::SetDefault(_) => "Could not set the default printer",
-        Cmd::Delete(_) => "Could not delete the printer",
-        Cmd::Rename { .. } => "Could not rename the printer",
-        Cmd::Modify { .. } => "Could not change the printer",
-        Cmd::TestPage(_) => "Could not print a test page",
+        Cmd::Pause(_) => tr!("fail-pause"),
+        Cmd::Resume(_) => tr!("fail-resume"),
+        Cmd::CancelAll(_) => tr!("fail-cancel-all"),
+        Cmd::SetDefault(_) => tr!("fail-set-default"),
+        Cmd::Delete(_) => tr!("fail-delete"),
+        Cmd::Rename { .. } => tr!("fail-rename"),
+        Cmd::Modify { .. } => tr!("fail-modify"),
+        Cmd::TestPage(_) => tr!("fail-test-page"),
         Cmd::Job {
             op: JobOp::Cancel | JobOp::Remove,
             ..
-        } => "Could not cancel the document",
+        } => tr!("fail-cancel-job"),
         Cmd::Job {
             op: JobOp::Pause, ..
-        } => "Could not pause the document",
+        } => tr!("fail-pause-job"),
         Cmd::Job {
             op: JobOp::Resume, ..
-        } => "Could not resume the document",
+        } => tr!("fail-resume-job"),
         Cmd::Job {
             op: JobOp::Restart, ..
-        } => "Could not restart the document",
-        Cmd::Add { .. } => "Could not add the printer",
+        } => tr!("fail-restart-job"),
+        Cmd::Add { .. } => tr!("fail-add"),
         Cmd::Refresh
         | Cmd::Changed
         | Cmd::Watching(_)
         | Cmd::Options(_)
         | Cmd::Devices { .. }
         | Cmd::Network(_)
-        | Cmd::Ppds => "Printers",
+        | Cmd::Ppds => tr!("fail-generic"),
     }
 }
 
@@ -451,7 +453,7 @@ impl State {
 /// none.
 fn failed(cmd: &Cmd, about: Option<&str>, e: &cups::Error) -> Option<Msg> {
     (*e != cups::Error::Dismissed).then(|| Msg::Failed {
-        title: title(cmd).into(),
+        title: title(cmd),
         body: e.text(),
         printer: about.map(str::to_owned),
     })

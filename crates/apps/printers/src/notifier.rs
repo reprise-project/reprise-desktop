@@ -3,6 +3,8 @@
 
 use std::time::{Duration, SystemTime};
 
+use reprisekit::tr;
+
 use crate::cups::{Client, Error, Result};
 use crate::ipp::{Request, SUBSCRIPTION, Value};
 
@@ -156,15 +158,16 @@ pub fn subscribe(c: &Client, now: SystemTime) -> Result<Lease> {
     let resp = c.call("/", create_request())?;
     let g = resp
         .first(SUBSCRIPTION)
-        .ok_or_else(|| Error::Refused("CUPS made no subscription.".into()))?;
+        .ok_or_else(|| Error::Refused(tr!("notify-no-subscription")))?;
     if let Some(status) = g.int("notify-status-code").filter(|s| *s != 0) {
-        return Err(Error::Refused(format!(
-            "CUPS refused the subscription (status 0x{status:04x})."
+        return Err(Error::Refused(tr!(
+            "notify-subscription-refused",
+            status = format!("{status:04x}")
         )));
     }
     let id = g
         .int("notify-subscription-id")
-        .ok_or_else(|| Error::Refused("CUPS made no subscription.".into()))?;
+        .ok_or_else(|| Error::Refused(tr!("notify-no-subscription")))?;
     Ok(Lease::new(
         id,
         g.int("notify-lease-duration").unwrap_or(LEASE),

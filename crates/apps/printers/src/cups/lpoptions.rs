@@ -71,9 +71,7 @@ pub fn with_user_default(text: &str, name: &str) -> String {
 
 pub(super) fn write_lpoptions(text: &str) -> Result<()> {
     let Some(path) = lpoptions_path() else {
-        return Err(Error::Refused(
-            "There is no home folder to keep the setting in.".into(),
-        ));
+        return Err(Error::Refused(tr!("cups-no-home")));
     };
     let write = || -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
@@ -83,5 +81,5 @@ pub(super) fn write_lpoptions(text: &str) -> Result<()> {
         std::fs::write(&tmp, text)?;
         std::fs::rename(&tmp, &path)
     };
-    write().map_err(|e| Error::Refused(format!("Could not save the default printer: {e}.")))
+    write().map_err(|e| Error::Refused(tr!("cups-default-not-saved", why = e.to_string())))
 }

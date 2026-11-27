@@ -103,36 +103,42 @@ pub fn media_label(k: &str) -> String {
         (size, "")
     };
     match dims.split_once('x') {
-        Some((w, h)) if !unit.is_empty() => format!("{} ({w} x {h} {unit})", name.join(" ")),
+        Some((w, h)) if !unit.is_empty() => tr!(
+            "paper-size",
+            name = name.join(" "),
+            w = w,
+            h = h,
+            unit = unit
+        ),
         _ => name.join(" "),
     }
 }
 
 pub fn sides_label(k: &str) -> String {
     match k {
-        "one-sided" => "Off".into(),
-        "two-sided-long-edge" => "Long edge (standard)".into(),
-        "two-sided-short-edge" => "Short edge (flip up)".into(),
+        "one-sided" => tr!("sides-off"),
+        "two-sided-long-edge" => tr!("sides-long-edge"),
+        "two-sided-short-edge" => tr!("sides-short-edge"),
         k => reason_words(k),
     }
 }
 
 pub fn color_label(k: &str) -> String {
     match k {
-        "monochrome" => "Black and white".into(),
-        "color" => "Color".into(),
-        "auto" => "Automatic".into(),
-        "auto-monochrome" => "Automatic black and white".into(),
-        "process-monochrome" => "Black and white (process)".into(),
+        "monochrome" => tr!("color-mono"),
+        "color" => tr!("color-color"),
+        "auto" => tr!("color-auto"),
+        "auto-monochrome" => tr!("color-auto-mono"),
+        "process-monochrome" => tr!("color-process-mono"),
         k => reason_words(k),
     }
 }
 
 pub fn quality_label(k: &str) -> String {
     match k {
-        "3" => "Draft".into(),
-        "4" => "Normal".into(),
-        "5" => "High".into(),
+        "3" => tr!("quality-draft"),
+        "4" => tr!("quality-normal"),
+        "5" => tr!("quality-high"),
         k => k.into(),
     }
 }

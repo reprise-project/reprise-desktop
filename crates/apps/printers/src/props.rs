@@ -7,13 +7,21 @@ use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::escape_mnemonic;
 use reprisekit::textedit::TextEdit;
+use reprisekit::tr;
 
 use crate::cups::{self, Change, Options, Printer, Setting, Snapshot};
 use crate::folder::check_name;
 use crate::ipp::Value;
 
 pub const CLIENT: (i32, i32) = (380, 440);
-const TABS: [&str; 4] = ["General", "Sharing", "Ports", "Device Settings"];
+fn tabs() -> [String; 4] {
+    [
+        tr!("props-tab-general"),
+        tr!("props-tab-sharing"),
+        tr!("props-tab-ports"),
+        tr!("props-tab-device"),
+    ]
+}
 pub const GENERAL: usize = 0;
 pub const SHARING: usize = 1;
 pub const PORTS: usize = 2;
@@ -86,39 +94,41 @@ fn set_edit(form: &mut Form, id: &str, s: &str) {
 
 fn features(p: &Printer, o: Option<&Options>) -> Vec<String> {
     let Some(o) = o else {
-        return vec!["Reading the printer's features...".into()];
+        return vec![tr!("props-reading-features")];
     };
-    let yes = |b: bool| if b { "Yes" } else { "No" };
+    let yes = |b: bool| {
+        if b { tr!("props-yes") } else { tr!("props-no") }
+    };
     let color = o.color.choices.iter().any(|c| c == "color");
     let duplex = o.sides.choices.iter().any(|c| c.starts_with("two-sided"));
     let mut l = vec![
-        format!("Color: {}", yes(color)),
-        format!("Double-sided: {}", yes(duplex)),
+        tr!("props-feature-color", value = yes(color)),
+        tr!("props-feature-duplex", value = yes(duplex)),
     ];
     if let Some(m) = &o.media.default {
-        l.push(format!("Paper: {}", cups::media_label(m)));
+        l.push(tr!("props-feature-paper", size = cups::media_label(m)));
     }
     if !p.accepting {
-        l.push("Not accepting documents".into());
+        l.push(tr!("props-not-accepting"));
     }
     l
 }
 
-pub fn connection(uri: &str) -> &'static str {
+pub fn connection(uri: &str) -> String {
     let scheme = uri.split(':').next().unwrap_or_default();
     match scheme {
-        "ipp" | "ipps" | "http" | "https" => "Network printer (IPP)",
-        "dnssd" | "mdns" => "Network printer (found on the network)",
-        "socket" => "Network printer (raw TCP/IP)",
-        "lpd" => "Network printer (LPD)",
-        "smb" => "Shared printer on another computer (SMB)",
-        "usb" => "USB printer",
-        "parallel" => "Parallel port printer",
-        "serial" => "Serial port printer",
-        "cups-pdf" => "Prints to PDF files",
-        "file" => "Prints to a file",
-        "implicitclass" => "Printer shared by another computer",
-        _ => "Other",
+        "ipp" | "ipps" | "http" | "https" => tr!("props-conn-ipp"),
+        "dnssd" | "mdns" => tr!("props-conn-dnssd"),
+        "socket" => tr!("props-conn-socket"),
+        "lpd" => tr!("props-conn-lpd"),
+        "smb" => tr!("props-conn-smb"),
+        "usb" => tr!("props-conn-usb"),
+        "parallel" => tr!("props-conn-parallel"),
+        "serial" => tr!("props-conn-serial"),
+        "cups-pdf" => tr!("props-conn-pdf"),
+        "file" => tr!("props-conn-file"),
+        "implicitclass" => tr!("props-conn-implicit"),
+        _ => tr!("props-conn-other"),
     }
 }
 
@@ -131,16 +141,16 @@ fn general(icon: Option<Canvas>) -> Form {
             Rect::new(LABEL_X, 90, FULL_W, 2),
             Control::Separator,
         ),
-        Item::label_at("location_label", LABEL_X, 106, 80, "&Location:"),
+        Item::label_at("location_label", LABEL_X, 106, 80, &tr!("props-location")),
         Item::edit(LOCATION, Rect::new(VALUE_X, 102, VALUE_W, 21), "", true),
-        Item::label_at("comment_label", LABEL_X, 134, 80, "&Comment:"),
+        Item::label_at("comment_label", LABEL_X, 134, 80, &tr!("props-comment")),
         Item::edit(COMMENT, Rect::new(VALUE_X, 130, VALUE_W, 21), "", true),
-        Item::label_at("model_label", LABEL_X, 164, 80, "Model:"),
+        Item::label_at("model_label", LABEL_X, 164, 80, &tr!("props-model")),
         Item::label_at(MODEL, VALUE_X, 164, VALUE_W, ""),
         Item::group(
             "features_group",
             Rect::new(LABEL_X, 190, FULL_W, 100),
-            "Features",
+            &tr!("props-features"),
         ),
     ];
     items.push(Item::new(
@@ -153,7 +163,7 @@ fn general(icon: Option<Canvas>) -> Form {
         CLIENT.0 - 26 - 110,
         304,
         110,
-        "Print &Test Page",
+        &tr!("props-test-page"),
         true,
     ));
     Form::new(items)
@@ -167,38 +177,26 @@ fn sharing(icon: Option<Canvas>) -> Form {
             62,
             46,
             FULL_W - 44,
-            &[
-                "You can share this printer with other",
-                "computers on your network.",
-            ],
+            &tr!("props-sharing-about").lines().collect::<Vec<_>>(),
         ),
-        Item::radio(NOSHARE, LABEL_X, 100, "Do &not share this printer", "share"),
-        Item::radio(SHARE, LABEL_X, 124, "&Share this printer", "share"),
+        Item::radio(NOSHARE, LABEL_X, 100, &tr!("props-no-share"), "share"),
+        Item::radio(SHARE, LABEL_X, 124, &tr!("props-share"), "share"),
         Item::lines_at(
             "note",
             LABEL_X,
             156,
             FULL_W,
-            &[
-                "Other computers see a shared printer only while",
-                "CUPS shares printers (cupsctl --share-printers).",
-            ],
+            &tr!("props-sharing-note").lines().collect::<Vec<_>>(),
         ),
     ])
 }
 
 fn ports() -> Form {
     Form::new(vec![
-        Item::lines_at(
-            "about",
-            LABEL_X,
-            44,
-            FULL_W,
-            &["Documents print to the printer at this address."],
-        ),
-        Item::label_at("uri_label", LABEL_X, 76, FULL_W, "&Address (URI):"),
+        Item::lines_at("about", LABEL_X, 44, FULL_W, &[&tr!("props-ports-about")]),
+        Item::label_at("uri_label", LABEL_X, 76, FULL_W, &tr!("props-uri")),
         Item::edit(URI, Rect::new(LABEL_X, 94, FULL_W, 21), "", true),
-        Item::label_at("conn_label", LABEL_X, 130, 80, "Connection:"),
+        Item::label_at("conn_label", LABEL_X, 130, 80, &tr!("props-connection")),
         Item::label_at(CONNECTION, VALUE_X, 130, VALUE_W, ""),
         Item::lines_at(
             "examples",
@@ -206,7 +204,7 @@ fn ports() -> Form {
             164,
             FULL_W,
             &[
-                "Examples:",
+                &tr!("props-examples-title"),
                 "  ipp://printer.local/ipp/print",
                 "  socket://192.168.1.20:9100",
                 "  lpd://server/queue",
@@ -232,7 +230,7 @@ fn device(o: Option<&Options>) -> Form {
             LABEL_X,
             48,
             FULL_W,
-            "Reading the printer's settings...",
+            &tr!("props-reading-settings"),
         )]);
     };
     let mut items = vec![Item::lines_at(
@@ -240,30 +238,21 @@ fn device(o: Option<&Options>) -> Form {
         LABEL_X,
         44,
         FULL_W,
-        &[
-            "Documents print with these settings unless they",
-            "ask for others.",
-        ],
+        &tr!("props-device-about").lines().collect::<Vec<_>>(),
     )];
-    let rows: [SettingRow; 4] = [
-        (
-            "media_label",
-            "&Paper size:",
-            MEDIA,
-            &o.media,
-            cups::media_label,
-        ),
-        (
-            "sides_label",
-            "T&wo-sided:",
-            SIDES,
-            &o.sides,
-            cups::sides_label,
-        ),
-        ("color_label", "C&olor:", COLOR, &o.color, cups::color_label),
+    let (paper, sided, color, quality) = (
+        tr!("props-paper-size"),
+        tr!("props-two-sided"),
+        tr!("props-color"),
+        tr!("props-quality"),
+    );
+    let rows: [SettingRow<'_>; 4] = [
+        ("media_label", &paper, MEDIA, &o.media, cups::media_label),
+        ("sides_label", &sided, SIDES, &o.sides, cups::sides_label),
+        ("color_label", &color, COLOR, &o.color, cups::color_label),
         (
             "quality_label",
-            "&Quality:",
+            &quality,
             QUALITY,
             &o.quality,
             cups::quality_label,
@@ -275,7 +264,7 @@ fn device(o: Option<&Options>) -> Form {
         let (labels, at) = choices(setting, words);
         if labels.is_empty() {
             items.push(
-                Item::label_at(id, VALUE_X, y + 4, VALUE_W, "Not offered by this printer")
+                Item::label_at(id, VALUE_X, y + 4, VALUE_W, &tr!("props-not-offered"))
                     .enabled(false),
             );
             continue;
@@ -301,7 +290,7 @@ fn sync(first: bool, was: &str, now: &str, pending: &mut String, page: &mut Form
 
 type SettingRow<'a> = (
     &'static str,
-    &'static str,
+    &'a str,
     &'static str,
     &'a Setting,
     fn(&str) -> String,
@@ -321,7 +310,7 @@ impl PropsSheet {
         let pages = vec![general(icon.clone()), sharing(icon), ports(), device(None)];
         let mut sheet = PropsSheet {
             printer: p.name.clone(),
-            sheet: PropSheet::new(&TABS, pages, CLIENT),
+            sheet: PropSheet::new(&tabs().each_ref().map(String::as_str), pages, CLIENT),
             applied: Fields::default(),
             pending: Fields::default(),
             options: None,
@@ -394,7 +383,7 @@ impl PropsSheet {
         self.sheet.pages[GENERAL].set_text(MODEL, &escape_mnemonic(&p.make_model));
         let f = features(p, self.options.as_ref());
         self.sheet.pages[GENERAL].set_lines(FEATURES, &f);
-        self.sheet.pages[PORTS].set_text(CONNECTION, &escape_mnemonic(connection(&p.device_uri)));
+        self.sheet.pages[PORTS].set_text(CONNECTION, &escape_mnemonic(&connection(&p.device_uri)));
         let dirty = self.dirty();
         self.sheet.set_apply_enabled(dirty);
     }
@@ -418,7 +407,7 @@ impl PropsSheet {
         let mut form = device(None);
         form.set_text(
             READING,
-            &escape_mnemonic(&format!("The settings could not be read. {why}")),
+            &escape_mnemonic(&tr!("props-settings-unreadable", why = why)),
         );
         self.sheet.set_page(DEVICE, form);
     }
@@ -616,11 +605,7 @@ mod tests {
             p.set_options(o, &laser());
             let mut failed = PropsSheet::new(&laser(), None);
             failed.options_failed("The printer did not answer.");
-            let mut pages: Vec<(String, Form)> = TABS
-                .iter()
-                .map(|t| t.to_string())
-                .zip(p.sheet.pages)
-                .collect();
+            let mut pages: Vec<(String, Form)> = tabs().into_iter().zip(p.sheet.pages).collect();
             pages.push(("reading".into(), reading));
             pages.push(("failed".into(), failed.sheet.pages.swap_remove(DEVICE)));
             pages
@@ -819,7 +804,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let mut p = PropsSheet::new(&laser(), None);
         p.set_options(options(), &laser());
-        for tab in 0..TABS.len() {
+        for tab in 0..tabs().len() {
             p.open_tab(tab);
             let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);

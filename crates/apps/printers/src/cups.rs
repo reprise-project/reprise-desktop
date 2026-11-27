@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use reprisekit::tr;
+
 use crate::avahi;
 use crate::http::{self, Server};
 use crate::ipp::{self, JOB, OPERATION, PRINTER, Request, Response, Value};
@@ -68,18 +70,10 @@ pub enum Error {
 impl Error {
     pub fn text(&self) -> String {
         match self {
-            Error::NotRunning => "The printing service (CUPS) is not running.".into(),
-            Error::Denied => "You are not allowed to change printers. CUPS lets the members of \
-                its admin group do this: SystemGroup in /etc/cups/cups-files.conf, wheel on \
-                most systems."
-                .into(),
-            Error::NeedsHelper => format!(
-                "{} Install cups-pk-helper to make changes with an administrator's password.",
-                Error::Denied.text()
-            ),
-            Error::NotAuthorized => {
-                "Nothing was changed: this needs an administrator's password.".into()
-            }
+            Error::NotRunning => tr!("cups-not-running"),
+            Error::Denied => tr!("cups-denied"),
+            Error::NeedsHelper => tr!("cups-needs-helper", denied = Error::Denied.text()),
+            Error::NotAuthorized => tr!("cups-not-authorized"),
             Error::Refused(why) => why.clone(),
             Error::Dismissed => String::new(),
         }
@@ -141,7 +135,7 @@ impl Client {
             code => Error::Refused(
                 resp.message()
                     .map(sentence)
-                    .unwrap_or_else(|| format!("CUPS refused the request (status 0x{code:04x}).")),
+                    .unwrap_or_else(|| tr!("cups-refused-status", code = format!("{code:04x}"))),
             ),
         })
     }
@@ -150,9 +144,8 @@ impl Client {
     fn send(&self, resource: &str, req: Request) -> Result<Response> {
         let req = req.op_attr("requesting-user-name", Value::name(&self.user));
         let reply = http::post(&self.server, resource, &req.encode(), &self.user)?;
-        ipp::parse(&reply.body).map_err(|e| {
-            Error::Refused(format!("CUPS sent a reply Reprise cannot read ({}).", e.0))
-        })
+        ipp::parse(&reply.body)
+            .map_err(|e| Error::Refused(tr!("cups-unreadable-reply", why = e.0.to_string())))
     }
 }
 

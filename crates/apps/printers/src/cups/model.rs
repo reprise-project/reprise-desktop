@@ -70,15 +70,15 @@ impl Printer {
 
     pub fn status_word(&self) -> String {
         if !self.accepting && self.state != PrinterState::Printing {
-            return "Not accepting documents".into();
+            return tr!("printer-not-accepting");
         }
         match self.state {
-            PrinterState::Idle => "Ready".into(),
-            PrinterState::Printing => "Printing".into(),
-            PrinterState::Stopped if self.paused() => "Paused".into(),
+            PrinterState::Idle => tr!("printer-ready"),
+            PrinterState::Printing => tr!("printer-printing"),
+            PrinterState::Stopped if self.paused() => tr!("printer-paused"),
             PrinterState::Stopped => match self.problem() {
-                Some(r) => format!("Error: {}", reason_words(r)),
-                None => "Error".into(),
+                Some(r) => tr!("printer-error-with", reason = reason_words(r)),
+                None => tr!("printer-error"),
             },
         }
     }
@@ -164,15 +164,15 @@ impl Job {
         self.state == JobState::Stopped || (self.state.done() && self.preserved)
     }
 
-    pub fn status_word(&self) -> &'static str {
+    pub fn status_word(&self) -> String {
         match self.state {
-            JobState::Pending => "Waiting",
-            JobState::Held => "Paused",
-            JobState::Printing => "Printing",
-            JobState::Stopped => "Stopped",
-            JobState::Canceled => "Deleting",
-            JobState::Aborted => "Error",
-            JobState::Completed => "Printed",
+            JobState::Pending => tr!("job-waiting"),
+            JobState::Held => tr!("job-paused"),
+            JobState::Printing => tr!("job-printing"),
+            JobState::Stopped => tr!("job-stopped"),
+            JobState::Canceled => tr!("job-deleting"),
+            JobState::Aborted => tr!("job-error"),
+            JobState::Completed => tr!("job-printed"),
         }
     }
 }
@@ -364,5 +364,5 @@ pub fn job(c: &Client, id: i32) -> Result<Job> {
     let r = c.call("/", req)?;
     r.first(JOB)
         .map(Job::from_group)
-        .ok_or_else(|| Error::Refused("CUPS has no such document.".into()))
+        .ok_or_else(|| Error::Refused(tr!("cups-no-such-document")))
 }

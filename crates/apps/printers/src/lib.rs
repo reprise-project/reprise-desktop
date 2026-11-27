@@ -7,6 +7,8 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("printers");
+
 mod addwiz;
 mod avahi;
 mod cups;
@@ -44,6 +46,7 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::{kit_tr, tr};
 
 use cups::{JobState, PrinterState, Snapshot};
 use wins::{Ids, Opened, Wins};
@@ -197,12 +200,20 @@ impl PrintersApp {
             let mine = s.jobs_of(&p.name).any(|j| j.owner == self.user);
             if broken && mine && self.announced.insert(p.name.clone()) {
                 let body = if p.message.is_empty() {
-                    format!("{} has a problem: {}.", p.name, p.status_word())
+                    tr!(
+                        "balloon-problem",
+                        name = p.name.as_str(),
+                        status = p.status_word()
+                    )
                 } else {
-                    format!("{}: {}", p.name, p.message)
+                    tr!(
+                        "balloon-problem-message",
+                        name = p.name.as_str(),
+                        message = p.message.as_str()
+                    )
                 };
                 let name = p.name.clone();
-                self.balloon("Printer problem", &body, &name);
+                self.balloon(&tr!("balloon-problem-title"), &body, &name);
             }
             if !broken {
                 self.announced.remove(&p.name);
@@ -247,19 +258,23 @@ impl PrintersApp {
             return;
         }
         let name = if j.name.is_empty() {
-            "Untitled".to_string()
+            tr!("queue-untitled")
         } else {
             j.name.clone()
         };
         match j.state {
             JobState::Completed => self.balloon(
-                "Document printed",
-                &format!("{name} was printed on {}.", j.printer),
+                &tr!("balloon-printed-title"),
+                &tr!("balloon-printed", name = name, printer = j.printer.as_str()),
                 &j.printer,
             ),
             JobState::Aborted => self.balloon(
-                "Document not printed",
-                &format!("{name} could not be printed on {}.", j.printer),
+                &tr!("balloon-not-printed-title"),
+                &tr!(
+                    "balloon-not-printed",
+                    name = name,
+                    printer = j.printer.as_str()
+                ),
                 &j.printer,
             ),
             _ => {}
@@ -312,8 +327,8 @@ impl PrintersApp {
                     }
                 }
                 Msg::TestPage(p) => {
-                    let body = format!("A test page has been sent to {p}.");
-                    self.notify(Some(&p), "Print Test Page", body);
+                    let body = tr!("balloon-test-page", printer = p.as_str());
+                    self.notify(Some(&p), &tr!("balloon-test-page-title"), body);
                 }
             }
         }
@@ -447,13 +462,11 @@ impl PrintersApp {
             return self.rename(old, new, device_uri);
         }
         let b = MsgBox::new(
-            "Rename Printer",
+            tr!("rename-title"),
             Fields {
-                text: format!(
-                    "Renaming {old} to {new} drops the user name and password from its address. Properties then opens on the Ports tab to type the address again.\nDo you want to rename the printer?"
-                ),
+                text: tr!("rename-text", old = old.as_str(), new = new.as_str()),
                 icon: ctx.icons.get("dialog-question", 32),
-                buttons: vec!["&Yes".into(), "&No".into()],
+                buttons: vec![kit_tr!("yes"), kit_tr!("no")],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
@@ -493,13 +506,11 @@ impl PrintersApp {
 
     fn ask_delete(&mut self, printer: String, ctx: &mut Ctx) {
         let b = MsgBox::new(
-            "Delete Printer",
+            tr!("delete-title"),
             Fields {
-                text: format!(
-                    "Are you sure you want to delete the printer {printer}?\nDocuments waiting on it are cancelled."
-                ),
+                text: tr!("delete-text", printer = printer.as_str()),
                 icon: ctx.icons.get("dialog-question", 32),
-                buttons: vec!["&Yes".into(), "&No".into()],
+                buttons: vec![kit_tr!("yes"), kit_tr!("no")],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
@@ -593,7 +604,7 @@ impl PrintersApp {
                 Reply::redraw_all()
             }
             O::BadName(why) => {
-                self.notify(None, "Rename", why);
+                self.notify(None, &tr!("balloon-rename-title"), why);
                 Reply::redraw_all()
             }
         }
@@ -747,7 +758,7 @@ impl PrintersApp {
                 Reply::redraw_all()
             }
             props::Outcome::BadName(why) => {
-                self.notify(Some(&printer), "Rename", why);
+                self.notify(Some(&printer), &tr!("balloon-rename-title"), why);
                 Reply::redraw_all()
             }
             props::Outcome::Close => {
@@ -798,11 +809,11 @@ impl PrintersApp {
                 let dlg = host.open_last(
                     Path::new(&start),
                     FileFields {
-                        title: "Have Disk".into(),
-                        accept_label: "Open".into(),
+                        title: tr!("have-disk-title"),
+                        accept_label: tr!("have-disk-open"),
                         mode: DlgMode::Open,
                         multiple: false,
-                        filters: vec!["Printer Drivers (*.ppd)".into(), "All Files (*.*)".into()],
+                        filters: vec![tr!("have-disk-filter-ppd"), tr!("have-disk-filter-all")],
                     },
                     ctx.forms().text,
                 );
@@ -878,7 +889,7 @@ impl PrintersApp {
 
 impl App for PrintersApp {
     fn title(&self) -> String {
-        tray::TITLE.into()
+        tray::title()
     }
 
     fn app_id(&self) -> String {
@@ -912,7 +923,7 @@ impl App for PrintersApp {
         if self.wizard.is_some() {
             out.push(Child {
                 id: WIZARD,
-                title: "Add Printer Wizard".into(),
+                title: tr!("wizard-window-title"),
                 size: self.forms.text.size(wizard::CLIENT),
                 fixed: true,
                 modal: false,
@@ -921,7 +932,7 @@ impl App for PrintersApp {
         if let Some((_, d)) = &self.browse {
             out.push(Child {
                 id: BROWSE,
-                title: "Have Disk".into(),
+                title: tr!("have-disk-title"),
                 size: d.client(),
                 fixed: false,
                 modal: true,
