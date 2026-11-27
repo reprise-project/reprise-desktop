@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(text(look::SHELL_DLG), "/usr/share/wine/fonts/sserife.fon");
         assert_eq!(text(look::FONT_FAMILY), "DejaVu Sans,Noto Sans");
         assert_eq!(text(look::FONT_ANTIALIAS), "true");
-        assert_eq!(text(look::MODE), "dark", "Tokyo Night is a dark scheme");
+        assert_eq!(text(look::MODE), "light", "Blue in light mode");
         assert_eq!(text(look::GLASS_MATERIAL), "frosted");
         assert_eq!(text(look::TEXT_SIZE), "100");
         assert_eq!(text(look::DOUBLE_CLICK_MS), "500");
@@ -707,6 +707,22 @@ mod tests {
                 (GNOME, "font-hinting", zbus::Variant::from("full")),
             ]
         );
+    }
+
+    #[test]
+    fn a_dark_window_colour_by_hand_leaves_light_blue_and_glass_light() {
+        for interface in ["blue", "glass"] {
+            let c = crate::config::Config::parse(&format!(
+                "[appearance]\ninterface = \"{interface}\"\n[colors]\nwindow = \"#101010\"\n"
+            ))
+            .unwrap();
+            let a = Appearance::of(&c);
+            assert_eq!(
+                (a.color_scheme, a.mode),
+                (2, reprisekit::glass::Mode::Light),
+                "{interface}"
+            );
+        }
     }
 
     #[test]
