@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Renders the gallery (every colour scheme, Classic bands only) and every
 # preview test on BASE and on the working tree, and lists each PNG that
-# differs or exists on one side only. Exits 1 on any difference.
+# differs or exists on one side only. Exits 1 on any difference, and without
+# a list when a side wrote no PNGs or more than 5 fewer than the other.
 # --with-blue also renders the gallery with its Blue bands, every page saved as
 # with-blue-<name>, and compares Blue previews; without it, PNGs with "blue"
 # in the name are skipped on both sides. The gallery draws on one thread per
@@ -152,6 +153,10 @@ render() {
             done
         fi
     )
+    if [[ -z $(find "$out" -maxdepth 1 -name '*.png' -print -quit) ]]; then
+        echo "pixels-unchanged.sh: $tree wrote no PNGs into its target/" >&2
+        exit 1
+    fi
 }
 
 exec 9>"$basewt.lock"
@@ -190,6 +195,16 @@ quiet_prune
 started=$SECONDS
 render "$root" "$work/b"
 echo "working tree: rendered in $((SECONDS - started)) s"
+
+# A render that wrote into another checkout's target/ leaves its side short;
+# report that rather than a list of hundreds of one-sided names.
+na=$(find "$work/a" -maxdepth 1 -name '*.png' | wc -l)
+nb=$(find "$work/b" -maxdepth 1 -name '*.png' | wc -l)
+if ((na - nb > 5 || nb - na > 5)); then
+    echo "pixels-unchanged.sh: $base rendered $na PNGs and the working tree $nb;" \
+        "one render wrote elsewhere or skipped tests" >&2
+    exit 1
+fi
 
 fail=0
 compared=0
