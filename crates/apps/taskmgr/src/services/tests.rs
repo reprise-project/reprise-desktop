@@ -256,3 +256,32 @@ fn the_log_is_asked_for_the_one_unit_of_its_manager() {
         "a pattern is never passed"
     );
 }
+
+#[test]
+fn the_filter_finds_text_in_the_shown_name_or_description_and_may_ask_for_failed() {
+    let s = |name: &str, description: &str, status| Service {
+        name: name.into(),
+        description: description.into(),
+        manager: Manager::User,
+        status,
+        startup: Startup::Manual,
+    };
+    let bt = s(
+        "app-reprise\\x2dbluetooth@autostart.service",
+        "Bluetooth",
+        Status::Running,
+    );
+    let sync = s("sync.service", "Copies the Photos", Status::Failed);
+    assert!(shows(&bt, "", false));
+    assert!(shows(&bt, "reprise-blue", false), "the unescaped name");
+    assert!(!shows(&bt, "x2d", false), "not the escape");
+    assert!(!shows(&bt, ".service", false), "not the suffix");
+    assert!(
+        shows(&sync, " PHOTOS ", false),
+        "the description, case and spaces aside"
+    );
+    assert!(!shows(&bt, "photos", false));
+    assert!(shows(&sync, "", true));
+    assert!(!shows(&bt, "", true), "only failed");
+    assert!(!shows(&sync, "bluetooth", true), "both must hold");
+}

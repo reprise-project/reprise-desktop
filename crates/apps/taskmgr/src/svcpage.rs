@@ -20,7 +20,12 @@ use crate::{Act, Ask, Page, TaskMgr};
 
 pub struct Svc {
     pub list: List,
+    /// Every row read, sorted; the list shows those at `shown`.
     pub rows: Vec<Service>,
+    pub shown: Vec<usize>,
+    /// The filter field's text and Show only failed ([`services::shows`]).
+    pub filter: String,
+    pub failed_only: bool,
     /// The column sorted by, and whether ascending.
     pub sort: (usize, bool),
     /// Show system services.
@@ -59,6 +64,9 @@ impl Svc {
         Svc {
             list,
             rows: Vec::new(),
+            shown: Vec::new(),
+            filter: String::new(),
+            failed_only: false,
             sort: (0, true),
             system: false,
             manage_system: true,
@@ -105,7 +113,8 @@ impl TaskMgr {
     }
 
     pub(crate) fn selected_service(&self) -> Option<&Service> {
-        (self.svc.list.selected()).and_then(|i| self.svc.rows.get(i))
+        let at = self.svc.list.selected().and_then(|i| self.svc.shown.get(i));
+        at.and_then(|&i| self.svc.rows.get(i))
     }
 
     /// Whether `verb` may run on `s` now: its state takes it, no job is under way on it, and for a
@@ -127,7 +136,7 @@ impl TaskMgr {
         (self.selected_service()).map(|s| (s.manager, s.name.clone()))
     }
 
-    /// Sorts the rows and puts them in the list, `keep` selected.
+    /// Sorts the rows and puts those the filter lets through in the list, `keep` selected.
     fn show_services(&mut self, keep: Option<(Manager, String)>) {
         let (col, ascending) = self.svc.sort;
         let text = |s: &Service| Svc::cells(s).swap_remove(col).to_lowercase();
@@ -137,15 +146,20 @@ impl TaskMgr {
         } else {
             rows.sort_by_cached_key(|s| (Reverse(text(s)), s.name.clone(), s.manager));
         }
-        self.svc.list.view.rows = (self.svc.rows.iter())
+        let (filter, failed_only) = (self.svc.filter.as_str(), self.svc.failed_only);
+        self.svc.shown = (0..rows.len())
+            .filter(|&i| services::shows(&rows[i], filter, failed_only))
+            .collect();
+        let shown = || self.svc.shown.iter().map(|&i| &self.svc.rows[i]);
+        self.svc.list.view.rows = shown()
             .map(|s| listview::Row {
                 icon: None,
                 cells: Svc::cells(s),
             })
             .collect();
-        let at = keep.and_then(|(m, n)| self.svc.rows.iter().position(|s| s.key() == (m, &n)));
+        let at = keep.and_then(|(m, n)| shown().position(|s| s.key() == (m, &n)));
         self.svc.list.view.selection.set_only(at);
-        let n = self.svc.rows.len();
+        let n = self.svc.shown.len();
         self.svc.list.view.top = self.svc.list.view.top.min(n.saturating_sub(1));
     }
 
@@ -156,6 +170,14 @@ impl TaskMgr {
         };
         self.svc.sort = (col, ascending);
         self.svc.list.view.sort = Some((col, ascending));
+        let keep = self.selected_key();
+        self.show_services(keep);
+    }
+
+    /// Shows the rows the filter field's `text` and Show only failed let through.
+    pub(crate) fn filter_services(&mut self, text: &str, failed_only: bool) {
+        self.svc.filter = text.to_string();
+        self.svc.failed_only = failed_only;
         let keep = self.selected_key();
         self.show_services(keep);
     }

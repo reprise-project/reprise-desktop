@@ -676,15 +676,16 @@ impl TaskMgr {
 
     /// Fits each list's last column to what the others leave of `ctx`'s list area.
     fn fit_lists(&mut self, ctx: &Ctx) {
-        let r = pages::layout(self, ctx).list_area;
+        let lay = pages::layout(self, ctx);
+        let r = lay.list_area;
         self.apps.fit_last(r, ctx);
-        self.svc.list.fit_last(r, ctx);
+        self.svc.list.fit_last(lay.svc_list, ctx);
         // The process list nearly always scrolls: fill beside its bar, or a horizontal one appears.
         let last = self.procs.view.columns.len() - 1;
         (self.procs.view).fill_beside_bar(last, r, &ctx.theme.controls());
-        for list in [&mut self.apps, &mut self.procs, &mut self.svc.list] {
-            list.follow(r, ctx);
-        }
+        self.apps.follow(r, ctx);
+        self.procs.follow(r, ctx);
+        self.svc.list.follow(lay.svc_list, ctx);
         self.refit = false;
     }
 
@@ -1070,6 +1071,12 @@ impl TaskMgr {
             form::Event::Pressed(pages::START) => self.service_verb(Verb::Start, ctx),
             form::Event::Pressed(pages::STOP) => self.service_verb(Verb::Stop, ctx),
             form::Event::Pressed(pages::RESTART) => self.service_verb(Verb::Restart, ctx),
+            form::Event::Changed(pages::FILTER | pages::FAILED) => {
+                let text = self.form.edit_text(pages::FILTER).to_string();
+                let failed = self.form.checked(pages::FAILED).unwrap_or(false);
+                self.filter_services(&text, failed);
+                Reply::redraw()
+            }
             form::Event::Changed(pages::SYSTEM) => {
                 let on = self.form.checked(pages::SYSTEM).unwrap_or(false);
                 self.set_system_services(on);
@@ -1129,6 +1136,9 @@ impl TaskMgr {
             && r.contains(x, y)
         {
             let page = self.page();
+            if self.filter_focused() {
+                self.form.set_focus(None);
+            }
             let list = self.list().expect("a page with a list");
             let press = list.press(at, button, r, ctx);
             return match press {
@@ -1236,6 +1246,13 @@ impl TaskMgr {
             let ev = self.form.key(key);
             return self.form_event(ev, ctx);
         }
+        if self.filter_focused() {
+            return self.filter_key(k, ctx);
+        }
+        if self.page() == Page::Services && matches!(k.sym, keysym::TAB | keysym::ISO_LEFT_TAB) {
+            self.form.focus_id(pages::FILTER);
+            return Reply::redraw();
+        }
         let lay = pages::layout(self, ctx);
         if let (Some(r), Some(list)) = (lay.list, self.list())
             && let Some(moved) = list.key(k.sym, r, ctx)
@@ -1267,6 +1284,34 @@ impl TaskMgr {
             (keysym::RETURN | keysym::KP_ENTER, Page::Applications) => self.switch_to(),
             (keysym::RETURN | keysym::KP_ENTER, Page::Services) => self.open_log(ctx),
             _ => Reply::none(),
+        }
+    }
+
+    /// Whether the Services page's filter field holds the keyboard; the page's list does
+    /// otherwise.
+    pub(crate) fn filter_focused(&self) -> bool {
+        self.page() == Page::Services
+            && self.form.focus().is_some()
+            && self.form.focus() == self.form.index_of(pages::FILTER)
+    }
+
+    /// A key in the filter field: Tab, Down, Enter and Esc go back to the list.
+    fn filter_key(&mut self, k: &KeyInput, ctx: &mut Ctx) -> Reply {
+        if matches!(
+            k.sym,
+            keysym::TAB
+                | keysym::ISO_LEFT_TAB
+                | keysym::DOWN
+                | keysym::RETURN
+                | keysym::KP_ENTER
+                | keysym::ESCAPE
+        ) {
+            self.form.set_focus(None);
+            return Reply::redraw();
+        }
+        match repriseapp::keys::form_input(&mut self.form, &Event::Key(k.clone()), ctx) {
+            Some(ev) => self.form_event(ev, ctx),
+            None => Reply::none(),
         }
     }
 
@@ -1344,6 +1389,16 @@ impl TaskMgr {
             }
             Event::OnTop(on) => self.act(Act::OnTop(on)),
             Event::Tick => self.tick(),
+            Event::Blink if self.filter_focused() => {
+                self.form.blink(ctx.caret_on);
+                Reply::redraw()
+            }
+            ev @ Event::Pasted(_) if self.filter_focused() => {
+                match repriseapp::keys::form_input(&mut self.form, &ev, ctx) {
+                    Some(ev) => self.form_event(ev, ctx),
+                    None => Reply::none(),
+                }
+            }
             Event::Key(k) => self.key(&k, ctx),
             Event::KeyUp(k) => self.key_up(&k, ctx),
             Event::Pointer(PointerInput::Press {

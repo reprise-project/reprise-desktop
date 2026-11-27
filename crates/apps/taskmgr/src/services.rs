@@ -138,6 +138,18 @@ pub fn shown_name(name: &str) -> String {
     reprisebus::services::unescape(name.strip_suffix(".service").unwrap_or(name))
 }
 
+/// Whether `s` shows under the Services page's filter: `text`, case aside, in its shown name or
+/// its description, and failed when `failed_only`.
+pub fn shows(s: &Service, text: &str, failed_only: bool) -> bool {
+    if failed_only && s.status != Status::Failed {
+        return false;
+    }
+    let text = text.trim().to_lowercase();
+    text.is_empty()
+        || s.shown_name().to_lowercase().contains(&text)
+        || s.description.to_lowercase().contains(&text)
+}
+
 /// Manager `m`'s rows by name: its loaded services and, as stopped, each file not loaded, which
 /// `describe` reads. Templates, aliases and units whose file is missing are left out.
 pub fn rows(

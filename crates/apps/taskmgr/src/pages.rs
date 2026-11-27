@@ -28,12 +28,19 @@ pub const SYSTEM: &str = "system_services";
 pub const START: &str = "start";
 pub const STOP: &str = "stop";
 pub const RESTART: &str = "restart";
+pub const FILTER_LABEL: &str = "filter_label";
+pub const FILTER: &str = "filter";
+pub const FAILED: &str = "failed_only";
 
 /// The window edge to the sheet, and the sheet's edge to what it holds.
 const MARGIN: i32 = 6;
 const PAD: i32 = 7;
 const BUTTON_W: i32 = 75;
 const GAP: i32 = 6;
+/// The Services page's filter row above its list: the label's width, the field's.
+const FILTER_H: i32 = 21;
+const FILTER_LABEL_W: i32 = 40;
+const FILTER_W: i32 = 200;
 
 pub struct Layout {
     pub bar: menubar::Layout,
@@ -42,8 +49,10 @@ pub struct Layout {
     pub status: Rect,
     /// The list on the open page, if it has one.
     pub list: Option<Rect>,
-    /// Where either page's list sits.
+    /// Where the Applications and Processes lists sit.
     pub list_area: Rect,
+    /// Where the Services list sits, under its filter row.
+    pub svc_list: Rect,
     /// The bottom row of buttons on the pages with a list.
     pub buttons_y: i32,
     pub inner: Rect,
@@ -92,7 +101,18 @@ pub fn layout(t: &TaskMgr, ctx: &Ctx) -> Layout {
         inner.width,
         (buttons_y - PAD - inner.y).max(1),
     );
-    let list = (t.page() != Page::Performance).then_some(list_area);
+    let filter_h = ctx.theme.text.len(FILTER_H) + GAP;
+    let svc_list = Rect::new(
+        list_area.x,
+        list_area.y + filter_h,
+        list_area.width,
+        (list_area.height - filter_h).max(1),
+    );
+    let list = match t.page() {
+        Page::Performance => None,
+        Page::Services => Some(svc_list),
+        _ => Some(list_area),
+    };
     let perf = (t.page() == Page::Performance)
         .then(|| perf::layout(inner, t.perf.selected().pane(), ctx.theme.text));
     Layout {
@@ -102,6 +122,7 @@ pub fn layout(t: &TaskMgr, ctx: &Ctx) -> Layout {
         status,
         list,
         list_area,
+        svc_list,
         buttons_y,
         inner,
         perf,
@@ -159,7 +180,23 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
                 let x = inner.right() - (3 - i) * BUTTON_W - (2 - i) * GAP;
                 Item::button_at(id, x, by, BUTTON_W, label, true)
             };
+            let field_x = inner.x + FILTER_LABEL_W + 2;
+            let field = Rect::new(field_x, inner.y, FILTER_W, FILTER_H);
             vec![
+                Item::label_at(
+                    FILTER_LABEL,
+                    inner.x,
+                    inner.y + 4,
+                    FILTER_LABEL_W,
+                    &tr!("svc-filter"),
+                ),
+                Item::edit(FILTER, field, &t.svc.filter, true),
+                Item::check(
+                    FAILED,
+                    field.right() + 12,
+                    inner.y + 4,
+                    &tr!("svc-failed-only"),
+                ),
                 Item::check(SYSTEM, inner.x, by + 5, &tr!("system-services")),
                 button(START, 0, &tr!("start")),
                 button(STOP, 1, &tr!("stop")),
@@ -195,7 +232,7 @@ pub fn follow_form(t: &mut TaskMgr, ctx: &Ctx) {
         may(reprisebus::services::Verb::Stop),
         may(reprisebus::services::Verb::Restart),
     );
-    let system = t.svc.system;
+    let (system, failed) = (t.svc.system, t.svc.failed_only);
     let f = &mut t.form;
     match key.0 {
         Page::Applications => {
@@ -213,6 +250,7 @@ pub fn follow_form(t: &mut TaskMgr, ctx: &Ctx) {
         }
         Page::Services => {
             f.set_check(SYSTEM, system);
+            f.set_check(FAILED, failed);
             f.set_enabled(START, start);
             f.set_enabled(STOP, stop);
             f.set_enabled(RESTART, restart);
@@ -323,7 +361,10 @@ pub fn access(t: &mut TaskMgr, tree: &mut Tree, ctx: &Ctx) {
         let l = list.layout(r, ctx);
         focus = Some(list.view.access(&l, tree, ROOT, name));
     }
-    t.form.access(tree, ROOT, &ctx.text, px);
+    let form_focus = t.form.access(tree, ROOT, &ctx.text, px);
+    if t.filter_focused() {
+        focus = form_focus;
+    }
     if let Some(perf) = &lay.perf {
         focus = Some(perf::access(t, tree, ctx, perf));
     }
