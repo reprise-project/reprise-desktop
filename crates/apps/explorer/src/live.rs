@@ -495,6 +495,7 @@ impl Explorer {
                         reprisefs::locale::is_12h(),
                     )
                 };
+                let lines = self.hit_folder(it).into_iter().chain(lines).collect();
                 (lines, false)
             }
             HoverOn::Pane(i, j) => match self.pane_tip(i, j) {
