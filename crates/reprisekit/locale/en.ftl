@@ -218,7 +218,6 @@ key-up = Up
 key-down = Down
 key-plus = Plus
 key-minus = Minus
-key-back-space = Back Space
 key-print = Print
 key-caps-lock = Caps Lock
 key-num-lock = Num Lock

@@ -57,6 +57,7 @@ pub fn key_text(sym: u32) -> String {
     let name = key_name(sym).unwrap_or_else(|| format!("{sym:#x}"));
     let fixed = match name.as_str() {
         "Return" | "return" => "Enter",
+        "BackSpace" | "backspace" => "Backspace",
         "space" => "Space",
         "Escape" | "escape" => "Esc",
         "Sys_Req" | "sys_req" => "SysRq",
@@ -140,7 +141,6 @@ macro_rules! key_names {
                 ("Down", $tr!("key-down")),
                 ("Plus", $tr!("key-plus")),
                 ("Minus", $tr!("key-minus")),
-                ("Back Space", $tr!("key-back-space")),
                 ("Print", $tr!("key-print")),
                 ("Caps Lock", $tr!("key-caps-lock")),
                 ("Num Lock", $tr!("key-num-lock")),
@@ -235,6 +235,7 @@ mod tests {
         assert_eq!(key_text(0x62), "B");
         assert_eq!(key_text(0x3d), "=");
         assert_eq!(key_text(0xff0d), "Enter");
+        assert_eq!(key_text(0xff08), "Backspace");
         assert_eq!(key_text(0xff55), "Page Up");
         assert_eq!(key_text(0xffe9), "Left Alt");
         assert_eq!(key_text(0x1008ff13), "Audio Raise Volume");
@@ -256,7 +257,7 @@ mod tests {
             "Ctrl+",
             "Super+Shift+Page Up",
             "Shift+Left Alt",
-            "Ctrl+Back Space",
+            "Ctrl+Backspace",
             "Print",
             "Caps Lock",
             "Right Ctrl",
