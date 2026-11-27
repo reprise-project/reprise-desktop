@@ -110,6 +110,7 @@ fn a_reader_hears_every_rows_behaviour_not_only_the_selected_ones() {
                 "Only show notifications",
                 "Show icon and notifications",
                 "Only show notifications",
+                "Hide icon and notifications",
             ],
         ),
         (
@@ -119,14 +120,17 @@ fn a_reader_hears_every_rows_behaviour_not_only_the_selected_ones() {
                 "Hide when inactive",
                 "Always show",
                 "Always hide",
+                "Hide, no balloons",
             ],
         ),
     ] {
-        let t = sample(w);
+        let mut t = sample(w);
+        t.entries
+            .push(entry("magnifier", "Magnifier", false, Behaviour::Mute));
         let lay = t.layout(&text, px, (0, 0));
         let mut tree = Tree::window("", t.client());
         t.access(&mut tree, &lay, &text, px);
-        for (name, want) in ["Network", "Volume", "Mail", "Sticky Keys"]
+        for (name, want) in ["Network", "Volume", "Mail", "Sticky Keys", "Magnifier"]
             .iter()
             .zip(want)
         {
@@ -275,7 +279,15 @@ fn a_behaviour_hides_by_status_only_when_left_auto() {
 fn each_interface_names_the_behaviours_in_its_own_words() {
     let c = Wording::Classic;
     let labels: Vec<_> = c.choices().iter().map(|&b| c.label(b)).collect();
-    assert_eq!(labels, ["Hide when inactive", "Always hide", "Always show"]);
+    assert_eq!(
+        labels,
+        [
+            "Hide when inactive",
+            "Always hide",
+            "Always show",
+            "Hide, no balloons"
+        ]
+    );
     let g = Wording::Glass;
     let labels: Vec<_> = g.choices().iter().map(|&b| g.label(b)).collect();
     assert_eq!(
@@ -286,11 +298,90 @@ fn each_interface_names_the_behaviours_in_its_own_words() {
             "Only show notifications"
         ]
     );
-    // A choice one interface has no row for shows as the row that
-    // does the same to the icon.
-    assert_eq!(c.index(Behaviour::Mute, false), 1, "Always hide");
+    assert_eq!(c.index(Behaviour::Mute, false), 3, "Hide, no balloons");
+    // Glass has no row for Auto and shows the row that does what the
+    // status does to the icon now.
     assert_eq!(g.index(Behaviour::Auto, true), 2, "Only show notifications");
     assert_eq!(g.index(Behaviour::Auto, false), 0, "Show icon...");
+}
+
+#[test]
+fn classic_picks_mute_on_its_own_row_and_ok_carries_it() {
+    let mut t = sample(Wording::Classic);
+    t.select(3);
+    t.take_pick(3);
+    assert_eq!(t.entries[3].behaviour, Behaviour::Mute);
+    t.select(3);
+    assert_eq!(t.combo.selected, 3, "the combo shows Hide, no balloons");
+    t.click(Some(Hit::Ok));
+    let Event::Accept(ch) = t.release(Some(Hit::Ok)) else {
+        panic!("OK accepts");
+    };
+    assert_eq!(ch.behaviours[3], ("sticky".into(), Behaviour::Mute));
+}
+
+#[test]
+fn classic_behaviour_labels_fit_their_combo_field() {
+    crate::pins::fonts();
+    let (text, px) = (text(), Theme::default().fonts.size_px);
+    let mut t = sample(Wording::Classic);
+    t.select(0);
+    let l = t.layout(&text, px, (0, 0));
+    let cl = l.combo.unwrap().1;
+    let w = Wording::Classic;
+    for &b in w.choices() {
+        let label = w.label(b);
+        let need = text.measure(label, false, px);
+        assert!(need <= cl.text.width, "{label}: {need} > {}", cl.text.width);
+    }
+}
+
+/// Every row's open behaviour list, on a row cut by the list's bottom too, shows its four
+/// rows inside the client, at 100% and 200% text and on a list shortened to its least.
+#[test]
+fn classic_open_behaviour_list_stays_inside_the_dialog() {
+    let rows = (0..12).map(|i| {
+        entry(
+            &format!("c{i}"),
+            &format!("Item {i}"),
+            false,
+            Behaviour::Auto,
+        )
+    });
+    for (px, room) in [
+        (11, None),
+        (22, None),
+        (11, Some((1000, 100))),
+        (22, Some((1000, 100))),
+    ] {
+        let text = TextRenderer::stub(px, |_| px as i32 / 2);
+        let mut t = TrayCustomize::new(
+            Wording::Classic,
+            rows.clone().collect(),
+            Vec::new(),
+            None,
+            metrics(Wording::Classic).grown(TextUnits::new(px, 11)),
+        );
+        t.room = room;
+        t.fit(&text, px);
+        let (_, client_h) = t.client();
+        for i in 0..t.entries.len() {
+            for top in 0..t.slots().len() {
+                t.select(i);
+                t.top = top;
+                t.combo.open = None;
+                assert!(t.combo.toggle());
+                let l = t.layout(&text, px, (0, 0));
+                let Some((_, cl)) = l.combo else { continue };
+                assert_eq!(cl.list.height, 4 * cl.row_h + 2, "four rows at {px} px");
+                assert!(
+                    cl.list.bottom() <= client_h,
+                    "row {i} from slot {top} at {px} px, {room:?}: {} > {client_h}",
+                    cl.list.bottom()
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -435,7 +526,7 @@ fn the_selected_rows_combo_is_its_behaviour_cell() {
     assert_eq!(i, 1);
     assert_eq!(cl.field, Rect::new(11 + 186, 150, 124, 21));
     assert_eq!(t.combo.value(), "Hide when inactive");
-    assert_eq!(t.combo.items.len(), 3);
+    assert_eq!(t.combo.items.len(), 4);
 }
 
 #[test]
@@ -1190,10 +1281,12 @@ fn tab_closes_the_open_behaviour_list_and_a_letter_picks_on_the_closed_one() {
     assert_eq!(t.key(form::Key::Tab { back: false }), Event::Redraw);
     assert_eq!((t.focus, t.combo.open), (Focus::Combo, None));
     t.key(form::Key::Char('h'));
+    let first_h = t.entries[i].behaviour;
+    t.key(form::Key::Char('h'));
     assert_eq!(
-        t.entries[i].behaviour,
-        Behaviour::Auto,
-        "h: Hide when inactive"
+        [first_h, t.entries[i].behaviour],
+        [Behaviour::Mute, Behaviour::Auto],
+        "h: Hide, no balloons, then Hide when inactive"
     );
     t.key(form::Key::Char('a'));
     let first_a = t.entries[i].behaviour;

@@ -84,18 +84,21 @@ impl Wording {
     /// The behaviour combo's rows, in order.
     pub fn choices(self) -> &'static [Behaviour] {
         match self {
-            Wording::Classic => &[Behaviour::Auto, Behaviour::Hide, Behaviour::Show],
+            Wording::Classic => &[
+                Behaviour::Auto,
+                Behaviour::Hide,
+                Behaviour::Show,
+                Behaviour::Mute,
+            ],
             Wording::Glass => &[Behaviour::Show, Behaviour::Mute, Behaviour::Hide],
         }
     }
 
     /// The combo row that stands for `b` on an item whose status is
-    /// `passive`: Classic has no row of its own for Mute and shows it as
-    /// Always hide; Glass has none for Auto and shows what the status
-    /// does now.
+    /// `passive`: Glass has no row of its own for Auto and shows what the
+    /// status does now.
     pub fn index(self, b: Behaviour, passive: bool) -> usize {
         let shown = match (self, b) {
-            (Wording::Classic, Behaviour::Mute) => Behaviour::Hide,
             (Wording::Glass, Behaviour::Auto) if passive => Behaviour::Hide,
             (Wording::Glass, Behaviour::Auto) => Behaviour::Show,
             (_, b) => b,
@@ -107,8 +110,9 @@ impl Wording {
     pub fn label(self, b: Behaviour) -> &'static str {
         match (self, b) {
             (Wording::Classic, Behaviour::Auto) => "Hide when inactive",
-            (Wording::Classic, Behaviour::Hide | Behaviour::Mute) => "Always hide",
+            (Wording::Classic, Behaviour::Hide) => "Always hide",
             (Wording::Classic, Behaviour::Show) => "Always show",
+            (Wording::Classic, Behaviour::Mute) => "Hide, no balloons",
             (Wording::Glass, Behaviour::Show | Behaviour::Auto) => "Show icon and notifications",
             (Wording::Glass, Behaviour::Mute) => "Hide icon and notifications",
             (Wording::Glass, Behaviour::Hide) => "Only show notifications",
