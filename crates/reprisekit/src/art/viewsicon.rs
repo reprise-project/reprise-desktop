@@ -24,6 +24,22 @@ pub fn draw16_at(scale: i32) -> Canvas {
     icons::VIEWS_16.canvas_at(scale)
 }
 
+/// [`draw24`] `px` logical px across on a canvas at `scale`: the big strip's icon grown with the
+/// text. Drawn at the whole multiple of 24 px at or above `px * scale` device px, then
+/// box-resampled down to it.
+pub fn draw24_grown(px: i32, scale: i32) -> Canvas {
+    let s = scale.max(1);
+    let dev = px.max(1) * s;
+    let k = (dev + 23) / 24;
+    let art = icons::VIEWS_24.canvas_at(k).at_scale(1);
+    let sized = if dev == 24 * k {
+        art
+    } else {
+        art.resample_box(dev as u32, dev as u32)
+    };
+    sized.at_scale(s)
+}
+
 /// [`draw16`] at the whole multiple of 16 px nearest `px`, at least 1: the small strip's icon
 /// grown with the text and the scale.
 pub fn draw16_near(px: i32) -> Canvas {
@@ -34,6 +50,27 @@ pub fn draw16_near(px: i32) -> Canvas {
 mod tests {
     use super::*;
     use crate::theme::Color;
+
+    #[test]
+    fn the_grown_big_icon_is_as_wide_as_asked_and_the_24_px_one_at_100() {
+        let at100 = draw24_grown(24, 1);
+        assert_eq!((at100.width, at100.scale()), (24, 1));
+        assert_eq!(
+            at100.pixels,
+            draw24().pixels,
+            "the 24 px art itself at 100%"
+        );
+        let grown = draw24_grown(37, 1);
+        assert_eq!((grown.width, grown.height), (37, 37));
+        let (x0, x1) = ink_box(&grown).0;
+        assert!(
+            x1 - x0 >= 29,
+            "the window spans the grown icon, got {x0}..={x1}"
+        );
+        let doubled = draw24_grown(24, 2);
+        assert_eq!((doubled.width, doubled.device_size()), (24, (48, 48)));
+        assert_eq!(draw24_grown(37, 2).device_size(), (74, 74));
+    }
 
     const OUTLINE: Color = Color::rgb(64, 64, 64);
     const TITLE: Color = Color::rgb(0, 0, 128);

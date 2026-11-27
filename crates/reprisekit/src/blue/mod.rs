@@ -243,6 +243,7 @@ fn build(v: Variant, scale: i32) -> Style {
         })
     })
     .with_button_side(move |side| sided_buttons(v, scale, side))
+    .with_task_marks(move |g| controls::taskpane::grown_marks(v, scale, g))
     .with_painted(Part::Taskbar, move || bar::taskbar(v.scheme(), scale))
     .with_painted(Part::StartButton, move || {
         start::start_button(v.scheme(), scale)

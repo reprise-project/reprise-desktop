@@ -42,9 +42,11 @@ pub fn draw_header(
     let (w, h) = (frame.width / img.scale * s, frame.height / img.scale * s);
     if r.height == h {
         st.draw(c, Rect::new(r.right() - w, r.y, w, h), button, state, s);
-    } else if st.part(mark).is_some() {
-        // A band grown with the text moves the button down by half its growth, drawn without
-        // the band's 100% rows behind it.
+    } else if let Some(img) = st.part(mark) {
+        // A band grown with the text centres the button's mark down it, drawn without the band's
+        // 100% rows behind it, as large as the style painted it for the text size.
+        let frame = img.frame(state);
+        let (w, h) = (frame.width / img.scale * s, frame.height / img.scale * s);
         let y = r.y + (r.height - h) / 2;
         st.draw(c, Rect::new(r.right() - w, y, w, h), mark, state, s);
     }
@@ -274,6 +276,84 @@ mod tests {
             assert_eq!(lay.headers[0], Rect::new(13, 12, 185, h), "{v:?}");
             assert_eq!(lay.bodies[0].y, 12 + h, "{v:?}");
             assert_eq!(lay.back, Rect::new(1, 0, 199, 299), "{v:?}");
+        }
+    }
+
+    /// At 200% text a band grown with the text carries a fold mark painted afresh as much larger as
+    /// the icons grow, with anti-aliased edges at scale 2; at 100% the mark keeps its size.
+    #[test]
+    fn a_blue_fold_mark_grows_with_the_text() {
+        let text = TextRenderer::load(&FontConfig::default());
+        for v in Variant::ALL {
+            let size = |pct: u32, s: i32| {
+                let theme = blue_theme(v).with_text_size(pct).scaled(s);
+                let img = theme
+                    .look
+                    .style()
+                    .unwrap()
+                    .part(Part::TaskCollapseMark)
+                    .unwrap()
+                    .clone();
+                let f = img.frame(State::Normal);
+                (f.width / img.scale, f.height / img.scale)
+            };
+            assert_eq!(size(100, 1), (24, band_h(v)), "{v:?} at 100%");
+            let (w, h) = size(200, 1);
+            assert!(w >= 40 && h > 2 * band_h(v) - 10, "{v:?} grown to {w}x{h}");
+            assert_eq!(size(200, 2), (w, h), "{v:?} the same size at scale 2");
+            assert_eq!(
+                blue_theme(v)
+                    .scaled(2)
+                    .with_text_size(200)
+                    .look
+                    .style()
+                    .unwrap()
+                    .part(Part::TaskCollapseMark)
+                    .unwrap()
+                    .scale,
+                2,
+                "{v:?} grown at the scale it was asked at"
+            );
+
+            let ink = |pct: u32| {
+                let theme = blue_theme(v).with_text_size(pct);
+                let p = theme.paint();
+                let band = Rect::new(0, 0, BAND_W, theme.text.len(band_h(v)));
+                let mut c = Canvas::new(band.width as u32, band.height as u32);
+                draw_header(
+                    &mut c,
+                    &text,
+                    &p,
+                    band,
+                    band,
+                    "",
+                    true,
+                    Interaction::Idle,
+                    11,
+                );
+                let mark = px(v.scheme().task_collapse.normal.mark.unwrap());
+                (0..c.height as i32)
+                    .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
+                    .filter(|&(x, y)| c.get(x, y) == mark)
+                    .count()
+            };
+            assert!(
+                ink(200) > 2 * ink(100),
+                "{v:?} the chevrons grow: {} vs {}",
+                ink(200),
+                ink(100)
+            );
+
+            let theme = blue_theme(v).with_text_size(200).scaled(2);
+            let img = theme
+                .look
+                .style()
+                .unwrap()
+                .part(Part::TaskCollapseMark)
+                .unwrap()
+                .clone();
+            let partial = (img.atlas.pixels.iter()).any(|&p| (1..255).contains(&(p >> 24)));
+            assert!(partial, "{v:?} anti-aliased edges at scale 2");
         }
     }
 }
