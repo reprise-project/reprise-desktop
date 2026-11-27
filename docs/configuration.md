@@ -18,11 +18,11 @@ If the file is broken when you log in, Reprise starts with the defaults.
 
 | Section | What it configures |
 | --- | --- |
-| `[appearance]` | `interface` and `color_scheme` |
+| `[appearance]` | `interface`, `color_scheme`, dark `mode` and its hours, and Classic's `dark_color_scheme` |
 | `[colors]`, `[metrics]` | Colour and size overrides over the active interface |
 | `[fonts]`, `[icons]`, `[cursor]` | UI font, icon theme and pointer theme |
 | `[toolkits]` | GTK and Qt theming |
-| `[glass]` | Glass colour, material, mode, schedule, blur and `notification_style` |
+| `[glass]` | Glass colour, material, blur and `notification_style` |
 | `[wallpaper]` | Image, slideshow and water or fluid effects ([below](#wallpaper)) |
 | `[screensaver]`, `[idle]` | Screen savers and idle timeouts ([below](#screen-saver)) |
 | `[power]` | Turn Off commands, lid, buttons, battery alarms and external locker |
@@ -148,11 +148,11 @@ Reprise also sets `org.freedesktop.appearance` `reduced-motion` to `1` and `org.
 ```toml
 [appearance]
 interface = "glass"
+mode = "dark"
 
 [glass]
 color = "ruby"
 material = "molten"
-mode = "dark"
 
 [taskbar]
 position = "left"

@@ -641,6 +641,7 @@ pub(crate) fn report(state: &mut State, r: Report) {
         Report::Resumed => {
             crate::idle::resumed(state);
             crate::nightlight::update(state);
+            crate::darkmode::clock_moved(state);
             crate::displays::reread(state);
             crate::autozone::resumed(state);
             state.clock_resumed();

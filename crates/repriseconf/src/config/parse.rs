@@ -580,7 +580,7 @@ impl Config {
                     })?;
             }
         }
-        // As before they moved, the `[glass]` keys apply to Glass alone.
+        // `[glass]`'s mode keys apply under Glass only.
         let glass_applies = cfg.interface == Interface::Glass;
         cfg.mode = mode_config(appearance_mode, glass_mode, glass_applies, &mut cfg.moved)?;
         cfg.dark = cfg.mode.mode == super::AppearanceMode::Dark;
@@ -600,27 +600,26 @@ impl Config {
         if cfg.interface == Interface::Glass && cfg.taskbar.small_icons {
             reprisekit::interfaces::small_bar(&mut cfg.theme, &cfg.glass);
         }
-        if let Some(name) = cfg.dark_color_scheme.as_deref()
-            && reprisekit::schemes::scheme(name).is_none()
-        {
-            return Err(format!(
-                "[appearance] dark_color_scheme = {name:?} is not a Classic scheme"
-            ));
-        }
-        if cfg.interface == Interface::Classic {
-            let (key, name) = if cfg.dark {
-                let dark = cfg.dark_color_scheme.as_deref();
-                (
-                    "dark_color_scheme",
-                    Some(dark.unwrap_or(super::CLASSIC_DARK_SCHEME)),
+        let dark_name = (cfg.dark_color_scheme.as_deref()).unwrap_or(super::CLASSIC_DARK_SCHEME);
+        let dark_colors = (reprisekit::schemes::scheme(dark_name))
+            .filter(|c| c.is_dark())
+            .ok_or_else(|| {
+                format!(
+                    "[appearance] dark_color_scheme = {dark_name:?} is not a dark Classic scheme"
                 )
-            } else {
-                ("color_scheme", cfg.color_scheme.as_deref())
-            };
-            if let Some(name) = name {
-                cfg.theme.colors = reprisekit::schemes::scheme(name).ok_or_else(|| {
-                    format!("[appearance] {key} = {name:?} is not a Classic scheme")
-                })?;
+            })?;
+        if cfg.interface == Interface::Classic {
+            let light = (cfg.color_scheme.as_deref())
+                .map(|name| {
+                    reprisekit::schemes::scheme(name).ok_or_else(|| {
+                        format!("[appearance] color_scheme = {name:?} is not a Classic scheme")
+                    })
+                })
+                .transpose()?;
+            if cfg.dark {
+                cfg.theme.colors = dark_colors;
+            } else if let Some(colors) = light {
+                cfg.theme.colors = colors;
             }
         }
         for (name, value) in file.colors.unwrap_or_default() {

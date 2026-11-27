@@ -30,7 +30,7 @@ pub fn load(text: &str) -> Settings {
         log::warn!("config.toml does not parse; showing defaults");
         return Settings::default();
     };
-    move_mode_keys(&mut doc);
+    settle_mode_keys(&mut doc);
     let mut s = defaults_in(&doc);
     repriseconf::fields::load(&doc, &fields(), &mut s);
     if let Some(list) = get(&doc, &KEYBINDS).and_then(read_shortcuts) {
@@ -82,13 +82,11 @@ pub fn load(text: &str) -> Settings {
     s
 }
 
-/// Under Glass, move `[glass]`'s `mode`, `dark_from` and `dark_to` into `[appearance]` where it
-/// leaves them out, as the compositor reads them; `[glass]`'s go either way. Another interface
-/// ignores them.
-fn move_mode_keys(doc: &mut DocumentMut) {
-    if get(doc, &INTERFACE).and_then(Item::as_str) != Some("glass") {
-        return;
-    }
+/// Settle `[glass]`'s `mode`, `dark_from` and `dark_to` as the compositor reads `doc`: under
+/// Glass they move into `[appearance]` where it leaves them out, under another interface they
+/// apply to nothing and go.
+fn settle_mode_keys(doc: &mut DocumentMut) {
+    let glass = get(doc, &INTERFACE).and_then(Item::as_str) == Some("glass");
     let has = |doc: &DocumentMut, names: &[&'static str]| {
         names
             .iter()
@@ -102,7 +100,7 @@ fn move_mode_keys(doc: &mut DocumentMut) {
             let Some(v) = get(doc, &old).and_then(Item::as_value).cloned() else {
                 continue;
             };
-            if take && set(doc, &new, v).is_err() {
+            if glass && take && set(doc, &new, v).is_err() {
                 continue;
             }
             remove(doc, &old);
@@ -127,9 +125,10 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     } else {
         &have.interface
     });
-    if (&want.mode, &want.dark_from, &want.dark_to) != (&base.mode, &base.dark_from, &base.dark_to)
-    {
-        move_mode_keys(&mut doc);
+    // Before the interface is written: the keys settle as the file read until now.
+    let mode = (&want.mode, &want.dark_from, &want.dark_to);
+    if mode != (&base.mode, &base.dark_from, &base.dark_to) || want.interface != base.interface {
+        settle_mode_keys(&mut doc);
     }
     repriseconf::fields::save(&mut doc, &fields(), want, base, &have, &def)
         .map_err(|e| e.to_string())?;

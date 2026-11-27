@@ -166,7 +166,7 @@ Open from Accessories, Settings > Backup or Welcome to read GNOME (`dconf dump /
 | Source setting | Reprise target |
 | --- | --- |
 | Wallpaper (with dark variant) | `[wallpaper] image`, `position` |
-| Dark style | Glass `mode = "dark"`, Classic One Dark |
+| Dark style | `[appearance] mode = "dark"` |
 | Keyboard layouts, model, options, repeat | `[keyboard]` |
 | Mouse and touchpad speed, gestures, buttons | `[mouse]`, `[touchpad]` |
 | Text scaling / forced font DPI | `[accessibility] text_size` |

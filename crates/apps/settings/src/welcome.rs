@@ -33,7 +33,7 @@ pub fn read(text: &str) -> Picks {
 }
 
 /// `text`'s settings, and them with each pick that differs laid over, a new interface as the
-/// Interface combo moves it; a "night" or "hours" mode stays until Light or Dark moves.
+/// Interface combo moves it; a "night" or "hours" mode stays unless Dark is picked.
 fn with(text: &str, picks: &Picks) -> (Settings, Settings) {
     let base = model::load(text);
     let mut s = base.clone();
@@ -47,8 +47,8 @@ fn with(text: &str, picks: &Picks) -> (Settings, Settings) {
     (base, s)
 }
 
-/// Make `s`'s look dark or light: the mode, and light also drops a dark Classic scheme. A "night"
-/// or "hours" mode stays while it already gives `dark`.
+/// Make `s`'s look dark or light: the mode, and light also drops a dark Classic scheme. Dark
+/// replaces a "night" or "hours" schedule; Light keeps one.
 pub(crate) fn set_dark(s: &mut Settings, dark: bool) {
     if self::dark(s) == dark {
         return;

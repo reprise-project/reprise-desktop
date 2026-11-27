@@ -84,6 +84,7 @@ impl AutoZone {
                 reprisefs::locale::refresh_zone();
                 state.redraw_taskbars();
                 crate::nightlight::update(state);
+                crate::darkmode::clock_moved(state);
             }
         });
         if let Err(e) = inserted {

@@ -111,6 +111,15 @@ pub fn config_changed(state: &mut State) {
     }
 }
 
+/// The wall clock moved under the tick (a resume, a new time zone): read the schedule now rather
+/// than at the tick's next minute.
+pub fn clock_moved(state: &mut State) {
+    if let Some((token, _)) = state.dark_mode.timer.take() {
+        state.handle.remove(token);
+    }
+    config_changed(state);
+}
+
 /// Put in the look the schedule gives now if it is not in force; how long until the next look,
 /// None without a schedule.
 fn tick(state: &mut State) -> Option<std::time::Duration> {
@@ -181,6 +190,22 @@ mod tests {
             h.state.dark_mode.timer.is_none(),
             "a fixed mode cancels the tick"
         );
+    }
+
+    #[test]
+    fn a_moved_clock_reads_the_schedule_at_once() {
+        let mut h = crate::harness::Harness::new();
+        clock_moved(&mut h.state);
+        assert!(
+            h.state.dark_mode.timer.is_none(),
+            "no schedule: nothing to read"
+        );
+        h.state.config = read(HOURS).0;
+        config_changed(&mut h.state);
+        let first = h.state.dark_mode.timer.as_ref().map(|t| t.0);
+        clock_moved(&mut h.state);
+        let now = h.state.dark_mode.timer.as_ref().map(|t| t.0);
+        assert!(now.is_some() && now != first, "a fresh tick, due at once");
     }
 
     #[test]

@@ -6,7 +6,8 @@ Set `[appearance] interface` to `"classic"` (default), `"blue"` or `"glass"`, or
 
 `[appearance] mode` (Settings > Appearance > Mode) is one switch for every interface: `"light"` (default), `"dark"`, `"night"` (dark from sunset to sunrise, or between night light's fixed times, whether or not night light is on) or `"hours"` (dark from `dark_from` to `dark_to`). A scheduled mode switches by itself; picking Light or Dark ends the schedule.
 
-- Classic wears `dark_color_scheme` while dark (default One Dark), Blue its scheme's dark twin, Glass dark glass.
+- Classic wears `dark_color_scheme` while dark (a dark Classic scheme, default One Dark; a High Contrast user picks High Contrast Black there to keep high contrast), Blue its scheme's dark twin, Glass dark glass. `[colors]` overrides apply over the dark colours too.
+- A dark Classic `color_scheme` in light mode also reads as dark to programs and the portal.
 - Running programs, the taskbar and open windows switch live. The portal tells GTK, Qt and browsers (`org.freedesktop.appearance` color-scheme), the generated GTK and Qt themes are rewritten, and `[toolkits] gtk_theme = "auto"` picks Adwaita-dark.
 - `mode`, `dark_from` and `dark_to` used to live in `[glass]`. They still work there for Glass where `[appearance]` leaves them out, and the config notice names them until they move.
 

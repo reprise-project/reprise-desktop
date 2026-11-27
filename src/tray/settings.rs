@@ -58,7 +58,7 @@ pub struct Appearance {
 }
 
 impl Appearance {
-    /// Read the scheme: dark in dark mode or per `ColorScheme::is_dark`, high contrast
+    /// Read the scheme: dark per `Config::looks_dark`, high contrast
     /// when the scheme is one of the High Contrast four, the accent the
     /// glass colour under Glass, else the active caption's.
     pub fn of(cfg: &Config) -> Appearance {
@@ -72,7 +72,7 @@ impl Appearance {
         };
         let (cursor_theme, cursor_size) = cfg.cursor.effective();
         Appearance {
-            color_scheme: if cfg.dark || colors.is_dark() { 1 } else { 2 },
+            color_scheme: if cfg.looks_dark() { 1 } else { 2 },
             contrast: high_contrast as u32,
             accent: (a.r as f64 / 255.0, a.g as f64 / 255.0, a.b as f64 / 255.0),
             interface: cfg.interface,
@@ -82,11 +82,7 @@ impl Appearance {
             shell_dlg: cfg.theme.fonts.shell_dlg.clone().unwrap_or_default(),
             font_family: cfg.theme.fonts.family.join(","),
             font_antialias: cfg.theme.fonts.antialias,
-            mode: if cfg.dark {
-                reprisekit::glass::Mode::Dark
-            } else {
-                reprisekit::glass::Mode::Light
-            },
+            mode: cfg.look_mode(),
             glass_material: cfg.glass.material,
             cursor_theme,
             cursor_size: cursor_size as i32,
@@ -501,7 +497,7 @@ mod tests {
         assert_eq!(text(look::SHELL_DLG), "/usr/share/wine/fonts/sserife.fon");
         assert_eq!(text(look::FONT_FAMILY), "DejaVu Sans,Noto Sans");
         assert_eq!(text(look::FONT_ANTIALIAS), "true");
-        assert_eq!(text(look::MODE), "light");
+        assert_eq!(text(look::MODE), "dark", "Tokyo Night is a dark scheme");
         assert_eq!(text(look::GLASS_MATERIAL), "frosted");
         assert_eq!(text(look::TEXT_SIZE), "100");
         assert_eq!(text(look::DOUBLE_CLICK_MS), "500");
@@ -711,6 +707,14 @@ mod tests {
                 (GNOME, "font-hinting", zbus::Variant::from("full")),
             ]
         );
+    }
+
+    #[test]
+    fn a_dark_classic_scheme_in_light_mode_reads_dark_to_the_portal_and_programs_alike() {
+        let c = crate::config::Config::parse("[appearance]\ncolor_scheme = \"Nord\"\n").unwrap();
+        assert!(!c.dark);
+        let a = Appearance::of(&c);
+        assert_eq!((a.color_scheme, a.mode), (1, reprisekit::glass::Mode::Dark));
     }
 
     #[test]
