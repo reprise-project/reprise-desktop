@@ -224,12 +224,8 @@ mod tests {
             })
     }
 
-    fn part(v: Variant, d: i32, p: Part) -> PartImage {
-        parts(v.into(), d)
-            .into_iter()
-            .find(|(q, _)| *q == p)
-            .unwrap()
-            .1
+    fn part(v: Tone, d: i32, p: Part) -> PartImage {
+        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
     }
 
     fn frame(img: &PartImage, i: i32, h: i32, d: i32) -> Vec<u32> {
@@ -243,7 +239,7 @@ mod tests {
     #[test]
     fn header_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in [Part::HeaderItem, Part::HeaderFiller, Part::HeaderSortArrow] {
                     got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p))));
@@ -255,7 +251,7 @@ mod tests {
 
     #[test]
     fn the_header_parts_are_drawn_at_the_styles_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for (p, w, h) in [
                 (Part::HeaderItem, ITEM_W, 3 * ITEM_H),
                 (Part::HeaderFiller, 1, ITEM_H),
@@ -279,7 +275,7 @@ mod tests {
 
     #[test]
     fn every_header_state_draws_its_own_frame() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let item = part(v, d, Part::HeaderItem);
                 let f: Vec<_> = (0..3).map(|i| frame(&item, i, ITEM_H, d)).collect();
@@ -295,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_header_face_is_opaque() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in [Part::HeaderItem, Part::HeaderFiller] {
                     let img = part(v, d, p);
@@ -310,7 +306,7 @@ mod tests {
 
     #[test]
     fn the_sort_arrow_is_solid_at_1_and_smooth_at_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let one = part(v, 1, Part::HeaderSortArrow);
             for i in 0..2 {
                 let at = |x: i32, y: i32| one.atlas.get(x, i * ITEM_H + y);
@@ -353,7 +349,7 @@ mod tests {
             Variant::Steel,
         ] {
             let d = 2;
-            let item = part(v, d, Part::HeaderItem);
+            let item = part(v.into(), d, Part::HeaderItem);
             let hot = |x: i32, y: i32| item.atlas.get(x, ITEM_H * d + y);
             let face = hot(ITEM_W * d / 2, 5 * d);
             let bottom = (ITEM_H - 1) * d + 1;

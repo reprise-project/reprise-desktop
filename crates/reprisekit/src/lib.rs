@@ -75,6 +75,7 @@ pub mod media;
 pub mod metrics;
 mod mutex;
 pub mod netmeter;
+mod oklab;
 pub mod overview;
 pub mod paint;
 pub mod perfart;

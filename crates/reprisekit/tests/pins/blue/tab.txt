@@ -78,3 +78,83 @@ Steel TabItem Normal 2 655616efd42eca95
 Steel TabItem Hot 2 2c99a61a66e3e5ad
 Steel TabItem Checked 2 d02638765461fd09
 Steel TabPane 2 52a4f1a1348a5bd9
+Blue dark TabItem Normal 1 572d7a9a04680d2c
+Blue dark TabItem Hot 1 c42380d242a8007a
+Blue dark TabItem Checked 1 fc17604655743dd3
+Blue dark TabPane 1 5f4fd6b5a488405c
+Blue dark TabItem Normal 2 d709582f1f1eafe2
+Blue dark TabItem Hot 2 676e913b0f8ad09e
+Blue dark TabItem Checked 2 a73daa5ec554f79d
+Blue dark TabPane 2 99bd9a1b3b3d7635
+Olive dark TabItem Normal 1 0d978c085b47797f
+Olive dark TabItem Hot 1 5b27941d3fea9f01
+Olive dark TabItem Checked 1 36ca20506f4e0403
+Olive dark TabPane 1 3577aeece7fa7d92
+Olive dark TabItem Normal 2 27b070ecb829cacc
+Olive dark TabItem Hot 2 310d07ca484b8f6c
+Olive dark TabItem Checked 2 4773410656eecdd5
+Olive dark TabPane 2 4710a8c6ee0770de
+Silver dark TabItem Normal 1 d4bf32212b16d783
+Silver dark TabItem Hot 1 332a32c39d7185d7
+Silver dark TabItem Checked 1 8c5ba86beb372fab
+Silver dark TabPane 1 9e3c0b7de7a5b3c3
+Silver dark TabItem Normal 2 770cdcd0870933f5
+Silver dark TabItem Hot 2 0e9e42b7955fbd61
+Silver dark TabItem Checked 2 6afd2f95f7dc2b9d
+Silver dark TabPane 2 52a4f1a1348a5bd9
+Slate dark TabItem Normal 1 77262e9e5c79ae4f
+Slate dark TabItem Hot 1 9d11accb32fe3a34
+Slate dark TabItem Checked 1 324e86c2f5561783
+Slate dark TabPane 1 8bc4995d4fc55107
+Slate dark TabItem Normal 2 22c41544021c5739
+Slate dark TabItem Hot 2 d0ab150cb2492615
+Slate dark TabItem Checked 2 82287fb31907c8e5
+Slate dark TabPane 2 cba317ad3ee6ac78
+Sapphire dark TabItem Normal 1 f2f6428de2bbd6ab
+Sapphire dark TabItem Hot 1 4be926c1a9fa37fb
+Sapphire dark TabItem Checked 1 edad7c4d9ae0e71b
+Sapphire dark TabPane 1 dea6b31369628a3a
+Sapphire dark TabItem Normal 2 ec839e71102dac51
+Sapphire dark TabItem Hot 2 47c174d5c054ffdd
+Sapphire dark TabItem Checked 2 84089dce4dcf6865
+Sapphire dark TabPane 2 dcd900bbda338f03
+Obsidian dark TabItem Normal 1 f2f6428de2bbd6ab
+Obsidian dark TabItem Hot 1 4be926c1a9fa37fb
+Obsidian dark TabItem Checked 1 edad7c4d9ae0e71b
+Obsidian dark TabPane 1 dea6b31369628a3a
+Obsidian dark TabItem Normal 2 ec839e71102dac51
+Obsidian dark TabItem Hot 2 47c174d5c054ffdd
+Obsidian dark TabItem Checked 2 84089dce4dcf6865
+Obsidian dark TabPane 2 dcd900bbda338f03
+Ember dark TabItem Normal 1 77262e9e5c79ae4f
+Ember dark TabItem Hot 1 9d11accb32fe3a34
+Ember dark TabItem Checked 1 324e86c2f5561783
+Ember dark TabPane 1 8bc4995d4fc55107
+Ember dark TabItem Normal 2 22c41544021c5739
+Ember dark TabItem Hot 2 d0ab150cb2492615
+Ember dark TabItem Checked 2 82287fb31907c8e5
+Ember dark TabPane 2 cba317ad3ee6ac78
+Cobalt dark TabItem Normal 1 f2f6428de2bbd6ab
+Cobalt dark TabItem Hot 1 4be926c1a9fa37fb
+Cobalt dark TabItem Checked 1 edad7c4d9ae0e71b
+Cobalt dark TabPane 1 dea6b31369628a3a
+Cobalt dark TabItem Normal 2 ec839e71102dac51
+Cobalt dark TabItem Hot 2 47c174d5c054ffdd
+Cobalt dark TabItem Checked 2 84089dce4dcf6865
+Cobalt dark TabPane 2 dcd900bbda338f03
+Carbon dark TabItem Normal 1 f2f6428de2bbd6ab
+Carbon dark TabItem Hot 1 4be926c1a9fa37fb
+Carbon dark TabItem Checked 1 edad7c4d9ae0e71b
+Carbon dark TabPane 1 dea6b31369628a3a
+Carbon dark TabItem Normal 2 ec839e71102dac51
+Carbon dark TabItem Hot 2 47c174d5c054ffdd
+Carbon dark TabItem Checked 2 84089dce4dcf6865
+Carbon dark TabPane 2 dcd900bbda338f03
+Steel dark TabItem Normal 1 74aa3bd22ca35143
+Steel dark TabItem Hot 1 357544e58de7bfa4
+Steel dark TabItem Checked 1 15bb6288c1b0007b
+Steel dark TabPane 1 9e3c0b7de7a5b3c3
+Steel dark TabItem Normal 2 655616efd42eca95
+Steel dark TabItem Hot 2 2c99a61a66e3e5ad
+Steel dark TabItem Checked 2 d02638765461fd09
+Steel dark TabPane 2 52a4f1a1348a5bd9

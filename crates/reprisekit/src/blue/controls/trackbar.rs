@@ -238,8 +238,8 @@ mod tests {
     use super::*;
     use crate::blue::Variant;
 
-    fn part(v: Variant, d: i32, part: Part) -> PartImage {
-        parts(v.into(), d)
+    fn part(v: Tone, d: i32, part: Part) -> PartImage {
+        parts(v, d)
             .into_iter()
             .find(|(p, _)| *p == part)
             .map(|(_, img)| img)
@@ -293,7 +293,7 @@ mod tests {
     /// the same design-pixel border, size and states as at 1.
     #[test]
     fn every_part_is_its_design_size_times_the_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for p in ALL {
                 let (one, two) = (part(v, 1, p), part(v, 2, p));
                 let (w, h) = size(p);
@@ -319,7 +319,7 @@ mod tests {
     /// which is the one at rest; the channel's two frames are one.
     #[test]
     fn the_thumbs_light_hold_and_grey() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let t = part(v, d, Part::TrackbarThumb);
                 let f: Vec<_> = (0..4).map(|i| frame(&t, i)).collect();
@@ -344,7 +344,7 @@ mod tests {
     /// its point narrows to the tip on row 20 with nothing beside it.
     #[test]
     fn the_pointer_has_round_top_corners_and_a_point() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let c = frame(&part(v, 1, Part::TrackbarThumb), 0);
             assert!(alpha(c.get(0, 0)) < 96, "{v:?} top left corner");
             assert!(alpha(c.get(10, 0)) < 96, "{v:?} top right corner");
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn curved_edges_are_smooth_at_scale_2() {
         let partial = |px: u32| (1..255).contains(&alpha(px));
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let t = frame(&part(v, 2, Part::TrackbarThumb), 0);
             assert!(partial(t.get(1, 1)), "{v:?} pointer corner");
             assert!(
@@ -389,7 +389,7 @@ mod tests {
     /// both scales, flat and upright, so a long channel has no seams.
     #[test]
     fn the_channels_middle_stretches_evenly() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let c = frame(&part(v, d, Part::TrackbarTrack), 0);
                 for y in 0..TRACK_H * d {
@@ -424,7 +424,7 @@ mod tests {
             let ch = |s: u32| ((px >> s) & 0xFF) + (255 - a);
             ch(16) + ch(8) + ch(0)
         };
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for p in ALL {
                 let img = part(v, 2, p);
                 for i in 0..img.states.len() {
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn trackbar_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in ALL {
                     got.push((format!("{v:?} {p:?} {d}"), fnv(&part(v, d, p).atlas)));
@@ -500,7 +500,7 @@ mod tests {
 
     /// Every state of `v`'s box thumb drawn into a `w` x `h` rect, one
     /// under the other.
-    fn box_in(v: Variant, w: i32, h: i32, d: i32) -> Canvas {
+    fn box_in(v: Tone, w: i32, h: i32, d: i32) -> Canvas {
         let img = part(v, d, Part::TrackbarThumbV);
         let n = THUMB_STATES.len() as i32;
         let mut c = Canvas::new((w * d) as u32, (h * n * d) as u32);
@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn the_box_thumb_at_its_own_size_is_its_frames() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let img = part(v, d, Part::TrackbarThumbV);
                 assert!(
@@ -528,7 +528,7 @@ mod tests {
     /// edge, its caps stay 2 px wide and its corners stay clear.
     #[test]
     fn the_box_thumb_fills_the_volume_popups_26_by_15_rect() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let c = box_in(v, 26, 15, d);
                 let px = |x: i32, y: i32| c.get(x * d, y * d);
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn the_box_thumb_in_the_volume_popups_rect_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&box_in(v, 26, 15, d)))))
             .collect();

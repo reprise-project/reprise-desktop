@@ -18,3 +18,23 @@ Carbon 1 f47f60553d41f9eb
 Carbon 2 46a37933b1b3005b
 Steel 1 c1d0e1a6b1d99033
 Steel 2 acabc9639b661b62
+Blue dark 1 785951205d67de17
+Blue dark 2 05c9bc828c708a8c
+Olive dark 1 d931a3cbbe9e63b8
+Olive dark 2 349b4cac9bf90e62
+Silver dark 1 f2730b61020c77cf
+Silver dark 2 54defad4b8b6cb06
+Slate dark 1 f47f60553d41f9eb
+Slate dark 2 46a37933b1b3005b
+Sapphire dark 1 f47f60553d41f9eb
+Sapphire dark 2 46a37933b1b3005b
+Obsidian dark 1 f47f60553d41f9eb
+Obsidian dark 2 46a37933b1b3005b
+Ember dark 1 5536416c72a84c0c
+Ember dark 2 8c4efdd042a17379
+Cobalt dark 1 a1de5c18217922a4
+Cobalt dark 2 e98a707980ee53a0
+Carbon dark 1 f47f60553d41f9eb
+Carbon dark 2 46a37933b1b3005b
+Steel dark 1 c1d0e1a6b1d99033
+Steel dark 2 acabc9639b661b62

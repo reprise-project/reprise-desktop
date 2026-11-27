@@ -1,3 +1,120 @@
+blue-variants-dark.png "Apply" x10
+blue-variants-dark.png "Blue dark: common controls" x1
+blue-variants-dark.png "Blue dark: explorer bar" x1
+blue-variants-dark.png "Blue dark: frames and taskbar" x1
+blue-variants-dark.png "Blue dark: list header" x1
+blue-variants-dark.png "Blue dark: menus" x1
+blue-variants-dark.png "Blue dark: rebar" x1
+blue-variants-dark.png "Blue dark: status bar" x1
+blue-variants-dark.png "Blue dark: task pane" x1
+blue-variants-dark.png "Blue dark: toolbar" x1
+blue-variants-dark.png "Blue dark: tooltip" x1
+blue-variants-dark.png "Carbon dark: common controls" x1
+blue-variants-dark.png "Carbon dark: explorer bar" x1
+blue-variants-dark.png "Carbon dark: frames and taskbar" x1
+blue-variants-dark.png "Carbon dark: list header" x1
+blue-variants-dark.png "Carbon dark: menus" x1
+blue-variants-dark.png "Carbon dark: rebar" x1
+blue-variants-dark.png "Carbon dark: status bar" x1
+blue-variants-dark.png "Carbon dark: task pane" x1
+blue-variants-dark.png "Carbon dark: toolbar" x1
+blue-variants-dark.png "Carbon dark: tooltip" x1
+blue-variants-dark.png "Closed" x10
+blue-variants-dark.png "Cobalt dark: common controls" x1
+blue-variants-dark.png "Cobalt dark: explorer bar" x1
+blue-variants-dark.png "Cobalt dark: frames and taskbar" x1
+blue-variants-dark.png "Cobalt dark: list header" x1
+blue-variants-dark.png "Cobalt dark: menus" x1
+blue-variants-dark.png "Cobalt dark: rebar" x1
+blue-variants-dark.png "Cobalt dark: status bar" x1
+blue-variants-dark.png "Cobalt dark: task pane" x1
+blue-variants-dark.png "Cobalt dark: toolbar" x1
+blue-variants-dark.png "Cobalt dark: tooltip" x1
+blue-variants-dark.png "Combo" x30
+blue-variants-dark.png "Date Mo..." x30
+blue-variants-dark.png "Direction" x10
+blue-variants-dark.png "Edit" x10
+blue-variants-dark.png "Ember dark: common controls" x1
+blue-variants-dark.png "Ember dark: explorer bar" x1
+blue-variants-dark.png "Ember dark: frames and taskbar" x1
+blue-variants-dark.png "Ember dark: list header" x1
+blue-variants-dark.png "Ember dark: menus" x1
+blue-variants-dark.png "Ember dark: rebar" x1
+blue-variants-dark.png "Ember dark: status bar" x1
+blue-variants-dark.png "Ember dark: task pane" x1
+blue-variants-dark.png "Ember dark: toolbar" x1
+blue-variants-dark.png "Ember dark: tooltip" x1
+blue-variants-dark.png "File and Folder Tasks" x20
+blue-variants-dark.png "Greyed" x10
+blue-variants-dark.png "Help" x20
+blue-variants-dark.png "Hot" x10
+blue-variants-dark.png "List" x10
+blue-variants-dark.png "Match case" x10
+blue-variants-dark.png "Name" x30
+blue-variants-dark.png "Obsidian dark: common controls" x1
+blue-variants-dark.png "Obsidian dark: explorer bar" x1
+blue-variants-dark.png "Obsidian dark: frames and taskbar" x1
+blue-variants-dark.png "Obsidian dark: list header" x1
+blue-variants-dark.png "Obsidian dark: menus" x1
+blue-variants-dark.png "Obsidian dark: rebar" x1
+blue-variants-dark.png "Obsidian dark: status bar" x1
+blue-variants-dark.png "Obsidian dark: task pane" x1
+blue-variants-dark.png "Obsidian dark: toolbar" x1
+blue-variants-dark.png "Obsidian dark: tooltip" x1
+blue-variants-dark.png "Olive Green dark: common controls" x1
+blue-variants-dark.png "Olive Green dark: explorer bar" x1
+blue-variants-dark.png "Olive Green dark: frames and taskbar" x1
+blue-variants-dark.png "Olive Green dark: list header" x1
+blue-variants-dark.png "Olive Green dark: menus" x1
+blue-variants-dark.png "Olive Green dark: rebar" x1
+blue-variants-dark.png "Olive Green dark: status bar" x1
+blue-variants-dark.png "Olive Green dark: task pane" x1
+blue-variants-dark.png "Olive Green dark: toolbar" x1
+blue-variants-dark.png "Olive Green dark: tooltip" x1
+blue-variants-dark.png "Open" x10
+blue-variants-dark.png "S  M  T  W  T  F  S" x20
+blue-variants-dark.png "Sapphire dark: common controls" x1
+blue-variants-dark.png "Sapphire dark: explorer bar" x1
+blue-variants-dark.png "Sapphire dark: frames and taskbar" x1
+blue-variants-dark.png "Sapphire dark: list header" x1
+blue-variants-dark.png "Sapphire dark: menus" x1
+blue-variants-dark.png "Sapphire dark: rebar" x1
+blue-variants-dark.png "Sapphire dark: status bar" x1
+blue-variants-dark.png "Sapphire dark: task pane" x1
+blue-variants-dark.png "Sapphire dark: toolbar" x1
+blue-variants-dark.png "Sapphire dark: tooltip" x1
+blue-variants-dark.png "Silver dark: common controls" x1
+blue-variants-dark.png "Silver dark: explorer bar" x1
+blue-variants-dark.png "Silver dark: frames and taskbar" x1
+blue-variants-dark.png "Silver dark: list header" x1
+blue-variants-dark.png "Silver dark: menus" x1
+blue-variants-dark.png "Silver dark: rebar" x1
+blue-variants-dark.png "Silver dark: status bar" x1
+blue-variants-dark.png "Silver dark: task pane" x1
+blue-variants-dark.png "Silver dark: toolbar" x1
+blue-variants-dark.png "Silver dark: tooltip" x1
+blue-variants-dark.png "Size" x30
+blue-variants-dark.png "Slate dark: common controls" x1
+blue-variants-dark.png "Slate dark: explorer bar" x1
+blue-variants-dark.png "Slate dark: frames and taskbar" x1
+blue-variants-dark.png "Slate dark: list header" x1
+blue-variants-dark.png "Slate dark: menus" x1
+blue-variants-dark.png "Slate dark: rebar" x1
+blue-variants-dark.png "Slate dark: status bar" x1
+blue-variants-dark.png "Slate dark: task pane" x1
+blue-variants-dark.png "Slate dark: toolbar" x1
+blue-variants-dark.png "Slate dark: tooltip" x1
+blue-variants-dark.png "Steel dark: common controls" x1
+blue-variants-dark.png "Steel dark: explorer bar" x1
+blue-variants-dark.png "Steel dark: frames and taskbar" x1
+blue-variants-dark.png "Steel dark: list header" x1
+blue-variants-dark.png "Steel dark: menus" x1
+blue-variants-dark.png "Steel dark: rebar" x1
+blue-variants-dark.png "Steel dark: status bar" x1
+blue-variants-dark.png "Steel dark: task pane" x1
+blue-variants-dark.png "Steel dark: toolbar" x1
+blue-variants-dark.png "Steel dark: tooltip" x1
+blue-variants-dark.png "Type" x30
 blue-variants.png "Apply" x10
 blue-variants.png "Blue: common controls" x1
 blue-variants.png "Blue: explorer bar" x1

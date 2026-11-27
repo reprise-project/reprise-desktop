@@ -38,3 +38,43 @@ Steel 1 ExplorerBarHeader 617f82ad84e7a157
 Steel 1 ExplorerBarClose 4531eeed769fe977
 Steel 2 ExplorerBarHeader 7c771c8232a7c4ee
 Steel 2 ExplorerBarClose 3737b1abb86d38de
+Blue dark 1 ExplorerBarHeader 00da115341290787
+Blue dark 1 ExplorerBarClose d1800548a5184820
+Blue dark 2 ExplorerBarHeader 7b655902aeaf135e
+Blue dark 2 ExplorerBarClose c32fcbf668f9dcec
+Olive dark 1 ExplorerBarHeader 0e2d35c43409cf2f
+Olive dark 1 ExplorerBarClose 4531eeed769fe977
+Olive dark 2 ExplorerBarHeader 494650a629567b8e
+Olive dark 2 ExplorerBarClose 3737b1abb86d38de
+Silver dark 1 ExplorerBarHeader 617f82ad84e7a157
+Silver dark 1 ExplorerBarClose 4531eeed769fe977
+Silver dark 2 ExplorerBarHeader 7c771c8232a7c4ee
+Silver dark 2 ExplorerBarClose 3737b1abb86d38de
+Slate dark 1 ExplorerBarHeader 3a32fe5f3288e1df
+Slate dark 1 ExplorerBarClose 1342811b95f1625d
+Slate dark 2 ExplorerBarHeader a42d5320014e62de
+Slate dark 2 ExplorerBarClose 14e09813d9f706f4
+Sapphire dark 1 ExplorerBarHeader 172252632873fa77
+Sapphire dark 1 ExplorerBarClose 2339226a1ef2c876
+Sapphire dark 2 ExplorerBarHeader 3b9f903b86eaec7a
+Sapphire dark 2 ExplorerBarClose abc4af1845075270
+Obsidian dark 1 ExplorerBarHeader 172252632873fa77
+Obsidian dark 1 ExplorerBarClose 2339226a1ef2c876
+Obsidian dark 2 ExplorerBarHeader 3b9f903b86eaec7a
+Obsidian dark 2 ExplorerBarClose abc4af1845075270
+Ember dark 1 ExplorerBarHeader cbee38ff5de3c65b
+Ember dark 1 ExplorerBarClose d97663b55f19a0aa
+Ember dark 2 ExplorerBarHeader 5cefbf1b1ff040f6
+Ember dark 2 ExplorerBarClose c3816e3cf4dcbddf
+Cobalt dark 1 ExplorerBarHeader 172252632873fa77
+Cobalt dark 1 ExplorerBarClose 2339226a1ef2c876
+Cobalt dark 2 ExplorerBarHeader 3b9f903b86eaec7a
+Cobalt dark 2 ExplorerBarClose abc4af1845075270
+Carbon dark 1 ExplorerBarHeader 172252632873fa77
+Carbon dark 1 ExplorerBarClose 2339226a1ef2c876
+Carbon dark 2 ExplorerBarHeader 3b9f903b86eaec7a
+Carbon dark 2 ExplorerBarClose abc4af1845075270
+Steel dark 1 ExplorerBarHeader 617f82ad84e7a157
+Steel dark 1 ExplorerBarClose 4531eeed769fe977
+Steel dark 2 ExplorerBarHeader 7c771c8232a7c4ee
+Steel dark 2 ExplorerBarClose 3737b1abb86d38de

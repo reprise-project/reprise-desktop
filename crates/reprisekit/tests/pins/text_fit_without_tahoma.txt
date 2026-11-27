@@ -20,33 +20,63 @@ label-ellipsis ellipsized "HP LaserJet 4250 PostScript Printer Driver" x3  # the
 parts-blue-blue cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-blue cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-blue cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-blue-dark cut "Unchecked Disabled" x2
+parts-blue-blue-dark cut "Unchecked Normal" x2
+parts-blue-blue-dark cut "Unchecked Pressed" x2
 parts-blue-carbon cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-carbon cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-carbon cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-carbon-dark cut "Unchecked Disabled" x2
+parts-blue-carbon-dark cut "Unchecked Normal" x2
+parts-blue-carbon-dark cut "Unchecked Pressed" x2
 parts-blue-cobalt cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-cobalt cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-cobalt cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-cobalt-dark cut "Unchecked Disabled" x2
+parts-blue-cobalt-dark cut "Unchecked Normal" x2
+parts-blue-cobalt-dark cut "Unchecked Pressed" x2
 parts-blue-ember cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-ember cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-ember cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-ember-dark cut "Unchecked Disabled" x2
+parts-blue-ember-dark cut "Unchecked Normal" x2
+parts-blue-ember-dark cut "Unchecked Pressed" x2
 parts-blue-obsidian cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-obsidian cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-obsidian cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-obsidian-dark cut "Unchecked Disabled" x2
+parts-blue-obsidian-dark cut "Unchecked Normal" x2
+parts-blue-obsidian-dark cut "Unchecked Pressed" x2
 parts-blue-olive cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-olive cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-olive cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-olive-dark cut "Unchecked Disabled" x2
+parts-blue-olive-dark cut "Unchecked Normal" x2
+parts-blue-olive-dark cut "Unchecked Pressed" x2
 parts-blue-sapphire cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-sapphire cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-sapphire cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-sapphire-dark cut "Unchecked Disabled" x2
+parts-blue-sapphire-dark cut "Unchecked Normal" x2
+parts-blue-sapphire-dark cut "Unchecked Pressed" x2
 parts-blue-silver cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-silver cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-silver cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-silver-dark cut "Unchecked Disabled" x2
+parts-blue-silver-dark cut "Unchecked Normal" x2
+parts-blue-silver-dark cut "Unchecked Pressed" x2
 parts-blue-slate cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-slate cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-slate cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-slate-dark cut "Unchecked Disabled" x2
+parts-blue-slate-dark cut "Unchecked Normal" x2
+parts-blue-slate-dark cut "Unchecked Pressed" x2
 parts-blue-steel cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-steel cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-steel cut "Unchecked Pressed" x2  # the gallery's own caption
+parts-blue-steel-dark cut "Unchecked Disabled" x2
+parts-blue-steel-dark cut "Unchecked Normal" x2
+parts-blue-steel-dark cut "Unchecked Pressed" x2
 parts-glass-dark cut "StartShutdownArrowLight" x1  # the gallery's own caption
 parts-glass-dark cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-glass-dark cut "Unchecked Normal" x2  # the gallery's own caption

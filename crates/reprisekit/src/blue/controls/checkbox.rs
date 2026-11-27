@@ -195,9 +195,9 @@ mod tests {
 
     #[test]
     fn every_frame_is_13_square_and_its_own() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
-                let img = check_box(v.into(), d);
+                let img = check_box(v, d);
                 assert_eq!(img.scale, d, "{v:?} at {d}");
                 assert_eq!(img.sizing, crate::raster::Insets::ZERO, "{v:?}");
                 let mut seen: Vec<Vec<u32>> = Vec::new();
@@ -224,10 +224,10 @@ mod tests {
     /// The rim is the face's rim all round; the box is opaque except where a greyed face has no well.
     #[test]
     fn the_rim_is_the_faces_and_only_a_bare_greyed_well_is_clear() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let f = &v.scheme().check_box;
             for d in [1, 2] {
-                let img = check_box(v.into(), d);
+                let img = check_box(v, d);
                 for check in CHECKS {
                     for state in CHECK_STATES {
                         let face = face(f, check, state);
@@ -265,9 +265,9 @@ mod tests {
     /// The tick has solid pixels on both arms at d = 1 and soft edges at d = 2; the mixed square spans (3, 3) to (9, 9).
     #[test]
     fn the_tick_is_solid_at_1_and_smooth_at_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let f = &v.scheme().check_box;
-            let one = check_box(v.into(), 1);
+            let one = check_box(v, 1);
             let ink = 0xFF00_0000 | f.normal_checked.mark.unwrap().argb();
             for (x, y) in [(3, 6), (4, 7), (5, 8), (6, 7), (9, 4)] {
                 assert_eq!(
@@ -299,7 +299,7 @@ mod tests {
                 mixed,
                 "{v:?} mixed is 7 px wide"
             );
-            let two = check_box(v.into(), 2);
+            let two = check_box(v, 2);
             let f2 = two.check_frame(Check::Checked, State::Normal);
             let unchecked = two.check_frame(Check::Unchecked, State::Normal);
             let soft = (0..f2.height)
@@ -318,9 +318,9 @@ mod tests {
 
     #[test]
     fn check_box_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
-            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&check_box(v.into(), d)))))
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&check_box(v, d)))))
             .collect();
         crate::pins::check("blue/check_box", &got);
     }

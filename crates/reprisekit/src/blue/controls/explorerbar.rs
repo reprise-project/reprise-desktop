@@ -161,15 +161,15 @@ mod tests {
         h
     }
 
-    fn part(v: Variant, d: i32, which: Part) -> PartImage {
-        parts(v.into(), d)
+    fn part(v: Tone, d: i32, which: Part) -> PartImage {
+        parts(v, d)
             .into_iter()
             .find(|(p, _)| *p == which)
             .map(|(_, img)| img)
             .unwrap()
     }
 
-    fn frame(v: Variant, d: i32, i: i32) -> Canvas {
+    fn frame(v: Tone, d: i32, i: i32) -> Canvas {
         let img = part(v, d, Part::ExplorerBarClose);
         let mut c = Canvas::new((CLOSE_W * d) as u32, (CLOSE_H * d) as u32);
         for y in 0..CLOSE_H * d {
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn explorer_bar_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 for p in [Part::ExplorerBarHeader, Part::ExplorerBarClose] {
                     got.push((format!("{v:?} {d} {p:?}"), fnv(&part(v, d, p).atlas)));
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn explorer_bar_parts_are_redrawn_at_scale_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for p in [Part::ExplorerBarHeader, Part::ExplorerBarClose] {
                 let (one, two) = (part(v, 1, p), part(v, 2, p));
                 assert_eq!(two.atlas.width, 2 * one.atlas.width, "{v:?} {p:?}");
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn the_strip_shades_across_over_its_line() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let face = &v.scheme().explorer_bar_header.normal;
             for d in [1, 2] {
                 let a = part(v, d, Part::ExplorerBarHeader).atlas;
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn the_close_box_states_differ() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let [rest, hot, held] = [0, 1, 2].map(|i| frame(v, d, i));
                 assert_ne!(rest.pixels, hot.pixels, "{v:?} at {d}");
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn the_close_box_has_round_open_corners() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let faces = &v.scheme().explorer_bar_close;
             for (i, face) in [(1, &faces.hot), (2, &faces.pressed)] {
                 let one = frame(v, 1, i);
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn the_close_box_corners_have_no_dark_fringe() {
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             let faces = &v.scheme().explorer_bar_close;
             for (i, face) in [(1, &faces.hot), (2, &faces.pressed)] {
                 let floor = [face.rim.r, face.rim.g, face.rim.b].map(f64::from);
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn the_x_is_solid_at_1_smooth_at_2_and_moves_when_held() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let ink = v.scheme().explorer_bar_close.hot.mark.unwrap().argb();
             let rest = frame(v, 1, 0);
             assert_eq!(rest.get(9, 8), ink, "{v:?}: the arms cross");

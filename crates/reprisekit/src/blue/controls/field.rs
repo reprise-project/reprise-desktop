@@ -42,8 +42,8 @@ mod tests {
     use super::*;
     use crate::blue::Variant;
 
-    fn part(v: Variant, p: Part) -> Option<PartImage> {
-        parts(v.into())
+    fn part(v: Tone, p: Part) -> Option<PartImage> {
+        parts(v)
             .into_iter()
             .find(|(q, _)| *q == p)
             .map(|(_, img)| img)
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn each_variant_lines_its_edits_in_its_scheme_colour() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let want = v.scheme().edit_border.normal.rim.argb();
             let img = part(v, Part::EditBorder).unwrap();
             for (x, y) in [(0, 0), (4, 0), (0, 4), (4, 4), (2, 0), (0, 2)] {
@@ -68,8 +68,8 @@ mod tests {
 
     #[test]
     fn only_silver_and_steel_line_their_lists_apart() {
-        for v in Variant::ALL {
-            if !matches!(v, Variant::Silver | Variant::Steel) {
+        for v in Tone::ALL {
+            if !matches!(v.variant, Variant::Silver | Variant::Steel) {
                 assert!(part(v, Part::ListBorder).is_none(), "{v:?}");
             }
         }
@@ -80,14 +80,14 @@ mod tests {
             s.edit_border.normal.rim.argb(),
             "the edit line differs"
         );
-        let img = part(Variant::Silver, Part::ListBorder).unwrap();
+        let img = part(Variant::Silver.into(), Part::ListBorder).unwrap();
         assert_eq!(px(&img, State::Normal, 0, 0), list);
         assert_eq!(px(&img, State::Normal, 4, 2), list);
     }
 
     #[test]
     fn a_greyed_combo_is_a_pale_line_over_a_paler_ring() {
-        for v in Variant::ALL {
+        for v in Variant::ALL.map(Tone::from) {
             for p in [Part::EditBorder, Part::ListBorder] {
                 let Some(img) = part(v, p) else { continue };
                 let (line, ring) = (

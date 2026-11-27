@@ -133,12 +133,8 @@ mod tests {
     use super::*;
     use crate::raster::Rect;
 
-    fn img(v: Variant, part: Part, d: i32) -> PartImage {
-        parts(v.into(), d)
-            .into_iter()
-            .find(|(p, _)| *p == part)
-            .unwrap()
-            .1
+    fn img(v: Tone, part: Part, d: i32) -> PartImage {
+        parts(v, d).into_iter().find(|(p, _)| *p == part).unwrap().1
     }
 
     fn px(img: &PartImage, state: State, x: i32, y: i32) -> u32 {
@@ -173,7 +169,7 @@ mod tests {
 
     #[test]
     fn each_frame_is_15_by_8_design_px_at_every_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 for d in [1, 2] {
                     let img = img(v, part, d);
@@ -189,7 +185,7 @@ mod tests {
 
     #[test]
     fn the_seams_are_the_same_design_insets_at_scale_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 assert_eq!(img(v, part, 1).sizing, img(v, part, 2).sizing, "{v:?}");
             }
@@ -198,7 +194,7 @@ mod tests {
 
     #[test]
     fn every_state_draws_its_own_frame() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 for d in [1, 2] {
                     let img = img(v, part, d);
@@ -214,7 +210,7 @@ mod tests {
 
     #[test]
     fn the_corners_are_rounded_clear_and_soft_at_scale_2() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 for state in STATES {
                     let one = img(v, part, 1);
@@ -253,7 +249,7 @@ mod tests {
             .collect()
     }
 
-    fn ink(v: Variant, part: Part, state: State) -> u32 {
+    fn ink(v: Tone, part: Part, state: State) -> u32 {
         let s = v.scheme();
         let face = match (part, state) {
             (Part::SpinUp, State::Normal) => &s.spin_up.normal,
@@ -271,7 +267,7 @@ mod tests {
     /// At scale 1 both arms and the point hold solid ink: the chevron never thins to a grey smudge.
     #[test]
     fn the_chevron_is_solid_ink_at_scale_1() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 let img = img(v, part, 1);
                 for state in STATES {
@@ -292,7 +288,7 @@ mod tests {
 
     #[test]
     fn the_up_and_down_chevrons_point_opposite_ways() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let (up, down) = (img(v, Part::SpinUp, 1), img(v, Part::SpinDown, 1));
             let (iu, id) = (
                 ink(v, Part::SpinUp, State::Normal),
@@ -308,7 +304,7 @@ mod tests {
     /// The stretchable column 3 and row carry no ink in any state, so a wider or taller button never repeats the chevron.
     #[test]
     fn the_seams_stay_clear_of_the_chevron() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 for d in [1, 2] {
                     let img = img(v, part, d);
@@ -344,7 +340,7 @@ mod tests {
     #[test]
     fn the_rounded_corners_leave_no_dark_fringe() {
         let luma = |c: crate::theme::Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
-        let face_of = |v: Variant, part: Part, state: State| {
+        let face_of = |v: Tone, part: Part, state: State| {
             let s = v.scheme();
             let f = match part {
                 Part::SpinUp => [
@@ -362,7 +358,7 @@ mod tests {
             };
             *f[STATES.iter().position(|&t| t == state).unwrap()]
         };
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 for d in [1, 2] {
                     let img = img(v, part, d);
@@ -406,7 +402,7 @@ mod tests {
 
     #[test]
     fn a_taller_slate_down_button_stretches_the_bottom_of_its_face() {
-        let draw = |v: Variant, part: Part, h: i32| {
+        let draw = |v: Tone, part: Part, h: i32| {
             let mut c = Canvas::new(W as u32, 12);
             crate::blue::style_for(v).draw(&mut c, Rect::new(0, 0, W, h), part, State::Normal, 1);
             c
@@ -418,7 +414,7 @@ mod tests {
             (Variant::Ember, Part::SpinDown, 1),
             (Variant::Cobalt, Part::SpinDown, 1),
         ] {
-            let (short, tall) = (draw(v, part, H), draw(v, part, H + 2));
+            let (short, tall) = (draw(v.into(), part, H), draw(v.into(), part, H + 2));
             for x in 0..W {
                 for y in 0..=seam {
                     assert_eq!(tall.get(x, y), short.get(x, y), "{v:?} {part:?} ({x}, {y})");
@@ -444,7 +440,7 @@ mod tests {
     #[test]
     fn spin_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for part in PARTS {
                 for d in [1, 2] {
                     let img = img(v, part, d);

@@ -38,3 +38,43 @@ Steel Rebar 1 02f2060fcfe629b7
 Steel RebarBand 1 b9ea95dc1000a761
 Steel Rebar 2 d5555043c43cae75
 Steel RebarBand 2 378fc45603f1eec3
+Blue dark Rebar 1 0c82dff27cf9484f
+Blue dark RebarBand 1 2f577a591ad39fe3
+Blue dark Rebar 2 03fd2cfefd91f580
+Blue dark RebarBand 2 15b8f30b3dfae48b
+Olive dark Rebar 1 8d7e919b16cf0c3b
+Olive dark RebarBand 1 b9ea95dc1000a761
+Olive dark Rebar 2 2e2d7989cb987f94
+Olive dark RebarBand 2 378fc45603f1eec3
+Silver dark Rebar 1 02f2060fcfe629b7
+Silver dark RebarBand 1 b9ea95dc1000a761
+Silver dark Rebar 2 d5555043c43cae75
+Silver dark RebarBand 2 378fc45603f1eec3
+Slate dark Rebar 1 39c1c16eed6e8e77
+Slate dark RebarBand 1 221848b77a31edc9
+Slate dark Rebar 2 55db844d2d91ca95
+Slate dark RebarBand 2 a3852e3d97c059fb
+Sapphire dark Rebar 1 5c18e2541baf7cd4
+Sapphire dark RebarBand 1 6506ae63d400f32b
+Sapphire dark Rebar 2 5d60bb1ff0df8139
+Sapphire dark RebarBand 2 5835cd7bf850573b
+Obsidian dark Rebar 1 5c18e2541baf7cd4
+Obsidian dark RebarBand 1 6506ae63d400f32b
+Obsidian dark Rebar 2 5d60bb1ff0df8139
+Obsidian dark RebarBand 2 5835cd7bf850573b
+Ember dark Rebar 1 cc73d0111c8e4504
+Ember dark RebarBand 1 044881221d36f702
+Ember dark Rebar 2 546b4610a9ae9b65
+Ember dark RebarBand 2 ad4a8407cd59bd23
+Cobalt dark Rebar 1 5c18e2541baf7cd4
+Cobalt dark RebarBand 1 6506ae63d400f32b
+Cobalt dark Rebar 2 5d60bb1ff0df8139
+Cobalt dark RebarBand 2 5835cd7bf850573b
+Carbon dark Rebar 1 5c18e2541baf7cd4
+Carbon dark RebarBand 1 6506ae63d400f32b
+Carbon dark Rebar 2 5d60bb1ff0df8139
+Carbon dark RebarBand 2 5835cd7bf850573b
+Steel dark Rebar 1 02f2060fcfe629b7
+Steel dark RebarBand 1 b9ea95dc1000a761
+Steel dark Rebar 2 d5555043c43cae75
+Steel dark RebarBand 2 378fc45603f1eec3

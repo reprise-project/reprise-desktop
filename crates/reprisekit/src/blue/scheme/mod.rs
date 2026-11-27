@@ -1,5 +1,6 @@
 //! Blue colour schemes as named colours and metrics: one [`Scheme`] const per scheme, reached
-//! through [`Variant::scheme`]. A [`Face`] names the colours one state of a part is drawn from.
+//! through [`Variant::scheme`], and its dark twin built from it (`twin`), reached through
+//! [`scheme_in`]. A [`Face`] names the colours one state of a part is drawn from.
 
 mod carbon;
 mod cobalt;
@@ -12,6 +13,7 @@ mod sapphire;
 mod silver;
 mod slate;
 mod steel;
+mod twin;
 
 pub use carbon::CARBON;
 pub use cobalt::COBALT;
@@ -48,12 +50,7 @@ pub fn scheme(v: Variant) -> &'static Scheme {
 
 /// `v`'s scheme, or its dark twin when `dark`.
 pub fn scheme_in(v: Variant, dark: bool) -> &'static Scheme {
-    if dark { twin(v) } else { scheme(v) }
-}
-
-/// `v`'s dark twin; a variant without one yet keeps its light scheme.
-fn twin(v: Variant) -> &'static Scheme {
-    scheme(v)
+    if dark { twin::twin(v) } else { scheme(v) }
 }
 
 impl Variant {
@@ -552,7 +549,7 @@ pub struct Scheme {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blue::style_for;
+    use crate::blue::{Tone, style_for};
     use crate::style::{Part, State};
 
     /// Every face of a part, named by state.
@@ -635,7 +632,7 @@ mod tests {
         .collect()
     }
 
-    fn style_inks(v: Variant) -> Vec<Color> {
+    fn style_inks(v: Tone) -> Vec<Color> {
         let st = style_for(v);
         let ink = |p, s| st.text_color(p, s).unwrap();
         let task = |s| st.text_color(Part::TaskButton, s).unwrap_or(st.bar_text);
@@ -705,7 +702,7 @@ mod tests {
 
     #[test]
     fn every_style_takes_its_schemes_system_colours_and_inks() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let s = v.scheme();
             assert_eq!(s.system.colors(), style_for(v).colors, "{v:?}");
             assert_eq!(inks(s), style_inks(v), "{v:?}");
@@ -714,7 +711,7 @@ mod tests {
 
     #[test]
     fn every_face_is_filled() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let s = v.scheme();
             let faces = faces(s);
             assert!(faces.len() > 150, "{v:?}: {} faces", faces.len());

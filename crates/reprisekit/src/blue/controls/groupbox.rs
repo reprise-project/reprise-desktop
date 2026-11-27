@@ -56,7 +56,6 @@ fn frame(face: &Face, d: i32) -> Vec<Px> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blue::Variant;
     use crate::raster::Canvas;
 
     fn fnv(c: &Canvas) -> u64 {
@@ -70,13 +69,13 @@ mod tests {
             })
     }
 
-    fn atlas(v: Variant, d: i32) -> PartImage {
-        parts(v.into(), d).remove(0).1
+    fn atlas(v: Tone, d: i32) -> PartImage {
+        parts(v, d).remove(0).1
     }
 
     #[test]
     fn group_box_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&atlas(v, d).atlas))))
             .collect();
@@ -85,7 +84,7 @@ mod tests {
 
     #[test]
     fn the_group_box_is_painted_at_the_style_scale() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2, 3] {
                 let img = atlas(v, d);
                 let du = d as u32;
@@ -103,7 +102,7 @@ mod tests {
 
     #[test]
     fn the_frame_is_a_one_pixel_line_with_soft_corners() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let rim = v.scheme().group_box.normal.rim.argb();
             for d in [1, 2] {
                 let c = atlas(v, d).atlas;
@@ -149,7 +148,7 @@ mod tests {
 
     #[test]
     fn a_disabled_group_box_keeps_its_frame() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
                 let img = atlas(v, d);
                 let frame = |s| {

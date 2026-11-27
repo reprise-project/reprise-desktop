@@ -145,7 +145,6 @@ fn face(f: &RadioFaces, check: Check, state: State) -> &Face {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blue::Variant;
 
     fn frame_px(img: &PartImage, check: Check, state: State, x: i32, y: i32) -> u32 {
         let f = img.check_frame(check, state);
@@ -173,9 +172,9 @@ mod tests {
     /// size, and every check and state draws its own frame.
     #[test]
     fn every_frame_is_13_square_and_its_own() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
-                let img = radio(v.into(), d);
+                let img = radio(v, d);
                 assert!(img.true_size, "{v:?}");
                 assert_eq!(img.scale, d, "{v:?} at {d}");
                 assert_eq!(img.sizing, crate::raster::Insets::ZERO, "{v:?}");
@@ -205,10 +204,10 @@ mod tests {
     /// is solid, and a greyed well is clear in every scheme.
     #[test]
     fn the_disc_is_round_soft_edged_and_greyed_hollow() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let f = &v.scheme().radio;
             for d in [1, 2] {
-                let img = radio(v.into(), d);
+                let img = radio(v, d);
                 let n = 13 * d;
                 let mid = n / 2;
                 for check in CHECKS {
@@ -262,9 +261,9 @@ mod tests {
     /// greyed.
     #[test]
     fn a_checked_radio_has_a_dot() {
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             let f = &v.scheme().radio;
-            let img = radio(v.into(), 1);
+            let img = radio(v, 1);
             for state in CHECK_STATES {
                 let on = frame_px(&img, Check::Checked, state, 6, 6);
                 let off = frame_px(&img, Check::Unchecked, state, 6, 6);
@@ -288,9 +287,9 @@ mod tests {
     /// Each scheme's atlas at d = 1 and 2, hashed with its size.
     #[test]
     fn radio_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
-            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&radio(v.into(), d)))))
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&radio(v, d)))))
             .collect();
         crate::pins::check("blue/radio", &got);
     }
