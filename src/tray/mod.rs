@@ -76,6 +76,8 @@ pub struct TrayItem {
     /// The process owning `service`, whose next window a click on the item
     /// lets take focus; `None` when the bus would not say.
     pub pid: Option<i32>,
+    /// The app `service` runs as: a sandboxed app's id, else the Reprise app scope's desktop id.
+    pub app_id: Option<String>,
     /// `Status` is `NeedsAttention`: the cell shows `attention` when it has one.
     pub needs_attention: bool,
     /// `AttentionIconName` and `AttentionIconPixmap`.
@@ -254,7 +256,9 @@ pub struct Notification {
     pub resident: bool,
     pub sender: String,
     pub pid: Option<i32>,
-    pub reply: Option<Reply>,
+    /// The app `sender` runs as, as [`TrayItem::app_id`] tells it.
+    pub app_id: Option<String>,
+    pub reply: Option<Box<Reply>>,
     /// What its balloon plays; None is silent.
     pub sound: Option<repriseaudio::sounds::Sound>,
 }
@@ -286,6 +290,7 @@ impl Notification {
             resident: false,
             sender: String::new(),
             pid: None,
+            app_id: None,
             reply: None,
             sound: None,
         }
@@ -774,7 +779,7 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             false
         }
         TrayEvent::Notify(n) => {
-            if mutes(state, n.pid) {
+            if mutes(state, &n) {
                 notification_closed(state, n.id, crate::notifyview::REASON_DISMISSED);
             } else {
                 crate::notifyview::show(state, n);

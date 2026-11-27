@@ -1,7 +1,7 @@
 use super::item::{Pixmaps, ToolTip, decode_names, icon_ref, item_key, item_texts};
 use super::menu::{LABEL_CHARS, MENU_ROWS, parse_layout};
 use super::notifications::{
-    CAPABILITIES, action_icons, as_sent_by, notification_icons, picture_file,
+    CAPABILITIES, action_icons, app_id_with, as_sent_by, notification_icons, picture_file,
 };
 use super::watcher::{
     Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_APP, admit, resolve_registration,
@@ -357,6 +357,43 @@ fn a_small_png_image_path_stays_an_icon() {
     assert_eq!(image.sources.len(), NOTIFY_SIZES.len());
     assert!(image.whole.is_none(), "a 48 px PNG is an icon");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_terminal_scope_names_no_app() {
+    let entry = |id: &str| {
+        Some(reprisefs::apps::AppEntry {
+            name: id.into(),
+            exec_line: id.into(),
+            terminal: false,
+            id: format!("{id}.desktop").parse().unwrap(),
+            icon: None,
+            startup_wm_class: None,
+            categories: match id {
+                "foot" => vec!["System".into(), "TerminalEmulator".into()],
+                _ => Vec::new(),
+            },
+            mime_types: Vec::new(),
+            shown: true,
+            path: None,
+            actions: Vec::new(),
+        })
+    };
+    let host = |id: &str| AppIdentity::Host {
+        desktop_id: Some(id.into()),
+    };
+    assert_eq!(
+        app_id_with(&host("mailer"), entry).as_deref(),
+        Some("mailer")
+    );
+    assert_eq!(app_id_with(&host("foot"), entry), None);
+    let sandboxed = AppIdentity::Sandboxed {
+        app_id: "org.example.Mail".into(),
+    };
+    assert_eq!(
+        app_id_with(&sandboxed, entry).as_deref(),
+        Some("org.example.Mail")
+    );
 }
 
 #[test]

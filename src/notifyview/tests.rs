@@ -396,10 +396,10 @@ fn the_switcher_unlights_the_reply_field_until_it_closes_and_a_picked_window_tak
     h.dispatch();
     let mut n = note(1, "Chat");
     n.actions = vec![(INLINE_REPLY.into(), "Reply".into())];
-    n.reply = Some(crate::tray::Reply {
+    n.reply = Some(Box::new(crate::tray::Reply {
         placeholder: String::new(),
         send: crate::tray::REPLY_SEND.into(),
-    });
+    }));
     show(&mut h.state, n);
     invoke(&mut h.state, 1, INLINE_REPLY);
     let keyed = |s: &State| s.notify.reply_keyed;
@@ -466,10 +466,10 @@ fn super_tab_opens_the_3d_switcher_over_the_reply_field_and_its_pick_takes_the_k
     h.dispatch();
     let mut n = note(1, "Chat");
     n.actions = vec![(INLINE_REPLY.into(), "Reply".into())];
-    n.reply = Some(crate::tray::Reply {
+    n.reply = Some(Box::new(crate::tray::Reply {
         placeholder: String::new(),
         send: crate::tray::REPLY_SEND.into(),
-    });
+    }));
     show(&mut h.state, n);
     invoke(&mut h.state, 1, INLINE_REPLY);
     let keyed = |s: &State| s.notify.reply_keyed;
@@ -535,10 +535,10 @@ fn a_window_mapping_with_the_focus_takes_the_keyboard_from_the_reply_field() {
     h.dispatch();
     let mut n = note(1, "Chat");
     n.actions = vec![(INLINE_REPLY.into(), "Reply".into())];
-    n.reply = Some(crate::tray::Reply {
+    n.reply = Some(Box::new(crate::tray::Reply {
         placeholder: String::new(),
         send: crate::tray::REPLY_SEND.into(),
-    });
+    }));
     show(&mut h.state, n);
     invoke(&mut h.state, 1, INLINE_REPLY);
     let keyed = |s: &State| s.notify.reply_keyed;
