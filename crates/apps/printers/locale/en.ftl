@@ -260,3 +260,8 @@ fail-resume-job = Could not resume the document
 fail-restart-job = Could not restart the document
 fail-add = Could not add the printer
 fail-generic = Printers
+
+## cups-pk-helper
+pkhelper-failed = cups-pk-helper could not make the change.
+pkhelper-failed-with = cups-pk-helper could not make the change ({ $why }).
+pkhelper-no-bus = The system bus is not there ({ $why }).

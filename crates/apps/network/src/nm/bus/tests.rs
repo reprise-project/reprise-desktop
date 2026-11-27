@@ -33,7 +33,7 @@ fn common_network_manager_errors_read_as_sentences() {
             Failure::Dismissed => panic!("an error is never a dismissal"),
         }
     };
-    let not_allowed = reprisebus::polkit::NOT_ALLOWED;
+    let not_allowed = reprisekit::kit_tr!("polkit-not-allowed");
     let not_ready = "The network adapter is not ready. Make sure it is turned on and \
                      enabled, then try again.";
     assert_eq!(
@@ -77,12 +77,12 @@ fn common_network_manager_errors_read_as_sentences() {
     );
     assert_eq!(
         clean("org.freedesktop.zbus.Error: Not authorized to perform this operation"),
-        Failure::Text(not_allowed.into()),
+        Failure::Text(not_allowed.clone()),
         "a refused property write reaches zbus as its own error name"
     );
     assert_eq!(
         clean("org.freedesktop.DBus.Error.AccessDenied: Rejected send message"),
-        Failure::Text(not_allowed.into())
+        Failure::Text(not_allowed)
     );
 }
 
@@ -171,7 +171,7 @@ fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
     let refused = auth_failure(denied(), || false);
     assert_eq!(
         refused,
-        Failure::Text(reprisebus::polkit::NOT_ALLOWED.into())
+        Failure::Text(reprisekit::kit_tr!("polkit-not-allowed"))
     );
     assert!(matches!(
         ran(&join(), Err(refused)),
@@ -186,7 +186,10 @@ fn a_prompt_left_open_past_the_call_timeout_says_to_check_and_try_again() {
         "timed out",
     ));
     let failure = auth_failure(io, || panic!("a timeout is no dismissal"));
-    assert_eq!(failure, Failure::Text(reprisebus::polkit::GAVE_UP.into()));
+    assert_eq!(
+        failure,
+        Failure::Text(reprisekit::kit_tr!("polkit-gave-up"))
+    );
 }
 
 #[test]

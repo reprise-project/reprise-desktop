@@ -318,7 +318,9 @@ fn with_trigger(password: Password, verdict: Verdict) -> Result<Password, Refuse
     match verdict {
         Verdict::Allowed => Ok(password),
         Verdict::Prompts => Ok(password.or(Password::Yes)),
-        Verdict::Refused => Err(Refused::Failed(not_set(reprisebus::polkit::NOT_ALLOWED))),
+        Verdict::Refused => Err(Refused::Failed(not_set(&reprisekit::kit_tr!(
+            "polkit-not-allowed"
+        )))),
     }
 }
 
@@ -1739,12 +1741,12 @@ fn failure(e: &zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<Refused>
         Some(reprisebus::polkit::Refusal::Dismissed) => None,
         Some(reprisebus::polkit::Refusal::Denied) => Some(Refused::NotAllowed),
         Some(reprisebus::polkit::Refusal::TimedOut) => {
-            Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.to_string()))
+            Some(Refused::Failed(reprisekit::kit_tr!("polkit-timed-out")))
         }
         None => Some(match reprisebus::error::name(e).as_deref() {
             Some("org.freedesktop.login1.BlockedByInhibitorLock") => Refused::Held(Vec::new()),
             Some("org.freedesktop.DBus.Error.Timeout") => {
-                Refused::Failed(reprisebus::polkit::TIMED_OUT.to_string())
+                Refused::Failed(reprisekit::kit_tr!("polkit-timed-out"))
             }
             _ => Refused::Failed(
                 reprisebus::error::message(e).map_or_else(|| e.to_string(), String::from),
@@ -4173,13 +4175,13 @@ mod tests {
         );
         assert_eq!(
             failure(&late, || false),
-            Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.into()))
+            Some(Refused::Failed(reprisekit::kit_tr!("polkit-timed-out")))
         );
         let timeout =
             reprisebus::error::reply("org.freedesktop.DBus.Error.Timeout", "Connection timed out");
         assert_eq!(
             failure(&timeout, || false),
-            Some(Refused::Failed(reprisebus::polkit::TIMED_OUT.into()))
+            Some(Refused::Failed(reprisekit::kit_tr!("polkit-timed-out")))
         );
         let blocked = reprisebus::error::reply(
             "org.freedesktop.login1.BlockedByInhibitorLock",

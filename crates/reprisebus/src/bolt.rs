@@ -58,12 +58,13 @@ pub struct Device {
 }
 
 impl Device {
-    /// The vendor and the name, or the name alone when it already starts with the vendor.
-    pub fn label(&self) -> String {
+    /// The vendor and the name, or the name alone when it already starts with the vendor; `unnamed`
+    /// when it has neither.
+    pub fn label_or(&self, unnamed: &str) -> String {
         let (vendor, name) = (self.vendor.trim(), self.name.trim());
         match (vendor.is_empty(), name.is_empty()) {
             (_, true) if !vendor.is_empty() => vendor.to_string(),
-            (_, true) => "Thunderbolt device".into(),
+            (_, true) => unnamed.into(),
             (true, false) => name.to_string(),
             (false, false) if name.starts_with(vendor) => name.to_string(),
             (false, false) => format!("{vendor} {name}"),
@@ -155,7 +156,13 @@ pub async fn found(conn: &Connection) -> zbus::Result<Found> {
             Err(e) => log::info!("bolt: {}: {e}", path.as_str()),
         }
     }
-    devices.sort_by_key(|d| (d.label().to_lowercase(), d.uid.clone()));
+    // Unnamed devices sort as the programs word them in English.
+    devices.sort_by_key(|d| {
+        (
+            d.label_or("Thunderbolt device").to_lowercase(),
+            d.uid.clone(),
+        )
+    });
     Ok(Found {
         domains: domains.len(),
         devices,
@@ -286,7 +293,7 @@ async fn asking<T>(call: impl Future<Output = zbus::Result<T>>) -> zbus::Result<
 /// [`apply`] on a system bus connection of its own, blocking until polkit and boltd answer or
 /// [`crate::polkit::PROMPT_TIMEOUT`] passes. The error is what to tell the user; None when they
 /// dismissed the password prompt.
-pub fn carry_out(d: &Device, change: Change) -> Result<(), Option<String>> {
+pub fn carry_out(d: &Device, change: Change) -> Result<(), Option<crate::polkit::Told>> {
     let e = match zbus::block_on(async {
         let conn = Connection::system().await?;
         apply(&conn, d, change).await
@@ -479,11 +486,11 @@ mod tests {
             name: name.into(),
             ..dock(Status::Connected)
         };
-        assert_eq!(named("Acme", "Dock").label(), "Acme Dock");
-        assert_eq!(named("Acme", "Acme Dock").label(), "Acme Dock");
-        assert_eq!(named("", "Dock").label(), "Dock");
-        assert_eq!(named("Acme", "").label(), "Acme");
-        assert_eq!(named("", " ").label(), "Thunderbolt device");
+        assert_eq!(named("Acme", "Dock").label_or("Unnamed"), "Acme Dock");
+        assert_eq!(named("Acme", "Acme Dock").label_or("Unnamed"), "Acme Dock");
+        assert_eq!(named("", "Dock").label_or("Unnamed"), "Dock");
+        assert_eq!(named("Acme", "").label_or("Unnamed"), "Acme");
+        assert_eq!(named("", " ").label_or("Unnamed"), "Unnamed");
     }
 
     #[test]

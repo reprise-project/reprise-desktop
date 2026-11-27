@@ -21,7 +21,7 @@ use reprisekit::theme::TextUnits;
 use reprisekit::tr;
 use zeroize::Zeroizing;
 
-use crate::acct::{ONLY_ADMIN, Op, PasswordMode, User};
+use crate::acct::{Op, PasswordMode, User, only_admin};
 use crate::picture::Source;
 
 pub const CLIENT: (i32, i32) = (398, 410);
@@ -130,7 +130,7 @@ fn general_page(user: &User, face: Option<Canvas>, last_admin: bool) -> Form {
         )
         .grows(),
         Item::label_at("login", 84, 50, 290, &user.login),
-        Item::label_at(KIND, 84, 50 + LINE_H + 4, 290, user.kind()),
+        Item::label_at(KIND, 84, 50 + LINE_H + 4, 290, &user.kind()),
         Item::new(
             "sep",
             Rect::new(X, 104, CLIENT.0 - 2 * X, 2),
@@ -452,7 +452,7 @@ impl Props {
         }
         if self.pending_admin() != self.user.admin {
             if self.last_admin && !self.pending_admin() {
-                return Err(ONLY_ADMIN.into());
+                return Err(only_admin());
             }
             ops.push(Op::Admin {
                 path: path.clone(),
@@ -590,7 +590,7 @@ impl Props {
         self.picture = None;
         let page = &mut self.sheet.pages[TAB_GENERAL];
         page.set_text("login", &self.user.login);
-        page.set_text(KIND, self.user.kind());
+        page.set_text(KIND, &self.user.kind());
         if let Some(Control::Edit { edit, .. }) = page.item_mut(NAME).map(|i| &mut i.control) {
             edit.set_selected(self.user.real_name.clone());
         }
@@ -1098,7 +1098,7 @@ mod tests {
         p.last_admin = true;
         assert_eq!(
             p.event(propsheet::Event::Apply, no_file),
-            Outcome::Refuse(ONLY_ADMIN.into())
+            Outcome::Refuse(only_admin())
         );
     }
 

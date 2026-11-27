@@ -119,7 +119,10 @@ pub fn show_thunderbolt(page: &mut Form, found: Option<&Found>, shown: Option<&F
     };
     let picked = selected(page, shown).map(|d| d.uid.clone());
     if let Some(Control::ListBox { list, .. }) = page.item_mut(TB_LIST).map(|i| &mut i.control) {
-        let items: Vec<String> = devices.iter().map(Device::label).collect();
+        let items: Vec<String> = devices
+            .iter()
+            .map(|d| d.label_or(&reprisekit::kit_tr!("thunderbolt-device")))
+            .collect();
         let at = picked.and_then(|uid| devices.iter().position(|d| d.uid == uid));
         if list.items != items {
             *list = ListBox::new(items, at);

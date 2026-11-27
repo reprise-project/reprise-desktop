@@ -1,6 +1,7 @@
 //! The name and message of a D-Bus error reply. zbus reports a reply whose name `fdo::Error`
 //! defines (`org.freedesktop.DBus.Error.*`) as `Error::FDO`, any other as `Error::MethodError`.
 
+use crate::polkit::Told;
 use zbus::DBusError;
 use zbus::names::ErrorName;
 
@@ -35,14 +36,16 @@ pub fn message(e: &zbus::Error) -> Option<&str> {
 /// What to tell the user when a call that may open a password prompt fails with `e`; None when
 /// `dismissed` (usually [`crate::polkit::dismissed`]) says the prompt was dismissed. A refusal
 /// and a failure of the call itself read alike, so the prompt is asked about first.
-pub fn to_tell(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<String> {
+pub fn to_tell(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Option<Told> {
     if crate::polkit::gave_up(&e) {
-        return Some(crate::polkit::GAVE_UP.into());
+        return Some(Told::GaveUp);
     }
     if name(&e).is_some() && dismissed() {
         return None;
     }
-    Some(message(&e).map_or_else(|| e.to_string(), String::from))
+    Some(Told::Text(
+        message(&e).map_or_else(|| e.to_string(), String::from),
+    ))
 }
 
 /// The error a call fails with when the peer answers an error reply named `name` carrying
@@ -98,8 +101,10 @@ mod tests {
         };
         assert_eq!(to_tell(unknown(), || true), None);
         assert_eq!(
-            to_tell(unknown(), || false).as_deref(),
-            Some("No such method \u{201c}EnableChargeThreshold\u{201d}")
+            to_tell(unknown(), || false),
+            Some(Told::Text(
+                "No such method \u{201c}EnableChargeThreshold\u{201d}".into()
+            ))
         );
         let lost = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
         let told = to_tell(lost, || panic!("only an error reply follows a prompt"));
@@ -110,12 +115,12 @@ mod tests {
     fn a_call_that_gave_up_says_the_change_may_not_have_been_made() {
         let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
         let told = to_tell(late, || panic!("a timeout is no dismissal"));
-        assert_eq!(told.as_deref(), Some(crate::polkit::GAVE_UP));
+        assert_eq!(told, Some(Told::GaveUp));
         let quit = reply(
             "org.freedesktop.DBus.Error.NoReply",
             "Remote peer disconnected",
         );
         let told = to_tell(quit, || false);
-        assert_eq!(told.as_deref(), Some("Remote peer disconnected"));
+        assert_eq!(told, Some(Told::Text("Remote peer disconnected".into())));
     }
 }

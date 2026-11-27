@@ -1,6 +1,7 @@
 //! fwupd on the system bus. Metadata and cabinets go to the daemon as file descriptors;
 //! the files are fetched here with `curl`, as the daemon downloads nothing itself.
 
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -83,7 +84,7 @@ fn install_failed(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> Error {
     let refused = |n: &str| n == "org.freedesktop.fwupd.AuthFailed";
     match reprisebus::polkit::refusal(&e, refused, dismissed) {
         Some(reprisebus::polkit::Refusal::Dismissed) => Error::Dismissed,
-        Some(reprisebus::polkit::Refusal::TimedOut) => Error::Failed(UNFINISHED.into()),
+        Some(reprisebus::polkit::Refusal::TimedOut) => Error::Failed(unfinished()),
         _ => failed(e),
     }
 }
@@ -149,7 +150,9 @@ fn at_device(s: u32) -> bool {
     )
 }
 
-const UNFINISHED: &str = "fwupd stopped answering before the firmware install finished.";
+fn unfinished() -> String {
+    tr!("fwupd-unfinished")
+}
 
 fn sentence(s: &str) -> String {
     let mut s = s.trim().to_string();
@@ -359,13 +362,17 @@ fn download(url: &str, to: &Path) -> Result<(), String> {
         .arg(url)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("curl could not be started: {e}."))?;
+        .map_err(|e| tr!("fwupd-curl-failed", why = e.to_string()))?;
     if out.status.success() {
         Ok(())
     } else {
         let why = String::from_utf8_lossy(&out.stderr);
         let why = why.trim().trim_start_matches("curl: ").trim();
-        Err(sentence(&format!("Could not download {url}: {why}")))
+        Err(sentence(&tr!(
+            "fwupd-download-failed",
+            url = url,
+            why = why
+        )))
     }
 }
 
@@ -377,7 +384,13 @@ fn fetch(location: &str, scratch: &Scratch) -> Result<File, String> {
             scratch.0.clone()
         }
     };
-    File::open(&path).map_err(|e| format!("Could not open {}: {e}.", path.display()))
+    File::open(&path).map_err(|e| {
+        tr!(
+            "fwupd-open-failed",
+            path = path.display().to_string(),
+            why = e.to_string()
+        )
+    })
 }
 
 /// fwupd's polkit action for `UpdateMetadata`.
@@ -448,14 +461,14 @@ pub async fn refresh(conn: &Connection, force: bool) -> Result<(), Error> {
 
 fn status_line(status: u32, name: &str) -> Option<String> {
     Some(match status {
-        STATUS_DECOMPRESSING => format!("Preparing the firmware for {name}"),
-        STATUS_DEVICE_WRITE | STATUS_DEVICE_ERASE => format!("Writing the firmware to {name}"),
-        STATUS_DEVICE_VERIFY | STATUS_DEVICE_READ => format!("Verifying {name}"),
-        STATUS_DEVICE_RESTART => format!("Restarting {name}"),
-        STATUS_SCHEDULING => format!("Scheduling the update for {name}"),
-        STATUS_WAITING_FOR_AUTH => "Waiting for authentication".into(),
-        STATUS_DEVICE_BUSY => format!("Waiting for {name}"),
-        STATUS_WAITING_FOR_USER => "Waiting for you".into(),
+        STATUS_DECOMPRESSING => tr!("fwupd-step-decompress", name = name),
+        STATUS_DEVICE_WRITE | STATUS_DEVICE_ERASE => tr!("fwupd-step-write", name = name),
+        STATUS_DEVICE_VERIFY | STATUS_DEVICE_READ => tr!("fwupd-step-verify", name = name),
+        STATUS_DEVICE_RESTART => tr!("fwupd-step-restart", name = name),
+        STATUS_SCHEDULING => tr!("fwupd-step-schedule", name = name),
+        STATUS_WAITING_FOR_AUTH => tr!("fwupd-step-auth"),
+        STATUS_DEVICE_BUSY => tr!("fwupd-step-busy", name = name),
+        STATUS_WAITING_FOR_USER => tr!("fwupd-step-user"),
         _ => return None,
     })
 }
@@ -466,28 +479,26 @@ fn request(r: &Dict, name: &str) -> Request {
     let own = text(r, "UpdateMessage");
     let generic = match text(r, "AppstreamId").as_str() {
         "org.freedesktop.fwupd.request.remove-replug" | "org.freedesktop.fwupd.replug-install" => {
-            Some(format!(
-                "Unplug {name} and plug it back in to continue the update."
-            ))
+            Some(tr!("fwupd-request-replug", name = name))
         }
-        "org.freedesktop.fwupd.request.remove-usb-cable" => Some(format!(
-            "Unplug the USB cable of {name} to continue the update."
-        )),
-        "org.freedesktop.fwupd.request.insert-usb-cable" => Some(format!(
-            "Plug the USB cable of {name} back in to continue the update."
-        )),
-        "org.freedesktop.fwupd.replug-power" => Some(format!(
-            "Unplug the power cable of {name} and plug it back in to continue the update."
-        )),
+        "org.freedesktop.fwupd.request.remove-usb-cable" => {
+            Some(tr!("fwupd-request-remove-cable", name = name))
+        }
+        "org.freedesktop.fwupd.request.insert-usb-cable" => {
+            Some(tr!("fwupd-request-insert-cable", name = name))
+        }
+        "org.freedesktop.fwupd.replug-power" => {
+            Some(tr!("fwupd-request-replug-power", name = name))
+        }
         "org.freedesktop.fwupd.request.press-unlock" => {
-            Some(format!("Press unlock on {name} to continue the update."))
+            Some(tr!("fwupd-request-unlock", name = name))
         }
-        "org.freedesktop.fwupd.request.do-not-power-off" => Some(format!(
-            "Do not turn off your computer or unplug its power until {name} has finished updating."
-        )),
-        "org.freedesktop.fwupd.restart-daemon" => Some(format!(
-            "Restart the fwupd service to finish updating {name}."
-        )),
+        "org.freedesktop.fwupd.request.do-not-power-off" => {
+            Some(tr!("fwupd-request-keep-power", name = name))
+        }
+        "org.freedesktop.fwupd.restart-daemon" => {
+            Some(tr!("fwupd-request-restart-daemon", name = name))
+        }
         _ => None,
     };
     let message = if number(r, "Flags") & REQUEST_NON_GENERIC_MESSAGE != 0 && !own.is_empty() {
@@ -495,7 +506,7 @@ fn request(r: &Dict, name: &str) -> Request {
     } else {
         generic
             .or_else(|| (!own.is_empty()).then(|| sentence(&own)))
-            .unwrap_or_else(|| format!("{name} is waiting for you to continue the update."))
+            .unwrap_or_else(|| tr!("fwupd-request-waiting", name = name))
     };
     Request {
         message,
@@ -535,17 +546,14 @@ pub async fn install(
     let name = device.name.as_str();
     let release = newest(conn, &device.id)
         .await?
-        .ok_or_else(|| Error::Failed(format!("{name} has no newer firmware.")))?;
+        .ok_or_else(|| Error::Failed(tr!("fwupd-no-newer", name = name)))?;
     let remotes: Vec<Dict> = call(conn, "GetRemotes", &())
         .await
         .and_then(|m| m.body().deserialize())
         .map_err(failed)?;
-    let loc = location(&release, &remotes).ok_or_else(|| {
-        Error::Failed(format!(
-            "The firmware for {name} has nowhere to download from."
-        ))
-    })?;
-    progress(None, Some(format!("Downloading the firmware for {name}")));
+    let loc = location(&release, &remotes)
+        .ok_or_else(|| Error::Failed(tr!("fwupd-no-source", name = name)))?;
+    progress(None, Some(tr!("fwupd-downloading", name = name)));
     let scratch = Scratch::new("firmware.cab");
     let cab = fetch(&loc, &scratch).map_err(Error::Failed)?;
 
@@ -623,7 +631,7 @@ pub async fn install(
                     "{name}: no install after {:?}",
                     reprisebus::polkit::PROMPT_TIMEOUT
                 );
-                return Err(Error::Failed(reprisebus::polkit::TIMED_OUT.into()));
+                return Err(Error::Failed(reprisekit::kit_tr!("polkit-timed-out")));
             }
             Next::Signal(None | Some(Signal::OwnerChanged)) => {
                 listening = false;
@@ -714,7 +722,7 @@ mod tests {
     fn an_install_past_its_limit_says_fwupd_stopped_answering() {
         let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
         let failed = install_failed(late, || panic!("a timeout is no dismissal"));
-        assert_eq!(failed, Error::Failed(UNFINISHED.into()));
+        assert_eq!(failed, Error::Failed(unfinished()));
     }
 
     #[test]

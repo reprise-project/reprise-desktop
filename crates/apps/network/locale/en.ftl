@@ -341,3 +341,5 @@ nm-login-rejected = The server for { $name } did not accept the login.
 nm-not-found = { $name } could not be found.
 nm-no-address = { $name } did not give this computer an address.
 nm-could-not-connect = Reprise could not connect to { $name }.
+nm-no-secret = This connection needs a password, and none was given.
+nm-not-ready = The network adapter is not ready. Make sure it is turned on and enabled, then try again.

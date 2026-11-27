@@ -2,6 +2,7 @@
 //! cups.rs tries the socket's peer credentials first and comes here only when cupsd says no.
 
 use reprisebus::mutex::lock;
+use reprisekit::tr;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -90,9 +91,7 @@ fn outcome(method: &str, error: &str) -> Result<()> {
     log::warn!("{method}: {error}");
     // A refusal that sets no status of its own leaves the last request's.
     if error == "successful-ok" {
-        return Err(Error::Refused(
-            "cups-pk-helper could not make the change.".into(),
-        ));
+        return Err(Error::Refused(tr!("pkhelper-failed")));
     }
     Err(Error::Refused(crate::cups::sentence(error)))
 }
@@ -106,12 +105,12 @@ fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> E
         Some(Refusal::Dismissed) => return Error::Dismissed,
         Some(Refusal::Denied) => return Error::NotAuthorized,
         Some(Refusal::TimedOut) if reprisebus::polkit::gave_up(&e) => {
-            return Error::Refused(reprisebus::polkit::GAVE_UP.into());
+            return Error::Refused(reprisekit::kit_tr!("polkit-gave-up"));
         }
         Some(Refusal::TimedOut) | None => {}
     }
     log::warn!("{method}: {e}");
-    Error::Refused(format!("cups-pk-helper could not make the change ({e})."))
+    Error::Refused(tr!("pkhelper-failed-with", why = e.to_string()))
 }
 
 #[derive(Debug, Default)]
@@ -126,7 +125,7 @@ impl Bus {
             return Ok(c.clone());
         }
         let conn = reprisebus::connect(zbus::connection::Builder::system())
-            .map_err(|e| Error::Refused(format!("The system bus is not there ({e}).")))?;
+            .map_err(|e| Error::Refused(tr!("pkhelper-no-bus", why = e.to_string())))?;
         *c = Some(conn.clone());
         Ok(conn)
     }
@@ -397,7 +396,7 @@ mod tests {
         let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
         assert_eq!(
             describe("PrinterAdd", late, || panic!("a timeout is no dismissal")),
-            Error::Refused(reprisebus::polkit::GAVE_UP.into())
+            Error::Refused(reprisekit::kit_tr!("polkit-gave-up"))
         );
     }
 

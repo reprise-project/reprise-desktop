@@ -53,13 +53,17 @@ fn start(
     change: Change,
     spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
 ) {
-    let (uid, label) = (d.uid.clone(), d.label());
+    let (uid, label) = (
+        d.uid.clone(),
+        d.label_or(&reprisekit::kit_tr!("thunderbolt-device")),
+    );
     let p = poster.clone();
     let started = spawn(Box::new(move || {
-        let result = bolt::carry_out(&d, change);
+        let result =
+            bolt::carry_out(&d, change).map_err(|e| e.map(|told| reprisebus::told_text!(told)));
         p.post(Msg::Done {
             uid: d.uid.clone(),
-            label: d.label(),
+            label: d.label_or(&reprisekit::kit_tr!("thunderbolt-device")),
             result,
         });
     }));
@@ -109,7 +113,10 @@ pub fn change_for(i: usize) -> Option<Change> {
 /// The balloon asking about `d`.
 pub fn balloon(d: &Device) -> (String, String) {
     (
-        tr!("authorize-title", device = d.label()),
+        tr!(
+            "authorize-title",
+            device = d.label_or(&reprisekit::kit_tr!("thunderbolt-device"))
+        ),
         tr!("authorize-body"),
     )
 }

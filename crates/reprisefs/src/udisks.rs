@@ -613,7 +613,7 @@ impl From<zbus::Error> for Error {
         if timed_out {
             return Error {
                 kind: ErrorKind::Other,
-                message: reprisebus::polkit::TIMED_OUT.into(),
+                message: reprisekit::kit_tr!("polkit-timed-out"),
                 came_off: Vec::new(),
             };
         }
@@ -1293,9 +1293,15 @@ pub(crate) mod tests {
             std::io::ErrorKind::TimedOut,
             "timed out",
         ));
-        assert_eq!(Error::from(io).message, reprisebus::polkit::TIMED_OUT);
+        assert_eq!(
+            Error::from(io).message,
+            reprisekit::kit_tr!("polkit-timed-out")
+        );
         let other = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
-        assert_ne!(Error::from(other).message, reprisebus::polkit::TIMED_OUT);
+        assert_ne!(
+            Error::from(other).message,
+            reprisekit::kit_tr!("polkit-timed-out")
+        );
     }
 
     fn u(v: u32) -> OwnedVariant {
