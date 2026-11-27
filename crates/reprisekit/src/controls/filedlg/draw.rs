@@ -309,6 +309,7 @@ impl FileDlg {
     pub fn drawn_with(&self, p: &Paint) {
         self.drawn.0.set(p.look.controls_at_100().grown(p.text));
         self.drawn.1.set(p.look.lights_pointer());
+        self.drawn.3.replace(p.look.clone());
         if let Some((f, _)) = &self.extra {
             f.drawn_with(p);
         }

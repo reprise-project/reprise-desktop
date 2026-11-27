@@ -48,6 +48,74 @@ fn views_popup_is_a_context_menu_under_its_button() {
     assert!(!d.views_open);
 }
 
+/// The Views menu lays out as the look's own context menu at the dialog's text size: its check
+/// column and gutter grow with the text, and each label fits left of the row's padding.
+#[test]
+fn the_views_menu_takes_the_looks_gutter_and_fits_its_labels_at_every_text_size() {
+    use crate::controls::menu::{ContextBitmaps, MenuStyle};
+    let mut wrong = Vec::new();
+    crate::interfaces::overflows(|i, theme, text| {
+        let mut d = sample();
+        d.set_text(theme.text);
+        d.drawn_with(&theme.paint());
+        d.views_open = true;
+        let cm = theme.controls();
+        let px = theme.fonts.size_px;
+        let lay = d.layout(text, px, R, &cm);
+        let (_, menu) = lay.views.as_ref().expect("the menu is laid out while open");
+        let own = MenuStyle::context(theme, ContextBitmaps::None);
+        if (menu.text_x, menu.gutter) != (own.text_x, own.gutter) {
+            wrong.push(format!(
+                "{} {px} px: text at {} gutter {}, the look's text at {} gutter {}",
+                i.as_str(),
+                menu.text_x,
+                menu.gutter,
+                own.text_x,
+                own.gutter
+            ));
+        }
+        for (row, (label, _)) in menu.rows.iter().zip(views_items()) {
+            let end = row.x + menu.text_x + text.measure(&label, false, px) + menu.right_pad;
+            if end > row.right() {
+                wrong.push(format!(
+                    "{} {px} px: {label} ends at {end}, row at {}",
+                    i.as_str(),
+                    row.right()
+                ));
+            }
+        }
+        Vec::new()
+    });
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Glass's Views menu, with its gutter and the picked view's dot in it, at 100% and 200% text and
+/// at 1x and 2x.
+#[test]
+fn the_glass_views_menu_is_drawn_as_pinned() {
+    use crate::interface::Interface;
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for (pct, s) in [(100, 1), (100, 2), (200, 1), (200, 2)] {
+        let theme = crate::interfaces::theme_for(Interface::Glass)
+            .with_form_text(pct)
+            .scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        let mut d = sample();
+        d.set_text(theme.text);
+        let (w, h) = d.min_client();
+        let r = Rect::new(0, 0, w, h);
+        d.set_size((w, h));
+        d.shell.mode = Mode::Tiles;
+        d.click(r, Some(Hit::ToolBar(TOOLBAR_VIEWS)), Mods::default());
+        assert!(d.views_open);
+        let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
+        d.draw(&mut c, &text, &theme.paint(), r, theme.fonts.size_px);
+        got.push((format!("{pct}% @{s}"), crate::pins::fnv(&c)));
+    }
+    crate::pins::check("filedlg_views_menu", &got);
+}
+
 #[test]
 fn a_hosted_list_or_views_menu_draws_alone_as_in_the_dialog_and_is_hit_where_it_was_put() {
     let text = Rc::new(text());

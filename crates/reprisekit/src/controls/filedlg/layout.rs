@@ -213,7 +213,11 @@ impl FileDlg {
 
     fn views_menu(&self, text: &TextRenderer, px: u32, max_width: i32, u: TextUnits) -> MenuLayout {
         let items = self.views_menu_items();
-        let mut theme = Theme::default();
+        let mut theme = Theme {
+            look: self.drawn.3.borrow().clone(),
+            text: u,
+            ..Theme::default()
+        };
         theme.fonts.size_px = u.px(theme.fonts.size_px);
         let style =
             MenuStyle::context(&theme, ContextBitmaps::None).fit(text, &items, px, max_width);

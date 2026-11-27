@@ -32,7 +32,7 @@ use crate::text::{access_key, split_mnemonic};
 use crate::textedit::TextEdit;
 use crate::theme::TextUnits;
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 mod access_tree;
@@ -503,10 +503,15 @@ struct KeptThumb {
 }
 
 /// The sizes a `FileDlg` was last drawn with, whether its look lights
-/// the pointer's part, and the shell view's last layout. Not dialog state: it compares equal and
-/// debug-prints as nothing.
+/// the pointer's part, the shell view's last layout and the look its Views menu lays out in. Not
+/// dialog state: it compares equal and debug-prints as nothing.
 #[derive(Clone, Default)]
-struct Drawn(Cell<ControlMetrics>, Cell<bool>, shellview::LayoutCache);
+struct Drawn(
+    Cell<ControlMetrics>,
+    Cell<bool>,
+    shellview::LayoutCache,
+    RefCell<crate::look::Look>,
+);
 
 impl PartialEq for Drawn {
     fn eq(&self, _: &Drawn) -> bool {
