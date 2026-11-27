@@ -113,18 +113,20 @@ fn percent(s: &str) -> String {
 /// backends write it ("ipps://Lab._ipps._tcp.local/"), lower-cased: the same printer under
 /// another type or scheme.
 pub fn service_name(uri: &str, types: &[&str]) -> Option<String> {
+    service_of(uri, types).map(|(name, _)| name)
+}
+
+/// The DNS-SD service a URI names, as [`service_name`], and its type: one announcement,
+/// whatever the URI's scheme, case or percent-encoding.
+pub fn service_of(uri: &str, types: &[&str]) -> Option<(String, String)> {
     let rest = uri.split_once("://")?.1;
-    let host = unpercent(rest.split(['/', '?']).next()?);
-    let at = types
+    let host = unpercent(rest.split(['/', '?']).next()?).to_lowercase();
+    let (at, kind) = types
         .iter()
-        .filter_map(|t| host.find(&format!(".{t}.")))
+        .filter_map(|t| Some((host.find(&format!(".{t}."))?, *t)))
         .min()?;
-    Some(
-        host[..at]
-            .replace("\\.", ".")
-            .replace("\\\\", "\\")
-            .to_lowercase(),
-    )
+    let name = host[..at].replace("\\.", ".").replace("\\\\", "\\");
+    Some((name, kind.to_string()))
 }
 
 fn unpercent(s: &str) -> String {
@@ -251,7 +253,8 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
 /// The most services one [`browse`] resolves.
 const MOST: usize = 64;
 
-/// The services of `types` avahi-daemon finds and resolves within `budget`, each resolved once
+/// The services of `types` avahi-daemon finds and resolves within `budget`, counted from when
+/// the system bus connection is made, each resolved once
 /// however many interfaces and protocols announce it, at most [`MOST`]. Browsing stops at each
 /// browser's first answer or a quarter of the budget before its end; resolving at its end, with
 /// what resolved by then. Empty without avahi-daemon.
@@ -578,6 +581,22 @@ mod tests {
         assert!(service("Hall", "_ipp._tcp", &shared, LOCAL).own_queue());
         assert!(!service("Hall", "_ipp._tcp", &shared, 0).own_queue());
         assert!(!service("Hall", "_ipp._tcp", &["UUID=u1"], LOCAL).own_queue());
+    }
+
+    #[test]
+    fn one_announcement_reads_the_same_whatever_its_uris_case_or_encoding() {
+        let want = Some(("office jet".to_string(), "_ipps._tcp".to_string()));
+        for uri in [
+            "dnssd://Office%20Jet._ipps._tcp.local/?uuid=U1",
+            "DNSSD://office%20jet._IPPS._tcp.local./",
+            "ipps://Office Jet._ipps._tcp.local/ipp/print",
+        ] {
+            assert_eq!(service_of(uri, &IPP_TYPES), want, "{uri}");
+        }
+        assert_eq!(
+            service_of("dnssd://Office%20Jet._ipp._tcp.local/", &IPP_TYPES).map(|s| s.1),
+            Some("_ipp._tcp".into())
+        );
     }
 
     #[test]
