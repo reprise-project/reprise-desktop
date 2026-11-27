@@ -16,9 +16,15 @@ pub const COUNT: &str = "count";
 pub const HINT: &str = "hint";
 const RADIOS: &str = "finger";
 
-pub const TITLE: &str = "Add a Fingerprint";
-pub const PICK: &str = "Pick the finger to add. The fingers you've already added are greyed.";
-pub const WAITING: &str = "Waiting for the fingerprint reader...";
+pub fn title() -> String {
+    tr!("addfinger-title")
+}
+pub fn pick() -> String {
+    tr!("addfinger-pick")
+}
+pub fn waiting() -> String {
+    tr!("addfinger-waiting")
+}
 
 /// How the reader takes a finger.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,18 +80,23 @@ pub enum Refusal {
     Failed,
 }
 
+/// What was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Add,
+    Delete,
+}
+
 impl Refusal {
-    /// What a dialog says for it; `doing` is what was refused, "add a fingerprint".
-    pub fn text(self, doing: &str) -> String {
-        match self {
-            Refusal::NotAuthorized => format!("You weren't allowed to {doing}."),
-            Refusal::InUse => "Another program is using the fingerprint reader. Try again once \
-                               it is done."
-                .into(),
-            Refusal::TimedOut => "The password prompt was open too long. Check the fingerprints \
-                                  and try again."
-                .into(),
-            Refusal::Failed => format!("The fingerprint reader couldn't {doing}."),
+    /// What a dialog says for it.
+    pub fn text(self, action: Action) -> String {
+        match (self, action) {
+            (Refusal::NotAuthorized, Action::Add) => tr!("addfinger-refused-add"),
+            (Refusal::NotAuthorized, Action::Delete) => tr!("addfinger-refused-delete"),
+            (Refusal::InUse, _) => tr!("addfinger-in-use"),
+            (Refusal::TimedOut, _) => tr!("addfinger-timed-out"),
+            (Refusal::Failed, Action::Add) => tr!("addfinger-failed-add"),
+            (Refusal::Failed, Action::Delete) => tr!("addfinger-failed-delete"),
         }
     }
 }
@@ -98,7 +109,7 @@ pub enum Step {
     Scanning {
         finger: Finger,
         done: u32,
-        hint: Option<&'static str>,
+        hint: Option<String>,
     },
     Added(Finger),
     Failed(Finger, String),
@@ -185,26 +196,29 @@ impl AddFinger {
     }
 
     fn picker(&self) -> Vec<Item> {
-        let mut items = vec![self.text(2, PICK)];
+        let mut items = vec![self.text(2, &pick())];
         let pick = self.first_free();
         for (k, hand) in [Hand::Left, Hand::Right].into_iter().enumerate() {
             let gx = M + k as i32 * (GROUP_W + M);
             items.push(Item::group(
                 ["left_g", "right_g"][k],
                 Rect::new(gx, GROUP_Y, GROUP_W, GROUP_H),
-                hand.label(),
+                &hand.label(),
             ));
             let fingers = Finger::ALL.into_iter().filter(|f| f.hand() == hand);
             for (row, f) in fingers.enumerate() {
                 let y = GROUP_Y + 20 + row as i32 * RADIO_DY;
                 items.push(
-                    Item::radio(f.key(), gx + 12, y, f.digit(), RADIOS)
+                    Item::radio(f.key(), gx + 12, y, &f.digit(), RADIOS)
                         .checked(pick == Some(f))
                         .enabled(!self.added.contains(&f)),
                 );
             }
         }
-        items.extend(self.buttons(&[(START, "&Start"), (CANCEL, "Cancel")]));
+        items.extend(self.buttons(&[
+            (START, &tr!("addfinger-start")),
+            (CANCEL, &tr!("addfinger-cancel")),
+        ]));
         items
     }
 
@@ -219,11 +233,11 @@ impl AddFinger {
         let count = if of == 0 {
             String::new()
         } else {
-            format!("{done} of {of} scans")
+            tr!("addfinger-count", done = done, of = of)
         };
         vec![
             self.text(3, text),
-            Item::progress(BAR, bar, done, of).named("Scans"),
+            Item::progress(BAR, bar, done, of).named(tr!("addfinger-scans")),
             Item::label_at(COUNT, M, BAR_Y + BAR_H + 6, W - 2 * M, &count),
             Item::lines(
                 HINT,
@@ -234,40 +248,34 @@ impl AddFinger {
     }
 
     fn how(&self, f: Finger) -> String {
-        let finger = f.label().to_lowercase();
+        let finger = f.mid_sentence();
         match self.scan {
-            Scan::Press => format!(
-                "Put your {finger} on the reader, then lift it. Do it again each time the bar \
-                 moves on, until it is full."
-            ),
-            Scan::Swipe => format!(
-                "Swipe your {finger} across the reader. Swipe it again each time the bar moves \
-                 on, until it is full."
-            ),
+            Scan::Press => tr!("addfinger-how-press", finger = finger),
+            Scan::Swipe => tr!("addfinger-how-swipe", finger = finger),
         }
     }
 
     fn build(&mut self) {
         let mut items = match &self.step {
             Step::Pick => self.picker(),
-            Step::Waiting(_) => self.progress(WAITING, None, None),
+            Step::Waiting(_) => self.progress(&waiting(), None, None),
             Step::Scanning { finger, done, hint } => {
-                self.progress(&self.how(*finger), Some(*done), *hint)
+                self.progress(&self.how(*finger), Some(*done), hint.as_deref())
             }
             Step::Added(f) => {
-                let text = format!(
-                    "Your {} is added. It can unlock the screen from now on.",
-                    f.label().to_lowercase()
-                );
+                let text = tr!("addfinger-added", finger = f.mid_sentence());
                 self.progress(&text, Some(self.stages), None)
             }
             Step::Failed(_, why) => self.progress(why, None, None),
         };
+        let cancel = tr!("addfinger-cancel");
+        let close = tr!("addfinger-close");
+        let retry = tr!("addfinger-retry");
         let buttons: &[(&'static str, &str)] = match &self.step {
             Step::Pick => &[],
-            Step::Waiting(_) | Step::Scanning { .. } => &[(CANCEL, "Cancel")],
-            Step::Added(_) => &[(CLOSE, "Close")],
-            Step::Failed(..) => &[(RETRY, "&Try Again"), (CLOSE, "Close")],
+            Step::Waiting(_) | Step::Scanning { .. } => &[(CANCEL, &cancel)],
+            Step::Added(_) => &[(CLOSE, &close)],
+            Step::Failed(..) => &[(RETRY, &retry), (CLOSE, &close)],
         };
         items.extend(self.buttons(buttons));
         let old = std::mem::replace(&mut self.form, Form::new(items));
@@ -331,34 +339,28 @@ impl AddFinger {
             _ => return,
         };
         let again = match self.scan {
-            Scan::Press => "Lift your finger, then put it on the reader again.",
-            Scan::Swipe => "Swipe it again.",
+            Scan::Press => tr!("addfinger-again-press"),
+            Scan::Swipe => tr!("addfinger-again-swipe"),
         };
         let (done, hint) = match s {
             Scanned::Passed => (done + 1, again),
-            Scanned::Retry => (done, "That scan couldn't be read. Try again."),
-            Scanned::TooShort => (done, "The swipe was too short. Swipe again."),
-            Scanned::NotCentred => (done, "Put your finger in the middle of the reader."),
-            Scanned::LiftAndRetry => (done, "Lift your finger and try again."),
+            Scanned::Retry => (done, tr!("addfinger-hint-retry")),
+            Scanned::TooShort => (done, tr!("addfinger-hint-too-short")),
+            Scanned::NotCentred => (done, tr!("addfinger-hint-not-centred")),
+            Scanned::LiftAndRetry => (done, tr!("addfinger-hint-lift")),
             Scanned::Completed => return self.go(Step::Added(finger)),
-            Scanned::Failed => return self.fail(finger, "The fingerprint couldn't be added."),
+            Scanned::Failed => return self.fail(finger, tr!("addfinger-error-failed")),
             Scanned::Full => {
-                return self.fail(
-                    finger,
-                    "The reader has no room for another fingerprint. Delete one first.",
-                );
+                return self.fail(finger, tr!("addfinger-error-full"));
             }
             Scanned::Duplicate => {
-                return self.fail(
-                    finger,
-                    "That fingerprint is already added, as another finger or for another user.",
-                );
+                return self.fail(finger, tr!("addfinger-error-duplicate"));
             }
             Scanned::Disconnected => {
-                return self.fail(finger, "The fingerprint reader was disconnected.");
+                return self.fail(finger, tr!("addfinger-error-disconnected"));
             }
             Scanned::Error => {
-                return self.fail(finger, "The fingerprint reader reported an error.");
+                return self.fail(finger, tr!("addfinger-error-reader"));
             }
         };
         self.go(Step::Scanning {
@@ -368,8 +370,8 @@ impl AddFinger {
         });
     }
 
-    fn fail(&mut self, finger: Finger, why: &str) {
-        self.go(Step::Failed(finger, why.into()));
+    fn fail(&mut self, finger: Finger, why: String) {
+        self.go(Step::Failed(finger, why));
     }
 
     /// The reader could not be used.
@@ -378,7 +380,7 @@ impl AddFinger {
             Step::Waiting(f) | Step::Scanning { finger: f, .. } => f,
             _ => return,
         };
-        self.fail(finger, &r.text("add a fingerprint"));
+        self.fail(finger, r.text(Action::Add));
     }
 
     /// The text shown above the bar, or the picker's.

@@ -128,4 +128,3 @@ account-password-kept = The new password was set, but the account will not be as
 account-unreadable = The accounts could not be read, so nothing was changed.
 account-passwd-stopped = passwd stopped unexpectedly
 account-expire-failed = The account { $login } could not be set to ask for a new password.{ $why }
-accounts-delete-fingerprint-verb = delete the fingerprint

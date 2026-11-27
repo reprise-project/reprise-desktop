@@ -1033,3 +1033,75 @@ polkit-gave-up = The password prompt was open too long, so the change may not ha
 polkit-timed-out = The password prompt was open too long, so nothing was changed. Try again.
 polkit-not-allowed = You are not allowed to make this change.
 thunderbolt-device = Thunderbolt device
+
+## addfinger
+addfinger-title = Add a Fingerprint
+addfinger-pick = Pick the finger to add. The fingers you've already added are greyed.
+addfinger-waiting = Waiting for the fingerprint reader...
+addfinger-start = &Start
+addfinger-cancel = Cancel
+addfinger-close = Close
+addfinger-retry = &Try Again
+addfinger-scans = Scans
+addfinger-count = { NUMBER($done, useGrouping: "false") } of { NUMBER($of, useGrouping: "false") } scans
+addfinger-how-press = Put your { $finger } on the reader, then lift it. Do it again each time the bar moves on, until it is full.
+addfinger-how-swipe = Swipe your { $finger } across the reader. Swipe it again each time the bar moves on, until it is full.
+addfinger-added = Your { $finger } is added. It can unlock the screen from now on.
+addfinger-again-press = Lift your finger, then put it on the reader again.
+addfinger-again-swipe = Swipe it again.
+addfinger-hint-retry = That scan couldn't be read. Try again.
+addfinger-hint-too-short = The swipe was too short. Swipe again.
+addfinger-hint-not-centred = Put your finger in the middle of the reader.
+addfinger-hint-lift = Lift your finger and try again.
+addfinger-error-failed = The fingerprint couldn't be added.
+addfinger-error-full = The reader has no room for another fingerprint. Delete one first.
+addfinger-error-duplicate = That fingerprint is already added, as another finger or for another user.
+addfinger-error-disconnected = The fingerprint reader was disconnected.
+addfinger-error-reader = The fingerprint reader reported an error.
+addfinger-refused-add = You weren't allowed to add a fingerprint.
+addfinger-refused-delete = You weren't allowed to delete the fingerprint.
+addfinger-failed-add = The fingerprint reader couldn't add a fingerprint.
+addfinger-failed-delete = The fingerprint reader couldn't delete the fingerprint.
+addfinger-in-use = Another program is using the fingerprint reader. Try again once it is done.
+addfinger-timed-out = The password prompt was open too long. Check the fingerprints and try again.
+finger-hand-left = Left hand
+finger-hand-right = Right hand
+finger-digit =
+    { $finger ->
+        [left-thumb] Thumb
+        [left-index-finger] Index finger
+        [left-middle-finger] Middle finger
+        [left-ring-finger] Ring finger
+        [left-little-finger] Little finger
+        [right-thumb] Thumb
+        [right-index-finger] Index finger
+        [right-middle-finger] Middle finger
+        [right-ring-finger] Ring finger
+       *[right-little-finger] Little finger
+    }
+finger-name =
+    { $finger ->
+        [left-thumb] Left thumb
+        [left-index-finger] Left index finger
+        [left-middle-finger] Left middle finger
+        [left-ring-finger] Left ring finger
+        [left-little-finger] Left little finger
+        [right-thumb] Right thumb
+        [right-index-finger] Right index finger
+        [right-middle-finger] Right middle finger
+        [right-ring-finger] Right ring finger
+       *[right-little-finger] Right little finger
+    }
+finger-name-mid =
+    { $finger ->
+        [left-thumb] left thumb
+        [left-index-finger] left index finger
+        [left-middle-finger] left middle finger
+        [left-ring-finger] left ring finger
+        [left-little-finger] left little finger
+        [right-thumb] right thumb
+        [right-index-finger] right index finger
+        [right-middle-finger] right middle finger
+        [right-ring-finger] right ring finger
+       *[right-little-finger] right little finger
+    }
