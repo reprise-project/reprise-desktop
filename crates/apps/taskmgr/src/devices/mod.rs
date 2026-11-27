@@ -122,7 +122,7 @@ impl Sampler {
         let cpu_name = std::fs::read_to_string(root.join("proc/cpuinfo"))
             .ok()
             .and_then(|s| cpu_name(&s))
-            .unwrap_or_else(|| "CPU".into());
+            .unwrap_or_else(|| reprisekit::tr!("cpu-fallback"));
         Sampler {
             root: root.to_path_buf(),
             cpu_name,

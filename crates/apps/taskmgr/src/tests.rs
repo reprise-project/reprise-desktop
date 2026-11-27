@@ -1317,3 +1317,19 @@ fn the_process_tip_closes_when_another_process_sorts_under_the_pointer() {
     assert_eq!(tip(&mut t, &mut ctx), None, "ark's tip closes");
     assert!(t.tip.is_none(), "and does not come back over notepad");
 }
+
+#[test]
+fn box_texts_keep_their_paragraph_breaks() {
+    assert_eq!(
+        tr!("end-process-text", name = "foo", pid = "42"),
+        "Ending foo (PID 42) can lose the data it holds, and a program that needs it may stop \
+         working.\n\nAre you sure you want to end this process?"
+    );
+    assert_eq!(
+        tr!("end-now-asked", name = "foo"),
+        "foo is not responding to the request to end.\n\nTo end it now, click End Now. Anything \
+         it has not saved is lost."
+    );
+    assert_eq!(tr!("sensors-heading", count = 1), "1 sensor chip");
+    assert_eq!(tr!("sensors-heading", count = 3), "3 sensor chips");
+}

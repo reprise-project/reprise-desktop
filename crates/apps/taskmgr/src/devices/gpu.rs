@@ -80,7 +80,7 @@ pub fn scan(root: &Path, names: &mut Names) -> Vec<Card> {
             let name = read_trim(&dev.join("product_name"))
                 .filter(|s| !s.is_empty())
                 .or_else(|| ids.and_then(|(v, d)| names.name(root, v, d)))
-                .unwrap_or_else(|| format!("{driver} GPU"));
+                .unwrap_or_else(|| reprisekit::tr!("gpu-named", driver = driver.as_str()));
             Some((
                 n,
                 Card {

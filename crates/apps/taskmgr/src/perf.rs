@@ -18,6 +18,7 @@ use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
 use reprisekit::theme::TextUnits;
+use reprisekit::tr;
 
 use crate::devices::{Source, hwmon};
 use crate::sample::Snapshot;
@@ -116,10 +117,10 @@ pub struct Perf {
 impl Perf {
     pub fn new() -> Perf {
         let mut sensors = List::new(vec![
-            Column::new("Sensor", 170),
+            Column::new(&tr!("sensor"), 170),
             Column {
                 right: true,
-                ..Column::new("Value", 90)
+                ..Column::new(&tr!("sensor-value"), 90)
             },
         ]);
         sensors.view.frame = true;
@@ -223,7 +224,7 @@ impl Perf {
                 first: rows.len(),
             });
             if c.asleep {
-                rows.push(row(&["Not read while the device sleeps", ""]));
+                rows.push(row(&[&tr!("sensors-asleep"), ""]));
             }
             for r in &c.readings {
                 rows.push(row(&[&r.label, &r.unit.text(r.value)]));
@@ -293,7 +294,7 @@ pub fn devices(s: &Snapshot) -> Vec<Device> {
     let cpu = s.cpu.map_or_else(String::new, pct);
     out.push(Device {
         key: Key::Cpu,
-        title: "CPU".into(),
+        title: tr!("device-cpu"),
         figure: match d.cpu_temp {
             Some(t) if !cpu.is_empty() => format!("{cpu}  {}", celsius(t)),
             _ => cpu,
@@ -302,7 +303,7 @@ pub fn devices(s: &Snapshot) -> Vec<Device> {
     let m = &s.mem;
     out.push(Device {
         key: Key::Memory,
-        title: "Memory".into(),
+        title: tr!("device-memory"),
         figure: if m.total == 0 {
             String::new()
         } else {
@@ -317,21 +318,29 @@ pub fn devices(s: &Snapshot) -> Vec<Device> {
     for (i, r) in d.disks.iter().enumerate() {
         out.push(Device {
             key: Key::Disk(r.disk.name.clone()),
-            title: format!("Disk {i} ({})", r.disk.name),
+            title: tr!(
+                "device-disk",
+                index = i.to_string(),
+                name = r.disk.name.as_str()
+            ),
             figure: r.rates.map_or_else(String::new, |x| pct(x.active)),
         });
     }
     for n in &d.nets {
         out.push(Device {
             key: Key::Net(n.adapter.name.clone()),
-            title: format!("{} ({})", n.adapter.kind.label(), n.adapter.name),
+            title: tr!(
+                "device-net",
+                kind = n.adapter.kind.label(),
+                name = n.adapter.name.as_str()
+            ),
             figure: n.rate.map_or_else(String::new, netspeed::line),
         });
     }
     for (i, g) in d.gpus.iter().enumerate() {
         let figure = match (g.asleep, g.busy) {
-            (true, _) => "Asleep".into(),
-            (false, None) => "No usage data".into(),
+            (true, _) => tr!("gpu-asleep"),
+            (false, None) => tr!("gpu-no-data"),
             (false, Some(b)) => match g.temp {
                 Some(t) => format!("{}  {}", pct(b), celsius(t)),
                 None => pct(b),
@@ -339,30 +348,29 @@ pub fn devices(s: &Snapshot) -> Vec<Device> {
         };
         out.push(Device {
             key: Key::Gpu(g.card.card.clone()),
-            title: format!("GPU {i}"),
+            title: tr!("device-gpu", index = i.to_string()),
             figure,
         });
     }
     out.push(Device {
         key: Key::Sensors,
-        title: "Sensors".into(),
-        figure: hottest_of(&d.sensors).map_or_else(|| "None".into(), celsius),
+        title: tr!("device-sensors"),
+        figure: hottest_of(&d.sensors).map_or_else(|| tr!("sensors-none"), celsius),
     });
     out
 }
 
 /// A row of graphs: a meter's group id and title, then each graph's.
 struct RowSpec {
-    meter: Option<(&'static str, &'static str)>,
-    graphs: &'static [(&'static str, &'static str)],
+    meter: Option<(&'static str, Text)>,
+    graphs: &'static [(&'static str, Text)],
 }
 
+/// A title or label looked up when the page is built.
+type Text = fn() -> String;
+
 /// A figure group: its id and title, then each row's value id, label id and label.
-type Figures = (
-    &'static str,
-    &'static str,
-    [(&'static str, &'static str, &'static str); 3],
-);
+type Figures = (&'static str, Text, [(&'static str, &'static str, Text); 3]);
 
 struct Spec {
     rows: &'static [RowSpec],
@@ -373,28 +381,28 @@ struct Spec {
 fn spec(p: Pane) -> &'static Spec {
     const TOTALS: Figures = (
         "totals",
-        "Totals",
+        || tr!("group-totals"),
         [
-            ("procs", "procs_label", "Processes"),
-            ("threads", "threads_label", "Threads"),
-            ("programs", "programs_label", "Programs"),
+            ("procs", "procs_label", || tr!("figure-procs")),
+            ("threads", "threads_label", || tr!("figure-threads")),
+            ("programs", "programs_label", || tr!("figure-programs")),
         ],
     );
     match p {
         Pane::Cpu => &Spec {
             rows: &[RowSpec {
-                meter: Some(("cpu_meter", "CPU Usage")),
-                graphs: &[("cpu_history", "CPU Usage History")],
+                meter: Some(("cpu_meter", || tr!("meter-cpu-meter"))),
+                graphs: &[("cpu_history", || tr!("graph-cpu-history"))],
             }],
             figures: &[
                 TOTALS,
                 (
                     "processor",
-                    "Processor",
+                    || tr!("group-processor"),
                     [
-                        ("cores", "cores_label", "Cores"),
-                        ("cpu_temp", "cpu_temp_label", "Temperature"),
-                        ("cpu_fan", "cpu_fan_label", "Fan"),
+                        ("cores", "cores_label", || tr!("figure-cores")),
+                        ("cpu_temp", "cpu_temp_label", || tr!("figure-cpu-temp")),
+                        ("cpu_fan", "cpu_fan_label", || tr!("figure-cpu-fan")),
                     ],
                 ),
             ],
@@ -402,26 +410,30 @@ fn spec(p: Pane) -> &'static Spec {
         },
         Pane::Memory => &Spec {
             rows: &[RowSpec {
-                meter: Some(("mem_meter", "Memory")),
-                graphs: &[("mem_history", "Memory Usage History")],
+                meter: Some(("mem_meter", || tr!("meter-mem-meter"))),
+                graphs: &[("mem_history", || tr!("graph-mem-history"))],
             }],
             figures: &[
                 (
                     "physical",
-                    "Physical Memory (MB)",
+                    || tr!("group-physical"),
                     [
-                        ("mem_total", "mem_total_label", "Total"),
-                        ("mem_avail", "mem_avail_label", "Available"),
-                        ("mem_cached", "mem_cached_label", "Cached"),
+                        ("mem_total", "mem_total_label", || tr!("figure-mem-total")),
+                        ("mem_avail", "mem_avail_label", || tr!("figure-mem-avail")),
+                        ("mem_cached", "mem_cached_label", || {
+                            tr!("figure-mem-cached")
+                        }),
                     ],
                 ),
                 (
                     "swap",
-                    "Swap (MB)",
+                    || tr!("group-swap"),
                     [
-                        ("swap_total", "swap_total_label", "Total"),
-                        ("swap_used", "swap_used_label", "In use"),
-                        ("swap_free", "swap_free_label", "Free"),
+                        ("swap_total", "swap_total_label", || {
+                            tr!("figure-swap-total")
+                        }),
+                        ("swap_used", "swap_used_label", || tr!("figure-swap-used")),
+                        ("swap_free", "swap_free_label", || tr!("figure-swap-free")),
                     ],
                 ),
             ],
@@ -431,33 +443,41 @@ fn spec(p: Pane) -> &'static Spec {
             rows: &[
                 RowSpec {
                     meter: None,
-                    graphs: &[("disk_active_history", "Active Time")],
+                    graphs: &[("disk_active_history", || tr!("graph-disk-active-history"))],
                 },
                 RowSpec {
                     meter: None,
                     graphs: &[
-                        ("disk_read_history", "Read"),
-                        ("disk_write_history", "Write"),
+                        ("disk_read_history", || tr!("graph-disk-read-history")),
+                        ("disk_write_history", || tr!("graph-disk-write-history")),
                     ],
                 },
             ],
             figures: &[
                 (
                     "activity",
-                    "Activity",
+                    || tr!("group-activity"),
                     [
-                        ("disk_active", "disk_active_label", "Active time"),
-                        ("disk_read", "disk_read_label", "Read speed"),
-                        ("disk_write", "disk_write_label", "Write speed"),
+                        ("disk_active", "disk_active_label", || {
+                            tr!("figure-disk-active")
+                        }),
+                        ("disk_read", "disk_read_label", || tr!("figure-disk-read")),
+                        ("disk_write", "disk_write_label", || {
+                            tr!("figure-disk-write")
+                        }),
                     ],
                 ),
                 (
                     "disk_totals",
-                    "Since Startup",
+                    || tr!("group-disk-totals"),
                     [
-                        ("disk_size", "disk_size_label", "Capacity"),
-                        ("disk_read_total", "disk_read_total_label", "Read"),
-                        ("disk_written", "disk_written_label", "Written"),
+                        ("disk_size", "disk_size_label", || tr!("figure-disk-size")),
+                        ("disk_read_total", "disk_read_total_label", || {
+                            tr!("figure-disk-read-total")
+                        }),
+                        ("disk_written", "disk_written_label", || {
+                            tr!("figure-disk-written")
+                        }),
                     ],
                 ),
             ],
@@ -467,30 +487,30 @@ fn spec(p: Pane) -> &'static Spec {
             rows: &[
                 RowSpec {
                     meter: None,
-                    graphs: &[("net_down_history", "Receive")],
+                    graphs: &[("net_down_history", || tr!("graph-net-down-history"))],
                 },
                 RowSpec {
                     meter: None,
-                    graphs: &[("net_up_history", "Send")],
+                    graphs: &[("net_up_history", || tr!("graph-net-up-history"))],
                 },
             ],
             figures: &[
                 (
                     "throughput",
-                    "Throughput",
+                    || tr!("group-throughput"),
                     [
-                        ("net_down", "net_down_label", "Receive"),
-                        ("net_up", "net_up_label", "Send"),
-                        ("net_kind", "net_kind_label", "Type"),
+                        ("net_down", "net_down_label", || tr!("figure-net-down")),
+                        ("net_up", "net_up_label", || tr!("figure-net-up")),
+                        ("net_kind", "net_kind_label", || tr!("figure-net-kind")),
                     ],
                 ),
                 (
                     "net_totals",
-                    "Since Connected",
+                    || tr!("group-net-totals"),
                     [
-                        ("net_rx", "net_rx_label", "Received"),
-                        ("net_tx", "net_tx_label", "Sent"),
-                        ("net_name", "net_name_label", "Adapter"),
+                        ("net_rx", "net_rx_label", || tr!("figure-net-rx")),
+                        ("net_tx", "net_tx_label", || tr!("figure-net-tx")),
+                        ("net_name", "net_name_label", || tr!("figure-net-name")),
                     ],
                 ),
             ],
@@ -499,31 +519,33 @@ fn spec(p: Pane) -> &'static Spec {
         Pane::Gpu => &Spec {
             rows: &[
                 RowSpec {
-                    meter: Some(("gpu_meter", "GPU Usage")),
-                    graphs: &[("gpu_history", "GPU Usage History")],
+                    meter: Some(("gpu_meter", || tr!("meter-gpu-meter"))),
+                    graphs: &[("gpu_history", || tr!("graph-gpu-history"))],
                 },
                 RowSpec {
-                    meter: Some(("vram_meter", "Memory")),
-                    graphs: &[("vram_history", "Video Memory History")],
+                    meter: Some(("vram_meter", || tr!("meter-vram-meter"))),
+                    graphs: &[("vram_history", || tr!("graph-vram-history"))],
                 },
             ],
             figures: &[
                 (
                     "gpu",
-                    "GPU",
+                    || tr!("group-gpu"),
                     [
-                        ("gpu_busy", "gpu_busy_label", "Usage"),
-                        ("gpu_temp", "gpu_temp_label", "Temperature"),
-                        ("gpu_fan", "gpu_fan_label", "Fan"),
+                        ("gpu_busy", "gpu_busy_label", || tr!("figure-gpu-busy")),
+                        ("gpu_temp", "gpu_temp_label", || tr!("figure-gpu-temp")),
+                        ("gpu_fan", "gpu_fan_label", || tr!("figure-gpu-fan")),
                     ],
                 ),
                 (
                     "vram",
-                    "Video Memory (MB)",
+                    || tr!("group-vram"),
                     [
-                        ("vram_total", "vram_total_label", "Total"),
-                        ("vram_used", "vram_used_label", "In use"),
-                        ("vram_free", "vram_free_label", "Free"),
+                        ("vram_total", "vram_total_label", || {
+                            tr!("figure-vram-total")
+                        }),
+                        ("vram_used", "vram_used_label", || tr!("figure-vram-used")),
+                        ("vram_free", "vram_free_label", || tr!("figure-vram-free")),
                     ],
                 ),
             ],
@@ -642,21 +664,21 @@ pub fn form_items(lay: &Layout, u: TextUnits) -> Vec<Item> {
     let mut items = vec![Item::label("heading", at_100(lay.heading), "")];
     for (rs, row) in sp.rows.iter().zip(&lay.rows) {
         if let (Some((id, title)), Some(m)) = (rs.meter, row.meter) {
-            items.push(Item::group(id, at_100(m.group), title));
+            items.push(Item::group(id, at_100(m.group), &title()));
         }
         for ((id, title), g) in rs.graphs.iter().zip(&row.graphs) {
-            items.push(Item::group(id, at_100(g.group), title));
+            items.push(Item::group(id, at_100(g.group), &title()));
         }
     }
     for ((id, title, rows), r) in sp.figures.iter().zip(&lay.figures) {
         let r = &at_100(*r);
-        items.push(Item::group(id, *r, title));
+        items.push(Item::group(id, *r, &title()));
         let w = r.width - 2 * GROUP_EDGE;
         let label_w = w * 3 / 5;
         for (i, (value, label_id, label)) in rows.iter().enumerate() {
             let y = r.y + GROUP_TOP + i as i32 * (LINE_H + 2);
             let x = r.x + GROUP_EDGE;
-            items.push(Item::label_at(label_id, x, y, label_w, label));
+            items.push(Item::label_at(label_id, x, y, label_w, &label()));
             items.push(Item::value_at(value, x + label_w, y, w - label_w, ""));
         }
     }
@@ -674,7 +696,11 @@ pub struct Art {
 
 /// The rate graph title with its scale: "Read (scale 10 MB/s)".
 fn scaled_title(title: &str, scale: f64) -> String {
-    format!("{title} (scale {})", netspeed::format(scale as u64))
+    tr!(
+        "scaled-title",
+        title = title,
+        scale = netspeed::format(scale as u64)
+    )
 }
 
 /// The figures, titles and graphs of the device `t` has picked.
@@ -737,7 +763,7 @@ pub fn shown(t: &TaskMgr) -> Shown {
             values.extend([
                 (
                     "heading",
-                    format!("{} installed", bytes_text(m.total * 1024)),
+                    tr!("installed", size = bytes_text(m.total * 1024)),
                 ),
                 ("mem_total", mb(m.total)),
                 ("mem_avail", mb(m.available)),
@@ -789,8 +815,14 @@ pub fn shown(t: &TaskMgr) -> Shown {
                     nice_scale(read.peak(), DISK_FLOOR),
                     nice_scale(write.peak(), DISK_FLOOR),
                 );
-                values.push(("disk_read_history", scaled_title("Read", rs)));
-                values.push(("disk_write_history", scaled_title("Write", ws)));
+                values.push((
+                    "disk_read_history",
+                    scaled_title(&tr!("graph-disk-read-history"), rs),
+                ));
+                values.push((
+                    "disk_write_history",
+                    scaled_title(&tr!("graph-disk-write-history"), ws),
+                ));
                 art.push(Art {
                     meter: None,
                     graphs: vec![vec![active.clone()]],
@@ -808,15 +840,16 @@ pub fn shown(t: &TaskMgr) -> Shown {
                 (
                     "heading",
                     n.map_or_else(String::new, |n| {
-                        format!("{} adapter {}", n.adapter.kind.label(), n.adapter.name)
+                        tr!(
+                            "adapter-heading",
+                            kind = n.adapter.kind.label(),
+                            name = n.adapter.name.as_str()
+                        )
                     }),
                 ),
                 ("net_down", or_dash(rate.map(|r| netspeed::format(r.down)))),
                 ("net_up", or_dash(rate.map(|r| netspeed::format(r.up)))),
-                (
-                    "net_kind",
-                    or_dash(n.map(|n| n.adapter.kind.label().into())),
-                ),
+                ("net_kind", or_dash(n.map(|n| n.adapter.kind.label()))),
                 ("net_rx", or_dash(n.map(|n| bytes_text(n.total.rx)))),
                 ("net_tx", or_dash(n.map(|n| bytes_text(n.total.tx)))),
                 ("net_name", or_dash(n.map(|n| n.adapter.name.clone()))),
@@ -826,8 +859,14 @@ pub fn shown(t: &TaskMgr) -> Shown {
                     nice_scale(down.peak(), NET_FLOOR),
                     nice_scale(up.peak(), NET_FLOOR),
                 );
-                values.push(("net_down_history", scaled_title("Receive", ds)));
-                values.push(("net_up_history", scaled_title("Send", us)));
+                values.push((
+                    "net_down_history",
+                    scaled_title(&tr!("graph-net-down-history"), ds),
+                ));
+                values.push((
+                    "net_up_history",
+                    scaled_title(&tr!("graph-net-up-history"), us),
+                ));
                 art.push(Art {
                     meter: None,
                     graphs: vec![vec![down.scaled(ds)]],
@@ -842,12 +881,12 @@ pub fn shown(t: &TaskMgr) -> Shown {
             let g = d.gpus.iter().find(|g| &g.card.card == card);
             let vram = g.and_then(|g| g.vram);
             let note = match g {
-                Some(g) if g.asleep => "The GPU is asleep; it is not read, so it stays asleep.",
-                Some(g) if g.source == Source::None => "No usage data.",
+                Some(g) if g.asleep => tr!("gpu-note-asleep"),
+                Some(g) if g.source == Source::None => tr!("gpu-note-no-data"),
                 Some(g) if g.source == Source::OwnProcesses && t.uid != 0 => {
-                    "Usage counts only your own processes."
+                    tr!("gpu-note-own-processes")
                 }
-                _ => "",
+                _ => String::new(),
             };
             let busy = g.and_then(|g| g.busy);
             let mib = |b: u64| grouped(b >> 20);
@@ -867,7 +906,7 @@ pub fn shown(t: &TaskMgr) -> Shown {
                     "vram_free",
                     or_dash(vram.map(|(u, t)| mib(t.saturating_sub(u)))),
                 ),
-                ("note", note.into()),
+                ("note", note),
             ]);
             if let Some(Hist::Gpu { busy: bh, vram: vh }) = hist {
                 let b = busy.unwrap_or(0.0);
@@ -891,9 +930,8 @@ pub fn shown(t: &TaskMgr) -> Shown {
         Key::Sensors => {
             let n = d.sensors.len();
             let heading = match n {
-                0 => "This computer reports no sensors.".to_string(),
-                1 => "1 sensor chip".to_string(),
-                n => format!("{n} sensor chips"),
+                0 => tr!("sensors-heading-none"),
+                n => tr!("sensors-heading", count = n),
             };
             values.push(("heading", heading));
         }
@@ -1025,13 +1063,13 @@ pub fn access(
             .as_ref()
             .map_or_else(String::new, |(_, v)| v.clone());
         if let (Some((_, title)), Some(m), Some((_, v))) = (rs.meter, row.meter, &a.meter) {
-            perfgraph::access(tree, ROOT, m.inside, title, v);
+            perfgraph::access(tree, ROOT, m.inside, &title(), v);
         }
         for ((id, title), g) in rs.graphs.iter().zip(&row.graphs) {
             let title = (shown.values.iter())
                 .find(|(i, _)| i == id)
-                .map_or(*title, |(_, v)| v.as_str());
-            perfgraph::access(tree, ROOT, g.inside, title, &value);
+                .map_or_else(title, |(_, v)| v.clone());
+            perfgraph::access(tree, ROOT, g.inside, &title, &value);
         }
     }
     if let Some(r) = lay.sensors
