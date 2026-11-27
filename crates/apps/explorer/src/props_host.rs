@@ -486,8 +486,8 @@ impl Explorer {
             info,
             sheet,
         };
-        props.picks.picture.canvas = glanced.picture.clone();
-        crate::props_picture::wear_picture(&mut props);
+        let own = props.info.own_picture.clone();
+        crate::props_picture::load_picture(&mut props, own, ctx);
         crate::props_picture::show_picture_buttons(&mut props);
         props
     }
@@ -1408,6 +1408,10 @@ fn shortcut_facts(info: &FileInfo, l: &reprisefs::launcher::Launcher) -> fileshe
 /// Why OK or Apply could not write the folder's icon or, with `picture`, its picture.
 fn look_failed_text(name: &str, picture: bool, e: &std::io::Error) -> String {
     use std::io::ErrorKind::{PermissionDenied, ReadOnlyFilesystem};
+    let link = (e.get_ref()).is_some_and(|i| i.is::<reprisefs::meta::DirectoryIsLink>());
+    if link {
+        return tr!("props-apply-props-directory-is-a-link", name = name);
+    }
     match (picture, e.kind()) {
         (true, PermissionDenied | ReadOnlyFilesystem) => tr!(
             "props-apply-props-no-permission-for-the-picture-of-name",
@@ -1467,8 +1471,6 @@ pub(crate) struct Glanced {
     info: FileInfo,
     icon: SheetIcon,
     files: Vec<(String, i32, Option<Canvas>)>,
-    /// Customize's preview of the folder's picture.
-    picture: Option<Canvas>,
     scale: i32,
 }
 
@@ -1530,13 +1532,10 @@ fn glance(
             files.push((f.to_string(), px, art));
         }
     }
-    let picture =
-        (info.own_picture.as_deref()).and_then(|p| crate::props_picture::preview_picture(p, scale));
     Ok(Glanced {
         info,
         icon,
         files,
-        picture,
         scale,
     })
 }

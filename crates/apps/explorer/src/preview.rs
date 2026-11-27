@@ -65,7 +65,7 @@ pub(crate) fn read(
     }
     let read_text = || -> Option<String> {
         let mut head = Vec::with_capacity(SNIFF_BYTES);
-        let mut f = std::fs::File::open(path).ok()?;
+        let mut f = reprisefs::ops::open_regular(path).ok()?;
         (&mut f)
             .take(SNIFF_BYTES as u64)
             .read_to_end(&mut head)
@@ -90,6 +90,19 @@ pub(crate) fn read(
     found
         .or_else(|| cached(path, &meta, cache?, max, scale).map(Loaded::Picture))
         .unwrap_or(Loaded::Nothing)
+}
+
+/// The picture at `path` (a folder's), fitted inside `max` device px at `scale`: [`read`]'s picture
+/// without its stat or the cache, so a read on a mount that never answers gives up within
+/// [`repriseapp::thumbs::picture`]'s deadline.
+pub(crate) fn read_picture(
+    path: &Path,
+    jailed: &Jailed,
+    max: (u32, u32),
+    scale: i32,
+) -> Option<Canvas> {
+    repriseapp::thumbs::picture_in(jailed.runner.as_ref(), &jailed.exe, path, max)
+        .map(|c| c.at_scale(scale))
 }
 
 /// How a font's sample and a JPEG XL's or AVIF's picture are drawn: by `exe` [`FONT_SAMPLE`] and
@@ -220,16 +233,23 @@ impl Explorer {
             ((within.0 - 2 * PAD).max(1) * scale) as u32,
             ((within.1 - 2 * PAD).max(1) * scale) as u32,
         );
-        let (read_path, route) = match self.pictures.get(&it.path) {
-            Some(picture) if folder => (Some(picture.clone()), Route::Picture),
-            _ => ((!folder).then(|| it.path.clone()), route),
+        let job = match self.pictures.get(&it.path).filter(|_| folder) {
+            Some(picture) => {
+                let p = picture.clone();
+                Some(Job::spawn(Some(&ctx.wake), move || {
+                    let read = read_picture(&p, &Jailed::installed(), max, scale);
+                    read.map_or(Loaded::Nothing, Loaded::Picture)
+                }))
+            }
+            None => (!folder).then(|| {
+                let p = it.path.clone();
+                Job::spawn(Some(&ctx.wake), move || {
+                    let cache =
+                        repriseapp::thumbs::cache_for(repriseconf::current().thumbnail_cache);
+                    read(&p, route, cache.as_ref(), &Jailed::installed(), max, scale)
+                })
+            }),
         };
-        let job = read_path.map(|p| {
-            Job::spawn(Some(&ctx.wake), move || {
-                let cache = repriseapp::thumbs::cache_for(repriseconf::current().thumbnail_cache);
-                read(&p, route, cache.as_ref(), &Jailed::installed(), max, scale)
-            })
-        });
         let landed = job.as_ref().and_then(|j| j.wait(self.list_wait()));
         let (mono, metrics) = match self.preview.take() {
             Some(p) => (p.mono, p.metrics),
