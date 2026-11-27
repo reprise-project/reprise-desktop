@@ -378,7 +378,7 @@ fn empty_folder(dir: BorrowedFd, path: &Path, keep: Option<&CStr>) -> io::Result
         if let Some(e) = failed.first {
             let n = failed.count;
             log::warn!(
-                "clean up: {} keeps {n} entries, the first: {e}",
+                "clean up: {} is not all removed, {n} failed, the first: {e}",
                 at.display()
             );
             first.get_or_insert(e);
