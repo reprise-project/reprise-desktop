@@ -7,6 +7,7 @@ fn places(cache: &Path) -> Places {
         cache: Some(cache.to_path_buf()),
         bins: None,
         flatpak: None,
+        flatpak_user: None,
         coredumpctl: None,
         // SAFETY: getuid cannot fail.
         uid: unsafe { libc::getuid() },
@@ -231,6 +232,7 @@ fn flatpak_lists_without_removing_and_removes_only_confirmed_runtimes_still_unus
     let log = t.path().join("log");
     let p = Places {
         flatpak: Some(fake_flatpak(t.path(), &log)),
+        flatpak_user: Some(t.path().to_path_buf()),
         ..places(&t.path().join("cache"))
     };
     let found = p.count(Part::Flatpak);
@@ -260,6 +262,24 @@ fn flatpak_lists_without_removing_and_removes_only_confirmed_runtimes_still_unus
          uninstall -y --no-related --user runtime/org.gnome.Platform/x86_64/47\n",
         "the system installation, with nothing confirmed, is not asked"
     );
+}
+
+#[test]
+fn flatpak_lists_only_the_system_installation_while_the_user_has_none() {
+    let t = tempfile::tempdir().unwrap();
+    let log = t.path().join("log");
+    let user = t.path().join("data/flatpak");
+    let p = Places {
+        flatpak: Some(fake_flatpak(t.path(), &log)),
+        flatpak_user: Some(user.clone()),
+        ..places(&t.path().join("cache"))
+    };
+    assert_eq!(p.count(Part::Flatpak), Found::nothing(true));
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "--default-arch\nuninstall --unused --system\n"
+    );
+    assert!(!user.exists());
 }
 
 #[test]

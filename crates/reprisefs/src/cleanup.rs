@@ -122,6 +122,9 @@ pub struct Places {
     pub cache: Option<PathBuf>,
     pub bins: Option<Bins>,
     pub flatpak: Option<PathBuf>,
+    /// Flatpak's user installation, asked about only while it exists: `flatpak --user` creates
+    /// one where it is missing.
+    pub flatpak_user: Option<PathBuf>,
     pub coredumpctl: Option<PathBuf>,
     pub uid: u32,
     /// `$HOME`: a cache folder there or above it is refused.
@@ -143,6 +146,9 @@ impl Places {
             cache: reprisexdg::cache_home(),
             bins: Bins::system(),
             flatpak: program("flatpak"),
+            flatpak_user: std::env::var_os("FLATPAK_USER_DIR")
+                .map(PathBuf::from)
+                .or_else(|| reprisexdg::data_home().map(|d| d.join("flatpak"))),
             coredumpctl: program("coredumpctl"),
             // SAFETY: getuid cannot fail.
             uid: unsafe { libc::getuid() },
@@ -164,6 +170,14 @@ impl Places {
         Part::ALL.into_iter().filter(|p| has(*p)).collect()
     }
 
+    /// The installations to list, by the option that picks each: the user's only while it exists.
+    fn installations(&self) -> impl Iterator<Item = (&'static str, bool)> {
+        let user = self.flatpak_user.as_deref().is_some_and(Path::exists);
+        INSTALLATIONS
+            .into_iter()
+            .filter(move |&(_, system)| system || user)
+    }
+
     /// What `part` holds; a part this system lacks holds nothing. A long count gives up, with
     /// what it has, once `stop` is set.
     pub fn measure(&self, part: Part, stop: &AtomicBool) -> Found {
@@ -182,7 +196,7 @@ impl Places {
                 ..Found::nothing(false)
             },
             Part::Flatpak => match &self.flatpak {
-                Some(p) => unused_runtimes(p, stop),
+                Some(p) => unused_runtimes(p, self.installations(), stop),
                 None => Found::nothing(false),
             },
         }
@@ -448,9 +462,13 @@ fn unused_in(flatpak: &Path, option: &str, system: bool) -> io::Result<Vec<Runti
 }
 
 /// Each installation's unused runtimes, with the sizes `flatpak info` gives.
-fn unused_runtimes(flatpak: &Path, stop: &AtomicBool) -> Found {
+fn unused_runtimes(
+    flatpak: &Path,
+    installations: impl Iterator<Item = (&'static str, bool)>,
+    stop: &AtomicBool,
+) -> Found {
     let mut found = Found::nothing(true);
-    for (option, system) in INSTALLATIONS {
+    for (option, system) in installations {
         let rows = match unused_in(flatpak, option, system) {
             Ok(rows) => rows,
             Err(e) => {
