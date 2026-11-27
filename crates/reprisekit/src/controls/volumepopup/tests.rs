@@ -109,11 +109,11 @@ fn a_readers_focus_shows_the_focus_ring() {
 }
 
 #[test]
-fn with_no_programs_the_panel_is_444_wide() {
+fn with_no_programs_and_short_names_the_panel_is_234_wide() {
     let vp = VolumePopup::new(&mix(&[]));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(738, 690, 444, 362));
-    assert_eq!(col(&l, 0).rect, Rect::new(750, 772, 96, 247));
+    assert_eq!(l.panel, Rect::new(843, 690, 234, 362));
+    assert_eq!(col(&l, 0).rect, Rect::new(912, 772, 96, 247));
     assert_eq!(l.divider, None, "no programs, no line after master");
 }
 
@@ -133,8 +133,8 @@ fn from_a_top_bar_the_panel_hangs_under_the_anchor() {
     let text = TextRenderer::load(&theme.fonts);
     let screen = Rect::new(0, 0, 1920, 1080);
     let l = layout(&vp, &theme, &text, (960, 28), Edge::Top, screen);
-    assert_eq!(l.panel, Rect::new(738, 28, 444, 362));
-    assert_eq!(col(&l, 0).rect, Rect::new(750, 110, 96, 247));
+    assert_eq!(l.panel, Rect::new(843, 28, 234, 362));
+    assert_eq!(col(&l, 0).rect, Rect::new(912, 110, 96, 247));
     let low = layout(&vp, &theme, &text, (960, 1000), Edge::Top, screen);
     assert_eq!(low.panel.bottom(), 1080, "kept inside the bounds");
 }
@@ -143,11 +143,11 @@ fn from_a_top_bar_the_panel_hangs_under_the_anchor() {
 fn programs_stand_102_px_apart_past_an_etched_line_after_master() {
     let vp = VolumePopup::new(&one_output(&[app("firefox", 16), app("mpv", 8)]));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(738, 690, 444, 362), "the combos' width");
-    assert_eq!(col(&l, 0).rect.x, 750);
-    assert_eq!(l.divider, Some(Rect::new(852, 772, 2, 247)));
-    assert_eq!(col(&l, 1).rect.x, 860);
-    assert_eq!(col(&l, 2).rect.x, 962);
+    assert_eq!(l.panel, Rect::new(794, 690, 332, 362), "the columns' width");
+    assert_eq!(col(&l, 0).rect.x, 806);
+    assert_eq!(l.divider, Some(Rect::new(908, 772, 2, 247)));
+    assert_eq!(col(&l, 1).rect.x, 916);
+    assert_eq!(col(&l, 2).rect.x, 1018);
     assert_eq!(l.bar, None);
 }
 
@@ -215,7 +215,40 @@ fn past_six_programs_a_scrollbar_runs_under_them() {
 }
 
 #[test]
-fn the_combos_are_360_wide_right_of_the_widest_label() {
+fn the_combos_take_their_widest_device_name_between_150_and_360() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let dialog = text.dialog(crate::text::DialogFont::ShellDlg);
+    let field = |name: &str| {
+        let mut m = mix(&[]);
+        m.outputs = vec![name.into()];
+        lay(&VolumePopup::new(&m)).output.field.width
+    };
+    assert_eq!(field("Speakers"), 150, "short names");
+    let mid = "Built-in Audio Analog Stereo Speakers";
+    let want = dialog.measure(mid, false, theme.fonts.size_px) + 12 + theme.controls().combo_drop;
+    assert!(want > 150 && want < 360, "{want}");
+    assert_eq!(field(mid), want);
+    assert_eq!(
+        field(&"Long ".repeat(30)),
+        360,
+        "a longer one ends in an ellipsis"
+    );
+}
+
+#[test]
+fn master_alone_centres_under_the_combos() {
+    let l = lay(&VolumePopup::new(&mix(&[])));
+    let c = col(&l, 0).rect;
+    let (left, right) = (c.x - l.panel.x, l.panel.right() - c.right());
+    assert!(
+        (left - right).abs() <= 1,
+        "{left} and {right} px either side"
+    );
+}
+
+#[test]
+fn the_combos_sit_right_of_the_widest_label() {
     let vp = VolumePopup::new(&mix(&[]));
     let theme = Theme::default();
     let text = TextRenderer::load(&theme.fonts);
@@ -227,10 +260,10 @@ fn the_combos_are_360_wide_right_of_the_widest_label() {
         .max(52);
     assert_eq!(
         l.output.field,
-        Rect::new(738 + 12 + label_w + 8, 702, 360, 21)
+        Rect::new(843 + 12 + label_w + 8, 702, 150, 21)
     );
     assert_eq!(l.input.field.y, 729);
-    assert_eq!(l.separator, Rect::new(750, 760, 420, 2));
+    assert_eq!(l.separator, Rect::new(855, 760, 210, 2));
 }
 
 #[test]
@@ -1617,21 +1650,26 @@ fn the_middle_button_pauses_a_playing_track_and_plays_a_paused_one() {
 fn a_player_adds_the_strip_under_the_columns() {
     let vp = VolumePopup::new(&with_track(&[], track(true)));
     let l = lay(&vp);
-    assert_eq!(l.panel, Rect::new(738, 634, 444, 418), "56 px taller");
+    assert_eq!(
+        l.panel,
+        Rect::new(798, 634, 324, 418),
+        "56 px taller, 300 inside for the title"
+    );
     let st = l.strip.as_ref().expect("a strip");
     let foot = col(&l, 0).rect.bottom();
-    assert_eq!(st.separator, Rect::new(750, foot + 10, 420, 2));
-    assert_eq!(st.rect, Rect::new(750, foot + 22, 420, 34));
+    assert_eq!(col(&l, 0).rect.x, 912, "master centred");
+    assert_eq!(st.separator, Rect::new(810, foot + 10, 300, 2));
+    assert_eq!(st.rect, Rect::new(810, foot + 22, 300, 34));
     assert_eq!(
         st.buttons,
         [
-            Rect::new(1066, foot + 25, 32, 28),
-            Rect::new(1102, foot + 25, 32, 28),
-            Rect::new(1138, foot + 25, 32, 28),
+            Rect::new(1006, foot + 25, 32, 28),
+            Rect::new(1042, foot + 25, 32, 28),
+            Rect::new(1078, foot + 25, 32, 28),
         ]
     );
-    assert_eq!(st.title, Rect::new(750, foot + 26, 308, 13));
-    assert_eq!(st.artist, Some(Rect::new(750, foot + 39, 308, 13)));
+    assert_eq!(st.title, Rect::new(810, foot + 26, 188, 13));
+    assert_eq!(st.artist, Some(Rect::new(810, foot + 39, 188, 13)));
     assert_eq!(
         st.rect.bottom() + LINK_GAP + ROW_H + MARGIN,
         l.panel.bottom()
@@ -2042,7 +2080,7 @@ fn at_200_percent_the_parts_and_thumbs_grow_and_icons_and_glyphs_keep_their_size
     let (w, h) = size(c1.track.thumb);
     assert_eq!(size(c.track.thumb), (2 * w, 2 * h));
     assert_eq!(c.track.bounds.width, 2 * c1.track.bounds.width);
-    assert_eq!(l.output.field.width, 720);
+    assert_eq!(l.output.field.width, 300, "the narrowest combo, doubled");
     assert_eq!(l.output.row_h, 2 * one.output.row_h);
     assert_eq!(l.bar, None);
 }
@@ -2090,13 +2128,13 @@ fn beside_a_side_bar_the_panel_stands_off_its_edge_level_with_the_icon() {
     let left = layout(&vp, &theme, &text, (60, 500), Edge::Left, screen);
     assert_eq!(
         left.panel,
-        Rect::new(60, 500 - 181, 444, 362),
+        Rect::new(60, 500 - 181, 234, 362),
         "its left edge on the bar's, centred on the icon"
     );
     let right = layout(&vp, &theme, &text, (1860, 1050), Edge::Right, screen);
     assert_eq!(
         right.panel,
-        Rect::new(1860 - 444, 1080 - 362, 444, 362),
+        Rect::new(1860 - 234, 1080 - 362, 234, 362),
         "its right edge on the bar's, kept above the output's foot"
     );
 }

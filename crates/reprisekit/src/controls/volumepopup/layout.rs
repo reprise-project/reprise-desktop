@@ -11,10 +11,10 @@ use crate::trackbar;
 
 use super::{
     BAR_GAP, COL_GAP, COL_H, COL_W, COMBO_GAP, COMBO_H, Column, DEVICE_GAP, DEVICE_INSET,
-    DIVIDER_GAP, Dir, FIELD_W, ICON, LABEL_GAP, LABEL_W, LEVEL_Y, LINK_GAP, MARGIN, MAX_SHOWN,
-    MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H, MUTE_W, MUTE_Y, NAME_Y, NowPlaying, Pick, ROW_H, SEP_GAP,
-    SEP_H, STRIP_H, THUMB_H, THUMB_WIDER, TRACK_H, TRACK_Y, Transport, VolumePopup, input, output,
-    settings,
+    DIVIDER_GAP, Dir, FIELD_CHROME, FIELD_MIN_W, FIELD_W, ICON, LABEL_GAP, LABEL_W, LEVEL_Y,
+    LINK_GAP, MARGIN, MAX_SHOWN, MEDIA_GAP, MEDIA_H, MEDIA_W, MUTE_H, MUTE_W, MUTE_Y, NAME_Y,
+    NowPlaying, Pick, ROW_H, SEP_GAP, SEP_H, STRIP_H, STRIP_MIN_W, THUMB_H, THUMB_WIDER, TRACK_H,
+    TRACK_Y, Transport, VolumePopup, input, output, settings,
 };
 
 #[derive(Clone, Debug)]
@@ -168,8 +168,21 @@ pub fn layout(
         .measure(&output(), false, px)
         .max(text.measure(&input(), false, px))
         .max(l(LABEL_W));
-    let rows_w = label_w + l(LABEL_GAP) + l(FIELD_W);
-    let w = 2 * margin + (col_w + divider_w + programs_w).max(rows_w);
+    let widest = (vp.output.items.iter())
+        .chain(&vp.input.items)
+        .map(|it| text.measure(&it.text, false, px))
+        .max()
+        .unwrap_or(0);
+    let field_w = (widest + FIELD_CHROME + cm.combo_drop).clamp(l(FIELD_MIN_W), l(FIELD_W));
+    let rows_w = label_w + l(LABEL_GAP) + field_w;
+    let strip_w = col_w + divider_w + programs_w;
+    let player_w = if vp.playing.is_some() {
+        l(STRIP_MIN_W)
+    } else {
+        0
+    };
+    let inner_w = strip_w.max(rows_w).max(player_w);
+    let w = 2 * margin + inner_w;
     let bar_h = if scrolls { l(BAR_GAP) + cm.scroll } else { 0 };
     let col_h = column_h(vp, u);
     let strip_h = if vp.playing.is_some() {
@@ -208,7 +221,8 @@ pub fn layout(
     let row = |ry: i32| Rect::new(x + margin, ry + (combo_h - row_h) / 2, label_w, row_h);
     let sy = iy + combo_h + l(SEP_GAP);
     let cy = sy + SEP_H + l(SEP_GAP);
-    let cx = x + margin;
+    // The master column and the programs centre in a panel wider than they are.
+    let cx = x + margin + (inner_w - strip_w) / 2;
     let px0 = cx + col_w + divider_w;
     let inner = Rect::new(x + margin, y + margin, w - 2 * margin, h - 2 * margin);
     let columns = vp
@@ -224,7 +238,7 @@ pub fn layout(
             at.map(|ax| column_layout(c, &cm, u, (ax, cy, col_h), inner, text, px))
         })
         .collect();
-    let field = |fy: i32| Rect::new(fx, fy, l(FIELD_W), combo_h);
+    let field = |fy: i32| Rect::new(fx, fy, field_w, combo_h);
     let foot = cy + col_h + bar_h;
     let lw = text.measure(&settings(), false, px);
     let ly = foot + strip_h + l(LINK_GAP);
