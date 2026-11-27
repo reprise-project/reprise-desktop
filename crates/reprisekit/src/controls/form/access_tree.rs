@@ -243,7 +243,7 @@ impl Form {
                 }
                 Control::Calendar(cal) => {
                     let lay = calendar::layout(r, &self.rendered.controls.get());
-                    let id = calendar::access(cal, &lay, text, px, tree, up, key);
+                    let id = calendar::field_access(cal, &lay, text, px, tree, up, key);
                     (id, Some(id))
                 }
                 Control::Time(tf) => {
