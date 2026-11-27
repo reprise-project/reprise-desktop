@@ -986,6 +986,7 @@ fn a_relabel_refusal_reads_in_words() {
         kind: ErrorKind::Other,
         message: message.into(),
         came_off: Vec::new(),
+        stuck: None,
     };
     let text = |fs: &str, message: &str| {
         crate::volumes::relabel_failed_text("STICK", fs, &failed(message))

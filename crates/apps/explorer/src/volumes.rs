@@ -377,7 +377,8 @@ impl Explorer {
             "volumes-eject-selected-problem-ejecting-name",
             name = disk.map_or_else(|| v.name(None), |d| d.name())
         );
-        // The busy box names the drive when another of its volumes may be the one in use.
+        // A refusal no volume answers for names the drive when another of its volumes may be
+        // the one in use.
         let mounted_on = |d: &reprisefs::udisks::Disk| {
             let on = self.volumes.volumes_on(&d.path);
             on.iter().filter(|o| !o.mounts.is_empty()).count()
