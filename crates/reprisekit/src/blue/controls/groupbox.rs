@@ -5,7 +5,7 @@
 //! draws the same frame as an enabled one, so its face carries the same
 //! colour.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::Face;
 use crate::raster::Insets;
 use crate::shape::{CLEAR, Px, draw, premul, ringed};
@@ -17,7 +17,7 @@ const FRAME_SIZE: i32 = CORNER * 2 + 1;
 
 const RADIUS: f64 = 3.0;
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let faces = &v.scheme().group_box;
     let frames = [
         (State::Normal, &faces.normal),
@@ -56,6 +56,7 @@ fn frame(face: &Face, d: i32) -> Vec<Px> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::raster::Canvas;
 
     fn fnv(c: &Canvas) -> u64 {
@@ -70,7 +71,7 @@ mod tests {
     }
 
     fn atlas(v: Variant, d: i32) -> PartImage {
-        parts(v, d).remove(0).1
+        parts(v.into(), d).remove(0).1
     }
 
     #[test]

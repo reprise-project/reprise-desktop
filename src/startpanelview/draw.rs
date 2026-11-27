@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use reprisekit::anim::Unroll;
-use reprisekit::blue::Variant;
+use reprisekit::blue::Tone;
 use reprisekit::interface::Interface;
 use reprisekit::startpanel::layout::{self, Layout};
 use reprisekit::startpanel::{self, Mode, Shape, Spot, StartPanel};
@@ -183,10 +183,10 @@ fn unroll_frame(v: &mut StartPanelView, scene: &mut crate::compositor::DeskScene
 impl State {
     /// The scheme the Blue Start menu and its menus draw in: the active one under Blue, Blue's own
     /// under another interface.
-    pub(crate) fn blue_start_variant(&self) -> Variant {
+    pub(crate) fn blue_start_variant(&self) -> Tone {
         match self.config.interface {
-            Interface::Blue => self.config.blue_variant,
-            _ => Variant::Blue,
+            Interface::Blue => Tone::of(&self.config.theme.look),
+            _ => Tone::default(),
         }
     }
 

@@ -323,7 +323,14 @@ pub fn render_blue_start_panel(n: i32, pct: u32) -> Canvas {
         let p = &p;
         let l = sp::layout::layout(p).scaled(n);
         let mut panel = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
-        interfaces::draw_blue_start_panel(&mut panel, *variant, &text, p, &l, *pressed);
+        interfaces::draw_blue_start_panel(
+            &mut panel,
+            reprisekit::blue::Tone::from(*variant),
+            &text,
+            p,
+            &l,
+            *pressed,
+        );
         let (x, y) = (
             (k % 3) as i32 * cell_w + 10 * n,
             (k / 3) as i32 * cell_h + 10 * n,
@@ -384,8 +391,8 @@ pub fn render_blue_start_menus(n: i32) -> Canvas {
         .into_iter()
         .enumerate()
     {
-        let one = interfaces::blue_start_menus(&base, v);
-        let theme = interfaces::blue_start_menus(&base.scaled(n), v);
+        let one = interfaces::blue_start_menus(&base, v.into());
+        let theme = interfaces::blue_start_menus(&base.scaled(n), v.into());
         let laid_out = |items: &[MenuItem]| {
             let style =
                 MenuStyle::context_for(&one, items).fit(&text, items, one.fonts.size_px, 400);

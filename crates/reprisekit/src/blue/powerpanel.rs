@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use crate::art::logo;
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::cues::Cues;
 use crate::pointer::{Interaction, Lit, lit_of};
 use crate::powerpanel::{BORDER, Choice, ICON, Layout, Panel, Part, SEPARATOR};
@@ -44,7 +44,7 @@ struct Inks {
     peak: Color,
 }
 
-fn inks(v: Variant) -> Inks {
+fn inks(v: Tone) -> Inks {
     let (h, s, _) = hsl_of(v.scheme().system.active_title);
     Inks {
         band: hsl(h, s, BAND_L),
@@ -99,7 +99,7 @@ fn solid(c: Color) -> Px {
 
 /// The panel without its text, tiles and Cancel at `d` device px per logical px: a 1 px black
 /// border round the title band, the separator, the lit band, a lighter line and the bottom band.
-pub fn backdrop(v: Variant, lay: &Layout, d: i32) -> Canvas {
+pub fn backdrop(v: Tone, lay: &Layout, d: i32) -> Canvas {
     let ink = inks(v);
     let (w, h) = lay.size;
     let (title, band) = (lay.title, lay.band);
@@ -449,7 +449,7 @@ pub fn tile_state(p: &Panel, i: usize, lit: Lit<Part>) -> TileState {
 pub fn draw(
     c: &mut Canvas,
     text: &TextRenderer,
-    v: Variant,
+    v: Tone,
     p: &Panel,
     lay: &Layout,
     lit: Lit<Part>,
@@ -517,6 +517,7 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::powerpanel::{First, Leave, layout};
     use crate::theme::TextUnits;
 
@@ -576,7 +577,7 @@ mod tests {
                 for d in [1, 2] {
                     got.push((
                         format!("{v:?} {} {d}", p.bigs.len()),
-                        fnv(&backdrop(v, &lay, d)),
+                        fnv(&backdrop(v.into(), &lay, d)),
                     ));
                 }
             }
@@ -644,7 +645,7 @@ mod tests {
             }),
             TextUnits::ONE,
         );
-        let navy = backdrop(Variant::Blue, &lay, 1);
+        let navy = backdrop(Variant::Blue.into(), &lay, 1);
         let rgb = |p: u32| p & 0xFF_FFFF;
         assert_eq!(rgb(navy.get(0, 100)), 0, "the border is black");
         let band = rgb(navy.get(100, 20));
@@ -658,9 +659,9 @@ mod tests {
         let peak = rgb(navy.get(185, 88));
         let lum = |p: u32| ((p >> 16) & 0xFF) + ((p >> 8) & 0xFF) + (p & 0xFF);
         assert!(lum(peak) > lum(edge) + 100, "the band is lit off centre");
-        let silver = backdrop(Variant::Silver, &lay, 1);
+        let silver = backdrop(Variant::Silver.into(), &lay, 1);
         assert_ne!(rgb(silver.get(100, 20)), band, "Silver has its own band");
-        let two = backdrop(Variant::Blue, &lay, 2);
+        let two = backdrop(Variant::Blue.into(), &lay, 2);
         assert_eq!((two.width, two.height), (628, 400));
         assert_eq!(rgb(two.get(1, 200)), 0, "the border is 2 device px at 2");
         assert_eq!(

@@ -11,7 +11,7 @@
 //! 17 px, centred in the 19 px box. The disc's edge is anti-aliased and the
 //! rest clear, so the button draws over any bar.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::raster::Canvas;
 use crate::shape::{
     CLEAR, Px, Stops, draw, ellipse, mix, over, premul, radial, scale, shares, stroke,
@@ -258,13 +258,14 @@ pub(crate) const BEAD: Shading = Shading::Banded {
     glow: (5.5, 3.5, 5.0),
 };
 
-pub(crate) fn recipe(v: Variant) -> ArrowRecipe {
+pub(crate) fn recipe(v: Tone) -> ArrowRecipe {
     v.scheme().tray_arrow
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::shape::pack;
 
     fn fnv(c: &Canvas) -> u64 {
@@ -302,7 +303,7 @@ mod tests {
     fn every_frame_is_19_px_a_side_times_the_scale() {
         for v in Variant::ALL {
             for d in [1, 2, 3] {
-                let a = art(&recipe(v), d);
+                let a = art(&recipe(v.into()), d);
                 assert_eq!(a.scale, d);
                 let n = (SIZE * d) as u32;
                 for f in frames(&a) {
@@ -315,7 +316,7 @@ mod tests {
     #[test]
     fn beyond_the_disc_the_frame_is_clear() {
         for v in Variant::ALL {
-            let r = recipe(v);
+            let r = recipe(v.into());
             for d in [1, 2] {
                 let a = art(&r, d);
                 let reach = r.radius * f64::from(d) + 0.75;
@@ -336,7 +337,7 @@ mod tests {
     #[test]
     fn slate_and_ember_draw_a_disc_a_pixel_smaller_round() {
         for v in Variant::ALL {
-            let a = art(&recipe(v), 1);
+            let a = art(&recipe(v.into()), 1);
             let small = matches!(v, Variant::Slate | Variant::Ember);
             assert_eq!(alpha(&a.rest, 9, 0) == 0, small, "{v:?}: the top row");
             assert_eq!(alpha(&a.rest, 9, 1), 255, "{v:?}: the second row");
@@ -347,7 +348,7 @@ mod tests {
     fn each_state_and_direction_draws_its_own_frame() {
         for v in Variant::ALL {
             for d in [1, 2] {
-                let a = art(&recipe(v), d);
+                let a = art(&recipe(v.into()), d);
                 let f = frames(&a);
                 for i in 0..f.len() {
                     for j in i + 1..f.len() {
@@ -360,7 +361,7 @@ mod tests {
 
     #[test]
     fn every_scheme_draws_its_own_button() {
-        let rest = Variant::ALL.map(|v| art(&recipe(v), 1).rest);
+        let rest = Variant::ALL.map(|v| art(&recipe(v.into()), 1).rest);
         for i in 0..rest.len() {
             for j in i + 1..rest.len() {
                 let (a, b) = (Variant::ALL[i], Variant::ALL[j]);
@@ -372,7 +373,7 @@ mod tests {
     #[test]
     fn the_disc_edge_is_smooth_at_scale_2() {
         for v in Variant::ALL {
-            let r = recipe(v);
+            let r = recipe(v.into());
             let a = art(&r, 2);
             for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
                 let soft = (0..2 * SIZE)
@@ -398,7 +399,7 @@ mod tests {
             0.3 * ch(16) + 0.59 * ch(8) + 0.11 * ch(0)
         };
         for v in Variant::ALL {
-            let r = recipe(v);
+            let r = recipe(v.into());
             for d in [1, 2] {
                 let a = art(&r, d);
                 let k = f64::from(d);
@@ -433,7 +434,7 @@ mod tests {
     #[test]
     fn the_chevron_holds_solid_pixels_on_each_arm_at_scale_1() {
         for v in Variant::ALL {
-            let r = recipe(v);
+            let r = recipe(v.into());
             let a = art(&r, 1);
             for (i, f) in frames(&a).into_iter().enumerate() {
                 let ink = r.states[i % 3].glyph.argb();
@@ -450,7 +451,7 @@ mod tests {
     #[test]
     fn the_chevron_points_back_while_shut_and_on_while_open() {
         for v in Variant::ALL {
-            let r = recipe(v);
+            let r = recipe(v.into());
             let a = art(&r, 1);
             let ink = r.states[0].glyph.argb();
             let tip = r.chevron.tip.floor() as i32;
@@ -477,7 +478,7 @@ mod tests {
         let mut got = Vec::new();
         for v in Variant::ALL {
             for d in [1, 2] {
-                let hashes = frames(&art(&recipe(v), d)).map(fnv);
+                let hashes = frames(&art(&recipe(v.into()), d)).map(fnv);
                 for (name, h) in FRAMES.into_iter().zip(hashes) {
                     got.push((format!("{v:?} {name} {d}"), h));
                 }

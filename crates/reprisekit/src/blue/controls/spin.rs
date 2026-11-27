@@ -13,8 +13,8 @@
 //! taller: column 3, clear of the chevron, is the only stretchable column, and one plain row (row 1, or
 //! row 6 in Slate's down button) the only stretchable row, so no size repeats a slice of the chevron.
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, stops};
+use crate::blue::{Tone, Variant};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -48,7 +48,7 @@ enum Dir {
     Down,
 }
 
-pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, scale: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let up = [
         &s.spin_up.normal,
@@ -70,8 +70,8 @@ pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
 
 /// The down button's stretchable row: 6, the bottom of its face, in Slate (whose down button opens with
 /// the white row the two buttons share); row 1 everywhere else.
-fn seam_down(v: Variant) -> i32 {
-    match v {
+fn seam_down(v: Tone) -> i32 {
+    match v.variant {
         Variant::Slate => 6,
         _ => 1,
     }
@@ -134,7 +134,11 @@ mod tests {
     use crate::raster::Rect;
 
     fn img(v: Variant, part: Part, d: i32) -> PartImage {
-        parts(v, d).into_iter().find(|(p, _)| *p == part).unwrap().1
+        parts(v.into(), d)
+            .into_iter()
+            .find(|(p, _)| *p == part)
+            .unwrap()
+            .1
     }
 
     fn px(img: &PartImage, state: State, x: i32, y: i32) -> u32 {

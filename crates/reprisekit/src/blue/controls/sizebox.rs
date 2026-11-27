@@ -7,7 +7,7 @@
 //! so they stay sharp at every scale. Everything between the dots is
 //! transparent, so the face shows through.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::Face;
 use crate::raster::Canvas;
 use crate::shape::{CLEAR, Px, draw, over, premul, rounded, scale};
@@ -19,7 +19,7 @@ const PITCH: i32 = 4;
 const DOT: f64 = 2.0;
 const LIFT: f64 = 1.0;
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let mut img = PartImage::new(
         grip(&v.scheme().size_box.normal, d),
         &[State::Normal],
@@ -66,6 +66,7 @@ fn grip(f: &Face, d: i32) -> Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn fnv(c: &Canvas) -> u64 {
         [c.width, c.height]
@@ -79,7 +80,7 @@ mod tests {
     }
 
     fn atlas(v: Variant, d: i32) -> PartImage {
-        parts(v, d).remove(0).1
+        parts(v.into(), d).remove(0).1
     }
 
     /// Each scheme's grip at scale 1 and 2, as FNV-1a hashes of (width,

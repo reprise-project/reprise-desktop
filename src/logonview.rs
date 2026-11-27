@@ -373,7 +373,7 @@ pub fn backdrop(state: &State) -> Option<[f32; 4]> {
     match state.config.interface {
         Interface::Classic => Some(theme.colors.background.as_f32()),
         Interface::Blue => {
-            let scheme = reprisekit::blue::Variant::of(&theme.look).scheme();
+            let scheme = reprisekit::blue::Tone::of(&theme.look).scheme();
             Some(scheme.welcome_field.as_f32())
         }
         Interface::Glass => None,

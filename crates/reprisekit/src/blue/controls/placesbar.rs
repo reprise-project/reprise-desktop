@@ -1,4 +1,4 @@
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, Grad};
 use crate::metrics::PlacesMetrics;
 use crate::raster::{Canvas, Fill, Insets};
@@ -32,7 +32,7 @@ pub(super) fn metrics() -> PlacesMetrics {
 /// panel's rim and white lines.
 const TILE_INSET: i32 = 3;
 
-pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, scale: i32) -> Vec<(Part, PartImage)> {
     let b = &v.scheme().toolbar_button;
     vec![
         (
@@ -114,6 +114,7 @@ fn grad_at(g: Grad, t: f32) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::blue::style_for;
     use crate::raster::Rect;
 
@@ -133,7 +134,7 @@ mod tests {
     }
 
     fn atlas(v: Variant, d: i32) -> Canvas {
-        parts(v, d).remove(0).1.atlas
+        parts(v.into(), d).remove(0).1.atlas
     }
 
     #[test]
@@ -149,7 +150,7 @@ mod tests {
     fn the_panel_is_a_lit_frame_round_a_white_line_and_a_fill() {
         for v in Variant::ALL {
             for d in [1, 2] {
-                let (_, img) = parts(v, d).remove(0);
+                let (_, img) = parts(v.into(), d).remove(0);
                 let a = &img.atlas;
                 let n = SIDE * d;
                 assert_eq!((a.width as i32, a.height as i32), (n, n), "{v:?} at {d}");

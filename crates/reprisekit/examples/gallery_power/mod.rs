@@ -96,7 +96,7 @@ pub fn render(scale: i32) -> Canvas {
             draw_power_panel(
                 &mut panel,
                 text.for_output(scale),
-                v,
+                v.into(),
                 cancel,
                 p,
                 &lay,

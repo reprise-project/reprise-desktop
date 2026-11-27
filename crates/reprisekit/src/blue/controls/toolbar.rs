@@ -3,7 +3,7 @@
 //! Normal and Disabled are empty: a button at rest shows the rebar behind it.
 //! The separator is a 1 px line two columns into a 6 px slot, from two rows under the band's top to one row over its bottom.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, stops};
 use crate::metrics::{ButtonPads, ToolbarMetrics};
 use crate::raster::{Canvas, Insets, Rect};
@@ -34,7 +34,7 @@ const SEP_H: i32 = 4;
 const SEP_X: i32 = 2;
 const SEP_TOP: i32 = 2;
 
-pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, scale: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let b = &s.toolbar_button;
     let dr = &s.toolbar_drop;
@@ -90,7 +90,7 @@ pub(super) fn metrics() -> ToolbarMetrics {
 }
 
 /// Label and arrow inks from the scheme: held label, greyed label etched over a white copy, greyed drop arrow.
-pub(in crate::blue) fn inks(v: Variant) -> [(Part, State, Color); 3] {
+pub(in crate::blue) fn inks(v: Tone) -> [(Part, State, Color); 3] {
     let k = &v.scheme().inks;
     [
         (Part::ToolbarButton, State::Pressed, k.toolbar_pressed),
@@ -162,9 +162,10 @@ fn separator(line: Color, d: i32) -> PartImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn part(v: Variant, part: Part, d: i32) -> PartImage {
-        parts(v, d)
+        parts(v.into(), d)
             .into_iter()
             .find(|(p, _)| *p == part)
             .expect("a toolbar part")
@@ -376,7 +377,7 @@ mod tests {
     fn the_label_inks_follow_the_scheme() {
         for v in Variant::ALL {
             let k = &v.scheme().inks;
-            let [pressed, disabled, arrow] = inks(v);
+            let [pressed, disabled, arrow] = inks(v.into());
             assert_eq!(pressed.2, k.toolbar_pressed, "{v:?}: a held label");
             assert_eq!(disabled.2, k.toolbar_disabled, "{v:?}: a greyed label");
             assert_eq!(

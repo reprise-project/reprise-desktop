@@ -6,12 +6,12 @@
 //! A scheme with a `list_border` (silver, steel) gives list boxes, views and combo
 //! boxes [`Part::ListBorder`] instead.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::Face;
 use crate::raster::{Canvas, Insets, Rect};
 use crate::style::{Layout, Part, PartImage, State};
 
-pub(super) fn parts(v: Variant) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let mut parts = vec![(
         Part::EditBorder,
@@ -40,9 +40,10 @@ fn border(normal: &Face, greyed: &Face) -> PartImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn part(v: Variant, p: Part) -> Option<PartImage> {
-        parts(v)
+        parts(v.into())
             .into_iter()
             .find(|(q, _)| *q == p)
             .map(|(_, img)| img)

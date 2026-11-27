@@ -6,7 +6,7 @@
 //! one where the scheme's greyed face has no fill (silver). The tick has
 //! 45 degree edges; the mixed mark is a 7x7 square 3 px in.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{CheckBoxFaces, Face, Grad};
 use crate::shape::{CLEAR, Px, Stops, centre, draw, over, polygon, premul, scale};
 use crate::style::{CHECK_STATES, Check, Layout, Part, PartImage, State};
@@ -34,12 +34,12 @@ const TICK: [(f64, f64); 6] = [
 const CHECKS: [Check; 3] = [Check::Unchecked, Check::Checked, Check::Mixed];
 
 /// This control's parts in `v`'s colours at `d` device pixels per design pixel.
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     vec![(Part::CheckBox, check_box(v, d))]
 }
 
 /// `v`'s twelve frames at `d` stacked top to bottom, in [`PartImage::new_check`] order.
-fn check_box(v: Variant, d: i32) -> PartImage {
+fn check_box(v: Tone, d: i32) -> PartImage {
     let faces = &v.scheme().check_box;
     let frames: Vec<Frame> = CHECKS
         .iter()
@@ -174,6 +174,7 @@ impl Well {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn frame_px(img: &PartImage, check: Check, state: State, x: i32, y: i32) -> u32 {
         let f = img.check_frame(check, state);
@@ -196,7 +197,7 @@ mod tests {
     fn every_frame_is_13_square_and_its_own() {
         for v in Variant::ALL {
             for d in [1, 2] {
-                let img = check_box(v, d);
+                let img = check_box(v.into(), d);
                 assert_eq!(img.scale, d, "{v:?} at {d}");
                 assert_eq!(img.sizing, crate::raster::Insets::ZERO, "{v:?}");
                 let mut seen: Vec<Vec<u32>> = Vec::new();
@@ -226,7 +227,7 @@ mod tests {
         for v in Variant::ALL {
             let f = &v.scheme().check_box;
             for d in [1, 2] {
-                let img = check_box(v, d);
+                let img = check_box(v.into(), d);
                 for check in CHECKS {
                     for state in CHECK_STATES {
                         let face = face(f, check, state);
@@ -251,7 +252,7 @@ mod tests {
         }
         assert!(
             frame_px(
-                &check_box(Variant::Silver, 1),
+                &check_box(Variant::Silver.into(), 1),
                 Check::Unchecked,
                 State::Disabled,
                 6,
@@ -266,7 +267,7 @@ mod tests {
     fn the_tick_is_solid_at_1_and_smooth_at_2() {
         for v in Variant::ALL {
             let f = &v.scheme().check_box;
-            let one = check_box(v, 1);
+            let one = check_box(v.into(), 1);
             let ink = 0xFF00_0000 | f.normal_checked.mark.unwrap().argb();
             for (x, y) in [(3, 6), (4, 7), (5, 8), (6, 7), (9, 4)] {
                 assert_eq!(
@@ -298,7 +299,7 @@ mod tests {
                 mixed,
                 "{v:?} mixed is 7 px wide"
             );
-            let two = check_box(v, 2);
+            let two = check_box(v.into(), 2);
             let f2 = two.check_frame(Check::Checked, State::Normal);
             let unchecked = two.check_frame(Check::Unchecked, State::Normal);
             let soft = (0..f2.height)
@@ -319,7 +320,7 @@ mod tests {
     fn check_box_pins_at_scale_1_and_2() {
         let got: Vec<_> = Variant::ALL
             .into_iter()
-            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&check_box(v, d)))))
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&check_box(v.into(), d)))))
             .collect();
         crate::pins::check("blue/check_box", &got);
     }

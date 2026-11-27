@@ -1,7 +1,7 @@
 //! The task pane in Blue, drawn from each scheme's faces at the draw's scale.
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, Grad, Scheme};
+use crate::blue::{Tone, Variant};
 use crate::metrics::TaskMetrics;
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
@@ -36,8 +36,8 @@ const DOWN: [[(f64, f64); 3]; 2] = [
     [(6.0, 12.0), (9.5, 15.5), (13.0, 12.0)],
 ];
 
-fn band_h(v: Variant) -> i32 {
-    match v {
+fn band_h(v: Tone) -> i32 {
+    match v.variant {
         Variant::Blue => 25,
         _ => 23,
     }
@@ -246,7 +246,7 @@ fn grown_mark(f: &Face, lines: &[[(f64, f64); 3]; 2], h: i32, g: f64, d: i32) ->
 
 /// [`Part::TaskCollapseMark`] and [`Part::TaskExpandMark`] `g` times their design size at `d`,
 /// for a text size that grows the icons ([`crate::style::Style::with_task_marks`]).
-pub(crate) fn grown_marks(v: Variant, d: i32, g: f64) -> Vec<(Part, PartImage)> {
+pub(crate) fn grown_marks(v: Tone, d: i32, g: f64) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let h = band_h(v);
     let c = &s.task_collapse;
@@ -267,7 +267,7 @@ pub(crate) fn grown_marks(v: Variant, d: i32, g: f64) -> Vec<(Part, PartImage)> 
     ]
 }
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let h = band_h(v);
     let band = Band::new(s, h);
@@ -323,7 +323,7 @@ pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
     ]
 }
 
-pub(super) fn inks(v: Variant) -> Vec<(Part, State, Color)> {
+pub(super) fn inks(v: Tone) -> Vec<(Part, State, Color)> {
     let i = &v.scheme().inks;
     vec![
         (Part::TaskGroupHeader, State::Normal, i.task_title),
@@ -333,7 +333,7 @@ pub(super) fn inks(v: Variant) -> Vec<(Part, State, Color)> {
     ]
 }
 
-pub(super) fn metrics(v: Variant) -> TaskMetrics {
+pub(super) fn metrics(v: Tone) -> TaskMetrics {
     TaskMetrics {
         lead: 1,
         top: 12,
@@ -351,7 +351,7 @@ mod tests {
     use super::*;
 
     fn built(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
-        parts(v, d)
+        parts(v.into(), d)
     }
 
     fn part(v: Variant, d: i32, p: Part) -> PartImage {
@@ -406,7 +406,7 @@ mod tests {
                 assert_eq!(one.sizing, two.sizing, "{v:?} {p:?} borders");
                 assert_eq!(one.states, two.states, "{v:?} {p:?} states");
             }
-            let h = band_h(v);
+            let h = band_h(v.into());
             let header = part(v, 1, Part::TaskGroupHeader);
             assert_eq!((header.atlas.width, header.atlas.height), (185, h as u32));
             assert_eq!(header.sizing, Insets::new(4, h - 2, 24, 1), "{v:?}");
@@ -570,7 +570,7 @@ mod tests {
         let mut got = Vec::new();
         for v in Variant::ALL {
             for d in [1, 2] {
-                for (p, img) in parts(v, d) {
+                for (p, img) in parts(v.into(), d) {
                     got.push((format!("{v:?} {d} {p:?}"), fnv(&img.atlas)));
                 }
             }

@@ -104,9 +104,7 @@ impl Variant {
 
     /// The scheme `look` draws in: its own under Blue, navy under any other look.
     pub fn of(look: &crate::paint::Look) -> Variant {
-        look.style()
-            .and_then(|st| Variant::ALL.into_iter().find(|v| v.style_name() == st.name))
-            .unwrap_or_default()
+        Tone::of(look).variant
     }
 
     /// The variant an [`ENV`] value names; unset or unknown is navy.
@@ -114,9 +112,9 @@ impl Variant {
         v.and_then(Variant::parse).unwrap_or_default()
     }
 
-    /// The style's name, which tells variants apart ([`crate::look::Look`] compares styles by
-    /// name).
-    pub(crate) fn style_name(self) -> &'static str {
+    /// The light style's name, which tells variants apart ([`crate::look::Look`] compares styles
+    /// by name).
+    fn style_name(self) -> &'static str {
         match self {
             Variant::Blue => "Blue",
             Variant::Olive => "Blue Olive Green",
@@ -132,6 +130,86 @@ impl Variant {
     }
 }
 
+/// A Blue scheme as drawn: `variant`'s light scheme, or its dark twin when `dark`.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Tone {
+    pub variant: Variant,
+    pub dark: bool,
+}
+
+impl Tone {
+    /// Every variant's light scheme, then every dark twin, each in [`Variant::ALL`] order.
+    pub const ALL: [Tone; 2 * Variant::ALL.len()] = {
+        let mut all = [Tone::new(Variant::Blue, false); 2 * Variant::ALL.len()];
+        let mut i = 0;
+        while i < all.len() {
+            all[i] = Tone::new(
+                Variant::ALL[i % Variant::ALL.len()],
+                i >= Variant::ALL.len(),
+            );
+            i += 1;
+        }
+        all
+    };
+
+    pub const fn new(variant: Variant, dark: bool) -> Tone {
+        Tone { variant, dark }
+    }
+
+    pub fn scheme(self) -> &'static scheme::Scheme {
+        scheme::scheme_in(self.variant, self.dark)
+    }
+
+    /// The tone `look` draws in: its own under Blue, navy light under any other look.
+    pub fn of(look: &crate::paint::Look) -> Tone {
+        look.style()
+            .and_then(|st| Tone::ALL.into_iter().find(|t| t.style_name() == st.name))
+            .unwrap_or_default()
+    }
+
+    /// The style's name, which tells tones apart ([`crate::look::Look`] compares styles by name).
+    pub(crate) fn style_name(self) -> &'static str {
+        const DARK: [&str; Variant::ALL.len()] = [
+            "Blue Dark",
+            "Blue Olive Green Dark",
+            "Blue Silver Dark",
+            "Blue Slate Dark",
+            "Blue Sapphire Dark",
+            "Blue Obsidian Dark",
+            "Blue Ember Dark",
+            "Blue Cobalt Dark",
+            "Blue Carbon Dark",
+            "Blue Steel Dark",
+        ];
+        if self.dark {
+            DARK[self.variant as usize]
+        } else {
+            self.variant.style_name()
+        }
+    }
+
+    fn index(self) -> usize {
+        self.variant as usize + usize::from(self.dark) * Variant::ALL.len()
+    }
+}
+
+impl From<Variant> for Tone {
+    fn from(variant: Variant) -> Tone {
+        Tone::new(variant, false)
+    }
+}
+
+/// The variant's name, then ` dark` for a twin.
+impl std::fmt::Debug for Tone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.variant)?;
+        if self.dark {
+            f.write_str(" dark")?;
+        }
+        Ok(())
+    }
+}
+
 /// Reprise Blue's style in its navy scheme, built on first use and shared.
 pub fn style() -> Arc<Style> {
     style_for(Variant::Blue)
@@ -139,23 +217,22 @@ pub fn style() -> Arc<Style> {
 
 /// Blue's style in `v`'s scheme, or its dark twin when `dark`.
 pub fn style_in(v: Variant, dark: bool) -> Arc<Style> {
-    // Until a twin is drawn it is its light scheme, so the light style serves both.
-    debug_assert!(std::ptr::eq(scheme::scheme_in(v, dark), v.scheme()));
-    style_for(v)
+    style_for(Tone::new(v, dark))
 }
 
-/// Blue's style in `v`'s scheme, built on first use and shared. At another scale it is built
-/// again ([`Style::at_scale`]).
-pub fn style_for(v: Variant) -> Arc<Style> {
-    static STYLES: [OnceLock<Arc<Style>>; Variant::ALL.len()] =
-        [const { OnceLock::new() }; Variant::ALL.len()];
-    STYLES[v as usize]
-        .get_or_init(|| Arc::new(build(v, 1).with_rescale(move |n| build(v, n))))
+/// Blue's style in tone `t` (a [`Variant`] is its light tone), built on first use and shared.
+/// At another scale it is built again ([`Style::at_scale`]).
+pub fn style_for(t: impl Into<Tone>) -> Arc<Style> {
+    static STYLES: [OnceLock<Arc<Style>>; Tone::ALL.len()] =
+        [const { OnceLock::new() }; Tone::ALL.len()];
+    let t = t.into();
+    STYLES[t.index()]
+        .get_or_init(|| Arc::new(build(t, 1).with_rescale(move |n| build(t, n))))
         .clone()
 }
 
 /// The caption buttons and the ? box `side` design px square at `scale`.
-fn sided_buttons(v: Variant, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
+fn sided_buttons(v: Tone, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
     let mut parts: Vec<(Part, PartImage)> = [
         (Part::MinButton, capbutton::Glyph::Minimize),
         (Part::MaxButton, capbutton::Glyph::Maximize),
@@ -182,7 +259,7 @@ pub(crate) const DESKTOP_LABEL_EDGE: u8 = 112;
 /// painted at `scale` and marked so
 /// ([`PartImage::at_scale`](crate::style::PartImage::at_scale)); other parts are design-size
 /// art the draw magnifies.
-fn build(v: Variant, scale: i32) -> Style {
+fn build(v: Tone, scale: i32) -> Style {
     debug_assert!(scale >= 1, "a style for scale {scale}");
     let inks = v.scheme().inks;
     let style = Style::new(
@@ -320,7 +397,7 @@ fn caption_tabs(title: &crate::style::TextSpec) -> crate::style::CaptionTabLook 
 /// Blue's pixel metrics in `v`: taller caption and taskbar than Classic's, square caption
 /// buttons with a gap, and the Start pill as wide as `v`'s metrics make it
 /// ([`scheme::Metrics::start_width`]).
-fn metrics(v: Variant) -> Metrics {
+fn metrics(v: Tone) -> Metrics {
     Metrics {
         frame_width: 4,
         dialog_frame_width: 3,
@@ -344,7 +421,7 @@ fn metrics(v: Variant) -> Metrics {
 /// px list header, 23 px status bar, `v`'s own task pane, explorer bar, rebar, toolbar strip,
 /// menu bars, address band and places bar, a file dialog with rows a pixel higher, and its own
 /// Start menu borders.
-fn controls(v: Variant) -> ControlMetrics {
+fn controls(v: Tone) -> ControlMetrics {
     ControlMetrics {
         radio: 13,
         radio_x: -1,
@@ -396,7 +473,7 @@ fn start_menu_metrics() -> StartMenuMetrics {
 
 /// The window title's bold face in `v`: the scheme's title inks with a hard shadow 1 px down
 /// and right, 13 px (11 px in slate and ember).
-fn caption_text(v: Variant) -> TextSpec {
+fn caption_text(v: Tone) -> TextSpec {
     let s = v.scheme();
     TextSpec {
         family: vec!["Trebuchet MS".into(), "DejaVu Sans".into()],
@@ -424,7 +501,7 @@ fn caption_text(v: Variant) -> TextSpec {
 /// heavier still (coverage to the power 1/2). The shadow spreads each inked pixel over a 4x4
 /// block from 1 px up-left to 2 px down-right, at 3/2 strength. The pill never goes inactive,
 /// so `inactive` is the same label ink.
-fn start_text(v: Variant) -> TextSpec {
+fn start_text(v: Tone) -> TextSpec {
     let inks = v.scheme().inks;
     TextSpec {
         family: vec![
@@ -754,7 +831,7 @@ mod tests {
     /// variant's own colour.
     #[test]
     fn the_start_label_asks_for_franklin_gothic_medium_then_trebuchet_ms() {
-        let spec = start_text(Variant::Blue);
+        let spec = start_text(Variant::Blue.into());
         assert_eq!(
             spec.family[..2],
             ["Franklin Gothic Medium", "Trebuchet MS"],
@@ -793,7 +870,7 @@ mod tests {
 
     #[test]
     fn the_start_label_inks_37_by_12_px_in_franklin_gothic_medium() {
-        let spec = start_text(Variant::Blue);
+        let spec = start_text(Variant::Blue.into());
         let Some(ink) = start_ink(&spec, "Franklin Gothic Medium") else {
             crate::pins::skip!(face "Franklin Gothic Medium");
         };
@@ -802,7 +879,7 @@ mod tests {
 
     #[test]
     fn the_start_label_inks_37_px_wide_in_trebuchet_ms_at_16_px() {
-        let mut spec = start_text(Variant::Blue);
+        let mut spec = start_text(Variant::Blue.into());
         spec.family.retain(|f| f != "Franklin Gothic Medium");
         let Some((w, _)) = start_ink(&spec, "Trebuchet MS") else {
             crate::pins::skip!(face "Trebuchet MS");
@@ -813,7 +890,7 @@ mod tests {
 
     #[test]
     fn a_caption_titles_stems_land_on_whole_pixels() {
-        let spec = caption_text(Variant::Blue);
+        let spec = caption_text(Variant::Blue.into());
         let t = crate::text::TextRenderer::load(&spec.font());
         if !t.has_face("Trebuchet MS") {
             crate::pins::skip!(face "Trebuchet MS");
@@ -841,7 +918,7 @@ mod tests {
 
     #[test]
     fn a_caption_title_is_81_px_wide_in_its_own_face() {
-        let spec = caption_text(Variant::Blue);
+        let spec = caption_text(Variant::Blue.into());
         let t = crate::text::TextRenderer::load(&spec.font());
         if !t.has_face("Trebuchet MS") {
             crate::pins::skip!(face "Trebuchet MS");
