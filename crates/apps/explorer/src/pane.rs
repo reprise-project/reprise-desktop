@@ -440,7 +440,7 @@ impl Explorer {
         };
         crate::window::details_text(
             &self.title_of(&self.place),
-            self.place.is_system(),
+            self.place.folder_kind(),
             &chosen,
             dims,
             reprisefs::locale::is_12h(),

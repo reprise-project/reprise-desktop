@@ -668,12 +668,11 @@ pub fn shortcut_status_text(l: &Launcher, path: &std::path::Path) -> Option<Stri
 /// string the gap between groups.
 ///
 /// One item: name, kind, date, size. An image (`dims`) leads with its
-/// dimensions, then size, then date. Nothing selected names the folder
-/// ("System Folder" when `system`, per [`crate::place::Place::is_system`],
-/// else "File Folder"). Several selected give their count and total size.
+/// dimensions, then size, then date. Nothing selected names the folder and its `kind`.
+/// Several selected give their count and total size.
 pub fn details_text(
     folder: &str,
-    system: bool,
+    kind: crate::place::FolderKind,
     chosen: &[&Item],
     dims: Option<(u32, u32)>,
     is_12h: bool,
@@ -682,10 +681,11 @@ pub fn details_text(
     match chosen {
         [] => {
             out.push((folder.to_string(), true));
-            let kind = if system {
-                tr!("status-details-text-system-folder")
-            } else {
-                tr!("status-details-text-file-folder")
+            use crate::place::FolderKind;
+            let kind = match kind {
+                FolderKind::File => tr!("status-details-text-file-folder"),
+                FolderKind::System => tr!("status-details-text-system-folder"),
+                FolderKind::Compressed => tr!("status-details-text-compressed-folder"),
             };
             out.push((kind.to_string(), false));
         }
