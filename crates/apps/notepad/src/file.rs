@@ -5,7 +5,8 @@ use super::*;
 impl Notepad {
     /// The edit keeps LF, so a CRLF or CR file gets its breaks back here.
     pub(crate) fn write_to(&self, path: &Path, format: Format) -> std::io::Result<()> {
-        reprisefs::ops::write_document(path, &encode(self.edit.lines(), format))
+        let bytes = encode(self.edit.lines(), format).ok_or_else(|| unheld(format))?;
+        reprisefs::ops::write_document(path, &bytes)
     }
 
     /// False when there is nowhere to write yet (the caller opens Save As), when the write failed,
@@ -50,6 +51,9 @@ impl Notepad {
             return Reply::redraw_all();
         }
         let ok = self.save_anyway();
+        if self.save_asks() {
+            return Reply::redraw_all();
+        }
         match self.pending.saved(ok) {
             Some(action) => self.run_pending(action),
             None => Reply::redraw_all(),
@@ -57,11 +61,23 @@ impl Notepad {
     }
 
     fn save_anyway(&mut self) -> bool {
+        self.save_in(self.format)
+    }
+
+    /// Writes the document over its file in `format` and adopts it; a format that cannot hold
+    /// the text writes nothing and asks whether to save in UTF-8.
+    fn save_in(&mut self, format: Format) -> bool {
         let Some(p) = self.path.clone() else {
             return false;
         };
-        match self.write_to(&p, self.format) {
+        if !format.holds(self.edit.lines()) {
+            let b = self.unheld_box(&p, format);
+            self.ask(b, Ask::Unheld(None));
+            return false;
+        }
+        match self.write_to(&p, format) {
             Ok(()) => {
+                self.format = format;
                 self.recent.record(&p);
                 self.stamp = Stamp::of(&p);
                 self.edit.mark_saved();
@@ -71,6 +87,58 @@ impl Notepad {
             Err(e) => {
                 self.save_failed(&p, &e);
                 false
+            }
+        }
+    }
+
+    /// Whether a save is waiting on a box: the file changed on disk, or its encoding cannot hold
+    /// the text.
+    fn save_asks(&self) -> bool {
+        (self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::Changed | Ask::Unheld(None)))
+    }
+
+    pub(crate) fn unheld_box(&self, path: &Path, format: Format) -> MsgBox {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let encoding = encoding_name(format.encoding);
+        MsgBox::new(
+            tr!("name"),
+            msgbox::Fields {
+                text: tr!("cannot-hold", name = name, encoding = encoding),
+                icon: self.warn_icon.clone(),
+                buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        )
+        .sounding(repriseapp::sound::Event::Warning)
+    }
+
+    /// Yes saves in UTF-8 instead, to `save_as` (Save As's pick) or else over the document's
+    /// file. No writes nothing: Save As stays up, and a Save drops the action waiting on it.
+    pub(crate) fn unheld_answered(
+        &mut self,
+        save_as: Option<PathBuf>,
+        answer: Option<usize>,
+    ) -> Reply {
+        let utf8 = self.format.utf8();
+        match (save_as, answer) {
+            (Some(path), Some(0)) => self.saveas_write_in(path, utf8),
+            (None, Some(0)) => {
+                let ok = self.save_in(utf8);
+                match self.pending.saved(ok) {
+                    Some(action) => self.run_pending(action),
+                    None => Reply::redraw_all(),
+                }
+            }
+            (Some(_), _) => Reply::redraw_all(),
+            (None, _) => {
+                self.pending.cancelled();
+                Reply::redraw_all()
             }
         }
     }
@@ -276,7 +344,7 @@ impl Notepad {
                 }
                 Reply::redraw_all()
             }
-            PendingAction::Pick(path) => self.open_picked(&path),
+            PendingAction::Pick(path, read_as) => self.open_picked(&path, read_as),
             PendingAction::Lossy(text) => {
                 self.show_lossy(&text);
                 Reply::redraw_all()
@@ -291,7 +359,7 @@ impl Notepad {
             return Reply::redraw_all();
         }
         let ok = self.save();
-        if (self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::Changed)) {
+        if self.save_asks() {
             return Reply::redraw_all();
         }
         match self.pending.saved(ok) {

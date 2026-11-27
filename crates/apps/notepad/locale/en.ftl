@@ -53,6 +53,8 @@ go-to-line-number = &Line Number:
 open-button = Open
 save-button = Save
 encoding-label = &Encoding:
+# Open's first Encoding row: the file's BOM, else whether it is valid UTF-8, picks the encoding.
+encoding-auto = Auto-Detect
 # A filter keeps its pattern in brackets: the file dialog matches names against it.
 filter-text = Text Documents (*.txt)
 filter-all = All Files (*.*)
@@ -68,6 +70,9 @@ save-failed =
 undecodable =
     { $path } is not a { $encoding } text file.
     Do you want to open a copy with the unreadable characters replaced?
+cannot-hold =
+    { $name } has characters that { $encoding } cannot hold.
+    Do you want to save it as UTF-8 instead?
 # $name is the document's name, or recovered-untitled. The counter's no-break spaces keep it on one line.
 recovered =
     { $count ->

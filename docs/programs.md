@@ -36,7 +36,7 @@ Explorer serves `org.freedesktop.FileManager1`, updates folders live, uses the f
 
 Notepad edits plain text with Find (`F3`), Replace, Go To, Time/Date (`F5`), Word Wrap, status bar (`Ln`, `Col`), zoom from 10% to 500% (`Ctrl+Plus`, `Ctrl+Minus`, `Ctrl+0`), `Format > Font` and 1000-step `Ctrl+Z`/`Ctrl+Y` undo.
 
-It opens UTF-8 (with or without BOM) and UTF-16 LE/BE (with BOM), preserving encoding and line endings unless changed in `Save As` (which appends `.txt` unless quoted). Saves are atomic, and `Print` is disabled. Settings save in `$XDG_CONFIG_HOME/reprise/notepad.toml`, and crash recovery files save in `~/.local/state/reprise/notepad/`.
+It opens UTF-8 (with or without BOM), UTF-16 LE/BE (with BOM) and Western (CP1252), preserving encoding and line endings unless changed in `Save As` (which appends `.txt` unless quoted). Open's Encoding box reads a file as the encoding picked; on Auto-Detect a BOM decides, else a file that is valid UTF-8 opens as UTF-8 and any other as CP1252. A CP1252 document holding a character CP1252 lacks is not saved until you agree to save it as UTF-8. Saves are atomic, and `Print` is disabled. Settings save in `$XDG_CONFIG_HOME/reprise/notepad.toml`, and crash recovery files save in `~/.local/state/reprise/notepad/`.
 
 ## Sticky Notes
 

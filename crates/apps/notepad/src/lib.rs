@@ -18,8 +18,8 @@ reprisekit::strings!("notepad");
 
 use dialogs::{Ask, FormStep, form_event, goto_form, ok_box};
 use document::{
-    ENCODINGS, Format, Stamp, Undecodable, encode, encoding_name, load, open_failed_text,
-    read_text, recovered_in, recovery_dir, write_recovery,
+    ENCODINGS, Encoding, Format, READ_AS, Stamp, Undecodable, encode, encoding_name, load,
+    open_failed_text, read_text, read_text_as, recovered_in, recovery_dir, unheld, write_recovery,
 };
 use drop::Hover;
 use menu::menus;
