@@ -326,6 +326,7 @@ status-layout-folders = Folders
 status-panels-selected-object-s-selected = { $selected } object(s) selected
 status-details-text-system-folder = System Folder
 status-details-text-file-folder = File Folder
+status-details-text-compressed-folder = Compressed Folder
 status-details-text-date-modified-when = Date Modified: { $when }
 status-details-text-dimensions-w-x-h = Dimensions: { $w } x { $h }
 status-infotip-lines-dimensions-w-x-h = Dimensions: { $w } x { $h }

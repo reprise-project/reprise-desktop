@@ -231,37 +231,48 @@ fn a_sort_keeps_the_selection_when_its_index_moves() {
 
 #[test]
 fn the_details_section_follows_the_selection() {
+    use crate::place::FolderKind;
     let file = item("notes.txt", false, 1260, "Text Document", None);
     let folder = item("Reports", true, 0, "File Folder", None);
 
     let none: Vec<&Item> = vec![];
     assert_eq!(
-        window::details_text("Documents", true, &none, None, true),
+        window::details_text("Documents", FolderKind::System, &none, None, true),
         [
             ("Documents".to_string(), true),
             ("System Folder".to_string(), false)
         ]
     );
     assert_eq!(
-        window::details_text("Reports", false, &none, None, true)[1],
+        window::details_text("Reports", FolderKind::File, &none, None, true)[1],
         ("File Folder".to_string(), false)
     );
+    assert_eq!(
+        window::details_text("test.zip", FolderKind::Compressed, &none, None, true)[1],
+        ("Compressed Folder".to_string(), false)
+    );
 
-    let one = window::details_text("Documents", false, &[&file], None, true);
+    let one = window::details_text("Documents", FolderKind::File, &[&file], None, true);
     let gap = (String::new(), false);
     assert_eq!(one[0], gap);
     assert_eq!(one[1], ("notes.txt".to_string(), true));
     assert_eq!(one[2], ("Text Document".to_string(), false));
     assert_eq!(one[3], gap);
     assert_eq!(one[4], ("Size: 1.23 KB".to_string(), false));
-    let one = window::details_text("Documents", false, &[&folder], None, true);
+    let one = window::details_text("Documents", FolderKind::File, &[&folder], None, true);
     assert_eq!(one.len(), 3);
     let dated = item("a.txt", false, 0, "Text Document", Some(1_757_795_100));
-    let one = window::details_text("Documents", false, &[&dated], None, true);
+    let one = window::details_text("Documents", FolderKind::File, &[&dated], None, true);
     assert!(one[4].0.starts_with("Date Modified: "), "{:?}", one[4]);
 
     let pic = item("a.png", false, 1260, "PNG Image", Some(1_757_795_100));
-    let one = window::details_text("Documents", false, &[&pic], Some((800, 600)), true);
+    let one = window::details_text(
+        "Documents",
+        FolderKind::File,
+        &[&pic],
+        Some((800, 600)),
+        true,
+    );
     assert_eq!(
         one[3..5],
         [gap.clone(), ("Dimensions: 800 x 600".to_string(), false)]
@@ -269,7 +280,13 @@ fn the_details_section_follows_the_selection() {
     assert_eq!(one[6], ("Size: 1.23 KB".to_string(), false));
     assert!(one[8].0.starts_with("Date Modified: "), "{:?}", one[8]);
 
-    let many = window::details_text("Documents", false, &[&file, &folder, &file], None, true);
+    let many = window::details_text(
+        "Documents",
+        FolderKind::File,
+        &[&file, &folder, &file],
+        None,
+        true,
+    );
     assert_eq!(many[0], ("3 items selected".to_string(), true));
     assert_eq!(many[2], ("Size: 2.46 KB".to_string(), false));
 }

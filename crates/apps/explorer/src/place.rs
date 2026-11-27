@@ -270,10 +270,14 @@ impl Place {
         Some((file, inner.to_path_buf()))
     }
 
-    /// Whether the Details pane calls this a "System Folder": every shell place,
-    /// including the three that are real writable directories.
-    pub fn is_system(&self) -> bool {
-        !matches!(self, Place::Folder(_))
+    /// What the Details pane calls this place: a shell place is a system folder, including the
+    /// three that are real writable directories, and any folder of an archive a compressed one.
+    pub fn folder_kind(&self) -> FolderKind {
+        match self {
+            Place::Folder(_) => FolderKind::File,
+            Place::Archive(..) => FolderKind::Compressed,
+            _ => FolderKind::System,
+        }
     }
 
     /// Typed address-bar text or a command-line place: "Computer", "Recycle Bin" and "Network"
@@ -668,6 +672,13 @@ pub(crate) fn desktop_listing(
         drives: Vec::new(),
         error: None,
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderKind {
+    File,
+    System,
+    Compressed,
 }
 
 fn row_item(place: &Place) -> Option<Item> {
