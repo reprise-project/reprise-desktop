@@ -147,6 +147,7 @@ impl Notepad {
     /// drop the action.
     pub(crate) fn update_answered(&mut self, answer: Option<usize>) -> Reply {
         match answer {
+            Some(0) if self.zip_save.running() => return Reply::redraw_all(),
             Some(0) => {}
             Some(1) => return self.read_only_answered(Some(0)),
             _ => {
@@ -161,11 +162,14 @@ impl Notepad {
     }
 
     /// Starts the job writing the document into the zip it came out of, and then over its copy.
-    /// The window takes no input until it ends ([`Notepad::zip_saved`]).
-    fn update_zip(&mut self) -> bool {
+    /// Its windows take no input until it ends ([`Notepad::zip_saved`]); refused while one runs.
+    pub(crate) fn update_zip(&mut self) -> bool {
         let (Some(p), Some((zip, inner))) = (self.path.clone(), self.zip_entry.clone()) else {
             return false;
         };
+        if self.zip_save.running() {
+            return false;
+        }
         let Some(bytes) = encode(self.edit.lines(), self.format) else {
             return false;
         };
@@ -184,8 +188,7 @@ impl Notepad {
                 }
             });
         let kind = reprisekit::controls::copyprogress::Kind::Compress;
-        self.zip_save.start(job, kind, names, self.waker.as_ref());
-        true
+        self.zip_save.start(job, kind, names, self.waker.as_ref())
     }
 
     /// The save into a zip ended: once it landed the document is saved and the action waiting

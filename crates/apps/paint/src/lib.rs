@@ -369,6 +369,11 @@ impl App for Paint {
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.dialog_text = ctx.text.clone();
         self.prime(ctx);
+        // The save into a zip writes the picture as it was: no window edits or saves meanwhile.
+        if self.zip_save.running() && !self.zip_save.owns(win) && repriseapp::jobbox::is_input(&ev)
+        {
+            return Reply::none();
+        }
         if win != MAIN {
             self.alt_arm.interrupt();
         }

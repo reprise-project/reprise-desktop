@@ -474,13 +474,76 @@ fn a_crash_mid_rewrite_leaves_the_zip_whole_and_its_temp_file_beside_it() {
 }
 
 #[test]
-fn a_dropped_job_stops_and_removes_its_temp_file() {
+fn a_job_stopped_for_a_quit_removes_its_temp_file_before_it_returns() {
     let (dir, zip) = big_zip(96);
-    let job = ArchiveJob::add_to_zip(zip.clone(), add(&dir.join("src"), &["small.txt"]), || {});
+    let mut job = ArchiveJob::add_to_zip(zip.clone(), add(&dir.join("src"), &["small.txt"]), || {});
     assert!(wait_for_temp(&zip), "the rewrite started");
-    drop(job);
+    job.stop_and_wait(Duration::from_secs(30));
+    assert!(temps(&zip).is_empty(), "the wait outlasts the temp file");
+}
+
+#[test]
+fn a_read_only_zip_is_refused_and_left_alone() {
+    let dir = fresh(&[("a.txt", b"a")]);
+    let zip = zip_of(&dir, &["a.txt"]);
+    std::fs::set_permissions(&zip, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+    let before = std::fs::read(&zip).expect("read");
+    let why = update(&zip, "a.txt", b"b").expect_err("read-only");
+    assert_eq!(why, "Cannot update a.zip: it is read-only.");
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+}
+
+#[test]
+fn an_entry_stored_without_owner_read_still_saves() {
+    let dir = fresh(&[("locked.txt", b"old")]);
+    let src = dir.join("src/locked.txt");
+    std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o440)).expect("chmod");
+    let zip = zip_of(&dir, &["locked.txt"]);
+    let out = Command::new("bsdtar")
+        .arg("-tvf")
+        .arg(&zip)
+        .output()
+        .expect("bsdtar");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("-r--r----- "));
+    // Stored as 0040: the group may read it and the owner may not.
+    let patched = std::fs::read(&zip).expect("read");
+    let patched = patch_modes(patched, 0o100040);
+    std::fs::write(&zip, patched).expect("write");
+    update(&zip, "locked.txt", b"new").expect("saved");
+    assert_eq!(read_entry(&zip, "locked.txt"), b"new");
+}
+
+/// `zip` with every central directory entry's external attributes giving unix `mode`.
+fn patch_modes(mut zip: Vec<u8>, mode: u32) -> Vec<u8> {
+    let mut at = 0;
+    while let Some(i) = zip[at..].windows(4).position(|w| w == b"PK\x01\x02") {
+        let e = at + i;
+        zip[e + 38..e + 42].copy_from_slice(&(mode << 16).to_le_bytes());
+        at = e + 4;
+    }
+    zip
+}
+
+#[test]
+fn a_rewrite_sweeps_stale_temp_files_of_any_zip_in_its_folder() {
+    let dir = fresh(&[("a.txt", b"a")]);
+    let zip = zip_of(&dir, &["a.txt"]);
+    let stale = std::time::SystemTime::now() - Duration::from_secs(86_400);
+    let made = |name: &str| {
+        let p = dir.join(name);
+        let f = std::fs::File::create(&p).expect("create");
+        f.set_modified(stale).expect("age it");
+        p
+    };
+    let other = made(".Other.ZIP.0123456789abcdef.tmp");
+    let text = made(".notes.txt.0123456789abcdef.tmp");
+    let fresh_one = dir.join(".Third.zip.fedcba9876543210.tmp");
+    std::fs::write(&fresh_one, b"").expect("create");
+    rewrite(&zip, &add(&dir.join("src"), &["a.txt"])).expect("rewritten");
+    assert!(!other.exists(), "another zip's stale temp file goes");
+    assert!(text.exists(), "a document's temp file stays");
     assert!(
-        temps(&zip).is_empty(),
-        "letting go waits for the temp file to go"
+        fresh_one.exists(),
+        "a temp file written to within the deadline stays"
     );
 }

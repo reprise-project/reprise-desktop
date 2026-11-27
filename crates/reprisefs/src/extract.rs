@@ -241,6 +241,7 @@ impl ArchiveJob {
     ) -> ArchiveJob {
         let (tx, events) = mpsc::channel();
         let m = meter.clone();
+        let failed = tx.clone();
         let spawned = std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
@@ -250,8 +251,11 @@ impl ArchiveJob {
                     sent
                 })
             });
+        // A job with no thread ends with a failure, read at the host's next wake.
         if let Err(e) = spawned {
             log::error!("reprisefs: cannot spawn {name}: {e}");
+            let text = tr!("job-no-thread", why = e.to_string());
+            let _ = failed.send(ArchiveEvent::Failed { index: 0, text });
         }
         ArchiveJob {
             events,
@@ -282,31 +286,36 @@ impl ArchiveJob {
     pub fn is_finished(&self) -> bool {
         self.finished
     }
-}
 
-/// How long letting go of a running job waits for its thread to stop and remove what it made.
-const LET_GO_WAIT: Duration = Duration::from_secs(3);
-
-/// A job let go before it finished is cancelled, so a paused one neither sleeps nor keeps its
-/// stopped bsdtar for good, and waited for up to [`LET_GO_WAIT`], so a program quitting mid-job
-/// leaves no temp file behind.
-impl Drop for ArchiveJob {
-    fn drop(&mut self) {
+    /// Cancels the job and waits up to `within` for its thread to stop and remove what it made:
+    /// for a program quitting mid-job, whose windows are gone.
+    pub fn stop_and_wait(&mut self, within: Duration) {
         if self.finished {
             return;
         }
         self.meter.cancel();
-        let until = Instant::now() + LET_GO_WAIT;
+        let until = Instant::now() + within;
         loop {
             let left = until.saturating_duration_since(Instant::now());
             match self.events.recv_timeout(left) {
                 Ok(_) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    log::warn!("reprisefs: let go of a job still stopping");
-                    return;
+                    log::warn!("reprisefs: quit with a job still stopping");
+                    break;
                 }
             }
+        }
+        self.finished = true;
+    }
+}
+
+/// A job let go before it finished is cancelled, so a paused one neither sleeps nor keeps its
+/// stopped bsdtar for good.
+impl Drop for ArchiveJob {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.meter.cancel();
         }
     }
 }

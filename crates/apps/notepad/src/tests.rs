@@ -3421,6 +3421,16 @@ fn yes_on_the_update_box_saves_into_the_zip_on_a_job_and_then_quits() {
     let reply = np.answer_box(Some(0));
     assert!(!reply.quit, "the quit waits on the save");
     assert!(np.zip_save.running() && np.edit.modified());
+    let mut ctx = test_ctx();
+    np.open_find();
+    np.event(FIND, key(keysym::F5), &mut ctx);
+    np.event(MAIN, key(keysym::F5), &mut ctx);
+    assert_eq!(
+        np.edit.text(),
+        "new",
+        "no window edits the text while it saves"
+    );
+    assert!(!np.update_zip(), "a second save waits for the first");
     let reply = finish_zip_save(&mut np);
     assert!(reply.quit, "the quit runs once the zip holds the save");
     assert!(!np.edit.modified());
