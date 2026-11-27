@@ -1183,6 +1183,7 @@ remotehost-certificate-failed =
 
 ## ruledlg.rs
 ruledlg-pick-one-to-fill-in-its = (Pick one to fill in its app ID)
+ruledlg-window-row = { $title } ({ $app })
 ruledlg-edit-window-rule = Edit Window Rule
 ruledlg-add-window-rule = Add Window Rule
 ruledlg-windows = Windows

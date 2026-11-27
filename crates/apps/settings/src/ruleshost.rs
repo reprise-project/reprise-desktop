@@ -56,13 +56,16 @@ impl SettingsApp {
                     log::warn!("open windows: {e}");
                     Vec::new()
                 });
-                found.into_iter().map(|w| w.app_id).collect()
+                (found.into_iter())
+                    .filter(|w| w.button)
+                    .map(|w| (w.app_id, w.title))
+                    .collect()
             }));
         }
         Reply::redraw_all()
     }
 
-    /// The compositor listed the open windows; the dialog offers their programs.
+    /// The compositor listed the open windows; the dialog offers each with a task button.
     pub(crate) fn open_windows_done(&mut self) -> bool {
         let Some(rx) = &self.open_windows else {
             return false;

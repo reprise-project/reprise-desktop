@@ -500,8 +500,8 @@ struct SettingsApp {
     saver_dlg: Option<saverdlg::SaverDialog>,
     /// The rule dialog, with the Window Rules row it opened on and the rule there (`None` adds one).
     rule_dlg: Option<(ruledlg::RuleDialog, Option<(usize, windowrules::Rule)>)>,
-    /// The open windows' app ids, being asked of the compositor for the rule dialog.
-    open_windows: Option<Receiver<Vec<String>>>,
+    /// The open windows as (app id, title), being asked of the compositor for the rule dialog.
+    open_windows: Option<Receiver<Vec<(String, String)>>>,
     saver_preview: Option<(saverpage::Preview, std::time::Instant)>,
     saver_ticking: bool,
     /// BlueZ's paired devices, listed each time the Screen Saver & Lock page opens.

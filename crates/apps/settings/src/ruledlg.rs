@@ -76,7 +76,7 @@ pub struct RuleDialog {
     pub title: String,
     /// The rule it was opened on: the keys the dialog does not show come back from it.
     was: Rule,
-    /// The open windows' app ids, in the combo after [`no_window`].
+    /// The app id of each open window, in the combo's order after [`no_window`].
     windows: Vec<String>,
     /// The Screen combo's rows, as `output` values.
     outputs: Vec<String>,
@@ -265,22 +265,24 @@ impl RuleDialog {
         d
     }
 
-    /// Offer `app_ids`, the open windows' programs, in the From a window combo, each once; greyed
-    /// while there are none.
-    pub fn offer_windows(&mut self, app_ids: Vec<String>) {
-        let mut ids: Vec<String> = Vec::new();
-        for id in app_ids {
-            if !id.is_empty() && !ids.contains(&id) {
-                ids.push(id);
+    /// Offer `windows`, the open windows as (app id, title), in the From a window combo, each
+    /// once as its title and app id; greyed while there are none.
+    pub fn offer_windows(&mut self, windows: Vec<(String, String)>) {
+        let mut seen: Vec<(String, String)> = Vec::new();
+        for w in windows {
+            if !w.0.is_empty() && !seen.contains(&w) {
+                seen.push(w);
             }
         }
-        let rows: Vec<String> = std::iter::once(no_window())
-            .chain(ids.iter().cloned())
-            .collect();
+        let rows = seen.iter().map(|(id, title)| match title.trim() {
+            "" => id.clone(),
+            title => tr!("ruledlg-window-row", title = title, app = id.as_str()),
+        });
+        let rows: Vec<String> = std::iter::once(no_window()).chain(rows).collect();
         self.form.set_combo_rows(WINDOWS, &rows, 0, 10);
-        self.form.set_enabled(WINDOWS, !ids.is_empty());
-        self.form.set_enabled("wr_windows_label", !ids.is_empty());
-        self.windows = ids;
+        self.form.set_enabled(WINDOWS, !seen.is_empty());
+        self.form.set_enabled("wr_windows_label", !seen.is_empty());
+        self.windows = seen.into_iter().map(|(id, _)| id).collect();
         self.sync();
     }
 
@@ -602,19 +604,31 @@ mod tests {
     fn picking_an_open_window_fills_in_its_app_id() {
         let mut d = RuleDialog::new(None, Vec::new());
         assert!(!lit(&d, WINDOWS), "greyed until the windows are in");
+        let w = |id: &str, title: &str| (id.to_string(), title.to_string());
         d.offer_windows(vec![
-            "foot".into(),
-            "".into(),
-            "reprise.notepad".into(),
-            "foot".into(),
+            w("foot", "~"),
+            w("", "Desktop"),
+            w("reprise.notepad", "Untitled - Notepad"),
+            w("reprise.notepad", "notes.txt - Notepad"),
+            w("foot", "~"),
+            w("org.example.Bare", " "),
         ]);
         assert!(lit(&d, WINDOWS));
         let Some(Control::Combo(c)) = d.form.item(WINDOWS).map(|i| &i.control) else {
             panic!("the combo is there");
         };
         let rows: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
-        assert_eq!(rows, [no_window().as_str(), "foot", "reprise.notepad"]);
-        d.form.set_combo(WINDOWS, 2);
+        assert_eq!(
+            rows,
+            [
+                no_window().as_str(),
+                "~ (foot)",
+                "Untitled - Notepad (reprise.notepad)",
+                "notes.txt - Notepad (reprise.notepad)",
+                "org.example.Bare",
+            ]
+        );
+        d.form.set_combo(WINDOWS, 3);
         assert_eq!(d.event(form::Event::Changed(WINDOWS)), Outcome::Redraw);
         assert_eq!(d.form.edit_text(APP_ID), "reprise.notepad");
         assert!(lit(&d, OK));
