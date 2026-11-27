@@ -12,6 +12,7 @@ use model::{Line, SHARE};
 use repriseapp::asks::{Answer, Asks};
 use repriseapp::ctxmenu::{Popup, Step, item};
 use repriseapp::detailslist::{List, Press};
+use repriseapp::filedlg::{Driven, Host};
 use repriseapp::oneshot::{ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, MAIN, PointerInput, Poster, Reply, WinId,
@@ -21,6 +22,7 @@ use reprisefs::usage::{Kind, ROOT, Scan, Sort};
 use reprisekit::access::{ROOT as ACCESS_ROOT, Tree};
 use reprisekit::classic::widgets::BUTTON_H;
 use reprisekit::controls::dlgtemplate::{self, FOLDER_TEXT_H, Template};
+use reprisekit::controls::filedlg::{self, DlgMode, FileDlg};
 use reprisekit::controls::form::{self, Form, Item};
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::listview::{Column, Rows};
@@ -52,10 +54,11 @@ fn columns() -> [(String, i32, bool); 4] {
     ]
 }
 
-fn button_rows() -> [(&'static str, String, i32); 4] {
+fn button_rows() -> [(&'static str, String, i32); 5] {
     [
         ("back", tr!("back"), 75),
         ("up", tr!("up"), 75),
+        ("browse", tr!("browse"), 75),
         ("refresh", tr!("refresh"), 75),
         ("explore", tr!("explore"), 110),
     ]
@@ -63,6 +66,7 @@ fn button_rows() -> [(&'static str, String, i32); 4] {
 const SCAN_THREADS: usize = 4;
 
 const CONFIRM: WinId = WinId::named("confirm");
+const PICK: WinId = WinId::named("pick");
 
 /// The rows the list draws: the folder's entries and the icons of each kind.
 #[derive(Default)]
@@ -119,6 +123,9 @@ struct DiskUsage {
     trashed: Option<(Poster<Trashed>, Receiver<Trashed>)>,
     waker: Option<repriseapp::Waker>,
     trash_icon: Option<Canvas>,
+    /// Browse...'s folder dialog while it is up.
+    pick: Option<FileDlg>,
+    host: Host,
 }
 
 fn buttons() -> Vec<Item> {
@@ -172,6 +179,8 @@ impl DiskUsage {
             trashed: None,
             waker: None,
             trash_icon: None,
+            pick: None,
+            host: Host::default(),
         }
     }
 
@@ -210,6 +219,38 @@ impl DiskUsage {
         }
         self.list.view.top = 0;
         self.list.view.selection = Default::default();
+    }
+
+    /// Browse...: a folder dialog on the folder shown, which shows the folder picked.
+    fn browse(&mut self, ctx: &Ctx) {
+        let fields = filedlg::Fields {
+            title: tr!("title-browse"),
+            accept_label: tr!("ok"),
+            mode: DlgMode::Folder,
+            multiple: false,
+            filters: Vec::new(),
+        };
+        self.pick = Some(self.host.open(&self.at, fields, ctx.forms().text));
+    }
+
+    fn pick_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        let Some(dlg) = self.pick.as_mut() else {
+            return Reply::none();
+        };
+        let (text, forms) = (ctx.text.clone(), ctx.forms());
+        match self.host.drive(dlg, &ev, &text, &forms, ctx) {
+            Driven::Reply(r) => *r,
+            Driven::Picked(path) => {
+                self.pick = None;
+                self.go(path, true);
+                self.sync();
+                Reply::redraw_all()
+            }
+            Driven::Cancelled => {
+                self.pick = None;
+                Reply::redraw_all()
+            }
+        }
     }
 
     fn up(&mut self) {
@@ -412,10 +453,10 @@ impl DiskUsage {
         let r = self.list_rect(ctx);
         let alt = k.mods.alt;
         Some(match k.sym {
-            keysym::BACKSPACE => self.button("back"),
-            keysym::LEFT if alt => self.button("back"),
-            keysym::UP if alt => self.button("up"),
-            keysym::F5 => self.button("refresh"),
+            keysym::BACKSPACE => self.button("back", ctx),
+            keysym::LEFT if alt => self.button("back", ctx),
+            keysym::UP if alt => self.button("up", ctx),
+            keysym::F5 => self.button("refresh", ctx),
             keysym::RETURN | keysym::KP_ENTER => self.open_picked(),
             keysym::DELETE | keysym::KP_DELETE => match self.picked_path() {
                 Some(p) if self.picked().is_some_and(|l| l.kind != Kind::Mount) => {
@@ -438,8 +479,12 @@ impl DiskUsage {
         })
     }
 
-    fn button(&mut self, id: &str) -> Reply {
+    fn button(&mut self, id: &str, ctx: &Ctx) -> Reply {
         match id {
+            "browse" => {
+                self.browse(ctx);
+                return Reply::redraw_all();
+            }
             "back" => {
                 if let Some(p) = self.back.pop() {
                     self.go(p, false);
@@ -542,7 +587,7 @@ impl DiskUsage {
             _ => false,
         };
         match repriseapp::keys::form_input(&mut self.form, &ev, ctx) {
-            Some(form::Event::Pressed(id)) => self.button(id),
+            Some(form::Event::Pressed(id)) => self.button(id, ctx),
             Some(form::Event::None) | None if !lit => Reply::none(),
             Some(_) | None => Reply::redraw(),
         }
@@ -569,6 +614,7 @@ impl DiskUsage {
             rows.drive = ctx.icons.get("drive-harddisk", 16);
             self.trash_icon = ctx.icons.get("user-trash-full", 32);
         }
+        self.host.icons.prime(&mut ctx.icons);
     }
 
     fn draw_main(&self, c: &mut Canvas, ctx: &Ctx) {
@@ -617,6 +663,15 @@ impl App for DiskUsage {
         let mut out = Vec::new();
         out.extend(self.confirm.child(&text, &forms));
         out.extend(self.note.child(&text, &forms));
+        if let Some(d) = &self.pick {
+            out.push(repriseapp::Child {
+                id: PICK,
+                title: tr!("title-browse"),
+                size: d.client(),
+                fixed: false,
+                modal: true,
+            });
+        }
         out
     }
 
@@ -634,6 +689,7 @@ impl App for DiskUsage {
         match win {
             w if self.confirm.owns(w) => self.confirm_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
+            PICK => self.pick_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
     }
@@ -643,6 +699,17 @@ impl App for DiskUsage {
         match win {
             w if self.confirm.owns(w) => self.confirm.draw(c, &forms, &ctx.text),
             w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
+            PICK => {
+                if let Some(d) = &self.pick {
+                    let (w, h) = d.client();
+                    let paint = Paint {
+                        s: 1,
+                        ..forms.paint()
+                    };
+                    let r = Rect::new(0, 0, w, h);
+                    d.draw(c, &ctx.text, &paint, r, forms.fonts.size_px);
+                }
+            }
             _ => self.draw_main(c, ctx),
         }
     }
@@ -650,7 +717,21 @@ impl App for DiskUsage {
 
 impl repriseapp::Extended for DiskUsage {
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        (win == MAIN).then_some((420, 240))
+        match win {
+            MAIN => Some((420, 240)),
+            PICK => self.pick.as_ref().map(FileDlg::min_client),
+            _ => None,
+        }
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<repriseapp::FileDrop<'_>> {
+        if win != PICK {
+            return None;
+        }
+        Some(repriseapp::FileDrop {
+            dlg: self.pick.as_mut()?,
+            host: &mut self.host,
+        })
     }
 
     fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
@@ -666,6 +747,13 @@ impl repriseapp::Extended for DiskUsage {
         match win {
             w if self.confirm.owns(w) => self.confirm.access(tree, &ctx.text, &forms),
             w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
+            PICK => {
+                if let Some(d) = &self.pick {
+                    let (w, h) = d.client();
+                    let r = Rect::new(0, 0, w, h);
+                    d.access(tree, r, &ctx.text, forms.fonts.size_px);
+                }
+            }
             _ => {
                 let focus = self
                     .form
