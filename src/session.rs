@@ -1332,6 +1332,7 @@ mod tests {
             maximized,
             text_size: 100,
             client: false,
+            picked: false,
         }
     }
 

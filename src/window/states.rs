@@ -446,8 +446,8 @@ impl State {
 
     /// A normal window that took a size of its own after acking every configure keeps it in its
     /// pending state, so a later state-only configure (activation, bounds) does not ask it back
-    /// to the size last sent.
-    pub(super) fn keep_own_size(&self, w: WindowId) {
+    /// to the size last sent, and its size is the program's again (`Window::sized`).
+    pub(super) fn keep_own_size(&mut self, w: WindowId) {
         let Some(win) = self.win(w) else {
             return;
         };
@@ -464,11 +464,22 @@ impl State {
         };
         let own = win.client_size();
         let acked = t.with_committed_state(|s| s.cloned());
-        t.with_pending_state(|s| {
-            if acked.as_ref() == Some(&*s) && s.size.is_some_and(|z| (z.w, z.h) != own) {
-                s.size = Some(own.into());
+        let took = t.with_pending_state(|s| {
+            if acked.as_ref() != Some(&*s) {
+                return false;
+            }
+            match s.size {
+                Some(z) if (z.w, z.h) != own => {
+                    s.size = Some(own.into());
+                    true
+                }
+                Some(_) => false,
+                None => true,
             }
         });
+        if took && let Some(win) = self.win_mut(w) {
+            win.sized = false;
+        }
     }
 
     /// Drop minimized/maximized/fullscreen/snapped state on unmap. An xdg toplevel takes the

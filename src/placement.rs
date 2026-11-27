@@ -407,6 +407,11 @@ impl State {
                 }
             }
         }
+        if size.is_some()
+            && let Some(win) = self.win_mut(w)
+        {
+            win.sized = true;
+        }
         self.send_configure(w);
     }
 
@@ -462,6 +467,7 @@ impl State {
             maximized: win.maximized,
             text_size: win.sized_text_size(self.config.accessibility.text_size),
             client: false,
+            picked: false,
         })
     }
 
@@ -535,9 +541,11 @@ impl State {
             return;
         }
         let frame = frame_added(&self.config.theme.metrics, win.normal_chrome());
-        let Some(entry) = self.frame_of(w).map(|f| f.without_frame(frame)) else {
+        let picked = !win.sized;
+        let Some(mut entry) = self.frame_of(w).map(|f| f.without_frame(frame)) else {
             return;
         };
+        entry.picked = picked;
         let set = self.output_set();
         if self.wm.kept.store(&set, &app_id, entry.clone()) {
             log::info!("window {app_id:?}: remembered {entry:?} for {set:?}");
