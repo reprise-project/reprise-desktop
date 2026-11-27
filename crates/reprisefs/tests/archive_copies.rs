@@ -53,13 +53,34 @@ fn a_background_from_a_compressed_folder_is_kept_in_the_data_dir() {
     let kept_dir = home().join("data/reprise/backgrounds");
     let first = archivecopy::lasting_background(&copy("dunes.png", b"one")).expect("kept");
     assert_eq!(first, kept_dir.join("dunes.png"));
-    let again = archivecopy::lasting_background(&copy("dunes.png", b"two")).expect("kept again");
-    assert_eq!(again, first);
-    assert_eq!(std::fs::read(&again).expect("read"), b"two");
+    let again = archivecopy::lasting_background(&copy("dunes.png", b"one")).expect("kept again");
+    assert_eq!(again, first, "the same picture is used again");
+    let other = archivecopy::lasting_background(&copy("dunes.png", b"two")).expect("another");
+    assert_eq!(other, kept_dir.join("dunes (2).png"));
+    assert_eq!(std::fs::read(&first).expect("read"), b"one");
+    assert_eq!(std::fs::read(&other).expect("read"), b"two");
     let own = plain("dunes.png", b"mine");
     assert_eq!(archivecopy::lasting_background(&own).expect("own"), own);
+    let around = home().join("cache/reprise/archives/../../docs/dunes.png");
+    assert_eq!(
+        archivecopy::lasting_background(&around).expect("own"),
+        around
+    );
 }
 
+#[test]
+fn a_kept_background_never_writes_through_a_link_in_its_place() {
+    let kept_dir = home().join("data/reprise/backgrounds");
+    std::fs::create_dir_all(&kept_dir).expect("mkdir");
+    let own = plain("sun.png", b"mine");
+    std::os::unix::fs::symlink(&own, kept_dir.join("sun.png")).expect("symlink");
+    std::fs::hard_link(&own, kept_dir.join("sun (2).png")).expect("hard link");
+    let kept = archivecopy::lasting_background(&copy("sun.png", b"mine")).expect("kept");
+    assert_eq!(kept, kept_dir.join("sun (3).png"));
+    let kept = archivecopy::lasting_background(&copy("sun.png", b"new")).expect("kept");
+    assert_eq!(kept, kept_dir.join("sun (4).png"));
+    assert_eq!(std::fs::read(&own).expect("read"), b"mine");
+}
 #[test]
 fn a_copy_names_the_compressed_folder_it_came_from() {
     let copy = copy("report.txt", b"inside");
@@ -71,4 +92,53 @@ fn a_copy_names_the_compressed_folder_it_came_from() {
     assert_eq!(archivecopy::origin(&copy).as_deref(), Some(zip));
     let own = plain("report.txt", b"mine");
     assert_eq!(archivecopy::origin(&own), None);
+}
+
+/// Marks `copy`'s folder as come from `archive` without [`archivecopy::set_origin`]'s checks;
+/// false where the file system takes no user xattrs.
+fn mark_raw(copy: &Path, archive: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = std::ffi::CString::new(copy.parent().expect("a folder").as_os_str().as_bytes())
+        .expect("no NUL");
+    let value = archive.as_os_str().as_bytes();
+    // SAFETY: `dir` and the name are NUL-terminated, and `value` is valid for its length.
+    let set = unsafe {
+        libc::setxattr(
+            dir.as_ptr(),
+            c"user.reprise.archive".as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+        )
+    };
+    set == 0
+}
+
+#[test]
+fn a_copy_out_of_an_archive_inside_another_names_the_outer_one() {
+    let inner = copy("inner.zip", b"PK");
+    let outer = Path::new("/home/user/Downloads/outer.zip");
+    if !mark_raw(&inner, outer) {
+        return;
+    }
+    let notes = copy("notes.txt", b"inside");
+    archivecopy::set_origin(&notes, &inner).expect("mark");
+    assert_eq!(archivecopy::origin(&notes).as_deref(), Some(outer));
+    assert_eq!(
+        archivecopy::dialog_folder(&notes).as_deref(),
+        Some(Path::new("/home/user/Downloads"))
+    );
+}
+
+#[test]
+fn no_dialog_starts_in_a_scratch_folder() {
+    let inner = copy("unknown.zip", b"PK");
+    let notes = copy("notes.txt", b"inside");
+    archivecopy::set_origin(&notes, &inner).expect("nothing to note");
+    assert_eq!(archivecopy::origin(&notes), None);
+    assert_eq!(archivecopy::dialog_folder(&notes), None);
+    let marked = copy("marked.txt", b"inside");
+    if mark_raw(&marked, &inner) {
+        assert_eq!(archivecopy::dialog_folder(&marked), None);
+    }
 }
