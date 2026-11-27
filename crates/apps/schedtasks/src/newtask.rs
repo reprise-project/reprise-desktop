@@ -42,9 +42,10 @@ enum Kind {
     Monthly,
     Once,
     AtLogOn,
+    AtStartup,
 }
 
-const KINDS: [Kind; 10] = [
+const KINDS: [Kind; 11] = [
     Kind::Minutes(5),
     Kind::Minutes(10),
     Kind::Minutes(15),
@@ -55,6 +56,7 @@ const KINDS: [Kind; 10] = [
     Kind::Monthly,
     Kind::Once,
     Kind::AtLogOn,
+    Kind::AtStartup,
 ];
 
 fn kind_row(kind: Kind) -> usize {
@@ -71,6 +73,7 @@ impl Kind {
             Kind::Monthly => tr!("kind-monthly"),
             Kind::Once => tr!("kind-once"),
             Kind::AtLogOn => tr!("kind-logon"),
+            Kind::AtStartup => tr!("kind-startup"),
         }
     }
 
@@ -105,6 +108,8 @@ pub struct NewTaskBox {
     shown: Kind,
     weekday: usize,
     month_day: usize,
+    /// `reprise-schedtasks` ([`units::notifier`]), which an at-startup task needs.
+    helper: Option<PathBuf>,
 }
 
 fn field(id: &'static str, y: i32, w: i32) -> Item {
@@ -185,9 +190,9 @@ impl NewTaskBox {
                 Control::Separator,
             ),
             label("kind_label", sy, &tr!("new-kind")),
-            Item::combo(KIND, FIELD_X, sy, 140, &kinds, KINDS.len()),
+            Item::combo(KIND, FIELD_X, sy, 170, &kinds, KINDS.len()),
             label("day_label", sy + PITCH, &tr!("new-day")),
-            Item::combo(DAY, FIELD_X, sy + PITCH, 140, &[], 8),
+            Item::combo(DAY, FIELD_X, sy + PITCH, 170, &[], 8),
             label("date_label", sy + 2 * PITCH, &tr!("new-date")),
             field(DATE, sy + 2 * PITCH, 100),
             label("time_label", sy + 3 * PITCH, &tr!("new-time")),
@@ -224,6 +229,7 @@ impl NewTaskBox {
             shown: Kind::AtLogOn,
             weekday: 0,
             month_day: 0,
+            helper: units::notifier(),
         };
         b.form.set_combo(KIND, kind_row(Kind::Daily));
         b.form
@@ -266,6 +272,7 @@ impl NewTaskBox {
                 (Kind::Once, Some(at))
             }
             Schedule::AtLogOn => (Kind::AtLogOn, None),
+            Schedule::AtStartup => (Kind::AtStartup, None),
         };
         if let (Some((h, m)), Some(Control::Time(t))) =
             (at, b.form.item_mut(TIME).map(|i| &mut i.control))
@@ -312,6 +319,7 @@ impl NewTaskBox {
             Kind::Hourly => Schedule::Hourly,
             Kind::Minutes(every) => Schedule::Minutes { every },
             Kind::AtLogOn => Schedule::AtLogOn,
+            Kind::AtStartup => Schedule::AtStartup,
         })
     }
 
@@ -335,7 +343,7 @@ impl NewTaskBox {
             args,
             schedule: self.schedule()?,
         };
-        units::texts(&task, None).map_err(problem)?;
+        units::check(&task, self.helper.as_deref()).map_err(problem)?;
         Ok(task)
     }
 
@@ -370,7 +378,9 @@ impl NewTaskBox {
         let task = self.task();
         let hint = match &task {
             Err(why) => why.clone(),
-            Ok(_) if kind == Kind::AtLogOn && self.editing.is_none() => tr!("new-logon-now"),
+            Ok(_) if matches!(kind, Kind::AtLogOn | Kind::AtStartup) && self.editing.is_none() => {
+                tr!("new-logon-now")
+            }
             Ok(_) => String::new(),
         };
         let f = &mut self.form;
@@ -414,9 +424,11 @@ impl NewTaskBox {
 
 /// `s` as the list's Schedule column words it.
 fn words(s: &Schedule, twelve: bool) -> String {
+    let delay = units::LOGON_DELAY_S * 1_000_000;
     match s.calendar() {
         Some(spec) => model::calendar(&spec, twelve),
-        None => model::after("OnStartupUSec", units::LOGON_DELAY_S * 1_000_000),
+        None if *s == Schedule::AtStartup => model::once_per_startup(delay),
+        None => model::after("OnStartupUSec", delay),
     }
 }
 
@@ -426,6 +438,7 @@ fn problem(p: Problem) -> String {
         Problem::Program => tr!("new-no-program"),
         Problem::Quote => tr!("new-quote"),
         Problem::Special => tr!("new-special"),
+        Problem::Helper => tr!("new-no-helper"),
     }
 }
 
@@ -487,8 +500,11 @@ mod tests {
         }
     }
 
+    const HELPER: &str = "/usr/bin/reprise-schedtasks";
+
     fn filled() -> NewTaskBox {
         let mut b = NewTaskBox::new(|| NOW, false);
+        b.helper = Some(HELPER.into());
         typed(&mut b, NAME, "Back up");
         typed(&mut b, PROGRAM, "/bin/sh");
         typed(&mut b, ARGS, r#"-c "echo hi""#);
@@ -581,6 +597,17 @@ mod tests {
                 schedule: Schedule::AtLogOn,
             })
         );
+        pick(&mut b, Kind::AtStartup);
+        assert!(!enabled(&b, TIME) && !enabled(&b, DATE));
+        assert_eq!(
+            label(&b, SETTING),
+            "Once per startup, 30 s after logging on"
+        );
+        assert_eq!(
+            label(&b, HINT),
+            "The task also runs once now, when it is made."
+        );
+        assert_eq!(b.schedule(), Ok(Schedule::AtStartup));
     }
 
     #[test]
@@ -646,6 +673,7 @@ mod tests {
                 at: (6, 0),
             },
             Schedule::AtLogOn,
+            Schedule::AtStartup,
         ] {
             let task = NewTask {
                 name: "Back up".into(),
@@ -654,12 +682,31 @@ mod tests {
                 schedule,
             };
             let mut b = NewTaskBox::edit(|| NOW, false, "reprise-task-back-up.timer", &task);
+            b.helper = Some(HELPER.into());
+            b.sync();
             assert_eq!(label(&b, HINT), "", "{schedule:?}");
             assert_eq!(
                 b.event(form::Event::Pressed(CREATE)),
                 Outcome::Create(task),
                 "{schedule:?}"
             );
+        }
+    }
+
+    #[test]
+    fn once_per_startup_needs_the_helper_before_create() {
+        for helper in [None, Some("/opt/x[1]/reprise-schedtasks")] {
+            let mut b = filled();
+            b.helper = helper.map(PathBuf::from);
+            pick(&mut b, Kind::AtStartup);
+            assert_eq!(
+                label(&b, HINT),
+                "A task run once per startup needs reprise-schedtasks on PATH.",
+                "{helper:?}"
+            );
+            assert!(!enabled(&b, CREATE));
+            pick(&mut b, Kind::AtLogOn);
+            assert!(enabled(&b, CREATE), "the other rows need no helper");
         }
     }
 

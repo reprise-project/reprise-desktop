@@ -163,6 +163,175 @@ fn each_schedule_maps_to_one_timer_setting() {
         "OnCalendar=*-*-* *:00/15:00"
     );
     assert_eq!(Schedule::AtLogOn.setting(), "OnStartupSec=30s");
+    assert_eq!(Schedule::AtStartup.setting(), "OnStartupSec=30s");
+}
+
+const NOTIFIER: &str = "/usr/bin/reprise-schedtasks";
+
+#[test]
+fn an_at_startup_task_is_skipped_by_its_stamp_and_stamped_before_each_run() {
+    let t = NewTask {
+        schedule: Schedule::AtStartup,
+        ..task()
+    };
+    let (service, timer) = texts(&t, Some(Path::new(NOTIFIER))).unwrap();
+    assert_eq!(
+        service,
+        format!(
+            "{MARKER}\n[Unit]\nDescription=Back up photos\n\
+             ConditionPathExists=!%S/reprise/schedtasks/%N.%b\n\n\
+             [Service]\nType=oneshot\n\
+             ExecStartPre=:\"{NOTIFIER}\" \"--once-per-boot\" \"%S/reprise/schedtasks\" \"%N\" \"%b\"\n\
+             ExecStart=:\"/usr/bin/rsync\" \"-a\" \"/home/u/My Photos\" \"/mnt\"\n\
+             ExecStopPost=-:\"{NOTIFIER}\" \"--failed\" \"Back up photos\"\n"
+        )
+    );
+    assert!(timer.contains("\n[Timer]\nOnStartupSec=30s\n"), "{timer}");
+}
+
+#[test]
+fn an_at_startup_task_needs_a_helper_it_can_run() {
+    let t = NewTask {
+        schedule: Schedule::AtStartup,
+        ..task()
+    };
+    for helper in [None, Some(Path::new("/opt/x[1]/reprise-schedtasks"))] {
+        assert_eq!(texts(&t, helper), Err(Problem::Helper), "{helper:?}");
+        assert_eq!(check(&t, helper), Err(Problem::Helper), "{helper:?}");
+    }
+    assert_eq!(check(&t, Some(Path::new(NOTIFIER))), Ok(()));
+    assert_eq!(check(&task(), None), Ok(()), "other schedules need none");
+}
+
+#[test]
+fn an_awkward_name_never_reaches_the_stamp_lines_and_reads_back() {
+    for name in [
+        "Back up \"my\" files",
+        "100% done",
+        "$HOME and ${x}",
+        "it's %N %b",
+    ] {
+        let t = NewTask {
+            name: name.into(),
+            schedule: Schedule::AtStartup,
+            ..task()
+        };
+        let (service, timer) = texts(&t, Some(Path::new(NOTIFIER))).unwrap();
+        for key in ["ConditionPathExists=", "ExecStartPre="] {
+            let line = service.lines().find(|l| l.starts_with(key)).unwrap();
+            assert!(
+                line.ends_with("%N.%b") || line.ends_with("\"%N\" \"%b\""),
+                "{line}"
+            );
+            assert!(
+                !line.contains("Back") && !line.contains("HOME"),
+                "{name}: {line}"
+            );
+        }
+        assert_eq!(parse(&service, &timer).as_ref(), Some(&t), "{name}");
+    }
+}
+
+#[test]
+fn a_log_on_pair_with_a_stamp_step_reads_as_at_startup_and_one_without_as_at_log_on() {
+    let notifier = Some(Path::new(NOTIFIER));
+    let logon = NewTask {
+        schedule: Schedule::AtLogOn,
+        ..task()
+    };
+    let (service, timer) = texts(&logon, notifier).unwrap();
+    assert_eq!(parse(&service, &timer), Some(logon.clone()));
+    let startup = NewTask {
+        schedule: Schedule::AtStartup,
+        ..logon
+    };
+    let (service, timer) = texts(&startup, notifier).unwrap();
+    assert_eq!(parse(&service, &timer), Some(startup));
+    for changed in [
+        service.replace("\"%N\"", "\"reprise-task-x\""),
+        service.replace(
+            &format!("ExecStartPre=:\"{NOTIFIER}"),
+            "ExecStartPre=:\"/bin/true",
+        ),
+        service.replace("--once-per-boot", "--failed"),
+        service.replace("ConditionPathExists=!", "ConditionPathExists="),
+    ] {
+        assert_eq!(parse(&changed, &timer), None, "{changed}");
+    }
+}
+
+const BOOT: &str = "20956c8391bb4f9da73ecc05a087448b";
+const EARLIER: &str = "9841c25773014c34b3a2e3d1cf4cbbdd";
+
+#[test]
+fn a_run_stamps_its_boot_and_drops_its_other_stamps_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("state dir/reprise/schedtasks");
+    let stem = "reprise-task-x";
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in [
+        format!("{stem}.{EARLIER}"),
+        format!("{stem}-2.{EARLIER}"),
+        format!("{stem}.notes"),
+    ] {
+        std::fs::write(dir.join(name), "").unwrap();
+    }
+    stamp_run(&dir, stem, BOOT).unwrap();
+    assert_eq!(
+        names(&dir),
+        [
+            format!("{stem}-2.{EARLIER}"),
+            format!("{stem}.{BOOT}"),
+            format!("{stem}.notes"),
+        ],
+        "this boot's stamp; another task's and a file of another form stay"
+    );
+    stamp_run(&dir, stem, BOOT).unwrap();
+    forget_runs(&dir, stem, None).unwrap();
+    assert_eq!(
+        names(&dir),
+        [format!("{stem}-2.{EARLIER}"), format!("{stem}.notes")]
+    );
+    forget_runs(&tmp.path().join("gone"), stem, None).unwrap();
+}
+
+#[test]
+fn a_stamp_run_refuses_arguments_its_unit_never_passes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    for (dir, stem, boot) in [
+        (Path::new("relative"), "reprise-task-x", BOOT),
+        (dir, "../reprise-task-x", BOOT),
+        (dir, "backup", BOOT),
+        (
+            dir,
+            "reprise-task-x",
+            "9841c257-7301-4c34-b3a2-e3d1cf4cbbdd",
+        ),
+        (dir, "reprise-task-x", "%b"),
+    ] {
+        assert!(stamp_run(dir, stem, boot).is_err(), "{dir:?} {stem} {boot}");
+    }
+    assert!(names(dir).is_empty());
+}
+
+#[test]
+fn the_stamp_folder_comes_from_the_path_the_manager_resolved() {
+    let stem = "reprise-task-x";
+    let resolved = format!("/home/u/.state %/reprise/schedtasks/{stem}.{BOOT}");
+    assert_eq!(
+        stamps_dir(&resolved, stem),
+        Some(Path::new("/home/u/.state %/reprise/schedtasks"))
+    );
+    for other in [
+        format!("relative/{stem}.{BOOT}"),
+        format!("/s/{stem}-2.{BOOT}"),
+        format!("/s/{stem}.boot"),
+        format!("/s/{stem}"),
+    ] {
+        assert_eq!(stamps_dir(&other, stem), None, "{other}");
+    }
+    assert_eq!(stamps_dir(&format!("/s/backup.{BOOT}"), "backup"), None);
 }
 
 #[test]

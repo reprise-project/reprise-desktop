@@ -38,6 +38,11 @@ pub struct Task {
     pub file: String,
     /// New Task wrote the timer and its service, so Delete may remove them ([`crate::units::ours`]).
     pub ours: bool,
+    /// The service runs once per boot: its `ExecStartPre` stamps the run
+    /// ([`crate::units::stamp_run`]) and its condition skips the start when the stamp exists.
+    pub once_per_boot: bool,
+    /// The service's `ConditionResult`: false when its conditions skipped the last start.
+    pub condition_met: bool,
 }
 
 impl Task {
@@ -96,7 +101,10 @@ impl Task {
     /// The schedule as a sentence per setting, joined by "; ".
     pub fn schedule(&self, is_12h: bool) -> String {
         let calendar = self.calendar.iter().map(|(_, spec)| calendar(spec, is_12h));
-        let monotonic = self.monotonic.iter().map(|(base, us)| after(base, *us));
+        let monotonic = self.monotonic.iter().map(|(base, us)| match base.as_str() {
+            "OnStartupUSec" if self.once_per_boot => once_per_startup(*us),
+            base => after(base, *us),
+        });
         calendar.chain(monotonic).collect::<Vec<_>>().join("; ")
     }
 
@@ -136,12 +144,14 @@ impl Task {
     pub fn result_text(&self) -> String {
         match self.result.as_str() {
             _ if self.last.is_none() && self.exit_code == 0 => tr!("result-not-run"),
+            _ if self.once_per_boot && !self.condition_met => tr!("result-skipped"),
             "success" => tr!("result-success"),
             "exit-code" if self.exit_code == libc::CLD_EXITED => {
                 tr!("result-exit", status = self.exit_status)
             }
             "signal" | "core-dump" => tr!("result-signal"),
             "timeout" => tr!("result-timeout"),
+            "exit-code" if self.exit_code == 0 => tr!("result-not-started"),
             other => other.to_string(),
         }
     }
@@ -202,6 +212,11 @@ pub fn after(base: &str, us: u64) -> String {
         "OnUnitInactiveUSec" => tr!("after-finish", span = span),
         _ => format!("{base}={span}"),
     }
+}
+
+/// An at-startup task's `OnStartupUSec` setting of `us` in words.
+pub fn once_per_startup(us: u64) -> String {
+    tr!("after-startup-once", span = span(us))
 }
 
 const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -432,6 +447,38 @@ mod tests {
         assert_eq!(
             after("OnStartupUSec", 2 * 86_400 * S),
             "2 days after logging on"
+        );
+    }
+
+    #[test]
+    fn a_once_per_boot_task_says_so_and_a_skipped_run_reads_as_skipped() {
+        let t = Task {
+            monotonic: vec![("OnStartupUSec".into(), 30 * S)],
+            once_per_boot: true,
+            condition_met: true,
+            last: Some(1),
+            ..task()
+        };
+        assert_eq!(t.schedule(false), "Once per startup, 30 s after logging on");
+        assert_eq!(t.settings(), ["OnStartup=30s"]);
+        assert_eq!(t.result_text(), "Succeeded", "its conditions were met");
+        let skipped = Task {
+            condition_met: false,
+            ..t.clone()
+        };
+        assert_eq!(
+            skipped.result_text(),
+            "Skipped, as it already ran since startup"
+        );
+        let stamp_failed = Task {
+            service_state: "failed".into(),
+            result: "exit-code".into(),
+            ..t
+        };
+        assert_eq!(stamp_failed.status(), "Failed");
+        assert_eq!(
+            stamp_failed.result_text(),
+            "Failed before the program started"
         );
     }
 
