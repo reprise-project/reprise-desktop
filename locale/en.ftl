@@ -356,6 +356,7 @@ dlg-menu-open-file-location = Open f&ile location
 dlg-keys-run = Run { $command }
 dlg-keys-start = Start { $app }
 dlg-keys-start-menu = Start menu
+dlg-keys-separator = {", "}
 # A program's global shortcut: its name, then what the shortcut does.
 dlg-keys-global = { $program }: { $what }
 
@@ -550,12 +551,12 @@ location-using =
 
 ## Accessibility aids (StickyKeys, SlowKeys, MouseKeys)
 
-misc-aid-sticky-shortcut = Pressing Shift five times
-misc-aid-slow-shortcut = Holding the right Shift key for eight seconds
-misc-aid-mouse-shortcut = Left Alt+left Shift+Num Lock
-misc-aid-sticky-what = Shift, Ctrl, Alt and the Super key work one key at a time.
+misc-aid-sticky-shortcut = Pressing { $shift } five times
+misc-aid-slow-shortcut = Holding the right { $shift } key for eight seconds
+misc-aid-mouse-shortcut = Left { $alt }+left { $shift }+{ $num_lock }
+misc-aid-sticky-what = { $shift }, { $ctrl }, { $alt } and the { $super_key } key work one key at a time.
 misc-aid-slow-what = A key counts only once it has been held down for a moment.
-misc-aid-mouse-what = The keypad moves the pointer. Hold Ctrl to go faster or Shift to creep.
+misc-aid-mouse-what = The keypad moves the pointer. Hold { $ctrl } to go faster or { $shift } to creep.
 # $what is the aid's description, $keys the shortcut that turns it off
 misc-aid-on-body-shortcut = { $what } { $keys } turns it off.
 misc-aid-off-body-shortcut = { $keys } turns it on again.
@@ -577,7 +578,7 @@ misc-mousekeys-tip-held = The { $button } button is held down
 
 misc-shortcuts-taken-someone = A program
 misc-shortcuts-taken-title = { $name } took the keyboard shortcuts
-misc-shortcuts-taken-body = Super+Shift+Escape gives them back.
+misc-shortcuts-taken-body = { $keys } gives them back.
 
 ## Debug overlay
 

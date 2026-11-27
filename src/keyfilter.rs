@@ -15,6 +15,7 @@ use smithay::{
     },
 };
 
+use reprisekit::keycap::shown_chord;
 use reprisekit::tr;
 
 use crate::compositor::State;
@@ -66,18 +67,35 @@ impl Aid {
     }
 
     fn shortcut_keys(self) -> String {
+        let key = shown_chord;
         match self {
-            Aid::StickyKeys => tr!("misc-aid-sticky-shortcut"),
-            Aid::SlowKeys => tr!("misc-aid-slow-shortcut"),
-            Aid::MouseKeys => tr!("misc-aid-mouse-shortcut"),
+            Aid::StickyKeys => tr!("misc-aid-sticky-shortcut", shift = key("Shift")),
+            Aid::SlowKeys => tr!("misc-aid-slow-shortcut", shift = key("Shift")),
+            Aid::MouseKeys => tr!(
+                "misc-aid-mouse-shortcut",
+                alt = key("Alt"),
+                shift = key("Shift"),
+                num_lock = key("Num Lock")
+            ),
         }
     }
 
     fn what(self) -> String {
+        let key = shown_chord;
         match self {
-            Aid::StickyKeys => tr!("misc-aid-sticky-what"),
+            Aid::StickyKeys => tr!(
+                "misc-aid-sticky-what",
+                shift = key("Shift"),
+                ctrl = key("Ctrl"),
+                alt = key("Alt"),
+                super_key = key("Super")
+            ),
             Aid::SlowKeys => tr!("misc-aid-slow-what"),
-            Aid::MouseKeys => tr!("misc-aid-mouse-what"),
+            Aid::MouseKeys => tr!(
+                "misc-aid-mouse-what",
+                ctrl = key("Ctrl"),
+                shift = key("Shift")
+            ),
         }
     }
 }
