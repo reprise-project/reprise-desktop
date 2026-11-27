@@ -151,15 +151,15 @@ impl SetInfo {
 
     pub fn type_text(&self) -> String {
         match &self.type_name {
-            Some(t) => format!("All of type {t}"),
-            None => "Multiple Types".to_string(),
+            Some(t) => tr!("props-all-of-type", type = t.as_str()),
+            None => tr!("props-multiple-types"),
         }
     }
 
     pub fn location_text(&self) -> String {
         match &self.location {
-            Some(dir) => format!("All in {dir}"),
-            None => "Various Folders".to_string(),
+            Some(dir) => tr!("props-all-in", dir = dir.as_str()),
+            None => tr!("props-various-folders"),
         }
     }
 }
@@ -999,8 +999,8 @@ pub fn comment_of(xml: &str) -> Option<String> {
 
 pub fn generic_type_name(path: &Path) -> String {
     match path.extension().map(|e| e.to_string_lossy().to_uppercase()) {
-        Some(ext) if !ext.is_empty() => format!("{ext} File"),
-        _ => "File".to_string(),
+        Some(ext) if !ext.is_empty() => tr!("props-generic-type", ext = ext),
+        _ => tr!("props-generic-file"),
     }
 }
 
@@ -1343,12 +1343,12 @@ pub fn thousands(n: u64) -> String {
 }
 
 pub fn format_contains(files: u64, folders: u64) -> String {
-    format!(
-        "{} {}, {} {}",
-        thousands(files),
-        if files == 1 { "File" } else { "Files" },
-        thousands(folders),
-        if folders == 1 { "Folder" } else { "Folders" }
+    tr!(
+        "props-contains",
+        files = thousands(files),
+        filesn = files,
+        folders = thousands(folders),
+        foldersn = folders,
     )
 }
 

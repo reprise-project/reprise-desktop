@@ -132,3 +132,23 @@ proxy-no-script = Type the address of the configuration script.
 proxy-bad-script = The configuration script's address can't hold spaces, quotes, $ or \.
 proxy-bad-address = The { $label } proxy's address can't hold spaces, quotes, $ or \.
 proxy-bad-port = Type the { $label } proxy's port, a number from 1 to 65535.
+
+## Properties sheet
+# $type is the shared type's name.
+props-all-of-type = All of type { $type }
+props-multiple-types = Multiple Types
+# $dir is the shared folder.
+props-all-in = All in { $dir }
+props-various-folders = Various Folders
+# $ext is the upper-case file extension.
+props-generic-type = { $ext } File
+props-generic-file = File
+# $files and $folders are the grouped counts, $filesn and $foldersn the numbers that pick the plural.
+props-contains =
+    { $files } { $filesn ->
+        [one] File
+       *[other] Files
+    }, { $folders } { $foldersn ->
+        [one] Folder
+       *[other] Folders
+    }

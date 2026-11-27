@@ -1070,3 +1070,10 @@ fn a_default_set_while_another_writer_edits_mimeapps_list_keeps_both() {
         Some("viewer.desktop")
     );
 }
+
+#[test]
+fn the_contents_line_groups_thousands_and_pluralizes() {
+    assert_eq!(format_contains(1234, 1), "1,234 Files, 1 Folder");
+    assert_eq!(format_contains(1, 1_000_000), "1 File, 1,000,000 Folders");
+    assert_eq!(format_contains(0, 2), "0 Files, 2 Folders");
+}
