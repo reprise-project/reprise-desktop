@@ -1,6 +1,7 @@
 //! The Flatpak side: application and runtime updates in the system and user installation, through the `flatpak`
 //! command (it does the pull, signature checks and polkit prompt itself). Output is read in the C locale.
 
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader};
@@ -39,7 +40,7 @@ fn run(args: &[&str]) -> Result<String, String> {
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("Flatpak could not be started: {e}."))?;
+        .map_err(|e| tr!("flatpak-start-failed", why = e.to_string()))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -52,8 +53,10 @@ fn complaint(stderr: &str) -> String {
         .lines()
         .map(str::trim)
         .rfind(|l| !l.is_empty())
-        .unwrap_or("Flatpak failed.");
-    let line = line.strip_prefix("error:").map_or(line, str::trim_start);
+        .map_or_else(|| tr!("flatpak-failed"), str::to_string);
+    let line = line
+        .strip_prefix("error:")
+        .map_or(line.as_str(), str::trim_start);
     let mut s = line.to_string();
     if let Some(first) = s.get(..1) {
         s.replace_range(..1, &first.to_uppercase());
@@ -112,8 +115,8 @@ fn parse_updates(
             };
             let summary = match (field(4), field(5)) {
                 ("", _) => String::new(),
-                (o, "") => format!("from {o}"),
-                (o, size) => format!("from {o}, {size} to download"),
+                (o, "") => tr!("flatpak-from", origin = o),
+                (o, size) => tr!("flatpak-from-size", origin = o, size = size),
             };
             Some(Update {
                 id: r.to_string(),
@@ -330,7 +333,7 @@ fn follow_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Flatpak could not be started: {e}."))?;
+        .map_err(|e| tr!("flatpak-start-failed", why = e.to_string()))?;
     if let Some(fd) = Pidfd::open(child.id()) {
         started(fd);
     }

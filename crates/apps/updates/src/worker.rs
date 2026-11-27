@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::FutureExt;
 use futures_util::stream::StreamExt;
+use reprisekit::tr;
 use zbus::Connection;
 
 use crate::model::{Found, Group, Install, Origin, Request, Restart, Update};
@@ -299,7 +300,7 @@ async fn install(
 ) -> Result<Restart, Failure> {
     let stages = stages(updates);
     let n = stages.len().max(1) as f64;
-    let mut doing = String::from("Preparing to install");
+    let mut doing = tr!("install-preparing");
     poster.post(Msg::Progress {
         fraction: None,
         doing: doing.clone(),
@@ -319,19 +320,19 @@ async fn install(
             (Stage::Flatpak(at, refs), _) => {
                 let ids: Vec<String> = refs.iter().map(|u| u.id.clone()).collect();
                 flatpak::install(at, &ids, &mut |id, f| {
-                    let line =
-                        (!id.is_empty()).then(|| format!("Updating {}", ref_name(&refs, id)));
+                    let line = (!id.is_empty())
+                        .then(|| tr!("install-updating", name = ref_name(&refs, id)));
                     report(Some(f), line);
                 })
                 .map(|()| Restart::None)
                 .map_err(Failure::Text)
             }
-            (_, None) => Err(Failure::Text("There is no system bus.".into())),
+            (_, None) => Err(Failure::Text(tr!("install-no-bus"))),
             (Stage::Packages(ids), Some(c)) => {
                 match packagekit::install(c, ids, &mut report).await {
                     Ok(r) => Ok(r),
                     Err(packagekit::Error::Unavailable) => {
-                        Err(Failure::Text("PackageKit is not installed.".into()))
+                        Err(Failure::Text(tr!("install-no-packagekit")))
                     }
                     Err(packagekit::Error::Dismissed) => Err(Failure::Dismissed),
                     Err(packagekit::Error::Failed(e) | packagekit::Error::SystemPackage(e)) => {
@@ -344,9 +345,7 @@ async fn install(
                     .await
                 {
                     Ok(r) => Ok(r),
-                    Err(fwupd::Error::Unavailable) => {
-                        Err(Failure::Text("fwupd is not installed.".into()))
-                    }
+                    Err(fwupd::Error::Unavailable) => Err(Failure::Text(tr!("install-no-fwupd"))),
                     Err(fwupd::Error::Dismissed) => Err(Failure::Dismissed),
                     Err(fwupd::Error::Failed(e)) => Err(Failure::Text(e)),
                 }

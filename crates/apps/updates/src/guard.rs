@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use reprisekit::controls::installsheet::Verb;
+use reprisekit::tr;
 
 /// The names Reprise's packages install as: packaging/arch's pkgname and provides, the .deb's
 /// Package.
@@ -60,22 +61,26 @@ pub fn refusal(verb: Verb, blocks: &[(Why, String)]) -> String {
         }
         let mut list = names[..names.len().min(LISTED)].join(", ");
         if names.len() > LISTED {
-            list.push_str(&format!(" and {} more", names.len() - LISTED));
+            list = tr!("guard-more", list = list, count = names.len() - LISTED);
         }
-        Some(format!("{list} ({reason})"))
+        Some(tr!("guard-group", list = list, reason = reason))
     };
     let parts: Vec<String> = [
-        group(Why::System, "needed by the system"),
-        group(Why::Reprise, "part of Reprise"),
+        group(Why::System, &tr!("guard-reason-system")),
+        group(Why::Reprise, &tr!("guard-reason-reprise")),
     ]
     .into_iter()
     .flatten()
     .collect();
-    let doing = match verb {
-        Verb::Install => "Installing",
-        Verb::Uninstall => "Uninstalling",
+    let verb = match verb {
+        Verb::Install => "install",
+        Verb::Uninstall => "uninstall",
     };
-    format!("{doing} it would remove {}.", parts.join(" and "))
+    let parts = match parts.as_slice() {
+        [a, b] => tr!("guard-both", first = a.as_str(), second = b.as_str()),
+        _ => parts.join(""),
+    };
+    tr!("guard-refusal", verb = verb, parts = parts)
 }
 
 /// The note for an uninstall's dry run PackageKit refused because it would remove a package the

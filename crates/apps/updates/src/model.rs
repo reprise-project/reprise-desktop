@@ -4,6 +4,8 @@
 
 use std::collections::BTreeSet;
 
+use reprisekit::tr;
+
 use crate::restart::Due;
 
 /// How much an update matters, as PackageKit rates it (firmware maps its
@@ -20,14 +22,14 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Kind::Security => "Security update",
-            Kind::Important => "Important update",
-            Kind::Bugfix => "Bug fix",
-            Kind::Normal => "Update",
-            Kind::Enhancement => "Enhancement",
-            Kind::Low => "Optional update",
+            Kind::Security => tr!("update-kind-security"),
+            Kind::Important => tr!("update-kind-important"),
+            Kind::Bugfix => tr!("update-kind-bugfix"),
+            Kind::Normal => tr!("update-kind-normal"),
+            Kind::Enhancement => tr!("update-kind-enhancement"),
+            Kind::Low => tr!("update-kind-low"),
         }
     }
 }
@@ -39,10 +41,10 @@ pub enum Install {
 }
 
 impl Install {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Install::System => "system",
-            Install::User => "user",
+            Install::System => tr!("update-install-system"),
+            Install::User => tr!("update-install-user"),
         }
     }
 }
@@ -75,11 +77,11 @@ pub enum Group {
 }
 
 impl Group {
-    pub fn title(self) -> &'static str {
+    pub fn title(self) -> String {
         match self {
-            Group::Packages => "System packages",
-            Group::Flatpak => "Flatpak",
-            Group::Firmware => "Firmware",
+            Group::Packages => tr!("update-group-packages"),
+            Group::Flatpak => tr!("update-group-flatpak"),
+            Group::Firmware => tr!("update-group-firmware"),
         }
     }
 }
@@ -116,19 +118,19 @@ impl Update {
     /// Urgency for a package or firmware; app or runtime and installation for a Flatpak ref.
     pub fn type_cell(&self) -> String {
         match self.origin {
-            Origin::Package | Origin::Firmware => self.kind.label().into(),
-            Origin::App(i) => format!("Application ({})", i.label()),
-            Origin::Runtime(i) => format!("Runtime ({})", i.label()),
+            Origin::Package | Origin::Firmware => self.kind.label(),
+            Origin::App(i) => tr!("update-origin-app", install = i.label()),
+            Origin::Runtime(i) => tr!("update-origin-runtime", install = i.label()),
         }
     }
 
     pub fn about(&self) -> String {
         let what = match self.origin {
             Origin::Package => self.kind.label(),
-            _ => self.name.as_str(),
+            _ => self.name.clone(),
         };
         if self.summary.is_empty() {
-            what.to_string()
+            what
         } else {
             format!("{what}: {}", self.summary)
         }
@@ -200,62 +202,44 @@ impl Phase {
 }
 
 pub fn count(n: usize) -> String {
-    if n == 1 {
-        "1 update".into()
-    } else {
-        format!("{n} updates")
-    }
+    tr!("update-count", count = n)
 }
 
 /// `picked` is how many of `updates` are checked for install.
 pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
     match phase {
-        Phase::Unchecked => "Reprise has not checked for updates yet.".into(),
-        Phase::Checking => "Checking for updates...".into(),
-        Phase::Ready if updates.is_empty() => "Your computer is up to date.".into(),
-        Phase::Ready if picked == 0 => format!(
-            "0 of {} selected. Check the updates you want to install.",
-            count(updates.len())
+        Phase::Unchecked => tr!("headline-unchecked"),
+        Phase::Checking => tr!("headline-checking"),
+        Phase::Ready if updates.is_empty() => tr!("headline-up-to-date"),
+        Phase::Ready if picked == 0 => {
+            tr!("headline-none-selected", updates = count(updates.len()))
+        }
+        Phase::Ready if picked < updates.len() => tr!(
+            "headline-some-selected",
+            picked = picked,
+            updates = count(updates.len())
         ),
-        Phase::Ready if picked < updates.len() => format!(
-            "{picked} of {} selected. Click Install to download and install {}.",
-            count(updates.len()),
-            if picked == 1 { "it" } else { "them" },
-        ),
-        Phase::Ready => format!(
-            "{} {} available for your computer. Click Install to download and install {}.",
-            count(updates.len()),
-            if updates.len() == 1 { "is" } else { "are" },
-            if updates.len() == 1 { "it" } else { "them" },
+        Phase::Ready => tr!(
+            "headline-available",
+            updates = count(updates.len()),
+            count = updates.len()
         ),
         Phase::Installing {
             request: Some(r), ..
         } => r.clone(),
-        Phase::Installing { .. } => {
-            "Installing updates. You can close this window; the updates keep installing.".into()
+        Phase::Installing { .. } => tr!("headline-installing"),
+        Phase::Installed(Restart::System) | Phase::RestartDue(_) if picked > 0 => {
+            tr!(
+                "headline-restart-picked",
+                updates = count(picked),
+                picked = picked
+            )
         }
-        Phase::Installed(Restart::System) | Phase::RestartDue(_) if picked > 0 => format!(
-            "Your computer needs a restart to finish updating. {} selected: click Install to \
-             install {}, or Restart Now.",
-            count(picked),
-            if picked == 1 { "it" } else { "them" },
-        ),
-        Phase::Installed(Restart::System) => {
-            "The updates were installed. Restart your computer to finish installing them.".into()
-        }
-        Phase::Installed(Restart::Session) => {
-            "The updates were installed. Log off and back on to finish installing them.".into()
-        }
-        Phase::Installed(Restart::None) => "The updates were installed.".into(),
-        Phase::RestartDue(Due::System) => {
-            "The system was updated. Some devices may not work until you restart your computer."
-                .into()
-        }
-        Phase::RestartDue(Due::Reprise) => {
-            "Reprise was updated. Log off and back on, or restart your computer, to use the new \
-             version."
-                .into()
-        }
+        Phase::Installed(Restart::System) => tr!("headline-installed-restart"),
+        Phase::Installed(Restart::Session) => tr!("headline-installed-logoff"),
+        Phase::Installed(Restart::None) => tr!("headline-installed"),
+        Phase::RestartDue(Due::System) => tr!("headline-due-system"),
+        Phase::RestartDue(Due::Reprise) => tr!("headline-due-reprise"),
         Phase::Failed(message) => message.clone(),
     }
 }
@@ -265,7 +249,11 @@ pub fn progress_line(phase: &Phase) -> String {
         Phase::Installing {
             fraction, doing, ..
         } => match fraction {
-            Some(f) => format!("{doing} ({}%)", (f * 100.0).round() as i32),
+            Some(f) => tr!(
+                "progress-line",
+                doing = doing.as_str(),
+                percent = ((f * 100.0).round() as i32).to_string()
+            ),
             None => doing.clone(),
         },
         _ => String::new(),
@@ -290,42 +278,45 @@ pub fn tray_look(phase: &Phase, updates: &[Update]) -> TrayLook {
         Phase::Installing { fraction, .. } => TrayLook {
             icon: "software-update-available",
             tip: match fraction {
-                Some(f) => format!("Installing updates ({}%)", (f * 100.0).round() as i32),
-                None => "Installing updates".into(),
+                Some(f) => tr!(
+                    "tip-installing-percent",
+                    percent = ((f * 100.0).round() as i32).to_string()
+                ),
+                None => tr!("tip-installing"),
             },
             active: true,
         },
         Phase::Installed(Restart::System) => TrayLook {
             icon: "system-reboot",
-            tip: "Restart your computer to finish installing updates".into(),
+            tip: tr!("tip-restart"),
             active: true,
         },
         Phase::RestartDue(Due::System) => TrayLook {
             icon: "system-reboot",
-            tip: "Restart to finish updating".into(),
+            tip: tr!("tip-due-system"),
             active: true,
         },
         Phase::RestartDue(Due::Reprise) => TrayLook {
             icon: "system-reboot",
-            tip: "Log off or restart to finish updating Reprise".into(),
+            tip: tr!("tip-due-reprise"),
             active: true,
         },
         Phase::Installed(Restart::Session) => TrayLook {
             icon: "system-log-out",
-            tip: "Log off to finish installing updates".into(),
+            tip: tr!("tip-logoff"),
             active: true,
         },
         _ if updates.is_empty() => TrayLook {
             icon: "software-update-available",
-            tip: "Your computer is up to date".into(),
+            tip: tr!("tip-up-to-date"),
             active: false,
         },
         _ => TrayLook {
             icon: available,
-            tip: format!(
-                "{} {} available",
-                count(updates.len()),
-                if updates.len() == 1 { "is" } else { "are" }
+            tip: tr!(
+                "tip-available",
+                updates = count(updates.len()),
+                count = updates.len()
             ),
             active: true,
         },
@@ -349,48 +340,41 @@ impl Announced {
 
 pub fn news_balloon(updates: &[Update]) -> (String, String) {
     let summary = if updates.iter().any(|u| u.kind == Kind::Security) {
-        "Security updates are ready for your computer"
+        tr!("balloon-news-security")
     } else {
-        "Updates are ready for your computer"
+        tr!("balloon-news")
     };
     (
-        summary.into(),
-        format!(
-            "{} {} available. Click here to review and install {}.",
-            count(updates.len()),
-            if updates.len() == 1 { "is" } else { "are" },
-            if updates.len() == 1 { "it" } else { "them" },
+        summary,
+        tr!(
+            "balloon-news-body",
+            updates = count(updates.len()),
+            count = updates.len()
         ),
     )
 }
 
 pub fn check_failed(why: &str) -> String {
-    format!("Reprise could not check for updates. {why}")
+    tr!("check-failed", why = why)
 }
 
 pub fn install_failed(why: &str) -> String {
-    format!("The updates could not be installed. {why}")
+    tr!("install-failed", why = why)
 }
 
 pub fn installed_balloon(restart: Restart) -> (String, String) {
     let body = match restart {
-        Restart::System => "Restart your computer to finish installing them.",
-        Restart::Session => "Log off and back on to finish installing them.",
-        Restart::None => "Your computer is up to date.",
+        Restart::System => tr!("balloon-installed-restart"),
+        Restart::Session => tr!("balloon-installed-logoff"),
+        Restart::None => tr!("balloon-installed-none"),
     };
-    ("Updates installed".into(), body.into())
+    (tr!("balloon-installed-title"), body)
 }
 
 pub fn restart_balloon(due: Due) -> (String, String) {
     match due {
-        Due::System => (
-            "Restart to finish updating".into(),
-            "The system was updated. Some devices may not work until you restart.".into(),
-        ),
-        Due::Reprise => (
-            "Reprise was updated".into(),
-            "Log off and back on, or restart, to use the new version.".into(),
-        ),
+        Due::System => (tr!("balloon-due-system-title"), tr!("balloon-due-system")),
+        Due::Reprise => (tr!("balloon-due-reprise-title"), tr!("balloon-due-reprise")),
     }
 }
 
@@ -404,11 +388,11 @@ pub struct Request {
 
 pub fn request_balloon(r: &Request) -> (String, String) {
     let summary = if r.now {
-        "Firmware update needs you"
+        tr!("balloon-request-now")
     } else {
-        "Finish the firmware update"
+        tr!("balloon-request-later")
     };
-    (summary.into(), r.message.clone())
+    (summary, r.message.clone())
 }
 
 /// The balloon closing the window sends: a request to do now, which only the headline showed.
@@ -428,6 +412,15 @@ pub fn closed_balloon(phase: &Phase) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_of_a_thousand_or_more_have_no_group_separator() {
+        assert_eq!(count(1234), "1234 updates");
+        assert_eq!(
+            tray_look(&Phase::Ready, &vec![pkg("a", Kind::Normal); 1234]).tip,
+            "1234 updates are available"
+        );
+    }
 
     #[test]
     fn a_restart_only_reprise_asked_for_says_logging_off_is_enough() {
