@@ -1,9 +1,13 @@
-//! Reflection streaks: diagonal bands of light fixed to the screen, drawn into the blurred backdrop under the glass art.
-//! Only Frosted glass has them. The profile runs along `u = x - STREAK_SLOPE * y`; [`LIGHT`] and [`SHADE`] hold the stops.
+//! Reflection streaks: diagonal bands of light fixed to the screen. Only Frosted glass has them.
+//! Glass draws them into the blurred backdrop under the glass art, along `u = x - STREAK_SLOPE * y`
+//! ([`LIGHT`], [`SHADE`]). Onyx lays its stronger bands over the glass ([`over`]), along
+//! `u = x - ONYX_SLOPE * y` ([`ONYX_LIGHT`]): light where a band lies and a dimming where it has
+//! faded, so they show over a white backdrop too, where the lifted glass has no light to gain.
 
-use super::{Material, Settings};
+use super::{Material, Settings, Style};
 
 pub const STREAK_SLOPE: f64 = 0.767;
+pub const ONYX_SLOPE: f64 = 0.738;
 
 /// The bands of light: (u, brightness in levels), u rising. A band
 /// brightens what lies under it by its level and lets
@@ -21,6 +25,22 @@ pub const LIGHT: &[(f64, f64)] = &[
 ];
 
 pub const LIGHT_ALPHA: f64 = 0.4;
+
+/// Onyx's bands: (u, level), u rising, up to [`ONYX_PEAK`]. Each rises sharply at its edge, holds,
+/// and fades towards the next.
+#[rustfmt::skip]
+pub const ONYX_LIGHT: &[(f64, f64)] = &[
+    (-830.0, 0.0), (-815.0, 12.0), (-700.0, 12.0), (-600.0, 2.0), (-585.0, 14.0), (-520.0, 13.0),
+    (-470.0, 11.0), (-400.0, 8.0), (-372.0, 13.0), (-330.0, 13.0), (-196.0, 2.0),
+    (-182.0, 15.0), (-130.0, 16.0), (-30.0, 16.0), (110.0, 0.0),
+    (128.0, 17.0), (180.0, 20.0), (192.0, 20.0), (200.0, 13.0), (225.0, 12.0), (270.0, 19.0),
+    (290.0, 17.0), (330.0, 19.0), (420.0, 15.0), (520.0, 1.0),
+    (532.0, 16.0), (640.0, 17.0), (790.0, 0.0),
+    (802.0, 18.0), (900.0, 19.0), (1080.0, 2.0),
+    (1092.0, 14.0), (1190.0, 15.0), (1330.0, 0.0),
+    (1342.0, 19.0), (1460.0, 18.0), (1640.0, 1.0),
+    (1652.0, 13.0), (1760.0, 12.0), (1900.0, 0.0),
+];
 
 /// The faint shadows beside the bands: (u, alpha of black in levels), as
 /// [`LIGHT`].
@@ -94,27 +114,61 @@ fn layer(light: f64, shade: f64) -> u32 {
     a << 24 | c << 16 | c << 8 | c
 }
 
-/// [`picture`], None unless [`shown`].
-pub fn pixels(s: &Settings, px: (i32, i32), scale: f32) -> Option<Vec<u32>> {
-    shown(s).then(|| picture(px, scale))
+/// The brightest of [`ONYX_LIGHT`]'s levels: glass there is not dimmed.
+pub const ONYX_PEAK: f64 = 20.0;
+
+/// Onyx's layer at `u` along its diagonal, premultiplied: [`ONYX_LIGHT_SHARE`] of the band's
+/// level as white light, over black covering as many levels as the band lies below
+/// [`ONYX_PEAK`]. It only brightens at the peak, so its colour may exceed its alpha.
+pub fn onyx_at(u: f64) -> u32 {
+    onyx_layer(along(ONYX_LIGHT, u))
 }
 
-/// The streaks for a picture of `px` pixels that covers its screen at
-/// `scale` picture pixels per logical pixel: premultiplied ARGB rows, each
-/// pixel the layer at its centre.
-pub fn picture(px: (i32, i32), scale: f32) -> Vec<u32> {
+pub const ONYX_LIGHT_SHARE: f64 = 0.5;
+
+fn onyx_layer(level: f64) -> u32 {
+    let a = (ONYX_PEAK - level).round().clamp(0.0, 255.0) as u32;
+    let c = (ONYX_LIGHT_SHARE * level).round().clamp(0.0, 255.0) as u32;
+    a << 24 | c << 16 | c << 8 | c
+}
+
+/// [`picture`] for `s`'s style, None unless [`shown`].
+pub fn pixels(s: &Settings, px: (i32, i32), scale: f32) -> Option<Vec<u32>> {
+    shown(s).then(|| picture(s.style, px, scale))
+}
+
+/// `style`'s streaks for a picture of `px` pixels that covers its screen
+/// at `scale` picture pixels per logical pixel: premultiplied ARGB rows,
+/// each pixel the layer at its centre.
+pub fn picture(style: Style, px: (i32, i32), scale: f32) -> Vec<u32> {
     let (w, h) = (px.0.max(0) as usize, px.1.max(0) as usize);
     let step = 1.0 / f64::from(scale);
+    let slope = match style {
+        Style::Glass => STREAK_SLOPE,
+        Style::Onyx => ONYX_SLOPE,
+    };
     let mut out = Vec::with_capacity(w * h);
     for y in 0..h {
-        let row = -STREAK_SLOPE * (y as f64 + 0.5) * step;
-        let (mut light, mut shade) = (Along::new(LIGHT), Along::new(SHADE));
-        out.extend((0..w).map(|x| {
-            let u = (x as f64 + 0.5) * step + row;
-            layer(light.at(u), shade.at(u))
-        }));
+        let row = -slope * (y as f64 + 0.5) * step;
+        let u = |x: usize| (x as f64 + 0.5) * step + row;
+        match style {
+            Style::Glass => {
+                let (mut light, mut shade) = (Along::new(LIGHT), Along::new(SHADE));
+                out.extend((0..w).map(|x| layer(light.at(u(x)), shade.at(u(x)))));
+            }
+            Style::Onyx => {
+                let mut light = Along::new(ONYX_LIGHT);
+                out.extend((0..w).map(|x| onyx_layer(light.at(u(x)))));
+            }
+        }
     }
     out
+}
+
+/// Whether `s`'s streaks lie over the glass as light, after the backdrop is lifted for the
+/// chrome, rather than in the backdrop under it.
+pub fn over(s: &Settings) -> bool {
+    s.style == Style::Onyx
 }
 
 /// Whether `s`'s glass shows the streaks: Frosted glass that lets the
@@ -133,7 +187,7 @@ mod tests {
 
     #[test]
     fn the_stops_rise_along_the_diagonal() {
-        for stops in [LIGHT, SHADE] {
+        for stops in [LIGHT, SHADE, ONYX_LIGHT] {
             assert!(stops.windows(2).all(|w| w[0].0 < w[1].0), "u rises");
             assert_eq!(stops[0].1, 0.0, "a run starts dark");
             assert_eq!(stops[stops.len() - 1].1, 0.0, "and ends dark");
@@ -148,6 +202,69 @@ mod tests {
         let [a, r, ..] = channels(at(1150.0));
         assert_eq!((a, r), (10, 0), "black at the shadow's alpha");
         assert_eq!(channels(at(175.0))[1], 7, "straight between the stops");
+    }
+
+    #[test]
+    fn onyxs_bands_light_at_their_peak_dim_where_faded_and_rise_sharply() {
+        let [a, r, g, b] = channels(onyx_at(180.0));
+        assert_eq!(
+            (a, r, g, b),
+            (0, 10, 10, 10),
+            "half the peak's level as light, nothing covered"
+        );
+        let [a, r, ..] = channels(onyx_at(110.0));
+        assert_eq!((a, r), (20, 0), "a faded band dims by the peak's level");
+        let rise = channels(onyx_at(110.0))[0] - channels(onyx_at(128.0))[0];
+        assert_eq!(rise, 17, "from dim to the band within 18 px");
+        assert!(
+            channels(onyx_at(60.0))[0] > channels(onyx_at(-30.0))[0],
+            "fading towards the next edge"
+        );
+        let peak = ONYX_LIGHT.iter().map(|s| s.1).fold(0.0, f64::max);
+        assert_eq!(peak, ONYX_PEAK);
+        let (glass, onyx) = (LIGHT, ONYX_LIGHT);
+        let mean = |stops: &[(f64, f64)]| {
+            (-800..1900)
+                .map(|u| along(stops, f64::from(u)))
+                .sum::<f64>()
+                / 2700.0
+        };
+        assert!(mean(onyx) > 2.0 * mean(glass), "stronger than Glass's");
+    }
+
+    #[test]
+    fn onyx_lays_its_streaks_over_the_glass_and_glass_under_it() {
+        let onyx = Settings {
+            style: Style::Onyx,
+            ..Settings::default()
+        };
+        assert!(over(&onyx) && shown(&onyx));
+        assert!(!over(&Settings::default()));
+    }
+
+    #[test]
+    fn an_onyx_screen_keeps_its_streaks_along_its_own_slope() {
+        let onyx = Settings {
+            style: Style::Onyx,
+            ..Settings::default()
+        };
+        for (scale, px) in [(0.5, (960, 540)), (2.0, (640, 90))] {
+            let p = pixels(&onyx, px, scale).expect("translucent glass");
+            let step = 1.0 / f64::from(scale);
+            for (i, v) in p.iter().enumerate().step_by(97) {
+                let (x, y) = ((i % px.0 as usize) as f64, (i / px.0 as usize) as f64);
+                let u = (x + 0.5) * step - ONYX_SLOPE * (y + 0.5) * step;
+                assert_eq!(*v, onyx_at(u), "pixel {i} at scale {scale}");
+            }
+        }
+        let p = pixels(&onyx, (960, 540), 0.5).unwrap();
+        let hash = p
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+            });
+        crate::pins::check("glass/onyx_streaks_1080p", &[("1920x1080".into(), hash)]);
     }
 
     #[test]

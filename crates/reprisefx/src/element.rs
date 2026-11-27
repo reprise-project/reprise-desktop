@@ -7,7 +7,7 @@ use std::sync::{Arc, mpsc};
 
 use reprisekit::backdrop::Lift;
 use reprisekit::glass::tint::{self, Surface};
-use reprisekit::glass::{Material, Settings, streak};
+use reprisekit::glass::{Material, Settings, Style, streak};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
@@ -34,7 +34,7 @@ pub struct GlassFx(Rc<Shared>);
 #[derive(Debug)]
 struct Shared {
     programs: Programs,
-    /// The streak textures last made, newest first, one per output size, scale and gain.
+    /// The streak textures last made, newest first, one per output size, scale and style.
     streaks: RefCell<Vec<(StreakKey, GlesTexture)>>,
     /// Streak pictures being made on a thread of their own ([`GlassFx::on_streaks`]).
     jobs: RefCell<Vec<(StreakKey, Job)>>,
@@ -76,7 +76,7 @@ struct Made {
     dmabuf: Option<Dmabuf>,
 }
 
-type StreakKey = (Size<i32, Physical>, u64);
+type StreakKey = (Size<i32, Physical>, u64, Style);
 
 const STREAK_TEXTURES: usize = 4;
 
@@ -116,7 +116,7 @@ impl GlassFx {
         if !streak::shown(s) {
             return false;
         }
-        let key = (output, scale.to_bits());
+        let key = (output, scale.to_bits(), s.style);
         if self.0.streaks.borrow().iter().any(|(k, _)| *k == key) {
             return true;
         }
@@ -141,11 +141,12 @@ impl GlassFx {
             None => {
                 let (tx, rx) = mpsc::channel();
                 let px = streak_px(output);
+                let style = s.style;
                 let fill = self.0.fill.borrow().clone();
                 let spawned = std::thread::Builder::new()
                     .name("glass-streaks".into())
                     .spawn(move || {
-                        let bytes = streak_bytes(px, scale);
+                        let bytes = streak_bytes(style, px, scale);
                         let size = (px.0 as u32, px.1 as u32);
                         let dmabuf = fill.and_then(|f| (f.0)(&bytes, size));
                         if tx.send(Made { bytes, dmabuf }).is_ok() {
@@ -183,7 +184,7 @@ impl GlassFx {
         if !streak::shown(s) {
             return Ok(None);
         }
-        let key = (output, scale.to_bits());
+        let key = (output, scale.to_bits(), s.style);
         let mut cache = self.0.streaks.borrow_mut();
         if let Some(i) = cache.iter().position(|(k, _)| *k == key) {
             let hit = cache.remove(i);
@@ -202,7 +203,7 @@ impl GlassFx {
         let made = match made {
             Some(Job::Made(made)) => made,
             _ => Made {
-                bytes: streak_bytes(px, scale),
+                bytes: streak_bytes(s.style, px, scale),
                 dmabuf: None,
             },
         };
@@ -230,9 +231,9 @@ fn streak_px(output: Size<i32, Physical>) -> (i32, i32) {
     ((output.w + 1) / 2, (output.h + 1) / 2)
 }
 
-/// The streak picture of `px` pixels for an output at `scale`, as ARGB8888 bytes.
-fn streak_bytes(px: (i32, i32), scale: f64) -> Vec<u8> {
-    let p = streak::picture(px, (scale / 2.0) as f32);
+/// `style`'s streak picture of `px` pixels for an output at `scale`, as ARGB8888 bytes.
+fn streak_bytes(style: Style, px: (i32, i32), scale: f64) -> Vec<u8> {
+    let p = streak::picture(style, px, (scale / 2.0) as f32);
     p.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
@@ -509,6 +510,7 @@ fn key(
     let s = f.settings;
     (
         streaks,
+        s.style,
         s.material,
         f.output.w,
         f.output.h,
@@ -538,7 +540,8 @@ pub struct GlassElement {
     lift: Lift,
     plan: Plan,
     settings: Settings,
-    /// Whether the streaks are drawn: shown and made ([`GlassFx::streaks_ready`]).
+    /// Whether the streaks are drawn: shown and made ([`GlassFx::streaks_ready`]). They go into the
+    /// captured backdrop, or over the drawn glass when `streak::over`.
     streaks: bool,
     output: Size<i32, Physical>,
     scale: f64,
@@ -599,6 +602,52 @@ impl Element for GlassElement {
     }
 }
 
+impl GlassElement {
+    /// The streak picture `t` (over the whole output, upright) added over `shape`'s glass drawn at
+    /// `dst`, on `parts` of it.
+    fn streak_over(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        t: &GlesTexture,
+        shape: &Shape,
+        dst: Rectangle<i32, Physical>,
+        parts: &[Rectangle<i32, Physical>],
+    ) -> Result<(), GlesError> {
+        let st = t.size();
+        let kx = f64::from(st.w) / f64::from(self.output.w);
+        let ky = f64::from(st.h) / f64::from(self.output.h);
+        let r = shape.rect;
+        let src = Rectangle::new(
+            (f64::from(r.loc.x) * kx, f64::from(r.loc.y) * ky).into(),
+            (f64::from(r.size.w) * kx, f64::from(r.size.h) * ky).into(),
+        );
+        let uniforms = [
+            Uniform::new(
+                "cap",
+                [
+                    -r.loc.x as f32,
+                    -r.loc.y as f32,
+                    self.output.w as f32,
+                    self.output.h as f32,
+                ],
+            ),
+            Uniform::new("size", [r.size.w as f32, r.size.h as f32]),
+            Uniform::new("radii", shape.radii),
+        ];
+        frame.render_texture_from_to(
+            t,
+            src,
+            dst,
+            parts,
+            &[],
+            Transform::Normal,
+            self.alpha,
+            Some(&self.fx.0.programs.streak),
+            &uniforms,
+        )
+    }
+}
+
 impl RenderElement<GlesRenderer> for GlassElement {
     fn capture_framebuffer(
         &self,
@@ -631,7 +680,7 @@ impl RenderElement<GlesRenderer> for GlassElement {
         let streaks = {
             let mut guard = frame.renderer();
             let renderer: &mut GlesRenderer = guard.as_mut();
-            let streaks = if self.streaks {
+            let streaks = if self.streaks && !streak::over(&self.settings) {
                 (self.fx).streaks(renderer, &self.settings, self.output, self.scale)?
             } else {
                 None
@@ -695,6 +744,14 @@ impl RenderElement<GlesRenderer> for GlassElement {
             Material::Molten => 2.0,
         };
         let k = self.downscale;
+        // Streaks over the glass light the output's glass only, not glass drawn into a backdrop.
+        let over = if self.streaks && k == 1 && streak::over(&self.settings) {
+            let mut guard = frame.renderer();
+            let renderer: &mut GlesRenderer = guard.as_mut();
+            (self.fx).streaks(renderer, &self.settings, self.output, self.scale)?
+        } else {
+            None
+        };
         let holes = self.holes.iter().map(|h| {
             let h = shrink_in(*h, k);
             Rectangle::new(h.loc + offset, h.size)
@@ -773,6 +830,9 @@ impl RenderElement<GlesRenderer> for GlassElement {
                 Some(&self.fx.0.programs.glass),
                 &uniforms,
             )?;
+            if let Some(t) = &over {
+                self.streak_over(frame, t, shape, s, &parts)?;
+            }
         }
         Ok(())
     }

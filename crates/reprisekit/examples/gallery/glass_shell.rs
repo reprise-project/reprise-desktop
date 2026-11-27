@@ -901,3 +901,36 @@ pub fn render_onyx_preview(n: i32) -> Canvas {
     popup(&windows[1..3], 480, Some(1));
     c
 }
+
+/// Frame-coloured glass over white at scale `n`, 1600 px of the screen's streaks: Glass's laid in
+/// under it (the light lost to the white, the shades kept), then Onyx's laid over it.
+pub fn render_onyx_streaks(n: i32) -> Canvas {
+    use reprisekit::glass::{Style, streak};
+    let n = n.max(1);
+    let (w, h) = (1600, 60);
+    let mut c = Canvas::new((w * n) as u32, (2 * h * n) as u32);
+    let glass = streak::picture(Style::Glass, (w * n, h * n), n as f32);
+    let over = streak::picture(Style::Onyx, (w * n, h * n), n as f32);
+    let frame = [210u32, 231, 254];
+    for (row, layer, add) in [(0, &glass, false), (1, &over, true)] {
+        let top = row * h * n;
+        for (i, &px) in layer.iter().enumerate() {
+            let (x, y) = (i as i32 % (w * n), top + i as i32 / (w * n));
+            let a = px >> 24;
+            let out = frame
+                .iter()
+                .enumerate()
+                .fold(0xFF00_0000u32, |acc, (k, &f)| {
+                    let l = (px >> (16 - 8 * k)) & 0xFF;
+                    let v = if add {
+                        (f * (255 - a) / 255 + l).min(255)
+                    } else {
+                        (l + 255 * (255 - a) / 255).min(255) * f / 255
+                    };
+                    acc | v << (16 - 8 * k)
+                });
+            c.pixels[(y * w * n + x) as usize] = out;
+        }
+    }
+    c
+}
