@@ -213,7 +213,7 @@ impl Notepad {
             host: Host::default(),
             hover: None,
             context: None,
-            printing: Printing::new(&tr!("name")),
+            printing: Printing::new(&tr!("name")).with_headers(),
         };
         if let Some((p, e)) = failed {
             np.open_failed(&p, &e);

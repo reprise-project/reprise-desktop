@@ -1,5 +1,5 @@
 //! `$XDG_CONFIG_HOME/reprise/notepad.toml`: the font Format > Font picks, Word Wrap, the
-//! status bar and File > Page Setup's paper and margins.
+//! status bar and File > Page Setup's paper, margins, header and footer.
 
 use reprisekit::controls::fontdlg::Style;
 use reprisekit::controls::pagesetup::{PAPERS, PageSetup};
@@ -70,12 +70,19 @@ fn page_from(v: &toml::Value) -> PageSetup {
                 .collect::<Option<Vec<i32>>>()
         })
         .and_then(|m| <[i32; 4]>::try_from(m).ok());
+    let text = |k| {
+        get(k)
+            .and_then(toml::Value::as_str)
+            .map_or_else(String::new, String::from)
+    };
     let mut page = PageSetup {
         paper,
         landscape: get("landscape")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false),
         margins: margins.unwrap_or(base.margins),
+        header: text("header"),
+        footer: text("footer"),
     };
     if !page.fits() {
         page.margins = base.margins;

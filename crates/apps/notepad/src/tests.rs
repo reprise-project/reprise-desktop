@@ -2,6 +2,7 @@ use super::*;
 use crate::menu::{row, title};
 use crate::window::EDIT_PX;
 use reprisekit::controls::filedlg::Event as FileEvent;
+use reprisekit::controls::pagesetup::{self, PageSetup};
 use reprisekit::icontheme::IconCache;
 use reprisekit::theme::FontConfig;
 
@@ -3104,6 +3105,39 @@ fn page_setup_ok_keeps_the_page_in_the_settings() {
     assert!(np.children().is_empty(), "OK closes it");
     let kept = settings::load(np.settings_path.as_ref().unwrap());
     assert_eq!(kept.page.as_ref(), Some(&np.printing.setup));
+}
+
+#[test]
+fn page_setup_keeps_the_header_and_footer_and_a_footer_that_is_no_text_reads_as_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notepad.toml");
+    let s = Settings {
+        page: Some(PageSetup {
+            header: "&f".into(),
+            footer: "Page &p".into(),
+            ..PageSetup::default()
+        }),
+        ..Settings::default()
+    };
+    settings::save(&path, &s);
+    let page = settings::load(&path).page.unwrap();
+    assert_eq!(
+        (page.header.as_str(), page.footer.as_str()),
+        ("&f", "Page &p")
+    );
+    std::fs::write(&path, "[page]\nheader = \"&d\"\nfooter = 5\n").unwrap();
+    let page = settings::load(&path).page.unwrap();
+    assert_eq!((page.header.as_str(), page.footer.as_str()), ("&d", ""));
+}
+
+#[test]
+fn page_setup_offers_the_header_and_footer() {
+    let mut np = Notepad::new(None);
+    let ctx = test_ctx();
+    np.command(title::FILE, row::PAGE_SETUP, &ctx);
+    let win = repriseapp::print::PAGE_SETUP;
+    let f = np.printing.drop_form(win).expect("Page Setup is open").form;
+    assert!(f.item(pagesetup::HEADER).is_some() && f.item(pagesetup::FOOTER).is_some());
 }
 
 #[test]

@@ -264,6 +264,13 @@ impl Drop for TimeLocale {
     }
 }
 
+/// The hour and minute as the LC_TIME locale writes them ("9:05 AM" or "09:05"), in
+/// [`strftime`].
+pub fn short_time(tm: &libc::tm) -> String {
+    let clock = if is_12h() { c"%l:%M %p" } else { c"%H:%M" };
+    strftime(tm, clock).trim().to_string()
+}
+
 /// Whether the environment's LC_TIME locale writes the time in 12-hour form.
 /// Reads the locale named by `LC_ALL`, `LC_TIME` or `LANG` once, whatever the
 /// process's global locale is.

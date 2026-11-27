@@ -4,11 +4,12 @@ use crate::controls::form::Key;
 use crate::interfaces;
 use crate::theme::Theme;
 
-fn hash(theme: &Theme, f: &Form, s: i32) -> u64 {
+fn hash(theme: &Theme, f: &Form, headers: bool, s: i32) -> u64 {
     let theme = theme.scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let p = theme.paint();
-    let mut c = Canvas::new((CLIENT.0 * s) as u32, (CLIENT.1 * s) as u32);
+    let (w, h) = client(headers);
+    let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), p.cs.button_face);
     draw(&mut c, &text, &p, f, theme.fonts.size_px);
     crate::pins::fnv(&c)
@@ -22,12 +23,21 @@ fn landscape_letter() -> PageSetup {
     }
 }
 
+fn with_headers() -> PageSetup {
+    PageSetup {
+        header: "&f".into(),
+        footer: "Page &p".into(),
+        ..PageSetup::default()
+    }
+}
+
 #[test]
 fn the_dialog_fits_its_text_under_every_interface() {
     let over = interfaces::form_overflows(|_, _, _| {
         vec![
-            ("A4".into(), form(&PageSetup::default())),
-            ("Letter".into(), form(&landscape_letter())),
+            ("A4".into(), form(&PageSetup::default(), false)),
+            ("Letter".into(), form(&landscape_letter(), false)),
+            ("Headers".into(), form(&with_headers(), true)),
         ]
     });
     assert!(over.is_empty(), "{}", over.join("\n"));
@@ -38,14 +48,15 @@ fn the_dialog_pins_its_pixels_portrait_and_landscape_in_every_look() {
     crate::pins::fonts();
     let mut got = Vec::new();
     for (look, base) in looks() {
-        for (state, s) in [
-            ("A4 portrait", PageSetup::default()),
-            ("Letter landscape", landscape_letter()),
+        for (state, s, headers) in [
+            ("A4 portrait", PageSetup::default(), false),
+            ("Letter landscape", landscape_letter(), false),
+            ("A4 with header and footer", with_headers(), true),
         ] {
             for scale in [1, 2] {
                 got.push((
                     format!("{look} {state} {scale}"),
-                    hash(&base, &form(&s), scale),
+                    hash(&base, &form(&s, headers), headers, scale),
                 ));
             }
         }
@@ -85,7 +96,7 @@ fn the_preview_lays_the_page_on_its_side_for_landscape() {
 
 #[test]
 fn ok_reads_the_paper_orientation_and_margins_back() {
-    let mut f = form(&PageSetup::default());
+    let mut f = form(&PageSetup::default(), false);
     f.set_combo(PAPER, LETTER);
     f.set_check(PORTRAIT, false);
     f.set_check(LANDSCAPE, true);
@@ -103,8 +114,27 @@ fn ok_reads_the_paper_orientation_and_margins_back() {
 }
 
 #[test]
+fn ok_reads_the_header_and_footer_back_and_only_their_boxes_set_them() {
+    let mut f = form(&with_headers(), true);
+    f.focus_id(FOOTER);
+    f.select_edit_text(FOOTER);
+    for k in "&p of &d".chars() {
+        f.key(Key::Char(k));
+    }
+    let s = read(&f).unwrap();
+    assert_eq!((s.header.as_str(), s.footer.as_str()), ("&f", "&p of &d"));
+    let s = read(&form(&with_headers(), false)).unwrap();
+    assert_eq!(
+        (s.header.as_str(), s.footer.as_str()),
+        ("", ""),
+        "a dialog without the boxes prints neither"
+    );
+    assert_eq!(client(true).1 - client(false).1, HEADERS_H);
+}
+
+#[test]
 fn ok_refuses_a_margin_that_is_no_number_or_leaves_no_room() {
-    let mut f = form(&PageSetup::default());
+    let mut f = form(&PageSetup::default(), false);
     f.focus_id(TOP);
     f.select_edit_text(TOP);
     f.key(Key::Char('x'));

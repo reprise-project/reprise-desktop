@@ -72,6 +72,8 @@ pagesetup-left = &Left:
 pagesetup-right = &Right:
 pagesetup-top = &Top:
 pagesetup-bottom = &Bottom:
+pagesetup-header = &Header:
+pagesetup-footer = &Footer:
 pagesetup-preview = Preview
 pagesetup-not-a-number = Enter each margin as a number of millimeters.
 # mm is a whole number of millimeters.

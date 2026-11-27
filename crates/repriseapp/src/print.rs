@@ -100,6 +100,8 @@ pub struct Printing {
     /// The forms theme and font of the last event or draw, for [`Printing::children`].
     forms: Theme,
     text: Rc<TextRenderer>,
+    /// Page Setup offers a header and footer.
+    headers: bool,
 }
 
 impl Printing {
@@ -117,13 +119,20 @@ impl Printing {
             sending: Vec::new(),
             forms: crate::start_forms(),
             text: crate::start_text(),
+            headers: false,
         }
+    }
+
+    /// Page Setup with Header and Footer boxes, for a program that prints text.
+    pub fn with_headers(mut self) -> Printing {
+        self.headers = true;
+        self
     }
 
     /// Open Page Setup on [`Printing::setup`].
     pub fn page_setup(&mut self, ctx: &Ctx) {
         self.follow_forms(ctx);
-        self.open = Some(Open::Setup(pagesetup::form(&self.setup)));
+        self.open = Some(Open::Setup(pagesetup::form(&self.setup, self.headers)));
     }
 
     /// Open Print for `doc`, titled `title` in the print queue. The dialog looks for printers
@@ -140,9 +149,10 @@ impl Printing {
         });
         let poster = self.poster(ctx);
         let setup = self.setup.clone();
+        let title = title.to_string();
         std::thread::spawn(move || {
             let queues = cups::queues(&http::Server::find(), &login_name());
-            let laid = Laid::new(doc, setup);
+            let laid = Laid::new(doc, setup, &title);
             poster.post(Msg::Listed(ask, Box::new(Listed { queues, laid })));
         });
     }
@@ -190,7 +200,7 @@ impl Printing {
             Some(Open::Setup(_)) => vec![Child {
                 id: PAGE_SETUP,
                 title: kit_tr!("pagesetup-title"),
-                size: units.size(pagesetup::CLIENT),
+                size: units.size(pagesetup::client(self.headers)),
                 fixed: true,
                 modal: true,
             }],

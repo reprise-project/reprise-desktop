@@ -967,7 +967,7 @@ pub fn render_font_dialog(with_blue: bool, scale: i32) -> Canvas {
     c
 }
 
-/// Page Setup on Letter landscape over Print with two printers, at `scale`; Classic then Blue and
+/// Page Setup on Letter landscape with a header and footer over Print with two printers, at `scale`; Classic then Blue and
 /// Glass.
 pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
     let mut themes = vec![cued(interfaces::classic())];
@@ -977,6 +977,8 @@ pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
     }
     let setup = pagesetup::PageSetup {
         landscape: true,
+        header: "&f".into(),
+        footer: "Page &p".into(),
         ..pagesetup::PageSetup::on(&pagesetup::PAPERS[0])
     };
     let dests = [
@@ -992,7 +994,8 @@ pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
             ..Default::default()
         },
     ];
-    let (sw, sh) = (pagesetup::CLIENT.0 * scale, pagesetup::CLIENT.1 * scale);
+    let (sw, sh) = pagesetup::client(true);
+    let (sw, sh) = (sw * scale, sh * scale);
     let (pw, ph) = (printdlg::CLIENT.0 * scale, printdlg::CLIENT.1 * scale);
     let col = sw.max(pw) + 10;
     let mut c = Canvas::new(
@@ -1007,7 +1010,7 @@ pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
         let px = theme.fonts.size_px;
         let mut setup_c = Canvas::new(sw as u32, sh as u32);
         setup_c.fill_rect(setup_c.bounds(), p.cs.button_face);
-        pagesetup::draw(&mut setup_c, &text, &p, &pagesetup::form(&setup), px);
+        pagesetup::draw(&mut setup_c, &text, &p, &pagesetup::form(&setup, true), px);
         c.blit_canvas(10 + i as i32 * col, 10, &setup_c);
         let mut print_c = Canvas::new(pw as u32, ph as u32);
         print_c.fill_rect(print_c.bounds(), p.cs.button_face);

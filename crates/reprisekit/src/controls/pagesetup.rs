@@ -1,5 +1,6 @@
-//! Page Setup: the paper a program prints on, its orientation and margins, the page's geometry
-//! at a printer's resolution, and the dialog that picks them with a preview of the page.
+//! Page Setup: the paper a program prints on, its orientation and margins, a text's header and
+//! footer, the page's geometry at a printer's resolution, and the dialog that picks them with a
+//! preview of the page.
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BUTTON_H, BUTTON_W};
@@ -89,6 +90,11 @@ pub struct PageSetup {
     pub landscape: bool,
     /// Left, right, top and bottom, in hundredths of a millimetre.
     pub margins: [i32; 4],
+    /// A text's header and footer, with [`printpage::band`]'s codes; empty prints none.
+    ///
+    /// [`printpage::band`]: crate::controls::printpage::band
+    pub header: String,
+    pub footer: String,
 }
 
 impl Default for PageSetup {
@@ -103,6 +109,8 @@ impl PageSetup {
             paper: paper.media.into(),
             landscape: false,
             margins: DEFAULT_MARGINS,
+            header: String::new(),
+            footer: String::new(),
         }
     }
 
@@ -173,12 +181,16 @@ pub const LEFT: &str = "left";
 pub const RIGHT: &str = "right";
 pub const TOP: &str = "top";
 pub const BOTTOM: &str = "bottom";
+pub const HEADER: &str = "header";
+pub const FOOTER: &str = "footer";
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
 const PREVIEW: &str = "preview";
 const MARGIN_IDS: [&str; 4] = [LEFT, RIGHT, TOP, BOTTOM];
 
 pub const CLIENT: (i32, i32) = (348, 312);
+/// The rows Header and Footer add below the margins.
+const HEADERS_H: i32 = 52;
 const PAD: i32 = 8;
 const WIDE: i32 = CLIENT.0 - 2 * PAD;
 const PREVIEW_RECT: Rect = Rect::new(PAD, PAD, WIDE, 124);
@@ -189,9 +201,17 @@ const EDIT_W: i32 = 48;
 const EDIT_H: i32 = 20;
 const PAPER_ROWS: usize = 8;
 const BUTTONS_Y: i32 = 280;
+const HEADER_Y: i32 = 276;
+const ROW_GAP: i32 = 26;
 
-/// The dialog's form for `s`: Size, Orientation and the four margins in millimetres.
-pub fn form(s: &PageSetup) -> Form {
+/// The dialog's client size, with the Header and Footer rows when `headers`.
+pub fn client(headers: bool) -> (i32, i32) {
+    (CLIENT.0, CLIENT.1 + if headers { HEADERS_H } else { 0 })
+}
+
+/// The dialog's form for `s`: Size, Orientation and the four margins in millimetres, and with
+/// `headers` the Header and Footer boxes.
+pub fn form(s: &PageSetup, headers: bool) -> Form {
     let labels: Vec<String> = PAPERS.iter().map(Paper::label).collect();
     let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
     let mut paper = Item::combo(PAPER, 76, 158, 252, &labels, PAPER_ROWS);
@@ -208,7 +228,8 @@ pub fn form(s: &PageSetup) -> Form {
     };
     let label = |id, x, y, text: String| Item::label_at(id, x, y + 4, 50, &text);
     let (mx, my) = (MARGIN_GROUP.x, MARGIN_GROUP.y);
-    let mut f = Form::new(vec![
+    let buttons_y = BUTTONS_Y + client(headers).1 - CLIENT.1;
+    let mut items = vec![
         Item::new(PREVIEW, PREVIEW_RECT, Control::Blank),
         Item::group("papergroup", PAPER_GROUP, &tr!("pagesetup-paper")),
         Item::label_at("paperlabel", 20, 162, 54, &tr!("pagesetup-size")),
@@ -225,11 +246,26 @@ pub fn form(s: &PageSetup) -> Form {
         margin(2, mx + 58, my + 42),
         label("bottomlabel", mx + 112, my + 42, tr!("pagesetup-bottom")),
         margin(3, mx + 160, my + 42),
+    ];
+    if headers {
+        for (i, (label, id, text, value)) in [
+            ("headerlabel", HEADER, tr!("pagesetup-header"), &s.header),
+            ("footerlabel", FOOTER, tr!("pagesetup-footer"), &s.footer),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let y = HEADER_Y + i as i32 * ROW_GAP;
+            items.push(Item::label_at(label, 20, y + 4, 54, &text));
+            items.push(Item::edit(id, Rect::new(76, y, 252, EDIT_H), value, true));
+        }
+    }
+    items.extend([
         Item::button(
             OK,
             Rect::new(
                 CLIENT.0 - PAD - 2 * BUTTON_W - 6,
-                BUTTONS_Y,
+                buttons_y,
                 BUTTON_W,
                 BUTTON_H,
             ),
@@ -239,14 +275,15 @@ pub fn form(s: &PageSetup) -> Form {
         ),
         Item::button(
             CANCEL,
-            Rect::new(CLIENT.0 - PAD - BUTTON_W, BUTTONS_Y, BUTTON_W, BUTTON_H),
+            Rect::new(CLIENT.0 - PAD - BUTTON_W, buttons_y, BUTTON_W, BUTTON_H),
             &tr!("cancel"),
             true,
             false,
         ),
-    ])
-    .set_in(DialogFont::ShellDlg)
-    .labels_at_ink();
+    ]);
+    let mut f = Form::new(items)
+        .set_in(DialogFont::ShellDlg)
+        .labels_at_ink();
     f.focus_id(PAPER);
     f
 }
@@ -328,13 +365,15 @@ pub fn read(f: &Form) -> Result<PageSetup, Refusal> {
 }
 
 /// What the preview draws: the paper and orientation picked, and each margin whose box holds a
-/// number (else none).
+/// number (else none). The header and footer as typed; empty without their boxes.
 fn shown(f: &Form) -> PageSetup {
     let paper = f.combo_selected(PAPER).unwrap_or(A4).min(PAPERS.len() - 1);
     PageSetup {
         paper: PAPERS[paper].media.into(),
         landscape: f.checked(LANDSCAPE).unwrap_or(false),
         margins: MARGIN_IDS.map(|id| parse_mm(f.edit_text(id)).unwrap_or(0)),
+        header: f.edit_text(HEADER).into(),
+        footer: f.edit_text(FOOTER).into(),
     }
 }
 
