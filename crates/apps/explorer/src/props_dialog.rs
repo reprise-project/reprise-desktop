@@ -124,6 +124,8 @@ pub struct Props {
     pub summary: Option<[String; 6]>,
     pub own_icon: Option<String>,
     pub icon_chosen: Option<Option<String>>,
+    /// The picture Choose Picture... or Restore Default (None) left, till OK or Apply writes it.
+    pub picture_chosen: Option<Option<PathBuf>>,
     pub(crate) picks: crate::props_host::Picks,
     pub(crate) checksums: crate::checksums::Checksums,
     pub(crate) walk: crate::props_host::WalkStop,
@@ -251,7 +253,20 @@ impl Props {
             || self.hidden().is_some()
             || !self.summary_moves().is_empty()
             || self.icon_move().is_some()
+            || self.picture_move().is_some()
             || !self.launcher_edits().is_empty()
+    }
+
+    /// The folder's picture as the sheet shows it: the one chosen, else its own.
+    pub fn shown_picture(&self) -> Option<&Path> {
+        match &self.picture_chosen {
+            Some(chosen) => chosen.as_deref(),
+            None => self.info.own_picture.as_deref(),
+        }
+    }
+
+    pub fn picture_move(&self) -> Option<Option<PathBuf>> {
+        (self.picture_chosen.clone()).filter(|c| *c != self.info.own_picture)
     }
 
     pub fn icon_move(&self) -> Option<Option<String>> {

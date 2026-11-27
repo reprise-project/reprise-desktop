@@ -37,6 +37,7 @@ mod pointer;
 mod preview;
 mod props_dialog;
 mod props_host;
+mod props_picture;
 mod removing;
 mod rename;
 mod search;
@@ -483,6 +484,9 @@ pub struct Explorer {
     /// ([`Explorer::read_dims`]). They survive a sort and a refresh and feed the
     /// Tiles detail line, the infotip and the Details pane.
     image_dims: HashMap<PathBuf, (u32, u32)>,
+    /// The listed folders' pictures ([`reprisefs::meta::folder_picture`]), by folder: Thumbnails
+    /// view draws each one's thumbnail on its folder.
+    pub(crate) pictures: HashMap<PathBuf, PathBuf>,
     /// Images whose header was sent to a job in this listing, so a file that states no size is read once.
     dims_asked: HashSet<PathBuf>,
     /// Typed address text or the command line's place whose folder is still being checked.
@@ -765,6 +769,7 @@ impl Explorer {
             #[cfg(test)]
             held: None,
             image_dims: HashMap::new(),
+            pictures: HashMap::new(),
             dims_asked: HashSet::new(),
             checking: None,
             going: None,
@@ -1359,6 +1364,9 @@ impl Explorer {
                 }
             }
         }
+        let pictures: HashMap<PathBuf, PathBuf> = (items.iter().zip(&read_icons.pictures))
+            .filter_map(|(it, p)| Some((it.path.clone(), p.clone()?)))
+            .collect();
         let shown: Vec<String> = items.iter().map(|it| self.shown_name(it)).collect();
         let mut icons = (ListingIcons::default().with_sizes(sizes))
             .drawing(drawn)
@@ -1414,6 +1422,13 @@ impl Explorer {
             let Some((size, modified, thumb)) = kept.remove(&it.path) else {
                 continue;
             };
+            if it.is_dir {
+                let picture = pictures.get(&it.path);
+                if picture.is_some() && picture == self.pictures.get(&it.path) {
+                    e.thumb = Some(thumb);
+                }
+                continue;
+            }
             let Some(&d) = self.image_dims.get(&it.path) else {
                 continue;
             };
@@ -1424,6 +1439,7 @@ impl Explorer {
             }
         }
         self.image_dims = dims;
+        self.pictures = pictures;
         self.dims_asked.clear();
         self.sv.groups = groups
             .into_iter()
@@ -2143,6 +2159,9 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
     if win == PROGRAM_BROWSE {
         return ex.program_browse_event(ev, ctx);
     }
+    if win == props_picture::PICTURE_BROWSE {
+        return ex.picture_browse_event(ev, ctx);
+    }
     if win == browse::ERROR {
         return ex.browse_error_event(ev);
     }
@@ -2355,6 +2374,10 @@ impl App for Lazy {
             ex.draw_program_browse(c);
             return;
         }
+        if win == props_picture::PICTURE_BROWSE {
+            ex.draw_picture_browse(c);
+            return;
+        }
         if win == browse::ERROR {
             ex.draw_browse_error(c, ctx);
             return;
@@ -2499,8 +2522,12 @@ impl repriseapp::Extended for Lazy {
     }
 
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
-        let up = self.inner.as_mut()?.dialogs.up_mut()?;
-        let b = crate::newshortcut::picker_of_mut(up).filter(|_| win == PROGRAM_BROWSE)?;
+        let ex = self.inner.as_mut()?;
+        let b = match win {
+            PROGRAM_BROWSE => crate::newshortcut::picker_of_mut(ex.dialogs.up_mut()?)?,
+            props_picture::PICTURE_BROWSE => ex.picture_browse_mut()?,
+            _ => return None,
+        };
         Some(FileDrop {
             dlg: &mut b.dlg,
             host: &mut b.host,
@@ -2529,6 +2556,7 @@ impl repriseapp::Extended for Lazy {
             w if is_dialog(w) => ex.access_dialog(tree, ctx),
             copydlg::COPY | copydlg::REMOVE | copydlg::EXTRACT => ex.access_progress(win, tree),
             PROGRAM_BROWSE => ex.access_program_browse(tree),
+            props_picture::PICTURE_BROWSE => ex.access_picture_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
             preview::PREVIEW => ex.access_preview(tree, ctx),
             PROPS | bin_props::BIN_PROPS | folder_opts::FOLDER_OPTS => {

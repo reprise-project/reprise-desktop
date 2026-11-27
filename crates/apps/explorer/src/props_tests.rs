@@ -61,6 +61,7 @@ fn info(is_dir: bool) -> FileInfo {
         robots: None,
         summary: None,
         own_icon: None,
+        own_picture: None,
         launcher: None,
         description: None,
     }
@@ -186,6 +187,7 @@ fn props(info: FileInfo) -> Props {
         summary: None,
         own_icon: None,
         icon_chosen: None,
+        picture_chosen: None,
         picks: Default::default(),
         checksums: Default::default(),
         walk: Default::default(),
@@ -2389,4 +2391,102 @@ fn a_change_landing_after_its_sheet_was_replaced_raises_no_chooser() {
     drop(writing);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.acting.is_empty());
     assert!(ex.dialog().is_none(), "no chooser over b.txt's sheet");
+}
+
+/// Choose Picture... opens the file dialog over the sheet; the picture picked lights Apply and
+/// Restore Default, and Apply keeps it in the folder's .directory, relative inside the folder.
+/// Restore Default and OK take it off again.
+#[test]
+fn choose_picture_gives_a_folder_its_picture_and_restore_default_clears_it() {
+    use crate::place::Place;
+    use crate::props_picture::PICTURE_BROWSE;
+    use reprisekit::controls::filesheet::{CHOOSE_PICTURE, RESTORE_PICTURE};
+    use reprisekit::controls::form;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    sheet_up(&mut ex, &sub, &mut ctx);
+    let enabled = |ex: &crate::Explorer, id: &str| {
+        let page = &ex.props.as_ref().expect("the sheet").sheet.pages[2];
+        matches!(
+            page.item(id).map(|i| &i.control),
+            Some(Control::Button { enabled: true, .. })
+        )
+    };
+    assert!(enabled(&ex, CHOOSE_PICTURE));
+    assert!(!enabled(&ex, RESTORE_PICTURE), "no picture yet");
+
+    let page = |ev| reprisekit::controls::propsheet::Event::Page(2, ev);
+    ex.props_outcome(page(form::Event::Pressed(CHOOSE_PICTURE)), &mut ctx);
+    assert!(ex.picture_browse().is_some(), "the file dialog is up");
+    assert!(
+        ex.children()
+            .iter()
+            .any(|c| c.id == PICTURE_BROWSE && c.modal)
+    );
+    assert_eq!(ex.parent_of(PICTURE_BROWSE), PROPS, "over the sheet");
+    ex.picture_browse_event(repriseapp::Event::CloseRequest, &mut ctx);
+    assert!(ex.picture_browse().is_none(), "its close box cancels it");
+
+    ex.picture_chosen(Some(sub.join("pics/cover.png")), &mut ctx);
+    assert!(ex.props.as_ref().is_some_and(|p| p.dirty()), "Apply lights");
+    assert!(enabled(&ex, RESTORE_PICTURE));
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Apply, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    let entry = std::fs::read_to_string(sub.join(".directory")).expect("written");
+    assert_eq!(entry, "[Desktop Entry]\nX-Reprise-Picture=pics/cover.png\n");
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+        ex.props
+            .as_ref()
+            .is_some_and(|p| p.info.own_picture.is_some())
+    });
+    assert!(
+        enabled(&ex, RESTORE_PICTURE),
+        "the sheet read again shows it"
+    );
+
+    ex.props_outcome(page(form::Event::Pressed(RESTORE_PICTURE)), &mut ctx);
+    assert!(!enabled(&ex, RESTORE_PICTURE));
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert_eq!(reprisefs::meta::folder_picture(&sub), None);
+    assert!(!sub.join(".directory").exists(), "nothing left, no file");
+}
+
+#[test]
+fn a_folder_without_write_access_says_so_and_keeps_its_picture() {
+    use crate::place::Place;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    let entry = "[Desktop Entry]\nX-Reprise-Picture=a.png\n";
+    std::fs::write(sub.join(".directory"), entry).expect("write");
+    std::fs::set_permissions(&sub, PermissionsExt::from_mode(0o555)).expect("chmod");
+    // Root writes through the mode bits.
+    if std::fs::write(sub.join("probe"), "").is_ok() {
+        return;
+    }
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    sheet_up(&mut ex, &sub, &mut ctx);
+    ex.picture_chosen(Some(dir.path().join("b.png")), &mut ctx);
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    std::fs::set_permissions(&sub, PermissionsExt::from_mode(0o755)).expect("chmod");
+    assert!(
+        matches!(
+            ex.dialog(),
+            Some(crate::dialogs::Dialog::Message { text, .. })
+                if text == "You do not have permission to change the picture of sub."
+        ),
+        "the error box is up"
+    );
+    assert!(ex.props.is_some(), "the sheet stays open");
+    assert_eq!(
+        std::fs::read_to_string(sub.join(".directory")).expect("kept"),
+        entry
+    );
 }

@@ -75,8 +75,9 @@ impl Explorer {
         reply
     }
 
-    /// Queues thumbnails for files ([`Item::thumbnailable`]) without one at the window's `scale` (Thumbnails and
-    /// Tiles only). One made at another scale shows until its replacement arrives.
+    /// Queues thumbnails for files ([`Item::thumbnailable`]) without one at the window's `scale`
+    /// (Thumbnails and Tiles only), and in Thumbnails for folders with a picture. One made at
+    /// another scale shows until its replacement arrives.
     pub fn request_thumbs(&mut self, scale: i32) {
         if !matches!(self.sv.mode, Mode::Thumbnails | Mode::Tiles)
             || matches!(self.place, Place::Archive(..))
@@ -88,10 +89,13 @@ impl Explorer {
             .items
             .iter()
             .zip(&self.sv.entries)
-            .filter(|(it, e)| {
-                it.thumbnailable() && e.thumb.as_ref().is_none_or(|t| t.scale() != scale)
+            .filter(|(_, e)| e.thumb.as_ref().is_none_or(|t| t.scale() != scale))
+            .filter_map(|(it, _)| match self.pictures.get(&it.path) {
+                Some(picture) if it.is_dir => {
+                    (self.sv.mode == Mode::Thumbnails).then(|| picture.clone())
+                }
+                _ => it.thumbnailable().then(|| it.path.clone()),
             })
-            .map(|(it, _)| it.path.clone())
             .collect();
         for path in wanted {
             self.thumbs.request(path, r#gen, scale);
@@ -230,6 +234,16 @@ impl Explorer {
             | self.land_address_completion(ctx);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {
+            let folders = (self.pictures.iter())
+                .filter(|(_, p)| **p == done.path)
+                .filter_map(|(f, _)| self.item_index.get(f));
+            for &i in folders {
+                if let Some(e) = self.sv.entries.get_mut(i) {
+                    let thumb = done.thumb.clone();
+                    e.thumb = Some(shellview::frame_thumb(thumb, done.dims, done.scale));
+                    dirty = true;
+                }
+            }
             let Some(&i) = self.item_index.get(&done.path) else {
                 continue;
             };
@@ -271,6 +285,7 @@ impl Explorer {
             self.take_bin_tabs(ctx),
             self.take_config(ctx),
             self.take_preview(),
+            self.take_sheet_picture(ctx),
             self.take_checksums(),
             self.take_reads(ctx),
             self.take_favorites_failed(ctx),
@@ -1159,6 +1174,52 @@ pub(crate) mod tests {
         assert_eq!(ex.sv.entries[a].name, "a.png");
         let others = (0..ex.sv.entries.len()).filter(|&i| i != a);
         assert!(others.into_iter().all(|i| ex.sv.entries[i].thumb.is_none()));
+    }
+
+    #[test]
+    fn a_folders_picture_is_its_thumbnail_and_stays_through_a_relisting() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let trip = dir.path().join("trip");
+        std::fs::create_dir(&trip).expect("mkdir");
+        std::fs::create_dir(dir.path().join("plain")).expect("mkdir");
+        let picture = trip.join("cover.png");
+        reprisefs::meta::set_folder_look(
+            &trip,
+            reprisefs::meta::FolderLook {
+                picture: Some(Some(&picture)),
+                ..Default::default()
+            },
+        )
+        .expect("a picture");
+        let mut ctx = test_ctx();
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.sv.mode = Mode::Thumbnails;
+        ex.request_thumbs(1);
+        assert!(ex.thumbs.asked(&picture, 1), "the picture is asked for");
+        assert!(!ex.thumbs.asked(&trip, 1), "the folder itself is not");
+
+        ex.thumbs.deliver(Done {
+            sized: true,
+            path: picture.clone(),
+            thumb: Canvas::new(4, 3),
+            dims: (800, 600),
+            generation: ex.generation,
+            scale: 1,
+        });
+        assert!(ex.wake(&mut ctx).redraw);
+        let trip_at = index_of(&ex, "trip");
+        let e = &ex.sv.entries[trip_at];
+        assert!(e.thumb.is_some(), "the folder wears its picture");
+        assert!(e.detail.is_empty(), "a folder shows no picture size");
+        assert!(ex.sv.entries[index_of(&ex, "plain")].thumb.is_none());
+
+        let _ = ex.refresh(&mut ctx);
+        ex.finish_puts(&mut ctx);
+        let trip_at = index_of(&ex, "trip");
+        assert!(
+            ex.sv.entries[trip_at].thumb.is_some(),
+            "kept, not asked again"
+        );
     }
 
     #[test]

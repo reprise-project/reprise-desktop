@@ -374,6 +374,8 @@ props-apply-props-properties = Properties
 props-apply-props-rename = Rename
 props-apply-props-cannot-change-name-e = Cannot change { $name }: { $e }
 props-apply-props-cannot-change-the-icon-of-name = Cannot change the icon of { $name }: { $e }
+props-apply-props-cannot-change-the-picture-of-name = Cannot change the picture of { $name }: { $e }
+props-apply-props-no-permission-for-the-picture-of-name = You do not have permission to change the picture of { $name }.
 props-apply-set-props-properties = Properties
 props-write-set-props-properties = Properties
 props-finish-set-props-properties = Properties
@@ -425,3 +427,9 @@ archive-open-failed = Cannot open { $name }: { $why }
 archive-copy-failed-title = Compressed (zipped) Folders
 archive-copy-failed = Cannot open { $name } from the compressed folder: { $why }
 archive-runs = { $name } is a program, and programs do not run from inside a compressed folder. Extract the folder first, then run it from there.
+
+## props_picture.rs
+props-picture-browse = Browse
+props-picture-open = Open
+props-picture-all-pictures = All Pictures ({ $globs })
+props-picture-all-files = All Files (*.*)
