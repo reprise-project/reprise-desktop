@@ -1,7 +1,8 @@
-//! `$XDG_CONFIG_HOME/reprise/notepad.toml`: the font Format > Font picks, Word Wrap and the
-//! status bar.
+//! `$XDG_CONFIG_HOME/reprise/notepad.toml`: the font Format > Font picks, Word Wrap, the
+//! status bar and File > Page Setup's paper and margins.
 
 use reprisekit::controls::fontdlg::Style;
+use reprisekit::controls::pagesetup::{PAPERS, PageSetup};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -18,6 +19,9 @@ pub(crate) struct Settings {
     pub size: u32,
     pub word_wrap: bool,
     pub status_bar: bool,
+    /// None until Page Setup is first OKed: the paper of the user's locale.
+    #[serde(deserialize_with = "lenient_page")]
+    pub page: Option<PageSetup>,
 }
 
 impl Default for Settings {
@@ -29,6 +33,7 @@ impl Default for Settings {
             size: 10,
             word_wrap: false,
             status_bar: false,
+            page: None,
         }
     }
 }
@@ -42,6 +47,40 @@ impl Settings {
             (true, true) => Style::BoldItalic,
         }
     }
+}
+
+/// `[page]` read value by value: one that is missing, of the wrong type or out of range reads as
+/// the locale's, so a bad page costs only itself.
+fn lenient_page<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<PageSetup>, D::Error> {
+    Ok(Some(page_from(&toml::Value::deserialize(d)?)))
+}
+
+fn page_from(v: &toml::Value) -> PageSetup {
+    let base = repriseapp::print::locale_setup();
+    let get = |k| v.as_table().and_then(|t| t.get(k));
+    let paper = get("paper")
+        .and_then(toml::Value::as_str)
+        .filter(|p| PAPERS.iter().any(|x| x.media == *p))
+        .map_or_else(|| base.paper.clone(), String::from);
+    let margins = get("margins")
+        .and_then(toml::Value::as_array)
+        .and_then(|a| {
+            a.iter()
+                .map(|m| m.as_integer().and_then(|i| i32::try_from(i).ok()))
+                .collect::<Option<Vec<i32>>>()
+        })
+        .and_then(|m| <[i32; 4]>::try_from(m).ok());
+    let mut page = PageSetup {
+        paper,
+        landscape: get("landscape")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+        margins: margins.unwrap_or(base.margins),
+    };
+    if !page.fits() {
+        page.margins = base.margins;
+    }
+    page
 }
 
 pub(crate) fn path() -> Option<PathBuf> {

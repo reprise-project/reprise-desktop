@@ -68,3 +68,16 @@ display-named = { $mode } ({ $name })
 ## Sizes
 size-kb = { NUMBER($kb) } KB
 size-gb = { NUMBER($gb, minimumFractionDigits: 1, maximumFractionDigits: 1) } GB
+
+## Printing
+print-not-running = The printing service (CUPS) is not running.
+print-denied = The printing service did not let this account print.
+# why is the printing service's own message.
+print-refused = The printing service refused the document: { $why }
+# status is a hexadecimal IPP status code, such as 0x0507.
+print-status = The printing service refused the document (status { $status }).
+print-http-status = The printing service answered with HTTP status { NUMBER($status, useGrouping: "false") }.
+print-bad-reply = The printing service sent a reply Reprise cannot read.
+print-broken = The connection to the printing service broke off.
+# why is one of the print-* messages above.
+print-failed = The document was not printed. { $why }

@@ -21,6 +21,8 @@ pub(crate) mod row {
     pub const OPEN: usize = 1;
     pub const SAVE: usize = 2;
     pub const SAVE_AS: usize = 3;
+    pub const PAGE_SETUP: usize = 5;
+    pub const PRINT: usize = 6;
     pub const EXIT: usize = 8;
     pub const UNDO: usize = 0;
     pub const REDO: usize = 1;
@@ -74,8 +76,8 @@ pub(crate) fn menus() -> Vec<(String, MenuTree)> {
                 mi(&tr!("menu-save"), Some("Ctrl+S"), true),
                 mi(&tr!("menu-save-as"), None, true),
                 MenuItem::Separator,
-                mi(&tr!("menu-page-setup"), None, false),
-                mi(&tr!("menu-print"), Some("Ctrl+P"), false),
+                mi(&tr!("menu-page-setup"), None, true),
+                mi(&tr!("menu-print"), Some("Ctrl+P"), true),
                 MenuItem::Separator,
                 mi(&tr!("menu-exit"), None, true),
             ],
@@ -143,6 +145,8 @@ impl Notepad {
                 }
             }
             (title::FILE, row::SAVE_AS) => self.saveas_dialog(),
+            (title::FILE, row::PAGE_SETUP) => self.printing.page_setup(ctx),
+            (title::FILE, row::PRINT) => self.open_print(ctx),
             (title::FILE, row::EXIT) => return self.confirm_then(PendingAction::Quit),
             (title::EDIT, row::UNDO) => {
                 self.edit_key(MultiKey::Edit(EditKey::Undo), ctx);
@@ -193,8 +197,11 @@ impl Notepad {
         reply
     }
 
-    /// Notepad's kept settings take effect: the font, Word Wrap and the status bar.
+    /// Notepad's kept settings take effect: the font, Word Wrap, the status bar and the page.
     pub(crate) fn take_settings(&mut self, s: Settings) {
+        if let Some(page) = &s.page {
+            self.printing.setup = page.clone();
+        }
         self.settings = s;
         self.mono = edit_font(&self.settings);
         self.sync_toggles();
@@ -360,6 +367,7 @@ impl Notepad {
                 0x6e => return Some(self.command(title::FILE, row::NEW, ctx)),
                 0x6f => return Some(self.command(title::FILE, row::OPEN, ctx)),
                 0x73 => return Some(self.command(title::FILE, row::SAVE, ctx)),
+                0x70 => return Some(self.command(title::FILE, row::PRINT, ctx)),
                 0x66 => return Some(self.command(title::EDIT, row::FIND, ctx)),
                 0x68 => return Some(self.command(title::EDIT, row::REPLACE, ctx)),
                 0x67 => return Some(self.command(title::EDIT, row::GOTO, ctx)),

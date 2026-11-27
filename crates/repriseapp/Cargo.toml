@@ -30,6 +30,8 @@ image = { workspace = true, features = ["gif", "webp", "tiff", "ico", "qoi", "pn
 reprise-decode-protocol = { path = "../reprisedecodeproto" }
 repriseconfine = { path = "../repriseconfine" }
 accesskit_unix.workspace = true
+# Deflates the pages of a print job's PDF.
+flate2 = "1"
 reprisebus = { path = "../reprisebus" }
 repriseaudio = { path = "../repriseaudio" }
 

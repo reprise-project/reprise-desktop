@@ -2,6 +2,7 @@
 //! socket when present (cupsd takes the peer's uid as credentials), else localhost:631.
 
 use std::io::{Read, Write};
+use std::net::ToSocketAddrs;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -31,12 +32,18 @@ impl Server {
     }
 }
 
+/// What went wrong; the strings are the system's own words, for the log.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     Unreachable(String),
     /// 401 or 403.
     Denied,
-    Failed(String),
+    /// The connection broke or timed out mid-request.
+    Io(String),
+    /// Any other status but 2xx.
+    Status(u16),
+    /// A reply that is not HTTP, or longer than [`MAX_REPLY`].
+    BadReply(&'static str),
 }
 
 pub struct Reply {
@@ -47,22 +54,40 @@ pub struct Reply {
 trait Stream: Read + Write {}
 impl<T: Read + Write> Stream for T {}
 
-/// How long one request may take; device discovery waits on its own `timeout` first, so this is well past it.
-const TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a read or write may stall: printers-app requests wait for cupsd's device
+/// discovery, which takes its own `timeout` first, and a print job's upload for a busy cupsd.
+pub const TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a host named in `CUPS_SERVER` may take to accept the connection.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The longest reply read; a PPD list is a few MB.
+pub const MAX_REPLY: usize = 64 << 20;
 
-fn connect(server: &Server) -> Result<Box<dyn Stream>, Error> {
+fn connect(server: &Server, timeout: Duration) -> Result<Box<dyn Stream>, Error> {
     let unreachable = |e: std::io::Error| Error::Unreachable(e.to_string());
     Ok(match server {
         Server::Socket(p) => {
             let s = UnixStream::connect(p).map_err(unreachable)?;
-            s.set_read_timeout(Some(TIMEOUT)).ok();
-            s.set_write_timeout(Some(TIMEOUT)).ok();
+            s.set_read_timeout(Some(timeout)).ok();
+            s.set_write_timeout(Some(timeout)).ok();
             Box::new(s)
         }
         Server::Tcp(addr) => {
-            let s = std::net::TcpStream::connect(addr).map_err(unreachable)?;
-            s.set_read_timeout(Some(TIMEOUT)).ok();
-            s.set_write_timeout(Some(TIMEOUT)).ok();
+            let mut last = None;
+            let mut stream = None;
+            for a in addr.to_socket_addrs().map_err(unreachable)? {
+                match std::net::TcpStream::connect_timeout(&a, CONNECT_TIMEOUT) {
+                    Ok(s) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(e) => last = Some(e),
+                }
+            }
+            let s = stream.ok_or_else(|| {
+                unreachable(last.unwrap_or_else(|| std::io::ErrorKind::NotFound.into()))
+            })?;
+            s.set_read_timeout(Some(timeout)).ok();
+            s.set_write_timeout(Some(timeout)).ok();
             Box::new(s)
         }
     })
@@ -85,19 +110,37 @@ fn head(method: &str, resource: &str, len: Option<usize>, server: &Server, user:
 }
 
 pub fn post(server: &Server, resource: &str, body: &[u8], user: &str) -> Result<Reply, Error> {
-    let mut s = connect(server)?;
-    let io = |e: std::io::Error| Error::Failed(e.to_string());
-    s.write_all(head("POST", resource, Some(body.len()), server, user).as_bytes())
+    post_parts(server, resource, &[body], user, TIMEOUT)
+}
+
+/// A POST whose body is `parts` one after the other, each written as it is, with `timeout` for
+/// every read and write.
+pub fn post_parts(
+    server: &Server,
+    resource: &str,
+    parts: &[&[u8]],
+    user: &str,
+    timeout: Duration,
+) -> Result<Reply, Error> {
+    let mut s = connect(server, timeout)?;
+    let len = parts.iter().map(|p| p.len()).sum();
+    s.write_all(head("POST", resource, Some(len), server, user).as_bytes())
         .map_err(io)?;
-    s.write_all(body).map_err(io)?;
+    for p in parts {
+        s.write_all(p).map_err(io)?;
+    }
     s.flush().map_err(io)?;
     read_reply(&mut s)
 }
 
+fn io(e: std::io::Error) -> Error {
+    Error::Io(e.to_string())
+}
+
 pub fn get(server: &Server, resource: &str, user: &str) -> Result<Reply, Error> {
-    let mut s = connect(server)?;
+    let mut s = connect(server, TIMEOUT)?;
     s.write_all(head("GET", resource, None, server, user).as_bytes())
-        .map_err(|e| Error::Failed(e.to_string()))?;
+        .map_err(io)?;
     read_reply(&mut s)
 }
 
@@ -110,22 +153,23 @@ fn read_reply(s: &mut dyn Stream) -> Result<Reply, Error> {
     while !progress.whole(&raw) {
         match s.read(&mut buf) {
             Ok(0) => break,
+            Ok(n) if raw.len() + n > MAX_REPLY => return Err(Error::BadReply("too long")),
             Ok(n) => raw.extend_from_slice(&buf[..n]),
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(Error::Failed(e.to_string())),
+            Err(e) => return Err(io(e)),
         }
     }
     let reply = parse_reply(&raw)?;
     match reply.status {
         200..=299 => Ok(reply),
         401 | 403 => Err(Error::Denied),
-        code => Err(Error::Failed(format!("HTTP {code}"))),
+        code => Err(Error::Status(code)),
     }
 }
 
 /// Split a whole response into status and body, undoing chunked coding; with neither length nor chunking the body runs to the end.
 fn parse_reply(raw: &[u8]) -> Result<Reply, Error> {
-    let bad = |what: &str| Error::Failed(format!("bad HTTP reply: {what}"));
+    let bad = Error::BadReply;
     let Head {
         end,
         status,
@@ -223,7 +267,10 @@ impl Progress {
             if size == 0 {
                 return true;
             }
-            let next = eol + 2 + size + 2;
+            // A size past the end of memory is a reply `parse_reply` refuses.
+            let Some(next) = size.checked_add(eol + 4) else {
+                return true;
+            };
             if b.len() < next {
                 return false;
             }
@@ -248,7 +295,7 @@ fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
             return Some(out);
         }
         out.extend_from_slice(b.get(..size)?);
-        b = b.get(size + 2..)?;
+        b = b.get(size.checked_add(2)?..)?;
     }
 }
 
@@ -386,5 +433,12 @@ mod tests {
         assert!(
             parse_reply(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\nab").is_err()
         );
+    }
+
+    #[test]
+    fn a_chunk_size_past_memory_ends_the_read_and_is_refused() {
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffec\r\nab";
+        assert!(whole(raw), "the read stops instead of spinning");
+        assert!(parse_reply(raw).is_err());
     }
 }

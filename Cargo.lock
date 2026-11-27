@@ -5400,6 +5400,7 @@ version = "0.1.0"
 dependencies = [
  "accesskit_unix",
  "env_logger",
+ "flate2",
  "image",
  "libc",
  "log",
