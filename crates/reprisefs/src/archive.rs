@@ -100,8 +100,18 @@ fn members_argv<'a>(archive: &Path, entries: impl IntoIterator<Item = &'a Path>)
 /// start: more names cost each entry more pattern matches.
 const BATCH_FILES: usize = 128;
 
-/// The most bytes of escaped names one bsdtar run's arguments hold.
-const BATCH_NAME_BYTES: usize = 256 << 10;
+/// The most bytes of escaped names (each with its pointer) one bsdtar run's arguments hold:
+/// a quarter of what `ARG_MAX` leaves past the environment, between one name of the longest
+/// path and 256 KiB.
+fn batch_name_bytes() -> usize {
+    // SAFETY: sysconf only reads a limit.
+    let arg_max = usize::try_from(unsafe { libc::sysconf(libc::_SC_ARG_MAX) }).unwrap_or(0);
+    let env: usize = (std::env::vars_os())
+        .map(|(k, v)| k.len() + v.len() + 2 + 8)
+        .sum();
+    let longest = 2 * libc::PATH_MAX as usize + 3 + 8;
+    (arg_max.saturating_sub(env) / 4).clamp(longest, 256 << 10)
+}
 
 /// The CPU seconds a child reading `bytes` of archive (and member) may take.
 pub(crate) fn cpu_secs(bytes: u64) -> u64 {
@@ -1179,7 +1189,7 @@ fn same_device(a: &Path, b: &Path) -> bool {
 /// Copies the entries `picked` of `archive` (paths inside it, each a file or a folder with all
 /// that `entries` lists below it) into the empty private folder `into` under their own names,
 /// files 0644 and folders 0755, laid out as [`TreePlan`] says: the folders first, then the files
-/// in archive order, up to [`BATCH_FILES`] per [`write_entries`]. Refused past
+/// in archive order, up to [`BATCH_FILES`] per [`write_entries`] and a name listed twice alone. Refused past
 /// [`extract::FREE_SHARE_PERCENT`] of the free space, [`MAX_ENTRIES`] or a path longer than the
 /// system takes. When the copies then go on to the folder `dest`, they must fit there too: twice
 /// over when it shares `into`'s file system. Cancelling `m` stops it, part way through a file
@@ -1266,6 +1276,17 @@ fn copy_tree_within(
     // bsdtar writes the files it finds in archive order, the listing's.
     files.sort_unstable_by_key(|&(i, _)| i);
     let files: Vec<(&Entry, PathBuf)> = files.into_iter().map(|(_, f)| f).collect();
+    // With several names bsdtar goes on to the end of its last match, writing a later copy of a
+    // name it already matched too: a name listed twice gets a run of its own, which stops at its
+    // first copy.
+    let mut listed: std::collections::HashMap<&Path, bool> = Default::default();
+    for e in entries {
+        (listed.entry(&e.path))
+            .and_modify(|twice| *twice = true)
+            .or_insert(false);
+    }
+    let twice = |e: &Entry| listed.get(e.path.as_path()).copied().unwrap_or(false);
+    let most_names = batch_name_bytes();
     let mut rest = files.as_slice();
     while !rest.is_empty() {
         if m.cancelled() {
@@ -1274,8 +1295,8 @@ fn copy_tree_within(
         let mut names = 0;
         let take = (rest.iter().take(BATCH_FILES))
             .take_while(|(e, _)| {
-                names += 2 * e.path.as_os_str().len() + 3;
-                names <= BATCH_NAME_BYTES
+                names += 2 * e.path.as_os_str().len() + 3 + 8;
+                names <= most_names && !twice(e)
             })
             .count()
             .max(1);
@@ -1973,19 +1994,44 @@ mod tests {
         std::fs::write(two.join("d/a"), "second!").unwrap();
         std::fs::write(one.join("d/b/y"), "below").unwrap();
         std::fs::write(two.join("d/b"), "file b").unwrap();
+        std::fs::write(two.join("d/c"), "after").unwrap();
         let tar = t.path().join("t.tar");
         bsdtar(&one, &["-cf", tar.to_str().unwrap(), "d"]);
+        // An updated file appended, then a new one: the batch holding `d/a` ends past the copy.
         bsdtar(&two, &["-rf", tar.to_str().unwrap(), "d/a", "d/b"]);
+        bsdtar(&two, &["-rf", tar.to_str().unwrap(), "d/c"]);
         let into = t.path().join("into");
         std::fs::create_dir(&into).unwrap();
         let picked = [PathBuf::from("d")];
         copy_tree_out(&tar, &listed(&tar), &picked, &into, None, &Meter::default())
             .expect("copied");
-        assert_eq!(std::fs::read_to_string(into.join("d/a")).unwrap(), "first");
-        assert_eq!(
-            std::fs::read_to_string(into.join("d/b/y")).unwrap(),
-            "below"
-        );
+        let read = |p: &str| std::fs::read_to_string(into.join(p)).unwrap();
+        assert_eq!(read("d/a"), "first");
+        assert_eq!(read("d/b/y"), "below");
+        assert_eq!(read("d/c"), "after");
+    }
+
+    #[test]
+    fn a_copy_out_takes_the_first_of_x_and_dot_slash_x() {
+        let t = tempfile::tempdir().unwrap();
+        let (one, two) = (t.path().join("one"), t.path().join("two"));
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        std::fs::write(one.join("x"), "plain").unwrap();
+        std::fs::write(two.join("x"), "dotted!").unwrap();
+        std::fs::write(two.join("z"), "last").unwrap();
+        let tar = t.path().join("t.tar");
+        bsdtar(&one, &["-cf", tar.to_str().unwrap(), "x"]);
+        bsdtar(&two, &["-rf", tar.to_str().unwrap(), "./x", "z"]);
+        let entries = listed(&tar);
+        let xs = entries.iter().filter(|e| e.path == Path::new("x")).count();
+        assert_eq!(xs, 2, "both list as x");
+        let into = t.path().join("into");
+        std::fs::create_dir(&into).unwrap();
+        let picked = ["x", "z"].map(PathBuf::from);
+        copy_tree_out(&tar, &entries, &picked, &into, None, &Meter::default()).expect("copied");
+        assert_eq!(std::fs::read_to_string(into.join("x")).unwrap(), "plain");
+        assert_eq!(std::fs::read_to_string(into.join("z")).unwrap(), "last");
     }
 
     #[test]
