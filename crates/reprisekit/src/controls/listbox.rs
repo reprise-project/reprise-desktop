@@ -244,12 +244,12 @@ fn icon_x(lb: &ListBox, lay: &Layout) -> i32 {
     }
 }
 
-/// A row's label x: a checked list leaves room for icons only when it is given some, and only
-/// a list given icons widens its icon column with the text.
+/// A row's label x: a list leaves room for icons only when it is given some, and only a list
+/// given icons widens its icon column with the text.
 pub fn text_x(lb: &ListBox, lay: &Layout, icons: &[Option<Canvas>]) -> i32 {
     let grown = lay.icon - ICON_SIZE;
     match (lb.checks.is_empty(), icons.is_empty()) {
-        (true, true) => TEXT_X,
+        (true, true) => ICON_X,
         (true, false) => TEXT_X + grown,
         (false, true) => lay.check_k * CHECK_TEXT_X,
         (false, false) => lay.check_k * CHECK_TEXT_X + TEXT_X - ICON_X + grown,
@@ -257,7 +257,8 @@ pub fn text_x(lb: &ListBox, lay: &Layout, icons: &[Option<Canvas>]) -> i32 {
 }
 
 /// Draw the box; `icons` is parallel to the items ([`icon_px`] at the scale, or None for
-/// no icon), drawn after the check boxes in a checked list. A partly visible last row is clipped.
+/// no icon), drawn after the check boxes in a checked list. A label too long for its row ends in
+/// "...", and a partly visible last row is clipped.
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -318,7 +319,8 @@ pub fn draw(
         }
         let text_x = text_x(lb, lay, icons);
         let tx = inner.x + text_x * s;
-        let tw = text.measure(&lb.items[i], false, px);
+        let label = text.ellipsize(&lb.items[i], inner.right() - tx - 2 * s, false, px);
+        let tw = text.measure(&label, false, px);
         let (fg, bg) = if lb.selected == Some(i) && !boxed {
             (cs.hilight_text, Some(cs.hilight))
         } else if lb.greyed.get(i).copied().unwrap_or(false) && !mark.selected {
@@ -331,7 +333,7 @@ pub fn draw(
         }
         // A partly shown row keeps the baseline of a whole one; only the clip shrinks.
         let tr = Rect::new(tx, y, (inner.right() - tx).max(0), rh);
-        text.draw_clipped(c, tr, row, &lb.items[i], false, fg, Align::Left, px);
+        text.draw_clipped(c, tr, row, &label, false, fg, Align::Left, px);
         if let Some(d) = lb.detail.get(i).filter(|d| !d.is_empty()) {
             let dx = tx + tw + DETAIL_GAP * s;
             let dw = (inner.right() - dx - 2 * s).max(0);
@@ -634,6 +636,31 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_list_sets_its_labels_at_the_edge_and_ends_a_long_one_in_dots() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let long = "MesloLGL Nerd Font Propo";
+        let lb = ListBox::new(vec![long.into(), "Tahoma".into()], None);
+        let l = layout(&lb, Rect::new(0, 0, 100, 40), &ControlMetrics::CLASSIC);
+        assert_eq!(text_x(&lb, &l, &[]), ICON_X, "no room kept for icons");
+        let mut c = Canvas::new(100, 40);
+        let ((), cut) = crate::pins::shortened_text(|| {
+            draw(
+                &mut c,
+                &text,
+                &classic_paint(&theme.colors, 1),
+                &lb,
+                &l,
+                &[],
+                None,
+                11,
+            )
+        });
+        let cut: Vec<_> = cut.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(cut, [long], "only the long label is shortened");
+    }
+
+    #[test]
     fn a_greyed_row_draws_its_label_in_gray_text() {
         let theme = Theme::default();
         let text = TextRenderer::load(&FontConfig::default());
@@ -643,7 +670,8 @@ mod tests {
         let l = layout(&lb, Rect::new(0, 0, 120, 40), &ControlMetrics::CLASSIC);
         let mut c = Canvas::new(120, 40);
         draw(&mut c, &text, &classic_paint(cs, 1), &lb, &l, &[], None, 11);
-        let row = |i: i32| Rect::new(l.inner.x + TEXT_X, l.inner.y + i * ROW_H, 60, ROW_H);
+        let x = l.inner.x + text_x(&lb, &l, &[]);
+        let row = |i: i32| Rect::new(x, l.inner.y + i * ROW_H, 60, ROW_H);
         let inks = |r: Rect, col: Color| {
             (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| c.get(x, y) == col.argb()))
         };
@@ -669,7 +697,7 @@ mod tests {
         let mut c = Canvas::new(300, 21);
         draw(&mut c, &text, &classic_paint(cs, 1), &lb, &l, &[], None, 11);
         let tw = text.measure("notes.txt", false, 11);
-        let dx = l.inner.x + TEXT_X + tw + DETAIL_GAP;
+        let dx = l.inner.x + text_x(&lb, &l, &[]) + tw + DETAIL_GAP;
         let r = Rect::new(dx, l.inner.y, 80, ROW_H);
         let inks = |col: Color| {
             (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| c.get(x, y) == col.argb()))

@@ -21,7 +21,7 @@ pub const SAMPLE: &str = "sample";
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
 
-pub const CLIENT: (i32, i32) = (463, 252);
+pub const CLIENT: (i32, i32) = (503, 252);
 
 /// The sizes listed, in points.
 pub const SIZES: [u32; 16] = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72];
@@ -36,7 +36,8 @@ const EDIT_H: i32 = 20;
 const LIST_Y: i32 = EDIT_Y + EDIT_H;
 const LIST_H: i32 = 112;
 const GAP: i32 = 10;
-const FAMILY_W: i32 = 160;
+/// Wide enough for a family's variant names ("... Nerd Font Mono", "... Nerd Font Propo") to show whole.
+const FAMILY_W: i32 = 200;
 const STYLE_X: i32 = MARGIN + FAMILY_W + GAP;
 const STYLE_W: i32 = 112;
 const SIZE_X: i32 = STYLE_X + STYLE_W + GAP;
@@ -312,6 +313,9 @@ mod tests {
             "Arial",
             "DejaVu Sans",
             "Lucida Console",
+            "MesloLGL Nerd Font",
+            "MesloLGL Nerd Font Mono",
+            "MesloLGL Nerd Font Propo",
             "Tahoma",
             "Verdana",
         ]
@@ -464,6 +468,16 @@ mod tests {
         let bold = span(&drawn(&classic, &tahoma(Style::Bold, 24), 1));
         assert!(regular > 0, "the sample is drawn");
         assert!(bold > regular, "{bold} > {regular}");
+    }
+
+    #[test]
+    fn variant_family_names_show_whole() {
+        crate::pins::fonts();
+        let (_, cut) = crate::pins::shortened_text(|| {
+            drawn(&Theme::default(), &tahoma(Style::Regular, 10), 1)
+        });
+        let cut: Vec<_> = cut.iter().map(|c| c.text.as_str()).collect();
+        assert!(cut.is_empty(), "nothing ends in dots: {cut:?}");
     }
 
     #[test]
