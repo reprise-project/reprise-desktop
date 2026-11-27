@@ -196,6 +196,8 @@ impl Viewer {
         let file = self.folder.current().is_some();
         let shown = self.picture.is_some();
         let many = self.folder.pictures.len() > 1;
+        // A picture out of a compressed folder is a copy; deleting it would leave the zip as is.
+        let deletes = file && self.delete.is_empty() && self.walk.is_none();
         let background = self
             .folder
             .current()
@@ -207,7 +209,7 @@ impl Viewer {
             (title::FILE, row::PREVIEW, shown),
             (title::FILE, row::PRINT, shown),
             (title::EDIT, row::COPY, file),
-            (title::EDIT, row::DELETE, file && self.delete.is_empty()),
+            (title::EDIT, row::DELETE, deletes),
             (title::VIEW, row::PREVIOUS, many),
             (title::VIEW, row::NEXT, many),
             (title::VIEW, row::FIRST, many),
