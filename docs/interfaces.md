@@ -56,7 +56,7 @@ Glass uses `[glass]` instead of colour schemes (see `config.example.toml`). Conf
 - Smoked glass reduces transparency and uses white titles.
 - Molten glass blurs less, boosts colour and refracts edges.
 - Square frames use square corners, centred titles and flat caption buttons.
-- The Onyx style (`[glass] style = "onyx"`, Settings > Appearance > Style: Glass: Onyx) draws a near-black 30 px taskbar with one labelled button per window, the Quick Launch toolbar and no Show desktop strip. Its Start orb is a 41 px disc of dark blue glass standing 4 px over the bar's top edge; the screen's corner pixel opens Start. Frames stay Glass's.
+- The Onyx style (`[glass] style = "onyx"`, Settings > Appearance > Style: Glass: Onyx) draws a near-black 30 px taskbar with one labelled button per window, the Quick Launch toolbar and no Show desktop strip, and its own Start menu ([below](#the-start-menu)). Its Start orb is a 41 px disc of dark blue glass standing 4 px over the bar's top edge; the screen's corner pixel opens Start. Frames stay Glass's.
 - `[glass] opaque_when_maximized` (on by default under Onyx, off under Glass) makes a maximized window's frame opaque, deep navy with a white title under Onyx, and a screen's taskbar opaque while that screen shows a maximized or fullscreen window that is not minimized and is on the current desktop. The switch is immediate, with no fade.
 
 ![Reprise Glass in dark mode, Ruby and Molten, with the calendar open](screenshots/glass-dark.png)
@@ -68,6 +68,8 @@ Window titles use Segoe UI, falling back to Noto Sans then DejaVu Sans.
 Glass opens a two-column Start menu with pinned/frequent apps, All Programs and search (apps, settings, files, maths, unit conversions) on the left, and folders and system shortcuts on the right. Hover a program or click its arrow for its jump list.
 
 The Shut down arrow lists Log off, Lock, Restart, Restart into (if logind provides boot entries), Sleep and Hibernate, with Switch user first under `reprise-login`. Remote sessions show Disconnect first and omit Sleep and Hibernate ([remote-desktop.md](remote-desktop.md#disconnecting)). Prepared offline updates appear at the top ([features.md](features.md#lock-power-and-session)).
+
+Onyx's Start menu is smoked glass that darkens towards its foot around the white program column. The search field sits under the column. The right column ends in a power button (`startmenu_power`), a lock button and an arrow whose menu ends with Shut down. Rest the pointer on a place for half a second and the user picture fades into the place's picture. Programs have no jump lists, pinned programs show a grey second line, and search results replace only the left column.
 
 ### Glass only
 

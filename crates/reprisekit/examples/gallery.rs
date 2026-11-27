@@ -115,7 +115,8 @@ use sheets::{
     render_long_list_sheets, render_tray_customize,
 };
 use start::{
-    render_blue_start_menus, render_blue_start_panel, render_start_panel, render_start_panel_dark,
+    render_blue_start_menus, render_blue_start_panel, render_onyx_start_panel, render_start_panel,
+    render_start_panel_dark,
 };
 use taskbar::{
     render_onyx_orb, render_onyx_taskbar, render_orb_glow, render_quick_more,
@@ -342,6 +343,10 @@ fn write_scale(n: i32) {
     write_preview(
         || render_start_panel_dark(n.max(1)),
         &format!("reprisekit-gallery-start-panel-dark@{}.png", n.max(1)),
+    );
+    write_preview(
+        || render_onyx_start_panel(n.max(1), reprisekit::glass::Mode::Light),
+        &format!("reprisekit-gallery-onyx-start-panel@{}.png", n.max(1)),
     );
     write_preview(
         || render_glass_launcher_dark(n.max(1)),
@@ -704,6 +709,14 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         write_preview(
             || render_start_panel_dark(1),
             "reprisekit-gallery-start-panel-dark.png",
+        );
+        write_preview(
+            || render_onyx_start_panel(1, reprisekit::glass::Mode::Light),
+            "reprisekit-gallery-onyx-start-panel.png",
+        );
+        write_preview(
+            || render_onyx_start_panel(1, reprisekit::glass::Mode::Dark),
+            "reprisekit-gallery-onyx-start-panel-dark.png",
         );
         write_preview(
             || render_glass_launcher_dark(1),

@@ -90,6 +90,17 @@ impl StartPanelView {
     }
 }
 
+/// The Start menu `config` opens: Blue's, Onyx's under Glass in its Onyx style, else Glass's.
+pub(crate) fn start_shape(config: &crate::config::Config) -> Shape {
+    let onyx = config.interface == reprisekit::interface::Interface::Glass
+        && config.glass.style == reprisekit::glass::Style::Onyx;
+    match config.startmenu_style {
+        StartMenuStyle::Blue => Shape::Blue,
+        _ if onyx => Shape::Onyx,
+        _ => Shape::Glass,
+    }
+}
+
 pub fn open_on(state: &State) -> Option<Output> {
     Some(state.start_panel.as_ref()?.output.clone())
 }
@@ -148,14 +159,11 @@ impl State {
         let px = PICTURE * scale;
         let user = crate::lock::current_user();
         let mut model = StartPanel::new();
-        model.shape = match self.config.startmenu_style {
-            StartMenuStyle::Blue => Shape::Blue,
-            _ => Shape::Glass,
-        };
+        model.shape = start_shape(&self.config);
         model.user = user.clone();
         model.text = self.config.theme.text;
         model.power = self.config.startmenu_power;
-        if model.shape == Shape::Glass {
+        if model.shape != Shape::Blue {
             crate::offlineupdate::refresh(self);
         }
         self.refresh_recent();
@@ -218,7 +226,7 @@ impl State {
         if self
             .start_panel
             .as_ref()
-            .is_some_and(|v| v.model.shape == Shape::Glass)
+            .is_some_and(|v| v.model.shape != Shape::Blue)
         {
             self.restart_caret();
         } else {

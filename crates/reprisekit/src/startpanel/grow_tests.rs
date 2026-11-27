@@ -148,7 +148,7 @@ fn draw(p: &StartPanel, s: i32) -> (Canvas, layout::Layout) {
             );
             (c, l)
         }
-        Shape::Glass => {
+        Shape::Glass | Shape::Onyx => {
             let theme = interfaces::theme_for(Interface::Glass).scaled(s);
             let text = interfaces::start_panel_text(&theme);
             let glass = crate::glass::Settings::default();

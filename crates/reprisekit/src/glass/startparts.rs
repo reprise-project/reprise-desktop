@@ -21,17 +21,17 @@ use crate::theme::Color;
 
 /// A colour at an alpha: the alpha in levels, then 0xRRGGBB, not
 /// premultiplied.
-type Ink = (f64, u32);
+pub(super) type Ink = (f64, u32);
 
 fn rgb(v: u32) -> [f64; 3] {
     [16, 8, 0].map(|sh| f64::from((v >> sh) & 0xFF))
 }
 
-fn px((a, c): Ink) -> Px {
+pub(super) fn px((a, c): Ink) -> Px {
     (a, rgb(c).map(|v| v * a / 255.0))
 }
 
-fn opaque(c: u32) -> Px {
+pub(super) fn opaque(c: u32) -> Px {
     px((255.0, c))
 }
 
@@ -47,7 +47,7 @@ fn between(y: f64, y0: i32, y1: i32) -> f64 {
     t.clamp(0.0, 1.0)
 }
 
-fn along(stops: &[(i32, Ink)], y: f64) -> Px {
+pub(super) fn along(stops: &[(i32, Ink)], y: f64) -> Px {
     let (first, last) = (stops[0], stops[stops.len() - 1]);
     if y <= f64::from(first.0) {
         return px(first.1);
@@ -79,15 +79,15 @@ fn level(stops: &[(i32, f64)], y: f64) -> f64 {
     last.1
 }
 
-fn share(y: f64, from: i32, to: i32) -> f64 {
+pub(super) fn share(y: f64, from: i32, to: i32) -> f64 {
     ((y - f64::from(from)) / f64::from((to - from).max(1))).clamp(0.0, 1.0)
 }
 
-fn cell(v: f64) -> i32 {
+pub(super) fn cell(v: f64) -> i32 {
     v.round() as i32
 }
 
-fn canvas(w: i32, pixels: &[Px]) -> Canvas {
+pub(super) fn canvas(w: i32, pixels: &[Px]) -> Canvas {
     let h = pixels.len() as i32 / w;
     let mut c = Canvas::new(w as u32, h as u32);
     for (i, &p) in pixels.iter().enumerate() {
@@ -96,7 +96,7 @@ fn canvas(w: i32, pixels: &[Px]) -> Canvas {
     c
 }
 
-fn one(c: Canvas, ins: Insets, d: i32) -> PartImage {
+pub(super) fn one(c: Canvas, ins: Insets, d: i32) -> PartImage {
     PartImage::new(c, &[State::Normal], Layout::Vertical)
         .sizing(ins)
         .at_scale(d)
@@ -188,7 +188,7 @@ fn jump_pane(d: i32) -> Canvas {
     canvas(w * d, &pixels)
 }
 
-const fn row_box(outline: u32, line: [u32; 2], fill: [u32; 2]) -> LightBox {
+pub(super) const fn row_box(outline: u32, line: [u32; 2], fill: [u32; 2]) -> LightBox {
     const fn ink(v: u32) -> (Color, u8) {
         (Color::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8), 255)
     }
@@ -211,7 +211,7 @@ const NEW_PIN: LightBox = row_box(0xF1BD8D, [0xFEFBE2, 0xFFE8D0], [0xFDF4BE, 0xF
 /// A new program's amber box on the dark pane: the remap would turn its outline darker than its fill.
 const DARK_NEW_PIN: LightBox = row_box(0xB8863B, [0x5A4A2C, 0x524024], [0x4F4127, 0x46381E]);
 
-fn row_part(b: &LightBox, h: i32, d: i32) -> PartImage {
+pub(super) fn row_part(b: &LightBox, h: i32, d: i32) -> PartImage {
     one(panel::light_box(b, BOX_W, h, d), BOX_GRID, d)
 }
 
@@ -239,18 +239,32 @@ const RULE_JUMP: u32 = 0xA2B4DC;
 const RULE_SEARCH: u32 = 0xE3E4E4;
 const RULE_RIGHT: [Ink; 2] = [(39.0, 0x000000), (24.0, 0xFFFFFF)];
 
-fn rule(rows: &[Ink]) -> Canvas {
+pub(super) fn rule(rows: &[Ink]) -> Canvas {
     canvas(1, &rows.iter().map(|&r| px(r)).collect::<Vec<_>>())
 }
 
 const FIELD: (i32, i32) = (10, 24);
-const FIELD_GRID: Insets = Insets::new(4, 11, 4, 11);
-const FIELD_R: f64 = 3.0;
-const FIELD_HALO: [f64; 4] = [128.0, 191.0, 128.0, 146.0];
-const FIELD_TOP: u32 = 0x3D3E3E;
-const FIELD_BOTTOM: u32 = 0xABABAD;
-const FIELD_LEFT: [u32; 2] = [0x444444, 0x818182];
-const FIELD_RIGHT: [u32; 2] = [0x686869, 0xA3A4A5];
+pub(super) const FIELD_GRID: Insets = Insets::new(4, 11, 4, 11);
+
+/// A search field's white halo's alpha on its top, left, right and bottom, its border's colours
+/// (the sides' running top to bottom) and corner radius.
+pub(super) struct FieldInks {
+    pub halo: [f64; 4],
+    pub top: u32,
+    pub bottom: u32,
+    pub left: [u32; 2],
+    pub right: [u32; 2],
+    pub radius: f64,
+}
+
+const GLASS_FIELD: FieldInks = FieldInks {
+    halo: [128.0, 191.0, 128.0, 146.0],
+    top: 0x3D3E3E,
+    bottom: 0xABABAD,
+    left: [0x444444, 0x818182],
+    right: [0x686869, 0xA3A4A5],
+    radius: 3.0,
+};
 
 /// Which side of ring `i` of a `w` x `h` box (`x`, `y`) lies on: 0 top,
 /// 1 left, 2 right, 3 bottom; the top or bottom where a corner ties.
@@ -269,16 +283,20 @@ fn side(x: i32, y: i32, w: i32, h: i32, i: i32) -> usize {
 }
 
 fn field(d: i32) -> Canvas {
+    field_in(&GLASS_FIELD, d)
+}
+
+pub(super) fn field_in(f: &FieldInks, d: i32) -> Canvas {
     let (w, h) = FIELD;
-    let pixels = ringed(w, h, FIELD_R, 2, d, |x, y, i| match i {
-        0 => px((FIELD_HALO[side(cell(x), cell(y), w, h, 0)], 0xFFFFFF)),
+    let pixels = ringed(w, h, f.radius, 2, d, |x, y, i| match i {
+        0 => px((f.halo[side(cell(x), cell(y), w, h, 0)], 0xFFFFFF)),
         1 => {
             let t = share(y, 3, h - 4);
             match side(cell(x), cell(y), w, h, 1) {
-                0 => opaque(FIELD_TOP),
-                3 => opaque(FIELD_BOTTOM),
-                1 => mix(opaque(FIELD_LEFT[0]), opaque(FIELD_LEFT[1]), t),
-                _ => mix(opaque(FIELD_RIGHT[0]), opaque(FIELD_RIGHT[1]), t),
+                0 => opaque(f.top),
+                3 => opaque(f.bottom),
+                1 => mix(opaque(f.left[0]), opaque(f.left[1]), t),
+                _ => mix(opaque(f.right[0]), opaque(f.right[1]), t),
             }
         }
         _ => opaque(0xFFFFFF),
@@ -414,13 +432,13 @@ const DARK_LIGHT_HOT: Face = Face {
 };
 
 const ARROW_AT: [(i32, i32); 2] = [(8, 7), (9, 7)];
-const ARROW_WHITE: [(i32, Ink); 4] = [
+pub(super) const ARROW_WHITE: [(i32, Ink); 4] = [
     (0, (255.0, 0xFFFFFF)),
     (2, (255.0, 0xFFFFFF)),
     (3, (255.0, 0xEBF0F8)),
     (4, (255.0, 0xD3D7DF)),
 ];
-const ARROW_OUTLINE: f64 = 160.0;
+pub(super) const ARROW_OUTLINE: f64 = 160.0;
 const ARROW_DARK: u32 = 0x3E3E3E;
 
 /// Shut down's face `f` with its arrow: the glass button's white one, or in `plain` ink on the light button.
@@ -1092,7 +1110,7 @@ mod tests {
             Part::StartShutdownArrow | Part::StartShutdownArrowLight => {
                 (Rect::new(-SHUT_W, 0, SHUT_W + ARROW_W, h), SHUT_R)
             }
-            Part::StartSearchField => (all, FIELD_R),
+            Part::StartSearchField => (all, GLASS_FIELD.radius),
             Part::StartPictureFrame => {
                 let (x, y, side) = FRAME_RECT;
                 (Rect::new(x, y, side, side), FRAME_R)

@@ -101,11 +101,11 @@ fn shows_stand_in(m: &StartPanel) -> bool {
         .any(blank)
 }
 
-/// The device px at `scale` of `m`'s place rows' pictures: Glass's are the user picture's
-/// size, Blue's 24 px icons that grow with the text.
+/// The device px at `scale` of `m`'s place rows' pictures: Glass's and Onyx's are the user
+/// picture's size, Blue's 24 px icons that grow with the text.
 pub(super) fn place_px(m: &StartPanel, scale: i32) -> i32 {
     match m.shape {
-        Shape::Glass => PICTURE * scale,
+        Shape::Glass | Shape::Onyx => PICTURE * scale,
         Shape::Blue => m.icon_px(reprisekit::blue::startpanel::PLACE_ICON_PX, scale),
     }
 }
@@ -147,10 +147,10 @@ fn jump_sections(
         .collect()
 }
 
-/// Whether app `a`'s row opens a jump list: it has recent `files` or tasks, and the menu is not
-/// Blue's, which has none.
+/// Whether app `a`'s row opens a jump list: it has recent `files` or tasks, and the menu is
+/// Glass's, the only one with jump lists.
 fn has_jump(shape: Shape, a: &AppEntry, files: &[PathBuf]) -> bool {
-    shape != Shape::Blue && (!files.is_empty() || !crate::taskbar::jump_tasks(a).is_empty())
+    shape == Shape::Glass && (!files.is_empty() || !crate::taskbar::jump_tasks(a).is_empty())
 }
 
 pub(super) fn jump_file(jumps: &[(Vec<PathBuf>, usize)], mode: Mode, k: usize) -> Option<&Path> {
@@ -192,7 +192,7 @@ impl State {
         let recent = self.config.recent_files;
         let shown = &self.config.startmenu_places;
         let entries = match shape {
-            Shape::Glass => crate::startmenu::places(recent, &dirs, shown),
+            Shape::Glass | Shape::Onyx => crate::startmenu::places(recent, &dirs, shown),
             Shape::Blue => crate::startmenu::blue_places(recent, &dirs, shown),
         };
         let mut rows = Vec::new();
@@ -286,10 +286,12 @@ impl State {
             count,
         );
         let programs: Vec<usize> = pinned.iter().chain(&frequent).copied().collect();
-        let blue = v.model.shape == Shape::Blue;
+        let lists = v.model.shape == Shape::Glass;
+        // Blue's and Onyx's pinned rows carry a grey second line.
+        let subtitled = !lists;
         v.jumps = programs
             .iter()
-            .map(|&i| match blue {
+            .map(|&i| match !lists {
                 true => (Vec::new(), 0),
                 false => crate::jumppins::files_for(
                     jump_pins,
@@ -312,7 +314,7 @@ impl State {
                     icon: app_icon(icons, a, px),
                     jump: has_jump(v.model.shape, a, &jumps.0),
                     new_pin: pin && v.new_pins.contains(&a.id),
-                    detail: (blue && pin).then(|| subtitle(a)).flatten(),
+                    detail: (subtitled && pin).then(|| subtitle(a)).flatten(),
                 }
             });
         v.model.pinned = rows.by_ref().take(pinned.len()).collect();
@@ -493,8 +495,10 @@ impl State {
                 continue;
             };
             let fresh = match shape {
-                Shape::Blue => (Vec::new(), 0),
-                _ => crate::jumppins::files_for(jump_pins, recent, config.recent_files, e),
+                Shape::Glass => {
+                    crate::jumppins::files_for(jump_pins, recent, config.recent_files, e)
+                }
+                Shape::Onyx | Shape::Blue => (Vec::new(), 0),
             };
             let Some(old) = v.jumps.get_mut(k) else {
                 break;

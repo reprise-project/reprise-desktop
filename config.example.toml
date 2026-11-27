@@ -8,7 +8,7 @@ terminal = "reprise-terminal"   # a command line, arguments included (quote a pr
 startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start menu's left edge
 # startmenu_style = "glass"   # the Start menu: "classic" (the band and the [[startmenu]] entries), "blue" (programs and places in two columns under your picture) or "glass" (programs, search and places in two columns); default: the interface's own
 # startmenu_places = ["documents", "pictures", "music", "computer", "control-panel", "printers", "run"]   # the places the Blue and Glass Start menus list on the right; the home folder, Recent Items and Help and Support always show; Settings > Start Menu sets it
-# startmenu_power = "shut_down"   # the Glass Start menu's power button: "shut_down", "log_off", "lock" or "restart"; its arrow lists the others; Settings > Start Menu sets it
+# startmenu_power = "shut_down"   # the Glass Start menu's power button: "shut_down", "log_off", "lock" or "restart"; its arrow lists the others (Onyx's arrow always ends with Shut down); Settings > Start Menu sets it
 # startmenu_programs = 10   # 0 to 10: how many frequently used programs the Blue and Glass Start menus list under the pinned ones; Settings > Start Menu sets it
 desktop_icons = true          # icons for the files in ~/Desktop (XDG_DESKTOP_DIR); false hides them and the desktop takes no files, the system icons stay
 # desktop_extensions = "hide"  # file name extensions in desktop labels: "hide" (every registered type's), "hide_launchers" (only .desktop) or "show"; report.pdf.sh always shows in full; Explorer reads [folders] hide_extensions
@@ -146,7 +146,8 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 # style = "glass"           # glass | onyx: a near-black 30 px taskbar with a labelled
 #                            # button per window; onyx's [taskbar] defaults are
 #                            # buttons = "never", small_icons = true and false for
-#                            # pinned and show_desktop_button; a key set there wins
+#                            # pinned and show_desktop_button; a key set there wins;
+#                            # onyx's Start menu has a lock button and no jump lists
 # opaque_when_maximized = false  # true: while a screen shows a maximized or fullscreen
 #                            # window its taskbar is opaque, and a maximized window's
 #                            # frame always is; default true under style = "onyx"

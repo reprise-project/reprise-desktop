@@ -70,20 +70,20 @@ impl State {
             return;
         };
         let enters = key == Key::Right
-            && shape == Shape::Glass
+            && shape != Shape::Blue
             && self.start_panel.as_ref().is_some_and(|v| {
                 v.model.mode() != Mode::Programs && v.model.lit() == Some(Spot::AllPrograms)
             });
         if enters {
             self.list_start_tree();
         }
-        if shape == Shape::Glass {
+        if shape != Shape::Blue {
             if let Key::Char(e) = &key {
                 self.clip_edit_key(e);
             }
             self.restart_caret();
         }
-        let menu = key == Key::Menu && shape == Shape::Glass;
+        let menu = key == Key::Menu && shape != Shape::Blue;
         let mut row_menu = false;
         self.start_panel_event_with(enters, |m| {
             let event = m.key(key);
@@ -327,6 +327,7 @@ impl State {
                 PowerButton::Lock => StartRow::Lock,
                 PowerButton::Restart => StartRow::Restart,
             }),
+            Spot::Lock => self.start_row(StartRow::Lock),
             Spot::LogOff => {
                 self.close_start_panel();
                 self.blue_log_off();

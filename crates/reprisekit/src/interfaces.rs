@@ -449,10 +449,18 @@ pub fn draw_start_panel_backed(
     pressed: Option<startpanel::Spot>,
     caret: bool,
 ) {
+    // The Onyx menu draws Onyx's parts, the Glass one Glass's, whatever `glass` names.
+    let wanted = match p.shape {
+        startpanel::Shape::Onyx => glass::Style::Onyx,
+        _ => glass::Style::Glass,
+    };
     let style = match &theme.look {
-        Look::Styled(s) if s.glass.is_some() && glass.transparency => s.clone(),
+        Look::Styled(s) if s.glass.is_some() && glass.transparency && glass.style == wanted => {
+            s.clone()
+        }
         _ => glass::style(&glass::Settings {
             transparency: false,
+            style: wanted,
             ..*glass
         })
         .at_scale(l.scale.max(1)),

@@ -22,6 +22,7 @@ mod menus;
 pub mod notify;
 mod onyx;
 mod onyxorb;
+mod onyxstart;
 mod orb;
 pub mod overview;
 pub mod page;
