@@ -163,6 +163,15 @@ fn rows(recommended_programs: Vec<Program>, other_programs: Vec<Program>) -> Vec
     rows
 }
 
+fn programs_list(recommended: Vec<Program>, others: Vec<Program>) -> GroupList<Program> {
+    let matched = !recommended.is_empty();
+    let mut list = GroupList::new(rows(recommended, others));
+    if !matched {
+        list.selected = None;
+    }
+    list
+}
+
 pub fn icon_name(row: &Row<Program>) -> Option<&str> {
     match row {
         Row::Group(_) => Some(FOLDER_ICON),
@@ -175,10 +184,12 @@ fn redraw_if(changed: bool) -> Event {
 }
 
 impl OpenWith {
+    /// The chooser for `file`, its first recommended program picked; with none recommended
+    /// nothing is, and OK waits for a pick.
     pub fn new(file: &str, recommended: Vec<Program>, others: Vec<Program>) -> OpenWith {
         OpenWith {
             file: file.into(),
-            list: GroupList::new(rows(recommended, others)),
+            list: programs_list(recommended, others),
             always: Check {
                 on: false,
                 enabled: true,
@@ -200,10 +211,10 @@ impl OpenWith {
     }
 
     /// Replace the programs, keeping the pick when its id is still
-    /// listed; otherwise the first program is picked.
+    /// listed; otherwise the pick is [`OpenWith::new`]'s.
     pub fn set_programs(&mut self, recommended: Vec<Program>, others: Vec<Program>) {
         let keep = self.chosen().map(|p| p.id.clone());
-        self.list = GroupList::new(rows(recommended, others));
+        self.list = programs_list(recommended, others);
         if let Some(id) = keep {
             self.select_id(&id);
         }
@@ -818,6 +829,20 @@ mod tests {
     }
 
     #[test]
+    fn with_no_recommended_program_nothing_is_picked_until_one_is() {
+        let mut o = OpenWith::new("archive.zip", vec![], vec![p("a", "A"), p("b", "B")]);
+        assert_eq!(o.list.selected, None);
+        assert!(!o.ok_enabled(), "OK waits for a pick");
+        assert_eq!(o.key(Key::Enter), Event::None, "Enter opens nothing");
+        o.key(Key::Down);
+        o.key(Key::Down);
+        assert_eq!(o.chosen().map(|p| p.id.as_str()), Some("a"));
+        assert!(o.ok_enabled());
+        o.set_programs(vec![], vec![p("c", "C")]);
+        assert_eq!(o.list.selected, None, "a list without A picks nothing");
+    }
+
+    #[test]
     fn a_reader_scrolls_a_program_in_and_focuses_a_button_without_pressing_it() {
         use crate::access::{Published, Tree};
         let mut o = sample();
@@ -1100,13 +1125,13 @@ mod tests {
     }
 
     #[test]
-    fn a_refill_that_drops_the_pick_takes_the_first_program() {
+    fn a_refill_that_drops_the_pick_takes_the_first_recommended_program() {
         let mut o = sample();
         o.focus = Focus::Ok;
-        o.set_programs(vec![], vec![p("x", "X")]);
+        o.set_programs(vec![p("x", "X")], vec![p("y", "Y")]);
         assert_eq!(o.chosen().map(|p| p.id.as_str()), Some("x"));
-        o.set_programs(vec![], vec![]);
-        assert_eq!(o.chosen(), None);
+        o.set_programs(vec![], vec![p("y", "Y")]);
+        assert_eq!(o.chosen(), None, "no recommended program, no pick");
         assert_eq!(o.focus, Focus::List, "the focus leaves a greyed OK");
     }
 
