@@ -215,7 +215,7 @@ fn backing_rects(l: &Layout) -> (Rect, Rect) {
 
 pub fn draw(
     canvas: &mut Canvas,
-    style: &Style,
+    style: &Arc<Style>,
     text: &TextRenderer,
     p: &StartPanel,
     l: &Layout,
@@ -269,7 +269,7 @@ pub fn draw_backed(
 /// Everything over the frame and left pane.
 fn draw_contents(
     canvas: &mut Canvas,
-    style: &Style,
+    style: &Arc<Style>,
     text: &TextRenderer,
     p: &StartPanel,
     l: &Layout,
@@ -281,9 +281,15 @@ fn draw_contents(
     let at = |r: Rect| Rect::new(r.x - o.x, r.y - o.y, r.width, r.height);
     let g = search::Grow { s, u: p.text };
     let off = |r: Rect, (dx, dy): (i32, i32)| (r.x - o.x + g.len(dx), r.y - o.y + g.len(dy));
-    // A glyph keeps its size as the text grows; its centre moves with the rest.
-    let kept = |r: Rect, (dx, dy): (i32, i32), (w, h): (i32, i32)| {
-        (r.x - o.x + g.kept(dx, w), r.y - o.y + g.kept(dy, h))
+    // An arrow grows by whole steps with the text, drawn afresh at the grown scale; its centre
+    // moves with the rest.
+    let k = p.text.small();
+    let arrows = match k {
+        1 => style.clone(),
+        k => style.at_scale(s * k),
+    };
+    let stepped = |r: Rect, (dx, dy): (i32, i32), (w, h): (i32, i32)| {
+        (r.x - o.x + g.stepped(dx, w), r.y - o.y + g.stepped(dy, h))
     };
     let icon_at = |r: Rect, (dx, dy): (i32, i32), size: i32, c: &Canvas| {
         let (w, h) = (c.width as i32, c.height as i32);
@@ -293,11 +299,17 @@ fn draw_contents(
         )
     };
     let glyph_at =
-        |r: Rect, off: (i32, i32), part: Part| kept(r, off, search::glyph_size(style, part));
+        |r: Rect, off: (i32, i32), part: Part| stepped(r, off, search::glyph_size(style, part));
     let mode = p.mode();
     let lit = p.lit();
     let light = matches!(mode, Mode::Jump(_) | Mode::Search);
-    let mut d = Draw { canvas, style, s };
+    let mut d = Draw {
+        canvas,
+        style,
+        arrows: &arrows,
+        s,
+        k,
+    };
     let size = g.px(TEXT_PX);
     let inks = style.pane_inks;
     let right = style
@@ -428,7 +440,7 @@ fn draw_contents(
                     let size = (glyph::ARROW.w, glyph::ARROW.h);
                     let (ax, ay) = at::PLACE_ARROW;
                     let ax = ax - layout::narrow(p);
-                    d.inked(kept(r, (ax, ay - lift), size), &glyph::ARROW, right);
+                    d.inked(stepped(r, (ax, ay - lift), size), &glyph::ARROW, right);
                 }
             }
             Spot::Search => {
@@ -564,7 +576,12 @@ fn draw_contents(
 struct Draw<'a> {
     canvas: &'a mut Canvas,
     style: &'a Style,
+    /// The style the arrows draw from, at `s * k`.
+    arrows: &'a Style,
     s: i32,
+    /// The whole multiple of their 100% size the arrows draw at
+    /// ([`crate::theme::TextUnits::small`]).
+    k: i32,
 }
 
 impl Draw<'_> {
@@ -574,11 +591,12 @@ impl Draw<'_> {
 
     fn inked(&mut self, (x, y): (i32, i32), m: &glyph::Mark, color: Color) {
         let ink = crate::shape::premul(color, 0xFF);
-        self.canvas.blit_over(x, y, &m.canvas(self.s, |_, _| ink));
+        self.canvas
+            .blit_over(x, y, &m.canvas(self.s * self.k, |_, _| ink));
     }
 
     fn glyph(&mut self, at: (i32, i32), part: Part) {
-        search::glyph(self.canvas, self.style, at, part, self.s);
+        search::glyph(self.canvas, self.arrows, at, part, self.s * self.k);
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -708,7 +726,7 @@ mod tests {
             ..Settings::default()
         });
         let blank = |l: &Layout| Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
-        let fresh = |style: &Style, p: &StartPanel| {
+        let fresh = |style: &Arc<Style>, p: &StartPanel| {
             let l = layout(p);
             let mut c = blank(&l);
             draw(&mut c, style, &text, p, &l, None, true);
@@ -1360,6 +1378,51 @@ mod tests {
         assert!(whole >= 6, "the arrow's whole pixels: {whole}");
         let plain = render(&sample(Mode::Home, None), None);
         assert_ne!(plain.at(ax, ay + 3), 0xFF00_0000 | INK_RIGHT, "no arrow");
+    }
+
+    #[test]
+    fn the_arrows_grow_by_whole_steps_with_the_text() {
+        use crate::theme::TextUnits;
+        // The width and height of the pixels that differ between `a` and `b` in `r`.
+        let diff_box = |a: &Drawn, b: &Drawn, r: Rect| {
+            let differ: Vec<(i32, i32)> = (r.y..r.bottom())
+                .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                .filter(|&(x, y)| a.at(x, y) != b.at(x, y))
+                .collect();
+            let span = |f: fn(&(i32, i32)) -> i32| {
+                let (lo, hi) = (differ.iter().map(f).min(), differ.iter().map(f).max());
+                hi.zip(lo).map_or(0, |(hi, lo)| hi - lo + 1)
+            };
+            (span(|p| p.0), span(|p| p.1))
+        };
+        let boxes = |text: TextUnits| {
+            let draw = |mode: Mode, submenu: bool| {
+                let mut p = sample(mode, None);
+                p.places[4].submenu = submenu;
+                p.text = text;
+                render(&p, None)
+            };
+            let (home, arrow, back) = (
+                draw(Mode::Home, false),
+                draw(Mode::Home, true),
+                draw(Mode::Programs, false),
+            );
+            let place = home.l.rect(Spot::Place(4)).unwrap();
+            let all = home.l.rect(Spot::AllPrograms).unwrap();
+            let all = Rect::new(all.x, all.y, text.len(at::ALL_PEN) - 4, all.height);
+            (diff_box(&home, &arrow, place), diff_box(&home, &back, all))
+        };
+        assert_eq!(boxes(TextUnits::ONE), ((4, 7), (6, 11)), "the 100% sizes");
+        assert_eq!(
+            boxes(TextUnits::new(22, 11)),
+            ((8, 14), (12, 22)),
+            "twice at 200%"
+        );
+        assert_eq!(
+            boxes(TextUnits::new(16, 11)),
+            ((4, 7), (6, 11)),
+            "their own size below 200%"
+        );
     }
 
     fn typed(typed: &str, then: Option<EditKey>) -> StartPanel {
