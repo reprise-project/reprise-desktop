@@ -7,6 +7,7 @@
 //! the menu, `[9, 2]` for the third row of its submenu.
 
 use crate::commands::{Command, Menu};
+use crate::favorites::RowIcon;
 use crate::place::Place;
 use reprisefs::ops::DropOp;
 use reprisefs::program::{Program, ScriptOpen};
@@ -76,6 +77,8 @@ pub struct MenuState {
     pub favorites: Vec<crate::favorites::MenuRow>,
     /// The icons of a folder favorite and a server one.
     pub favorite_icons: [Option<Canvas>; 2],
+    /// The special folders' own icons by name ([`crate::favorites::RowIcon::Special`]).
+    pub special_icons: Vec<(&'static str, Option<Canvas>)>,
 }
 
 impl Default for MenuState {
@@ -111,6 +114,7 @@ impl Default for MenuState {
             can_add_favorite: false,
             favorites: Vec::new(),
             favorite_icons: [None, None],
+            special_icons: Vec::new(),
         }
     }
 }
@@ -551,7 +555,14 @@ fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
     }
     for f in &state.favorites {
         let item = MenuItem::entry(f.label.as_str()).enabled(f.go.is_some());
-        let icon = state.favorite_icons[usize::from(f.remote)].clone();
+        let [folder, server] = &state.favorite_icons;
+        let icon = match f.icon {
+            RowIcon::Folder => folder.clone(),
+            RowIcon::Server => server.clone(),
+            RowIcon::Special(name) => (state.special_icons.iter())
+                .find(|(n, _)| *n == name)
+                .map_or_else(|| folder.clone(), |(_, c)| c.clone()),
+        };
         favorites.row(
             with_icon(item, icon),
             f.go.clone().unwrap_or(Command::Nothing),

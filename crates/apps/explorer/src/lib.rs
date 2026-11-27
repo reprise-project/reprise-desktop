@@ -299,6 +299,8 @@ pub struct Explorer {
     chrome_waits: repriseapp::iconjobs::IconWaits,
     /// The Favorites menu's folder and server icons, at the menu's icon size.
     favorite_icons: [Option<Canvas>; 2],
+    /// The special folders' icons by name, for their Favorites rows.
+    special_icons: Vec<(&'static str, Option<Canvas>)>,
     pub status: StatusBar,
     pub settings: Settings,
     /// `settings` changed since the last write. A resize delivers a burst of
@@ -665,6 +667,7 @@ impl Explorer {
             pane_key: None,
             chrome_waits: Default::default(),
             favorite_icons: [None, None],
+            special_icons: Vec::new(),
             status: StatusBar {
                 panels: Vec::new(),
                 grip: true,
@@ -931,8 +934,9 @@ impl Explorer {
             can_connect: self.shares.gio,
             templates: self.templates.clone(),
             can_add_favorite: self.favorite_dir().is_some(),
-            favorites: favorites::menu_rows(&self.favorites()),
+            favorites: favorites::menu_rows(&self.favorites(), &self.specials),
             favorite_icons: self.favorite_icons.clone(),
+            special_icons: self.special_icons.clone(),
         }
     }
 

@@ -171,6 +171,15 @@ impl Explorer {
         let px = crate::fileops::menu_icon_px(&ctx.theme);
         self.favorite_icons = [&["folder"][..], &["folder-remote", "network-server"]]
             .map(|names| self.chrome_waits.first(&mut ctx.icons, names, px));
+        self.special_icons = (self.specials.iter())
+            .map(|&(_, name)| {
+                (
+                    name,
+                    self.chrome_waits
+                        .first(&mut ctx.icons, &[name, "folder"], px),
+                )
+            })
+            .collect();
         self.pane_key = None;
         self.refresh_chrome(ctx);
     }
