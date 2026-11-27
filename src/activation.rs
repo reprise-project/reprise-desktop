@@ -318,8 +318,8 @@ impl State {
     /// The line typed in Run box `from`: one that names a folder opens it in Explorer, a document
     /// opens as its icon does ([`State::open_document`]), anything else runs as
     /// [`State::spawn_command_activated`]. Each closes the box. A line whose program is not there
-    /// keeps the box open under a notice, unless its first word is a name typed from habit
-    /// ([`crate::spawn::habit_line`]), which runs the Reprise program instead. The paths are
+    /// keeps the box open under a notice, and a name typed from habit runs the Reprise program
+    /// instead ([`program_line`]). The paths are
     /// checked off the loop on a [`State::spawn_job`], so a mount that does not answer stalls
     /// neither the loop nor the launch.
     /// The box takes no second OK while its line is checked, and a check that lands after the box
@@ -353,13 +353,10 @@ impl State {
                     }
                     Err(_) => RunLine::Command,
                 },
-                (None, Some((word, p))) if p.missing(path.as_deref()) => {
-                    match crate::spawn::habit_line(&cmd, &word, &terminal) {
-                        Some(line) => RunLine::Habit(line),
-                        None => RunLine::Missing(word),
-                    }
+                (None, Some((word, p))) => {
+                    program_line(&cmd, word, p.missing(path.as_deref()), &terminal)
                 }
-                (None, _) => RunLine::Command,
+                (None, None) => RunLine::Command,
             };
             Box::new(move |state: &mut State| state.run_line_checked(&cmd, from, line))
         });
@@ -482,21 +479,35 @@ impl State {
     }
 }
 
-/// Whether a Run line's path is a document to record as opened: a regular file with no execute
-/// bit, since an executable it names runs instead, or, on a mount whose modes are fixed (FAT,
-/// exFAT and NTFS can mark every file executable), one whose name's type `mime` is no program's.
 /// What a Run line was found to name, off the loop.
+#[derive(Debug, PartialEq)]
 enum RunLine {
     Folder(std::path::PathBuf),
     Document(std::path::PathBuf),
     /// The program, as typed, is not there.
     Missing(String),
-    /// The line with its missing program swapped for the Reprise one.
+    /// The line with its program swapped for the Reprise one.
     Habit(String),
     /// Anything else, for `sh`.
     Command,
 }
 
+/// What Run line `cmd` with program `word` does, `missing` saying whether `word` is on `PATH`. A
+/// habit name typed alone starts its Reprise program even when `PATH` has one of that name (Wine
+/// puts a `notepad` there); typed with arguments it starts the installed program, which those
+/// arguments were written for, and the Reprise one only when none is installed.
+fn program_line(cmd: &str, word: String, missing: bool, terminal: &str) -> RunLine {
+    let alone = cmd.trim() == word;
+    match crate::spawn::habit_line(cmd, &word, terminal) {
+        Some(line) if alone || missing => RunLine::Habit(line),
+        _ if missing => RunLine::Missing(word),
+        _ => RunLine::Command,
+    }
+}
+
+/// Whether a Run line's path is a document to record as opened: a regular file with no execute
+/// bit, since an executable it names runs instead, or, on a mount whose modes are fixed (FAT,
+/// exFAT and NTFS can mark every file executable), one whose name's type `mime` is no program's.
 fn names_a_document(meta: &std::fs::Metadata, mime: Option<&str>, fixed_modes: bool) -> bool {
     use std::os::unix::fs::PermissionsExt;
     meta.is_file()
@@ -1260,6 +1271,28 @@ pub(crate) mod tests {
         h.until("the line is checked", |s| s.dialogs.checking.is_empty());
         assert_eq!(crate::spawn::recorded(), ["reprise-paint"]);
         assert!(h.state.dialogs.views.is_empty(), "Run closes");
+    }
+
+    #[test]
+    fn a_habit_name_alone_beats_a_program_of_that_name_on_path() {
+        let line = |cmd: &str, missing| {
+            let word = cmd.split_whitespace().next().unwrap().to_string();
+            program_line(cmd, word, missing, "foot")
+        };
+        let habit = |l: &str| RunLine::Habit(l.into());
+        assert_eq!(line("Notepad", false), habit("reprise-notepad"));
+        assert_eq!(line("notepad", true), habit("reprise-notepad"));
+        assert_eq!(
+            line("notepad /tmp/a.txt", false),
+            RunLine::Command,
+            "with arguments, the installed program"
+        );
+        assert_eq!(
+            line("notepad /tmp/a.txt", true),
+            habit("reprise-notepad /tmp/a.txt")
+        );
+        assert_eq!(line("firefox", false), RunLine::Command);
+        assert_eq!(line("fooberx", true), RunLine::Missing("fooberx".into()));
     }
 
     #[test]
