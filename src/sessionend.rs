@@ -36,6 +36,10 @@ use crate::window::WindowId;
 const PROMPT_AFTER: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(500);
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a logind power call may take, its password prompts included: logind may ask two in
+/// turn (another session open, an inhibitor overridden), giving up on each after 25 s but
+/// leaving it open.
+const POWER_ASK_TIMEOUT: Duration = Duration::from_secs(60);
 /// The longest a session end waits for the remote desktop server to tell its clients.
 const TELL_CLIENTS: Duration = Duration::from_secs(1);
 /// The longest a session end waits for screenshot files under way to be written.
@@ -1135,8 +1139,7 @@ fn late(state: &mut State, id: u64, act: Act, lingers: bool) {
     refuse(state, act, &why);
 }
 
-/// [`clear`] on the system bus, without a method timeout: a password prompt stays up as long as
-/// polkit lets it. logind out of reach clears nothing and holds nothing back.
+/// [`clear`] on the system bus. logind out of reach clears nothing and holds nothing back.
 fn clear_set(interactive: bool, regardless: bool) -> Option<String> {
     match zbus::block_on(zbus::Connection::system()) {
         Ok(conn) => zbus::block_on(clear(&conn, None, interactive, regardless)),
@@ -1687,12 +1690,11 @@ fn too_old_for_flags(e: &zbus::Error) -> bool {
 }
 
 async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Option<Failed> {
-    // No method timeout: logind stops waiting on the password prompt after 25 s.
     let conn = match zbus::Connection::system().await {
         Ok(c) => c,
         Err(e) => return Some(Failed::Refused(Refused::Failed(e.to_string()))),
     };
-    let reply = async {
+    let call = async {
         let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
             .destination(LOGIND)
             .path(LOGIND_PATH)
@@ -1717,11 +1719,9 @@ async fn call(verb: Verb, override_inhibitors: bool, interactive: bool) -> Optio
             }
             r => r,
         }
-    }
-    .await;
-    let e = reply.err()?;
-    // polkit leaves the prompt up after logind stopped waiting on it.
-    reprisebus::polkit::withdraw_timed_out(&e, interactive);
+    };
+    let reply = reprisebus::polkit::asking(POWER_ASK_TIMEOUT, interactive, call);
+    let e = reply.await.err()?;
     let dismissed = || interactive && reprisebus::polkit::dismissed();
     let Some(why) = failure(&e, dismissed) else {
         return Some(Failed::Dismissed);

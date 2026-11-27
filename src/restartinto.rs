@@ -21,6 +21,9 @@ const LOGIND: &str = "org.freedesktop.login1";
 const LOGIND_PATH: &str = "/org/freedesktop/login1";
 const LOGIND_MANAGER: &str = "org.freedesktop.login1.Manager";
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long setting or clearing a target may take, its password prompt included. logind gives up
+/// on the prompt after 25 s but leaves it open; either timeout withdraws it.
+const ASK_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Where the boot partition's `loader/entries` may be mounted, per the Boot Loader Specification.
 const ENTRY_ROOTS: [&str; 3] = ["/efi", "/boot", "/boot/efi"];
@@ -131,14 +134,19 @@ pub async fn aim(
 ) -> zbus::Result<()> {
     let proxy = manager(conn).await?;
     let auth = auth(interactive);
-    match &target.entry {
-        Some(id) => {
-            (proxy.call_with_flags::<_, _, ()>("SetRebootToBootLoaderEntry", auth, &(id,))).await?
-        }
-        None => {
-            (proxy.call_with_flags::<_, _, ()>("SetRebootToFirmwareSetup", auth, &(true,))).await?
+    let call = async {
+        match &target.entry {
+            Some(id) => {
+                (proxy.call_with_flags::<_, _, ()>("SetRebootToBootLoaderEntry", auth, &(id,)))
+                    .await
+            }
+            None => {
+                (proxy.call_with_flags::<_, _, ()>("SetRebootToFirmwareSetup", auth, &(true,)))
+                    .await
+            }
         }
     };
+    reprisebus::polkit::asking(ASK_TIMEOUT, interactive, call).await?;
     Ok(())
 }
 
@@ -146,14 +154,19 @@ pub async fn aim(
 pub async fn unaim(conn: &zbus::Connection, kind: Kind, interactive: bool) -> zbus::Result<()> {
     let proxy = manager(conn).await?;
     let auth = auth(interactive);
-    match kind {
-        Kind::Entry => {
-            (proxy.call_with_flags::<_, _, ()>("SetRebootToBootLoaderEntry", auth, &("",))).await?
-        }
-        Kind::Firmware => {
-            (proxy.call_with_flags::<_, _, ()>("SetRebootToFirmwareSetup", auth, &(false,))).await?
+    let call = async {
+        match kind {
+            Kind::Entry => {
+                (proxy.call_with_flags::<_, _, ()>("SetRebootToBootLoaderEntry", auth, &("",)))
+                    .await
+            }
+            Kind::Firmware => {
+                (proxy.call_with_flags::<_, _, ()>("SetRebootToFirmwareSetup", auth, &(false,)))
+                    .await
+            }
         }
     };
+    reprisebus::polkit::asking(ASK_TIMEOUT, interactive, call).await?;
     Ok(())
 }
 

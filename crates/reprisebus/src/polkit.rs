@@ -91,14 +91,6 @@ fn withdraw_with(method: &str) {
     }
 }
 
-/// [`withdraw`] after a call that let polkit ask for a password (`interactive`) timed out with
-/// `e`: the service may still wait on the prompt, and act on a password typed into it.
-pub fn withdraw_timed_out(e: &zbus::Error, interactive: bool) {
-    if interactive && crate::error::timed_out(e) {
-        withdraw();
-    }
-}
-
 /// How long a call that may open a password prompt waits, the change it then makes included:
 /// time to read the prompt, find the password and type it. Past it the prompt is withdrawn.
 pub const PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
