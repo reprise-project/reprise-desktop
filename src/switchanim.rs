@@ -549,7 +549,7 @@ impl State {
     /// `tree`. None when it cannot be rendered.
     fn still_of(&mut self, output: &Output, b: Rect, tree: TreeId) -> Option<Still> {
         let l = &self.layers;
-        let above = [l.switching, l.menu, l.overlay, l.lock];
+        let above = [l.switching, l.balloons, l.menu, l.overlay, l.lock];
         let shown: Vec<bool> = above.iter().map(|&t| self.scene.enabled(t)).collect();
         for &t in &above {
             self.scene.set_enabled(t, false);

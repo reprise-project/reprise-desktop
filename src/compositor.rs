@@ -143,6 +143,9 @@ pub struct Layers {
     /// covers the taskbar; `State::restack` moves trees in and out of it.
     pub fullscreen: TreeId,
     pub switching: TreeId,
+    /// Notification balloons: over the taskbar and a full-screen window, under the menus the user
+    /// opens.
+    pub balloons: TreeId,
     /// Compositor overlays that must sit above the taskbar: the Start menu
     /// stack and the Alt+Tab switcher.
     pub menu: TreeId,
@@ -169,6 +172,7 @@ impl Layers {
             taskbar: t(),
             fullscreen: t(),
             switching: t(),
+            balloons: t(),
             menu: t(),
             start_orb: t(),
             overlay: t(),

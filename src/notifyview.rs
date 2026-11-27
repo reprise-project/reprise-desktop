@@ -228,9 +228,9 @@ fn droplets(state: &State) -> bool {
     sheets(state) && state.config.glass.notification.shape() == SheetShape::Droplet
 }
 
-/// A tree in the overlay for a balloon or the chip, left out of the glass.
-fn overlay_tree(state: &mut State) -> TreeId {
-    let tree = state.scene.tree_create(state.layers.overlay);
+/// A tree in the balloons layer for a balloon or the chip, left out of the glass.
+fn balloon_tree(state: &mut State) -> TreeId {
+    let tree = state.scene.tree_create(state.layers.balloons);
     crate::glass::leave_out(&mut state.scene, tree);
     state.scene.set_data(tree, Some(SceneOwner::Notification));
     tree

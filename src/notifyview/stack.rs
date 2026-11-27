@@ -19,8 +19,8 @@ use super::motion::{Motion, destroy, drop_leaving, leave, restack};
 use super::paint::paint;
 use super::{
     BURST_AFTER, BURST_LINE_CHARS, BURST_LINES, BURST_WINDOW, Balloon, DEFAULT_MS, MAX_QUEUED,
-    NotifyView, OWN_ID, REASON_EXPIRED, REASON_UNDEFINED, cap, close_transient, droplets,
-    overlay_tree, sheets, take_down, timeout_ms,
+    NotifyView, OWN_ID, REASON_EXPIRED, REASON_UNDEFINED, balloon_tree, cap, close_transient,
+    droplets, sheets, take_down, timeout_ms,
 };
 
 #[derive(Clone, Debug)]
@@ -409,7 +409,7 @@ pub(super) fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
         (true, SheetShape::Lozenge | SheetShape::Halo) => Motion::arrive(e, now),
     };
     let tint = sheet_tint(&state.config.theme, item.app_icon(), scale);
-    let tree = overlay_tree(state);
+    let tree = balloon_tree(state);
     let glass_tree = state.scene.tree_create(tree);
     let buffer = state.scene.buffer_create(tree);
     state.notify.shown += 1;
