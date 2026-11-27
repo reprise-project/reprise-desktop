@@ -45,6 +45,28 @@ pub(crate) fn erase_at(
     path: &Path,
     meter: Option<&Meter>,
 ) -> io::Result<()> {
+    erase_entry_at(dir, name, path, meter, None)
+}
+
+/// [`erase_at`] that goes on past an entry it cannot remove at any depth, adding each failure to
+/// `failed` and keeping the folders above it; an entry already gone is no failure. The error is
+/// `name` itself failing, or what stops the walk, as a folder replaced on the way.
+pub(crate) fn erase_all_at(
+    dir: BorrowedFd,
+    name: &CStr,
+    path: &Path,
+    failed: &mut Vec<io::Error>,
+) -> io::Result<()> {
+    erase_entry_at(dir, name, path, None, Some(failed))
+}
+
+fn erase_entry_at(
+    dir: BorrowedFd,
+    name: &CStr,
+    path: &Path,
+    meter: Option<&Meter>,
+    failed: Option<&mut Vec<io::Error>>,
+) -> io::Result<()> {
     refuse_mount_point(path)?;
     if !is_dir_at(dir, name)? {
         unlink_at(dir, name, 0)?;
@@ -54,7 +76,7 @@ pub(crate) fn erase_at(
         return Ok(());
     }
     refuse_holding_mount(path)?;
-    remove_tree_at(dir, name, meter)
+    remove_tree_at(dir, name, meter, failed)
 }
 
 /// Whether `name` in the folder open as `dir` is a folder, not a link to one.
@@ -110,7 +132,7 @@ fn erase_tree(path: &Path, meter: Option<&Meter>) -> io::Result<()> {
         parent
     })?;
     let name = std::ffi::CString::new(name.as_bytes())?;
-    remove_tree_at(parent.as_fd(), &name, meter)
+    remove_tree_at(parent.as_fd(), &name, meter, None)
 }
 
 /// The folders [`remove_tree_at`] keeps open on its way down; one above them is closed and
@@ -123,12 +145,20 @@ struct Level {
     fd: Option<OwnedFd>,
     ino: u64,
     left: Vec<(CString, bool)>,
+    /// Something under it stayed, so it stays too.
+    kept: bool,
 }
 
 /// Remove folder `name` in the folder open at `parent` with everything under it, children first,
 /// without following a link or entering another file system. Iterative, so depth costs no stack.
-/// An entry that fails is named by its path under `name` ([`in_tree`]).
-fn remove_tree_at(parent: BorrowedFd, name: &CStr, meter: Option<&Meter>) -> io::Result<()> {
+/// An entry that fails is named by its path under `name` ([`in_tree`]) and stops the walk, or
+/// with `failed` joins it ([`settle`]).
+fn remove_tree_at(
+    parent: BorrowedFd,
+    name: &CStr,
+    meter: Option<&Meter>,
+    mut failed: Option<&mut Vec<io::Error>>,
+) -> io::Result<()> {
     let dev = stat_fd(parent)?.st_dev;
     let mut stack = vec![level(parent, name, dev)?];
     while !stack.is_empty() {
@@ -140,19 +170,29 @@ fn remove_tree_at(parent: BorrowedFd, name: &CStr, meter: Option<&Meter>) -> io:
                     None => crate::progress::step(),
                 }
                 let at = reopen(parent, &mut stack, dev)?;
-                if is_dir {
-                    let next =
-                        level(at, &child, dev).map_err(|e| in_tree(&under(&stack, &child), e))?;
-                    stack.push(next);
-                    if let Some(far) = stack.len().checked_sub(OPEN_LEVELS + 1) {
-                        stack[far].fd = None;
+                let stays = if is_dir {
+                    match level(at, &child, dev) {
+                        Ok(next) => {
+                            stack.push(next);
+                            if let Some(far) = stack.len().checked_sub(OPEN_LEVELS + 1) {
+                                stack[far].fd = None;
+                            }
+                            false
+                        }
+                        Err(e) => settle(&mut failed, in_tree(&under(&stack, &child), e))?,
                     }
                 } else {
-                    unlink_at(at, &child, 0).map_err(|e| in_tree(&under(&stack, &child), e))?;
-                    if let Some(m) = meter {
-                        m.removed();
+                    match unlink_at(at, &child, 0) {
+                        Ok(()) => {
+                            if let Some(m) = meter {
+                                m.removed();
+                            }
+                            false
+                        }
+                        Err(e) => settle(&mut failed, in_tree(&under(&stack, &child), e))?,
                     }
-                }
+                };
+                stack[top].kept |= stays;
             }
             None => {
                 let done = stack.pop().expect("a level is left");
@@ -161,12 +201,31 @@ fn remove_tree_at(parent: BorrowedFd, name: &CStr, meter: Option<&Meter>) -> io:
                     true => parent,
                     false => reopen(parent, &mut stack, dev)?,
                 };
-                unlink_at(up, &done.name, libc::AT_REMOVEDIR)
-                    .map_err(|e| in_tree(&under(&stack, &done.name), e))?;
+                let stays = done.kept
+                    || match unlink_at(up, &done.name, libc::AT_REMOVEDIR) {
+                        Ok(()) => false,
+                        Err(e) => settle(&mut failed, in_tree(&under(&stack, &done.name), e))?,
+                    };
+                if let Some(above) = stack.last_mut() {
+                    above.kept |= stays;
+                }
             }
         }
     }
     Ok(())
+}
+
+/// An entry [`remove_tree_at`] could not remove: without `failed` the walk stops with `e`; with
+/// it `e` joins `failed` and the entry stays (true), unless it is already gone.
+fn settle(failed: &mut Option<&mut Vec<io::Error>>, e: io::Error) -> io::Result<bool> {
+    let Some(list) = failed else {
+        return Err(e);
+    };
+    if e.kind() == io::ErrorKind::NotFound {
+        return Ok(false);
+    }
+    list.push(e);
+    Ok(true)
 }
 
 /// The path of `name`, in the last of `levels`, under the first; empty with no levels, `name`
@@ -199,6 +258,7 @@ fn level(at: BorrowedFd, name: &CStr, dev: libc::dev_t) -> io::Result<Level> {
         left: entries_at(fd.as_fd())?,
         ino: st.st_ino,
         fd: Some(fd),
+        kept: false,
     })
 }
 
