@@ -984,8 +984,8 @@ mod tests {
         };
         let (large, hash) = shades(edge_for(shellview::thumb_px(2)));
         assert_eq!(large, 188, "one shade per device column");
-        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/thumbnail_cell.txt");
-        reprisekit::pins::check_file(std::path::Path::new(file), &[("scale 2".into(), hash)]);
+        let file = reprisekit::crate_dir!().join("tests/pins/thumbnail_cell.txt");
+        reprisekit::pins::check_file(&file, &[("scale 2".into(), hash)]);
         let (normal, _) = shades(128);
         assert_eq!(normal, 128, "a 128 px thumbnail stretched over 188 columns");
     }

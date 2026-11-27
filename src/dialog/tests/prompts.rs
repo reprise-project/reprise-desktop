@@ -13,8 +13,8 @@ fn delete_badge_pins_at_scale_1_and_2() {
         }
         got.push((format!("@{s}"), h));
     }
-    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/delete_badge.txt");
-    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+    let pins = reprisekit::crate_dir!().join("tests/pins/delete_badge.txt");
+    reprisekit::pins::check_file(&pins, &got);
 }
 
 #[test]
@@ -237,8 +237,8 @@ fn confirm_delete_is_pinned_in_every_interface_at_1_and_2() {
             }
         }
     }
-    let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/confirm_delete.txt");
-    reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+    let pins = reprisekit::crate_dir!().join("tests/pins/confirm_delete.txt");
+    reprisekit::pins::check_file(&pins, &got);
 }
 
 #[test]

@@ -852,11 +852,8 @@ mod tests {
                     .map(|(state, h)| (format!("{i:?} {state}"), h)),
             );
         }
-        let file = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/pins/desktop_icons_group.txt"
-        );
-        reprisekit::pins::check_file(std::path::Path::new(file), &got);
+        let file = reprisekit::crate_dir!().join("tests/pins/desktop_icons_group.txt");
+        reprisekit::pins::check_file(&file, &got);
     }
 
     #[test]
@@ -1118,8 +1115,8 @@ mod tests {
                     .map(|(state, h)| (format!("{i:?} {state}"), h)),
             );
         }
-        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/use_for_row.txt");
-        reprisekit::pins::check_file(std::path::Path::new(file), &got);
+        let file = reprisekit::crate_dir!().join("tests/pins/use_for_row.txt");
+        reprisekit::pins::check_file(&file, &got);
     }
 
     #[test]

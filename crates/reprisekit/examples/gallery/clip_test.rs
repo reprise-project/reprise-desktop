@@ -3,7 +3,6 @@ use reprisekit::pins::{self, Cut};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::Path;
 use std::rc::Rc;
 
 /// Draws every page with its themes at 200% text and lists each line whose rect cuts its ink, by
@@ -40,7 +39,7 @@ fn every_page_at_200_percent_text_cuts_no_line_beyond_the_listed_ones() {
         );
         drawn.entry(key).or_insert((0, at)).0 += 1;
     }
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins/text_clip_200.txt");
+    let path = reprisekit::crate_dir!().join("tests/pins/text_clip_200.txt");
     let mut text = String::new();
     for (key, (n, _)) in &drawn {
         writeln!(text, "{key} x{n}").unwrap();

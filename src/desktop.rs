@@ -1440,11 +1440,8 @@ mod tests {
         let show = drawn(names::Extensions::Show);
         assert_ne!(show, drawn(names::Extensions::Hide), "the extension shows");
         let got = [("label".into(), show[0]), ("rename box".into(), show[1])];
-        let pins = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/pins/shown_extension.txt"
-        );
-        reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+        let pins = reprisekit::crate_dir!().join("tests/pins/shown_extension.txt");
+        reprisekit::pins::check_file(&pins, &got);
     }
 
     /// An executable FIFO named `*.desktop` would block `open(2)` forever,

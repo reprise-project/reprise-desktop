@@ -433,10 +433,7 @@ mod tests {
                     .map(move |(look, h)| (format!("{state} {look}"), h))
             })
             .collect();
-        let file = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/pins/remote_password_dialogs.txt"
-        );
-        reprisekit::pins::check_file(std::path::Path::new(file), &got);
+        let file = reprisekit::crate_dir!().join("tests/pins/remote_password_dialogs.txt");
+        reprisekit::pins::check_file(&file, &got);
     }
 }

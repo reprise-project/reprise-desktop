@@ -342,8 +342,8 @@ fn the_window_sits_on_its_pixels_in_every_look() {
         }
         pins.push((format!("{i:?}"), h));
     }
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/window.txt");
-    reprisekit::pins::check_file(std::path::Path::new(file), &pins);
+    let file = reprisekit::crate_dir!().join("tests/pins/window.txt");
+    reprisekit::pins::check_file(&file, &pins);
 }
 
 /// Writes `target/diskusage-{classic,blue,glass}.png` for eyeballing; run with `--ignored`.

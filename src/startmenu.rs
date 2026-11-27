@@ -829,8 +829,8 @@ mod tests {
                 }
             }
         }
-        let pins = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/program_menu.txt");
-        reprisekit::pins::check_file(std::path::Path::new(pins), &got);
+        let pins = reprisekit::crate_dir!().join("tests/pins/program_menu.txt");
+        reprisekit::pins::check_file(&pins, &got);
     }
 
     #[test]

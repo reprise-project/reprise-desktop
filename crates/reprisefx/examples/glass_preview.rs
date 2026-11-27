@@ -179,7 +179,7 @@ fn main() {
         .expect("read back");
     let rgba = renderer.map_texture(&mapping).expect("map").to_vec();
 
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    let dir = reprisekit::crate_dir!().join("../../target");
     std::fs::create_dir_all(&dir).expect("target/ exists");
     let path = dir.join("glass_preview.png");
     let file = std::fs::File::create(&path).expect("create the PNG");

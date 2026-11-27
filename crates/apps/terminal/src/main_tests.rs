@@ -1864,11 +1864,8 @@ fn the_caption_mode_toolbar_pins_in_every_interface() {
         top.blit_canvas(0, 0, &c);
         got.push((format!("{i:?}"), fnv(&top)));
     }
-    let file = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/pins/caption_mode_toolbar.txt"
-    );
-    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    let file = reprisekit::crate_dir!().join("tests/pins/caption_mode_toolbar.txt");
+    reprisekit::pins::check_file(&file, &got);
 }
 
 #[test]
@@ -2189,6 +2186,6 @@ fn a_linked_line_pins_plain_and_hovered_in_every_interface() {
             pointer(&mut t, &mut ctx, PointerInput::Leave);
         }
     }
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/linked_line.txt");
-    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    let file = reprisekit::crate_dir!().join("tests/pins/linked_line.txt");
+    reprisekit::pins::check_file(&file, &got);
 }

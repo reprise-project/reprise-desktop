@@ -487,8 +487,8 @@ fn the_main_window_is_pinned_per_interface_and_scale() {
             got.push((format!("{i:?}@{s}"), fnv(&c)));
         }
     }
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/main_window.txt");
-    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    let file = reprisekit::crate_dir!().join("tests/pins/main_window.txt");
+    reprisekit::pins::check_file(&file, &got);
 }
 
 /// Toolbar buttons by their place in the strip.
@@ -682,8 +682,8 @@ fn the_toolbar_is_pinned_per_interface_and_scale() {
             got.push((format!("{i:?}@{s}"), fnv(&c.copy_rect(band))));
         }
     }
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/toolbar.txt");
-    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    let file = reprisekit::crate_dir!().join("tests/pins/toolbar.txt");
+    reprisekit::pins::check_file(&file, &got);
 }
 
 #[test]

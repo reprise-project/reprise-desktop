@@ -782,11 +782,8 @@ mod tests {
                 }
             }
         }
-        let file = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/pins/screenshot_picker.txt"
-        );
-        reprisekit::pins::check_file(std::path::Path::new(file), &got);
+        let file = reprisekit::crate_dir!().join("tests/pins/screenshot_picker.txt");
+        reprisekit::pins::check_file(&file, &got);
     }
 
     #[test]

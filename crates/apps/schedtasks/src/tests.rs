@@ -618,8 +618,8 @@ fn hash(c: &Canvas) -> u64 {
 fn the_window_and_its_properties_sit_on_their_pixels_in_every_look() {
     reprisekit::pins::fonts();
     let got: Vec<(String, u64)> = drawn().iter().map(|(k, c)| (k.clone(), hash(c))).collect();
-    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pins/window.txt");
-    reprisekit::pins::check_file(std::path::Path::new(file), &got);
+    let file = reprisekit::crate_dir!().join("tests/pins/window.txt");
+    reprisekit::pins::check_file(&file, &got);
 }
 
 /// Writes `target/schedtasks-*.png` for eyeballing; run with `--ignored`.

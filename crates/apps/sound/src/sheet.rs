@@ -1762,7 +1762,7 @@ mod tests {
             got.push((name.to_string(), hash));
         }
         reprisekit::pins::check_file(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pins/audio_page.txt"),
+            &reprisekit::crate_dir!().join("tests/pins/audio_page.txt"),
             &got,
         );
     }
@@ -1805,8 +1805,7 @@ mod tests {
             got.push((name.to_string(), hash));
         }
         reprisekit::pins::check_file(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/pins/audio_page_cut_short.txt"),
+            &reprisekit::crate_dir!().join("tests/pins/audio_page_cut_short.txt"),
             &got,
         );
     }

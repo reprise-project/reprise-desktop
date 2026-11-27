@@ -954,7 +954,7 @@ pub(crate) fn fnv(c: &Canvas) -> u64 {
 /// [`reprisekit::pins::check_file`] on `tests/pins/<name>.txt`.
 #[track_caller]
 pub(crate) fn pins(name: &str, got: &[(String, u64)]) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = reprisekit::crate_dir!()
         .join("tests/pins")
         .join(format!("{name}.txt"));
     reprisekit::pins::check_file(&path, got);
