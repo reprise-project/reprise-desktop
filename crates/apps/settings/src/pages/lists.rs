@@ -119,14 +119,14 @@ pub fn fit_permission_columns(
 }
 
 /// One row per answer: the program's name, the permission and whether it was allowed.
-pub fn fill_permissions(lv: &mut ListView<IconRows>, answers: &[(String, &str, bool)]) {
+pub fn fill_permissions(lv: &mut ListView<IconRows>, answers: &[(String, String, bool)]) {
     lv.rows = answers
         .iter()
         .map(|(name, what, allow)| Row {
             icon: None,
             cells: vec![
                 name.clone(),
-                (*what).into(),
+                what.clone(),
                 if *allow {
                     tr!("pages-lists-allowed")
                 } else {

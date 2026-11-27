@@ -3,6 +3,7 @@
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{self, Form, Item};
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::tr;
 
 pub const CLIENT: (i32, i32) = (345, 110);
 pub const ICON: &str = "icon";
@@ -25,8 +26,7 @@ pub struct MonitorDialog {
 
 /// "Reverting in 15 seconds"; "1 second" at 1.
 pub fn countdown_text(left: u32) -> String {
-    let unit = if left == 1 { "second" } else { "seconds" };
-    format!("Reverting in {left} {unit}")
+    tr!("monitordlg-reverting", left = left)
 }
 
 impl MonitorDialog {
@@ -37,22 +37,22 @@ impl MonitorDialog {
                 "text",
                 Rect::new(50, 12, 288, 26),
                 &[
-                    "Your desktop has been reconfigured.  Do you want to keep",
-                    "these settings?",
+                    &tr!("monitordlg-your-desktop-has-been-reconfigured-do"),
+                    &tr!("monitordlg-these-settings"),
                 ],
             ),
             Item::label_at(COUNTDOWN, 11, 76, 160, &countdown_text(seconds)),
             Item::button(
                 YES,
                 Rect::new(182, 64, BUTTON_W, BUTTON_H),
-                "&Yes",
+                &tr!("monitordlg-yes"),
                 true,
                 false,
             ),
             Item::button(
                 NO,
                 Rect::new(263, 64, BUTTON_W, BUTTON_H),
-                "&No",
+                &tr!("monitordlg-no"),
                 true,
                 true,
             ),

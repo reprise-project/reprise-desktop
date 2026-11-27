@@ -15,6 +15,7 @@ use reprisekit::textedit::TextEdit;
 use crate::model::DESKTOPS_MAX;
 use crate::rulespage::{STATES, screen};
 use crate::windowrules::Rule;
+use reprisekit::tr;
 
 const W: i32 = 360;
 const MARGIN: i32 = 12;
@@ -50,7 +51,9 @@ pub const STICKY: &str = "wr_sticky";
 pub const TAB_GROUP: &str = "wr_tab_group";
 
 /// The From a window combo's first row, standing for no pick.
-const NO_WINDOW: &str = "(Pick one to fill in its app ID)";
+fn no_window() -> String {
+    tr!("ruledlg-pick-one-to-fill-in-its")
+}
 
 /// Each value row's check box and the fields it lights.
 const TICKED: [(&str, &[&str]); 4] = [
@@ -70,10 +73,10 @@ pub enum Outcome {
 
 pub struct RuleDialog {
     pub form: Form,
-    pub title: &'static str,
+    pub title: String,
     /// The rule it was opened on: the keys the dialog does not show come back from it.
     was: Rule,
-    /// The open windows' app ids, in the combo after [`NO_WINDOW`].
+    /// The open windows' app ids, in the combo after [`no_window`].
     windows: Vec<String>,
     /// The Screen combo's rows, as `output` values.
     outputs: Vec<String>,
@@ -109,8 +112,8 @@ impl RuleDialog {
     /// ([`screens`]).
     pub fn new(rule: Option<&Rule>, mut outputs: Vec<String>) -> RuleDialog {
         let (title, r) = match rule {
-            Some(r) => ("Edit Window Rule", r.clone()),
-            None => ("Add Window Rule", Rule::default()),
+            Some(r) => (tr!("ruledlg-edit-window-rule"), r.clone()),
+            None => (tr!("ruledlg-add-window-rule"), Rule::default()),
         };
         let label = |id, y, text| Item::label_at(id, GX, y + 4, FIELD_X - GX - 4, text);
         let edit = |id, y, text: &Option<String>| {
@@ -154,38 +157,47 @@ impl RuleDialog {
             Item::group(
                 "wr_match",
                 Rect::new(MARGIN, MATCH_Y, W - 2 * MARGIN, 126 + LINE_H),
-                "Windows",
+                &tr!("ruledlg-windows"),
             ),
-            label("wr_windows_label", MATCH_Y + 20, "From a &window:"),
-            Item::combo(WINDOWS, FIELD_X, MATCH_Y + 20, FIELD_W, &[NO_WINDOW], 1),
-            label("wr_app_id_label", MATCH_Y + 46, "App &ID:"),
+            label(
+                "wr_windows_label",
+                MATCH_Y + 20,
+                &tr!("ruledlg-from-a-window"),
+            ),
+            Item::combo(WINDOWS, FIELD_X, MATCH_Y + 20, FIELD_W, &[&no_window()], 1),
+            label("wr_app_id_label", MATCH_Y + 46, &tr!("ruledlg-app-id")),
             edit(APP_ID, MATCH_Y + 46, &Some(r.app_id.clone())),
-            label("wr_title_label", MATCH_Y + 72, "&Title:"),
+            label("wr_title_label", MATCH_Y + 72, &tr!("ruledlg-title")),
             edit(TITLE, MATCH_Y + 72, &r.title),
             Item::new(
                 "wr_glob_note",
                 Rect::new(GX, MATCH_Y + 98, W - 2 * GX, 2 * LINE_H),
                 Control::Lines(vec![
-                    "The title matches whole, once, as the window opens;".into(),
-                    "* stands for any text, ? for one character.".into(),
+                    tr!("ruledlg-the-title-matches-whole-once-as"),
+                    tr!("ruledlg-wildcards"),
                 ]),
             ),
             Item::group(
                 "wr_sets",
                 Rect::new(MARGIN, SETS_Y, W - 2 * MARGIN, SETS_H),
-                "Open It",
+                &tr!("ruledlg-open-it"),
             ),
-            tick(SIZE, row(0), "&Size:", r.size.is_some()),
+            tick(SIZE, row(0), &tr!("ruledlg-size"), r.size.is_some()),
             spin(WIDTH, FIELD_X, row(0), w, size),
             unit("wr_wide", FIELD_X, row(0), "wide"),
             spin(HEIGHT, SECOND_X, row(0), h, size),
             unit("wr_high", SECOND_X, row(0), "high"),
-            tick(POSITION, row(1), "&Position:", r.position.is_some()),
+            tick(
+                POSITION,
+                row(1),
+                &tr!("ruledlg-position"),
+                r.position.is_some(),
+            ),
             spin(LEFT, FIELD_X, row(1), x, place),
-            unit("wr_from_left", FIELD_X, row(1), "from left"),
+            unit("wr_from_left", FIELD_X, row(1), &tr!("ruledlg-from-left")),
             spin(TOP, SECOND_X, row(1), y, place),
-            unit("wr_from_top", SECOND_X, row(1), "from top"),
-            tick(OUTPUT, row(2), "Scr&een:", r.output.is_some()),
+            unit("wr_from_top", SECOND_X, row(1), &tr!("ruledlg-from-top")),
+            tick(OUTPUT, row(2), &tr!("ruledlg-screen"), r.output.is_some()),
             Item::combo(
                 OUTPUT_NAME,
                 FIELD_X,
@@ -194,9 +206,14 @@ impl RuleDialog {
                 &screens,
                 screens.len().clamp(1, 8),
             ),
-            label("wr_state_label", row(3), "St&ate:"),
+            label("wr_state_label", row(3), &tr!("ruledlg-state")),
             Item::combo(STATE, FIELD_X, row(3), FIELD_W, &states, states.len()),
-            tick(DESKTOP, row(4), "&Desktop:", r.desktop.is_some()),
+            tick(
+                DESKTOP,
+                row(4),
+                &tr!("ruledlg-desktop"),
+                r.desktop.is_some(),
+            ),
             spin(
                 DESKTOP_N,
                 FIELD_X,
@@ -204,11 +221,11 @@ impl RuleDialog {
                 r.desktop.unwrap_or(1),
                 (1, DESKTOPS_MAX as i32),
             ),
-            Item::check(ON_TOP, GX, row(5) + 3, "Always on t&op")
+            Item::check(ON_TOP, GX, row(5) + 3, &tr!("ruledlg-always-on-top"))
                 .checked(r.always_on_top == Some(true)),
-            Item::check(STICKY, GX, row(6) + 3, "On every des&ktop")
+            Item::check(STICKY, GX, row(6) + 3, &tr!("ruledlg-on-every-desktop"))
                 .checked(r.sticky == Some(true)),
-            label("wr_tab_group_label", row(7), "Tab &group:"),
+            label("wr_tab_group_label", row(7), &tr!("ruledlg-tab-group")),
             edit(TAB_GROUP, row(7), &r.tab_group),
         ];
         let cancel_x = W - MARGIN - BUTTON_W;
@@ -220,14 +237,14 @@ impl RuleDialog {
                 BUTTON_W,
                 BUTTON_H,
             ),
-            "OK",
+            &tr!("ruledlg-ok"),
             true,
             true,
         ));
         items.push(Item::button(
             CANCEL,
             Rect::new(cancel_x, BUTTON_Y, BUTTON_W, BUTTON_H),
-            "Cancel",
+            &tr!("ruledlg-cancel"),
             true,
             false,
         ));
@@ -257,7 +274,7 @@ impl RuleDialog {
                 ids.push(id);
             }
         }
-        let rows: Vec<String> = std::iter::once(NO_WINDOW.to_string())
+        let rows: Vec<String> = std::iter::once(no_window())
             .chain(ids.iter().cloned())
             .collect();
         self.form.set_combo_rows(WINDOWS, &rows, 0, 10);
@@ -596,7 +613,7 @@ mod tests {
             panic!("the combo is there");
         };
         let rows: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
-        assert_eq!(rows, [NO_WINDOW, "foot", "reprise.notepad"]);
+        assert_eq!(rows, [no_window().as_str(), "foot", "reprise.notepad"]);
         d.form.set_combo(WINDOWS, 2);
         assert_eq!(d.event(form::Event::Changed(WINDOWS)), Outcome::Redraw);
         assert_eq!(d.form.edit_text(APP_ID), "reprise.notepad");

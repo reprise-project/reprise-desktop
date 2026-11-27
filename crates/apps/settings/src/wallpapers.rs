@@ -6,22 +6,28 @@ use std::path::{Path, PathBuf};
 use reprisefs::pictures::natural_cmp;
 
 use crate::backgroundpage::label;
+use reprisekit::tr;
 
 pub use reprisefs::pictures::is_picture;
 
-pub const FILTER: &str = "Background Files (*.bmp;*.jpg;*.jpeg;*.dib;*.png;*.jxl;*.avif)";
+pub fn filter() -> String {
+    tr!("wallpapers-background-files-bmp-jpg-jpeg-dib")
+}
 const DEPTH: usize = 3;
 
 pub fn refusal(path: &Path) -> Option<String> {
     (!is_picture(path)).then(|| {
         let name = path.file_name().unwrap_or(path.as_os_str());
-        format!("'{}' is not a picture.", name.to_string_lossy())
+        tr!(
+            "wallpapers-not-a-picture",
+            name = name.to_string_lossy().to_string()
+        )
     })
 }
 
 pub fn dirs() -> Vec<PathBuf> {
     dirs_for(
-        reprisefs::places::user_dir("PICTURES", "Pictures"),
+        reprisefs::places::user_dir("PICTURES", &tr!("wallpapers-pictures")),
         std::env::var_os("HOME").map(PathBuf::from),
     )
 }
@@ -112,7 +118,7 @@ pub fn place(list: &mut Vec<PathBuf>, p: &Path) {
 }
 
 pub fn start_dir() -> PathBuf {
-    reprisefs::places::user_dir("PICTURES", "Pictures")
+    reprisefs::places::user_dir("PICTURES", &tr!("wallpapers-pictures"))
         .filter(|p| p.is_dir())
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("/"))
@@ -313,7 +319,7 @@ mod tests {
     fn the_browse_filter_lists_every_picture_extension() {
         for e in reprisefs::pictures::EXTS {
             assert!(
-                FILTER.contains(&format!("*.{e};")) || FILTER.contains(&format!("*.{e})")),
+                filter().contains(&format!("*.{e};")) || filter().contains(&format!("*.{e})")),
                 "{e}"
             );
         }

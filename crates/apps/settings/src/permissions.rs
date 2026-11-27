@@ -3,6 +3,7 @@
 use crate::registry::Page;
 use crate::{SettingsApp, pages, registry, take};
 use repriseapp::Reply;
+use reprisekit::tr;
 use std::sync::mpsc::Receiver;
 
 /// A permission the list shows, kept by its portal in the permission store table of
@@ -42,15 +43,15 @@ impl Kind {
         }
     }
 
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> String {
         match self {
-            Kind::Location => "Location",
-            Kind::Background => "Run in background",
-            Kind::Screenshot => "Screenshots",
-            Kind::Wallpaper => "Change desktop background",
-            Kind::InputCapture => "Capture keyboard and mouse",
-            Kind::ScreenCast => "Share the screen",
-            Kind::RemoteDesktop => "Remote control",
+            Kind::Location => tr!("permissions-location"),
+            Kind::Background => tr!("permissions-run-in-background"),
+            Kind::Screenshot => tr!("permissions-screenshots"),
+            Kind::Wallpaper => tr!("permissions-change-desktop-background"),
+            Kind::InputCapture => tr!("permissions-capture-keyboard-and-mouse"),
+            Kind::ScreenCast => tr!("permissions-share-the-screen"),
+            Kind::RemoteDesktop => tr!("permissions-remote-control"),
         }
     }
 
@@ -234,7 +235,7 @@ thread_local! {
 #[derive(Debug, Default)]
 pub(crate) struct PermissionList {
     pub(crate) answers: Vec<PermissionAnswer>,
-    pub(crate) rows: Vec<(String, &'static str, bool)>,
+    pub(crate) rows: Vec<(String, String, bool)>,
     pub(crate) icons: Vec<Option<String>>,
 }
 
@@ -243,7 +244,7 @@ pub(crate) struct PermissionList {
 pub(crate) fn program_name(app: &str, entry: Option<&str>) -> String {
     match entry {
         Some(name) => name.into(),
-        None if app.is_empty() => "Unidentified programs".into(),
+        None if app.is_empty() => tr!("permissions-unidentified-programs"),
         None => app.into(),
     }
 }
@@ -377,7 +378,7 @@ impl SettingsApp {
             }
             Err(e) => {
                 log::warn!("forget the {} answer for {}: {e}", a.kind.table(), a.app);
-                self.fail("The answer could not be forgotten.");
+                self.fail(&tr!("permissions-the-answer-could-not-be-forgotten"));
                 self.permissions_due = true;
                 self.ensure_permissions();
             }

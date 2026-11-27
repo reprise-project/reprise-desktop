@@ -5,6 +5,7 @@ use crate::registry::Page;
 use crate::{SettingsApp, loginhost, pages, registry, take};
 use reprisebus::remote::{self, Status};
 use reprisekit::controls::form::Form;
+use reprisekit::tr;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
@@ -82,13 +83,16 @@ fn address() -> Option<String> {
 fn act(act: Act) -> Reading {
     let failed = match act {
         Act::Allow(on) => remote::set_enabled(on).err().map(|why| {
-            let to = if on { "turned on" } else { "turned off" };
-            format!("Remote Desktop could not be {to}.\n\n{why}")
+            if on {
+                tr!("remotehost-failed-on", why = why.to_string())
+            } else {
+                tr!("remotehost-failed-off", why = why.to_string())
+            }
         }),
         Act::Disconnect(address) => (remote::disconnect_client(&address).err())
-            .map(|why| format!("The remote computer could not be disconnected.\n\n{why}")),
+            .map(|why| tr!("remotehost-disconnect-failed", why = why.to_string())),
         Act::NewCertificate => (remote::regenerate().err())
-            .map(|why| format!("A new certificate could not be made.\n\n{why}")),
+            .map(|why| tr!("remotehost-certificate-failed", why = why.to_string())),
     };
     let started = Instant::now();
     let mut remote = read();

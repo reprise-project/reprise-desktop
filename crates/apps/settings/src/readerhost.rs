@@ -4,6 +4,7 @@
 use crate::registry::{self, Page};
 use crate::{SettingsApp, autostart, magnifierpage, take};
 use reprisefs::screenreader;
+use reprisekit::tr;
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_secs(2);
@@ -33,7 +34,7 @@ fn switch(on: bool) -> Reading {
         let argv = [screenreader::PROGRAM.into()];
         repriseapp::spawn_in(&argv, None, Some(&screenreader::APP))
             .err()
-            .map(|e| format!("The screen reader could not be started.\n\n{e}"))
+            .map(|e| tr!("readerhost-not-started", why = e.to_string()))
     } else {
         screenreader::stop(&screenreader::running());
         None
@@ -115,7 +116,7 @@ impl SettingsApp {
             autostart::set_reader_at_logon(&dir, &self.entries, on, &self.desktops, &config_dirs);
         if let Err(e) = set {
             log::warn!("screen reader autostart: {e}");
-            self.fail("The autostart entry could not be written.");
+            self.fail(&tr!("readerhost-the-autostart-entry-could-not-be"));
         }
         self.rescan();
         self.show_reader();

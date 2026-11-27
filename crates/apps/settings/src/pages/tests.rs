@@ -773,13 +773,17 @@ fn render_the_pages() {
     fill_permissions(
         &mut places,
         &[
-            ("Maps".into(), "Location", true),
+            ("Maps".into(), "Location".into(), true),
             (
                 "org.example.Talk".into(),
-                "Capture keyboard and mouse",
+                "Capture keyboard and mouse".into(),
                 true,
             ),
-            ("org.example.Weather".into(), "Run in background", false),
+            (
+                "org.example.Weather".into(),
+                "Run in background".into(),
+                false,
+            ),
         ],
     );
     let keyboard = crate::model::load(

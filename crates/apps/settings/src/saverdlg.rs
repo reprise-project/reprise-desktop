@@ -7,6 +7,7 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::Settings;
+use reprisekit::tr;
 
 const W: i32 = 300;
 const MARGIN: i32 = 12;
@@ -39,7 +40,7 @@ impl SaverDialog {
         let o = crate::saverpage::options(s);
         let mut items = Vec::new();
         let mut y = MARGIN + 4;
-        let label = |id, y, text| Item::label_at(id, MARGIN, y, FIELD_X - MARGIN - 4, text);
+        let label = |id, y, text: &str| Item::label_at(id, MARGIN, y, FIELD_X - MARGIN - 4, text);
         let spin = |id, y: i32, value: u32, (lo, hi): (u32, u32)| {
             Item::new(
                 id,
@@ -48,35 +49,54 @@ impl SaverDialog {
             )
         };
         if kind != Kind::Photos {
-            items.push(label("speed_label", y, "Spee&d:"));
-            items.push(Item::label_at("slow", FIELD_X, y, 26, "Slow"));
+            items.push(label("speed_label", y, &tr!("saverdlg-speed")));
+            items.push(Item::label_at(
+                "slow",
+                FIELD_X,
+                y,
+                26,
+                &tr!("saverdlg-slow"),
+            ));
             let steps = (Options::SPEED.1 - Options::SPEED.0 + 1) as usize;
             items.push(Item::new(
                 SPEED,
                 Rect::new(FIELD_X + 28, y - 6, 110, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new((o.speed - Options::SPEED.0) as usize, steps)),
             ));
-            items.push(Item::label_at("fast", FIELD_X + 142, y, 26, "Fast"));
+            items.push(Item::label_at(
+                "fast",
+                FIELD_X + 142,
+                y,
+                26,
+                &tr!("saverdlg-fast"),
+            ));
             y += 36;
         }
         match kind {
             Kind::Starfield => {
-                items.push(label("count_label", y, "&Stars:"));
+                items.push(label("count_label", y, &tr!("saverdlg-stars")));
                 items.push(spin(COUNT, y, o.stars, Options::STARS));
                 y += 28;
             }
             Kind::Mystify => {
-                items.push(label("count_label", y, "S&hapes:"));
+                items.push(label("count_label", y, &tr!("saverdlg-shapes")));
                 items.push(spin(COUNT, y, o.shapes, Options::SHAPES));
                 y += 28;
-                items
-                    .push(Item::check(CYCLE, MARGIN, y, "&Change colours").checked(o.cycle_colors));
+                items.push(
+                    Item::check(CYCLE, MARGIN, y, &tr!("saverdlg-change-colours"))
+                        .checked(o.cycle_colors),
+                );
                 y += 24;
             }
             Kind::Logo => {
                 items.push(
-                    Item::check(CYCLE, MARGIN, y, "&Change colour at each bounce")
-                        .checked(o.cycle_colors),
+                    Item::check(
+                        CYCLE,
+                        MARGIN,
+                        y,
+                        &tr!("saverdlg-change-colour-at-each-bounce"),
+                    )
+                    .checked(o.cycle_colors),
                 );
                 y += 24;
             }
@@ -86,7 +106,7 @@ impl SaverDialog {
                     MARGIN,
                     y,
                     W - 2 * MARGIN,
-                    "&Folder (empty for Pictures):",
+                    &tr!("saverdlg-folder-empty-for-pictures"),
                 ));
                 items.push(Item::new(
                     FOLDER,
@@ -98,7 +118,7 @@ impl SaverDialog {
                     },
                 ));
                 y += 50;
-                items.push(label("seconds_label", y, "&Show each for:"));
+                items.push(label("seconds_label", y, &tr!("saverdlg-show-each-for")));
                 items.push(spin(SECONDS, y, o.photo_seconds, Options::PHOTO_SECONDS));
                 items.push(Item::label_at(
                     "seconds_units",
@@ -117,14 +137,14 @@ impl SaverDialog {
         items.push(Item::button(
             OK,
             Rect::new(cancel_x - BUTTON_GAP - BUTTON_W, by, BUTTON_W, BUTTON_H),
-            "OK",
+            &tr!("saverdlg-ok"),
             true,
             true,
         ));
         items.push(Item::button(
             CANCEL,
             Rect::new(cancel_x, by, BUTTON_W, BUTTON_H),
-            "Cancel",
+            &tr!("saverdlg-cancel"),
             true,
             false,
         ));
@@ -139,7 +159,7 @@ impl SaverDialog {
     }
 
     pub fn title(&self) -> String {
-        format!("{} Settings", self.kind.label())
+        tr!("saverdlg-title", kind = self.kind.label())
     }
 
     pub fn event(&mut self, ev: form::Event) -> Outcome {

@@ -8,6 +8,7 @@ use reprisekit::raster::Rect;
 use repriseconf::keybind::NONE;
 
 use crate::model::{ACTIONS, Shortcut, action_text, check_keys, check_program_keys, default_chord};
+use reprisekit::tr;
 
 pub const CLIENT: (i32, i32) = (330, 160);
 
@@ -25,10 +26,12 @@ pub const CLEAR: &str = "clear";
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
 
-const HINT: [&str; 2] = [
-    "Press the keys in the field, as in Super+Shift+B.",
-    "Backspace or Clear empties it.",
-];
+fn hint() -> [String; 2] {
+    [
+        tr!("shortcutdlg-press-the-keys-in-the-field"),
+        tr!("shortcutdlg-backspace-or-clear-empties-it"),
+    ]
+}
 
 /// The action list's ids: the compositor's actions, then "none", which
 /// unbinds a default's chord. The combo shows each by [`action_text`].
@@ -46,7 +49,7 @@ pub enum Outcome {
 
 pub struct ShortcutDialog {
     pub form: Form,
-    pub title: &'static str,
+    pub title: String,
     others: Vec<Shortcut>,
     program: bool,
 }
@@ -54,21 +57,30 @@ pub struct ShortcutDialog {
 impl ShortcutDialog {
     pub fn new(sc: Option<&Shortcut>, others: Vec<Shortcut>) -> ShortcutDialog {
         let (title, sc) = match sc {
-            Some(sc) => ("Edit Shortcut", sc.clone()),
-            None => ("Add Shortcut", Shortcut::new("", "terminal", "")),
+            Some(sc) => (tr!("shortcutdlg-edit-shortcut"), sc.clone()),
+            None => (
+                tr!("shortcutdlg-add-shortcut"),
+                Shortcut::new("", "terminal", ""),
+            ),
         };
         let selected = (choices().iter())
             .position(|a| *a == sc.action)
             .unwrap_or(1);
         let mut items = vec![
-            ROWS.label("keys_l", ROW_Y[0], "&Keys:"),
+            ROWS.label("keys_l", ROW_Y[0], &tr!("shortcutdlg-keys")),
             Item::new(
                 KEYS,
                 Rect::new(ROWS.field_x(), ROW_Y[0], KEYS_W, EDIT_H),
                 Control::HotKey(HotKey::from_keys(&sc.keys)),
             ),
-            Rows::button(CLEAR, CLEAR_X, ROW_Y[0] - 2, "C&lear", false),
-            ROWS.label("action_l", ROW_Y[1], "&Action:"),
+            Rows::button(
+                CLEAR,
+                CLEAR_X,
+                ROW_Y[0] - 2,
+                &tr!("shortcutdlg-clear"),
+                false,
+            ),
+            ROWS.label("action_l", ROW_Y[1], &tr!("shortcutdlg-action")),
             Item::new(
                 "action",
                 ROWS.field(ROW_Y[1], COMBO_H),
@@ -80,12 +92,12 @@ impl ShortcutDialog {
                     8,
                 )),
             ),
-            ROWS.label("command_l", ROW_Y[2], "&Command:"),
+            ROWS.label("command_l", ROW_Y[2], &tr!("shortcutdlg-command")),
             ROWS.edit("command", ROW_Y[2], &sc.command, sc.action == "spawn"),
             Item::new(
                 "note",
                 Rect::new(MARGIN, NOTE_Y, ROWS.inner_w(), 2 * 13),
-                Control::Lines(HINT.map(String::from).to_vec()),
+                Control::Lines(hint().to_vec()),
             ),
         ];
         items.extend(ROWS.ok_cancel(OK, CANCEL));
@@ -102,7 +114,7 @@ impl ShortcutDialog {
     pub fn for_program(keys: &str, others: Vec<Shortcut>) -> ShortcutDialog {
         let mut d = ShortcutDialog::new(Some(&Shortcut::new(keys, "", "")), others);
         d.program = true;
-        d.title = "Change Shortcut";
+        d.title = tr!("shortcutdlg-change-shortcut");
         if let Some(i) = d.form.item_mut("action") {
             i.control = Control::Combo(Combo::new(&[""], 0, 1));
         }
@@ -189,8 +201,8 @@ impl ShortcutDialog {
             // The name gets the second line: the longest default chord and name do not fit on one.
             let what = action_text(&o.action, Some(&o.command));
             return [
-                format!("{shown} is already used for"),
-                format!("\"{what}\". Press other keys."),
+                tr!("shortcutdlg-already-used", shown = shown.to_string()),
+                tr!("shortcutdlg-already-used-press", what = what.to_string()),
             ];
         }
         let keys = self.value().keys;
@@ -202,13 +214,13 @@ impl ShortcutDialog {
         match checked {
             Err(why) if !keys.is_empty() => [why, String::new()],
             Ok(()) if !self.program && self.action() == NONE && !default_chord(&keys) => [
-                format!(
-                    "Only a default shortcut can be set to \"{}\".",
-                    action_text(NONE, None)
+                tr!(
+                    "shortcutdlg-only-default",
+                    what = action_text(NONE, None).to_string()
                 ),
-                "Remove a shortcut you added instead.".into(),
+                tr!("shortcutdlg-remove-a-shortcut-you-added-instead"),
             ],
-            _ => HINT.map(String::from),
+            _ => hint(),
         }
     }
 
@@ -398,7 +410,7 @@ mod tests {
         chord(&mut d, &[(SUPER_L, "Super_L"), (0x77, "w")]);
         assert!(d.conflict().is_none());
         assert!(enabled(&d, OK));
-        assert_eq!(note(&d), HINT);
+        assert_eq!(note(&d), hint());
     }
 
     #[test]
@@ -472,7 +484,7 @@ mod tests {
         );
         pick(&mut d, "lock");
         assert!(enabled(&d, OK));
-        assert_eq!(note(&d), HINT);
+        assert_eq!(note(&d), hint());
     }
 
     #[test]
