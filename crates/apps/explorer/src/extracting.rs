@@ -33,6 +33,19 @@ pub(crate) struct Extracting {
     pub scratch: Option<Scratch>,
 }
 
+/// The copies a compressed folder's Copy put on the clipboard. Replacing them lets go of them;
+/// dropping them with the window hands them over ([`Scratch::hand_over`]).
+#[derive(Default)]
+pub(crate) struct ClipCopies(pub Option<Scratch>);
+
+impl Drop for ClipCopies {
+    fn drop(&mut self) {
+        if let Some(clip) = self.0.take() {
+            clip.hand_over();
+        }
+    }
+}
+
 /// Entries picked in a compressed folder: the archive, its listing when picked, and the entries'
 /// paths in it.
 pub(crate) struct Picks {
@@ -362,7 +375,7 @@ impl Explorer {
                 _ if !out => Reply::none(),
                 Then::Clipboard => {
                     let reply = self.clipboard_paths(false, landed, ctx);
-                    self.clip_scratch = ex.scratch;
+                    self.clip_scratch.0 = ex.scratch;
                     reply
                 }
                 // The put holds the copies until it has read them.

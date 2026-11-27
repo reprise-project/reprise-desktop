@@ -231,7 +231,7 @@ impl Explorer {
 
     pub fn clipboard_paths(&mut self, cut: bool, paths: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
         // The copies a compressed folder's Copy put on the clipboard are let go with it.
-        self.clip_scratch = None;
+        self.clip_scratch.0 = None;
         self.refresh_chrome(ctx);
         Reply {
             redraw: true,

@@ -309,13 +309,15 @@ struct StagedShared {
 
 #[derive(Default)]
 struct StagedState {
-    /// The pipes of the requests waiting, each with the bytes it is sent.
-    waiting: Vec<(std::os::fd::OwnedFd, Arc<[u8]>)>,
+    /// The pipes of the requests waiting, each with the bytes it is sent and whether it asked
+    /// for a file list.
+    waiting: Vec<(std::os::fd::OwnedFd, Arc<[u8]>, bool)>,
     out: Option<bool>,
     ended: Option<bool>,
 }
 
-/// The most requests one staged drag holds a pipe for; more are closed empty.
+/// The most requests for a file list, and the most for anything else, one staged drag holds a
+/// pipe for; more are closed empty.
 const MAX_WAITING: usize = 16;
 
 impl Staged {
@@ -339,19 +341,21 @@ impl Staged {
             s.out = Some(ok);
             std::mem::take(&mut s.waiting)
         };
-        for (fd, bytes) in waiting.into_iter().filter(|_| ok) {
+        for (fd, bytes, _) in waiting.into_iter().filter(|_| ok) {
             reprisefs::pipe::write_detached(fd, bytes);
         }
     }
 
-    /// A target asks for `bytes` on `fd`, sent once the files are out: the host's part.
-    pub fn send(&self, fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>) {
+    /// A target asks for `bytes` on `fd`, sent once the files are out: the host's part. `files`
+    /// when it asked for a file list, so text asked for alongside cannot crowd it out.
+    pub fn send(&self, fd: std::os::fd::OwnedFd, bytes: Arc<[u8]>, files: bool) {
         let mut s = self.state();
+        let same = s.waiting.iter().filter(|w| w.2 == files).count();
         match s.out {
             Some(true) => reprisefs::pipe::write_detached(fd, bytes),
             Some(false) => {}
-            None if s.ended == Some(false) || s.waiting.len() >= MAX_WAITING => {}
-            None => s.waiting.push((fd, bytes)),
+            None if s.ended == Some(false) || same >= MAX_WAITING => {}
+            None => s.waiting.push((fd, bytes, files)),
         }
     }
 
@@ -675,14 +679,14 @@ mod tests {
             w.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         });
         let (before, fd) = pipe();
-        staged.send(fd, Arc::from(&b"file:///a"[..]));
+        staged.send(fd, Arc::from(&b"file:///a"[..]), true);
         let (again, fd) = pipe();
-        staged.send(fd, Arc::from(&b"file:///a"[..]));
+        staged.send(fd, Arc::from(&b"file:///a"[..]), true);
         staged.done(true);
         assert_eq!(read(before), b"file:///a", "a read before the drop waits");
         assert_eq!(read(again), b"file:///a", "and so does a second");
         let (after, fd) = pipe();
-        staged.send(fd, Arc::from(&b"file:///a"[..]));
+        staged.send(fd, Arc::from(&b"file:///a"[..]), true);
         assert_eq!(
             read(after),
             b"file:///a",
@@ -696,13 +700,33 @@ mod tests {
 
         let failed = Staged::new(|| {});
         let (empty, fd) = pipe();
-        failed.send(fd, Arc::from(&b"file:///a"[..]));
+        failed.send(fd, Arc::from(&b"file:///a"[..]), true);
         failed.done(false);
         assert!(read(empty).is_empty(), "a copy that failed sends nothing");
 
+        let busy = Staged::new(|| {});
+        let mut texts = Vec::new();
+        for _ in 0..MAX_WAITING + 1 {
+            let (r, fd) = pipe();
+            busy.send(fd, Arc::from(&b"/a"[..]), false);
+            texts.push(r);
+        }
+        let (list, fd) = pipe();
+        busy.send(fd, Arc::from(&b"file:///a"[..]), true);
+        busy.done(true);
+        assert_eq!(
+            read(list),
+            b"file:///a",
+            "text asked for crowds out no file list"
+        );
+        assert!(
+            read(texts.pop().unwrap()).is_empty(),
+            "past the most, text is refused"
+        );
+
         let untaken = Staged::new(|| {});
         let (closed, fd) = pipe();
-        untaken.send(fd, Arc::from(&b"file:///a"[..]));
+        untaken.send(fd, Arc::from(&b"file:///a"[..]), true);
         untaken.end(false);
         assert!(
             read(closed).is_empty(),
