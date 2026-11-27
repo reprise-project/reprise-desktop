@@ -19,6 +19,7 @@ use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameHit}
 use reprisekit::icon::IconSource;
 use reprisescene::{BufferId, RectId, SurfaceId, TreeId};
 use smithay::{
+    backend::renderer::element::solid::SolidColorBuffer,
     desktop::utils::bbox_from_surface_tree,
     reexports::wayland_server::{Client, Resource, protocol::wl_surface::WlSurface},
     utils::{Logical, Rectangle, Serial},
@@ -132,6 +133,13 @@ pub enum Kind {
     X11(Box<X11Surface>),
 }
 
+/// The frame's glass under one of a client's `blur` rects, and the solid it lies over in a
+/// picture of the client (`livepreview`), where no backdrop shows through it.
+pub struct ClientGlass {
+    pub buffer: BufferId,
+    pub backing: SolidColorBuffer,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Handle {
     Wl(WlSurface),
@@ -171,7 +179,7 @@ pub struct Window {
     pub blur: Vec<Rect>,
     blur_ops: crate::clientglass::BlurOps,
     /// The frame's glass under each `blur` rect while Glass draws it.
-    client_glass: Vec<BufferId>,
+    client_glass: Vec<ClientGlass>,
     /// `draw_sheet` drew the window as a sheet and `unsheet` has not put
     /// its frame's nodes back yet.
     pub sheeted: bool,
@@ -537,6 +545,10 @@ impl Window {
 
     pub fn is_resizable(&self) -> bool {
         self.size_limits().resizable()
+    }
+
+    pub fn client_glass(&self) -> &[ClientGlass] {
+        &self.client_glass
     }
 
     pub fn has_frame(&self) -> bool {

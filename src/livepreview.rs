@@ -5,7 +5,9 @@
 //! window's `content` subtree is rendered into at thumbnail size, or a
 //! cell of a texture shared by thumbs made together ([`State::thumbs_create`]),
 //! drawn in one render: the
-//! client surface and its popups without the frame, drawn even while the
+//! client surface and its popups without the frame (but for the frame's
+//! glass under the client's blur region, laid on the colour that glass has
+//! with transparency off), drawn even while the
 //! window is covered, minimized or on another desktop (the subtree's own
 //! and its ancestors' enabled flags are ignored). A scene buffer in the
 //! host's tree shows the texture, which later renders update in place: no
@@ -34,11 +36,15 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use reprisekit::controls::taskpreview::fit;
-use reprisescene::{BufferId, TreeId, View};
+use reprisescene::{BufferId, SceneElement, TreeId, View};
 use smithay::{
     backend::renderer::{
         Renderer,
-        element::{Element, Id, Kind, RenderElement, UnderlyingStorage, utils::CropRenderElement},
+        element::{
+            Element, Id, Kind, RenderElement, UnderlyingStorage,
+            solid::{SolidColorBuffer, SolidColorRenderElement},
+            utils::CropRenderElement,
+        },
         gles::{GlesRenderer, GlesTexture, ffi},
         utils::{CommitCounter, DamageSet, OpaqueRegions, with_renderer_surface_state},
     },
@@ -151,6 +157,8 @@ enum Show {
 struct Shot {
     tree: TreeId,
     rect: Rect,
+    /// A client's frame glass ([`crate::window::ClientGlass`]), drawn under it over its backing.
+    glass: Vec<(BufferId, SolidColorBuffer)>,
     surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
 }
 
@@ -434,15 +442,21 @@ impl State {
             .filter(|(_, t)| picked(t) || t.sheet.is_some_and(|s| sheets.contains(&s)))
             .filter_map(|(i, t)| {
                 let x = self.win(t.window)?;
-                let (tree, rect) = match t.show {
-                    Show::Well { .. } => (x.content, Rect::new(0, 0, x.client_w, x.client_h)),
-                    Show::Whole { .. } => (x.tree, x.frame_rect()),
+                let (tree, rect, glass) = match t.show {
+                    Show::Well { .. } => {
+                        let glass = (x.client_glass().iter())
+                            .map(|g| (g.buffer, g.backing.clone()))
+                            .collect();
+                        (x.content, Rect::new(0, 0, x.client_w, x.client_h), glass)
+                    }
+                    Show::Whole { .. } => (x.tree, x.frame_rect(), Vec::new()),
                 };
                 Some((
                     i,
                     Shot {
                         tree,
                         rect,
+                        glass,
                         surface: x.wl_surface().clone(),
                     },
                 ))
@@ -608,7 +622,7 @@ fn draw(
         Show::Whole { .. } => (shot.rect.x, shot.rect.y).into(),
     };
     let view = View::new(Rectangle::new(origin, (cw, ch).into()), scale);
-    let elements = scene.render_elements_of(renderer, shot.tree, &view);
+    let elements = shot_elements(renderer, scene, shot, &view);
     let damage = match target.render(renderer, &elements) {
         Ok(d) => d,
         Err(e) => {
@@ -645,6 +659,33 @@ fn draw(
         }
         Show::Well { .. } => false,
     }
+}
+
+/// What `view` shows of `shot`, front to back: its tree, then a client's frame glass over that
+/// glass's backing, so the band reads as the frame does with no backdrop behind it.
+fn shot_elements(
+    renderer: &mut GlesRenderer,
+    scene: &crate::compositor::DeskScene,
+    shot: &Shot,
+    view: &View,
+) -> Vec<SceneElement<GlesRenderer>> {
+    let mut out = scene.render_elements_of(renderer, shot.tree, view);
+    for (buffer, _) in &shot.glass {
+        out.extend(scene.render_elements_of(renderer, *buffer, view));
+    }
+    for (buffer, backing) in &shot.glass {
+        let Some((at, _)) = scene.coords(*buffer) else {
+            continue;
+        };
+        out.push(SceneElement::Solid(SolidColorRenderElement::from_buffer(
+            backing,
+            view.to_physical(at).to_i32_round(),
+            view.scale,
+            1.0,
+            Kind::Unspecified,
+        )));
+    }
+    out
 }
 
 /// A thumb's picture for the window's current size.
@@ -766,8 +807,7 @@ fn draw_page(
         let view = View::new(Rectangle::new(origin, (cw, ch).into()), f.scale);
         let crop = Rectangle::new(cell, f.size.into());
         elements.extend(
-            scene
-                .render_elements_of(renderer, shot.tree, &view)
+            shot_elements(renderer, scene, shot, &view)
                 .into_iter()
                 .filter_map(|e| {
                     let placed = Placed {
@@ -1070,6 +1110,57 @@ mod tests {
             own.pixels[0], own.pixels[35],
             "the picture is not one colour"
         );
+    }
+
+    /// The frame's glass under a 300x200 window's 30-row blur band, as a picture of the
+    /// client shows it at scale 1, the client's own pixels left out.
+    fn band_picture(r: &mut GlesRenderer, transparency: bool) -> crate::raster::Canvas {
+        let text = format!(
+            "[appearance]\ninterface = \"glass\"\n[glass]\ntransparency = {transparency}\n"
+        );
+        let config = crate::config::Config::parse(&text).unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let s = &mut h.state;
+        s.win_mut(t.id).unwrap().blur = vec![Rect::new(0, 0, 300, 30)];
+        s.redraw_frame(t.id);
+        let x = s.win(t.id).unwrap();
+        let glass: Vec<_> = (x.client_glass().iter())
+            .map(|g| (g.buffer, g.backing.clone()))
+            .collect();
+        assert_eq!(glass.len(), 1, "the frame's glass runs under the band");
+        let (origin, _) = s.scene.coords(x.content).unwrap();
+        let surface = x.wl_surface().clone();
+        let shot = Shot {
+            tree: s.scene.tree_create(s.scene.root()),
+            rect: Rect::new(0, 0, 300, 30),
+            glass,
+            surface,
+        };
+        let view = View::new(Rectangle::new(origin, (300, 30).into()), 1.0);
+        let elements = shot_elements(r, &s.scene, &shot, &view);
+        let mut target = Target::new(r, (300, 30).into(), 1.0).unwrap();
+        target.render(r, &elements).unwrap();
+        target.read(r).unwrap()
+    }
+
+    #[test]
+    fn a_pictures_glass_band_is_the_frames_glass_with_transparency_off() {
+        let Some(mut r) = reprisefx::headless::renderer()
+            .map_err(|e| reprisekit::pins::skipped(&e))
+            .ok()
+        else {
+            return;
+        };
+        let (on, off) = (band_picture(&mut r, true), band_picture(&mut r, false));
+        for (i, (&a, &b)) in on.pixels.iter().zip(&off.pixels).enumerate() {
+            let (x, y) = (i % 300, i / 300);
+            assert_eq!(a >> 24, 0xFF, "({x}, {y}) is opaque: {a:#010x}");
+            let near = (0..3).all(|k| ((a >> (8 * k)) & 0xFF).abs_diff((b >> (8 * k)) & 0xFF) <= 1);
+            assert!(near, "({x}, {y}): {a:#010x}, the opaque frame's {b:#010x}");
+        }
     }
 
     #[test]
