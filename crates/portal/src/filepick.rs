@@ -339,13 +339,7 @@ fn type_rows(input: &Input) -> Vec<String> {
 }
 
 /// The caller's `choices` as rows under Files of type, laid out for text at `px`, 100%.
-fn add_choices(
-    dlg: &mut FileDlg,
-    cs: &[choices::Choice],
-    text: &TextRenderer,
-    px: u32,
-    cm: &reprisekit::metrics::ControlMetrics,
-) {
+fn add_choices(dlg: &mut FileDlg, cs: &[choices::Choice], text: &TextRenderer, px: u32) {
     if cs.is_empty() {
         return;
     }
@@ -361,7 +355,6 @@ fn add_choices(
     dlg.set_extra(
         form::Form::new(items),
         bottom - filedlg::EXTRA_Y + EXTRA_PAD,
-        cm,
     );
 }
 
@@ -401,13 +394,7 @@ pub fn run_dialog() {
         host.alias(input.name.clone(), OsStr::from_bytes(raw).to_os_string());
     }
     dlg.set_filter(input.filter);
-    add_choices(
-        &mut dlg,
-        &input.choices,
-        &text,
-        px,
-        &repriseapp::start_theme().look.controls_at_100(),
-    );
+    add_choices(&mut dlg, &input.choices, &text, px);
     let out = Arc::new(Mutex::new(Output::default()));
     repriseapp::run(Box::new(Pick {
         input,
@@ -607,13 +594,7 @@ mod tests {
                 entries: Vec::new(),
             });
             dlg.set_file_name("Quarterly report for the northern region, second draft.png");
-            add_choices(
-                &mut dlg,
-                &cs,
-                text,
-                base.fonts.size_px,
-                &base.look.controls_at_100(),
-            );
+            add_choices(&mut dlg, &cs, text, base.fonts.size_px);
             dlg.set_text(theme.text);
             dlg.drawn_with(&theme.paint());
             dlg.overflows(text, theme.fonts.size_px)

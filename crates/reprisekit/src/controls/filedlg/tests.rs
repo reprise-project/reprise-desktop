@@ -126,7 +126,7 @@ fn with_extra() -> FileDlg {
             2,
         ),
     ]);
-    d.set_extra(form, EXTRA_H, &ControlMetrics::CLASSIC);
+    d.set_extra(form, EXTRA_H);
     d
 }
 

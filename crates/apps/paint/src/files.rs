@@ -101,11 +101,7 @@ impl Paint {
             multiple: false,
             filters: vec![tr!("filter-png"), tr!("filter-jpeg"), tr!("filter-bmp")],
         });
-        dlg.set_extra(
-            quality_row(self.quality),
-            QUALITY_ROW_H,
-            &self.forms.look.controls_at_100(),
-        );
+        dlg.set_extra(quality_row(self.quality), QUALITY_ROW_H);
         if let Some(stem) = (self.path.as_deref())
             .filter(|p| Kind::of(p).is_none())
             .and_then(Path::file_stem)

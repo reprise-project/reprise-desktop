@@ -82,11 +82,7 @@ impl Notepad {
             .into_iter()
             .chain(READ_AS.iter().map(|&(name, _)| name))
             .collect();
-        dlg.set_extra(
-            encoding_row(&names, 0),
-            ENCODING_ROW_H,
-            &self.forms.look.controls_at_100(),
-        );
+        dlg.set_extra(encoding_row(&names, 0), ENCODING_ROW_H);
         self.open = Some(dlg);
     }
 
@@ -110,7 +106,6 @@ impl Notepad {
         dlg.set_extra(
             encoding_row(&names, self.format.encoding_row()),
             ENCODING_ROW_H,
-            &self.forms.look.controls_at_100(),
         );
         self.saveas = Some(dlg);
     }
