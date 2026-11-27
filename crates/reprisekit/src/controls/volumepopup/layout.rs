@@ -88,13 +88,13 @@ fn column_h(vp: &VolumePopup, u: TextUnits) -> i32 {
 }
 
 /// A column's parts with its top-left at (`x`, `y`), its lengths grown by `u`. A program's output
-/// list opens above its combo, as wide as its widest row inside `inner`.
+/// list opens above its combo, as wide as its widest row inside `bounds`, the screen.
 pub(super) fn column_layout(
     col: &Column,
     cm: &ControlMetrics,
     u: TextUnits,
     (x, y, h): (i32, i32, i32),
-    inner: Rect,
+    bounds: Rect,
     text: &TextRenderer,
     px: u32,
 ) -> ColumnLayout {
@@ -119,7 +119,7 @@ pub(super) fn column_layout(
             l(COMBO_H),
         );
         let mut cl = combo::layout_rows(c, field, cm, cm.list_row);
-        combo::list_above(c, &mut cl, inner, text, px);
+        combo::list_above(c, &mut cl, bounds, text, px);
         cl
     });
     ColumnLayout {
@@ -224,7 +224,6 @@ pub fn layout(
     // The master column and the programs centre in a panel wider than they are.
     let cx = x + margin + (inner_w - strip_w) / 2;
     let px0 = cx + col_w + divider_w;
-    let inner = Rect::new(x + margin, y + margin, w - 2 * margin, h - 2 * margin);
     let columns = vp
         .columns
         .iter()
@@ -235,10 +234,15 @@ pub fn layout(
                 Some(a) => (a >= vp.first && a < vp.first + MAX_SHOWN)
                     .then(|| px0 + (a - vp.first) as i32 * (col_w + gap)),
             };
-            at.map(|ax| column_layout(c, &cm, u, (ax, cy, col_h), inner, text, px))
+            at.map(|ax| column_layout(c, &cm, u, (ax, cy, col_h), bounds, text, px))
         })
         .collect();
     let field = |fy: i32| Rect::new(fx, fy, field_w, combo_h);
+    let device = |c: &combo::Combo, fy: i32| {
+        let mut cl = combo::layout_rows(c, field(fy), &cm, cm.list_row);
+        combo::widen_within(c, &mut cl, bounds, text, px);
+        cl
+    };
     let foot = cy + col_h + bar_h;
     let lw = text.measure(&settings(), false, px);
     let ly = foot + strip_h + l(LINK_GAP);
@@ -246,9 +250,9 @@ pub fn layout(
     Layout {
         panel: Rect::new(x, y, w, h),
         output_label: row(oy),
-        output: combo::layout_rows(&vp.output, field(oy), &cm, cm.list_row),
+        output: device(&vp.output, oy),
         input_label: row(iy),
-        input: combo::layout_rows(&vp.input, field(iy), &cm, cm.list_row),
+        input: device(&vp.input, iy),
         separator: Rect::new(x + margin, sy, w - 2 * margin, SEP_H),
         divider: (shown > 0).then(|| Rect::new(cx + col_w + l(DIVIDER_GAP), cy, SEP_H, col_h)),
         columns,

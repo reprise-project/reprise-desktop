@@ -2179,7 +2179,40 @@ fn with_two_outputs_a_program_column_ends_in_its_output_combo() {
 }
 
 #[test]
-fn a_program_output_list_opens_above_its_combo_inside_the_panel() {
+fn a_device_list_runs_past_its_combo_as_wide_as_its_longest_name() {
+    let long =
+        "Integrated-High-Definition-Audio-Controller-Speaker-and-Headphones-on-the-Rear-Panel";
+    let mut m = mix(&[]);
+    m.outputs = vec!["Speakers".into(), long.into()];
+    let mut vp = VolumePopup::new(&m);
+    let l = lay(&vp);
+    let (x, y) = mid(l.output.drop);
+    assert_eq!(vp.press(&l, x, y), Event::Redraw);
+    vp.release();
+    let l = lay(&vp);
+    let theme = Theme::default();
+    let text = TextRenderer::load(&theme.fonts);
+    let dialog = text.dialog(crate::text::DialogFont::ShellDlg);
+    let need = 1 + 2 + dialog.measure(long, false, theme.fonts.size_px) + 3;
+    assert!(
+        l.output.field.width < need,
+        "the field ends the name in an ellipsis"
+    );
+    assert_eq!(l.output.list.width, need, "the list shows it whole");
+    assert!(
+        l.output.list.x >= 0 && l.output.list.right() <= 1920,
+        "inside the screen"
+    );
+    let row = l.output.list.y + 1 + l.output.row_h + 2;
+    assert_eq!(
+        vp.press(&l, l.output.list.right() - 4, row),
+        Event::Default(Dir::Output, 1),
+        "its far end picks the row"
+    );
+}
+
+#[test]
+fn a_program_output_list_opens_above_its_combo_inside_the_screen() {
     let mut m = mix(&[app("firefox", 16), app("mpv", 8)]);
     m.outputs = vec![
         "Speakers".into(),
@@ -2195,7 +2228,7 @@ fn a_program_output_list_opens_above_its_combo_inside_the_panel() {
     let ol = col(&l, 2).output.as_ref().unwrap();
     assert_eq!(ol.list.bottom(), ol.field.y);
     assert!(ol.list.width > ol.field.width, "widened to its rows");
-    assert!(ol.list.x >= l.panel.x && ol.list.right() <= l.panel.right());
+    assert!(ol.list.x >= 0 && ol.list.right() <= 1920);
     let row = ol.list.y + 1 + 2 * ol.row_h + 2;
     assert_eq!(
         vp.press(&l, ol.list.x + 10, row),
