@@ -292,6 +292,13 @@ fn copy_to_folder_out_of_a_compressed_folder_asks_before_replacing_as_a_copy_doe
     );
 }
 
+/// The scratch folder the copy out running fills.
+fn copying_into(ex: &Explorer) -> PathBuf {
+    let ex = ex.extracting.as_ref().expect("the copy runs");
+    let scratch = ex.scratch.as_ref().expect("a scratch folder");
+    scratch.path().to_path_buf()
+}
+
 #[test]
 fn a_cancelled_copy_out_of_a_compressed_folder_puts_nothing_on_the_clipboard() {
     let (_dir, zip) = pack();
@@ -299,46 +306,70 @@ fn a_cancelled_copy_out_of_a_compressed_folder_puts_nothing_on_the_clipboard() {
     let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
     ex.select_paths(&[zip.join("docs"), zip.join("top.txt")]);
     ex.run(Command::Copy, &mut ctx);
-    let ex_job = ex.extracting.as_ref().expect("the copy runs");
-    let scratch = ex_job.scratch.clone().expect("a scratch folder");
-    ex_job.job.meter().cancel();
+    let scratch = copying_into(&ex);
+    ex.extracting.as_ref().unwrap().job.meter().cancel();
     let got = finish_copies(&mut ex, &mut ctx);
     assert!(got.copy_files.is_none(), "nothing goes on the clipboard");
     wake_until(&mut ex, &mut ctx, |_| !scratch.exists());
 }
 
 #[test]
-fn a_second_copy_out_onto_the_clipboard_removes_the_first_ones_copies() {
+fn a_second_copy_out_onto_the_clipboard_lets_go_of_the_first_ones_copies() {
     let (_dir, zip) = pack();
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
     ex.select_paths(&[zip.join("top.txt")]);
     ex.run(Command::Copy, &mut ctx);
+    let first = copying_into(&ex);
     finish_copies(&mut ex, &mut ctx);
-    let first = ex.clip_scratch.clone().expect("the clipboard's copies");
     assert!(first.join("top.txt").exists());
     ex.run(Command::Copy, &mut ctx);
     finish_copies(&mut ex, &mut ctx);
-    assert_ne!(ex.clip_scratch.as_ref(), Some(&first));
-    wake_until(&mut ex, &mut ctx, |_| !first.exists());
+    assert!(!first.exists(), "nothing else held the first copies");
+    let second = ex.clip_scratch.as_ref().expect("the clipboard's copies");
+    assert!(second.path().join("top.txt").exists());
 }
 
 #[test]
-fn copy_to_folder_out_of_a_compressed_folder_removes_its_scratch_copies_once_put() {
+fn a_copy_onto_the_clipboard_during_a_paste_of_the_last_ones_leaves_the_paste_its_copies() {
     let (dir, zip) = pack();
     let to = dir.path().join("to");
     std::fs::create_dir(&to).expect("mkdir");
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
-    ex.copy_out(
-        (zip.clone(), vec![PathBuf::from("docs")]),
-        crate::extracting::Then::Into(to.clone()),
-        &mut ctx,
-    );
-    let scratch = (ex.extracting.as_ref())
-        .and_then(|e| e.scratch.clone())
-        .expect("a scratch folder");
+    ex.select_paths(&[zip.join("docs")]);
+    ex.run(Command::Copy, &mut ctx);
+    let first = copying_into(&ex);
+    let clip = finish_copies(&mut ex, &mut ctx)
+        .copy_files
+        .expect("the copies go on the clipboard");
+    ex.put_all(&clip.paths, &to, &|_| Some(DropOp::Copy), true, &mut ctx);
+    ex.select_paths(&[zip.join("top.txt")]);
+    ex.run(Command::Copy, &mut ctx);
     finish_copies(&mut ex, &mut ctx);
+    assert!(
+        first.join("docs/a.txt").exists(),
+        "the paste still holds what it reads"
+    );
+    wake_until(&mut ex, &mut ctx, |ex| ex.puts_idle() && !first.exists());
+    assert_eq!(
+        std::fs::read_to_string(to.join("docs/a.txt")).expect("pasted"),
+        "inside"
+    );
+}
+
+#[test]
+fn copy_to_folder_out_of_a_compressed_folder_lets_go_of_its_copies_once_put() {
+    let (dir, zip) = pack();
+    let to = dir.path().join("to");
+    std::fs::create_dir(&to).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    let picks = ex.archive_picks(&[zip.join("docs")]).expect("picked");
+    ex.copy_out(picks, crate::extracting::Then::Into(to.clone()), &mut ctx);
+    let scratch = copying_into(&ex);
+    finish_copies(&mut ex, &mut ctx);
+    assert!(scratch.exists(), "the put holds the copies");
     wake_until(&mut ex, &mut ctx, |_| {
         to.join("docs/a.txt").exists() && !scratch.exists()
     });
@@ -346,4 +377,18 @@ fn copy_to_folder_out_of_a_compressed_folder_removes_its_scratch_copies_once_put
         std::fs::read_to_string(to.join("docs/a.txt")).expect("put"),
         "inside"
     );
+}
+
+#[test]
+fn closing_explorer_lets_go_of_the_copies_on_its_clipboard() {
+    let (_dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    ex.select_paths(&[zip.join("top.txt")]);
+    ex.run(Command::Copy, &mut ctx);
+    let copies = copying_into(&ex);
+    finish_copies(&mut ex, &mut ctx);
+    assert!(copies.join("top.txt").exists());
+    drop(ex);
+    assert!(!copies.exists());
 }

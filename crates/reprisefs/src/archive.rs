@@ -611,30 +611,14 @@ pub fn is_copy(path: &Path) -> bool {
     scratch_base().is_some_and(|base| clean.starts_with(base))
 }
 
-/// A fresh name under the scratch folder, for a folder [`make_scratch`] makes later.
-pub fn scratch_name() -> Option<PathBuf> {
-    static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let nanos = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
-        .map_or(0, |d| d.as_nanos());
-    let name = format!("{}-{nanos:x}-{n}", std::process::id());
-    Some(scratch_base()?.join(name))
-}
-
-/// Makes the folder [`scratch_name`] gave, as [`scratch`] makes its own; refused when it is
-/// there already.
-pub fn make_scratch(dir: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    let base = dir
-        .parent()
-        .ok_or_else(|| std::io::Error::other(tr!("archive-no-cache")))?;
-    sweep_scratch(base, SCRATCH_KEEP_SECS)?;
-    std::fs::DirBuilder::new().mode(0o700).create(dir)
-}
-
 fn scratch_in(base: &Path, keep_secs: u64) -> std::io::Result<PathBuf> {
     sweep_scratch(base, keep_secs)?;
-    let mut template = base.join("XXXXXX").into_os_string().into_vec();
+    make_temp(base, "XXXXXX")
+}
+
+/// A fresh folder named after `template` (ending in `XXXXXX`) in the private folder `base`.
+fn make_temp(base: &Path, template: &str) -> std::io::Result<PathBuf> {
+    let mut template = base.join(template).into_os_string().into_vec();
     template.push(0);
     // SAFETY: `template` is a writable NUL-terminated buffer that mkdtemp fills in place.
     let made = unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) };
@@ -645,65 +629,180 @@ fn scratch_in(base: &Path, keep_secs: u64) -> std::io::Result<PathBuf> {
     Ok(PathBuf::from(OsString::from_vec(template)))
 }
 
-/// Makes the private scratch folder `base`, removing the folders in it older than `keep_secs`.
-fn sweep_scratch(base: &Path, keep_secs: u64) -> std::io::Result<()> {
+/// Makes the private scratch folder `base`.
+fn make_base(base: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(base)?;
+        .create(base)
+}
+
+/// Makes the private scratch folder `base`, removing the folders in it older than `keep_secs`
+/// and the ones a [`Scratch`] let go of, unless something holds them.
+fn sweep_scratch(base: &Path, keep_secs: u64) -> std::io::Result<()> {
+    make_base(base)?;
     let now = std::time::SystemTime::now();
     for e in std::fs::read_dir(base)?.flatten() {
+        if !e.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let gone = e.file_name().as_bytes().ends_with(GONE_SUFFIX.as_bytes());
         let old = (e.metadata().and_then(|m| m.modified()).ok())
             .and_then(|t| now.duration_since(t).ok())
             .is_some_and(|age| age.as_secs() > keep_secs);
-        if old && e.file_type().is_ok_and(|t| t.is_dir()) {
+        if (gone || old) && open_dir(&e.path()).is_some_and(|d| flock(&d, libc::LOCK_EX)) {
             let _ = std::fs::remove_dir_all(e.path());
         }
     }
     Ok(())
 }
 
-/// [`copy_tree_out`] into the scratch folder `dir` [`scratch_name`] gave, made here and removed
-/// again when the copy fails or `m` is cancelled.
-pub fn copy_to_scratch(
-    archive: &Path,
-    entries: &[Entry],
-    picked: &[PathBuf],
-    (dir, dest): (&Path, Option<&Path>),
-    m: &Meter,
-) -> Result<Vec<PathBuf>, String> {
-    make_scratch(dir).map_err(|e| e.to_string())?;
-    let copied = copy_tree_out(archive, entries, picked, dir, dest, m).and_then(|c| {
-        if m.cancelled() {
-            Err(Failure::Cancelled.why())
-        } else {
-            Ok(c)
-        }
-    });
-    if copied.is_err() {
-        let _ = std::fs::remove_dir_all(dir);
-    }
-    copied
+/// Names of the folders a [`Scratch`] makes; other scratch folders hold copies opened in programs.
+const HELD_PREFIX: &str = "copy-";
+
+/// What a [`Scratch`]'s folder is renamed to end with while it is removed.
+const GONE_SUFFIX: &str = ".gone";
+
+/// A private folder under the scratch folder that copies out of an archive go into, held by each
+/// consumer of the copies: the job writing them, the clipboard or drag offering them, each put
+/// reading them, in this process or another ([`Scratch::hold`]). The folder is removed when the
+/// last holder anywhere lets go; the sweep [`SCRATCH_KEEP_SECS`] after only catches crashes.
+#[derive(Clone)]
+pub struct Scratch(Arc<Held>);
+
+/// One process's hold: a shared `flock` on its open folder. The last holder to let go takes the
+/// exclusive lock, renames the folder to end in [`GONE_SUFFIX`] and removes it on a thread.
+struct Held {
+    path: PathBuf,
+    dir: Option<std::fs::File>,
 }
 
-/// [`copy_to_scratch`] into `dir` (from [`scratch_name`]) on a job, the copies going on to
-/// `dest`: each copy as an [`ArchiveEvent::Landed`], or one [`ArchiveEvent::Failed`] saying why.
-/// A cancelled job lands nothing.
+impl Scratch {
+    /// A fresh, empty, held folder under `$XDG_CACHE_HOME/reprise/archives`. Folders left there by
+    /// crashes are swept on a thread.
+    pub fn new() -> std::io::Result<Scratch> {
+        let base = scratch_base().ok_or_else(|| std::io::Error::other(tr!("archive-no-cache")))?;
+        Self::new_in(&base, SCRATCH_KEEP_SECS)
+    }
+
+    fn new_in(base: &Path, keep_secs: u64) -> std::io::Result<Scratch> {
+        make_base(base)?;
+        let swept = base.to_path_buf();
+        std::thread::spawn(move || sweep_scratch(&swept, keep_secs));
+        let path = make_temp(base, &format!("{HELD_PREFIX}XXXXXX"))?;
+        let dir = open_dir(&path).ok_or_else(std::io::Error::last_os_error)?;
+        if !flock(&dir, libc::LOCK_SH) {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Scratch(Arc::new(Held {
+            path,
+            dir: Some(dir),
+        })))
+    }
+
+    /// Holds the [`Scratch`] folder `path` lies in, for as long as the value lives. None when
+    /// `path` is in none, or it is gone or going.
+    pub fn hold(path: &Path) -> Option<Scratch> {
+        Self::hold_in(&scratch_base()?, path)
+    }
+
+    fn hold_in(base: &Path, path: &Path) -> Option<Scratch> {
+        let Some(Component::Normal(name)) = path.strip_prefix(base).ok()?.components().next()
+        else {
+            return None;
+        };
+        let held = name.as_bytes();
+        if !held.starts_with(HELD_PREFIX.as_bytes()) || held.ends_with(GONE_SUFFIX.as_bytes()) {
+            return None;
+        }
+        let path = base.join(name);
+        let dir = open_dir(&path)?;
+        flock(&dir, libc::LOCK_SH).then(|| {
+            Scratch(Arc::new(Held {
+                path,
+                dir: Some(dir),
+            }))
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0.path
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let Some(dir) = self.dir.take() else {
+            return;
+        };
+        if !flock(&dir, libc::LOCK_EX) {
+            return;
+        }
+        let mut gone = self.path.clone().into_os_string();
+        gone.push(GONE_SUFFIX);
+        let gone = PathBuf::from(gone);
+        if let Err(e) = std::fs::rename(&self.path, &gone) {
+            log::debug!("archive: cannot remove {}: {e}", self.path.display());
+            return;
+        }
+        // The lock stays until the folder is gone, so no sweep removes it twice.
+        std::thread::spawn(move || {
+            let _ = std::fs::remove_dir_all(&gone);
+            drop(dir);
+        });
+    }
+}
+
+impl PartialEq for Scratch {
+    fn eq(&self, other: &Scratch) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Scratch {}
+
+impl std::fmt::Debug for Scratch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Scratch").field(&self.0.path).finish()
+    }
+}
+
+/// The folder `path` opened to lock, never through a link.
+fn open_dir(path: &Path) -> Option<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .ok()
+}
+
+/// Takes `how` (`LOCK_SH` or `LOCK_EX`) on `file` without waiting: whether it was granted.
+fn flock(file: &std::fs::File, how: libc::c_int) -> bool {
+    use std::os::fd::AsRawFd;
+    // SAFETY: flock on a file descriptor `file` keeps open.
+    unsafe { libc::flock(file.as_raw_fd(), how | libc::LOCK_NB) == 0 }
+}
+
+/// [`copy_tree_out`] into the empty folder of `scratch` on a job, which holds it while it runs,
+/// the copies going on to `dest`: each copy as an [`ArchiveEvent::Landed`], or one
+/// [`ArchiveEvent::Failed`] saying why. A cancelled job lands nothing.
 pub fn copy_job(
     archive: PathBuf,
     entries: Arc<Vec<Entry>>,
     picked: Vec<PathBuf>,
-    (dir, dest): (Option<PathBuf>, Option<PathBuf>),
+    (scratch, dest): (Scratch, Option<PathBuf>),
     wake: impl Fn() + Send + 'static,
 ) -> ArchiveJob {
     let meter = Arc::new(Meter::default());
     ArchiveJob::on_thread("reprisefs-copy-out", meter, wake, move |m, send| {
-        let copied = (dir.ok_or_else(|| tr!("archive-no-cache"))).and_then(|dir| {
-            let to = (dir.as_path(), dest.as_deref());
-            copy_to_scratch(&archive, &entries, &picked, to, m)
-        });
+        let into = scratch.path();
+        let copied = copy_tree_out(&archive, &entries, &picked, into, dest.as_deref(), m);
+        // Let go before the end is told, so the host's holds decide when the folder goes.
+        drop(scratch);
         match copied {
+            Ok(_) if m.cancelled() => {}
             Ok(copies) => {
                 for (index, into) in copies.into_iter().enumerate() {
                     if !send(ArchiveEvent::Landed { index, into }) {
@@ -1664,77 +1763,81 @@ mod tests {
         assert!(!into.join("docs/a.txt").exists());
     }
 
-    #[test]
-    fn a_copy_job_lands_each_picked_copy_in_a_fresh_private_folder() {
-        use std::os::unix::fs::PermissionsExt;
-        let t = tempfile::tempdir().unwrap();
-        let archive = pack(t.path());
-        let entries = Arc::new(listed(&archive));
-        let (wtx, woke) = std::sync::mpsc::channel();
-        let picked = ["top.txt", "docs"].map(PathBuf::from).to_vec();
-        let dir = t.path().join("scratch/one");
-        let mut job = copy_job(
-            archive.clone(),
-            entries.clone(),
-            picked,
-            (Some(dir.clone()), None),
-            move || {
-                let _ = wtx.send(());
-            },
-        );
-        let mut landed = Vec::new();
+    /// Runs `job` to its end, returning its events.
+    fn job_events(mut job: ArchiveJob, woke: std::sync::mpsc::Receiver<()>) -> Vec<ArchiveEvent> {
+        let mut events = Vec::new();
         while !job.is_finished() {
             woke.recv_timeout(std::time::Duration::from_secs(30))
                 .expect("a wake");
-            for ev in job.poll() {
-                match ev {
-                    ArchiveEvent::Landed { into, .. } => landed.push(into),
-                    ArchiveEvent::Failed { text, .. } => panic!("{text}"),
-                    ArchiveEvent::Finished => {}
-                }
-            }
+            events.extend(job.poll());
         }
+        events
+    }
+
+    /// The wake a job sends, and where it lands.
+    fn waker() -> (impl Fn() + Send + 'static, std::sync::mpsc::Receiver<()>) {
+        let (wtx, woke) = std::sync::mpsc::channel();
+        (
+            move || {
+                let _ = wtx.send(());
+            },
+            woke,
+        )
+    }
+
+    /// Waits until `path` is gone.
+    fn until_gone(path: &Path) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while path.exists() {
+            assert!(std::time::Instant::now() < end, "{} goes", path.display());
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_copy_job_lands_each_picked_copy_in_its_private_scratch_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let base = t.path().join("archives");
+        let archive = pack(t.path());
+        let entries = Arc::new(listed(&archive));
+        let picked = ["top.txt", "docs"].map(PathBuf::from).to_vec();
+        let scratch = Scratch::new_in(&base, 3600).unwrap();
+        let dir = scratch.path().to_path_buf();
+        let (wake, woke) = waker();
+        let job = copy_job(
+            archive.clone(),
+            entries.clone(),
+            picked,
+            (scratch.clone(), None),
+            wake,
+        );
+        let landed: Vec<PathBuf> = (job_events(job, woke).into_iter())
+            .filter_map(|ev| match ev {
+                ArchiveEvent::Landed { into, .. } => Some(into),
+                ArchiveEvent::Failed { text, .. } => panic!("{text}"),
+                ArchiveEvent::Finished => None,
+            })
+            .collect();
         let [top, docs] = &landed[..] else {
             panic!("{landed:?}")
         };
         assert_eq!((top.parent(), docs.parent()), (Some(&*dir), Some(&*dir)));
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        assert_eq!((mode(&dir), mode(dir.parent().unwrap())), (0o700, 0o700));
+        assert_eq!((mode(&dir), mode(&base)), (0o700, 0o700));
         assert_eq!(std::fs::read_to_string(docs.join("a.txt")).unwrap(), "a");
 
+        let failed = Scratch::new_in(&base, 3600).unwrap();
+        let (wake, woke) = waker();
         let gone = vec![PathBuf::from("gone")];
-        let (wtx, woke) = std::sync::mpsc::channel();
-        let two = t.path().join("scratch/two");
-        let mut job = copy_job(
-            archive,
-            entries,
-            gone,
-            (Some(two.clone()), None),
-            move || {
-                let _ = wtx.send(());
-            },
+        let job = copy_job(archive, entries, gone, (failed, None), wake);
+        let events = job_events(job, woke);
+        assert!(
+            matches!(&events[..], [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished]
+                if text == "it no longer holds gone."),
+            "{events:?}"
         );
-        let mut failed = None;
-        while !job.is_finished() {
-            woke.recv_timeout(std::time::Duration::from_secs(30))
-                .expect("a wake");
-            for ev in job.poll() {
-                if let ArchiveEvent::Failed { text, .. } = ev {
-                    failed = Some(text);
-                }
-            }
-        }
-        assert_eq!(failed.as_deref(), Some("it no longer holds gone."));
-        assert!(!two.exists(), "a failed copy's folder is removed");
-        let again = copy_to_scratch(
-            &t.path().join("pack.tar.gz"),
-            &[],
-            &[],
-            (&dir, None),
-            &Meter::default(),
-        );
-        assert!(again.is_err(), "a folder there already is not taken");
-        assert!(top.exists(), "nor removed");
+        assert!(top.exists(), "the first copies stay while held");
     }
 
     /// `big.tar.gz` in `dir`, holding `big`: `size` zero bytes.
@@ -1779,22 +1882,15 @@ mod tests {
     }
 
     #[test]
-    fn a_copy_job_cancelled_during_its_last_file_lands_nothing_and_removes_its_folder() {
+    fn a_copy_job_cancelled_during_its_last_file_lands_nothing() {
         let t = tempfile::tempdir().unwrap();
         let archive = big_pack(t.path(), 64 << 20);
         let entries = Arc::new(listed(&archive));
-        let (wtx, woke) = std::sync::mpsc::channel();
-        let dir = t.path().join("scratch/one");
+        let scratch = Scratch::new_in(&t.path().join("archives"), 3600).unwrap();
+        let dir = scratch.path().to_path_buf();
         let picked = vec![PathBuf::from("big")];
-        let mut job = copy_job(
-            archive,
-            entries,
-            picked,
-            (Some(dir.clone()), None),
-            move || {
-                let _ = wtx.send(());
-            },
-        );
+        let (wake, woke) = waker();
+        let job = copy_job(archive, entries, picked, (scratch, None), wake);
         job.meter().set_paused(true);
         for _ in 0..2000 {
             if dir.join("big").exists() {
@@ -1804,17 +1900,66 @@ mod tests {
         }
         assert!(dir.join("big").exists(), "the file is being written");
         job.meter().cancel();
-        let mut events = Vec::new();
-        while !job.is_finished() {
-            woke.recv_timeout(std::time::Duration::from_secs(30))
-                .expect("a wake");
-            events.extend(job.poll());
-        }
+        let events = job_events(job, woke);
         assert!(
             matches!(&events[..], [ArchiveEvent::Finished]),
             "{events:?}"
         );
-        assert!(!dir.exists(), "its folder is removed");
+        until_gone(&dir);
+    }
+
+    #[test]
+    fn a_scratch_folder_stays_while_any_holder_holds_it_and_goes_with_the_last() {
+        let t = tempfile::tempdir().unwrap();
+        let base = t.path().join("archives");
+        let owner = Scratch::new_in(&base, 3600).unwrap();
+        let dir = owner.path().to_path_buf();
+        assert!(dir.file_name().unwrap().as_bytes().starts_with(b"copy-"));
+        std::fs::create_dir(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/a.txt"), "a").unwrap();
+        // A hold opens the folder again, as a put in another process does.
+        let reader = Scratch::hold_in(&base, &dir.join("docs/a.txt")).expect("held");
+        assert_eq!(reader.path(), dir);
+        let clone = owner.clone();
+        drop(owner);
+        drop(clone);
+        assert!(dir.join("docs/a.txt").exists(), "the reader still holds it");
+        drop(reader);
+        assert!(
+            !dir.exists(),
+            "the last holder's drop takes it away at once"
+        );
+        until_gone(&base.join(format!("{}.gone", dir.file_name().unwrap().display())));
+        assert!(
+            Scratch::hold_in(&base, &dir.join("docs")).is_none(),
+            "a folder that went is not held again"
+        );
+    }
+
+    #[test]
+    fn only_a_held_scratch_folder_is_held_and_a_sweep_leaves_held_folders() {
+        let t = tempfile::tempdir().unwrap();
+        let base = t.path().join("archives");
+        let opened = scratch_in(&base, 3600).unwrap();
+        assert!(
+            Scratch::hold_in(&base, &opened.join("f")).is_none(),
+            "a file opened in a program is no held copy"
+        );
+        assert!(Scratch::hold_in(&base, t.path()).is_none());
+        let held = Scratch::new_in(&base, 3600).unwrap();
+        let dir = held.path().to_path_buf();
+        let crashed = make_temp(&base, "copy-XXXXXX").unwrap();
+        let removing = make_temp(&base, "copy-XXXXXX").unwrap();
+        let left = PathBuf::from(format!("{}.gone", removing.display()));
+        std::fs::rename(&removing, &left).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        for d in [&dir, &crashed] {
+            std::fs::File::open(d).unwrap().set_modified(old).unwrap();
+        }
+        sweep_scratch(&base, 3600).unwrap();
+        assert!(dir.exists(), "a held folder stays past its age");
+        assert!(!crashed.exists(), "an old one nobody holds goes");
+        assert!(!left.exists(), "one a removal left goes at once");
     }
 
     #[test]

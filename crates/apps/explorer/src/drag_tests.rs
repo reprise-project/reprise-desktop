@@ -2017,10 +2017,7 @@ fn a_drag_out_of_a_compressed_folder_no_drop_asks_of_copies_nothing() {
     };
     assert!(copy.starts_with(crate::tests::scratch().join("cache/reprise/archives")));
     assert_eq!(copy.file_name(), Some("a.txt".as_ref()));
-    assert!(
-        !copy.parent().unwrap().exists(),
-        "nothing copies at the start"
-    );
+    assert!(!copy.exists(), "nothing copies at the start");
     ex.drag_ended();
     assert!(ex.drag_copy.is_none() && ex.extracting.is_none());
     assert!(!staged.asked());

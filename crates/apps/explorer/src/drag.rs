@@ -212,8 +212,8 @@ pub fn write_links(links: &[WebLink], dir: &Path) -> Result<(), String> {
 /// its files yet: the archive and its entries' paths, and the scratch folder its paths name.
 pub(crate) struct DragCopy {
     staged: Staged,
-    picks: (PathBuf, Vec<PathBuf>),
-    dir: PathBuf,
+    picks: crate::extracting::Picks,
+    scratch: reprisefs::archive::Scratch,
 }
 
 impl Explorer {
@@ -330,16 +330,16 @@ impl Explorer {
     /// ([`Explorer::take_drag_copy`]). None when there is no scratch folder to name.
     fn stage_drag(&mut self, items: &[PathBuf], ctx: &Ctx) -> Option<(Vec<PathBuf>, Staged)> {
         let picks = self.archive_picks(items)?;
-        let dir = reprisefs::archive::scratch_name()?;
-        let paths = (picks.1.iter())
-            .filter_map(|p| Some(dir.join(p.file_name()?)))
+        let scratch = reprisefs::archive::Scratch::new().ok()?;
+        let paths = (picks.picked.iter())
+            .filter_map(|p| Some(scratch.path().join(p.file_name()?)))
             .collect();
         let wake = ctx.wake.clone();
         let staged = Staged::new(move || wake.wake());
         self.drag_copy = Some(DragCopy {
             staged: staged.clone(),
             picks,
-            dir,
+            scratch,
         });
         Some((paths, staged))
     }
@@ -349,12 +349,9 @@ impl Explorer {
     /// gave up, with a box.
     pub(crate) fn take_drag_copy(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         if let Some(d) = self.drag_copy.take_if(|d| d.staged.asked()) {
-            let (archive, picked) = d.picks;
             let batch = crate::extracting::Batch::CopyOut {
-                entries: self.archives.kept(&archive).unwrap_or_default(),
-                archive,
-                picked,
-                dir: Some(d.dir),
+                picks: d.picks,
+                scratch: d.scratch,
                 then: crate::extracting::Then::Drag(d.staged),
             };
             self.queue_archive_job(batch, ctx);

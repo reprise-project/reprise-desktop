@@ -51,7 +51,7 @@ pub struct Browse {
     pub refused: Option<Refused>,
     /// Copy To Folder... in a compressed folder: the archive and its entries' paths, taken when
     /// the picker opened, which copy out once a folder is picked.
-    pub archive_picks: Option<(PathBuf, Vec<PathBuf>)>,
+    pub(crate) archive_picks: Option<crate::extracting::Picks>,
 }
 
 pub const ERROR: repriseapp::WinId = repriseapp::WinId::named("browse error");
