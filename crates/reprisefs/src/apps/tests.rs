@@ -744,6 +744,36 @@ fn group_files_apps_by_first_matching_category() {
 }
 
 #[test]
+fn entries_of_one_name_list_once_reprise_s_own_first_then_by_the_lower_id() {
+    let app = |name: &str, id: &str| AppEntry {
+        plain_name: None,
+        name: name.into(),
+        exec_line: name.to_lowercase(),
+        terminal: false,
+        id: id.parse().unwrap(),
+        icon: None,
+        startup_wm_class: None,
+        categories: vec!["Utility".into()],
+        mime_types: Vec::new(),
+        shown: true,
+        path: None,
+        actions: Vec::new(),
+    };
+    let apps = [
+        app("Calculator", "org.gnome.Calculator.desktop"),
+        app("Calculator", "reprise-calc.desktop"),
+        app("Paint", "z-paint.desktop"),
+        app("Paint", "a-paint.desktop"),
+    ];
+    assert_eq!(one_per_name(&apps), [false, true, false, true]);
+    assert_eq!(
+        group(&apps)[0].apps,
+        [1, 3],
+        "Accessories lists each name once"
+    );
+}
+
+#[test]
 fn mime_db_answers_per_table_in_order() {
     let db = MimeDb::parse([
         "50:text/x-mine:*.txt\n",

@@ -31,11 +31,13 @@ fn next_generation() -> u64 {
     GENERATIONS.fetch_add(1, Ordering::Relaxed) + 1
 }
 
+/// The entries `query` finds, best first, at most `max`, of those the menus list
+/// ([`reprisefs::apps::one_per_name`]): a NoDisplay entry opens files but is not offered to launch.
 pub fn rank_apps(query: &str, apps: &[AppEntry], max: usize) -> Vec<usize> {
+    let listed = reprisefs::apps::one_per_name(apps);
     reprisekit::fuzzy::rank_any(query, apps.iter().map(AppEntry::search_names))
         .into_iter()
-        // A NoDisplay entry opens files but is not offered to launch.
-        .filter(|&i| apps[i].shown)
+        .filter(|&i| listed[i])
         .take(max)
         .collect()
 }
@@ -905,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn rank_apps_drops_hidden_entries_and_caps() {
+    fn rank_apps_drops_hidden_entries_and_repeated_names_and_caps() {
         let apps = [
             app("Notepad", true),
             app("Notes hidden", false),
@@ -913,6 +915,8 @@ mod tests {
         ];
         assert_eq!(rank_apps("n", &apps, 1).len(), 1);
         assert!(!rank_apps("notes", &apps, 8).contains(&1));
+        let twice = [app("Notepad", true), app("Notepad", true)];
+        assert_eq!(rank_apps("note", &twice, 8).len(), 1, "one per name");
     }
 
     #[test]

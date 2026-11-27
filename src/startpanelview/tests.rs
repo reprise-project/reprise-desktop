@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use reprisefs::apps::AppEntry;
+use reprisefs::apps::{AppEntry, one_per_name};
 use reprisekit::startpanel::{Key, Mode, ProgramRow, TreeRow, layout};
 use reprisekit::taskbar::{Edge, StartMenuDock};
 use reprisekit::textedit::EditKey;
@@ -16,8 +16,7 @@ use crate::search::Found;
 use super::draw::{Drawn, RasterKey, Rasters, panel_origin, panel_pane, panel_room, takes_pointer};
 use super::input::{key_of, spot_app};
 use super::lists::{
-    app_icon, frequent_rows, jump_file, jump_task, one_per_name, refill_tree, replace_tree,
-    tree_rows,
+    app_icon, frequent_rows, jump_file, jump_task, refill_tree, replace_tree, tree_rows,
 };
 use super::menus::shutdown_options_at;
 use super::picture::{UserPictures, decode_picture, picture_paths, read_pictures};
@@ -306,7 +305,7 @@ fn the_tree_lists_folders_with_their_apps_under_them() {
         app("Calculator", "Utility"),
         app("Gimp", "Graphics"),
     ];
-    let (rows, map) = tree_rows(&apps, &reprisefs::apps::group(&apps), &[true; 3]);
+    let (rows, map) = tree_rows(&apps, &reprisefs::apps::group(&apps));
     let names: Vec<&str> = rows
         .iter()
         .map(|r| match r {
@@ -337,7 +336,7 @@ fn two_entries_of_one_name_list_once_by_the_lower_id() {
     apps[3].shown = false;
     let kept = one_per_name(&apps);
     assert_eq!(kept, [false, true, true, false]);
-    let (rows, map) = tree_rows(&apps, &reprisefs::apps::group(&apps), &kept);
+    let (rows, map) = tree_rows(&apps, &reprisefs::apps::group(&apps));
     assert_eq!(map, [None, Some(1), Some(2)], "Graphics is left empty");
     assert!(matches!(&rows[0], TreeRow::Folder { name, .. } if name == "Accessories"));
     assert_eq!(panel_matches("pa", &apps, &kept, 8), [2]);
@@ -370,7 +369,7 @@ fn a_rebuilt_tree_drops_the_scroll_and_the_lit_row() {
     let apps: Vec<AppEntry> = (0..30)
         .map(|k| app(&format!("App {k}"), "Utility"))
         .collect();
-    let (rows, _) = tree_rows(&apps, &reprisefs::apps::group(&apps), &one_per_name(&apps));
+    let (rows, _) = tree_rows(&apps, &reprisefs::apps::group(&apps));
     let mut p = StartPanel::new();
     replace_tree(&mut p, rows.clone());
     p.set_mode(Mode::Programs);

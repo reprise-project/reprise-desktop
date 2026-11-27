@@ -1,6 +1,5 @@
 //! The program, tree, jump and place rows, and the app icons they wear.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps::{AppEntry, Group};
@@ -15,38 +14,17 @@ use crate::raster::Canvas;
 
 use super::PICTURE;
 
-pub(super) fn one_per_name(apps: &[AppEntry]) -> Vec<bool> {
-    let mut first: HashMap<&str, usize> = HashMap::new();
-    for (i, a) in apps.iter().enumerate().filter(|(_, a)| a.shown) {
-        let k = first.entry(a.name.as_str()).or_insert(i);
-        if a.id < apps[*k].id {
-            *k = i;
-        }
-    }
-    (0..apps.len())
-        .map(|i| first.get(apps[i].name.as_str()) == Some(&i))
-        .collect()
-}
-
-pub(super) fn tree_rows(
-    apps: &[AppEntry],
-    groups: &[Group],
-    kept: &[bool],
-) -> (Vec<TreeRow>, Vec<Option<usize>>) {
+pub(super) fn tree_rows(apps: &[AppEntry], groups: &[Group]) -> (Vec<TreeRow>, Vec<Option<usize>>) {
     let mut rows = Vec::new();
     let mut map = Vec::new();
     for g in groups {
-        let listed: Vec<usize> = g.apps.iter().copied().filter(|&i| kept[i]).collect();
-        if listed.is_empty() {
-            continue;
-        }
         rows.push(TreeRow::Folder {
             name: g.name.clone(),
             open: false,
             icon: None,
         });
         map.push(None);
-        for i in listed {
+        for &i in &g.apps {
             rows.push(TreeRow::App {
                 name: apps[i].name.clone(),
                 icon: None,
@@ -372,8 +350,7 @@ impl State {
         let Some(v) = start_panel.as_mut() else {
             return;
         };
-        let kept = one_per_name(app_index);
-        let (mut rows, map) = tree_rows(app_index, &reprisefs::apps::group(app_index), &kept);
+        let (mut rows, map) = tree_rows(app_index, &reprisefs::apps::group(app_index));
         let px = v.model.icon_px(SMALL_ICON, scale);
         let folder = unread(icons, "folder", px);
         for row in &mut rows {

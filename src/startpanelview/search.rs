@@ -9,7 +9,7 @@ use crate::compositor::State;
 use crate::raster::Canvas;
 use crate::search::{Found, Picked, SearchOwner, calc_icon, calc_row, rank_settings};
 
-use super::lists::{app_icon, one_per_name, unread};
+use super::lists::{app_icon, unread};
 
 const SEARCH_ROWS: usize = 8;
 const SEARCH_SETTINGS: usize = 4;
@@ -131,7 +131,7 @@ impl State {
             ..
         } = self;
         if let Some(v) = start_panel.as_mut() {
-            let listed = one_per_name(app_index);
+            let listed = reprisefs::apps::one_per_name(app_index);
             v.result_apps = panel_matches(&query, app_index, &listed, SEARCH_ROWS);
             v.result_settings = rank_settings(&query, app_index, &v.result_apps, SEARCH_SETTINGS);
             v.answer = calc_row(&query);
