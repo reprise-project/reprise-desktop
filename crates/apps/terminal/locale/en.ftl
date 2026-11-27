@@ -16,6 +16,11 @@ settings = Settings
 login-shell = Login Shell
 link-open = &Open Link
 link-copy = Copy &Link Address
+menu-copy = &Copy
+menu-paste = &Paste
+menu-select-all = Select &All
+menu-find = &Find...
+menu-new-tab = New &Tab
 
 ## Boxes
 not-found = Cannot find "{ $text }"

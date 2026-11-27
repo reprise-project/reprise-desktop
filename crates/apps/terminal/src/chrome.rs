@@ -1,11 +1,12 @@
 //! The toolbar and tab strip over the grid: over the frame's glass in a look that has it, plain
 //! bars otherwise. A window with its tabs in the caption has no strip; its toolbar leads with
-//! the new-tab split button. The pointer on them, the new-tab menu and the link menu.
+//! the new-tab split button. The pointer on them, the new-tab menu and the grid's menu.
 
 use std::ffi::OsString;
 
 use repriseapp::ctxmenu::{self, Popup, Step};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput, PointerInput, Reply};
+use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::rebar;
 use reprisekit::controls::tabstrip::{self, AdderPart, DocHit, DocLayout, Drag, TabStrip};
 use reprisekit::controls::termgrid;
@@ -24,6 +25,7 @@ pub const COPY: &str = "copy";
 pub const PASTE: &str = "paste";
 pub const FIND: &str = "find";
 pub const SETTINGS: &str = "settings";
+pub const SELECT_ALL: &str = "select-all";
 
 pub const BTN_MIDDLE: u32 = 0x112;
 /// How far a held tab moves before it is dragged, logical px.
@@ -34,7 +36,7 @@ pub const GRID_GAP: i32 = 4;
 pub struct Chrome {
     pub bar: ToolBar,
     pub press: Option<Press>,
-    /// The new-tab menu or the link menu, open.
+    /// The new-tab menu or the grid's menu, open.
     pub menu: Option<Popup<Pick>>,
     /// The chrome is drawn again next frame.
     pub dirty: bool,
@@ -68,6 +70,8 @@ pub enum Pick {
     Open(OsString),
     /// Put this URI on the clipboard.
     Copy(String),
+    /// Do what the toolbar button or grid menu row with this id does.
+    Act(&'static str),
 }
 
 /// What a left press is holding.
@@ -362,16 +366,20 @@ impl Terminal {
     }
 
     fn button(&mut self, i: usize) -> Reply {
-        let id = match self.w.chrome.bar.items.get(i) {
-            Some(Item::Button { id, .. } | Item::DropButton { id, .. }) => *id,
-            _ => return Reply::none(),
-        };
+        match self.w.chrome.bar.items.get(i) {
+            Some(Item::Button { id, .. } | Item::DropButton { id, .. }) => self.act(id),
+            _ => Reply::none(),
+        }
+    }
+
+    fn act(&mut self, id: &str) -> Reply {
         match id {
             NEW => self.new_tab(&Choice::Shell),
             COPY => self.copy(),
             PASTE => self.paste(),
             FIND => self.open_find(),
             SETTINGS => self.open_options(),
+            SELECT_ALL => self.select_all(),
             _ => Reply::none(),
         }
     }
@@ -405,19 +413,39 @@ impl Terminal {
         self.w.full = true;
     }
 
-    /// Open the link menu for `uri` at `at`; Open Link greys for a link a click does not open.
-    pub(crate) fn open_link_menu(&mut self, uri: String, at: (i32, i32), ctx: &Ctx) -> Reply {
-        let target = links::target(&uri, &cwd::hostname());
-        let rows = vec![
-            (
+    /// Open the grid's menu at `at`: the rows of the link `uri` first when the press is on one
+    /// (Open Link greys for a link a click does not open), then the edit rows, Copy greyed
+    /// without a selection.
+    pub(crate) fn open_grid_menu(
+        &mut self,
+        uri: Option<String>,
+        selected: bool,
+        at: (i32, i32),
+        ctx: &Ctx,
+    ) -> Reply {
+        let mut rows = Vec::new();
+        if let Some(uri) = uri {
+            let target = links::target(&uri, &cwd::hostname());
+            rows.push((
                 ctxmenu::item(&tr!("link-open"), target.is_some()),
                 target.map(Pick::Open),
-            ),
-            (
+            ));
+            rows.push((
                 ctxmenu::item(&tr!("link-copy"), true),
                 Some(Pick::Copy(uri)),
-            ),
-        ];
+            ));
+            rows.push((MenuItem::Separator, None));
+        }
+        let act = |label: String, on: bool, id| (ctxmenu::item(&label, on), Some(Pick::Act(id)));
+        rows.extend([
+            act(tr!("menu-copy"), selected, COPY),
+            act(tr!("menu-paste"), true, PASTE),
+            (MenuItem::Separator, None),
+            act(tr!("menu-select-all"), true, SELECT_ALL),
+            act(tr!("menu-find"), true, FIND),
+            (MenuItem::Separator, None),
+            act(tr!("menu-new-tab"), true, NEW),
+        ]);
         self.w.chrome.menu = Popup::open(rows, at.0, at.1, ctx, false);
         self.w.full = true;
         Reply::redraw()
@@ -457,6 +485,7 @@ impl Terminal {
                         copy: Some(uri),
                         ..closed
                     },
+                    Some(Pick::Act(id)) => closed.and(self.act(id)),
                     None => closed,
                 }
             }

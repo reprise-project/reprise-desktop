@@ -118,6 +118,16 @@ pub fn select<T>(term: &mut Term<T>, ty: SelectionType, cell: CellAt, s: Side) {
     term.selection = Some(Selection::new(ty, point(term, cell), side(s)));
 }
 
+/// Select the whole scrollback and screen.
+pub fn select_all<T>(term: &mut Term<T>) {
+    use alacritty_terminal::grid::Dimensions;
+    let start = Point::new(term.topmost_line(), Column(0));
+    let end = Point::new(term.bottommost_line(), term.last_column());
+    let mut sel = Selection::new(SelectionType::Simple, start, TermSide::Left);
+    sel.update(end, TermSide::Right);
+    term.selection = Some(sel);
+}
+
 /// Move the selection's end to `cell`.
 pub fn extend<T>(term: &mut Term<T>, cell: CellAt, s: Side) {
     let p = point(term, cell);
@@ -413,11 +423,24 @@ impl Terminal {
                 paste_primary: true,
                 ..Default::default()
             },
-            BTN_RIGHT => match tab.link_at(cell) {
-                Some(link) => self.open_link_menu(link.uri().to_owned(), (x, y), ctx),
-                None => Reply::none(),
-            },
+            BTN_RIGHT => {
+                let link = tab.link_at(cell).map(|l| l.uri().to_owned());
+                let selected = tab.selection().is_some_and(|s| !s.is_empty());
+                self.open_grid_menu(link, selected, (x, y), ctx)
+            }
             _ => Reply::none(),
+        }
+    }
+
+    /// Select everything in the tab, offered as the primary selection.
+    pub(crate) fn select_all(&mut self) -> Reply {
+        let Some(tab) = self.w.tabs.current() else {
+            return Reply::none();
+        };
+        tab.with_term(select_all);
+        Reply {
+            copy_primary: tab.selection().filter(|s| !s.is_empty()),
+            ..Reply::redraw()
         }
     }
 
