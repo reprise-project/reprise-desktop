@@ -104,6 +104,29 @@ pub fn config_dir(search: &[String]) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// The user manager's unit folders, from its search path (`UnitPath`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Folders {
+    /// [`config_dir`]: New Task writes here and Delete removes from here.
+    pub own: PathBuf,
+    /// Every folder searched. A drop-in folder in any of them applies to a unit of its name.
+    pub search: Vec<PathBuf>,
+}
+
+impl Folders {
+    /// The folders of `search`; None when it has no [`config_dir`].
+    pub fn of(search: &[String]) -> Option<Folders> {
+        Some(Folders {
+            own: config_dir(search)?,
+            search: search
+                .iter()
+                .filter(|p| p.starts_with('/'))
+                .map(PathBuf::from)
+                .collect(),
+        })
+    }
+}
+
 /// A unit name part made of `name`: ASCII letters and digits in lower case, every other run of
 /// characters one `-`, at most [`SLUG_MAX`] long; `task` when nothing is left.
 pub fn slug(name: &str) -> String {
@@ -134,15 +157,22 @@ pub fn is_our_stem(stem: &str) -> bool {
     })
 }
 
-/// `reprise-task-<slug>`, with `-2`, `-3`... added while `dir` holds a unit file, drop-in folder
-/// or enable link of that name or `taken` (the timers the manager knows) the timer.
-pub fn free_stem(dir: &Path, slug: &str, taken: &[String]) -> String {
+/// `reprise-task-<slug>`, with `-2`, `-3`... added while the own folder holds a unit file or
+/// enable link of that name, any folder of `folders` its drop-in folder, or `taken` (the timers
+/// the manager knows) the timer.
+pub fn free_stem(folders: &Folders, slug: &str, taken: &[String]) -> String {
+    let there = |dir: &Path, name: &str| dir.join(name).symlink_metadata().is_ok();
     let used = |stem: &str| {
-        let file = |name: String| dir.join(name).symlink_metadata().is_ok();
-        ["timer", "service", "timer.d", "service.d"]
-            .into_iter()
-            .any(|ext| file(format!("{stem}.{ext}")))
-            || file(format!("timers.target.wants/{stem}.timer"))
+        let own = |name: String| there(&folders.own, &name);
+        own(format!("{stem}.timer"))
+            || own(format!("{stem}.service"))
+            || own(format!("timers.target.wants/{stem}.timer"))
+            || std::iter::once(&folders.own)
+                .chain(&folders.search)
+                .any(|dir| {
+                    there(dir, &format!("{stem}.timer.d"))
+                        || there(dir, &format!("{stem}.service.d"))
+                })
             || taken.iter().any(|t| *t == format!("{stem}.timer"))
     };
     let base = format!("{PREFIX}{slug}");
@@ -300,14 +330,15 @@ pub fn texts(task: &NewTask) -> Result<(String, String), Problem> {
     Ok((service, timer))
 }
 
-/// Writes `task` into `dir` as `<stem>.service` and `<stem>.timer` (made with [`free_stem`]),
-/// the service first, so the timer never points at a missing unit. Each file is written beside
-/// its place, synced and linked in, which fails rather than replace a file that appeared since.
-/// Returns the timer's unit name.
-pub fn write(dir: &Path, task: &NewTask, taken: &[String]) -> io::Result<String> {
+/// Writes `task` into the own folder of `folders` as `<stem>.service` and `<stem>.timer` (made
+/// with [`free_stem`]), the service first, so the timer never points at a missing unit. Each file
+/// is written beside its place, synced and linked in, which fails rather than replace a file
+/// that appeared since. Returns the timer's unit name.
+pub fn write(folders: &Folders, task: &NewTask, taken: &[String]) -> io::Result<String> {
     let (service, timer) = texts(task).map_err(|p| io::Error::other(format!("{p:?}")))?;
+    let dir = &folders.own;
     std::fs::create_dir_all(dir)?;
-    let stem = free_stem(dir, &slug(&task.name), taken);
+    let stem = free_stem(folders, &slug(&task.name), taken);
     put_new(&dir.join(format!("{stem}.service")), &service)?;
     if let Err(e) = put_new(&dir.join(format!("{stem}.timer")), &timer) {
         let _ = std::fs::remove_file(dir.join(format!("{stem}.service")));

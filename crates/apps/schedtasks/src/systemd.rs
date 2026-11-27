@@ -10,7 +10,7 @@ use repriseapp::Poster;
 use reprisebus::mutex::lock;
 use reprisebus::{Props, Signal, prop};
 use std::collections::{BTreeSet, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -126,14 +126,15 @@ fn serve(rx: Receiver<Cmd>, post: Poster<Update>, shown: Arc<Mutex<HashSet<Strin
                 continue;
             }
         };
-        let dir = reprisebus::wait(unit_dir(&conn));
+        let folders = reprisebus::wait(unit_dir(&conn));
+        let dir = folders.as_ref().map(|f| f.own.as_path());
         for cmd in batch.iter().filter(|c| **c != Cmd::Refresh) {
             let done = match cmd {
                 Cmd::Create { task, taken } => {
-                    reprisebus::wait(create(&conn, dir.as_deref(), task, taken))
+                    reprisebus::wait(create(&conn, folders.as_ref(), task, taken))
                         .map(|timer| post.post(Update::Created(timer)))
                 }
-                Cmd::Delete(timer) => reprisebus::wait(delete(&conn, dir.as_deref(), timer)),
+                Cmd::Delete(timer) => reprisebus::wait(delete(&conn, dir, timer)),
                 cmd => reprisebus::wait(act(&conn, cmd)),
             };
             if let Err(e) = done {
@@ -141,7 +142,7 @@ fn serve(rx: Receiver<Cmd>, post: Poster<Update>, shown: Arc<Mutex<HashSet<Strin
                 post.post(Update::Refused(cmd.clone(), told(&e)));
             }
         }
-        match reprisebus::wait(read(&conn, clocks(), dir.as_deref())) {
+        match reprisebus::wait(read(&conn, clocks(), dir)) {
             Ok((tasks, paths)) => {
                 *lock(&shown) = paths;
                 post.post(Update::Tasks(Ok(tasks)));
@@ -193,9 +194,9 @@ async fn load(conn: &Connection, name: &str) -> zbus::Result<OwnedObjectPath> {
     call(conn, "LoadUnit", &(name,)).await?.body().deserialize()
 }
 
-/// The folder New Task writes in: [`units::config_dir`] of the manager's own search path, which
-/// can differ from this program's `$XDG_CONFIG_HOME`.
-async fn unit_dir(conn: &Connection) -> Option<PathBuf> {
+/// The folders of the manager's own search path, which can differ from this program's
+/// `$XDG_CONFIG_HOME`.
+async fn unit_dir(conn: &Connection) -> Option<units::Folders> {
     let reply = conn
         .call_method(
             Some(DEST),
@@ -208,7 +209,7 @@ async fn unit_dir(conn: &Connection) -> Option<PathBuf> {
         .inspect_err(|e| log::info!("systemd UnitPath: {e}"))
         .ok()?;
     let search: zbus::OwnedVariant = reply.body().deserialize().ok()?;
-    units::config_dir(&Vec::<String>::try_from(search).ok()?)
+    units::Folders::of(&Vec::<String>::try_from(search).ok()?)
 }
 
 /// A `ListUnitsByPatterns` row: name, description, load, active and sub state, followed unit,
@@ -248,7 +249,8 @@ async fn timer_names(conn: &Connection) -> zbus::Result<BTreeSet<String>> {
 }
 
 /// Every loaded timer, sorted by name, and the object paths of the timers and their units.
-/// `now` is [`clocks`], `dir` [`unit_dir`]. A timer that does not read is left out.
+/// `now` is [`clocks`], `dir` the own folder of [`unit_dir`]. A timer that does not read is
+/// left out.
 pub async fn read(
     conn: &Connection,
     now: (u64, u64),
@@ -384,17 +386,18 @@ pub async fn act(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
     Ok(())
 }
 
-/// Writes `task` in `dir` ([`unit_dir`]), enables it, reloads and starts its timer, as
-/// `systemctl --user enable` and `daemon-reload` and `start` would; returns the timer. A step
-/// that fails after the files are written takes them away again.
+/// Writes `task` in the own folder of `folders` ([`unit_dir`]), enables it, reloads and starts
+/// its timer, as `systemctl --user enable` and `daemon-reload` and `start` would; returns the
+/// timer. A step that fails after the files are written takes them away again.
 async fn create(
     conn: &Connection,
-    dir: Option<&Path>,
+    folders: Option<&units::Folders>,
     task: &NewTask,
     taken: &[String],
 ) -> zbus::Result<String> {
-    let dir = dir.ok_or_else(no_folder)?;
-    let timer = units::write(dir, task, taken).map_err(|e| failed(&e.to_string()))?;
+    let folders = folders.ok_or_else(no_folder)?;
+    let dir = &folders.own;
+    let timer = units::write(folders, task, taken).map_err(|e| failed(&e.to_string()))?;
     let units = [timer.as_str()];
     let started = async {
         call(conn, "EnableUnitFiles", &(&units[..], false, false)).await?;

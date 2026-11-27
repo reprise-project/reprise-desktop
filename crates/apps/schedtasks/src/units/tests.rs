@@ -9,6 +9,14 @@ fn task() -> NewTask {
     }
 }
 
+/// `dir` as the own folder, with no other folder searched.
+fn own(dir: &Path) -> Folders {
+    Folders {
+        own: dir.into(),
+        search: vec![],
+    }
+}
+
 fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
@@ -200,7 +208,7 @@ fn names(dir: &Path) -> Vec<String> {
 fn write_makes_the_pair_under_a_free_name_and_leaves_nothing_else() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("systemd/user");
-    let timer = write(&dir, &task(), &[]).unwrap();
+    let timer = write(&own(&dir), &task(), &[]).unwrap();
     assert_eq!(timer, "reprise-task-back-up-photos.timer");
     let (service, timer_text) = texts(&task()).unwrap();
     let read = |n: &str| std::fs::read_to_string(dir.join(n)).unwrap();
@@ -208,7 +216,7 @@ fn write_makes_the_pair_under_a_free_name_and_leaves_nothing_else() {
     assert_eq!(read("reprise-task-back-up-photos.timer"), timer_text);
     let taken = vec!["reprise-task-back-up-photos-2.timer".to_string()];
     assert_eq!(
-        write(&dir, &task(), &taken).unwrap(),
+        write(&own(&dir), &task(), &taken).unwrap(),
         "reprise-task-back-up-photos-3.timer",
         "a file in the folder and a timer the manager knows both take a name"
     );
@@ -225,12 +233,41 @@ fn write_makes_the_pair_under_a_free_name_and_leaves_nothing_else() {
 }
 
 #[test]
-fn a_drop_in_folder_takes_its_units_name() {
+fn a_drop_in_folder_in_any_searched_folder_takes_its_units_name() {
     let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path();
+    let dir = tmp.path().join("user");
+    let control = tmp.path().join("user.control");
+    let runtime = tmp.path().join("runtime");
+    for d in [&dir, &control, &runtime] {
+        std::fs::create_dir(d).unwrap();
+    }
     std::fs::create_dir(dir.join("reprise-task-x.service.d")).unwrap();
-    std::fs::create_dir(dir.join("reprise-task-x-2.timer.d")).unwrap();
-    assert_eq!(free_stem(dir, "x", &[]), "reprise-task-x-3");
+    std::fs::create_dir(control.join("reprise-task-x-2.service.d")).unwrap();
+    std::fs::create_dir(runtime.join("reprise-task-x-3.timer.d")).unwrap();
+    let folders = Folders {
+        own: dir.clone(),
+        search: vec![control, dir, runtime],
+    };
+    assert_eq!(free_stem(&folders, "x", &[]), "reprise-task-x-4");
+}
+
+#[test]
+fn the_folders_are_the_absolute_ones_of_the_search_path() {
+    let search = args(&[
+        "/home/u/.config/systemd/user.control",
+        "relative",
+        "/home/u/.config/systemd/user",
+    ]);
+    let folders = Folders::of(&search).unwrap();
+    assert_eq!(folders.own, PathBuf::from("/home/u/.config/systemd/user"));
+    assert_eq!(
+        folders.search,
+        [
+            PathBuf::from("/home/u/.config/systemd/user.control"),
+            PathBuf::from("/home/u/.config/systemd/user"),
+        ]
+    );
+    assert_eq!(Folders::of(&args(&["/etc/systemd/user"])), None);
 }
 
 #[test]
@@ -241,14 +278,14 @@ fn a_dangling_enable_link_takes_its_timers_name() {
     std::fs::create_dir(&wants).unwrap();
     let link = wants.join("reprise-task-x.timer");
     std::os::unix::fs::symlink(dir.join("reprise-task-x.timer"), link).unwrap();
-    assert_eq!(free_stem(dir, "x", &[]), "reprise-task-x-2");
+    assert_eq!(free_stem(&own(dir), "x", &[]), "reprise-task-x-2");
 }
 
 #[test]
 fn remove_takes_the_pair_and_its_enable_link_and_skips_what_is_gone() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let timer = write(dir, &task(), &[]).unwrap();
+    let timer = write(&own(dir), &task(), &[]).unwrap();
     let wants = dir.join("timers.target.wants");
     std::fs::create_dir(&wants).unwrap();
     std::os::unix::fs::symlink(dir.join(&timer), wants.join(&timer)).unwrap();
@@ -300,7 +337,7 @@ fn a_new_file_never_replaces_one_already_there() {
 fn only_a_marked_pair_loaded_from_the_folder_is_ours() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let timer = write(dir, &task(), &[]).unwrap();
+    let timer = write(&own(dir), &task(), &[]).unwrap();
     let fragment = dir.join(&timer).to_string_lossy().into_owned();
     assert!(ours(dir, &timer, &fragment), "a pair New Task wrote");
     assert!(
