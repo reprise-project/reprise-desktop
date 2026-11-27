@@ -647,7 +647,8 @@ impl FileDlg {
         }
         self.pending = None;
         self.parent = folder.parent;
-        let selected = (folder.crumbs.iter().position(|c| c.id == folder.id))
+        // The deepest row naming the folder: `/` is Computer and, under it, its drive.
+        let selected = (folder.crumbs.iter().rposition(|c| c.id == folder.id))
             .unwrap_or(folder.crumbs.len().saturating_sub(1));
         self.crumbs = folder.crumbs;
         self.lookin = Combo::with_items(self.lookin_items(), selected, 8);

@@ -184,7 +184,7 @@ pub enum LinkKind {
     Recent,
     Home,
     Computer,
-    Drive,
+    Drive(DriveKind),
     Folder,
 }
 
@@ -198,9 +198,10 @@ pub struct ChainLink {
 }
 
 /// A dialog's Look in rows for folder `dir`: Recent Items while it is shown, then Home, then
-/// Computer (`/`) with each of `drives` under it. The deepest of Home, a drive and `/` that holds
-/// `dir` gets the folders down to `dir` beneath it, one level deeper each.
-pub fn dialog_chain(dir: &Path, home: Option<&Path>, drives: &[PathBuf]) -> Vec<ChainLink> {
+/// Computer (`/`) with each of `drives` under it as Computer lists them, hard disks first, by
+/// [`Drive::name`]. The deepest of Home, a drive and `/` that holds `dir` gets the folders down to
+/// `dir` beneath it, one level deeper each.
+pub fn dialog_chain(dir: &Path, home: Option<&Path>, drives: &[Drive]) -> Vec<ChainLink> {
     let link = |dir: &Path, label: String, depth, kind| ChainLink {
         dir: dir.to_path_buf(),
         label,
@@ -210,7 +211,7 @@ pub fn dialog_chain(dir: &Path, home: Option<&Path>, drives: &[PathBuf]) -> Vec<
     let root = Path::new("/");
     let home = home.filter(|h| h.is_absolute() && *h != root);
     let holder = (home.iter().copied())
-        .chain(drives.iter().map(PathBuf::as_path))
+        .chain(drives.iter().map(|d| d.mount.as_path()))
         .chain([root])
         .filter(|base| dir.starts_with(base))
         .max_by_key(|base| base.components().count());
@@ -239,10 +240,18 @@ pub fn dialog_chain(dir: &Path, home: Option<&Path>, drives: &[PathBuf]) -> Vec<
         rows.extend(below(h, 1));
     }
     rows.push(link(root, "Computer".to_string(), 0, LinkKind::Computer));
-    rows.extend(below(root, 1));
-    for d in drives {
-        rows.push(link(d, dialog_label(d), 1, LinkKind::Drive));
-        rows.extend(below(d, 2));
+    // A drive mounted at `/` takes the folders under it.
+    if !drives.iter().any(|d| d.mount == root) {
+        rows.extend(below(root, 1));
+    }
+    let local = |d: &&Drive| d.kind() == DriveKind::Local;
+    let ordered = drives
+        .iter()
+        .filter(local)
+        .chain(drives.iter().filter(|d| !local(d)));
+    for d in ordered {
+        rows.push(link(&d.mount, d.name(), 1, LinkKind::Drive(d.kind())));
+        rows.extend(below(&d.mount, 2));
     }
     rows
 }
@@ -391,6 +400,26 @@ impl MountedDrives {
 /// read-only mount or another owner's folder). It waits for as long as the drive does not answer.
 pub fn usable_drive(top: &Path) -> bool {
     std::fs::metadata(top).is_ok_and(|m| m.is_dir()) && crate::ops::can_write(top)
+}
+
+/// The drives Computer lists ([`drives`]) for a long-lived process, without their sizes:
+/// `listed` reads them again only when the mount table changed. Nothing here touches a drive's
+/// file system, so a drive that never answers cannot hold it.
+#[derive(Debug, Default)]
+pub struct ComputerDrives {
+    mounts: Option<Vec<u8>>,
+    drives: Vec<Drive>,
+}
+
+impl ComputerDrives {
+    pub fn listed(&mut self) -> &[Drive] {
+        let mounts = std::fs::read("/proc/self/mounts").unwrap_or_default();
+        if self.mounts.as_ref() != Some(&mounts) {
+            self.drives = drives_from(&mounts, &sys_removable, &disk_label, &|_| (0, 0));
+            self.mounts = Some(mounts);
+        }
+        &self.drives
+    }
 }
 
 impl Default for MountedDrives {
@@ -1193,7 +1222,12 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
     #[test]
     fn look_in_hangs_the_shown_folders_parents_under_home_computer_or_its_drive() {
         let home = Some(Path::new("/home/u"));
-        let drives = [PathBuf::from("/run/media/u/STICK")];
+        let mounts = "/dev/sdb1 /run/media/u/STICK vfat rw 0 0\n\
+             /dev/sda2 / ext4 rw 0 0\n\
+             /dev/sda1 /boot vfat rw 0 0\n";
+        let removable = |b: &str| b.starts_with("sdb");
+        let label = |d: &str| (d == "/dev/sdb1").then(|| "STICK".to_string());
+        let drives = drives_from(mounts, &removable, &label, &|_| (0, 0));
         let rows = |dir: &str| -> Vec<(String, usize, LinkKind)> {
             (dialog_chain(Path::new(dir), home, &drives).into_iter())
                 .map(|l| (l.dir.display().to_string(), l.depth, l.kind))
@@ -1201,6 +1235,7 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
         };
         let row = |dir: &str, depth, kind| (dir.to_string(), depth, kind);
         use LinkKind::*;
+        let (disk, stick) = (Drive(DriveKind::Local), Drive(DriveKind::Removable));
         assert_eq!(
             rows("/home/u/Documents/Letters"),
             [
@@ -1208,25 +1243,33 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
                 row("/home/u/Documents", 1, Folder),
                 row("/home/u/Documents/Letters", 2, Folder),
                 row("/", 0, Computer),
-                row("/run/media/u/STICK", 1, Drive),
-            ]
+                row("/", 1, disk),
+                row("/boot", 1, disk),
+                row("/run/media/u/STICK", 1, stick),
+            ],
+            "Computer's drives, hard disks first"
         );
         assert_eq!(
             rows("/usr/share"),
             [
                 row("/home/u", 0, Home),
                 row("/", 0, Computer),
-                row("/usr", 1, Folder),
-                row("/usr/share", 2, Folder),
-                row("/run/media/u/STICK", 1, Drive),
-            ]
+                row("/", 1, disk),
+                row("/usr", 2, Folder),
+                row("/usr/share", 3, Folder),
+                row("/boot", 1, disk),
+                row("/run/media/u/STICK", 1, stick),
+            ],
+            "the folders under / hang off its drive"
         );
         assert_eq!(
             rows("/run/media/u/STICK/photos"),
             [
                 row("/home/u", 0, Home),
                 row("/", 0, Computer),
-                row("/run/media/u/STICK", 1, Drive),
+                row("/", 1, disk),
+                row("/boot", 1, disk),
+                row("/run/media/u/STICK", 1, stick),
                 row("/run/media/u/STICK/photos", 2, Folder),
             ]
         );
@@ -1239,8 +1282,29 @@ sshfs#u@h:/ /media/ssh fuse.sshfs rw 0 0
             .into_iter()
             .map(|l| l.label)
             .collect();
-        assert_eq!(labels[1..], ["x", "Computer", "STICK"]);
+        assert_eq!(
+            labels[1..],
+            [
+                "x",
+                "Computer",
+                "Local Disk (/)",
+                "Local Disk (/boot)",
+                "STICK (/run/media/u/STICK)"
+            ],
+            "named as Computer names them"
+        );
         assert!(labels[0].ends_with("Home"), "got {}", labels[0]);
+        assert_eq!(
+            (dialog_chain(Path::new("/usr"), home, &[]).into_iter())
+                .map(|l| (l.dir.display().to_string(), l.depth))
+                .collect::<Vec<_>>(),
+            [
+                ("/home/u".to_string(), 0),
+                ("/".to_string(), 0),
+                ("/usr".to_string(), 1)
+            ],
+            "with no drive read, the folders hang off Computer"
+        );
     }
 
     #[test]

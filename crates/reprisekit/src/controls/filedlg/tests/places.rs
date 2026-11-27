@@ -270,6 +270,18 @@ fn look_in_picks_the_shown_folders_crumb_and_crumbs_without_an_icon_wear_the_fol
     d.click(R, Some(Hit::LookIn(combo::Hit::Drop)), Mods::default());
     let ev = d.click(R, Some(Hit::LookIn(combo::Hit::Row(2))), Mods::default());
     assert!(matches!(ev, Event::NeedListing(40)), "got {ev:?}");
+
+    let mut f = folder(40, None, vec![]);
+    f.crumbs = vec![
+        crumb(30, "Home", 0, None),
+        crumb(40, "Computer", 0, None),
+        crumb(40, "Local Disk (/)", 1, None),
+    ];
+    d.set_listing(f);
+    assert_eq!(
+        d.lookin.selected, 2,
+        "the deepest row naming the folder is picked: / is its drive's row"
+    );
 }
 
 /// The dialog with two pinned folders, the second missing: the places bar scrolled to them and

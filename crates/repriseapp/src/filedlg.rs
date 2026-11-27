@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::{Event, PointerInput};
 use reprisefs::listing::{Item, Row};
 use reprisefs::pins::{Pin, Pins};
-use reprisefs::places::{DialogPlace, LinkKind, MountedDrives};
+use reprisefs::places::{ComputerDrives, DialogPlace, DriveKind, LinkKind};
 use reprisekit::controls::filedlg::DlgMode;
 use reprisekit::controls::form;
 use reprisekit::raster::Rect;
@@ -74,12 +74,15 @@ const PINS_WAIT: std::time::Duration = if cfg!(test) {
 const TOOLBAR_ICONS: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-list"];
 const TOOLBAR_VIEWS: usize = 3;
 const TOOLBAR_PX: i32 = 16;
-/// The Look in icons [`Icons::link`] gives: Recent Items, Home, Computer and a drive.
-const LINK_ICONS: [&str; 4] = [
+/// The Look in icons [`Icons::link`] gives: Recent Items, Home, Computer, then a hard disk, a
+/// removable drive and a CD as Computer draws them ([`DriveKind::icon`]).
+const LINK_ICONS: [&str; 6] = [
     "document-open-recent",
     "user-home",
     "computer",
+    "drive-harddisk",
     "drive-removable-media",
+    "media-optical",
 ];
 
 #[derive(Default)]
@@ -91,7 +94,7 @@ pub struct Icons {
     /// The Look in field's folder, grown with the text like the toolbar's.
     pub folder: Option<Canvas>,
     /// Look in's Recent Items, Home, Computer and drive rows ([`LINK_ICONS`]), grown like `folder`.
-    links: [Option<Canvas>; 4],
+    links: [Option<Canvas>; 6],
     /// The cache's scale and theme and the text size when they were fetched.
     scale: i32,
     theme: Option<Arc<IconTheme>>,
@@ -189,7 +192,9 @@ impl Icons {
             LinkKind::Recent => 0,
             LinkKind::Home => 1,
             LinkKind::Computer => 2,
-            LinkKind::Drive => 3,
+            LinkKind::Drive(DriveKind::Local) => 3,
+            LinkKind::Drive(DriveKind::Optical) => 5,
+            LinkKind::Drive(_) => 4,
             LinkKind::Folder => return None,
         };
         self.links[i].clone()
@@ -642,7 +647,7 @@ pub struct Host {
     /// Every file with an execute bit wears the program icon, whatever its type.
     pub exec_icon: bool,
     /// The drives Look in lists under Computer.
-    drives: MountedDrives,
+    drives: ComputerDrives,
     /// The kind of each Look in row the shown folder's listing gave, for their icons.
     chain: Vec<LinkKind>,
 }
