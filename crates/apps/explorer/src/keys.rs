@@ -69,7 +69,12 @@ impl Explorer {
         {
             // The arrows filled the field with the rows they passed.
             if key == form::Key::Escape && !completing {
-                let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
+                let icon = address_icon(
+                    &mut self.chrome_waits,
+                    &mut ctx.icons,
+                    &self.place,
+                    ctx.theme.text,
+                );
                 let text = self.place.address_in(&self.shares.shares);
                 self.reset_address(&text, icon);
             }
@@ -112,7 +117,12 @@ impl Explorer {
             // Escape: the field goes back to where we actually are
             // and the focus drops into the view.
             if k.sym == keysym::ESCAPE {
-                let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
+                let icon = address_icon(
+                    &mut self.chrome_waits,
+                    &mut ctx.icons,
+                    &self.place,
+                    ctx.theme.text,
+                );
                 let text = self.place.address_in(&self.shares.shares);
                 self.reset_address(&text, icon);
                 self.focus = Focus::View;

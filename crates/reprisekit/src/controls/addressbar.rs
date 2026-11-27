@@ -14,7 +14,7 @@ use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, EditKey, TextEdit};
-use crate::theme::Color;
+use crate::theme::{Color, TextUnits};
 use accesskit::{NodeId, Role};
 
 pub const LABEL_X: i32 = 6;
@@ -37,10 +37,36 @@ pub const GO_W: i32 = crate::metrics::AddressMetrics::CLASSIC.go_w;
 
 pub const RIGHT_PAD: i32 = 2;
 
+/// The band's height at 100% text; it grows with the text ([`height`]).
+pub const HEIGHT: i32 = 22;
+
 const GO_ICON: i32 = 20;
 const GO_ICON_X: i32 = 5;
+/// The gap between Go's icon and its label.
+const GO_TEXT_GAP: i32 = 4;
 
-const GO_TEXT_X: i32 = GO_ICON_X + GO_ICON + 4;
+/// The band's height at text `u`.
+pub fn height(u: TextUnits) -> i32 {
+    u.len(HEIGHT)
+}
+
+/// The field's place icon at text `u` in a band [`height`] tall, the size a host fetches
+/// [`Combo::icon`] at.
+pub fn field_icon_px(u: TextUnits) -> i32 {
+    combo::field_icon_px(u, height(u))
+}
+
+/// Go's icon in a band `band_h` px tall at text `u`: grown as far as the band grows
+/// ([`TextUnits::icon_within`]).
+fn go_icon_in(u: TextUnits, band_h: i32) -> i32 {
+    u.icon_within(GO_ICON, band_h - HEIGHT)
+}
+
+/// Go's icon at text `u` in a band [`height`] tall, the size a host fetches
+/// [`AddressBar::go_icon`] at.
+pub fn go_icon_px(u: TextUnits) -> i32 {
+    go_icon_in(u, height(u))
+}
 
 /// The band: the places combo (always editable, always with an icon)
 /// and the Go button, hot while the pointer is on it.
@@ -400,19 +426,22 @@ fn draw_go(
     px: u32,
 ) {
     let Paint { s, .. } = *p;
+    let side = go_icon_in(p.text, go.height / s);
     if ab.go_hot {
         let dx = p.look.controls_at_100().address.go_frame_x * s;
         let frame = Rect::new(go.x + dx, go.y, go.width - 2 * dx, go.height);
         toolbar::draw_button(c, p, frame, None, State::Hot);
     }
     if let Some(icon) = &ab.go_icon {
+        // A smaller icon than its box (one fetched before the text grew) centres in it.
+        let pad = |room: i32, have: u32| (room - have as i32).max(0) / 2;
         c.blit_over(
-            go.x + GO_ICON_X * s,
-            go.y + (go.height - GO_ICON * s) / 2,
+            go.x + GO_ICON_X * s + pad(side * s, icon.width),
+            go.y + (go.height - side * s) / 2 + pad(side * s, icon.height),
             icon,
         );
     }
-    let tx = go.x + GO_TEXT_X * s;
+    let tx = go.x + (GO_ICON_X + side + GO_TEXT_GAP) * s;
     text.draw(
         c,
         Rect::new(tx, go.y, (go.right() - tx).max(0), go.height),
@@ -733,6 +762,79 @@ mod tests {
         let lay = layout(&ab, &text, 11, BAND, &ControlMetrics::CLASSIC);
         ab.click(Hit::Completion(1), 0, &lay, &text, 11, 1);
         assert_eq!(ab.text(), "~/Documents/");
+    }
+
+    /// At 200% text the band doubles to 44 px: the place icon and the drop rows' icons grow to
+    /// 32 px and Go's to 40, each centred down its box, and Go's label moves past its icon.
+    #[test]
+    fn the_place_and_go_icons_grow_with_the_band() {
+        let one = Theme::default().text;
+        assert_eq!(
+            (field_icon_px(one), go_icon_px(one), combo::row_icon_px(one)),
+            (16, 20, 16)
+        );
+        let theme = Theme::default().with_text_size(200);
+        let u = theme.text;
+        assert_eq!(height(u), 44);
+        let (field_side, go_side) = (field_icon_px(u), go_icon_px(u));
+        assert_eq!((field_side, go_side, combo::row_icon_px(u)), (32, 40, 32));
+        let text = TextRenderer::load(&theme.fonts);
+        let px = theme.fonts.size_px;
+        let (red, green) = (Color::rgb(255, 0, 0), Color::rgb(0, 128, 0));
+        let mut ab = AddressBar::new(places(), 1, Some(icon(40, 40, green)));
+        ab.combo.icon = Some(icon(32, 32, red));
+        let band = Rect::new(0, 0, 900, height(u));
+        let lay = layout(&ab, &text, px, band, &theme.controls());
+        let field = lay.combo.icon.expect("the place icon's box");
+        assert_eq!((field.width, field.height), (32, 32));
+        assert_eq!(
+            field.y - band.y,
+            (band.height - 32) / 2,
+            "centred down the band"
+        );
+        assert!(
+            lay.combo.text.x >= field.right(),
+            "the path starts past the icon"
+        );
+        let mut c = Canvas::new(900, band.height as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &ab,
+            &lay,
+            false,
+            Caret::new(false, true),
+            px,
+        );
+        let spans = |colour: Color, r: Rect| {
+            let at: Vec<(i32, i32)> = (r.y..r.bottom())
+                .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) == colour.argb())
+                .collect();
+            let x0 = at.iter().map(|p| p.0).min().unwrap();
+            let y0 = at.iter().map(|p| p.1).min().unwrap();
+            let x1 = at.iter().map(|p| p.0).max().unwrap();
+            let y1 = at.iter().map(|p| p.1).max().unwrap();
+            Rect::new(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+        };
+        assert_eq!(spans(red, lay.field), field, "the place icon fills its box");
+        let go = spans(green, lay.go);
+        assert_eq!((go.width, go.height), (40, 40));
+        assert_eq!(
+            go.y - band.y,
+            (band.height - 40) / 2,
+            "Go's icon centred down the band"
+        );
+        let ink = theme.colors.button_text.argb();
+        let label = (go.right()..lay.go.right())
+            .find(|&x| (band.y..band.bottom()).any(|y| c.get(x, y) == ink))
+            .expect("Go's label inks");
+        assert!(
+            label >= go.right() + GO_TEXT_GAP,
+            "Go's label starts past its icon"
+        );
     }
 
     #[test]

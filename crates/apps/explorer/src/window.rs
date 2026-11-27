@@ -88,7 +88,7 @@ pub fn rebar(settings: &Settings, cm: &ControlMetrics) -> rebar::Rebar {
     }
     if settings.address_bar {
         bands.push(rebar::Band {
-            height: cm.text.len(22),
+            height: addressbar::height(cm.text),
         });
     }
     rebar::Rebar { bands }

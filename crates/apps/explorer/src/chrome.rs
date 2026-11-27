@@ -11,24 +11,27 @@ use repriseapp::listjob::Job;
 use reprisefs::listing::Item;
 use reprisefs::places::{DriveKind, Gadget};
 use reprisekit::art::viewsicon;
-use reprisekit::controls::addressbar::AddressBar;
-use reprisekit::controls::combo::ListItem;
+use reprisekit::controls::addressbar::{self, AddressBar};
+use reprisekit::controls::combo::{self, ListItem};
+use reprisekit::controls::statusbar;
 use reprisekit::controls::toolbar;
 use reprisekit::icontheme::IconCache;
 use reprisekit::raster::Canvas;
+use reprisekit::theme::TextUnits;
 use reprisekit::tr;
 use std::path::PathBuf;
 
 /// A selected shortcut's path and its status text, or the read of it still out.
 pub(crate) type LinkStatus = (PathBuf, Result<Option<String>, Job<Option<String>>>);
 
-/// `place`'s address bar icon, a blank stand-in noted in `waits` while it decodes.
+/// `place`'s address bar icon at text `u`, a blank stand-in noted in `waits` while it decodes.
 pub(crate) fn address_icon(
     waits: &mut IconWaits,
     icons: &mut IconCache,
     place: &Place,
+    u: TextUnits,
 ) -> Option<Canvas> {
-    waits.first(icons, &[place.icon_name()], 16)
+    waits.first(icons, &[place.icon_name()], addressbar::field_icon_px(u))
 }
 
 impl Explorer {
@@ -82,7 +85,8 @@ impl Explorer {
 
     fn go_icon(&mut self, ctx: &mut Ctx) -> Option<Canvas> {
         let names = &["go-jump", "go-next"];
-        chrome_icon_unread(&mut self.chrome_waits, &mut ctx.icons, names, 20)
+        let px = addressbar::go_icon_px(ctx.theme.text);
+        chrome_icon_unread(&mut self.chrome_waits, &mut ctx.icons, names, px)
     }
 
     /// The address drop's places: the shell tree, one row a place, the Desktop's places in the Folders tree's order with the drives under Computer.
@@ -92,7 +96,12 @@ impl Explorer {
         let go = self.go_icon(ctx);
         self.address = AddressBar::new(rows, 0, go);
         self.address_places = places;
-        let icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
+        let icon = address_icon(
+            &mut self.chrome_waits,
+            &mut ctx.icons,
+            &self.place,
+            ctx.theme.text,
+        );
         let text = self.place.address_in(&self.shares.shares);
         self.reset_address(&text, icon);
     }
@@ -124,8 +133,9 @@ impl Explorer {
         }
         let mut rows = Vec::new();
         let mut places = Vec::new();
+        let px = combo::row_icon_px(ctx.theme.text);
         for (text, place, indent, icon) in shell {
-            let icon = self.chrome_waits.first(&mut ctx.icons, &[icon], 16);
+            let icon = self.chrome_waits.first(&mut ctx.icons, &[icon], px);
             rows.push(ListItem::shell(text, icon, indent));
             places.push(place);
         }
@@ -149,7 +159,12 @@ impl Explorer {
         for (item, row) in self.address.combo.items.iter_mut().zip(rows) {
             item.icon = row.icon;
         }
-        self.address.combo.icon = address_icon(&mut self.chrome_waits, &mut ctx.icons, &self.place);
+        self.address.combo.icon = address_icon(
+            &mut self.chrome_waits,
+            &mut ctx.icons,
+            &self.place,
+            ctx.theme.text,
+        );
         self.address.go_icon = self.go_icon(ctx);
         let px = crate::fileops::menu_icon_px(&ctx.theme);
         self.favorite_icons = [&["folder"][..], &["folder-remote", "network-server"]]
@@ -180,7 +195,8 @@ impl Explorer {
             .place
             .path()
             .map(|_| sized.filter(|i| !i.is_folder()).map(|i| i.size).sum());
-        let zone = self.chrome_waits.first(&mut ctx.icons, &["computer"], 16);
+        let px = statusbar::icon_px(ctx.theme.text);
+        let zone = self.chrome_waits.first(&mut ctx.icons, &["computer"], px);
         self.status.panels = window::status_panels(
             self.items.len(),
             chosen.len(),

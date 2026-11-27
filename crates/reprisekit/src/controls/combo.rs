@@ -27,6 +27,7 @@ use crate::selection::scroll_into_view;
 use crate::style::Part;
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, TextEdit};
+use crate::theme::TextUnits;
 use accesskit::{Node, NodeId, Role};
 use std::cell::Cell;
 
@@ -80,6 +81,21 @@ const LIST_ICON_X: i32 = 3;
 /// The gap between a 16 px icon and the label after it, in the list and
 /// in the field alike.
 const ICON_GAP: i32 = 4;
+
+/// A shell row's icon at text `u`, the size a host fetches [`ListItem::icon`] at: grown with
+/// the row ([`TextUnits::icon_within`]).
+pub fn row_icon_px(u: TextUnits) -> i32 {
+    u.icon_within(16, u.len(SHELL_ROW_H) - SHELL_ROW_H)
+}
+
+/// The field's icon box at 100% text: the 16 px icon and a px above and below.
+const FIELD_ICON_ROOM: i32 = 18;
+
+/// The field's icon ([`Combo::icon`]) in a field `field_h` px tall at text `u`: grown with the
+/// text as far as the field is taller than at 100% ([`TextUnits::icon_within`]).
+pub fn field_icon_px(u: TextUnits, field_h: i32) -> i32 {
+    u.icon_within(16, field_h - 4 - FIELD_ICON_ROOM)
+}
 
 fn shell(items: &[ListItem]) -> bool {
     items.iter().any(|i| i.icon.is_some())
@@ -516,14 +532,14 @@ pub fn layout_rows(combo: &Combo, field: Rect, cm: &ControlMetrics, row_h: i32) 
         cm.combo_drop,
         inner.height,
     );
-    // The place icon sits 3 px inside the frame, centred in the field's
-    // 18 px inner box.
+    // The place icon sits 3 px inside the frame, centred down the field's inner box.
     let icon = combo.icon.as_ref().map(|_| {
+        let side = field_icon_px(cm.text, field.height);
         Rect::new(
             field.x + FIELD_PAD,
-            inner.y + (inner.height - 16) / 2,
-            16,
-            16,
+            inner.y + (inner.height - side) / 2,
+            side,
+            side,
         )
     });
     let text_x = match (icon, combo.edit.is_some()) {
@@ -779,11 +795,14 @@ pub fn draw(
     draw_combo_frame(c, p, field, lay.drop.scaled(s), fill, look);
     if let (Some(icon), Some(r)) = (&combo.icon, lay.icon) {
         let r = r.scaled(s);
+        // A smaller icon than the box (one fetched before the text grew) centres in it.
+        let x = r.x + (r.width - icon.width as i32).max(0) / 2;
+        let y = r.y + (r.height - icon.height as i32).max(0) / 2;
         if focus && combo.enabled && !editable && !list_button {
             let tinted = crate::controls::iconview::tint_selected(icon, cs.hilight);
-            c.blit_over(r.x, r.y, &tinted);
+            c.blit_over(x, y, &tinted);
         } else {
-            c.blit_over(r.x, r.y, icon);
+            c.blit_over(x, y, icon);
         }
     }
     let tr = lay.text.scaled(s);
