@@ -457,7 +457,8 @@ async fn check_ours(conn: &Connection, dir: &Path, timer: &str) -> zbus::Result<
 
 /// Rewrites the pair of timer `timer` in `dir` with `task` and reloads, when the pair is ours and
 /// still holds `was`, so a change made by hand while the box was open is never lost. The reload
-/// has a running timer work out its next run from the new schedule.
+/// has a running timer work out its next run from the new schedule. A task that stops being
+/// at-startup loses its stamps first, while the loaded unit still names their folder.
 async fn edit(
     conn: &Connection,
     dir: Option<&Path>,
@@ -472,6 +473,11 @@ async fn edit(
     }
     units::rewrite(dir, timer, task, units::notifier().as_deref())
         .map_err(|e| failed(&e.to_string()))?;
+    let startup = units::Schedule::AtStartup;
+    if was.schedule == startup && task.schedule != startup {
+        let service = format!("{}.service", timer.strip_suffix(".timer").unwrap_or(timer));
+        forget_runs(conn, &service, false).await;
+    }
     call(conn, "Reload", &()).await?;
     Ok(())
 }

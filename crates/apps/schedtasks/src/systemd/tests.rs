@@ -29,6 +29,7 @@ struct Spec {
     status: i32,
     /// The unit's `FragmentPath`; empty for `HOME/<description>`.
     fragment: String,
+    conditions: Vec<(String, bool, bool, String, i32)>,
 }
 
 fn object(name: &str) -> String {
@@ -182,6 +183,10 @@ impl Unit {
     #[zbus(property)]
     fn inactive_exit_timestamp(&self) -> u64 {
         self.0.inactive_exit
+    }
+    #[zbus(property)]
+    fn conditions(&self) -> Vec<(String, bool, bool, String, i32)> {
+        self.0.conditions.clone()
     }
     #[zbus(property)]
     fn fragment_path(&self) -> String {
@@ -760,5 +765,82 @@ fn edit_rewrites_only_a_pair_new_task_wrote_unchanged_since_and_reloads() {
             .unwrap();
         assert_eq!(units::read(&dir, &timer), Some(changed));
         assert_eq!(*lock(&calls), ["Reload"]);
+    });
+}
+
+#[test]
+fn an_edit_away_from_once_per_startup_drops_the_tasks_stamps() {
+    let Some(bus) = testbus::bus_with_no_services() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("units");
+    let stamps = tmp.path().join("state/reprise/schedtasks");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&stamps).unwrap();
+    let at_startup = NewTask {
+        schedule: units::Schedule::AtStartup,
+        ..new_task()
+    };
+    let notifier = Path::new("/usr/bin/reprise-schedtasks");
+    let timer = units::write(&own(&dir), &at_startup, &[], Some(notifier)).unwrap();
+    let boot = "20956c8391bb4f9da73ecc05a087448b";
+    let stamp = format!("reprise-task-back-up.{boot}");
+    let other = format!("reprise-task-back-up-2.{boot}");
+    for name in [&stamp, &other] {
+        std::fs::write(stamps.join(name), "").unwrap();
+    }
+    let made = Spec {
+        load: "loaded",
+        fragment: dir.join(&timer).to_string_lossy().into_owned(),
+        ..Spec::default()
+    };
+    let service = Spec {
+        load: "loaded",
+        active: "inactive",
+        conditions: vec![(
+            "ConditionPathExists".into(),
+            false,
+            true,
+            stamps.join(&stamp).to_string_lossy().into_owned(),
+            0,
+        )],
+        ..Spec::default()
+    };
+    let units = vec![
+        ("reprise-task-back-up.timer", made),
+        ("reprise-task-back-up.service", service),
+    ];
+    let left = |d: &Path| {
+        let mut v: Vec<String> = (std::fs::read_dir(d).unwrap())
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        v.sort();
+        v
+    };
+    zbus::block_on(async move {
+        let (_fake, conn, _calls) = manager_with(&bus, units).await;
+        let daily = new_task();
+        let was = units::read(&dir, &timer).unwrap();
+        assert_eq!(was, at_startup);
+        edit(&conn, Some(&dir), &timer, &was, &daily).await.unwrap();
+        assert_eq!(
+            left(&stamps),
+            std::slice::from_ref(&other),
+            "another task's stamp stays"
+        );
+        std::fs::write(stamps.join(&stamp), "").unwrap();
+        let hourly = NewTask {
+            schedule: units::Schedule::Hourly,
+            ..new_task()
+        };
+        edit(&conn, Some(&dir), &timer, &daily, &hourly)
+            .await
+            .unwrap();
+        assert_eq!(
+            left(&stamps),
+            [other, stamp],
+            "only an edit away from Once per startup drops them"
+        );
     });
 }
