@@ -825,11 +825,13 @@ fn reveal(state: &mut State, surface: Surface, r: Reveal) {
     }
 }
 
-/// Click pointer `button` at layout point `at` as a press and release would, without moving the pointer: the press goes through `State::press`, the release through the interaction it started, with `State::pointer_location` reading `at` meanwhile. No client hears the click. Nothing happens while locked. What the pointer holds ends first ([`let_go`]).
+/// Click pointer `button` at layout point `at` as a press and release would, without moving the pointer: the press goes through `State::press`, the release through the interaction it started, with `State::pointer_location` reading `at` meanwhile. No client hears the click. Nothing happens while locked. What the pointer holds ends first ([`let_go`]); afterwards the pointer shows what it hovers, its client's cursor where that client kept it.
 pub fn click(state: &mut State, at: (f64, f64), button: u32) {
     if state.desktop_locked() {
         return;
     }
+    let focus = |s: &State| s.seat.get_pointer().and_then(|p| p.current_focus());
+    let before = (focus(state), state.cursor.clone());
     let_go(state);
     let real = state.pointer_location();
     let pos = Point::from(at);
@@ -849,6 +851,16 @@ pub fn click(state: &mut State, at: (f64, f64), button: u32) {
     }
     state.access.click_at = None;
     state.repoint(real, InputTime::now());
+    // A client sets its cursor on enter: one that kept the pointer would not set it again over
+    // the cursor the click's interaction left.
+    if before.0.is_some()
+        && focus(state) == before.0
+        && state.cursor != before.1
+        && !state.inputproto.captured()
+    {
+        state.cursor = before.1;
+        state.redraw_cursor();
+    }
     state.redraw_all();
 }
 
@@ -1126,6 +1138,90 @@ mod tests {
                 "{what}: the late release leaves Start open"
             );
         }
+    }
+
+    /// A point whose hit `want` takes.
+    fn find(s: &State, want: impl Fn(&State, &Hit) -> bool) -> (f64, f64) {
+        (0..768)
+            .step_by(2)
+            .flat_map(|y| {
+                (0..1024)
+                    .step_by(2)
+                    .map(move |x| (f64::from(x), f64::from(y)))
+            })
+            .find(|&p| want(s, &s.scene_hit(p.into())))
+            .expect("the target")
+    }
+
+    #[test]
+    fn a_readers_click_leaves_the_pointer_where_it_was_and_as_it_looked() {
+        use reprisekit::classic::frame::{CaptionButton, FrameHit};
+        use reprisekit::controls::menu::MenuItem;
+        use reprisekit::taskbar::TaskbarHit;
+        use smithay::input::pointer::{CursorIcon, CursorImageStatus};
+        type Want<'a> = &'a dyn Fn(&State, &Hit) -> bool;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let other = h.map_toplevel(&mut c, "first.app", 300, 200);
+        h.state.move_to(other.id, 600, 300);
+        let t = h.map_toplevel(&mut c, "second.app", 300, 200);
+        h.state.move_to(t.id, 50, 50);
+        h.dispatch();
+        let w = h.state.win(t.id).expect("the window");
+        let client = w.geom.client;
+        h.pointer_to(
+            f64::from(w.x + client.x + client.width / 2),
+            f64::from(w.y + client.y + client.height / 2),
+        );
+        let focus = h.state.seat.get_pointer().and_then(|p| p.current_focus());
+        assert!(focus.is_some(), "the window has the pointer");
+        let real = h.state.pointer_location();
+        let text = CursorImageStatus::Named(CursorIcon::Text);
+        h.state.cursor = text.clone();
+        let bar = |b: TaskbarHit| move |_: &State, hit: &Hit| matches!(hit, Hit::Taskbar { hit, .. } if *hit == b);
+        let row = |s: &State, hit: &Hit| match hit {
+            Hit::Menu {
+                depth,
+                row: Some(r),
+            } => matches!(
+                s.menus.get(*depth).and_then(|m| m.items.get(*r)),
+                Some(MenuItem::Entry { label, .. }) if label.contains("Programs")
+            ),
+            _ => false,
+        };
+        let other = other.id;
+        let minimize = move |_: &State, hit: &Hit| {
+            *hit == Hit::Frame {
+                window: other,
+                hit: FrameHit::Button(CaptionButton::Minimize),
+            }
+        };
+        let steps: [(&str, Want); 4] = [
+            ("Start", &bar(TaskbarHit::Start)),
+            ("a Start menu row", &row),
+            ("a task button", &bar(TaskbarHit::Task(0))),
+            ("another window's Minimize", &minimize),
+        ];
+        for (what, want) in steps {
+            let at = find(&h.state, want);
+            click(&mut h.state, at, BTN_LEFT);
+            assert_eq!(
+                h.state.pointer_location(),
+                real,
+                "{what}: the pointer stays put"
+            );
+            assert_eq!(
+                h.state.seat.get_pointer().and_then(|p| p.current_focus()),
+                focus,
+                "{what}: the window keeps the pointer"
+            );
+            assert_eq!(h.state.cursor, text, "{what}: the window's cursor stays");
+        }
+        assert!(
+            h.state.win(other).is_some_and(|w| w.minimized),
+            "the Minimize click minimizes the other window"
+        );
     }
 
     #[test]
