@@ -124,6 +124,98 @@ pub async fn files(conn: &Connection) -> zbus::Result<Vec<UnitFile>> {
         .collect())
 }
 
+/// What a manager signal asks a list of its services to read again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reread {
+    /// A service was loaded or unloaded: the loaded units.
+    Loaded,
+    /// A reload ended or unit files were enabled or disabled: the unit files too.
+    Files,
+}
+
+/// The [`Reread`] a manager signal asks for: `UnitNew` and `UnitRemoved` of a service,
+/// `UnitFilesChanged`, and `Reloading` once a reload ends. A new unit file shows only after a
+/// reload, as no unit loads it.
+pub fn reread(m: &zbus::Message) -> Option<Reread> {
+    let hdr = m.header();
+    if hdr.path().map(|p| p.as_str()) != Some(PATH)
+        || hdr.interface().map(|i| i.as_str()) != Some(MANAGER)
+    {
+        return None;
+    }
+    match hdr.member()?.as_str() {
+        "UnitNew" | "UnitRemoved" => {
+            let (name, _): (String, OwnedObjectPath) = m.body().deserialize().ok()?;
+            is_service_name(&name).then_some(Reread::Loaded)
+        }
+        "UnitFilesChanged" => Some(Reread::Files),
+        "Reloading" => (!m.body().deserialize::<bool>().ok()?).then_some(Reread::Files),
+        _ => None,
+    }
+}
+
+/// Calls `asked` with each [`Reread`] the user manager signals until it returns false,
+/// connecting again after the bus or the manager goes, and asking [`Reread::Files`] then, as
+/// what changed in between was missed. Blocks.
+pub fn follow_rereads(mut asked: impl FnMut(Reread) -> bool) {
+    let mut pause = std::time::Duration::ZERO;
+    let mut again = false;
+    loop {
+        let start = std::time::Instant::now();
+        let gone = match crate::session() {
+            Ok(conn) => crate::wait(rereads(&conn, again, &mut asked)),
+            Err(e) => {
+                log::info!("no session bus: {e}");
+                false
+            }
+        };
+        if gone {
+            return;
+        }
+        again = true;
+        pause = crate::reconnect_pause(pause, start.elapsed());
+        std::thread::sleep(pause);
+    }
+}
+
+/// [`follow_rereads`] on `conn` until the manager leaves or the stream ends; true once `asked`
+/// returned false. `again` asks [`Reread::Files`] once subscribed.
+async fn rereads(conn: &Connection, again: bool, asked: &mut impl FnMut(Reread) -> bool) -> bool {
+    use futures_util::StreamExt as _;
+    let rules = ["UnitNew", "UnitRemoved", "UnitFilesChanged", "Reloading"].map(|member| {
+        zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .path(PATH)
+            .interface(MANAGER)
+            .member(member)
+            .build()
+            .map(Into::into)
+    });
+    let rules = (rules.into_iter())
+        .filter_map(|r| r.inspect_err(|e| log::warn!("no match rule: {e}")).ok())
+        .collect();
+    let mut signals = crate::signals(conn, DEST, rules).await;
+    // The manager sends unit signals only while some client is subscribed.
+    if let Err(e) = call(conn, "Subscribe", &()).await {
+        log::info!("systemd Subscribe: {e}");
+    }
+    if again && !asked(Reread::Files) {
+        return true;
+    }
+    while let Some(signal) = signals.next().await {
+        let ask = match &signal {
+            crate::Signal::OwnerChanged => return false,
+            crate::Signal::Message(m) => reread(m),
+        };
+        if let Some(r) = ask
+            && !asked(r)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether polkit may let this user start, stop and restart system services, at once or after
 /// a password. True when polkit does not answer, so the system manager itself says no.
 pub fn may_manage_system() -> bool {
@@ -284,6 +376,49 @@ mod tests {
             assert!(!is_service_name(bad), "{bad:?} is not a service name");
         }
         assert!(!is_service_name(&format!("{}.service", "a".repeat(250))));
+    }
+
+    #[test]
+    fn a_list_reads_again_on_a_service_unit_change_and_after_a_reload() {
+        let unit = |member: &str, name: &str| {
+            let path = OwnedObjectPath::try_from("/org/freedesktop/systemd1/unit/x").unwrap();
+            zbus::Message::signal(PATH, MANAGER, member)
+                .build(&(name, path))
+                .unwrap()
+        };
+        let reloading = |active: bool| {
+            zbus::Message::signal(PATH, MANAGER, "Reloading")
+                .build(&active)
+                .unwrap()
+        };
+        let files = zbus::Message::signal(PATH, MANAGER, "UnitFilesChanged")
+            .build(&())
+            .unwrap();
+        assert_eq!(
+            reread(&unit("UnitNew", "i14test.service")),
+            Some(Reread::Loaded)
+        );
+        assert_eq!(
+            reread(&unit("UnitRemoved", "i14test.service")),
+            Some(Reread::Loaded)
+        );
+        assert_eq!(
+            reread(&unit("UnitNew", "app-x-1.scope")),
+            None,
+            "not a service"
+        );
+        assert_eq!(reread(&files), Some(Reread::Files));
+        assert_eq!(
+            reread(&reloading(false)),
+            Some(Reread::Files),
+            "a reload ended"
+        );
+        assert_eq!(reread(&reloading(true)), None, "a reload began");
+        let elsewhere =
+            zbus::Message::signal("/org/freedesktop/systemd1/unit/x", MANAGER, "Reloading")
+                .build(&false)
+                .unwrap();
+        assert_eq!(reread(&elsewhere), None, "not the manager's object");
     }
 
     type Calls = Arc<Mutex<Vec<String>>>;

@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use repriseapp::detailslist::List;
 use repriseapp::oneshot::MsgBox;
 use repriseapp::{Ctx, Event, Reply};
-use reprisebus::services::{Failed, Manager, Verb};
+use reprisebus::services::{Failed, Manager, Reread, Verb};
 use reprisekit::controls::listview::{self, Column};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::msgbox::Fields;
@@ -36,6 +36,11 @@ pub struct Svc {
     pub run_job: fn(Job, Post),
     /// A log read off the event loop ([`services::read_log`]).
     pub read_log: fn(Manager, String, Post),
+    /// Follows the user manager's changes ([`services::follow`]), from the page's first showing.
+    pub follow: fn(Post),
+    /// Where the threads post, once the window started.
+    pub post: Option<Post>,
+    pub following: bool,
     pub log: Option<Log>,
 }
 
@@ -63,6 +68,9 @@ impl Svc {
             rx,
             run_job: services::run,
             read_log: services::read_log,
+            follow: services::follow,
+            post: None,
+            following: false,
             log: None,
         }
     }
@@ -263,11 +271,14 @@ impl TaskMgr {
         Reply::redraw_all()
     }
 
-    /// Takes what the threads posted: rows, ended jobs (telling a failure) and log lines.
+    /// Takes what the threads posted: rows, ended jobs (telling a failure), log lines and the
+    /// manager's changes, which read the rows again while the page shows.
     pub(crate) fn service_msgs(&mut self, ctx: &mut Ctx) {
         let got: Vec<Msg> = self.svc.rx.try_iter().collect();
+        let mut reread = None;
         for m in got {
             match m {
+                Msg::Reread(r) => reread = reread.max(Some(r == Reread::Files)),
                 // A read asked before the box last changed would bring back or hide rows.
                 Msg::Listed { system, .. } if system != self.svc.system => {}
                 Msg::Listed {
@@ -297,6 +308,11 @@ impl TaskMgr {
                     }
                 }
             }
+        }
+        if let Some(files) = reread
+            && self.page() == Page::Services
+        {
+            self.read_services(files);
         }
     }
 
@@ -330,11 +346,19 @@ impl TaskMgr {
         }
     }
 
-    /// The Services page opened: its rows are read afresh.
-    pub(crate) fn services_shown(&self) {
-        if self.page() == Page::Services {
-            self.read_services(true);
+    /// The Services page opened: its rows are read afresh, and the manager's changes followed
+    /// from now on.
+    pub(crate) fn services_shown(&mut self) {
+        if self.page() != Page::Services {
+            return;
         }
+        if !self.svc.following
+            && let Some(post) = self.svc.post.clone()
+        {
+            self.svc.following = true;
+            (self.svc.follow)(post);
+        }
+        self.read_services(true);
     }
 }
 

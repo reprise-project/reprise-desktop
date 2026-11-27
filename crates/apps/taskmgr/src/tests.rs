@@ -2,7 +2,7 @@ use super::*;
 use crate::procfs::MemInfo;
 use crate::scopes::Scope;
 use repriseapp::{Extended, MAIN, Mods};
-use reprisebus::services::{Failed, Manager};
+use reprisebus::services::{Failed, Manager, Reread};
 use reprisekit::interface::Interface;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
@@ -1960,4 +1960,41 @@ fn hiding_system_services_drops_their_rows_at_once() {
         (t.svc.rows.iter()).all(|s| s.manager == Manager::User),
         "only user services stay"
     );
+}
+
+#[test]
+fn a_manager_change_reads_the_services_again_while_the_page_shows() {
+    thread_local! {
+        static FOLLOWS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    let (reads, asked) = std::sync::mpsc::channel();
+    t.svc.reader = Some(reads);
+    t.svc.post = Some(services::Post {
+        tx: t.svc.tx.clone(),
+        wake: repriseapp::Waker::noop(),
+    });
+    t.svc.follow = |_| FOLLOWS.set(FOLLOWS.get() + 1);
+    let reread = |t: &mut TaskMgr, ctx: &mut Ctx, r| {
+        t.svc.tx.send(services::Msg::Reread(r)).unwrap();
+        t.event(MAIN, Event::Wake, ctx);
+    };
+    reread(&mut t, &mut ctx, Reread::Files);
+    assert_eq!(asked.try_iter().count(), 0, "no read off the page");
+    open(&mut t, &mut ctx, Page::Services);
+    open(&mut t, &mut ctx, Page::Processes);
+    open(&mut t, &mut ctx, Page::Services);
+    assert_eq!(FOLLOWS.get(), 1, "followed from the first showing on");
+    asked.try_iter().for_each(drop);
+    reread(&mut t, &mut ctx, Reread::Loaded);
+    let files = |asked: &std::sync::mpsc::Receiver<services::Read>| {
+        asked.try_iter().map(|r| r.files).collect::<Vec<_>>()
+    };
+    assert_eq!(files(&asked), [false], "a unit loaded: the loaded units");
+    for r in [Reread::Loaded, Reread::Files, Reread::Loaded] {
+        t.svc.tx.send(services::Msg::Reread(r)).unwrap();
+    }
+    t.event(MAIN, Event::Wake, &mut ctx);
+    assert_eq!(files(&asked), [true], "a reload: one read with the files");
 }

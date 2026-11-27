@@ -1567,10 +1567,12 @@ impl App for TaskMgr {
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
-        self.svc.reader = Some(services::spawn(services::Post {
+        let post = services::Post {
             tx: self.svc.tx.clone(),
             wake: waker.clone(),
-        }));
+        };
+        self.svc.reader = Some(services::spawn(post.clone()));
+        self.svc.post = Some(post);
         if let Some(mut s) = self.sampler.take() {
             s.disk = self.columns.contains(&ProcColumn::Disk);
             if let Some(d) = s.devices.as_mut() {
