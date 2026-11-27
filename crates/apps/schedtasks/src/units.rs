@@ -157,21 +157,19 @@ pub fn is_our_stem(stem: &str) -> bool {
     })
 }
 
-/// `reprise-task-<slug>`, with `-2`, `-3`... added while the own folder holds a unit file or
-/// enable link of that name, any folder of `folders` its drop-in folder, or `taken` (the timers
+/// `reprise-task-<slug>`, with `-2`, `-3`... added while any folder of `folders` holds a unit
+/// file or drop-in folder of that name, the own folder its enable link, or `taken` (the timers
 /// the manager knows) the timer.
 pub fn free_stem(folders: &Folders, slug: &str, taken: &[String]) -> String {
     let there = |dir: &Path, name: &str| dir.join(name).symlink_metadata().is_ok();
     let used = |stem: &str| {
-        let own = |name: String| there(&folders.own, &name);
-        own(format!("{stem}.timer"))
-            || own(format!("{stem}.service"))
-            || own(format!("timers.target.wants/{stem}.timer"))
+        there(&folders.own, &format!("timers.target.wants/{stem}.timer"))
             || std::iter::once(&folders.own)
                 .chain(&folders.search)
                 .any(|dir| {
-                    there(dir, &format!("{stem}.timer.d"))
-                        || there(dir, &format!("{stem}.service.d"))
+                    ["timer", "service", "timer.d", "service.d"]
+                        .into_iter()
+                        .any(|ext| there(dir, &format!("{stem}.{ext}")))
                 })
             || taken.iter().any(|t| *t == format!("{stem}.timer"))
     };

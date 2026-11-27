@@ -252,6 +252,24 @@ fn a_drop_in_folder_in_any_searched_folder_takes_its_units_name() {
 }
 
 #[test]
+fn a_unit_file_in_any_searched_folder_takes_its_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("user");
+    let control = tmp.path().join("user.control");
+    let system = tmp.path().join("etc");
+    for d in [&dir, &control, &system] {
+        std::fs::create_dir(d).unwrap();
+    }
+    std::fs::write(control.join("reprise-task-x.service"), "").unwrap();
+    std::fs::write(system.join("reprise-task-x-2.timer"), "").unwrap();
+    let folders = Folders {
+        own: dir.clone(),
+        search: vec![control, dir, system],
+    };
+    assert_eq!(free_stem(&folders, "x", &[]), "reprise-task-x-3");
+}
+
+#[test]
 fn the_folders_are_the_absolute_ones_of_the_search_path() {
     let search = args(&[
         "/home/u/.config/systemd/user.control",
