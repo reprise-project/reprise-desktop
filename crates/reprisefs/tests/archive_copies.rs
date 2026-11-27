@@ -5,13 +5,36 @@ use reprisefs::{archive, archivecopy, recent};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+const HOME_PREFIX: &str = "reprisefs-archive-copies-";
+
+static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Removes the scratch home as the test binary exits; statics are never dropped.
+extern "C" fn remove_home() {
+    if let Some(home) = HOME.get() {
+        let _ = std::fs::remove_dir_all(home);
+    }
+}
+
 fn home() -> PathBuf {
-    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME.get_or_init(|| {
-        let home =
-            std::env::temp_dir().join(format!("reprisefs-archive-copies-{}", std::process::id()));
+        // Homes of runs that were killed before their exit handler ran.
+        for e in std::fs::read_dir(std::env::temp_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let name = e.file_name();
+            let pid = name.to_str().and_then(|n| n.strip_prefix(HOME_PREFIX));
+            if pid.is_some_and(|p| !Path::new("/proc").join(p).exists()) {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+        let home = std::env::temp_dir().join(format!("{HOME_PREFIX}{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("a scratch home");
+        // SAFETY: `remove_home` is a plain extern "C" fn with no arguments.
+        unsafe { libc::atexit(remove_home) };
         // SAFETY: set once, before any test reads the environment; the others wait on the lock.
         unsafe {
             std::env::set_var("XDG_CACHE_HOME", home.join("cache"));
