@@ -195,7 +195,7 @@ impl Explorer {
         let put = self.poll_put(ctx);
         let removed = self.poll_removal(ctx);
         let extracted = self.poll_extract(ctx);
-        self.sweep_put_scratch();
+        self.release_put_holds();
         self.show_progress_dialogs();
         let job = self.poll_jobs(ctx);
         let shared = self.poll_shares(ctx);
