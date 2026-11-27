@@ -165,7 +165,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
             DELAY_X + reprisekit::controls::updown::WIDTH + 4,
             66,
             50,
-            "seconds",
+            &tr!("units-seconds"),
         ),
     ];
     let format = row(
@@ -271,7 +271,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 &tr!("capturepage-bitrate"),
                 (500, 100_000),
             ));
-            items.push(units("bitrate_units", 262, "kbit/s"));
+            items.push(units("bitrate_units", 262, &tr!("units-kbit-s")));
         }
         _ => items.extend(level(
             a,
@@ -300,7 +300,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
         &tr!("capturepage-keyframe-after"),
         (1, 60),
     ));
-    items.push(units("keyframe_units", 312, "seconds"));
+    items.push(units("keyframe_units", 312, &tr!("units-seconds")));
 
     items.extend([
         group(a, "audio_group", 344, 92, &tr!("capturepage-audio")),
@@ -350,7 +350,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
             ),
             &tr!("capturepage-audio-bitrate"),
         ));
-        items.push(units("audio_bitrate_units", 414, "kbit/s"));
+        items.push(units("audio_bitrate_units", 414, &tr!("units-kbit-s")));
         items.push(Item::check(
             AUDIO_VBR,
             RIGHT_X,

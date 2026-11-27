@@ -742,6 +742,8 @@ appearancepage-custom = Custom
 appearancepage-interface = &Interface:
 appearancepage-color-scheme = &Color scheme:
 appearancepage-mode = &Mode:
+# Between the two times of the dark hours.
+appearancepage-dark-hours-to = to
 appearancepage-material = M&aterial:
 appearancepage-frame = &Frame:
 appearancepage-enable-transparency = Enable &transparency
@@ -1362,3 +1364,6 @@ thunderbolthost-failed =
 ## units
 units-px = px
 units-ms = ms
+units-seconds = seconds
+units-minutes = minutes
+units-kbit-s = kbit/s
