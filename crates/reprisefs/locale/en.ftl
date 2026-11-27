@@ -71,6 +71,13 @@ archive-not-held = it no longer holds { $name }.
 archive-path-too-long = it holds a path too long to copy out.
 archive-line-too-long = bsdtar listed a name too long to read.
 archive-names-too-long = its names add up to more than { $most }.
+archive-update-failed = Cannot update { $name }: { $why }
+archive-update-not-zip = only a zip compressed folder can be written into.
+archive-update-not-own = it is a link, or not a file of yours.
+archive-update-too-large = it holds { $size }, more than the { $most } a save writes into.
+archive-update-too-long = it took too long to rewrite.
+archive-update-mismatch = the rewritten copy did not hold what it should, so it was left as it was.
+archive-update-changed = it changed while it was being rewritten, so it was left as it was.
 extract-list-too-long = it took too long to read.
 extract-too-long = it took too long to extract.
 

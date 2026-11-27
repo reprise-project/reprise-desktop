@@ -87,6 +87,9 @@ struct Notepad {
     settings_path: Option<PathBuf>,
     bar: Bar,
     path: Option<std::path::PathBuf>,
+    /// The zip and the path inside it the document was copied out of, which a save of the
+    /// read-only copy offers to write into.
+    zip_entry: Option<(PathBuf, PathBuf)>,
     /// `path` as it was opened or last saved; a save asks first when the file no longer matches.
     stamp: Option<Stamp>,
     /// The encoding, BOM and line end the file was opened or last saved with; a save writes them.
@@ -180,6 +183,7 @@ impl Notepad {
             settings_path: None,
             bar,
             stamp: path.as_deref().and_then(Stamp::of),
+            zip_entry: path.as_deref().and_then(reprisefs::archivecopy::updatable),
             path,
             dragging: None,
             thumb: ThumbDrag::default(),

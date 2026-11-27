@@ -67,6 +67,9 @@ enum Prompt {
     Overwrite(PathBuf, file::Kind),
     /// The picture's file takes no writes; OK opens Save As on its name, then `Then` runs.
     ReadOnly(Option<Then>),
+    /// The read-only file came out of a zip; Yes writes the picture into it, No opens Save As
+    /// on its name, and `Then` runs once either saved.
+    Update(Option<Then>),
     /// A recovery file; Yes opens its picture.
     Recovered(PathBuf),
 }
@@ -88,6 +91,9 @@ struct Paint {
     /// The tool the color picker goes back to.
     before_pick: Tool,
     path: Option<PathBuf>,
+    /// The zip and the path inside it the picture was copied out of, which a save of the
+    /// read-only copy offers to write into.
+    zip_entry: Option<(PathBuf, PathBuf)>,
     /// JPEG quality, from Save As.
     quality: u8,
     zoom: i32,
@@ -165,6 +171,7 @@ impl Paint {
             doc: Doc::new(img),
             tool: Tool::Pencil,
             before_pick: Tool::Pencil,
+            zip_entry: path.as_deref().and_then(reprisefs::archivecopy::updatable),
             path,
             quality: file::DEFAULT_QUALITY,
             zoom: 1,

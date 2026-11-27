@@ -13,25 +13,36 @@ use std::path::{Path, PathBuf};
 /// itself is read-only, and a read-only file takes no user xattrs.
 const ORIGIN: &CStr = c"user.reprise.archive";
 
-/// Notes on `copy`'s scratch folder that it came out of `archive`, for [`origin`]. An `archive`
-/// that is itself a copy (a compressed folder inside another) notes the outer archive it came
-/// from, or nothing when that is not known.
-pub fn set_origin(copy: &Path, archive: &Path) -> io::Result<()> {
-    let archive = if is_copy(archive) {
+/// The xattr beside [`ORIGIN`] naming the copy's path inside the archive.
+const ENTRY: &CStr = c"user.reprise.archive-entry";
+
+/// Notes on `copy`'s scratch folder that it came out of `archive` as its file `entry`, for
+/// [`origin`] and [`origin_entry`]. An `archive` that is itself a copy (a compressed folder
+/// inside another) notes the outer archive it came from and no entry, or nothing when that is
+/// not known.
+pub fn set_origin(copy: &Path, archive: &Path, entry: &Path) -> io::Result<()> {
+    let (archive, entry) = if is_copy(archive) {
         match origin(archive) {
-            Some(outer) => outer,
+            Some(outer) => (outer, None),
             None => return Ok(()),
         }
     } else {
-        archive.to_path_buf()
+        (archive.to_path_buf(), Some(entry))
     };
     let dir = cstring(copy.parent().ok_or_else(|| io::Error::other("no folder"))?)?;
-    let value = archive.as_os_str().as_bytes();
-    // SAFETY: `dir` and `ORIGIN` are NUL-terminated, and `value` is valid for its length.
+    set_xattr(&dir, ORIGIN, archive.as_os_str().as_bytes())?;
+    match entry {
+        Some(entry) => set_xattr(&dir, ENTRY, entry.as_os_str().as_bytes()),
+        None => Ok(()),
+    }
+}
+
+fn set_xattr(dir: &CStr, name: &CStr, value: &[u8]) -> io::Result<()> {
+    // SAFETY: `dir` and `name` are NUL-terminated, and `value` is valid for its length.
     let set = unsafe {
         libc::setxattr(
             dir.as_ptr(),
-            ORIGIN.as_ptr(),
+            name.as_ptr(),
             value.as_ptr().cast(),
             value.len(),
             0,
@@ -44,26 +55,46 @@ pub fn set_origin(copy: &Path, archive: &Path) -> io::Result<()> {
     }
 }
 
+fn get_xattr(dir: &CStr, name: &CStr) -> Option<PathBuf> {
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: `dir` and `name` are NUL-terminated, and `buf` is writable for its length.
+    let got = unsafe {
+        libc::getxattr(
+            dir.as_ptr(),
+            name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
+    buf.truncate(usize::try_from(got).ok()?);
+    Some(PathBuf::from(OsString::from_vec(buf)))
+}
+
 /// The compressed folder `path` was copied out of, when it is an archive copy whose folder
 /// says ([`set_origin`]).
 pub fn origin(path: &Path) -> Option<PathBuf> {
     if !is_copy(path) {
         return None;
     }
-    let dir = cstring(path.parent()?).ok()?;
-    let mut buf = vec![0u8; libc::PATH_MAX as usize];
-    // SAFETY: `dir` and `ORIGIN` are NUL-terminated, and `buf` is writable for its length.
-    let got = unsafe {
-        libc::getxattr(
-            dir.as_ptr(),
-            ORIGIN.as_ptr(),
-            buf.as_mut_ptr().cast(),
-            buf.len(),
-        )
-    };
-    buf.truncate(usize::try_from(got).ok()?);
-    let archive = PathBuf::from(OsString::from_vec(buf));
+    let archive = get_xattr(&cstring(path.parent()?).ok()?, ORIGIN)?;
     archive.is_absolute().then_some(archive)
+}
+
+/// The compressed folder `path` was copied out of and its path inside it, when it is an archive
+/// copy whose folder says both ([`set_origin`]): plain names only, ending in `path`'s own.
+pub fn origin_entry(path: &Path) -> Option<(PathBuf, PathBuf)> {
+    let archive = origin(path)?;
+    let entry = get_xattr(&cstring(path.parent()?).ok()?, ENTRY)?;
+    let plain = (entry.components()).all(|c| matches!(c, std::path::Component::Normal(_)));
+    (plain && entry.file_name().is_some() && entry.file_name() == path.file_name())
+        .then_some((archive, entry))
+}
+
+/// The zip and the path inside it a save of the archive copy `path` can write into
+/// ([`crate::zipwrite::update_entry`]); None for any other file, and for a copy out of a tar or
+/// 7z archive, which keep Save As.
+pub fn updatable(path: &Path) -> Option<(PathBuf, PathBuf)> {
+    origin_entry(path).filter(|(zip, _)| crate::zipwrite::is_zip(zip))
 }
 
 /// The folder a file dialog starts in for the document at `path`: its own, or for an archive

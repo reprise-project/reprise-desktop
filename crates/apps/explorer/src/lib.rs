@@ -1860,7 +1860,7 @@ impl Explorer {
                         return Opened::NotCopied(why);
                     }
                 };
-                if let Err(e) = reprisefs::archivecopy::set_origin(&copy, &file) {
+                if let Err(e) = reprisefs::archivecopy::set_origin(&copy, &file, &entry.path) {
                     log::debug!(
                         "{} keeps no note of {}: {e}",
                         copy.display(),

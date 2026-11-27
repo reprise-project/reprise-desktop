@@ -1012,9 +1012,6 @@ pub(crate) fn spawn_with(
     stdout: bool,
     env: impl FnOnce(&mut Command),
 ) -> Result<Child, Failure> {
-    use std::os::unix::process::CommandExt;
-    let mut cmd = Command::new(&argv[0]);
-    env(&mut cmd);
     // bsdtar asks for an encrypted entry's passphrase on the terminal, else on stdin, and asks
     // again forever when stdin answers nothing. With no terminal and a stdin it cannot read,
     // it fails at once.
@@ -1022,6 +1019,22 @@ pub(crate) fn spawn_with(
         .write(true)
         .open("/dev/null")
         .map_or_else(|_| Stdio::null(), Stdio::from);
+    let stdout = match stdout {
+        true => Stdio::piped(),
+        false => Stdio::null(),
+    };
+    spawn_io(argv, (stdin, stdout), env)
+}
+
+/// [`spawn_with`] reading and writing the `(stdin, stdout)` given, stderr piped.
+pub(crate) fn spawn_io(
+    argv: &[OsString],
+    (stdin, stdout): (Stdio, Stdio),
+    env: impl FnOnce(&mut Command),
+) -> Result<Child, Failure> {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new(&argv[0]);
+    env(&mut cmd);
     // No terminal also means no terminal's signals, so the child dies with the thread that
     // started it instead. SAFETY: setsid and prctl are async-signal-safe.
     unsafe {
@@ -1033,11 +1046,8 @@ pub(crate) fn spawn_with(
             Ok(())
         });
     }
-    cmd.args(&argv[1..]).stdin(stdin).stderr(Stdio::piped());
-    cmd.stdout(match stdout {
-        true => Stdio::piped(),
-        false => Stdio::null(),
-    });
+    cmd.args(&argv[1..]).stdin(stdin).stdout(stdout);
+    cmd.stderr(Stdio::piped());
     cmd.spawn()
         .map_err(|e| Failure::Tool(tr!("extract-no-bsdtar", why = e.to_string())))
 }

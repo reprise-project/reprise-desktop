@@ -34,7 +34,7 @@ const MAX_NAME_BYTES: usize = 128 << 20;
 /// Address space a bsdtar child may map, in bytes.
 const CHILD_MEMORY: u64 = 2 << 30;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
     File,
     Folder,

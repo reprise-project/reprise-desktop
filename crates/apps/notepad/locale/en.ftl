@@ -91,6 +91,9 @@ save-changes =
 read-only =
     { $name } is read-only.
     Click OK to save your changes under another name or in another folder.
+update-archive =
+    { $name } came out of the compressed folder { $archive }.
+    Do you want to update { $archive } with your changes?
 overwrite =
     { $path } already exists.
     Do you want to replace it?

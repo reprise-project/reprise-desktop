@@ -70,7 +70,8 @@ impl Notepad {
         let Some(p) = self.path.clone() else {
             return false;
         };
-        if reprisefs::ops::is_read_only(&p) {
+        let read_only = reprisefs::ops::is_read_only(&p);
+        if read_only && self.zip_entry.is_none() {
             let b = self.read_only_box(&p);
             self.ask(b, Ask::ReadOnly);
             return false;
@@ -78,6 +79,12 @@ impl Notepad {
         if !format.holds(self.edit.lines()) {
             let b = self.unheld_box(&p, format);
             self.ask(b, Ask::Unheld(None));
+            return false;
+        }
+        if read_only {
+            self.format = format;
+            let b = self.update_box(&p);
+            self.ask(b, Ask::Update);
             return false;
         }
         match self.write_to(&p, format) {
@@ -99,8 +106,83 @@ impl Notepad {
     /// Whether a save is waiting on a box: the file changed on disk, takes no writes, or its
     /// encoding cannot hold the text.
     fn save_asks(&self) -> bool {
-        (self.asks.iter())
-            .any(|(_, ask)| matches!(ask, Ask::Changed | Ask::ReadOnly | Ask::Unheld(None)))
+        (self.asks.iter()).any(|(_, ask)| {
+            matches!(
+                ask,
+                Ask::Changed | Ask::ReadOnly | Ask::Update | Ask::Unheld(None)
+            )
+        })
+    }
+
+    fn update_box(&self, path: &Path) -> MsgBox {
+        let name = |p: &Path| {
+            (p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        let zip = self
+            .zip_entry
+            .as_ref()
+            .map_or_else(String::new, |(z, _)| name(z));
+        MsgBox::new(
+            tr!("name"),
+            msgbox::Fields {
+                text: tr!("update-archive", name = name(path), archive = zip),
+                icon: self.warn_icon.clone(),
+                buttons: vec![
+                    reprisekit::kit_tr!("yes"),
+                    reprisekit::kit_tr!("no"),
+                    reprisekit::kit_tr!("cancel"),
+                ],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        )
+        .sounding(repriseapp::sound::Event::Warning)
+    }
+
+    /// Yes writes the document into its zip and over the copy, then runs the action waiting on
+    /// the save; No opens Save As as a read-only file's OK does; Cancel, Escape and the close box
+    /// drop the action.
+    pub(crate) fn update_answered(&mut self, answer: Option<usize>) -> Reply {
+        match answer {
+            Some(0) => {}
+            Some(1) => return self.read_only_answered(Some(0)),
+            _ => {
+                self.pending.cancelled();
+                return Reply::redraw_all();
+            }
+        }
+        let ok = self.update_zip();
+        match self.pending.saved(ok) {
+            Some(action) => self.run_pending(action),
+            None => Reply::redraw_all(),
+        }
+    }
+
+    /// Writes the document into the zip it came out of, then over its read-only copy, so the
+    /// copy keeps matching what the zip holds. A zip that cannot be written raises a box.
+    fn update_zip(&mut self) -> bool {
+        let (Some(p), Some((zip, inner))) = (self.path.clone(), self.zip_entry.clone()) else {
+            return false;
+        };
+        let Some(bytes) = encode(self.edit.lines(), self.format) else {
+            return false;
+        };
+        if let Err(why) = reprisefs::zipwrite::update_entry(&zip, &inner, &bytes) {
+            log::warn!("update {} in {}: {why}", inner.display(), zip.display());
+            self.fail(&reprisefs::zipwrite::failure(&zip, &why));
+            return false;
+        }
+        if let Err(e) = reprisefs::ops::write_document(&p, &bytes) {
+            log::warn!("update the copy {}: {e}", p.display());
+        }
+        self.stamp = Stamp::of(&p);
+        self.edit.mark_saved();
+        self.forget_rescued();
+        true
     }
 
     pub(crate) fn read_only_box(&self, path: &Path) -> MsgBox {
@@ -380,6 +462,7 @@ impl Notepad {
                 self.format = Format::default();
                 self.view = View::default();
                 self.path = None;
+                self.zip_entry = None;
                 Reply::redraw_all()
             }
             PendingAction::Open => {
