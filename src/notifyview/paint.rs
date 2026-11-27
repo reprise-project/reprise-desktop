@@ -29,7 +29,7 @@ use super::motion::{aim_open, animate, follow_slot, pose_balloon};
 use super::pointer::{rehold, rehover};
 use super::stack::chip_count;
 use super::warm::warm_openings;
-use super::{AGE_TICK, Balloon, Bead, Chip, INFO_ICONS, NotifyView, cap, overlay_tree, replying};
+use super::{AGE_TICK, Balloon, Bead, Chip, INFO_ICONS, NotifyView, balloon_tree, cap, replying};
 
 /// A sheet's app line time: "now", then minutes, then hours.
 pub(super) fn relative(d: Duration) -> String {
@@ -452,7 +452,7 @@ fn draw_chip_at(state: &mut State, more: usize, at: (i32, i32), size: (i32, i32)
     let c = match state.notify.chip.take() {
         Some(c) => c,
         None => {
-            let tree = overlay_tree(state);
+            let tree = balloon_tree(state);
             let buffer = state.scene.buffer_create(tree);
             Chip {
                 tree,

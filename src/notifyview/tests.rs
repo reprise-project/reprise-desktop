@@ -2369,3 +2369,23 @@ fn a_classic_balloon_shows_the_picture_under_its_text_and_the_app_icon_above_it(
     let header = balloon_icon(&mut h.state.icons, b, 16).expect("an icon");
     assert_eq!(header.pixels, red.pixels, "it heads the balloon");
 }
+
+#[test]
+fn a_menu_opened_over_a_balloon_takes_its_pixels_and_the_pointer() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    show(&mut h.state, note(1, "Mail"));
+    let (x, y) = balloon_origins(&h.state)[0];
+    let at = (f64::from(x) + 8.0, f64::from(y) + 8.0).into();
+    let owner = |s: &State| {
+        let hit = s.scene.node_at(s.scene.root(), at)?;
+        s.scene.find_data(hit.node).map(|(_, o)| *o)
+    };
+    assert_eq!(owner(&h.state), Some(SceneOwner::Notification));
+    let menu = h.state.scene.tree_create(h.state.layers.menu);
+    h.state.scene.set_data(menu, Some(SceneOwner::StartPanel));
+    h.state
+        .scene
+        .rect_create(menu, (1024, 768), [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(owner(&h.state), Some(SceneOwner::StartPanel));
+}
