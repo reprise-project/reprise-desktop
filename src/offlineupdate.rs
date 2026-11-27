@@ -56,9 +56,11 @@ impl Bus for PackageKit {
     }
     fn trigger(&self, after: After, interactive: bool) -> Answer {
         reprisebus::offline::trigger_now(after, interactive)
+            .map_err(|e| e.map(|told| reprisebus::told_text!(told)))
     }
     fn cancel(&self, interactive: bool) -> Answer {
         reprisebus::offline::cancel_now(interactive)
+            .map_err(|e| e.map(|told| reprisebus::told_text!(told)))
     }
     fn shutting_down(&self) -> bool {
         crate::power::shutting_down()

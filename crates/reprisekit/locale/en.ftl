@@ -1051,3 +1051,9 @@ notifyhistory-group = { $name } ({ NUMBER($count, useGrouping: "false") })
 ## Restore Defaults with an access key
 traycustomize-restore-classic = &Restore Defaults
 filesheet-customize-restore-defaults = &Restore Defaults
+
+## A call that may open a password prompt, as reprisebus reports it
+polkit-gave-up = The password prompt was open too long, so the change may not have been made. Check it and try again.
+polkit-timed-out = The password prompt was open too long, so nothing was changed. Try again.
+polkit-not-allowed = You are not allowed to make this change.
+thunderbolt-device = Thunderbolt device

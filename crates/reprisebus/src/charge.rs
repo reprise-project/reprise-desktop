@@ -118,7 +118,7 @@ pub fn read() -> Option<ChargeLimit> {
 /// [`enable`] on a system bus connection of its own, blocking until polkit and UPower answer or
 /// [`crate::polkit::PROMPT_TIMEOUT`] passes. The error is what to tell the user; `None` when they
 /// dismissed the password prompt.
-pub fn set(device: &str, on: bool) -> Result<(), Option<String>> {
+pub fn set(device: &str, on: bool) -> Result<(), Option<crate::polkit::Told>> {
     let e = match zbus::block_on(async {
         let conn = Connection::system().await?;
         enable(&conn, device, on).await

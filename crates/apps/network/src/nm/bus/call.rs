@@ -1,6 +1,7 @@
 //! Proxies and calls into NetworkManager, and the failures they end in.
 
 use super::*;
+use reprisekit::tr;
 use zbus::{ObjectPath, Proxy};
 
 pub(super) fn cmd_device(cmd: &Cmd) -> Option<&str> {
@@ -68,32 +69,29 @@ pub(super) fn clean(e: impl std::fmt::Display) -> Failure {
     match plain(&raw) {
         Some(said) => {
             log::warn!("{raw}");
-            Failure::Text(said.into())
+            Failure::Text(said)
         }
         None => Failure::Text(raw.replace("org.freedesktop.NetworkManager.", "")),
     }
 }
 
 /// The sentence for a zbus error text (`name: message`) NetworkManager commonly answers.
-fn plain(raw: &str) -> Option<&'static str> {
+fn plain(raw: &str) -> Option<String> {
     let (name, msg) = raw.split_once(": ").unwrap_or((raw, ""));
     let short = name.rsplit('.').next().unwrap_or(name);
     match short {
         "PermissionDenied" | "AccessDenied" | "NotAuthorized" => {
-            Some(reprisebus::polkit::NOT_ALLOWED)
+            Some(reprisekit::kit_tr!("polkit-not-allowed"))
         }
         _ if msg.to_ascii_lowercase().starts_with("not authorized") => {
-            Some(reprisebus::polkit::NOT_ALLOWED)
+            Some(reprisekit::kit_tr!("polkit-not-allowed"))
         }
-        "ConnectionNotAvailable" | "UnknownDevice" => Some(NOT_READY),
-        _ if msg.contains("because device") => Some(NOT_READY),
-        "NoSecrets" => Some("This connection needs a password, and none was given."),
+        "ConnectionNotAvailable" | "UnknownDevice" => Some(tr!("nm-not-ready")),
+        _ if msg.contains("because device") => Some(tr!("nm-not-ready")),
+        "NoSecrets" => Some(tr!("nm-no-secret")),
         _ => None,
     }
 }
-
-const NOT_READY: &str =
-    "The network adapter is not ready. Make sure it is turned on and enabled, then try again.";
 
 /// NetworkManager answers a `PermissionDenied` for a dismissed prompt and a
 /// refused password alike; `dismissed` tells them apart.
@@ -102,7 +100,7 @@ pub(super) fn auth_failure(e: zbus::Error, dismissed: impl FnOnce() -> bool) -> 
     match reprisebus::polkit::refusal(&e, refused, dismissed) {
         Some(reprisebus::polkit::Refusal::Dismissed) => Failure::Dismissed,
         Some(reprisebus::polkit::Refusal::TimedOut) if reprisebus::polkit::gave_up(&e) => {
-            reprisebus::polkit::GAVE_UP.into()
+            Failure::Text(reprisekit::kit_tr!("polkit-gave-up"))
         }
         _ => clean(e),
     }

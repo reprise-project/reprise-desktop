@@ -124,8 +124,8 @@ fn set_system(pairs: Vec<(String, String)>) -> Set {
         let denied = |n: &str| n == "org.freedesktop.DBus.Error.AccessDenied";
         match polkit::refusal(&e, denied, polkit::dismissed) {
             Some(Refusal::Dismissed) => None,
-            Some(Refusal::TimedOut) => Some(polkit::TIMED_OUT.into()),
-            Some(Refusal::Denied) => Some(polkit::NOT_ALLOWED.into()),
+            Some(Refusal::TimedOut) => Some(reprisekit::kit_tr!("polkit-timed-out")),
+            Some(Refusal::Denied) => Some(reprisekit::kit_tr!("polkit-not-allowed")),
             None => {
                 log::warn!("SetLocale: {e}");
                 let why = reprisebus::error::message(&e).map_or(e.to_string(), String::from);

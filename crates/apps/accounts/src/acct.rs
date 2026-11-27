@@ -1,5 +1,6 @@
 //! AccountsService over the system bus. Calls block until polkit is answered through the session agent; run them off the event loop.
 
+use reprisekit::tr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -81,11 +82,11 @@ impl User {
         }
     }
 
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> String {
         if self.admin {
-            "Administrator"
+            tr!("account-administrator")
         } else {
-            "Standard user"
+            tr!("account-standard")
         }
     }
 }
@@ -412,15 +413,13 @@ impl From<String> for Failure {
 }
 
 /// Why an only administrator cannot be made standard or deleted.
-pub const ONLY_ADMIN: &str =
-    "This is the only administrator account. Make another account an administrator first.";
+pub fn only_admin() -> String {
+    tr!("account-only-admin")
+}
 
 /// Why `u` cannot be deleted while it has sessions.
 pub fn logged_on_text(u: &User) -> String {
-    format!(
-        "{} is logged on. Delete the account once they have logged off.",
-        u.named()
-    )
+    tr!("account-logged-on", name = u.named())
 }
 
 /// Why `ops` must not run against the accounts as `rows` has them: a Delete of a logged-on
@@ -439,7 +438,7 @@ pub fn refusal(ops: &[Op], rows: &[User]) -> Option<String> {
     }
     let admins = rows.iter().filter(|u| u.admin);
     if admins.clone().next().is_some() && admins.clone().all(|u| deleted(u) || demoted(u)) {
-        return Some(ONLY_ADMIN.into());
+        return Some(only_admin());
     }
     None
 }
@@ -458,15 +457,16 @@ pub fn apply(ops: &[Op]) -> Result<(), Failure> {
 }
 
 /// Why an expiry failed after the new password before it was set.
-pub const PASSWORD_KEPT: &str =
-    "The new password was set, but the account will not be asked for a new one at the next login.";
+pub fn password_kept() -> String {
+    tr!("account-password-kept")
+}
 
 /// What to tell of `why`, the failure of `ops[i]`. An expiry after a new password says that
 /// password was set, even for a dismissed prompt.
 fn told(ops: &[Op], i: usize, why: Failure) -> Failure {
     let set = ops[..i].iter().any(|op| matches!(op, Op::Password { .. }));
     match &ops[i] {
-        Op::Expire { .. } if set => Failure::Text(format!("{PASSWORD_KEPT}{}", and_why(why))),
+        Op::Expire { .. } if set => Failure::Text(format!("{}{}", password_kept(), and_why(why))),
         _ => why,
     }
 }
@@ -482,7 +482,7 @@ fn check_fresh(ops: &[Op]) -> Result<(), Failure> {
     }
     let rows = read().map_err(|e| {
         log::error!("reading the accounts before a change: {e}");
-        "The accounts could not be read, so nothing was changed.".to_string()
+        tr!("account-unreadable")
     })?;
     match refusal(ops, &rows) {
         Some(why) => Err(Failure::Text(why)),
@@ -537,7 +537,7 @@ async fn run(conn: &zbus::Connection, op: &Op) -> Result<(), Failure> {
             // it runs on a thread of its own, off the bus's executor.
             let changed = std::thread::spawn(move || passwd::change_own(&current, &new))
                 .join()
-                .map_err(|_| "passwd stopped unexpectedly".to_string())?;
+                .map_err(|_| tr!("account-passwd-stopped"))?;
             Ok(changed?)
         }
         Op::Create {
@@ -619,7 +619,7 @@ fn expire(login: &str) -> Result<(), Failure> {
         .map_err(|e| format!("{PKEXEC}: {e}"))?;
     let Some(out) = ran else {
         log::warn!("{CHAGE} -d 0 {login}: stopped {PKEXEC} after {APPLY_TIMEOUT:?}");
-        return Err(Failure::Text(reprisebus::polkit::GAVE_UP.into()));
+        return Err(Failure::Text(reprisekit::kit_tr!("polkit-gave-up")));
     };
     let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
     match out.status.code() {
@@ -627,13 +627,14 @@ fn expire(login: &str) -> Result<(), Failure> {
         // pkexec's 126: the prompt dismissed; 127: not authorized, or pkexec failed.
         Some(126) => Err(Failure::Dismissed),
         Some(127) if why.is_empty() || why.contains("Not authorized") => {
-            Err(Failure::Text(reprisebus::polkit::NOT_ALLOWED.into()))
+            Err(Failure::Text(reprisekit::kit_tr!("polkit-not-allowed")))
         }
         _ => {
             log::error!("{CHAGE} -d 0 {login}: {}: {why}", out.status);
-            Err(Failure::Text(format!(
-                "The account {login} could not be set to ask for a new password.{}",
-                and_why(Failure::Text(why))
+            Err(Failure::Text(tr!(
+                "account-expire-failed",
+                login = login,
+                why = and_why(Failure::Text(why))
             )))
         }
     }
@@ -730,7 +731,7 @@ where
 fn describe(method: &str, e: zbus::Error) -> Failure {
     log::error!("{method}: {e}");
     if reprisebus::polkit::gave_up(&e) {
-        return Failure::Text(reprisebus::polkit::GAVE_UP.into());
+        return Failure::Text(reprisekit::kit_tr!("polkit-gave-up"));
     }
     match reprisebus::error::name(&e) {
         Some(name) => failure(
@@ -751,7 +752,7 @@ fn failure(name: &str, msg: Option<&str>, dismissed: impl FnOnce() -> bool) -> F
     if dismissed() {
         return Failure::Dismissed;
     }
-    Failure::Text(reprisebus::polkit::NOT_ALLOWED.into())
+    Failure::Text(reprisekit::kit_tr!("polkit-not-allowed"))
 }
 
 /// Your `~/.face` and `~/.face.icon`, when you keep them, take the new
@@ -840,13 +841,10 @@ mod tests {
         assert_eq!(refusal(&[delete(1001)], &rows), None);
         assert_eq!(
             refusal(&[demote(1000)], &rows[..1]),
-            Some(ONLY_ADMIN.into()),
+            Some(only_admin()),
             "a fresh read found the other one gone"
         );
-        assert_eq!(
-            refusal(&[delete(1001)], &rows[1..]),
-            Some(ONLY_ADMIN.into())
-        );
+        assert_eq!(refusal(&[delete(1001)], &rows[1..]), Some(only_admin()));
         assert_eq!(
             refusal(&[delete(1002)], &rows),
             Some("u1002 is logged on. Delete the account once they have logged off.".into())
@@ -873,11 +871,11 @@ mod tests {
         let both = [set, expire.clone()];
         assert_eq!(
             told(&both, 1, Failure::Dismissed),
-            Failure::Text(PASSWORD_KEPT.into())
+            Failure::Text(password_kept())
         );
         assert_eq!(
             told(&both, 1, Failure::Text("chage failed".into())),
-            Failure::Text(format!("{PASSWORD_KEPT}\n\nchage failed"))
+            Failure::Text(format!("{}\n\nchage failed", password_kept()))
         );
         assert_eq!(
             told(&[expire], 0, Failure::Dismissed),
@@ -900,7 +898,7 @@ mod tests {
         );
         assert_eq!(
             failure(DENIED, Some("Not authorized"), || false),
-            Failure::Text(reprisebus::polkit::NOT_ALLOWED.into())
+            Failure::Text(reprisekit::kit_tr!("polkit-not-allowed"))
         );
         let other = failure(
             "org.freedesktop.Accounts.Error.Failed",
@@ -919,7 +917,7 @@ mod tests {
         let late = zbus::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
         assert_eq!(
             describe("CreateUser", late),
-            Failure::Text(reprisebus::polkit::GAVE_UP.into())
+            Failure::Text(reprisekit::kit_tr!("polkit-gave-up"))
         );
     }
 
@@ -1009,7 +1007,7 @@ mod tests {
         let sam = user_of("/u/1001", &props(1001, "sam", " ", 0, false), 1000).unwrap();
         assert_eq!(
             (sam.shown_name(), sam.kind(), sam.you),
-            ("sam", "Standard user", false)
+            ("sam", "Standard user".to_string(), false)
         );
     }
 

@@ -3,6 +3,7 @@
 //! installs a triggered update at boot (`/system-update`); PackageKit asks polkit
 //! ([`TRIGGER_ACTION`]) before it triggers or cancels.
 
+use crate::polkit::Told;
 use crate::{Props, prop};
 use std::time::Duration;
 
@@ -125,7 +126,7 @@ pub const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// [`trigger`] on a system bus connection of its own, waiting [`CALL_TIMEOUT`] at most. The error
 /// is what to tell the user; None when the prompt was dismissed.
-pub fn trigger_now(after: After, interactive: bool) -> Result<(), Option<String>> {
+pub fn trigger_now(after: After, interactive: bool) -> Result<(), Option<crate::polkit::Told>> {
     let call = async { trigger(&timed().await?, after, interactive).await };
     let answer = zbus::block_on(crate::polkit::asking(CALL_TIMEOUT, interactive, call));
     settled(answer, interactive, |s| s.triggered, read, SETTLE).map_err(|e| {
@@ -135,7 +136,7 @@ pub fn trigger_now(after: After, interactive: bool) -> Result<(), Option<String>
 }
 
 /// [`cancel`], as [`trigger_now`] calls.
-pub fn cancel_now(interactive: bool) -> Result<(), Option<String>> {
+pub fn cancel_now(interactive: bool) -> Result<(), Option<crate::polkit::Told>> {
     let call = async { cancel(&timed().await?, interactive).await };
     let answer = zbus::block_on(crate::polkit::asking(CALL_TIMEOUT, interactive, call));
     settled(answer, interactive, |s| !s.triggered, read, SETTLE).map_err(|e| {
@@ -182,13 +183,15 @@ async fn timed() -> zbus::Result<Connection> {
         .await
 }
 
-fn to_tell(e: &zbus::Error) -> Option<String> {
-    use crate::polkit::{NOT_ALLOWED, Refusal, TIMED_OUT, dismissed, refusal};
+fn to_tell(e: &zbus::Error) -> Option<Told> {
+    use crate::polkit::{Refusal, dismissed, refusal};
     match refusal(e, refused, dismissed) {
         Some(Refusal::Dismissed) => None,
-        Some(Refusal::Denied) => Some(NOT_ALLOWED.to_string()),
-        Some(Refusal::TimedOut) => Some(TIMED_OUT.to_string()),
-        None => Some(crate::error::message(e).map_or_else(|| e.to_string(), String::from)),
+        Some(Refusal::Denied) => Some(Told::NotAllowed),
+        Some(Refusal::TimedOut) => Some(Told::TimedOut),
+        None => Some(Told::Text(
+            crate::error::message(e).map_or_else(|| e.to_string(), String::from),
+        )),
     }
 }
 

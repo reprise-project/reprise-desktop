@@ -118,3 +118,14 @@ accounts-delete-fingerprints-title = Delete All Fingerprints
 accounts-delete-fingerprints-text = Delete all your fingerprints? You unlock with your password until you add one again.
 accounts-delete-all = &Delete All
 accounts-not-readable-picture = The file is not a picture Reprise can read.
+
+## Account changes
+account-administrator = Administrator
+account-standard = Standard user
+account-only-admin = This is the only administrator account. Make another account an administrator first.
+account-logged-on = { $name } is logged on. Delete the account once they have logged off.
+account-password-kept = The new password was set, but the account will not be asked for a new one at the next login.
+account-unreadable = The accounts could not be read, so nothing was changed.
+account-passwd-stopped = passwd stopped unexpectedly
+account-expire-failed = The account { $login } could not be set to ask for a new password.{ $why }
+accounts-delete-fingerprint-verb = delete the fingerprint

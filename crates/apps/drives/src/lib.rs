@@ -316,7 +316,7 @@ impl DrivesApp {
             log::info!(
                 "Thunderbolt device {} ({}) waits for authorization",
                 d.uid,
-                d.label()
+                d.label_or("a Thunderbolt device")
             );
             let (summary, body) = thunderbolt::balloon(&d);
             let tag = self.tag();

@@ -212,7 +212,7 @@ impl Failure {
     pub fn message(&self) -> Option<String> {
         match self {
             Failure::Dismissed => None,
-            Failure::TimedOut => Some(reprisebus::polkit::TIMED_OUT.into()),
+            Failure::TimedOut => Some(reprisekit::kit_tr!("polkit-timed-out")),
             Failure::Denied(msg) | Failure::Text(msg) => {
                 Some(tr!("change-failed", error = msg.as_str()))
             }

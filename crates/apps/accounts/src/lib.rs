@@ -269,7 +269,10 @@ impl AccountsApp {
             changed = true;
             reread = true;
             if let Err(r) = done {
-                self.fail_over(PROPS, fingers::refusal(r).text("delete the fingerprint"));
+                self.fail_over(
+                    PROPS,
+                    fingers::refusal(r).text(&tr!("accounts-delete-fingerprint-verb")),
+                );
             }
         }
         if let Some((from, steps, ended)) = self.fingers.add_landed() {

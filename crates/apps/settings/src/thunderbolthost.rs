@@ -41,9 +41,11 @@ fn carry_out(d: bolt::Device, change: Change) -> Reading {
             };
             Some(tr!(
                 "thunderbolthost-failed",
-                device = d.label().to_string(),
+                device = d
+                    .label_or(&reprisekit::kit_tr!("thunderbolt-device"))
+                    .to_string(),
                 what = what,
-                why = why.to_string()
+                why = reprisebus::told_text!(why)
             ))
         }
     };

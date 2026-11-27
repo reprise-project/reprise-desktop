@@ -130,9 +130,33 @@ pub fn gave_up(e: &zbus::Error) -> bool {
     matches!(e, zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut)
 }
 
-/// What a program says for a call [`gave_up`] on.
-pub const GAVE_UP: &str = "The password prompt was open too long, so the change may not have \
-                           been made. Check it and try again.";
+/// What a program tells the user after a call that may open a password prompt. The texts are
+/// the program's: [`told_text!`](crate::told_text) turns one into reprisekit's words for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Told {
+    /// The call gave up on its prompt ([`gave_up`]).
+    GaveUp,
+    /// [`Refusal::TimedOut`].
+    TimedOut,
+    /// [`Refusal::Denied`].
+    NotAllowed,
+    /// The service's own message.
+    Text(String),
+}
+
+/// A [`Told`] as the user's words, from reprisekit's `polkit-gave-up`, `polkit-timed-out` and
+/// `polkit-not-allowed`. The caller links reprisekit.
+#[macro_export]
+macro_rules! told_text {
+    ($told:expr) => {
+        match $told {
+            $crate::polkit::Told::GaveUp => ::reprisekit::kit_tr!("polkit-gave-up"),
+            $crate::polkit::Told::TimedOut => ::reprisekit::kit_tr!("polkit-timed-out"),
+            $crate::polkit::Told::NotAllowed => ::reprisekit::kit_tr!("polkit-not-allowed"),
+            $crate::polkit::Told::Text(text) => text,
+        }
+    };
+}
 
 fn timeout() -> zbus::Error {
     let e = std::io::Error::from(std::io::ErrorKind::TimedOut);
@@ -237,13 +261,6 @@ pub enum Refusal {
     /// timeout ran out first.
     TimedOut,
 }
-
-/// What a program says for [`Refusal::TimedOut`].
-pub const TIMED_OUT: &str =
-    "The password prompt was open too long, so nothing was changed. Try again.";
-
-/// What a program says for [`Refusal::Denied`].
-pub const NOT_ALLOWED: &str = "You are not allowed to make this change.";
 
 /// The refusal `e` is, when its error name passes `refused` or is `NoReply`, or
 /// it is the connection's method timeout; None for any other error. `dismissed`, normally [`dismissed`], is asked only for a

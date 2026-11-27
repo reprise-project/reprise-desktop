@@ -91,7 +91,9 @@ struct Charged {
 
 fn toggle(device: &str, on: bool) -> Charged {
     Charged {
-        failed: charge::set(device, on).err(),
+        failed: charge::set(device, on)
+            .err()
+            .map(|e| e.map(|told| reprisebus::told_text!(told))),
         // Tests leave the system bus alone.
         limit: if cfg!(test) { None } else { charge::read() },
     }
