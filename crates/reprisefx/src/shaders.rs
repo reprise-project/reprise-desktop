@@ -176,6 +176,45 @@ void main() {
 }
 "#;
 
+/// Streaks laid over drawn glass (`reprisekit::glass::streak::over`): the output-wide streak
+/// picture inside the shape's rounded rectangle, anti-aliased as the glass is, blended over what
+/// the glass drew (premultiplied, its light may exceed its alpha).
+const STREAK_SRC: &str = r#"#version 100
+//_DEFINES_
+#if defined(EXTERNAL)
+#extension GL_OES_EGL_image_external : require
+#endif
+precision highp float;
+#if defined(EXTERNAL)
+uniform samplerExternalOES tex;
+#else
+uniform sampler2D tex;
+#endif
+uniform float alpha;
+varying vec2 v_coords;
+#if defined(DEBUG_FLAGS)
+uniform float tint;
+#endif
+// Where the streak picture lies, in the shape's own pixels: top-left (xy) and size (zw).
+uniform vec4 cap;
+uniform vec2 size;
+// Corner radii: top-left, top-right, bottom-right, bottom-left.
+uniform vec4 radii;
+
+float sd_round_box(vec2 p, vec2 half_size, vec4 r) {
+    float rr = p.x > 0.0 ? (p.y > 0.0 ? r.z : r.y) : (p.y > 0.0 ? r.w : r.x);
+    vec2 q = abs(p) - half_size + rr;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - rr;
+}
+
+void main() {
+    vec2 p = cap.xy + v_coords * cap.zw;
+    float d = sd_round_box(p - size * 0.5, size * 0.5, radii);
+    float cover = clamp(0.5 - d, 0.0, 1.0);
+    gl_FragColor = texture2D(tex, v_coords) * cover * alpha;
+}
+"#;
+
 /// The glass program with `crate::lens`'s constants in place of their names.
 fn glass_frag() -> String {
     use crate::lens::*;
@@ -561,6 +600,7 @@ pub(crate) fn compile_flip(renderer: &mut GlesRenderer) -> Result<GlesTexProgram
 pub(crate) struct Programs {
     pub blur: GlesTexProgram,
     pub glass: GlesTexProgram,
+    pub streak: GlesTexProgram,
 }
 
 impl Programs {
@@ -587,6 +627,18 @@ impl Programs {
                 UniformName::new("lens_box", UniformType::_4f),
             ],
         )?;
-        Ok(Programs { blur, glass })
+        let streak = renderer.compile_custom_texture_shader(
+            STREAK_SRC,
+            &[
+                UniformName::new("cap", UniformType::_4f),
+                UniformName::new("size", UniformType::_2f),
+                UniformName::new("radii", UniformType::_4f),
+            ],
+        )?;
+        Ok(Programs {
+            blur,
+            glass,
+            streak,
+        })
     }
 }

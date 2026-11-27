@@ -14,13 +14,15 @@
 //!    texture (a quarter for the coarse blur or at output scale 2 and up);
 //!    two Gaussian passes
 //!    ([`blur::SIGMA`] per `[glass] blur`); blend the streaks
-//!    (`reprisekit::glass::streak`) over the result. The textures live in
+//!    (`reprisekit::glass::streak`) over the result, unless the style lays
+//!    them over the drawn glass (`streak::over`). The textures live in
 //!    the tracker's per-element cache and are remade only when their size changes.
 //! 2. draw: each [`Shape`] draws the blurred picture through the glass
 //!    program: a rounded rectangle with per-corner radii (anti-aliased
 //!    distance field), holes left out of the drawn damage, and the backdrop
 //!    lifted per pixel for the chrome's glass over it
-//!    (`reprisekit::glass::tint::lift`).
+//!    (`reprisekit::glass::tint::lift`), then the streaks laid over it when
+//!    the style lays them there.
 //!
 //! The element's geometry is its shapes' bounds grown by [`blur::reach`], so
 //! a change that close recaptures it. A frame with no damage under the glass

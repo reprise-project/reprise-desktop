@@ -9,7 +9,7 @@ use reprisefx::{
 };
 use reprisekit::flip::{self, Homography};
 use reprisekit::glass::tint::{self, Surface};
-use reprisekit::glass::{Material, Mode, Settings};
+use reprisekit::glass::{Material, Mode, Settings, Style};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::texture::{TextureBuffer, TextureRenderElement};
@@ -1112,6 +1112,40 @@ fn only_frosted_glass_shows_the_streaks() {
             lit(material, false),
             "{material:?} shows no streaks"
         );
+    }
+}
+
+#[test]
+fn onyx_lays_its_streaks_over_the_lifted_glass_and_leaves_the_corners_clear() {
+    let Some(mut r) = rig(640, 360) else { return };
+    for grey in [128u8, 255] {
+        let back = r.backdrop(|_, _| [grey; 3]);
+        let mut shot = |streaks| {
+            let s = Settings {
+                style: Style::Onyx,
+                streaks,
+                ..Settings::default()
+            };
+            let shapes = [Shape {
+                rect: rect(0, 0, 640, 360),
+                radii: [12.0; 4],
+            }];
+            let f = r.frame(&shapes, &[], &s);
+            let glass = Glass::new().element(&r.fx, &f).unwrap();
+            r.frames = 0;
+            r.render(vec![glass], &back).0
+        };
+        let (on, off) = (shot(true), shot(false));
+        // u = 10 - 0.738 * 100 lies on a band at level 16: 8 levels of light over 4 of dimming.
+        let (lit, plain) = (on.at(10, 100), off.at(10, 100));
+        for k in 0..3 {
+            let want = (f64::from(plain[k]) * 251.0 / 255.0 + 8.0).min(255.0);
+            assert!(
+                (f64::from(lit[k]) - want).abs() <= 1.5,
+                "over {grey}: {lit:?} is {plain:?} dimmed 4 levels with 8 of light"
+            );
+        }
+        assert_eq!(on.at(0, 0), off.at(0, 0), "outside the corner's curve");
     }
 }
 

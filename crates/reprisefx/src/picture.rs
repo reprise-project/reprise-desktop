@@ -24,7 +24,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use reprisekit::glass::Settings;
+use reprisekit::glass::{Settings, streak};
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::{CommitCounter, DamageBag, DamageSnapshot};
 use smithay::backend::renderer::{Bind, Renderer, Texture};
@@ -203,7 +203,7 @@ impl Picture {
             output: u.output,
             area: self.area.unwrap_or(Rectangle::from_size(u.output)),
             scale: u.scale.to_bits(),
-            streaks: fx.streaks_ready(s, u.output, u.scale),
+            streaks: !streak::over(s) && fx.streaks_ready(s, u.output, u.scale),
         };
         let (f, out, extent) = (key.plan.factor, key.texels(), key.extent());
         let whole = self.drawn != Some(key) || self.picture.is_none();

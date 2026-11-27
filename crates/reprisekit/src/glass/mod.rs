@@ -211,8 +211,8 @@ pub struct Settings {
     /// How strongly the backdrop blurs, from 1 to [`BLUR_MAX`]. Draws nothing of its
     /// own, so styles are shared across it (`cached`).
     pub blur: u8,
-    /// The reflection streaks over the backdrop ([`streak`]); drawn into the
-    /// backdrop, so styles are shared across it too.
+    /// The reflection streaks ([`streak`]); drawn with the backdrop (over the
+    /// glass under Onyx), so styles are shared across it too.
     pub streaks: bool,
     /// While a window is dragged or sized, blur with fewer passes and show the glass
     /// a frame behind; full blur again once let go. Styles are shared across it.
