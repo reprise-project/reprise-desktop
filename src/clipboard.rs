@@ -1281,10 +1281,10 @@ mod tests {
         let replies = |id: u32| {
             let mut n = crate::tray::Notification::new(id, format!("n{id}"), String::new());
             n.actions = vec![(INLINE_REPLY.into(), "Reply".into())];
-            n.reply = Some(crate::tray::Reply {
+            n.reply = Some(Box::new(crate::tray::Reply {
                 placeholder: String::new(),
                 send: crate::tray::REPLY_SEND.into(),
-            });
+            }));
             n
         };
         let mut h = crate::harness::Harness::new();

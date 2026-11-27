@@ -256,6 +256,7 @@ async fn read_item(
             .as_deref()
             .is_some_and(|s| s.eq_ignore_ascii_case("Passive")),
         pid,
+        app_id: super::notifications::app_id_of(&identity),
         needs_attention: status.is_some_and(|s| s.eq_ignore_ascii_case("NeedsAttention")),
         attention,
         overlay,

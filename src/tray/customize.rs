@@ -18,6 +18,10 @@ pub struct Remembered {
     /// path a sandboxed app sent, so [`trusted_icons`] drops such a path.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub icon_trusted: bool,
+    /// The item's [`TrayItem::app_id`] when picked, so a Mute holds while no item of it is
+    /// registered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
 }
 
 /// `choices` as loaded, a path icon kept only where the row says it can be read.
@@ -115,8 +119,8 @@ pub fn customize(state: &mut State) {
 }
 
 /// `choices` after the Customize dialog's OK picked `picked`: an Auto
-/// pick forgets its key, any other keeps it with the name and icon of the
-/// registered item that has it, or what was kept before.
+/// pick forgets its key, any other keeps it with the name, icon and app of
+/// the registered item that has it, or what was kept before.
 pub(super) fn remember(
     choices: &mut BTreeMap<String, Remembered>,
     picked: &[(String, Behaviour)],
@@ -128,9 +132,13 @@ pub(super) fn remember(
             continue;
         }
         let kept = choices.remove(key);
-        let (name, icon) = match current.iter().find(|i| i.key == *key) {
-            Some(i) => (item_name(i).to_string(), i.saved_icon.clone()),
-            None => kept.map_or_else(|| (key.clone(), None), |r| (r.name, r.icon)),
+        let (name, icon, app_id) = match current.iter().find(|i| i.key == *key) {
+            Some(i) => (
+                item_name(i).to_string(),
+                i.saved_icon.clone(),
+                i.app_id.clone(),
+            ),
+            None => kept.map_or_else(|| (key.clone(), None, None), |r| (r.name, r.icon, r.app_id)),
         };
         choices.insert(
             key.clone(),
@@ -139,6 +147,7 @@ pub(super) fn remember(
                 name,
                 icon,
                 icon_trusted: true,
+                app_id,
             },
         );
     }

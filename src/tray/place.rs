@@ -1,6 +1,6 @@
 //! Where an item sits: on the bar, or behind the ^ cell with tray overflow on.
 
-use super::{Remembered, TrayItem};
+use super::{Notification, Remembered, TrayItem};
 use crate::compositor::State;
 use reprisekit::controls::traycustomize::Behaviour;
 use std::collections::BTreeMap;
@@ -180,14 +180,28 @@ pub(super) fn arrange(
     order.sort(hidden);
 }
 
-/// Whether a balloon from process `pid` is held back: tray overflow is on
-/// and an item that process serves hides its icon and its notifications.
-pub fn mutes(state: &State, pid: Option<i32>) -> bool {
-    let (Some(pid), Some(tray)) = (pid, state.tray.as_ref()) else {
+/// Whether balloon `n` is held back: tray overflow is on and a Mute choice is for its program.
+pub fn mutes(state: &State, n: &Notification) -> bool {
+    let Some(tray) = state.tray.as_ref() else {
         return false;
     };
-    overflow_enabled(&state.config)
-        && tray
-            .all()
-            .any(|i| i.pid == Some(pid) && !behaviour_of(&tray.choices, i).balloons())
+    overflow_enabled(&state.config) && muted(&tray.choices, tray.all(), n)
+}
+
+/// Whether a Mute in `choices` is for the program sending `n`: one of `items` under such a choice,
+/// or the choice itself, runs as the same app, or, where one side knows no app, has its program
+/// key or (an item only) its process.
+pub(super) fn muted<'a>(
+    choices: &BTreeMap<String, Remembered>,
+    items: impl IntoIterator<Item = &'a TrayItem>,
+    n: &Notification,
+) -> bool {
+    let sends = |app: Option<&str>, key: &str, pid: Option<i32>| match (app, n.app_id.as_deref()) {
+        (Some(a), Some(b)) => a == b,
+        _ => key == n.key || pid.is_some_and(|p| n.pid == Some(p)),
+    };
+    let mutes = |r: &Remembered| !r.behaviour.balloons();
+    let item = |i: &TrayItem| choices.get(&i.key).is_some_and(mutes);
+    (items.into_iter()).any(|i| item(i) && sends(i.app_id.as_deref(), &i.key, i.pid))
+        || (choices.iter()).any(|(key, r)| mutes(r) && sends(r.app_id.as_deref(), key, None))
 }

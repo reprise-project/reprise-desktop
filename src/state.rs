@@ -562,6 +562,7 @@ mod tests {
                     name: "Network".into(),
                     icon: Some("network-wired".into()),
                     icon_trusted: true,
+                    app_id: None,
                 },
             ),
             (
@@ -571,6 +572,7 @@ mod tests {
                     name: "Mail".into(),
                     icon: None,
                     icon_trusted: true,
+                    app_id: None,
                 },
             ),
         ]);

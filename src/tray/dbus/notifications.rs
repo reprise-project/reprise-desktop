@@ -149,6 +149,7 @@ impl Notifications {
         let sender = hdr.sender().map_or("", |s| s.as_str()).to_string();
         let mut hints = notify::hints(hints.0);
         let identity = self.identities.of(conn, &sender).await;
+        let app_id = app_id_of(&identity);
         let (app_name, app_icon) = as_sent_by(&identity, &mut hints, app_name, app_icon);
         let pid = owner_pid(conn, &sender).await;
         let other = lock(&self.senders).other_sender(replaces_id, &sender, pid, &app_name);
@@ -185,15 +186,17 @@ impl Notifications {
         let reply = actions
             .iter()
             .any(|(k, _)| k == notify::INLINE_REPLY)
-            .then(|| Reply {
-                placeholder: shown_line(
-                    &hints.reply_placeholder.unwrap_or_default(),
-                    notify::ACTION_LABEL_CHARS,
-                ),
-                send: shown_line(
-                    &hints.reply_send.unwrap_or_else(|| REPLY_SEND.into()),
-                    notify::ACTION_LABEL_CHARS,
-                ),
+            .then(|| {
+                Box::new(Reply {
+                    placeholder: shown_line(
+                        &hints.reply_placeholder.unwrap_or_default(),
+                        notify::ACTION_LABEL_CHARS,
+                    ),
+                    send: shown_line(
+                        &hints.reply_send.unwrap_or_else(|| REPLY_SEND.into()),
+                        notify::ACTION_LABEL_CHARS,
+                    ),
+                })
             });
         emit(
             &self.events,
@@ -215,6 +218,7 @@ impl Notifications {
                 resident: hints.resident,
                 sender,
                 pid,
+                app_id,
                 reply,
                 sound,
             }),
@@ -307,6 +311,26 @@ pub(super) fn as_sent_by(
             hints.desktop_entry = None;
             (String::new(), String::new())
         }
+    }
+}
+
+/// The app `identity` runs as: a sandboxed app's id, else the Reprise app scope's desktop id.
+pub(super) fn app_id_of(identity: &AppIdentity) -> Option<String> {
+    app_id_with(identity, desktop_entry)
+}
+
+/// [`app_id_of`], reading desktop entries with `entry`.
+pub(super) fn app_id_with(
+    identity: &AppIdentity,
+    entry: impl Fn(&str) -> Option<reprisefs::apps::AppEntry>,
+) -> Option<String> {
+    match identity {
+        AppIdentity::Sandboxed { app_id } => Some(app_id.clone()),
+        // A terminal's scope holds whatever was started in it, so it names no one app.
+        AppIdentity::Host { desktop_id } => desktop_id
+            .clone()
+            .filter(|id| !entry(id).is_some_and(|e| e.in_category("TerminalEmulator"))),
+        AppIdentity::Unknown => None,
     }
 }
 

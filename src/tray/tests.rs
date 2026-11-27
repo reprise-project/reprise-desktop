@@ -2,7 +2,7 @@ use super::customize::{past_icon, refill_past, remember};
 use super::icons::icon_sizes;
 use super::icons::pixmap_to_source;
 use super::menu::{SubmenuRequest, menu_items, strip_mnemonic};
-use super::place::{Change, Order, Place, arrange, merge_item, shows_chevron};
+use super::place::{Change, Order, Place, arrange, merge_item, muted, shows_chevron};
 use super::pointer::click_command;
 use crate::icontheme::IconCache;
 use crate::input::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
@@ -98,6 +98,7 @@ fn a_remembered_row_takes_its_icon_file_when_it_lands() {
         name: String::new(),
         icon: Some(icon.into()),
         icon_trusted: true,
+        app_id: None,
     };
     let choices = [
         ("live".to_string(), kept(file)),
@@ -460,6 +461,92 @@ fn a_choice_overrides_the_status_only_with_overflow_on() {
     assert_eq!(placement(&idle, Behaviour::Auto, false), Place::Bar);
 }
 
+fn mute(app_id: Option<&str>) -> Remembered {
+    Remembered {
+        behaviour: Behaviour::Mute,
+        name: String::new(),
+        icon: None,
+        icon_trusted: true,
+        app_id: app_id.map(Into::into),
+    }
+}
+
+fn balloon(key: &str, app_id: Option<&str>, pid: i32) -> Notification {
+    Notification {
+        key: key.into(),
+        app_id: app_id.map(Into::into),
+        pid: Some(pid),
+        ..Notification::new(1, "New mail".into(), String::new())
+    }
+}
+
+#[test]
+fn a_muted_app_stays_muted_after_it_restarts() {
+    let choices = BTreeMap::from([("mailer".to_string(), mute(Some("org.example.Mail")))]);
+    let restarted = balloon("Mail", Some("org.example.Mail"), 300);
+    assert!(
+        muted(&choices, [], &restarted),
+        "muted with no item of it registered yet"
+    );
+    let mut item = item(":1.9/StatusNotifierItem", false);
+    (item.key, item.app_id, item.pid) =
+        ("mailer".into(), Some("org.example.Mail".into()), Some(300));
+    let unpicked = BTreeMap::from([("mailer".to_string(), mute(None))]);
+    assert!(
+        muted(&unpicked, [&item], &restarted),
+        "muted through its registered item"
+    );
+}
+
+#[test]
+fn a_helper_balloon_of_a_muted_app_is_muted() {
+    let mut item = item(":1.4/StatusNotifierItem", false);
+    (item.key, item.app_id, item.pid) =
+        ("mailer".into(), Some("org.example.Mail".into()), Some(100));
+    let choices = BTreeMap::from([("mailer".to_string(), mute(None))]);
+    let helper = balloon("notify-send", Some("org.example.Mail"), 101);
+    assert!(muted(&choices, [&item], &helper));
+}
+
+#[test]
+fn another_app_is_not_muted() {
+    let mut item = item(":1.4/StatusNotifierItem", false);
+    (item.key, item.app_id, item.pid) =
+        ("mailer".into(), Some("org.example.Mail".into()), Some(100));
+    let choices = BTreeMap::from([("mailer".to_string(), mute(Some("org.example.Mail")))]);
+    let other = balloon("chat", Some("org.example.Chat"), 200);
+    assert!(!muted(&choices, [&item], &other));
+    let unscoped = balloon("chat", None, 201);
+    assert!(!muted(&choices, [&item], &unscoped));
+    let hidden = BTreeMap::from([(
+        "mailer".to_string(),
+        Remembered {
+            behaviour: Behaviour::Hide,
+            ..mute(Some("org.example.Mail"))
+        },
+    )]);
+    let own = balloon("Mail", Some("org.example.Mail"), 100);
+    assert!(!muted(&hidden, [&item], &own), "Hide keeps the balloons");
+}
+
+#[test]
+fn without_an_app_a_mute_goes_by_program_key_then_process() {
+    let mut item = item(":1.4/StatusNotifierItem", false);
+    (item.key, item.pid) = ("nm-applet".into(), Some(100));
+    let choices = BTreeMap::from([("nm-applet".to_string(), mute(None))]);
+    assert!(muted(
+        &choices,
+        [&item],
+        &balloon("NetworkManager", None, 100)
+    ));
+    assert!(muted(&choices, [], &balloon("nm-applet", None, 400)));
+    assert!(!muted(
+        &choices,
+        [&item],
+        &balloon("NetworkManager", None, 101)
+    ));
+}
+
 #[test]
 fn an_item_needing_attention_leaves_the_overflow_unless_muted() {
     let mut calling = item("a", false);
@@ -486,6 +573,7 @@ fn new_choices_move_items_and_keep_the_order_in_each_list() {
         name: String::new(),
         icon: None,
         icon_trusted: true,
+        app_id: None,
     };
     choices.insert("b".to_string(), keep(Behaviour::Hide));
     choices.insert("p".to_string(), keep(Behaviour::Show));
@@ -508,6 +596,7 @@ fn ok_keeps_only_choices_away_from_auto_and_names_them() {
             name: "Old Applet".into(),
             icon: Some("old".into()),
             icon_trusted: true,
+            app_id: None,
         },
     );
     let mut net = item(":1.4/StatusNotifierItem", false);
@@ -515,6 +604,7 @@ fn ok_keeps_only_choices_away_from_auto_and_names_them() {
     net.tooltip = "Network\nConnected".into();
     net.icon_name = Some("/app/share/icons/network.png".into());
     net.saved_icon = Some("network-wired".into());
+    net.app_id = Some("nm-applet".into());
     let picked = vec![
         ("nm-applet".to_string(), Behaviour::Show),
         ("gone".to_string(), Behaviour::Mute),
@@ -528,6 +618,7 @@ fn ok_keeps_only_choices_away_from_auto_and_names_them() {
             name: "Network".into(),
             icon: Some("network-wired".into()),
             icon_trusted: true,
+            app_id: Some("nm-applet".into()),
         }
     );
     assert_eq!(choices["gone"].behaviour, Behaviour::Mute);
@@ -618,6 +709,7 @@ fn a_loaded_path_icon_is_kept_only_where_its_row_vouches_for_it() {
         name: String::new(),
         icon: Some(icon.into()),
         icon_trusted,
+        app_id: None,
     };
     let loaded = super::customize::trusted_icons(std::collections::BTreeMap::from([
         ("a".to_string(), row("/home/u/Pictures/x.png", false)),
