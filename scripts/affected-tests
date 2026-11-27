@@ -88,19 +88,23 @@ if affected == names:
 scanners = []
 if affected:
     scanners = [f"{p}:{t}" for p, t in SCANNERS if p not in affected]
-print(" ".join(sorted(changed)) + "\t" + " ".join(sorted(affected)) + "\t" + " ".join(scanners))
+libs = {q["name"] for q in meta["packages"] if any("lib" in t["kind"] for t in q["targets"])}
+print(" ".join(sorted(changed)) + "\t" + " ".join(sorted(affected)) + "\t" + " ".join(scanners) + "\t" + ("lib" if affected & libs else ""))
 ')
 
-cmd=(cargo nextest run --locked --lib --bins --tests)
+# --lib only when a picked crate has one: cargo refuses it for a binary-only crate alone.
+cmd=(cargo nextest run --locked --bins --tests)
 gallery=(--example gallery)
 scan=()
 case $sets in
-  ALL) crates="(whole workspace)"; cmd+=(--workspace "${gallery[@]}") ;;
-  $'\t\t') echo "affected-tests: no crate changed since $base"; exit 0 ;;
+  ALL) crates="(whole workspace)"; cmd+=(--lib --workspace "${gallery[@]}") ;;
+  $'\t\t\t') echo "affected-tests: no crate changed since $base"; exit 0 ;;
   *)
     rest=${sets#*$'\t'}
     crates=${rest%%$'\t'*}
-    scanners=${rest#*$'\t'}
+    rest=${rest#*$'\t'}
+    scanners=${rest%%$'\t'*}
+    [ "${rest#*$'\t'}" = lib ] && cmd+=(--lib)
     for c in $crates; do
       cmd+=(-p "$c")
       [ "$c" = reprisekit ] && cmd+=("${gallery[@]}")
