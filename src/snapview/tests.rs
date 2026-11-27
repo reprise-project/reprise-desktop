@@ -1319,6 +1319,34 @@ fn the_window_menus_move_to_screen_lists_the_other_output_and_carries_the_window
 }
 
 #[test]
+fn move_to_screen_numbers_two_identical_monitors_as_display_settings_does() {
+    use reprisekit::controls::menu::MenuItem;
+    let mut h = crate::harness::Harness::new();
+    h.head("TEST-1", 1024, 768);
+    h.head("TEST-2", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.state.open_window_menu(t.id, (100, 100), false);
+    let at = (h.state.menus[0].items.iter())
+        .position(|i| matches!(i, MenuItem::Entry { label, .. } if label == "Move to Screen"))
+        .expect("a Move to Screen row with two outputs");
+    h.state.menu_activate(0, at);
+    let rows: Vec<(&str, Option<usize>)> = (h.state.menus[1].items.iter())
+        .filter_map(|i| match i {
+            MenuItem::Entry {
+                label, mnemonic, ..
+            } => Some((label.as_str(), *mnemonic)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [("2. Test (TEST-2)", Some(0))],
+        "the other display by its number, keyed by it"
+    );
+}
+
+#[test]
 fn a_maximized_window_carried_to_the_other_output_stays_maximized_there() {
     let (mut h, mut c, w, small, big) = two_sizes();
     let normal = h.state.win(w).expect("window").frame_rect();

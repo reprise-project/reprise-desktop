@@ -93,9 +93,15 @@ impl State {
                 });
                 let heads: Vec<_> = outs.iter().map(crate::displays::Head::of).collect();
                 let all = self.scene.outputs();
+                let connected = crate::backend::heads(self);
+                let number = |o: &smithay::output::Output| {
+                    (connected.iter().position(|h| h.output == *o)).map(|n| n + 1)
+                };
                 let screens = (outs.iter().zip(crate::displays::labels(&heads)))
                     .filter(|(o, _)| Some(*o) != own.as_ref())
-                    .filter_map(|(o, label)| Some((all.iter().position(|a| a == o)?, label)))
+                    .filter_map(|(o, label)| {
+                        Some((all.iter().position(|a| a == o)?, number(o), label))
+                    })
                     .collect();
                 let (items, rows) = crate::winmenu::move_to_screen_menu(screens);
                 return Some((

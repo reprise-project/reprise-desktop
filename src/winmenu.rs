@@ -3,7 +3,7 @@
 //! compositor opens it and acts on the picked row.
 
 use crate::startmenu::{MenuGlyph, MenuItem};
-use crate::text::split_mnemonic;
+use crate::text::{escape_mnemonic, split_mnemonic};
 use reprisekit::tr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,14 +291,29 @@ pub fn move_to_menu<R>(
         .unzip()
 }
 
-/// The Move to Screen submenu: a row per output in `screens` (its index in the scene's outputs and
-/// its label), each carrying the window there.
+/// The Move to Screen submenu: a row per output in `screens` (its index in the scene's outputs,
+/// its display number as Display settings and Identify count it, if it has one, and its label),
+/// each carrying the window there.
 pub fn move_to_screen_menu(
-    screens: Vec<(usize, String)>,
+    screens: Vec<(usize, Option<usize>, String)>,
 ) -> (Vec<MenuItem>, Vec<Option<WindowMenuRow>>) {
     screens
         .into_iter()
-        .map(|(i, label)| (MenuItem::entry(label), Some(WindowMenuRow::MoveToScreen(i))))
+        .map(|(i, number, label)| {
+            let name = escape_mnemonic(&label);
+            let label = match number {
+                Some(n @ 1..=9) => tr!(
+                    "start-win-screen-keyed",
+                    number = n.to_string(),
+                    name = name
+                ),
+                Some(n) => tr!("start-win-screen", number = n.to_string(), name = name),
+                None => name,
+            };
+            let (label, mnemonic) = split_mnemonic(&label);
+            let item = MenuItem::entry(label).mnemonic(mnemonic);
+            (item, Some(WindowMenuRow::MoveToScreen(i)))
+        })
         .unzip()
 }
 
@@ -653,15 +668,31 @@ mod tests {
             items.len() - 1,
             "one screen: no Move to Screen row"
         );
-        let (items, rows) =
-            move_to_screen_menu(vec![(0, "DELL U2415".into()), (2, "HDMI-A-1".into())]);
-        assert_eq!(row(&items, 0), ("DELL U2415", true, false));
-        assert_eq!(row(&items, 1), ("HDMI-A-1", true, false));
+        let (items, rows) = move_to_screen_menu(vec![
+            (0, Some(1), "DELL U2415".into()),
+            (2, Some(12), "R&D".into()),
+            (3, None, "HDMI-A-1".into()),
+        ]);
+        assert_eq!(row(&items, 0), ("1. DELL U2415", true, false));
+        assert_eq!(row(&items, 1), ("12. R&D", true, false));
+        assert_eq!(row(&items, 2), ("HDMI-A-1", true, false));
+        let keys: Vec<_> = (items.iter())
+            .map(|i| match i {
+                MenuItem::Entry { mnemonic, .. } => *mnemonic,
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            [Some(0), None, None],
+            "a one-digit number is the access key"
+        );
         assert_eq!(
             rows,
             [
                 Some(WindowMenuRow::MoveToScreen(0)),
-                Some(WindowMenuRow::MoveToScreen(2))
+                Some(WindowMenuRow::MoveToScreen(2)),
+                Some(WindowMenuRow::MoveToScreen(3))
             ]
         );
     }
