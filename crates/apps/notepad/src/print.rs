@@ -1,5 +1,5 @@
-//! File > Page Setup... and Print...: the text printed wrapped between the margins in the
-//! document's font, with Page Setup's header and footer in the margins.
+//! File > Page Setup..., Print Preview... and Print...: the text printed wrapped between the
+//! margins in the document's font, with Page Setup's header and footer in the margins.
 
 use super::*;
 use repriseapp::print::{Doc, Step, TextFont};
@@ -7,6 +7,17 @@ use repriseapp::print::{Doc, Step, TextFont};
 impl Notepad {
     /// Open Print for the text in the font Format > Font picked.
     pub(crate) fn open_print(&mut self, ctx: &Ctx) {
+        let (doc, title) = self.print_doc();
+        self.printing.print(doc, &title, ctx);
+    }
+
+    pub(crate) fn open_preview(&mut self, ctx: &Ctx) {
+        let (doc, title) = self.print_doc();
+        self.printing.preview(doc, &title, ctx);
+    }
+
+    /// The text as it prints and the file name its header and footer show.
+    fn print_doc(&self) -> (Doc, String) {
         let s = &self.settings;
         let doc = Doc::Text {
             font: TextFont {
@@ -22,7 +33,7 @@ impl Notepad {
             .as_ref()
             .and_then(|p| p.file_name())
             .map_or_else(|| tr!("untitled"), |n| n.to_string_lossy().into_owned());
-        self.printing.print(doc, &title, ctx);
+        (doc, title)
     }
 
     pub(crate) fn print_event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

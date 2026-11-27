@@ -22,8 +22,9 @@ pub(crate) mod row {
     pub const SAVE: usize = 2;
     pub const SAVE_AS: usize = 3;
     pub const PAGE_SETUP: usize = 5;
-    pub const PRINT: usize = 6;
-    pub const EXIT: usize = 8;
+    pub const PREVIEW: usize = 6;
+    pub const PRINT: usize = 7;
+    pub const EXIT: usize = 9;
     pub const UNDO: usize = 0;
     pub const REDO: usize = 1;
     pub const CUT: usize = 3;
@@ -77,6 +78,7 @@ pub(crate) fn menus() -> Vec<(String, MenuTree)> {
                 mi(&tr!("menu-save-as"), None, true),
                 MenuItem::Separator,
                 mi(&tr!("menu-page-setup"), None, true),
+                mi(&tr!("menu-print-preview"), None, true),
                 mi(&tr!("menu-print"), Some("Ctrl+P"), true),
                 MenuItem::Separator,
                 mi(&tr!("menu-exit"), None, true),
@@ -146,6 +148,7 @@ impl Notepad {
             }
             (title::FILE, row::SAVE_AS) => self.saveas_dialog(),
             (title::FILE, row::PAGE_SETUP) => self.printing.page_setup(ctx),
+            (title::FILE, row::PREVIEW) => self.open_preview(ctx),
             (title::FILE, row::PRINT) => self.open_print(ctx),
             (title::FILE, row::EXIT) => return self.confirm_then(PendingAction::Quit),
             (title::EDIT, row::UNDO) => {

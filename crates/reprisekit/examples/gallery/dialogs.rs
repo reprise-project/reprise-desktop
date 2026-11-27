@@ -4,7 +4,7 @@ use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameStat
 use reprisekit::controls::form::{self};
 use reprisekit::controls::{
     aboutbox, endsession, favorites, filedlg, fontdlg, importsheet, installsheet, locationprompt,
-    namebox, pagesetup, printdlg, shellview,
+    namebox, pagesetup, printdlg, printpreview, shellview,
 };
 use reprisekit::interface::Interface;
 use reprisekit::look;
@@ -1023,6 +1023,56 @@ pub fn render_print_dialogs(with_blue: bool, scale: i32) -> Canvas {
         let f = printdlg::form(Ok(&dests), 0, 4);
         form::draw(&mut print_c, &text, &p, &f, true, px);
         c.blit_canvas(10 + i as i32 * col, sh + 20, &print_c);
+    }
+    c
+}
+
+/// Print Preview on page 2 of 3 of a text with a header and footer, the whole page; Classic then
+/// Blue and Glass.
+pub fn render_print_preview(with_blue: bool, scale: i32) -> Canvas {
+    let mut themes = vec![cued(interfaces::classic())];
+    if with_blue {
+        themes.push(cued(interfaces::theme_for(Interface::Blue)));
+        themes.push(cued(interfaces::theme_for(Interface::Glass)));
+    }
+    let a4 = (21000, 29700);
+    let (w, h) = printpreview::CLIENT;
+    let col = w + 10;
+    let mut c = Canvas::with_scale(
+        (themes.len() as i32 * col + 10) as u32,
+        (h + 20) as u32,
+        scale,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    let mut page = Canvas::new(2480, 3508);
+    page.fill_rect(page.bounds(), Color::rgb(255, 255, 255));
+    let ink = Color::rgb(0, 0, 0);
+    page.fill_rect(Rect::new(1040, 110, 400, 40), ink);
+    for row in 0..44 {
+        let len = 1890 * (4 + row % 5) / 8;
+        page.fill_rect(Rect::new(236, 236 + row * 68, len, 40), ink);
+    }
+    page.fill_rect(Rect::new(1140, 3360, 200, 40), ink);
+    for (i, theme) in themes.iter().enumerate() {
+        let mut theme = theme.clone();
+        theme.look = theme.look.at_scale(scale);
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let mut pv = printpreview::Preview::new(a4);
+        pv.laid(3);
+        pv.go(1);
+        let r = Rect::new(0, 0, w, h);
+        let units = theme.text;
+        let lay = printpreview::layout(&pv, r, scale, units, &theme.controls());
+        if let Some((n, size)) = pv.wanted(&lay) {
+            let at = Rect::new(0, 0, a4.0, a4.1);
+            pv.show(n, printpreview::sheet(&page, at, a4, size));
+        }
+        let lay = printpreview::layout(&pv, r, scale, units, &theme.controls());
+        let mut win = Canvas::with_scale(w as u32, h as u32, scale);
+        win.fill_rect(win.bounds(), p.cs.button_face);
+        printpreview::draw(&mut win, &text, &p, &pv, &lay, theme.fonts.size_px);
+        c.blit_canvas(10 + i as i32 * col, 10, &win);
     }
     c
 }
