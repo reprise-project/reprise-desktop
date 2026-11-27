@@ -18,7 +18,8 @@ pub(crate) use fields::INTERFACE;
 #[cfg(test)]
 pub use io::keys;
 pub use io::{
-    copy_keys, keys_apart, keys_in, load, rebase, save, switch_interface, validate, without_keys,
+    copy_keys, keys_apart, keys_in, load, rebase, save, snap_layouts_problem, switch_interface,
+    validate, without_keys,
 };
 pub(crate) use repriseconf::fields::text_to_list;
 pub use shortcuts::{

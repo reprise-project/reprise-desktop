@@ -1061,11 +1061,22 @@ fn validate_refuses_a_snap_layout_the_compositor_would() {
     assert_eq!(validate(&with("1|1 2-1:2"), &base), Ok(()));
     assert_eq!(
         validate(&with("1|1 1|0"), &base),
-        Err(r#"Snap layouts: "1|0": "0" is not a weight > 0."#.into())
+        Err(r#"Layout 2 (1|0): "0" is not a size. A band's size is a number above 0."#.into())
     );
     assert_eq!(
         validate(&with("1|1-1"), &base),
-        Err(r#"Snap layouts: "1|1-1" mixes | and -."#.into())
+        Err("Layout 1 (1|1-1) mixes | and -: a layout splits into columns with | or into rows with -.".into())
+    );
+    assert_eq!(
+        validate(&with("1 2 1:9"), &base),
+        Err(
+            r#"Layout 3 (1:9): "9" is not a number of parts. A band splits into 1 to 6 parts."#
+                .into()
+        )
+    );
+    assert_eq!(
+        validate(&with("1|1|1|1|1|1|1"), &base),
+        Err("Layout 1 (1|1|1|1|1|1|1) has more than 6 bands.".into())
     );
     assert_eq!(
         validate(&with("1 1 1 1 1 1 1"), &base),

@@ -1261,7 +1261,14 @@ model-io-the-quiet-hours-from-and-to = The quiet hours' From and To times must d
 model-io-a-shortcuts-action-is-not-one = A shortcut's action is not one the compositor knows.
 model-io-a-spawn-shortcut-needs-a-command = A spawn shortcut needs a command.
 model-io-snap-layouts-too-many = Snap layouts: at most { $max } layouts, got { $got }.
-model-io-snap-layouts-invalid = Snap layouts: { $why }.
+# n is the entry's place in the Custom layouts field, from 1; spec is the entry as typed; part
+# is the text it got wrong; max is the most bands or parts a layout takes.
+model-io-snap-layout-bad = { $fault ->
+    [mixed] Layout { $n } ({ $spec }) mixes | and -: a layout splits into columns with | or into rows with -.
+    [weight] Layout { $n } ({ $spec }): "{ $part }" is not a size. A band's size is a number above 0.
+    [parts] Layout { $n } ({ $spec }): "{ $part }" is not a number of parts. A band splits into 1 to { $max } parts.
+   *[bands] Layout { $n } ({ $spec }) has more than { $max } bands.
+}
 model-io-window-rule-needs-app-id = Window rule { $n } needs an app ID.
 model-io-program-keys-refused = { $name }: { $why }
 

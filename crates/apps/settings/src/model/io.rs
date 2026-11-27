@@ -247,22 +247,34 @@ pub fn switch_interface(s: &mut Settings, from: &str, text: &str, loaded: &Setti
     }
 }
 
-/// The compositor's own parse of each spec in `text`, at most `ZONE_MAX` of them.
-fn check_snap_layouts(text: &str) -> Result<(), String> {
-    use reprisekit::snaplayouts::{ZONE_MAX, ZoneLayout};
+/// What keeps the compositor from taking the snap layouts `text` names, worded: too many, or the
+/// first entry that does not parse and why. None when it takes them.
+pub fn snap_layouts_problem(text: &str) -> Option<String> {
+    use reprisekit::snaplayouts::{SpecFault, ZONE_MAX, ZoneLayout};
     let specs: Vec<&str> = words(text).collect();
     if specs.len() > ZONE_MAX {
-        return Err(tr!(
+        return Some(tr!(
             "model-io-snap-layouts-too-many",
             max = ZONE_MAX.to_string(),
             got = specs.len().to_string()
         ));
     }
-    for spec in specs {
-        ZoneLayout::parse(spec)
-            .map_err(|e| tr!("model-io-snap-layouts-invalid", why = e.to_string()))?;
-    }
-    Ok(())
+    let (n, e) = (specs.iter().enumerate())
+        .find_map(|(i, s)| ZoneLayout::parse(s).err().map(|e| (i + 1, e)))?;
+    let (fault, part) = match e.fault {
+        SpecFault::Mixed => ("mixed", String::new()),
+        SpecFault::Weight(w) => ("weight", w),
+        SpecFault::Parts(p) => ("parts", p),
+        SpecFault::Bands => ("bands", String::new()),
+    };
+    Some(tr!(
+        "model-io-snap-layout-bad",
+        n = n.to_string(),
+        spec = e.spec,
+        fault = fault,
+        part = part,
+        max = ZONE_MAX.to_string()
+    ))
 }
 
 /// What Apply refuses before writing: a bind's key that will not bind, or a program key changed from `base` that fails `check_program_keys`.
@@ -295,7 +307,9 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
             return Err(tr!("model-io-a-spawn-shortcut-needs-a-command"));
         }
     }
-    check_snap_layouts(&s.snap_layouts)?;
+    if let Some(why) = snap_layouts_problem(&s.snap_layouts) {
+        return Err(why);
+    }
     if s.window_rules != base.window_rules
         && let Some(i) = (s.window_rules.iter()).position(|r| r.app_id.trim().is_empty())
     {

@@ -1,4 +1,6 @@
-use super::super::desktop::{CONTENTS, CONTENTS_NOTE, GLOW_CONTROLS, snap_preview};
+use super::super::desktop::{
+    CONTENTS, CONTENTS_NOTE, GLOW_CONTROLS, SNAP_PREVIEW, show_snap_preview, snap_preview,
+};
 use super::*;
 
 #[test]
@@ -967,6 +969,45 @@ fn the_layouts_preview_draws_what_the_field_names_and_nothing_while_it_does_not_
         })
         .collect();
     pin("snap_layouts_preview", &pins);
+}
+
+#[test]
+fn a_layout_that_does_not_parse_empties_the_preview_and_the_note_says_which_and_why() {
+    let theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Classic);
+    reprisekit::pins::fonts();
+    let mut f = window_behavior(Area::MIN);
+    let note = |f: &Form| {
+        let it = f.item("snap_layouts_note").unwrap();
+        match &it.control {
+            Control::Lines(l) => (it.rect, l.clone()),
+            c => panic!("the note is lines, got {c:?}"),
+        }
+    };
+    let preview = |f: &Form| match &f.item(SNAP_PREVIEW).unwrap().control {
+        Control::Picture { canvas, .. } => canvas.is_some(),
+        c => panic!("the preview is a picture, got {c:?}"),
+    };
+    let (hint_rect, hint) = note(&f);
+    show_snap_preview(&mut f, &theme, "1|1 2|x", 1);
+    assert!(!preview(&f), "nothing drawn while an entry does not parse");
+    let (rect, lines) = note(&f);
+    assert_eq!(
+        lines,
+        [r#"Layout 2 (2|x): "x" is not a size. A band's size is a number above 0."#]
+    );
+    let shown = f.item(SNAP_PREVIEW).unwrap().rect;
+    assert_eq!(
+        (rect.x, rect.right()),
+        (shown.x, hint_rect.right()),
+        "the reason runs from the preview's left to the note's right"
+    );
+    show_snap_preview(&mut f, &theme, "1|1 2|1", 1);
+    assert!(preview(&f));
+    assert_eq!(
+        note(&f),
+        (hint_rect, hint),
+        "a fixed entry brings the hint back"
+    );
 }
 
 #[test]

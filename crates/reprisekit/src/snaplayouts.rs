@@ -174,31 +174,69 @@ pub struct ZoneLayout {
 
 pub const ZONE_MAX: usize = 6;
 
+/// Why a layout spec does not parse ([`ZoneLayout::parse`]). `Display` words it for a log; a
+/// program words `fault` for people.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpecError {
+    /// The spec, trimmed.
+    pub spec: String,
+    pub fault: SpecFault,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SpecFault {
+    /// It joins bands with both `|` and `-`.
+    Mixed,
+    /// A band's weight, the text before its `:`, is not a number above 0.
+    Weight(String),
+    /// A band's part count, the text after its `:`, is not 1 to [`ZONE_MAX`].
+    Parts(String),
+    /// It has more than [`ZONE_MAX`] bands.
+    Bands,
+}
+
+impl std::fmt::Display for SpecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let spec = &self.spec;
+        match &self.fault {
+            SpecFault::Mixed => write!(f, "{spec:?} mixes | and -"),
+            SpecFault::Weight(w) => write!(f, "{spec:?}: {w:?} is not a weight > 0"),
+            SpecFault::Parts(p) => write!(
+                f,
+                "{spec:?}: {p:?} is not a count of parts from 1 to {ZONE_MAX}"
+            ),
+            SpecFault::Bands => write!(f, "{spec:?}: at most {ZONE_MAX} bands"),
+        }
+    }
+}
+
 impl ZoneLayout {
-    pub fn parse(spec: &str) -> Result<ZoneLayout, String> {
+    pub fn parse(spec: &str) -> Result<ZoneLayout, SpecError> {
         let spec = spec.trim();
+        let err = |fault| SpecError {
+            spec: spec.to_string(),
+            fault,
+        };
         let columns = !spec.contains('-');
         if !columns && spec.contains('|') {
-            return Err(format!("{spec:?} mixes | and -"));
+            return Err(err(SpecFault::Mixed));
         }
         let sep = if columns { '|' } else { '-' };
-        let band = |band: &str| -> Result<(f64, u32), String> {
+        let band = |band: &str| -> Result<(f64, u32), SpecError> {
             let (w, parts) = band.split_once(':').unwrap_or((band, "1"));
             let (w, parts) = (w.trim(), parts.trim());
             let weight = (w.parse::<f64>().ok()).filter(|v| v.is_finite() && *v > 0.0);
             let Some(weight) = weight else {
-                return Err(format!("{spec:?}: {w:?} is not a weight > 0"));
+                return Err(err(SpecFault::Weight(w.to_string())));
             };
             match parts.parse::<u32>() {
                 Ok(p) if (1..=ZONE_MAX as u32).contains(&p) => Ok((weight, p)),
-                _ => Err(format!(
-                    "{spec:?}: {parts:?} is not a count of parts from 1 to {ZONE_MAX}"
-                )),
+                _ => Err(err(SpecFault::Parts(parts.to_string()))),
             }
         };
         let bands = spec.split(sep).map(band).collect::<Result<Vec<_>, _>>()?;
         if bands.len() > ZONE_MAX {
-            return Err(format!("{spec:?}: at most {ZONE_MAX} bands"));
+            return Err(err(SpecFault::Bands));
         }
         Ok(ZoneLayout { columns, bands })
     }
@@ -292,7 +330,15 @@ mod tests {
         assert_eq!((z.columns, z.bands), (true, want));
         let z = ZoneLayout::parse(" 1 - 1:2 ").unwrap();
         assert_eq!((z.columns, z.bands), (false, vec![(1.0, 1), (1.0, 2)]));
-        assert!(ZoneLayout::parse("1|1-1").is_err(), "mixed");
+        let fault = |s: &str| ZoneLayout::parse(s).unwrap_err().fault;
+        assert_eq!(fault("1|1-1"), SpecFault::Mixed);
+        assert_eq!(fault("1|x:2"), SpecFault::Weight("x".into()));
+        assert_eq!(fault("1|1:9"), SpecFault::Parts("9".into()));
+        assert_eq!(fault("1|1|1|1|1|1|1"), SpecFault::Bands);
+        assert_eq!(
+            ZoneLayout::parse(" 1|x ").unwrap_err().to_string(),
+            r#""1|x": "x" is not a weight > 0"#
+        );
         assert!(ZoneLayout::parse("1||1").is_err(), "an empty band");
         assert!(ZoneLayout::parse("0|1").is_err());
         assert!(ZoneLayout::parse("1:0").is_err());

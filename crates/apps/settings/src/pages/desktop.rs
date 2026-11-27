@@ -1,6 +1,7 @@
 //! Taskbar, Search, Window Switcher, Virtual Desktops and Window Behavior.
 
 use super::{Area, GX, TRAY_CUSTOMIZE, X, button, choice, edit, group, spin};
+
 use crate::providerpage;
 use repriseconf::fields::words;
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
@@ -17,6 +18,7 @@ use crate::model::{
     DESKTOPS_MAX, DIM_INACTIVE_MAX, HIDDEN_FRAME_RATE_MAX, HOT_CORNERS, PAGER_MARKS,
     PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX, SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES,
     SWITCHER_STYLES, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS, keys_for,
+    snap_layouts_problem,
 };
 use reprisekit::tr;
 
@@ -88,13 +90,11 @@ pub fn window_behavior(a: Area) -> Form {
             },
         ),
         Item::new(
-            "snap_layouts_note",
+            SNAP_NOTE,
             Rect::new(preview.right() + 8, 178, gw - PREVIEW_W - 8, 2 * LINE_H),
-            Control::Lines(vec![
-                tr!("pages-desktop-empty-built-in-six"),
-                tr!("pages-desktop-eg-snap-layouts"),
-            ]),
-        ),
+            Control::Lines(snap_hint()),
+        )
+        .live(),
         group(
             a,
             "tabs_group",
@@ -198,6 +198,43 @@ pub fn snap_preview(theme: &Theme, text: &str, scale: i32) -> Option<Canvas> {
     let s = scale.max(1);
     let layout = PickerLayout::preview(&layouts).scaled(s);
     Some(reprisekit::interfaces::draw_snap_picker(theme, &layout, &[], None).at_scale(s))
+}
+
+/// The note beside the layouts preview: how to spell a layout, or what is wrong with one.
+const SNAP_NOTE: &str = "snap_layouts_note";
+
+fn snap_hint() -> Vec<String> {
+    vec![
+        tr!("pages-desktop-empty-built-in-six"),
+        tr!("pages-desktop-eg-snap-layouts"),
+    ]
+}
+
+/// Draws the layouts `text` names into the Window Behavior `page`'s preview. While they do not
+/// parse the preview is empty and the note beside it widens over it to say which entry is wrong
+/// and why ([`snap_layouts_problem`]).
+pub fn show_snap_preview(page: &mut Form, theme: &Theme, text: &str, scale: i32) {
+    let problem = snap_layouts_problem(text);
+    let canvas = problem
+        .is_none()
+        .then(|| snap_preview(theme, text, scale))
+        .flatten();
+    let Some(preview) = page.item_mut(SNAP_PREVIEW).map(|item| {
+        item.control = Control::Picture { canvas, frame: 0 };
+        item.rect
+    }) else {
+        return;
+    };
+    let Some(note) = page.item_mut(SNAP_NOTE) else {
+        return;
+    };
+    let (x, lines) = match problem {
+        Some(why) => (preview.x, vec![why]),
+        None => (preview.right() + 8, snap_hint()),
+    };
+    let right = note.rect.right();
+    note.rect = Rect::new(x, note.rect.y, right - x, note.rect.height);
+    note.control = Control::Lines(lines);
 }
 
 /// The Window Behavior page's Forget Positions under the remember check: the compositor drops every
