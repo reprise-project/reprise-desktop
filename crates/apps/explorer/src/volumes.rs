@@ -443,10 +443,11 @@ impl Explorer {
                 .is_some_and(|v| v.filesystem && v.holds_system())
     }
 
-    /// Sets the label of `picked`, the volume the Rename box opened on, to `text` on a job:
-    /// polkit may prompt first. A drive swapped out while the box was up is left alone. The
-    /// drives are scanned again once it lands, for the new name.
-    pub(crate) fn relabel(&mut self, picked: Volume, text: &str, ctx: &mut Ctx) -> Reply {
+    /// Sets the label of `picked`, the volume the Rename box on row `i` opened on, to `text` on a
+    /// job: polkit may prompt first. A drive swapped out while the box was up is left alone. A
+    /// name the drive cannot take reopens the box on the typed text under the box saying why.
+    /// The drives are scanned again once it lands, for the new name.
+    pub(crate) fn relabel(&mut self, i: usize, picked: Volume, text: &str, ctx: &mut Ctx) -> Reply {
         let Some(udisks) = self.udisks.clone() else {
             return Reply::none();
         };
@@ -457,21 +458,9 @@ impl Explorer {
         if !(self.volumes.volume(&picked.path)).is_some_and(|v| v.same_as(&picked)) {
             return self.message_box(&tr!("volumes-relabel-rename"), drive_changed(), ctx);
         }
-        // A label tool UDisks2 runs (e2label, fatlabel) may read a leading hyphen as an option.
-        if label.starts_with('-') {
-            return self.message_box(&tr!("volumes-relabel-rename"), leading_hyphen(), ctx);
-        }
-        if let Some(bad) = reprisefs::udisks::label_refuses(&picked.fs_type, &label) {
-            return self.message_box(&tr!("volumes-relabel-rename"), bad_char_text(bad), ctx);
-        }
-        if let Some(limit) =
-            reprisefs::udisks::label_limit(&picked.fs_type).filter(|l| !l.fits(&label))
-        {
-            return self.message_box(
-                &tr!("volumes-relabel-rename"),
-                too_long_text(Some(limit.max())),
-                ctx,
-            );
+        if let Some(why) = refused_label(&picked.fs_type, &label) {
+            self.open_relabel_box(i, picked, text, ctx);
+            return self.message_box(&tr!("volumes-relabel-rename"), why, ctx);
         }
         let name = picked.name(self.volumes.disk_of(&picked));
         self.spawn_job(ctx, move || {
@@ -506,6 +495,19 @@ impl Explorer {
         }
         self.message_box(title, e.message.clone(), ctx)
     }
+}
+
+/// Why a drive of `fs_type` cannot take `label`, asked before UDisks2 is.
+fn refused_label(fs_type: &str, label: &str) -> Option<String> {
+    // A label tool UDisks2 runs (e2label, fatlabel) may read a leading hyphen as an option.
+    if label.starts_with('-') {
+        return Some(leading_hyphen());
+    }
+    if let Some(bad) = reprisefs::udisks::label_refuses(fs_type, label) {
+        return Some(bad_char_text(bad));
+    }
+    (reprisefs::udisks::label_limit(fs_type).filter(|l| !l.fits(label)))
+        .map(|limit| too_long_text(Some(limit.max())))
 }
 
 pub(crate) fn system_drive() -> String {

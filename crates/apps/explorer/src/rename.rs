@@ -107,15 +107,8 @@ impl Explorer {
     pub fn begin_rename(&mut self, ctx: &mut Ctx) -> Reply {
         if let Some(i) = self.sv.selection.single() {
             if let Some(v) = self.relabel_target(i) {
-                self.open_rename_box(i, &crate::volumes::label_text(&v), true, ctx);
-                if let (Some(limit), Some((_, ed))) = (
-                    reprisefs::udisks::label_limit(&v.fs_type),
-                    self.sv.edit.as_mut(),
-                ) {
-                    ed.set_limit(limit);
-                }
-                self.relabeling = Some(v);
-                return Reply::redraw();
+                let label = crate::volumes::label_text(&v);
+                return self.open_relabel_box(i, v, &label, ctx);
             }
             if self.system_drive(i) {
                 return self.message_box(
@@ -140,6 +133,25 @@ impl Explorer {
         let shown = self.shown_name(it);
         let whole = it.is_dir || it.shortcut.is_some() || shown != it.label();
         self.open_rename_box(i, &shown, whole, ctx)
+    }
+
+    /// The rename box on drive row `i` holding `text`, which renames volume `v`.
+    pub(crate) fn open_relabel_box(
+        &mut self,
+        i: usize,
+        v: reprisefs::udisks::Volume,
+        text: &str,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        self.open_rename_box(i, text, true, ctx);
+        if let (Some(limit), Some((_, ed))) = (
+            reprisefs::udisks::label_limit(&v.fs_type),
+            self.sv.edit.as_mut(),
+        ) {
+            ed.set_limit(limit);
+        }
+        self.relabeling = Some(v);
+        Reply::redraw()
     }
 
     fn open_rename_box(&mut self, i: usize, text: &str, whole: bool, ctx: &mut Ctx) -> Reply {
@@ -182,7 +194,7 @@ impl Explorer {
     fn rename_to(&mut self, i: usize, text: &str, ctx: &mut Ctx) -> Reply {
         if self.place == crate::place::Place::Computer {
             return match self.relabeling.take() {
-                Some(v) => self.relabel(v, text, ctx),
+                Some(v) => self.relabel(i, v, text, ctx),
                 None => Reply::none(),
             };
         }
