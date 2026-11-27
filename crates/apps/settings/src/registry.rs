@@ -680,7 +680,7 @@ mod tests {
                 "MouseKeys acceleration",
             ),
             (Page::RemoteDesktop, "quality", "Picture quality"),
-            (Page::Appearance, "glass_dark_to", "Dark until"),
+            (Page::Appearance, "dark_to", "Dark until"),
             (Page::StartMenu, crate::menupage::TREE, "Start menu"),
             (
                 Page::ScreenCapture,

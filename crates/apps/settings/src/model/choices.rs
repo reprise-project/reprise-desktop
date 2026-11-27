@@ -242,12 +242,12 @@ pub const FONT_SMOOTHINGS: &Choices = &[
     ("none", || tr!("choices-font-smoothings-none")),
 ];
 
-/// `[glass] mode`: `glass::Mode::as_str`, then `DarkSchedule::name`.
-pub const GLASS_MODES: &Choices = &[
-    ("light", || tr!("choices-glass-modes-light")),
-    ("dark", || tr!("choices-glass-modes-dark")),
-    ("night", || tr!("choices-glass-modes-night")),
-    ("hours", || tr!("choices-glass-modes-hours")),
+/// `[appearance] mode`, in `AppearanceMode::ALL`'s order.
+pub const MODES: &Choices = &[
+    ("light", || tr!("choices-modes-light")),
+    ("dark", || tr!("choices-modes-dark")),
+    ("night", || tr!("choices-modes-night")),
+    ("hours", || tr!("choices-modes-hours")),
 ];
 
 /// `[glass] material`. Mirrors `glass::Material::as_str`.

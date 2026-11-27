@@ -24,8 +24,9 @@ pub const FONT_FAMILY: &str = "font-family";
 /// `[fonts] antialias`, `true` or `false`.
 pub const FONT_ANTIALIAS: &str = "font-antialias";
 
-/// `[glass] mode`, `light` or `dark`, as `REPRISE_GLASS_MODE`.
-pub const GLASS_MODE: &str = "glass-mode";
+/// The look's mode in force, `light` or `dark`, as `REPRISE_MODE`: `[appearance] mode`, or under
+/// its schedule the compositor's pick.
+pub const MODE: &str = "mode";
 
 /// `[glass] material`, `frosted`, `smoked` or `molten`, as `REPRISE_GLASS_MATERIAL`.
 pub const GLASS_MATERIAL: &str = "glass-material";
@@ -39,7 +40,7 @@ pub const DOUBLE_CLICK_MS: &str = "double-click-ms";
 const KEYS: [&str; 11] = [
     INTERFACE,
     BLUE_VARIANT,
-    GLASS_MODE,
+    MODE,
     GLASS_MATERIAL,
     COLORS,
     ICON_THEME,

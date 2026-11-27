@@ -130,7 +130,7 @@ pub struct SessionEnv {
     pub colors: String,
     pub interface: reprisekit::interface::Interface,
     pub blue_variant: reprisekit::blue::Variant,
-    pub glass_mode: reprisekit::glass::Mode,
+    pub mode: reprisekit::glass::Mode,
     pub glass_material: reprisekit::glass::Material,
     pub icons: String,
     /// `XCURSOR_THEME` and `XCURSOR_SIZE`: the `[cursor]` theme and size, so clients draw the
@@ -196,7 +196,7 @@ impl SessionEnv {
         colors: &reprisekit::theme::ColorScheme,
         interface: reprisekit::interface::Interface,
         blue_variant: reprisekit::blue::Variant,
-        (glass_mode, glass_material): (reprisekit::glass::Mode, reprisekit::glass::Material),
+        (mode, glass_material): (reprisekit::glass::Mode, reprisekit::glass::Material),
         icons: &str,
         cursor: (String, u32),
     ) -> SessionEnv {
@@ -217,7 +217,7 @@ impl SessionEnv {
             colors: colors.to_env(),
             interface,
             blue_variant,
-            glass_mode,
+            mode,
             glass_material,
             icons: icons.into(),
             cursor,
@@ -273,14 +273,14 @@ impl SessionEnv {
         colors: String,
         interface: reprisekit::interface::Interface,
         blue_variant: reprisekit::blue::Variant,
-        (glass_mode, glass_material): (reprisekit::glass::Mode, reprisekit::glass::Material),
+        (mode, glass_material): (reprisekit::glass::Mode, reprisekit::glass::Material),
         icons: &str,
         cursor: (String, u32),
     ) -> bool {
         if colors == self.colors
             && interface == self.interface
             && blue_variant == self.blue_variant
-            && glass_mode == self.glass_mode
+            && mode == self.mode
             && glass_material == self.glass_material
             && icons == self.icons
             && cursor == self.cursor
@@ -290,7 +290,7 @@ impl SessionEnv {
         self.colors = colors;
         self.interface = interface;
         self.blue_variant = blue_variant;
-        self.glass_mode = glass_mode;
+        self.mode = mode;
         self.glass_material = glass_material;
         self.icons = icons.into();
         self.cursor = cursor;
@@ -306,7 +306,7 @@ impl SessionEnv {
             (reprisekit::theme::COLORS_ENV, self.colors.clone()),
             (reprisekit::interface::ENV, self.interface.as_str().into()),
             (reprisekit::blue::ENV, self.blue_variant.as_str().into()),
-            (reprisekit::glass::MODE_ENV, self.glass_mode.as_str().into()),
+            (reprisekit::interface::MODE_ENV, self.mode.as_str().into()),
             (
                 reprisekit::glass::MATERIAL_ENV,
                 self.glass_material.as_str().into(),
@@ -1509,7 +1509,7 @@ mod tests {
             colors: "k=v".into(),
             interface: reprisekit::interface::Interface::Classic,
             blue_variant: reprisekit::blue::Variant::Blue,
-            glass_mode: Default::default(),
+            mode: Default::default(),
             glass_material: Default::default(),
             icons: "retro-icons".into(),
             cursor: ("default".into(), 24),
@@ -1745,7 +1745,7 @@ mod tests {
             reprisekit::theme::COLORS_ENV,
             reprisekit::interface::ENV,
             reprisekit::blue::ENV,
-            reprisekit::glass::MODE_ENV,
+            reprisekit::interface::MODE_ENV,
             reprisekit::glass::MATERIAL_ENV,
             reprisekit::icontheme::ENV,
             "XCURSOR_THEME",
@@ -2168,8 +2168,9 @@ mod tests {
     }
 
     #[test]
-    fn the_glass_mode_and_material_are_exported_and_a_change_republishes() {
-        use reprisekit::glass::{MATERIAL_ENV, MODE_ENV, Material, Mode};
+    fn the_mode_and_glass_material_are_exported_and_a_change_republishes() {
+        use reprisekit::glass::{MATERIAL_ENV, Material, Mode};
+        use reprisekit::interface::MODE_ENV;
         let mut e = env(None);
         assert!(e.pairs().contains(&(MODE_ENV, "light".into())));
         assert!(e.pairs().contains(&(MATERIAL_ENV, "frosted".into())));

@@ -1084,7 +1084,7 @@ mod tests {
             rank("hours")[..2],
             [
                 Setting::Control(Page::Notifications, "quiet_hours"),
-                Setting::Control(Page::Appearance, "glass_dark_from")
+                Setting::Control(Page::Appearance, "dark_from")
             ],
             "the keyword's control before an earlier page's control label"
         );

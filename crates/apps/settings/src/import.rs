@@ -10,7 +10,6 @@ use reprisefs::apps::{AppEntry, DesktopId};
 use reprisefs::quicklaunch as ql;
 use reprisekit::controls::importsheet::{Line, Source};
 use reprisekit::controls::welcome::TEXT_SIZES;
-use reprisekit::interface::Interface;
 use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -478,9 +477,6 @@ pub fn plan(name: &'static str, found: &[Setting], config: &str, sys: &dyn Syste
                 f.apply(&mut t);
                 let why = match f {
                     Setting::Wallpaper { path, .. } => picture_refused(path, sys),
-                    Setting::Dark(_) if crate::appearancepage::interface(&s) == Interface::Blue => {
-                        Some(tr!("import-blue-comes-in-light-colours-only"))
-                    }
                     _ => refused(&t, &s),
                 };
                 if let Some(why) = why {

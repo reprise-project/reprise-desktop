@@ -57,26 +57,26 @@ pub(crate) fn publish_theme(theme: &Theme) {
 }
 
 /// The theme a program builds from the compositor's environment: the
-/// interface named by [`reprisekit::interface::ENV`] (Blue variant from
-/// [`reprisekit::blue::ENV`], Glass mode and material from
-/// [`reprisekit::glass::MODE_ENV`] and [`reprisekit::glass::MATERIAL_ENV`]), else
-/// [`Theme::default`]; then a
+/// interface named by [`reprisekit::interface::ENV`], light or dark per
+/// [`reprisekit::interface::MODE_ENV`] (Blue variant from [`reprisekit::blue::ENV`], Glass
+/// material from [`reprisekit::glass::MATERIAL_ENV`]), else [`Theme::default`]; then a
 /// [`reprisekit::theme::COLORS_ENV`] scheme is laid over it.
 pub(crate) fn theme_from_env(
     interface: Option<&str>,
     variant: Option<&str>,
-    glass_mode: Option<&str>,
+    mode: Option<&str>,
     glass_material: Option<&str>,
     colors: Option<&str>,
 ) -> Theme {
+    let mode = mode
+        .and_then(reprisekit::glass::Mode::parse)
+        .unwrap_or_default();
     let mut theme = reprisekit::interfaces::theme_with(
         reprisekit::interface::Interface::from_env_value(interface),
         reprisekit::blue::Variant::from_env_value(variant),
-        false,
+        mode == reprisekit::glass::Mode::Dark,
         &reprisekit::glass::Settings {
-            mode: glass_mode
-                .and_then(reprisekit::glass::Mode::parse)
-                .unwrap_or_default(),
+            mode,
             material: glass_material
                 .and_then(reprisekit::glass::Material::parse)
                 .unwrap_or_default(),
@@ -95,7 +95,7 @@ pub(crate) fn theme_from_env(
 pub(crate) struct Look {
     interface: Option<String>,
     blue_variant: Option<String>,
-    glass_mode: Option<String>,
+    mode: Option<String>,
     glass_material: Option<String>,
     colors: Option<String>,
     icon_theme: String,
@@ -122,7 +122,7 @@ impl Look {
         Look {
             interface: std::env::var(reprisekit::interface::ENV).ok(),
             blue_variant: std::env::var(reprisekit::blue::ENV).ok(),
-            glass_mode: std::env::var(reprisekit::glass::MODE_ENV).ok(),
+            mode: std::env::var(reprisekit::interface::MODE_ENV).ok(),
             glass_material: std::env::var(reprisekit::glass::MATERIAL_ENV).ok(),
             colors: std::env::var(reprisekit::theme::COLORS_ENV).ok(),
             icon_theme: std::env::var(reprisekit::icontheme::ENV)
@@ -139,7 +139,7 @@ impl Look {
         let mut theme = theme_from_env(
             self.interface.as_deref(),
             self.blue_variant.as_deref(),
-            self.glass_mode.as_deref(),
+            self.mode.as_deref(),
             self.glass_material.as_deref(),
             self.colors.as_deref(),
         );
@@ -204,7 +204,7 @@ impl Look {
         let field = match key {
             a::INTERFACE => self.interface.get_or_insert_default(),
             a::BLUE_VARIANT => self.blue_variant.get_or_insert_default(),
-            a::GLASS_MODE => self.glass_mode.get_or_insert_default(),
+            a::MODE => self.mode.get_or_insert_default(),
             a::GLASS_MATERIAL => self.glass_material.get_or_insert_default(),
             a::COLORS => self.colors.get_or_insert_default(),
             a::ICON_THEME => &mut self.icon_theme,

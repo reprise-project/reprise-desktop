@@ -50,6 +50,7 @@ pub fn render_backgrounds() -> Canvas {
             cued(interfaces::sample_theme(
                 Interface::Classic,
                 "Brick",
+                false,
                 &ruby,
                 None,
             )),
@@ -59,6 +60,7 @@ pub fn render_backgrounds() -> Canvas {
             cued(interfaces::sample_theme(
                 Interface::Blue,
                 "Olive Green",
+                false,
                 &ruby,
                 None,
             )),
@@ -68,6 +70,7 @@ pub fn render_backgrounds() -> Canvas {
             cued(interfaces::sample_theme(
                 Interface::Glass,
                 "",
+                false,
                 &ruby,
                 Some(teal),
             )),

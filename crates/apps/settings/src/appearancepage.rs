@@ -8,11 +8,10 @@ use reprisekit::schemes;
 use reprisekit::theme::{Color, ColorScheme, FontConfig, Theme};
 use reprisekit::trackbar::{self, TrackBar};
 
-use crate::model::{
-    GLASS_FRAMES, GLASS_MATERIALS, GLASS_MODES, INTERFACES, Settings, text_to_list,
-};
+use crate::model::{GLASS_FRAMES, GLASS_MATERIALS, INTERFACES, MODES, Settings, text_to_list};
 use crate::pages::{Area, COMBO_MAX, TRACK_MAX, X, choice, time_edit};
 use crate::registry::Page;
+use repriseconf::config::{AppearanceMode, CLASSIC_DARK_SCHEME};
 use reprisekit::tr;
 
 pub const SAMPLE: &str = "sample";
@@ -39,12 +38,10 @@ fn columns(a: Area) -> (i32, i32, i32) {
 const INTENSITY_POSITIONS: usize = 101;
 const TIME_W: i32 = 62;
 /// The "hours" mode's times, greyed under any other mode.
-pub const DARK_HOURS: [&str; 4] = [
-    "dark_hours_label",
-    "glass_dark_from",
-    "dark_to_label",
-    "glass_dark_to",
-];
+pub const DARK_HOURS: [&str; 4] = ["dark_hours_label", "dark_from", "dark_to_label", "dark_to"];
+/// Classic's dark scheme combo, greyed under Light.
+pub const DARK_SCHEME: &str = "dark_scheme";
+const DARK_SCHEME_LABEL: &str = "dark_scheme_label";
 const BLUR_POSITIONS: usize = glass::BLUR_MAX as usize;
 
 /// The interface `s` names; an unknown one is Classic, as the compositor reads it.
@@ -61,7 +58,7 @@ pub fn glass(s: &Settings) -> glass::Settings {
         color: glass::swatch(&s.glass_color)
             .or_else(|| Color::parse(&s.glass_color))
             .unwrap_or(d.color),
-        mode: glass::Mode::parse(&s.glass_mode).unwrap_or_default(),
+        mode: glass::Mode::parse(&s.mode).unwrap_or_default(),
         material: glass::Material::parse(&s.glass_material).unwrap_or_default(),
         frame: glass::Frame::parse(&s.glass_frame).unwrap_or_default(),
         notification: glass::NotifyStyle::parse(&s.glass_notification_style).unwrap_or_default(),
@@ -73,11 +70,24 @@ pub fn glass(s: &Settings) -> glass::Settings {
     }
 }
 
+/// The Classic scheme `s` wears while dark.
+pub fn classic_dark(s: &Settings) -> &str {
+    match s.dark_color_scheme.as_str() {
+        "" => CLASSIC_DARK_SCHEME,
+        name => name,
+    }
+}
+
 pub fn theme(s: &Settings) -> Theme {
     let i = interface(s);
     let g = glass(s);
-    let mut t =
-        reprisekit::interfaces::sample_theme(i, &s.color_scheme, &g, Color::parse(&s.background));
+    let dark = s.mode == AppearanceMode::Dark.as_str();
+    let scheme = match (i, dark) {
+        (Interface::Classic, true) => classic_dark(s),
+        _ => &s.color_scheme,
+    };
+    let background = Color::parse(&s.background);
+    let mut t = reprisekit::interfaces::sample_theme(i, scheme, dark, &g, background);
     for (name, value) in &s.colors {
         if let Some(c) = Color::parse(value) {
             t.colors.set(name, c);
@@ -119,16 +129,15 @@ fn title(name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Classic's schemes, the High Contrast ones last.
+fn classic_rows() -> impl Iterator<Item = &'static str> {
+    let contrast = |n: &&str| n.starts_with("High Contrast");
+    (schemes::names().filter(move |n| !contrast(n))).chain(schemes::names().filter(contrast))
+}
+
 fn scheme_rows(i: Interface, custom: bool) -> Vec<String> {
     match i {
-        Interface::Classic => {
-            let contrast = |n: &&str| n.starts_with("High Contrast");
-            schemes::names()
-                .filter(|n| !contrast(n))
-                .chain(schemes::names().filter(contrast))
-                .map(String::from)
-                .collect()
-        }
+        Interface::Classic => classic_rows().map(String::from).collect(),
         Interface::Blue => blue::Variant::ALL
             .iter()
             .map(|v| v.name().to_string())
@@ -184,11 +193,50 @@ pub fn page(s: &Settings, a: Area) -> Form {
             &tr!("appearancepage-color-scheme"),
         ),
         Item::combo(scheme_id(i), X, y(304), lw, &refs, refs.len().min(8)),
+        Item::label_at("mode_label", rx, y(242), rw, &tr!("appearancepage-mode")),
+        choice("mode", rx, y(258), rw, MODES),
     ];
+    let dark_hours = |hours_y: i32| {
+        [
+            Item::label_at(
+                DARK_HOURS[0],
+                rx,
+                hours_y,
+                rw,
+                &tr!("appearancepage-dark-hours"),
+            ),
+            time_edit(DARK_HOURS[1], rx, hours_y + 16, TIME_W),
+            Item::label_at(
+                DARK_HOURS[2],
+                rx + TIME_W + 4,
+                hours_y + 20,
+                14,
+                &tr!("appearancepage-dark-hours-to"),
+            ),
+            time_edit(DARK_HOURS[3], rx + TIME_W + 22, hours_y + 16, TIME_W)
+                .named(tr!("appearancepage-dark-until")),
+        ]
+    };
+    if i != Interface::Glass {
+        items.extend(dark_hours(y(288)));
+    }
+    if i == Interface::Classic {
+        let dark: Vec<&str> = classic_rows()
+            .filter(|n| schemes::scheme(n).is_some_and(|c| c.is_dark()))
+            .collect();
+        items.extend([
+            Item::label_at(
+                DARK_SCHEME_LABEL,
+                X,
+                y(334),
+                lw,
+                &tr!("appearancepage-dark-color-scheme"),
+            ),
+            Item::combo(DARK_SCHEME, X, y(350), lw, &dark, dark.len().min(8)),
+        ]);
+    }
     if i == Interface::Glass {
         items.extend([
-            Item::label_at("mode_label", rx, y(242), rw, &tr!("appearancepage-mode")),
-            choice("glass_mode", rx, y(258), rw, GLASS_MODES),
             Item::label_at(
                 "material_label",
                 X,
@@ -247,24 +295,9 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 Rect::new(rx, y(350), tw, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new(1, BLUR_POSITIONS).paged(1, 1)),
             ),
-            Item::label_at(
-                DARK_HOURS[0],
-                rx,
-                y(406),
-                rw,
-                &tr!("appearancepage-dark-hours"),
-            ),
-            time_edit(DARK_HOURS[1], rx, y(422), TIME_W),
-            Item::label_at(
-                DARK_HOURS[2],
-                rx + TIME_W + 4,
-                y(426),
-                14,
-                &tr!("appearancepage-dark-hours-to"),
-            ),
-            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(422), TIME_W)
-                .named(tr!("appearancepage-dark-until")),
         ]);
+        // Under the intensity and blur that fill the column below Mode.
+        items.extend(dark_hours(y(406)));
     }
     Form::new(items)
 }
@@ -299,7 +332,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         glass::Material::parse(&s.glass_material).unwrap_or_default() == glass::Material::Frosted;
     form.set_enabled("glass_streaks", s.glass_transparency && frosted);
     for id in DARK_HOURS {
-        form.set_enabled(id, s.glass_mode == "hours");
+        form.set_enabled(id, s.mode == AppearanceMode::Hours.as_str());
+    }
+    for id in [DARK_SCHEME_LABEL, DARK_SCHEME] {
+        form.set_enabled(id, s.mode != AppearanceMode::Light.as_str());
     }
     // Set every time: `Theme`'s equality cannot see the glass settings (the look compares by name).
     if let Some(Control::Sample { theme: t, .. }) = form.item_mut(SAMPLE).map(|i| &mut i.control) {

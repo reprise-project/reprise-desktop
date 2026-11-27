@@ -286,9 +286,65 @@ pub fn lenient_over<T>(
     Ok((from_table(table.clone())?, out, table))
 }
 
+/// A table's `mode`, and its `dark_from` and `dark_to` when it sets either.
+type TableMode = (Option<super::AppearanceMode>, Option<(u32, u32)>);
+
+/// One table's `mode`, and its hours when it sets either time (the other at its default).
+fn read_mode(table: &str, [mode, from, to]: [Option<String>; 3]) -> Result<TableMode, String> {
+    let mode = mode
+        .map(|m| {
+            super::AppearanceMode::parse(&m)
+                .ok_or_else(|| format!("[{table}] mode = {m:?} is not light, dark, night or hours"))
+        })
+        .transpose()?;
+    if from.is_none() && to.is_none() {
+        return Ok((mode, None));
+    }
+    let d = super::ModeConfig::default();
+    let time = |key: &str, text: Option<String>, default: u32| match text {
+        None => Ok(default),
+        Some(t) => super::parse_hhmm(&t)
+            .ok_or_else(|| format!("[{table}] {key} {t:?} is not a time like \"19:00\"")),
+    };
+    let hours = (time("dark_from", from, d.from)?, time("dark_to", to, d.to)?);
+    if hours.0 == hours.1 {
+        return Err(format!("[{table}] dark_from and dark_to must differ"));
+    }
+    Ok((mode, Some(hours)))
+}
+
+/// `[appearance] mode`, `dark_from` and `dark_to`. Under Glass (`glass_applies`) `[glass]`'s
+/// mode stands in where `[appearance]` has none, and its hours where `[appearance]` has none;
+/// every `[glass]` key set then goes into `moved`. `[glass]`'s keys are checked either way.
+fn mode_config(
+    appearance: [Option<String>; 3],
+    glass: [Option<String>; 3],
+    glass_applies: bool,
+    moved: &mut Vec<String>,
+) -> Result<super::ModeConfig, String> {
+    let names = ["mode", "dark_from", "dark_to"];
+    if glass_applies {
+        let set = names.iter().zip(&glass).filter(|(_, v)| v.is_some());
+        moved.extend(set.map(|(k, _)| format!("glass.{k}")));
+    }
+    let (mode, hours) = read_mode("appearance", appearance)?;
+    let (old_mode, old_hours) = match read_mode("glass", glass)? {
+        old if glass_applies => old,
+        _ => (None, None),
+    };
+    let d = super::ModeConfig::default();
+    let (from, to) = hours.or(old_hours).unwrap_or((d.from, d.to));
+    Ok(super::ModeConfig {
+        mode: mode.or(old_mode).unwrap_or_default(),
+        from,
+        to,
+    })
+}
+
 /// Keys `Config::from_file` checks against each other, so a lenient read tries each with its
 /// partners from the file rather than their defaults.
 const PARTNERS: &[(&str, &[&str])] = &[
+    ("appearance", &["dark_from", "dark_to"]),
     ("glass", &["dark_from", "dark_to"]),
     ("night_light", &["from", "to"]),
     ("night_light", &["latitude", "longitude"]),
@@ -356,7 +412,7 @@ impl Config {
         Config::from_file(FileConfig {
             appearance: Some(FileAppearance {
                 interface: Some(interface.as_str().into()),
-                color_scheme: None,
+                ..FileAppearance::default()
             }),
             ..FileConfig::default()
         })
@@ -393,6 +449,8 @@ impl Config {
             })?;
         }
         cfg.color_scheme = appearance.color_scheme;
+        cfg.dark_color_scheme = appearance.dark_color_scheme;
+        let appearance_mode = [appearance.mode, appearance.dark_from, appearance.dark_to];
         if cfg.interface == Interface::Blue
             && let Some(name) = cfg.color_scheme.as_deref()
         {
@@ -400,6 +458,7 @@ impl Config {
                 format!("[appearance] color_scheme = {name:?} is not a Blue scheme")
             })?;
         }
+        let mut glass_mode = [None, None, None];
         if let Some(g) = file.glass {
             if let Some(name) = g.color {
                 cfg.glass.color = reprisekit::glass::color_named(&name).ok_or_else(|| {
@@ -440,29 +499,7 @@ impl Config {
                 }
                 cfg.glass.orb_glow = o;
             }
-            if let Some(m) = g.mode {
-                match super::DarkSchedule::parse(&m) {
-                    Some(s) => cfg.glass_dark.schedule = s,
-                    None => {
-                        cfg.glass.mode = reprisekit::glass::Mode::parse(&m).ok_or_else(|| {
-                            format!("[glass] mode = {m:?} is not light, dark, night or hours")
-                        })?
-                    }
-                }
-            }
-            for (key, text, slot) in [
-                ("dark_from", g.dark_from, &mut cfg.glass_dark.from),
-                ("dark_to", g.dark_to, &mut cfg.glass_dark.to),
-            ] {
-                if let Some(t) = text {
-                    *slot = super::parse_hhmm(&t).ok_or_else(|| {
-                        format!("[glass] {key} {t:?} is not a time like \"19:00\"")
-                    })?;
-                }
-            }
-            if cfg.glass_dark.from == cfg.glass_dark.to {
-                return Err("[glass] dark_from and dark_to must differ".into());
-            }
+            glass_mode = [g.mode, g.dark_from, g.dark_to];
             if let Some(m) = g.material {
                 cfg.glass.material = reprisekit::glass::Material::parse(&m).ok_or_else(|| {
                     format!("[glass] material = {m:?} is not frosted, smoked or molten")
@@ -543,19 +580,48 @@ impl Config {
                     })?;
             }
         }
-        cfg.theme =
-            reprisekit::interfaces::theme_with(cfg.interface, cfg.blue_variant, false, &cfg.glass);
+        // As before they moved, the `[glass]` keys apply to Glass alone.
+        let glass_applies = cfg.interface == Interface::Glass;
+        cfg.mode = mode_config(appearance_mode, glass_mode, glass_applies, &mut cfg.moved)?;
+        cfg.dark = cfg.mode.mode == super::AppearanceMode::Dark;
+        cfg.glass.mode = if cfg.dark {
+            reprisekit::glass::Mode::Dark
+        } else {
+            reprisekit::glass::Mode::Light
+        };
+        cfg.theme = reprisekit::interfaces::theme_with(
+            cfg.interface,
+            cfg.blue_variant,
+            cfg.dark,
+            &cfg.glass,
+        );
         // Classic and Blue already run small icons at their usual height. A
         // `[metrics] taskbar_height` below still wins over the small bar.
         if cfg.interface == Interface::Glass && cfg.taskbar.small_icons {
             reprisekit::interfaces::small_bar(&mut cfg.theme, &cfg.glass);
         }
-        if cfg.interface == Interface::Classic
-            && let Some(name) = cfg.color_scheme.as_deref()
+        if let Some(name) = cfg.dark_color_scheme.as_deref()
+            && reprisekit::schemes::scheme(name).is_none()
         {
-            cfg.theme.colors = reprisekit::schemes::scheme(name).ok_or_else(|| {
-                format!("[appearance] color_scheme = {name:?} is not a Classic scheme")
-            })?;
+            return Err(format!(
+                "[appearance] dark_color_scheme = {name:?} is not a Classic scheme"
+            ));
+        }
+        if cfg.interface == Interface::Classic {
+            let (key, name) = if cfg.dark {
+                let dark = cfg.dark_color_scheme.as_deref();
+                (
+                    "dark_color_scheme",
+                    Some(dark.unwrap_or(super::CLASSIC_DARK_SCHEME)),
+                )
+            } else {
+                ("color_scheme", cfg.color_scheme.as_deref())
+            };
+            if let Some(name) = name {
+                cfg.theme.colors = reprisekit::schemes::scheme(name).ok_or_else(|| {
+                    format!("[appearance] {key} = {name:?} is not a Classic scheme")
+                })?;
+            }
         }
         for (name, value) in file.colors.unwrap_or_default() {
             let c =

@@ -2,6 +2,14 @@
 
 Set `[appearance] interface` to `"classic"` (default), `"blue"` or `"glass"`, or switch live in Settings > Appearance. Window frames, the taskbar, controls, menus, popups and bundled programs update together while keeping the same dialog layouts.
 
+## Dark mode
+
+`[appearance] mode` (Settings > Appearance > Mode) is one switch for every interface: `"light"` (default), `"dark"`, `"night"` (dark from sunset to sunrise, or between night light's fixed times, whether or not night light is on) or `"hours"` (dark from `dark_from` to `dark_to`). A scheduled mode switches by itself; picking Light or Dark ends the schedule.
+
+- Classic wears `dark_color_scheme` while dark (default One Dark), Blue its scheme's dark twin, Glass dark glass.
+- Running programs, the taskbar and open windows switch live. The portal tells GTK, Qt and browsers (`org.freedesktop.appearance` color-scheme), the generated GTK and Qt themes are rewritten, and `[toolkits] gtk_theme = "auto"` picks Adwaita-dark.
+- `mode`, `dark_from` and `dark_to` used to live in `[glass]`. They still work there for Glass where `[appearance]` leaves them out, and the config notice names them until they move.
+
 ## Reprise Classic
 
 Grey bevelled frames, a gradient title bar, a 28 px grey taskbar and a cascading Start menu.
@@ -41,7 +49,7 @@ Glass also styles the Start menu, Alt+Tab, window overview, snap layouts, launch
 
 Glass uses `[glass]` instead of colour schemes (see `config.example.toml`). Configure it on Settings > Appearance (except `blur_rate`), `orb_glow` on Taskbar, and `notification_style` on Notifications.
 
-- Dark mode switches controls, dialogs, menus, titles and the portal to dark. Scheduled `night` or `hours` modes switch automatically, and picking Light or Dark ends the schedule.
+- Dark mode ([above](#dark-mode)) switches controls, dialogs, menus, titles and the portal to dark.
 - Disabling transparency uses opaque frames and taskbar (black taskbar labels in light mode, white in Smoked or dark mode).
 - Smoked glass reduces transparency and uses white titles.
 - Molten glass blurs less, boosts colour and refracts edges.

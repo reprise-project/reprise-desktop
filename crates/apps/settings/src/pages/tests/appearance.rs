@@ -15,7 +15,32 @@ fn the_appearance_page_geometry() {
         rect(&s, p, appearancepage::CLASSIC_SCHEME),
         Rect::new(20, 304, 196, 21)
     );
+    assert_eq!(rect(&s, p, "mode_label"), Rect::new(232, 242, 146, 13));
+    assert_eq!(rect(&s, p, "mode"), Rect::new(232, 258, 146, 21));
+    assert_eq!(
+        rect(&s, p, "dark_hours_label"),
+        Rect::new(232, 288, 146, 13)
+    );
+    assert_eq!(rect(&s, p, "dark_from"), Rect::new(232, 304, 62, 20));
+    assert_eq!(rect(&s, p, "dark_to"), Rect::new(316, 304, 62, 20));
+    assert_eq!(
+        rect(&s, p, "dark_scheme_label"),
+        Rect::new(20, 334, 196, 13)
+    );
+    assert_eq!(
+        rect(&s, p, appearancepage::DARK_SCHEME),
+        Rect::new(20, 350, 196, 21)
+    );
     inside_page(&s, p);
+    let b = under("blue");
+    assert_eq!(rect(&b, p, "mode"), Rect::new(232, 258, 146, 21));
+    assert_eq!(rect(&b, p, "dark_from"), Rect::new(232, 304, 62, 20));
+    assert!(
+        b.pages[p.index()]
+            .item(appearancepage::DARK_SCHEME)
+            .is_none()
+    );
+    inside_page(&b, p);
     let g = under("glass");
     assert_eq!(
         rect(&g, p, appearancepage::GLASS_COLOR),
@@ -40,19 +65,39 @@ fn the_appearance_page_geometry() {
 }
 
 #[test]
-fn glass_shows_a_mode_combo_that_writes_glass_mode() {
-    let g = under("glass");
+fn every_look_shows_the_mode_combo_right_of_the_interface_combo() {
     let p = Page::Appearance;
-    assert_eq!(
-        rect(&g, p, "glass_mode").x,
-        232,
-        "the Mode combo stands right of the interface combo"
-    );
+    for i in ["classic", "blue", "glass"] {
+        assert_eq!(rect(&under(i), p, "mode").x, 232, "{i}");
+    }
+}
+
+#[test]
+fn the_classic_dark_scheme_lists_the_dark_schemes_and_greys_under_light() {
+    let p = Page::Appearance;
+    let mut got = Settings::default();
+    let mut s = with(&got);
+    let (names, at) = rows(&s, p, appearancepage::DARK_SCHEME);
+    assert_eq!(names[at], "One Dark", "the default shows picked");
     assert!(
-        under("classic").pages[p.index()]
-            .item("glass_mode")
-            .is_none(),
-        "only Glass has it"
+        names
+            .iter()
+            .all(|n| { reprisekit::schemes::scheme(n).is_some_and(|c| c.is_dark()) })
+    );
+    assert!(names.contains(&"Nord".to_string()) && !names.contains(&"Brick".to_string()));
+    assert!(
+        !enabled_on(&s, p, appearancepage::DARK_SCHEME),
+        "greyed under Light"
+    );
+    pick(&mut s, &mut got, p, "mode", 1);
+    assert!(enabled_on(&s, p, appearancepage::DARK_SCHEME));
+    let nord = names.iter().position(|n| n == "Nord").unwrap();
+    pick(&mut s, &mut got, p, appearancepage::DARK_SCHEME, nord);
+    assert_eq!(got.dark_color_scheme, "Nord");
+    assert_eq!(
+        appearancepage::theme(&got).colors,
+        reprisekit::schemes::scheme("Nord").unwrap(),
+        "the sample wears it in dark mode"
     );
 }
 
@@ -65,7 +110,7 @@ fn the_mode_combo_offers_the_schedules_and_the_hours_grey_unless_picked() {
     };
     let mut s = with(&got);
     assert_eq!(
-        rows(&s, p, "glass_mode"),
+        rows(&s, p, "mode"),
         (
             vec![
                 "Light".to_string(),
@@ -79,11 +124,11 @@ fn the_mode_combo_offers_the_schedules_and_the_hours_grey_unless_picked() {
     for id in appearancepage::DARK_HOURS {
         assert!(!enabled_on(&s, p, id), "{id} greys under Light");
     }
-    pick(&mut s, &mut got, p, "glass_mode", 2);
-    assert_eq!(got.glass_mode, "night");
-    assert!(!enabled_on(&s, p, "glass_dark_from"));
-    pick(&mut s, &mut got, p, "glass_mode", 3);
-    assert_eq!(got.glass_mode, "hours");
+    pick(&mut s, &mut got, p, "mode", 2);
+    assert_eq!(got.mode, "night");
+    assert!(!enabled_on(&s, p, "dark_from"));
+    pick(&mut s, &mut got, p, "mode", 3);
+    assert_eq!(got.mode, "hours");
     for id in appearancepage::DARK_HOURS {
         assert!(enabled_on(&s, p, id), "{id} comes back under set hours");
     }
@@ -91,18 +136,18 @@ fn the_mode_combo_offers_the_schedules_and_the_hours_grey_unless_picked() {
         rect(&s, p, "dark_hours_label"),
         Rect::new(232, 406, 146, 13)
     );
-    assert_eq!(rect(&s, p, "glass_dark_from"), Rect::new(232, 422, 62, 20));
-    assert_eq!(rect(&s, p, "glass_dark_to"), Rect::new(316, 422, 62, 20));
+    assert_eq!(rect(&s, p, "dark_from"), Rect::new(232, 422, 62, 20));
+    assert_eq!(rect(&s, p, "dark_to"), Rect::new(316, 422, 62, 20));
     inside_page(&s, p);
     if let Some(Control::Time(tf)) = s.pages[p.index()]
-        .item_mut("glass_dark_from")
+        .item_mut("dark_from")
         .map(|i| &mut i.control)
     {
         tf.set(21, 30, 0);
     }
-    read_one(&s, "glass_dark_from", &mut got);
+    read_one(&s, "dark_from", &mut got);
     assert_eq!(
-        (got.glass_dark_from.as_str(), got.glass_dark_to.as_str()),
+        (got.dark_from.as_str(), got.dark_to.as_str()),
         ("21:30", "07:00")
     );
 }
@@ -111,7 +156,7 @@ fn the_mode_combo_offers_the_schedules_and_the_hours_grey_unless_picked() {
 fn the_dark_hours_row_pins_its_pixels_in_every_look() {
     let s = Settings {
         interface: "glass".into(),
-        glass_mode: "hours".into(),
+        mode: "hours".into(),
         ..Settings::default()
     };
     let mut f = appearancepage::page(&s, Area::MIN);
@@ -189,7 +234,6 @@ fn glass_notification_combo_writes_its_key() {
 #[test]
 fn the_glass_rows_show_under_glass_only() {
     let glass_rows = [
-        "glass_mode",
         "glass_material",
         "glass_frame",
         "glass_transparency",

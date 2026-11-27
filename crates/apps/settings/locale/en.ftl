@@ -109,11 +109,11 @@ choices-qt-platform-themes-gtk3 = GTK 3
 choices-font-smoothings-grayscale = Grayscale
 choices-font-smoothings-subpixel = Subpixel (RGB)
 choices-font-smoothings-none = None
-# glass-modes
-choices-glass-modes-light = Light
-choices-glass-modes-dark = Dark
-choices-glass-modes-night = Dark at night
-choices-glass-modes-hours = Dark at set hours
+# modes
+choices-modes-light = Light
+choices-modes-dark = Dark
+choices-modes-night = Dark at night
+choices-modes-hours = Dark at set hours
 # glass-materials
 choices-glass-materials-frosted = Frosted
 choices-glass-materials-smoked = Smoked
@@ -762,6 +762,7 @@ appearancepage-color-intensity = Color i&ntensity:
 appearancepage-blur = &Blur:
 appearancepage-dark-hours = Dark &hours:
 appearancepage-dark-until = Dark until
+appearancepage-dark-color-scheme = &Dark color scheme:
 
 ## defaultspage.rs
 defaultspage-web-browser = &Web browser:
@@ -1256,7 +1257,7 @@ wallpapers-not-a-picture = '{ $name }' is not a picture.
 
 ## model/io.rs
 model-io-the-night-lights-from-and-to = The night light's From and To times must differ.
-model-io-glasss-dark-hours-must-start-and = Glass's dark hours must start and end at different times.
+model-io-dark-hours-must-differ = The dark hours must start and end at different times.
 model-io-the-quiet-hours-from-and-to = The quiet hours' From and To times must differ.
 model-io-a-shortcuts-action-is-not-one = A shortcut's action is not one the compositor knows.
 model-io-a-spawn-shortcut-needs-a-command = A spawn shortcut needs a command.
@@ -1353,7 +1354,6 @@ import-the-sessions = The session's
 import-reprise-shows-jpeg-png-bmp-jpeg = Reprise shows JPEG, PNG, BMP, JPEG XL and AVIF pictures
 import-the-file-is-missing = the file is missing
 import-not-installed = not installed
-import-blue-comes-in-light-colours-only = Blue comes in light colours only
 import-there-is-no-quick-launch-folder = there is no Quick Launch folder
 import-no-setting = no setting
 import-clock-why = the clock follows the formats locale

@@ -37,7 +37,7 @@ pub struct Appearance {
     pub font_family: String,
     /// `[fonts] antialias`, as [`look::FONT_ANTIALIAS`] carries it.
     pub font_antialias: bool,
-    pub glass_mode: reprisekit::glass::Mode,
+    pub mode: reprisekit::glass::Mode,
     pub glass_material: reprisekit::glass::Material,
     /// `[cursor] theme`, else `XCURSOR_THEME`, else "default".
     pub cursor_theme: String,
@@ -58,7 +58,7 @@ pub struct Appearance {
 }
 
 impl Appearance {
-    /// Read the scheme: dark per `ColorScheme::is_dark`, high contrast
+    /// Read the scheme: dark in dark mode or per `ColorScheme::is_dark`, high contrast
     /// when the scheme is one of the High Contrast four, the accent the
     /// glass colour under Glass, else the active caption's.
     pub fn of(cfg: &Config) -> Appearance {
@@ -72,7 +72,7 @@ impl Appearance {
         };
         let (cursor_theme, cursor_size) = cfg.cursor.effective();
         Appearance {
-            color_scheme: if colors.is_dark() { 1 } else { 2 },
+            color_scheme: if cfg.dark || colors.is_dark() { 1 } else { 2 },
             contrast: high_contrast as u32,
             accent: (a.r as f64 / 255.0, a.g as f64 / 255.0, a.b as f64 / 255.0),
             interface: cfg.interface,
@@ -82,7 +82,11 @@ impl Appearance {
             shell_dlg: cfg.theme.fonts.shell_dlg.clone().unwrap_or_default(),
             font_family: cfg.theme.fonts.family.join(","),
             font_antialias: cfg.theme.fonts.antialias,
-            glass_mode: cfg.glass.mode,
+            mode: if cfg.dark {
+                reprisekit::glass::Mode::Dark
+            } else {
+                reprisekit::glass::Mode::Light
+            },
             glass_material: cfg.glass.material,
             cursor_theme,
             cursor_size: cursor_size as i32,
@@ -96,7 +100,7 @@ impl Appearance {
         }
     }
 
-    /// Whether the look in force is dark: a dark scheme or dark Glass.
+    /// Whether the look in force is dark: dark mode or a dark scheme.
     fn dark(&self) -> bool {
         self.color_scheme == 1
     }
@@ -175,8 +179,8 @@ impl Appearance {
             ),
             (
                 look::NAMESPACE,
-                look::GLASS_MODE,
-                zbus::Variant::from(self.glass_mode.as_str()),
+                look::MODE,
+                zbus::Variant::from(self.mode.as_str()),
             ),
             (
                 look::NAMESPACE,
@@ -497,7 +501,7 @@ mod tests {
         assert_eq!(text(look::SHELL_DLG), "/usr/share/wine/fonts/sserife.fon");
         assert_eq!(text(look::FONT_FAMILY), "DejaVu Sans,Noto Sans");
         assert_eq!(text(look::FONT_ANTIALIAS), "true");
-        assert_eq!(text(look::GLASS_MODE), "light");
+        assert_eq!(text(look::MODE), "light");
         assert_eq!(text(look::GLASS_MATERIAL), "frosted");
         assert_eq!(text(look::TEXT_SIZE), "100");
         assert_eq!(text(look::DOUBLE_CLICK_MS), "500");
@@ -710,29 +714,31 @@ mod tests {
     }
 
     #[test]
-    fn dark_glass_reads_dark_everywhere() {
-        let c = crate::config::Config::parse(
-            "[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"dark\"\n",
-        )
-        .unwrap();
-        let a = Appearance::of(&c);
-        assert_eq!(a.color_scheme, 1, "dark Glass is dark to the portal");
-        assert!(a.dark());
-        assert_eq!(a.gtk_theme(), "Adwaita-dark");
-        let s = Settings {
-            current: Arc::new(Mutex::new(a)),
-        };
-        assert_eq!(
-            String::try_from(s.lookup(look::NAMESPACE, look::GLASS_MODE).unwrap()).unwrap(),
-            "dark"
-        );
+    fn dark_mode_reads_dark_everywhere_in_every_interface() {
+        for interface in ["classic", "blue", "glass"] {
+            let c = crate::config::Config::parse(&format!(
+                "[appearance]\ninterface = \"{interface}\"\nmode = \"dark\"\n"
+            ))
+            .unwrap();
+            let a = Appearance::of(&c);
+            assert_eq!(a.color_scheme, 1, "dark {interface} is dark to the portal");
+            assert_eq!(a.gtk_theme(), "Adwaita-dark", "{interface}");
+            let s = Settings {
+                current: Arc::new(Mutex::new(a)),
+            };
+            assert_eq!(
+                String::try_from(s.lookup(look::NAMESPACE, look::MODE).unwrap()).unwrap(),
+                "dark",
+                "{interface}"
+            );
+        }
     }
 
     #[test]
     fn a_light_to_dark_glass_switch_signals_the_keys_that_moved() {
         let glass = |mode| {
             let c = crate::config::Config::parse(&format!(
-                "[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"{mode}\"\n"
+                "[appearance]\ninterface = \"glass\"\nmode = \"{mode}\"\n"
             ))
             .unwrap();
             Appearance::of(&c)
@@ -748,11 +754,7 @@ mod tests {
                     look::COLORS,
                     zbus::Variant::from(dark.colors.clone())
                 ),
-                (
-                    look::NAMESPACE,
-                    look::GLASS_MODE,
-                    zbus::Variant::from("dark")
-                ),
+                (look::NAMESPACE, look::MODE, zbus::Variant::from("dark")),
                 (GNOME, "color-scheme", zbus::Variant::from("prefer-dark")),
                 (GNOME, "gtk-theme", zbus::Variant::from("Adwaita-dark")),
             ],

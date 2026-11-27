@@ -5,7 +5,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         Page::Appearance => &[
             ("interface", "Interface:"),
             ("glass_color", "Color scheme:"),
-            ("glass_mode", "Mode:"),
+            ("mode", "Mode:"),
             ("glass_material", "Material:"),
             ("glass_frame", "Frame:"),
             ("glass_transparency", "Enable transparency"),
@@ -14,10 +14,11 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("glass_streaks", "Show reflections"),
             ("glass_intensity", "Color intensity:"),
             ("glass_blur", "Blur:"),
-            ("glass_dark_from", "Dark hours:"),
-            ("glass_dark_to", "Dark until"),
+            ("dark_from", "Dark hours:"),
+            ("dark_to", "Dark until"),
             ("classic_scheme", "Color scheme:"),
             ("blue_scheme", "Color scheme:"),
+            ("dark_scheme", "Dark color scheme:"),
         ],
         Page::Background => &[
             ("wallpaper_mode", "Background:"),

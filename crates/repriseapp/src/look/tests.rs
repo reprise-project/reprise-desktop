@@ -47,7 +47,7 @@ fn theme_from_env_picks_the_blue_variant() {
 }
 
 #[test]
-fn the_glass_mode_picks_dark_glass_and_anything_else_is_light() {
+fn the_mode_picks_dark_glass_and_anything_else_is_light() {
     let dark = theme_from_env(Some("glass"), None, Some("dark"), None, None);
     let light = theme_from_env(Some("glass"), None, None, None, None);
     assert_ne!(dark.look, light.look, "dark Glass is another look");
@@ -62,7 +62,7 @@ fn the_glass_mode_picks_dark_glass_and_anything_else_is_light() {
     assert_eq!(
         theme_from_env(Some("classic"), None, Some("dark"), None, None).look,
         theme_from_env(Some("classic"), None, None, None, None).look,
-        "Classic ignores the glass mode"
+        "Classic wears its dark in the colours the compositor hands it"
     );
 }
 
@@ -97,19 +97,19 @@ fn a_glass_material_change_through_the_portal_relooks() {
 }
 
 #[test]
-fn a_glass_mode_change_through_the_portal_relooks() {
+fn a_mode_change_through_the_portal_relooks() {
     let mut look = Look {
         interface: Some("glass".into()),
         ..Look::default()
     };
     let before = look.theme().look;
     assert!(
-        look.set(reprisebus::appearance::GLASS_MODE, "dark".into()),
+        look.set(reprisebus::appearance::MODE, "dark".into()),
         "the change is seen"
     );
     assert_ne!(look.theme().look, before, "and the look moves");
     assert!(
-        !look.set(reprisebus::appearance::GLASS_MODE, "dark".into()),
+        !look.set(reprisebus::appearance::MODE, "dark".into()),
         "the same value again is no change"
     );
 }

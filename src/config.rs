@@ -5,7 +5,7 @@ mod keybinds;
 mod menu;
 mod parse;
 pub(crate) use parse::{
-    Notice, broken_notice, dropped_notice, keeps_settings, parse_error, unreadable_notice,
+    Notice, broken_notice, keeps_settings, parse_error, read_notice, unreadable_notice,
     warn_stray_rows,
 };
 

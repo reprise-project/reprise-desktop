@@ -147,54 +147,118 @@ fn glass_notification_style_parses_and_rejects_unknown_names() {
 }
 
 #[test]
-fn glass_mode_parses_light_and_dark() {
+fn mode_parses_light_and_dark_and_dark_sets_the_glass_mode() {
     use reprisekit::glass::Mode;
-    assert_eq!(Config::parse("").unwrap().glass.mode, Mode::Light);
-    assert_eq!(
-        Config::parse("[glass]\nmode = \"dark\"\n")
+    let dark = Config::parse("[appearance]\nmode = \"dark\"\n").unwrap();
+    assert!(dark.dark && !Config::parse("").unwrap().dark);
+    assert_eq!(dark.glass.mode, Mode::Dark);
+    assert!(
+        !Config::parse("[appearance]\nmode = \"light\"\n")
             .unwrap()
-            .glass
-            .mode,
-        Mode::Dark
-    );
-    assert_eq!(
-        Config::parse("[glass]\nmode = \"light\"\n")
-            .unwrap()
-            .glass
-            .mode,
-        Mode::Light
+            .dark
     );
     assert!(
-        Config::parse("[glass]\nmode = \"dim\"\n").is_err(),
+        Config::parse("[appearance]\nmode = \"dim\"\n").is_err(),
         "a mode other than light, dark, night or hours is an error"
     );
 }
 
 #[test]
-fn glass_mode_night_or_hours_sets_a_schedule_and_leaves_the_mode_light() {
-    use super::super::{DarkSchedule, GlassDark};
-    use reprisekit::glass::Mode;
-    assert_eq!(Config::default().glass_dark, GlassDark::default());
-    let c = Config::parse("[glass]\nmode = \"night\"\n").unwrap();
+fn mode_night_or_hours_sets_a_schedule_and_starts_light() {
+    use super::super::{AppearanceMode, ModeConfig};
+    assert_eq!(Config::default().mode, ModeConfig::default());
+    let c = Config::parse("[appearance]\nmode = \"night\"\n").unwrap();
+    assert_eq!((c.mode.mode, c.dark), (AppearanceMode::Night, false));
+    let c = Config::parse(
+        "[appearance]\nmode = \"hours\"\ndark_from = \"20:30\"\ndark_to = \"6:15\"\n",
+    )
+    .unwrap();
     assert_eq!(
-        (c.glass_dark.schedule, c.glass.mode),
-        (DarkSchedule::Night, Mode::Light)
-    );
-    let c = Config::parse("[glass]\nmode = \"hours\"\ndark_from = \"20:30\"\ndark_to = \"6:15\"\n")
-        .unwrap();
-    assert_eq!(
-        c.glass_dark,
-        GlassDark {
-            schedule: DarkSchedule::Hours,
+        c.mode,
+        ModeConfig {
+            mode: AppearanceMode::Hours,
             from: 20 * 60 + 30,
             to: 6 * 60 + 15,
         }
     );
-    assert!(Config::parse("[glass]\ndark_from = \"25:00\"\n").is_err());
+    assert!(Config::parse("[appearance]\ndark_from = \"25:00\"\n").is_err());
     assert!(
-        Config::parse("[glass]\ndark_from = \"07:00\"\n").is_err(),
+        Config::parse("[appearance]\ndark_from = \"07:00\"\n").is_err(),
         "equal to the default dark_to"
     );
+}
+
+#[test]
+fn glass_mode_keys_still_darken_glass_lose_to_appearance_and_are_named_as_moved() {
+    use super::super::AppearanceMode;
+    let glass = "[appearance]\ninterface = \"glass\"\n";
+    let old = Config::parse(&format!(
+        "{glass}[glass]\nmode = \"dark\"\ndark_from = \"21:00\"\n"
+    ))
+    .unwrap();
+    assert!(old.dark);
+    assert_eq!(old.mode.from, 21 * 60);
+    assert_eq!(old.moved, ["glass.mode", "glass.dark_from"]);
+    let classic = Config::parse("[glass]\nmode = \"dark\"\n").unwrap();
+    assert!(
+        !classic.dark && classic.moved.is_empty(),
+        "another interface leaves Glass's keys alone, as before"
+    );
+    let both = Config::parse(&format!(
+        "{glass}mode = \"hours\"\n[glass]\nmode = \"dark\"\ndark_to = \"05:00\"\n"
+    ))
+    .unwrap();
+    assert_eq!(
+        (both.mode.mode, both.dark, both.mode.to),
+        (AppearanceMode::Hours, false, 5 * 60),
+        "[appearance] mode wins; [glass] dark_to fills the key [appearance] leaves out"
+    );
+    assert_eq!(both.moved, ["glass.mode", "glass.dark_to"]);
+    let mixed = Config::parse(&format!(
+        "{glass}dark_from = \"22:00\"\n[glass]\ndark_from = \"20:00\"\ndark_to = \"22:00\"\n"
+    ))
+    .unwrap();
+    assert_eq!(
+        (mixed.mode.from, mixed.mode.to),
+        (22 * 60, 7 * 60),
+        "the hours come as a pair from one table"
+    );
+    assert!(
+        Config::parse("[appearance]\nmode = \"dark\"\n")
+            .unwrap()
+            .moved
+            .is_empty()
+    );
+}
+
+#[test]
+fn classic_in_dark_mode_wears_the_dark_scheme() {
+    let scheme = |n| reprisekit::schemes::scheme(n).unwrap();
+    let c = Config::parse("[appearance]\nmode = \"dark\"\ncolor_scheme = \"Brick\"\n").unwrap();
+    assert_eq!(c.theme.colors, scheme(super::super::CLASSIC_DARK_SCHEME));
+    assert!(c.theme.colors.is_dark());
+    let c = Config::parse(
+        "[appearance]\nmode = \"dark\"\ncolor_scheme = \"Brick\"\ndark_color_scheme = \"Nord\"\n",
+    )
+    .unwrap();
+    assert_eq!(c.theme.colors, scheme("Nord"));
+    let light =
+        Config::parse("[appearance]\ncolor_scheme = \"Brick\"\ndark_color_scheme = \"Nord\"\n")
+            .unwrap();
+    assert_eq!(
+        light.theme.colors,
+        scheme("Brick"),
+        "light wears color_scheme"
+    );
+    assert!(
+        Config::parse("[appearance]\ndark_color_scheme = \"Dim\"\n").is_err(),
+        "an unknown dark scheme is an error in light mode too"
+    );
+    let glass = Config::parse(
+        "[appearance]\ninterface = \"glass\"\nmode = \"dark\"\ndark_color_scheme = \"Nord\"\n",
+    )
+    .unwrap();
+    assert_ne!(glass.theme.colors, scheme("Nord"), "Glass ignores the key");
 }
 
 #[test]
@@ -815,7 +879,7 @@ fn wallpaper_defaults_to_each_interfaces_own() {
         Some(PathBuf::from("reprise:flow/night"))
     );
     assert_eq!(
-        image("[wallpaper]\nimage = \"reprise:flow/glass\"\n[glass]\nmode = \"dark\"\n"),
+        image("[appearance]\nmode = \"dark\"\n[wallpaper]\nimage = \"reprise:flow/glass\"\n"),
         Some(PathBuf::from("reprise:flow/night"))
     );
     assert_eq!(
@@ -1028,7 +1092,7 @@ fn a_bad_output_wallpaper_is_left_out_and_keeps_the_outputs_other_keys() {
 #[test]
 fn an_output_s_glass_built_in_resolves_like_the_main_one() {
     let c = Config::parse(
-        "[glass]\nmode = \"dark\"\n[[outputs]]\nname = \"DP-1\"\nwallpaper = \"reprise:flow/glass\"\n",
+        "[appearance]\nmode = \"dark\"\n[[outputs]]\nname = \"DP-1\"\nwallpaper = \"reprise:flow/glass\"\n",
     )
     .unwrap();
     assert_eq!(

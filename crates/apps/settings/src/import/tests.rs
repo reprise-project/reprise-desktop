@@ -268,13 +268,10 @@ fn a_picture_reprise_cant_show_or_find_is_greyed() {
 }
 
 #[test]
-fn dark_is_greyed_under_blue() {
+fn dark_imports_under_blue_too() {
     let config = "[appearance]\ninterface = \"blue\"\n";
     let p = plan("GNOME", &[Setting::Dark(true)], config, &fake());
-    assert_eq!(
-        cells(&p.lines[0]),
-        ("Blue comes in light colours only", "On", true)
-    );
+    assert!(!cells(&p.lines[0]).2, "not greyed");
 }
 
 #[test]
@@ -343,7 +340,7 @@ fn checked_rows_land_in_the_config_file_and_quick_launch_and_the_rest_stays() {
     );
     let s = model::load(&text);
     assert!(s.touchpad_natural);
-    assert_eq!(s.color_scheme, welcome::DARK_SCHEME);
+    assert_eq!(s.mode, "dark");
     assert_eq!(
         (s.nl_schedule.as_str(), s.nl_from.as_str()),
         ("fixed", "20:30")

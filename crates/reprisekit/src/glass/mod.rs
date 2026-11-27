@@ -167,9 +167,6 @@ impl Frame {
     }
 }
 
-/// The environment variable a compositor hands its clients `[glass] mode` in.
-pub const MODE_ENV: &str = "REPRISE_GLASS_MODE";
-
 /// The environment variable a compositor hands its clients `[glass] material` in.
 pub const MATERIAL_ENV: &str = "REPRISE_GLASS_MATERIAL";
 
