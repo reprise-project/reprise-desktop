@@ -15,6 +15,7 @@ use reprisekit::controls::deskwidget::{
     self, Clock, Content, CpuTimes, Face, Kind, Meter, MeterStyle, Spot,
 };
 use reprisekit::look::panel;
+use reprisekit::tr;
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
@@ -122,26 +123,26 @@ pub fn widget_menu(kind: Kind, store: &Store) -> (Vec<MenuItem>, Vec<Option<Desk
     let mut rows: Vec<(MenuItem, Option<Dc>)> = match kind {
         Kind::Clock => vec![
             (
-                radio("&Analog", store.face == Face::Analog),
+                radio(&tr!("desk-widget-analog"), store.face == Face::Analog),
                 Some(Dc::ClockFace(Face::Analog)),
             ),
             (
-                radio("&Digital", store.face == Face::Digital),
+                radio(&tr!("desk-widget-digital"), store.face == Face::Digital),
                 Some(Dc::ClockFace(Face::Digital)),
             ),
             (MenuItem::Separator, None),
             (
-                entry("Show &Seconds").checked(store.seconds),
+                entry(&tr!("desk-widget-show-seconds")).checked(store.seconds),
                 Some(Dc::ClockSeconds),
             ),
         ],
         Kind::Meter => vec![
             (
-                radio("&Bars", store.meter == MeterStyle::Bars),
+                radio(&tr!("desk-widget-bars"), store.meter == MeterStyle::Bars),
                 Some(Dc::MeterLook(MeterStyle::Bars)),
             ),
             (
-                radio("&Graph", store.meter == MeterStyle::Graph),
+                radio(&tr!("desk-widget-graph"), store.meter == MeterStyle::Graph),
                 Some(Dc::MeterLook(MeterStyle::Graph)),
             ),
         ],
@@ -150,7 +151,10 @@ pub fn widget_menu(kind: Kind, store: &Store) -> (Vec<MenuItem>, Vec<Option<Desk
     if !rows.is_empty() {
         rows.push((MenuItem::Separator, None));
     }
-    rows.push((entry("&Remove"), Some(Dc::RemoveWidget(kind))));
+    rows.push((
+        entry(&tr!("desk-widget-remove")),
+        Some(Dc::RemoveWidget(kind)),
+    ));
     rows.into_iter().unzip()
 }
 
@@ -682,7 +686,8 @@ impl State {
         if self.widgets.shown.is_empty() {
             return None;
         }
-        let mut tree = crate::access::root(Role::Pane, "Desktop widgets", Rect::new(0, 0, 1, 1));
+        let mut tree =
+            crate::access::root(Role::Pane, &tr!("desk-widgets-pane"), Rect::new(0, 0, 1, 1));
         let cm = self.config.theme.controls();
         let text = self.text.for_output(1);
         let px = self.config.theme.fonts.size_px;

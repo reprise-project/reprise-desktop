@@ -2,6 +2,7 @@ use std::path::Path;
 
 use reprisefs::apps;
 use reprisefs::program::{Program, ScriptOpen};
+use reprisekit::tr;
 
 use crate::{
     compositor::State,
@@ -21,10 +22,6 @@ fn disabled_row(label: &str) -> MenuItem {
     entry(label).enabled(false)
 }
 
-const TERMINAL: &str = "Open in Termina&l";
-const PIN: &str = "Pin to Pl&aces";
-const UNPIN: &str = "Unpin from Pl&aces";
-
 /// A menu's rows, each with what it does, so a row and its command cannot drift.
 type Rows = Vec<(MenuItem, Option<DesktopCommand>)>;
 
@@ -34,8 +31,14 @@ const SEP: (MenuItem, Option<DesktopCommand>) = (MenuItem::Separator, None);
 /// pinned from here (`None`).
 fn pin_row(pinned: Option<bool>) -> Option<(MenuItem, Option<DesktopCommand>)> {
     pinned.map(|p| match p {
-        false => (entry(PIN), Some(DesktopCommand::Pin(true))),
-        true => (entry(UNPIN), Some(DesktopCommand::Pin(false))),
+        false => (
+            entry(&tr!("desk-menu-pin-to-places")),
+            Some(DesktopCommand::Pin(true)),
+        ),
+        true => (
+            entry(&tr!("desk-menu-unpin-from-places")),
+            Some(DesktopCommand::Pin(false)),
+        ),
     })
 }
 
@@ -67,9 +70,9 @@ pub fn desktop_menu(
 ) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
     let new = if show_files {
-        (entry("Ne&w").submenu(true), Some(New))
+        (entry(&tr!("desk-menu-new")).submenu(true), Some(New))
     } else {
-        (disabled_row("Ne&w").submenu(true), None)
+        (disabled_row(&tr!("desk-menu-new")).submenu(true), None)
     };
     let paste = |label: &str, cmd: DesktopCommand| {
         let live = match cmd {
@@ -83,18 +86,27 @@ pub fn desktop_menu(
         }
     };
     let mut rows = vec![
-        (entry("Arrange &Icons By").submenu(true), Some(ArrangeIcons)),
-        (entry("Wi&dgets").submenu(true), Some(Widgets)),
-        (entry("R&efresh"), Some(Refresh)),
-        (entry(TERMINAL), Some(OpenTerminal)),
+        (
+            entry(&tr!("desk-menu-arrange-icons-by")).submenu(true),
+            Some(ArrangeIcons),
+        ),
+        (
+            entry(&tr!("desk-menu-widgets")).submenu(true),
+            Some(Widgets),
+        ),
+        (entry(&tr!("desk-menu-refresh")), Some(Refresh)),
+        (
+            entry(&tr!("desk-menu-open-in-terminal")),
+            Some(OpenTerminal),
+        ),
         SEP,
-        paste("&Paste", Paste),
-        paste("Paste &Shortcut", PasteShortcut),
+        paste(&tr!("desk-menu-paste"), Paste),
+        paste(&tr!("desk-menu-paste-shortcut"), PasteShortcut),
         SEP,
         new,
         SEP,
-        (entry("&Reprise Settings"), Some(Settings)),
-        (entry("&About Reprise"), Some(AboutReprise)),
+        (entry(&tr!("desk-menu-reprise-settings")), Some(Settings)),
+        (entry(&tr!("desk-menu-about-reprise")), Some(AboutReprise)),
     ];
     if let Some((id, label, live)) = undo {
         let live = live && show_files;
@@ -104,7 +116,13 @@ pub fn desktop_menu(
         rows.insert(7, (row, live.then_some(Undo(id))));
     }
     if slideshow {
-        rows.insert(3, (entry("Next desktop &background"), Some(NextBackground)));
+        rows.insert(
+            3,
+            (
+                entry(&tr!("desk-menu-next-desktop-background")),
+                Some(NextBackground),
+            ),
+        );
     }
     split(rows)
 }
@@ -115,10 +133,13 @@ pub fn new_menu(
 ) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
     let mut rows = vec![
-        (entry("&Folder"), Some(NewFolder)),
-        (entry("&Shortcut..."), Some(NewShortcut)),
+        (entry(&tr!("desk-menu-folder")), Some(NewFolder)),
+        (entry(&tr!("desk-menu-shortcut")), Some(NewShortcut)),
         SEP,
-        (entry("&Text Document"), Some(NewTextDocument)),
+        (
+            entry(&tr!("desk-menu-text-document")),
+            Some(NewTextDocument),
+        ),
     ];
     for t in templates {
         let label = escape_mnemonic(&t.label);
@@ -133,10 +154,10 @@ pub const NEW_MENU_ICONS: [Option<&str>; 4] = [Some("folder"), None, None, Some(
 pub fn arrange_menu(auto_arrange: bool) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
     split(vec![
-        (entry("&Name"), Some(ArrangeByName)),
+        (entry(&tr!("desk-menu-name")), Some(ArrangeByName)),
         SEP,
         (
-            entry("&Auto Arrange").checked(auto_arrange),
+            entry(&tr!("desk-menu-auto-arrange")).checked(auto_arrange),
             Some(AutoArrange),
         ),
     ])
@@ -162,7 +183,7 @@ pub fn drop_menu(
     let mut rows = Rows::new();
     if !system {
         rows.push((
-            entry("&Copy Here")
+            entry(&tr!("desk-menu-copy-here"))
                 .bold(default == DropOp::Copy)
                 .enabled(allowed.copy),
             Some(DropCopy),
@@ -170,19 +191,19 @@ pub fn drop_menu(
     }
     rows.extend([
         (
-            entry("&Move Here")
+            entry(&tr!("desk-menu-move-here"))
                 .bold(default == DropOp::Move)
                 .enabled(allowed.moves),
             Some(DropMove),
         ),
         (
-            entry("Create &Shortcuts Here")
+            entry(&tr!("desk-menu-create-shortcuts-here"))
                 .bold(default == DropOp::Shortcut)
                 .enabled(allowed.copy),
             Some(DropShortcut),
         ),
         SEP,
-        (entry("C&ancel"), Some(DropCancel)),
+        (entry(&tr!("desk-menu-cancel")), Some(DropCancel)),
     ]);
     split(rows)
 }
@@ -220,52 +241,67 @@ pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
             .iter()
             .map(|&(o, default)| (entry(o.label()).bold(default), Some(Run(o))))
             .collect(),
-        None => vec![(entry("&Open").bold(true), Some(Open))],
+        None => vec![(entry(&tr!("desk-menu-open")).bold(true), Some(Open))],
     };
     if m.is_dir {
-        rows.push((entry("E&xplore"), Some(Explore)));
-        rows.push((entry(TERMINAL), Some(OpenTerminal)));
+        rows.push((entry(&tr!("desk-menu-explore")), Some(Explore)));
+        rows.push((
+            entry(&tr!("desk-menu-open-in-terminal")),
+            Some(OpenTerminal),
+        ));
         rows.extend(pin_row(m.pinned));
         if !m.in_set {
-            rows.extend([SEP, (disabled_row("S&haring and Security..."), None)]);
+            rows.extend([
+                SEP,
+                (disabled_row(&tr!("desk-menu-sharing-and-security")), None),
+            ]);
         }
     } else {
         if m.launcher {
-            rows.push((disabled_row("Run &as..."), None));
+            rows.push((disabled_row(&tr!("desk-menu-run-as")), None));
         }
         // The file verbs between Open and Open With: Print, then Edit.
         if m.print {
-            rows.push((entry("&Print"), Some(Print)));
+            rows.push((entry(&tr!("desk-menu-print")), Some(Print)));
         }
         if m.edit {
-            rows.push((entry("&Edit"), Some(Edit)));
+            rows.push((entry(&tr!("desk-menu-edit")), Some(Edit)));
         }
         if !m.launcher {
-            rows.push((entry("Open Wit&h").submenu(true), Some(OpenWith)));
+            rows.push((
+                entry(&tr!("desk-menu-open-with")).submenu(true),
+                Some(OpenWith),
+            ));
         }
         if m.allow_launching {
-            rows.push((entry("Allow &Launching"), Some(AllowLaunching)));
+            rows.push((
+                entry(&tr!("desk-menu-allow-launching")),
+                Some(AllowLaunching),
+            ));
         }
     }
     rows.extend([
         SEP,
-        (entry("Se&nd To").submenu(true), Some(SendTo)),
+        (entry(&tr!("desk-menu-send-to")).submenu(true), Some(SendTo)),
         SEP,
-        (entry("Cu&t"), Some(Cut)),
-        (entry("&Copy"), Some(Copy)),
+        (entry(&tr!("desk-menu-cut")), Some(Cut)),
+        (entry(&tr!("desk-menu-copy")), Some(Copy)),
     ]);
     if m.is_dir {
-        rows.push((entry("&Paste"), Some(PasteInto)));
+        rows.push((entry(&tr!("desk-menu-paste")), Some(PasteInto)));
     } else if m.launcher {
-        rows.push((entry("&Paste"), Some(PasteOpen)));
+        rows.push((entry(&tr!("desk-menu-paste")), Some(PasteOpen)));
     }
     rows.extend([
         SEP,
-        (entry("Create &Shortcut"), Some(CreateShortcut)),
-        (entry("&Delete"), Some(Trash)),
-        (entry("Rena&me"), Some(Rename)),
+        (
+            entry(&tr!("desk-menu-create-shortcut")),
+            Some(CreateShortcut),
+        ),
+        (entry(&tr!("desk-menu-delete")), Some(Trash)),
+        (entry(&tr!("desk-menu-rename")), Some(Rename)),
         SEP,
-        (entry("P&roperties"), Some(IconProperties)),
+        (entry(&tr!("desk-menu-properties")), Some(IconProperties)),
     ]);
     split(rows)
 }
@@ -304,7 +340,7 @@ pub fn open_with_menu(
         rows.push(SEP);
     }
     rows.push((
-        entry("&Choose Program..."),
+        entry(&tr!("desk-menu-choose-program")),
         Some(DesktopCommand::ChooseProgram),
     ));
     split(rows)
@@ -322,30 +358,42 @@ pub fn place_menu(
 ) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
     let computer = place == desktop::Place::Computer;
-    let mut rows = vec![(entry("&Open").bold(true), Some(Open))];
+    let mut rows = vec![(entry(&tr!("desk-menu-open")).bold(true), Some(Open))];
     if !computer {
         rows.extend([
-            (entry("E&xplore"), Some(Explore)),
-            (entry(TERMINAL), Some(OpenTerminal)),
+            (entry(&tr!("desk-menu-explore")), Some(Explore)),
+            (
+                entry(&tr!("desk-menu-open-in-terminal")),
+                Some(OpenTerminal),
+            ),
         ]);
         rows.extend(pin_row(pinned));
-        rows.extend([SEP, (entry("&Copy"), Some(Copy))]);
+        rows.extend([SEP, (entry(&tr!("desk-menu-copy")), Some(Copy))]);
     }
     rows.extend([
         SEP,
-        (entry("Create &Shortcut"), Some(CreateShortcut)),
-        (entry("&Delete"), Some(Trash)),
-        (entry("Rena&me"), Some(Rename)),
+        (
+            entry(&tr!("desk-menu-create-shortcut")),
+            Some(CreateShortcut),
+        ),
+        (entry(&tr!("desk-menu-delete")), Some(Trash)),
+        (entry(&tr!("desk-menu-rename")), Some(Rename)),
     ]);
     if computer {
         rows.extend([
             SEP,
-            (entry("&Reprise Settings"), Some(RepriseSettings)),
-            (entry("&About Reprise"), Some(AboutReprise)),
+            (
+                entry(&tr!("desk-menu-reprise-settings")),
+                Some(RepriseSettings),
+            ),
+            (entry(&tr!("desk-menu-about-reprise")), Some(AboutReprise)),
         ]);
     }
     if sheet {
-        rows.extend([SEP, (entry("P&roperties"), Some(IconProperties))]);
+        rows.extend([
+            SEP,
+            (entry(&tr!("desk-menu-properties")), Some(IconProperties)),
+        ]);
     }
     split(rows)
 }
@@ -353,18 +401,21 @@ pub fn place_menu(
 pub fn bin_menu(empty: bool) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
     let empty_bin = if empty {
-        (disabled_row("Empt&y Recycle Bin"), None)
+        (disabled_row(&tr!("desk-menu-empty-recycle-bin")), None)
     } else {
-        (entry("Empt&y Recycle Bin"), Some(EmptyBin))
+        (entry(&tr!("desk-menu-empty-recycle-bin")), Some(EmptyBin))
     };
     split(vec![
-        (entry("&Open").bold(true), Some(Open)),
-        (entry("E&xplore"), Some(Explore)),
+        (entry(&tr!("desk-menu-open")).bold(true), Some(Open)),
+        (entry(&tr!("desk-menu-explore")), Some(Explore)),
         empty_bin,
         SEP,
-        (entry("Create &Shortcut"), Some(CreateShortcut)),
+        (
+            entry(&tr!("desk-menu-create-shortcut")),
+            Some(CreateShortcut),
+        ),
         SEP,
-        (entry("P&roperties"), Some(BinProperties)),
+        (entry(&tr!("desk-menu-properties")), Some(BinProperties)),
     ])
 }
 

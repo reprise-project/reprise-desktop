@@ -12,6 +12,7 @@ use crate::raster::Rect;
 use reprisekit::access::accesskit::Role;
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::controls::displaypanel::{self, DisplayPanel, Event, Hit, Key, Layout, Row};
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 
@@ -330,7 +331,7 @@ pub fn access(state: &State) -> Option<Tree> {
 
 fn panel_tree(model: &DisplayPanel, lay: &Layout, at: (i32, i32)) -> Tree {
     let rect = Rect::new(at.0, at.1, lay.size.0, lay.size.1);
-    let mut tree = crate::access::root(Role::Window, "Displays", rect);
+    let mut tree = crate::access::root(Role::Window, &tr!("desk-displays-window"), rect);
     let focus = displaypanel::access(model, lay, &mut tree, ROOT);
     tree.set_focus(focus);
     tree

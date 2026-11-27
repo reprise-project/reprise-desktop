@@ -30,6 +30,7 @@ use reprisekit::controls::calendar::{self, Agenda, Calendar, DayEvent, PopupHit}
 use reprisekit::metrics::ControlMetrics;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::text::TextRenderer;
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
@@ -615,7 +616,7 @@ fn popup_tree(
 ) -> Tree {
     let (w, h) = calendar::popup_size(cm, model.agenda.is_some());
     let rect = crate::raster::Rect::new(at.0, at.1, w, h);
-    let mut tree = crate::access::root(Role::Window, "Calendar", rect);
+    let mut tree = crate::access::root(Role::Window, &tr!("desk-calendar-window"), rect);
     let focus = calendar::popup_access(model, cm, text, px, &mut tree, ROOT);
     tree.set_focus(focus);
     tree

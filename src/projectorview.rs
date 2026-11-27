@@ -6,6 +6,7 @@
 
 use reprisekit::controls::projector::{self, Event, Key, Projector, ProjectorLayout};
 use reprisekit::interfaces;
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 
@@ -238,7 +239,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     use reprisekit::access::{ROOT, accesskit::Role};
     let s = state.projector.shown.as_ref()?;
     let rect = Rect::new(s.at.0, s.at.1, s.layout.width, s.layout.height);
-    let mut tree = crate::access::root(Role::Window, "Display switcher", rect);
+    let mut tree = crate::access::root(Role::Window, &tr!("desk-display-switcher-window"), rect);
     let focus = projector::access(&s.layout, &s.model, &mut tree, ROOT);
     tree.set_focus(focus);
     Some(tree)
