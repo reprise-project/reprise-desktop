@@ -1,6 +1,7 @@
 //! Export and Import: the files in [`ENTRIES`] in one TOML bundle, each file's text under its
 //! name, so a bundle carries Reprise's settings and remembered places to another account or machine.
 
+use reprisekit::tr;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, Item, Table, Value};
@@ -27,13 +28,21 @@ pub enum Kind {
 }
 
 /// One file or folder a bundle carries; `what` is the line the Backup page and Import show for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Entry {
     pub root: Root,
     pub name: &'static str,
     pub kind: Kind,
-    pub what: &'static str,
+    pub what: fn() -> String,
 }
+
+impl PartialEq for Entry {
+    fn eq(&self, o: &Entry) -> bool {
+        (self.root, self.name, self.kind) == (o.root, o.name, o.kind)
+    }
+}
+
+impl Eq for Entry {}
 
 /// What a bundle carries. Left out on purpose: `state.toml` (the session's open programs and the
 /// Run history), `location.toml` (location answers given on this machine), `trust.key` (a per-user
@@ -43,44 +52,44 @@ pub const ENTRIES: &[Entry] = &[
         root: Root::Config,
         name: "config.toml",
         kind: Kind::File,
-        what: "Settings and keyboard shortcuts (config.toml)",
+        what: || tr!("backup-settings-and-keyboard-shortcuts-config-toml"),
     },
     Entry {
         root: Root::Config,
         name: "terminal.toml",
         kind: Kind::File,
-        what: "Terminal options",
+        what: || tr!("backup-terminal-options"),
     },
     Entry {
         root: Root::Config,
         name: "quicklaunch",
         kind: Kind::Folder,
-        what: "Quick Launch buttons",
+        what: || tr!("backup-quick-launch-buttons"),
     },
     Entry {
         root: Root::State,
         name: "windows.toml",
         kind: Kind::File,
-        what: "Where each program's windows open",
+        what: || tr!("backup-where-each-programs-windows-open"),
     },
     // Keyed by monitor id: a layout from another machine applies only to the same monitors.
     Entry {
         root: Root::State,
         name: "displays.toml",
         kind: Kind::File,
-        what: "Display arrangements",
+        what: || tr!("backup-display-arrangements"),
     },
     Entry {
         root: Root::State,
         name: "filedialog.toml",
         kind: Kind::File,
-        what: "File dialog folders, views and sizes",
+        what: || tr!("backup-file-dialog-folders-views-and-sizes"),
     },
     Entry {
         root: Root::State,
         name: "explorer.toml",
         kind: Kind::File,
-        what: "Explorer view settings",
+        what: || tr!("backup-explorer-view-settings"),
     },
 ];
 
@@ -404,15 +413,26 @@ fn folder_files(dir: &Path) -> std::io::Result<Vec<String>> {
 
 /// `reprise-settings --export FILE`: writes the bundle, an error line on failure.
 pub fn export_to(path: &Path, roots: &Roots) -> Result<(), String> {
-    let bundle = Bundle::gather(roots).map_err(|e| format!("Cannot read the settings: {e}."))?;
-    repriseconf::write_atomic(path, &bundle.render())
-        .map_err(|e| format!("Cannot write {}: {e}.", path.display()))
+    let bundle = Bundle::gather(roots)
+        .map_err(|e| tr!("backup-cannot-read-settings", why = e.to_string()))?;
+    repriseconf::write_atomic(path, &bundle.render()).map_err(|e| {
+        tr!(
+            "backup-cannot-write",
+            path = path.display().to_string(),
+            why = e.to_string()
+        )
+    })
 }
 
 /// Read and check the bundle at `path`.
 pub fn read(path: &Path) -> Result<Bundle, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("Cannot read {}: {e}.", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        tr!(
+            "backup-cannot-read",
+            path = path.display().to_string(),
+            why = e.to_string()
+        )
+    })?;
     Bundle::parse(&text).map_err(|e| e.to_string())
 }
 
@@ -421,7 +441,7 @@ pub fn read(path: &Path) -> Result<Bundle, String> {
 pub fn import(bundle: &Bundle, roots: &Roots) -> Result<PathBuf, String> {
     let backup = bundle
         .import(roots)
-        .map_err(|e| format!("The settings could not be imported: {e}."))?;
+        .map_err(|e| tr!("backup-cannot-import", why = e.to_string()))?;
     if let Err(e) = reprisebus::tray::reload_remembered() {
         log::warn!("ReloadRemembered: {e}");
     }

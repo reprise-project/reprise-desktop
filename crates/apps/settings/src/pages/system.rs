@@ -327,7 +327,7 @@ pub fn backup(a: Area) -> Form {
         Item::new(
             "backup_list",
             Rect::new(GX, 66, a.w - 12, list_h),
-            Control::Lines(entries.iter().map(|e| e.what.to_string()).collect()),
+            Control::Lines(entries.iter().map(|e| (e.what)()).collect()),
         ),
         Item::new(
             "backup_left_out",

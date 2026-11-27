@@ -9,6 +9,7 @@ use repriseapp::asks::Answer;
 use repriseapp::oneshot::MsgBox;
 use repriseapp::{Ctx, Event, Reply, WinId};
 use reprisekit::controls::msgbox;
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// What OK in a question box goes on to do.
@@ -29,19 +30,22 @@ pub(crate) fn import_question(file: &Path, bundle: &Bundle, roots: &Roots) -> St
     );
     let (replaces, removes) = (bundle.replaces(), bundle.removes());
     let lines = |head: &str, list: &[&backup::Entry]| {
-        (list.iter()).fold(format!("{head}\n"), |t, e| t + &format!("    {}\n", e.what))
+        (list.iter()).fold(format!("{head}\n"), |t, e| {
+            t + &format!("    {}\n", (e.what)())
+        })
     };
     let mut parts = Vec::new();
     if !replaces.is_empty() || removes.is_empty() {
-        parts.push(lines("It replaces:", &replaces));
+        parts.push(lines(&tr!("backuphost-it-replaces"), &replaces));
     }
     if !removes.is_empty() {
-        parts.push(lines("It removes:", &removes));
+        parts.push(lines(&tr!("backuphost-it-removes"), &removes));
     }
-    format!(
-        "Import {name}? {}The current files are kept in {}.",
-        parts.concat(),
-        roots.before_import().display()
+    tr!(
+        "backuphost-import-question",
+        name = name,
+        lists = parts.concat(),
+        kept = roots.before_import().display().to_string()
     )
 }
 
@@ -49,11 +53,11 @@ impl SettingsApp {
     /// Asks `text` with OK and Cancel, once the questions before it are answered.
     pub(crate) fn ask(&mut self, text: String, then: Then) {
         let msg = MsgBox::new(
-            "Reprise Settings",
+            &tr!("backuphost-reprise-settings"),
             msgbox::Fields {
                 text,
                 icon: self.display.icon.clone(),
-                buttons: vec!["OK".into(), "Cancel".into()],
+                buttons: vec![tr!("backuphost-ok"), tr!("backuphost-cancel")],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
@@ -96,9 +100,9 @@ impl SettingsApp {
     pub(crate) fn backup_picked(&mut self, pick: Pick, path: PathBuf) {
         match pick {
             Pick::Export if path.exists() => {
-                let text = format!(
-                    "{} already exists.\nDo you want to replace it?",
-                    path.display()
+                let text = tr!(
+                    "backuphost-replace-question",
+                    path = path.display().to_string()
                 );
                 self.ask(text, Then::Export(path));
             }
@@ -116,7 +120,10 @@ impl SettingsApp {
 
     fn export(&mut self, path: &Path) {
         match backup::export_to(path, &Roots::current()) {
-            Ok(()) => self.backup_status(&format!("Exported to {}.", path.display())),
+            Ok(()) => self.backup_status(&tr!(
+                "backuphost-exported",
+                path = path.display().to_string()
+            )),
             Err(why) => self.fail(&why),
         }
     }
@@ -124,7 +131,10 @@ impl SettingsApp {
     fn import(&mut self, path: &Path, bundle: &Bundle) {
         match backup::import(bundle, &Roots::current()) {
             Ok(_) => {
-                self.backup_status(&format!("Imported {}.", path.display()));
+                self.backup_status(&tr!(
+                    "backuphost-imported",
+                    path = path.display().to_string()
+                ));
                 self.config_changed();
                 self.reread_display_files();
                 self.scan_profiles();

@@ -7,6 +7,7 @@ use reprisekit::controls::filedlg::{DlgMode, Fields, FileDlg};
 use std::path::PathBuf;
 
 use repriseapp::{Ctx, Event, Reply};
+use reprisekit::tr;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pick {
@@ -21,8 +22,6 @@ pub(crate) enum Pick {
     Export,
     Import,
 }
-
-const BUNDLE_FILTER: &str = "Reprise Settings (*.toml)";
 
 fn home() -> PathBuf {
     std::env::var_os("HOME")
@@ -56,13 +55,13 @@ impl SettingsApp {
                 home(),
                 true,
                 Fields {
-                    title: "Add".into(),
-                    accept_label: "Open".into(),
+                    title: tr!("filepick-add"),
+                    accept_label: tr!("filepick-open"),
                     mode: DlgMode::Open,
                     multiple: false,
                     filters: vec![
-                        "Desktop Entries (*.desktop)".into(),
-                        "All Files (*.*)".into(),
+                        tr!("filepick-desktop-entries-desktop"),
+                        tr!("filepick-all-files"),
                     ],
                 },
             ),
@@ -70,19 +69,19 @@ impl SettingsApp {
                 wallpapers::start_dir(),
                 true,
                 Fields {
-                    title: "Browse".into(),
-                    accept_label: "Open".into(),
+                    title: tr!("filepick-browse"),
+                    accept_label: tr!("filepick-open"),
                     mode: DlgMode::Open,
                     multiple: false,
-                    filters: vec![wallpapers::FILTER.into(), "All Files (*.*)".into()],
+                    filters: vec![wallpapers::FILTER.into(), tr!("filepick-all-files")],
                 },
             ),
             Pick::SlideFolder => (
                 slides.clone().unwrap_or_else(wallpapers::start_dir),
                 slides.is_none(),
                 Fields {
-                    title: "Browse for Folder".into(),
-                    accept_label: "OK".into(),
+                    title: tr!("filepick-browse-for-folder"),
+                    accept_label: tr!("filepick-ok"),
                     mode: DlgMode::Folder,
                     multiple: false,
                     filters: Vec::new(),
@@ -98,19 +97,25 @@ impl SettingsApp {
                 true,
                 Fields {
                     title: if pick == Pick::Export {
-                        "Export"
+                        tr!("filepick-export")
                     } else {
-                        "Import"
-                    }
-                    .into(),
-                    accept_label: if pick == Pick::Export { "Save" } else { "Open" }.into(),
+                        tr!("filepick-import")
+                    },
+                    accept_label: if pick == Pick::Export {
+                        tr!("filepick-save")
+                    } else {
+                        tr!("filepick-open")
+                    },
                     mode: if pick == Pick::Export {
                         DlgMode::Save
                     } else {
                         DlgMode::Open
                     },
                     multiple: false,
-                    filters: vec![BUNDLE_FILTER.into(), "All Files (*.*)".into()],
+                    filters: vec![
+                        tr!("filepick-reprise-settings-toml"),
+                        tr!("filepick-all-files"),
+                    ],
                 },
             ),
         };
@@ -148,7 +153,11 @@ impl SettingsApp {
             Pick::Autostart => {
                 if let Err(e) = autostart::add(&self.user_autostart(), &path) {
                     log::warn!("add {}: {e}", path.display());
-                    self.fail(&format!("Cannot add '{}': {e}.", path.display()));
+                    self.fail(&tr!(
+                        "filepick-cannot-add",
+                        path = path.display().to_string(),
+                        why = e.to_string()
+                    ));
                 }
                 self.rescan();
             }

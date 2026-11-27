@@ -13,20 +13,23 @@ use crate::displaypage::{self, Display};
 use crate::monitordlg::{self, Outcome};
 use crate::registry::{self, Page};
 use crate::{SettingsApp, outputwrite, take};
+use reprisekit::tr;
 
 pub const MONITOR_WIN: WinId = WinId::named("monitor");
 
-const NO_ANSWER: &str = "The desktop did not answer; the primary display was not changed.";
+fn no_answer() -> String {
+    tr!("displayhost-the-desktop-did-not-answer-the")
+}
 
 /// SetPrimary `name`; Err is the error box's text. Blocking.
 #[cfg(not(test))]
-fn send_primary(name: &str) -> Result<(), &'static str> {
+fn send_primary(name: &str) -> Result<(), String> {
     match reprisebus::tray::set_primary(name) {
         Ok(true) => Ok(()),
-        Ok(false) => Err("That display is no longer shown, so it was not made the primary one."),
+        Ok(false) => Err(tr!("displayhost-that-display-is-no-longer-shown")),
         Err(e) => {
             log::warn!("SetPrimary {name}: {e}");
-            Err(NO_ANSWER)
+            Err(no_answer())
         }
     }
 }
@@ -59,7 +62,7 @@ pub struct DisplayHost {
     pub profile_scan: Option<std::sync::mpsc::Receiver<ProfileScan>>,
     /// The SetPrimary call, off the loop since the compositor answers once it wrote the layout.
     /// Apply stays greyed while it runs.
-    pub primary_job: Option<std::sync::mpsc::Receiver<Result<(), &'static str>>>,
+    pub primary_job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     /// OK was pressed while `primary_job` ran: the sheet closes once it succeeds.
     pub quit_after_primary: bool,
     /// The last primary `start_primary` was asked for.
@@ -67,7 +70,7 @@ pub struct DisplayHost {
     pub sent_primary: Option<String>,
     /// Answers the job `start_primary` left pending.
     #[cfg(test)]
-    pub primary_answer: Option<std::sync::mpsc::Sender<Result<(), &'static str>>>,
+    pub primary_answer: Option<std::sync::mpsc::Sender<Result<(), String>>>,
 }
 
 impl SettingsApp {
@@ -334,7 +337,7 @@ impl SettingsApp {
         let done = match take(self.display.primary_job.as_ref()?) {
             Ok(None) => return None,
             Ok(Some(r)) => r,
-            Err(()) => Err(NO_ANSWER),
+            Err(()) => Err(no_answer()),
         };
         self.display.primary_job = None;
         let quit = std::mem::take(&mut self.display.quit_after_primary);
@@ -348,7 +351,7 @@ impl SettingsApp {
                 let running = self.session_primary(&self.display.connected);
                 self.display.model.set_primary_saved(running);
                 displaypage::refresh(&mut self.sheet, &self.display.model, &self.want);
-                self.fail(why);
+                self.fail(&why);
                 false
             }
         };
@@ -376,7 +379,7 @@ impl SettingsApp {
                 }
                 Effect::SavePrimary(name) => self.start_primary(name),
                 Effect::Fail(why) => {
-                    self.fail(why);
+                    self.fail(&why);
                     failed = true;
                 }
                 Effect::Quit => r.quit = !failed,

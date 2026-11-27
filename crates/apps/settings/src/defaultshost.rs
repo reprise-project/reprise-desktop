@@ -4,6 +4,7 @@ use repriseapp::openwith::ChooserInput;
 use repriseapp::{Ctx, Event, Reply};
 use reprisekit::controls::form;
 use reprisekit::controls::openwith::{self, OpenWith, Program};
+use reprisekit::tr;
 
 impl SettingsApp {
     pub(crate) fn ensure_defaults(&mut self) {
@@ -173,7 +174,11 @@ impl SettingsApp {
                     Ok(id) => id,
                     Err(e) => {
                         log::warn!("no desktop entry for {id}: {e}");
-                        self.fail(&format!("Cannot use '{id}': {e}."));
+                        self.fail(&tr!(
+                            "defaultshost-cannot-use",
+                            id = id.to_string(),
+                            why = e.to_string()
+                        ));
                         return Reply::redraw_all();
                     }
                 };

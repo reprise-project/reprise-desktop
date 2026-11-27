@@ -8,6 +8,7 @@ use reprisekit::controls::form::{Control, Form};
 use reprisekit::controls::listbox::ListBox;
 use reprisekit::controls::openwith;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
 use std::path::PathBuf;
 
 pub const LIST: &str = "clipboard_apps";
@@ -98,7 +99,7 @@ pub fn fill(form: &mut Form, rows: Option<&[Row]>, trusted: &[String]) -> bool {
     };
     let items: Vec<String> = match rows {
         Some(rows) => rows.iter().map(|r| r.name.clone()).collect(),
-        None => vec!["Loading...".into()],
+        None => vec![tr!("clipaccess-loading")],
     };
     let renamed = list.items != items;
     if renamed {
@@ -111,7 +112,7 @@ pub fn fill(form: &mut Form, rows: Option<&[Row]>, trusted: &[String]) -> bool {
     list.detail = rows
         .iter()
         .map(|r| match (r.installed, r.name == r.id) {
-            (false, _) => "not installed".into(),
+            (false, _) => tr!("clipaccess-not-installed"),
             (true, false) => r.id.clone(),
             (true, true) => String::new(),
         })

@@ -49,7 +49,7 @@ pub fn fill_list(lv: &mut ListView<IconRows>, entries: &[Entry], checks: &[bool]
             cells: vec![
                 e.name.clone(),
                 e.exec.clone(),
-                crate::autostart::location(e).into(),
+                crate::autostart::location(e),
             ],
         })
         .collect();

@@ -6,12 +6,17 @@ use repriseconf::config::VrrPolicy;
 use crate::displaypage::Display;
 use crate::monitordlg::MonitorDialog;
 use crate::outputwrite::OutputKeys;
+use reprisekit::tr;
 
-pub const VRR_REFUSED: &str = "This monitor did not accept variable refresh rate.";
+fn vrr_refused() -> String {
+    tr!("displayflow-this-monitor-did-not-accept-variable")
+}
 
 pub const KEEP_SECONDS: u32 = 15;
 
-const NOT_PUT_BACK: &str = "The old display settings could not be put back.";
+fn not_put_back() -> String {
+    tr!("displayflow-the-old-display-settings-could-not")
+}
 
 /// What the host does for the flow, in order. A `Quit` comes last and
 /// only when nothing before it failed; the host skips it when a `Save`
@@ -20,7 +25,7 @@ const NOT_PUT_BACK: &str = "The old display settings could not be put back.";
 pub enum Effect {
     Save(String, OutputKeys),
     SavePrimary(String),
-    Fail(&'static str),
+    Fail(String),
     Quit,
 }
 
@@ -197,7 +202,7 @@ impl Flow {
                 d.reset_vrr(&head);
                 self.close &= self.discard;
                 if !self.discard {
-                    out.push(Effect::Fail(VRR_REFUSED));
+                    out.push(Effect::Fail(vrr_refused()));
                 }
             }
         } else if let Some((_, back, asked)) = self.mode.take_if(|m| m.0 == serial) {
@@ -225,7 +230,9 @@ impl Flow {
                 }
                 _ if !ok && !self.discard => {
                     self.close = false;
-                    out.push(Effect::Fail("The display settings could not be applied."));
+                    out.push(Effect::Fail(tr!(
+                        "displayflow-the-display-settings-could-not-be"
+                    )));
                 }
                 _ => {}
             }
@@ -234,7 +241,7 @@ impl Flow {
             if !ok && d.head_named(&head).is_some() {
                 self.close = false;
                 self.discard = false;
-                out.push(Effect::Fail(NOT_PUT_BACK));
+                out.push(Effect::Fail(not_put_back()));
             }
         }
         out.extend(self.settle());
@@ -278,7 +285,7 @@ impl Flow {
         if end == TrialEnd::Failed {
             self.close = false;
             self.discard = false;
-            out.push(Effect::Fail(NOT_PUT_BACK));
+            out.push(Effect::Fail(not_put_back()));
         }
         out.extend(self.settle());
         out
@@ -415,7 +422,7 @@ mod tests {
             flow.applied(serial, true, &mut d, &mut req, Instant::now());
             assert_eq!(flow.answer(true, &mut req), vec![]);
             let fail = match end {
-                TrialEnd::Failed => vec![Effect::Fail(NOT_PUT_BACK)],
+                TrialEnd::Failed => vec![Effect::Fail(not_put_back())],
                 _ => vec![Effect::Quit],
             };
             assert_eq!(flow.trial_ended(end), fail, "as after No");
@@ -519,7 +526,9 @@ mod tests {
         assert_eq!(flow.trial_ended(TrialEnd::Reverted), vec![]);
         assert_eq!(
             flow.applied(serial, false, &mut d, &mut req, Instant::now()),
-            vec![Effect::Fail("The display settings could not be applied.")]
+            vec![Effect::Fail(
+                "The display settings could not be applied.".into()
+            )]
         );
         assert!(flow.question.is_none() && !flow.busy());
     }
@@ -575,7 +584,9 @@ mod tests {
         let out = flow.applied(serial, false, &mut d, &mut req, Instant::now());
         assert_eq!(
             out,
-            vec![Effect::Fail("The display settings could not be applied.")]
+            vec![Effect::Fail(
+                "The display settings could not be applied.".into()
+            )]
         );
         assert!(flow.question.is_none() && !flow.busy());
         assert!(d.dirty(), "the picks stay, Apply stays lit");
@@ -611,7 +622,7 @@ mod tests {
             } else {
                 assert_eq!(
                     out,
-                    vec![Effect::Fail(VRR_REFUSED)],
+                    vec![Effect::Fail(vrr_refused())],
                     "a refusal writes nothing and says so"
                 );
                 assert_eq!(
@@ -660,7 +671,7 @@ mod tests {
         );
         assert_eq!(
             flow.applied(asked[0].0, false, &mut d, &mut req, Instant::now()),
-            vec![Effect::Fail(VRR_REFUSED)]
+            vec![Effect::Fail(vrr_refused())]
         );
         flow.applied(asked[1].0, true, &mut d, &mut req, Instant::now());
         flow.answer(true, &mut req);
@@ -790,7 +801,7 @@ mod tests {
         assert_eq!(
             flow.trial_ended(TrialEnd::Failed),
             vec![Effect::Fail(
-                "The old display settings could not be put back."
+                "The old display settings could not be put back.".into()
             )],
             "no Quit over the box"
         );
@@ -808,7 +819,7 @@ mod tests {
                 d.set_heads(vec![test_head("HDMI-A-1")]);
             }
             let out = flow.applied(back[0].0, false, &mut d, &mut req, Instant::now());
-            let fail = Effect::Fail("The old display settings could not be put back.");
+            let fail = Effect::Fail("The old display settings could not be put back.".into());
             assert_eq!(out, if gone { vec![Effect::Quit] } else { vec![fail] });
             assert!(take(&mut req).is_empty(), "tried once");
             assert!(!flow.busy());

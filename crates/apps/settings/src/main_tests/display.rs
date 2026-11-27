@@ -1,5 +1,6 @@
 use super::*;
 use repriseapp::heads::{TrialAsk, TrialEnd};
+use reprisekit::tr;
 
 /// DP-1 listed with a smaller resolution picked, Apply or OK pressed
 /// and taken, so the question is up.
@@ -284,7 +285,7 @@ fn ok_waits_for_the_primary_call_and_a_failed_one_keeps_the_sheet_with_a_box() {
     assert!(!apply_lit(&app), "Apply greyed while it runs");
 
     let answer = app.display.primary_answer.take().unwrap();
-    answer.send(Err("refused")).unwrap();
+    answer.send(Err("refused".into())).unwrap();
     assert_eq!(app.primary_done(), Some(false), "the sheet stays");
     let text = app.error.shown().map(|b| b.fields.text.clone());
     assert_eq!(text.as_deref(), Some("refused"));
@@ -368,7 +369,7 @@ fn a_refused_primary_puts_the_check_back_on_the_running_display() {
     );
 
     let answer = app.display.primary_answer.take().unwrap();
-    answer.send(Err("refused")).unwrap();
+    answer.send(Err("refused".into())).unwrap();
     assert_eq!(app.primary_done(), Some(false));
     assert!(app.error.is_shown(), "the error box is up");
     assert_eq!(
@@ -411,7 +412,10 @@ fn a_refused_vrr_on_ok_says_so_and_keeps_the_sheet() {
     );
     assert!(!r.quit, "the sheet stays open");
     let text = app.error.shown().map(|b| b.fields.text.clone());
-    assert_eq!(text.as_deref(), Some(displayflow::VRR_REFUSED));
+    assert_eq!(
+        text.as_deref(),
+        Some(tr!("displayflow-this-monitor-did-not-accept-variable").as_str())
+    );
     assert!(
         app.children().iter().any(|c| app.error.owns(c.id)),
         "the error box is up"
