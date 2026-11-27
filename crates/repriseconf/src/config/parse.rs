@@ -12,6 +12,7 @@ use super::{
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
 /// The keys `[mouse]` and `[touchpad]` share.
 struct PointerKeys {
@@ -614,7 +615,9 @@ impl Config {
             cfg.start_icon = v;
         }
         if let Some(v) = file.system_icons {
-            if v.iter().any(|n| crate::system_icons::retired(n)) {
+            // Every program reads the file at each change; one line per process says enough.
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if v.iter().any(|n| crate::system_icons::retired(n)) && !WARNED.swap(true, Relaxed) {
                 log::warn!("config: system_icons: my-network-places is retired and is left out");
             }
             cfg.system_icons = crate::system_icons::current_list(v.iter().map(String::as_str));

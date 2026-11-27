@@ -975,6 +975,49 @@ fn desktop_icons_defaults_on_and_is_configurable() {
     );
 }
 
+/// The warnings `f` logs on this thread.
+fn warnings_of(f: impl FnOnce()) -> Vec<String> {
+    use std::sync::{Mutex, Once};
+    use std::thread::{ThreadId, current};
+    static LINES: Mutex<Vec<(ThreadId, String)>> = Mutex::new(Vec::new());
+    struct Capture;
+    impl log::Log for Capture {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            m.level() <= log::Level::Warn
+        }
+        fn log(&self, r: &log::Record) {
+            if self.enabled(r.metadata()) {
+                let line = (current().id(), r.args().to_string());
+                LINES.lock().unwrap().push(line);
+            }
+        }
+        fn flush(&self) {}
+    }
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        log::set_logger(&Capture).expect("no other repriseconf test sets a logger");
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+    f();
+    let me = current().id();
+    let mut lines = LINES.lock().unwrap();
+    let mine = lines.iter().filter(|(t, _)| *t == me);
+    let mine = mine.map(|(_, l)| l.clone()).collect();
+    lines.retain(|(t, _)| *t != me);
+    mine
+}
+
+#[test]
+fn a_retired_system_icon_is_named_once_per_process() {
+    let older = "system_icons = [\"my-computer\", \"my-network-places\"]\n";
+    let _ = warnings_of(|| drop(Config::parse(older)));
+    let again = warnings_of(|| {
+        Config::parse(older).unwrap();
+        Config::parse(older).unwrap();
+    });
+    assert_eq!(again, Vec::<String>::new(), "a later read logs nothing");
+}
+
 #[test]
 fn keyboard_repeat_rate_is_0_to_255_and_delay_not_negative() {
     let rate = |v: i64| Config::parse(&format!("[keyboard]\nrepeat_rate = {v}\n"));
