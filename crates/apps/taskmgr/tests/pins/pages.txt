@@ -6,6 +6,8 @@ Classic Performance @1 590961b4be75d1e7
 Classic Performance @2 3d06507987fb3d4c
 Classic Applications not responding @1 987a8a2219c220a6
 Classic Applications not responding @2 61a3f22571556f2a
+Classic Applications windows @1 5f51aef3cffa059e
+Classic Applications windows @2 59ce35f13d922d3b
 Classic Select Columns @1 d56b1ff0606f1ad3
 Classic Select Columns @2 0d1387332a86fa07
 Blue Applications @1 7cf8c6b7ff45e10a
@@ -16,6 +18,8 @@ Blue Performance @1 2cc809084f5adc06
 Blue Performance @2 d2fc3e91330e117f
 Blue Applications not responding @1 0db09870fef74b76
 Blue Applications not responding @2 3836d8516582ed7c
+Blue Applications windows @1 6346b0def3209fea
+Blue Applications windows @2 1b70feeceaabfdc6
 Blue Select Columns @1 8876df495451fc26
 Blue Select Columns @2 68e7787e91762889
 Glass Applications @1 a9621f70b3a6972c
@@ -26,5 +30,7 @@ Glass Performance @1 c8146a455b29e653
 Glass Performance @2 8ee37009af4e5e66
 Glass Applications not responding @1 be40724ef2ec8b1c
 Glass Applications not responding @2 e624f0a24b2f578e
+Glass Applications windows @1 7f43afe7e252a9f5
+Glass Applications windows @2 d0cecb24c2d8aa45
 Glass Select Columns @1 ea389194d1d1da39
 Glass Select Columns @2 cce296e03819bd0e

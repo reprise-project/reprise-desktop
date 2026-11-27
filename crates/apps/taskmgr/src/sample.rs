@@ -238,7 +238,7 @@ impl Sampler {
         let scopes = self.slice.as_deref().map(scopes::read).unwrap_or_default();
         let windows = self.windows();
         let sandboxed = (windows.iter().flatten())
-            .map(|&(_, pid)| pid)
+            .map(|w| w.pid)
             .filter(|&pid| {
                 i32::try_from(pid)
                     .is_ok_and(|p| p != 0 && !scopes.iter().any(|s| s.pids.contains(&p)))
@@ -491,10 +491,10 @@ mod tests {
         let mut s = Sampler {
             ask_windows: Some(|| {
                 Ok(vec![
-                    ("org.kde.ark".into(), 41),
-                    ("flatpak".into(), 50),
-                    ("host".into(), 60),
-                    ("unknown".into(), 0),
+                    crate::tests::window("org.kde.ark", 41),
+                    crate::tests::window("flatpak", 50),
+                    crate::tests::window("host", 60),
+                    crate::tests::window("unknown", 0),
                 ])
             }),
             sandboxed: |pid| {
@@ -513,8 +513,8 @@ mod tests {
     #[test]
     fn a_late_window_list_keeps_the_last_one_and_holds_no_sample_up() {
         let root = tempfile::tempdir().unwrap();
-        let first = vec![("first".to_string(), 1)];
-        let next = vec![("next".to_string(), 2)];
+        let first = vec![crate::tests::window("first", 1)];
+        let next = vec![crate::tests::window("next", 2)];
         ANSWERS.lock().unwrap().extend([
             (0, Ok(first.clone())),
             (2000, Ok(next.clone())),

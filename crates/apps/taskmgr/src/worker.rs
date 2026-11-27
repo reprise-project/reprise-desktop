@@ -107,6 +107,18 @@ pub fn end_task(unit: String, pids: Vec<i32>, spare: bool) {
     });
 }
 
+/// End Task on one window off the event loop: it is asked to close as its X button does.
+pub fn close_window(w: reprisebus::tray::AppWindow) {
+    std::thread::spawn(move || {
+        let pick = |ws: &[crate::toplevel::Toplevel]| crate::toplevel::the_one(ws, &w);
+        match crate::toplevel::on_window(pick, crate::toplevel::Do::Close) {
+            Ok(true) => {}
+            Ok(false) => log::info!("End Task: {:?} of {} is gone", w.title, w.app_id),
+            Err(e) => log::warn!("End Task {}: {e}", w.app_id),
+        }
+    });
+}
+
 /// Asks a program's windows to close (`close` returns how many it asked) and runs `term` only
 /// when it showed none, so a tray program whose prompt closed keeps running.
 pub fn end_gently(close: impl FnOnce() -> u32, term: impl FnOnce()) {
