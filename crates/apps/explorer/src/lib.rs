@@ -264,7 +264,7 @@ pub struct Explorer {
     /// [`reprisefs::portable::follow`]'s lists, each with a wake.
     portable_changes: Option<std::sync::mpsc::Receiver<Vec<reprisefs::portable::Device>>>,
     /// A mount holding the place arrived after the tree followed it there: the tree follows the
-    /// place again once Computer's node is read.
+    /// place again once Computer's node is read, unless a walk to the place got there first.
     pub(crate) refollow: bool,
     /// A connection to a server under way ([`shares`]).
     pub(crate) connection: Option<shares::Connection>,
