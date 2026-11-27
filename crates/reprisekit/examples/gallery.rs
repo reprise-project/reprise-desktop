@@ -118,9 +118,10 @@ use start::{
     render_blue_start_menus, render_blue_start_panel, render_start_panel, render_start_panel_dark,
 };
 use taskbar::{
-    render_orb_glow, render_quick_more, render_task_attention, render_task_progress,
-    render_taskbar_cells, render_taskbar_drag, render_taskbar_edges, render_taskbar_hidden,
-    render_taskbar_keys, render_taskbar_top, render_tray_arrow, render_tray_arrow_schemes,
+    render_onyx_taskbar, render_orb_glow, render_quick_more, render_task_attention,
+    render_task_progress, render_taskbar_cells, render_taskbar_drag, render_taskbar_edges,
+    render_taskbar_hidden, render_taskbar_keys, render_taskbar_top, render_tray_arrow,
+    render_tray_arrow_schemes,
 };
 use text_size::{
     render_list_icons, render_menu_columns, render_menu_icons, render_menu_scroll,
@@ -277,6 +278,10 @@ fn write_scale(n: i32) {
     write_preview(
         || render_task_attention(n.max(1)),
         &format!("reprisekit-gallery-task-attention@{}.png", n.max(1)),
+    );
+    write_preview(
+        || render_onyx_taskbar(n.max(1)),
+        &format!("reprisekit-gallery-onyx-taskbar@{}.png", n.max(1)),
     );
     write_preview(
         || render_termgrid(n.max(1)),
@@ -556,6 +561,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
     write_preview(
         || render_task_attention(1),
         "reprisekit-gallery-task-attention.png",
+    );
+    write_preview(
+        || render_onyx_taskbar(1),
+        "reprisekit-gallery-onyx-taskbar.png",
     );
     write_preview(
         || render_locate_rings(1),

@@ -207,6 +207,117 @@ pub fn render_task_attention(scale: i32) -> Canvas {
     c
 }
 
+/// Onyx's bar in light and dark mode and with transparency off, over a striped backdrop: one bar
+/// with buttons at rest, hot, active and lit for attention, one held, active and hot, and in a
+/// flash's dark half.
+pub fn render_onyx_taskbar(scale: i32) -> Canvas {
+    use reprisekit::glass::{Mode, Settings, Style};
+    use reprisekit::taskbar::{Attention, TaskEntry, TaskbarCounts, TaskbarLayout, TaskbarState};
+    let text = TextRenderer::load(&FontConfig::default());
+    let onyx = |s: Settings| {
+        let mut t = cued(interfaces::theme_with(
+            Interface::Glass,
+            reprisekit::blue::Variant::default(),
+            false,
+            &s,
+        ));
+        interfaces::small_bar(&mut t, &s);
+        t
+    };
+    let base = Settings {
+        style: Style::Onyx,
+        ..Settings::default()
+    };
+    let themes = [
+        onyx(base),
+        onyx(Settings {
+            mode: Mode::Dark,
+            ..base
+        }),
+        onyx(Settings {
+            transparency: false,
+            ..base
+        }),
+    ];
+    let (w, gap) = (640, 10);
+    let task = |title: &str, active: bool, attention, theme: &Theme| TaskEntry {
+        title: title.into(),
+        active,
+        attention,
+        icon: Some(indicator::draw_record(theme.icon_size()).into()),
+        glow: None,
+    };
+    let mut rows: Vec<Canvas> = Vec::new();
+    for theme in &themes {
+        let start_text = match theme.look.style() {
+            Some(s) => TextRenderer::load(&s.start_text.font()),
+            None => TextRenderer::load(&FontConfig::default()),
+        };
+        let bars = [
+            TaskbarState {
+                tasks: vec![
+                    task("Notepad", false, Attention::None, theme),
+                    task("Explorer", false, Attention::None, theme),
+                    task("Paint", true, Attention::None, theme),
+                    task("Chat", false, Attention::Steady, theme),
+                ],
+                task_hot: Some(1),
+                clock: "3:45 PM".into(),
+                ..TaskbarState::default()
+            },
+            TaskbarState {
+                tasks: vec![
+                    task("Notepad", false, Attention::None, theme),
+                    task("Paint", true, Attention::None, theme),
+                    task("Mail", false, Attention::FlashOff, theme),
+                ],
+                task_pressed: Some(0),
+                task_hot: Some(1),
+                clock: "3:45 PM".into(),
+                ..TaskbarState::default()
+            },
+        ];
+        for state in bars {
+            let counts = TaskbarCounts {
+                tasks: state.tasks.len(),
+                tray: 1,
+                ..TaskbarCounts::default()
+            };
+            let layout = TaskbarLayout::compute(
+                &theme.metrics,
+                &theme.taskbar_shape(),
+                w,
+                true,
+                counts,
+                text.measure("3:45 PM", false, theme.fonts.size_px),
+            );
+            let scaled = theme.scaled(scale);
+            let mut bar = Canvas::new((w * scale) as u32, (layout.height * scale) as u32);
+            look::draw_taskbar(
+                &mut bar,
+                &scaled,
+                &text,
+                &start_text,
+                &layout.scaled(scale),
+                &state,
+            );
+            rows.push(bar);
+        }
+    }
+    let height = rows
+        .iter()
+        .map(|r| r.height as i32 + gap * scale)
+        .sum::<i32>()
+        + gap * scale;
+    let mut c = blurred_stripes((w + 2 * gap) * scale, height);
+    let mut y = gap * scale;
+    for r in &rows {
+        c.blit_over(gap * scale, y, r);
+        y += r.height as i32 + gap * scale;
+    }
+    c
+}
+
 pub fn render_taskbar_top() -> Canvas {
     use reprisekit::taskbar::{
         Edge, PagerButton, TaskEntry, TaskbarCounts, TaskbarLayout, TaskbarState,
