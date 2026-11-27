@@ -6,7 +6,7 @@ use crate::progress::{Decision, Meter, Phase, Totals};
 use reprisekit::tr;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
-use std::os::fd::{AsFd, AsRawFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -807,28 +807,16 @@ enum Resolves {
 /// Where link `rel` under the folder open as `base` resolves; one through a folder it cannot
 /// search counts as outside.
 fn resolves(base: &std::fs::File, rel: &Path) -> std::io::Result<Resolves> {
-    let path = std::ffi::CString::new(rel.as_os_str().as_bytes())?;
-    // SAFETY: an all-zero `open_how` is a valid value of a plain C struct.
-    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
-    how.flags = (libc::O_PATH | libc::O_CLOEXEC) as u64;
-    how.resolve = libc::RESOLVE_BENEATH;
-    // SAFETY: `path` is NUL-terminated, `how` is an `open_how` of the size passed, and `base` is
-    // an open folder.
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            base.as_raw_fd(),
-            path.as_ptr(),
-            &how,
-            std::mem::size_of::<libc::open_how>(),
-        )
+    use crate::ops::at::{c_path, open_resolved};
+    let e = match open_resolved(
+        base.as_fd(),
+        &c_path(rel)?,
+        libc::O_PATH,
+        libc::RESOLVE_BENEATH,
+    ) {
+        Ok(_) => return Ok(Resolves::Beneath),
+        Err(e) => e,
     };
-    if fd >= 0 {
-        // SAFETY: `fd` was just opened and is owned by nothing else.
-        drop(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) });
-        return Ok(Resolves::Beneath);
-    }
-    let e = std::io::Error::last_os_error();
     match e.raw_os_error() {
         Some(libc::EXDEV | libc::EACCES) => Ok(Resolves::Outside),
         Some(libc::ENOENT | libc::ELOOP | libc::ENOTDIR) => Ok(Resolves::Nothing),

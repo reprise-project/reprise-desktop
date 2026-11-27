@@ -2223,3 +2223,31 @@ fn a_hard_linked_file_keeps_its_bytes_and_inode_when_the_write_fails_midway() {
     assert_eq!(std::fs::metadata(&b).unwrap().ino(), ma.ino());
     assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
 }
+
+#[test]
+fn a_raced_openat2_is_retried_and_gives_up_after_its_tries() {
+    use super::at::{RACED_TRIES, retry_raced};
+    let raced = || io::Error::from_raw_os_error(libc::EAGAIN);
+    let mut calls = 0;
+    let r = retry_raced(|| {
+        calls += 1;
+        if calls < 3 { Err(raced()) } else { Ok(calls) }
+    });
+    assert_eq!(r.unwrap(), 3, "succeeds on the third call");
+
+    let mut calls = 0;
+    let r: io::Result<()> = retry_raced(|| {
+        calls += 1;
+        Err(raced())
+    });
+    assert_eq!(r.unwrap_err().raw_os_error(), Some(libc::EAGAIN));
+    assert_eq!(calls, RACED_TRIES, "stops after RACED_TRIES calls");
+
+    let mut calls = 0;
+    let r: io::Result<()> = retry_raced(|| {
+        calls += 1;
+        Err(io::Error::from_raw_os_error(libc::EXDEV))
+    });
+    assert_eq!(r.unwrap_err().raw_os_error(), Some(libc::EXDEV));
+    assert_eq!(calls, 1, "any other error is returned at once");
+}
