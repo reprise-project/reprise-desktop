@@ -1205,3 +1205,47 @@ shortcutdlg-only-default = Only a default shortcut can be set to "{ $what }".
 wallpapers-background-files-bmp-jpg-jpeg-dib = Background Files (*.bmp;*.jpg;*.jpeg;*.dib;*.png;*.jxl;*.avif)
 wallpapers-pictures = Pictures
 wallpapers-not-a-picture = '{ $name }' is not a picture.
+
+## model/io.rs
+model-io-the-night-lights-from-and-to = The night light's From and To times must differ.
+model-io-glasss-dark-hours-must-start-and = Glass's dark hours must start and end at different times.
+model-io-the-quiet-hours-from-and-to = The quiet hours' From and To times must differ.
+model-io-a-shortcuts-action-is-not-one = A shortcut's action is not one the compositor knows.
+model-io-a-spawn-shortcut-needs-a-command = A spawn shortcut needs a command.
+model-io-snap-layouts-too-many = Snap layouts: at most { $max } layouts, got { $got }.
+model-io-snap-layouts-invalid = Snap layouts: { $why }.
+model-io-window-rule-needs-app-id = Window rule { $n } needs an app ID.
+model-io-program-keys-refused = { $name }: { $why }
+
+## model/shortcuts.rs
+model-shortcuts-a-program-shortcut-ends-in-a = A program shortcut ends in a key that is not a modifier.
+model-shortcuts-run-a-command = Run a command
+model-shortcuts-nothing = Nothing
+model-shortcuts-kept-by-desktop = { $shown } is kept by the desktop.
+model-shortcuts-types-text = { $shown } types text; add Ctrl, Alt or Super.
+model-shortcuts-run = Run { $command }
+model-shortcuts-program-text = { $name }: { $what }
+
+## lib.rs
+lib-reprise-settings = Reprise Settings
+lib-add = Add
+lib-browse = Browse
+lib-browse-for-folder = Browse for Folder
+lib-export = Export
+lib-import = Import
+lib-add-layout = Add Layout
+lib-add-item = Add Item
+lib-rename = Rename
+lib-monitor-settings = Monitor Settings
+lib-config-unreadable =
+    config.toml could not be read: { $why }.
+    The sheet shows the defaults.
+lib-config-does-not-parse =
+    config.toml does not parse at line { $line }: { $what }.
+    The sheet shows the defaults. Apply leaves the file alone until it parses.
+lib-exported = Exported the settings to { $path }.
+lib-removed = removed { $list }
+lib-imported =
+    Imported { $path }: { $what }.
+    The files it replaced are in { $kept }.
+lib-cannot-remove = Cannot remove '{ $name }': { $why }.

@@ -107,6 +107,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, Waker, WinId};
+use reprisekit::tr;
 
 /// The file dialog: Startup Add... and Background Browse....
 const ADD_WIN: WinId = WinId::named("add");
@@ -219,9 +220,7 @@ fn read_config(path: &Path) -> (String, Option<String>) {
             log::warn!("read {}: {e}", path.display());
             return (
                 String::new(),
-                Some(format!(
-                    "config.toml could not be read: {e}.\nThe sheet shows the defaults."
-                )),
+                Some(tr!("lib-config-unreadable", why = e.to_string())),
             );
         }
     };
@@ -236,9 +235,10 @@ fn read_config(path: &Path) -> (String, Option<String>) {
             .next()
             .unwrap_or("")
             .trim_end_matches('.');
-        format!(
-            "config.toml does not parse at line {line}: {what}.\n\
-             The sheet shows the defaults. Apply leaves the file alone until it parses."
+        tr!(
+            "lib-config-does-not-parse",
+            line = line.to_string(),
+            what = what.to_string()
         )
     });
     (text, err)
@@ -313,21 +313,22 @@ fn run_backup(verb: BackupVerb) -> i32 {
     let roots = backup::Roots::current();
     let done = match &verb {
         BackupVerb::Export(file) => backup::export_to(file, &roots)
-            .map(|()| format!("Exported the settings to {}.", file.display())),
+            .map(|()| tr!("lib-exported", path = file.display().to_string())),
         BackupVerb::Import(file) => backup::read(file).and_then(|bundle| {
             let kept = backup::import(&bundle, &roots)?;
             let list = |l: Vec<&backup::Entry>| l.iter().map(|e| (e.what)()).collect::<Vec<_>>();
             let removed = list(bundle.removes());
             let mut what = vec![list(bundle.replaces()).join(", ")];
             if !removed.is_empty() {
-                what.push(format!("removed {}", removed.join(", ")));
+                what.push(tr!("lib-removed", list = removed.join(", ")));
             }
             what.retain(|w| !w.is_empty());
             let what = what.join("; ");
-            Ok(format!(
-                "Imported {}: {what}.\nThe files it replaced are in {}.",
-                file.display(),
-                kept.display()
+            Ok(tr!(
+                "lib-imported",
+                path = file.display().to_string(),
+                what = what,
+                kept = kept.display().to_string()
             ))
         }),
     };
@@ -1002,7 +1003,11 @@ impl SettingsApp {
             Ok(()) => self.rescan(),
             Err(err) => {
                 log::warn!("remove {}: {err}", e.id);
-                self.fail(&format!("Cannot remove '{}': {err}.", e.name));
+                self.fail(&tr!(
+                    "lib-cannot-remove",
+                    name = e.name.to_string(),
+                    why = err.to_string()
+                ));
             }
         }
         self.sync_apply();
@@ -1012,7 +1017,7 @@ impl SettingsApp {
 
 impl App for SettingsApp {
     fn title(&self) -> String {
-        "Reprise Settings".into()
+        tr!("lib-reprise-settings")
     }
 
     fn app_id(&self) -> String {
@@ -1029,14 +1034,13 @@ impl App for SettingsApp {
             kids.push(Child {
                 id: ADD_WIN,
                 title: match self.add_for {
-                    Pick::Autostart => "Add",
-                    Pick::Wallpaper | Pick::LoginBackground => "Browse",
-                    Pick::SlideFolder => "Browse for Folder",
-                    Pick::Program => "Browse",
-                    Pick::Export => "Export",
-                    Pick::Import => "Import",
-                }
-                .into(),
+                    Pick::Autostart => tr!("lib-add"),
+                    Pick::Wallpaper | Pick::LoginBackground => tr!("lib-browse"),
+                    Pick::SlideFolder => tr!("lib-browse-for-folder"),
+                    Pick::Program => tr!("lib-browse"),
+                    Pick::Export => tr!("lib-export"),
+                    Pick::Import => tr!("lib-import"),
+                },
                 size: self.add.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
                 fixed: false,
                 modal: true,
@@ -1057,7 +1061,7 @@ impl App for SettingsApp {
         if self.add_layout.is_some() {
             kids.push(Child {
                 id: LAYOUT_WIN,
-                title: "Add Layout".into(),
+                title: tr!("lib-add-layout"),
                 size: self.units.size(layoutdlg::CLIENT),
                 fixed: true,
                 modal: true,
@@ -1066,7 +1070,7 @@ impl App for SettingsApp {
         if self.add_item.is_some() {
             kids.push(Child {
                 id: ADD_ITEM_WIN,
-                title: "Add Item".into(),
+                title: tr!("lib-add-item"),
                 size: self.units.size(additem::CLIENT),
                 fixed: true,
                 modal: true,
@@ -1075,7 +1079,7 @@ impl App for SettingsApp {
         if self.rename.is_some() {
             kids.push(Child {
                 id: RENAME_WIN,
-                title: "Rename".into(),
+                title: tr!("lib-rename"),
                 size: self.units.size(renamedlg::CLIENT),
                 fixed: true,
                 modal: true,
@@ -1102,7 +1106,7 @@ impl App for SettingsApp {
         if self.display.flow.question.is_some() {
             kids.push(Child {
                 id: displayhost::MONITOR_WIN,
-                title: "Monitor Settings".into(),
+                title: tr!("lib-monitor-settings"),
                 size: self.units.size(monitordlg::CLIENT),
                 fixed: true,
                 modal: true,
