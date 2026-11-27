@@ -233,7 +233,8 @@ xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>";
 pub type Opening<'a> = (&'a Path, Option<&'a AppEntry>, Option<&'a str>);
 
 /// Record each opened file that is a regular file in the session's `recently-used.xbel`, in one
-/// rewrite of it.
+/// rewrite of it. A copy out of a compressed folder ([`crate::archive::is_copy`]) is left out: its
+/// folder goes a day later.
 pub fn record(opened: &[Opening]) -> std::io::Result<()> {
     let xbel = xbel_path().ok_or_else(|| std::io::Error::other("no data directory"))?;
     record_at(&xbel, opened)
@@ -244,7 +245,7 @@ pub fn record_at(xbel: &Path, opened: &[Opening]) -> std::io::Result<()> {
     let absolute: Vec<_> = opened
         .iter()
         .filter_map(|o| absolute(o.0).map(|p| (p, o.1, o.2)))
-        .filter(|o| o.0.is_file())
+        .filter(|o| o.0.is_file() && !crate::archive::is_copy(&o.0))
         .collect();
     if absolute.is_empty() {
         return Ok(());
