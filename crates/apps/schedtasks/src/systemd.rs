@@ -407,7 +407,8 @@ async fn create(
 ) -> zbus::Result<String> {
     let folders = folders.ok_or_else(no_folder)?;
     let dir = &folders.own;
-    let timer = units::write(folders, task, taken).map_err(|e| failed(&e.to_string()))?;
+    let timer = units::write(folders, task, taken, units::notifier().as_deref())
+        .map_err(|e| failed(&e.to_string()))?;
     let units = [timer.as_str()];
     let started = async {
         call(conn, "EnableUnitFiles", &(&units[..], false, false)).await?;
@@ -460,7 +461,8 @@ async fn edit(
     if units::read(dir, timer).as_ref() != Some(was) {
         return Err(failed("its files changed since Edit opened them"));
     }
-    units::rewrite(dir, timer, task).map_err(|e| failed(&e.to_string()))?;
+    units::rewrite(dir, timer, task, units::notifier().as_deref())
+        .map_err(|e| failed(&e.to_string()))?;
     call(conn, "Reload", &()).await?;
     Ok(())
 }

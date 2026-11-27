@@ -154,6 +154,16 @@ edit-ok = OK
 # $name is the task's name.
 edit-unread = The files of the task '{ $name }' were changed outside Scheduled Tasks, so it cannot be edited here.
 
+## The notification of a failed run; $name is the task's name
+failed-title = A scheduled task failed
+failed-exit = '{ $name }' exited with status { $status }.
+# $signal is the signal's name, KILL.
+failed-signal = '{ $name }' was ended by signal { $signal }.
+failed-timeout = '{ $name }' ran out of time.
+# $result is how systemd says the run ended.
+failed-other = '{ $name }' failed: { $result }.
+failed-output = View Output in Scheduled Tasks shows what it wrote.
+
 ## Delete; $name is the task's name, $unit its timer
 delete-title = Delete Task
 delete-text = Delete the task '{ $name }'? Its timer and service ({ $unit }) are stopped and their files removed.

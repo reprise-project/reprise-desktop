@@ -387,12 +387,25 @@ fn description(name: &str) -> Result<String, Problem> {
     Ok(kept_name(name).replace('%', "%%"))
 }
 
-/// The `.service` and `.timer` files' text for `task`.
-pub fn texts(task: &NewTask) -> Result<(String, String), Problem> {
+/// The argument that has `reprise-schedtasks` tell of a failed run ([`crate::notice`]).
+pub const FAILED: &str = "--failed";
+
+/// `reprise-schedtasks` as found on `PATH`, which a task's service runs after each run.
+pub fn notifier() -> Option<PathBuf> {
+    find_program("reprise-schedtasks", std::env::var_os("PATH").as_deref())
+}
+
+/// The `.service` and `.timer` files' text for `task`. With a `notifier` the service runs it
+/// after each run with [`FAILED`] and the task's name; its failure is ignored.
+pub fn texts(task: &NewTask, notifier: Option<&Path>) -> Result<(String, String), Problem> {
     let desc = description(&task.name)?;
     let exec = exec_start(&task.program, &task.args)?;
+    let tell = [FAILED.to_string(), kept_name(&task.name).to_string()];
+    let after = notifier
+        .and_then(|n| exec_start(n, &tell).ok())
+        .map_or_else(String::new, |e| format!("ExecStopPost=-{e}\n"));
     let service = format!(
-        "{MARKER}\n[Unit]\nDescription={desc}\n\n[Service]\nType=oneshot\nExecStart={exec}\n"
+        "{MARKER}\n[Unit]\nDescription={desc}\n\n[Service]\nType=oneshot\nExecStart={exec}\n{after}"
     );
     let timer = format!(
         "{MARKER}\n[Unit]\nDescription={desc}\n\n[Timer]\n{}\n\n[Install]\nWantedBy=timers.target\n",
@@ -405,8 +418,13 @@ pub fn texts(task: &NewTask) -> Result<(String, String), Problem> {
 /// with [`free_stem`]), the service first, so the timer never points at a missing unit. Each file
 /// is written beside its place, synced and linked in, which fails rather than replace a file
 /// that appeared since. Returns the timer's unit name.
-pub fn write(folders: &Folders, task: &NewTask, taken: &[String]) -> io::Result<String> {
-    let (service, timer) = texts(task).map_err(|p| io::Error::other(format!("{p:?}")))?;
+pub fn write(
+    folders: &Folders,
+    task: &NewTask,
+    taken: &[String],
+    notifier: Option<&Path>,
+) -> io::Result<String> {
+    let (service, timer) = texts(task, notifier).map_err(|p| io::Error::other(format!("{p:?}")))?;
     let dir = &folders.own;
     std::fs::create_dir_all(dir)?;
     let stem = free_stem(folders, &slug(&task.name), taken);
@@ -418,8 +436,9 @@ pub fn write(folders: &Folders, task: &NewTask, taken: &[String]) -> io::Result<
     Ok(format!("{stem}.timer"))
 }
 
-/// The task the pair [`texts`] wrote for it holds: `service` and `timer` are the files' text.
-/// None when a line it writes is missing or reads otherwise, as after an edit by hand.
+/// The task the pair [`texts`] wrote for it holds, with or without a notifier: `service` and
+/// `timer` are the files' text. None when a line it writes is missing or reads otherwise, as
+/// after an edit by hand.
 pub fn parse(service: &str, timer: &str) -> Option<NewTask> {
     let value = |text: &str, key: &str| {
         let mut found = text.lines().filter_map(|l| l.strip_prefix(key));
@@ -435,7 +454,12 @@ pub fn parse(service: &str, timer: &str) -> Option<NewTask> {
         args: words.collect(),
         schedule: Schedule::parse(timer.lines().find(|l| l.starts_with("On"))?)?,
     };
-    (texts(&task).ok()? == (service.to_string(), timer.to_string())).then_some(task)
+    let notifier = match value(service, "ExecStopPost=-:") {
+        Some(line) => Some(PathBuf::from(unquote(&line)?.into_iter().next()?)),
+        None => None,
+    };
+    let written = texts(&task, notifier.as_deref()).ok()?;
+    (written == (service.to_string(), timer.to_string())).then_some(task)
 }
 
 /// The words of an `ExecStart=` value [`exec_start`] wrote, past its `:`.
@@ -493,8 +517,9 @@ pub fn join_args(args: &[String]) -> String {
 /// file is written beside its place, synced and renamed over it. When the timer cannot be
 /// written the service's old text goes back, so the pair never mixes two tasks. The caller has
 /// checked the pair is [`ours`].
-pub fn rewrite(dir: &Path, timer: &str, task: &NewTask) -> io::Result<()> {
-    let (service, timer_text) = texts(task).map_err(|p| io::Error::other(format!("{p:?}")))?;
+pub fn rewrite(dir: &Path, timer: &str, task: &NewTask, notifier: Option<&Path>) -> io::Result<()> {
+    let (service, timer_text) =
+        texts(task, notifier).map_err(|p| io::Error::other(format!("{p:?}")))?;
     let stem = timer.strip_suffix(".timer").filter(|s| is_our_stem(s));
     let stem = stem.ok_or_else(|| io::Error::other("not a task New Task makes"))?;
     let service_path = dir.join(format!("{stem}.service"));

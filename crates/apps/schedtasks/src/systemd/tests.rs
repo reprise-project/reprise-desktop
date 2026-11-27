@@ -651,7 +651,7 @@ fn delete_removes_only_a_pair_new_task_wrote() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
     let folders = own(&dir);
-    let timer = units::write(&folders, &new_task(), &[]).unwrap();
+    let timer = units::write(&folders, &new_task(), &[], None).unwrap();
     assert_eq!(timer, "reprise-task-back-up.timer");
     let made = Spec {
         load: "loaded",
@@ -696,7 +696,7 @@ fn delete_removes_only_a_pair_new_task_wrote() {
             ["backup.service", "backup.timer"],
             "the service named by the unit, not the timer's Unit="
         );
-        units::write(&folders, &new_task(), &[]).unwrap();
+        units::write(&folders, &new_task(), &[], None).unwrap();
         std::fs::remove_file(dir.join(&service)).unwrap();
         delete(&conn, Some(&dir), &timer).await.unwrap();
         assert!(
@@ -713,7 +713,7 @@ fn edit_rewrites_only_a_pair_new_task_wrote_unchanged_since_and_reloads() {
     };
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    let timer = units::write(&own(&dir), &new_task(), &[]).unwrap();
+    let timer = units::write(&own(&dir), &new_task(), &[], None).unwrap();
     let made = Spec {
         load: "loaded",
         fragment: dir.join(&timer).to_string_lossy().into_owned(),

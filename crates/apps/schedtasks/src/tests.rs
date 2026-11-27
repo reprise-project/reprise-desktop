@@ -570,7 +570,7 @@ fn edit_opens_new_task_on_a_task_it_wrote_and_sends_the_change() {
         args: vec!["-c".into(), "echo hi".into()],
         schedule: units::Schedule::Weekly { day: 2, at: (3, 0) },
     };
-    let timer = units::write(&folders, &task, &[]).unwrap();
+    let timer = units::write(&folders, &task, &[], None).unwrap();
     let mut w = window();
     let ours = Task {
         file: tmp.path().join(&timer).to_string_lossy().into_owned(),

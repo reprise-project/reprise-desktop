@@ -335,7 +335,7 @@ impl NewTaskBox {
             args,
             schedule: self.schedule()?,
         };
-        units::texts(&task).map_err(problem)?;
+        units::texts(&task, None).map_err(problem)?;
         Ok(task)
     }
 
