@@ -325,6 +325,7 @@ fn cleanup_places(root: &Path) -> Places {
         cache: Some(cache),
         bins: Some(reprisefs::trash::Bins::new(bin, Vec::new())),
         flatpak: None,
+        flatpak_user: None,
         coredumpctl: None,
         uid: std::os::unix::fs::MetadataExt::uid(&fs::metadata(root).unwrap()),
         home: Some(root.join("home")),
