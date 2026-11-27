@@ -1198,6 +1198,30 @@ pub fn command_program(cmd: &str, home: Option<&std::path::Path>) -> Option<(Str
     Some((word.to_string(), program))
 }
 
+/// The Reprise programs Run starts for the names typed from habit, matched without case and
+/// with a trailing `.exe` dropped; None is the configured terminal.
+const HABITS: [(&str, Option<&str>); 9] = [
+    ("calc", Some("reprise-calc")),
+    ("charmap", Some("reprise-charmap")),
+    ("cmd", None),
+    ("control", Some("reprise-settings")),
+    ("explorer", Some("reprise-explorer")),
+    ("mspaint", Some("reprise-paint")),
+    ("notepad", Some("reprise-notepad")),
+    ("pbrush", Some("reprise-paint")),
+    ("taskmgr", Some("reprise-taskmgr")),
+];
+
+/// Run line `cmd` with its first word, `word`, swapped for the program [`HABITS`] has for it;
+/// None when the word has none.
+pub fn habit_line(cmd: &str, word: &str, terminal: &str) -> Option<String> {
+    let lower = word.to_ascii_lowercase();
+    let name = lower.strip_suffix(".exe").unwrap_or(&lower);
+    let (_, program) = HABITS.iter().find(|(habit, _)| *habit == name)?;
+    let rest = cmd.trim_start().strip_prefix(word)?;
+    Some(format!("{}{rest}", program.unwrap_or(terminal)))
+}
+
 /// The file `xdg-open <file>` opens; None for any other command line.
 pub fn xdg_open_file(argv: &[std::ffi::OsString]) -> Option<&std::path::Path> {
     match argv {
@@ -2644,6 +2668,19 @@ mod tests {
         let p = env(None).pairs();
         assert!(p.contains(&("XDG_SESSION_TYPE", "wayland".into())));
         assert!(p.contains(&("XDG_SEAT", "seat0".into())));
+    }
+
+    #[test]
+    fn a_habit_name_on_a_run_line_becomes_its_reprise_program() {
+        let habit = |cmd: &str, word: &str| habit_line(cmd, word, "foot");
+        assert_eq!(habit("calc", "calc").as_deref(), Some("reprise-calc"));
+        assert_eq!(
+            habit(" Notepad.EXE notes.txt", "Notepad.EXE").as_deref(),
+            Some("reprise-notepad notes.txt"),
+            "any case, .exe dropped, arguments kept"
+        );
+        assert_eq!(habit("cmd", "cmd").as_deref(), Some("foot"), "the terminal");
+        assert_eq!(habit("calcx", "calcx"), None);
     }
 
     #[test]
