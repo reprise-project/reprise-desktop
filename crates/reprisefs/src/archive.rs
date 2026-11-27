@@ -666,14 +666,22 @@ fn sweep_scratch(base: &Path, keep_secs: u64) -> std::io::Result<()> {
         }
         let name = e.file_name();
         let gone = name.as_bytes().ends_with(GONE_SUFFIX.as_bytes());
-        let age = (e.metadata().and_then(|m| m.modified()).ok())
+        let meta = e.metadata().ok();
+        let age = (meta.as_ref().and_then(|m| m.modified().ok()))
             .and_then(|t| now.duration_since(t).ok())
             .map_or(0, |age| age.as_secs());
-        // A held folder is locked from a moment after it is made until its last holder ends.
-        let orphan = name.as_bytes().starts_with(HELD_PREFIX.as_bytes()) && age > ORPHAN_SECS;
-        let sweep = gone || orphan || age > keep_secs;
-        if sweep && open_dir(&e.path()).is_some_and(|d| flock(&d, libc::LOCK_EX)) {
+        // A held folder is locked from a moment after it is made until its last holder ends,
+        // unless it was handed over ([`Scratch::hand_over`]).
+        let held = name.as_bytes().starts_with(HELD_PREFIX.as_bytes())
+            && !meta.as_ref().is_some_and(handed_over);
+        let sweep = gone || (held && age > ORPHAN_SECS) || age > keep_secs;
+        if !sweep {
+            continue;
+        }
+        // The lock stays until the folder is gone, so no hold is taken on it meanwhile.
+        if let Some(d) = open_dir(&e.path()).filter(|d| flock(d, libc::LOCK_EX)) {
             let _ = std::fs::remove_dir_all(e.path());
+            drop(d);
         }
     }
     Ok(())
@@ -685,6 +693,13 @@ const HELD_PREFIX: &str = "copy-";
 /// How old a [`Scratch`] folder nothing holds must be before a sweep takes it: one made this
 /// moment is not locked yet.
 const ORPHAN_SECS: u64 = 60;
+
+/// Whether a scratch folder's metadata `m` marks it handed over ([`Scratch::hand_over`]): its
+/// sticky bit.
+fn handed_over(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o1000 != 0
+}
 
 /// What a [`Scratch`]'s folder is renamed to end with while it is removed.
 const GONE_SUFFIX: &str = ".gone";
@@ -751,6 +766,17 @@ impl Scratch {
         })
     }
 
+    /// Lets go of the folder without removing it, for a program that may read it at any later
+    /// time (the target of a drop): no holder removes it from then on, and it goes with the
+    /// sweep [`SCRATCH_KEEP_SECS`] after its copies were made.
+    pub fn hand_over(self) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::Permissions::from_mode(0o1700);
+        if let Err(e) = std::fs::set_permissions(self.path(), mode) {
+            log::debug!("archive: cannot hand over {}: {e}", self.path().display());
+        }
+    }
+
     pub fn path(&self) -> &Path {
         &self.0.path
     }
@@ -761,7 +787,7 @@ impl Drop for Held {
         let Some(dir) = self.dir.take() else {
             return;
         };
-        if !flock(&dir, libc::LOCK_EX) {
+        if !flock(&dir, libc::LOCK_EX) || dir.metadata().is_ok_and(|m| handed_over(&m)) {
             return;
         }
         let mut gone = self.path.clone().into_os_string();
@@ -1990,6 +2016,33 @@ mod tests {
             Scratch::hold_in(&base, &dir.join("docs")).is_none(),
             "a folder that went is not held again"
         );
+    }
+
+    #[test]
+    fn a_handed_over_scratch_folder_outlives_its_holders_and_goes_with_the_day_old_sweep() {
+        let t = tempfile::tempdir().unwrap();
+        let base = t.path().join("archives");
+        let owner = Scratch::new_in(&base, 3600).unwrap();
+        let dir = owner.path().to_path_buf();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let reader = Scratch::hold_in(&base, &dir.join("a.txt")).expect("held");
+        owner.hand_over();
+        drop(reader);
+        assert!(dir.join("a.txt").exists(), "no holder removes it");
+        let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(hour_ago)
+            .unwrap();
+        sweep_scratch(&base, 3600).unwrap();
+        assert!(dir.exists(), "nor does the sweep of folders nobody holds");
+        let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        std::fs::File::open(&dir)
+            .unwrap()
+            .set_modified(day_ago)
+            .unwrap();
+        sweep_scratch(&base, 3600).unwrap();
+        assert!(!dir.exists(), "the age sweep takes it");
     }
 
     #[test]

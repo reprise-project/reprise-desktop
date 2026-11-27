@@ -2051,7 +2051,7 @@ fn a_drag_out_of_a_compressed_folder_ended_while_copying_stops_and_sends_nothing
     let out = drag_out(&mut ex, &mut ctx, at, 5000);
     let staged = out.staged.expect("staged");
     let (read, fd) = drop_pipe();
-    staged.send(fd, b"x".as_slice().into());
+    staged.send(fd, b"x".as_slice().into(), true);
     staged.end(false);
     assert_eq!(read_all(read), "", "the target gets nothing");
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies.is_empty());
@@ -2061,8 +2061,8 @@ fn a_drag_out_of_a_compressed_folder_ended_while_copying_stops_and_sends_nothing
 }
 
 #[test]
-fn every_read_of_a_drag_out_of_a_compressed_folder_gets_its_copies_once_out_and_a_drop_keeps_them()
-{
+fn every_read_of_a_drag_out_of_a_compressed_folder_gets_its_copies_once_out_and_a_drop_hands_them_over()
+ {
     let mut ctx = test_ctx();
     let (_dir, mut ex, at) = archive_view(&mut ctx);
     let out = drag_out(&mut ex, &mut ctx, at, 5000);
@@ -2070,9 +2070,9 @@ fn every_read_of_a_drag_out_of_a_compressed_folder_gets_its_copies_once_out_and_
     let uri = out.paths[0].to_string_lossy().into_owned();
     // A target that reads the offer as the drag enters it, and again at the drop.
     let (early, fd) = drop_pipe();
-    staged.send(fd, uri.as_bytes().into());
+    staged.send(fd, uri.as_bytes().into(), true);
     let (late, fd) = drop_pipe();
-    staged.send(fd, uri.as_bytes().into());
+    staged.send(fd, uri.as_bytes().into(), true);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
         ex.drag_copies.iter().all(|d| d.out.is_some())
     });
@@ -2090,17 +2090,16 @@ fn every_read_of_a_drag_out_of_a_compressed_folder_gets_its_copies_once_out_and_
     );
     ex.drag_ended();
 
+    // A second drop leaves the first one's copies to the target that took them.
     let next = drag_out(&mut ex, &mut ctx, at, 60_000);
     let staged = next.staged.expect("staged");
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies[0].out.is_some());
     staged.end(true);
     crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.drag_copies.is_empty());
-    assert!(
-        !out.paths[0].exists(),
-        "the next drop's copies replace them"
-    );
-    assert!(next.paths[0].exists());
+    assert!(out.paths[0].exists() && next.paths[0].exists());
     assert!(ex.dialog().is_none(), "no box: the copies came out");
+    drop(ex);
+    assert!(out.paths[0].exists(), "closing the window leaves them too");
 }
 
 #[test]

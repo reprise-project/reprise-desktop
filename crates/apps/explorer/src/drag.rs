@@ -401,7 +401,7 @@ impl Explorer {
 
     /// Follows the drags out of compressed folders: each request waiting gets the copies once
     /// out, a failed copy says why in a box, a drag that ended without a drop stops its copy and
-    /// lets go of it, and the copies of one a target took are held until another drop's are.
+    /// lets go of it, and the copies of one a target took are handed over to it.
     pub(crate) fn poll_drag_copies(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let mut failed = Vec::new();
         for d in &mut self.drag_copies {
@@ -424,9 +424,8 @@ impl Explorer {
                 (Some(false), _) | (Some(true), Some(false)) => {
                     self.drag_copies.remove(i);
                 }
-                (Some(true), Some(true)) => {
-                    self.dropped_copy = Some(self.drag_copies.remove(i).scratch);
-                }
+                // Its target may read the copies at any later time, as a mail attachment does.
+                (Some(true), Some(true)) => self.drag_copies.remove(i).scratch.hand_over(),
                 _ => i += 1,
             }
         }

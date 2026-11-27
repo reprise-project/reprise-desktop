@@ -326,7 +326,7 @@ fn a_second_copy_out_onto_the_clipboard_lets_go_of_the_first_ones_copies() {
     ex.run(Command::Copy, &mut ctx);
     finish_copies(&mut ex, &mut ctx);
     assert!(!first.exists(), "nothing else held the first copies");
-    let second = ex.clip_scratch.as_ref().expect("the clipboard's copies");
+    let second = ex.clip_scratch.0.as_ref().expect("the clipboard's copies");
     assert!(second.path().join("top.txt").exists());
 }
 
@@ -380,7 +380,8 @@ fn copy_to_folder_out_of_a_compressed_folder_lets_go_of_its_copies_once_put() {
 }
 
 #[test]
-fn closing_explorer_lets_go_of_the_copies_on_its_clipboard() {
+fn closing_explorer_hands_the_copies_on_its_clipboard_to_the_day_old_sweep() {
+    use std::os::unix::fs::PermissionsExt;
     let (_dir, zip) = pack();
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
@@ -388,7 +389,14 @@ fn closing_explorer_lets_go_of_the_copies_on_its_clipboard() {
     ex.run(Command::Copy, &mut ctx);
     let copies = copying_into(&ex);
     finish_copies(&mut ex, &mut ctx);
-    assert!(copies.join("top.txt").exists());
     drop(ex);
-    assert!(!copies.exists());
+    assert!(
+        copies.join("top.txt").exists(),
+        "the clipboard history may still paste them"
+    );
+    let mode = std::fs::metadata(&copies)
+        .expect("kept")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o1700, "marked handed over");
 }
