@@ -24,6 +24,7 @@ fallback-test = []
 reprisebus = { path = "../../reprisebus" }
 reprisevideo = { path = "../../reprisevideo" }
 repriseconf = { path = "../../repriseconf" }
+reprisekit = { path = "../../reprisekit" }
 ffmpeg = { package = "ffmpeg-the-third", version = "6", default-features = false, features = ["codec", "format", "software-scaling"] }
 pipewire.workspace = true
 zbus.workspace = true

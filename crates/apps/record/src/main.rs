@@ -32,6 +32,7 @@ use movie::{CodeError, Coding, Movie};
 use pace::{Pace, Pacer};
 use repriseconf::recording::{AudioCodec, Probed, RateMode, Recording};
 use repriseconf::remote::EncoderChoice;
+use reprisekit::tr;
 use reprisevideo::encode::probe::{self, Backend};
 use reprisevideo::encode::rate::RateControl;
 use reprisevideo::encode::{Codec, choice};
@@ -44,6 +45,8 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
+
+reprisekit::strings!("record");
 
 /// What PipeWire's streams name the program.
 const APP: &str = "Screen Recorder";
@@ -200,10 +203,10 @@ fn record(args: &Args, stop: libc::sigset_t) -> Result<Outcome, String> {
             (found, refresh)
         }
     });
-    let cast = portal::Cast::start().map_err(|e| format!("The screen could not be shared: {e}"))?;
+    let cast = portal::Cast::start().map_err(|e| tr!("share-failed", error = e.to_string()))?;
     let screen = (cast.screen(&args.output).cloned())
-        .ok_or_else(|| format!("The screen {} is not shared.", args.output))?;
-    let ((device, order), refresh) = picked.join().map_err(|_| "Finding an encoder failed.")?;
+        .ok_or_else(|| tr!("screen-not-shared", name = args.output.as_str()))?;
+    let ((device, order), refresh) = picked.join().map_err(|_| tr!("encoder-search-failed"))?;
     #[cfg(feature = "fallback-test")]
     let (order, forced) = forced::order(order);
     let (first, modifiers) = first_encoder(&order, codec)?;
@@ -271,7 +274,7 @@ fn outcome(
     lost: (Option<String>, Option<String>),
     closed: Result<(), String>,
 ) -> Result<Outcome, String> {
-    let none = || "No picture of the screen came.".to_string();
+    let none = || tr!("no-picture");
     match (started, writing, ended, closed) {
         (_, false, Ok(End::Stopped), _) => Ok(Outcome::Stopped),
         (false, ..) | (true, false, Ok(_), _) => Err(none()),
@@ -292,7 +295,7 @@ fn microphone_line(why: String) -> String {
         return why;
     }
     log::warn!("the microphone stopped: {why}");
-    "The microphone stopped working; the rest of the recording has only what played.".into()
+    tr!("microphone-stopped")
 }
 
 /// The path FFmpeg opens to write the movie into `fd`, an inherited regular file. Through
@@ -305,9 +308,7 @@ fn movie_url(fd: RawFd) -> Result<PathBuf, String> {
         (libc::fstat(fd, &mut st), st)
     };
     if done != 0 || st.st_mode & libc::S_IFMT != libc::S_IFREG {
-        return Err(format!(
-            "Descriptor {fd} is not a file to write the recording into."
-        ));
+        return Err(tr!("not-a-file", fd = fd.to_string()));
     }
     Ok(PathBuf::from(format!("/proc/self/fd/{fd}")))
 }
@@ -317,7 +318,7 @@ fn first_encoder(
     order: &[(Backend, Vec<u64>)],
     codec: Codec,
 ) -> Result<&(Backend, Vec<u64>), String> {
-    (order.first()).ok_or_else(|| format!("No {} encoder works here.", codec.label()))
+    (order.first()).ok_or_else(|| tr!("no-video-encoder", codec = codec.label()))
 }
 
 /// The sound encoder `r` asks for, opened by `open`, or the reason the recording cannot start.
@@ -333,7 +334,7 @@ fn open_sound(
     )
     .map_err(|e| {
         log::warn!("{e}");
-        format!("No {} encoder works here.", r.audio_codec.label())
+        tr!("no-audio-encoder", codec = r.audio_codec.label())
     })
 }
 
@@ -476,9 +477,7 @@ fn capture_sound(tx: mpsc::Sender<Event>, source: Source) -> Result<Capture, Str
         let captured =
             reprisevideo::monitor::capture(tap, APP, name, sound::RATE, samples, stopped);
         // After a stop from the recorder nothing reads this, or `File::run` passes it over.
-        let why = captured
-            .err()
-            .unwrap_or_else(|| "PipeWire ended the capture.".into());
+        let why = captured.err().unwrap_or_else(|| tr!("capture-ended"));
         let _ = tx.send(match source {
             Source::Played => Event::SoundStopped(why),
             Source::Microphone => Event::MicrophoneStopped(why),
@@ -673,7 +672,7 @@ impl<'a> File<'a> {
     fn frame(&mut self, frame: Frame, at: Instant) -> Result<(), String> {
         let (size, _) = self.cut(frame.size)?;
         if self.movie.as_ref().is_some_and(|m| !m.takes(&frame, size)) {
-            return Err("The screen changed size or format.".into());
+            return Err(tr!("screen-changed"));
         }
         let start = *self.start.get_or_insert(at);
         if self.movie.is_none() && !self.reopen(&frame, at)? {
@@ -797,7 +796,7 @@ impl<'a> File<'a> {
                 }
                 Step::Exhausted => {
                     let label = self.coding.codec.label();
-                    return Err(format!("No {label} encoder could code the screen."));
+                    return Err(tr!("encoder-exhausted", codec = label));
                 }
             };
             match self.open(backend, fourcc, frame.size, size, origin) {
@@ -840,8 +839,7 @@ impl<'a> File<'a> {
     fn cut(&self, frame_size: (u32, u32)) -> Result<Cut, String> {
         match self.area {
             None => Ok((frame_size, (0, 0))),
-            Some(a) => area_pixels(a, self.logical, frame_size)
-                .ok_or_else(|| "The area is outside the screen.".into()),
+            Some(a) => area_pixels(a, self.logical, frame_size).ok_or_else(|| tr!("area-outside")),
         }
     }
 
@@ -864,7 +862,7 @@ impl<'a> File<'a> {
             return Ok(());
         }
         let movie = self.movie.as_ref().expect("opened before the header");
-        let failed = |e: ffmpeg::Error| format!("Cannot write the recording: {e}");
+        let failed = |e: ffmpeg::Error| tr!("write-failed", error = e.to_string());
         let mut output = ffmpeg::format::output_as(self.path, "mp4").map_err(failed)?;
         let mut video = output.add_stream(movie.encoder().codec()).map_err(failed)?;
         let mut parameters = ffmpeg::codec::Parameters::from(movie.encoder());
@@ -914,7 +912,7 @@ impl<'a> File<'a> {
             };
             if written < 0 {
                 let e = ffmpeg::Error::from(written);
-                return Err(format!("Cannot write the recording: {e}"));
+                return Err(tr!("write-failed", error = e.to_string()));
             }
         }
         Ok(())
@@ -948,7 +946,7 @@ impl<'a> File<'a> {
         }
         drained = drained.and(self.write(audio, AUDIO));
         if let Some(output) = self.output.as_mut() {
-            let failed = |e: ffmpeg::Error| format!("Cannot finish the recording: {e}");
+            let failed = |e: ffmpeg::Error| tr!("finish-failed", error = e.to_string());
             let written = std::fs::metadata(self.path).map_or(u64::MAX, |m| m.len());
             if written >= self.faststart_below {
                 index_at_end(output).map_err(failed)?;
