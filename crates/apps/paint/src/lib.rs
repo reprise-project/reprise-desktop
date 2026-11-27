@@ -65,6 +65,8 @@ enum Prompt {
     /// Save changes before `Then`; Yes saves first, No goes ahead, Cancel stays.
     SaveChanges(Then),
     Overwrite(PathBuf, file::Kind),
+    /// The picture's file takes no writes; OK opens Save As on its name, then `Then` runs.
+    ReadOnly(Option<Then>),
     /// A recovery file; Yes opens its picture.
     Recovered(PathBuf),
 }

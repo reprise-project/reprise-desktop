@@ -86,6 +86,10 @@ recycled-name = { $name } (recovered)
 save-changes =
     The text in the { $name } file has changed.
     Do you want to save the changes?
+# OK opens Save As on the file's name.
+read-only =
+    { $name } is read-only.
+    Click OK to save your changes under another name or in another folder.
 overwrite =
     { $path } already exists.
     Do you want to replace it?

@@ -3,7 +3,7 @@
 
 use reprisefs::{archive, archivecopy, recent};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn home() -> PathBuf {
     static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -58,4 +58,17 @@ fn a_background_from_a_compressed_folder_is_kept_in_the_data_dir() {
     assert_eq!(std::fs::read(&again).expect("read"), b"two");
     let own = plain("dunes.png", b"mine");
     assert_eq!(archivecopy::lasting_background(&own).expect("own"), own);
+}
+
+#[test]
+fn a_copy_names_the_compressed_folder_it_came_from() {
+    let copy = copy("report.txt", b"inside");
+    let zip = Path::new("/home/user/Downloads/test.zip");
+    match archivecopy::set_origin(&copy, zip) {
+        Err(e) if e.raw_os_error() == Some(libc::EOPNOTSUPP) => return,
+        made => made.expect("mark the scratch folder"),
+    }
+    assert_eq!(archivecopy::origin(&copy).as_deref(), Some(zip));
+    let own = plain("report.txt", b"mine");
+    assert_eq!(archivecopy::origin(&own), None);
 }

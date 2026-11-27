@@ -2144,6 +2144,19 @@ fn write_document_refuses_a_read_only_file() {
 }
 
 #[test]
+fn is_read_only_is_true_for_a_file_without_write_permission() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let doc = dir.path().join("doc.txt");
+    std::fs::write(&doc, "old").expect("write");
+    assert!(!is_read_only(&doc));
+    assert!(!is_read_only(&dir.path().join("missing.txt")));
+    std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o400)).expect("chmod");
+    let root = std::fs::OpenOptions::new().write(true).open(&doc).is_ok();
+    assert_eq!(is_read_only(&doc), !root);
+}
+
+#[test]
 fn write_document_writes_in_place_in_a_folder_it_cannot_write() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let tmp = tempfile::tempdir().expect("tempdir");

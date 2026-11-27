@@ -232,6 +232,22 @@ fn dangling_target(path: &Path) -> io::Result<PathBuf> {
     Err(io::Error::from_raw_os_error(libc::ELOOP))
 }
 
+/// Whether `path` is a file this process may not write, which [`write_document`] refuses, so a
+/// save over it goes through Save As.
+pub fn is_read_only(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c` is NUL-terminated.
+    let refused = path.is_file() && unsafe { libc::access(c.as_ptr(), libc::W_OK) } != 0;
+    refused
+        && matches!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::EACCES | libc::EPERM | libc::EROFS)
+        )
+}
+
 /// Write `bytes` over a file a user edits so a crash or full disk never leaves it truncated:
 /// temp file, sync, rename, sync the directory. Keeps mode, xattrs and (where permitted) owner
 /// and group. A symlink's target is replaced; hard-linked files and dangling symlinks are written

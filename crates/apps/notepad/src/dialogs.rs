@@ -18,6 +18,9 @@ pub(crate) enum Ask {
     Unheld(Option<PathBuf>),
     /// Save As picked a name another file has; Yes writes over it.
     Overwrite(PathBuf),
+    /// The file takes no writes; OK opens Save As on its name, and the action waiting on the save
+    /// waits on that.
+    ReadOnly,
     NotFound,
     Error,
 }
@@ -256,6 +259,7 @@ impl Notepad {
             Ask::Recovered(file) => self.recovered_answered(file, button),
             Ask::Unheld(save_as) => self.unheld_answered(save_as, button),
             Ask::Overwrite(path) if button == Some(0) => self.saveas_write(path),
+            Ask::ReadOnly => self.read_only_answered(button),
             Ask::Overwrite(_) | Ask::NotFound | Ask::Error => Reply::redraw_all(),
         }
     }

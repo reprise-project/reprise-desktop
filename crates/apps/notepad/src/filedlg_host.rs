@@ -51,13 +51,12 @@ pub(crate) fn start_in(documents: Option<PathBuf>, home: Option<PathBuf>) -> Pat
 }
 
 impl Notepad {
-    /// Where a fresh dialog starts: the current document's folder; None for an Untitled one,
-    /// which opens where Notepad's last dialog was confirmed, else in `default_dir()`.
+    /// Where a fresh dialog starts: the current document's folder, or for a copy out of a
+    /// compressed folder the folder holding the archive. None for an Untitled one (or a copy
+    /// that does not say), which opens where Notepad's last dialog was confirmed, else in
+    /// `default_dir()`.
     pub(crate) fn start_dir(&self) -> Option<PathBuf> {
-        self.path
-            .as_ref()
-            .and_then(|p| p.parent())
-            .map(Path::to_path_buf)
+        (self.path.as_deref()).and_then(reprisefs::archivecopy::dialog_folder)
     }
 
     fn open_at_start(&mut self, fields: Fields) -> FileDlg {
@@ -209,6 +208,11 @@ impl Notepad {
         if !format.holds(self.edit.lines()) {
             let b = self.unheld_box(&path, format);
             self.asks.ask_over(SAVEAS, b, Ask::Unheld(Some(path)));
+            return Reply::redraw_all();
+        }
+        if reprisefs::ops::is_read_only(&path) {
+            let b = self.read_only_box(&path);
+            self.asks.ask_over(SAVEAS, b, Ask::Error);
             return Reply::redraw_all();
         }
         match self.write_to(&path, format) {
