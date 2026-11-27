@@ -17,7 +17,7 @@ type Bundle = FluentBundle<FluentResource>;
 /// Declares the calling crate's `i18n::STRINGS`, the domain [`tr!`](crate::tr) reads; it goes
 /// at the crate root. `domain` names the installed `<lang>/<domain>.ftl` files, `locale/en.ftl`
 /// beside the crate's Cargo.toml is the compiled-in English. Under `cfg(test)` the crate's
-/// strings are English whatever the locale.
+/// strings are English whatever the locale, unless `REPRISE_TEST_LOCALE=1`.
 #[macro_export]
 macro_rules! strings {
     ($domain:literal) => {
@@ -90,7 +90,7 @@ impl Strings {
 
     fn catalog(&self) -> &Catalog {
         self.catalog.get_or_init(|| {
-            if self.english_only {
+            if self.english_only && env("REPRISE_TEST_LOCALE").is_none_or(|v| v == "0") {
                 Catalog::english(self.en)
             } else {
                 Catalog::load(self.domain, self.en, &requested(env), &locale_dirs())
@@ -347,11 +347,15 @@ pub fn is_posix(locale: &str) -> bool {
     matches!(locale.split(['.', '@']).next(), Some("C" | "POSIX"))
 }
 
-/// `reprise/locale` under `$XDG_DATA_HOME`, then under each `$XDG_DATA_DIRS`.
+/// `$REPRISE_LOCALE_DIR`, then `reprise/locale` under `$XDG_DATA_HOME` and each `$XDG_DATA_DIRS`.
 pub fn locale_dirs() -> Vec<PathBuf> {
-    (reprisexdg::data_home().into_iter())
+    let xdg = (reprisexdg::data_home().into_iter())
         .chain(reprisexdg::data_dirs())
-        .map(|d| d.join("reprise/locale"))
+        .map(|d| d.join("reprise/locale"));
+    env("REPRISE_LOCALE_DIR")
+        .map(PathBuf::from)
+        .into_iter()
+        .chain(xdg)
         .collect()
 }
 

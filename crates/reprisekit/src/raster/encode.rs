@@ -10,6 +10,7 @@ pub fn write_preview(canvas: &Canvas, name: &str) {
         .find(|p| p.join("target").is_dir())
         .unwrap_or(&manifest);
     let path = root.join("target").join(name);
+    crate::textlog::page(name);
     std::fs::write(&path, to_png(canvas)).unwrap();
     eprintln!("wrote {}", path.display());
 }

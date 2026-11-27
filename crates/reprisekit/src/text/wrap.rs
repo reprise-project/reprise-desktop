@@ -76,6 +76,9 @@ fn wrap_by(body: &str, max_w: i32, space: i32, measure: impl Fn(&str) -> i32) ->
     if lines.iter().all(|l| l.is_empty()) {
         lines.clear();
     }
+    if lines.len() > 1 && crate::textlog::on() {
+        crate::textlog::wrapped(&lines);
+    }
     lines
 }
 

@@ -1,0 +1,478 @@
+#!/usr/bin/env -S python3 -I
+"""Usage: scripts/pseudo-locale [--out DIR] [--report-only]
+
+Checks how Reprise's text fits a longer language and what text skips the .ftl files. It writes
+a pseudo translation, en-XA, of every domain's locale/en.ftl to DIR/locale/en-XA/ (each message
+accented, about 35% longer and wrapped in ⟦ ⟧; placeables, selectors, & access keys, strftime
+fields and (*.ext) filters kept), renders the gallery and the ignored preview tests under it as
+scripts/pixels-unchanged.sh does, and writes DIR/report.md from the text they drew
+(reprisekit's REPRISE_TEXT_LOG): English left inline, text ellipsized, overflowing its rect or
+missing its end marker. The PNGs are copied to DIR/png/. DIR defaults to tmp/pseudo-locale.
+--report-only rewrites the report from DIR/log/. Preview tests that fail under the pseudo
+locale are listed, not fatal. Not run in CI."""
+import collections
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+TREE = pathlib.Path(__file__).resolve().parent.parent
+TAG = "en-XA"
+OPEN, CLOSE = "⟦", "⟧"
+SKIP_DIRS = {"target", "tmp", ".git", "node_modules", "fixtures"}
+DOMAIN = re.compile(r'\bstrings!\(\s*"([\w-]+)"\s*\)|\bStrings::new\(\s*"([\w-]+)"')
+MESSAGE = re.compile(r"^([A-Za-z][\w-]*)(\s*=\s?)(.*)$")
+# Values that are data, not text: copied as they are.
+VERBATIM = {"number-group-separator", "number-decimal-separator"}
+ACCENTS = dict(zip(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "åƀçðéƒĝĥîĵķļɱñöþǫŕšţûṽŵẋýžÅƁÇÐÉƑĜĤÎĴĶĻṀÑÖÞǪŔŠŢÛṼŴẊÝŽ",
+))
+PSEUDO = set(ACCENTS.values())
+FILLER = "ļöŕéɱ îþšûɱ ðöļöŕ šîţ åɱéţ çöñšéçţéţûŕ "
+STRFTIME = re.compile(r"%[-_0^#]?[A-Za-z]")
+
+
+# Pseudo translation
+
+def closing(s, i):
+    """The index of the `}` closing the placeable opened at s[i], past nested ones and strings."""
+    depth, j = 0, i
+    while j < len(s):
+        c = s[j]
+        if c == '"':
+            j += 1
+            while j < len(s) and s[j] != '"':
+                j += 2 if s[j] == "\\" else 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    raise ValueError(f"unclosed placeable in {s!r}")
+
+
+def text(seg):
+    """A run of pattern text accented, with its access keys, strftime fields and filters kept.
+    Returns the text and how many letters it shows."""
+    out, letters, i = [], 0, 0
+    while i < len(seg):
+        c = seg[i]
+        if c == "&" and i + 1 < len(seg):
+            out.append(seg[i:i + 2])
+            letters += seg[i + 1].isalpha()
+            i += 2
+            continue
+        m = STRFTIME.match(seg, i)
+        if m:
+            out.append(m.group())
+            letters += 6
+            i = m.end()
+            continue
+        if c == "(":
+            end = seg.find(")", i)
+            if end > 0 and "*" in seg[i:end]:
+                out.append(seg[i:end + 1])
+                i = end + 1
+                continue
+        out.append(ACCENTS.get(c, c))
+        letters += c.isalpha()
+        i += 1
+    return "".join(out), letters
+
+
+def placeable(inner):
+    """A placeable's inside: a select's variant patterns pseudo-translated, anything else kept.
+    Returns it and the letters of its longest variant."""
+    depth, k = 0, -1
+    for j, c in enumerate(inner):
+        depth += (c == "{") - (c == "}")
+        if depth == 0 and inner.startswith("->", j):
+            k = j
+            break
+    if k < 0:
+        lit = re.fullmatch(r'(\s*")([^"\\]*)("\s*)', inner)
+        if lit:
+            done, n = text(lit.group(2))
+            return lit.group(1) + done + lit.group(3), n
+        return inner, 0
+    head, rest = inner[:k + 2], inner[k + 2:]
+    parts = re.split(r"(\n\s*\*?\[[^\]]*\])", rest)
+    out, most = [head, parts[0]], 0
+    for key, pat in zip(parts[1::2], parts[2::2]):
+        done, n = pattern(pat)
+        out += [key, done]
+        most = max(most, n)
+    return "".join(out), most
+
+
+def pattern(s):
+    """A Fluent pattern pseudo-translated, and the letters it shows."""
+    out, letters, i = [], 0, 0
+    while i < len(s):
+        j = s.find("{", i)
+        seg = s[i:] if j < 0 else s[i:j]
+        done, n = text(seg)
+        out.append(done)
+        letters += n
+        if j < 0:
+            break
+        end = closing(s, j)
+        inner, n = placeable(s[j + 1:end])
+        out.append("{" + inner + "}")
+        letters += n or 6
+        i = end + 1
+    return "".join(out), letters
+
+
+def padding(letters, body):
+    n = max(1, round(letters * 0.35))
+    fill = (FILLER * (n // len(FILLER) + 1))[:n].rstrip() or FILLER[0]
+    return (" " if " " in body.strip() else "") + fill
+
+
+def pseudo(value):
+    """A message's value (its lines after `=`) pseudo-translated and wrapped in the markers."""
+    body, letters = pattern(value)
+    start = len(body) - len(body.lstrip())
+    end = len(body.rstrip())
+    core = body[start:end]
+    tail = re.search(r"[.:…?!]*$", core).group() if not core.endswith("}") else ""
+    core = core[:len(core) - len(tail)] + padding(letters, core) + tail
+    return body[:start] + OPEN + core + CLOSE + body[end:]
+
+
+def brace_depth(line):
+    return line.count("{") - line.count("}")
+
+
+def continues(lines, j):
+    """Whether line j is an indented line of the message above, or a blank line before one."""
+    indented = lambda l: l[:1] in " \t" and l.strip()
+    return indented(lines[j]) or (not lines[j].strip() and j + 1 < len(lines)
+                                  and indented(lines[j + 1]))
+
+
+def pseudo_ftl(src):
+    lines = src.splitlines(keepends=True)
+    out, i = [], 0
+    while i < len(lines):
+        m = MESSAGE.match(lines[i].rstrip("\n"))
+        if not m:
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i + 1
+        # A placeable's lines continue the message whatever their indent (a select's `}`).
+        depth = brace_depth(lines[i])
+        while j < len(lines) and (depth > 0 or continues(lines, j)):
+            depth += brace_depth(lines[j])
+            j += 1
+        ident, eq, first = m.groups()
+        value = first + "\n" + "".join(lines[i + 1:j])
+        if ident not in VERBATIM and value.strip():
+            value = pseudo(value)
+        out.append(ident + eq + value)
+        i = j
+    return "".join(out)
+
+
+def crate_dirs():
+    for toml in TREE.rglob("Cargo.toml"):
+        if not SKIP_DIRS.intersection(toml.relative_to(TREE).parts) and (toml.parent / "src").is_dir():
+            yield toml.parent
+
+
+def domains():
+    """Each domain a crate declares with strings! (or Strings::new), to its en.ftl."""
+    found = {}
+    for crate in crate_dirs():
+        for rs in (crate / "src").rglob("*.rs"):
+            for m in DOMAIN.finditer(rs.read_text()):
+                found[m.group(1) or m.group(2)] = crate / "locale" / "en.ftl"
+    return {d: p for d, p in found.items() if p.is_file()}
+
+
+def generate(locale_dir):
+    dest = locale_dir / TAG
+    shutil.rmtree(dest, ignore_errors=True)
+    dest.mkdir(parents=True)
+    n = 0
+    for domain, en in sorted(domains().items()):
+        out = pseudo_ftl(en.read_text())
+        (dest / f"{domain}.ftl").write_text(out)
+        n += sum(1 for l in out.splitlines() if MESSAGE.match(l))
+    return n
+
+
+# Rendering
+
+def preview_skips():
+    """The --skip filters scripts/pixels-unchanged.sh passes, read from it so both run alike."""
+    src = (TREE / "scripts" / "pixels-unchanged.sh").read_text()
+    block = re.search(r"^skips=\((.*?)^\)", src, re.S | re.M).group(1)
+    return re.findall(r"--skip\s+(\S+)", block)
+
+
+def render(out):
+    log_dir, png_dir = out / "log", out / "png"
+    for d in (log_dir, png_dir, out / "preview-dir"):
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True)
+    env = dict(os.environ)
+    for var in ("REPRISE_SCHEME", "REPRISE_GALLERY_LOOK", "REPRISE_TEST_FONTS", "LC_ALL"):
+        env.pop(var, None)
+    env.update(
+        REPRISE_LOCALE_DIR=str(out / "locale"),
+        REPRISE_TEST_LOCALE="1",
+        REPRISE_TEXT_LOG=str(log_dir),
+        REPRISE_PREVIEW_DIR=str(out / "preview-dir"),
+        REPRISE_GALLERY_THREADS=env.get("CARGO_BUILD_JOBS", str(os.cpu_count() or 1)),
+        LANGUAGE=TAG,
+        LC_MESSAGES="en_US.UTF-8",
+    )
+    started = time.time() - 1
+    gallery = subprocess.run(["cargo", "run", "-q", "-p", "reprisekit", "--example", "gallery"],
+                             cwd=TREE, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                             text=True)
+    if gallery.returncode:
+        sys.exit(f"gallery render failed:\n{gallery.stderr[-4000:]}")
+    skips = [a for s in preview_skips() for a in ("--skip", s)]
+    test_log = out / "tests.log"
+    with open(test_log, "w") as f:
+        subprocess.run(["cargo", "test", "-q", "--workspace", "--lib", "--bins", "--tests",
+                        "--no-fail-fast", "--", "--ignored", *skips],
+                       cwd=TREE, env=env, stdout=f, stderr=subprocess.STDOUT)
+    for png in (TREE / "target").glob("*.png"):
+        if png.stat().st_mtime >= started:
+            shutil.copy2(png, png_dir)
+
+
+# Report
+
+def pseudo_marked(line):
+    return OPEN in line or CLOSE in line or any(c in PSEUDO for c in line)
+
+
+def unescape(s):
+    return re.sub(r"\\(.)", lambda m: {"t": "\t", "n": "\n"}.get(m.group(1), m.group(1)), s)
+
+
+def program_crate(tsv):
+    program = re.sub(r"-\d+$", "", tsv.stem)
+    program = re.sub(r"-[0-9a-f]{16}$", "", program)
+    return "reprisekit (gallery)" if program == "gallery" else program.replace("_", "-")
+
+
+LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
+HOLE = re.compile(r"\{[^{}]*\}")
+TEST_PATH = re.compile(r"(^|/)(tests?|examples|benches)(/|$)|(^|/|_)tests?\.rs$|_tests?/")
+
+
+def literal_index():
+    """Each string literal in the tree's .rs files (and its pieces between format holes, access
+    keys dropped) to where it is; a literal in an inline test module gets " (test)"."""
+    exact, pieces = collections.defaultdict(list), collections.defaultdict(list)
+    for rs in TREE.rglob("*.rs"):
+        rel = rs.relative_to(TREE)
+        if SKIP_DIRS.intersection(rel.parts):
+            continue
+        src = rs.read_text(errors="replace").splitlines()
+        tests = False
+        for n, line in enumerate(src, 1):
+            if line.lstrip().startswith("//"):
+                continue
+            if line.strip() == "#[cfg(test)]" and n < len(src) and re.match(r"\s*mod \w+ \{", src[n]):
+                tests = True
+            for m in LITERAL.finditer(line):
+                lit = m.group(1).replace('\\"', '"').replace("\\\\", "\\")
+                lit = re.sub(r"&(.)", r"\1", lit)
+                at = f"{rel}:{n}" + (" (test)" if tests else "")
+                exact[lit].append(at)
+                for piece in HOLE.split(lit):
+                    piece = piece.strip()
+                    if len(piece) >= 4 and re.search(r"[A-Za-z]{2}", piece):
+                        pieces[piece].append(at)
+    return exact, pieces
+
+
+def source_of(line, exact, pieces):
+    """Where `line`'s text likely comes from: an exact literal, else the longest literal piece
+    found in it on word bounds."""
+    if line in exact:
+        return exact[line]
+    words = line.split(" ")
+    best = None
+    for a in range(len(words)):
+        for b in range(len(words), a, -1):
+            sub = " ".join(words[a:b]).strip(" .,:;()")
+            if sub in pieces and (best is None or len(sub) > len(best)):
+                best = sub
+                break
+    return pieces[best] if best else []
+
+
+def crate_of(path, cache={}):
+    p = (TREE / path.split(":")[0]).parent
+    while p != TREE.parent:
+        if p in cache:
+            return cache[p]
+        toml = p / "Cargo.toml"
+        if toml.is_file():
+            m = re.search(r'^name\s*=\s*"([^"]+)"', toml.read_text(), re.M)
+            cache[p] = m.group(1) if m else p.name
+            return cache[p]
+        p = p.parent
+    return "?"
+
+
+def failed_tests(log):
+    if not log.is_file():
+        return []
+    names = re.findall(r"^test (\S+) \.\.\. FAILED$", log.read_text(errors="replace"), re.M)
+    if not names:
+        names = re.findall(r"^    (\S+)$", log.read_text(errors="replace"), re.M)
+    return sorted(set(names))
+
+
+def report(out, messages):
+    rows = []  # (program crate, page, kind, text, px)
+    for tsv in sorted((out / "log").glob("*.tsv")):
+        crate = program_crate(tsv)
+        for row in tsv.read_text().splitlines():
+            parts = row.split("\t")
+            if len(parts) == 4:
+                rows.append((crate, parts[0], parts[1], unescape(parts[2]), parts[3]))
+    exact, pieces = literal_index()
+    # The pseudo messages' lines as Fluent joins them, to tell a line ending a paragraph.
+    ftl_text = "\n".join(l.strip() for f in (out / "locale" / TAG).glob("*.ftl")
+                         for l in f.read_text().splitlines())
+    leftovers = collections.defaultdict(lambda: collections.defaultdict(set))
+    mixed = collections.defaultdict(lambda: collections.defaultdict(set))
+    sample = collections.defaultdict(lambda: collections.defaultdict(set))
+    clipped = collections.defaultdict(dict)  # crate -> (page, text, how) -> px
+    pages = set()
+    drawn_on = collections.defaultdict(set)
+    wraps = collections.defaultdict(list)
+    for crate, page, kind, line, _ in rows:
+        pages.add((crate, page))
+        if kind == "drawn":
+            drawn_on[(crate, page)].add(line)
+        elif kind == "wrapped":
+            wraps[(crate, page)].append(line.split("\n"))
+    for crate, page, kind, line, px in rows:
+        if kind == "wrapped":
+            continue
+        if kind == "ellipsized":
+            if pseudo_marked(line):
+                clipped[crate][(page, line, "ellipsized")] = int(px)
+            continue
+        over, cut = (int(v) for v in px.split(","))
+        if pseudo_marked(line):
+            if over > 0:
+                clipped[crate][(page, line, "overflows")] = over
+            elif cut > 0:
+                clipped[crate][(page, line, "ink cut beside its rect")] = 0
+            elif OPEN in line and CLOSE not in line.split(OPEN)[-1] and not line.endswith("..."):
+                into = [w for w in wraps[(crate, page)] if line in w[:-1]]
+                if not into:
+                    if line.strip() + "\n" not in ftl_text:
+                        clipped[crate][(page, line, "end marker missing")] = 0
+                elif not any(w[-1] in drawn_on[(crate, page)] for w in into):
+                    clipped[crate][(page, line, "wrapped, last lines not drawn")] = 0
+            if re.search(r"[A-Za-z]{2,}", line):
+                mixed[crate][line].add(page)
+            continue
+        if not re.search(r"[A-Za-z]{2,}", line):
+            continue
+        where = source_of(line, exact, pieces)
+        test = lambda w: w.endswith(" (test)") or TEST_PATH.search(w.split(":")[0])
+        own = [w for w in where if crate_of(w) == crate.split(" ")[0]]
+        product = [w for w in own if not test(w)] or [w for w in where if not test(w) and not own]
+        if where and not product:
+            sample[crate][line].add(page)
+        else:
+            owner = crate_of(product[0]) if product else crate
+            leftovers[owner][(line, ", ".join(product[:2]) or "source not found")].add(page)
+
+    sha = subprocess.run(["git", "rev-parse", "--short=12", "HEAD"], cwd=TREE,
+                         capture_output=True, text=True).stdout.strip()
+    pngs = len(list((out / "png").glob("*.png")))
+    failed = failed_tests(out / "tests.log")
+    md = [f"# Pseudo-locale report ({TAG})", "",
+          f"Tree {sha}, {time.strftime('%Y-%m-%d %H:%M')}. {messages} messages pseudo-translated; "
+          f"{len(pages)} pages drew text ({pngs} PNGs in png/); {len(failed)} preview tests failed "
+          "under the pseudo locale.", "",
+          "- English left inline: drawn lines with no pseudo text whose source literal is outside "
+          "tests and examples (or not found), by the crate holding the literal (the drawing "
+          "program's own crate first). A line whose literal is in the drawing crate's tests or "
+          "examples counts as sample text.",
+          "- Mixed: a pseudo line holding unaccented words: a placeable filled with inline "
+          "English, a name, a key or data (file names, sample text), or text joined to it.",
+          "- Clipped: a pseudo line ellipsized, drawn past its rect (px), wrapped with its last "
+          "lines not drawn, or missing its end marker in no wrap.", "",
+          "## Counts per crate", "",
+          "| crate | English left inline | mixed | ellipsized | overflows | ink cut | lines lost "
+          "| end marker missing |",
+          "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    crates = sorted(set(leftovers) | set(mixed) | set(clipped))
+    for c in crates:
+        kinds = collections.Counter(k[2] for k in clipped[c])
+        md.append(f"| {c} | {len(leftovers[c])} | {len(mixed[c])} | {kinds['ellipsized']} | "
+                  f"{kinds['overflows']} | {kinds['ink cut beside its rect']} | "
+                  f"{kinds['wrapped, last lines not drawn']} | "
+                  f"{kinds['end marker missing']} |")
+    worst = sorted(((px, c, k) for c in clipped for k, px in clipped[c].items() if px > 0),
+                   reverse=True)
+    md += ["", "## Worst clipped (px past the room)", ""]
+    for px, c, (page, line, how) in worst[:40]:
+        md.append(f"- {px} px, {how}: `{line}` ({c}, {page})")
+
+    def pages_of(ps):
+        ps = sorted(ps)
+        return ", ".join(ps[:3]) + (f" (+{len(ps) - 3})" if len(ps) > 3 else "")
+
+    for c in crates:
+        md += ["", f"## {c}"]
+        if leftovers[c]:
+            md += ["", "### English left inline", ""]
+            for (line, where), ps in sorted(leftovers[c].items()):
+                md.append(f"- `{line}` at {where}; {pages_of(ps)}")
+        if mixed[c]:
+            md += ["", "### Mixed", ""]
+            for line, ps in sorted(mixed[c].items()):
+                md.append(f"- `{line}`; {pages_of(ps)}")
+        if clipped[c]:
+            md += ["", "### Clipped", ""]
+            for (page, line, how), px in sorted(clipped[c].items(), key=lambda kv: (-kv[1], kv[0])):
+                md.append(f"- {page}: {how}{f' {px} px' if px else ''}: `{line}`")
+    if sample:
+        md += ["", "## Sample text from tests and the gallery (unmarked, for reference)", ""]
+        for c in sorted(sample):
+            md.append(f"- {c}: {len(sample[c])} lines")
+    if failed:
+        md += ["", "## Preview tests that failed under the pseudo locale", ""]
+        md += [f"- {t}" for t in failed]
+    (out / "report.md").write_text("\n".join(md) + "\n")
+    print(f"{out / 'report.md'}: {sum(map(len, leftovers.values()))} English left inline, "
+          f"{sum(map(len, clipped.values()))} clipped")
+
+
+def main():
+    args = sys.argv[1:]
+    out = TREE / "tmp" / "pseudo-locale"
+    if "--out" in args:
+        out = pathlib.Path(args[args.index("--out") + 1]).resolve()
+    messages = generate(out / "locale")
+    if "--report-only" not in args:
+        render(out)
+    report(out, messages)
+
+
+if __name__ == "__main__":
+    main()
