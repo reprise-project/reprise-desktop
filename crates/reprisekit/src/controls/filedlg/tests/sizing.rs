@@ -97,6 +97,25 @@ fn a_dialog_held_under_its_places_tiles_scrolls_them_and_fits_its_rows() {
     );
 }
 
+/// The extra rows' access nodes sit where they draw in a window held under its minimum.
+#[test]
+fn a_shortened_dialogs_extra_rows_report_where_they_draw() {
+    use crate::access::{Tree, accesskit::Role};
+    let t = text();
+    let mut d = with_extra();
+    six_places(&mut d);
+    let (w, h) = d.min_client();
+    let fitted = Rect::new(0, 0, w, 396);
+    d.set_size((w, 396));
+    let mut tree = Tree::window("Open", (w, 396));
+    d.access(&mut tree, fitted, &t, 11);
+    let check = tree
+        .find(Role::CheckBox, "Open read-only")
+        .expect("the extra check box");
+    let b = tree.get(check).and_then(|n| n.bounds()).expect("bounds");
+    assert_eq!(b.y0 as i32, EXTRA_Y - (h - 396));
+}
+
 /// The dialog of `a_dialog_held_under_its_places_tiles_scrolls_them_and_fits_its_rows`
 /// drawn under each interface at 1x and 2x, its places bar scrolled one tile down.
 #[test]

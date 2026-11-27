@@ -92,10 +92,10 @@ impl FileDlg {
             "cancel",
             access::button(lay.cancel, &cancel_label(), true, false),
         );
-        let extra = self
-            .extra
-            .as_ref()
-            .and_then(|(f, _)| f.access(tree, root, text, px));
+        let extra = self.extra.as_ref().and_then(|(f, _)| {
+            f.placed_at(self.extra_origin(r))
+                .access(tree, root, text, px)
+        });
         tree.set_focus(match self.focus {
             Focus::FileName => filename,
             Focus::FileType => filetype.unwrap_or(filename),
