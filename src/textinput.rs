@@ -666,8 +666,13 @@ impl ObjectData<State> for TiPeek {
             .entry(msg.sender_id.clone())
             .or_default()
             .take(msg.opcode, &ints);
+        let commit = msg.opcode == zwp_text_input_v3::REQ_COMMIT_OPCODE;
         let inner = self.inner.clone();
-        forward(self, inner, handle, data, client_id, msg)
+        let ret = forward(self, inner, handle, data, client_id, msg);
+        if commit {
+            data.emoji_caret_heard();
+        }
+        ret
     }
 
     fn destroyed(
@@ -682,6 +687,21 @@ impl ObjectData<State> for TiPeek {
             .clone()
             .destroyed(handle, data, client_id, object_id);
     }
+}
+
+/// Whether `surface`'s client made a text input, so entering it can bring a caret report.
+pub fn has_text_input(state: &State, surface: &WlSurface) -> bool {
+    let Some(client) = surface.client() else {
+        return false;
+    };
+    let mut found = false;
+    let _ = state
+        .dh
+        .backend_handle()
+        .with_all_objects_for(client.id(), |o| {
+            found |= o.interface().name == ZwpTextInputV3::interface().name;
+        });
+    found
 }
 
 pub fn peek_text_inputs(state: &State, client: &Client) {
