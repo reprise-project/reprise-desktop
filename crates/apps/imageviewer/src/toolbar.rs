@@ -96,13 +96,13 @@ fn rebar_of(cm: &reprisekit::metrics::ControlMetrics) -> Rebar {
 impl Viewer {
     /// The buttons with their icons from `ctx.icons`, greyed as their rows are.
     pub(crate) fn build_toolbar(&mut self, ctx: &mut Ctx) {
+        let px = toolbar::big_icon(ctx.theme.text);
         self.tools.bar.items = BUTTONS
             .iter()
             .map(|b| match b {
                 Some((id, (t, r), icons)) => Item::Button {
                     id,
-                    icon: (ctx.icons.rank(icons).into_iter())
-                        .find_map(|n| ctx.icons.get(n, toolbar::BIG_ICON)),
+                    icon: (ctx.icons.rank(icons).into_iter()).find_map(|n| ctx.icons.get(n, px)),
                     label: None,
                     enabled: self.row_live(*t, *r),
                 },

@@ -236,19 +236,17 @@ pub fn closest(sources: &[IconSource], px: i32) -> Option<Canvas> {
         .map(|s| s.to_canvas(px))
 }
 
-/// The px an item's icon is drawn at, each once and ascending: a tray cell's 16 px and the
+/// The px an item's icon is drawn at, each once and ascending: a tray cell's `cell` px and the
 /// Customize list's `list` px, at each draw scale in `scales`.
-pub fn icon_sizes(scales: &[i32], list: i32) -> Vec<i32> {
-    let mut sizes: Vec<i32> = scales
-        .iter()
-        .flat_map(|&s| [reprisekit::icon::ICON_SIZE * s, list * s])
-        .collect();
+pub fn icon_sizes(scales: &[i32], cell: i32, list: i32) -> Vec<i32> {
+    let mut sizes: Vec<i32> = scales.iter().flat_map(|&s| [cell * s, list * s]).collect();
     sizes.sort_unstable();
     sizes.dedup();
     sizes
 }
 
-/// [`icon_sizes`] at the outputs' draw scales (1 with no output) and the text size's list icon.
+/// [`icon_sizes`] at the outputs' draw scales (1 with no output) and the text size's cell and
+/// list icons.
 pub(super) fn drawn_sizes(state: &State) -> Vec<i32> {
     let mut scales: Vec<i32> = (state.scene.outputs().iter())
         .map(|o| state.draw_scale_at(Some(o)))
@@ -256,8 +254,9 @@ pub(super) fn drawn_sizes(state: &State) -> Vec<i32> {
     if scales.is_empty() {
         scales.push(1);
     }
-    let list = shellview::list_icon_px(state.config.theme.controls().text);
-    icon_sizes(&scales, list)
+    let theme = &state.config.theme;
+    let list = shellview::list_icon_px(theme.controls().text);
+    icon_sizes(&scales, theme.icon_size(), list)
 }
 
 /// After a text size or an output change: has the D-Bus thread decode item icons at the new

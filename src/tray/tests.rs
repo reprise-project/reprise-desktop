@@ -31,9 +31,10 @@ fn a_remembered_icon_file_is_never_read_on_the_loop() {
 
 #[test]
 fn icon_sizes_are_the_cell_and_list_px_at_each_scale() {
-    assert_eq!(icon_sizes(&[1], 16), [16]);
-    assert_eq!(icon_sizes(&[1, 2], 24), [16, 24, 32, 48]);
-    assert_eq!(icon_sizes(&[2, 2], 16), [32]);
+    assert_eq!(icon_sizes(&[1], 16, 16), [16]);
+    assert_eq!(icon_sizes(&[1, 2], 16, 24), [16, 24, 32, 48]);
+    assert_eq!(icon_sizes(&[2, 2], 16, 16), [32]);
+    assert_eq!(icon_sizes(&[1, 2], 23, 25), [23, 25, 46, 50]);
 }
 
 #[test]
@@ -56,12 +57,17 @@ fn a_text_size_or_scale_change_sends_the_new_icon_sizes() {
     let large = crate::config::Config::parse("[accessibility]\ntext_size = 150\n").unwrap();
     crate::configwatch::reload(&mut h.state, large);
     let list = shellview::list_icon_px(h.state.config.theme.controls().text);
-    assert!(list > 16, "the list icon grows at 150%, got {list}");
-    assert_eq!(sizes(), [vec![16, list]]);
+    let cell = h.state.config.theme.icon_size();
+    assert_eq!(
+        (cell, list),
+        (23, 25),
+        "the cell and list icons grow at 150%"
+    );
+    assert_eq!(sizes(), [vec![cell, list]]);
 
     output.change_current_state(None, None, Some(Scale::Fractional(2.0)), None);
     h.state.update_layout();
-    assert_eq!(sizes(), [vec![32, 2 * list]]);
+    assert_eq!(sizes(), [vec![2 * cell, 2 * list]]);
 }
 
 #[test]

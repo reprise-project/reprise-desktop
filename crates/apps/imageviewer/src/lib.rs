@@ -75,8 +75,9 @@ struct Viewer {
     timer: Option<Timer>,
     bar: Bar,
     tools: toolbar::Tools,
-    /// The icons' scale, so a new one fetches them again.
-    icons_at: i32,
+    /// The icons' scale and size ([`reprisekit::controls::toolbar::big_icon`]), so a new one
+    /// fetches them again.
+    icons_at: (i32, i32),
     /// The picture's context menu, each row the menu bar row it stands for.
     context: Option<Popup<(usize, usize)>>,
     status_bar: bool,
@@ -126,7 +127,7 @@ impl Viewer {
             timer: None,
             bar: Bar::new(menus()),
             tools: toolbar::Tools::new(),
-            icons_at: 0,
+            icons_at: (0, 0),
             context: None,
             status_bar: true,
             full: false,
@@ -469,8 +470,12 @@ impl Extended for Viewer {
     fn follow_scale(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) {
         if win == MAIN {
             self.scale = scale.max(1);
-            if self.icons_at != self.scale {
-                self.icons_at = self.scale;
+            let at = (
+                self.scale,
+                reprisekit::controls::toolbar::big_icon(ctx.theme.text),
+            );
+            if self.icons_at != at {
+                self.icons_at = at;
                 self.build_toolbar(ctx);
             }
         }

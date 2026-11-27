@@ -42,6 +42,8 @@ pub struct Chrome {
     pub dirty: bool,
     /// The theme and active state the chrome was last drawn in.
     pub drawn: Option<(Theme, bool)>,
+    /// The size the toolbar's icons were fetched at ([`toolbar::big_icon`]); 0 before the first.
+    pub icon_px: i32,
 }
 
 impl Chrome {
@@ -58,6 +60,7 @@ impl Chrome {
             menu: None,
             dirty: true,
             drawn: None,
+            icon_px: 0,
         }
     }
 }
@@ -105,9 +108,9 @@ pub struct Layout {
 /// Copy, Paste and Find, then Settings (laid out at the right edge); with the tabs in the
 /// caption, New Tab and its menu first.
 pub fn toolbar_items(ctx: &mut Ctx, caption: bool) -> Vec<Item> {
-    let mut icon = |icons: &[&str]| {
-        (ctx.icons.rank(icons).into_iter()).find_map(|n| ctx.icons.get(n, toolbar::BIG_ICON))
-    };
+    let px = toolbar::big_icon(ctx.theme.text);
+    let mut icon =
+        |icons: &[&str]| (ctx.icons.rank(icons).into_iter()).find_map(|n| ctx.icons.get(n, px));
     let new = Item::DropButton {
         id: NEW,
         icon: icon(&["tab-new", "list-add"]),

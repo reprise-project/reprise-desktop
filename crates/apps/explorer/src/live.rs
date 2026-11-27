@@ -13,7 +13,7 @@ use repriseapp::{Ctx, Event, KeyInput, PointerInput, Reply};
 use reprisefs::listing::Item;
 use reprisekit::controls::form::FocusedEdit;
 use reprisekit::controls::shellview::{self, Mode};
-use reprisekit::controls::{taskpane, treeview};
+use reprisekit::controls::{taskpane, toolbar, treeview};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -100,7 +100,7 @@ impl Explorer {
     /// their icons at that scale (List and Details' at the text's size), icon files once a thread
     /// decodes them, and thumbnails made at another one are asked for again. A new icon theme
     /// fetches the chrome again and re-lists. A new text size rebuilds the task pane and fetches
-    /// the Folders tree's icons at their size.
+    /// the toolbar's and the Folders tree's icons at their size.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         let list = shellview::list_icon_px(ctx.theme.text);
         self.list_icons
@@ -108,7 +108,9 @@ impl Explorer {
         self.draw_list_icons(ctx);
         let theme = std::sync::Arc::downgrade(&ctx.icons.theme());
         let rethemed = (self.drawn_theme.replace(theme.clone())).is_some_and(|t| !t.ptr_eq(&theme));
-        if std::mem::replace(&mut self.drawn_scale, scale) != scale || rethemed {
+        let bar_px = toolbar::big_icon(ctx.theme.text);
+        let regrown = std::mem::replace(&mut self.toolbar_px, bar_px) != bar_px;
+        if std::mem::replace(&mut self.drawn_scale, scale) != scale || rethemed || regrown {
             self.rescale_chrome(ctx);
             self.request_thumbs(scale);
         }

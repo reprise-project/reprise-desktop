@@ -126,10 +126,11 @@ pub(crate) fn draw_client_glass(
     });
 }
 
-/// Where a title may run in `style`'s caption: from its left edge to the first caption button.
-pub(crate) fn title_span(style: &Style, geom: &FrameGeometry, s: i32) -> (i32, i32) {
+/// Where a title may run in `style`'s caption beside an icon `grow` px past its 100% edge: from
+/// its left edge to the first caption button.
+pub(crate) fn title_span(style: &Style, geom: &FrameGeometry, s: i32, grow: i32) -> (i32, i32) {
     (
-        geom.caption.x + style.caption_title.text_x * s,
+        geom.caption.x + style.caption_title.text_x * s + grow,
         geom.buttons[0].x,
     )
 }
@@ -168,7 +169,7 @@ fn draw_title(
     let m = usize::from(state.maximized);
     let translucent = style.glass.is_some();
     let spec = &style.caption_text;
-    let (mut title_x, first_button_x) = title_span(style, geom, s);
+    let (mut title_x, first_button_x) = title_span(style, geom, s, theme.metrics.icon_grow);
     let size = spec.size_px * s as u32;
     if style.centred_title {
         let tw = caption_text.measure(state.title, spec.bold, size);
@@ -216,10 +217,11 @@ fn draw_title(
 
     let icon_px = theme.icon_size();
     let (ix, iy) = t.icon[m];
+    // The caption's growth past the icon's, split above and below it.
     let grown = if theme.text.is_one() {
         0
     } else {
-        geom.caption.height - style.metrics.caption_height * s
+        geom.caption.height - style.metrics.caption_height * s - theme.metrics.icon_grow
     };
     let (icon_x, icon_y) = (geom.caption.x + ix * s, geom.caption.y + iy * s + grown / 2);
     let fallback;
@@ -1309,12 +1311,14 @@ mod tests {
     }
 
     #[test]
-    fn a_grown_caption_keeps_its_icon_centred_on_the_growth() {
-        let mut icon = Canvas::new(16, 16);
-        icon.fill_rect(icon.bounds(), crate::theme::Color::rgb(0xFF, 0, 0xFF));
-        let magenta = icon.get(0, 0);
+    fn a_grown_caption_keeps_its_grown_icon_centred_on_the_growth() {
+        let magenta = crate::theme::Color::rgb(0xFF, 0, 0xFF);
         let top_row = |look: Interface, pct: u32| {
             let theme = theme_for(look).with_text_size(pct);
+            let px = theme.icon_size();
+            let mut icon = Canvas::new(px as u32, px as u32);
+            icon.fill_rect(icon.bounds(), magenta);
+            let magenta = icon.get(0, 0);
             let s = theme.look.style().unwrap();
             let g = FrameGeometry::layout(&theme.metrics, 800, 400, false, Chrome::WINDOW);
             let text = TextRenderer::load(&s.caption_text.font());
@@ -1324,14 +1328,26 @@ mod tests {
                 ..state(true, false)
             };
             draw_frame(&mut c, s, &theme, &text, &g, &st);
-            let row = (0..g.client.y).find(|&y| c.get(8, y) == magenta);
-            (row.expect("the icon shows"), g.caption.height)
+            let rows: Vec<i32> = (0..g.client.y)
+                .filter(|&y| c.get(8, y) == magenta)
+                .collect();
+            assert_eq!(
+                rows.len() as i32,
+                px,
+                "{look:?} {pct}%: the whole icon shows"
+            );
+            (rows[0], g.caption.height, px)
         };
         for look in [Interface::Glass, Interface::Blue] {
-            let (y, h) = top_row(look, 100);
+            let (y, h, px) = top_row(look, 100);
             for pct in [150, 200] {
-                let (big_y, big_h) = top_row(look, pct);
-                assert_eq!(big_y - y, (big_h - h) / 2, "{look:?} {pct}%");
+                let (big_y, big_h, big_px) = top_row(look, pct);
+                assert!(big_px > px, "{look:?} {pct}%: the icon grows");
+                assert_eq!(
+                    big_y - y,
+                    (big_h - h - (big_px - px)) / 2,
+                    "{look:?} {pct}%"
+                );
             }
         }
     }

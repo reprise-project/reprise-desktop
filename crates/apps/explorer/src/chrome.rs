@@ -33,8 +33,9 @@ pub(crate) fn address_icon(
 
 impl Explorer {
     pub(crate) fn build_toolbar(&mut self, ctx: &mut Ctx) {
+        let px = toolbar::big_icon(ctx.theme.text);
         let (waits, icons) = (&mut self.chrome_waits, &mut ctx.icons);
-        let mut icon = |names: &[&str]| chrome_icon_unread(waits, icons, names, 24);
+        let mut icon = |names: &[&str]| chrome_icon_unread(waits, icons, names, px);
         let (back, forward, up, folders) = (
             icon(&["go-previous"]),
             icon(&["go-next"]),
@@ -42,7 +43,7 @@ impl Explorer {
             icon(&["folder"]),
         );
         // Few themes carry a view icon, so the drawn one stands in rather than the placeholder.
-        let views = (waits.first(icons, &["view-list"], 24)).or_else(|| Some(viewsicon::draw24()));
+        let views = (waits.first(icons, &["view-list"], px)).or_else(|| Some(viewsicon::draw24()));
         self.toolbar.items = vec![
             toolbar::Item::DropButton {
                 id: toolbar::BACK,

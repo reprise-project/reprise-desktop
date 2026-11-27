@@ -184,7 +184,8 @@ pub(crate) fn draw_taskbar_on(
         }
     }
 
-    let task_px = style.taskbar.task_icon * s;
+    let shape = style.taskbar.with_icon_grow(theme.metrics.icon_grow / s);
+    let task_px = shape.task_icon * s;
     let mut task_fallback: Option<Canvas> = None;
     let count = layout.tasks.len().min(state.tasks.len());
     let float = state.task_float.filter(|&(i, _)| i < count);
@@ -310,7 +311,7 @@ pub(crate) fn draw_taskbar_on(
             State::Checked | State::CheckedHot | State::Attention
         ) && style.task_nudge;
         let o = if pushed || held { s } else { 0 };
-        let lb = style.taskbar.labelled;
+        let lb = shape.labelled;
         let narrow = r.width < (lb.icon_x + lb.icon_box) * s;
         let icon_x = if narrow || (layout.icons_only && style.taskbar.icon_button.is_some()) {
             r.x + (r.width - task_px) / 2

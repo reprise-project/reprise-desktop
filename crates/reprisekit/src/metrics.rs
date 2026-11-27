@@ -279,11 +279,13 @@ impl ToolbarMetrics {
         split_arrow_dy: 1,
     };
 
-    /// A strip whose labels grow by `u`: their 13 px line grows, the 24 px icon box and pads stay.
+    /// The strip's label line at 100% text.
+    pub const LINE: i32 = 13;
+
+    /// A strip whose labels grow by `u`: their [`Self::LINE`] grows, the pads stay.
     fn grown(self, u: crate::theme::TextUnits) -> ToolbarMetrics {
-        const LINE: i32 = 13;
         ToolbarMetrics {
-            height: self.height + u.len(LINE) - LINE,
+            height: self.height + u.len(Self::LINE) - Self::LINE,
             ..self
         }
     }

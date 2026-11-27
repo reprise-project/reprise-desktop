@@ -136,7 +136,7 @@ pub fn layout(theme: &Theme, geom: &FrameGeometry, n: usize) -> Layout {
         share
     };
     let grow = theme.line_growth();
-    let margin = ((cap.height - theme.icon_size() - (6 + grow) * s) / 2).max(0);
+    let margin = ((cap.height - (crate::icon::ICON_SIZE + 6 + grow) * s) / 2).max(0);
     let (y, h) = (cap.y + margin, cap.height - 2 * margin);
     let (cw, ch) = caption_tab_close(&theme.paint(), &theme.metrics, grow);
     let tabs: Vec<Rect> = (0..n as i32)

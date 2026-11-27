@@ -384,6 +384,7 @@ impl Theme {
             line_growth: self.line_growth(),
             ..shape
         }
+        .with_icon_grow(self.metrics.icon_grow / self.scale.max(1))
     }
 
     /// [`Theme::with_text_size`] for a bar at the look's own height: a bar that sets the clock on

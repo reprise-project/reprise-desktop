@@ -1,5 +1,6 @@
 //! Theme data: the Reprise Standard color scheme, pixel metrics and fonts.
 
+use crate::icon::ICON_SIZE;
 use crate::paint::Paint;
 use crate::raster::Rect;
 
@@ -240,7 +241,14 @@ named_fields!(Metrics, i32, {
     menu_fade_ms = 150 => ms,
 } extra {
     caption_group: Option<CaptionGroup> = None => CaptionGroup::scaled_opt,
+    /// How far the caption, taskbar and tray icons ([`Theme::icon_size`]) outgrow their 100%
+    /// edge at the text size; [`Theme::with_text_size`] sets it.
+    icon_grow: i32 = 0 => scale_px,
 });
+
+fn scale_px(v: &i32, n: i32) -> i32 {
+    v * n
+}
 
 /// Caption buttons drawn as one joined strip: minimize, maximize and
 /// close side by side, each neighbouring pair sharing the divider between
@@ -442,6 +450,12 @@ impl TextUnits {
         self.len(design).max(design)
     }
 
+    /// [`TextUnits::icon`] for an icon in a row that grows by only `growth` px with the text (a
+    /// caption, the taskbar, a toolbar strip): it grows no further, so it keeps its 100% margins.
+    pub fn icon_within(self, design: i32, growth: i32) -> i32 {
+        self.icon(design).min(design + growth.max(0))
+    }
+
     /// `px` (a font size or a device px count at 100%) at the text size.
     pub fn px(self, px: u32) -> u32 {
         self.len(px as i32).max(0) as u32
@@ -631,6 +645,7 @@ impl Theme {
         let mut t = self.with_form_text(pct);
         let grow = t.line_growth();
         let m = &mut t.metrics;
+        m.icon_grow = t.text.icon_within(ICON_SIZE, grow) - ICON_SIZE;
         for h in [
             &mut m.caption_height,
             &mut m.menu_item_height,
@@ -699,8 +714,10 @@ impl Theme {
         self.look.controls_at_100().grown(self.text)
     }
 
+    /// The caption, taskbar and tray icons' edge, device px: 16 px at 100% text, grown with a
+    /// line of the text ([`TextUnits::icon_within`]).
     pub fn icon_size(&self) -> i32 {
-        crate::icon::ICON_SIZE * self.scale
+        ICON_SIZE * self.scale + self.metrics.icon_grow
     }
 }
 
@@ -758,6 +775,31 @@ mod tests {
         assert_eq!(t.text, big);
         assert_eq!(t.scaled(2).paint().text, big);
         assert!(Theme::default().with_text_size(100).text.is_one());
+    }
+
+    #[test]
+    fn bar_icons_grow_with_the_text_as_far_as_a_line_grows() {
+        for (pct, side) in [(100, 16), (125, 19), (150, 23), (175, 25), (200, 29)] {
+            let t = Theme::default().with_text_size(pct);
+            assert_eq!(t.icon_size(), side, "{pct}%");
+            assert_eq!(
+                side,
+                ICON_SIZE + t.line_growth(),
+                "{pct}%: as far as a line grows"
+            );
+            assert!(
+                side <= t.text.icon(ICON_SIZE),
+                "{pct}%: no further than a tree's icon"
+            );
+            assert_eq!(t.scaled(2).icon_size(), 2 * side, "{pct}% at scale 2");
+        }
+        let u = TextUnits::new(22, 11);
+        assert_eq!(
+            u.icon_within(16, 40),
+            32,
+            "a row grown further holds the whole growth"
+        );
+        assert_eq!(u.icon_within(16, -3), 16, "never smaller");
     }
 
     #[test]

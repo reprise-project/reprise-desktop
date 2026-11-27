@@ -1005,6 +1005,7 @@ fn taskbar_shape() -> TaskbarShape {
         orb_rise: Some(ORB_RISE),
         two_line_clock: Some([17, 34]),
         line_growth: 0,
+        icon_grow: 0,
         start_menu: StartMenuDock::OnTop,
         labelled: LABELLED,
     }

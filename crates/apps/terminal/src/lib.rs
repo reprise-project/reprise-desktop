@@ -1184,7 +1184,9 @@ impl repriseapp::Extended for Terminal {
         if !self.enter(win) {
             return;
         }
-        if scale != self.w.scale || self.w.chrome.bar.items.is_empty() {
+        let px = reprisekit::controls::toolbar::big_icon(ctx.theme.text);
+        let regrown = std::mem::replace(&mut self.w.chrome.icon_px, px) != px;
+        if scale != self.w.scale || regrown || self.w.chrome.bar.items.is_empty() {
             self.w.chrome.bar.items = chrome::toolbar_items(ctx, self.w.caption);
             self.w.chrome.dirty = true;
         }

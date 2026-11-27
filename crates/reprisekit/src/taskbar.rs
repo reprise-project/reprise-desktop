@@ -479,6 +479,10 @@ pub struct TaskbarShape {
     /// How far a line of the bar's text outgrows its 100% line ([`crate::theme::Theme::line_growth`]):
     /// a two-line clock's box and lines grow by it per line, a Start of its own height by it once.
     pub line_growth: i32,
+    /// How far the bar's icons outgrow their 100% size at the text size
+    /// ([`crate::theme::Theme::icon_size`]): tray cells, Quick Launch and pager cells, task icons
+    /// and a labelled button's icon box and label grow or move by it.
+    pub icon_grow: i32,
     pub start_menu: StartMenuDock,
     pub labelled: LabelledButton,
 }
@@ -569,6 +573,7 @@ impl TaskbarShape {
         orb_rise: None,
         two_line_clock: None,
         line_growth: 0,
+        icon_grow: 0,
         start_menu: StartMenuDock::Into(4),
         labelled: LabelledButton::CLASSIC,
     };
@@ -589,6 +594,30 @@ impl TaskbarShape {
             baselines: [time + g, date + 2 * g],
             height: TWO_LINE_CLOCK_MIN + 2 * g,
         }
+    }
+
+    /// This shape with its icons grown `g` px past their 100% size ([`Self::icon_grow`]).
+    pub fn with_icon_grow(self, g: i32) -> TaskbarShape {
+        TaskbarShape {
+            icon_grow: g,
+            task_icon: self.task_icon + g,
+            labelled: LabelledButton {
+                icon_box: self.labelled.icon_box + g,
+                text_x: self.labelled.text_x + g,
+                ..self.labelled
+            },
+            ..self
+        }
+    }
+
+    /// A tray cell's edge.
+    pub fn tray_icon(&self) -> i32 {
+        ICON_SIZE + self.icon_grow
+    }
+
+    /// A Quick Launch or pager cell's width; down a side bar, its edge.
+    pub fn quick_w(&self) -> i32 {
+        QUICK_W + self.icon_grow
     }
 
     /// The height of a row bar's buttons.

@@ -104,6 +104,11 @@ pub enum Grip {
 
 pub const ICON_AREA: i32 = 20;
 
+/// The caption's icon area (the window menu's target) with `m`'s icon grown with the text.
+pub fn icon_area(m: &Metrics) -> i32 {
+    ICON_AREA + m.icon_grow
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptionButton {
     Minimize,
@@ -453,7 +458,7 @@ impl FrameGeometry {
                 return FrameHit::Resize(e);
             }
         }
-        if self.chrome.icon && self.caption.contains(x, y) && x < self.caption.x + ICON_AREA {
+        if self.chrome.icon && self.caption.contains(x, y) && x < self.caption.x + icon_area(m) {
             return FrameHit::Icon;
         }
         FrameHit::Title
@@ -502,10 +507,11 @@ pub fn held_button(hit: FrameHit, pressed: CaptionButton) -> Option<CaptionButto
 
 /// The frame's `access` part under `parent`, in `geom`'s coordinates: a title bar named `title`
 /// holding the window menu (the icon) and the caption buttons `geom` has. A tabbed caption has no
-/// icon: `strip` adds its tabs under the title bar in the menu's place. The buttons offer only
-/// Click: the keyboard never rests on them.
+/// icon, [`icon_area`] wide: `strip` adds its tabs under the title bar in the menu's place. The
+/// buttons offer only Click: the keyboard never rests on them.
 pub fn access(
     geom: &FrameGeometry,
+    icon_area: i32,
     title: &str,
     maximized: bool,
     strip: Option<impl FnOnce(&mut Tree, NodeId)>,
@@ -531,7 +537,7 @@ pub fn access(
         None if geom.chrome.icon => {
             let c = geom.caption;
             let mut n = press(
-                Rect::new(c.x, c.y, ICON_AREA, c.height),
+                Rect::new(c.x, c.y, icon_area, c.height),
                 &tr!("frame-window-menu"),
             );
             n.set_has_popup(HasPopup::Menu);
@@ -558,7 +564,15 @@ mod tests {
         strip: Option<Strip>,
     ) -> Vec<(Role, String, Rect)> {
         let mut t = Tree::window("Notes", geom.total);
-        access(geom, "Notes", maximized, strip, &mut t, access::ROOT);
+        access(
+            geom,
+            ICON_AREA,
+            "Notes",
+            maximized,
+            strip,
+            &mut t,
+            access::ROOT,
+        );
         let rect = |n: &accesskit::Node| {
             let b = n.bounds().expect("bounds");
             Rect::new(
@@ -767,6 +781,15 @@ mod tests {
         assert_eq!(gm.hit(0, 0, &m), FrameHit::Icon);
         assert_eq!(gm.hit(ICON_AREA - 1, 0, &m), FrameHit::Icon);
         assert_eq!(gm.hit(ICON_AREA, 0, &m), FrameHit::Title);
+    }
+
+    #[test]
+    fn the_window_menu_target_grows_with_the_caption_icon() {
+        let m = crate::theme::Theme::default().with_text_size(200).metrics;
+        assert_eq!(icon_area(&m), ICON_AREA + 13);
+        let g = FrameGeometry::layout(&m, 200, 100, true, Chrome::WINDOW);
+        assert_eq!(g.hit(icon_area(&m) - 1, 0, &m), FrameHit::Icon);
+        assert_eq!(g.hit(icon_area(&m), 0, &m), FrameHit::Title);
     }
 
     #[test]

@@ -444,6 +444,9 @@ pub struct Explorer {
     generation: u64,
     /// The scale the main window last drew at ([`Explorer::follow_scale`]).
     drawn_scale: i32,
+    /// The size the toolbar's icons were last fetched at
+    /// ([`reprisekit::controls::toolbar::big_icon`]).
+    toolbar_px: i32,
     /// The icon theme the main window last drew from: a new one (a switch, or a reload after
     /// an icon install) fetches the chrome and re-lists.
     drawn_theme: Option<std::sync::Weak<reprisekit::icontheme::IconTheme>>,
@@ -738,6 +741,7 @@ impl Explorer {
             ),
             generation: 0,
             drawn_scale: 0,
+            toolbar_px: 0,
             drawn_theme: None,
             list_icons: ListIcons::default(),
             reading: None,
