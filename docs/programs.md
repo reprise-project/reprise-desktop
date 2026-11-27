@@ -136,7 +136,7 @@ Opening `.flatpakref`, `.flatpak`, `.pkg.tar.zst`, `.pkg.tar.xz` or `.deb` launc
 
 ## Disk Usage
 
-Open from Explorer, low-disk-space balloons or `reprise-diskusage FOLDER` to scan largest files and folders on the same mount (counting hard links once, skipping symlinks). Right-click for `Open in Explorer` or `Move to Recycle Bin`.
+Open from Explorer, low-disk-space balloons or `reprise-diskusage FOLDER` to scan largest files and folders on the same mount (counting hard links once, skipping symlinks). Right-click for `Open in Explorer` or `Move to Recycle Bin`. `Browse...` scans another drive or folder.
 
 ## Scheduled Tasks
 

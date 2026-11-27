@@ -11,6 +11,7 @@ column-files = Files
 ## The buttons
 back = < &Back
 up = &Up
+browse = Br&owse...
 refresh = &Refresh
 explore = Open in &Explorer
 
@@ -31,6 +32,10 @@ status-sized =
 status-counting = Counting... { $sized } so far
 not-responding = The location is not responding.
 unreadable = The folder cannot be read.
+
+## Browse...'s folder dialog
+title-browse = Browse for Folder
+ok = OK
 
 ## Message boxes
 title-delete-failed = Error Deleting File or Folder

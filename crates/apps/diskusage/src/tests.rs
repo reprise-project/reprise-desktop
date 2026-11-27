@@ -80,6 +80,7 @@ fn opening_a_folder_goes_in_and_back_and_up_come_out() {
     fs::create_dir_all(r.join("a/b")).unwrap();
     fs::write(r.join("a/b/f"), vec![1u8; 8192]).unwrap();
     fs::write(r.join("g"), b"g").unwrap();
+    let ctx = test_ctx(reprisekit::theme::Theme::default());
     let mut d = counted(r);
     assert_eq!(names(&d), ["a", "g"]);
     pick(&mut d, "a");
@@ -89,12 +90,12 @@ fn opening_a_folder_goes_in_and_back_and_up_come_out() {
     pick(&mut d, "b");
     d.open_picked();
     assert_eq!(d.at, r.join("a/b"));
-    d.button("back");
+    d.button("back", &ctx);
     assert_eq!(d.at, r.join("a"));
-    d.button("up");
+    d.button("up", &ctx);
     assert_eq!(d.at, r);
     assert_eq!(d.root, r, "inside the count: no new one");
-    d.button("up");
+    d.button("up", &ctx);
     assert_eq!(
         d.at,
         r.parent().unwrap(),
@@ -354,4 +355,31 @@ fn render_diskusage_preview() {
         let name = format!("{i:?}").to_lowercase();
         reprisekit::raster::write_preview(&c, &format!("diskusage-{name}.png"));
     }
+}
+
+#[test]
+fn browse_shows_the_folder_its_dialog_picks() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    fs::create_dir_all(r.join("a")).unwrap();
+    fs::create_dir_all(r.join("elsewhere/x")).unwrap();
+    let mut ctx = test_ctx(reprisekit::theme::Theme::default());
+    let mut d = counted(&r.join("a"));
+    d.button("browse", &ctx);
+    let dlg = d.pick.as_mut().expect("Browse... opens the folder dialog");
+    assert_eq!(dlg.mode(), DlgMode::Folder);
+    assert!(d.children().iter().any(|c| c.id == PICK && c.modal));
+    let dlg = d.pick.as_mut().unwrap();
+    dlg.set_file_name(&r.join("elsewhere").display().to_string());
+    let enter = Event::Key(KeyInput {
+        sym: keysym::RETURN,
+        utf8: None,
+        mods: Default::default(),
+        edit: None,
+    });
+    d.event(PICK, enter, &mut ctx);
+    assert!(d.pick.is_none(), "the dialog closes on the pick");
+    assert_eq!(d.at, r.join("elsewhere"));
+    d.button("back", &ctx);
+    assert_eq!(d.at, r.join("a"), "Back returns to the folder before");
 }
