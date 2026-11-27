@@ -50,6 +50,22 @@ impl Spaces {
     }
 }
 
+/// The free space of the file system under the folder shown, for the status bar. One read is out
+/// at a time, so a dead mount holds one thread.
+#[derive(Default)]
+pub(crate) struct FolderFree {
+    /// The folder last read and its free bytes.
+    pub read: Option<(PathBuf, u64)>,
+    out: Option<(PathBuf, Job<Option<Totals>>)>,
+}
+
+impl FolderFree {
+    /// The free bytes under `dir`, once read.
+    pub(crate) fn of(&self, dir: &Path) -> Option<u64> {
+        (self.read.as_ref()).and_then(|(at, free)| (at == dir).then_some(*free))
+    }
+}
+
 /// `(total, free)` as Details and a tile show it.
 pub(crate) fn space((total, free): Totals) -> Space {
     Space {
@@ -82,6 +98,50 @@ impl Explorer {
             self.spaces.out.push((m, job, true));
         }
         self.take_space(SPACE_WAIT);
+    }
+
+    /// Starts a read of the free space under the folder shown, unless one is out, and waits
+    /// [`SPACE_WAIT`] for it; a later answer lands at a wake ([`Explorer::take_folder_free`]).
+    pub(crate) fn read_folder_free(&mut self, ctx: &mut Ctx) {
+        let Some(dir) = self.free_dir() else {
+            return;
+        };
+        if self.folder_free.out.is_none() {
+            let stat = self.statvfs;
+            let at = dir.clone();
+            self.folder_free.out = Some((dir, self.spawn_read(ctx, move || stat(&at))));
+        }
+        self.take_folder_free(SPACE_WAIT, ctx);
+    }
+
+    /// The folder whose free space the status bar shows: a folder's own, never the Recycle Bin's.
+    fn free_dir(&self) -> Option<PathBuf> {
+        (self.place != Place::RecycleBin)
+            .then(|| self.place.path())
+            .flatten()
+    }
+
+    /// Lands the free-space read if it answered within `wait`; an answer for a folder left since
+    /// starts a read of the one shown. Whether the status bar changes.
+    pub(crate) fn take_folder_free(&mut self, wait: Duration, ctx: &mut Ctx) -> bool {
+        let Some((at, job)) = &self.folder_free.out else {
+            return false;
+        };
+        let Some(answer) = job.wait(wait) else {
+            return false;
+        };
+        let at = at.clone();
+        self.folder_free.out = None;
+        if self.free_dir().as_ref() != Some(&at) {
+            self.read_folder_free(ctx);
+            return false;
+        }
+        // A file system with nothing to measure (a pseudo or an empty one) reads 0 bytes.
+        self.folder_free.read = answer
+            .filter(|&(total, _)| total > 0)
+            .map(|(_, free)| (at, free));
+        self.refresh_chrome(ctx);
+        true
     }
 
     /// Lands the space reads that answer on Computer's entries, waiting up to `wait` for those the

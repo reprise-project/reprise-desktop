@@ -235,6 +235,7 @@ pub struct Explorer {
     /// Computer's drives' space, read at each listing ([`space`]).
     pub(crate) spaces: space::Spaces,
     pub(crate) statvfs: space::Statvfs,
+    pub(crate) folder_free: space::FolderFree,
     /// A drive scan still being read, with the `/proc/mounts` it was started for.
     pub(crate) scanning: Option<(String, Job<Vec<reprisefs::places::Drive>>)>,
     pub(crate) udisks: Option<reprisefs::udisks::Udisks>,
@@ -590,7 +591,13 @@ impl Explorer {
             drives: Vec::new(),
             mounts_seen: String::new(),
             spaces: Default::default(),
-            statvfs: reprisefs::places::statvfs_totals,
+            // A test's numbers are its own: the host's disks would land at any moment.
+            statvfs: if cfg!(test) {
+                |_| None
+            } else {
+                reprisefs::places::statvfs_totals
+            },
+            folder_free: Default::default(),
             scanning: None,
             volumes: reprisefs::udisks::Snapshot::default(),
             volume_changes: None,
@@ -1412,6 +1419,7 @@ impl Explorer {
         if place == Place::Computer {
             self.read_space(ctx);
         }
+        self.read_folder_free(ctx);
 
         let icon = chrome::address_icon(&mut self.chrome_waits, &mut ctx.icons, &place);
         self.reset_address(&place.address_in(&self.shares.shares), icon);

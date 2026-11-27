@@ -184,6 +184,16 @@ impl Explorer {
             &tr!("chrome-refresh-chrome-computer"),
             zone,
         );
+        if chosen.is_empty()
+            && self.search.shown().is_none()
+            && let Some(free) = (self.place.path()).and_then(|d| self.folder_free.of(&d))
+        {
+            self.status.panels[0].text = tr!(
+                "status-objects-free",
+                objects = self.items.len(),
+                free = window::short_size(free)
+            );
+        }
         if self.search.no_tool() {
             self.status.panels[0].text = reprisefs::search::no_tool();
         }

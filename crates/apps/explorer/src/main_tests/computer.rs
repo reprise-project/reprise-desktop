@@ -792,6 +792,32 @@ fn computer_shows_each_drives_total_size_and_free_space_as_read() {
     );
 }
 
+#[test]
+fn a_folder_with_nothing_selected_counts_its_objects_and_the_disks_free_space() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.take_folder_free(LIST_WAIT, &mut ctx);
+    assert_eq!(
+        ex.status.panels[0].text, "1 object",
+        "a disk that cannot be read"
+    );
+    ex.statvfs = |_| Some((100 << 30, 13 << 30));
+    ex.run(Command::Refresh, &mut ctx);
+    ex.take_folder_free(LIST_WAIT, &mut ctx);
+    assert_eq!(
+        ex.status.panels[0].text,
+        "1 object (Disk free space: 13.0 GB)"
+    );
+    ex.sv.selection.set_only(Some(0));
+    ex.refresh_chrome(&mut ctx);
+    assert_eq!(ex.status.panels[0].text, "1 object(s) selected");
+    ex.go(Place::Computer, &mut ctx);
+    let text = &ex.status.panels[0].text;
+    assert!(!text.contains("free"), "Computer spans every disk: {text}");
+}
+
 static DEAD: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 static DEAD_GONE: std::sync::Condvar = std::sync::Condvar::new();
 
