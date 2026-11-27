@@ -1020,6 +1020,12 @@ fn tree_plan<'a>(
     Ok(TreePlan { nodes, bytes })
 }
 
+/// The bytes of the files the entries `picked` of the listing `entries` copy out as; 0 when the
+/// listing no longer holds one, which the copy then says.
+pub fn picked_bytes(entries: &[Entry], picked: &[PathBuf]) -> u64 {
+    tree_plan(entries, picked, usize::MAX, &Meter::default()).map_or(0, |p| p.bytes)
+}
+
 /// Whether `a` and `b` are on one file system.
 fn same_device(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;

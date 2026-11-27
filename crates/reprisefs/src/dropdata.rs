@@ -21,6 +21,12 @@ pub const HOST_FILES: &str = "application/x-reprise-host-files";
 /// program make (it takes the mime off any other program's): its file list names host files
 /// only under the document portal ([`all_exported`]).
 pub const SANDBOXED: &str = "application/x-reprise-sandboxed";
+/// Offered by a drag whose files are written after it starts, as a copy out of a compressed
+/// folder: read as this, its URI list comes at once, while its [`URI_LIST`] waits until the files
+/// are there. A Reprise target reads such a drop for up to [`STAGED_WAIT`].
+pub const STAGED: &str = "application/x-reprise-staged";
+/// How long a Reprise target waits for the files of a [`STAGED`] drag.
+pub const STAGED_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// The form most file managers use: `copy` or `cut` on its own
 /// line, then the `file://` URIs joined with `\n`.
@@ -59,6 +65,11 @@ pub const HTML: &str = "text/html";
 /// Whether a drag or selection offering `offered` comes from a sandboxed program ([`SANDBOXED`]).
 pub fn sandboxed<S: AsRef<str>>(offered: &[S]) -> bool {
     offered.iter().any(|m| m.as_ref() == SANDBOXED)
+}
+
+/// Whether a drag offering `offered` writes its files after it starts ([`STAGED`]).
+pub fn staged<S: AsRef<str>>(offered: &[S]) -> bool {
+    offered.iter().any(|m| m.as_ref() == STAGED)
 }
 
 /// Mark `offered` with [`SANDBOXED`] when `sandboxed`, and take a forged mark off otherwise.

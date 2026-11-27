@@ -526,18 +526,39 @@ impl State {
             return;
         };
         let sandboxed = source.sandboxed();
+        // A copy out of a compressed folder writes its files while the drop waits for them.
+        let staged = !sandboxed
+            && source
+                .metadata()
+                .is_some_and(|m| dropdata::staged(&m.mime_types));
         let dir = match &target {
             DropTarget::Folder(dir) => Some(dir.clone()),
             DropTarget::Desktop(_) => self.desktop.as_ref().map(|v| v.dir.clone()),
             DropTarget::Quick(_) | DropTarget::Pin { .. } | DropTarget::Trash => None,
         };
-        self.spawn_fs_job(move || {
-            let got = reprisefs::pipe::read_bounded(&read, MAX_BYTES, READ_TIMEOUT)
+        let wait = if staged {
+            dropdata::STAGED_WAIT
+        } else {
+            READ_TIMEOUT
+        };
+        let work = move || -> crate::fsjobs::OnLoop {
+            let got = reprisefs::pipe::read_bounded(&read, MAX_BYTES, wait)
                 .and_then(|bytes| items(mime, &bytes, sandboxed))
                 .map(|items| sort(items, &target, dir.as_deref()));
             Box::new(move |state| state.drop_received(id, got))
-        });
-        let deadline = Timer::from_duration(self.fsjobs.deadline());
+        };
+        // A long wait takes a thread of its own, not one of the file jobs' few.
+        let deadline = match staged {
+            true => {
+                self.spawn_job(work);
+                dropdata::STAGED_WAIT + self.fsjobs.deadline()
+            }
+            false => {
+                self.spawn_fs_job(work);
+                self.fsjobs.deadline()
+            }
+        };
+        let deadline = Timer::from_duration(deadline);
         let armed = self.handle.insert_source(deadline, move |_, _, state| {
             state.drop_gave_up(id);
             TimeoutAction::Drop

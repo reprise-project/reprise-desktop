@@ -268,7 +268,7 @@ impl Explorer {
             clashed,
             self.take_asking(ctx),
             self.take_drag_art(ctx),
-            self.take_drag_copy(ctx),
+            self.poll_drag_copies(ctx),
             self.take_due_sheet(ctx),
             self.take_bin_tabs(ctx),
             self.take_config(ctx),

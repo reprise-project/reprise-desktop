@@ -455,8 +455,10 @@ pub struct Explorer {
     generation: u64,
     /// The compressed folders' listings, kept while their archives stay unchanged.
     pub(crate) archives: reprisefs::archive::Listings,
-    /// The last drag out of a compressed folder, until its drop asks for the files.
-    pub(crate) drag_copy: Option<drag::DragCopy>,
+    /// The drags out of compressed folders whose copies are coming out or not yet taken.
+    pub(crate) drag_copies: Vec<drag::DragCopy>,
+    /// The most bytes a drag out of a compressed folder copies out ([`drag::DRAG_MOST`]).
+    pub(crate) drag_most: u64,
     /// The copies out of compressed folders the puts read, held until no put runs
     /// ([`Explorer::release_put_holds`]).
     pub(crate) put_holds: Vec<reprisefs::archive::Scratch>,
@@ -764,7 +766,8 @@ impl Explorer {
             ),
             generation: 0,
             archives: Default::default(),
-            drag_copy: None,
+            drag_copies: Vec::new(),
+            drag_most: drag::DRAG_MOST,
             put_holds: Vec::new(),
             clip_scratch: None,
             dropped_copy: None,
