@@ -51,7 +51,8 @@ pub fn write_all(n: i32) {
         ),
     ];
     for (name, s) in glass {
-        let theme = interfaces::theme_with(Interface::Glass, Variant::default(), &s).scaled(n);
+        let theme =
+            interfaces::theme_with(Interface::Glass, Variant::default(), false, &s).scaled(n);
         let st = theme.look.style().expect("Glass is styled");
         write_preview(
             || page(st, Color::rgb(0x3A, 0x6E, 0xA5), n),

@@ -662,8 +662,12 @@ mod tests {
             mode,
             ..super::super::Settings::default()
         };
-        let theme =
-            crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::default(), &s);
+        let theme = crate::interfaces::theme_with(
+            Interface::Glass,
+            crate::blue::Variant::default(),
+            false,
+            &s,
+        );
         theme.scaled(scale).for_options_menu()
     }
 

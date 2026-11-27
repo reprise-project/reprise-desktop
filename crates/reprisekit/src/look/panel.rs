@@ -121,7 +121,7 @@ mod tests {
             mode,
             ..Default::default()
         };
-        crate::interfaces::theme_with(Interface::Glass, Default::default(), &g)
+        crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g)
     }
 
     /// `px` (premultiplied) laid over opaque white, as its grey level.

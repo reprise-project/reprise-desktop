@@ -128,7 +128,8 @@ fn drawn_in(
         mode,
         ..Default::default()
     };
-    let theme = crate::interfaces::theme_with(Interface::Glass, Default::default(), &g).scaled(s);
+    let theme =
+        crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g).scaled(s);
     let text = TextRenderer::load(&theme.fonts);
     let l = layout(m, &theme, &text, OUTPUT);
     let mut c = Canvas::new((OUTPUT.width * s) as u32, (OUTPUT.height * s) as u32);
@@ -750,7 +751,8 @@ fn glass_lock_now_playing_pins_at_scale_1_and_2() {
                 ..Default::default()
             };
             let theme =
-                crate::interfaces::theme_with(Interface::Glass, Default::default(), &g).scaled(s);
+                crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g)
+                    .scaled(s);
             let text = TextRenderer::load(&theme.fonts);
             crate::interfaces::logon::draw_media(&mut c, &m, &l, &theme, text.for_output(s), s);
             got.push((format!("{name} @{s}"), fnv(&c)));

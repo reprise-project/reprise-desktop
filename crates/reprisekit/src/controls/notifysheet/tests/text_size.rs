@@ -5,7 +5,7 @@ fn glass_text(pct: u32, scale: i32) -> Theme {
         mode: glass::Mode::Light,
         ..glass::Settings::default()
     };
-    theme_with(Interface::Glass, blue::Variant::Blue, &light)
+    theme_with(Interface::Glass, blue::Variant::Blue, false, &light)
         .with_text_size(pct)
         .scaled(scale)
 }

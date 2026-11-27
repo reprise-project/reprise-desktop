@@ -415,7 +415,7 @@ mod tests {
                 mode,
                 ..Default::default()
             };
-            let t = interfaces::theme_with(Interface::Glass, Default::default(), &g);
+            let t = interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
             out.push((format!("Glass {mode:?}"), t));
         }
         out

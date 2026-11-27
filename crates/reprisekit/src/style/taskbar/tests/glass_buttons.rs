@@ -6,8 +6,12 @@ fn a_window_without_an_icon_shows_a_light_glyph_on_the_dark_glass_bar() {
         mode: crate::glass::Mode::Dark,
         ..crate::glass::Settings::default()
     };
-    let theme =
-        crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::default(), &settings);
+    let theme = crate::interfaces::theme_with(
+        Interface::Glass,
+        crate::blue::Variant::default(),
+        false,
+        &settings,
+    );
     let glyph = icon::chrome_fallback(&theme, 16);
     assert_eq!(glyph.get(8, 10) & 0xFF_FFFF, 0xFF_FFFF, "the white body");
     assert_eq!(glyph.get(1, 8) & 0xFF_FFFF, 0xEF_EEEF, "the EFEEEF frame");

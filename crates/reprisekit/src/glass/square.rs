@@ -398,6 +398,7 @@ mod tests {
         crate::interfaces::theme_with(
             crate::interface::Interface::Glass,
             crate::blue::Variant::default(),
+            false,
             &settings(mode),
         )
     }

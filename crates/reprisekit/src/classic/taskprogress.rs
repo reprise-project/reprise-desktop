@@ -66,7 +66,7 @@ mod tests {
                 mode,
                 ..crate::glass::Settings::default()
             };
-            let t = theme_with(Interface::Glass, Variant::default(), &settings);
+            let t = theme_with(Interface::Glass, Variant::default(), false, &settings);
             let p = styled(&t);
             v.push((format!("glass {mode:?}"), t, p));
         }

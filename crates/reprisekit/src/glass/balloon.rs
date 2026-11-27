@@ -317,6 +317,7 @@ mod tests {
         let dark = theme_with(
             Interface::Glass,
             crate::blue::Variant::default(),
+            false,
             &super::super::Settings {
                 mode: Mode::Dark,
                 ..super::super::Settings::default()

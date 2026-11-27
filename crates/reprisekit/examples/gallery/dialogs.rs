@@ -548,6 +548,7 @@ pub fn render_copy_progress(with_blue: bool, scale: i32) -> Canvas {
     let glass_dark = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
+        false,
         &reprisekit::glass::Settings {
             mode: reprisekit::glass::Mode::Dark,
             ..reprisekit::glass::Settings::default()
@@ -708,6 +709,7 @@ pub fn render_windowed_dialog(scale: i32) -> Canvas {
         cued(interfaces::theme_with(
             Interface::Glass,
             Variant::default(),
+            false,
             &s,
         ))
     };

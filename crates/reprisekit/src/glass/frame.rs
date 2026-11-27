@@ -1485,6 +1485,7 @@ mod tests {
         let theme = crate::interfaces::theme_with(
             crate::interface::Interface::Glass,
             crate::blue::Variant::default(),
+            false,
             &Settings {
                 mode: Mode::Dark,
                 ..Settings::default()

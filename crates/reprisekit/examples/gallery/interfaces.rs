@@ -30,8 +30,13 @@ pub fn theme_for(i: Interface) -> Theme {
     sized(reprisekit::interfaces::theme_for(i))
 }
 
-pub fn theme_with(i: Interface, variant: blue::Variant, glass: &glass::Settings) -> Theme {
-    sized(reprisekit::interfaces::theme_with(i, variant, glass))
+pub fn theme_with(
+    i: Interface,
+    variant: blue::Variant,
+    dark: bool,
+    glass: &glass::Settings,
+) -> Theme {
+    sized(reprisekit::interfaces::theme_with(i, variant, dark, glass))
 }
 
 pub fn blue_theme(v: blue::Variant) -> Theme {

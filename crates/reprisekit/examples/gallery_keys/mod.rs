@@ -141,7 +141,7 @@ pub fn key_sheet(scale: i32) -> Canvas {
                 mode,
                 ..Default::default()
             };
-            let theme = theme_with(Interface::Glass, Default::default(), &g).scaled(scale);
+            let theme = theme_with(Interface::Glass, Default::default(), false, &g).scaled(scale);
             let text = TextRenderer::load(&theme.fonts);
             let m = panel::margin(&theme);
             (sheet(&theme, &text), m.left * scale, m.top * scale)

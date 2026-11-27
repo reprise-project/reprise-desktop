@@ -1852,6 +1852,7 @@ mod bar_tests {
             let base = crate::interfaces::theme_with(
                 Interface::Glass,
                 crate::blue::Variant::default(),
+                false,
                 &settings,
             );
             let ([focused, unfocused], _) = caption_ink(material, mode);

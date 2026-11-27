@@ -66,6 +66,7 @@ pub fn render_glass_dark() -> Canvas {
     let theme = cued(interfaces::theme_with(
         Interface::Glass,
         reprisekit::blue::Variant::default(),
+        false,
         &reprisekit::glass::Settings {
             mode: reprisekit::glass::Mode::Dark,
             ..reprisekit::glass::Settings::default()
@@ -133,6 +134,7 @@ pub fn render_glass_scale2() -> Canvas {
         let theme = cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
+            false,
             s,
         ));
         let caption_text = TextRenderer::load(&theme.look.style().unwrap().caption_text.font());
@@ -169,6 +171,7 @@ fn render_glass_scale2_buttons(rows: &[reprisekit::glass::Settings]) -> Canvas {
         let theme = cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
+            false,
             s,
         ));
         let caption_text = TextRenderer::load(&theme.look.style().unwrap().caption_text.font());
@@ -461,6 +464,7 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
             cued(interfaces::theme_with(
                 Interface::Glass,
                 reprisekit::blue::Variant::default(),
+                false,
                 s,
             ))
         })
@@ -737,6 +741,7 @@ fn render_glass_materials(mode: reprisekit::glass::Mode) -> Canvas {
         let theme = cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
+            false,
             &Settings {
                 mode,
                 material,
@@ -777,6 +782,7 @@ fn render_glass_square_frames() -> Canvas {
         cued(interfaces::theme_with(
             Interface::Glass,
             reprisekit::blue::Variant::default(),
+            false,
             &square_settings(m),
         ))
     });

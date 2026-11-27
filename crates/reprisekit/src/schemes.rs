@@ -1327,6 +1327,7 @@ mod tests {
             let cs = crate::interfaces::theme_with(
                 crate::interface::Interface::Glass,
                 crate::blue::Variant::Blue,
+                false,
                 &settings,
             )
             .colors;

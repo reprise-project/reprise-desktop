@@ -1068,6 +1068,7 @@ mod tests {
             let theme = crate::interfaces::theme_with(
                 Interface::Glass,
                 Default::default(),
+                false,
                 &crate::glass::Settings {
                     mode,
                     ..Default::default()

@@ -195,6 +195,7 @@ pub fn render_caption_tabs(pct: u32) -> Canvas {
             cued(interfaces::theme_with(
                 Interface::Glass,
                 reprisekit::blue::Variant::Blue,
+                false,
                 &dark,
             )),
             1,

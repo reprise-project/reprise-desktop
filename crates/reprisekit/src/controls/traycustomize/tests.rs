@@ -24,6 +24,7 @@ fn glass_theme() -> Theme {
     theme_with(
         Interface::Glass,
         crate::blue::Variant::Blue,
+        false,
         &glass::Settings::default(),
     )
 }

@@ -703,7 +703,7 @@ mod tests {
                 mode,
                 ..Settings::default()
             };
-            theme_with(Interface::Glass, reprisekit::blue::Variant::Blue, &g)
+            theme_with(Interface::Glass, reprisekit::blue::Variant::Blue, false, &g)
         };
         let contrast = Theme {
             colors: reprisekit::schemes::scheme("High Contrast Black").expect("the scheme"),

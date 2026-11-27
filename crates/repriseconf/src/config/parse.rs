@@ -543,7 +543,8 @@ impl Config {
                     })?;
             }
         }
-        cfg.theme = reprisekit::interfaces::theme_with(cfg.interface, cfg.blue_variant, &cfg.glass);
+        cfg.theme =
+            reprisekit::interfaces::theme_with(cfg.interface, cfg.blue_variant, false, &cfg.glass);
         // Classic and Blue already run small icons at their usual height. A
         // `[metrics] taskbar_height` below still wins over the small bar.
         if cfg.interface == Interface::Glass && cfg.taskbar.small_icons {

@@ -1553,7 +1553,7 @@ mod tests {
                 frame,
                 ..Settings::default()
             };
-            let t = theme_with(Interface::Glass, crate::blue::Variant::Blue, &s);
+            let t = theme_with(Interface::Glass, crate::blue::Variant::Blue, false, &s);
             all.push((name.to_string(), t));
         }
         all
@@ -1706,8 +1706,12 @@ mod tests {
                 transparency: false,
                 ..Settings::default()
             };
-            let base =
-                crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, &g);
+            let base = crate::interfaces::theme_with(
+                Interface::Glass,
+                crate::blue::Variant::Blue,
+                false,
+                &g,
+            );
             let style = base.look.style().unwrap();
             assert_eq!(style.bar_text, want, "{mode:?}");
             let counts = TaskbarCounts {
@@ -1764,8 +1768,12 @@ mod tests {
                 transparency: false,
                 ..Settings::default()
             };
-            let base =
-                crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, &g);
+            let base = crate::interfaces::theme_with(
+                Interface::Glass,
+                crate::blue::Variant::Blue,
+                false,
+                &g,
+            );
             let counts = TaskbarCounts {
                 tray: 3,
                 ..TaskbarCounts::default()
@@ -1941,7 +1949,12 @@ mod tests {
                     frame,
                     ..Settings::default()
                 };
-                crate::interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, &g)
+                crate::interfaces::theme_with(
+                    Interface::Glass,
+                    crate::blue::Variant::Blue,
+                    false,
+                    &g,
+                )
             };
             let (dark, light) = (theme(Mode::Dark), theme(Mode::Light));
             for s in [1, 2] {
