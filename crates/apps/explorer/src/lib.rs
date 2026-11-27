@@ -502,6 +502,8 @@ pub struct Explorer {
     /// The listed folders' pictures ([`reprisefs::meta::folder_picture`]), by folder: Thumbnails
     /// view draws each one's thumbnail on its folder.
     pub(crate) pictures: HashMap<PathBuf, PathBuf>,
+    /// [`Explorer::pictures`] the other way: the folders that wear each picture.
+    picture_folders: HashMap<PathBuf, Vec<PathBuf>>,
     /// Images whose header was sent to a job in this listing, so a file that states no size is read once.
     dims_asked: HashSet<PathBuf>,
     /// Typed address text or the command line's place whose folder is still being checked.
@@ -791,6 +793,7 @@ impl Explorer {
             held: None,
             image_dims: HashMap::new(),
             pictures: HashMap::new(),
+            picture_folders: HashMap::new(),
             dims_asked: HashSet::new(),
             checking: None,
             going: None,
@@ -1487,6 +1490,11 @@ impl Explorer {
             }
         }
         self.image_dims = dims;
+        self.picture_folders = HashMap::new();
+        for (folder, picture) in &pictures {
+            let folders = self.picture_folders.entry(picture.clone()).or_default();
+            folders.push(folder.clone());
+        }
         self.pictures = pictures;
         self.dims_asked.clear();
         self.sv.groups = groups

@@ -2490,3 +2490,27 @@ fn a_folder_without_write_access_says_so_and_keeps_its_picture() {
         entry
     );
 }
+
+/// A folder whose picture is a named pipe opens its sheet without reading the picture, and
+/// Restore Default takes the picture off.
+#[test]
+fn a_folder_whose_picture_never_answers_opens_its_sheet_at_once() {
+    use crate::place::Place;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).expect("mkdir");
+    let fifo = dir.path().join("pipe.png");
+    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+    assert!(made.is_ok_and(|s| s.success()), "mkfifo pipe.png");
+    let entry = format!("[Desktop Entry]\nX-Reprise-Picture={}\n", fifo.display());
+    std::fs::write(sub.join(".directory"), entry).expect("write");
+    let mut ctx = crate::tests::test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    sheet_up(&mut ex, &sub, &mut ctx);
+    let p = ex.props.as_ref().expect("the sheet");
+    assert_eq!(p.info.own_picture.as_deref(), Some(fifo.as_path()));
+    ex.picture_chosen(None, &mut ctx);
+    ex.props_outcome(reprisekit::controls::propsheet::Event::Ok, &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert_eq!(reprisefs::meta::folder_picture(&sub), None);
+}
