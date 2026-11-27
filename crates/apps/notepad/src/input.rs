@@ -341,6 +341,9 @@ impl Notepad {
     }
 
     pub(crate) fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        if self.zip_save.running() && repriseapp::jobbox::is_input(&ev) {
+            return Reply::none();
+        }
         match ev {
             Event::Key(k) => self.key(k, ctx),
             Event::KeyUp(k) => self.key_up(k, ctx),

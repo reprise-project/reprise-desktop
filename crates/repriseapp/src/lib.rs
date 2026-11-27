@@ -31,6 +31,7 @@ mod hangup;
 pub mod heads;
 pub mod iconjobs;
 mod input;
+pub mod jobbox;
 mod keyboard;
 pub mod keys;
 pub mod listicons;

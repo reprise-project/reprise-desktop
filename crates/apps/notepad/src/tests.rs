@@ -3353,7 +3353,9 @@ fn yes_on_the_update_box_says_why_a_zip_cannot_be_written_and_drops_the_quit() {
     np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
     np.answer_box(Some(0));
-    let reply = np.answer_box(Some(0));
+    np.answer_box(Some(0));
+    assert!(np.zip_save.running(), "the save runs on a job");
+    let reply = finish_zip_save(&mut np);
     assert!(!reply.quit);
     let (b, ask) = np.asks.up().expect("an error box");
     assert!(matches!(ask, Ask::Error));
@@ -3381,4 +3383,51 @@ fn cancel_on_the_update_box_drops_the_quit_and_writes_nothing() {
     assert!(!reply.quit && np.asks.up().is_none() && np.saveas.is_none());
     assert!(!np.pending.is_waiting());
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
+}
+
+/// Waits for the save into a zip to end, as its wakes do.
+fn finish_zip_save(np: &mut Notepad) -> Reply {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if let Woke::Ended(ended) = np.zip_save.wake() {
+            return np.zip_saved(ended);
+        }
+        assert!(std::time::Instant::now() < until, "the save ends");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn yes_on_the_update_box_saves_into_the_zip_on_a_job_and_then_quits() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let zip = tmp.path().join("Docs.zip");
+    let made = std::process::Command::new("bsdtar")
+        .args(["-c", "--format", "zip", "-f"])
+        .arg(&zip)
+        .arg("-C")
+        .arg(tmp.path())
+        .arg("notes.txt")
+        .status()
+        .expect("bsdtar");
+    assert!(made.success());
+    let mut np = Notepad::new(Some(path.clone()));
+    np.zip_entry = Some((zip.clone(), "notes.txt".into()));
+    np.edit = MultiEdit::new("new");
+    np.edit.mark_unsaved();
+    np.confirm_then(PendingAction::Quit);
+    np.answer_box(Some(0));
+    let reply = np.answer_box(Some(0));
+    assert!(!reply.quit, "the quit waits on the save");
+    assert!(np.zip_save.running() && np.edit.modified());
+    let reply = finish_zip_save(&mut np);
+    assert!(reply.quit, "the quit runs once the zip holds the save");
+    assert!(!np.edit.modified());
+    let argv = reprisefs::archive::open_argv(&zip, std::path::Path::new("notes.txt"));
+    let out = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .output()
+        .expect("bsdtar");
+    assert_eq!(out.stdout, b"new");
 }

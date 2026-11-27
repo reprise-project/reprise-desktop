@@ -91,10 +91,29 @@ pub fn origin_entry(path: &Path) -> Option<(PathBuf, PathBuf)> {
 }
 
 /// The zip and the path inside it a save of the archive copy `path` can write into
-/// ([`crate::zipwrite::update_entry`]); None for any other file, and for a copy out of a tar or
-/// 7z archive, which keep Save As.
+/// ([`crate::extract::ArchiveJob::update_entry`]); None for any other file, and for a copy out of
+/// a tar or 7z archive, which keep Save As.
 pub fn updatable(path: &Path) -> Option<(PathBuf, PathBuf)> {
     origin_entry(path).filter(|(zip, _)| crate::zipwrite::is_zip(zip))
+}
+
+/// Writes `bytes` over the read-only archive copy `copy`: a new read-only file renamed over it in
+/// its private folder, so the copy holds what its zip now holds.
+pub fn rewrite_copy(copy: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    if !is_copy(copy) {
+        return Err(io::Error::other("not an archive copy"));
+    }
+    let mode = std::fs::Permissions::from_mode(0o444);
+    let (mut f, tmp) = crate::ops::create_temp_beside(copy, Some(mode))?;
+    let written = f
+        .write_all(bytes)
+        .and_then(|()| std::fs::rename(&tmp, copy));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// The folder a file dialog starts in for the document at `path`: its own, or for an archive

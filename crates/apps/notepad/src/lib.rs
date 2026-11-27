@@ -27,6 +27,7 @@ use menu::menus;
 use pending::{Pending, PendingAction};
 use repriseapp::asks::{Answer, Asks};
 use repriseapp::filedlg::{Driven, Host, taken};
+use repriseapp::jobbox::{JobBox, Woke};
 use repriseapp::keys::AltArm;
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::oneshot::{self, MsgBox};
@@ -34,7 +35,7 @@ use repriseapp::print::Printing;
 use repriseapp::recent::Recent;
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, Extended, FileDrop, KeyInput, MAIN,
-    PointerInput, Reply, WinId,
+    PointerInput, Reply, Start, Waker, WinId,
 };
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::{self, Axis, ScrollHit};
@@ -88,8 +89,11 @@ struct Notepad {
     bar: Bar,
     path: Option<std::path::PathBuf>,
     /// The zip and the path inside it the document was copied out of, which a save of the
-    /// read-only copy offers to write into.
+    /// copy offers to write into.
     zip_entry: Option<(PathBuf, PathBuf)>,
+    /// The save into `zip_entry`'s zip while it runs, with its progress box.
+    zip_save: JobBox,
+    waker: Option<Waker>,
     /// `path` as it was opened or last saved; a save asks first when the file no longer matches.
     stamp: Option<Stamp>,
     /// The encoding, BOM and line end the file was opened or last saved with; a save writes them.
@@ -184,6 +188,8 @@ impl Notepad {
             bar,
             stamp: path.as_deref().and_then(Stamp::of),
             zip_entry: path.as_deref().and_then(reprisefs::archivecopy::updatable),
+            zip_save: JobBox::default(),
+            waker: None,
             path,
             dragging: None,
             thumb: ThumbDrag::default(),
@@ -310,6 +316,11 @@ impl App for Notepad {
         self.forms.text.size((568, 328))
     }
 
+    fn start(&mut self, waker: Waker) -> Start {
+        self.waker = Some(waker);
+        Start::Continue
+    }
+
     fn children(&self) -> Vec<Child> {
         let mut kids = Vec::new();
         if self.goto.is_some() {
@@ -376,6 +387,7 @@ impl App for Notepad {
             });
         }
         kids.extend(self.printing.children());
+        kids.extend(self.zip_save.child(&self.forms));
         kids.extend(self.asks.child(&self.dialog_text, &self.forms));
         kids
     }
@@ -405,6 +417,10 @@ impl App for Notepad {
             self.find_focused = on.then_some(win);
         }
         let printed = win == MAIN && matches!(ev, Event::Wake) && self.printing.wake();
+        let saved = match (win, &ev) {
+            (MAIN, Event::Wake) => self.zip_save.wake(),
+            _ => Woke::Nothing,
+        };
         self.event_win = match win {
             GOTO | FIND | REPLACE_WIN | FONT | OPEN | SAVEAS => win,
             w if self.asks.owns(w) => self.parent(w).unwrap_or(MAIN),
@@ -415,6 +431,7 @@ impl App for Notepad {
             FIND => self.find_event(ev, ctx),
             REPLACE_WIN => self.replace_event(ev, ctx),
             FONT => self.font_event(ev, ctx),
+            w if self.zip_save.owns(w) => self.zip_save.event(&ev, ctx),
             w if self.printing.owns(w) => self.print_event(w, ev, ctx),
             w if self.asks.owns(w) => self.ask_event(w, ev),
             ABOUT => self.about_event(ev),
@@ -423,6 +440,11 @@ impl App for Notepad {
             _ => self.main_event(ev, ctx),
         };
         self.event_win = MAIN;
+        let reply = match saved {
+            Woke::Nothing => reply,
+            Woke::Shown => reply.and(Reply::redraw_all()),
+            Woke::Ended(ended) => reply.and(self.zip_saved(ended)),
+        };
         let reply = match clip {
             Some(clip) => reply.with_clipboard(clip),
             None => reply,
@@ -474,6 +496,7 @@ impl App for Notepad {
                 }
             }
             FONT => self.draw_font(c, ctx),
+            w if self.zip_save.owns(w) => self.zip_save.draw(c, ctx),
             w if self.printing.owns(w) => self.printing.draw(w, c, ctx),
             w if self.asks.owns(w) => self.asks.draw(c, &self.forms, &self.dialog_text),
             ABOUT => {
@@ -600,6 +623,7 @@ impl Extended for Notepad {
                 }
             }
             FONT => self.access_font(tree),
+            w if self.zip_save.owns(w) => self.zip_save.access(tree, ctx),
             w if self.printing.owns(w) => self.printing.access(w, tree, ctx),
             w if self.asks.owns(w) => self.asks.access(tree, dt, forms),
             ABOUT => {

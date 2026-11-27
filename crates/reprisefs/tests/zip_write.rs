@@ -100,7 +100,29 @@ fn add(dir: &Path, names: &[&str]) -> Vec<Adding> {
 }
 
 fn rewrite(zip: &Path, adds: &[Adding]) -> Result<(), String> {
-    zipwrite::rewrite(zip, adds, &Arc::new(Meter::default()), Bound::default())
+    zipwrite::rewrite(zip, adds, &Arc::new(Meter::default()), Bound::default()).map_err(|e| e.why())
+}
+
+/// The events of `job` until it finishes, for up to a minute.
+fn wait(job: &mut ArchiveJob) -> Vec<ArchiveEvent> {
+    let until = Instant::now() + Duration::from_secs(60);
+    let mut events = Vec::new();
+    while !job.is_finished() {
+        assert!(Instant::now() < until, "the job ends");
+        events.extend(job.poll());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    events
+}
+
+/// A save of `bytes` over `inner` of `zip` on its job: the error box's text when it failed.
+fn update(zip: &Path, inner: &str, bytes: &[u8]) -> Result<(), String> {
+    let mut job = ArchiveJob::update_entry(zip.into(), inner.into(), bytes.to_vec(), None, || {});
+    match wait(&mut job).as_slice() {
+        [ArchiveEvent::Landed { .. }, ArchiveEvent::Finished] => Ok(()),
+        [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished] => Err(text.clone()),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
@@ -115,8 +137,7 @@ fn a_saved_file_replaces_its_entry_and_keeps_the_rest_and_the_mode() {
         &["notes.txt", "sub", "sub/notes.txt", "sub/other.txt"],
     );
     std::fs::set_permissions(&zip, std::fs::Permissions::from_mode(0o640)).expect("chmod");
-    zipwrite::update_entry(&zip, Path::new("sub/notes.txt"), b"new and longer text")
-        .expect("updated");
+    update(&zip, "sub/notes.txt", b"new and longer text").expect("updated");
     assert_eq!(read_entry(&zip, "sub/notes.txt"), b"new and longer text");
     assert_eq!(read_entry(&zip, "notes.txt"), b"top");
     assert_eq!(
@@ -184,18 +205,95 @@ fn an_added_folder_merges_into_the_zips_folder_of_that_name() {
 }
 
 #[test]
-fn an_added_file_replaces_a_folder_of_its_name_and_all_below_it() {
-    let dir = fresh(&[("docs/a.txt", b"a"), ("docsx.txt", b"x")]);
-    let zip = zip_of(&dir, &["docs", "docs/a.txt", "docsx.txt"]);
-    let drop = fresh(&[("docs", b"a file now")]);
-    rewrite(&zip, &add(&drop.join("src"), &["docs"])).expect("replaced");
+fn a_file_over_a_folder_or_a_folder_over_a_file_is_refused_and_the_zip_left_alone() {
+    let dir = fresh(&[
+        ("docs/a.txt", b"a"),
+        ("implied/b.txt", b"b"),
+        ("notes", b"n"),
+    ]);
+    let zip = zip_of(&dir, &["docs", "docs/a.txt", "implied/b.txt", "notes"]);
+    let before = std::fs::read(&zip).expect("read");
+    let files = fresh(&[("docs", b"a file now"), ("implied", b"a file too")]);
+    let folders = fresh(&[("notes/inside.txt", b"a folder now")]);
+    let occupied = "There is already a file with the same name in this location.";
+    for (src, name) in [(&files, "docs"), (&files, "implied"), (&folders, "notes")] {
+        let why = rewrite(&zip, &add(&src.join("src"), &[name])).expect_err(name);
+        assert_eq!(why, occupied, "{name}");
+    }
+    let why = update(&zip, "docs", b"saved over a folder").expect_err("a save over a folder");
+    assert_eq!(why, format!("Cannot update a.zip: {occupied}"));
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+    assert!(temps(&zip).is_empty());
+}
+
+#[test]
+fn two_added_items_of_one_path_are_refused() {
+    let dir = fresh(&[("kept.txt", b"kept")]);
+    let zip = zip_of(&dir, &["kept.txt"]);
+    let a = fresh(&[("report.pdf", b"a")]);
+    let b = fresh(&[("report.pdf", b"b")]);
+    let adds = [
+        add(&a.join("src"), &["report.pdf"]),
+        add(&b.join("src"), &["report.pdf"]),
+    ]
+    .concat();
+    let why = rewrite(&zip, &adds).expect_err("two of one path");
     assert_eq!(
-        sorted(listing(&zip)),
-        sorted(vec![
-            ("docs".into(), Kind::File, 10),
-            ("docsx.txt".into(), Kind::File, 1),
-        ])
+        why,
+        "There is already a file with the same name in this location."
     );
+    assert_eq!(listing(&zip), vec![("kept.txt".into(), Kind::File, 4)]);
+}
+
+#[test]
+fn a_saved_file_keeps_the_mode_of_the_entry_it_replaces() {
+    let dir = fresh(&[("run.sh", b"echo old")]);
+    let src = dir.join("src/run.sh");
+    std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o750)).expect("chmod");
+    let zip = zip_of(&dir, &["run.sh"]);
+    update(&zip, "run.sh", b"echo new").expect("updated");
+    assert_eq!(read_entry(&zip, "run.sh"), b"echo new");
+    let out = Command::new("bsdtar")
+        .arg("-tvf")
+        .arg(&zip)
+        .output()
+        .expect("bsdtar");
+    let listed = String::from_utf8_lossy(&out.stdout);
+    assert!(listed.starts_with("-rwxr-x--- "), "{listed}");
+}
+
+#[test]
+fn a_zip_past_the_save_bound_is_refused_before_it_is_read() {
+    let dir = fresh(&[]);
+    let zip = dir.join("huge.zip");
+    let f = std::fs::File::create(&zip).expect("create");
+    std::io::Write::write_all(&mut &f, b"PK\x03\x04").expect("write");
+    f.set_len(zipwrite::UPDATE_MOST + 1).expect("a sparse zip");
+    let why = update(&zip, "notes.txt", b"x").expect_err("too large");
+    assert!(
+        why.starts_with("Cannot update huge.zip: it holds "),
+        "{why}"
+    );
+}
+
+#[test]
+fn a_rewrite_keeps_the_zips_xattrs() {
+    let dir = fresh(&[("a.txt", b"a")]);
+    let zip = zip_of(&dir, &["a.txt"]);
+    let set = Command::new("setfattr")
+        .args(["-n", "user.kept", "-v", "yes"])
+        .arg(&zip)
+        .status();
+    if !set.is_ok_and(|s| s.success()) {
+        return;
+    }
+    update(&zip, "a.txt", b"b").expect("updated");
+    let got = Command::new("getfattr")
+        .args(["--only-values", "-n", "user.kept"])
+        .arg(&zip)
+        .output()
+        .expect("getfattr");
+    assert_eq!(got.stdout, b"yes");
 }
 
 #[test]
@@ -241,7 +339,8 @@ fn a_link_a_tar_and_too_much_are_refused_and_left_alone() {
         &Arc::default(),
         small,
     )
-    .expect_err("over the bound");
+    .expect_err("over the bound")
+    .why();
     assert!(why.starts_with("it holds "), "{why}");
     assert_eq!(std::fs::read(&zip).expect("read"), before);
     assert!(temps(&zip).is_empty());
@@ -269,8 +368,8 @@ fn an_encrypted_zip_is_refused() {
     if !made.success() {
         return;
     }
-    let why = zipwrite::update_entry(&zip, Path::new("secret.txt"), b"x").expect_err("locked");
-    assert_eq!(why, "it is password-protected.");
+    let why = update(&zip, "secret.txt", b"x").expect_err("locked");
+    assert_eq!(why, "Cannot update locked.zip: it is password-protected.");
 }
 
 /// A zip holding `mb` MiB that does not compress, so rewriting it takes a while.
@@ -307,12 +406,7 @@ fn a_cancelled_add_leaves_the_zip_as_it_was_and_no_temp_file() {
     let mut job = ArchiveJob::add_to_zip(zip.clone(), add(&dir.join("src"), &["small.txt"]), || {});
     assert!(wait_for_temp(&zip), "the rewrite started");
     job.meter().cancel();
-    let until = Instant::now() + Duration::from_secs(60);
-    let mut events = Vec::new();
-    while !job.is_finished() && Instant::now() < until {
-        events.extend(job.poll());
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let events = wait(&mut job);
     assert!(
         matches!(events.as_slice(), [ArchiveEvent::Finished]),
         "{events:?}"
@@ -349,5 +443,44 @@ fn a_crash_mid_rewrite_leaves_the_zip_whole_and_its_temp_file_beside_it() {
         before,
         "the zip is whole"
     );
-    assert_eq!(temps(&zip).len(), 1, "the temp file stays");
+    let left = temps(&zip);
+    assert_eq!(left.len(), 1, "the temp file stays");
+    let young = rewrite(
+        &zip,
+        &add(&zip.parent().expect("a folder").join("src"), &["small.txt"]),
+    );
+    young.expect("a rewrite past a young temp file");
+    assert_eq!(
+        temps(&zip),
+        left,
+        "a temp file written to within the deadline stays"
+    );
+    let stale = std::time::SystemTime::now() - Duration::from_secs(86_400);
+    let f = std::fs::File::options()
+        .write(true)
+        .open(&left[0])
+        .expect("open");
+    f.set_modified(stale).expect("age it");
+    drop(f);
+    rewrite(
+        &zip,
+        &add(&zip.parent().expect("a folder").join("src"), &["small.txt"]),
+    )
+    .expect("a rewrite past a stale temp file");
+    assert!(
+        temps(&zip).is_empty(),
+        "the next rewrite removes a stale temp file"
+    );
+}
+
+#[test]
+fn a_dropped_job_stops_and_removes_its_temp_file() {
+    let (dir, zip) = big_zip(96);
+    let job = ArchiveJob::add_to_zip(zip.clone(), add(&dir.join("src"), &["small.txt"]), || {});
+    assert!(wait_for_temp(&zip), "the rewrite started");
+    drop(job);
+    assert!(
+        temps(&zip).is_empty(),
+        "letting go waits for the temp file to go"
+    );
 }
