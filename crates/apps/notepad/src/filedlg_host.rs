@@ -150,6 +150,7 @@ impl Notepad {
         self.format = format;
         self.view = View::default();
         self.stamp = path.as_deref().and_then(Stamp::of);
+        self.zip_entry = path.as_deref().and_then(reprisefs::archivecopy::updatable);
         self.path = path;
         self.open = None;
         self.sync_menus();
@@ -231,6 +232,7 @@ impl Notepad {
                 self.recent.record(&path);
                 self.format = format;
                 self.stamp = Stamp::of(&path);
+                self.zip_entry = None;
                 self.path = Some(path);
                 self.edit.mark_saved();
                 self.forget_rescued();

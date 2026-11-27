@@ -108,13 +108,30 @@ fn a_kept_background_never_writes_through_a_link_in_its_place() {
 fn a_copy_names_the_compressed_folder_it_came_from() {
     let copy = copy("report.txt", b"inside");
     let zip = Path::new("/home/user/Downloads/test.zip");
-    match archivecopy::set_origin(&copy, zip) {
+    match archivecopy::set_origin(&copy, zip, Path::new("2026/report.txt")) {
         Err(e) if e.raw_os_error() == Some(libc::EOPNOTSUPP) => return,
         made => made.expect("mark the scratch folder"),
     }
     assert_eq!(archivecopy::origin(&copy).as_deref(), Some(zip));
+    assert_eq!(
+        archivecopy::origin_entry(&copy),
+        Some((zip.to_path_buf(), "2026/report.txt".into()))
+    );
     let own = plain("report.txt", b"mine");
     assert_eq!(archivecopy::origin(&own), None);
+    assert_eq!(archivecopy::origin_entry(&own), None);
+}
+
+#[test]
+fn an_entry_not_ending_in_the_copys_name_is_not_its_origin() {
+    let copy = copy("report.txt", b"inside");
+    let zip = Path::new("/home/user/Downloads/test.zip");
+    match archivecopy::set_origin(&copy, zip, Path::new("other.txt")) {
+        Err(e) if e.raw_os_error() == Some(libc::EOPNOTSUPP) => return,
+        made => made.expect("mark the scratch folder"),
+    }
+    assert_eq!(archivecopy::origin(&copy).as_deref(), Some(zip));
+    assert_eq!(archivecopy::origin_entry(&copy), None);
 }
 
 /// Marks `copy`'s folder as come from `archive` without [`archivecopy::set_origin`]'s checks;
@@ -145,8 +162,13 @@ fn a_copy_out_of_an_archive_inside_another_names_the_outer_one() {
         return;
     }
     let notes = copy("notes.txt", b"inside");
-    archivecopy::set_origin(&notes, &inner).expect("mark");
+    archivecopy::set_origin(&notes, &inner, Path::new("notes.txt")).expect("mark");
     assert_eq!(archivecopy::origin(&notes).as_deref(), Some(outer));
+    assert_eq!(
+        archivecopy::origin_entry(&notes),
+        None,
+        "no entry of the outer zip"
+    );
     assert_eq!(
         archivecopy::dialog_folder(&notes).as_deref(),
         Some(Path::new("/home/user/Downloads"))
@@ -157,7 +179,7 @@ fn a_copy_out_of_an_archive_inside_another_names_the_outer_one() {
 fn no_dialog_starts_in_a_scratch_folder() {
     let inner = copy("unknown.zip", b"PK");
     let notes = copy("notes.txt", b"inside");
-    archivecopy::set_origin(&notes, &inner).expect("nothing to note");
+    archivecopy::set_origin(&notes, &inner, Path::new("notes.txt")).expect("nothing to note");
     assert_eq!(archivecopy::origin(&notes), None);
     assert_eq!(archivecopy::dialog_folder(&notes), None);
     let marked = copy("marked.txt", b"inside");

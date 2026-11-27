@@ -86,6 +86,7 @@ pub mod udisks;
 pub mod undo;
 pub mod usage;
 pub mod xkb;
+pub mod zipwrite;
 
 #[cfg(test)]
 pub(crate) mod testfs {
