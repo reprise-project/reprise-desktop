@@ -115,12 +115,24 @@ fn tool_hint(t: Tool) -> String {
         Tool::Brush => tr!("hint-brush"),
         Tool::Airbrush => tr!("hint-airbrush"),
         Tool::Text => tr!("hint-text"),
-        Tool::Line => tr!("hint-line"),
+        Tool::Line => tr!(
+            "hint-line",
+            shift = reprisekit::keycap::shown_chord("Shift")
+        ),
         Tool::Curve => tr!("hint-curve"),
-        Tool::Rect => tr!("hint-rect"),
+        Tool::Rect => tr!(
+            "hint-rect",
+            shift = reprisekit::keycap::shown_chord("Shift")
+        ),
         Tool::Polygon => tr!("hint-polygon"),
-        Tool::Ellipse => tr!("hint-ellipse"),
-        Tool::RoundRect => tr!("hint-round-rect"),
+        Tool::Ellipse => tr!(
+            "hint-ellipse",
+            shift = reprisekit::keycap::shown_chord("Shift")
+        ),
+        Tool::RoundRect => tr!(
+            "hint-round-rect",
+            shift = reprisekit::keycap::shown_chord("Shift")
+        ),
     }
 }
 

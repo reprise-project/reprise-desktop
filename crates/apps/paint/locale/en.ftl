@@ -66,12 +66,12 @@ hint-pencil = Draws one pixel wide wherever the pointer goes.
 hint-brush = Paints with the brush tip picked below.
 hint-airbrush = Sprays dots while the button is held.
 hint-text = Click or drag a box, then type; click outside the box to set the text.
-hint-line = Drag to draw a straight line; hold Shift for level or 45° lines.
+hint-line = Drag to draw a straight line; hold { $shift } for level or 45° lines.
 hint-curve = Drag a line, then drag once or twice to bend it.
-hint-rect = Drag to draw a rectangle; hold Shift for a square.
+hint-rect = Drag to draw a rectangle; hold { $shift } for a square.
 hint-polygon = Click each corner; double-click to close the shape.
-hint-ellipse = Drag to draw an ellipse; hold Shift for a circle.
-hint-round-rect = Drag to draw a box with rounded corners; hold Shift for a square.
+hint-ellipse = Drag to draw an ellipse; hold { $shift } for a circle.
+hint-round-rect = Drag to draw a box with rounded corners; hold { $shift } for a square.
 
 ## Options well entries
 option-width = { $n } pixel line
