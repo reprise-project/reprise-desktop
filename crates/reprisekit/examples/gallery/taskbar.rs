@@ -1089,8 +1089,6 @@ pub fn render_tray_arrow_schemes(n: i32) -> Canvas {
 
 /// Glass's Start orb at rest, lit and held on a 120 px bar at scale `n`, on Sky and dark glass.
 pub fn render_orb_glow(n: i32) -> Canvas {
-    use reprisekit::taskbar::{TaskbarCounts, TaskbarLayout, TaskbarState};
-    let text = TextRenderer::load(&FontConfig::default());
     // Rows are 80 px apart so a lit glow's rows above the bar land on the stripes.
     let (w, gap, row_h) = (120, 10, 80);
     let quads = four_colour_icon(24 * n);
@@ -1098,6 +1096,7 @@ pub fn render_orb_glow(n: i32) -> Canvas {
         reprisekit::glass::Mode::Light,
         reprisekit::glass::Mode::Dark,
     ];
+    let text = TextRenderer::load(&FontConfig::default());
     let mut c = blurred_stripes((3 * (w + gap) + gap) * n, 4 * row_h * n);
     for (li, mode) in looks.into_iter().enumerate() {
         let one = cued(interfaces::theme_with(
@@ -1109,66 +1108,129 @@ pub fn render_orb_glow(n: i32) -> Canvas {
                 ..reprisekit::glass::Settings::default()
             },
         ));
-        let theme = one.scaled(n);
-        let shape = theme.taskbar_shape();
         for (ii, icon) in [None, Some(quads.clone())].into_iter().enumerate() {
             for (col, (hot, held)) in [(false, false), (true, false), (true, true)]
                 .into_iter()
                 .enumerate()
             {
-                let l = TaskbarLayout::compute(
-                    &one.metrics,
-                    &shape,
-                    w,
-                    true,
-                    TaskbarCounts::default(),
-                    text.measure("3:45 PM", false, one.fonts.size_px),
-                )
-                .scaled(n);
-                let state = TaskbarState {
-                    start_pressed: held,
-                    start_focus: false,
-                    focus: None,
-                    start_hot: hot,
-                    start_icon: icon.clone().map(Into::into),
-                    orb_glow: 100,
-                    quick_icons: vec![],
-                    quick_hot: None,
-                    quick_pressed: None,
-                    quick_drop: None,
-                    quick_more: Default::default(),
-                    pager: vec![],
-                    pager_hot: None,
-                    pager_mark: Default::default(),
-                    task_hot: None,
-                    task_pressed: None,
-                    task_hot_x: None,
-                    task_shift: Vec::new(),
-                    task_float: None,
-                    task_progress: Vec::new(),
-                    task_badge: Vec::new(),
-                    show_desktop_hot: false,
-                    more: Default::default(),
-                    chevron: Default::default(),
-                    tasks: vec![],
-                    tray_icons: vec![],
-                    meter: None,
-                    clock: "3:45 PM".into(),
-                };
-                let mut bar = Canvas::new(l.width as u32, l.height as u32);
-                look::draw_taskbar(&mut bar, &theme, &text, &text, &l, &state);
                 let x = (gap + col as i32 * (w + gap)) * n;
                 let y = (40 + (2 * li + ii) as i32 * row_h) * n;
-                c.blit_over(x, y, &bar);
-                if let Some(r) = l.start_orb(held) {
-                    let mut orb = Canvas::new(r.width as u32, r.height as u32);
-                    look::draw_start_above(&mut orb, &theme, &l, &state);
-                    c.blit_over(x + r.x, y + r.y, &orb);
-                }
+                draw_orb_cell(
+                    &mut c,
+                    &text,
+                    &one,
+                    n,
+                    (x, y, w),
+                    icon.clone(),
+                    (hot, held, 100),
+                );
             }
         }
     }
     c
+}
+
+/// Onyx's Start orb at rest, lit and held on its 30 px bar at scale `n`: with the mark, with an
+/// icon, and with `orb_glow = 0`.
+pub fn render_onyx_orb(n: i32) -> Canvas {
+    let (w, gap, row_h) = (120, 10, 60);
+    let onyx = reprisekit::glass::Settings {
+        style: reprisekit::glass::Style::Onyx,
+        ..reprisekit::glass::Settings::default()
+    };
+    let mut one = cued(interfaces::theme_with(
+        Interface::Glass,
+        reprisekit::blue::Variant::default(),
+        false,
+        &onyx,
+    ));
+    interfaces::small_bar(&mut one, &onyx);
+    let quads = four_colour_icon(24 * n);
+    let rows = [(None, 100), (Some(quads), 100), (None, 0)];
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut c = blurred_stripes((3 * (w + gap) + gap) * n, (20 + 3 * row_h) * n);
+    for (ri, (icon, glow)) in rows.into_iter().enumerate() {
+        for (col, (hot, held)) in [(false, false), (true, false), (true, true)]
+            .into_iter()
+            .enumerate()
+        {
+            let x = (gap + col as i32 * (w + gap)) * n;
+            let y = (30 + ri as i32 * row_h) * n;
+            draw_orb_cell(
+                &mut c,
+                &text,
+                &one,
+                n,
+                (x, y, w),
+                icon.clone(),
+                (hot, held, glow),
+            );
+        }
+    }
+    c
+}
+
+/// A `w` px bar of `one` at scale `n` with only its orb, lit, held and glowing as `look` says,
+/// drawn with the orb's own buffer at device (`x`, `y`) of `c`.
+fn draw_orb_cell(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    one: &Theme,
+    n: i32,
+    (x, y, w): (i32, i32, i32),
+    icon: Option<Canvas>,
+    (hot, held, glow): (bool, bool, u8),
+) {
+    use reprisekit::taskbar::{TaskbarCounts, TaskbarLayout, TaskbarState};
+    let theme = one.scaled(n);
+    let shape = theme.taskbar_shape();
+    let l = TaskbarLayout::compute(
+        &one.metrics,
+        &shape,
+        w,
+        true,
+        TaskbarCounts::default(),
+        text.measure("3:45 PM", false, one.fonts.size_px),
+    )
+    .scaled(n);
+    let state = TaskbarState {
+        start_pressed: held,
+        start_focus: false,
+        focus: None,
+        start_hot: hot,
+        start_icon: icon.map(Into::into),
+        orb_glow: glow,
+        quick_icons: vec![],
+        quick_hot: None,
+        quick_pressed: None,
+        quick_drop: None,
+        quick_more: Default::default(),
+        pager: vec![],
+        pager_hot: None,
+        pager_mark: Default::default(),
+        task_hot: None,
+        task_pressed: None,
+        task_hot_x: None,
+        task_shift: Vec::new(),
+        task_float: None,
+        task_progress: Vec::new(),
+        task_badge: Vec::new(),
+        show_desktop_hot: false,
+        more: Default::default(),
+        chevron: Default::default(),
+        tasks: vec![],
+        tray_icons: vec![],
+        meter: None,
+        clock: "3:45 PM".into(),
+    };
+    let mut bar = Canvas::new(l.width as u32, l.height as u32);
+    look::draw_taskbar(&mut bar, &theme, text, text, &l, &state);
+    c.blit_over(x, y, &bar);
+    if let Some(r) = l.start_orb(held) {
+        let mut orb = Canvas::new(r.width as u32, r.height as u32);
+        look::draw_start_above(&mut orb, &theme, &l, &state);
+        c.blit_over(x + r.x, y + r.y, &orb);
+    }
 }
 
 /// A `px` square test icon of four rounded panes: red, green, blue, yellow clockwise from the top left.
