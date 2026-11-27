@@ -340,7 +340,7 @@ impl State {
             && let Some(e) = &target.entry
         {
             let (app, path) = (e.id.as_str().to_string(), path.clone());
-            self.open_jump_file_menu(&app, &path);
+            self.open_jump_file_menu(depth, &app, &path);
             return;
         }
         if button == BTN_RIGHT

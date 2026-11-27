@@ -129,7 +129,7 @@ impl State {
         let path = super::lists::jump_file(&v.jumps, v.model.mode(), k)?;
         let id = self.app_index.get(*v.programs.get(i)?)?.id.as_str();
         let pinned = self.jump_pins.is_pinned(id, path);
-        Some(crate::startmenu::jump_file_menu(id, path, pinned))
+        Some(crate::startmenu::jump_file_menu(id, path, pinned, None))
     }
 
     fn start_place_menu(&self, i: usize) -> Option<(Vec<MenuItem>, Vec<Option<StartRow>>)> {
@@ -310,22 +310,26 @@ impl State {
             .map(|q| q.file.clone())
     }
 
-    /// Row `r` of the menu of file `path` on the jump list of program `app` (`entry`).
+    /// Row `r` of the menu of file `path` on the jump list of program `app` (`entry`); a change
+    /// opens task button jump list `list` again.
     fn jump_file_row(
         &mut self,
         r: JumpFileRow,
         app: &str,
         path: &std::path::Path,
         entry: Option<reprisefs::apps::AppEntry>,
+        list: Option<crate::menuview::JumpListAt>,
     ) {
         match r {
             JumpFileRow::Open => {
                 self.close_start_panel();
                 self.open_recent_with(entry.as_ref(), path);
+                return;
             }
             JumpFileRow::OpenLocation => {
                 self.close_start_panel();
                 self.open_file_location(path);
+                return;
             }
             JumpFileRow::Pin | JumpFileRow::Unpin => {
                 let changed = match r {
@@ -342,6 +346,9 @@ impl State {
                     self.forget_recent(path.to_path_buf(), e);
                 }
             }
+        }
+        if let Some(l) = list {
+            self.open_jump_list(l.tree, l.button, l.at);
         }
     }
 
@@ -397,9 +404,9 @@ impl State {
                 }
             }
             StartRow::CannotUninstall | StartRow::OnDesktop => {}
-            StartRow::JumpFile(r, a, path) => {
+            StartRow::JumpFile(r, a, path, list) => {
                 let e = entry(self, a);
-                self.jump_file_row(*r, a, path, e);
+                self.jump_file_row(*r, a, path, e, *list);
             }
             StartRow::OpenFileLocation(a) => {
                 let file = entry(self, a).and_then(|e| reprisefs::apps::find_file(&e.id));

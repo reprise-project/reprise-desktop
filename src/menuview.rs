@@ -10,6 +10,7 @@ mod activate;
 mod context;
 mod input;
 mod jump;
+pub use jump::JumpListAt;
 mod stack;
 mod submenu;
 mod window_list;
