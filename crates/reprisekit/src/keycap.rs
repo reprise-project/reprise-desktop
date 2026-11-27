@@ -124,6 +124,7 @@ macro_rules! key_names {
                 ("Insert", $tr!("key-insert")),
                 ("Enter", $tr!("key-enter")),
                 ("Esc", $tr!("key-esc")),
+                ("Escape", $tr!("key-escape")),
                 ("Tab", $tr!("key-tab")),
                 ("Space", $tr!("key-space")),
                 ("Backspace", $tr!("key-backspace")),
@@ -139,6 +140,37 @@ macro_rules! key_names {
                 ("Down", $tr!("key-down")),
                 ("Plus", $tr!("key-plus")),
                 ("Minus", $tr!("key-minus")),
+                ("Back Space", $tr!("key-back-space")),
+                ("Print", $tr!("key-print")),
+                ("Caps Lock", $tr!("key-caps-lock")),
+                ("Num Lock", $tr!("key-num-lock")),
+                ("Scroll Lock", $tr!("key-scroll-lock")),
+                ("SysRq", $tr!("key-sysrq")),
+                ("Pause", $tr!("key-pause")),
+                ("Menu", $tr!("key-menu")),
+                ("Left Ctrl", $tr!("key-left-ctrl")),
+                ("Right Ctrl", $tr!("key-right-ctrl")),
+                ("Left Alt", $tr!("key-left-alt")),
+                ("Right Alt", $tr!("key-right-alt")),
+                ("Left Shift", $tr!("key-left-shift")),
+                ("Right Shift", $tr!("key-right-shift")),
+                ("Left Super", $tr!("key-left-super")),
+                ("Right Super", $tr!("key-right-super")),
+                ("Audio Mute", $tr!("key-audio-mute")),
+                ("Audio Raise Volume", $tr!("key-audio-raise-volume")),
+                ("Audio Lower Volume", $tr!("key-audio-lower-volume")),
+                ("Audio Mic Mute", $tr!("key-audio-mic-mute")),
+                ("Audio Play", $tr!("key-audio-play")),
+                ("Audio Pause", $tr!("key-audio-pause")),
+                ("Audio Stop", $tr!("key-audio-stop")),
+                ("Audio Prev", $tr!("key-audio-prev")),
+                ("Audio Next", $tr!("key-audio-next")),
+                ("Mon Brightness Up", $tr!("key-mon-brightness-up")),
+                ("Mon Brightness Down", $tr!("key-mon-brightness-down")),
+                ("Kbd Brightness Up", $tr!("key-kbd-brightness-up")),
+                ("Kbd Brightness Down", $tr!("key-kbd-brightness-down")),
+                ("Power Off", $tr!("key-power-off")),
+                ("Sleep", $tr!("key-sleep")),
             ],
         }
     };
@@ -224,6 +256,12 @@ mod tests {
             "Ctrl+",
             "Super+Shift+Page Up",
             "Shift+Left Alt",
+            "Ctrl+Back Space",
+            "Print",
+            "Caps Lock",
+            "Right Ctrl",
+            "Audio Raise Volume",
+            "Super+Shift+Escape",
         ] {
             assert_eq!(shown_chord(c), c);
         }
@@ -257,6 +295,8 @@ mod tests {
             "Super + Umschalt + Bild auf"
         );
         assert_eq!(names.shown("Ctrl+"), "Strg + ");
+        assert_eq!(names.shown("Left Alt"), "Alt links");
+        assert_eq!(names.shown("Print"), "Druck");
         assert_eq!(names.shown("F5"), "F5");
         assert_eq!(
             names.shown("Esc"),

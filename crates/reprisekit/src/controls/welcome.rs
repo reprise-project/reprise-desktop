@@ -7,6 +7,7 @@ use crate::controls::combo::COMBO_H;
 use crate::controls::form::{self, Control, Item};
 use crate::controls::wizard::{self, EXTERIOR_BODY, Style, Wizard};
 use crate::interface::Interface;
+use crate::keycap::shown_chord;
 use crate::look::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::text::{TextRenderer, wrap};
@@ -230,15 +231,19 @@ impl Welcome {
         let k = &self.keys;
         let paragraphs = [
             Some(if k.overlay {
-                "Press Super for the Start menu, or hold it a second to see every shortcut.".into()
+                tr!("welcome-ready-start-hold", super_key = shown_chord("Super"))
             } else {
-                "Press Super for the Start menu.".into()
+                tr!("welcome-ready-start", super_key = shown_chord("Super"))
             }),
             (k.launcher.as_ref()).map(|c| {
-                format!("{c} opens the launcher: type a few letters of a program and press Enter.")
+                tr!(
+                    "welcome-ready-launcher",
+                    keys = shown_chord(c),
+                    enter = shown_chord("Enter")
+                )
             }),
-            (k.clipboard.as_ref()).map(|c| format!("{c} brings back what you copied.")),
-            Some("Everything you picked here, and much more, is in Settings.".into()),
+            (k.clipboard.as_ref()).map(|c| tr!("welcome-ready-clipboard", keys = shown_chord(c))),
+            Some(tr!("welcome-ready-settings")),
         ];
         let mut lines = Vec::new();
         for p in paragraphs.iter().flatten() {

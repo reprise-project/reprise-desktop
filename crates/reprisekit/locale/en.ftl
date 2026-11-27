@@ -186,7 +186,7 @@ size-handle-bottom = Resize height
 size-handle-corner = Resize width and height
 
 ## Key names in a shown chord ("Ctrl+Z", "Super+Shift+Page Up"), and the mark between them. Letters,
-## signs and F1-F24 show as they are.
+## signs and F1-F24 show as they are. A key cap as keycap::key_text spells it.
 key-separator = +
 key-ctrl = Ctrl
 key-shift = Shift
@@ -198,6 +198,7 @@ key-ins = Ins
 key-insert = Insert
 key-enter = Enter
 key-esc = Esc
+key-escape = Escape
 key-tab = Tab
 key-space = Space
 key-backspace = Backspace
@@ -213,5 +214,46 @@ key-up = Up
 key-down = Down
 key-plus = Plus
 key-minus = Minus
+key-back-space = Back Space
+key-print = Print
+key-caps-lock = Caps Lock
+key-num-lock = Num Lock
+key-scroll-lock = Scroll Lock
+key-sysrq = SysRq
+key-pause = Pause
+key-menu = Menu
+key-left-ctrl = Left Ctrl
+key-right-ctrl = Right Ctrl
+key-left-alt = Left Alt
+key-right-alt = Right Alt
+key-left-shift = Left Shift
+key-right-shift = Right Shift
+key-left-super = Left Super
+key-right-super = Right Super
+key-audio-mute = Audio Mute
+key-audio-raise-volume = Audio Raise Volume
+key-audio-lower-volume = Audio Lower Volume
+key-audio-mic-mute = Audio Mic Mute
+key-audio-play = Audio Play
+key-audio-pause = Audio Pause
+key-audio-stop = Audio Stop
+key-audio-prev = Audio Prev
+key-audio-next = Audio Next
+key-mon-brightness-up = Mon Brightness Up
+key-mon-brightness-down = Mon Brightness Down
+key-kbd-brightness-up = Kbd Brightness Up
+key-kbd-brightness-down = Kbd Brightness Down
+key-power-off = Power Off
+key-sleep = Sleep
+## The last page of the welcome wizard
+welcome-ready-start-hold = Press { $super_key } for the Start menu, or hold it a second to see every shortcut.
+welcome-ready-start = Press { $super_key } for the Start menu.
+welcome-ready-launcher = { $keys } opens the launcher: type a few letters of a program and press { $enter }.
+welcome-ready-clipboard = { $keys } brings back what you copied.
+welcome-ready-settings = Everything you picked here, and much more, is in Settings.
+
+## The keyboard shortcut sheet
+keysheet-title = Keyboard Shortcuts
+
 ## A shortcut box holding no chord
 hotkey-none = None
