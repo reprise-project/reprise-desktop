@@ -190,6 +190,25 @@ fn a_start_address_inside_an_archive_opens_that_folder() {
     assert!(!ex.history.can_back());
 }
 
+#[test]
+fn a_start_address_of_no_folder_in_an_archive_opens_home_and_says_it_cannot_be_found() {
+    let (_dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let missing = zip.join("nope");
+    let start = parse_args([missing.clone().into_os_string()]);
+    let mut ex = Explorer::open(start, |d| d.is_dir(), test_explorer, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| ex.dialog().is_some());
+    let text = format!(
+        "Cannot find '{}'. Check the spelling and try again.",
+        missing.display()
+    );
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text: t, .. }) if *t == text),
+        "a box says {text}"
+    );
+    assert_eq!(ex.place, Place::Home);
+}
+
 /// Polls the archive jobs to the end of the queue, keeping every reply.
 fn finish_copies(ex: &mut Explorer, ctx: &mut Ctx) -> Reply {
     let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
