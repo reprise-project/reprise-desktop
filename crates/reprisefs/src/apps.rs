@@ -612,12 +612,18 @@ pub fn launcher_text(label: &str, icon: Option<&str>, launch: Launch) -> Option<
 /// opening `url`. None when `url` holds a control character, which
 /// could add a key.
 pub fn link_text(label: &str, url: &str) -> Option<String> {
-    if url.contains(char::is_control) {
+    link_text_with(label, url, "text-html")
+}
+
+/// [`link_text`] showing `icon`.
+pub fn link_text_with(label: &str, url: &str, icon: &str) -> Option<String> {
+    if url.contains(char::is_control) || icon.contains(char::is_control) {
         return None;
     }
     Some(format!(
-        "[Desktop Entry]\nType=Link\nName={}\nIcon=text-html\nURL={}\n",
+        "[Desktop Entry]\nType=Link\nName={}\nIcon={}\nURL={}\n",
         label_value(label),
+        escape_value(icon),
         escape_value(url)
     ))
 }

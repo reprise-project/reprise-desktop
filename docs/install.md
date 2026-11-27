@@ -185,6 +185,7 @@ Missing packages disable only their feature.
 - NetworkManager, for the network icon and Network Connections.
 - gvfs (with `gio` from GLib and `gvfsd-fuse`), for Connect to Server, Network Locations, and the Network place, plus `gvfs-smb` for SMB shares.
 - dnsmasq, for NetworkManager hotspot sharing.
+- curl, for naming a new Internet shortcut after its page's title (it reads the page's first 8 KB, waiting at most 3 seconds) and for firmware downloads with fwupd.
 - NetworkManager VPN plugins (such as `networkmanager-openvpn`), for importing and running VPNs. WireGuard needs no plugin.
 
 **Printing, updates and accounts**
