@@ -753,6 +753,42 @@ fn the_glass_mode_keys_load_and_a_mode_change_moves_them_to_appearance() {
 }
 
 #[test]
+fn leaving_glass_moves_its_mode_keys_so_the_sheets_mode_stays() {
+    let text = "[appearance]\ninterface = \"glass\"\n\n[glass]\nmode = \"dark\"\n";
+    let base = load(text);
+    assert_eq!(base.mode, "dark");
+    let classic = Settings {
+        interface: "classic".into(),
+        ..base.clone()
+    };
+    let saved = save(text, &classic, &base).unwrap();
+    let c = repriseconf::config::Config::parse(&saved).unwrap();
+    assert!(
+        c.dark && c.interface == reprisekit::interface::Interface::Classic,
+        "{saved}"
+    );
+    assert_eq!(load(&saved).mode, "dark");
+}
+
+#[test]
+fn entering_glass_drops_the_inert_glass_mode_keys() {
+    let text = "[appearance]\nmode = \"dark\"\n\n[glass]\nmode = \"dark\"\n";
+    let base = load(text);
+    let light_glass = Settings {
+        interface: "glass".into(),
+        mode: "light".into(),
+        ..base.clone()
+    };
+    let saved = save(text, &light_glass, &base).unwrap();
+    let c = repriseconf::config::Config::parse(&saved).unwrap();
+    assert!(
+        !c.dark && c.interface == reprisekit::interface::Interface::Glass,
+        "{saved}"
+    );
+    assert!(!saved.contains("[glass]"), "{saved}");
+}
+
+#[test]
 fn the_classic_dark_scheme_saves_its_name_and_drops_the_default() {
     let base = Settings::default();
     let nord = Settings {

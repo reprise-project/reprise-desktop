@@ -270,6 +270,22 @@ impl Config {
         }
     }
 
+    /// Whether the look in force is dark: dark mode, or a dark colour scheme worn in light mode
+    /// (a Classic one, or `[colors]`). The portal, `REPRISE_MODE` and the look's `mode` key all
+    /// say this.
+    pub fn looks_dark(&self) -> bool {
+        self.dark || self.theme.colors.is_dark()
+    }
+
+    /// [`Config::looks_dark`] as a light or dark mode.
+    pub fn look_mode(&self) -> reprisekit::glass::Mode {
+        if self.looks_dark() {
+            reprisekit::glass::Mode::Dark
+        } else {
+            reprisekit::glass::Mode::Light
+        }
+    }
+
     pub fn warn_retired(&self) {
         if !self.retired.is_empty() {
             log::warn!(

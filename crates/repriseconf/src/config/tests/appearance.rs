@@ -254,6 +254,14 @@ fn classic_in_dark_mode_wears_the_dark_scheme() {
         Config::parse("[appearance]\ndark_color_scheme = \"Dim\"\n").is_err(),
         "an unknown dark scheme is an error in light mode too"
     );
+    assert!(
+        Config::parse("[appearance]\ndark_color_scheme = \"Brick\"\n").is_err(),
+        "a light scheme is no dark scheme"
+    );
+    assert!(
+        Config::parse("[appearance]\nmode = \"dark\"\ncolor_scheme = \"Dim\"\n").is_err(),
+        "an unknown color_scheme is an error in dark mode too"
+    );
     let glass = Config::parse(
         "[appearance]\ninterface = \"glass\"\nmode = \"dark\"\ndark_color_scheme = \"Nord\"\n",
     )

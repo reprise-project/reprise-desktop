@@ -139,8 +139,8 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 # blur_rate = 30             # at most this many times a second a program drawing
 #                            # next to the glass (a video) or desktop water blurs
 #                            # into it again; 0: every frame
-#                            # mode, dark_from and dark_to are [appearance]'s now; set here
-#                            # they still apply to Glass where [appearance] leaves them out
+#                            # mode, dark_from and dark_to: see [appearance]; set here they
+#                            # apply to Glass where [appearance] leaves them out
 # material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
 # frame = "rounded"          # rounded | square (flat, separate caption buttons)
 # notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge, the glass washed in its colour) | droplet (one row, opens on hover)
