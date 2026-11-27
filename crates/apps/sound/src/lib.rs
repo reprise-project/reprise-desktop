@@ -10,6 +10,8 @@ fn list_icon_px(ctx: &Ctx) -> i32 {
 #[cfg(test)]
 reprisebus::test_session!();
 
+reprisekit::strings!("sound");
+
 mod appicons;
 mod connect;
 mod mpris;
@@ -34,6 +36,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::taskbar::Edge;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
+use reprisekit::tr;
 
 const VOLUME_CONTROL: &str = "reprise-volume";
 /// What the popup's settings link starts.
@@ -376,8 +379,8 @@ impl Sound {
                 s.unapplied(&self.snapshot);
             }
             self.error.show(
-                "Sounds and Audio Devices",
-                format!("{program} could not be run, so nothing was changed."),
+                &tr!("error-title"),
+                tr!("write-failed", program = program.to_string()),
                 None,
             );
             return false;
@@ -388,8 +391,8 @@ impl Sound {
             };
             if let Err(e) = repriseconf::save_sounds_on_connect(choice) {
                 self.error.show(
-                    "Sounds and Audio Devices",
-                    format!("The setting could not be saved: {e}"),
+                    &tr!("error-title"),
+                    tr!("save-failed", error = e.to_string()),
                     None,
                 );
                 return false;
@@ -698,7 +701,7 @@ fn program(change: &sheet::Change) -> &'static str {
 
 impl App for Sound {
     fn title(&self) -> String {
-        "Sounds and Audio Devices Properties".into()
+        tr!("title")
     }
 
     fn app_id(&self) -> String {
