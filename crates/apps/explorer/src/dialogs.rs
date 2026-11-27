@@ -710,7 +710,7 @@ impl Explorer {
         let (title, text) = reprisefs::bincap::delete_prompt(kind, name, count, erase, no_bin);
         let min_text_h = (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H);
         Confirm {
-            title: title.into(),
+            title,
             text,
             min_text_h,
             template: match kind {
