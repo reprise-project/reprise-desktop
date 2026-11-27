@@ -591,6 +591,14 @@ pub struct KeptSwipe {
     overview_was_open: bool,
 }
 
+impl KeptSwipe {
+    /// Whether the overview was open when this swipe began, if the swipe fades it.
+    pub(crate) fn fading_overview(&self) -> Option<bool> {
+        let (axis, _) = self.tracker.progress()?;
+        (axis == crate::gestures::Axis::Vertical).then_some(self.overview_was_open)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
