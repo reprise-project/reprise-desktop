@@ -107,6 +107,7 @@ pub enum Command {
     CloseBar,
     About,
     SystemInformation,
+    Settings,
     /// Ctrl+T: the folder shown in a new tab.
     NewTab,
     /// Ctrl+W: the open tab closes, the window with the last one.
@@ -301,6 +302,9 @@ impl Explorer {
                 spawn: vec![vec!["reprise-about".into()]],
                 ..Default::default()
             },
+            Command::Settings => {
+                crate::spawn_in(&["reprise-settings".as_ref()], "reprise-settings")
+            }
             Command::Eject
                 if self
                     .sv
