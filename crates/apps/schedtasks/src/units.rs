@@ -37,31 +37,49 @@ pub enum Schedule {
         date: (i32, u32, u32),
         at: (u32, u32),
     },
+    /// On the hour.
+    Hourly,
+    /// Every `every` minutes from the hour; `every` divides 60.
+    Minutes {
+        every: u32,
+    },
     AtLogOn,
 }
 
 /// systemd's weekday names, Monday first.
 pub const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/// How long after the user manager starts an at-log-on task runs, so the desktop has handed its
+/// environment to the manager first.
+pub const LOGON_DELAY_S: u64 = 30;
+
 impl Schedule {
-    /// The `[Timer]` line: `OnCalendar=*-*-* 09:30:00`. At log on waits 30 s, so the desktop has
-    /// handed its environment to the user manager before the program starts.
-    pub fn setting(&self) -> String {
+    /// The `OnCalendar` spec in the form systemd normalizes it to, `*-*-* 09:30:00`; None for at
+    /// log on.
+    pub fn calendar(&self) -> Option<String> {
         let time = |(h, m): (u32, u32)| format!("{h:02}:{m:02}:00");
-        match *self {
-            Schedule::Daily { at } => format!("OnCalendar=*-*-* {}", time(at)),
+        Some(match *self {
+            Schedule::Daily { at } => format!("*-*-* {}", time(at)),
             Schedule::Weekly { day, at } => {
                 let day = WEEKDAYS.get(day).copied().unwrap_or("Mon");
-                format!("OnCalendar={day} *-*-* {}", time(at))
+                format!("{day} *-*-* {}", time(at))
             }
-            Schedule::Monthly { day, at } => format!("OnCalendar=*-*-{day:02} {}", time(at)),
+            Schedule::Monthly { day, at } => format!("*-*-{day:02} {}", time(at)),
             Schedule::Once {
                 date: (y, mo, d),
                 at,
-            } => {
-                format!("OnCalendar={y:04}-{mo:02}-{d:02} {}", time(at))
-            }
-            Schedule::AtLogOn => "OnStartupSec=30s".into(),
+            } => format!("{y:04}-{mo:02}-{d:02} {}", time(at)),
+            Schedule::Hourly => "*-*-* *:00:00".into(),
+            Schedule::Minutes { every } => format!("*-*-* *:00/{every}:00"),
+            Schedule::AtLogOn => return None,
+        })
+    }
+
+    /// The `[Timer]` line: `OnCalendar=*-*-* 09:30:00`, or `OnStartupSec=` [`LOGON_DELAY_S`].
+    pub fn setting(&self) -> String {
+        match self.calendar() {
+            Some(spec) => format!("OnCalendar={spec}"),
+            None => format!("OnStartupSec={LOGON_DELAY_S}s"),
         }
     }
 }

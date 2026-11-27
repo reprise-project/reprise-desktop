@@ -53,6 +53,10 @@ schedule-once = Once, { $date } at { $time }
 schedule-hourly = Every hour
 schedule-hourly-at = Every hour at :{ $minute }
 schedule-minutely = Every minute
+schedule-minutes = { $n ->
+    [one] Every minute
+   *[other] Every { $n } minutes
+}
 days-range = { $first } to { $last }
 after-boot = { $span } after startup
 after-startup = { $span } after logging on
@@ -117,9 +121,11 @@ new-kind = &Run:
 new-day = &Day:
 new-date = Da&te:
 new-time = T&ime:
-new-setting = Timer:
+new-setting = Schedule:
 new-create = &Create
 new-cancel = Cancel
+kind-minutes = Every { $n } minutes
+kind-hourly = Hourly
 kind-daily = Daily
 kind-weekly = Weekly
 kind-monthly = Monthly

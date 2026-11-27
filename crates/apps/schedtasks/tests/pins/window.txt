@@ -1,12 +1,12 @@
 window Classic e5c16fec36366245
 properties Classic 84f0fc7581cf463c
 output Classic 1711e24493a746dc
-new task Classic 5272e35096507048
+new task Classic 70e88a895e4bc1e8
 window Blue 4a6ef8a73ec41fcf
 properties Blue c8c5ebbef2f4d475
 output Blue 8354a53e7eabbc3e
-new task Blue 3c88bde9fee6e854
+new task Blue 7eebaf14b1a3d404
 window Glass 48ee719d4af9da57
 properties Glass ff9985ba886d3369
 output Glass 9593e6c2c94e0525
-new task Glass e6882a1b1851f096
+new task Glass 4eab94f25951f5a6

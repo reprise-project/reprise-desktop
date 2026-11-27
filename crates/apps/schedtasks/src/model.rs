@@ -191,8 +191,8 @@ fn span(us: u64) -> String {
     out.join(" ")
 }
 
-/// A monotonic setting in words.
-fn after(base: &str, us: u64) -> String {
+/// A monotonic setting in words: `base` is its `TimersMonotonic` name, `OnStartupUSec`.
+pub fn after(base: &str, us: u64) -> String {
     let span = span(us);
     match base {
         "OnBootUSec" => tr!("after-boot", span = span),
@@ -292,6 +292,10 @@ fn calendar_words(spec: &str, is_12h: bool) -> Option<String> {
             ["*", m, "00"] if m.parse::<u8>().is_ok_and(|m| m < 60) => {
                 Some(tr!("schedule-hourly-at", minute = m.to_string()))
             }
+            ["*", m, "00"] => {
+                let every: i64 = m.strip_prefix("00/")?.parse().ok()?;
+                (every > 0 && 60 % every == 0).then(|| tr!("schedule-minutes", n = every))
+            }
             _ => None,
         },
         _ => None,
@@ -377,6 +381,7 @@ mod tests {
         assert_eq!(calendar("*-*-* *:00:00", false), "Every hour");
         assert_eq!(calendar("*-*-* *:15:00", false), "Every hour at :15");
         assert_eq!(calendar("*-*-* *:*:00", false), "Every minute");
+        assert_eq!(calendar("*-*-* *:00/15:00", false), "Every 15 minutes");
     }
 
     #[test]
