@@ -1,11 +1,11 @@
 //! Files a sandboxed program names, opened only where it could open them itself: inside its
 //! Flatpak sandbox's root, or beneath a snap's own folders.
 
-use crate::ops::at::{c_path, cwd, open_at};
+use crate::ops::at::{c_path, cwd, open_at, open_resolved};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
 /// Where a sandboxed program's named files open from. Paths are absolute, as the program
@@ -115,27 +115,7 @@ impl Confined {
 }
 
 fn openat2(dir: BorrowedFd, path: &Path, flags: libc::c_int, resolve: u64) -> io::Result<OwnedFd> {
-    let path = c_path(path)?;
-    // SAFETY: an all-zero `open_how` is a valid value of a plain C struct.
-    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
-    how.flags = (flags | libc::O_CLOEXEC) as u64;
-    how.resolve = resolve;
-    // SAFETY: `path` is NUL-terminated, `how` is an `open_how` of the size passed, and `dir`
-    // is an open folder.
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            dir.as_raw_fd(),
-            path.as_ptr(),
-            &how,
-            std::mem::size_of::<libc::open_how>(),
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `fd` was just opened and is owned by nothing else.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+    open_resolved(dir, &c_path(path)?, flags, resolve)
 }
 
 #[cfg(test)]
