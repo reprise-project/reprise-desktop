@@ -698,6 +698,7 @@ netconnect-password = &Password:
 
 ## newshortcut
 newshortcut-type-the-location-of-the-item = Type the &location of the item, or a command:
+newshortcut-browse = B&rowse...
 newshortcut-or-pick-a-program = Or pick a &program:
 newshortcut-what-do-you-want-the-shortcut = What do you want the shortcut to open?
 newshortcut-type-a-name-for-this-shortcut = &Type a name for this shortcut:
