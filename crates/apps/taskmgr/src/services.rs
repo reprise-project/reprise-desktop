@@ -120,12 +120,22 @@ impl Service {
         }
     }
 
+    pub fn shown_name(&self) -> String {
+        shown_name(&self.name)
+    }
+
     pub fn group(&self) -> String {
         match self.manager {
             Manager::User => tr!("group-user"),
             Manager::System => tr!("group-system"),
         }
     }
+}
+
+/// Service `name` as the page shows it: unescaped and without `.service`, an instance as
+/// `getty@tty1`.
+pub fn shown_name(name: &str) -> String {
+    reprisebus::services::unescape(name.strip_suffix(".service").unwrap_or(name))
 }
 
 /// Manager `m`'s rows by name: its loaded services and, as stopped, each file not loaded, which
@@ -348,20 +358,18 @@ pub fn read_log(manager: Manager, name: String, post: Post) {
     });
 }
 
-/// `journalctl`'s arguments for the last [`LOG_LINES`] lines of service `name`: the one unit,
-/// as one `--unit=` or `--user-unit=` argument.
-pub fn journal_args(m: Manager, name: &str) -> [String; 5] {
+/// `journalctl`'s arguments for the last [`LOG_LINES`] entries of service `name` as
+/// [`reprisefs::journal::lines`] reads them: the one unit, as one `--unit=` or `--user-unit=`
+/// argument.
+pub fn journal_args(m: Manager, name: &str) -> Vec<String> {
     let unit = match m {
         Manager::User => format!("--user-unit={name}"),
         Manager::System => format!("--unit={name}"),
     };
-    [
-        unit,
-        format!("--lines={LOG_LINES}"),
-        "--no-pager".into(),
-        "--no-hostname".into(),
-        "--quiet".into(),
-    ]
+    let args = [unit, format!("--lines={LOG_LINES}")].into_iter();
+    (args.chain(["--no-pager", "--quiet"].map(String::from)))
+        .chain(reprisefs::journal::JSON_ARGS.map(String::from))
+        .collect()
 }
 
 /// Why a service's log did not read.
@@ -380,7 +388,7 @@ pub enum LogError {
     Unwatched,
 }
 
-/// The lines of service `name` the journals this user may read hold.
+/// The entries of service `name` the journals this user may read hold, as JSON lines.
 fn journal(m: Manager, name: &str) -> Result<String, LogError> {
     if !is_service_name(name) {
         return Err(LogError::NotAService);

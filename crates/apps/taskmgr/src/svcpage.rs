@@ -77,7 +77,7 @@ impl Svc {
 
     fn cells(s: &Service) -> Vec<String> {
         vec![
-            s.name.clone(),
+            s.shown_name(),
             s.description.clone(),
             s.status.text(),
             s.startup.text(),
@@ -236,7 +236,7 @@ impl TaskMgr {
         let b = MsgBox::new(
             tr!("warning-title"),
             Fields {
-                text: tr!("stop-text", name = job.name.as_str()),
+                text: tr!("stop-text", name = services::shown_name(&job.name)),
                 icon: ctx.icons.get("dialog-warning", 32),
                 buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 default: 1,
@@ -266,7 +266,8 @@ impl TaskMgr {
         if self.svc.log.as_ref().is_some_and(|l| same(l) && l.reading) {
             return Reply::redraw_all();
         }
-        self.svc.log = Some(Log::new(manager, &name));
+        let is_12h = reprisefs::locale::is_12h();
+        self.svc.log = Some(Log::new(manager, &name, is_12h));
         (self.svc.read_log)(manager, name, self.post(ctx));
         Reply::redraw_all()
     }
@@ -364,7 +365,8 @@ impl TaskMgr {
 
 /// What a box says when `job` failed; nothing for a dismissed password prompt.
 fn failed_text(job: &Job, failed: Failed) -> Option<String> {
-    let name = job.name.as_str();
+    let name = services::shown_name(&job.name);
+    let name = name.as_str();
     let why = match failed {
         Failed::Dismissed => return None,
         Failed::Unchanged if job.verb == Verb::Disable => {

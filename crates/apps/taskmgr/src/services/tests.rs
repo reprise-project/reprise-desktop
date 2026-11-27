@@ -240,8 +240,10 @@ fn the_log_is_asked_for_the_one_unit_of_its_manager() {
             "--user-unit=pipewire.service",
             "--lines=200",
             "--no-pager",
-            "--no-hostname",
-            "--quiet"
+            "--quiet",
+            "--all",
+            "--output=json",
+            "--output-fields=MESSAGE"
         ]
     );
     assert_eq!(

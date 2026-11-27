@@ -41,6 +41,7 @@ pub mod icc;
 pub mod icons;
 pub mod imagesize;
 pub mod jobs;
+pub mod journal;
 pub mod launcher;
 pub mod listing;
 pub mod locale;

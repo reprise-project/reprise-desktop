@@ -77,6 +77,34 @@ pub fn is_service_name(name: &str) -> bool {
         && (stem.bytes()).all(|b| b.is_ascii_alphanumeric() || b":-_.\\@".contains(&b))
 }
 
+/// `systemd-escape`'s `\xNN` back to bytes; a `-` stays, as it may be a dash or an escaped `/`.
+pub fn unescape(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = b
+            .get(i + 2..i + 4)
+            .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|h| std::str::from_utf8(h).ok());
+        match (
+            b[i],
+            b.get(i + 1),
+            hex.and_then(|h| u8::from_str_radix(h, 16).ok()),
+        ) {
+            (b'\\', Some(b'x'), Some(v)) => {
+                out.push(v);
+                i += 4;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// The bus `m` serves on: the session bus for the user manager.
 pub fn connection(m: Manager) -> zbus::Result<Connection> {
     match m {
@@ -376,6 +404,22 @@ mod tests {
             assert!(!is_service_name(bad), "{bad:?} is not a service name");
         }
         assert!(!is_service_name(&format!("{}.service", "a".repeat(250))));
+    }
+
+    #[test]
+    fn an_escaped_name_reads_as_its_characters() {
+        assert_eq!(
+            unescape("app-reprise\\x2dbluetooth@autostart"),
+            "app-reprise-bluetooth@autostart"
+        );
+        assert_eq!(unescape("caf\\xc3\\xa9\\x20bar"), "caf\u{e9} bar");
+        assert_eq!(unescape("a\\x2D"), "a-", "either case of hex");
+        assert_eq!(
+            unescape("a\\xzz\\x+1\\x2"),
+            "a\\xzz\\x+1\\x2",
+            "no escape left as written"
+        );
+        assert_eq!(unescape("\\xff"), "\u{fffd}", "a byte that is no text");
     }
 
     #[test]
