@@ -354,9 +354,11 @@ fn capture_sheets() -> [PropSheet; 4] {
     ]
 }
 
+/// The sheet under `interface`, its Start menu in the interface's own style.
 fn under(interface: &str) -> PropSheet {
     with(&Settings {
         interface: interface.into(),
+        startmenu_style: Settings::for_interface(interface).startmenu_style,
         ..Settings::default()
     })
 }
@@ -558,8 +560,9 @@ fn lines(s: &PropSheet, page: Page, id: &str) -> Vec<String> {
 #[test]
 fn every_spin_shows_its_unit() {
     use reprisekit::interface::Interface;
-    const COUNTS: [&str; 6] = [
+    const COUNTS: [&str; 7] = [
         "desktops",
+        crate::menupage::PROGRAMS,
         crate::capturepage::JXL_EFFORT,
         crate::capturepage::FLAC_COMPRESSION,
         super::system::REMOTE_PORT,

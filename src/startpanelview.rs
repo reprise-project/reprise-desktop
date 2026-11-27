@@ -153,6 +153,7 @@ impl State {
         };
         model.user = user.clone();
         model.text = self.config.theme.text;
+        model.power = self.config.startmenu_power;
         if model.shape == Shape::Glass {
             crate::offlineupdate::refresh(self);
         }

@@ -307,7 +307,7 @@ mod tests {
             .collect();
         assert_eq!(tops, [326, 353, 380, 407]);
         assert!(group_rect(Area::MIN).bottom() >= list_rect(Area::MIN).bottom() + 8);
-        let menu = crate::menupage::page(Area::MIN);
+        let menu = crate::menupage::page(Area::MIN, true);
         let down = menu.item(crate::menupage::DOWN).unwrap().rect;
         assert!(group_rect(Area::MIN).y > down.bottom());
     }

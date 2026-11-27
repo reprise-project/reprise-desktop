@@ -325,7 +325,14 @@ impl Page {
                 "previews",
                 "multiple monitors",
             ],
-            Page::StartMenu => &["pinned", "quick launch", "banner"],
+            Page::StartMenu => &[
+                "pinned",
+                "quick launch",
+                "banner",
+                "places",
+                "recent items",
+                "frequent programs",
+            ],
             Page::Search => &[
                 "launcher",
                 "run",

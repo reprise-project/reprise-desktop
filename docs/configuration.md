@@ -60,6 +60,7 @@ If the file is broken when you log in, Reprise starts with the defaults.
 | `[[keybinds]]` | Custom shortcuts layered over defaults (`action = "spawn"` or `"none"`) |
 | `[[global_shortcuts]]`, `[portal]` | Portal global shortcuts and `shortcuts_denied` |
 | `[[startmenu_changes]]`, `[[startmenu]]`, `startmenu_style` | Classic Start menu edits or full replacement, and Start menu style |
+| `startmenu_places`, `startmenu_power`, `startmenu_programs` | Blue and Glass Start menus: the places on the right, the power button's action, the number of frequent programs |
 | `[[outputs]]` | Per-monitor mode, scale, rotation, position, VRR and ICC profile ([features.md](features.md#displays)) |
 | `[display]` | Startup `gpu`, `all_gpus` and built-in screen `auto_rotate` |
 | `desktop_extensions` | Desktop file extensions: `hide` (default), `hide_launchers` or `show` |

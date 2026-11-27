@@ -497,6 +497,9 @@ struct SettingsApp {
     add_item: Option<additem::AddItemDialog>,
     rename: Option<renamedlg::NameBox>,
     menu_icons_due: bool,
+    /// Whether the Start Menu page showed the Classic tree when icons were last looked up: a
+    /// page rebuilt with it needs them again.
+    menu_tree: bool,
     saver_dlg: Option<saverdlg::SaverDialog>,
     /// The rule dialog, with the Window Rules row it opened on and the rule there (`None` adds one).
     rule_dlg: Option<(ruledlg::RuleDialog, Option<(usize, windowrules::Rule)>)>,
@@ -647,6 +650,7 @@ impl SettingsApp {
             let template = match p {
                 Page::Appearance => appearancepage::page(&self.want, a),
                 Page::ScreenCapture => capturepage::page(&self.want, a),
+                Page::StartMenu => menupage::page(a, self.want.startmenu_style == "classic"),
                 Page::Display => displaypage::page(&self.display.model, a),
                 Page::Tablet => {
                     tabletpage::page(a, &self.pads, self.pad_picked, &self.want.tablet_pads)
@@ -875,6 +879,7 @@ impl SettingsApp {
             saver_photos: None,
             saver_photo: None,
             menu_icons_due: true,
+            menu_tree: false,
             add_to_quick: false,
             quick_dir: reprisefs::quicklaunch::dir(),
             quick: Vec::new(),

@@ -51,6 +51,11 @@ pub struct Settings {
     /// `startmenu_style`: one of [`STARTMENU_STYLES`]' values, by default the
     /// interface's own (`for_interface`).
     pub startmenu_style: String,
+    /// `startmenu_places`: the Blue and Glass Start menus' places shown, by name.
+    pub startmenu_places: Vec<String>,
+    /// `startmenu_power`: one of [`STARTMENU_POWERS`]' values.
+    pub startmenu_power: String,
+    pub startmenu_programs: i64,
     pub desktop_icons: bool,
     /// `desktop_extensions`: one of [`DESKTOP_EXTENSIONS`]' values.
     pub desktop_extensions: String,
@@ -540,6 +545,15 @@ impl Settings {
             task_manager: c.task_manager.clone().unwrap_or_default(),
             startmenu_banner: c.startmenu_banner.clone(),
             startmenu_style: named(STARTMENU_STYLES, StartMenuStyle::parse, &c.startmenu_style),
+            startmenu_places: (c.startmenu_places.iter())
+                .map(|p| p.name().into())
+                .collect(),
+            startmenu_power: named(
+                STARTMENU_POWERS,
+                reprisekit::startpanel::PowerButton::from_name,
+                &c.startmenu_power,
+            ),
+            startmenu_programs: c.startmenu_programs.into(),
             desktop_icons: c.desktop_icons,
             desktop_extensions: named(
                 DESKTOP_EXTENSIONS,

@@ -32,6 +32,15 @@ pub const STARTMENU_STYLES: &Choices = &[
     ("classic", || tr!("choices-startmenu-styles-classic")),
 ];
 
+/// What the Glass Start menu's power button does. Mirrors `PowerButton::from_name` in
+/// `crates/reprisekit/src/startpanel/mod.rs`.
+pub const STARTMENU_POWERS: &Choices = &[
+    ("shut_down", || tr!("choices-startmenu-powers-shut-down")),
+    ("log_off", || tr!("choices-startmenu-powers-log-off")),
+    ("lock", || tr!("choices-startmenu-powers-lock")),
+    ("restart", || tr!("choices-startmenu-powers-restart")),
+];
+
 /// The edges the taskbar can sit on. Mirrors `Edge::name` in
 /// `crates/reprisekit/src/taskbar.rs`.
 pub const TASKBAR_POSITIONS: &Choices = &[

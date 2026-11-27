@@ -14,7 +14,6 @@ pub use crate::startpanel::search::{
 };
 use crate::startpanel::{
     Mode, PROGRAM_ICON, SMALL_ICON, Spot, StartPanel, TreeRow, all_programs, back, no_results,
-    shut_down,
 };
 use crate::style::{Layout as Stack, Part, PartImage, State, Style};
 use crate::text::TextRenderer;
@@ -495,11 +494,12 @@ fn draw_contents(
                         (true, false) => d.part(half, plain, State::Normal),
                     }
                 }
-                let w = text.measure(&shut_down(), false, size);
+                let label = p.power.label();
+                let w = text.measure(&label, false, size);
                 let x = r.x - o.x + (g.len(at::SHUT_W) - w) / 2;
                 let y = r.y - o.y + g.len(at::SHUT_BASE);
                 let color = if light { inks.strong } else { right };
-                d.line(text, x, y, at(r), &shut_down(), color, size);
+                d.line(text, x, y, at(r), &label, color, size);
             }
             Spot::Picture => {
                 let place_picture = p
@@ -1649,6 +1649,27 @@ mod tests {
             }
         }
         crate::pins::check(pin, &got);
+    }
+
+    #[test]
+    fn the_power_button_reads_its_action() {
+        let mut got = Vec::new();
+        let mut drawn = Vec::new();
+        for d in [1, 2] {
+            for b in crate::startpanel::PowerButton::ALL {
+                let mut p = sample(Mode::Home, None);
+                p.power = b;
+                let [button, arrow] = shut_down_halves(&Settings::default(), &p, None, d);
+                got.push((format!("{} {d}", b.name()), fnv(&button)));
+                drawn.push((button, arrow));
+            }
+        }
+        let (rest, rest_arrow) = &drawn[0];
+        for (button, arrow) in &drawn[1..4] {
+            assert_ne!(button, rest, "each action has its own label");
+            assert_eq!(arrow, rest_arrow, "the arrow stays");
+        }
+        crate::pins::check("glass/start_power_button", &got);
     }
 
     fn dark() -> Settings {

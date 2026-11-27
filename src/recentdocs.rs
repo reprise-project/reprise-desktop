@@ -629,14 +629,18 @@ mod tests {
             ]
         };
         let places = |docs: &RecentDocs| -> Vec<String> {
-            crate::startmenu::places(false, &docs.found_dirs(dirs()))
-                .into_iter()
-                .filter_map(|e| match e {
-                    crate::config::MenuEntry::Item { label, .. } => Some(label),
-                    crate::config::MenuEntry::Separator => None,
-                })
-                .take(3)
-                .collect()
+            crate::startmenu::places(
+                false,
+                &docs.found_dirs(dirs()),
+                &crate::config::StartPlace::ALL,
+            )
+            .into_iter()
+            .filter_map(|e| match e {
+                crate::config::MenuEntry::Item { label, .. } => Some(label),
+                crate::config::MenuEntry::Separator => None,
+            })
+            .take(3)
+            .collect()
         };
         let checked = |docs: &RecentDocs| {
             let paths: Vec<PathBuf> = dirs().into_iter().map(|(d, _)| d).collect();

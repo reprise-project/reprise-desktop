@@ -140,15 +140,21 @@ fn a_caret_blink_reuses_the_canvas_drawn_for_that_phase_until_the_panel_changes(
 #[test]
 fn the_frequent_list_tops_up_with_the_starters_not_shown() {
     assert_eq!(
-        frequent_rows(vec![7], &[1, 7, 2, 3], &[2]),
+        frequent_rows(vec![7], &[1, 7, 2, 3], &[2], 10),
         (vec![7, 1, 3], 1)
     );
     let full: Vec<usize> = (10..20).collect();
     assert_eq!(
-        frequent_rows(full.clone(), &[1], &[]),
+        frequent_rows(full.clone(), &[1], &[], 10),
         (full, 10),
         "ten rows are full"
     );
+    assert_eq!(
+        frequent_rows(vec![7], &[1, 3], &[], 2),
+        (vec![7, 1], 1),
+        "the count caps the starters"
+    );
+    assert_eq!(frequent_rows(Vec::new(), &[1, 3], &[], 0), (Vec::new(), 0));
 }
 
 #[test]
@@ -2201,4 +2207,39 @@ fn the_blue_menu_opened_from_the_keyboard_underlines_its_letters() {
         h.key(ENTER, false);
         assert_eq!(keys(&h), Some(blue), "{style:?}: Enter on Start");
     }
+}
+
+#[test]
+fn the_start_menu_keys_pick_the_places_the_program_count_and_the_power_button() {
+    use crate::startmenu::StartRow;
+    use reprisekit::startpanel::PowerButton;
+    let config = crate::config::Config::parse(
+        "startmenu_places = [\"run\"]\nstartmenu_power = \"lock\"\nstartmenu_programs = 2\n\
+         [appearance]\ninterface = \"glass\"\n[privacy]\nrecent_files = false\n",
+    )
+    .unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.state.app_index = ["A", "B", "C"].map(|n| app(n, "Utility")).to_vec();
+    for a in h.state.app_index.clone() {
+        h.state.launches.record(&a.id);
+    }
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start_panel(bar);
+    let v = h.state.start_panel.as_ref().expect("the menu is open");
+    assert_eq!(v.model.power, PowerButton::Lock);
+    assert_eq!(v.model.frequent.len(), 2);
+    let places: Vec<&str> = v.model.places.iter().map(|p| p.label.as_str()).collect();
+    assert_eq!(places[1..], ["Run...", "Help and Support"]);
+    h.state.open_shutdown_options();
+    let rows = match &h.state.menus.last().expect("the options opened").kind {
+        crate::menuview::MenuKind::StartPanel { rows } => rows.clone(),
+        _ => panic!("the Shut down options"),
+    };
+    let at = |r: StartRow| rows.iter().position(|x| *x == Some(r.clone()));
+    assert_eq!(
+        at(StartRow::ShutDown).map(|i| i + 1),
+        at(StartRow::Restart),
+        "Shut down joins the options, before Restart"
+    );
 }

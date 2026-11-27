@@ -15,6 +15,10 @@ choices-title-double-clicks-none = Do nothing
 choices-startmenu-styles-glass = Glass
 choices-startmenu-styles-blue = Blue
 choices-startmenu-styles-classic = Classic
+choices-startmenu-powers-shut-down = Shut down
+choices-startmenu-powers-log-off = Log off
+choices-startmenu-powers-lock = Lock
+choices-startmenu-powers-restart = Restart
 # taskbar-positions
 choices-taskbar-positions-bottom = Bottom
 choices-taskbar-positions-top = Top
@@ -849,7 +853,6 @@ menupage-new-folder = New Folder
 menupage-start-menu = Start Menu
 menupage-start-menu-style = Start menu st&yle:
 menupage-banner = &Banner:
-menupage-only-the-classic-style-shows-the = Only the Classic style shows the banner and menu below.
 menupage-start-menu-2 = Start menu
 menupage-add = &Add...
 menupage-new-folder-2 = New &Folder
@@ -858,6 +861,17 @@ menupage-remove = &Remove
 menupage-move-up = Move &Up
 menupage-move-down = Move Do&wn
 menupage-separator = (Separator)
+menupage-places = Places
+menupage-place-documents = Documen&ts
+menupage-place-pictures = Pi&ctures
+menupage-place-music = M&usic
+menupage-place-computer = Co&mputer
+menupage-place-control-panel = Control Pa&nel
+menupage-place-printers = Pr&inters
+menupage-place-run = &Run
+menupage-power-button = Po&wer button:
+menupage-frequent-programs = Number of &frequent programs:
+menupage-clear-recent-items = C&lear Recent Items
 
 ## notifypage.rs
 notifypage-no-balloons = No balloons

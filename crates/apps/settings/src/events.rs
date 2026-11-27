@@ -281,6 +281,14 @@ impl SettingsApp {
                 menupage::FOLDER | menupage::REMOVE | menupage::UP | menupage::DOWN => {
                     self.menu_button(id)
                 }
+                menupage::CLEAR_RECENT => {
+                    match reprisefs::recent::clear() {
+                        Ok(()) => self.sheet.pages[Page::StartMenu.index()]
+                            .set_enabled(menupage::CLEAR_RECENT, false),
+                        Err(e) => log::warn!("recent items: {e}"),
+                    }
+                    Reply::redraw()
+                }
                 crate::rulespage::ADD
                 | crate::rulespage::EDIT
                 | crate::rulespage::REMOVE

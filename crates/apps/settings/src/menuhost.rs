@@ -151,6 +151,10 @@ impl SettingsApp {
             self.set_clip_icons(&mut get);
         }
         self.set_provider_icons(&mut get);
+        let tree = menupage::has_tree(&self.sheet.pages[Page::StartMenu.index()]);
+        if tree && !std::mem::replace(&mut self.menu_tree, tree) {
+            self.menu_icons_due = true;
+        }
         let mut get = |name: &str| ctx.icons.get(name, treeview::icon_px(u));
         if self.menu_icons_due {
             menupage::set_icons(

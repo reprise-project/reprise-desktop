@@ -300,7 +300,6 @@ fn record_locked(
     patience: std::time::Duration,
     busy: impl FnMut(),
 ) -> std::io::Result<()> {
-    use std::io::Write;
     let held = locked(xbel, patience, busy)?;
     sweep_temps(xbel);
     let bytes = crate::ops::read_opened(&held, MAX_XBEL_BYTES)?;
@@ -319,9 +318,30 @@ fn record_locked(
             )
         })?;
     }
+    replace(xbel, mode, &new)
+}
+
+/// Forget every recently used file: the session's `recently-used.xbel` is left with no
+/// bookmarks, for GTK and KDE programs as for Reprise.
+pub fn clear() -> std::io::Result<()> {
+    let xbel = xbel_path().ok_or_else(|| std::io::Error::other("no data directory"))?;
+    clear_at(&xbel)
+}
+
+/// [`clear`] the xbel file at `xbel`, under its lock as [`record`] writes it.
+pub fn clear_at(xbel: &Path) -> std::io::Result<()> {
+    let held = locked(xbel, LOCK_PATIENCE, || {})?;
+    sweep_temps(xbel);
+    let mode = held.metadata()?.permissions();
+    replace(xbel, mode, &format!("{XBEL_HEAD}\n</xbel>\n"))
+}
+
+/// Replace `xbel` with `text` in one rename, keeping `mode`.
+fn replace(xbel: &Path, mode: std::fs::Permissions, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
     let (mut f, tmp) = crate::ops::create_temp_beside(xbel, Some(mode))?;
     let written = (|| {
-        f.write_all(new.as_bytes())?;
+        f.write_all(text.as_bytes())?;
         f.sync_all()?;
         std::fs::rename(&tmp, xbel)
     })();
@@ -747,6 +767,28 @@ mod tests {
         std::fs::remove_file(&xbel).unwrap();
         assert!(recent.current(10).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_leaves_an_xbel_with_no_bookmarks_and_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (a, xbel) = (
+            dir.path().join("a.txt"),
+            dir.path().join("recently-used.xbel"),
+        );
+        std::fs::write(&a, "").unwrap();
+        record_at(&xbel, &[(&a, None, Some("text/plain"))]).unwrap();
+        assert_eq!(RecentFiles::at(Some(xbel.clone())).current(10), [a]);
+        clear_at(&xbel).unwrap();
+        assert!(RecentFiles::at(Some(xbel.clone())).current(10).is_empty());
+        let text = std::fs::read_to_string(&xbel).unwrap();
+        assert!(
+            text.starts_with(XBEL_HEAD) && !text.contains("<bookmark "),
+            "{text}"
+        );
+        let mode = std::fs::metadata(&xbel).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

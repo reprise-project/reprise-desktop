@@ -944,6 +944,26 @@ fn desktop_widgets_default_to_none_and_list_each_kind_once() {
 }
 
 #[test]
+fn the_start_panel_keys_default_to_every_place_shut_down_and_ten_programs() {
+    use reprisekit::startpanel::PowerButton;
+    let c = Config::default();
+    assert_eq!(c.startmenu_places, StartPlace::ALL);
+    assert_eq!(c.startmenu_power, PowerButton::ShutDown);
+    assert_eq!(c.startmenu_programs, 10);
+    let c = Config::parse(
+        "startmenu_places = [\"run\", \"documents\", \"run\"]\n\
+         startmenu_power = \"lock\"\nstartmenu_programs = 0\n",
+    )
+    .unwrap();
+    assert_eq!(c.startmenu_places, [StartPlace::Run, StartPlace::Documents]);
+    assert_eq!(c.startmenu_power, PowerButton::Lock);
+    assert_eq!(c.startmenu_programs, 0);
+    assert!(Config::parse("startmenu_places = [\"games\"]\n").is_err());
+    assert!(Config::parse("startmenu_power = \"sleep\"\n").is_err());
+    assert!(Config::parse("startmenu_programs = 11\n").is_err());
+}
+
+#[test]
 fn desktop_icons_defaults_on_and_is_configurable() {
     assert!(Config::default().desktop_icons);
     assert_eq!(Config::default().system_icons.len(), 4);
