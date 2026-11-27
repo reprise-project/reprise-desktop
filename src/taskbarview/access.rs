@@ -25,7 +25,14 @@ impl State {
             many => {
                 let name = crate::taskbar::group_name(&many[0].app_id());
                 let active = many.iter().any(|w| live(w));
-                Some((format!("{name} ({})", many.len()), active))
+                Some((
+                    reprisekit::tr!(
+                        "bar-group-title",
+                        name = name,
+                        count = many.len().to_string()
+                    ),
+                    active,
+                ))
             }
         }
     }
@@ -110,8 +117,11 @@ impl State {
             date: crate::taskbar::date_text(),
         };
         let rect = self.bar_placement(&bar.output).shown;
-        let mut tree =
-            crate::access::root(reprisekit::access::accesskit::Role::Window, "Taskbar", rect);
+        let mut tree = crate::access::root(
+            reprisekit::access::accesskit::Role::Window,
+            &reprisekit::tr!("bar-taskbar-name"),
+            rect,
+        );
         crate::taskbar::access(l, &names, &mut tree, reprisekit::access::ROOT);
         tree
     }

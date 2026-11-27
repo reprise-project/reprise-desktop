@@ -865,7 +865,11 @@ impl TaskPreviewView {
 pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     use reprisekit::access::{ROOT, accesskit::Role};
     let p = state.task_preview.shown.as_ref()?;
-    let mut tree = crate::access::root(Role::Window, "Window previews", p.layout.rect);
+    let mut tree = crate::access::root(
+        Role::Window,
+        &reprisekit::tr!("bar-previews-name"),
+        p.layout.rect,
+    );
     let titles: Vec<String> = (p.windows.iter())
         .map(|&w| state.win(w).map(|x| x.title()).unwrap_or_default())
         .collect();

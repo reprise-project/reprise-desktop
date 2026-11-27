@@ -11,6 +11,7 @@ use crate::quicklaunch::QuickItem;
 use crate::startmenu::MenuItem;
 use crate::text::split_mnemonic;
 use reprisekit::raster::Rect;
+use reprisekit::tr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskbarCommand {
@@ -39,33 +40,59 @@ pub fn taskbar_menu(
     pager: Option<usize>,
 ) -> (Vec<MenuItem>, Vec<Option<TaskbarCommand>>) {
     use TaskbarCommand::*;
-    let rename = pager.map(|n| ("Rena&me Desktop...", false, true, false, RenameDesktop(n)));
+    let rename = pager.map(|n| {
+        (
+            tr!("bar-menu-rename-desktop"),
+            false,
+            true,
+            false,
+            RenameDesktop(n),
+        )
+    });
     let rows = [
         rename,
         None,
-        Some(("&Toolbars", false, true, true, Toolbars)),
+        Some((tr!("bar-menu-toolbars"), false, true, true, Toolbars)),
         None,
-        Some(("Casca&de Windows", false, has_windows, false, Cascade)),
+        Some((tr!("bar-menu-cascade"), false, has_windows, false, Cascade)),
         Some((
-            "Tile Windows &Horizontally",
+            tr!("bar-menu-tile-horizontally"),
             false,
             has_windows,
             false,
             TileHorizontal,
         )),
         Some((
-            "Tile Windows &Vertically",
+            tr!("bar-menu-tile-vertically"),
             false,
             has_windows,
             false,
             TileVertical,
         )),
-        Some(("&Show the Desktop", false, true, false, ShowDesktop)),
+        Some((
+            tr!("bar-menu-show-desktop"),
+            false,
+            true,
+            false,
+            ShowDesktop,
+        )),
         None,
-        Some(("Tas&k Manager", false, true, false, TaskManager)),
+        Some((
+            tr!("bar-menu-task-manager"),
+            false,
+            true,
+            false,
+            TaskManager,
+        )),
         None,
-        Some(("&Lock the Taskbar", locked, true, false, LockTaskbar)),
-        Some(("P&roperties", false, true, false, Properties)),
+        Some((
+            tr!("bar-menu-lock-taskbar"),
+            locked,
+            true,
+            false,
+            LockTaskbar,
+        )),
+        Some((tr!("bar-menu-properties"), false, true, false, Properties)),
     ];
     let rows = &rows[if pager.is_some() { 0 } else { 2 }..];
     let items = rows
@@ -77,7 +104,10 @@ pub fn taskbar_menu(
             None => MenuItem::Separator,
         })
         .collect();
-    let commands = rows.iter().map(|r| r.map(|(.., cmd)| cmd)).collect();
+    let commands = rows
+        .iter()
+        .map(|r| r.as_ref().map(|(.., cmd)| *cmd))
+        .collect();
     (items, commands)
 }
 
@@ -87,10 +117,10 @@ pub fn start_button_menu() -> (Vec<MenuItem>, Vec<Option<TaskbarCommand>>) {
     let row = |label: &str, bold: bool| menu_row(label, false, true, false).bold(bold);
     (
         vec![
-            row("&Open", true),
-            row("E&xplore", false),
+            row(&tr!("bar-start-open"), true),
+            row(&tr!("bar-start-explore"), false),
             MenuItem::Separator,
-            row("P&roperties", false),
+            row(&tr!("bar-start-properties"), false),
         ],
         vec![
             Some(OpenPrograms),
@@ -107,7 +137,12 @@ pub fn toolbars_menu(
     pinned: bool,
 ) -> (Vec<MenuItem>, Vec<Option<TaskbarCommand>>) {
     (
-        vec![menu_row("&Quick Launch", quick_shown, !pinned, false)],
+        vec![menu_row(
+            &tr!("bar-menu-quick-launch"),
+            quick_shown,
+            !pinned,
+            false,
+        )],
         vec![Some(TaskbarCommand::QuickLaunch)],
     )
 }
@@ -134,9 +169,9 @@ pub fn quick_menu() -> (Vec<MenuItem>, Vec<Option<QuickCommand>>) {
     };
     (
         vec![
-            entry("&Open", true),
+            entry(&tr!("bar-quick-open"), true),
             MenuItem::Separator,
-            entry("&Delete", false),
+            entry(&tr!("bar-quick-delete"), false),
         ],
         vec![Some(QuickCommand::Open), None, Some(QuickCommand::Delete)],
     )
@@ -734,13 +769,10 @@ pub fn jump_tasks(entry: &reprisefs::apps::AppEntry) -> &[reprisefs::apps::Deskt
     &entry.actions[..entry.actions.len().min(JUMP_TASKS)]
 }
 
-pub const RECENT_TITLE: &str = "Recent";
-pub const TASKS_TITLE: &str = "Tasks";
-
 /// A jump list section: its title and, per row, the label and what the row does.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JumpSection {
-    pub title: &'static str,
+    pub title: String,
     pub rows: Vec<(String, JumpRow)>,
 }
 
@@ -758,11 +790,11 @@ pub fn jump_sections(
     };
     [
         JumpSection {
-            title: RECENT_TITLE,
+            title: tr!("bar-jump-recent"),
             rows: recent.iter().map(file).collect(),
         },
         JumpSection {
-            title: TASKS_TITLE,
+            title: tr!("bar-jump-tasks"),
             rows: (tasks.iter().enumerate())
                 .map(|(k, t)| (t.name.clone(), JumpRow::Task(k)))
                 .collect(),
@@ -802,7 +834,7 @@ pub fn jump_list(
     let mut rows = Vec::new();
     let listed = sections.iter().filter(|s| !s.rows.is_empty());
     for section in listed.clone() {
-        items.push(MenuItem::heading(section.title));
+        items.push(MenuItem::heading(section.title.clone()));
         rows.push(None);
         for (label, row) in &section.rows {
             items.push(MenuItem::entry(label.clone()));
@@ -824,21 +856,21 @@ pub fn jump_list(
     items.push(MenuItem::entry(name.to_string()));
     rows.push(Some(JumpRow::Launch));
     if pinned {
-        items.push(MenuItem::entry("Unpin this program from taskbar"));
+        items.push(MenuItem::entry(tr!("bar-jump-unpin")));
         rows.push(Some(JumpRow::Unpin));
     } else {
-        items.push(MenuItem::entry("Pin this program to taskbar").enabled(can_pin));
+        items.push(MenuItem::entry(tr!("bar-jump-pin")).enabled(can_pin));
         rows.push(Some(JumpRow::Pin));
     }
     if !titles.is_empty() && desktops > 1 {
-        items.push(MenuItem::entry("Move to desktop").submenu(true));
+        items.push(MenuItem::entry(tr!("bar-move-to-desktop")).submenu(true));
         rows.push(Some(JumpRow::MoveToMenu));
     }
     if !titles.is_empty() {
         let label = if titles.len() == 1 {
-            "Close window"
+            tr!("bar-jump-close-window")
         } else {
-            "Close all windows"
+            tr!("bar-jump-close-all-windows")
         };
         items.push(MenuItem::entry(label));
         rows.push(Some(JumpRow::Close));
@@ -875,16 +907,16 @@ pub fn window_list(
     items.push(MenuItem::Separator);
     rows.push(None);
     if recent {
-        items.push(MenuItem::item(crate::winmenu::RECENT_FILES).submenu(true));
+        items.push(MenuItem::item(&crate::winmenu::recent_files()).submenu(true));
         rows.push(Some(WindowListRow::RecentMenu));
     }
-    items.push(MenuItem::entry("Minimize Group"));
+    items.push(MenuItem::entry(tr!("bar-group-minimize")));
     rows.push(Some(WindowListRow::Minimize));
     if desktops > 1 {
-        items.push(MenuItem::entry("Move to desktop").submenu(true));
+        items.push(MenuItem::entry(tr!("bar-move-to-desktop")).submenu(true));
         rows.push(Some(WindowListRow::MoveToMenu));
     }
-    items.push(MenuItem::entry("Close Group"));
+    items.push(MenuItem::entry(tr!("bar-group-close")));
     rows.push(Some(WindowListRow::Close));
     (items, rows)
 }
@@ -913,7 +945,7 @@ pub fn group_click_pick<T: Copy + PartialEq>(
 pub fn group_name(app_id: &str) -> String {
     let base = app_id.rsplit('.').next().unwrap_or(app_id).trim();
     if base.is_empty() {
-        "Window".to_string()
+        tr!("bar-group-name-fallback")
     } else {
         base.to_string()
     }

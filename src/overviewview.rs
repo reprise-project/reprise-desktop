@@ -20,6 +20,7 @@ use reprisekit::controls::overview::{self, Event, Key, Overview, OverviewLayout}
 use reprisekit::interfaces;
 use reprisekit::taskpreview::fit;
 use reprisekit::textedit::EditKey;
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::backend::input::InputTime;
 use smithay::output::Output;
@@ -961,10 +962,10 @@ impl State {
             .map(|&w| self.win(w).map(|x| x.title()).unwrap_or_default())
             .collect();
         let (name, bounds) = match &v.assist {
-            Some(_) => ("Snap assist", v.layouts[0].area),
-            None => ("Windows", self.layout_box(None)),
+            Some(_) => (tr!("bar-overview-snap-assist"), v.layouts[0].area),
+            None => (tr!("bar-overview-windows"), self.layout_box(None)),
         };
-        let mut tree = crate::access::root(Role::Window, name, bounds);
+        let mut tree = crate::access::root(Role::Window, &name, bounds);
         let focus = overview::access(
             &titles,
             v.model.selected,

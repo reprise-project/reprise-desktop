@@ -11,6 +11,7 @@ use reprisekit::controls::snappicker::{
     self, CellSpec, Event, Key, PickerLayout, Shape, SnapPicker, Zone,
 };
 use reprisekit::interfaces;
+use reprisekit::tr;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::{
@@ -436,7 +437,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     use reprisekit::access::{ROOT, accesskit::Role};
     let p = state.snap_picker.shown.as_ref()?;
     let rect = Rect::new(p.at.0, p.at.1, p.layout.width, p.layout.height);
-    let mut tree = crate::access::root(Role::Window, "Snap layouts", rect);
+    let mut tree = crate::access::root(Role::Window, &tr!("bar-snap-layouts-name"), rect);
     let focus = snappicker::access(&p.layout, &p.specs, p.model.hot, &mut tree, ROOT);
     tree.set_focus(focus);
     Some(tree)

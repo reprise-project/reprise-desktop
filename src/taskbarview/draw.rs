@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 
 use reprisekit::taskbar::{Attention, BarSpan, ClockText};
+use reprisekit::tr;
 use reprisescene::{Input, NodeId, TreeId};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -273,7 +274,11 @@ impl State {
                     win(group[0]).map(|w| w.title()).unwrap_or_default()
                 } else {
                     let name = crate::taskbar::group_name(&apps[group[0]]);
-                    format!("{name} ({})", group.len())
+                    tr!(
+                        "bar-group-title",
+                        name = name,
+                        count = group.len().to_string()
+                    )
                 };
                 TaskEntry {
                     title,

@@ -6,6 +6,7 @@ use crate::media::Value;
 use crate::notifylog::Suppress;
 use crate::raster::{Canvas, Rect};
 use reprisekit::classic::indicator;
+use reprisekit::tr;
 use smithay::output::Output;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,22 +136,23 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
 /// `until`: the end time of a timed Do Not Disturb.
 fn bell_tip(unseen: usize, quiet: Suppress, until: Option<&str>) -> String {
     let count = match unseen {
-        0 => "Notifications".to_string(),
-        1 => "1 new notification".to_string(),
-        n => format!("{n} new notifications"),
+        0 => tr!("bar-bell-none"),
+        n => tr!("bar-bell-unseen", count = n),
     };
     let why = if quiet.manual {
-        until.map(|t| format!(" until {t}")).unwrap_or_default()
+        until
+            .map(|t| tr!("bar-bell-until", time = t))
+            .unwrap_or_default()
     } else if quiet.fullscreen_focus {
-        " while a full-screen window has focus".into()
+        tr!("bar-bell-fullscreen")
     } else if quiet.sharing {
-        " while the screen is shared".into()
+        tr!("bar-bell-sharing")
     } else if quiet.scheduled {
-        " during quiet hours".into()
+        tr!("bar-bell-scheduled")
     } else {
         return count;
     };
-    format!("{count}\nDo not disturb is on{why}")
+    format!("{count}\n{}", tr!("bar-bell-dnd", why = why))
 }
 
 /// A pointer button on cell `b`, which sits at `cell` (layout coordinates) on `output`'s taskbar.

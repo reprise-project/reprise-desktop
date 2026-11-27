@@ -210,3 +210,78 @@ start-search-settings = Settings ({ $count })
 start-search-found = { $heading } ({ $count })
 start-search-files = Files
 start-search-contents = Contents
+
+## Taskbar menu
+bar-menu-rename-desktop = Rena&me Desktop...
+bar-menu-toolbars = &Toolbars
+bar-menu-cascade = Casca&de Windows
+bar-menu-tile-horizontally = Tile Windows &Horizontally
+bar-menu-tile-vertically = Tile Windows &Vertically
+bar-menu-show-desktop = &Show the Desktop
+bar-menu-task-manager = Tas&k Manager
+bar-menu-lock-taskbar = &Lock the Taskbar
+bar-menu-properties = P&roperties
+bar-menu-quick-launch = &Quick Launch
+
+## Start button menu
+bar-start-open = &Open
+bar-start-explore = E&xplore
+bar-start-properties = P&roperties
+
+## Quick Launch button menu
+bar-quick-open = &Open
+bar-quick-delete = &Delete
+
+## Jump lists
+bar-jump-recent = Recent
+bar-jump-tasks = Tasks
+bar-jump-pin = Pin this program to taskbar
+bar-jump-unpin = Unpin this program from taskbar
+bar-jump-close-window = Close window
+bar-jump-close-all-windows = Close all windows
+bar-move-to-desktop = Move to desktop
+
+## Grouped task buttons
+bar-group-minimize = Minimize Group
+bar-group-close = Close Group
+# The label of a group whose app id is empty.
+bar-group-name-fallback = Window
+# A group of several windows: the program's name and the window count.
+bar-group-title = { $name } ({ $count })
+
+## Tooltips
+# The second line of the maximize button's tip; keys is the bound shortcut.
+bar-tip-snap-layouts = Snap layouts: { $keys }
+bar-tip-hide = Hide
+bar-tip-show-hidden-icons = Show hidden icons
+bar-tip-start = Click here to begin
+bar-tip-show-desktop = Show desktop
+bar-tip-more-windows = Show more windows
+bar-tip-network-speed = Network speed
+
+## Notification bell tip
+bar-bell-none = Notifications
+bar-bell-unseen =
+    { $count ->
+        [one] 1 new notification
+       *[other] { $count } new notifications
+    }
+# time is the end of a timed Do Not Disturb.
+bar-bell-until = { " " }until { $time }
+bar-bell-fullscreen = { " " }while a full-screen window has focus
+bar-bell-sharing = { " " }while the screen is shared
+bar-bell-scheduled = { " " }during quiet hours
+# why is one of the bar-bell- reasons above, with its leading space.
+bar-bell-dnd = Do not disturb is on{ $why }
+
+## Accessibility names
+bar-taskbar-name = Taskbar
+bar-switcher-name = Task Switcher
+bar-previews-name = Window previews
+bar-flyout-name = Hidden icons
+bar-snap-layouts-name = Snap layouts
+bar-overview-windows = Windows
+bar-overview-snap-assist = Snap assist
+bar-switcher-desktop = Desktop
+bar-media-playing = Playing
+bar-media-paused = Paused

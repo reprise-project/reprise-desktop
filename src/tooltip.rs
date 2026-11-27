@@ -10,6 +10,7 @@ use reprisekit::controls::tooltip::{
     tip_size,
 };
 use reprisekit::startpanel::Spot;
+use reprisekit::tr;
 use reprisescene::{Input, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::{
@@ -471,35 +472,37 @@ fn place_caption(
 fn caption_tip(button: CaptionButton, maximized: bool, snap_keys: Option<&str>) -> String {
     let name = button.name(maximized);
     match snap_keys {
-        Some(keys) if button == CaptionButton::Maximize => format!("{name}\nSnap layouts: {keys}"),
+        Some(keys) if button == CaptionButton::Maximize => {
+            format!("{name}\n{}", tr!("bar-tip-snap-layouts", keys = keys))
+        }
         _ => name.to_string(),
     }
 }
 
-fn chevron_tip(arrow: bool, open: bool) -> &'static str {
+fn chevron_tip(arrow: bool, open: bool) -> String {
     if arrow && open {
-        "Hide"
+        tr!("bar-tip-hide")
     } else {
-        "Show hidden icons"
+        tr!("bar-tip-show-hidden-icons")
     }
 }
 
 pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<String> {
     match hit {
-        TaskbarHit::Start => Some("Click here to begin".to_string()),
+        TaskbarHit::Start => Some(tr!("bar-tip-start")),
         TaskbarHit::Quick(i) => state.quicklaunch.get(i).map(|q| q.entry.label.clone()),
         TaskbarHit::Clock => Some(crate::taskbar::date_text()),
         TaskbarHit::Pager(i) => Some(state.desktop_name(i)),
-        TaskbarHit::ShowDesktop => Some("Show desktop".to_string()),
+        TaskbarHit::ShowDesktop => Some(tr!("bar-tip-show-desktop")),
         TaskbarHit::Chevron => {
             let open = state.bar(bar).is_some_and(|b| b.tray_open);
-            Some(chevron_tip(crate::trayreveal::arrow_look(state), open).to_string())
+            Some(chevron_tip(crate::trayreveal::arrow_look(state), open))
         }
-        TaskbarHit::More => Some("Show more windows".to_string()),
+        TaskbarHit::More => Some(tr!("bar-tip-more-windows")),
         TaskbarHit::QuickMore => Some(reprisekit::taskbar::QUICK_MORE_NAME.to_string()),
         TaskbarHit::Meter => Some(match crate::netspeed::line(state) {
-            Some(line) => format!("Network speed\n{line}"),
-            None => "Network speed".to_string(),
+            Some(line) => format!("{}\n{line}", tr!("bar-tip-network-speed")),
+            None => tr!("bar-tip-network-speed"),
         }),
         TaskbarHit::Tray(i) => match crate::tray::cell_at(state, bar, i) {
             crate::tray::Cell::Builtin(b) => crate::tray::builtin::shown(state)
