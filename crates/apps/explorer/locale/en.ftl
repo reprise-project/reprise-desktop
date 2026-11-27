@@ -195,6 +195,7 @@ volumes-mount-image-at-could-not-mount-name = Could not mount { $name }
 volumes-mount-image-at-udisks2-is-not-running = UDisks2 is not running.
 volumes-relabel-rename = Rename
 volumes-system-drive-reprise-doesn-t-rename-the-system = Reprise doesn't rename the system's own drives.
+volumes-read-only-drive = { $name } is read-only, so it can't be renamed.
 volumes-drive-changed-the-drive-changed-nothing-was-renamed = The drive changed; nothing was renamed.
 volumes-leading-hyphen-a-drive-s-name-cannot-start = A drive's name cannot start with a hyphen (-).
 volumes-too-long-text-the-name-is-too-long-for = The name is too long for this drive (at most { $n } characters).

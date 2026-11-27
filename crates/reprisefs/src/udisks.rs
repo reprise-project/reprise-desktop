@@ -136,6 +136,9 @@ pub struct Volume {
     pub system: bool,
     /// `HintAuto`: fine to mount on its own when it appears.
     pub auto: bool,
+    /// `ReadOnly`: the device takes no writes, as a disk image Mount set up does. UDisks2
+    /// answers a relabel of one as done and leaves the label as it was.
+    pub read_only: bool,
     /// The disk image this user set up the volume's loop device on, the volume itself or a
     /// partition of it.
     pub image: Option<Image>,
@@ -470,6 +473,7 @@ fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volu
         ignore: flag(block, "HintIgnore"),
         system: flag(block, "HintSystem"),
         auto: flag(block, "HintAuto"),
+        read_only: flag(block, "ReadOnly"),
         image: None,
     }
 }
