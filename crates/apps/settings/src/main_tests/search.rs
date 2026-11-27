@@ -26,7 +26,10 @@ fn enter_on_a_found_control_takes_the_keyboard_from_the_permission_list() {
     let (mut a, mut ctx) = (app("search-from-list"), test_ctx());
     a.open_page(Page::Privacy, None);
     a.permissions_due = false;
-    pages::fill_permissions(&mut a.permissions, &[("Maps".into(), "Location", true)]);
+    pages::fill_permissions(
+        &mut a.permissions,
+        &[("Maps".into(), "Location".into(), true)],
+    );
     press_side_row(&mut a, &mut ctx, 0, 1000);
     assert!(a.permissions_focus);
     find(&mut a, &mut ctx, "history");

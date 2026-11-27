@@ -670,8 +670,12 @@ fn the_location_check_and_the_permission_list() {
     fill_permissions(
         &mut lv,
         &[
-            ("Maps".into(), "Location", true),
-            ("org.example.Weather".into(), "Run in background", false),
+            ("Maps".into(), "Location".into(), true),
+            (
+                "org.example.Weather".into(),
+                "Run in background".into(),
+                false,
+            ),
         ],
     );
     let cells: Vec<&[String]> = lv.rows.iter().map(|r| r.cells.as_slice()).collect();
@@ -693,7 +697,7 @@ fn every_permission_name_fits_its_column() {
     let px = Theme::default().fonts.size_px;
     let width = PERMISSION_COLUMNS[1].1;
     for k in crate::permissions::Kind::ALL {
-        let w = text.measure(k.label(), false, px);
+        let w = text.measure(&k.label(), false, px);
         assert!(w + 8 <= width, "{} is {w} px", k.label());
     }
 }

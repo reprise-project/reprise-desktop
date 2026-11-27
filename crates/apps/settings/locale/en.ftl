@@ -1055,3 +1055,153 @@ defaultshost-cannot-use = Cannot use '{ $id }': { $why }.
 
 ## events.rs
 events-new-certificate-question = Make a new certificate? Computers that connected before will warn that this computer's certificate changed.
+
+## loginhost.rs
+loginhost-the-login-managers-settings-could-not = The login manager's settings could not be saved.
+loginhost-the-change-was-not-authorized = The change was not authorized.
+loginhost-the-login-manager-refused-the-settings = The login manager refused the settings:
+loginhost-the-save-was-withdrawn = The save was withdrawn.
+loginhost-no-screens-are-listed-so-there = No screens are listed, so there are no display settings to use.
+loginhost-changed = Your changes were not saved: the login manager's settings changed since this page opened. The page now shows the new settings; make your changes again.
+loginhost-not-installed = { $path } is not installed.
+loginhost-unreadable =
+    The login manager's settings in { $at } could not be read, so this page doesn't save over them.
+
+    { $why }
+loginhost-unusable =
+    The login manager's settings in { $at } have values this page can't use, so it doesn't save over them. Correct or remove these lines as root, then press Apply again:
+
+    { $warnings }
+loginhost-bad-background = { $path } can't be the login screen's background: { $why }.
+loginhost-picture-too-large = '{ $name }' is larger than { $mb } MB, too large for the login screen.
+loginhost-picture-not-supported = '{ $name }' is not a PNG, JPEG or BMP picture, which the login screen shows.
+loginhost-cannot-open = Cannot open '{ $name }': { $why }.
+
+## monitordlg.rs
+monitordlg-your-desktop-has-been-reconfigured-do = Your desktop has been reconfigured.  Do you want to keep
+monitordlg-these-settings = these settings?
+monitordlg-yes = &Yes
+monitordlg-no = &No
+monitordlg-reverting = Reverting in { $left } { $left ->
+        [one] second
+       *[other] seconds
+    }
+
+## outputwrite.rs
+outputwrite-outputs-holds-something-that-is-not = `outputs` holds something that is not a table
+outputwrite-outputs-is-not-an-array-of = `outputs` is not an array of tables
+outputwrite-config-toml-does-not-parse-the = config.toml does not parse; the display setting was not saved.
+outputwrite-config-toml-could-not-be-written = config.toml could not be written.
+outputwrite-mode-out-of-range = mode { $w }x{ $h }@{ $mhz }mHz is out of range
+outputwrite-scale-out-of-range = scale must be between 1 and 4, got { $s }
+outputwrite-position-out-of-range = position [{ $x }, { $y }] is out of range
+outputwrite-not-absolute-path = { $path } is not an absolute UTF-8 path
+outputwrite-not-saved-why = The display setting was not saved: { $why }.
+
+## permissions.rs
+permissions-location = Location
+permissions-run-in-background = Run in background
+permissions-screenshots = Screenshots
+permissions-change-desktop-background = Change desktop background
+permissions-capture-keyboard-and-mouse = Capture keyboard and mouse
+permissions-share-the-screen = Share the screen
+permissions-remote-control = Remote control
+permissions-unidentified-programs = Unidentified programs
+permissions-the-answer-could-not-be-forgotten = The answer could not be forgotten.
+
+## proxyhost.rs
+proxyhost-the-proxy-settings-could-not-be = The proxy settings could not be written.
+proxyhost-the-proxy-settings-were-saved-and = The proxy settings were saved and take effect at the next log on; this session could not take them.
+proxyhost-refused = the user manager did not take { $names }: { $why }
+
+## readerhost.rs
+readerhost-the-autostart-entry-could-not-be = The autostart entry could not be written.
+readerhost-not-started =
+    The screen reader could not be started.
+
+    { $why }
+
+## regionhost.rs
+regionhost-the-systems-language-could-not-be = The system's language could not be changed.
+regionhost-the-language-could-not-be-saved = The language could not be saved to locale.conf.
+regionhost-not-installed = { $name } - not installed
+regionhost-language-failed =
+    The system's language could not be changed.
+
+    { $why }
+
+## remotehost.rs
+remotehost-failed-on =
+    Remote Desktop could not be turned on.
+
+    { $why }
+remotehost-failed-off =
+    Remote Desktop could not be turned off.
+
+    { $why }
+remotehost-disconnect-failed =
+    The remote computer could not be disconnected.
+
+    { $why }
+remotehost-certificate-failed =
+    A new certificate could not be made.
+
+    { $why }
+
+## ruledlg.rs
+ruledlg-pick-one-to-fill-in-its = (Pick one to fill in its app ID)
+ruledlg-edit-window-rule = Edit Window Rule
+ruledlg-add-window-rule = Add Window Rule
+ruledlg-windows = Windows
+ruledlg-from-a-window = From a &window:
+ruledlg-app-id = App &ID:
+ruledlg-title = &Title:
+ruledlg-the-title-matches-whole-once-as = The title matches whole, once, as the window opens;
+ruledlg-open-it = Open It
+ruledlg-size = &Size:
+ruledlg-position = &Position:
+ruledlg-from-left = from left
+ruledlg-from-top = from top
+ruledlg-screen = Scr&een:
+ruledlg-state = St&ate:
+ruledlg-desktop = &Desktop:
+ruledlg-always-on-top = Always on t&op
+ruledlg-on-every-desktop = On every des&ktop
+ruledlg-tab-group = Tab &group:
+ruledlg-ok = OK
+ruledlg-cancel = Cancel
+ruledlg-wildcards = * stands for any text, ? for one character.
+
+## saverdlg.rs
+saverdlg-speed = Spee&d:
+saverdlg-slow = Slow
+saverdlg-fast = Fast
+saverdlg-stars = &Stars:
+saverdlg-shapes = S&hapes:
+saverdlg-change-colours = &Change colours
+saverdlg-change-colour-at-each-bounce = &Change colour at each bounce
+saverdlg-folder-empty-for-pictures = &Folder (empty for Pictures):
+saverdlg-show-each-for = &Show each for:
+saverdlg-ok = OK
+saverdlg-cancel = Cancel
+saverdlg-title = { $kind } Settings
+
+## shortcutdlg.rs
+shortcutdlg-press-the-keys-in-the-field = Press the keys in the field, as in Super+Shift+B.
+shortcutdlg-backspace-or-clear-empties-it = Backspace or Clear empties it.
+shortcutdlg-edit-shortcut = Edit Shortcut
+shortcutdlg-add-shortcut = Add Shortcut
+shortcutdlg-keys = &Keys:
+shortcutdlg-clear = C&lear
+shortcutdlg-action = &Action:
+shortcutdlg-command = &Command:
+shortcutdlg-change-shortcut = Change Shortcut
+shortcutdlg-remove-a-shortcut-you-added-instead = Remove a shortcut you added instead.
+shortcutdlg-already-used = { $shown } is already used for
+shortcutdlg-already-used-press = "{ $what }". Press other keys.
+shortcutdlg-only-default = Only a default shortcut can be set to "{ $what }".
+
+## wallpapers.rs
+wallpapers-background-files-bmp-jpg-jpeg-dib = Background Files (*.bmp;*.jpg;*.jpeg;*.dib;*.png;*.jxl;*.avif)
+wallpapers-pictures = Pictures
+wallpapers-not-a-picture = '{ $name }' is not a picture.

@@ -9,6 +9,7 @@ use repriseconf::hz_string;
 use repriseconf::projection::Home;
 
 use crate::model::OutputWallpaper;
+use reprisekit::tr;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value, value};
 
 /// What to record for one output; a None leaves that key as it is.
@@ -44,10 +45,10 @@ fn check_outputs(doc: &DocumentMut) -> Result<(), String> {
             if a.iter().all(Value::is_inline_table) {
                 Ok(())
             } else {
-                Err("`outputs` holds something that is not a table".into())
+                Err(tr!("outputwrite-outputs-holds-something-that-is-not"))
             }
         }
-        Some(_) => Err("`outputs` is not an array of tables".into()),
+        Some(_) => Err(tr!("outputwrite-outputs-is-not-an-array-of")),
     }
 }
 
@@ -77,22 +78,34 @@ fn check_keys(keys: &OutputKeys) -> Result<(), String> {
     if let Some((w, h, mhz)) = keys.mode
         && (w <= 0 || h <= 0 || !(0..=1_000_000).contains(&mhz))
     {
-        return Err(format!("mode {w}x{h}@{mhz}mHz is out of range"));
+        return Err(tr!(
+            "outputwrite-mode-out-of-range",
+            w = w.to_string(),
+            h = h.to_string(),
+            mhz = mhz.to_string()
+        ));
     }
     if let Some(s) = keys.scale
         && !(1.0..=4.0).contains(&s)
     {
-        return Err(format!("scale must be between 1 and 4, got {s}"));
+        return Err(tr!("outputwrite-scale-out-of-range", s = s.to_string()));
     }
     if let Some((x, y)) = keys.position
         && [x, y].iter().any(|v| v.abs() > MAX_POSITION)
     {
-        return Err(format!("position [{x}, {y}] is out of range"));
+        return Err(tr!(
+            "outputwrite-position-out-of-range",
+            x = x.to_string(),
+            y = y.to_string()
+        ));
     }
     if let Some(Some(p)) = &keys.icc_profile
         && (!p.is_absolute() || p.to_str().is_none())
     {
-        return Err(format!("{} is not an absolute UTF-8 path", p.display()));
+        return Err(tr!(
+            "outputwrite-not-absolute-path",
+            path = p.display().to_string()
+        ));
     }
     Ok(())
 }
@@ -407,15 +420,15 @@ pub fn save(path: &Path, name: &str, keys: &OutputKeys) -> Result<(), String> {
                 "{} does not parse, refusing to rewrite it: {e}",
                 path.display()
             );
-            Err("config.toml does not parse; the display setting was not saved.".into())
+            Err(tr!("outputwrite-config-toml-does-not-parse-the"))
         }
         Ok(Err(Unsaved::Refused(why))) => {
             log::warn!("{name} in {}: {why}", path.display());
-            Err(format!("The display setting was not saved: {why}."))
+            Err(tr!("outputwrite-not-saved-why", why = why.to_string()))
         }
         Err(e) => {
             log::warn!("write {}: {e}", path.display());
-            Err("config.toml could not be written.".into())
+            Err(tr!("outputwrite-config-toml-could-not-be-written"))
         }
     }
 }

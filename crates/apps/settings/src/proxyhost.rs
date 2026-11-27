@@ -5,6 +5,7 @@
 use crate::registry::Page;
 use crate::{SettingsApp, pages, take};
 use reprisefs::proxy;
+use reprisekit::tr;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
@@ -67,9 +68,10 @@ fn manager(c: &proxy::Change) -> Result<(), String> {
 /// The log line for a change the manager refused: the variables' names, never their values,
 /// which may hold a password.
 pub(crate) fn refused(c: &proxy::Change, why: &str) -> String {
-    format!(
-        "the user manager did not take {}: {why}",
-        c.names().join(" ")
+    tr!(
+        "proxyhost-refused",
+        names = c.names().join(" "),
+        why = why.to_string()
     )
 }
 
@@ -114,7 +116,7 @@ impl SettingsApp {
         };
         if let Err(e) = proxy::write(&self.proxy.file, &vars) {
             log::warn!("write {}: {e}", self.proxy.file.display());
-            self.fail("The proxy settings could not be written.");
+            self.fail(&tr!("proxyhost-the-proxy-settings-could-not-be"));
             return false;
         }
         self.proxy.vars = (vars.into_iter())
@@ -176,7 +178,7 @@ impl SettingsApp {
         if let Err(e) = done {
             log::warn!("{e}");
             if !self.proxy.quit {
-                self.fail("The proxy settings were saved and take effect at the next log on; this session could not take them.");
+                self.fail(&tr!("proxyhost-the-proxy-settings-were-saved-and"));
             }
         } else {
             self.proxy.sent = sending;

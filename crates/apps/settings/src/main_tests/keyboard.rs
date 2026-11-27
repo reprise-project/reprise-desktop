@@ -219,7 +219,10 @@ fn the_search_field_and_the_permission_list_never_hold_the_keyboard_together() {
     let mut ctx = test_ctx();
     a.open_page(Page::Privacy, None);
     a.permissions_due = false;
-    pages::fill_permissions(&mut a.permissions, &[("Maps".into(), "Location", true)]);
+    pages::fill_permissions(
+        &mut a.permissions,
+        &[("Maps".into(), "Location".into(), true)],
+    );
 
     press_search_field(&mut a, &mut ctx);
     assert_eq!(holders(&a), FIELD, "a press in the field");

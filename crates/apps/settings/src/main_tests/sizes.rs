@@ -497,7 +497,10 @@ fn the_start_menu_tree_permission_rows_and_chooser_rows_load_their_icons_at_the_
     }
     let mut ctx = test_ctx();
     ctx.icons = reprisekit::icontheme::IconCache::new(IconTheme::load("hicolor", &[root]));
-    pages::fill_permissions(&mut a.permissions, &[("Notes".into(), "Screenshot", true)]);
+    pages::fill_permissions(
+        &mut a.permissions,
+        &[("Notes".into(), "Screenshot".into(), true)],
+    );
     a.permission_icons = vec![None];
     a.permission_icons_due = true;
     let program = reprisekit::controls::openwith::Program {

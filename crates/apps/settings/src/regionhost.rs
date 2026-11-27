@@ -7,6 +7,7 @@ use crate::registry::{self, Page};
 use crate::{SettingsApp, take};
 use reprisebus::polkit::{self, Refusal};
 use reprisefs::region::{self, Choice};
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// The page's locales and choices once read.
@@ -71,7 +72,7 @@ pub(crate) fn with_names(installed: Vec<String>, also: &[&str]) -> Vec<(String, 
         if !named.iter().any(|(have, _)| have == c) {
             let name = match region::loads(c) {
                 true => region::name(c),
-                false => format!("{} - not installed", region::name(c)),
+                false => tr!("regionhost-not-installed", name = region::name(c)),
             };
             named.push((c.to_string(), name));
         }
@@ -128,9 +129,7 @@ fn set_system(pairs: Vec<(String, String)>) -> Set {
             None => {
                 log::warn!("SetLocale: {e}");
                 let why = reprisebus::error::message(&e).map_or(e.to_string(), String::from);
-                Some(format!(
-                    "The system's language could not be changed.\n\n{why}"
-                ))
+                Some(tr!("regionhost-language-failed", why = why))
             }
         }
     })
@@ -228,9 +227,9 @@ impl SettingsApp {
             let done = match take(rx) {
                 Ok(None) => None,
                 Ok(Some(r)) => Some(r),
-                Err(()) => Some(Err(Some(
-                    "The system's language could not be changed.".into(),
-                ))),
+                Err(()) => Some(Err(Some(tr!(
+                    "regionhost-the-systems-language-could-not-be"
+                )))),
             };
             if let Some(set) = done {
                 self.region_set = None;
@@ -303,7 +302,7 @@ impl SettingsApp {
         };
         if let Err(e) = region::save(&self.region_conf, &r.want) {
             log::warn!("{}: {e}", self.region_conf.display());
-            self.fail("The language could not be saved to locale.conf.");
+            self.fail(&tr!("regionhost-the-language-could-not-be-saved"));
             return false;
         }
         r.loaded = r.want.clone();

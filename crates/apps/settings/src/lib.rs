@@ -1048,7 +1048,7 @@ impl App for SettingsApp {
         if let Some(d) = &self.shortcut {
             kids.push(Child {
                 id: SHORTCUT_WIN,
-                title: d.title.into(),
+                title: d.title.clone(),
                 size: self.units.size(shortcutdlg::CLIENT),
                 fixed: true,
                 modal: true,
@@ -1093,7 +1093,7 @@ impl App for SettingsApp {
         if let Some((d, _)) = &self.rule_dlg {
             kids.push(Child {
                 id: RULE_WIN,
-                title: d.title.into(),
+                title: d.title.clone(),
                 size: self.units.size(ruledlg::CLIENT),
                 fixed: true,
                 modal: true,

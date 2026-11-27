@@ -4,6 +4,7 @@
 use crate::registry::{self, Page};
 use crate::{SettingsApp, pages, take};
 use repriseapp::heads::Head;
+use reprisekit::tr;
 use repriselogin::front::FINGERPRINT;
 use repriselogin::machine::{
     Background, LoginMode, LoginOutput, MACHINE_CONFIG, MAX_OUTPUTS, MAX_PICTURE, MachineConfig,
@@ -125,11 +126,15 @@ impl Withdraw {
 /// Runs the helper with a save request on its stdin, as [`pkexec`] does.
 pub(crate) type Run = fn(&[u8], &Withdraw) -> io::Result<Output>;
 
-const NOT_SAVED: &str = "The login manager's settings could not be saved.";
-const NOT_AUTHORIZED: &str = "The change was not authorized.";
-const CHANGED: &str = "Your changes were not saved: the login manager's settings changed since \
-                       this page opened. The page now shows the new settings; make your changes \
-                       again.";
+fn not_saved() -> String {
+    tr!("loginhost-the-login-managers-settings-could-not")
+}
+fn not_authorized() -> String {
+    tr!("loginhost-the-change-was-not-authorized")
+}
+fn changed() -> String {
+    tr!("loginhost-changed")
+}
 
 /// Why [`apply`] saved nothing.
 #[derive(Debug, PartialEq, Eq)]
@@ -149,7 +154,7 @@ pub(crate) fn apply(
     run: &dyn Fn(&[u8]) -> io::Result<Output>,
 ) -> Result<(), Unsaved> {
     let out = run(&save_request(tag, &cfg.to_toml(), picture))
-        .map_err(|e| Unsaved::Failed(format!("{NOT_SAVED}\n\n{e}")))?;
+        .map_err(|e| Unsaved::Failed(format!("{}\n\n{e}", not_saved())))?;
     let why = String::from_utf8_lossy(&out.stderr).trim_end().to_string();
     let with_why = |head: &str| match why.is_empty() {
         true => head.to_string(),
@@ -160,11 +165,11 @@ pub(crate) fn apply(
     let why = match out.status.code() {
         Some(0) => return Ok(()),
         Some(3) => return Err(Unsaved::Changed),
-        Some(2) => with_why("The login manager refused the settings:"),
-        Some(126) => NOT_AUTHORIZED.into(),
-        Some(127) if why.contains("Not authorized") => NOT_AUTHORIZED.into(),
-        Some(127) => with_why(NOT_AUTHORIZED),
-        _ => with_why(NOT_SAVED),
+        Some(2) => with_why(&tr!("loginhost-the-login-manager-refused-the-settings")),
+        Some(126) => not_authorized(),
+        Some(127) if why.contains("Not authorized") => not_authorized(),
+        Some(127) => with_why(&not_authorized()),
+        _ => with_why(&not_saved()),
     };
     Err(Unsaved::Failed(why))
 }
@@ -183,7 +188,10 @@ pub(crate) fn run_helper(
     withdraw: &Withdraw,
 ) -> io::Result<Output> {
     if !helper.exists() {
-        let why = format!("{} is not installed.", helper.display());
+        let why = tr!(
+            "loginhost-not-installed",
+            path = helper.display().to_string()
+        );
         return Err(io::Error::new(io::ErrorKind::NotFound, why));
     }
     let (stdin, stderr) = {
@@ -191,7 +199,7 @@ pub(crate) fn run_helper(
         if p.stopped {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
-                "The save was withdrawn.",
+                tr!("loginhost-the-save-was-withdrawn"),
             ));
         }
         let mut child = Command::new(pkexec)
@@ -254,9 +262,10 @@ fn read_tagged(path: &Path) -> Result<(MachineConfig, String), String> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => {
             log::warn!("{at}: {e}");
-            return Err(format!(
-                "The login manager's settings in {at} could not be read, so this page doesn't \
-                 save over them.\n\n{e}"
+            return Err(tr!(
+                "loginhost-unreadable",
+                at = at.to_string(),
+                why = e.to_string()
             ));
         }
     };
@@ -266,10 +275,10 @@ fn read_tagged(path: &Path) -> Result<(MachineConfig, String), String> {
         return Ok((config, tag));
     }
     log::warn!("{at}: {}", warnings.join("; "));
-    Err(format!(
-        "The login manager's settings in {at} have values this page can't use, so it doesn't \
-         save over them. Correct or remove these lines as root, then press Apply again:\n\n{}",
-        warnings.join("\n")
+    Err(tr!(
+        "loginhost-unusable",
+        at = at.to_string(),
+        warnings = warnings.join("\n")
     ))
 }
 
@@ -280,13 +289,18 @@ fn read_picture(path: &Path) -> Result<Vec<u8>, String> {
     let read = std::fs::File::open(path)
         .and_then(|f| f.take(MAX_PICTURE as u64 + 1).read_to_end(&mut bytes));
     if let Err(e) = read {
-        return Err(format!("{NOT_SAVED}\n\n{}: {e}", path.display()));
+        return Err(format!("{}\n\n{}: {e}", not_saved(), path.display()));
     }
     match decode_picture(&bytes) {
         Ok(_) => Ok(bytes),
         Err(why) => Err(format!(
-            "{NOT_SAVED}\n\n{} can't be the login screen's background: {why}.",
-            path.display()
+            "{}\n\n{}",
+            not_saved(),
+            tr!(
+                "loginhost-bad-background",
+                path = path.display().to_string(),
+                why = why.to_string()
+            )
         )),
     }
 }
@@ -460,7 +474,7 @@ impl SettingsApp {
             crate::outputwrite::session_primary(&self.display.connected, &layouts, &config);
         let outputs = login_outputs(self.display.model.heads(), primary.as_deref());
         if outputs.is_empty() {
-            return self.fail("No screens are listed, so there are no display settings to use.");
+            return self.fail(&tr!("loginhost-no-screens-are-listed-so-there"));
         }
         if let Some(l) = &mut self.login {
             l.want.outputs = outputs;
@@ -492,18 +506,26 @@ impl SettingsApp {
         });
         match read {
             Ok((len, _)) if len > MAX_PICTURE as u64 => {
-                return self.fail(&format!(
-                    "'{name}' is larger than {} MB, too large for the login screen.",
-                    MAX_PICTURE >> 20
+                return self.fail(&tr!(
+                    "loginhost-picture-too-large",
+                    name = name.to_string(),
+                    mb = (MAX_PICTURE >> 20).to_string()
                 ));
             }
             Ok((_, n)) if !picture_magic(&head[..n]) => {
-                return self.fail(&format!(
-                    "'{name}' is not a PNG, JPEG or BMP picture, which the login screen shows."
+                return self.fail(&tr!(
+                    "loginhost-picture-not-supported",
+                    name = name.to_string()
                 ));
             }
             Ok(_) => {}
-            Err(e) => return self.fail(&format!("Cannot open '{name}': {e}.")),
+            Err(e) => {
+                return self.fail(&tr!(
+                    "loginhost-cannot-open",
+                    name = name.to_string(),
+                    why = e.to_string()
+                ));
+            }
         }
         if let Some(l) = &mut self.login {
             l.want.login.background = Some(Background::Picture);
@@ -529,7 +551,7 @@ impl SettingsApp {
         };
         let (_, warnings) = MachineConfig::parse(&l.want.to_toml());
         if !warnings.is_empty() {
-            self.fail(&format!("{NOT_SAVED}\n\n{}", warnings.join("\n")));
+            self.fail(&format!("{}\n\n{}", not_saved(), warnings.join("\n")));
             return false;
         }
         let (cfg, loaded, run, path) = (
@@ -602,7 +624,7 @@ impl SettingsApp {
         let done = match take(&self.login_job.as_ref()?.rx) {
             Ok(None) => return None,
             Ok(Some(r)) => r,
-            Err(()) => Ended::Failed(NOT_SAVED.to_string()),
+            Err(()) => Ended::Failed(not_saved()),
         };
         let s = self.login_job.take()?;
         let (saved, why) = match done {
@@ -614,7 +636,7 @@ impl SettingsApp {
             }
             Ended::Failed(why) => (false, Some(why)),
             Ended::Changed(now) => {
-                let why = now.as_ref().err().cloned().unwrap_or(CHANGED.into());
+                let why = now.as_ref().err().cloned().unwrap_or(changed());
                 self.login_reread(now, true);
                 (false, Some(why))
             }

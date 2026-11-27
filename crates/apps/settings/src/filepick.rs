@@ -73,7 +73,7 @@ impl SettingsApp {
                     accept_label: tr!("filepick-open"),
                     mode: DlgMode::Open,
                     multiple: false,
-                    filters: vec![wallpapers::FILTER.into(), tr!("filepick-all-files")],
+                    filters: vec![wallpapers::filter(), tr!("filepick-all-files")],
                 },
             ),
             Pick::SlideFolder => (
