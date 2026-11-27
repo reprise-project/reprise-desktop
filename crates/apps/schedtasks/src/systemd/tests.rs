@@ -362,7 +362,7 @@ fn the_timers_read_from_the_manager_loaded_and_unit_files_alike() {
     zbus::block_on(async move {
         let (_fake, conn, _) = manager(&bus).await;
         let now = (1_950_000 * S, 100 * S);
-        assert_eq!(unit_dir(&conn).await, Some(PathBuf::from(HOME)));
+        assert_eq!(unit_dir(&conn).await.map(|f| f.own), Some(HOME.into()));
         let (tasks, paths) = read(&conn, now, None).await.unwrap();
         let names: Vec<&str> = tasks.iter().map(|t| t.timer.as_str()).collect();
         assert_eq!(
@@ -533,6 +533,14 @@ fn a_read_follows_timers_shown_units_unit_files_and_finished_reloads() {
     );
 }
 
+/// `dir` as the own folder, with no other folder searched.
+fn own(dir: &Path) -> units::Folders {
+    units::Folders {
+        own: dir.into(),
+        search: vec![],
+    }
+}
+
 fn new_task() -> NewTask {
     NewTask {
         name: "Back up".into(),
@@ -552,7 +560,7 @@ fn new_task_writes_reloads_and_enables_its_timer() {
     zbus::block_on(async move {
         let (_fake, conn, calls) = manager(&bus).await;
         let taken = ["reprise-task-back-up.timer".to_string()];
-        let timer = create(&conn, Some(&dir), &new_task(), &taken)
+        let timer = create(&conn, Some(&own(&dir)), &new_task(), &taken)
             .await
             .unwrap();
         assert_eq!(timer, "reprise-task-back-up-2.timer");
@@ -600,7 +608,7 @@ fn a_create_the_manager_refuses_after_writing_leaves_nothing() {
             name: name.into(),
             ..new_task()
         };
-        let refused = create(&conn, Some(&dir), &task("enable refused"), &[]).await;
+        let refused = create(&conn, Some(&own(&dir)), &task("enable refused"), &[]).await;
         assert_eq!(
             refused.map_err(|e| told(&e)),
             Err("Unit file does not exist.".into())
@@ -610,7 +618,7 @@ fn a_create_the_manager_refuses_after_writing_leaves_nothing() {
         let wants = dir.join("timers.target.wants");
         std::fs::create_dir(&wants).unwrap();
         std::os::unix::fs::symlink(dir.join(stale), wants.join(stale)).unwrap();
-        let refused = create(&conn, Some(&dir), &task("start refused"), &[]).await;
+        let refused = create(&conn, Some(&own(&dir)), &task("start refused"), &[]).await;
         assert_eq!(
             refused.map_err(|e| told(&e)),
             Err("Interactive authentication required.".into())
@@ -642,7 +650,8 @@ fn delete_removes_only_a_pair_new_task_wrote() {
     };
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    let timer = units::write(&dir, &new_task(), &[]).unwrap();
+    let folders = own(&dir);
+    let timer = units::write(&folders, &new_task(), &[]).unwrap();
     assert_eq!(timer, "reprise-task-back-up.timer");
     let made = Spec {
         load: "loaded",
@@ -687,7 +696,7 @@ fn delete_removes_only_a_pair_new_task_wrote() {
             ["backup.service", "backup.timer"],
             "the service named by the unit, not the timer's Unit="
         );
-        units::write(&dir, &new_task(), &[]).unwrap();
+        units::write(&folders, &new_task(), &[]).unwrap();
         std::fs::remove_file(dir.join(&service)).unwrap();
         delete(&conn, Some(&dir), &timer).await.unwrap();
         assert!(
