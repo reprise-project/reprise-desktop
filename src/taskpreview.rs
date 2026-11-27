@@ -13,6 +13,8 @@
 //! The taskbar's keyboard focus (`barkeys`) on a task button shows its panel after the same delay, and that panel stays
 //! until the focus moves on, whatever the pointer does. Enter on a group opens the panel at once with the arrows
 //! (`open_keys`): they move the hot cell, Enter brings its window up, Delete closes it, Escape goes back to the button.
+//! Under Onyx (`interfaces::onyx_previews`) the panel is sized to its window's picture and leaves the title out; a
+//! one-window panel shows the title in a tip over it once it has stayed up `TITLE_TIP_MS`.
 //! A window with a media player (`previewmedia`) gets Previous, Play or Pause, and Next under its picture, greyed where
 //! the player can't; a click presses the player and the panel stays. With the arrows, Tab steps through the hot
 //! cell's buttons, Enter and Space press the one focused and Escape goes back to the cell. On a one-window panel shown
@@ -52,12 +54,17 @@ use crate::{
 };
 
 const SHOW_MS: u64 = reprisekit::controls::tooltip::SHOW_MS as u64;
+const TITLE_TIP_MS: u64 = 1500;
+/// Between Onyx's title tip and the top of its panel.
+const TITLE_TIP_GAP: i32 = 2;
 const SMALL_ICON: i32 = 16;
 const WELL_ICON: i32 = 32;
 
 #[derive(Default)]
 pub struct TaskPreviewView {
     timer: Option<RegistrationToken>,
+    /// Shows the shown panel's title tip (`TITLE_TIP_MS`).
+    tip_timer: Option<RegistrationToken>,
     /// The task button waiting for its panel: its bar and index.
     pending: Option<(TreeId, usize)>,
     shown: Option<Panel>,
@@ -100,6 +107,8 @@ struct Panel {
     ptr: Pointer<(usize, Transport)>,
     /// The hot cell's media button with the keyboard, after Tab.
     media_focus: Option<Transport>,
+    /// Onyx's title tip over a one-window panel, once shown.
+    tip: Option<BufferId>,
 }
 
 impl Panel {
@@ -269,6 +278,68 @@ fn disarm(state: &mut State) {
     if let Some(t) = state.task_preview.timer.take() {
         state.handle.remove(t);
     }
+}
+
+/// Under Onyx, show the shown one-window panel's title in a tip over it after `TITLE_TIP_MS`.
+fn arm_title_tip(state: &mut State) {
+    let one = (state.task_preview.shown.as_ref()).is_some_and(|p| p.windows.len() == 1);
+    if !one || !interfaces::onyx_previews(&state.config.theme, &state.config.glass) {
+        return;
+    }
+    let token = state.handle.insert_source(
+        Timer::from_duration(Duration::from_millis(TITLE_TIP_MS)),
+        |_, _, state| {
+            state.task_preview.tip_timer = None;
+            draw_title_tip(state);
+            TimeoutAction::Drop
+        },
+    );
+    match token {
+        Ok(t) => state.task_preview.tip_timer = Some(t),
+        Err(e) => log::warn!("task preview title timer: {}", e.error),
+    }
+}
+
+/// The shown panel's title tip, centred over the panel (under it below a top bar), drawn again
+/// for a new title.
+fn draw_title_tip(state: &mut State) {
+    let Some(p) = state.task_preview.shown.as_ref() else {
+        return;
+    };
+    let Some(title) = p
+        .windows
+        .first()
+        .and_then(|&w| state.win(w))
+        .map(|w| w.title())
+    else {
+        return;
+    };
+    let scale = state.draw_scale_at(Some(&p.output)).max(1);
+    let theme = state.config.theme.scaled(scale);
+    let canvas =
+        reprisekit::controls::tooltip::draw_tip(&theme, state.text.for_output(scale), &title);
+    let (w, h) = (
+        (canvas.width as i32 + scale - 1) / scale,
+        (canvas.height as i32 + scale - 1) / scale,
+    );
+    let r = p.layout.rect;
+    let y = match p.layout.edge {
+        Edge::Top => r.height + TITLE_TIP_GAP,
+        _ => -h - TITLE_TIP_GAP,
+    };
+    let (tree, tip) = (p.tree, p.tip);
+    let was = state.scene.outputs_of(tree);
+    let buffer = tip.unwrap_or_else(|| {
+        let b = state.scene.buffer_create(tree);
+        state.scene.set_input(b, Input::Passthrough);
+        b
+    });
+    state.scene.set_position(buffer, (r.width - w) / 2, y);
+    upload_scaled(&mut state.scene, buffer, &canvas, scale);
+    if let Some(p) = state.task_preview.shown.as_mut() {
+        p.tip = Some(buffer);
+    }
+    state.redraw_nodes(was, &[tree.into()]);
 }
 
 pub fn hit(state: &State, lx: f64, ly: f64) -> Option<usize> {
@@ -614,6 +685,9 @@ pub fn hide(state: &mut State) {
     stop_peek(state);
     state.task_preview.pending = None;
     disarm(state);
+    if let Some(t) = state.task_preview.tip_timer.take() {
+        state.handle.remove(t);
+    }
     let awake = std::mem::take(&mut state.task_preview.awake);
     resuspend(state, awake);
     let Some(p) = state.task_preview.shown.take() else {
@@ -629,8 +703,15 @@ pub fn hide(state: &mut State) {
 
 /// `w`'s title, app id or icon changed: a panel showing it draws it again.
 pub fn retitled(state: &mut State, w: WindowId) {
-    if (state.task_preview.shown.as_ref()).is_some_and(|p| p.windows.contains(&w)) {
+    let Some(p) = state.task_preview.shown.as_ref() else {
+        return;
+    };
+    if p.windows.contains(&w) {
+        let tip = p.tip.is_some();
         redraw(state);
+        if tip {
+            draw_title_tip(state);
+        }
     }
 }
 
@@ -703,7 +784,14 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
     let button = Rect::new(p.shown.x + btn.x, p.shown.y + btn.y, btn.width, btn.height);
     let bounds = preview_bounds(state.layout_box(Some(&output)), &p);
     let players = crate::previewmedia::players_of(state, &windows);
-    let grid = interfaces::task_preview_grid(&state.config.theme);
+    let picture = match windows[..] {
+        [w] => state
+            .win(w)
+            .map(|x| x.frame_rect())
+            .map(|r| (r.width, r.height)),
+        _ => None,
+    };
+    let grid = interfaces::task_preview_grid(&state.config.theme, &state.config.glass, picture);
     let grid = if players.iter().any(Option::is_some) {
         grid.with_media()
     } else {
@@ -756,8 +844,10 @@ fn show(state: &mut State, bar: TreeId, i: usize) {
         players,
         ptr: Pointer::new(),
         media_focus: None,
+        tip: None,
     });
     redraw(state);
+    arm_title_tip(state);
 }
 
 /// Icon files landed: the open preview draws its windows' icons again.
@@ -827,6 +917,7 @@ fn redraw(state: &mut State) {
     interfaces::draw_task_preview(
         &mut canvas,
         &theme,
+        &state.config.glass,
         state.text.for_output(theme.scale),
         &layout,
         &cells,
@@ -1020,6 +1111,37 @@ mod tests {
 
     fn on(s: &State, i: usize) -> bool {
         (s.task_preview.shown.as_ref()).is_some_and(|p| p.button == i)
+    }
+
+    #[test]
+    fn under_onyx_a_panel_fits_its_window_and_shows_its_title_in_a_tip_later() {
+        let onyx = "[appearance]\ninterface = \"glass\"\n[glass]\nstyle = \"onyx\"\n";
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(onyx).unwrap());
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "one", 300, 200);
+        let (i, x, y) = centre(&h, a.id);
+        h.pointer_to(x, y);
+        h.until("the panel on a rest", |s| on(s, i));
+        let frame = h.state.win(a.id).expect("the window").frame_rect();
+        let p = h.state.task_preview.shown.as_ref().expect("the panel");
+        assert_eq!(
+            p.layout.grid,
+            reprisekit::glass::preview::onyx_grid(Some((frame.width, frame.height)))
+        );
+        assert!(p.tip.is_none(), "no title tip as the panel opens");
+        h.run_for(TITLE_TIP_MS + 100);
+        let p = h
+            .state
+            .task_preview
+            .shown
+            .as_ref()
+            .expect("the panel stays");
+        assert!(
+            p.tip.is_some(),
+            "the title tip once the panel has stayed up"
+        );
     }
 
     #[test]

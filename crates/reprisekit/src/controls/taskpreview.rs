@@ -475,7 +475,8 @@ mod tests {
         for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let base = crate::interfaces::theme_for(look);
             let text = TextRenderer::load(&base.fonts);
-            let grid = crate::interfaces::task_preview_grid(&base).with_media();
+            let grid =
+                crate::interfaces::task_preview_grid(&base, &Default::default(), None).with_media();
             let button = Rect::new(300, 1040, 60, 40);
             let l = TaskPreviewLayout::compute(grid, 2, button, SCREEN, Edge::Bottom);
             for s in [1, 2] {
@@ -485,6 +486,7 @@ mod tests {
                 crate::interfaces::draw_task_preview(
                     &mut c,
                     &theme,
+                    &Default::default(),
                     &text,
                     &l,
                     &cells,
@@ -657,7 +659,7 @@ mod tests {
             assert!(g > 0, "{look:?}");
             let button = Rect::new(300, 1054, 160, 22);
             let l = TaskPreviewLayout::compute(
-                task_preview_grid(&theme),
+                task_preview_grid(&theme, &Default::default(), None),
                 1,
                 button,
                 SCREEN,
@@ -678,11 +680,15 @@ mod tests {
                 "{look:?}: the close box centred in the row"
             );
             let base = theme_for(look);
-            assert_eq!(task_preview_grid(&base), CLASSIC, "{look:?} at 100%");
+            assert_eq!(
+                task_preview_grid(&base, &Default::default(), None),
+                CLASSIC,
+                "{look:?} at 100%"
+            );
         }
         let glass = theme_for(Interface::Glass).with_text_size(200);
         assert_eq!(
-            task_preview_grid(&glass),
+            task_preview_grid(&glass, &Default::default(), None),
             crate::glass::preview::GRID,
             "Glass keeps its own grid"
         );

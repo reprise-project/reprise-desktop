@@ -672,7 +672,7 @@ pub fn render_glass_preview() -> Canvas {
     let mut window = Canvas::new(184, 108);
     window.fill_rect(window.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
     window.fill_rect(Rect::new(0, 0, 184, 8), Color::rgb(0xDD, 0xE6, 0xF2));
-    let grid = interfaces::task_preview_grid(&theme);
+    let grid = interfaces::task_preview_grid(&theme, &Default::default(), None);
     let mut popup = |n: usize, button: Rect, bounds: Rect, hot: Option<usize>| {
         let l = taskpreview::TaskPreviewLayout::compute(
             grid,
@@ -699,6 +699,7 @@ pub fn render_glass_preview() -> Canvas {
         interfaces::draw_task_preview(
             &mut panel,
             &theme,
+            &Default::default(),
             &text,
             &l,
             &cells,
@@ -826,5 +827,77 @@ pub fn render_glass_switcher() -> Canvas {
     };
     icon_panel(9, Rect::new(0, 460, 650, 200), 2, Some(4));
     icon_panel(3, Rect::new(600, 460, 500, 200), 1, None);
+    c
+}
+
+/// Onyx's task preview popups at scale `n` over the striped backdrop: a wide window and a tall one,
+/// each panel sized to its picture, and a group of two with the second hot.
+pub fn render_onyx_preview(n: i32) -> Canvas {
+    use reprisekit::glass::{Settings, Style};
+    let n = n.max(1);
+    let onyx = Settings {
+        style: Style::Onyx,
+        ..Settings::default()
+    };
+    let theme = cued(interfaces::theme_for(Interface::Glass)).scaled(n);
+    let text = TextRenderer::load(&theme.fonts);
+    let (w, h) = (760, 280);
+    let mut c = blurred_stripes(w * n, h * n);
+    let windows = [(600, 400), (300, 500), (640, 480)];
+    let mut popup = |sizes: &[(i32, i32)], x: i32, hot: Option<usize>| {
+        let picture = match sizes {
+            [one] => Some(*one),
+            _ => None,
+        };
+        let grid = interfaces::task_preview_grid(&theme, &onyx, picture);
+        let button = Rect::new(x, 230, 160, 30);
+        let bounds = Rect::new(0, 0, w, 230);
+        let l = taskpreview::TaskPreviewLayout::compute(
+            grid,
+            sizes.len(),
+            button,
+            bounds,
+            reprisekit::taskbar::Edge::Bottom,
+        )
+        .scaled(n);
+        let pictures: Vec<Canvas> = (0..sizes.len())
+            .filter_map(|i| Some((sizes[i], l.well(i)?)))
+            .map(|((w, h), r)| {
+                let p = reprisekit::taskpreview::fit(w, h, r, n);
+                let mut s = Canvas::new(p.width.max(1) as u32, p.height.max(1) as u32);
+                s.fill_rect(s.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
+                s.fill_rect(
+                    Rect::new(0, 0, p.width, 6 * n),
+                    Color::rgb(0xDD, 0xE6, 0xF2),
+                );
+                s
+            })
+            .collect();
+        let cells: Vec<taskpreview::Cell> = pictures
+            .iter()
+            .map(|p| taskpreview::Cell {
+                title: "Untitled - Notepad",
+                icon: None,
+                active: false,
+                picture: Some(p),
+            })
+            .collect();
+        let a = l.canvas();
+        let mut panel = Canvas::new(a.width as u32, a.height as u32);
+        interfaces::draw_task_preview(
+            &mut panel,
+            &theme,
+            &onyx,
+            &text,
+            &l,
+            &cells,
+            hot,
+            &Default::default(),
+        );
+        c.blit_over(l.rect.x + a.x, l.rect.y + a.y, &panel);
+    };
+    popup(&windows[..1], 40, None);
+    popup(&windows[1..2], 260, None);
+    popup(&windows[1..3], 480, Some(1));
     c
 }

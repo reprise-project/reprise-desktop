@@ -358,7 +358,7 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
     );
     c.blit_over(20, y0 + 1100, &panel);
     let l = taskpreview::TaskPreviewLayout::compute(
-        interfaces::task_preview_grid(&theme).with_media(),
+        interfaces::task_preview_grid(&theme, &Default::default(), None).with_media(),
         2,
         Rect::new(300, 400, 60, 40),
         Rect::new(0, 0, 640, 400),
@@ -385,7 +385,16 @@ fn glass_popups_at_2(c: &mut Canvas, y0: i32, text: &TextRenderer) {
         )),
         focus: None,
     };
-    interfaces::draw_task_preview(&mut panel, &two, text, &l, &cells, Some(1), &media);
+    interfaces::draw_task_preview(
+        &mut panel,
+        &two,
+        &Default::default(),
+        text,
+        &l,
+        &cells,
+        Some(1),
+        &media,
+    );
     c.blit_over(20, y0 + 1500, &panel);
 }
 

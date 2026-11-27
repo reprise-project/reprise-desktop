@@ -102,7 +102,7 @@ use dialogs::{
     render_print_preview, render_stats_panel, render_windowed_dialog,
 };
 use glass::{render_glass, render_glass_dark, render_glass_scale2};
-use glass_shell::{render_glass_preview, render_glass_switcher};
+use glass_shell::{render_glass_preview, render_glass_switcher, render_onyx_preview};
 use page::render;
 use popups::{
     render_balloon_pictures, render_calendar_events, render_desktop_labels,
@@ -182,6 +182,10 @@ fn write_scale(n: i32) {
     write_preview(
         || render_onyx_orb(n.max(1)),
         &format!("reprisekit-gallery-onyx-orb@{}.png", n.max(1)),
+    );
+    write_preview(
+        || render_onyx_preview(n.max(1)),
+        &format!("reprisekit-gallery-onyx-preview@{}.png", n.max(1)),
     );
     write_volume_popups(true, n.max(1));
     write_preview(
@@ -695,6 +699,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         write_preview(render_quick_more, "reprisekit-gallery-quick-more.png");
         write_preview(render_tray_arrow, "reprisekit-gallery-tray-arrow.png");
         write_preview(render_glass_preview, "reprisekit-gallery-glass-preview.png");
+        write_preview(
+            || render_onyx_preview(1),
+            "reprisekit-gallery-onyx-preview@1.png",
+        );
         write_preview(
             render_glass_switcher,
             "reprisekit-gallery-glass-switcher.png",

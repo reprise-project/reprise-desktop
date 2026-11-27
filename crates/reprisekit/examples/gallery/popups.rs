@@ -742,7 +742,7 @@ pub fn render_preview_media() -> Canvas {
         let text = TextRenderer::load(&theme.fonts);
         let bounds = Rect::new(i as i32 * w, 0, w, h - 20);
         let button = Rect::new(bounds.x + w / 2 - 30, h - 20, 60, 20);
-        let grid = interfaces::task_preview_grid(&theme).with_media();
+        let grid = interfaces::task_preview_grid(&theme, &Default::default(), None).with_media();
         let l =
             TaskPreviewLayout::compute(grid, 2, button, bounds, reprisekit::taskbar::Edge::Bottom);
         let cells = ["Evening Mix - Player", "Podcast - Player"].map(|title| Cell {
@@ -766,7 +766,16 @@ pub fn render_preview_media() -> Canvas {
         };
         let a = l.canvas();
         let mut panel = Canvas::new(a.width as u32, a.height as u32);
-        interfaces::draw_task_preview(&mut panel, &theme, &text, &l, &cells, Some(0), &media);
+        interfaces::draw_task_preview(
+            &mut panel,
+            &theme,
+            &Default::default(),
+            &text,
+            &l,
+            &cells,
+            Some(0),
+            &media,
+        );
         c.blit_over(l.rect.x + a.x, l.rect.y + a.y, &panel);
     }
     c
