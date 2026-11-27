@@ -10,6 +10,7 @@ use reprisekit::cues::Cues;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::textedit::keysym;
 use reprisekit::theme::Metrics;
+use reprisekit::tr;
 
 use crate::keys::dialog_key;
 use crate::{BTN_LEFT, Event, PointerInput};
@@ -123,9 +124,12 @@ pub const PROGRAMS_DIR: &str = "/usr/bin";
 /// The file dialog the chooser's Browse... opens at [`PROGRAMS_DIR`].
 pub fn browse_fields() -> Fields {
     Fields {
-        title: "Browse".into(),
-        accept_label: "Open".into(),
-        filters: vec!["Programs".into(), "All Files".into()],
+        title: tr!("browse-programs-title"),
+        accept_label: tr!("browse-programs-open"),
+        filters: vec![
+            tr!("browse-programs-programs"),
+            tr!("browse-programs-all-files"),
+        ],
         mode: DlgMode::Open,
         multiple: false,
     }
