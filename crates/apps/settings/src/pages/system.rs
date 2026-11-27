@@ -285,7 +285,10 @@ pub fn privacy(a: Area) -> Form {
             GX,
             y + 64,
             158,
-            &tr!("pages-system-paste-with-ctrl-shift-v-into"),
+            &tr!(
+                "pages-system-paste-with-ctrl-shift-v-into",
+                keys = reprisekit::keycap::shown_chord("Ctrl+Shift+V")
+            ),
         )
         .under_check(),
         edit(TERMINAL_APPS[1], GX + 162, y + 60, a.gw() - 180).under_check(),

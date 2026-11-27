@@ -17,6 +17,11 @@ use reprisekit::tr;
 
 const CUSTOMIZE_W: i32 = 84;
 
+/// The Alt+Tab chord as the switcher's labels name it.
+fn alt_tab() -> String {
+    reprisekit::keycap::shown_chord("Alt+Tab")
+}
+
 /// How windows snap, tab and come back: the Snapping group holds
 /// `[window_snapping]`'s drag snapping and how near an edge it starts (greyed
 /// with drag snapping off), the snap layouts on the maximize button, the snap
@@ -428,7 +433,7 @@ pub fn taskbar(a: Area) -> Form {
         X + 170,
         372,
         a.w - 188,
-        &tr!("pages-desktop-times-a-second-alt-tab-too"),
+        &tr!("pages-desktop-times-a-second-alt-tab-too", keys = alt_tab()),
     );
     items.extend([fps_label, fps, fps_units].map(Item::under_check));
     let glow_w = a.track(150);
@@ -660,13 +665,19 @@ pub fn overview_note(binds: &[Shortcut]) -> String {
 /// overview's hot corner under it. [`super::show_keys`] fills the notes.
 pub fn switcher(a: Area) -> Form {
     Form::new(vec![
-        group(a, "switcher_group", 44, 186, &tr!("pages-desktop-alt-tab")),
+        group(
+            a,
+            "switcher_group",
+            44,
+            186,
+            &tr!("pages-desktop-alt-tab", keys = alt_tab()),
+        ),
         Item::label_at(
             "switcher_style_label",
             GX,
             68,
             110,
-            &tr!("pages-desktop-alt-tab-shows"),
+            &tr!("pages-desktop-alt-tab-shows", keys = alt_tab()),
         ),
         choice("switcher_style", GX + 114, 64, 130, SWITCHER_STYLES),
         Item::label_at(
@@ -687,7 +698,10 @@ pub fn switcher(a: Area) -> Form {
             "switcher_desktop",
             GX,
             140,
-            &tr!("pages-desktop-show-the-desktop-in-alt-tab"),
+            &tr!(
+                "pages-desktop-show-the-desktop-in-alt-tab",
+                keys = alt_tab()
+            ),
         ),
         Item::check(
             "switcher_peek",
