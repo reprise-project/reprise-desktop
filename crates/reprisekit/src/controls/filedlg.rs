@@ -225,6 +225,8 @@ pub fn extra_w(client_w: i32) -> i32 {
 }
 
 const SHELL_H: i32 = FILENAME_Y - GAP_ROW - SHELL_Y;
+/// The shortest the shell view gets in a window held under `min_client`: a header and three rows.
+const SHELL_LEAST: i32 = 64;
 /// The Look in field's icon (the current crumb's) sits 6 px in and 3
 /// down; the name starts 4 px past it.
 const LOOKIN_ICON_X: i32 = 6;
@@ -840,18 +842,11 @@ impl FileDlg {
         (r.height - self.min_client().1).max(-self.shrink(cm))
     }
 
-    /// How far the dialog lays out shorter than `min_client`: the places bar down to its
-    /// last built-in tile at its least ([`PlacesMetrics::least_tiles`]; pinned tiles scroll), the
-    /// shell view down to half its opening height.
-    ///
-    /// [`PlacesMetrics::least_tiles`]: crate::metrics::PlacesMetrics::least_tiles
+    /// How far the dialog lays out shorter than `min_client`: the shell view down to
+    /// `SHELL_LEAST`. The places bar shrinks with it and scrolls the tiles that no longer fit.
     fn shrink(&self, cm: &ControlMetrics) -> i32 {
         let u = |v: i32| cm.text.len(v);
-        let built_in = self.places.places.iter().filter(|p| !p.pinned).count();
-        let tiles = cm.places.least_tiles(built_in);
-        let places = u(SHELL_Y + PLACES_H) - u(SHELL_Y) - tiles;
-        let shell = (u(SHELL_Y + SHELL_H) - u(SHELL_Y)) / 2;
-        places.min(shell).max(0)
+        (u(SHELL_Y + SHELL_H) - u(SHELL_Y) - u(SHELL_LEAST)).max(0)
     }
 
     fn extra_list_open(&self) -> bool {
