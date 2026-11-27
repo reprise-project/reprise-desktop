@@ -168,6 +168,21 @@ pub(super) fn fill(len: usize, cap: usize, queue: &mut VecDeque<Item>) -> Vec<It
     came
 }
 
+/// [`fill`] while a modal dialog has the focus: only critical and transient notes come up, the
+/// rest staying queued in order.
+pub(super) fn fill_over_modal(len: usize, cap: usize, queue: &mut VecDeque<Item>) -> Vec<Item> {
+    let mut came = Vec::new();
+    let mut i = 0;
+    while len + came.len() < cap && i < queue.len() {
+        let now = (queue[i].note()).is_some_and(|n| n.urgency == Urgency::Critical || n.transient);
+        match now {
+            true => came.extend(queue.remove(i)),
+            false => i += 1,
+        }
+    }
+    came
+}
+
 pub(super) fn slot_of(items: &[&Item], id: u32) -> Option<usize> {
     items.iter().position(|i| i.is(id))
 }
@@ -344,8 +359,13 @@ pub(super) fn take_queued(
 /// stack, then repaints the stack and chip.
 pub(super) fn display_next(state: &mut State) {
     let cap = cap(state);
+    let modal = state.focused_modal().is_some();
     loop {
-        let came = fill(state.notify.stack.len(), cap, &mut state.notify.queue);
+        let (len, queue) = (state.notify.stack.len(), &mut state.notify.queue);
+        let came = match modal {
+            true => fill_over_modal(len, cap, queue),
+            false => fill(len, cap, queue),
+        };
         if came.is_empty() {
             break;
         }
