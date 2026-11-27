@@ -290,7 +290,10 @@ pub fn suppress_changed(state: &mut State) {
         state.notify.quiet = s;
         state.redraw_taskbars();
     }
-    let idle = !manual && !s.automatic() && !crate::notifycenter::is_open(state);
+    let idle = !manual
+        && !s.automatic()
+        && !crate::notifycenter::is_open(state)
+        && state.focused_modal().is_none();
     if !idle || state.notify.log.held.is_empty() {
         return;
     }
@@ -333,9 +336,9 @@ pub fn config_changed(state: &mut State) {
 
 /// Notification `n` arrived: into the history unless it is transient, and a balloon unless Do Not
 /// Disturb or `[notifications] no_balloons` holds it back or the history is open, where it shows as
-/// a row instead. One the automatic
-/// Do Not Disturb holds back waits to show until it ends. A replace swaps in place, keeping a reply
-/// being typed.
+/// a row instead. One the automatic Do Not Disturb holds back waits to show until it ends, and so
+/// does one arriving while a modal dialog has the focus, unless it is critical or transient. A
+/// replace swaps in place, keeping a reply being typed.
 pub fn show(state: &mut State, n: Notification) {
     let looking = crate::notifycenter::is_open(state);
     if !n.transient {
@@ -346,9 +349,12 @@ pub fn show(state: &mut State, n: Notification) {
     }
     let s = suppress(state);
     let allowed = state.config.notifications.shows_balloons(&n.key);
-    if looking || !shows_balloon(&n, s, allowed) {
+    let shows = shows_balloon(&n, s, allowed);
+    let waits =
+        shows && n.urgency != Urgency::Critical && !n.transient && state.focused_modal().is_some();
+    if looking || !shows || waits {
         drop_balloon(state, n.id);
-        if !looking && s.holds(&n, allowed) {
+        if !looking && (waits || s.holds(&n, allowed)) {
             state.notify.log.hold(n);
         } else if n.transient {
             crate::tray::notification_closed(state, n.id, REASON_EXPIRED);

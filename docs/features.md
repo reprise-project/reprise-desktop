@@ -79,7 +79,7 @@ Press `Super+Shift+C` for a colour-picker loupe (`Enter` or click copies `#rrggb
 
 Notifications appear as balloons near the tray with action buttons, inline chat replies and preview images. A bell icon (`Super+Shift+N`) opens the session history grouped by app. Bursts of more than three balloons in 10 s collapse into a summary balloon.
 
-Mute balloons or sounds per program in the history menu or Settings > Notifications. Do Not Disturb holds non-critical notifications manually, during `quiet_hours`, or during fullscreen windows and screen shares.
+Mute balloons or sounds per program in the history menu or Settings > Notifications. Do Not Disturb holds non-critical notifications manually, during `quiet_hours`, or during fullscreen windows and screen shares. A balloon arriving while a modal dialog has the focus waits until the dialog closes or loses the focus.
 
 ## Lock, power and session
 
