@@ -397,7 +397,7 @@ impl Queue {
             }
         }
         let r = self.list_rect(ctx);
-        if let Some(moved) = self.list.key(k.sym, r, ctx) {
+        if let Some(moved) = self.list.key(k, r, ctx) {
             self.set_menus(s);
             return redraw(moved);
         }

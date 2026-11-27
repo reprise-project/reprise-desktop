@@ -287,6 +287,7 @@ pub(super) fn details_listview(sv: &ShellView) -> DetailsView<'_> {
         inactive: sv.inactive,
         clicks: Default::default(),
         thumb: Default::default(),
+        typed: Default::default(),
     }
 }
 
@@ -343,6 +344,7 @@ pub(super) fn with_details<T>(
         inactive: false,
         clicks: Default::default(),
         thumb: Default::default(),
+        typed: Default::default(),
     };
     let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
     let out = f(&mut lv, &lv_lay);

@@ -2,13 +2,13 @@
 //! it (selection, scrollbars, their lit parts, the wheel, a column title, a divider drag), so each
 //! window keeps only what its rows mean.
 
-use crate::{BTN_LEFT, Ctx, PointerInput};
+use crate::{BTN_LEFT, Ctx, KeyInput, PointerInput};
 use reprisekit::classic::widgets::{Axis, ScrollHit};
 use reprisekit::controls::listview::{self, Column, ListView, Row, Rows};
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
-use reprisekit::selection::Mods;
+use reprisekit::selection::{Mods, types_ahead};
 use reprisekit::textedit::keysym;
 
 pub struct List<R: Rows = Vec<Row>> {
@@ -35,6 +35,15 @@ pub struct Released {
     pub redraw: bool,
     /// The column whose title the press and the release were both on: a click that sorts by it.
     pub column: Option<usize>,
+}
+
+/// The character `k` types on a list for type-ahead, None for a key with Ctrl or Alt or any other.
+fn typed_char(k: &KeyInput) -> Option<char> {
+    let mut chars = k.utf8.as_deref()?.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if types_ahead(c) && !k.mods.ctrl && !k.mods.alt => Some(c),
+        _ => None,
+    }
 }
 
 impl<R: Rows + Default> List<R> {
@@ -205,11 +214,15 @@ impl<R: Rows + Default> List<R> {
         self.view.hscroll(by, &lay)
     }
 
-    /// The arrows, Home, End and the page keys move the selection; `None` for any other key.
-    pub fn key(&mut self, sym: u32, r: Rect, ctx: &Ctx) -> Option<bool> {
+    /// The arrows, Home, End and the page keys move the selection, and a character typed
+    /// without Ctrl or Alt jumps ([`ListView::jump`]); `None` for any other key.
+    pub fn key(&mut self, k: &KeyInput, r: Rect, ctx: &Ctx) -> Option<bool> {
         let lay = self.layout(r, ctx);
+        if let Some(c) = typed_char(k) {
+            return Some(self.view.jump(c, &lay));
+        }
         let page = lay.rows.max(1) as i64;
-        let step = match sym {
+        let step = match k.sym {
             keysym::UP | keysym::KP_UP => -1,
             keysym::DOWN | keysym::KP_DOWN => 1,
             keysym::HOME | keysym::KP_HOME => i64::MIN / 2,

@@ -529,8 +529,8 @@ impl SchedTasks {
                 self.open_menu(lay.body.x + 20, y, ctx, true)
             }
             _ if k.mods.alt || self.form.focus().is_some() => return None,
-            sym => {
-                let moved = self.list.key(sym, r, ctx)?;
+            _ => {
+                let moved = self.list.key(k, r, ctx)?;
                 self.sync();
                 match moved {
                     true => Reply::redraw(),

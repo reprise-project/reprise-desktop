@@ -342,7 +342,7 @@ impl OpenWith {
     }
 
     fn type_ahead(&mut self, c: char) -> Event {
-        if !c.is_alphanumeric() {
+        if !crate::selection::types_ahead(c) {
             return Event::None;
         }
         redraw_if(self.list.jump(c, self.rows.get()))
@@ -964,16 +964,33 @@ mod tests {
             Some(3),
             "o lands on the Other Programs header"
         );
+        let apart = |o: &mut OpenWith| o.list.typed = Default::default();
+        apart(&mut o);
         assert_eq!(o.key(Key::Char('p')), Event::Redraw);
         assert_eq!(o.list.selected, Some(4));
+        apart(&mut o);
         assert_eq!(o.key(Key::Char('z')), Event::None);
         o.list.select(15, ROWS);
+        apart(&mut o);
         assert_eq!(o.key(Key::Char('p')), Event::Redraw);
         assert_eq!(
             o.list.selected,
             Some(4),
             "from the last P a p wraps to the first"
         );
+    }
+
+    #[test]
+    fn a_name_typed_quickly_lands_on_its_program() {
+        let others = ["Date and Time", "Disk Usage", "Notepad", "Notes"];
+        let others = (others.iter())
+            .map(|n| p(&format!("{}.desktop", n.to_lowercase()), n))
+            .collect();
+        let mut o = OpenWith::new("a.txt", vec![p("vim.desktop", "Vim")], others);
+        for c in "notep".chars() {
+            o.key(Key::Char(c));
+        }
+        assert_eq!(o.list.rows[o.list.selected.unwrap()].label(), "Notepad");
     }
 
     #[test]

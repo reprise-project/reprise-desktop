@@ -1,11 +1,10 @@
 //! A plain combo a host fills with names and acts on: building and syncing it, the presses and
 //! keys on its field and open list, and its list laid out above the field.
 
-use super::{Combo, Hit, Layout, widen_list};
+use super::{Combo, Hit, Layout, ListItem, widen_list};
 use crate::classic::widgets::BarHit;
 use crate::controls::form::Key;
 use crate::raster::Rect;
-use crate::selection::type_ahead;
 use crate::text::TextRenderer;
 
 /// What a press or key on a combo asks of its host.
@@ -87,7 +86,7 @@ impl Combo {
                     false
                 }
                 Key::Char(ch) if !edit => {
-                    if let Some(i) = type_ahead(self.live_names(), self.open, ch) {
+                    if let Some(i) = self.typed.find(live_names(&self.items), self.open, ch) {
                         self.open = Some(i);
                         self.keep_in_view(i);
                     }
@@ -113,7 +112,8 @@ impl Combo {
             Key::Home | Key::PageUp => self.jump(false),
             Key::End | Key::PageDown => self.jump(true),
             Key::Char(ch) if ch.is_alphanumeric() && self.enabled => {
-                let Some(i) = type_ahead(self.live_names(), Some(self.selected), ch) else {
+                let names = live_names(&self.items);
+                let Some(i) = self.typed.find(names, Some(self.selected), ch) else {
                     return Act::None;
                 };
                 if !self.pick(i) {
@@ -129,13 +129,13 @@ impl Combo {
             Act::None
         }
     }
+}
 
-    /// The rows' names for type-ahead, a greyed row's empty so no letter lands on it.
-    fn live_names(&self) -> impl Iterator<Item = &str> {
-        self.items
-            .iter()
-            .map(|it| if it.greyed { "" } else { it.text.as_str() })
-    }
+/// The rows' names for type-ahead, a greyed row's empty so no letter lands on it.
+fn live_names(items: &[ListItem]) -> impl Iterator<Item = &str> {
+    items
+        .iter()
+        .map(|it| if it.greyed { "" } else { it.text.as_str() })
 }
 
 /// Move `lay`'s list from under its field to above it, widened to its longest row and kept inside

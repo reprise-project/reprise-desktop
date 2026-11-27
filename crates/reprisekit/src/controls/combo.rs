@@ -151,6 +151,8 @@ pub struct Combo {
     /// A row was picked from the open list, the one already picked too, since
     /// [`Form::take_chosen`](crate::controls::form::Form::take_chosen) last read it.
     pub chosen: bool,
+    /// The letters typed on the field or the open list in a row, for type-ahead.
+    pub typed: crate::selection::TypeAhead,
 }
 
 impl Combo {
@@ -179,6 +181,7 @@ impl Combo {
             added_at: None,
             elide: false,
             chosen: false,
+            typed: Default::default(),
         }
     }
 

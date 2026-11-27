@@ -1045,6 +1045,8 @@ fn a_letter_finds_the_next_row_it_starts_skipping_greyed_rows() {
     assert_eq!(c.key(Key::Char('s')), Act::Picked(3), "Sand is greyed");
     assert_eq!(c.key(Key::Char('S')), Act::Picked(0), "the search wraps");
     assert_eq!(c.key(Key::Char('s')), Act::Picked(3));
+    let apart = |c: &mut Combo| c.typed = Default::default();
+    apart(&mut c);
     assert_eq!(c.key(Key::Char('h')), Act::Picked(1));
     assert_eq!(
         c.key(Key::Char('h')),
@@ -1053,6 +1055,7 @@ fn a_letter_finds_the_next_row_it_starts_skipping_greyed_rows() {
     );
     assert_eq!(c.key(Key::Char('x')), Act::None, "no row: the host's key");
     c.toggle();
+    apart(&mut c);
     assert_eq!(c.key(Key::Char('s')), Act::Redraw);
     assert_eq!(
         (c.open, c.selected),

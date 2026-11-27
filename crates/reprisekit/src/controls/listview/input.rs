@@ -104,7 +104,8 @@ impl<R: Rows> ListView<R> {
     }
 
     /// A key on the focused list laid out as `lay`, if it takes it: the arrows, Home / End and the
-    /// Page keys move the selection, and Space flips the focused row's check when `checks` may.
+    /// Page keys move the selection, a typed character jumps ([`ListView::jump`]), and Space flips
+    /// the focused row's check when `checks` may.
     pub fn key(&mut self, key: &form::Key, lay: &Layout, checks: bool) -> Option<Took> {
         let flat = match key {
             form::Key::Edit(e) => form::flat_key(e)?,
@@ -120,6 +121,7 @@ impl<R: Rows> ListView<R> {
             form::Key::End => self.step(n, lay, mods),
             form::Key::PageUp => self.step(-page, lay, mods),
             form::Key::PageDown => self.step(page, lay, mods),
+            form::Key::Char(c) if crate::selection::types_ahead(c) => self.jump(c, lay),
             form::Key::Space if checks => {
                 let i = self.selection.focus?;
                 return Some(if self.toggle(i) {
@@ -155,6 +157,31 @@ mod tests {
             checks: Some(vec![true; n]),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn letters_jump_by_the_first_cell_and_scroll_the_row_in() {
+        let mut lv = checked(40);
+        let lay = layout(&lv, R, &ControlMetrics::CLASSIC);
+        lv.select(Some(30), &lay);
+        for c in "file3".chars() {
+            lv.key(&form::Key::Char(c), &lay, true);
+        }
+        assert_eq!(lv.selection.focus, Some(31));
+        lv.key(&form::Key::Char('.'), &lay, true);
+        assert_eq!(lv.selection.focus, Some(3), "\"file3.\" wraps to file3.txt");
+        lv.typed = Default::default();
+        for c in "file3".chars() {
+            lv.key(&form::Key::Char(c), &lay, true);
+        }
+        let took = lv.key(&form::Key::Char('5'), &lay, true);
+        assert_eq!(
+            (took, lv.selection.focus),
+            (Some(Took::Moved), Some(35)),
+            "\"file35\""
+        );
+        assert!(lv.top > 0, "scrolled to it");
+        assert!(lv.checks.as_ref().unwrap()[35], "a letter flips no check");
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::look::widgets::item::{self, Mark};
 use crate::look::widgets::{draw_field_frame, draw_list_check, draw_scrollbar};
 use crate::pointer::Lit;
 use crate::raster::{Canvas, Rect};
-use crate::selection::{scroll_into_view, step_index, type_ahead};
+use crate::selection::{TypeAhead, scroll_into_view, step_index};
 use crate::text::{Align, TextRenderer};
 use accesskit::{Node, NodeId, Role};
 
@@ -39,6 +39,8 @@ pub struct ListBox {
     /// Parallel to `items`: each row's check box, before its icon.
     /// Empty for a list with no check boxes.
     pub checks: Vec<bool>,
+    /// The letters typed on the list in a row, for type-ahead.
+    pub typed: TypeAhead,
 }
 
 impl ListBox {
@@ -50,6 +52,7 @@ impl ListBox {
             greyed: Vec::new(),
             detail: Vec::new(),
             checks: Vec::new(),
+            typed: TypeAhead::default(),
         }
     }
 
@@ -84,7 +87,7 @@ impl ListBox {
     }
 
     pub fn jump(&mut self, ch: char, visible: usize) -> bool {
-        match type_ahead(self.items.iter().map(String::as_str), self.selected, ch) {
+        match self.typed.find(&self.items, self.selected, ch) {
             Some(k) => self.select(k, visible),
             None => false,
         }
@@ -469,7 +472,7 @@ mod tests {
     }
 
     /// `w` from "Other Programs:" skips the Write above it and scrolls
-    /// Web Browser into view; a second `w` wraps round to Write.
+    /// Web Browser into view; a second `w`, typed apart, wraps round to Write.
     #[test]
     fn a_letter_jumps_to_the_next_row_starting_with_it() {
         let rows = [
@@ -484,9 +487,23 @@ mod tests {
         let mut lb = ListBox::new(rows.iter().map(|s| s.to_string()).collect(), Some(1));
         assert!(lb.jump('w', 3));
         assert_eq!((lb.selected, lb.top), (Some(5), 3), "scrolled into view");
+        lb.typed = TypeAhead::default();
         assert!(!lb.jump('z', 3));
+        lb.typed = TypeAhead::default();
         assert!(lb.jump('w', 3));
         assert_eq!(lb.selected, Some(0));
+    }
+
+    #[test]
+    fn letters_typed_together_jump_by_their_prefix() {
+        let rows = ["Date and Time", "Disk Usage", "Notepad", "Notes"];
+        let mut lb = ListBox::new(rows.iter().map(|s| s.to_string()).collect(), Some(0));
+        for c in "note".chars() {
+            lb.jump(c, 4);
+        }
+        assert_eq!(lb.selected, Some(2));
+        assert!(lb.jump('s', 4));
+        assert_eq!(lb.selected, Some(3), "\"notes\"");
     }
 
     #[test]

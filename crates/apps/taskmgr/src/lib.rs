@@ -1255,7 +1255,7 @@ impl TaskMgr {
         }
         let lay = pages::layout(self, ctx);
         if let (Some(r), Some(list)) = (lay.list, self.list())
-            && let Some(moved) = list.key(k.sym, r, ctx)
+            && let Some(moved) = list.key(k, r, ctx)
         {
             return redraw(moved);
         }

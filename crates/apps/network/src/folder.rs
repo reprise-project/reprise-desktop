@@ -521,7 +521,7 @@ impl Folder {
             return self.popup_step(step);
         }
         let (_, list_r) = self.layout(ctx);
-        if let Some(moved) = self.list.key(k.sym, list_r, ctx) {
+        if let Some(moved) = self.list.key(k, list_r, ctx) {
             self.set_details(s);
             return redraw(moved);
         }
