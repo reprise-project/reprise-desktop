@@ -4,22 +4,17 @@
 use crate::appearancepage;
 use crate::model::{self, Settings};
 use reprisefs::apps::AppEntry;
-use reprisekit::controls::welcome::{Picks, ReadyKeys, TEXT_SIZES, dark_offered};
+use reprisekit::controls::welcome::{Picks, ReadyKeys, TEXT_SIZES};
 use reprisekit::interface::Interface;
 use reprisekit::schemes;
 use reprisekit::theme::Theme;
 use std::path::Path;
 
-/// The Classic scheme Dark picks.
-pub const DARK_SCHEME: &str = "One Dark";
-
-/// Whether `s`'s look is dark.
+/// Whether `s`'s look is dark: dark mode, or a dark Classic scheme.
 pub(crate) fn dark(s: &Settings) -> bool {
-    match appearancepage::interface(s) {
-        Interface::Classic => schemes::scheme(&s.color_scheme).is_some_and(|c| c.is_dark()),
-        Interface::Blue => false,
-        Interface::Glass => s.glass_mode == "dark",
-    }
+    s.mode == "dark"
+        || appearancepage::interface(s) == Interface::Classic
+            && schemes::scheme(&s.color_scheme).is_some_and(|c| c.is_dark())
 }
 
 /// The picks `text` holds; a text size off the steps reads as 100%.
@@ -38,7 +33,7 @@ pub fn read(text: &str) -> Picks {
 }
 
 /// `text`'s settings, and them with each pick that differs laid over, a new interface as the
-/// Interface combo moves it; a Glass "night" or "hours" mode stays until Light or Dark moves.
+/// Interface combo moves it; a "night" or "hours" mode stays until Light or Dark moves.
 fn with(text: &str, picks: &Picks) -> (Settings, Settings) {
     let base = model::load(text);
     let mut s = base.clone();
@@ -52,18 +47,15 @@ fn with(text: &str, picks: &Picks) -> (Settings, Settings) {
     (base, s)
 }
 
-/// Make `s`'s look dark or light under its interface; a Glass "night" or "hours" mode stays
-/// while it already gives `dark`, and Blue has no dark.
+/// Make `s`'s look dark or light: the mode, and light also drops a dark Classic scheme. A "night"
+/// or "hours" mode stays while it already gives `dark`.
 pub(crate) fn set_dark(s: &mut Settings, dark: bool) {
-    let i = appearancepage::interface(s);
-    if !dark_offered(i) || self::dark(s) == dark {
+    if self::dark(s) == dark {
         return;
     }
-    match i {
-        Interface::Classic if dark => s.color_scheme = DARK_SCHEME.into(),
-        Interface::Classic => s.color_scheme.clear(),
-        Interface::Glass => s.glass_mode = if dark { "dark" } else { "light" }.into(),
-        Interface::Blue => {}
+    s.mode = if dark { "dark" } else { "light" }.into();
+    if !dark && self::dark(s) {
+        s.color_scheme.clear();
     }
 }
 
@@ -179,38 +171,33 @@ mod tests {
         assert!(glass.contains("text_size = 150"), "{glass}");
 
         let classic = written("", picks(Interface::Classic, true, 100));
-        assert!(
-            classic.contains(&format!("color_scheme = \"{DARK_SCHEME}\"")),
-            "{classic}"
-        );
+        assert_eq!(classic, "[appearance]\nmode = \"dark\"\n");
         assert_eq!(read(&classic), picks(Interface::Classic, true, 100));
         let light = written(&classic, picks(Interface::Classic, false, 100));
-        assert!(
-            !light.contains("color_scheme"),
-            "Light is the default scheme: {light}"
+        assert_eq!(light, "", "Light is the default mode");
+        let scheme = "[appearance]\ncolor_scheme = \"Nord\"\n";
+        assert!(read(scheme).dark, "a dark Classic scheme reads as dark");
+        assert_eq!(
+            written(scheme, picks(Interface::Classic, false, 100)),
+            "",
+            "Light drops it"
         );
     }
 
     #[test]
-    fn dark_comes_back_when_the_pages_leave_blue() {
+    fn dark_stays_across_a_new_interface() {
         let dark = picks(Interface::Classic, true, 100);
         let classic = written("", dark);
         let blue_picks = picks(Interface::Blue, true, 100);
         let blue = written(&classic, moved(&classic, &dark, &blue_picks));
-        assert_eq!(read(&blue), picks(Interface::Blue, false, 100), "{blue}");
-        let back = written(&blue, moved(&blue, &blue_picks, &dark));
-        assert!(
-            back.contains(&format!("color_scheme = \"{DARK_SCHEME}\"")),
-            "{back}"
-        );
-        assert_eq!(read(&back), dark);
+        assert_eq!(read(&blue), blue_picks, "{blue}");
     }
 
     #[test]
     fn a_new_interface_drops_the_old_ones_scheme() {
-        let text = format!("[appearance]\ncolor_scheme = \"{DARK_SCHEME}\"\n");
-        let blue = written(&text, picks(Interface::Blue, false, 100));
-        assert!(!blue.contains(DARK_SCHEME), "{blue}");
+        let text = "[appearance]\ncolor_scheme = \"Brick\"\n";
+        let blue = written(text, picks(Interface::Blue, false, 100));
+        assert!(!blue.contains("Brick"), "{blue}");
         assert_eq!(read(&blue), picks(Interface::Blue, false, 100));
     }
 
@@ -227,6 +214,6 @@ mod tests {
                 .is_none()
         );
         let dark = sample("", &picks(Interface::Classic, true, 100));
-        assert!(dark.colors.is_dark(), "{DARK_SCHEME} is a dark scheme");
+        assert!(dark.colors.is_dark(), "Classic's dark scheme is dark");
     }
 }

@@ -1,7 +1,8 @@
-//! Glass's dark mode on a schedule (`[glass] mode = "night"` or `"hours"`). The config keeps the
-//! schedule; the mode in force is the config rebuilt with `mode` set to "dark" or "light", put in
-//! through `configwatch::reload` as an edit of the file would be, so the look, the programs' look
-//! and the portal's color-scheme change alike.
+//! Dark mode on a schedule (`[appearance] mode = "night"` or `"hours"`), in every interface. The
+//! config keeps the schedule; the look in force is the config rebuilt with `mode` set to "dark" or
+//! "light", put in through `configwatch::reload` as an edit of the file would be, so the
+//! compositor's look, the programs' look, the generated toolkit themes and the portal's
+//! color-scheme change alike.
 
 use smithay::reexports::calloop::{
     RegistrationToken,
@@ -9,85 +10,90 @@ use smithay::reexports::calloop::{
 };
 
 use crate::compositor::State;
-use crate::config::{Config, DarkSchedule};
+use crate::config::{AppearanceMode, Config, ModeConfig, NightLightConfig};
 use crate::nightlight::schedule::{self, LocalClock, Plan};
 use crate::nightlight::{Local, Zone};
-use reprisekit::glass::Mode;
-use reprisekit::interface::Interface;
 
 #[derive(Default)]
 pub struct DarkMode {
     zone: Zone,
     told_no_place: bool,
-    /// The schedule's tick, armed while there is a schedule.
-    timer: Option<RegistrationToken>,
+    /// The schedule's tick, armed while there is a schedule, and the keys it was armed for.
+    timer: Option<(RegistrationToken, (ModeConfig, NightLightConfig))>,
 }
 
-/// The mode `cfg`'s schedule gives at `now` and the next time that can change; None without a
-/// schedule or outside Glass.
+/// Whether `cfg`'s schedule is dark at `now`, and the next time that can change; None without a
+/// schedule.
 fn scheduled(
     cfg: &Config,
     dm: &mut DarkMode,
     now: i64,
     clock: &dyn LocalClock,
-) -> Option<(Mode, Option<i64>)> {
-    if cfg.interface != Interface::Glass {
-        return None;
-    }
-    let plan = match cfg.glass_dark.schedule {
-        DarkSchedule::Off => return None,
-        DarkSchedule::Night => {
+) -> Option<(bool, Option<i64>)> {
+    let plan = match cfg.mode.mode {
+        AppearanceMode::Light | AppearanceMode::Dark => return None,
+        AppearanceMode::Night => {
             crate::nightlight::plan_of(&cfg.night_light, &mut dm.zone, &mut dm.told_no_place)
         }
-        DarkSchedule::Hours => Plan::Fixed {
-            from: cfg.glass_dark.from,
-            to: cfg.glass_dark.to,
+        AppearanceMode::Hours => Plan::Fixed {
+            from: cfg.mode.from,
+            to: cfg.mode.to,
         },
     };
-    let (dark, next) = schedule::inside(now, &schedule::nights(plan, now, clock));
-    Some((if dark { Mode::Dark } else { Mode::Light }, next))
+    Some(schedule::inside(now, &schedule::nights(plan, now, clock)))
 }
 
-/// `cfg` (built from `table`) with `mode` in force: rebuilt from `table` with `[glass] mode` set to
-/// it, the schedule kept. `cfg` itself when it has the mode already or the rebuild fails.
-fn with_mode(cfg: Config, table: &toml::Table, mode: Mode) -> Config {
-    if cfg.glass.mode == mode {
+fn name(dark: bool) -> &'static str {
+    if dark { "dark" } else { "light" }
+}
+
+/// `cfg` (built from `table`) dark or light: rebuilt from `table` with `[appearance] mode` set
+/// to it, the schedule kept. `cfg` itself when it is already so or the rebuild fails.
+fn with_dark(cfg: Config, table: &toml::Table, dark: bool) -> Config {
+    if cfg.dark == dark {
         return cfg;
     }
     let mut t = table.clone();
-    let glass = t
-        .entry("glass")
+    let appearance = t
+        .entry("appearance")
         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    if let Some(g) = glass.as_table_mut() {
-        g.insert("mode".into(), toml::Value::String(mode.as_str().into()));
+    if let Some(a) = appearance.as_table_mut() {
+        a.insert("mode".into(), toml::Value::String(name(dark).into()));
     }
     match Config::from_table(t) {
         Ok(mut c) => {
-            c.glass_dark = cfg.glass_dark;
+            c.mode = cfg.mode;
             c
         }
         Err(e) => {
-            log::warn!("dark mode: the config does not build in {mode:?} mode: {e}");
+            log::warn!("dark mode: the config does not build {}: {e}", name(dark));
             cfg
         }
     }
 }
 
-/// `cfg`, read from `table`, with the mode its schedule gives now: for the start and each reload.
+/// `cfg`, read from `table`, with the look its schedule gives now: for the start and each reload.
 pub fn apply(dm: &mut DarkMode, cfg: Config, table: &toml::Table) -> Config {
     match scheduled(&cfg, dm, crate::nightlight::now(), &Local) {
-        Some((mode, _)) => with_mode(cfg, table, mode),
+        Some((dark, _)) => with_dark(cfg, table, dark),
         None => cfg,
     }
 }
 
 /// While the config has a schedule, re-read it at its next edge, and at least each minute so a
 /// clock change or a resume is caught. Runs once the backend drives its outputs, and on each
-/// reload.
+/// reload: a reload that changes the schedule cancels the tick armed for the old one.
 pub fn config_changed(state: &mut State) {
+    let keys = (state.config.mode, state.config.night_light.clone());
+    if let Some((token, armed)) = &state.dark_mode.timer {
+        if *armed == keys {
+            return;
+        }
+        state.handle.remove(*token);
+        state.dark_mode.timer = None;
+    }
     let now = crate::nightlight::now();
-    let dm = &mut state.dark_mode;
-    if dm.timer.is_some() || scheduled(&state.config, dm, now, &Local).is_none() {
+    if scheduled(&state.config, &mut state.dark_mode, now, &Local).is_none() {
         return;
     }
     let timer = state
@@ -100,20 +106,20 @@ pub fn config_changed(state: &mut State) {
             }
         });
     match timer {
-        Ok(t) => state.dark_mode.timer = Some(t),
+        Ok(t) => state.dark_mode.timer = Some((t, keys)),
         Err(e) => log::warn!("dark mode: no timer: {}", e.error),
     }
 }
 
-/// Put in the mode the schedule gives now if it is not in force; how long until the next look,
+/// Put in the look the schedule gives now if it is not in force; how long until the next look,
 /// None without a schedule.
 fn tick(state: &mut State) -> Option<std::time::Duration> {
     let now = crate::nightlight::now();
     let minute = (60 - now.rem_euclid(60)).max(1);
-    let (mode, next) = scheduled(&state.config, &mut state.dark_mode, now, &Local)?;
-    if state.config.glass.mode != mode {
-        log::info!("dark mode: {} by the schedule", mode.as_str());
-        let cfg = with_mode(state.config.clone(), &state.config_file, mode);
+    let (dark, next) = scheduled(&state.config, &mut state.dark_mode, now, &Local)?;
+    if state.config.dark != dark {
+        log::info!("dark mode: {} by the schedule", name(dark));
+        let cfg = with_dark(state.config.clone(), &state.config_file, dark);
         crate::configwatch::reload(state, cfg);
     }
     let wait = next.map_or(minute, |t| (t - now).clamp(1, minute));
@@ -144,16 +150,37 @@ mod tests {
         (cfg, table)
     }
 
-    const HOURS: &str = "[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"hours\"\ndark_from = \"22:00\"\ndark_to = \"06:30\"\n";
+    const HOURS: &str =
+        "[appearance]\nmode = \"hours\"\ndark_from = \"22:00\"\ndark_to = \"06:30\"\n";
 
     #[test]
-    fn only_a_schedule_arms_the_tick() {
+    fn only_a_schedule_arms_the_tick_and_a_new_schedule_rearms_it() {
         let mut h = crate::harness::Harness::new();
         config_changed(&mut h.state);
         assert!(h.state.dark_mode.timer.is_none(), "no schedule: no tick");
         h.state.config = read(HOURS).0;
         config_changed(&mut h.state);
-        assert!(h.state.dark_mode.timer.is_some(), "set hours: a tick");
+        let first = h.state.dark_mode.timer.as_ref().map(|t| t.0);
+        assert!(first.is_some(), "set hours: a tick");
+        config_changed(&mut h.state);
+        assert_eq!(
+            h.state.dark_mode.timer.as_ref().map(|t| t.0),
+            first,
+            "the same schedule keeps its tick"
+        );
+        h.state.config.mode.from = 21 * 60;
+        config_changed(&mut h.state);
+        let second = h.state.dark_mode.timer.as_ref().map(|t| t.0);
+        assert!(
+            second.is_some() && second != first,
+            "other hours: a new tick"
+        );
+        h.state.config = read("[appearance]\nmode = \"light\"\n").0;
+        config_changed(&mut h.state);
+        assert!(
+            h.state.dark_mode.timer.is_none(),
+            "a fixed mode cancels the tick"
+        );
     }
 
     #[test]
@@ -162,52 +189,55 @@ mod tests {
         let mut dm = DarkMode::default();
         let at =
             |dm: &mut DarkMode, h: i64, m: i64| scheduled(&cfg, dm, DAY0 + h * 3600 + m * 60, &Utc);
-        assert_eq!(
-            at(&mut dm, 21, 59),
-            Some((Mode::Light, Some(DAY0 + 22 * 3600)))
-        );
+        assert_eq!(at(&mut dm, 21, 59), Some((false, Some(DAY0 + 22 * 3600))));
         assert_eq!(
             at(&mut dm, 22, 0),
-            Some((Mode::Dark, Some(DAY0 + 86_400 + 6 * 3600 + 1800)))
+            Some((true, Some(DAY0 + 86_400 + 6 * 3600 + 1800)))
         );
-        assert_eq!(at(&mut dm, 3, 0).map(|s| s.0), Some(Mode::Dark));
-        assert_eq!(at(&mut dm, 6, 30).map(|s| s.0), Some(Mode::Light));
+        assert_eq!(at(&mut dm, 3, 0).map(|s| s.0), Some(true));
+        assert_eq!(at(&mut dm, 6, 30).map(|s| s.0), Some(false));
     }
 
     #[test]
     fn night_follows_night_lights_hours_even_with_night_light_off() {
         let (cfg, _) = read(
-            "[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"night\"\n\
+            "[appearance]\nmode = \"night\"\n\
              [night_light]\nenabled = false\nschedule = \"fixed\"\nfrom = \"20:00\"\nto = \"08:00\"\n",
         );
         let mut dm = DarkMode::default();
-        let mut mode = |h: i64| scheduled(&cfg, &mut dm, DAY0 + h * 3600, &Utc).map(|s| s.0);
-        assert_eq!(mode(19), Some(Mode::Light));
-        assert_eq!(mode(21), Some(Mode::Dark));
+        let mut dark = |h: i64| scheduled(&cfg, &mut dm, DAY0 + h * 3600, &Utc).map(|s| s.0);
+        assert_eq!(dark(19), Some(false));
+        assert_eq!(dark(21), Some(true));
     }
 
     #[test]
-    fn no_schedule_or_another_interface_leaves_the_mode_alone() {
+    fn a_fixed_mode_has_no_schedule_and_the_old_glass_keys_still_schedule_glass() {
         let mut dm = DarkMode::default();
-        let (fixed, _) = read("[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"dark\"\n");
+        let (fixed, _) = read("[appearance]\nmode = \"dark\"\n");
         assert_eq!(scheduled(&fixed, &mut dm, DAY0, &Utc), None);
-        let (classic, _) = read("[glass]\nmode = \"hours\"\n");
-        assert_eq!(scheduled(&classic, &mut dm, DAY0, &Utc), None);
+        let (old, _) = read("[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"hours\"\n");
+        assert_eq!(
+            scheduled(&old, &mut dm, DAY0 + 3600, &Utc).map(|s| s.0),
+            Some(true)
+        );
     }
 
     #[test]
-    fn the_mode_in_force_rebuilds_the_look_and_keeps_the_schedule() {
-        let (cfg, table) = read(HOURS);
-        assert_eq!(cfg.glass.mode, Mode::Light);
-        let light_scheme = cfg.theme.colors.is_dark();
-        let dark = with_mode(cfg.clone(), &table, Mode::Dark);
-        assert_eq!(dark.glass.mode, Mode::Dark);
-        assert_eq!(dark.glass_dark, cfg.glass_dark, "the schedule stays");
+    fn the_look_in_force_rebuilds_every_interface_and_keeps_the_schedule() {
+        for interface in ["classic", "blue", "glass"] {
+            let (cfg, table) = read(&format!("{HOURS}interface = \"{interface}\"\n"));
+            assert!(!cfg.dark);
+            let dark = with_dark(cfg.clone(), &table, true);
+            assert!(dark.dark, "{interface}");
+            assert_eq!(dark.mode, cfg.mode, "the schedule stays");
+            assert_eq!(dark.glass.mode, reprisekit::glass::Mode::Dark);
+            let back = with_dark(dark, &table, false);
+            assert_eq!(back, cfg, "{interface}");
+        }
+        let (classic, table) = read(HOURS);
         assert!(
-            dark.theme.colors.is_dark() && !light_scheme,
-            "the colours, and so the portal's color-scheme, follow"
+            with_dark(classic, &table, true).theme.colors.is_dark(),
+            "Classic's colours, and so the portal's color-scheme, follow"
         );
-        let back = with_mode(dark, &table, Mode::Light);
-        assert_eq!(back, cfg);
     }
 }

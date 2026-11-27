@@ -54,8 +54,8 @@ pub fn theme_for(i: Interface) -> Theme {
 
 /// The theme an interface starts from, before the config's overrides;
 /// Blue paints in `variant`'s colour scheme (its dark twin when `dark`),
-/// Glass in `glass`'s colour and mode. Each interface ignores the others'
-/// arguments.
+/// Glass in `glass`'s colour, dark when `dark` or `glass.mode` is. Each
+/// interface ignores the others' arguments.
 pub fn theme_with(
     i: Interface,
     variant: blue::Variant,
@@ -65,6 +65,10 @@ pub fn theme_with(
     match i {
         Interface::Classic => Theme::default(),
         Interface::Blue => blue_theme_in(variant, dark),
+        Interface::Glass if dark => styled(glass::style(&glass::Settings {
+            mode: glass::Mode::Dark,
+            ..*glass
+        })),
         Interface::Glass => styled(glass::style(glass)),
     }
 }
@@ -78,14 +82,17 @@ pub fn blue_theme_in(v: blue::Variant, dark: bool) -> Theme {
     styled(blue::style_in(v, dark))
 }
 
+/// A sample of interface `i` in `scheme` (a Classic scheme's or a Blue variant's name), dark or
+/// light, over `background`.
 pub fn sample_theme(
     i: Interface,
     scheme: &str,
+    dark: bool,
     glass: &glass::Settings,
     background: Option<Color>,
 ) -> Theme {
     let variant = blue::Variant::from_name(scheme).unwrap_or_default();
-    let mut t = theme_with(i, variant, false, glass);
+    let mut t = theme_with(i, variant, dark, glass);
     if i == Interface::Classic
         && let Some(colors) = crate::schemes::scheme(scheme)
     {
@@ -493,24 +500,24 @@ mod tests {
         let g = glass::Settings::default();
         let brick = crate::schemes::scheme("Brick").expect("Brick is a Classic scheme");
         assert_eq!(
-            sample_theme(Interface::Classic, "Brick", &g, None).colors,
+            sample_theme(Interface::Classic, "Brick", false, &g, None).colors,
             brick
         );
         assert_eq!(
-            sample_theme(Interface::Blue, "Olive Green", &g, None),
+            sample_theme(Interface::Blue, "Olive Green", false, &g, None),
             blue_theme(blue::Variant::Olive)
         );
         // A name of another interface's, or none, is the interface's own.
         assert_eq!(
-            sample_theme(Interface::Blue, "Brick", &g, None),
+            sample_theme(Interface::Blue, "Brick", false, &g, None),
             blue_theme(blue::Variant::Blue)
         );
         assert_eq!(
-            sample_theme(Interface::Classic, "Olive Green", &g, None),
+            sample_theme(Interface::Classic, "Olive Green", false, &g, None),
             Theme::default()
         );
         assert_eq!(
-            sample_theme(Interface::Classic, "", &g, None),
+            sample_theme(Interface::Classic, "", false, &g, None),
             Theme::default()
         );
         let ruby = glass::Settings {
@@ -518,7 +525,7 @@ mod tests {
             ..g
         };
         assert_eq!(
-            sample_theme(Interface::Glass, "Brick", &ruby, None),
+            sample_theme(Interface::Glass, "Brick", false, &ruby, None),
             theme_with(Interface::Glass, blue::Variant::Blue, false, &ruby),
             "Glass has no scheme; its colour is the glass's"
         );
@@ -529,7 +536,7 @@ mod tests {
         let text = crate::text::TextRenderer::load(&FontConfig::default());
         let teal = Color::rgb(0, 128, 128);
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            let t = sample_theme(i, "", &glass::Settings::default(), Some(teal));
+            let t = sample_theme(i, "", false, &glass::Settings::default(), Some(teal));
             let c = look::draw_sample(false, &t, 1, &text, None);
             assert_eq!(c.get(1, 1), teal.argb(), "{i:?}");
         }
@@ -537,6 +544,7 @@ mod tests {
         let t = sample_theme(
             Interface::Classic,
             "Brick",
+            false,
             &glass::Settings::default(),
             None,
         );
@@ -547,7 +555,7 @@ mod tests {
     #[test]
     fn the_small_bar_shrinks_a_glass_sample() {
         let g = glass::Settings::default();
-        let mut t = sample_theme(Interface::Glass, "", &g, None);
+        let mut t = sample_theme(Interface::Glass, "", false, &g, None);
         assert_ne!(t.metrics.taskbar_height, glass::SMALL_TASKBAR_HEIGHT);
         small_bar(&mut t, &g);
         assert_eq!(t.metrics.taskbar_height, 30);
@@ -575,6 +583,20 @@ mod tests {
         assert_eq!(t.metrics.caption_height, 26);
         assert!(matches!(t.look, Look::Styled(_)));
         assert_eq!(theme_for(Interface::Classic), Theme::default());
+    }
+
+    #[test]
+    fn the_dark_flag_darkens_glass_as_its_own_mode_does() {
+        let light = glass::Settings::default();
+        let dark = glass::Settings {
+            mode: glass::Mode::Dark,
+            ..light
+        };
+        let theme = |flag, g: &glass::Settings| {
+            theme_with(Interface::Glass, blue::Variant::Blue, flag, g).colors
+        };
+        assert_eq!(theme(true, &light), theme(false, &dark));
+        assert_ne!(theme(true, &light), theme(false, &light));
     }
 
     #[test]

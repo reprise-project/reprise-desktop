@@ -5,10 +5,10 @@ Classic Interface 2 ea28f21bd2bd9017
 Classic Look 2 9ac192f0a28161d7
 Classic Ready 2 4b1954ed378c1841
 Blue Interface 1 2d3190b8af06821a
-Blue Look 1 39944e0017274532
+Blue Look 1 ac8e92e5975bba7a
 Blue Ready 1 39a26946548b4789
 Blue Interface 2 e07ef57977eff7b3
-Blue Look 2 0864c082519c13fe
+Blue Look 2 c92b29bdd855e4a4
 Blue Ready 2 24b89cb160e238f5
 Glass Interface 1 db6541e1cf9eff84
 Glass Look 1 2926c6b48a51ab0f

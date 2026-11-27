@@ -188,9 +188,14 @@ pub(super) fn binds() -> Vec<Bind> {
             reprisekit::blue::Variant::default().name(),
         ),
         Bind::GlassColor(crate::appearancepage::GLASS_COLOR, lens!(glass_color)),
-        Bind::Named("glass_mode", lens!(glass_mode), crate::model::GLASS_MODES),
-        Bind::Time("glass_dark_from", lens!(glass_dark_from)),
-        Bind::Time("glass_dark_to", lens!(glass_dark_to)),
+        Bind::Named("mode", lens!(mode), crate::model::MODES),
+        Bind::Scheme(
+            crate::appearancepage::DARK_SCHEME,
+            lens!(dark_color_scheme),
+            repriseconf::config::CLASSIC_DARK_SCHEME,
+        ),
+        Bind::Time("dark_from", lens!(dark_from)),
+        Bind::Time("dark_to", lens!(dark_to)),
         Bind::Named(
             "glass_material",
             lens!(glass_material),

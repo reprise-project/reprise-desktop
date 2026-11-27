@@ -1495,19 +1495,21 @@ fn partner_keys_are_tried_together_and_dropped_together() {
         "the pair takes its defaults together"
     );
 
-    let (c, keys) =
-        dropped_keys("[glass]\nintensity = 50\ndark_from = \"08:00\"\ndark_to = \"08:00\"\n");
+    let (c, keys) = dropped_keys(
+        "[appearance]\ninterface = \"glass\"\n[glass]\nintensity = 50\ndark_from = \"08:00\"\ndark_to = \"08:00\"\n",
+    );
     assert_eq!(keys, ["glass.dark_from", "glass.dark_to"]);
     assert_eq!(
         c.glass.intensity, 50,
         "equal dark hours keep the rest of [glass]"
     );
 
-    let (c, keys) =
-        dropped_keys("[glass]\nintensity = 150\ndark_from = \"07:00\"\ndark_to = \"19:00\"\n");
+    let (c, keys) = dropped_keys(
+        "[appearance]\ndark_from = \"07:00\"\ndark_to = \"19:00\"\n[glass]\nintensity = 150\n",
+    );
     assert_eq!(keys, ["glass.intensity"]);
     assert_eq!(
-        (c.glass_dark.from, c.glass_dark.to),
+        (c.mode.from, c.mode.to),
         (7 * 60, 19 * 60),
         "dark_from is checked against the file's dark_to, not the default"
     );

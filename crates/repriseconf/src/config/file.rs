@@ -686,6 +686,10 @@ pub struct FileCursor {
 pub struct FileAppearance {
     pub interface: Option<String>,
     pub color_scheme: Option<String>,
+    pub mode: Option<String>,
+    pub dark_from: Option<String>,
+    pub dark_to: Option<String>,
+    pub dark_color_scheme: Option<String>,
 }
 
 #[derive(Deserialize, Default)]

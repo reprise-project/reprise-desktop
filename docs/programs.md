@@ -157,7 +157,7 @@ Double-click the clock for calendar, clock, time zone and NTP settings. The cale
 
 ## Welcome
 
-Runs on first login (`Start > Programs > Accessories > Welcome`) to pick interface, light/dark mode (no dark mode in Blue), text size and review active `[[keybinds]]`.
+Runs on first login (`Start > Programs > Accessories > Welcome`) to pick interface, light/dark mode, text size and review active `[[keybinds]]`.
 
 ## Import from Another Desktop
 

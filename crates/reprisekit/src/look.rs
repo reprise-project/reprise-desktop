@@ -772,7 +772,7 @@ mod tests {
             (Color::rgb(232, 232, 236), [0xFFD5_E2F0_u32, 0xFFC2_D6ED]),
             (Color::rgb(24, 30, 44), [0xFF46_4F5C_u32, 0xFF6F_7780]),
         ] {
-            let theme = sample_theme(Interface::Glass, "", &g, Some(desk));
+            let theme = sample_theme(Interface::Glass, "", false, &g, Some(desk));
             let mut flat = theme.clone();
             let mut style = theme.look.style().unwrap().clone();
             let spec = style.glass.as_mut().unwrap();
@@ -843,7 +843,7 @@ mod tests {
                 (Color::rgb(255, 255, 255), "white"),
                 (Color::rgb(0, 0, 0), "black"),
             ] {
-                let theme = sample_theme(Interface::Glass, "", &g, Some(desk));
+                let theme = sample_theme(Interface::Glass, "", false, &g, Some(desk));
                 for s in [1, 2] {
                     let c = draw_sample(false, &theme, s, &text, None);
                     let flat = draw_sample(false, &undimmed(&theme), s, &text, None);

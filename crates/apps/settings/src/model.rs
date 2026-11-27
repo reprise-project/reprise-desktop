@@ -127,11 +127,14 @@ pub struct Settings {
     pub color_scheme: String,
     /// `[glass] color`: a swatch's name or "#RRGGBB".
     pub glass_color: String,
-    /// `[glass] mode`: one of [`GLASS_MODES`]' values.
-    pub glass_mode: String,
-    /// `[glass] dark_from` and `dark_to`, "19:00": the "hours" mode's local times.
-    pub glass_dark_from: String,
-    pub glass_dark_to: String,
+    /// `[appearance] mode`: one of [`MODES`]' values.
+    pub mode: String,
+    /// `[appearance] dark_from` and `dark_to`, "19:00": the "hours" mode's local times.
+    pub dark_from: String,
+    pub dark_to: String,
+    /// `[appearance] dark_color_scheme`: the Classic scheme worn while dark; empty for
+    /// `CLASSIC_DARK_SCHEME`.
+    pub dark_color_scheme: String,
     /// `[glass] material`: one of [`GLASS_MATERIALS`]' values.
     pub glass_material: String,
     /// `[glass] frame`: one of [`GLASS_FRAMES`]' values.
@@ -604,11 +607,10 @@ impl Settings {
             glass_color: reprisekit::glass::swatch_name(c.glass.color)
                 .expect("the default glass colour is a swatch")
                 .into(),
-            glass_mode: (c.glass_dark.schedule.name())
-                .unwrap_or(c.glass.mode.as_str())
-                .into(),
-            glass_dark_from: hhmm(c.glass_dark.from),
-            glass_dark_to: hhmm(c.glass_dark.to),
+            mode: c.mode.mode.as_str().into(),
+            dark_from: hhmm(c.mode.from),
+            dark_to: hhmm(c.mode.to),
+            dark_color_scheme: c.dark_color_scheme.clone().unwrap_or_default(),
             glass_material: c.glass.material.as_str().into(),
             glass_frame: c.glass.frame.as_str().into(),
             glass_notification_style: c.glass.notification.as_str().into(),

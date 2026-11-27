@@ -1190,7 +1190,7 @@ mod tests {
     fn a_builtin_on_the_monitor_is_its_glass_coloured_spelling_and_fills_it() {
         let mut s = Settings {
             wallpaper: "reprise:flow/glass".into(),
-            glass_mode: "dark".into(),
+            mode: "dark".into(),
             ..Settings::default()
         };
         assert_eq!(monitor_file(&s, &[], None), "reprise:flow/night");

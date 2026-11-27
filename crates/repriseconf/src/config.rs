@@ -146,9 +146,19 @@ pub struct Config {
     pub interface: Interface,
     pub color_scheme: Option<String>,
     pub blue_variant: reprisekit::blue::Variant,
+    /// `glass.mode` follows `dark`.
     pub glass: reprisekit::glass::Settings,
-    /// `glass.mode` is the mode in force; under a schedule the compositor sets it (`darkmode`).
-    pub glass_dark: GlassDark,
+    /// `[appearance] mode`, `dark_from` and `dark_to`.
+    pub mode: ModeConfig,
+    /// Whether the look in force is dark: `mode` "dark", or under a schedule the compositor's
+    /// pick (`darkmode`). Every interface's theme is built for it.
+    pub dark: bool,
+    /// `[appearance] dark_color_scheme`: the Classic scheme worn while dark, else
+    /// [`CLASSIC_DARK_SCHEME`].
+    pub dark_color_scheme: Option<String>,
+    /// The `[glass]` keys read in `[appearance]`'s stead (`glass.mode`, `glass.dark_from`,
+    /// `glass.dark_to`), for the config notice.
+    pub moved: Vec<String>,
     pub taskbar: TaskbarConfig,
 }
 
@@ -242,7 +252,10 @@ impl Default for Config {
             color_scheme: None,
             blue_variant: reprisekit::blue::Variant::Blue,
             glass: reprisekit::glass::Settings::default(),
-            glass_dark: GlassDark::default(),
+            mode: ModeConfig::default(),
+            dark: false,
+            dark_color_scheme: None,
+            moved: Vec::new(),
             taskbar: TaskbarConfig::default_for(Interface::Classic),
         }
     }

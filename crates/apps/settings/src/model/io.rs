@@ -26,10 +26,11 @@ fn defaults_in(doc: &DocumentMut) -> Settings {
 /// defaults of its interface in place. A file that does not parse gives
 /// the defaults whole, as the compositor's own `Config::load` does.
 pub fn load(text: &str) -> Settings {
-    let Ok(doc) = text.parse::<DocumentMut>() else {
+    let Ok(mut doc) = text.parse::<DocumentMut>() else {
         log::warn!("config.toml does not parse; showing defaults");
         return Settings::default();
     };
+    move_mode_keys(&mut doc);
     let mut s = defaults_in(&doc);
     repriseconf::fields::load(&doc, &fields(), &mut s);
     if let Some(list) = get(&doc, &KEYBINDS).and_then(read_shortcuts) {
@@ -81,6 +82,35 @@ pub fn load(text: &str) -> Settings {
     s
 }
 
+/// Under Glass, move `[glass]`'s `mode`, `dark_from` and `dark_to` into `[appearance]` where it
+/// leaves them out, as the compositor reads them; `[glass]`'s go either way. Another interface
+/// ignores them.
+fn move_mode_keys(doc: &mut DocumentMut) {
+    if get(doc, &INTERFACE).and_then(Item::as_str) != Some("glass") {
+        return;
+    }
+    let has = |doc: &DocumentMut, names: &[&'static str]| {
+        names
+            .iter()
+            .any(|n| get(doc, &k("appearance", n)).is_some())
+    };
+    // The hours move as a pair: `[appearance]` setting either time keeps both of `[glass]`'s out.
+    for names in [&["mode"][..], &["dark_from", "dark_to"]] {
+        let take = !has(doc, names);
+        for &name in names {
+            let (new, old) = (k("appearance", name), k("glass", name));
+            let Some(v) = get(doc, &old).and_then(Item::as_value).cloned() else {
+                continue;
+            };
+            if take && set(doc, &new, v).is_err() {
+                continue;
+            }
+            remove(doc, &old);
+        }
+    }
+    remove_table_if_empty(doc, "glass");
+}
+
 /// Write into `text` the fields the sheet moved, `want` against `base`, touching as little as possible: keys the sheet did not move are left alone even if the file changed under it, keys moved back to the interface's default are removed (and tables left empty, unless a comment sits on or under the header), tables are created only when a key needs one.
 ///
 /// `Err` when `text` does not parse; the caller must not write then.
@@ -97,6 +127,10 @@ pub fn save(text: &str, want: &Settings, base: &Settings) -> Result<String, Stri
     } else {
         &have.interface
     });
+    if (&want.mode, &want.dark_from, &want.dark_to) != (&base.mode, &base.dark_from, &base.dark_to)
+    {
+        move_mode_keys(&mut doc);
+    }
     repriseconf::fields::save(&mut doc, &fields(), want, base, &have, &def)
         .map_err(|e| e.to_string())?;
     // The list is written whole or not at all: a table's comments do not
@@ -282,10 +316,10 @@ pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
     if s.nl_from == s.nl_to {
         return Err(tr!("model-io-the-night-lights-from-and-to"));
     }
-    if let (Some(f), Some(t)) = (parse_hhmm(&s.glass_dark_from), parse_hhmm(&s.glass_dark_to))
+    if let (Some(f), Some(t)) = (parse_hhmm(&s.dark_from), parse_hhmm(&s.dark_to))
         && f == t
     {
-        return Err(tr!("model-io-glasss-dark-hours-must-start-and"));
+        return Err(tr!("model-io-dark-hours-must-differ"));
     }
     // A file already holding equal times still applies other changes; the compositor drops the key alone.
     if s.quiet_hours != base.quiet_hours

@@ -55,16 +55,9 @@ pub enum Page {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Picks {
     pub interface: Interface,
-    /// Kept while an interface without dark ([`dark_offered`]) is picked, so picking another
-    /// one brings it back.
     pub dark: bool,
     /// One of [`TEXT_SIZES`].
     pub text_size: u32,
-}
-
-/// Whether `i` comes in dark colours: Blue's schemes are all light.
-pub fn dark_offered(i: Interface) -> bool {
-    i != Interface::Blue
 }
 
 /// A program the last page offers as a button; `id` comes back in [`Outcome::Open`].
@@ -175,8 +168,7 @@ impl Welcome {
                 (style, items)
             }
             Page::Look => {
-                let offered = dark_offered(self.picks.interface);
-                let dark = offered && self.picks.dark;
+                let dark = self.picks.dark;
                 let sizes: Vec<String> = TEXT_SIZES.iter().map(|p| format!("{p}%")).collect();
                 let refs: Vec<&str> = sizes.iter().map(String::as_str).collect();
                 let combo_x = SAMPLE_RECT.right() - TEXT_SIZE_W;
@@ -184,9 +176,7 @@ impl Welcome {
                     sample(),
                     Item::radio(LIGHT, SAMPLE_RECT.x, ROW_Y, &tr!("welcome-light"), "mode")
                         .checked(!dark),
-                    Item::radio(DARK, DARK_X, ROW_Y, &tr!("welcome-dark"), "mode")
-                        .checked(dark)
-                        .enabled(offered),
+                    Item::radio(DARK, DARK_X, ROW_Y, &tr!("welcome-dark"), "mode").checked(dark),
                     Item::label_at(
                         "text_size_label",
                         combo_x - TEXT_LABEL_W - 4,
@@ -469,38 +459,23 @@ mod tests {
     }
 
     #[test]
-    fn blue_greys_dark_and_keeps_it_for_the_next_interface() {
+    fn every_interface_offers_dark_and_keeps_the_pick() {
         let theme = Theme::default();
         let (mut w, text) = welcome(&theme);
         w.picks.dark = true;
-        w.event(form::Event::Changed("blue"), &text, &theme);
-        assert_eq!(
-            (w.picks.interface, w.picks.dark),
-            (Interface::Blue, true),
-            "the dark wish stays"
-        );
-        w.go(Page::Look, &text, &theme);
-        assert!(matches!(
-            w.wizard.form.item(DARK).unwrap().control,
-            Control::Radio {
-                enabled: false,
-                checked: false,
-                ..
-            }
-        ));
-        assert_eq!(
-            w.wizard.form.checked(LIGHT),
-            Some(true),
-            "Blue is light only"
-        );
-        w.go(Page::Interface, &text, &theme);
-        w.event(form::Event::Changed("glass"), &text, &theme);
-        w.go(Page::Look, &text, &theme);
-        assert_eq!(
-            w.wizard.form.checked(DARK),
-            Some(true),
-            "Glass shows dark again"
-        );
+        for i in ["blue", "glass", "classic"] {
+            w.go(Page::Interface, &text, &theme);
+            w.event(form::Event::Changed(i), &text, &theme);
+            w.go(Page::Look, &text, &theme);
+            assert_eq!(w.wizard.form.checked(DARK), Some(true), "{i}");
+            assert!(
+                matches!(
+                    w.wizard.form.item(DARK).unwrap().control,
+                    Control::Radio { enabled: true, .. }
+                ),
+                "{i}"
+            );
+        }
     }
 
     #[test]

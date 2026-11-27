@@ -439,15 +439,15 @@ fn save_starts_a_file_from_nothing() {
 }
 
 #[test]
-fn glass_mode_saves_dark_and_drops_light() {
+fn mode_saves_dark_under_appearance_and_drops_light() {
     let base = Settings::default();
     let want = Settings {
-        glass_mode: "dark".into(),
+        mode: "dark".into(),
         ..base.clone()
     };
     let text = save("", &want, &base).unwrap();
-    assert!(text.contains("mode = \"dark\""), "dark is written: {text}");
-    assert_eq!(load(&text).glass_mode, "dark");
+    assert_eq!(text, "[appearance]\nmode = \"dark\"\n");
+    assert_eq!(load(&text).mode, "dark");
     let back = save(&text, &base, &want).unwrap();
     assert!(
         !back.contains("mode ="),
@@ -512,7 +512,7 @@ fn appearance_defaults_match_the_compositor() {
         (d.glass_blur, d.glass_streaks),
         (i64::from(g.blur), g.streaks)
     );
-    assert_eq!(reprisekit::glass::Mode::parse(&d.glass_mode), Some(g.mode));
+    assert_eq!(reprisekit::glass::Mode::parse(&d.mode), Some(g.mode));
     assert_eq!(
         reprisekit::glass::Material::parse(&d.glass_material),
         Some(g.material)
@@ -691,32 +691,81 @@ fn window_shake_follows_the_interface_and_auto_reads_as_its_default() {
 
 #[test]
 fn a_dark_schedule_loads_as_its_mode_and_picking_light_or_dark_ends_it() {
-    let night = load("[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"night\"\n");
-    assert_eq!(night.glass_mode, "night");
-    let hours = load("[glass]\nmode = \"hours\"\ndark_from = \"22:00\"\n");
+    let night = load("[appearance]\ninterface = \"glass\"\nmode = \"night\"\n");
+    assert_eq!(night.mode, "night");
+    let text = "[appearance]\nmode = \"hours\"\ndark_from = \"22:00\"\n";
+    let base = load(text);
     assert_eq!(
         (
-            hours.glass_mode.as_str(),
-            hours.glass_dark_from.as_str(),
-            hours.glass_dark_to.as_str()
+            base.mode.as_str(),
+            base.dark_from.as_str(),
+            base.dark_to.as_str()
         ),
         ("hours", "22:00", "07:00")
     );
-    let text = "[glass]\nmode = \"hours\"\ndark_from = \"22:00\"\n";
-    let base = load(text);
     let dark = Settings {
-        glass_mode: "dark".into(),
+        mode: "dark".into(),
         ..base.clone()
     };
     let saved = save(text, &dark, &base).unwrap();
-    assert_eq!(load(&saved).glass_mode, "dark", "{saved}");
-    assert_eq!(
-        repriseconf::config::Config::parse(&saved)
-            .unwrap()
-            .glass_dark
-            .schedule,
-        repriseconf::config::DarkSchedule::Off,
+    let c = repriseconf::config::Config::parse(&saved).unwrap();
+    assert!(
+        c.dark && !c.mode.mode.scheduled(),
         "no schedule left: {saved}"
+    );
+}
+
+#[test]
+fn the_glass_mode_keys_load_and_a_mode_change_moves_them_to_appearance() {
+    let text = "[appearance]\ninterface = \"glass\"\n\n[glass]\nmode = \"hours\"\ndark_from = \"22:00\"\nintensity = 50\n";
+    let base = load(text);
+    assert_eq!(
+        (base.mode.as_str(), base.dark_from.as_str()),
+        ("hours", "22:00")
+    );
+    let night = Settings {
+        mode: "night".into(),
+        ..base.clone()
+    };
+    let saved = save(text, &night, &base).unwrap();
+    assert_eq!(
+        saved,
+        "[appearance]\ninterface = \"glass\"\nmode = \"night\"\ndark_from = \"22:00\"\n\n[glass]\nintensity = 50\n"
+    );
+    let c = repriseconf::config::Config::parse(&saved).unwrap();
+    assert!(c.moved.is_empty(), "{saved}");
+    assert_eq!(c.mode.from, 22 * 60, "the unmoved time goes along");
+    let other = Settings {
+        glass_intensity: 60,
+        ..base.clone()
+    };
+    assert!(
+        save(text, &other, &base)
+            .unwrap()
+            .contains("mode = \"hours\""),
+        "another change leaves the old keys where they are"
+    );
+    assert_eq!(
+        load("[glass]\nmode = \"dark\"\n").mode,
+        "light",
+        "Classic ignores Glass's keys"
+    );
+}
+
+#[test]
+fn the_classic_dark_scheme_saves_its_name_and_drops_the_default() {
+    let base = Settings::default();
+    let nord = Settings {
+        dark_color_scheme: "Nord".into(),
+        ..base.clone()
+    };
+    let text = save("", &nord, &base).unwrap();
+    assert_eq!(text, "[appearance]\ndark_color_scheme = \"Nord\"\n");
+    assert_eq!(load(&text).dark_color_scheme, "Nord");
+    assert!(
+        !save(&text, &base, &nord)
+            .unwrap()
+            .contains("dark_color_scheme")
     );
 }
 
@@ -775,9 +824,10 @@ fn save_round_trips_every_field() {
         interface: "blue".into(),
         color_scheme: "Olive Green".into(),
         glass_color: "#102030".into(),
-        glass_mode: "dark".into(),
-        glass_dark_from: "20:30".into(),
-        glass_dark_to: "05:45".into(),
+        mode: "dark".into(),
+        dark_from: "20:30".into(),
+        dark_to: "05:45".into(),
+        dark_color_scheme: "Nord".into(),
         glass_material: "smoked".into(),
         glass_frame: "square".into(),
         glass_notification_style: "lozenge".into(),
@@ -1789,18 +1839,18 @@ fn quiet_hours_round_trip_and_refuse_equal_times() {
 }
 
 #[test]
-fn apply_refuses_equal_glass_dark_hours() {
+fn apply_refuses_equal_dark_hours() {
     let s = Settings {
-        glass_dark_from: "08:00".into(),
-        glass_dark_to: "08:00".into(),
+        dark_from: "08:00".into(),
+        dark_to: "08:00".into(),
         ..Settings::default()
     };
     assert_eq!(
         validate(&s, &Settings::default()),
-        Err("Glass's dark hours must start and end at different times.".into())
+        Err("The dark hours must start and end at different times.".into())
     );
     let apart = Settings {
-        glass_dark_to: "20:00".into(),
+        dark_to: "20:00".into(),
         ..s
     };
     assert_eq!(validate(&apart, &Settings::default()), Ok(()));

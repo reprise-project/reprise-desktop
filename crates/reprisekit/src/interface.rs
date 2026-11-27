@@ -1,4 +1,7 @@
 pub const ENV: &str = "REPRISE_INTERFACE";
+/// The environment variable a compositor hands its clients the look's mode in, `light` or
+/// `dark` (`glass::Mode::as_str`), whatever the interface.
+pub const MODE_ENV: &str = "REPRISE_MODE";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Interface {

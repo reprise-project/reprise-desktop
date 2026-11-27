@@ -308,8 +308,7 @@ pub(crate) fn read(path: &Path, base: &toml::Table) -> Read {
                 };
                 log::warn!("config {}: {}: {}; {kept}", path.display(), d.key, d.error);
             }
-            let notice = (!dropped.is_empty())
-                .then(|| Notice::plain(crate::config::dropped_notice(&dropped)));
+            let notice = crate::config::read_notice(&cfg, &dropped);
             Read::Parsed(Box::new(cfg), notice, table)
         }
         Err(e) => {

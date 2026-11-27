@@ -94,6 +94,12 @@ theme = "hicolor"            # freedesktop icon theme for menus, taskbar, captio
 interface = "classic"        # classic | blue | glass; an unknown value runs classic and the config notice names it
 # color_scheme = "Brick"     # Classic: a scheme name (Reprise Settings' Appearance page lists them); Blue: "Blue", "Olive Green", "Silver", "Slate", "Sapphire", "Obsidian", "Ember", "Cobalt", "Carbon" or "Steel"; Glass has none, see [glass] color
 #                            # a name from another interface takes that interface's default and the config notice names it; Glass ignores the key
+# mode = "light"             # light | dark | night (dark from sunset to sunrise, or between
+#                            # [night_light]'s fixed times, night light on or not) | hours;
+#                            # every interface, the portal (GTK, Qt, browsers) and the generated toolkit themes follow it
+# dark_from = "19:00"        # local times for mode = "hours", which must differ; a dark_to
+# dark_to = "07:00"          # before dark_from is the next morning
+# dark_color_scheme = "One Dark"  # Classic: the scheme worn while dark; Blue wears its scheme's dark twin, Glass dark glass
 
 # [wallpaper]                # the picture under the desktop icons, drawn over [colors] background
 # image = "/usr/share/backgrounds/picture.jpg"   # bmp, jpg, png, dib, jxl or avif; "" or a file that does not decode shows the colour alone
@@ -133,10 +139,8 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 # blur_rate = 30             # at most this many times a second a program drawing
 #                            # next to the glass (a video) or desktop water blurs
 #                            # into it again; 0: every frame
-# mode = "light"             # light | dark | night (dark from sunset to sunrise, or between
-#                            # [night_light]'s fixed times, night light on or not) | hours
-# dark_from = "19:00"        # local times for mode = "hours", which must differ; a dark_to
-# dark_to = "07:00"          # before dark_from is the next morning
+#                            # mode, dark_from and dark_to are [appearance]'s now; set here
+#                            # they still apply to Glass where [appearance] leaves them out
 # material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
 # frame = "rounded"          # rounded | square (flat, separate caption buttons)
 # notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge, the glass washed in its colour) | droplet (one row, opens on hover)

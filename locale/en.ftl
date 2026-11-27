@@ -652,6 +652,8 @@ misc-config-unreadable =
 misc-config-dropped-kept = kept their previous values
 misc-config-dropped-reset = used the defaults there
 misc-config-dropped-mixed = kept the previous values of { $kept }; { $reset } used the defaults
+# $keys are old key names such as glass.mode
+misc-config-moved = { $keys } in config.toml belong in [appearance] now. Reprise reads them for Glass where [appearance] leaves them out.
 misc-config-dropped = Reprise ignored { $keys } in config.toml and { $what }. `journalctl --user -t reprise` names the errors.
 misc-quicklaunch-browser = Launch Web Browser
 misc-quicklaunch-show-desktop = Show Desktop

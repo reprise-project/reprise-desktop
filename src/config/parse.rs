@@ -180,7 +180,8 @@ impl Config {
             Ok((c, dropped, table)) if dropped.is_empty() => {
                 log::info!("loaded config {}", path.display());
                 warn_stray_rows(&table);
-                (c, None, table)
+                let notice = read_notice(&c, &dropped);
+                (c, notice, table)
             }
             Ok((c, dropped, table)) => {
                 warn_stray_rows(&table);
@@ -192,7 +193,8 @@ impl Config {
                         d.error
                     );
                 }
-                (c, Some(Notice::plain(dropped_notice(&dropped))), table)
+                let notice = read_notice(&c, &dropped);
+                (c, notice, table)
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
@@ -332,6 +334,22 @@ fn window_rule(f: FileWindowRule, at: &str) -> Result<WindowRule, String> {
         tab_group: f.tab_group,
         from_menu: f.from_menu.unwrap_or(false),
     })
+}
+
+/// The notice after a read that built `cfg`: the keys it dropped, then the `[glass]` keys it read
+/// in `[appearance]`'s stead. None when there is neither.
+pub(crate) fn read_notice(
+    cfg: &Config,
+    dropped: &[repriseconf::config::DroppedKey],
+) -> Option<Notice> {
+    let mut body = Vec::new();
+    if !dropped.is_empty() {
+        body.push(dropped_notice(dropped));
+    }
+    if !cfg.moved.is_empty() {
+        body.push(tr!("misc-config-moved", keys = cfg.moved.join(", ")));
+    }
+    (!body.is_empty()).then(|| Notice::plain(body.join("\n")))
 }
 
 /// The notice naming the keys a read dropped, saying which kept their previous values and which

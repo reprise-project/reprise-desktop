@@ -378,47 +378,61 @@ pub struct ScreensaverConfig {
     pub folder: Option<PathBuf>,
 }
 
-/// When Glass turns dark by itself: `[glass] mode = "night"` (night light's schedule, whether or not
-/// night light is on) or `"hours"` (from `dark_from` to `dark_to`). Off is a fixed light or dark mode.
+/// `[appearance] mode`: a fixed light or dark look, or dark on a schedule: "night" is night
+/// light's hours (sunset to sunrise, or its fixed times, whether or not night light is on),
+/// "hours" runs from `dark_from` to `dark_to`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DarkSchedule {
+pub enum AppearanceMode {
     #[default]
-    Off,
+    Light,
+    Dark,
     Night,
     Hours,
 }
 
-impl DarkSchedule {
-    /// The `[glass] mode` value naming the schedule; Off has none of its own.
-    pub fn name(self) -> Option<&'static str> {
+impl AppearanceMode {
+    pub const ALL: [AppearanceMode; 4] = [
+        AppearanceMode::Light,
+        AppearanceMode::Dark,
+        AppearanceMode::Night,
+        AppearanceMode::Hours,
+    ];
+
+    pub fn as_str(self) -> &'static str {
         match self {
-            DarkSchedule::Off => None,
-            DarkSchedule::Night => Some("night"),
-            DarkSchedule::Hours => Some("hours"),
+            AppearanceMode::Light => "light",
+            AppearanceMode::Dark => "dark",
+            AppearanceMode::Night => "night",
+            AppearanceMode::Hours => "hours",
         }
     }
 
-    pub fn parse(s: &str) -> Option<DarkSchedule> {
-        [DarkSchedule::Night, DarkSchedule::Hours]
-            .into_iter()
-            .find(|d| d.name() == Some(s))
+    pub fn parse(s: &str) -> Option<AppearanceMode> {
+        Self::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+
+    pub fn scheduled(self) -> bool {
+        matches!(self, AppearanceMode::Night | AppearanceMode::Hours)
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GlassDark {
-    pub schedule: DarkSchedule,
+pub struct ModeConfig {
+    pub mode: AppearanceMode,
     /// `dark_from` and `dark_to`, minutes after local midnight; `to` at or before `from` is the next day's.
     pub from: u32,
     pub to: u32,
 }
 
-impl Default for GlassDark {
+impl Default for ModeConfig {
     fn default() -> Self {
-        GlassDark {
-            schedule: DarkSchedule::Off,
+        ModeConfig {
+            mode: AppearanceMode::Light,
             from: 19 * 60,
             to: 7 * 60,
         }
     }
 }
+
+/// The Classic scheme dark mode wears while `[appearance] dark_color_scheme` is unset.
+pub const CLASSIC_DARK_SCHEME: &str = "One Dark";
