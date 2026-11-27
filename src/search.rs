@@ -89,6 +89,9 @@ pub enum Setting {
     /// A control on the page, by the id `--focus` takes.
     Control(Page, &'static str),
     App(usize),
+    /// How to uninstall a program, for a query that asks ([`asks_uninstall`]): picked, it opens
+    /// Start's program list.
+    Uninstall,
 }
 
 impl Setting {
@@ -96,6 +99,7 @@ impl Setting {
         match self {
             Setting::Page(p) | Setting::Control(p, _) => p.label().to_string(),
             Setting::App(i) => apps[i].name.clone(),
+            Setting::Uninstall => tr!("start-search-uninstall"),
         }
     }
 
@@ -103,24 +107,51 @@ impl Setting {
         match self {
             Setting::Page(_) | Setting::Control(..) => Some(PAGE_ICON.to_string()),
             Setting::App(i) => apps[i].icon.clone(),
+            Setting::Uninstall => Some(UNINSTALL_ICON.to_string()),
         }
     }
 
     /// What `query` found it by beyond its name, for the row's grey detail: the label of the
-    /// control it focuses, else the keyword.
-    pub fn detail(self, query: &str, apps: &[AppEntry]) -> Option<&'static str> {
-        match self {
+    /// control it focuses, else the keyword; for [`Setting::Uninstall`], where to find it.
+    pub fn detail(self, query: &str, apps: &[AppEntry]) -> Option<String> {
+        let found = match self {
             Setting::Page(p) => p.keyword_for(query),
             Setting::Control(p, id) => p.control_label(id),
             Setting::App(i) => {
                 repriseconf::pages::program(apps[i].id.as_str())?.keyword_for(query, &apps[i].name)
             }
-        }
+            Setting::Uninstall => return Some(tr!("start-search-uninstall-detail")),
+        };
+        found.map(String::from)
     }
 }
 
-/// The settings pages and programs `query` finds, at most `max`: label, then keyword, then
-/// control-label matches. What is not installed, and programs already in `programs`, is left out.
+/// What a query asking how to uninstall a program starts, or begins with before more words.
+const UNINSTALL_WORDS: [&str; 4] = [
+    "uninstall",
+    "remove programs",
+    "delete programs",
+    "add or remove programs",
+];
+const UNINSTALL_MIN_CHARS: usize = 4;
+const UNINSTALL_ICON: &str = "system-software-install";
+
+/// Whether `query` asks how to uninstall a program: from [`UNINSTALL_MIN_CHARS`], it starts one of
+/// [`UNINSTALL_WORDS`] or begins with one of them, in any case and spacing.
+fn asks_uninstall(query: &str) -> bool {
+    let q = query
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    q.chars().count() >= UNINSTALL_MIN_CHARS
+        && (UNINSTALL_WORDS.iter())
+            .any(|w| w.starts_with(&q) || q.strip_prefix(w).is_some_and(|r| r.starts_with(' ')))
+}
+
+/// The settings pages and programs `query` finds, at most `max`: [`Setting::Uninstall`] when it
+/// asks, then label, then keyword, then control-label matches. What is not installed, and
+/// programs already in `programs`, is left out.
 pub fn rank_settings(
     query: &str,
     apps: &[AppEntry],
@@ -151,7 +182,11 @@ pub fn rank_settings(
         Hit::Keyword(_) => 1,
         Hit::Control(_) => 2,
     });
-    found.into_iter().map(|(_, s)| s).take(max).collect()
+    let uninstall = asks_uninstall(query).then_some(Setting::Uninstall);
+    (uninstall.into_iter())
+        .chain(found.into_iter().map(|(_, s)| s))
+        .take(max)
+        .collect()
 }
 
 /// [`Page::installed`]; under test the Login Manager is never installed, whatever the host has.
@@ -639,6 +674,7 @@ impl State {
                     self.launch_app(&entry);
                 }
             }
+            Setting::Uninstall => self.open_start_programs(),
         }
     }
 
@@ -980,6 +1016,24 @@ mod tests {
     }
 
     #[test]
+    fn a_query_asking_how_to_uninstall_finds_the_uninstall_row_first() {
+        let rank = |q: &str| rank_settings(q, &[], &[], 8);
+        for q in [
+            "uninstall",
+            "Uninstall firefox",
+            "remove",
+            "remove  program",
+            "Add or Remove",
+            "unin",
+        ] {
+            assert_eq!(rank(q).first(), Some(&Setting::Uninstall), "{q}");
+        }
+        for q in ["uni", "removal", "programs", "install"] {
+            assert!(!rank(q).contains(&Setting::Uninstall), "{q}");
+        }
+    }
+
+    #[test]
     fn the_page_is_found_by_rdp_and_remmina() {
         let rank = |q: &str| as_pages(rank_settings(q, &[], &[], 8));
         for q in ["rdp", "remmina", "desktop sharing"] {
@@ -1007,6 +1061,7 @@ mod tests {
                 None => panic!("{p:?} is listed for {q:?}"),
             },
             Setting::App(_) => panic!("no programs installed"),
+            Setting::Uninstall => panic!("{q:?} does not ask to uninstall"),
         };
         assert!(rank("repeat delay").contains(&Setting::Control(Page::Keyboard, "repeat_delay")));
         for q in ["keyboard", "hours", "dis"] {
@@ -1050,22 +1105,25 @@ mod tests {
         let apps = [installed("reprise-network.desktop", "Network Connections")];
         let first = |q: &str| {
             let s = rank_settings(q, &apps, &[], 8)[0];
-            (s, s.detail(q, &apps))
+            (s, s.detail(q, &apps).unwrap_or_default())
         };
         assert_eq!(
             first("disk"),
-            (Setting::Page(Page::Advanced), Some("low disk space"))
+            (Setting::Page(Page::Advanced), "low disk space".into())
         );
-        assert_eq!(first("keyboard"), (Setting::Page(Page::Keyboard), None));
+        assert_eq!(
+            first("keyboard"),
+            (Setting::Page(Page::Keyboard), "".into())
+        );
         assert_eq!(
             first("quiet hours"),
             (
                 Setting::Control(Page::Notifications, "quiet_hours"),
-                Some("Hold balloons during quiet hours")
+                "Hold balloons during quiet hours".into()
             ),
             "the control the page opens on"
         );
-        assert_eq!(first("wifi"), (Setting::App(0), Some("wifi")));
+        assert_eq!(first("wifi"), (Setting::App(0), "wifi".into()));
     }
 
     #[test]
