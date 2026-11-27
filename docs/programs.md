@@ -74,7 +74,7 @@ Click `+` for a shell in the current directory, or its arrow for profiles and `~
 
 Scroll with the bar, wheel or `Shift+Page Up`/`Page Down`, and search scrollback with `Ctrl+Shift+F`. Selection copies to primary selection (hold `Shift` in mouse-aware apps). Paste strips control characters (prompting on multiline unless bracketed paste is on), and dropped files insert shell-quoted paths. Supports OSC 0/2 titles, write-only OSC 52 clipboard (up to 1 MiB), BEL alerts and OSC 8 links (`Ctrl+click` opens `http`, `https`, `mailto` and local `file://` via `xdg-open`). Right-click for Copy, Paste, Select All, Find and New Tab, with Open Link and Copy Link Address on top over a link.
 
-Configure shell, cursor, scrollback (default 10000 lines), font, colours, Glass transparency and profiles in Settings (`$XDG_CONFIG_HOME/reprise/terminal.toml`, with window size in `$XDG_STATE_HOME/reprise/terminal.toml`).
+Configure shell, cursor, scrollback (default 10000 lines), font (its size at 100% text; the cells grow with `[accessibility] text_size`), colours, Glass transparency and profiles in Settings (`$XDG_CONFIG_HOME/reprise/terminal.toml`, with window size in `$XDG_STATE_HOME/reprise/terminal.toml`).
 
 Shortcuts: `Ctrl+Shift+T` (new tab), `Ctrl+Shift+W` (close tab), `Ctrl+Shift+N` (new window), `Ctrl+Shift+C`/`V` (copy/paste), `Ctrl+Shift+F` (find), `Ctrl+Tab` (next tab), `Ctrl+=`/`-` (zoom).
 

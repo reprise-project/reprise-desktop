@@ -66,7 +66,7 @@ fn terminal_with(settings: Settings, cmd: &[&str]) -> Terminal {
         ..settings
     };
     let nowhere = Path::new(NOWHERE);
-    let mut t = Terminal::with_state(settings, Some(argv(cmd)), nowhere.join("state.toml"));
+    let mut t = Terminal::with_state(settings, Some(argv(cmd)), nowhere.join("state.toml"), 100);
     t.config = nowhere.join("terminal.toml");
     t.start(repriseapp::Waker::noop());
     t
@@ -553,7 +553,7 @@ fn themed_ctx(theme: Theme) -> Ctx {
 }
 
 fn in_dir(dir: &std::path::Path, settings: Settings) -> Terminal {
-    let mut t = Terminal::with_state(settings, None, dir.join("state.toml"));
+    let mut t = Terminal::with_state(settings, None, dir.join("state.toml"), 100);
     t.config = dir.join("config.toml");
     t.loaded = mtime(&t.config);
     t
@@ -1343,6 +1343,41 @@ fn a_broken_file_keeps_the_live_settings() {
 }
 
 #[test]
+fn the_cells_grow_with_the_text_size_and_zoom_from_the_100_percent_size() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["cat"]);
+    t.follow_scale(MAIN, 1, &mut ctx);
+    t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
+    let ((cols, rows), _) = t.w.fitted.unwrap();
+    let px = t.settings.size_px;
+    let cells = |t: &Terminal, px| {
+        let m = termgrid::metrics(&t.font, px, 1);
+        (m.cell_w, m.cell_h)
+    };
+
+    ctx.text_size = 200;
+    t.draw(MAIN, &mut Canvas::new(640, 400), &ctx);
+    let ((cols2, rows2), cell) = t.w.fitted.unwrap();
+    assert_eq!(cell, cells(&t, 2 * px), "the cells at twice the font size");
+    assert!(cols2 < cols && rows2 < rows, "fewer of them fit");
+
+    t.event(MAIN, key(u32::from(b'='), true, false), &mut ctx);
+    assert_eq!(t.px, px + 1, "zoom steps the 100% size");
+    assert_eq!(t.w.fitted.unwrap().1, cells(&t, 2 * (px + 1)));
+}
+
+#[test]
+fn the_window_opens_at_80_by_24_cells_of_the_text_size() {
+    let nowhere = Path::new(NOWHERE).join("state.toml");
+    for pct in [100, 200] {
+        let t = Terminal::with_state(Settings::default(), None, nowhere.clone(), pct);
+        let m = termgrid::metrics(&t.font, text_px(t.settings.size_px, pct), 1);
+        let (w, h) = t.initial_size();
+        assert!(w >= 80 * m.cell_w && h >= 24 * m.cell_h, "{pct}%: {w}x{h}");
+    }
+}
+
+#[test]
 fn the_text_size_from_the_file_stays_in_the_zoom_range() {
     let dir = tempfile::tempdir().unwrap();
     let mut t = in_dir(
@@ -1762,7 +1797,12 @@ fn without_the_compositor_s_tab_groups_the_tabs_stay_below_the_toolbar() {
         tab_position: TabPosition::Caption,
         ..Settings::default()
     };
-    let mut t = Terminal::with_state(settings, Some(argv(&["cat"])), nowhere.join("state.toml"));
+    let mut t = Terminal::with_state(
+        settings,
+        Some(argv(&["cat"])),
+        nowhere.join("state.toml"),
+        100,
+    );
     t.start(repriseapp::Waker::noop());
     assert!(!t.w.caption);
 }

@@ -667,7 +667,7 @@ suspend_after = 0            # run [power] standby
 #                            # Explorer, Notepad, Network
 #                            # Connections, Printers, Volume Control, Software Updates, User
 #                            # Accounts, Bluetooth Devices and Safely Remove Hardware, Notepad's
-#                            # text, and GTK's and Qt's text (text-scaling-factor, the qt6ct font).
+#                            # and Terminal's text, and GTK's and Qt's text (text-scaling-factor, the qt6ct font).
 #                            # The desktop's labels grow and its grid with them; icons keep
 #                            # 32 px, and one placed by hand keeps its place on the wider grid.
 #                            # Other programs' lists and bars keep their size.

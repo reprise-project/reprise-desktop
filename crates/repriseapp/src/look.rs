@@ -243,6 +243,12 @@ pub fn start_text() -> Rc<TextRenderer> {
     text_for(&start_theme().fonts)
 }
 
+/// [`Ctx::text_size`](crate::Ctx::text_size) as the program starts, for an [`App::initial_size`]
+/// asked before any event.
+pub fn start_text_size() -> u32 {
+    Look::from_env().text_size
+}
+
 /// [`Ctx::forms`](crate::Ctx::forms) as the program starts, for an [`App::initial_size`] asked
 /// before any event.
 pub fn start_forms() -> Theme {
