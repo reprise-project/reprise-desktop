@@ -70,6 +70,7 @@ fn list_cell(u: TextUnits) -> Cell {
     Cell {
         w: u.len(COL_W),
         h: u.len(ROW_H),
+        icon: list_icon_px(u),
     }
 }
 
@@ -368,6 +369,18 @@ pub fn size_text(bytes: u64) -> String {
 /// List and Details' icon column at text size `u`, the size a host fetches `Entry::icon` at.
 pub fn list_icon_px(u: TextUnits) -> i32 {
     u.len(ICON_PX)
+}
+
+/// The sizes a host fetches a listing's icons at for text size `u`
+/// ([`crate::icontheme::ListingIcons::sizes`]): List and Details' ([`list_icon_px`]), Icons and
+/// Thumbnails' ([`crate::controls::iconview::grid_icon_px`]), then Tiles' 48 px.
+pub fn listing_px(u: TextUnits) -> [i32; 3] {
+    let tiles = crate::icontheme::LISTING_PX[2];
+    [
+        list_icon_px(u),
+        crate::controls::iconview::grid_icon_px(u),
+        tiles,
+    ]
 }
 
 /// The icon List and Details draw for `e` in an icon column `slot` px wide: the 32 px one once

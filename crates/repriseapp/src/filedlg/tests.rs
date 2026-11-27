@@ -15,7 +15,7 @@ fn listed(
         false,
         picks(folders_only, None, keep),
         icons.scale(),
-        16,
+        reprisekit::icontheme::LISTING_PX,
     );
     listing(folders, id, r, icons, false).folder
 }
@@ -1443,8 +1443,8 @@ fn a_new_draw_scale_swaps_the_list_icons_without_listing_again() {
 }
 
 /// At 125% and 150% text List and Details' icons are fetched at their grown column, 20 and
-/// 25 px, without listing the folder again: theme icons at once, icon files once their thread
-/// decodes them. A listing made there wears them too.
+/// 25 px, and Icons' at 41 and 49, without listing the folder again: theme icons at once, icon
+/// files once their thread decodes them. A listing made there wears them too.
 #[test]
 fn a_text_size_change_fetches_the_list_icons_at_the_grown_column() {
     const OWN: u32 = 0xff80_20a0;
@@ -1464,13 +1464,16 @@ fn a_text_size_change_fetches_the_list_icons_at_the_grown_column() {
     let list = |dlg: &FileDlg, name: &str| icon_sizes(entry(dlg, name))[0];
     assert_eq!(list(&dlg, "notes.txt"), Some((1, 16, TEXT)));
 
-    for (u, side) in [(TextUnits::new(14, 11), 20), (TextUnits::new(17, 11), 25)] {
+    for (u, side, grid) in [
+        (TextUnits::new(14, 11), 20, 41),
+        (TextUnits::new(17, 11), 25, 49),
+    ] {
         dlg.set_text(u);
         h.follow_scale(&mut dlg, 1, &mut icons, &wake);
         assert_eq!(list(&dlg, "notes.txt"), Some((1, side, TEXT)));
         settle_thumbs(&mut h, &mut dlg, &mut icons);
         assert_eq!(list(&dlg, "sub"), Some((1, side, OWN)), "the icon file");
-        assert_eq!(icon_sizes(entry(&dlg, "sub"))[1], Some((1, 32, OWN)));
+        assert_eq!(icon_sizes(entry(&dlg, "sub"))[1], Some((1, grid, OWN)));
     }
     assert_eq!(
         h.pictures.generation, listing,
@@ -1506,7 +1509,13 @@ fn a_late_listing_lands_with_the_icons_its_thread_read() {
     let mut h = host_in(&dir);
     let mut dlg = open_dlg(&mut h);
     let id = h.folder.unwrap();
-    let read = read(dir.clone(), false, |_: &Item| true, icons.scale(), 16);
+    let read = read(
+        dir.clone(),
+        false,
+        |_: &Item| true,
+        icons.scale(),
+        reprisekit::icontheme::LISTING_PX,
+    );
     std::fs::remove_file(dir.join("sub/.directory")).unwrap();
     std::fs::remove_file(&own).unwrap();
     let (answer, gate) = std::sync::mpsc::channel::<()>();
@@ -1540,7 +1549,13 @@ fn a_relist_of_a_folder_being_read_waits_on_that_read() {
     let mut dlg = open_dlg(&mut h);
     let id = h.folder.unwrap();
     let in_flight = |h: &mut Host, key: ReadKey| {
-        let before = read(t.clone(), false, |_: &Item| true, 1, 16);
+        let before = read(
+            t.clone(),
+            false,
+            |_: &Item| true,
+            1,
+            reprisekit::icontheme::LISTING_PX,
+        );
         h.reading = Some((key, Job::spawn(None, move || before)));
     };
     let names =

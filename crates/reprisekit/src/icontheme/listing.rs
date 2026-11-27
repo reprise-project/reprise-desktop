@@ -8,11 +8,6 @@ use std::sync::Arc;
 /// Thumbnails, Tiles.
 pub const LISTING_PX: [i32; 3] = [16, 32, 48];
 
-/// [`LISTING_PX`] with List and Details' icon `list` px, their icon column grown with the text.
-pub fn listing_px(list: i32) -> [i32; 3] {
-    [list, LISTING_PX[1], LISTING_PX[2]]
-}
-
 /// One icon name's canvases at [`ListingIcons::sizes`].
 pub type ListingSizes = [Option<std::rc::Rc<Canvas>>; 3];
 
@@ -22,8 +17,8 @@ pub type ListingSizes = [Option<std::rc::Rc<Canvas>>; 3];
 pub struct ListingIcons {
     by_name: HashMap<String, ListingSizes>,
     device: i32,
-    /// List and Details' icon size; 0 is [`LISTING_PX`]'s.
-    list: i32,
+    /// The sizes at the text size; None is [`LISTING_PX`].
+    px: Option<[i32; 3]>,
     /// The sizes theme icons are fetched at; None is all three. Icon files always hold all three.
     drawn: Option<[bool; 3]>,
     /// Fetched with [`IconCache::get_unread`] ([`ListingIcons::unread`]).
@@ -42,9 +37,10 @@ impl ListingIcons {
         }
     }
 
-    /// List and Details' icons fetched at `list` px ([`listing_px`]).
-    pub fn with_list(self, list: i32) -> ListingIcons {
-        ListingIcons { list, ..self }
+    /// Icons fetched at `px`, [`LISTING_PX`] grown with the text.
+    pub fn with_sizes(self, px: [i32; 3]) -> ListingIcons {
+        let px = Some(px);
+        ListingIcons { px, ..self }
     }
 
     /// Theme icons fetched only at the sizes a view draws, by index into
@@ -108,18 +104,15 @@ impl ListingIcons {
 
     /// The sizes each name is fetched at, in logical px.
     pub fn sizes(&self) -> [i32; 3] {
-        match self.list {
-            0 => LISTING_PX,
-            list => listing_px(list),
-        }
+        self.px.unwrap_or(LISTING_PX)
     }
 
-    /// Fetches List and Details' icons at `list` px from now on; [`ListingIcons::refetch`]
-    /// swaps the names already held. False when they already were.
-    pub fn set_list(&mut self, list: i32) -> bool {
-        let old = self.sizes()[0];
-        self.list = list;
-        old != list
+    /// Fetches icons at `px` from now on; [`ListingIcons::refetch`] swaps the names already
+    /// held. False when they already were.
+    pub fn set_sizes(&mut self, px: [i32; 3]) -> bool {
+        let old = self.sizes();
+        self.px = Some(px);
+        old != px
     }
 
     pub fn get(&mut self, cache: &mut IconCache, name: &str) -> ListingSizes {

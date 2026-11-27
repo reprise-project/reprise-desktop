@@ -27,15 +27,21 @@ pub enum Ground {
     Window,
 }
 
+/// A grid cell, `icon` the edge of the icon drawn in it, all in logical px.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
     pub w: i32,
     pub h: i32,
+    pub icon: i32,
 }
 
 impl Cell {
     pub const fn square(n: i32) -> Cell {
-        Cell { w: n, h: n }
+        Cell {
+            w: n,
+            h: n,
+            icon: ICON_PX,
+        }
     }
 
     /// The desktop's cell with the label's room grown by `u`; the icon keeps its size and place.
@@ -43,11 +49,33 @@ impl Cell {
         Cell {
             w: u.len(CELL),
             h: LABEL_TOP + u.len(CELL - LABEL_TOP),
+            icon: ICON_PX,
         }
+    }
+
+    /// A folder view's Icons cell at text `u`: [`Cell::grown`] with its icon grown too
+    /// ([`grid_icon_px`]), the label below it.
+    pub fn folder(u: TextUnits) -> Cell {
+        let icon = grid_icon_px(u);
+        Cell {
+            h: Cell::grown(u).h + icon - ICON_PX,
+            icon,
+            ..Cell::grown(u)
+        }
+    }
+
+    /// The label's top, 4 px under the icon.
+    pub fn label_top(self) -> i32 {
+        ICON_TOP + self.icon + 4
     }
 }
 
-/// The label's top in its cell, 4 px under the icon.
+/// A folder view's Icons and Thumbnails icon at text `u`, the size a host fetches it at: grown
+/// with the text as far as the cell widens ([`TextUnits::icon_within`]).
+pub fn grid_icon_px(u: TextUnits) -> i32 {
+    u.icon_within(ICON_PX, u.len(CELL) - CELL)
+}
+
 const LABEL_TOP: i32 = ICON_TOP + ICON_PX + 4;
 
 pub fn rows_per_column(cell: Cell, area: Rect) -> usize {
@@ -333,10 +361,10 @@ pub(crate) const EDIT_WRAP_INSET: i32 = 8;
 /// How much wider than its widest line a rename box is.
 pub(crate) const EDIT_BOX_PAD: i32 = 12;
 
-/// The rename box for `edit` in a `w` px wide cell at `theme.scale`: text wrapped and
+/// The rename box for `edit` in `cell` at `theme.scale`, under its icon: text wrapped and
 /// centred in a white box with a 1 px border, never narrower than 30 px.
-pub fn edit_layout(theme: &Theme, text: &TextRenderer, edit: &TextEdit, w: i32) -> EditLayout {
-    edit_layout_at(theme.scale.max(1), theme.fonts.size_px, text, edit, w)
+pub fn edit_layout(theme: &Theme, text: &TextRenderer, edit: &TextEdit, cell: Cell) -> EditLayout {
+    edit_layout_at(theme.scale.max(1), theme.fonts.size_px, text, edit, cell)
 }
 
 /// [`edit_layout`] at scale `s` with `font` px text.
@@ -345,9 +373,9 @@ pub fn edit_layout_at(
     font: u32,
     text: &TextRenderer,
     edit: &TextEdit,
-    w: i32,
+    cell: Cell,
 ) -> EditLayout {
-    let size = w * s;
+    let size = cell.w * s;
     let step = font as i32 + 2 * s;
     let ranges = wrap_edit(text, &edit.text, size - EDIT_WRAP_INSET * s, font);
     let widths: Vec<i32> = ranges
@@ -358,7 +386,7 @@ pub fn edit_layout_at(
     let rect_x = (size + 2 * s - widest) / 2 - 2 * s;
     let rect = Rect::new(
         rect_x - 3 * s,
-        (ICON_TOP + ICON_PX + 3) * s,
+        (cell.label_top() - 1) * s,
         (widest + EDIT_BOX_PAD * s).max(30 * s),
         ranges.len() as i32 * step + 4 * s,
     );
@@ -544,7 +572,7 @@ pub fn draw_cell(
     let s = theme.scale.max(1);
     let size = cell.w * s;
     let extra = rename.map_or(0, |(edit, _)| {
-        let r = edit_layout(theme, text, edit, cell.w).rect;
+        let r = edit_layout(theme, text, edit, cell).rect;
         (-r.x).max(r.right() - size).max(0)
     });
     let mut c = Canvas::new((size + 2 * extra) as u32, (cell.h * s) as u32);
@@ -584,7 +612,7 @@ pub fn draw_cell_at(
     let s = theme.scale.max(1);
     let cs = &theme.colors;
     let size = cell.w * s;
-    let icon_px = ICON_PX * s;
+    let icon_px = cell.icon * s;
     let fallback;
     let icon = match icon {
         Some(i) => i,
@@ -594,7 +622,7 @@ pub fn draw_cell_at(
         }
     };
     let boxed = selected.is_some() && rename.is_none() && {
-        let l = label_layout(text, name, theme.fonts.size_px, s, cell.w, theme.text).rect;
+        let l = label_layout(text, name, theme.fonts.size_px, s, cell, theme.text).rect;
         let r = Rect::new(x0, y0, size, (l.bottom() + 2 * s).min(cell.h * s));
         item::draw_desktop_item(c, &theme.paint(), r)
     };
@@ -610,7 +638,7 @@ pub fn draw_cell_at(
     let ix = (size - icon.width as i32 + 1) / 2;
     c.blit_over(x0 + ix, y0 + ICON_TOP * s, icon);
     if shortcut {
-        draw_shortcut_arrow(c, x0 + ix, y0 + (ICON_TOP + ICON_PX) * s, s);
+        draw_shortcut_arrow(c, x0 + ix, y0 + (ICON_TOP + cell.icon) * s, s);
     }
 
     let font = theme.fonts.size_px;
@@ -618,14 +646,14 @@ pub fn draw_cell_at(
 
     if let Some((own, caret_state)) = rename {
         draw_edit(c, theme, text, own, caret_state, |edit| {
-            let mut lay = edit_layout(theme, text, edit, cell.w);
+            let mut lay = edit_layout(theme, text, edit, cell);
             lay.moved(x0, y0);
             lay
         });
         return;
     }
 
-    let label = label_layout(text, name, font, s, cell.w, theme.text);
+    let label = label_layout(text, name, font, s, cell, theme.text);
     let l = label.rect;
     let rect = Rect::new(x0 + l.x, y0 + l.y, l.width, l.height);
     let (fg, shadow) = match (selected, ground) {
@@ -696,10 +724,10 @@ pub fn label_layout(
     name: &str,
     px: u32,
     s: i32,
-    w: i32,
+    cell: Cell,
     u: TextUnits,
 ) -> LabelLayout {
-    let size = w * s;
+    let size = cell.w * s;
     let step = px as i32 + u.len(2) * s;
     let lines: Vec<LabelLine> = wrap_label(text, name, size - 4 * s, px)
         .into_iter()
@@ -720,7 +748,7 @@ pub fn label_layout(
         .unwrap_or(size / 2);
     let rect = Rect::new(
         x0 - 2 * s,
-        LABEL_TOP * s,
+        cell.label_top() * s,
         x1 - x0 + 4 * s,
         lines.len() as i32 * step + 2 * s,
     );
@@ -1220,7 +1248,8 @@ mod tests {
                 );
                 got.push((format!("{i:?} @{s}"), fnv(&c)));
                 let font = theme.fonts.size_px;
-                let r = label_layout(&t, "Recycle Bin", font, s, CELL, theme.text).rect;
+                let r =
+                    label_layout(&t, "Recycle Bin", font, s, Cell::square(CELL), theme.text).rect;
                 let edge = match i {
                     Interface::Blue => {
                         hil.toward(Color::rgb(0, 0, 0), crate::blue::DESKTOP_LABEL_EDGE)
@@ -1391,7 +1420,7 @@ mod tests {
         assert_eq!(c.get(x0 + wide + 3, y0 + 20), hil);
         assert_eq!(c.get(x0 + wide + 4, y0 + 20), 0);
         assert_eq!(
-            label_layout(&t, name, font, 1, CELL, TextUnits::ONE).rect,
+            label_layout(&t, name, font, 1, Cell::square(CELL), TextUnits::ONE).rect,
             Rect::new(x0, y0, wide + 4, 28)
         );
         let ink = cs.hilight_text.argb();
@@ -1639,7 +1668,7 @@ mod tests {
                         rename,
                         ground,
                     );
-                    let mut lay = edit_layout(&theme, &t, &edit, cell.w);
+                    let mut lay = edit_layout(&theme, &t, &edit, cell);
                     lay.shift(20);
                     let (l, r) = (&lay.lines[0], lay.rect.inset(1));
                     let line_h = px as i32 + theme.text.len(3);
@@ -1678,7 +1707,7 @@ mod tests {
             draw_cell(&theme, &t, "AVA", None, false, None, rename, None)
         };
         let (off, on) = (draw(Caret::Hidden), draw(Caret::Shown));
-        let lay = edit_layout(&theme, &t, &edit, Cell::grown(theme.text).w);
+        let lay = edit_layout(&theme, &t, &edit, Cell::grown(theme.text));
         let pen = &lay.lines[0];
         assert_eq!(
             crate::paint::inverted_bar(&off, &on, theme.colors.window.argb()),
@@ -1693,7 +1722,7 @@ mod tests {
         let t = text();
         let font = theme.fonts.size_px;
         let edit = TextEdit::new("New Text Document", false);
-        let lay = edit_layout(&theme, &t, &edit, CELL);
+        let lay = edit_layout(&theme, &t, &edit, Cell::square(CELL));
         assert_eq!(lay.lines.len(), 2);
         let (l1, l2) = (&lay.lines[0], &lay.lines[1]);
         assert_eq!((l1.start, l2.start), (0, 9));
@@ -1723,7 +1752,7 @@ mod tests {
             "",
         ] {
             let edit = TextEdit::new(name, false);
-            let lay = edit_layout(&theme, &t, &edit, CELL);
+            let lay = edit_layout(&theme, &t, &edit, Cell::square(CELL));
             let mut next = 0;
             for l in &lay.lines {
                 assert_eq!(
@@ -1761,7 +1790,7 @@ mod tests {
         let t = text();
         let long = "Reasdfghijklmnop";
         let edit = TextEdit::new(long, false);
-        let lay = edit_layout(&theme, &t, &edit, CELL);
+        let lay = edit_layout(&theme, &t, &edit, Cell::square(CELL));
         assert!(lay.rect.right() > CELL, "the box overflows the cell");
         let c = draw_cell(
             &theme,
@@ -1851,7 +1880,11 @@ mod tests {
 
     #[test]
     fn layout_flows_a_non_square_cell() {
-        let cell = Cell { w: 150, h: 17 };
+        let cell = Cell {
+            w: 150,
+            h: 17,
+            icon: ICON_PX,
+        };
         let area = Rect::new(0, 0, 450, 51); // 3 rows per column, 3 columns
         assert_eq!(rows_per_column(cell, area), 3);
         assert_eq!(columns(cell, area), 3);
@@ -1878,7 +1911,14 @@ mod tests {
     fn saved_positions_survive_the_grid_growing() {
         use std::collections::BTreeMap;
         let big = Cell::grown(TextUnits::new(22, 11));
-        assert_eq!(big, Cell { w: 150, h: 112 });
+        assert_eq!(
+            big,
+            Cell {
+                w: 150,
+                h: 112,
+                icon: ICON_PX
+            }
+        );
         assert_eq!(Cell::grown(TextUnits::default()), Cell::square(CELL));
         for c in 0..12 {
             for r in 0..9 {
@@ -1938,6 +1978,63 @@ mod tests {
             "the label stands {} rows at 200%, {} at 100%",
             label(&c),
             label(&small)
+        );
+    }
+
+    /// A folder view's Icons cell grows its icon with the text, 64 px at 200%, the label and the
+    /// rename box moving down by the icon's growth; at 100% it is the desktop's cell.
+    #[test]
+    fn a_folder_cell_grows_its_icon_and_moves_its_label_under_it() {
+        assert_eq!(Cell::folder(TextUnits::ONE), Cell::square(CELL));
+        let u = TextUnits::new(22, 11);
+        assert_eq!(grid_icon_px(u), 64);
+        let (desk, folder) = (Cell::grown(u), Cell::folder(u));
+        assert_eq!(
+            folder,
+            Cell {
+                h: desk.h + 32,
+                icon: 64,
+                ..desk
+            }
+        );
+        let t = text();
+        let theme = Theme::default().with_text_size(200);
+        let font = theme.fonts.size_px;
+        let label = label_layout(&t, "Notes", font, 1, folder, u).rect;
+        let desk_label = label_layout(&t, "Notes", font, 1, desk, u).rect;
+        assert_eq!(label.y, desk_label.y + 32);
+        let edit = TextEdit::new("Notes", false);
+        let (moved, kept) = (
+            edit_layout(&theme, &t, &edit, folder),
+            edit_layout(&theme, &t, &edit, desk),
+        );
+        assert_eq!(moved.rect.y, kept.rect.y + 32);
+        let mut icon = Canvas::new(64, 64);
+        icon.fill_rect(icon.bounds(), Color::rgb(0, 0, 255));
+        let mut c = Canvas::new(folder.w as u32, folder.h as u32);
+        draw_cell_at(
+            &mut c,
+            (0, 0),
+            folder,
+            &theme,
+            &t,
+            "Notes",
+            Some(&icon),
+            false,
+            None,
+            None,
+            Ground::Window,
+        );
+        let blue = Color::rgb(0, 0, 255).argb();
+        let rows: Vec<i32> = (0..folder.h)
+            .filter(|&y| (0..folder.w).any(|x| c.get(x, y) == blue))
+            .collect();
+        assert_eq!((rows[0], rows.len()), (ICON_TOP, 64), "the icon's rows");
+        let ink = theme.colors.window_text.argb();
+        let first_ink = (0..folder.h).find(|&y| (0..folder.w).any(|x| c.get(x, y) == ink));
+        assert!(
+            first_ink.is_some_and(|y| y >= label.y),
+            "the label inks under the icon"
         );
     }
 
@@ -2111,7 +2208,7 @@ mod tests {
                 one.fade(1, 2);
                 assert!(holds(&img, &one, (0, k as i32 * cell.h)), "{pct}%: {k}");
             }
-            let label = label_layout(&t, name, theme.fonts.size_px, 1, cell.w, theme.text);
+            let label = label_layout(&t, name, theme.fonts.size_px, 1, cell, theme.text);
             assert!(
                 label.lines.iter().all(|l| l.width <= cell.w - 4),
                 "{pct}%: wrapped in the grown width"
@@ -2271,7 +2368,7 @@ mod tests {
                 c.pixels
             };
             let geom = |t: &str| {
-                let lay = edit_layout(&theme, &text, &TextEdit::new(t, false), cell.w);
+                let lay = edit_layout(&theme, &text, &TextEdit::new(t, false), cell);
                 let l = &lay.lines[0];
                 let line = Rect::new(lay.rect.x + 1, l.y, lay.rect.width - 2, line_h);
                 (l.x, line, l.y..l.y + line_h)
@@ -2337,7 +2434,7 @@ mod tests {
                         c.pixels
                     };
                     for t in ["8605", "gjpqy", "8605 gjpqy", "gjpqy 8605"] {
-                        let lay = edit_layout(&theme, &text, &TextEdit::new(t, false), w);
+                        let lay = edit_layout(&theme, &text, &TextEdit::new(t, false), cell);
                         let r = lay.rect;
                         let room = Rect::new(r.x + 1, r.y + 1, r.width - 2, r.height - 2);
                         let plain = draw(t, 0..0);

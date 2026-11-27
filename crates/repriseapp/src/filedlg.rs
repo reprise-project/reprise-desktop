@@ -246,29 +246,28 @@ struct Read {
     path: PathBuf,
     rows: Vec<Row>,
     icons: ReadIcons,
-    /// List and Details' icon size the icon files were decoded at.
-    list: i32,
+    /// The sizes the icon files were decoded at ([`shellview::listing_px`]).
+    sizes: [i32; 3],
 }
 
 /// Folder `path`'s rows, hidden entries (unless `hidden`) and those `keep` refuses left out, with
-/// their icons read at `scale` and List and Details' at `list` px. Runs on a listing's thread: any
+/// their icons read at `scale` and `sizes`. Runs on a listing's thread: any
 /// of it may sit on a mount that never answers.
 fn read(
     path: PathBuf,
     hidden: bool,
     keep: impl FnMut(&Item) -> bool,
     scale: i32,
-    list: i32,
+    sizes: [i32; 3],
 ) -> Read {
     let globs = reprisefs::apps::mime_globs();
     let rows = reprisefs::listing::dialog_rows(&path, &globs, hidden, keep);
-    let sizes = icontheme::listing_px(list);
     let icons = ReadIcons::read(rows.iter().map(|r| &r.item), sizes, scale);
     Read {
         path,
         rows,
         icons,
-        list,
+        sizes,
     }
 }
 
@@ -282,7 +281,7 @@ struct ReadKey {
     filter: usize,
     hidden: bool,
     scale: i32,
-    list: i32,
+    sizes: [i32; 3],
 }
 
 impl ReadKey {
@@ -294,7 +293,7 @@ impl ReadKey {
             filter: dlg.filter(),
             hidden: dlg.show_hidden(),
             scale,
-            list: shellview::list_icon_px(dlg.text()),
+            sizes: shellview::listing_px(dlg.text()),
         }
     }
 }
@@ -331,7 +330,7 @@ fn listing(
         path,
         rows,
         icons: read_icons,
-        list,
+        sizes,
     } = read;
     read_icons.put(icons);
     let specials = reprisefs::places::special_folders();
@@ -345,7 +344,7 @@ fn listing(
             }),
         })
         .collect();
-    let mut shared = ListingIcons::default().with_list(list).unread();
+    let mut shared = ListingIcons::default().with_sizes(sizes).unread();
     let mut aliases: Vec<(String, OsString)> = Vec::new();
     let mut pictures = Vec::new();
     let entries = rows
@@ -978,9 +977,9 @@ impl Host {
                 self.restyling = Some(start(path, key.hidden));
             }
         }
-        let list = shellview::list_icon_px(dlg.text());
+        let sizes = shellview::listing_px(dlg.text());
         self.list_icons
-            .follow(scale, list, icons, dlg.entries_mut(), wake);
+            .follow(scale, sizes, icons, dlg.entries_mut(), wake);
         let p = &mut self.pictures;
         if p.scale != scale {
             p.scale = scale;
@@ -1553,7 +1552,7 @@ impl Host {
         };
         let key = ReadKey::of(dlg, id, icons.scale());
         let start = {
-            let (keep, scale, list) = (keep.clone(), key.scale, key.list);
+            let (keep, scale, sizes) = (keep.clone(), key.scale, key.sizes);
             let (folders_only, typed) = (key.folders_only, key.typed.clone());
             let wake = self.wake.clone();
             move |path: &Path, hidden: bool| {
@@ -1561,7 +1560,9 @@ impl Host {
                     path.to_path_buf(),
                     picks(folders_only, typed.clone(), keep.clone()),
                 );
-                Job::spawn(wake.as_ref(), move || read(path, hidden, keep, scale, list))
+                Job::spawn(wake.as_ref(), move || {
+                    read(path, hidden, keep, scale, sizes)
+                })
             }
         };
         let job = match self.reading.take() {

@@ -1033,7 +1033,7 @@ fn a_thumbnails_drag_image_carries_the_picture() {
 /// At a larger text size an icon mode's image is made of the dragged whole grown icon cells inside the grown square.
 #[test]
 fn the_drag_image_grows_with_the_text_size() {
-    const EXPECTED_CELL: [(u32, (i32, i32)); 2] = [(150, (116, 95)), (200, (150, 112))];
+    const EXPECTED_CELL: [(u32, (i32, i32)); 2] = [(150, (116, 112)), (200, (150, 144))];
     let modes = [Mode::Icons, Mode::Tiles, Mode::Thumbnails];
     for (pct, (w, h)) in EXPECTED_CELL {
         for mode in modes {

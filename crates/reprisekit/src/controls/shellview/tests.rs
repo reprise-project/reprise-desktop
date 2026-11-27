@@ -972,7 +972,7 @@ fn a_press_in_the_rename_box_finds_the_byte_under_it_in_every_mode() {
                     px,
                     &text,
                     &sv.edit.as_ref().unwrap().1,
-                    cell.width,
+                    shellgrid::icons_cell(cell, lay.controls.text),
                 );
                 (cell.x + el.lines[0].x, cell.y + el.lines[0].y + 2)
             }

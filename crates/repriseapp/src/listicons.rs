@@ -204,18 +204,18 @@ impl ListIcons {
         shellview::swap_icons(entries, &swaps);
     }
 
-    /// The window draws at `scale`, `cache`'s scale, with List and Details' icons `list` px
-    /// ([`shellview::list_icon_px`]): `entries` wear its theme icons now, and the icon files
+    /// The window draws at `scale`, `cache`'s scale, with icons at `sizes`
+    /// ([`shellview::listing_px`]): `entries` wear its theme icons now, and the icon files
     /// `cache` lacks decode on a thread that fires `wake` ([`ListIcons::take`]).
     pub fn follow(
         &mut self,
         scale: i32,
-        list: i32,
+        sizes: [i32; 3],
         cache: &mut IconCache,
         entries: &mut [Entry],
         wake: &Waker,
     ) {
-        let relisted = self.icons.set_list(list);
+        let relisted = self.icons.set_sizes(sizes);
         if std::mem::replace(&mut self.scale, scale) == scale && !relisted {
             return;
         }

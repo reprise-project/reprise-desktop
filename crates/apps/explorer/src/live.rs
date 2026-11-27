@@ -102,9 +102,14 @@ impl Explorer {
     /// fetches the chrome again and re-lists. A new text size rebuilds the task pane and fetches
     /// the toolbar's and the Folders tree's icons at their size.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
-        let list = shellview::list_icon_px(ctx.theme.text);
-        self.list_icons
-            .follow(scale, list, &mut ctx.icons, &mut self.sv.entries, &ctx.wake);
+        let sizes = shellview::listing_px(ctx.theme.text);
+        self.list_icons.follow(
+            scale,
+            sizes,
+            &mut ctx.icons,
+            &mut self.sv.entries,
+            &ctx.wake,
+        );
         self.draw_list_icons(ctx);
         let theme = std::sync::Arc::downgrade(&ctx.icons.theme());
         let rethemed = (self.drawn_theme.replace(theme.clone())).is_some_and(|t| !t.ptr_eq(&theme));
