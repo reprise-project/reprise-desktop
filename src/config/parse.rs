@@ -9,12 +9,12 @@ use crate::windowrules::{WindowRule, WindowState};
 use repriseconf::config::file::{
     FileConfig, FileKeybind, FileMenuChange, FileMenuEntry, FileQuickLaunch, FileWindowRule,
 };
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
-const UNREADABLE_NOTICE: &str = "Reprise could not read config.toml and started with the \
-                                 defaults. `journalctl --user -t reprise` names the error.";
-const STARTED_WITH_DEFAULTS: &str = "Reprise started with the defaults.";
-pub(crate) const KEEPS_SETTINGS: &str = "Reprise keeps the settings from before.";
+pub(crate) fn keeps_settings() -> String {
+    tr!("misc-config-keeps-settings")
+}
 
 /// A balloon about the config file. A click on an `edit` one opens the file in the text editor.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,7 +171,7 @@ impl Config {
                 log::error!("config {}: {e}; using defaults", path.display());
                 return (
                     Config::default(),
-                    Some(Notice::plain(UNREADABLE_NOTICE.to_string())),
+                    Some(Notice::plain(tr!("misc-config-unreadable-at-start"))),
                     toml::Table::new(),
                 );
             }
@@ -196,7 +196,11 @@ impl Config {
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
-                let notice = broken_notice(&path, &parse_error(&text, &e), STARTED_WITH_DEFAULTS);
+                let notice = broken_notice(
+                    &path,
+                    &parse_error(&text, &e),
+                    &tr!("misc-config-started-defaults"),
+                );
                 (Config::default(), Some(notice), toml::Table::new())
             }
         }
@@ -341,21 +345,17 @@ pub(crate) fn dropped_notice(dropped: &[repriseconf::config::DroppedKey]) -> Str
     };
     let (old, reset) = (keys_where(true), keys_where(false));
     let what = if reset.is_empty() {
-        "kept their previous values".to_string()
+        tr!("misc-config-dropped-kept")
     } else if old.is_empty() {
-        "used the defaults there".to_string()
+        tr!("misc-config-dropped-reset")
     } else {
-        format!(
-            "kept the previous values of {}; {} used the defaults",
-            old.join(", "),
-            reset.join(", ")
+        tr!(
+            "misc-config-dropped-mixed",
+            kept = old.join(", "),
+            reset = reset.join(", ")
         )
     };
-    format!(
-        "Reprise ignored {} in config.toml and {what}. \
-         `journalctl --user -t reprise` names the errors.",
-        keys.join(", ")
-    )
+    tr!("misc-config-dropped", keys = keys.join(", "), what = what)
 }
 
 /// Why a config file was refused whole: where toml stopped reading it (1-based line, column in
@@ -401,13 +401,20 @@ fn position(text: &str, at: usize) -> (usize, usize) {
 pub(crate) fn broken_notice(path: &Path, e: &ParseError, then: &str) -> Notice {
     let name = file_name(path);
     let at = match e.at {
-        Some((line, column)) => format!(" line {line}, column {column}"),
+        Some((line, column)) => tr!(
+            "misc-config-error-at",
+            line = line.to_string(),
+            column = column.to_string()
+        ),
         None => String::new(),
     };
     Notice {
-        body: format!(
-            "{name}{at}: {}.\n{then} Click here to open the file.",
-            e.message.trim_end_matches('.')
+        body: tr!(
+            "misc-config-broken",
+            name = name.as_ref(),
+            at = at,
+            message = e.message.trim_end_matches('.'),
+            then = then
         ),
         edit: true,
     }
@@ -415,10 +422,11 @@ pub(crate) fn broken_notice(path: &Path, e: &ParseError, then: &str) -> Notice {
 
 /// The notice for the config file at `path`, there but unreadable with `e`, on a reload.
 pub(crate) fn unreadable_notice(path: &Path, e: &std::io::Error) -> Notice {
-    Notice::plain(format!(
-        "Reprise could not read {}: {}.\n{KEEPS_SETTINGS}",
-        file_name(path),
-        e.kind()
+    Notice::plain(tr!(
+        "misc-config-unreadable",
+        file = file_name(path).as_ref(),
+        reason = e.kind().to_string(),
+        then = keeps_settings()
     ))
 }
 

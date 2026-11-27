@@ -1,4 +1,5 @@
 use super::Action;
+use reprisekit::tr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuickLaunchEntry {
@@ -8,19 +9,27 @@ pub struct QuickLaunchEntry {
 }
 
 pub(super) fn default_quicklaunch() -> Vec<QuickLaunchEntry> {
-    let entry = |label: &str, icon: &str, action: Action| QuickLaunchEntry {
-        label: label.into(),
+    let entry = |label: String, icon: &str, action: Action| QuickLaunchEntry {
+        label,
         icon: Some(icon.into()),
         action,
     };
     vec![
         entry(
-            "Launch Web Browser",
+            tr!("misc-quicklaunch-browser"),
             "web-browser",
             Action::Spawn("xdg-open https://duckduckgo.com/".into()),
         ),
-        entry("Show Desktop", "user-desktop", Action::ShowDesktop),
-        entry("Terminal", "utilities-terminal", Action::Terminal),
+        entry(
+            tr!("misc-quicklaunch-show-desktop"),
+            "user-desktop",
+            Action::ShowDesktop,
+        ),
+        entry(
+            tr!("misc-quicklaunch-terminal"),
+            "utilities-terminal",
+            Action::Terminal,
+        ),
     ]
 }
 

@@ -547,3 +547,74 @@ location-using =
         [1] { $one } is using your location
        *[other] { $rest } and { $last } are using your location
     }
+
+## Accessibility aids (StickyKeys, SlowKeys, MouseKeys)
+
+misc-aid-sticky-shortcut = Pressing Shift five times
+misc-aid-slow-shortcut = Holding the right Shift key for eight seconds
+misc-aid-mouse-shortcut = Left Alt+left Shift+Num Lock
+misc-aid-sticky-what = Shift, Ctrl, Alt and the Super key work one key at a time.
+misc-aid-slow-what = A key counts only once it has been held down for a moment.
+misc-aid-mouse-what = The keypad moves the pointer. Hold Ctrl to go faster or Shift to creep.
+# $what is the aid's description, $keys the shortcut that turns it off
+misc-aid-on-body-shortcut = { $what } { $keys } turns it off.
+misc-aid-off-body-shortcut = { $keys } turns it on again.
+misc-aid-off-body-settings = Click here to turn it on again in Settings.
+misc-aid-on-title = { $name } is on
+misc-aid-off-title = { $name } is off
+# $keys is a comma-separated list of modifier names
+misc-sticky-tip-held = Held for the next key: { $keys }
+misc-sticky-tip-locked = Locked: { $keys }
+misc-mousekeys-button-left = left
+misc-mousekeys-button-middle = middle
+misc-mousekeys-button-right = right
+misc-mousekeys-tip =
+    MouseKeys
+    The keys click the { $button } button
+misc-mousekeys-tip-held = The { $button } button is held down
+
+## Keyboard shortcuts taken
+
+misc-shortcuts-taken-someone = A program
+misc-shortcuts-taken-title = { $name } took the keyboard shortcuts
+misc-shortcuts-taken-body = Super+Shift+Escape gives them back.
+
+## Debug overlay
+
+misc-debug-renders = Renders/s
+misc-debug-cpu-render = CPU/render
+misc-debug-flip-interval = Flip interval
+misc-debug-handoff-commit = Handoff + commit
+misc-debug-damage = Damage
+misc-debug-clients = Clients
+misc-debug-windows = Windows
+misc-debug-surfaces = Surfaces
+misc-debug-memory = Memory
+
+## Config file notices
+
+misc-config-notice-title = Configuration
+misc-config-keeps-settings = Reprise keeps the settings from before.
+misc-config-started-defaults = Reprise started with the defaults.
+misc-config-unreadable-at-start = Reprise could not read config.toml and started with the defaults. `journalctl --user -t reprise` names the error.
+misc-config-error-at = { " " }line { $line }, column { $column }
+# $at is misc-config-error-at or empty, $then says what Reprise runs with
+misc-config-broken =
+    { $name }{ $at }: { $message }.
+    { $then } Click here to open the file.
+# $reason is the I/O error kind
+misc-config-unreadable =
+    Reprise could not read { $file }: { $reason }.
+    { $then }
+misc-config-dropped-kept = kept their previous values
+misc-config-dropped-reset = used the defaults there
+misc-config-dropped-mixed = kept the previous values of { $kept }; { $reset } used the defaults
+misc-config-dropped = Reprise ignored { $keys } in config.toml and { $what }. `journalctl --user -t reprise` names the errors.
+misc-quicklaunch-browser = Launch Web Browser
+misc-quicklaunch-show-desktop = Show Desktop
+misc-quicklaunch-terminal = Terminal
+
+## X11
+
+misc-xwayland-down-title = X11 programs cannot run
+misc-xwayland-down-body = Xwayland would not start. Programs that need X11 will not open until you log on again.

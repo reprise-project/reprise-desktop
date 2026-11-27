@@ -15,6 +15,8 @@ use smithay::{
     utils::{Logical, Point},
 };
 
+use reprisekit::tr;
+
 use crate::compositor::State;
 use crate::config::AccessibilityConfig;
 use crate::input::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
@@ -388,16 +390,14 @@ pub fn shown(mk: &MouseKeysHost) -> bool {
 
 pub fn tip(mk: &MouseKeysHost) -> String {
     let name = |b: u32| match b {
-        BTN_MIDDLE => "middle",
-        BTN_RIGHT => "right",
-        _ => "left",
+        BTN_MIDDLE => tr!("misc-mousekeys-button-middle"),
+        BTN_RIGHT => tr!("misc-mousekeys-button-right"),
+        _ => tr!("misc-mousekeys-button-left"),
     };
-    let mut tip = format!(
-        "MouseKeys\nThe keys click the {} button",
-        name(mk.model.pick())
-    );
+    let mut tip = tr!("misc-mousekeys-tip", button = name(mk.model.pick()));
     if let Some(b) = mk.model.held() {
-        tip += &format!("\nThe {} button is held down", name(b));
+        tip += "\n";
+        tip += &tr!("misc-mousekeys-tip-held", button = name(b));
     }
     tip
 }

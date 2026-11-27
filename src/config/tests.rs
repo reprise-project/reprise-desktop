@@ -742,7 +742,7 @@ fn a_broken_file_notice_names_the_file_line_column_and_message() {
     let e = parse_error(text, "");
     assert_eq!(e.at, Some((3, 2)));
     assert_eq!(
-        broken_notice(path, &e, KEEPS_SETTINGS).body,
+        broken_notice(path, &e, &keeps_settings()).body,
         "config.toml line 3, column 2: duplicate key.\n\
          Reprise keeps the settings from before. Click here to open the file."
     );
@@ -752,7 +752,7 @@ fn a_broken_file_notice_names_the_file_line_column_and_message() {
     );
     assert_eq!(built.at, None, "TOML that builds no config has no place");
     assert_eq!(
-        broken_notice(path, &built, KEEPS_SETTINGS).body,
+        broken_notice(path, &built, &keeps_settings()).body,
         "config.toml: invalid type: integer `1`, expected a string.\n\
          Reprise keeps the settings from before. Click here to open the file."
     );

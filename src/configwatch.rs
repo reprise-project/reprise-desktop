@@ -7,10 +7,11 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use inotify::WatchMask;
+use reprisekit::tr;
 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
 
 use crate::compositor::State;
-use crate::config::{Config, KEEPS_SETTINGS, Notice, StartMenuStyle};
+use crate::config::{Config, Notice, StartMenuStyle, keeps_settings};
 use crate::dirwatch::{DirWatch, Want};
 use crate::window::WindowId;
 
@@ -314,7 +315,11 @@ pub(crate) fn read(path: &Path, base: &toml::Table) -> Read {
         Err(e) => {
             log::error!("config {}: {e}; keeping the old one", path.display());
             let e = crate::config::parse_error(&text, &e);
-            Read::Kept(Some(crate::config::broken_notice(path, &e, KEEPS_SETTINGS)))
+            Read::Kept(Some(crate::config::broken_notice(
+                path,
+                &e,
+                &keeps_settings(),
+            )))
         }
     }
 }
@@ -329,13 +334,16 @@ pub fn announce(state: &mut State, notice: Option<Notice>) {
         let path = std::path::absolute(&state.config_path).unwrap_or(state.config_path.clone());
         let open = editor.map(|e| reprisefs::props::open_file(&path, e, &state.config.terminal));
         match open {
-            Some(Ok(open)) => {
-                crate::notifyview::notice_opening(state, "Configuration", &n.body, open.argv)
-            }
-            _ => crate::notifyview::notice(state, "Configuration", &n.body),
+            Some(Ok(open)) => crate::notifyview::notice_opening(
+                state,
+                &tr!("misc-config-notice-title"),
+                &n.body,
+                open.argv,
+            ),
+            _ => crate::notifyview::notice(state, &tr!("misc-config-notice-title"), &n.body),
         }
     } else {
-        crate::notifyview::notice(state, "Configuration", &n.body);
+        crate::notifyview::notice(state, &tr!("misc-config-notice-title"), &n.body);
     }
 }
 

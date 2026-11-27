@@ -20,6 +20,8 @@ use smithay::{
     },
 };
 
+use reprisekit::tr;
+
 use crate::compositor::State;
 
 #[derive(Debug)]
@@ -154,11 +156,11 @@ impl State {
         let name = (self.window_for_surface(surface).and_then(|w| self.win(w)))
             .map(|w| [w.title(), w.app_id()])
             .and_then(|names| names.into_iter().find(|n| !n.is_empty()))
-            .unwrap_or_else(|| "A program".to_string());
+            .unwrap_or_else(|| tr!("misc-shortcuts-taken-someone"));
         crate::notifyview::notice(
             self,
-            &format!("{name} took the keyboard shortcuts"),
-            "Super+Shift+Escape gives them back.",
+            &tr!("misc-shortcuts-taken-title", name = name),
+            &tr!("misc-shortcuts-taken-body"),
         );
     }
 
