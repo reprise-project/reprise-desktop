@@ -856,6 +856,10 @@ impl NetApp {
                 self.send(nm::Cmd::StopHotspot(p));
                 Reply::redraw()
             }
+            folder::Outcome::Spawn(argv) => Reply {
+                spawn: vec![argv],
+                ..Reply::none()
+            },
         }
     }
 
@@ -1267,6 +1271,7 @@ impl NetApp {
         }
         self.icons_read = true;
         self.vpn_icon = ctx.icons.get("network-vpn", 16);
+        self.folder.wear_icons(|name| ctx.icons.get(name, 16));
         self.folder.refresh(&self.snapshot, self.vpn_icon.clone());
         self.refit = true;
     }
