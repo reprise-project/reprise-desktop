@@ -679,9 +679,10 @@ impl DataSourceHandler for Host {
                 let Some(bytes) = dnd::encode_files(&out.paths, as_mime) else {
                     return;
                 };
+                let files = mime == URI_LIST || mime == reprisefs::dropdata::GNOME_FILES;
                 match names {
                     true => reprisefs::pipe::write_detached(fd.into(), bytes.into()),
-                    false => staged.send(fd.into(), bytes.into()),
+                    false => staged.send(fd.into(), bytes.into(), files),
                 }
                 return;
             }

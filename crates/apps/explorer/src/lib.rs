@@ -462,10 +462,9 @@ pub struct Explorer {
     /// The copies out of compressed folders the puts read, held until no put runs
     /// ([`Explorer::release_put_holds`]).
     pub(crate) put_holds: Vec<reprisefs::archive::Scratch>,
-    /// The copies a compressed folder's Copy put on the clipboard, held while they are on it.
-    pub(crate) clip_scratch: Option<reprisefs::archive::Scratch>,
-    /// The copies the last drop out of a compressed folder took, held until another drop's.
-    pub(crate) dropped_copy: Option<reprisefs::archive::Scratch>,
+    /// The copies a compressed folder's Copy put on the clipboard, held while they are on it and
+    /// handed over when the window closes, as the clipboard history may paste them later.
+    pub(crate) clip_scratch: extracting::ClipCopies,
     /// The scale the main window last drew at ([`Explorer::follow_scale`]).
     drawn_scale: i32,
     /// The size the toolbar's icons were last fetched at
@@ -769,8 +768,7 @@ impl Explorer {
             drag_copies: Vec::new(),
             drag_most: drag::DRAG_MOST,
             put_holds: Vec::new(),
-            clip_scratch: None,
-            dropped_copy: None,
+            clip_scratch: Default::default(),
             drawn_scale: 0,
             toolbar_px: 0,
             drawn_theme: None,
