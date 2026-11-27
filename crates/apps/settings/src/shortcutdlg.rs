@@ -215,7 +215,7 @@ impl ShortcutDialog {
         let checked = if self.program {
             check_program_keys(&keys, &shown)
         } else {
-            check_keys(&keys).map_err(String::from)
+            check_keys(&keys)
         };
         match checked {
             Err(why) if !keys.is_empty() => [why, String::new()],
