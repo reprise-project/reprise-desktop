@@ -422,7 +422,7 @@ fn a_part_the_system_lacks_is_not_offered() {
 }
 
 #[test]
-fn a_read_only_folder_deep_in_the_thumbnails_keeps_only_itself() {
+fn a_read_only_folder_deep_in_the_thumbnails_keeps_its_files_and_the_rest_goes() {
     let t = tempfile::tempdir().unwrap();
     let cache = t.path().join("cache");
     let large = cache.join("thumbnails/large");
@@ -469,4 +469,30 @@ fn a_read_only_folder_deep_in_the_thumbnails_keeps_only_itself() {
         blocks(&large) + blocks(&locked) + blocks(&locked.join("held.png")),
         "a count afterwards finds only what stayed"
     );
+}
+
+#[test]
+fn a_read_only_folder_of_thousands_of_files_is_one_count_and_one_error() {
+    let t = tempfile::tempdir().unwrap();
+    let tree = t.path().join("tool");
+    let locked = tree.join("locked");
+    fs::create_dir_all(&locked).unwrap();
+    for i in 0..3000 {
+        fs::write(locked.join(i.to_string()), b"").unwrap();
+    }
+    fs::write(tree.join("loose"), b"").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    let dir = fs::File::open(t.path()).unwrap();
+    let mut failed = Failures::default();
+    let got = erase_all_at(dir.as_fd(), c"tool", &tree, &mut failed);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    // SAFETY: geteuid cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    got.unwrap();
+    assert_eq!(failed.count, 3000);
+    let first = failed.first.unwrap();
+    assert_eq!(first.kind(), io::ErrorKind::PermissionDenied);
+    assert!(!tree.join("loose").exists());
 }
