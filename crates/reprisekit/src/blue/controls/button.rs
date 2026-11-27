@@ -22,8 +22,8 @@
 //! carries the default button's ring. No frame has a label or a focus ring;
 //! the drawer adds both.
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, stops};
+use crate::blue::{Tone, Variant};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -60,8 +60,8 @@ enum Edge {
 }
 
 /// `v`'s edge and corner radius.
-fn edge(v: Variant) -> (Edge, f64) {
-    match v {
+fn edge(v: Tone) -> (Edge, f64) {
+    match v.variant {
         Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel => (Edge::Lit, ROUND),
         Variant::Sapphire | Variant::Obsidian | Variant::Cobalt | Variant::Carbon => {
             (Edge::Halo, SQUARE)
@@ -81,7 +81,7 @@ const STATES: [State; 6] = [
 
 /// This control's parts in `v`'s colours, painted for a draw at `d`
 /// device px per design px.
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let pixels = STATES.iter().flat_map(|&s| frame(v, s, d).pixels).collect();
     let a = Canvas::from_pixels((W * d) as u32, (H * d) as u32 * STATES.len() as u32, pixels);
     let img = PartImage::new(a, &STATES, Layout::Vertical)
@@ -96,7 +96,7 @@ fn shift(a: Px, b: Px, c: Px) -> Px {
     (255.0, [ch(0), ch(1), ch(2)])
 }
 
-fn frame(v: Variant, s: State, d: i32) -> Canvas {
+fn frame(v: Tone, s: State, d: i32) -> Canvas {
     let p = &v.scheme().push_button;
     let (f, ring): (&Face, bool) = match s {
         State::Hot => (&p.hot, true),
@@ -154,7 +154,7 @@ mod tests {
     }
 
     fn img(v: Variant, d: i32) -> PartImage {
-        parts(v, d).into_iter().next().unwrap().1
+        parts(v.into(), d).into_iter().next().unwrap().1
     }
 
     fn cut(v: Variant, s: State, d: i32) -> Canvas {
@@ -216,7 +216,10 @@ mod tests {
     fn each_state_draws_its_own_frame() {
         for v in Variant::ALL {
             for d in [1, 2] {
-                let h: Vec<u64> = STATES.iter().map(|&s| fnv(&frame(v, s, d))).collect();
+                let h: Vec<u64> = STATES
+                    .iter()
+                    .map(|&s| fnv(&frame(v.into(), s, d)))
+                    .collect();
                 for i in 0..5 {
                     for j in i + 1..5 {
                         let alias = matches!(v, Variant::Slate | Variant::Ember)
@@ -238,8 +241,8 @@ mod tests {
     #[test]
     fn the_hot_ring_shows_down_the_sides() {
         for v in Variant::ALL {
-            let n = frame(v, State::Normal, 1);
-            let h = frame(v, State::Hot, 1);
+            let n = frame(v.into(), State::Normal, 1);
+            let h = frame(v.into(), State::Hot, 1);
             let at = |c: &Canvas, x: i32| c.pixels[(11 * c.width as i32 + x) as usize];
             for x in [2, 72] {
                 assert_ne!(at(&h, x), at(&n, x), "{v:?} column {x}");
@@ -254,7 +257,7 @@ mod tests {
     fn the_border_is_solid_with_no_dark_fringe() {
         let lum = |p: u32| ((p >> 16) & 0xFF) + ((p >> 8) & 0xFF) + (p & 0xFF);
         for v in Variant::ALL {
-            let c = frame(v, State::Normal, 2);
+            let c = frame(v.into(), State::Normal, 2);
             let px = |x: i32, y: i32| c.pixels[(y * c.width as i32 + x) as usize];
             for y in [2, 3] {
                 assert_eq!(px(75, y) >> 24, 255, "{v:?} top border row {y}");

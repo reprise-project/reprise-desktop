@@ -24,7 +24,7 @@ pub(super) mod toolbar;
 mod tooltip;
 mod trackbar;
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::metrics::{
     AddressMetrics, BarMetrics, MenuBarMetrics, MenuTitles, PlacesMetrics, RebarMetrics,
     TaskMetrics, ToolbarMetrics,
@@ -33,7 +33,7 @@ use crate::style::{Part, PartImage, State};
 use crate::theme::Color;
 
 /// A control module's parts and the painter that draws them together at a scale.
-pub(super) type Group = (&'static [Part], fn(Variant, i32) -> Vec<(Part, PartImage)>);
+pub(super) type Group = (&'static [Part], fn(Tone, i32) -> Vec<(Part, PartImage)>);
 
 /// Each control module whose parts are painted at their first use, in file order.
 pub(super) const GROUPS: [Group; 19] = [
@@ -105,25 +105,25 @@ pub(super) const GROUPS: [Group; 19] = [
 ];
 
 /// The ? box `side` design px square at `scale`.
-pub(super) fn help_sized(v: Variant, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn help_sized(v: Tone, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
     help::parts_sized(v, scale, side)
 }
 
 /// The parts cheap enough to paint with the style; which ones depends on the variant.
-pub(super) fn eager(v: Variant) -> Vec<(Part, PartImage)> {
+pub(super) fn eager(v: Tone) -> Vec<(Part, PartImage)> {
     let mut parts = field::parts(v);
     parts.extend(calendar::parts(v));
     parts.extend(tooltip::parts(v));
     parts
 }
 
-pub(super) fn inks(v: Variant) -> Vec<(Part, State, Color)> {
+pub(super) fn inks(v: Tone) -> Vec<(Part, State, Color)> {
     let mut inks = taskpane::inks(v);
     inks.extend(rebar::inks(v));
     inks
 }
 
-pub(super) fn task_metrics(v: Variant) -> TaskMetrics {
+pub(super) fn task_metrics(v: Tone) -> TaskMetrics {
     taskpane::metrics(v)
 }
 
@@ -131,7 +131,7 @@ pub(super) fn bar_metrics() -> BarMetrics {
     explorerbar::metrics()
 }
 
-pub(super) fn rebar_metrics(v: Variant) -> RebarMetrics {
+pub(super) fn rebar_metrics(v: Tone) -> RebarMetrics {
     rebar::metrics(v)
 }
 
@@ -180,12 +180,13 @@ pub(super) fn menubar_metrics() -> MenuBarMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     #[test]
     fn each_group_paints_exactly_the_parts_it_names() {
         for v in Variant::ALL {
             for (names, paint) in GROUPS {
-                let painted: Vec<Part> = paint(v, 1).into_iter().map(|(p, _)| p).collect();
+                let painted: Vec<Part> = paint(v.into(), 1).into_iter().map(|(p, _)| p).collect();
                 assert_eq!(painted.len(), names.len(), "{v:?} {names:?}");
                 assert!(names.iter().all(|p| painted.contains(p)), "{v:?} {names:?}");
             }

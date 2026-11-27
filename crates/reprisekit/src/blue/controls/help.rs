@@ -1,7 +1,7 @@
 //! The dialog caption's ? box, [`Part::HelpButton`]: 21x21, drawn at the style's scale. It never
 //! disables, so it carries no Disabled frame. Sizes below are design px.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, stops};
 use crate::raster::Canvas;
 use crate::shape::{self, Px, Stops};
@@ -28,7 +28,7 @@ const STEM_END: (f64, f64) = (10.0, 14.0);
 
 const DOT: (f64, f64, f64) = (9.0, 15.0, 2.0);
 
-fn frames(v: Variant) -> [(State, &'static Face); 4] {
+fn frames(v: Tone) -> [(State, &'static Face); 4] {
     let f = &v.scheme().help_button;
     [
         (State::Normal, &f.normal),
@@ -38,12 +38,12 @@ fn frames(v: Variant) -> [(State, &'static Face); 4] {
     ]
 }
 
-pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, scale: i32) -> Vec<(Part, PartImage)> {
     parts_sized(v, scale, S)
 }
 
 /// [`parts`] with the box `side` design px square, for a caption grown with the text size.
-pub(super) fn parts_sized(v: Variant, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts_sized(v: Tone, scale: i32, side: i32) -> Vec<(Part, PartImage)> {
     let frames = frames(v);
     let px = side * scale;
     let mut a = Canvas::new(px as u32, (px * frames.len() as i32) as u32);
@@ -128,6 +128,7 @@ fn question(x: f64, y: f64, k: f64, curl: &[(f64, f64)]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn fnv(c: &Canvas) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -152,7 +153,7 @@ mod tests {
     fn each(d: i32) -> Vec<(Variant, State, Canvas)> {
         let mut out = Vec::new();
         for v in Variant::ALL {
-            for (state, face) in frames(v) {
+            for (state, face) in frames(v.into()) {
                 out.push((v, state, help_box(face, d, S)));
             }
         }
@@ -163,7 +164,7 @@ mod tests {
     fn the_box_is_21_design_px_at_every_scale_with_four_frames() {
         for d in [1, 2, 3] {
             for v in Variant::ALL {
-                let (part, img) = parts(v, d).remove(0);
+                let (part, img) = parts(v.into(), d).remove(0);
                 assert_eq!(part, Part::HelpButton);
                 assert_eq!(img.scale, d, "{v:?} painted at {d}");
                 assert!(img.true_size, "{v:?} true to its size");
@@ -181,7 +182,7 @@ mod tests {
 
     #[test]
     fn the_atlas_keeps_the_corners_translucent() {
-        let (_, img) = parts(Variant::Blue, 1).remove(0);
+        let (_, img) = parts(Variant::Blue.into(), 1).remove(0);
         for i in 0..4 {
             let p = img.atlas.get(0, i * S);
             assert!(alpha(p) < 32, "frame {i}: corner alpha {:#x}", alpha(p));
@@ -206,7 +207,7 @@ mod tests {
     #[test]
     fn every_state_draws_its_own_frame() {
         for v in Variant::ALL {
-            let f: Vec<u64> = frames(v)
+            let f: Vec<u64> = frames(v.into())
                 .iter()
                 .map(|(_, face)| fnv(&help_box(face, 1, S)))
                 .collect();
@@ -297,7 +298,7 @@ mod tests {
     fn a_grown_box_is_its_side_with_clear_corners_smooth_at_2() {
         for side in [28, 34] {
             for d in [1, 2] {
-                let (_, img) = parts_sized(Variant::Blue, d, side).remove(0);
+                let (_, img) = parts_sized(Variant::Blue.into(), d, side).remove(0);
                 let n = side * d;
                 assert_eq!(
                     (img.atlas.width, img.atlas.height),
@@ -322,7 +323,7 @@ mod tests {
     fn grown_help_box_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
         for v in Variant::ALL {
-            for (state, face) in frames(v) {
+            for (state, face) in frames(v.into()) {
                 for side in [28, 34] {
                     for d in [1, 2] {
                         let c = help_box(face, d, side);

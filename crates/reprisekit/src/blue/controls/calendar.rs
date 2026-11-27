@@ -3,11 +3,11 @@
 //! (registered as the part's text colour). A greyed calendar keeps the band and letters as they are, so
 //! Disabled repeats Normal; only the day numbers grey.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::raster::Canvas;
 use crate::style::{Layout, Part, PartImage, State};
 
-pub(super) fn parts(v: Variant) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone) -> Vec<(Part, PartImage)> {
     let states = [State::Normal, State::Disabled];
     let mut a = Canvas::new(1, states.len() as u32);
     a.fill_rect(a.bounds(), v.scheme().system.inactive_title);
@@ -20,6 +20,7 @@ pub(super) fn parts(v: Variant) -> Vec<(Part, PartImage)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::look::widgets::draw_calendar_band;
     use crate::raster::Rect;
 

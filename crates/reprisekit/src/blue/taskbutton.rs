@@ -1,8 +1,8 @@
 //! Reprise Blue's taskbar button, drawn from its scheme's `TaskButtonFaces` at the output's scale.
 //! Top/bottom rings take the `down` profile, side rings the `across` profile; the fill shifts by `across`.
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, TASK_ATTENTION, stops};
+use crate::blue::{Tone, Variant};
 use crate::raster::Insets;
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, PartImage, State};
@@ -31,8 +31,8 @@ fn lum(p: Px) -> f64 {
     0.30 * p.1[0] + 0.59 * p.1[1] + 0.11 * p.1[2] + 4.0
 }
 
-fn inset(v: Variant) -> [i32; 4] {
-    match v {
+fn inset(v: Tone) -> [i32; 4] {
+    match v.variant {
         Variant::Slate
         | Variant::Sapphire
         | Variant::Obsidian
@@ -87,7 +87,7 @@ fn frame(face: &Face, w: i32, h: i32, left: i32, [l, t, r, b]: [i32; 4], d: i32)
 
 /// It never stretches vertically on the bar, so the sizing
 /// insets carry no top or bottom margin.
-pub fn task_button(v: Variant, d: i32) -> PartImage {
+pub fn task_button(v: Tone, d: i32) -> PartImage {
     let s = v.scheme();
     let m = s.metrics;
     let f = &s.task_button;
@@ -156,7 +156,7 @@ mod tests {
             .into_iter()
             .flat_map(|v| {
                 [1, 2].map(|d| {
-                    let b = leading(&task_button(v, d), &STATES[..5]);
+                    let b = leading(&task_button(v.into(), d), &STATES[..5]);
                     (format!("{v:?} {d}"), fnv(&b))
                 })
             })
@@ -170,7 +170,7 @@ mod tests {
             .into_iter()
             .flat_map(|v| {
                 [1, 2].map(|d| {
-                    let b = task_button(v, d);
+                    let b = task_button(v.into(), d);
                     let f = b.frame(State::Attention);
                     let mut c = crate::raster::Canvas::new(f.width as u32, f.height as u32);
                     for y in 0..f.height {
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn task_attention_is_orange_in_every_scheme() {
         for v in Variant::ALL {
-            let b = task_button(v, 1);
+            let b = task_button(v.into(), 1);
             let f = b.frame(State::Attention);
             let p = b.atlas.get(f.x + 13, f.y + 12);
             let (r, g, bl) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
@@ -214,7 +214,7 @@ mod tests {
             (Variant::Carbon, 12),
             (Variant::Steel, 4),
         ] {
-            let (one, two) = (task_button(v, 1), task_button(v, 2));
+            let (one, two) = (task_button(v.into(), 1), task_button(v.into(), 2));
             let f = one.frame(State::Normal);
             assert_eq!((f.width, f.height), (14 + right, 25), "{v:?} frame");
             assert_eq!(one.sizing, Insets::new(13, 0, right, 0), "{v:?} sizing");
@@ -229,7 +229,7 @@ mod tests {
     fn task_button_states_differ_and_pressed_is_checked() {
         for v in Variant::ALL {
             for d in [1, 2] {
-                let b = task_button(v, d);
+                let b = task_button(v.into(), d);
                 let lit = [
                     State::Normal,
                     State::Hot,
@@ -258,7 +258,7 @@ mod tests {
             img.atlas.get(f.x + x, f.y + y) >> 24
         };
         for v in Variant::ALL {
-            let one = task_button(v, 1);
+            let one = task_button(v.into(), 1);
             let f = one.frame(State::Normal);
             let (w, h) = (f.width, f.height);
             for (x, y) in [(0, 0), (w - 1, 0)] {
@@ -268,8 +268,8 @@ mod tests {
                 );
             }
             assert_eq!(alpha(&one, 13, 12), 255, "{v:?} face is opaque");
-            let two = task_button(v, 2);
-            let [l, t, r, b] = inset(v);
+            let two = task_button(v.into(), 2);
+            let [l, t, r, b] = inset(v.into());
             let (w2, h2) = (2 * w, 2 * h);
             for (cx, cy, sx, sy) in [
                 (2 * l, 2 * t, 1, 1),
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn task_button_edges_leave_no_dark_fringe() {
         for v in Variant::ALL {
-            let b = task_button(v, 2);
+            let b = task_button(v.into(), 2);
             for state in STATES {
                 let f = b.frame(state);
                 let at = |x: i32, y: i32| b.atlas.get(f.x + x, f.y + y);

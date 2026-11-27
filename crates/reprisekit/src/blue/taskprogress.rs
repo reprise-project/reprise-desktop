@@ -1,7 +1,7 @@
 //! A task button's progress in Blue: a rounded bar along the bottom shaded like the scheme's
 //! progress blocks over a faint track; the same shading in grey while paused.
 
-use super::Variant;
+use super::Tone;
 use super::scheme::stops;
 use crate::raster::Canvas;
 use crate::shape::{self, Px, Stops, over, premul};
@@ -22,7 +22,7 @@ fn grey((a, [r, g, b]): Px) -> Px {
     (a, [y, y, y])
 }
 
-pub(super) fn painter(v: Variant) -> ProgressPainter {
+pub(super) fn painter(v: Tone) -> ProgressPainter {
     let running = stops(v.scheme().progress_chunk.normal.down);
     let paused = running
         .iter()

@@ -1,8 +1,8 @@
 //! The combo box drop button's [`Part::ComboDrop`] atlas: Normal, Hot, Pressed and Disabled frames,
 //! drawn from the scheme's `combo_drop` faces at the style's scale.
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, LitGreyedFaces, stops};
+use crate::blue::{Tone, Variant};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -46,8 +46,8 @@ const CHEVRON_ARM: f64 = 3.0;
 
 const GREYED_SHADE: f64 = 0.86;
 
-fn cut(v: Variant) -> Cut {
-    match v {
+fn cut(v: Tone) -> Cut {
+    match v.variant {
         Variant::Blue | Variant::Olive => PLAIN,
         _ => FRAMED,
     }
@@ -56,7 +56,7 @@ fn cut(v: Variant) -> Cut {
 /// The button's four frames in `v`'s colours at `scale`, stacked one
 /// above the other. Sideways only the column just past the left rings
 /// stretches; up and down only the cut's seam row.
-pub(super) fn parts(v: Variant, scale: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, scale: i32) -> Vec<(Part, PartImage)> {
     let c = cut(v);
     let atlas = atlas(&v.scheme().combo_drop, c, scale);
     let o = c.out;
@@ -144,7 +144,7 @@ mod tests {
     use crate::raster::Rect;
 
     fn part(v: Variant, d: i32) -> PartImage {
-        parts(v, d).into_iter().next().unwrap().1
+        parts(v.into(), d).into_iter().next().unwrap().1
     }
 
     fn px(img: &PartImage, state: State, x: i32, y: i32) -> u32 {
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn each_cut_sizes_its_frames_and_insets_by_the_scale() {
         for v in Variant::ALL {
-            let c = cut(v);
+            let c = cut(v.into());
             let (one, two) = (part(v, 1), part(v, 2));
             for (d, img) in [(1, &one), (2, &two)] {
                 assert_eq!(img.scale, d, "{v:?}");
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn the_corners_are_round_and_smooth_at_scale_2() {
         for v in Variant::ALL {
-            let c = cut(v);
+            let c = cut(v.into());
             for d in [1, 2] {
                 let img = part(v, d);
                 for state in [State::Normal, State::Hot, State::Pressed] {
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn the_chevron_is_solid_at_scale_1_and_smooth_at_scale_2() {
         for v in Variant::ALL {
-            let (o, top) = (cut(v).out, cut(v).chevron as i32);
+            let (o, top) = (cut(v.into()).out, cut(v.into()).chevron as i32);
             for state in STATES {
                 let ink = ink(v, state);
                 let img = part(v, 1);
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn the_seams_carry_no_chevron() {
         for v in Variant::ALL {
-            let c = cut(v);
+            let c = cut(v.into());
             let img = part(v, 1);
             for state in STATES {
                 let ink = ink(v, state);
@@ -319,7 +319,7 @@ mod tests {
             c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11
         };
         for v in Variant::ALL {
-            let o = cut(v).out;
+            let o = cut(v.into()).out;
             let img = part(v, 1);
             let at = |s, x, y| luma(px(&img, s, x + o, y + o));
             let (face, rim) = ((7, 3), (-o, 8));

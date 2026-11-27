@@ -2,8 +2,8 @@
 //! The styled drawer in [`crate::look::styled::progress`] steps the chunk across the fill and stretches it
 //! to the bar's height, since a nine-grid atlas cannot repeat one axis while stretching the other.
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, stops};
+use crate::blue::{Tone, Variant};
 use crate::raster::{Canvas, Fill, Insets};
 use crate::shape::{CLEAR, Stops, centre, draw, mix, ringed, smooth};
 use crate::style::{Layout, Part, PartImage, State};
@@ -28,8 +28,8 @@ const BLOCK_H: i32 = 7;
 
 /// The gap after each of `v`'s blocks, where the trough shows: 1 px in
 /// Slate, Sapphire, Obsidian and Cobalt, 2 px in the others.
-fn gap(v: Variant) -> i32 {
-    match v {
+fn gap(v: Tone) -> i32 {
+    match v.variant {
         Variant::Slate
         | Variant::Sapphire
         | Variant::Obsidian
@@ -39,7 +39,7 @@ fn gap(v: Variant) -> i32 {
     }
 }
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let states = [State::Normal, State::Disabled];
 
@@ -124,7 +124,11 @@ mod tests {
     }
 
     fn part(v: Variant, d: i32, p: Part) -> PartImage {
-        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
+        parts(v.into(), d)
+            .into_iter()
+            .find(|(q, _)| *q == p)
+            .unwrap()
+            .1
     }
 
     fn luma(p: u32) -> u32 {
@@ -248,7 +252,7 @@ mod tests {
                     for x in 0..BLOCK_W * d {
                         assert_eq!(a.get(x, y) >> 24, 0xFF, "{v:?} d={d}: ({x}, {y})");
                     }
-                    for x in BLOCK_W * d..(BLOCK_W + gap(v)) * d {
+                    for x in BLOCK_W * d..(BLOCK_W + gap(v.into())) * d {
                         assert_eq!(a.get(x, y), 0, "{v:?} d={d}: gap ({x}, {y})");
                     }
                 }

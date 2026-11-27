@@ -1,8 +1,8 @@
 //! The rebar's parts: [`Part::Rebar`], the background behind every band (one 320x13 frame), and
 //! [`Part::RebarBand`], the line along the top of each band after the first (one 1x2 frame).
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, stops};
+use crate::blue::{Tone, Variant};
 use crate::metrics::RebarMetrics;
 use crate::raster::{Canvas, Fill, Insets};
 use crate::shape::{self, Px, Stops};
@@ -26,8 +26,8 @@ const LEAN_MIN: f64 = 8.0;
 const LINE_W: i32 = 1;
 const LINE_H: i32 = 2;
 
-pub(super) fn metrics(v: Variant) -> RebarMetrics {
-    let band_top = match v {
+pub(super) fn metrics(v: Tone) -> RebarMetrics {
+    let band_top = match v.variant {
         Variant::Blue | Variant::Olive | Variant::Silver | Variant::Ember | Variant::Steel => 0,
         Variant::Slate
         | Variant::Sapphire
@@ -43,11 +43,11 @@ pub(super) fn metrics(v: Variant) -> RebarMetrics {
     }
 }
 
-pub(super) fn inks(v: Variant) -> Vec<(Part, State, Color)> {
+pub(super) fn inks(v: Tone) -> Vec<(Part, State, Color)> {
     vec![(Part::RebarBand, State::Normal, v.scheme().inks.rebar_label)]
 }
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     vec![
         (Part::Rebar, background(&s.rebar.normal, d)),
@@ -114,7 +114,7 @@ mod tests {
     use crate::raster::Rect;
 
     fn part(v: Variant, part: Part, d: i32) -> PartImage {
-        parts(v, d)
+        parts(v.into(), d)
             .into_iter()
             .find(|(p, _)| *p == part)
             .expect("the part")
@@ -262,7 +262,7 @@ mod tests {
                     }
                 }
             }
-            let [(part, state, ink)] = inks(v)[..] else {
+            let [(part, state, ink)] = inks(v.into())[..] else {
                 panic!("{v:?}: one ink")
             };
             assert_eq!((part, state), (Part::RebarBand, State::Normal));
@@ -281,7 +281,7 @@ mod tests {
                 | Variant::Carbon => 2,
                 _ => 0,
             };
-            assert_eq!(metrics(v).band_top, want, "{v:?}");
+            assert_eq!(metrics(v.into()).band_top, want, "{v:?}");
         }
     }
 }

@@ -2,7 +2,7 @@
 //! ([`Part::ExplorerBarHeader`]) and the 20x17 close box in Normal, Hot and
 //! Pressed ([`Part::ExplorerBarClose`]), drawn from the scheme at the draw's scale.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, stops};
 use crate::metrics::BarMetrics;
 use crate::raster::{Canvas, Insets};
@@ -20,7 +20,7 @@ const X_LEFT: f64 = 5.0;
 const X_RIGHT: f64 = 14.0;
 const X_ACROSS: f64 = 2.0;
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let head = PartImage::new(
         strip(&s.explorer_bar_header.normal, d),
@@ -143,6 +143,7 @@ pub(super) fn metrics() -> BarMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::shape::unpack;
 
     fn fnv(c: &Canvas) -> u64 {
@@ -161,7 +162,7 @@ mod tests {
     }
 
     fn part(v: Variant, d: i32, which: Part) -> PartImage {
-        parts(v, d)
+        parts(v.into(), d)
             .into_iter()
             .find(|(p, _)| *p == which)
             .map(|(_, img)| img)

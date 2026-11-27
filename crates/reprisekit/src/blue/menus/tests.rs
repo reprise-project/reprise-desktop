@@ -79,8 +79,8 @@ fn draw_level(
 /// The Start menu's menu in `v` at `d` over white, at `lit`; with its layout.
 fn scene(v: Variant, d: i32, lit: Lit) -> (Canvas, MenuLayout) {
     let base = theme_for(Interface::Classic);
-    let one = blue_start_menus(&base, v);
-    let theme = blue_start_menus(&base.scaled(d), v);
+    let one = blue_start_menus(&base, v.into());
+    let theme = blue_start_menus(&base.scaled(d), v.into());
     let text = TextRenderer::load(&FontConfig::default());
     let items = rows();
     let layout = laid_out(&one, &text, &items);

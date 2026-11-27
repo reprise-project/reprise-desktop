@@ -14,7 +14,7 @@
 //! olive green, silver) a white line sits after it, else the bar shows
 //! through that column.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{CLEAR, Px, Stops, centre, draw, premul};
@@ -48,7 +48,7 @@ const CONTENT_BOTTOM: i32 = 3;
 
 /// This surface's parts in `v`'s colours, painted at `d` device pixels
 /// per design pixel.
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let bar = PartImage::new(
         bar(&s.status_bar.normal, d),
@@ -144,6 +144,7 @@ fn pane(p: &Face, bar: &Face, d: i32) -> Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn fnv(c: &Canvas) -> u64 {
         [c.width, c.height]
@@ -157,7 +158,11 @@ mod tests {
     }
 
     fn part(v: Variant, d: i32, p: Part) -> PartImage {
-        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
+        parts(v.into(), d)
+            .into_iter()
+            .find(|(q, _)| *q == p)
+            .unwrap()
+            .1
     }
 
     /// Navy, olive green and silver draw a white line after the shadow.

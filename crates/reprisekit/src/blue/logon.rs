@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::art::{logo, userpic};
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::powerpanel::{self, Glaze, Hue, Mark, RIM, TileState, glaze, title_text};
 use crate::blue::scheme::Scheme;
 use crate::logon::{
@@ -659,7 +659,7 @@ fn draw_titled(
     s: i32,
     show: Show,
 ) {
-    let sc = Variant::of(&theme.look).scheme();
+    let sc = Tone::of(&theme.look).scheme();
     let o = l.output;
     let f = frame(o);
     let k = lines(theme.text);

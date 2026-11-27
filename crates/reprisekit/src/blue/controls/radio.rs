@@ -9,7 +9,7 @@
 //! flat. Colours come from the scheme's radio faces.
 
 use super::checkbox::{Well, solid};
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, RadioFaces};
 use crate::shape::{Px, Stops, centre, draw, ellipse, mix, over, scale, shares};
 use crate::style::{CHECK_STATES, Check, Layout, Part, PartImage, State};
@@ -41,11 +41,11 @@ const DOT_SHADE: f64 = 0.3;
 
 const CHECKS: [Check; 2] = [Check::Unchecked, Check::Checked];
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     vec![(Part::Radio, radio(v, d))]
 }
 
-fn radio(v: Variant, d: i32) -> PartImage {
+fn radio(v: Tone, d: i32) -> PartImage {
     let faces = &v.scheme().radio;
     let frames: Vec<Frame> = CHECKS
         .iter()
@@ -145,6 +145,7 @@ fn face(f: &RadioFaces, check: Check, state: State) -> &Face {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn frame_px(img: &PartImage, check: Check, state: State, x: i32, y: i32) -> u32 {
         let f = img.check_frame(check, state);
@@ -174,7 +175,7 @@ mod tests {
     fn every_frame_is_13_square_and_its_own() {
         for v in Variant::ALL {
             for d in [1, 2] {
-                let img = radio(v, d);
+                let img = radio(v.into(), d);
                 assert!(img.true_size, "{v:?}");
                 assert_eq!(img.scale, d, "{v:?} at {d}");
                 assert_eq!(img.sizing, crate::raster::Insets::ZERO, "{v:?}");
@@ -207,7 +208,7 @@ mod tests {
         for v in Variant::ALL {
             let f = &v.scheme().radio;
             for d in [1, 2] {
-                let img = radio(v, d);
+                let img = radio(v.into(), d);
                 let n = 13 * d;
                 let mid = n / 2;
                 for check in CHECKS {
@@ -263,7 +264,7 @@ mod tests {
     fn a_checked_radio_has_a_dot() {
         for v in Variant::ALL {
             let f = &v.scheme().radio;
-            let img = radio(v, 1);
+            let img = radio(v.into(), 1);
             for state in CHECK_STATES {
                 let on = frame_px(&img, Check::Checked, state, 6, 6);
                 let off = frame_px(&img, Check::Unchecked, state, 6, 6);
@@ -289,7 +290,7 @@ mod tests {
     fn radio_pins_at_scale_1_and_2() {
         let got: Vec<_> = Variant::ALL
             .into_iter()
-            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&radio(v, d)))))
+            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&radio(v.into(), d)))))
             .collect();
         crate::pins::check("blue/radio", &got);
     }

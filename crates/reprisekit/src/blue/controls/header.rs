@@ -1,7 +1,7 @@
 //! A list header's atlases per colour scheme: item (Normal, Hot, Pressed), filler past the last column, sort arrow (Normal rising, Checked falling). An item frame is 18x20 (8 px ends, 2 px tiled middle); each face shades down one design row at a time so rows stay crisp at every scale.
 
-use crate::blue::Variant;
 use crate::blue::scheme::{Face, Grad};
+use crate::blue::{Tone, Variant};
 use crate::raster::{Canvas, Fill, Insets};
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, Part, PartImage, State};
@@ -25,8 +25,8 @@ const ARROW_ROWS: (f64, f64) = (7.0, 12.0);
 const EDGE_IN: f64 = 1e-6;
 
 /// The title's box inside a column in `v`; the header's 6 px text margin applies inside it. Navy, olive green and silver: 3 px in on the left, rows 2 to 18. Slate, Sapphire, Obsidian and Cobalt start it at the left edge; Ember ends it on row 16.
-fn title(v: Variant) -> Insets {
-    match v {
+fn title(v: Tone) -> Insets {
+    match v.variant {
         Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel => {
             Insets::new(3, 2, 0, 1)
         }
@@ -40,14 +40,14 @@ fn title(v: Variant) -> Insets {
 }
 
 /// Whether `v` draws the 2 px divider and the rounded hot band (navy, olive green, silver) rather than the 1 px divider and flat band.
-fn lined(v: Variant) -> bool {
+fn lined(v: Tone) -> bool {
     matches!(
-        v,
+        v.variant,
         Variant::Blue | Variant::Olive | Variant::Silver | Variant::Steel
     )
 }
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let faces = &s.header_item;
 
@@ -114,7 +114,7 @@ fn fade(y: f64, tail: bool) -> f64 {
     }
 }
 
-fn normal(v: Variant, f: &Face, d: i32) -> Canvas {
+fn normal(v: Tone, f: &Face, d: i32) -> Canvas {
     let down = rows(f.down);
     let (shadow, light) = (column(f.across, ITEM_W - 2), column(f.across, ITEM_W - 1));
     let lined = lined(v);
@@ -136,7 +136,7 @@ fn normal(v: Variant, f: &Face, d: i32) -> Canvas {
     })
 }
 
-fn hot(v: Variant, f: &Face, d: i32) -> Canvas {
+fn hot(v: Tone, f: &Face, d: i32) -> Canvas {
     let down = rows(f.down);
     let k = f64::from(d);
     if lined(v) {
@@ -225,7 +225,11 @@ mod tests {
     }
 
     fn part(v: Variant, d: i32, p: Part) -> PartImage {
-        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
+        parts(v.into(), d)
+            .into_iter()
+            .find(|(q, _)| *q == p)
+            .unwrap()
+            .1
     }
 
     fn frame(img: &PartImage, i: i32, h: i32, d: i32) -> Vec<u32> {

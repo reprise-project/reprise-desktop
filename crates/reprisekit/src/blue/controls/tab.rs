@@ -2,7 +2,7 @@
 //! A closed tab is 11 columns plus a clear gap column against its right neighbour; the open tab has no gap
 //! since it grows over both neighbours.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, stops};
 use crate::raster::Insets;
 use crate::shape::{self, CLEAR, Px, Stops};
@@ -23,7 +23,7 @@ const PANE_W: i32 = PANE_LEFT + 1 + PANE_RIGHT;
 const PANE_H: i32 = 360;
 const SHADOW: i32 = 2;
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let faces = [
         (State::Normal, &s.tab_item.normal),
@@ -127,6 +127,7 @@ fn tab_pane(f: &Face, d: i32) -> PartImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::look::widgets::draw_page;
     use crate::raster::{Canvas, Rect};
     use crate::style::Style;

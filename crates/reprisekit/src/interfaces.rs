@@ -374,7 +374,7 @@ fn with_icons<'a>(cells: &[ThumbCell<'a>], fallback: Option<&'a Canvas>) -> Vec<
 /// Draws the Blue Start menu `p` laid out as `l` onto a clear `canvas`, in `variant`'s colours.
 pub fn draw_blue_start_panel(
     canvas: &mut Canvas,
-    variant: blue::Variant,
+    variant: blue::Tone,
     text: &TextRenderer,
     p: &StartPanel,
     l: &startpanel::layout::Layout,
@@ -385,7 +385,7 @@ pub fn draw_blue_start_panel(
 
 /// `theme` for the menus the Blue Start menu opens, in `variant`'s colours: Blue's style at
 /// `theme`'s scale with [`blue::menus::look`] as its menu look. Fonts and metrics stay `theme`'s.
-pub fn blue_start_menus(theme: &Theme, variant: blue::Variant) -> Theme {
+pub fn blue_start_menus(theme: &Theme, variant: blue::Tone) -> Theme {
     let st = blue::style_for(variant).at_scale(theme.scale);
     let look = blue::menus::look(variant.scheme());
     Theme {

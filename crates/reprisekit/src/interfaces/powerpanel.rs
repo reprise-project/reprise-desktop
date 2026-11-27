@@ -1,7 +1,7 @@
 //! The Log Off and Turn off computer panels put together: Blue's painter, with Cancel, Restart
 //! Into... and the Install updates check box drawn as Blue's or the active look's.
 
-use crate::blue::{self, Variant};
+use crate::blue::{self, Tone};
 use crate::cues::Cues;
 use crate::look::{self, Look};
 use crate::paint::{Backdrop, Paint};
@@ -15,8 +15,8 @@ use crate::theme::Color;
 const ON_BAND: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 
 /// The Blue scheme a panel drawn under `look` takes: the look's own under Blue, navy otherwise.
-pub fn power_panel_variant(look: &Look) -> Variant {
-    Variant::of(look)
+pub fn power_panel_variant(look: &Look) -> Tone {
+    Tone::of(look)
 }
 
 /// Panel `p` laid out as `lay` onto `c`, a device-px canvas at scale 1 for output scale `s`, in
@@ -28,7 +28,7 @@ pub fn power_panel_variant(look: &Look) -> Variant {
 pub fn draw_power_panel(
     c: &mut Canvas,
     text: &TextRenderer,
-    v: Variant,
+    v: Tone,
     cancel: Option<&Paint>,
     p: &Panel,
     lay: &Layout,
@@ -120,6 +120,7 @@ pub fn draw_updates_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::blue::powerpanel::{TileState, icon};
     use crate::interface::Interface;
     use crate::interfaces::theme_for;
@@ -162,7 +163,7 @@ mod tests {
         draw_power_panel(
             &mut c,
             text.for_output(s),
-            v,
+            v.into(),
             paint.as_ref(),
             p,
             &lay,
@@ -176,13 +177,16 @@ mod tests {
 
     #[test]
     fn the_panel_takes_blues_scheme_under_blue_and_navy_elsewhere() {
-        assert_eq!(power_panel_variant(&Theme::default().look), Variant::Blue);
+        assert_eq!(
+            power_panel_variant(&Theme::default().look),
+            Variant::Blue.into()
+        );
         assert_eq!(
             power_panel_variant(&theme_for(Interface::Glass).look),
-            Variant::Blue
+            Variant::Blue.into()
         );
         let silver = crate::interfaces::blue_theme(Variant::Silver);
-        assert_eq!(power_panel_variant(&silver.look), Variant::Silver);
+        assert_eq!(power_panel_variant(&silver.look), Variant::Silver.into());
     }
 
     #[test]

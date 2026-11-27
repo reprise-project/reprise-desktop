@@ -2,7 +2,7 @@
 
 use std::f64::consts::SQRT_2;
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{self, CLEAR, Px, Stops};
@@ -193,7 +193,7 @@ fn turn(c: Canvas, lie: Lie) -> Canvas {
     t
 }
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let up = &s.scroll_arrow_up;
     let down = &s.scroll_arrow_down;
@@ -329,6 +329,7 @@ fn atlas(frames: &[Canvas], states: &[State], d: i32) -> PartImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
     use crate::raster::Rect;
 
     const PARTS: [Part; 10] = [
@@ -345,7 +346,11 @@ mod tests {
     ];
 
     fn part(v: Variant, p: Part, d: i32) -> PartImage {
-        parts(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
+        parts(v.into(), d)
+            .into_iter()
+            .find(|(q, _)| *q == p)
+            .unwrap()
+            .1
     }
 
     fn frame(img: &PartImage, state: State) -> Rect {

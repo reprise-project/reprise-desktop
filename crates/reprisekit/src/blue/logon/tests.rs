@@ -1,4 +1,5 @@
 use super::*;
+use crate::blue::Variant;
 use crate::blue::powerpanel::TILE_STATES;
 use crate::interface::Interface;
 use crate::interfaces::blue_theme;

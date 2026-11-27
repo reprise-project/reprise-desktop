@@ -140,7 +140,7 @@ fn draw(p: &StartPanel, s: i32) -> (Canvas, layout::Layout) {
             let mut c = blank(&l);
             interfaces::draw_blue_start_panel(
                 &mut c,
-                crate::blue::Variant::Blue,
+                crate::blue::Variant::Blue.into(),
                 text,
                 &p,
                 &l,

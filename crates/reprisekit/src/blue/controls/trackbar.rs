@@ -19,7 +19,7 @@
 //! fill a larger rect. No greyed box thumb is drawn anywhere, so its
 //! Disabled repeats Normal.
 
-use crate::blue::Variant;
+use crate::blue::Tone;
 use crate::blue::scheme::{Face, Grad, stops};
 use crate::raster::{Canvas, Insets};
 use crate::shape::{CLEAR, Px, Stops, centre, draw, mix, polygon, premul, ringed, shares};
@@ -52,7 +52,7 @@ const THUMB_BAND: f64 = 2.0;
 const TRACK_STATES: [State; 2] = [State::Normal, State::Disabled];
 const THUMB_STATES: [State; 4] = [State::Normal, State::Hot, State::Pressed, State::Disabled];
 
-pub(super) fn parts(v: Variant, d: i32) -> Vec<(Part, PartImage)> {
+pub(super) fn parts(v: Tone, d: i32) -> Vec<(Part, PartImage)> {
     let s = v.scheme();
     let track = [&s.trackbar_track.normal, &s.trackbar_track.disabled];
     let track = PartImage::new(
@@ -236,9 +236,10 @@ fn box_thumb(f: &Face, d: i32) -> Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blue::Variant;
 
     fn part(v: Variant, d: i32, part: Part) -> PartImage {
-        parts(v, d)
+        parts(v.into(), d)
             .into_iter()
             .find(|(p, _)| *p == part)
             .map(|(_, img)| img)
