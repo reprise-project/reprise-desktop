@@ -270,11 +270,11 @@ impl Config {
         }
     }
 
-    /// Whether the look in force is dark: dark mode, or a dark colour scheme worn in light mode
-    /// (a Classic one, or `[colors]`). The portal, `REPRISE_MODE` and the look's `mode` key all
-    /// say this.
+    /// Whether the look in force is dark: dark mode, or under Classic a dark colour scheme worn in
+    /// light mode. Blue and Glass draw their chrome from the mode, so a dark `[colors]` there
+    /// leaves them light. The portal, `REPRISE_MODE` and the look's `mode` key all say this.
     pub fn looks_dark(&self) -> bool {
-        self.dark || self.theme.colors.is_dark()
+        self.dark || self.interface == Interface::Classic && self.theme.colors.is_dark()
     }
 
     /// [`Config::looks_dark`] as a light or dark mode.
