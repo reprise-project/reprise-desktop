@@ -532,26 +532,19 @@ fn program_line(cmd: &str, word: String, missing: bool, terminal: &str) -> RunLi
     }
 }
 
-/// Whether `path`, which is not there, names a folder inside one of `archives` (each with its
-/// type) that opens as a compressed folder. One whose archive cannot be listed is taken, so
-/// Explorer's box says why.
+/// Whether `path`, which is not there, reaches into one of `archives` (each with its type) that
+/// opens as a compressed folder. Explorer lists the archive and says whether it holds the folder.
 fn names_a_compressed_folder(
     path: &std::path::Path,
     archives: &[(std::path::PathBuf, String)],
     apps: &[reprisefs::apps::AppEntry],
 ) -> bool {
-    use reprisefs::archive;
-    let Some((file, inner)) = archive::address(path) else {
+    let Some((file, _)) = reprisefs::archive::address(path) else {
         return false;
     };
-    let Some((_, mime)) = archives.iter().find(|(p, _)| *p == file) else {
-        return false;
-    };
-    archive::opens_as_folder(mime, apps)
-        && match archive::list(&file, &reprisefs::progress::Meter::default()) {
-            Ok(entries) => archive::holds_folder(&entries, &inner),
-            Err(_) => true,
-        }
+    archives
+        .iter()
+        .any(|(p, mime)| *p == file && reprisefs::archive::opens_as_folder(mime, apps))
 }
 
 /// Whether a Run line's path is a document to record as opened: a regular file with no execute
@@ -1403,27 +1396,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_run_line_below_an_archive_names_only_a_folder_it_holds() {
+    fn a_run_line_below_an_archive_opens_in_explorer_unlisted() {
         let dir = std::env::temp_dir().join(format!("reprise-run-zip-{}", std::process::id()));
         let d = dir.as_path();
-        std::fs::create_dir_all(d.join("docs")).unwrap();
-        std::fs::write(d.join("docs/a.txt"), "a").unwrap();
-        let made = std::process::Command::new("bsdtar")
-            .current_dir(d)
-            .args(["-a", "-cf", "pack.zip", "docs"])
-            .status()
-            .unwrap();
-        assert!(made.success());
+        std::fs::create_dir_all(d).unwrap();
+        // Not a zip at all: nothing reads it, Explorer's check does.
         let zip = d.join("pack.zip");
+        std::fs::write(&zip, "not read").unwrap();
         let archives = [(zip.clone(), "application/zip".to_string())];
         let names = |rest: &str| names_a_compressed_folder(&zip.join(rest), &archives, &[]);
         assert!(names("docs"));
-        assert!(names("docs/"));
-        assert!(!names("nope"), "a missing member");
-        assert!(!names("docs/a.txt"), "a file is no folder");
+        assert!(names("docs/deeper/"));
+        assert!(!names("docs/../.."), "no step climbs out");
         assert!(
             !names_a_compressed_folder(&zip.join("docs"), &[], &[]),
             "a file whose name gives no archive type"
+        );
+        assert!(
+            !names_a_compressed_folder(&d.join("nope/docs"), &archives, &[]),
+            "the nearest step there is a folder"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

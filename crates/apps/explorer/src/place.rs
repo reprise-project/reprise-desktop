@@ -723,24 +723,41 @@ pub fn archive_listing(
     }
 }
 
+/// What the check of a typed folder found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Found {
+    Place(Place),
+    Missing,
+    /// It reaches into an archive that holds no such folder.
+    NotHeld(PathBuf),
+}
+
 /// The compressed folder a typed `path` that is not a folder names: a folder inside an archive
-/// that opens as one. One whose archive cannot be listed is taken, so its box says why.
+/// that opens as one. One whose archive cannot be listed is taken, so its box says why; a
+/// listing another one stopped is read again.
 pub(crate) fn archive_place(
     path: &Path,
     globs: &reprisefs::apps::MimeDb,
     apps: &[reprisefs::apps::AppEntry],
     archives: &reprisefs::archive::Listings,
-) -> Option<Place> {
-    let (file, inner) = reprisefs::archive::address(path)?;
-    let mime = globs.mime_of_name(&file.file_name()?.to_string_lossy())?;
-    if !reprisefs::archive::opens_as_folder(&mime, apps) {
-        return None;
-    }
-    let held = match archives.entries(&file) {
-        Ok(entries) => reprisefs::archive::holds_folder(&entries, &inner),
-        Err(_) => true,
+) -> Found {
+    let Some((file, inner)) = reprisefs::archive::address(path) else {
+        return Found::Missing;
     };
-    held.then_some(Place::Archive(file, inner))
+    let mime = file
+        .file_name()
+        .and_then(|n| globs.mime_of_name(&n.to_string_lossy()));
+    if !mime.is_some_and(|m| reprisefs::archive::opens_as_folder(&m, apps)) {
+        return Found::Missing;
+    }
+    let held = match (0..3).find_map(|_| archives.listing(&file)) {
+        Some(Ok(entries)) => reprisefs::archive::holds_folder(&entries, &inner),
+        Some(Err(_)) | None => true,
+    };
+    match held {
+        true => Found::Place(Place::Archive(file, inner)),
+        false => Found::NotHeld(path.to_path_buf()),
+    }
 }
 
 /// The path standing for the folder `inner` of the archive `file`: the archive's own at its top.
