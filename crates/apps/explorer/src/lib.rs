@@ -1788,6 +1788,13 @@ impl Explorer {
                         return Opened::NotCopied(why);
                     }
                 };
+                if let Err(e) = reprisefs::archivecopy::set_origin(&copy, &file) {
+                    log::debug!(
+                        "{} keeps no note of {}: {e}",
+                        copy.display(),
+                        file.display()
+                    );
+                }
                 let name = entry.path.file_name().unwrap_or_default().to_string_lossy();
                 if reprisefs::archive::runs_as_a_program(
                     &copy,

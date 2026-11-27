@@ -1199,3 +1199,30 @@ fn page_setup_and_print_sit_above_exit_in_the_file_menu() {
     assert_eq!(label(menu::row::PRINT), "Print...");
     assert_eq!(label(menu::row::EXIT), "Exit");
 }
+
+#[test]
+fn saving_a_read_only_picture_says_so_and_ok_opens_save_as_on_its_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let pic = dir.path().join("dunes.bmp");
+    file::save(&Bitmap::new(3, 3, WHITE), &pic, file::Kind::Bmp, 100).unwrap();
+    std::fs::set_permissions(&pic, std::fs::Permissions::from_mode(0o400)).unwrap();
+    // Root writes through any mode, so there is nothing to check.
+    if std::fs::OpenOptions::new().write(true).open(&pic).is_ok() {
+        return;
+    }
+    let bytes = std::fs::read(&pic).unwrap();
+    let mut p = Paint::new(Some(pic.clone()));
+    p.doc.dirty = true;
+    let reply = p.answered(Prompt::SaveChanges(Then::Quit), Some(0));
+    assert!(!reply.quit);
+    let (what, _) = prompt_up(&p).expect("the read-only box");
+    assert_eq!(what, Prompt::ReadOnly(Some(Then::Quit)));
+    assert!(prompt_text(&p).is_some_and(|t| t.starts_with("dunes.bmp is read-only.\n")));
+    p.prompt.close();
+    p.answered(what, Some(0));
+    let dlg = p.saveas.as_ref().expect("OK opens Save As");
+    assert_eq!((dlg.file_name(), dlg.filter()), ("dunes.bmp", 2));
+    assert_eq!(p.after_save, Some(Then::Quit));
+    assert_eq!(std::fs::read(&pic).unwrap(), bytes);
+}

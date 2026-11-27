@@ -145,6 +145,10 @@ overwrite = { $path } already exists.
 open-failed = Paint cannot read this file.
     { $path }
     { $error }
+# OK opens Save As on the file's name.
+read-only =
+    { $name } is read-only.
+    Click OK to save your changes under another name or in another folder.
 save-failed = Paint cannot save { $path }.
     { $error }
 background-failed = Paint cannot set the desktop background.

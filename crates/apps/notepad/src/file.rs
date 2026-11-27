@@ -70,6 +70,11 @@ impl Notepad {
         let Some(p) = self.path.clone() else {
             return false;
         };
+        if reprisefs::ops::is_read_only(&p) {
+            let b = self.read_only_box(&p);
+            self.ask(b, Ask::ReadOnly);
+            return false;
+        }
         if !format.holds(self.edit.lines()) {
             let b = self.unheld_box(&p, format);
             self.ask(b, Ask::Unheld(None));
@@ -91,10 +96,39 @@ impl Notepad {
         }
     }
 
-    /// Whether a save is waiting on a box: the file changed on disk, or its encoding cannot hold
-    /// the text.
+    /// Whether a save is waiting on a box: the file changed on disk, takes no writes, or its
+    /// encoding cannot hold the text.
     fn save_asks(&self) -> bool {
-        (self.asks.iter()).any(|(_, ask)| matches!(ask, Ask::Changed | Ask::Unheld(None)))
+        (self.asks.iter())
+            .any(|(_, ask)| matches!(ask, Ask::Changed | Ask::ReadOnly | Ask::Unheld(None)))
+    }
+
+    pub(crate) fn read_only_box(&self, path: &Path) -> MsgBox {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        ok_box(tr!("read-only", name = name), self.warn_icon.clone())
+            .sounding(repriseapp::sound::Event::Warning)
+    }
+
+    /// OK opens Save As on the file's name; Escape and the close box drop the action waiting.
+    pub(crate) fn read_only_answered(&mut self, answer: Option<usize>) -> Reply {
+        if answer != Some(0) {
+            self.pending.cancelled();
+            return Reply::redraw_all();
+        }
+        self.saveas_dialog();
+        let name = (self.path.as_deref())
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned());
+        if let (Some(dlg), Some(name)) = (self.saveas.as_mut(), name) {
+            if Path::new(&name).extension().is_none() {
+                dlg.set_filter(1);
+            }
+            dlg.set_file_name(&name);
+        }
+        Reply::redraw_all()
     }
 
     pub(crate) fn unheld_box(&self, path: &Path, format: Format) -> MsgBox {
@@ -130,6 +164,9 @@ impl Notepad {
             (Some(path), Some(0)) => self.saveas_write_in(path, utf8),
             (None, Some(0)) => {
                 let ok = self.save_in(utf8);
+                if self.save_asks() {
+                    return Reply::redraw_all();
+                }
                 match self.pending.saved(ok) {
                     Some(action) => self.run_pending(action),
                     None => Reply::redraw_all(),

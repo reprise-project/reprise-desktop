@@ -3170,3 +3170,71 @@ fn a_bad_page_value_drops_only_that_value_and_keeps_the_other_settings() {
         "margins with no room between them read as the defaults"
     );
 }
+
+/// `notes.txt` holding "old", read-only, in a fresh folder; None under root, which writes
+/// through any mode.
+fn read_only_notes() -> Option<(tempfile::TempDir, PathBuf)> {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("notes.txt");
+    std::fs::write(&path, "old").expect("write");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).expect("chmod");
+    let writable = std::fs::OpenOptions::new().write(true).open(&path).is_ok();
+    (!writable).then_some((tmp, path))
+}
+
+#[test]
+fn saving_a_read_only_file_says_so_and_ok_opens_save_as_on_its_name() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let mut np = Notepad::new(Some(path.clone()));
+    np.edit = MultiEdit::new("new");
+    np.edit.mark_unsaved();
+    np.command(title::FILE, row::SAVE, &test_ctx());
+    let (b, ask) = np.asks.up().expect("a box");
+    assert!(matches!(ask, Ask::ReadOnly));
+    assert!(b.fields.text.starts_with("notes.txt is read-only.\n"));
+    np.answer_box(Some(0));
+    let dlg = np.saveas.as_ref().expect("OK opens Save As");
+    assert_eq!(dlg.file_name(), "notes.txt");
+    let folder = np.host.folder.and_then(|id| np.host.folders.path(id));
+    assert_eq!(folder, Some(tmp.path()));
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
+}
+
+#[test]
+fn close_yes_on_a_read_only_file_waits_on_save_as_and_quits_once_saved() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let mut np = Notepad::new(Some(path));
+    np.edit = MultiEdit::new("new");
+    np.edit.mark_unsaved();
+    np.confirm_then(PendingAction::Quit);
+    let reply = np.answer_box(Some(0));
+    assert!(!reply.quit);
+    assert!(matches!(np.asks.up(), Some((_, Ask::ReadOnly))));
+    assert!(np.pending.is_waiting());
+    np.answer_box(Some(0));
+    assert!(np.saveas.is_some() && np.pending.is_waiting());
+    let reply = np.saveas_accept("kept.txt", &mut test_icons());
+    assert!(reply.quit, "the quit runs once Save As writes");
+    let kept = tmp.path().join("kept.txt");
+    assert_eq!(std::fs::read_to_string(&kept).expect("written"), "new");
+}
+
+#[test]
+fn escape_on_the_read_only_box_drops_the_pending_quit() {
+    let Some((_tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let mut np = Notepad::new(Some(path));
+    np.edit = MultiEdit::new("new");
+    np.edit.mark_unsaved();
+    np.confirm_then(PendingAction::Quit);
+    np.answer_box(Some(0));
+    let reply = np.answer_box(None);
+    assert!(!reply.quit && !np.pending.is_waiting() && np.saveas.is_none());
+    assert!(np.dirty());
+}

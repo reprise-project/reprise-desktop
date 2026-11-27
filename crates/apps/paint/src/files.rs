@@ -68,8 +68,12 @@ fn default_dir() -> PathBuf {
 impl Paint {
     fn dialog_at(&mut self, fields: Fields) -> FileDlg {
         let u = self.forms.text;
-        match self.path.as_deref().and_then(Path::parent) {
-            Some(dir) => self.host.open(dir, fields, u),
+        match self
+            .path
+            .as_deref()
+            .and_then(reprisefs::archivecopy::dialog_folder)
+        {
+            Some(dir) => self.host.open(&dir, fields, u),
             None => self.host.open_last(&default_dir(), fields, u),
         }
     }
@@ -170,6 +174,9 @@ impl Paint {
                     self.saveas_dialog();
                     return Reply::redraw_all();
                 };
+                if self.refuses(&path, Some(then.clone())) {
+                    return Reply::redraw_all();
+                }
                 if self.write(&path, kind) {
                     return self.run(then);
                 }
@@ -182,6 +189,12 @@ impl Paint {
                 self.run(then)
             }
             (Prompt::Overwrite(path, kind), Some(0)) => self.saveas_write(path, kind),
+            (Prompt::ReadOnly(then), Some(0)) => {
+                self.after_save = then;
+                self.saveas_dialog();
+                self.name_saveas();
+                Reply::redraw_all()
+            }
             (Prompt::Recovered(file), answer) => self.recovered_answered(file, answer),
             _ => Reply::redraw_all(),
         }
@@ -194,11 +207,41 @@ impl Paint {
         self.doc.finish();
         match self.writable() {
             Some((path, kind)) => {
-                self.write(&path, kind);
+                if !self.refuses(&path, None) {
+                    self.write(&path, kind);
+                }
             }
             None => self.saveas_dialog(),
         }
         Reply::redraw_all()
+    }
+
+    /// Whether `path` takes no writes, in which case a box says so and its OK opens Save As,
+    /// with `then` waiting on that.
+    fn refuses(&mut self, path: &Path, then: Option<Then>) -> bool {
+        if !reprisefs::ops::is_read_only(path) {
+            return false;
+        }
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        self.ask(
+            tr!("read-only", name = name.into_owned()),
+            vec![reprisekit::kit_tr!("ok")],
+            0,
+            Prompt::ReadOnly(then),
+        );
+        true
+    }
+
+    /// Save As on the picture's own name and type, for a file that takes no writes.
+    fn name_saveas(&mut self) {
+        let (Some(dlg), Some(path)) = (self.saveas.as_mut(), self.path.as_deref()) else {
+            return;
+        };
+        let Some(kind) = SAVE_KINDS.iter().position(|&k| Kind::of(path) == Some(k)) else {
+            return;
+        };
+        dlg.set_file_name(&path.file_name().unwrap_or_default().to_string_lossy());
+        dlg.set_filter(kind);
     }
 
     /// The picture's file and its type, when it is one Paint saves; a GIF, WebP or TIFF it
@@ -212,6 +255,11 @@ impl Paint {
     /// first.
     fn write(&mut self, path: &Path, kind: Kind) -> bool {
         self.doc.finish();
+        if reprisefs::ops::is_read_only(path) {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            self.error(tr!("read-only", name = name.into_owned()));
+            return false;
+        }
         match file::save(&self.doc.img, path, kind, self.quality) {
             Ok(()) => {
                 self.recent.record(path);
@@ -239,7 +287,7 @@ impl Paint {
         let path = match (self.path.clone(), self.writable()) {
             (Some(path), _) if !self.doc.dirty => path,
             (_, Some((path, kind))) => {
-                if !self.write(&path, kind) {
+                if self.refuses(&path, Some(Then::Background)) || !self.write(&path, kind) {
                     return Reply::redraw_all();
                 }
                 path
