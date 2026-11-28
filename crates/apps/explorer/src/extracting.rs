@@ -244,8 +244,13 @@ impl Explorer {
         })
     }
 
-    /// The item menu's Compress to row names the zip.
+    /// The item menu's Compress to row names the zip; zips alone get no row, while Send To still
+    /// zips them.
     pub(crate) fn compress_label(&self) -> Option<String> {
+        let zip = |it: &Item| !it.is_dir && it.mime.as_deref() == Some("application/zip");
+        if self.picked().all(|(_, it)| zip(it)) {
+            return None;
+        }
         let c = self.compress_target()?;
         Some(c.zip.file_name()?.to_string_lossy().into_owned())
     }
