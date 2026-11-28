@@ -20,9 +20,30 @@ impl Explorer {
     pub(crate) fn sync_nav_place(&mut self, text: &str, icon: Option<reprisekit::raster::Canvas>) {
         let crumbs = crate::chrome::crumbs_for(&self.place, &self.drives, &self.shares.shares);
         self.crumbs.set_place(crumbs, icon, text);
+        self.search_crumb = None;
         self.search_field.set_cue(&self.place.title());
         self.nav.can_back = self.can_back();
         self.nav.can_forward = self.history.can_forward();
+    }
+
+    /// While a search runs or shows results the crumbs end in one more segment naming it
+    /// ([`crate::chrome::search_crumb`]); true when they changed.
+    pub(crate) fn sync_search_crumb(&mut self) -> bool {
+        let want = self.search.asked().map(|a| &a.place);
+        if want == self.search_crumb.as_ref() {
+            return false;
+        }
+        let want = want.cloned();
+        if self.search_crumb.take().is_some() {
+            self.crumbs.crumbs.pop();
+        }
+        if let Some(p) = want {
+            let seg = crate::chrome::search_crumb(&p, &self.shares.shares);
+            self.crumbs.crumbs.push(seg);
+            self.search_crumb = Some(p);
+        }
+        (self.crumbs.hot, self.crumbs.pressed) = (None, None);
+        true
     }
 
     /// A left press on the nav row or the command bar; `None` off them.
@@ -95,7 +116,7 @@ impl Explorer {
             }
             return Some(self.cancel_search(ctx).unwrap_or_else(Reply::redraw));
         }
-        self.crumbs.pressed?;
+        let pressed = self.crumbs.pressed?;
         let px = ctx.theme.fonts.size_px;
         let bl = breadcrumb::layout(
             &self.crumbs,
@@ -107,6 +128,14 @@ impl Explorer {
         let ev = self
             .crumbs
             .release(breadcrumb::hit(&self.crumbs, &bl, x, y));
+        // The search's own segment searches again; every other crumb leaves the search (`go`).
+        let last = self.crumbs.crumbs.len().checked_sub(1);
+        if matches!(ev, breadcrumb::Event::Go(_))
+            && self.search_crumb.is_some()
+            && last.map(breadcrumb::Part::Segment) == Some(pressed)
+        {
+            return Some(self.run(Command::Refresh, ctx));
+        }
         Some(self.crumb_event(ev, &bl, ctx))
     }
 
