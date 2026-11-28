@@ -1,8 +1,9 @@
 //! Onyx's Start orb at output scale: a 41 px disc of dark blue glass standing [`RISE`] px over
-//! the bar's top edge, its foot running off the bar's (and the screen's) lower edge. A black
-//! outline and a navy rim, a pale gloss over the upper half that is brightest along the rim, and
-//! a cyan light rising from the foot; under the pointer the light climbs and the body brightens,
-//! held the body darkens. The icon's own glow is Glass's ([`super::orb::bloom`]).
+//! the bar's top edge, its foot running off the bar's (and the screen's) lower edge, opaque out to
+//! its anti-aliased edge. A black outline and a navy rim, a pale gloss over the upper half that is
+//! brightest along the rim and covers the rim only above the bar, and a cyan light rising from the
+//! foot; under the pointer the light climbs and the body brightens, held the body darkens. The
+//! icon's own glow is Glass's ([`super::orb::bloom`]).
 
 use crate::raster::Canvas;
 use crate::shape::{CLEAR, Px, Stops, draw, ellipse, over, premul, radial, scale, shares, smooth};
@@ -29,7 +30,6 @@ const CX: f64 = WIDTH as f64 / 2.0;
 const CY: f64 = R - RISE as f64;
 
 const OUTLINE: Color = Color::rgb(0x0b, 0x0e, 0x10);
-const OUTLINE_ALPHA: u8 = 235;
 const NAVY: Color = Color::rgb(0x06, 0x22, 0x3a);
 const RIM: Color = Color::rgb(0x00, 0x4c, 0x82);
 /// The soft shade the lower half casts on the bar: its alpha and width.
@@ -130,13 +130,15 @@ fn px(look: Look, top: i32, x: f64, y: f64, d: i32) -> Px {
     );
     inside = over(foot, inside);
     let ring = shares(&[
-        (premul(OUTLINE, OUTLINE_ALPHA), outer - navy),
+        (opaque(OUTLINE), outer - navy),
         (opaque(NAVY), navy - rim),
         (opaque(RIM), rim - body),
         (inside, body),
     ]);
 
-    let g = ellipse(x, y, CX * k, GLOSS_CY * k, GLOSS_R.0 * k, GLOSS_R.1 * k).min(outer);
+    // From the bar's top edge down the outline stays dark, so it reads in front of the bar's edge.
+    let lid = if my < 0.0 { outer } else { body };
+    let g = ellipse(x, y, CX * k, GLOSS_CY * k, GLOSS_R.0 * k, GLOSS_R.1 * k).min(lid);
     if g <= 0.0 {
         return ring;
     }
@@ -253,6 +255,49 @@ mod tests {
             assert!(
                 r < 30 && g < 30 && b < 30,
                 "{st:?} black outline: {r} {g} {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_disc_is_opaque_to_within_a_px_of_its_edge_in_every_state() {
+        for d in [1, 2] {
+            let k = f64::from(d);
+            for (img, top) in [(orb(30, d), 0), (orb(40, d), 0), (above(d), -REACH)] {
+                for st in STATES {
+                    let f = img.frame(st);
+                    for y in 0..f.height {
+                        for x in 0..f.width {
+                            let mx = (f64::from(x) + 0.5) / k;
+                            let my = (f64::from(y) + 0.5) / k + f64::from(top);
+                            if (mx - CX).hypot(my - CY) * k > R * k - 1.0 {
+                                continue;
+                            }
+                            let a = at(&img, st, x, y) >> 24;
+                            assert_eq!(a, 0xFF, "({x}, {y}) {st:?} top {top} scale {d}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_outline_is_dark_where_it_crosses_the_bars_top_edge_and_pale_above_it() {
+        let edge = |img: &PartImage, st, y| {
+            let x = (0..59).find(|&x| at(img, st, x, y) >> 24 == 0xFF).unwrap();
+            rgb(at(img, st, x, y)).iter().sum::<u32>()
+        };
+        let (o, a) = (orb(30, 1), above(1));
+        for st in STATES {
+            for y in 0..4 {
+                let lum = edge(&o, st, y);
+                assert!(lum < 90, "row {y} {st:?}: dark outline, sum {lum}");
+            }
+            let lum = edge(&a, st, REACH - 1);
+            assert!(
+                lum > 400,
+                "{st:?}: pale gloss on the rim over the bar, sum {lum}"
             );
         }
     }
