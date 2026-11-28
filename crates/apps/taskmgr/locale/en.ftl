@@ -44,6 +44,11 @@ status-processes = Processes: { $count }
 status-cpu = CPU Usage: { $percent }%
 status-memory = Memory: { $percent }%
 
+## Applications menu
+menu-minimize = Mi&nimize
+menu-maximize = Ma&ximize
+menu-go-to-process = &Go To Process
+
 ## Process menu
 menu-open-location = Open File &Location
 menu-end-process = &End Process

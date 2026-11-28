@@ -249,6 +249,12 @@ enum Act {
     PerCore(bool),
     SelectColumns,
     OnTop(bool),
+    /// The Applications menu's rows, on the selected row.
+    SwitchTo,
+    Minimize,
+    Maximize,
+    EndTask,
+    GoToProcess,
     /// The process menu's rows, on the selected process.
     OpenLocation,
     EndProcess,
@@ -497,6 +503,69 @@ impl TaskMgr {
         ])
     }
 
+    /// The selected Applications row's menu: Minimize and Maximize grey for a program showing
+    /// no window, Go To Process for one whose process is not listed.
+    fn app_menu(&self) -> Option<Vec<(MenuItem, Option<Act>)>> {
+        let r = self.selected_app()?;
+        let window = r.window.is_some();
+        let row = |label: String, live: bool, act: Act| {
+            (MenuItem::item(&label).enabled(live), live.then_some(act))
+        };
+        let (switch, act) = row(tr!("switch-to"), window || r.app.is_some(), Act::SwitchTo);
+        Some(vec![
+            (switch.bold(true), act),
+            row(tr!("menu-minimize"), window, Act::Minimize),
+            row(tr!("menu-maximize"), window, Act::Maximize),
+            (MenuItem::Separator, None),
+            row(tr!("end-task"), window || r.unit.is_some(), Act::EndTask),
+            row(
+                tr!("menu-go-to-process"),
+                self.process_of(r).is_some(),
+                Act::GoToProcess,
+            ),
+        ])
+    }
+
+    /// The listed process behind Applications row `r`: its window's client, else the first of
+    /// its app scope's.
+    fn process_of(&self, r: &AppRow) -> Option<i32> {
+        let listed = |pid: &i32| self.proc_rows.iter().any(|p| p.pid == *pid);
+        let client = (r.window.as_ref()).and_then(|w| i32::try_from(w.pid).ok());
+        let scope = (r.unit.as_ref())
+            .and_then(|u| self.snap.scopes.iter().find(|s| s.unit == *u))
+            .and_then(|s| s.pids.iter().copied().find(listed));
+        client.filter(|p| *p != 0 && listed(p)).or(scope)
+    }
+
+    fn open_app_menu(&mut self, x: i32, y: i32, ctx: &Ctx, by_keyboard: bool) -> Reply {
+        let Some(rows) = self.app_menu() else {
+            return Reply::none();
+        };
+        self.popup = Popup::open(rows, x, y, ctx, by_keyboard);
+        Reply::redraw()
+    }
+
+    /// Go To Process: the Processes page, with the selected row's process selected and shown.
+    fn go_to_process(&mut self, ctx: &Ctx) -> Reply {
+        let Some(pid) = self.selected_app().and_then(|r| self.process_of(r)) else {
+            return Reply::none();
+        };
+        self.tabs.open = Page::ALL
+            .iter()
+            .position(|p| *p == Page::Processes)
+            .unwrap_or(1);
+        self.form_for = None;
+        self.set_menus();
+        let at = self.proc_rows.iter().position(|p| p.pid == pid);
+        if let Some(r) = pages::layout(self, ctx).list {
+            self.procs.select(at, r, ctx);
+            if let Some(i) = at {
+                self.procs.reveal(i, r, ctx);
+            }
+        }
+        Reply::redraw_all()
+    }
+
     fn open_proc_menu(&mut self, x: i32, y: i32, ctx: &Ctx, by_keyboard: bool) -> Reply {
         let Some(rows) = self.proc_menu() else {
             return Reply::none();
@@ -532,6 +601,14 @@ impl TaskMgr {
                 self.popup = None;
                 match act {
                     Some(Act::EndProcess) => self.ask_end_process(ctx),
+                    Some(Act::SwitchTo) => self.on_app_window(toplevel::Do::Activate),
+                    Some(Act::Minimize) => self.on_app_window(toplevel::Do::Minimize),
+                    Some(Act::Maximize) => self.on_app_window(toplevel::Do::Maximize),
+                    Some(Act::EndTask) => Reply {
+                        redraw: true,
+                        ..self.end_task()
+                    },
+                    Some(Act::GoToProcess) => self.go_to_process(ctx),
                     Some(Act::Service(verb)) => self.service_verb(verb, ctx),
                     Some(Act::OpenLog) => self.open_log(ctx),
                     Some(a) => Reply {
@@ -586,7 +663,14 @@ impl TaskMgr {
             }
             Act::OpenLocation => return self.proc_file(reprisefs::apps::open_location_argv),
             Act::Properties => return self.proc_file(reprisefs::apps::properties_argv),
-            Act::EndProcess | Act::Service(_) | Act::OpenLog => return Reply::none(),
+            Act::EndProcess
+            | Act::Service(_)
+            | Act::OpenLog
+            | Act::SwitchTo
+            | Act::Minimize
+            | Act::Maximize
+            | Act::EndTask
+            | Act::GoToProcess => return Reply::none(),
         }
         self.set_menus();
         self.persist();
@@ -1020,6 +1104,11 @@ impl TaskMgr {
     }
 
     fn switch_to(&mut self) -> Reply {
+        self.on_app_window(toplevel::Do::Activate)
+    }
+
+    /// Does `what` to the selected Applications row's window, else to a window of its program.
+    fn on_app_window(&mut self, what: toplevel::Do) -> Reply {
         let Some(row) = self.selected_app().cloned() else {
             return Reply::none();
         };
@@ -1034,10 +1123,10 @@ impl TaskMgr {
                     })
             };
             let task = row.task();
-            match toplevel::on_window(pick, toplevel::Do::Activate) {
+            match toplevel::on_window(pick, what) {
                 Ok(true) => {}
-                Ok(false) => log::info!("Switch To: no window of {task}"),
-                Err(e) => log::warn!("Switch To {task}: {e}"),
+                Ok(false) => log::info!("{what:?}: no window of {task}"),
+                Err(e) => log::warn!("{what:?} {task}: {e}"),
             }
         });
         Reply::none()
@@ -1234,6 +1323,9 @@ impl TaskMgr {
             let press = list.press(at, button, r, ctx);
             return match press {
                 Press::Activate(_) if page == Page::Applications => self.switch_to(),
+                Press::Row(_) if page == Page::Applications && button == BTN_RIGHT => {
+                    self.open_app_menu(x, y, ctx, false)
+                }
                 Press::Row(_) if page == Page::Processes && button == BTN_RIGHT => {
                     self.open_proc_menu(x, y, ctx, false)
                 }
@@ -1356,7 +1448,7 @@ impl TaskMgr {
             return r;
         }
         let menu_key = k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift);
-        if menu_key && matches!(self.page(), Page::Processes | Page::Services) {
+        if menu_key && self.page() != Page::Performance {
             let (Some(r), Some(list)) = (lay.list, self.list()) else {
                 return Reply::none();
             };
@@ -1364,6 +1456,7 @@ impl TaskMgr {
             let row = list.selected().unwrap_or(0) as i32;
             let y = l.body.y + (row - list.view.top as i32 + 1) * l.row_h();
             return match self.page() {
+                Page::Applications => self.open_app_menu(l.body.x + 20, y, ctx, true),
                 Page::Services => self.open_service_menu(l.body.x + 20, y, ctx, true),
                 _ => self.open_proc_menu(l.body.x + 20, y, ctx, true),
             };
