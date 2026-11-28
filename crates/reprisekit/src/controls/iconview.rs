@@ -556,7 +556,8 @@ pub(crate) fn draw_edit(
 /// `rename` draws the in-progress edit box in place of the label, with `preedit`
 /// wrapped in at the caret; without the focus it hides its selection
 /// ([`TextEdit::unfocused`]). A box wider than the cell returns a wider canvas
-/// with the cell centred, so the caller offsets it by half the difference.
+/// with the cell centred, so the caller offsets it by half the difference; a box
+/// running past the cell's foot returns a taller canvas, the cell at its top.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_cell(
     theme: &Theme,
@@ -571,11 +572,10 @@ pub fn draw_cell(
     let cell = Cell::grown(theme.text);
     let s = theme.scale.max(1);
     let size = cell.w * s;
-    let extra = rename.map_or(0, |(edit, _)| {
-        let r = edit_layout(theme, text, edit, cell).rect;
-        (-r.x).max(r.right() - size).max(0)
-    });
-    let mut c = Canvas::new((size + 2 * extra) as u32, (cell.h * s) as u32);
+    let edit_box = rename.map(|(edit, _)| edit_layout(theme, text, edit, cell).rect);
+    let extra = edit_box.map_or(0, |r| (-r.x).max(r.right() - size).max(0));
+    let height = edit_box.map_or(0, |r| r.bottom()).max(cell.h * s);
+    let mut c = Canvas::new((size + 2 * extra) as u32, height as u32);
     c.set_preedit(preedit.cloned());
     draw_cell_at(
         &mut c,
@@ -1506,6 +1506,39 @@ mod tests {
                 Ground::Wallpaper,
             );
             assert!(got.pixels == want.pixels, "rename {}", rename.is_some());
+        }
+    }
+
+    #[test]
+    fn a_rename_box_of_three_lines_or_more_keeps_its_bottom_border_at_scale_1_and_2() {
+        crate::pins::fonts();
+        let t = text();
+        let name = "New Compressed (zipped) Folder";
+        let edit = TextEdit::new(name, true);
+        for s in [1, 2] {
+            let theme = Theme::default().scaled(s);
+            let lay = edit_layout(&theme, &t, &edit, Cell::grown(theme.text));
+            assert!(lay.lines.len() >= 3, "scale {s}: three lines or more");
+            let c = draw_cell(
+                &theme,
+                &t,
+                name,
+                None,
+                false,
+                None,
+                Some((&edit, Caret::Hidden)),
+                None,
+            );
+            let extra = (c.width as i32 - CELL * s) / 2;
+            let (x, y) = (
+                extra + lay.rect.x + lay.rect.width / 2,
+                lay.rect.bottom() - 1,
+            );
+            assert_eq!(
+                c.get(x, y),
+                0xFF000000,
+                "scale {s}: border under the last line"
+            );
         }
     }
 

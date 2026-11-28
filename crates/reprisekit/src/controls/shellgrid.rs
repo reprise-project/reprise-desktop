@@ -396,9 +396,12 @@ pub(crate) fn draw_grid(
         }
     }
     let theme = Theme::for_draw(p, px);
-    for (i, e) in sv.entries.iter().enumerate() {
-        let Some(&at) = lay.cells.get(i) else {
-            break;
+    // The entry being renamed draws last: its box may run over the cells under it.
+    let renamed = sv.edit.as_ref().map(|(i, _)| *i);
+    let order = (0..sv.entries.len()).filter(|&i| Some(i) != renamed);
+    for i in order.chain(renamed) {
+        let (Some(e), Some(&at)) = (sv.entries.get(i), lay.cells.get(i)) else {
+            continue;
         };
         if off(at).intersect(&all).is_empty() {
             continue;
