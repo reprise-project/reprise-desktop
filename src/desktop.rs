@@ -161,6 +161,9 @@ pub struct DesktopEntry {
     pub is_dir: bool,
     /// An untrusted application `.desktop` file, as the scan read it: the menu's Allow Launching.
     pub allow_launching: bool,
+    /// A folder's picture ([`reprisefs::meta::folder_picture`]) as the scan read it, which the
+    /// icon wears once the thumbnail helper has made it.
+    pub picture: Option<PathBuf>,
 }
 
 impl DesktopEntry {
@@ -224,6 +227,7 @@ pub fn place(name: &str) -> Option<DesktopEntry> {
         label: place.label(),
         is_dir: matches!(target, Target::Open(_)),
         allow_launching: false,
+        picture: None,
         icon: icon.into(),
         target,
         path,
@@ -284,6 +288,7 @@ pub fn recycle_bin(files: PathBuf, empty: bool) -> DesktopEntry {
         kind: Kind::RecycleBin,
         is_dir: false,
         allow_launching: false,
+        picture: None,
     }
 }
 
@@ -487,8 +492,9 @@ struct Followed {
     /// A file system is mounted here; nothing inside it is read, as it may never answer.
     mount_root: bool,
     meta: Option<std::fs::Metadata>,
-    /// A folder's own icon ([`reprisefs::meta::folder_icon`]).
+    /// A folder's own icon and picture ([`reprisefs::meta::folder_look`]).
     folder_icon: Option<String>,
+    picture: Option<PathBuf>,
     shortcut: Option<apps::Shortcut>,
     target: Option<Target>,
     allow_launching: bool,
@@ -506,8 +512,10 @@ impl Followed {
             return Followed::default();
         };
         if meta.is_dir() {
+            let (folder_icon, picture) = reprisefs::meta::folder_look(path);
             return Followed {
-                folder_icon: reprisefs::meta::folder_icon(path),
+                folder_icon,
+                picture,
                 meta: Some(meta),
                 ..Followed::default()
             };
@@ -548,6 +556,7 @@ fn entry_with(
         mount_root,
         meta,
         folder_icon,
+        picture,
         shortcut,
         target,
         allow_launching,
@@ -564,6 +573,7 @@ fn entry_with(
             kind: Kind::File,
             is_dir: true,
             allow_launching: false,
+            picture,
         };
     }
     if let Some(sc) = shortcut {
@@ -578,6 +588,7 @@ fn entry_with(
             kind: Kind::File,
             is_dir: false,
             allow_launching: false,
+            picture: None,
         };
     }
     let mime = globs.mime_of_name(&file_name);
@@ -586,6 +597,7 @@ fn entry_with(
     DesktopEntry {
         label: names::label_for(&file_name, globs, shown),
         allow_launching,
+        picture: None,
         name: file_name,
         icon,
         target,
@@ -690,6 +702,7 @@ mod tests {
             kind: Kind::Place(Place::Documents),
             is_dir: false,
             allow_launching: false,
+            picture: None,
         };
         assert_eq!(
             place_command(&docs(PathBuf::from("/home/u/Docs"))).as_deref(),
@@ -731,6 +744,7 @@ mod tests {
             kind: Kind::File,
             is_dir: false,
             allow_launching: false,
+            picture: None,
         }
     }
 
@@ -1442,6 +1456,34 @@ mod tests {
         let got = [("label".into(), show[0]), ("rename box".into(), show[1])];
         let pins = reprisekit::crate_dir!().join("tests/pins/shown_extension.txt");
         reprisekit::pins::check_file(&pins, &got);
+    }
+
+    #[test]
+    fn scan_reads_a_folders_picture_and_keeps_its_icon() {
+        let dir = fixture("picture");
+        let _cleanup = Cleanup(dir.clone());
+        let trip = dir.join("Trip");
+        std::fs::create_dir(&trip).unwrap();
+        std::os::unix::fs::symlink(&trip, dir.join("Trip link")).unwrap();
+        let picture = trip.join("cover.png");
+        let look = reprisefs::meta::FolderLook {
+            picture: Some(Some(&picture)),
+            ..Default::default()
+        };
+        reprisefs::meta::set_folder_look(&trip, look).unwrap();
+        let list = scan(&dir, &apps::MimeDb::empty(), names::Extensions::Hide, false);
+        let worn: Vec<(&str, &str, Option<&Path>)> = (list.iter())
+            .map(|e| (e.name.as_str(), e.icon.as_str(), e.picture.as_deref()))
+            .collect();
+        let through_link = dir.join("Trip link/cover.png");
+        assert_eq!(
+            worn,
+            [
+                ("Trip", "folder", Some(picture.as_path())),
+                ("Trip link", "folder", Some(through_link.as_path())),
+            ],
+            "a picture inside the folder is named through the link"
+        );
     }
 
     /// An executable FIFO named `*.desktop` would block `open(2)` forever,

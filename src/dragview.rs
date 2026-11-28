@@ -1449,6 +1449,7 @@ mod tests {
             kind,
             is_dir: false,
             allow_launching: false,
+            picture: None,
         };
         let entries = [
             entry("notes.txt", desktop::Kind::RecycleBin),
@@ -1586,6 +1587,7 @@ mod tests {
             kind: desktop::Kind::File,
             is_dir,
             allow_launching: allow,
+            picture: None,
         }
     }
 

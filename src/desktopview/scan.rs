@@ -473,6 +473,7 @@ impl State {
         let launcher = self.land_job_icons(&fresh).filter(|_| !typing);
         let rename = rename.or(launcher);
         self.relayout_desktop();
+        self.ask_desktop_pictures();
         if let Some(i) = rename {
             self.begin_rename(i);
         }

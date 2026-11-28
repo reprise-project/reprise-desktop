@@ -159,6 +159,7 @@ fn widgets_stand_clear_of_icons_move_by_drag_and_come_back_after_a_restart() {
             kind: desktop::Kind::File,
             is_dir: false,
             allow_launching: false,
+            picture: None,
         });
     }
     h.state.config.desktop_widgets = vec![Kind::Clock, Kind::Calendar, Kind::Meter];

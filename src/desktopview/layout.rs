@@ -44,6 +44,8 @@ pub(super) fn landing_cell(
 pub(super) struct CellKey<'a> {
     pub(super) label: Cow<'a, str>,
     pub(super) icon: Cow<'a, str>,
+    /// The serial of the folder picture worn in place of `icon`.
+    pub(super) picture: Option<u64>,
     pub(super) shortcut: bool,
     pub(super) cell: Rect,
     pub(super) selected: bool,
@@ -72,6 +74,7 @@ struct Redraw {
     cell: Rect,
     label: String,
     icon: String,
+    picture: Option<std::sync::Arc<reprisekit::raster::Canvas>>,
     shortcut: bool,
     cut: bool,
     selection: Option<desktop::Selection>,
@@ -102,6 +105,7 @@ impl State {
         let preedit = self.ime_field_preedit(crate::caret::Editor::Rename);
         let grid = self.desktop_grid();
         let mut spot = None;
+        let px = ICON_PX * scale;
         // A Cut file shows its icon at half strength until it is pasted.
         let cut: Vec<PathBuf> = self
             .own_file_clip()
@@ -142,6 +146,8 @@ impl State {
         }
         view.drawn.resize(count, None);
         let mut redraw = Vec::new();
+        // A folder whose picture has not landed at this size wears its icon meanwhile.
+        let mut unworn = false;
         let dropping = view
             .rename
             .as_ref()
@@ -163,9 +169,12 @@ impl State {
                 });
             let selected = view.selection.is(i) || view.drop_hilite == Some(i);
             let ring = view.focus_ring && view.selection.focus == Some(i);
+            let picture = (e.picture.as_ref()).and_then(|p| view.pictures.shown(p, px));
+            unworn |= e.picture.is_some() && picture.is_none();
             let key = CellKey {
                 label: Cow::Borrowed(&e.label),
                 icon: Cow::Borrowed(&e.icon),
+                picture: picture.as_ref().map(|(serial, _)| *serial),
                 shortcut: e.shortcut,
                 cell: *cell,
                 selected,
@@ -191,6 +200,7 @@ impl State {
                 cell: *cell,
                 label: e.label.clone(),
                 icon: e.icon.clone(),
+                picture: picture.map(|(_, c)| c),
                 shortcut: e.shortcut,
                 cut: is_cut,
                 selection: selected.then_some(desktop::Selection {
@@ -200,14 +210,15 @@ impl State {
                 editing: editing.map(|(ed, on)| (ed.clone(), on)),
             });
         }
-        let px = ICON_PX * scale;
         let (mut undecoded, mut waiting) = (false, false);
         if let Some((_, theme)) = view.drawn_theme.as_ref() {
             for r in &redraw {
                 // Icon files are decoded by the desktop's read, never here: one not decoded at
                 // this size (the scale changed, or the cache dropped it) shows no picture until
                 // a read decodes it. A theme icon still decoding draws its cell again on landing.
-                let mut icon = if r.icon.starts_with('/') {
+                let mut icon = if let Some(p) = &r.picture {
+                    Some(p.clone())
+                } else if r.icon.starts_with('/') {
                     let put = self.icons.file_put(&r.icon, px);
                     if put.is_none() {
                         view.drawn[r.index] = None;
@@ -257,6 +268,9 @@ impl State {
         self.desktop = Some(view);
         if reread {
             self.rescan_desktop();
+        }
+        if unworn {
+            self.ask_desktop_pictures();
         }
         if waiting {
             self.wait_for_icons(crate::icon::IconWaiter::Desktop);
