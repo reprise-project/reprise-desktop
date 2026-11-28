@@ -2222,6 +2222,48 @@ fn files_dropped_on_a_zip_icon_go_into_it_in_explorer_and_a_read_only_zip_takes_
 }
 
 #[test]
+fn paste_on_a_zip_icon_puts_the_clipboard_files_into_it_and_greys_on_a_read_only_zip() {
+    crate::spawn::record();
+    let (mut h, desk) = desktop_in("desktop-paste-zip", &["a.txt", "box.zip", "shut.zip"]);
+    for (name, writes) in [("box.zip", true), ("shut.zip", false)] {
+        let i = icon(&h, name);
+        h.state.desktop.as_mut().unwrap().entries[i].zip = Some(writes);
+    }
+    let paste = |h: &crate::harness::Harness, name: &str| {
+        let (items, commands) = h.state.icon_menu_rows(icon(h, name)).unwrap();
+        let at = commands
+            .iter()
+            .position(|c| *c == Some(DesktopCommand::PasteInto));
+        at.map(|at| matches!(&items[at], MenuItem::Entry { label, enabled, .. } if label == "Paste" && *enabled))
+    };
+    assert_eq!(paste(&h, "box.zip"), Some(true));
+    assert_eq!(paste(&h, "shut.zip"), Some(false), "greyed");
+    assert_eq!(paste(&h, "a.txt"), None);
+
+    let clip = crate::clipboard::FileClip {
+        paths: vec![desk.join("a.txt")],
+        cut: false,
+    };
+    h.state
+        .clip_offer_each(crate::clipboard::file_offers(&clip).unwrap());
+    let zip = desk.join("box.zip");
+    h.state.desktop_command(
+        DesktopCommand::PasteInto,
+        Some(desktop::IconId::File(zip.clone())),
+    );
+    let a = desk.join("a.txt");
+    assert_eq!(
+        job_args(&h),
+        [vec![
+            "--add-to-zip".to_string(),
+            zip.display().to_string(),
+            "--".into(),
+            a.display().to_string(),
+        ]]
+    );
+}
+
+#[test]
 fn a_paste_beside_its_source_selects_the_copy_once_the_desktop_lists_it() {
     use crate::dragview::{DropOp, DropTarget};
     crate::spawn::record();

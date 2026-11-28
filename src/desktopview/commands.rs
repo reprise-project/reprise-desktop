@@ -688,11 +688,14 @@ impl State {
                 self.paste_files(target, cmd == Dc::PasteShortcut);
             }
             Dc::PasteInto => {
-                let dir = target
+                let into = target
                     .and_then(|i| self.desktop.as_ref()?.entries.get(i))
-                    .map(|e| e.path.clone());
-                if let Some(dir) = dir {
-                    self.paste_files(crate::dragview::DropTarget::Folder(dir), false);
+                    .map(|e| match e.zip {
+                        Some(_) => DropTarget::Zip(e.path.clone()),
+                        None => DropTarget::Folder(e.path.clone()),
+                    });
+                if let Some(into) = into {
+                    self.paste_files(into, false);
                 }
             }
             Dc::PasteOpen => {
