@@ -354,28 +354,42 @@ pub fn hit(bar: &Commandbar, l: &Layout, x: i32, y: i32) -> Option<Hit> {
     l.help.filter(|&r| across(r)).map(|_| Hit::Help)
 }
 
-/// The box state `part` draws in: Pressed while held or its menu is open, Hot under the pointer or
-/// the keyboard. A split command lights both its parts while either is hot, as does Views.
+/// The box state `part` draws in: Pressed while held or its menu is open, Hot under the pointer,
+/// Focused under the keyboard. A split command lights both its parts while either is hot, as
+/// does Views.
 fn state_of(bar: &Commandbar, part: Hit, twin: Option<Hit>) -> State {
     let either = |h: Option<Hit>| h.is_some_and(|h| h == part || Some(h) == twin);
     if bar.pressed == Some(part) {
         State::Pressed
-    } else if either(bar.hot) || either(bar.focus) || either(bar.pressed) {
+    } else if either(bar.hot) || either(bar.pressed) {
         State::Hot
+    } else if either(bar.focus) {
+        State::Focused
     } else {
         State::Normal
     }
 }
 
+/// A look without a focused box of its own lights the keyboard's command as hot.
 fn draw_box(c: &mut Canvas, p: &Paint, r: Rect, state: State) {
     if state == State::Normal {
         return;
     }
     match p.look.style() {
-        Some(st) if st.part(Part::CommandButton).is_some() => {
+        Some(st) if let Some(art) = st.part(Part::CommandButton) => {
+            let state = match state {
+                State::Focused if !art.states.contains(&State::Focused) => State::Hot,
+                state => state,
+            };
             st.draw(c, r, Part::CommandButton, state, p.s);
         }
-        _ => tb::draw_button(c, p, r, None, state),
+        _ => {
+            let state = match state {
+                State::Focused => State::Hot,
+                state => state,
+            };
+            tb::draw_button(c, p, r, None, state)
+        }
     }
 }
 
@@ -507,12 +521,16 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, bar: &Commandbar, l:
     if let Some(pane) = l.pane {
         let r = pane.scaled(s);
         let state = match state_of(bar, Hit::PreviewPane, None) {
-            State::Normal | State::Hot if bar.pane_shown => State::Pressed,
+            State::Normal | State::Hot | State::Focused if bar.pane_shown => State::Pressed,
             state => state,
         };
         draw_box(c, p, r, state);
         let cs = c.scale();
-        let glyph = cmdglyph::canvas(CmdGlyph::PreviewPane, ICON * s, cs);
+        let ink = p
+            .look
+            .style()
+            .and_then(|st| st.text_color(Part::CommandBar, State::Normal));
+        let glyph = cmdglyph::canvas_inked(CmdGlyph::PreviewPane, ICON * s, cs, ink);
         let side = ICON * s;
         c.blit_over(
             r.x + (r.width - side) / 2,
@@ -853,16 +871,26 @@ mod tests {
         assert!(t.find(Role::Button, &tr!("toolbar-views")).is_some());
     }
 
-    fn glass(mode: Mode) -> Theme {
+    fn glass_in(style: crate::glass::Style, mode: Mode) -> Theme {
         let g = crate::glass::Settings {
             mode,
+            style,
             ..Default::default()
         };
         theme_with(Interface::Glass, crate::blue::Variant::Blue, false, &g)
     }
 
     fn render(bar: &Commandbar, mode: Mode, s: i32) -> (Canvas, Layout) {
-        let base = glass(mode);
+        render_in(crate::glass::Style::Glass, bar, mode, s)
+    }
+
+    fn render_in(
+        style: crate::glass::Style,
+        bar: &Commandbar,
+        mode: Mode,
+        s: i32,
+    ) -> (Canvas, Layout) {
+        let base = glass_in(style, mode);
         let one = TextRenderer::load(&base.fonts);
         let l = layout(
             bar,
@@ -957,6 +985,51 @@ mod tests {
             }
         }
         crate::pins::check("commandbar", &got);
+    }
+
+    #[test]
+    fn onyx_command_bar_pins_per_state_in_light_and_dark_at_scale_1_and_2() {
+        crate::pins::fonts();
+        let mut got = Vec::new();
+        for mode in [Mode::Light, Mode::Dark] {
+            for s in [1, 2] {
+                for (name, bar) in states() {
+                    let (c, _) = render_in(crate::glass::Style::Onyx, &bar, mode, s);
+                    got.push((format!("{name} {mode:?} {s}"), crate::pins::fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("commandbar_onyx", &got);
+    }
+
+    #[test]
+    fn onyx_marks_the_keyboards_command_apart_from_a_hot_one_and_glass_lights_both_alike() {
+        use crate::glass::Style;
+        crate::pins::fonts();
+        let (mut hot, mut keyed) = (sample(), sample());
+        hot.hot = Some(Hit::Item(2));
+        keyed.focus = Some(Hit::Item(2));
+        let drawn = |style, bar: &Commandbar| render_in(style, bar, Mode::Light, 1).0.pixels;
+        assert_eq!(drawn(Style::Glass, &hot), drawn(Style::Glass, &keyed));
+        assert_ne!(drawn(Style::Onyx, &hot), drawn(Style::Onyx, &keyed));
+        assert_ne!(drawn(Style::Onyx, &keyed), drawn(Style::Onyx, &sample()));
+    }
+
+    #[test]
+    fn onyx_leaves_the_pane_glyphs_page_open_on_its_band() {
+        use crate::glass::Style;
+        let mut bar = sample();
+        with_pane(&mut bar);
+        let white = |style| {
+            let (c, l) = render_in(style, &bar, Mode::Light, 1);
+            let r = l.pane.unwrap();
+            (r.y..r.bottom())
+                .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                .filter(|&(x, y)| c.get(x, y) == 0xFFFF_FFFF)
+                .count()
+        };
+        assert!(white(Style::Glass) > 20, "Glass draws a white page");
+        assert_eq!(white(Style::Onyx), 0, "Onyx shows its band through it");
     }
 
     #[test]

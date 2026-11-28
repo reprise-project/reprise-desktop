@@ -153,6 +153,26 @@ fn cued(t: Theme) -> Theme {
     }
 }
 
+/// Onyx's command bar, address, panes and headings, light and dark, stacked at scale `n`.
+fn render_onyx_panes(n: i32) -> Canvas {
+    let onyx = reprisekit::glass::Style::Onyx;
+    let pages = [
+        gallery_commandbar::render_in(onyx, n),
+        gallery_crumbs::render_in(onyx, n),
+        glass_panes::render_panes(onyx, n),
+    ];
+    let w = pages.iter().map(|p| p.width).max().unwrap_or(0);
+    let h = pages.iter().map(|p| p.height).sum::<u32>();
+    let mut c = Canvas::new(w, h);
+    c.fill_rect(c.bounds(), Color::rgb(0x80, 0x80, 0x80));
+    let mut y = 0;
+    for p in &pages {
+        c.blit_over(0, y, p);
+        y += p.height as i32;
+    }
+    c
+}
+
 fn main() {
     if let Ok(n) = std::env::var("REPRISE_GALLERY_SCALE") {
         let n: i32 = n.parse().expect("REPRISE_GALLERY_SCALE is a whole number");
@@ -205,6 +225,14 @@ fn write_scale(n: i32) {
     write_preview(
         || render_glass_navrow(n.max(1)),
         &format!("reprisekit-gallery-glass-navrow@{}.png", n.max(1)),
+    );
+    write_preview(
+        || glass::render_navrow(reprisekit::glass::Style::Onyx, n.max(1)),
+        &format!("reprisekit-gallery-onyx-navrow@{}.png", n.max(1)),
+    );
+    write_preview(
+        || render_onyx_panes(n.max(1)),
+        &format!("reprisekit-gallery-onyx-panes@{}.png", n.max(1)),
     );
     write_preview(
         || glass_caption::render_glass_bare_captions(n.max(1)),
@@ -641,6 +669,14 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
     write_preview(
         || gallery_commandbar::render(1),
         "reprisekit-gallery-command-bar@1.png",
+    );
+    write_preview(
+        || glass::render_navrow(reprisekit::glass::Style::Onyx, 1),
+        "reprisekit-gallery-onyx-navrow@1.png",
+    );
+    write_preview(
+        || render_onyx_panes(1),
+        "reprisekit-gallery-onyx-panes@1.png",
     );
     write_preview(
         || gallery_commandbar::render_menus(1),

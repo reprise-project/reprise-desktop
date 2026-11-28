@@ -9,9 +9,9 @@ use crate::theme::Color;
 /// The band's height at 100% text, and the rows of it that keep their height: the gradient at the
 /// top and the three edge rows at the bottom. The flat rows between stretch.
 pub const BAR_H: i32 = 31;
-const BAR_TOP: i32 = 15;
-const BAR_BOTTOM: i32 = 3;
-const BAR_W: i32 = 3;
+pub(super) const BAR_TOP: i32 = 15;
+pub(super) const BAR_BOTTOM: i32 = 3;
+pub(super) const BAR_W: i32 = 3;
 
 const BAR_TOP_STOPS: [(f64, Color); 2] = [
     (0.0, Color::rgb(0xFA, 0xFC, 0xFD)),
@@ -27,17 +27,17 @@ const BAR_EDGE_ROWS: [Color; 3] = [
     Color::rgb(0xA0, 0xAF, 0xC3),
 ];
 /// The end columns take white over the band at this alpha, above the edge rows.
-const BAR_END_LIGHT: u8 = 0x80;
+pub(super) const BAR_END_LIGHT: u8 = 0x80;
 
 /// A command's box at 100% text, and its rows that keep their height.
 pub const BOX_H: i32 = 24;
-const BOX_END: i32 = 3;
-const BOX_W: i32 = 2 * BOX_END + 1;
-const BOX_TOP: i32 = 12;
-const BOX_BOTTOM: i32 = 3;
-const BOX_RADIUS: f64 = 2.5;
+pub(super) const BOX_END: i32 = 3;
+pub(super) const BOX_W: i32 = 2 * BOX_END + 1;
+pub(super) const BOX_TOP: i32 = 12;
+pub(super) const BOX_BOTTOM: i32 = 3;
+pub(super) const BOX_RADIUS: f64 = 2.5;
 /// The row where a box's face steps from its pale upper half to its deeper lower half.
-const BOX_STEP: f64 = 12.0;
+pub(super) const BOX_STEP: f64 = 12.0;
 
 const BOX_STATES: [State; 3] = [State::Normal, State::Hot, State::Pressed];
 
@@ -202,7 +202,7 @@ fn hook() -> Vec<(f64, f64)> {
     pts
 }
 
-fn help(d: i32) -> PartImage {
+pub(super) fn help(d: i32) -> PartImage {
     let k = f64::from(d);
     let mid = f64::from(HELP) / 2.0;
     let hook: Vec<(f64, f64)> = hook().into_iter().map(|(x, y)| (x * k, y * k)).collect();

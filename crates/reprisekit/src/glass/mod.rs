@@ -25,6 +25,7 @@ mod navrow;
 pub mod notify;
 mod onyx;
 mod onyxorb;
+mod onyxshell;
 mod onyxstart;
 mod orb;
 pub mod overview;

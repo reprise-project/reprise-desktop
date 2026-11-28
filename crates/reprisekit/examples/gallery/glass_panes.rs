@@ -19,9 +19,10 @@ const DETAILS: (i32, i32) = (660, detailspane::HEIGHT);
 const HEADING: (i32, i32) = (660, 140);
 const GAP: i32 = 12;
 
-fn theme(mode: glass::Mode) -> Theme {
+fn theme(mode: glass::Mode, style: glass::Style) -> Theme {
     let g = glass::Settings {
         mode,
+        style,
         ..Default::default()
     };
     interfaces::theme_with(Interface::Glass, Default::default(), false, &g)
@@ -188,12 +189,17 @@ fn draw_heading(c: &mut Canvas, t: &Theme, s: i32, (x, y): (i32, i32)) {
 
 /// The page at scale `s`: a column per mode, light then dark.
 pub fn render_glass_panes(s: i32) -> Canvas {
+    render_panes(glass::Style::Glass, s)
+}
+
+/// [`render_glass_panes`] in `style`.
+pub fn render_panes(style: glass::Style, s: i32) -> Canvas {
     let col = DETAILS.0.max(4 * (NAV.0 + GAP)) + GAP;
     let h = GAP + NAV.1 + GAP + 3 * (DETAILS.1 + GAP) + HEADING.1 + GAP;
     let mut c = Canvas::new((2 * col * s) as u32, (h * s) as u32);
     c.fill_rect(c.bounds(), Color::rgb(0x80, 0x80, 0x80));
     for (m, mode) in glass::Mode::ALL.into_iter().enumerate() {
-        let t = theme(mode);
+        let t = theme(mode, style);
         let x0 = m as i32 * col + GAP;
         for (i, (_, set)) in nav_scenes().into_iter().enumerate() {
             draw_nav(

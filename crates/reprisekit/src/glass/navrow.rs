@@ -10,8 +10,8 @@ use crate::style::{Layout, Part, PartImage, State};
 use crate::theme::Color;
 
 const ORB: i32 = 25;
-const PILL_W: i32 = 57;
-const PILL_H: i32 = 29;
+pub(super) const PILL_W: i32 = 57;
+pub(super) const PILL_H: i32 = 29;
 const RECENT_W: i32 = 15;
 const RECENT_H: i32 = 21;
 const FIELD_W: i32 = 7;
@@ -21,12 +21,13 @@ const CLEAR_W: i32 = 21;
 const CLEAR_H: i32 = 20;
 const CROSS: i32 = 8;
 
-const BUTTON_STATES: [State; 4] = [State::Normal, State::Hot, State::Pressed, State::Disabled];
-const FIELD_STATES: [State; 3] = [State::Normal, State::Hot, State::Focused];
-const CLEAR_STATES: [State; 3] = [State::Normal, State::Hot, State::Pressed];
+pub(super) const BUTTON_STATES: [State; 4] =
+    [State::Normal, State::Hot, State::Pressed, State::Disabled];
+pub(super) const FIELD_STATES: [State; 3] = [State::Normal, State::Hot, State::Focused];
+pub(super) const CLEAR_STATES: [State; 3] = [State::Normal, State::Hot, State::Pressed];
 
 /// A part's painter at a scale.
-type Painter = fn(i32) -> PartImage;
+pub(super) type Painter = fn(i32) -> PartImage;
 
 const fn rgb(v: u32) -> Color {
     Color::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
@@ -41,12 +42,12 @@ fn solid(v: u32) -> Px {
 
 /// One orb state: its ring top and bottom, the gloss over its upper half and the deep blue
 /// under the split, and the cyan its lower rim glows in.
-struct Orb {
-    ring: [u32; 2],
-    upper: [(f64, u32); 3],
-    lower: [(f64, u32); 4],
-    rim: Option<u32>,
-    arrow: (u32, u8),
+pub(super) struct Orb {
+    pub ring: [u32; 2],
+    pub upper: [(f64, u32); 3],
+    pub lower: [(f64, u32); 4],
+    pub rim: Option<u32>,
+    pub arrow: (u32, u8),
 }
 
 const ORB_REST: Orb = Orb {
@@ -120,6 +121,22 @@ const RECENT_FILL: u32 = 0x398CC9;
 const RECENT_LINE: u32 = 0x052959;
 const RECENT_GREYED: [u32; 2] = [0x8A9AB0, 0x44546A];
 
+/// The search field's edge, darker at the top; the alpha of its edge, inner line and face per
+/// [`FIELD_STATES`]; then the magnifier's ink and its lens's white.
+pub(super) struct FieldInks {
+    pub edge: [(f64, u32); 2],
+    pub alpha: [[u8; 3]; 3],
+    pub magnifier: u32,
+    pub lens: u8,
+}
+
+const FIELD: FieldInks = FieldInks {
+    edge: FIELD_EDGE,
+    alpha: FIELD_ALPHA,
+    magnifier: GLASS_INK,
+    lens: GLASS_LENS,
+};
+
 const FIELD_EDGE: [(f64, u32); 2] = [(0.0, 0x414952), (21.0, 0x8091A5)];
 /// The edge's, the inner line's and the face's alpha for Normal, Hot and Focused.
 const FIELD_ALPHA: [[u8; 3]; 3] = [[0xE0, 0xE8, 0xCC], [0xF0, 0xF4, 0xED], [0xF0, 0xFF, 0xFF]];
@@ -127,8 +144,18 @@ const FIELD_ALPHA: [[u8; 3]; 3] = [[0xE0, 0xE8, 0xCC], [0xF0, 0xF4, 0xED], [0xF0
 const GLASS_INK: u32 = 0x2D6FB6;
 const GLASS_LENS: u8 = 0x60;
 
+/// The clear button's cross, and its box's line and face top and bottom, Hot then Pressed.
+pub(super) struct ClearInks {
+    pub cross: u32,
+    pub boxes: [[u32; 3]; 2],
+}
+
+const CLEAR_INKS: ClearInks = ClearInks {
+    cross: CROSS_INK,
+    boxes: CLEAR_BOX,
+};
+
 const CROSS_INK: u32 = 0x3A5F8F;
-/// The clear button's line and its face's top and bottom, Hot then Pressed.
 const CLEAR_BOX: [[u32; 3]; 2] = [
     [0x8EC5EA, 0xEAF6FD, 0xD3EEFC],
     [0x6E9DC0, 0xC2E4F6, 0xA9D9F2],
@@ -147,13 +174,13 @@ pub fn glass_painters() -> [(Part, Painter); 4] {
 /// The search field's parts, remapped in dark Glass with the other fields.
 pub fn painters() -> [(Part, Painter); 3] {
     [
-        (Part::SearchField, field_part),
-        (Part::SearchGlass, glass_part),
-        (Part::SearchClear, clear_part),
+        (Part::SearchField, |d| field_part(&FIELD, d)),
+        (Part::SearchGlass, |d| glass_part(&FIELD, d)),
+        (Part::SearchClear, |d| clear_part(&CLEAR_INKS, d)),
     ]
 }
 
-fn stack(frames: impl IntoIterator<Item = Canvas>) -> Canvas {
+pub(super) fn stack(frames: impl IntoIterator<Item = Canvas>) -> Canvas {
     let frames: Vec<Canvas> = frames.into_iter().collect();
     let w = frames.first().map_or(0, |f| f.width);
     let h: u32 = frames.iter().map(|f| f.height).sum();
@@ -176,9 +203,14 @@ fn orb_inks(state: State) -> &'static Orb {
 }
 
 fn orb_part(forward: bool, d: i32) -> PartImage {
+    orbs(orb_inks, forward, d)
+}
+
+/// Back's (or, `forward`, Forward's) ball in each of [`BUTTON_STATES`], inked by `inks`.
+pub(super) fn orbs(inks: fn(State) -> &'static Orb, forward: bool, d: i32) -> PartImage {
     let d = d.max(1);
     PartImage::new(
-        stack(BUTTON_STATES.map(|s| orb(orb_inks(s), forward, d))),
+        stack(BUTTON_STATES.map(|s| orb(inks(s), forward, d))),
         &BUTTON_STATES,
         Layout::Vertical,
     )
@@ -257,8 +289,25 @@ fn pill_part(d: i32) -> PartImage {
         .at_scale(d)
 }
 
-/// The drop's 7 x 4 triangle, its outline round it, and the plate it lights on.
 fn recent_part(d: i32) -> PartImage {
+    recent(&RECENT, d)
+}
+
+/// The recent places drop's triangle and its outline, and greyed, the two of them.
+pub(super) struct RecentInks {
+    pub fill: u32,
+    pub line: u32,
+    pub greyed: [u32; 2],
+}
+
+const RECENT: RecentInks = RecentInks {
+    fill: RECENT_FILL,
+    line: RECENT_LINE,
+    greyed: RECENT_GREYED,
+};
+
+/// The drop's 7 x 4 triangle, its outline round it, and the plate it lights on.
+pub(super) fn recent(inks: &RecentInks, d: i32) -> PartImage {
     let d = d.max(1);
     let k = f64::from(d);
     let mid = f64::from(RECENT_H) / 2.0;
@@ -271,8 +320,8 @@ fn recent_part(d: i32) -> PartImage {
     let (outline, fill) = (tri(1.0), tri(0.0));
     let frames = BUTTON_STATES.map(|state| {
         let [ink, line] = match state {
-            State::Disabled => RECENT_GREYED.map(solid),
-            _ => [solid(RECENT_FILL), solid(RECENT_LINE)],
+            State::Disabled => inks.greyed.map(solid),
+            _ => [solid(inks.fill), solid(inks.line)],
         };
         let plate = match state {
             State::Hot => Some((premul(WHITE, 0x90), [0x60, 0x28])),
@@ -302,12 +351,12 @@ fn recent_part(d: i32) -> PartImage {
 
 /// A 1 px edge darker at the top, a light line inside it and a white face the glass shows
 /// through until the field holds the keyboard.
-fn field_part(d: i32) -> PartImage {
+pub(super) fn field_part(inks: &FieldInks, d: i32) -> PartImage {
     let d = d.max(1);
-    let edge = stops(&FIELD_EDGE);
+    let edge = stops(&inks.edge);
     let frames = FIELD_STATES
         .iter()
-        .zip(FIELD_ALPHA)
+        .zip(inks.alpha)
         .map(|(_, [e, line, face])| {
             draw(FIELD_W, FIELD_H, d, |x, y| {
                 let (col, row) = (x as i32 / d, y as i32 / d);
@@ -328,31 +377,31 @@ fn field_part(d: i32) -> PartImage {
 }
 
 /// A lens ring with a handle down to the right.
-fn glass_part(d: i32) -> PartImage {
+pub(super) fn glass_part(inks: &FieldInks, d: i32) -> PartImage {
     let d = d.max(1);
     let k = f64::from(d);
-    let ink = solid(GLASS_INK);
+    let ink = solid(inks.magnifier);
     let (cx, cy) = (5.0 * k, 5.0 * k);
     let atlas = draw(GLASS_SIDE, GLASS_SIDE, d, |x, y| {
         let out = ellipse(x, y, cx, cy, 4.25 * k, 4.25 * k);
         let inn = ellipse(x, y, cx, cy, 2.75 * k, 2.75 * k);
         let handle = stroke(x, y, &[(8.0 * k, 8.0 * k), (11.2 * k, 11.2 * k)], 2.2 * k);
         let ring = (out - inn).max(handle).clamp(0.0, 1.0);
-        let lens = crate::shape::scale(premul(WHITE, GLASS_LENS), inn);
+        let lens = crate::shape::scale(premul(WHITE, inks.lens), inn);
         over(crate::shape::scale(ink, ring), lens)
     });
     PartImage::new(atlas, &[State::Normal], Layout::Vertical).at_scale(d)
 }
 
 /// The cross alone at rest, on a light box while hot and a deeper one while held.
-fn clear_part(d: i32) -> PartImage {
+pub(super) fn clear_part(inks: &ClearInks, d: i32) -> PartImage {
     let d = d.max(1);
     let k = f64::from(d);
-    let cross = glyph(Glyph::Cross, CROSS, d, 1.5, solid(CROSS_INK));
+    let cross = glyph(Glyph::Cross, CROSS, d, 1.5, solid(inks.cross));
     let frames = CLEAR_STATES.map(|state| {
         let inks = match state {
-            State::Hot => Some(CLEAR_BOX[0]),
-            State::Pressed => Some(CLEAR_BOX[1]),
+            State::Hot => Some(inks.boxes[0]),
+            State::Pressed => Some(inks.boxes[1]),
             _ => None,
         };
         let mut c = draw(CLEAR_W, CLEAR_H, d, |x, y| {

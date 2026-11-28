@@ -68,22 +68,32 @@ fn states() -> Vec<(&'static str, Commandbar, i32)> {
     ]
 }
 
-fn looks() -> Vec<(String, Theme)> {
+fn looks(style: reprisekit::glass::Style) -> Vec<(String, Theme)> {
+    let name = match style {
+        reprisekit::glass::Style::Glass => "Glass",
+        reprisekit::glass::Style::Onyx => "Onyx",
+    };
     reprisekit::glass::Mode::ALL
         .into_iter()
         .map(|mode| {
             let g = reprisekit::glass::Settings {
                 mode,
+                style,
                 ..Default::default()
             };
             let t = interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
-            (format!("Glass {mode:?}"), t)
+            (format!("{name} {mode:?}"), t)
         })
         .collect()
 }
 
 pub fn render(s: i32) -> Canvas {
-    let looks = looks();
+    render_in(reprisekit::glass::Style::Glass, s)
+}
+
+/// The bar's states in `style`, light and dark side by side.
+pub fn render_in(style: reprisekit::glass::Style, s: i32) -> Canvas {
+    let looks = looks(style);
     let states = states();
     let row_h = looks
         .iter()
@@ -151,7 +161,7 @@ pub fn render_menus(s: i32) -> Canvas {
             .checked(g == CmdGlyph::Details)
     })
     .to_vec();
-    let looks = looks();
+    let looks = looks(reprisekit::glass::Style::Glass);
     let col_w = 420;
     let (w, h) = (looks.len() as i32 * col_w, 300);
     let mut c = super::blurred_stripes(w * s, h * s);
