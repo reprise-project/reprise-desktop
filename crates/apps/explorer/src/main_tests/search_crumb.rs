@@ -38,8 +38,9 @@ fn labels(ex: &Explorer) -> Vec<&str> {
     ex.crumbs.crumbs.iter().map(|c| c.label.as_str()).collect()
 }
 
-#[test]
-fn a_search_ends_the_crumbs_in_its_segment_and_the_folders_crumb_leaves_it() {
+/// A folder `Documents` with report.txt and other.txt, Explorer in it under Glass light and
+/// searching with `find`.
+fn searching_docs() -> (tempfile::TempDir, Explorer, Ctx) {
     let dir = tempfile::tempdir().expect("a temp dir");
     let docs = dir.path().join("Documents");
     std::fs::create_dir(&docs).expect("mkdir");
@@ -47,73 +48,65 @@ fn a_search_ends_the_crumbs_in_its_segment_and_the_folders_crumb_leaves_it() {
     std::fs::write(docs.join("other.txt"), "x").expect("write");
     let mut ctx = glass(false);
     ctx.size = (1200, 573);
-    let place = Place::Folder(docs);
-    let mut ex = test_explorer(place.clone(), &mut ctx);
+    let mut ex = test_explorer(Place::Folder(docs), &mut ctx);
     ex.search_run = |q, cancel| {
         let mut find = std::process::Command::new("find");
         find.arg(&q.root);
         Some(reprisefs::search::collect(find, q, cancel))
     };
-    let before = ex.crumbs.crumbs.clone();
-    assert_eq!(labels(&ex).last(), Some(&"Documents"));
-
     ex.search_field
         .key(reprisekit::textedit::EditKey::Insert("report".into()));
     ex.focus = Focus::Search;
     ex.event(MAIN, Event::Key(key(keysym::RETURN, None, false)), &mut ctx);
     assert_eq!(ex.items.len(), 1, "the hit alone");
-    let n = before.len();
-    assert_eq!(
-        ex.crumbs.crumbs[..n],
-        before[..],
-        "the folder's crumbs first"
-    );
-    assert_eq!(labels(&ex)[n..], ["Search results in Documents"]);
+    (dir, ex, ctx)
+}
+
+#[test]
+fn a_search_shows_one_segment_behind_the_magnifier_and_back_leaves_it() {
+    let (dir, mut ex, mut ctx) = searching_docs();
+    assert_eq!(labels(&ex), ["Search results in Documents"]);
+    assert!(ex.crumbs.searching, "the magnifier for the folder's icon");
     assert_eq!(
         ex.search.caption(&[]).as_deref(),
         Some("Search results in Documents"),
         "the title keeps the search's"
     );
 
-    let (x, y) = crumb_at(&ex, n, &ctx);
+    let (x, y) = crumb_at(&ex, 0, &ctx);
     click(&mut ex, x, y, &mut ctx);
-    assert!(
-        ex.search.shown().is_some(),
-        "its own segment searches again"
-    );
+    assert!(ex.search.shown().is_some(), "the segment searches again");
     assert_eq!(ex.items.len(), 1);
-    assert_eq!(ex.crumbs.crumbs.len(), n + 1);
 
-    let (x, y) = crumb_at(&ex, n - 1, &ctx);
-    click(&mut ex, x, y, &mut ctx);
-    assert_eq!(ex.search.caption(&[]), None, "the search is over");
-    assert_eq!(ex.search_field.text(), "");
+    ex.event(MAIN, Event::Key(key(keysym::LEFT, None, true)), &mut ctx);
+    assert_eq!(ex.search.caption(&[]), None, "Back leaves the search");
     assert_eq!(ex.items.len(), 2, "the folder is back");
-    assert_eq!(ex.place, place);
-    assert_eq!(ex.crumbs.crumbs, before, "the search's segment is gone");
+    assert_eq!(ex.place, Place::Folder(dir.path().join("Documents")));
+    assert!(!ex.crumbs.searching);
+    assert_eq!(
+        labels(&ex).last(),
+        Some(&"Documents"),
+        "the folder's crumbs"
+    );
 }
 
 #[test]
-fn a_crumb_above_the_folder_leaves_the_search_for_its_place() {
-    let dir = tempfile::tempdir().expect("a temp dir");
-    let docs = dir.path().join("Documents");
-    std::fs::create_dir(&docs).expect("mkdir");
-    let mut ctx = glass(false);
-    ctx.size = (1200, 573);
-    let mut ex = test_explorer(Place::Folder(docs.clone()), &mut ctx);
-    ex.search.start(&Place::Folder(docs), "notes", false);
-    assert!(ex.sync_search_crumb());
-    let n = ex.crumbs.crumbs.len();
-    let (x, y) = crumb_at(&ex, n - 3, &ctx);
-    click(&mut ex, x, y, &mut ctx);
+fn alt_up_and_a_subfolder_leave_the_search() {
+    let (dir, mut ex, mut ctx) = searching_docs();
+    ex.event(MAIN, Event::Key(key(keysym::UP, None, true)), &mut ctx);
     assert_eq!(ex.place, Place::Folder(dir.path().to_path_buf()));
     assert!(ex.search.asked().is_none());
-    assert_eq!(ex.search_crumb, None);
-    assert_ne!(
-        labels(&ex).last(),
-        Some(&"Search results in Documents"),
-        "the crumbs end in the new place"
-    );
+    assert!(!ex.crumbs.searching);
+    assert_ne!(labels(&ex), ["Search results in Documents"]);
+
+    let (dir, mut ex, mut ctx) = searching_docs();
+    let sub = dir.path().join("Documents").join("Old");
+    std::fs::create_dir(&sub).expect("mkdir");
+    ex.run(Command::GoTo(Place::Folder(sub.clone())), &mut ctx);
+    ex.sync_search_crumb();
+    assert_eq!(ex.place, Place::Folder(sub));
+    assert!(ex.search.asked().is_none(), "a chevron row leaves it too");
+    assert_eq!(labels(&ex).last(), Some(&"Old"));
 }
 
 #[test]
@@ -135,13 +128,7 @@ fn the_search_crumb_pins_light_and_dark_at_scale_1_and_2() {
             ("hot", Some(breadcrumb::Part::Segment(n - 1))),
         ] {
             ex.crumbs.hot = hot;
-            // The search's segment and its chevron: the crumbs before it name the temp dir.
-            let sl = shell(&ex, &ctx);
-            let (px, cm) = (ctx.theme.fonts.size_px, ctx.theme.controls());
-            let bl = breadcrumb::layout(&ex.crumbs, sl.address, &ctx.text, px, &cm);
-            let seg = bl.segments.last().expect("the search's segment");
-            assert_eq!(seg.crumb, n - 1);
-            let r = seg.button.union(&seg.chevron);
+            let r = shell(&ex, &ctx).address;
             for s in [1, 2] {
                 let mut c = Canvas::with_scale(792, 573, s);
                 ctx.at_scale(s, |ctx| window::draw(&ex, &mut c, ctx));

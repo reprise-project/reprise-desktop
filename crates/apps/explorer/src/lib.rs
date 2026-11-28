@@ -291,7 +291,7 @@ pub struct Explorer {
     pub address: AddressBar,
     /// The shell layout's address while it is not edited; the edit is `address`'s field.
     pub crumbs: reprisekit::controls::breadcrumb::Breadcrumb,
-    /// The place whose search the crumbs end in ([`Explorer::sync_search_crumb`]).
+    /// The place whose search the crumbs name ([`Explorer::sync_search_crumb`]).
     pub(crate) search_crumb: Option<Place>,
     /// The shell layout's Back, Forward and recent places.
     pub nav: reprisekit::controls::navbuttons::NavButtons,

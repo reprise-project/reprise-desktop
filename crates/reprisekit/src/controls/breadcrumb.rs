@@ -14,6 +14,7 @@ use crate::controls::combo::{self, ListItem};
 use crate::controls::form::Key;
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::pathcomplete;
+use crate::controls::searchfield;
 use crate::look::Paint;
 use crate::look::widgets::{draw_edit_field, toolbar};
 use crate::pointer::{Interaction, Shape};
@@ -64,6 +65,8 @@ pub struct Breadcrumb {
     pub open_menu: Option<Part>,
     /// The pointer is over the field, which brightens it.
     pub field_hot: bool,
+    /// The crumbs name a search: the magnifier stands in for the place's icon.
+    pub searching: bool,
 }
 
 impl Default for Breadcrumb {
@@ -83,6 +86,7 @@ impl Breadcrumb {
             pressed: None,
             open_menu: None,
             field_hot: false,
+            searching: false,
         }
     }
 
@@ -90,6 +94,7 @@ impl Breadcrumb {
     /// mode and closes any menu.
     pub fn set_place(&mut self, crumbs: Vec<Crumb>, icon: Option<Canvas>, text: &str) {
         self.crumbs = crumbs;
+        self.searching = false;
         self.place_text = text.to_string();
         self.edit.set_place(text, icon);
         self.editing = false;
@@ -524,8 +529,23 @@ pub fn draw(
         return;
     }
     draw_frame(c, p, lay.frame, face);
-    if let Some(icon) = b.icon() {
-        blit_centred(c, icon, lay.icon.scaled(s));
+    let glass = p.look.style().filter(|_| has(p, StylePart::SearchGlass));
+    match (b.searching, glass) {
+        (true, Some(st)) => {
+            let m = searchfield::MAGNIFIER;
+            let r = Rect::new(
+                lay.icon.x + (lay.icon.width - m) / 2,
+                lay.icon.y + (lay.icon.height - m) / 2,
+                m,
+                m,
+            );
+            st.draw(c, r.scaled(s), StylePart::SearchGlass, State::Normal, s);
+        }
+        _ => {
+            if let Some(icon) = b.icon() {
+                blit_centred(c, icon, lay.icon.scaled(s));
+            }
+        }
     }
     let arrow = |c: &mut Canvas, g: Glyph, r: Rect| {
         let art = shape::glyph(g, GLYPH * small, s, 1.0, premul(ink, 255));
