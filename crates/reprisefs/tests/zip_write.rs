@@ -1,5 +1,6 @@
-//! Writing into a zip browsed as a compressed folder. Its own binary: it points `$XDG_CACHE_HOME`
-//! at a scratch home before anything reads it, and re-runs itself to be killed mid-rewrite.
+//! Writing into a zip browsed as a compressed folder. Its own binary, in a test session of its
+//! own; it re-runs itself to be killed mid-rewrite, and the killed run's session lies in this
+//! one's temp folder.
 
 use reprisefs::archive::{self, Kind};
 use reprisefs::extract::{ArchiveEvent, ArchiveJob};
@@ -11,20 +12,15 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+reprisebus::test_session!();
+
 fn home() -> PathBuf {
-    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    HOME.get_or_init(|| {
-        let home = std::env::temp_dir().join(format!("reprisefs-zip-write-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
-        std::fs::create_dir_all(&home).expect("a scratch home");
-        // SAFETY: set once, before any test reads the environment; the others wait on the lock.
-        unsafe { std::env::set_var("XDG_CACHE_HOME", home.join("cache")) };
-        home
-    })
-    .clone()
+    std::env::var_os("HOME")
+        .expect("set by the test session")
+        .into()
 }
 
-/// A fresh folder of the scratch home holding `files` (paths and contents) under `src`.
+/// A fresh folder of the home holding `files` (paths and contents) under `src`.
 fn fresh(files: &[(&str, &[u8])]) -> PathBuf {
     let dir = tempfile::tempdir_in(home()).expect("a folder").keep();
     for (name, bytes) in files {
@@ -418,7 +414,6 @@ fn a_cancelled_add_leaves_the_zip_as_it_was_and_no_temp_file() {
 #[test]
 fn a_crash_mid_rewrite_leaves_the_zip_whole_and_its_temp_file_beside_it() {
     if let Some(zip) = std::env::var_os("ZIP_WRITE_CRASH") {
-        home();
         let zip = PathBuf::from(zip);
         let src = zip.parent().expect("a folder").join("src");
         let _ = rewrite(&zip, &add(&src, &["small.txt"]));
