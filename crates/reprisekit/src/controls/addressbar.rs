@@ -296,6 +296,18 @@ pub fn layout(
     }
 }
 
+/// The field alone over `field`, with no label or Go: the breadcrumb's edit mode.
+pub fn field_layout(ab: &AddressBar, field: Rect, cm: &ControlMetrics) -> Layout {
+    let none = Rect::new(field.x, field.y, 0, field.height);
+    Layout {
+        label: none,
+        field,
+        combo: combo::layout(&ab.combo, field, cm),
+        complete: pathcomplete::layout(&ab.complete, field, None, cm),
+        go: Rect::new(field.right(), field.y, 0, field.height),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Combo(combo::Hit),
