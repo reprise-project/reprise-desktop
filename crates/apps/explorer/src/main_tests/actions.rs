@@ -440,6 +440,10 @@ fn compress_to_names_the_zip_on_the_menu_and_selects_it() {
     assert_eq!(ex.compress_label().as_deref(), Some("v1.2.zip"));
     ex.select_paths(&[d.join("v1.2"), d.join("report.txt")]);
     assert_eq!(ex.compress_label().as_deref(), Some("Work.zip"));
+    ex.select_paths(&[d.join("report.zip")]);
+    assert_eq!(ex.compress_label(), None, "a zip's menu has no Compress to");
+    ex.select_paths(&[d.join("report.zip"), d.join("report.txt")]);
+    assert_eq!(ex.compress_label().as_deref(), Some("Work.zip"));
 
     ex.select_paths(&[d.join("v1.2")]);
     ex.run(Command::Compress, &mut ctx);
