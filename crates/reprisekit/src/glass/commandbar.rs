@@ -383,19 +383,24 @@ mod tests {
     }
 
     #[test]
-    fn the_help_mark_is_a_blue_disc_with_white_in_it_and_clear_corners() {
-        let c = frame(Part::CommandHelp, Mode::Light, State::Normal, 1);
-        assert_eq!((c.width, c.height), (HELP as u32, HELP as u32));
-        assert_eq!(c.get(0, 0) >> 24, 0, "a clear corner");
-        let blue = |p: u32| (p & 0xFF) > (p >> 16 & 0xFF) + 0x40;
-        assert!(blue(c.get(4, 9)), "the body is blue: {:08x}", c.get(4, 9));
-        let lightest = (7..9)
-            .flat_map(|x| (11..13).map(move |y| (x, y)))
-            .map(|(x, y)| c.get(x, y))
-            .map(|p| (p & 0xFF).min(p >> 8 & 0xFF).min(p >> 16 & 0xFF))
-            .max()
-            .unwrap();
-        assert!(lightest > 0xD0, "the mark's dot is white: {lightest:02x}");
+    fn the_help_mark_is_a_blue_disc_with_white_in_it_and_clear_corners_light_and_dark() {
+        for mode in [Mode::Light, Mode::Dark] {
+            let c = frame(Part::CommandHelp, mode, State::Normal, 1);
+            assert_eq!((c.width, c.height), (HELP as u32, HELP as u32));
+            assert_eq!(c.get(0, 0) >> 24, 0, "a clear corner");
+            let blue = |p: u32| (p & 0xFF) > (p >> 16 & 0xFF) + 0x40;
+            assert!(blue(c.get(4, 9)), "the body is blue: {:08x}", c.get(4, 9));
+            let lightest = (7..9)
+                .flat_map(|x| (11..13).map(move |y| (x, y)))
+                .map(|(x, y)| c.get(x, y))
+                .map(|p| (p & 0xFF).min(p >> 8 & 0xFF).min(p >> 16 & 0xFF))
+                .max()
+                .unwrap();
+            assert!(
+                lightest > 0xD0,
+                "{mode:?}: the mark's dot is white: {lightest:02x}"
+            );
+        }
     }
 
     #[test]
