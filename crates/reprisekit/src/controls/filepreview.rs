@@ -1,6 +1,8 @@
-//! File preview: one file shown in a window of its own, as its picture, its text or a card of its
-//! facts, stepped through the folder with the arrows. The host reads the file; this side routes
-//! it, sizes the window, draws, takes the keys and the pointer, and names it to a screen reader.
+//! File preview: one file shown in a window of its own, as its picture, its text or a card of
+//! its facts, stepped through the folder with the arrows; or in a pane beside a folder's view
+//! ([`draw_pane`]), which says what it shows instead when it shows no file. The host reads the
+//! file; this side routes it, sizes the window, draws, takes the keys and the pointer, and names
+//! it to a screen reader.
 
 use crate::access::{self, Tree, accesskit};
 use crate::controls::multiedit::{self, Metrics, MultiEdit, View};
@@ -11,6 +13,7 @@ use crate::text::{Align, TextRenderer};
 use crate::textedit::Caret;
 use crate::textedit::keysym;
 use accesskit::{Node, NodeId, Role};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Bytes of a text file read for its preview.
@@ -132,6 +135,9 @@ pub enum Body {
     Picture(Canvas),
     /// The file's first [`TEXT_BYTES`], read-only.
     Text(MultiEdit),
+    /// A pane's word in place of a file: nothing picked, no preview, or blank while the read is
+    /// out.
+    Note(String),
 }
 
 /// What a key in the window means.
@@ -171,13 +177,18 @@ pub fn key(sym: u32, ctrl: bool, alt: bool) -> Action {
     }
 }
 
+/// A picture shrunk to a width, height and scale.
+type Fitted = ((i32, i32, i32), Canvas);
+
 pub struct FilePreview {
     pub facts: Facts,
     /// The card's icon, [`ICON_PX`] square.
     pub icon: Option<Rc<Canvas>>,
-    pub body: Body,
+    body: Body,
     pub view: View,
     thumb: ThumbDrag,
+    /// The picture shrunk to the size it last drew at, and that size and scale.
+    fitted: RefCell<Option<Fitted>>,
 }
 
 impl FilePreview {
@@ -189,19 +200,36 @@ impl FilePreview {
             body: Body::Card,
             view: View::default(),
             thumb: ThumbDrag::default(),
+            fitted: RefCell::new(None),
         }
+    }
+
+    pub fn body(&self) -> &Body {
+        &self.body
     }
 
     pub fn set_body(&mut self, body: Body) {
         self.body = body;
         self.view = View::default();
         self.thumb = ThumbDrag::default();
+        self.fitted.replace(None);
+    }
+
+    /// The picture shrunk to `w` x `h`, made once per size and scale.
+    fn fitted(&self, pic: &Canvas, w: i32, h: i32) -> std::cell::Ref<'_, Canvas> {
+        let key = (w, h, pic.scale());
+        let fresh = matches!(&*self.fitted.borrow(), Some((k, _)) if *k == key);
+        if !fresh {
+            let c = pic.resample_box(w as u32, h as u32);
+            self.fitted.replace(Some((key, c)));
+        }
+        std::cell::Ref::map(self.fitted.borrow(), |f| &f.as_ref().expect("just made").1)
     }
 
     /// The client size the window opens at for its body, inside `within` (the work area's share).
     pub fn size(&self, mono: &TextRenderer, m: &Metrics, within: (i32, i32)) -> (i32, i32) {
         let want = match &self.body {
-            Body::Card => CARD,
+            Body::Card | Body::Note(_) => CARD,
             Body::Picture(p) => (
                 (p.width as i32 + 2 * PAD).max(MIN_PICTURE.0),
                 (p.height as i32 + 2 * PAD).max(MIN_PICTURE.1),
@@ -328,19 +356,49 @@ pub fn draw(
     qv: &FilePreview,
     r: Rect,
 ) {
+    c.fill_rect(r, p.cs.button_face);
+    draw_body(c, p, text, px, mono, m, qv, r);
+}
+
+/// [`draw`] in a pane `r` on the window colour, a [`Body::Note`] centred in grey.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_pane(
+    c: &mut Canvas,
+    p: &Paint,
+    text: &TextRenderer,
+    px: u32,
+    mono: &TextRenderer,
+    m: &Metrics,
+    qv: &FilePreview,
+    r: Rect,
+) {
+    c.fill_rect(r, p.cs.window);
+    draw_body(c, p, text, px, mono, m, qv, r);
+}
+
+#[expect(clippy::too_many_arguments)]
+fn draw_body(
+    c: &mut Canvas,
+    p: &Paint,
+    text: &TextRenderer,
+    px: u32,
+    mono: &TextRenderer,
+    m: &Metrics,
+    qv: &FilePreview,
+    r: Rect,
+) {
     let cs = p.cs;
-    c.fill_rect(r, cs.button_face);
     match &qv.body {
+        Body::Note(note) => {
+            let shown = text.ellipsize(note, r.inset(PAD).width, false, px);
+            text.draw(c, r, &shown, false, cs.gray_text, Align::Center, px);
+        }
         Body::Picture(pic) => {
             let at = picture_rect(pic, r);
             if (at.width, at.height) == (pic.width as i32, pic.height as i32) {
                 c.blit_over(at.x, at.y, pic);
             } else {
-                c.blit_over(
-                    at.x,
-                    at.y,
-                    &pic.resample_box(at.width as u32, at.height as u32),
-                );
+                c.blit_over(at.x, at.y, &qv.fitted(pic, at.width, at.height));
             }
         }
         Body::Text(edit) => {
@@ -374,7 +432,8 @@ pub fn draw(
     }
 }
 
-/// The window's nodes under `parent`: the picture as an image, the text box, or the card's lines.
+/// The window's nodes under `parent`: the picture as an image, the text box (which takes the
+/// focus), or the card's lines.
 pub fn access(
     tree: &mut Tree,
     parent: NodeId,
@@ -383,6 +442,21 @@ pub fn access(
     m: &Metrics,
     r: Rect,
 ) {
+    if let Some(text) = access_pane(tree, parent, qv, mono, m, r) {
+        tree.set_focus(text);
+    }
+}
+
+/// [`access`] for a pane, which leaves the focus where it is; its note as a label. Gives the text
+/// box's node.
+pub fn access_pane(
+    tree: &mut Tree,
+    parent: NodeId,
+    qv: &FilePreview,
+    mono: &TextRenderer,
+    m: &Metrics,
+    r: Rect,
+) -> Option<NodeId> {
     match &qv.body {
         Body::Picture(pic) => {
             let at = picture_rect(pic, r);
@@ -394,9 +468,14 @@ pub fn access(
         }
         Body::Text(edit) => {
             let lay = multiedit::layout(mono, m, edit, r.inset(PAD), 1);
-            let id = multiedit::access(edit, qv.view, &lay, m, mono, tree, parent, "text");
-            tree.set_focus(id);
+            return Some(multiedit::access(
+                edit, qv.view, &lay, m, mono, tree, parent, "text",
+            ));
         }
+        Body::Note(note) if !note.is_empty() => {
+            tree.push(parent, "note", value(r, note));
+        }
+        Body::Note(_) => {}
         Body::Card => {
             let lines = qv.facts.lines();
             let (icon, rows) = card_layout(r, lines.len() + 1);
@@ -411,6 +490,7 @@ pub fn access(
             }
         }
     }
+    None
 }
 
 /// A label reading `text` as it is: a file name's `&` is no access key.

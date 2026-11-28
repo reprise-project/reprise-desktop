@@ -8,6 +8,10 @@ use std::collections::BTreeMap;
 
 /// The width Glass's navigation pane opens at, its divider left out.
 pub const NAV_W: i32 = 158;
+/// The width Glass's preview pane opens at, its divider left out.
+pub const PREVIEW_W: i32 = 260;
+/// The widest a state file may set Glass's panes, in 100% px.
+pub const MAX_PANE_W: i32 = 2000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -25,6 +29,9 @@ pub struct Settings {
     pub menu_bar: bool,
     pub nav_pane: bool,
     pub details_pane: bool,
+    /// Glass's preview pane right of the view, and its width in 100% px, its divider left out.
+    pub preview_pane: bool,
+    pub preview_width: i32,
     /// The Folders bar's width in 100% px, grown by the text size when drawn.
     pub bar_width: i32,
     /// Glass's navigation pane width in 100% px, its divider left out.
@@ -51,6 +58,8 @@ impl Default for Settings {
             menu_bar: false,
             nav_pane: true,
             details_pane: true,
+            preview_pane: false,
+            preview_width: PREVIEW_W,
             bar_width: 200,
             nav_width: NAV_W,
             // The folder window opens at an outer 800x600; the client
@@ -79,9 +88,10 @@ impl Settings {
             .clamped()
     }
 
-    fn clamped(mut self) -> Settings {
+    pub(crate) fn clamped(mut self) -> Settings {
         self.bar_width = self.bar_width.max(explorerbar::MIN_W);
-        self.nav_width = self.nav_width.max(explorerbar::MIN_W);
+        self.nav_width = self.nav_width.clamp(explorerbar::MIN_W, MAX_PANE_W);
+        self.preview_width = self.preview_width.clamp(explorerbar::MIN_W, MAX_PANE_W);
         self.window = (
             self.window.0.max(repriseapp::MIN_SIZE.0),
             self.window.1.max(repriseapp::MIN_SIZE.1),

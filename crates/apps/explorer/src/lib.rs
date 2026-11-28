@@ -35,9 +35,11 @@ mod navrow;
 mod newshortcut;
 mod openwith;
 mod pane;
+mod panereader;
 mod place;
 mod pointer;
 mod preview;
+mod previewpane;
 mod props_dialog;
 mod props_host;
 mod props_picture;
@@ -436,6 +438,10 @@ pub struct Explorer {
     keyed: bool,
     /// The held splitter's grab: the press's x less the bar's right edge.
     dragging: Option<i32>,
+    /// The preview pane's held divider: the press's x less the divider's.
+    pane_drag: Option<i32>,
+    /// Glass's preview pane while it shows ([`Explorer::sync_pane`]).
+    pub(crate) pane: Option<previewpane::Pane>,
     /// A marquee drag in the view; its rectangle lives in `sv.marquee`.
     marquee_from: Option<shellview::MarqueeDrag>,
     /// A Details column divider drag: the column, the press position and the column's 100% width then.
@@ -788,6 +794,8 @@ impl Explorer {
             key_wait: None,
             keyed: false,
             dragging: None,
+            pane_drag: None,
+            pane: None,
             marquee_from: None,
             resizing: None,
             thumb: ThumbDrag::default(),
@@ -1051,6 +1059,7 @@ impl Explorer {
             layout: [
                 self.settings.menu_bar,
                 self.settings.details_pane,
+                self.settings.preview_pane,
                 self.settings.nav_pane,
             ],
             shell: self.shell_on,

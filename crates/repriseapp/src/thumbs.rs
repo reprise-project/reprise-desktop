@@ -337,6 +337,39 @@ pub fn picture(path: &std::path::Path, max: (u32, u32)) -> Option<Canvas> {
     )
 }
 
+/// What `call` on `path` gives, on a thread of its own and given up after [`picture_in`]'s
+/// deadline (`TimedOut`), or at once while earlier calls on `path`'s mount have not returned: a
+/// stat or read of a file on a mount that never answers holds its caller that long at most.
+pub fn named_read<T: Send + 'static>(
+    path: &std::path::Path,
+    call: impl FnOnce() -> io::Result<T> + Send + 'static,
+) -> io::Result<T> {
+    NAMED_READS.run(path, call)
+}
+
+/// A call refused at once, untried, because earlier calls on its mount or in the process have not
+/// returned: a `TimedOut` that says nothing about the file it was for ([`budget_full`]).
+#[derive(Debug)]
+pub struct BudgetFull(pub PathBuf);
+
+impl std::fmt::Display for BudgetFull {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "file reads on {} have not returned", self.0.display())
+    }
+}
+
+impl std::error::Error for BudgetFull {}
+
+/// Whether `e` is [`named_read`] refusing a call untried, not the call itself timing out.
+pub fn budget_full(e: &io::Error) -> bool {
+    e.get_ref().is_some_and(|inner| inner.is::<BudgetFull>())
+}
+
+/// The mount point `path` lies on, read from the mount table without touching `path`.
+pub fn mount_point(path: &std::path::Path) -> PathBuf {
+    mount_of(path)
+}
+
 /// [`picture`] with `runner` (None: no jail) running `helper`.
 pub fn picture_in(
     runner: Option<&Runner>,
@@ -607,10 +640,7 @@ impl Deadlines {
     ) -> io::Result<T> {
         let mount = (self.mount_of)(path);
         let Some(slot) = Stuck::take(&self.stuck, &mount) else {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("file reads on {} have not returned", mount.display()),
-            ));
+            return Err(io::Error::new(io::ErrorKind::TimedOut, BudgetFull(mount)));
         };
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
@@ -1183,11 +1213,9 @@ mod tests {
         };
         let refused_at_once = |p: &std::path::Path, why: &str| {
             let asked = Instant::now();
-            assert_eq!(
-                read(p).unwrap_err().kind(),
-                io::ErrorKind::TimedOut,
-                "{why}"
-            );
+            let refused = read(p).unwrap_err();
+            assert_eq!(refused.kind(), io::ErrorKind::TimedOut, "{why}");
+            assert!(budget_full(&refused), "{why}: refused untried");
             assert!(asked.elapsed() < SHORT, "{why}: refused at once");
         };
         let hang_all_of = |m: &PathBuf| {
@@ -1195,6 +1223,7 @@ mod tests {
                 let asked = Instant::now();
                 let hung = read(&m.join("hang.png")).unwrap_err();
                 assert_eq!(hung.kind(), io::ErrorKind::TimedOut);
+                assert!(!budget_full(&hung), "a call that ran out of time");
                 assert!(
                     asked.elapsed() < SHORT * 20,
                     "gave up after {:?}",

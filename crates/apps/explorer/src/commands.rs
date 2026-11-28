@@ -134,6 +134,7 @@ pub enum Command {
 pub enum LayoutPart {
     MenuBar,
     DetailsPane,
+    PreviewPane,
     NavPane,
 }
 
@@ -469,6 +470,7 @@ impl Explorer {
                 let on = match part {
                     LayoutPart::MenuBar => &mut s.menu_bar,
                     LayoutPart::DetailsPane => &mut s.details_pane,
+                    LayoutPart::PreviewPane => &mut s.preview_pane,
                     LayoutPart::NavPane => &mut s.nav_pane,
                 };
                 *on = !*on;

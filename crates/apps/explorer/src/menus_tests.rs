@@ -1317,12 +1317,20 @@ fn some_glyph(_: CmdGlyph) -> Option<Canvas> {
 #[test]
 fn organize_puts_glyphs_on_the_clipboard_rows_layout_delete_and_the_hidden_panes() {
     let state = MenuState {
-        layout: [false, false, true],
+        layout: [false, false, false, true],
         ..MenuState::default()
     };
     assert_eq!(
         worn(&organize_menu(&state, &some_glyph)),
-        ["Cut", "Copy", "Paste", "Layout", "> Details pane", "Delete"],
+        [
+            "Cut",
+            "Copy",
+            "Paste",
+            "Layout",
+            "> Details pane",
+            "> Preview pane",
+            "Delete"
+        ],
         "the shown navigation pane keeps its check in place of a glyph"
     );
     assert_eq!(

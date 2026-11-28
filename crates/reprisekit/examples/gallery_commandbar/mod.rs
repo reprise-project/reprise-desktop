@@ -25,7 +25,7 @@ fn sample() -> Commandbar {
             Item::new("New folder", 3).drop(Drop::Split),
             Item::new("Eject", 4).enabled(false),
         ],
-        right: vec![RightItem::Views, RightItem::Help],
+        right: vec![RightItem::Views, RightItem::PreviewPane, RightItem::Help],
         ..Commandbar::default()
     }
 }
@@ -61,6 +61,8 @@ fn states() -> Vec<(&'static str, Commandbar, i32)> {
             BAR_W,
         ),
         ("keyboard", with(&|b| b.focus = Some(Hit::Item(2))), BAR_W),
+        ("pane hot", with(&|b| b.hot = Some(Hit::PreviewPane)), BAR_W),
+        ("pane shown", with(&|b| b.pane_shown = true), BAR_W),
         ("folded", sample(), NARROW_W),
         ("» hot", with(&|b| b.hot = Some(Hit::More)), NARROW_W),
     ]

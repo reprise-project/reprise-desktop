@@ -269,6 +269,8 @@ impl Explorer {
             let facts = self.facts_for(&mut ctx.icons);
             self.details.set(facts);
         }
+        self.cmdbar.pane_shown = self.settings.preview_pane;
+        self.sync_pane(ctx);
         self.toolbar.latched = self.settings.folders.then_some(FOLDERS_ITEM);
         self.build_taskpane(ctx);
         let (items, acts) = commands_for(&self.bar_facts()).into_iter().unzip();
@@ -365,6 +367,10 @@ impl Explorer {
                 let glyph = menu_glyph(ctx);
                 let menu = crate::menus::views_menu(self.sv.mode, &glyph);
                 (menu, IconWaits::default())
+            }
+            Hit::PreviewPane => {
+                let part = crate::commands::LayoutPart::PreviewPane;
+                return self.run(Command::ToggleLayout(part), ctx);
             }
             Hit::Help => return Reply::none(),
         };
@@ -716,6 +722,7 @@ fn part_rect(l: &commandbar::Layout, part: commandbar::Hit) -> Option<Rect> {
         Hit::More => l.more,
         Hit::ViewsCycle => l.views.map(|v| v.0),
         Hit::ViewsDrop => l.views.map(|v| v.1),
+        Hit::PreviewPane => l.pane,
         Hit::Help => l.help,
     }
 }
@@ -723,7 +730,7 @@ fn part_rect(l: &commandbar::Layout, part: commandbar::Hit) -> Option<Rect> {
 /// The command bar with no commands yet: Views and the help mark at its right end.
 pub(crate) fn command_bar() -> Commandbar {
     Commandbar {
-        right: vec![RightItem::Views, RightItem::Help],
+        right: vec![RightItem::Views, RightItem::PreviewPane, RightItem::Help],
         ..Commandbar::default()
     }
 }

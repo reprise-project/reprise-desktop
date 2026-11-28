@@ -189,7 +189,7 @@ fn the_recycle_bin_offers_empty_and_restore_and_an_archive_extract_all() {
 }
 
 #[test]
-fn organize_layout_toggles_menu_bar_details_and_navigation_panes() {
+fn organize_layout_toggles_the_menu_bar_and_each_pane() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ctx = test_ctx();
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
@@ -220,12 +220,13 @@ fn organize_layout_toggles_menu_bar_details_and_navigation_panes() {
     let (popup, row, checks) = open(&mut ex, &mut ctx);
     assert_eq!(
         checks,
-        [false, true, true],
-        "menu bar hidden, both panes shown"
+        [false, true, false, true],
+        "menu bar and preview pane hidden, the other panes shown"
     );
     for (i, part) in [
         LayoutPart::MenuBar,
         LayoutPart::DetailsPane,
+        LayoutPart::PreviewPane,
         LayoutPart::NavPane,
     ]
     .into_iter()
@@ -237,8 +238,8 @@ fn organize_layout_toggles_menu_bar_details_and_navigation_panes() {
     }
     let s = &ex.settings;
     assert_eq!(
-        (s.menu_bar, s.details_pane, s.nav_pane),
-        (true, false, false)
+        (s.menu_bar, s.details_pane, s.preview_pane, s.nav_pane),
+        (true, false, true, false)
     );
     assert_eq!(
         (s.folders, s.status_bar),
@@ -247,7 +248,7 @@ fn organize_layout_toggles_menu_bar_details_and_navigation_panes() {
     );
     assert!(ex.settings_dirty, "the toggles are saved");
     let (_, _, checks) = open(&mut ex, &mut ctx);
-    assert_eq!(checks, [true, false, false]);
+    assert_eq!(checks, [true, false, true, false]);
 }
 
 #[test]

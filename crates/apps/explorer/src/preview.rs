@@ -38,7 +38,7 @@ pub(crate) struct Preview {
     within: (i32, i32),
 }
 
-/// What the read made of a file; `Nothing` keeps the card.
+/// What the read made of a file; `Nothing` keeps the card (the pane says there is no preview).
 pub(crate) enum Loaded {
     Picture(Canvas),
     Text(String),
@@ -57,26 +57,17 @@ pub(crate) fn read(
     max: (u32, u32),
     scale: i32,
 ) -> Loaded {
-    let Ok(meta) = std::fs::metadata(path) else {
+    let p = path.to_path_buf();
+    let Ok(meta) = repriseapp::thumbs::named_read(path, move || std::fs::metadata(&p)) else {
         return Loaded::Nothing;
     };
     if !meta.is_file() {
         return Loaded::Nothing;
     }
     let read_text = || -> Option<String> {
-        let mut head = Vec::with_capacity(SNIFF_BYTES);
-        let mut f = reprisefs::ops::open_regular(path).ok()?;
-        (&mut f)
-            .take(SNIFF_BYTES as u64)
-            .read_to_end(&mut head)
-            .ok()?;
-        if !filepreview::looks_text(&head) || (route == Route::Other && head.is_empty()) {
-            return None;
-        }
-        f.take((TEXT_BYTES - head.len()) as u64)
-            .read_to_end(&mut head)
-            .ok()?;
-        Some(filepreview::text_of(&head))
+        let p = path.to_path_buf();
+        let head = repriseapp::thumbs::named_read(path, move || read_head(&p, route));
+        head.ok().flatten().map(|h| filepreview::text_of(&h))
     };
     let picture = || {
         repriseapp::thumbs::picture_in(jailed.runner.as_ref(), &jailed.exe, path, max)
@@ -90,6 +81,19 @@ pub(crate) fn read(
     found
         .or_else(|| cached(path, &meta, cache?, max, scale).map(Loaded::Picture))
         .unwrap_or(Loaded::Nothing)
+}
+
+/// The first [`TEXT_BYTES`] of the file at `path` when its first bytes read as text.
+fn read_head(path: &Path, route: Route) -> std::io::Result<Option<Vec<u8>>> {
+    let mut head = Vec::with_capacity(SNIFF_BYTES);
+    let mut f = reprisefs::ops::open_regular(path)?;
+    (&mut f).take(SNIFF_BYTES as u64).read_to_end(&mut head)?;
+    if !filepreview::looks_text(&head) || (route == Route::Other && head.is_empty()) {
+        return Ok(None);
+    }
+    f.take((TEXT_BYTES - head.len()) as u64)
+        .read_to_end(&mut head)?;
+    Ok(Some(head))
 }
 
 /// The picture at `path` (a folder's), fitted inside `max` device px at `scale`: [`read`]'s picture
@@ -124,7 +128,7 @@ impl Jailed {
     }
 
     /// The sample of the font file at `path` inside `max` device px at `scale`.
-    fn sample(&self, path: &Path, max: (u32, u32), scale: i32) -> Option<Canvas> {
+    pub(crate) fn sample(&self, path: &Path, max: (u32, u32), scale: i32) -> Option<Canvas> {
         use reprisefs::thumbnailers::{MAX_SIDE, Thumbnailer};
         let runner = self.runner.as_ref()?;
         let (w, h) = (max.0.min(MAX_SIDE), max.1.min(MAX_SIDE));
@@ -177,7 +181,7 @@ fn font_sample(path: &Path, max: (u32, u32), scale: i32) -> Option<Canvas> {
 }
 
 /// The largest thumbnail of `path` in the cache, fitted inside `max` device px.
-fn cached(
+pub(crate) fn cached(
     path: &Path,
     meta: &std::fs::Metadata,
     cache: &Thumbnails,
@@ -192,7 +196,31 @@ fn cached(
     })
 }
 
+/// [`read`] with the thumbnail cache as configured, for a listing thread.
+pub(crate) fn read_file(path: &Path, route: Route, (max, scale): ((u32, u32), i32)) -> Loaded {
+    let cache = repriseapp::thumbs::cache_for(repriseconf::current().thumbnail_cache);
+    read(
+        path,
+        route,
+        cache.as_ref(),
+        &Jailed::installed(),
+        max,
+        scale,
+    )
+}
+
 impl Explorer {
+    /// What the preview says of entry `i` beside its picture or text.
+    pub(crate) fn facts_of(&self, i: usize) -> Option<Facts> {
+        let (it, e) = (self.items.get(i)?, self.sv.entries.get(i)?);
+        Some(Facts {
+            name: it.label().to_string(),
+            kind: e.kind.clone(),
+            size: (!e.is_folder()).then(|| reprisefs::props::format_size(it.size)),
+            modified: e.modified.clone(),
+        })
+    }
+
     /// Space in the view: the preview of the one selected item, or closes the one up.
     pub(crate) fn toggle_preview(&mut self, ctx: &mut Ctx) -> Reply {
         if self.preview.take().is_some() {
@@ -207,14 +235,10 @@ impl Explorer {
     /// Show entry `i` in the preview, opening the window if it is not up; waits for the read as
     /// long as a listing is waited for, so a quick read opens at its own size.
     fn preview_entry(&mut self, i: usize, ctx: &mut Ctx) -> Reply {
-        let (Some(it), Some(e)) = (self.items.get(i), self.sv.entries.get(i)) else {
+        let (Some(facts), Some(it), Some(e)) =
+            (self.facts_of(i), self.items.get(i), self.sv.entries.get(i))
+        else {
             return Reply::none();
-        };
-        let facts = Facts {
-            name: it.label().to_string(),
-            kind: e.kind.clone(),
-            size: (!e.is_folder()).then(|| reprisefs::props::format_size(it.size)),
-            modified: e.modified.clone(),
         };
         let route = filepreview::route(it.mime.as_deref());
         let folder = e.is_folder();
@@ -243,11 +267,7 @@ impl Explorer {
             }
             None => (!folder).then(|| {
                 let p = it.path.clone();
-                Job::spawn(Some(&ctx.wake), move || {
-                    let cache =
-                        repriseapp::thumbs::cache_for(repriseconf::current().thumbnail_cache);
-                    read(&p, route, cache.as_ref(), &Jailed::installed(), max, scale)
-                })
+                Job::spawn(Some(&ctx.wake), move || read_file(&p, route, (max, scale)))
             }),
         };
         let landed = job.as_ref().and_then(|j| j.wait(self.list_wait()));

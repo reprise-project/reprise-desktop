@@ -53,6 +53,7 @@ impl Explorer {
     /// The release's end of every hold but an item drag's, each where the pointer left it; the
     /// Explorer bar's splitter and a column resize keep their widths.
     fn let_go(&mut self) {
+        self.pane_release();
         self.tree.bars.release_bar();
         self.sv.bars.release_bar();
         self.sv.header.release();
@@ -260,6 +261,9 @@ impl Explorer {
         }
 
         if let Some(reply) = self.nav_row_press(x, y, ctx) {
+            return reply;
+        }
+        if let Some(reply) = self.pane_press(x, y, ctx) {
             return reply;
         }
 
@@ -634,7 +638,7 @@ impl Explorer {
     /// The pointer's shape at (`x`, `y`), from the control under it as `press` finds it; a held
     /// splitter or column edge keeps its arrow through the drag.
     pub(crate) fn shape_at(&self, x: i32, y: i32, ctx: &Ctx) -> Shape {
-        if self.dragging.is_some() || self.resizing.is_some() {
+        if self.dragging.is_some() || self.resizing.is_some() || self.on_pane_divider(x, y, ctx) {
             return Shape::ColResize;
         }
         if self.popup.is_some() || self.bar.open.is_some() || self.drag.is_some() {
@@ -854,15 +858,25 @@ impl Explorer {
                 Reply::none()
             };
         }
+        if let Some(reply) = self.pane_drag_to(x, ctx) {
+            return reply;
+        }
+        if self.pane_motion(x, y, ctx) {
+            return Reply::redraw();
+        }
         if let Some(grab) = self.dragging {
             // The view keeps at least 200 px, the width the task pane
             // would have taken.
             let u = ctx.theme.controls().text;
-            let split = match self.shell_on {
-                true => explorerbar::NAV_DIVIDER_W,
-                false => explorerbar::SPLITTER_W,
+            let (split, preview) = match self.shell_on {
+                true => {
+                    let sl = self.shell_layout(ctx);
+                    let preview = sl.and_then(|sl| sl.preview).map_or(0, |r| r.width);
+                    (explorerbar::NAV_DIVIDER_W, preview)
+                }
+                false => (explorerbar::SPLITTER_W, 0),
             };
-            let widest = u.within(ctx.size.0 - split - 200);
+            let widest = u.within(ctx.size.0 - split - preview - 200);
             let width = u
                 .within(x - grab)
                 .clamp(explorerbar::MIN_W, widest.max(explorerbar::MIN_W));
@@ -987,6 +1001,9 @@ impl Explorer {
             } else {
                 Reply::none()
             };
+        }
+        if let Some(reply) = self.pane_scroll(x, y, rows, ctx) {
+            return reply;
         }
         let lay = self.layout(ctx);
         let px = ctx.theme.fonts.size_px;

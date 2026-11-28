@@ -915,6 +915,7 @@ commandbar-more = More commands
 # command is the name of the command or button the arrow belongs to.
 commandbar-more-options = { $command } options
 commandbar-help = Help
+commandbar-preview-pane = Preview pane
 mixer-mute-all = Mute all
 mixer-mute = Mute
 mixer-select = Select
