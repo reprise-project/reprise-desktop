@@ -12,6 +12,14 @@ use reprisekit::raster::Canvas;
 use reprisekit::tr;
 
 impl Explorer {
+    /// The details pane shows the selection's facts, under the shell layout.
+    pub(crate) fn sync_details(&mut self, ctx: &mut repriseapp::Ctx) {
+        if self.shell_on {
+            let facts = self.facts_for(&mut ctx.icons);
+            self.details.set(facts);
+        }
+    }
+
     /// The details pane's facts for the selection, or the folder with none.
     pub fn facts_for(&self, icons: &mut IconCache) -> Facts {
         let chosen: Vec<usize> = (self.sv.selection.set.iter().copied())

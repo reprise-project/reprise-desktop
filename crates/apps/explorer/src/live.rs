@@ -111,7 +111,8 @@ impl Explorer {
     /// decodes them, and thumbnails made at another one are asked for again. A new icon theme
     /// fetches the chrome again and re-lists. A new text size rebuilds the task pane and fetches
     /// the toolbar's and the Folders tree's icons at their size. A switch to or from a look whose
-    /// frame runs under the client builds the Folders tree or the navigation pane in its place.
+    /// frame runs under the client builds the Folders tree or the navigation pane in its place,
+    /// and a switch of layout or text size draws the details and preview panes afresh.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         let nav = reprisekit::look::client_glass(&ctx.theme, true).is_some();
         if (self.tree.style == treeview::Style::Nav) != nav {
@@ -151,6 +152,19 @@ impl Explorer {
         {
             self.build_taskpane(ctx);
         }
+        self.follow_look(ctx);
+        let panes = (self.shell_on, ctx.theme.text);
+        if self
+            .panes_drawn
+            .replace(panes)
+            .is_some_and(|was| was != panes)
+        {
+            if let Some(p) = self.pane.as_mut() {
+                p.follow_text(ctx);
+            }
+            self.sync_details(ctx);
+            self.sync_pane(ctx);
+        }
     }
 
     /// The view drawn in mode `m`, its icons and thumbnails asked for at that mode's sizes.
@@ -160,6 +174,15 @@ impl Explorer {
         // Thumbnails and Tiles are the modes that show one, so switching into either is when
         // the decode is asked for.
         self.request_thumbs(ctx.icons.scale());
+    }
+
+    /// Icon files decoded for the entries landed: the details pane wears the selection's anew.
+    fn land_list_icons(&mut self, ctx: &mut Ctx) -> bool {
+        let landed = self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
+        if landed {
+            self.sync_details(ctx);
+        }
+        landed
     }
 
     /// The entries wear their theme icons at every size the view now draws.
@@ -242,7 +265,7 @@ impl Explorer {
             | self.take_link_status(ctx)
             | self.take_space(std::time::Duration::ZERO)
             | self.take_folder_free(std::time::Duration::ZERO, ctx)
-            | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons)
+            | self.land_list_icons(ctx)
             | self.land_address_completion(ctx)
             | self.land_crumb_menu(ctx);
         let mut arrived: Vec<PathBuf> = Vec::new();

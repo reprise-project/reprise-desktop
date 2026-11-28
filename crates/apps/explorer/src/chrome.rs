@@ -266,10 +266,7 @@ impl Explorer {
             }
         }
         (self.nav.can_back, self.nav.can_forward) = (back, fwd);
-        if self.shell_on {
-            let facts = self.facts_for(&mut ctx.icons);
-            self.details.set(facts);
-        }
+        self.sync_details(ctx);
         self.cmdbar.pane_shown = self.settings.preview_pane;
         self.sync_pane(ctx);
         self.toolbar.latched = self.settings.folders.then_some(FOLDERS_ITEM);

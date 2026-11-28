@@ -447,6 +447,9 @@ pub struct Explorer {
     pane_drag: Option<i32>,
     /// Glass's preview pane while it shows ([`Explorer::sync_pane`]).
     pub(crate) pane: Option<previewpane::Pane>,
+    /// The layout and text size the details and preview panes were last drawn for; a switch of
+    /// either draws them afresh.
+    panes_drawn: Option<(bool, reprisekit::theme::TextUnits)>,
     /// A marquee drag in the view; its rectangle lives in `sv.marquee`.
     marquee_from: Option<shellview::MarqueeDrag>,
     /// A Details column divider drag: the column, the press position and the column's 100% width then.
@@ -802,6 +805,7 @@ impl Explorer {
             dragging: None,
             pane_drag: None,
             pane: None,
+            panes_drawn: None,
             marquee_from: None,
             resizing: None,
             thumb: ThumbDrag::default(),

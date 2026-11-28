@@ -58,13 +58,7 @@ impl Pane {
     }
 
     pub(crate) fn with_parts(ctx: &Ctx, parts: Parts) -> Pane {
-        let px = ctx.theme.text.px(MONO_PX);
-        let mono = TextRenderer::monospace(px);
-        let mut metrics = Metrics {
-            bars_always: false,
-            ..Metrics::for_font(&mono, px)
-        };
-        metrics.follow_look(&ctx.theme.controls());
+        let (mono, metrics) = text_box(ctx);
         Pane {
             qv: FilePreview::new(empty_facts(), None),
             shown: None,
@@ -77,6 +71,14 @@ impl Pane {
             #[cfg(test)]
             started: 0,
         }
+    }
+
+    /// The text box set afresh at the look and text size now worn, the pane blank until the
+    /// selection is shown again. The reader and the read out stay.
+    pub(crate) fn follow_text(&mut self, ctx: &Ctx) {
+        (self.mono, self.metrics) = text_box(ctx);
+        self.qv = FilePreview::new(empty_facts(), None);
+        self.shown = None;
     }
 
     /// Shows `text`; a read out keeps running and its answer is dropped.
@@ -101,6 +103,23 @@ impl Pane {
     pub fn reading(&self) -> bool {
         self.read.is_some()
     }
+
+    /// The text box's face size.
+    #[cfg(test)]
+    pub fn mono_px(&self) -> u32 {
+        self.metrics.font_px
+    }
+}
+
+fn text_box(ctx: &Ctx) -> (TextRenderer, Metrics) {
+    let px = ctx.theme.text.px(MONO_PX);
+    let mono = TextRenderer::monospace(px);
+    let mut metrics = Metrics {
+        bars_always: false,
+        ..Metrics::for_font(&mono, px)
+    };
+    metrics.follow_look(&ctx.theme.controls());
+    (mono, metrics)
 }
 
 fn empty_facts() -> filepreview::Facts {
@@ -134,10 +153,14 @@ fn grip(frame: Rect) -> Rect {
 impl Explorer {
     /// The pane follows the selection: a note for none, a folder or several, else the file, read
     /// again only when it is another file or the file changed, and only once no read is out.
-    /// Off, or out of the shell layout, it goes.
+    /// Off, or out of the shell layout, it goes once no read is out: a pane shown again waits
+    /// behind that read instead of starting a second.
     pub(crate) fn sync_pane(&mut self, ctx: &mut Ctx) {
-        if !(self.shell_on && self.settings.preview_pane) {
-            self.pane = None;
+        if !self.pane_on() {
+            match self.pane.as_mut() {
+                Some(p) if p.read.is_some() => p.note(String::new()),
+                _ => self.pane = None,
+            }
             return;
         }
         let want = match self.pane_wants() {
@@ -183,6 +206,10 @@ impl Explorer {
         {
             pane.started += 1;
         }
+    }
+
+    fn pane_on(&self) -> bool {
+        self.shell_on && self.settings.preview_pane
     }
 
     fn pane_wants(&self) -> Want {
@@ -234,6 +261,11 @@ impl Explorer {
             }
         };
         pane.read = None;
+        if !self.pane_on() {
+            self.pane = None;
+            return Some(Reply::none());
+        }
+        let pane = self.pane.as_mut()?;
         if pane.shown.as_ref() == Some(&key) {
             pane.land(landed);
             return Some(Reply::redraw());
