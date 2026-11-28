@@ -870,12 +870,14 @@ impl State {
     }
 
     /// The mapped windows: Task Manager lists a program only while it shows one, and a row for
-    /// each window with a task button.
+    /// each window with a task button. A client [`State::may_end`] refuses is listed with pid 0.
     pub fn windows_by_app(&self) -> Vec<reprisebus::tray::AppWindow> {
         let mut out: Vec<reprisebus::tray::AppWindow> = (self.windows.iter())
             .filter(|w| w.mapped && !w.override_redirect)
             .map(|w| {
-                let pid = self.client_pid(w.id).and_then(|p| u32::try_from(p).ok());
+                let pid = (self.client_pid(w.id))
+                    .filter(|&p| self.may_end(p))
+                    .and_then(|p| u32::try_from(p).ok());
                 reprisebus::tray::AppWindow {
                     id: w.id.raw(),
                     app_id: w.app_id(),
@@ -1454,6 +1456,22 @@ mod tests {
         assert!(
             other.side.closes.is_empty(),
             "another process with the same app id keeps its window"
+        );
+    }
+
+    #[test]
+    fn the_task_window_list_gives_no_pid_for_a_client_that_is_reprise_itself() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut own = h.connect_as(std::process::id() as i32);
+        let mut init = h.connect_as(1);
+        h.map_toplevel(&mut own, "app", 200, 100);
+        h.map_toplevel(&mut init, "app", 200, 100);
+        let pids: Vec<u32> = h.state.windows_by_app().iter().map(|w| w.pid).collect();
+        assert_eq!(
+            pids,
+            [0, 0],
+            "End Now never reaches the compositor or pid 1"
         );
     }
 
