@@ -219,9 +219,7 @@ impl Notepad {
             (title::VIEW, row::STATUS_BAR, self.status_bar),
         ];
         for (t, r, on) in rows {
-            if let MenuItem::Entry { checked, .. } = &mut self.bar.menus[t][r] {
-                *checked = on;
-            }
+            self.bar.menus[t][r].set_checked(on);
         }
     }
 

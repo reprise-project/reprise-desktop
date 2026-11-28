@@ -141,11 +141,7 @@ impl Viewer {
             (title::VIEW, row::SLIDESHOW) => return self.slideshow(true),
             (title::VIEW, row::STATUS_BAR) => {
                 self.status_bar = !self.status_bar;
-                if let MenuItem::Entry { checked, .. } =
-                    &mut self.bar.menus[title::VIEW][row::STATUS_BAR]
-                {
-                    *checked = self.status_bar;
-                }
+                self.bar.menus[title::VIEW][row::STATUS_BAR].set_checked(self.status_bar);
             }
             (title::IMAGE, row::ROTATE_CW) => self.view.turn(true),
             (title::IMAGE, row::ROTATE_CCW) => self.view.turn(false),

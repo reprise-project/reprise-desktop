@@ -43,7 +43,7 @@ pub fn taskbar_menu(
     let rename = pager.map(|n| {
         (
             tr!("bar-menu-rename-desktop"),
-            false,
+            None,
             true,
             false,
             RenameDesktop(n),
@@ -52,54 +52,42 @@ pub fn taskbar_menu(
     let rows = [
         rename,
         None,
-        Some((tr!("bar-menu-toolbars"), false, true, true, Toolbars)),
+        Some((tr!("bar-menu-toolbars"), None, true, true, Toolbars)),
         None,
-        Some((tr!("bar-menu-cascade"), false, has_windows, false, Cascade)),
+        Some((tr!("bar-menu-cascade"), None, has_windows, false, Cascade)),
         Some((
             tr!("bar-menu-tile-horizontally"),
-            false,
+            None,
             has_windows,
             false,
             TileHorizontal,
         )),
         Some((
             tr!("bar-menu-tile-vertically"),
-            false,
+            None,
             has_windows,
             false,
             TileVertical,
         )),
-        Some((
-            tr!("bar-menu-show-desktop"),
-            false,
-            true,
-            false,
-            ShowDesktop,
-        )),
+        Some((tr!("bar-menu-show-desktop"), None, true, false, ShowDesktop)),
         None,
-        Some((
-            tr!("bar-menu-task-manager"),
-            false,
-            true,
-            false,
-            TaskManager,
-        )),
+        Some((tr!("bar-menu-task-manager"), None, true, false, TaskManager)),
         None,
         Some((
             tr!("bar-menu-lock-taskbar"),
-            locked,
+            Some(locked),
             true,
             false,
             LockTaskbar,
         )),
-        Some((tr!("bar-menu-properties"), false, true, false, Properties)),
+        Some((tr!("bar-menu-properties"), None, true, false, Properties)),
     ];
     let rows = &rows[if pager.is_some() { 0 } else { 2 }..];
     let items = rows
         .iter()
         .map(|r| match r {
-            Some((label, checked, enabled, submenu, _)) => {
-                menu_row(label, *checked, *enabled, *submenu)
+            Some((label, check, enabled, submenu, _)) => {
+                menu_row(label, *check, *enabled, *submenu)
             }
             None => MenuItem::Separator,
         })
@@ -114,7 +102,7 @@ pub fn taskbar_menu(
 /// The Start button's right-click menu rows and, parallel to them, what each does.
 pub fn start_button_menu() -> (Vec<MenuItem>, Vec<Option<TaskbarCommand>>) {
     use TaskbarCommand::*;
-    let row = |label: &str, bold: bool| menu_row(label, false, true, false).bold(bold);
+    let row = |label: &str, bold: bool| menu_row(label, None, true, false).bold(bold);
     (
         vec![
             row(&tr!("bar-start-open"), true),
@@ -139,7 +127,7 @@ pub fn toolbars_menu(
     (
         vec![menu_row(
             &tr!("bar-menu-quick-launch"),
-            quick_shown,
+            Some(quick_shown),
             !pinned,
             false,
         )],
@@ -147,13 +135,17 @@ pub fn toolbars_menu(
     )
 }
 
-fn menu_row(label: &str, checked: bool, enabled: bool, submenu: bool) -> MenuItem {
+/// A row, a check row when `check` holds its state.
+fn menu_row(label: &str, check: Option<bool>, enabled: bool, submenu: bool) -> MenuItem {
     let (label, mnemonic) = split_mnemonic(label);
-    MenuItem::entry(label)
+    let mut row = MenuItem::entry(label)
         .enabled(enabled)
-        .checked(checked)
         .submenu(submenu)
-        .mnemonic(mnemonic)
+        .mnemonic(mnemonic);
+    if let Some(on) = check {
+        row.set_checked(on);
+    }
+    row
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

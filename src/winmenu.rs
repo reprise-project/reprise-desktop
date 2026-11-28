@@ -220,21 +220,24 @@ pub fn window_menu(
             actions.push(None);
         }
         let (label, mnemonic) = split_mnemonic(&label);
-        items.push(
-            MenuItem::entry(label)
-                .enabled(enabled)
-                .checked(
-                    (row == AlwaysOnTop && state.on_top)
-                        || (row == OpenHere && state.open_here == OpenHereState::On)
-                        || (row == MiniView && state.mini)
-                        || (row == AllDesktops && state.sticky),
-                )
-                .submenu(row.opens_submenu())
-                .mnemonic(mnemonic)
-                .bold(row == default)
-                .shortcut(shortcut)
-                .glyph(glyph),
-        );
+        let mut item = MenuItem::entry(label)
+            .enabled(enabled)
+            .submenu(row.opens_submenu())
+            .mnemonic(mnemonic)
+            .bold(row == default)
+            .shortcut(shortcut)
+            .glyph(glyph);
+        let check = match row {
+            AlwaysOnTop => Some(state.on_top),
+            OpenHere => Some(state.open_here == OpenHereState::On),
+            MiniView => Some(state.mini),
+            AllDesktops => Some(state.sticky),
+            _ => None,
+        };
+        if let Some(on) = check {
+            item.set_checked(on);
+        }
+        items.push(item);
         actions.push(Some(row));
     }
     (items, actions)

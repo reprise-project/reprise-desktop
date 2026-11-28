@@ -1090,8 +1090,30 @@ fn entry_constructor_defaults() {
     let e = MenuItem::entry("x");
     assert!(matches!(
         e,
-        MenuItem::Entry { ref label, icon: None, enabled: true, checked: false, radio: false, submenu: false, mnemonic: None, shortcut: None, bold: false, glyph: None } if label == "x"
+        MenuItem::Entry { ref label, icon: None, enabled: true, checked: false, toggle: false, radio: false, submenu: false, mnemonic: None, shortcut: None, bold: false, glyph: None } if label == "x"
     ));
+}
+
+#[test]
+fn a_check_row_publishes_its_state_checked_or_not() {
+    use access::accesskit::{Role, Toggled};
+    let r = Rect::new(0, 0, 80, 18);
+    let node = |item: MenuItem| access_row(&item, r, false).expect("a node");
+    let off = node(MenuItem::entry("Preview pane").checked(false));
+    assert_eq!(off.role(), Role::MenuItemCheckBox);
+    assert_eq!(off.toggled(), Some(Toggled::False));
+    let on = node(MenuItem::entry("Preview pane").checked(true));
+    assert_eq!(on.role(), Role::MenuItemCheckBox);
+    assert_eq!(on.toggled(), Some(Toggled::True));
+    let mut set = MenuItem::entry("Status bar");
+    set.set_checked(false);
+    assert_eq!(node(set).role(), Role::MenuItemCheckBox);
+    let plain = node(MenuItem::entry("Open"));
+    assert_eq!(plain.role(), Role::MenuItem);
+    assert_eq!(plain.toggled(), None);
+    let radio = node(MenuItem::entry("Tiles").radio(true).checked(false));
+    assert_eq!(radio.role(), Role::MenuItemRadio);
+    assert_eq!(radio.toggled(), Some(Toggled::False));
 }
 
 #[test]
