@@ -228,7 +228,7 @@ impl Explorer {
             ..ctx.theme.paint()
         };
         let line = (ctx.theme.look.style().and_then(|st| st.panes))
-            .map_or(ctx.theme.colors.button_face, |p| p.nav_edge);
+            .map_or(ctx.theme.colors.button_face, |p| p.preview_edge);
         c.fill_rect(divider, line);
         let Some(p) = &self.pane else {
             c.fill_rect(body, ctx.theme.colors.window);

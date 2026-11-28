@@ -32,6 +32,7 @@ pub fn look(mode: Mode) -> PaneLook {
     match mode {
         Mode::Light => PaneLook {
             nav_edge: NAV_EDGE,
+            preview_edge: NAV_EDGE,
             details: details_light,
             details_label: DETAILS_LABEL,
             details_value: DETAILS_VALUE,
@@ -40,6 +41,7 @@ pub fn look(mode: Mode) -> PaneLook {
         },
         Mode::Dark => PaneLook {
             nav_edge: dark::remap_color(NAV_EDGE),
+            preview_edge: dark::remap_color(NAV_EDGE),
             details: details_dark,
             details_label: DARK_DETAILS_LABEL,
             details_value: DARK_DETAILS_VALUE,

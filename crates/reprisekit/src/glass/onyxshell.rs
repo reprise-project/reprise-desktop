@@ -1,12 +1,12 @@
 //! Onyx's shell window parts ([`super::Style::Onyx`]): Back and Forward as two round glass
 //! buttons in a silver rim with no pill round them, a pale address and search field, a deep
-//! blue-black command bar glossy over its top half with white labels, and its own panes: a pale
+//! blue-teal command bar glossy over its top half with white labels, and its own panes: a pale
 //! details pane shading to blue at its right end under Onyx's light bands, blue group headings
 //! over a light blue rule.
 //!
-//! The command bar keeps its dark band in either mode; dark mode lifts its lit box. The round
-//! buttons keep their colours over the frame's glass; the fields, the address's boxes and the
-//! panes darken as dark Glass's do ([`dark`]).
+//! The address's boxes and the help mark are Glass's. The command bar keeps its dark band in
+//! either mode; dark mode lifts its lit box. The round buttons keep their colours over the
+//! frame's glass; the fields and the panes darken as dark Glass's do ([`dark`]).
 
 use super::navrow::{self, ClearInks, FieldInks, Orb, Painter, RecentInks};
 use super::{Mode, Settings, commandbar, crumbs, dark, streak};
@@ -102,30 +102,6 @@ const CRUMB_FIELD: crumbs::FieldInks = crumbs::FieldInks {
     line: [230, 240],
 };
 
-const CRUMB_HOT: crumbs::BoxInks = crumbs::BoxInks {
-    edge: px(0x7DA2CE),
-    line: [(0.0, px(0xFFFFFF)), (19.0, px(0xF2F8FD))],
-    face: [
-        (1.0, px(0xF4F9FE)),
-        (crumbs::SPLIT, px(0xE6F1FB)),
-        (crumbs::SPLIT, px(0xD2E6F8)),
-        (18.0, px(0xC4DDF4)),
-    ],
-    shade: None,
-};
-
-const CRUMB_PRESSED: crumbs::BoxInks = crumbs::BoxInks {
-    edge: px(0x5A82AF),
-    line: [(0.0, px(0xC9DDF1)), (19.0, px(0xA6C6E6))],
-    face: [
-        (1.0, px(0xC9DDF1)),
-        (crumbs::SPLIT, px(0xC1D8EE)),
-        (crumbs::SPLIT, px(0xAFCDEA)),
-        (19.0, px(0xA6C6E6)),
-    ],
-    shade: Some([px(0x7890AA), px(0xADC2D8)]),
-};
-
 /// The command bar's band, top to bottom: a dark top line, a light line, the gloss over its
 /// top half, the deep body lightening to its foot, a light line and a dark foot line.
 const BAND_TOP_LINE: Color = Color::rgb(0x4E, 0x62, 0x74);
@@ -143,25 +119,58 @@ pub const COMMAND_GREYED_INK: Color = Color::rgb(0x7F, 0x95, 0xAC);
 /// The outlines of the glyphs drawn on the band ([`crate::art::cmdglyph::canvas_inked`]).
 pub const COMMAND_GLYPH_INK: Color = Color::rgb(0xE8, 0xF0, 0xF8);
 
-/// A command's box on the band: white over it for a lit or keyboard-focused box, black for a
-/// held one. Each is (outline top, outline bottom, inner line, upper face top, upper face
-/// bottom, lower face top, lower face bottom) in alpha.
+const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+const BLACK: Color = Color::rgb(0, 0, 0);
+
+/// A command box's inks over the band, alphas as (top, bottom) pairs. The line inside the outline
+/// is white; `None` runs the face out to the outline.
+struct BoxInks {
+    edge: (Color, [u8; 2]),
+    line: Option<[u8; 2]>,
+    face: Color,
+    upper: [u8; 2],
+    lower: [u8; 2],
+    /// Black down the two rows under the top and the two columns in from the left.
+    shade: Option<[[u8; 2]; 2]>,
+}
+
 const BOX_STATES: [State; 4] = [State::Normal, State::Hot, State::Pressed, State::Focused];
-const BOX_HOT: [u8; 7] = [0xA0, 0x70, 0x48, 0x50, 0x30, 0x10, 0x38];
-/// A held box's black, and the two rows of shade under its top.
-const BOX_HELD: [u8; 7] = [0xA0, 0x90, 0x00, 0x48, 0x40, 0x38, 0x30];
-const BOX_HELD_SHADE: [u8; 2] = [0x60, 0x48];
-/// A box the keyboard is on: its outline alone, and a faint light inside.
-const BOX_FOCUSED: [u8; 7] = [0xC0, 0xA0, 0x00, 0x14, 0x0C, 0x00, 0x0C];
-/// The cyan the lit box's lower half glows in.
-const BOX_GLOW: Color = Color::rgb(0x9F, 0xD8, 0xF0);
+/// Lit: a dark outline round a bright line, the upper half whitened, the lower half barely.
+const BOX_HOT: BoxInks = BoxInks {
+    edge: (BLACK, [0x4D, 0x4D]),
+    line: Some([0xBA, 0x7C]),
+    face: WHITE,
+    upper: [0x73, 0x21],
+    lower: [0x12, 0x14],
+    shade: None,
+};
+/// Held: a darker outline, the band dimmed under a shade along the top and left.
+const BOX_HELD: BoxInks = BoxInks {
+    edge: (BLACK, [0xA6, 0xA6]),
+    line: None,
+    face: BLACK,
+    upper: [0x26, 0x0B],
+    lower: [0x13, 0x0A],
+    shade: Some([[0x4D, 0x38], [0x2E, 0x1F]]),
+};
+/// The keyboard's box: a white outline and a faint light inside.
+const BOX_FOCUSED: BoxInks = BoxInks {
+    edge: (WHITE, [0xC0, 0xA0]),
+    line: None,
+    face: WHITE,
+    upper: [0x14, 0x0C],
+    lower: [0x00, 0x0C],
+    shade: None,
+};
 /// Dark mode raises a lit box's alphas by this much.
 const BOX_DARK_LIFT: u8 = 0x18;
 
-/// The details pane: a line along its top, then a face shading from white at its left to pale
-/// blue at its right end; Onyx's bands light the right end ([`streak::ONYX_LIGHT`]).
-const DETAILS_LINE: Color = Color::rgb(0xC8, 0xDD, 0xE8);
-const DETAILS_UNDER_LINE: Color = Color::rgb(0xE3, 0xF3, 0xF8);
+/// The details pane: a blue-grey line shading the face's top rows, the face white at its left to
+/// pale blue at its right end, which Onyx's bands light ([`streak::ONYX_LIGHT`]).
+const DETAILS_LINE: Color = Color::rgb(0x98, 0xB4, 0xC4);
+/// The line's share in the face's first row, and the rows the shade takes to fade out.
+const DETAILS_SHADE: f64 = 0.48;
+const DETAILS_SHADE_ROWS: f64 = 8.0;
 const DETAILS_FACE: [Color; 3] = [
     Color::rgb(0xF2, 0xFB, 0xFE),
     Color::rgb(0xEC, 0xFB, 0xFE),
@@ -174,11 +183,12 @@ const DETAILS_TURN: f64 = 0.45;
 const FLOURISH_W: f64 = 220.0;
 const FLOURISH_ALPHA: f64 = 0.55;
 const DARK_FLOURISH_ALPHA: f64 = 0.22;
-const DETAILS_LABEL: Color = Color::rgb(0x5B, 0x66, 0x72);
-const DETAILS_VALUE: Color = Color::rgb(0x1B, 0x1B, 0x1B);
+const DETAILS_LABEL: Color = Color::rgb(0x73, 0x73, 0x73);
+const DETAILS_VALUE: Color = Color::rgb(0x00, 0x00, 0x00);
 const DARK_DETAILS_LABEL: Color = Color::rgb(0xA4, 0xAE, 0xBE);
 const DARK_DETAILS_VALUE: Color = Color::rgb(0xE6, 0xEC, 0xF2);
-const NAV_EDGE: Color = Color::rgb(0xC5, 0xD3, 0xE0);
+const NAV_EDGE: Color = Color::rgb(0xA7, 0xBA, 0xC5);
+const PREVIEW_EDGE: Color = Color::rgb(0xDD, 0xE4, 0xE8);
 const HEADING: Color = Color::rgb(0x00, 0x33, 0x99);
 const HEADING_RULE: Color = Color::rgb(0xB0, 0xBF, 0xDE);
 const DARK_HEADING: Color = Color::rgb(0x7F, 0xA8, 0xF0);
@@ -197,14 +207,11 @@ pub(super) fn restyle(st: crate::style::Style, s: &Settings, d: i32) -> crate::s
         (Part::NavForward, |d| navrow::orbs(orb_inks, true, d)),
         (Part::NavRecent, |d| navrow::recent(&RECENT, d)),
     ];
-    let darkened: [(Part, Painter); 5] = [
+    let darkened: [(Part, Painter); 4] = [
         (Part::SearchField, |d| navrow::field_part(&SEARCH, d)),
         (Part::SearchGlass, |d| navrow::glass_part(&SEARCH, d)),
         (Part::SearchClear, |d| navrow::clear_part(&SEARCH_CLEAR, d)),
         (Part::CrumbField, |d| crumbs::field_part(&CRUMB_FIELD, d)),
-        (Part::CrumbButton, |d| {
-            crumbs::box_part([&CRUMB_HOT, &CRUMB_PRESSED, &crumbs::PARTNER], d)
-        }),
     ];
     let st = kept.into_iter().fold(st, |st, (part, paint)| {
         st.with_painted(part, move || paint(d))
@@ -288,9 +295,8 @@ fn band(mode: Mode, d: i32) -> PartImage {
         .at_scale(d)
 }
 
-fn box_alphas(state: State, mode: Mode) -> Option<([u8; 7], Color)> {
-    let white = Color::rgb(0xFF, 0xFF, 0xFF);
-    let lift = |a: [u8; 7]| match mode {
+fn box_inks(state: State, mode: Mode) -> Option<BoxInks> {
+    let lift = |a: [u8; 2]| match mode {
         Mode::Light => a,
         Mode::Dark => a.map(|v| match v {
             0 => 0,
@@ -298,15 +304,21 @@ fn box_alphas(state: State, mode: Mode) -> Option<([u8; 7], Color)> {
         }),
     };
     match state {
-        State::Hot => Some((lift(BOX_HOT), white)),
-        State::Pressed => Some((BOX_HELD, Color::rgb(0, 0, 0))),
-        State::Focused => Some((BOX_FOCUSED, white)),
+        State::Hot => Some(BoxInks {
+            edge: (BOX_HOT.edge.0, lift(BOX_HOT.edge.1)),
+            line: BOX_HOT.line.map(lift),
+            upper: lift(BOX_HOT.upper),
+            lower: lift(BOX_HOT.lower),
+            ..BOX_HOT
+        }),
+        State::Pressed => Some(BOX_HELD),
+        State::Focused => Some(BOX_FOCUSED),
         _ => None,
     }
 }
 
 /// The boxes clear at rest, lit, held and focused: a rounded outline, a line inside it, and a
-/// face split across the middle, lit from below while hot.
+/// face split across the middle.
 fn boxes(mode: Mode, d: i32) -> PartImage {
     use commandbar::{BOX_H, BOX_RADIUS, BOX_STEP, BOX_W};
     let k = f64::from(d);
@@ -315,15 +327,14 @@ fn boxes(mode: Mode, d: i32) -> PartImage {
     let (w, h) = (f64::from(BOX_W) * k, f64::from(BOX_H) * k);
     let atlas = draw(BOX_W, BOX_H * n, d, |x, y| {
         let i = (y as i32 / fh) as usize;
-        let state = BOX_STATES[i];
-        let Some((a, ink)) = box_alphas(state, mode) else {
+        let Some(inks) = box_inks(BOX_STATES[i], mode) else {
             return CLEAR;
         };
         let y = y - f64::from(i as i32 * fh);
         let row = centre(y as i32, d);
         let t = row / f64::from(BOX_H - 1);
-        let tint = |alpha: f64| premul(ink, alpha.round().clamp(0.0, 255.0) as u8);
-        let between = |p: u8, q: u8, t: f64| f64::from(p) + (f64::from(q) - f64::from(p)) * t;
+        let tint = |ink: Color, alpha: f64| premul(ink, alpha.round().clamp(0.0, 255.0) as u8);
+        let between = |[p, q]: [u8; 2], t: f64| f64::from(p) + (f64::from(q) - f64::from(p)) * t;
         let outer = rounded(x, y, w, h, BOX_RADIUS * k);
         let inner = rounded(
             x - k,
@@ -334,28 +345,34 @@ fn boxes(mode: Mode, d: i32) -> PartImage {
         );
         let body = rounded(x - 2.0 * k, y - 2.0 * k, w - 4.0 * k, h - 4.0 * k, 0.0);
         let face = if row < BOX_STEP - 0.5 {
-            tint(between(a[3], a[4], (row - 2.0) / (BOX_STEP - 3.0)))
+            let s = ((row - 2.0) / (BOX_STEP - 3.0)).clamp(0.0, 1.0);
+            tint(inks.face, between(inks.upper, 1.0 - (1.0 - s) * (1.0 - s)))
         } else {
-            let lower = between(
-                a[5],
-                a[6],
-                (row - BOX_STEP) / (f64::from(BOX_H) - 3.0 - BOX_STEP),
-            );
-            match state {
-                State::Hot => premul(BOX_GLOW, lower.round() as u8),
-                _ => tint(lower),
+            let s = (row - BOX_STEP) / (f64::from(BOX_H) - 3.0 - BOX_STEP);
+            tint(inks.face, between(inks.lower, s))
+        };
+        let col = (x as i32) / d;
+        let face = match inks.shade {
+            Some([top, left]) => {
+                let by_row = usize::try_from((row.round() as i32) - 1).ok();
+                let by_col = usize::try_from(col - 1).ok();
+                let a = [
+                    by_row.and_then(|r| top.get(r)),
+                    by_col.and_then(|c| left.get(c)),
+                ]
+                .into_iter()
+                .flatten()
+                .max();
+                a.map_or(face, |&a| premul(BLACK, a))
             }
+            None => face,
         };
-        let face = match (state, (row.round() as i32) - 1) {
-            (State::Pressed, r @ 0..=1) => premul(Color::rgb(0, 0, 0), BOX_HELD_SHADE[r as usize]),
-            _ => face,
-        };
-        let line = match a[2] {
-            0 => face,
-            v => tint(f64::from(v)),
+        let line = match inks.line {
+            Some(a) => tint(WHITE, between(a, t)),
+            None => face,
         };
         shares(&[
-            (tint(between(a[0], a[1], t)), outer - inner),
+            (tint(inks.edge.0, between(inks.edge.1, t)), outer - inner),
             (line, inner - body),
             (face, body),
         ])
@@ -374,6 +391,7 @@ fn panes(mode: Mode) -> PaneLook {
     match mode {
         Mode::Light => PaneLook {
             nav_edge: NAV_EDGE,
+            preview_edge: PREVIEW_EDGE,
             details: details_light,
             details_label: DETAILS_LABEL,
             details_value: DETAILS_VALUE,
@@ -382,6 +400,7 @@ fn panes(mode: Mode) -> PaneLook {
         },
         Mode::Dark => PaneLook {
             nav_edge: dark::remap_color(NAV_EDGE),
+            preview_edge: dark::remap_color(PREVIEW_EDGE),
             details: details_dark,
             details_label: DARK_DETAILS_LABEL,
             details_value: DARK_DETAILS_VALUE,
@@ -399,12 +418,12 @@ fn details_dark(c: &mut Canvas, r: Rect, d: i32) {
     details(c, r, d, dark::remap_color, DARK_FLOURISH_ALPHA);
 }
 
-/// The backdrop down `r`: design row 0 the line, row 1 the light under it, then the face
-/// across, its right [`FLOURISH_W`] px lit by Onyx's bands fixed to the pane's right end.
+/// The backdrop down `r`: design row 0 the line, then the face across, shaded under the line
+/// and its right [`FLOURISH_W`] px lit by Onyx's bands fixed to the pane's right end.
 fn details(c: &mut Canvas, r: Rect, d: i32, ink: fn(Color) -> Color, flourish: f64) {
     let dev = r.scaled(c.scale());
     let k = f64::from(d.max(1));
-    let (line, under) = (solid(ink(DETAILS_LINE)), solid(ink(DETAILS_UNDER_LINE)));
+    let line = solid(ink(DETAILS_LINE));
     let face = DETAILS_FACE.map(|v| solid(ink(v)));
     let width = f64::from(dev.width) / k;
     c.compose_device(dev, |x, y| {
@@ -412,14 +431,13 @@ fn details(c: &mut Canvas, r: Rect, d: i32, ink: fn(Color) -> Color, flourish: f
         if v < 0.5 {
             return pack(line);
         }
-        if v < 1.5 {
-            return pack(under);
-        }
         let t = (u / width.max(1.0)).clamp(0.0, 1.0);
         let base = match t < DETAILS_TURN {
             true => mix(face[0], face[1], t / DETAILS_TURN),
             false => mix(face[1], face[2], (t - DETAILS_TURN) / (1.0 - DETAILS_TURN)),
         };
+        let fade_in = 1.0 - ((v - 1.0) / DETAILS_SHADE_ROWS).clamp(0.0, 1.0);
+        let base = mix(base, line, DETAILS_SHADE * fade_in * fade_in);
         let from_end = width - u;
         if from_end > FLOURISH_W {
             return pack(base);
@@ -546,8 +564,11 @@ mod tests {
             let state = states[0];
             let glass = frame_of(&settings(Style::Glass, Mode::Light), part, state, 1);
             let onyx = frame(Mode::Light, part, state, 1);
-            if part != Part::CommandHelp {
-                assert_ne!(fnv(&glass), fnv(&onyx), "{part:?} is Onyx's own");
+            match part {
+                Part::CommandHelp | Part::CrumbButton => {
+                    assert_eq!(fnv(&glass), fnv(&onyx), "{part:?} is Glass's")
+                }
+                _ => assert_ne!(fnv(&glass), fnv(&onyx), "{part:?} is Onyx's own"),
             }
         }
         let glass = style(&Settings::default());

@@ -51,17 +51,17 @@ const FIELD: FieldInks = FieldInks {
     line: [FIELD_LINE_ALPHA, FIELD_LINE_HOT_ALPHA],
 };
 
-pub(super) struct BoxInks {
-    pub edge: Px,
+struct BoxInks {
+    edge: Px,
     /// The 1 px line inside the edge, down the box.
-    pub line: [(f64, Px); 2],
+    line: [(f64, Px); 2],
     /// The gloss, its two halves split at [`SPLIT`].
-    pub face: [(f64, Px); 4],
+    face: [(f64, Px); 4],
     /// A pressed box's shade down its top and left: the two lines inside the edge.
-    pub shade: Option<[Px; 2]>,
+    shade: Option<[Px; 2]>,
 }
 
-pub(super) const SPLIT: f64 = 9.5;
+const SPLIT: f64 = 9.5;
 
 const HOT: BoxInks = BoxInks {
     edge: rgb(0x3C, 0x7F, 0xB1),
@@ -87,7 +87,7 @@ const PRESSED: BoxInks = BoxInks {
     shade: Some([rgb(0x6E, 0x8D, 0x9F), rgb(0xA6, 0xC7, 0xD9)]),
 };
 
-pub(super) const PARTNER: BoxInks = BoxInks {
+const PARTNER: BoxInks = BoxInks {
     edge: rgb(0x8E, 0x8F, 0x8F),
     line: [(0.0, rgb(0xFC, 0xFC, 0xFC)), (19.0, rgb(0xF4, 0xF4, 0xF4))],
     face: [
@@ -105,9 +105,7 @@ type Paint = fn(i32) -> PartImage;
 pub fn painters() -> [(Part, Paint); 2] {
     [
         (Part::CrumbField, |d| field_part(&FIELD, d)),
-        (Part::CrumbButton, |d| {
-            box_part([&HOT, &PRESSED, &PARTNER], d)
-        }),
+        (Part::CrumbButton, box_part),
     ]
 }
 
@@ -153,11 +151,10 @@ fn field_frame(inks: &FieldInks, state: State, d: i32) -> Canvas {
     })
 }
 
-/// The boxes lit, pressed and partnered (in [`BOX_STATES`] order).
-pub(super) fn box_part(inks: [&BoxInks; 3], d: i32) -> PartImage {
+fn box_part(d: i32) -> PartImage {
     let d = d.max(1);
     PartImage::new(
-        stack(inks.map(|inks| box_frame(inks, d))),
+        stack([HOT, PRESSED, PARTNER].map(|inks| box_frame(&inks, d))),
         &BOX_STATES,
         Layout::Vertical,
     )
