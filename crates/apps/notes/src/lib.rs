@@ -350,7 +350,7 @@ impl Notes {
     }
 
     fn edit_layout(&self, n: &Note, ctx: &Ctx) -> multiedit::Layout {
-        let text = stickynote::layout(Notes::client(ctx)).text;
+        let text = stickynote::layout(Notes::client(ctx), ctx.theme.text).text;
         multiedit::layout(&ctx.text, &self.metrics, &n.edit, text, 1)
     }
 
@@ -386,7 +386,11 @@ impl Notes {
         let Some(n) = self.note(win) else {
             return;
         };
-        stickynote::access(&stickynote::layout(Notes::client(ctx)), tree, ROOT);
+        stickynote::access(
+            &stickynote::layout(Notes::client(ctx), ctx.theme.text),
+            tree,
+            ROOT,
+        );
         let el = self.edit_layout(n, ctx);
         let edit = multiedit::access(
             &n.edit,
@@ -534,7 +538,11 @@ impl Extended for Notes {
         if self.note(win).is_none() || self.menu_on(win) {
             return None;
         }
-        stickynote::grip(&stickynote::layout(Rect::new(0, 0, w, h)), x, y)
+        stickynote::grip(
+            &stickynote::layout(Rect::new(0, 0, w, h), self.forms.text),
+            x,
+            y,
+        )
     }
 
     fn place_tag(&self, win: WinId) -> Option<String> {
