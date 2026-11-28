@@ -625,6 +625,52 @@ fn the_window_and_clean_up_sit_on_their_pixels_in_every_look() {
     reprisekit::pins::check_file(&dir.join("cleanup.txt"), &boxes);
 }
 
+/// The list fetches its icons at 16 px at 100% text and 32 px at 200%, and draws them whole.
+/// Files only: a folder counts its own blocks, which differ from one file system to another.
+#[test]
+fn the_list_icons_grow_with_the_text() {
+    use reprisekit::theme::Color;
+    const MARK: Color = Color::rgb(1, 2, 3);
+    reprisekit::pins::fonts();
+    let t = tempfile::tempdir().unwrap();
+    files(t.path());
+    let mut d = counted(t.path());
+    d.form.set_text("path", "/home/u/Videos");
+    let mut pins = Vec::new();
+    for (pct, px) in [(100, 16), (200, 32)] {
+        let theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Classic)
+            .with_text_size(pct);
+        let mut ctx = test_ctx(theme);
+        ctx.size = ctx.theme.text.size(CLIENT);
+        let mark = |px: i32| {
+            let mut c = Canvas::new(px as u32, px as u32);
+            c.fill_rect(c.bounds(), MARK);
+            Some(c)
+        };
+        let names = ["folder", "text-x-generic", "drive-harddisk"];
+        let icons = (names.iter())
+            .flat_map(|n| [16, 32].map(|px| (n.to_string(), px, mark(px))))
+            .collect();
+        let cache_theme = ctx.icons.theme();
+        ctx.icons.put_icons(&cache_theme, icons);
+        d.load_icons(&mut ctx);
+        let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        d.draw_main(&mut c, &ctx);
+        let marked = (0..c.height as i32)
+            .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
+            .filter(|&(x, y)| c.get(x, y) == MARK.argb())
+            .count();
+        assert_eq!(
+            marked,
+            3 * (px * px) as usize,
+            "three {px} px icons at {pct}%"
+        );
+        pins.push((format!("text {pct}"), hash(&c)));
+    }
+    let dir = reprisekit::crate_dir!().join("tests/pins");
+    reprisekit::pins::check_file(&dir.join("icons.txt"), &pins);
+}
+
 /// Writes `target/diskusage-{classic,blue,glass}.png` and `cleanup-*.png` for eyeballing; run
 /// with `--ignored`.
 #[test]
