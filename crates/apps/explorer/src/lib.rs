@@ -2372,10 +2372,12 @@ impl Explorer {
             reply.redraw |= self.cmdbar.focus.take().is_some();
         }
         // The pointer or the keyboard came to or left the navigation pane, or its fade ticked.
+        // A file waits in the preview pane behind a read out, or that read stalled.
         if win == MAIN {
             let (faded, fading) = self.nav_fade();
-            reply.redraw |= faded;
-            reply.tick |= fading;
+            let (stalled, waiting) = self.pane_stall(std::time::Instant::now());
+            reply.redraw |= faded || stalled;
+            reply.tick |= fading || waiting;
         }
         let mut reply = self.raise_waiting(reply, ctx);
         reply.tick_wins.extend(self.held_progress_moved());

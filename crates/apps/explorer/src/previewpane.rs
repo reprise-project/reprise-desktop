@@ -2,7 +2,8 @@
 //! ([`panereader`]) and [`filepreview`]'s control, or a note when it shows none.
 //!
 //! One read is out at a time: while it is, a selection change only notes the file now wanted,
-//! and the read for it starts once the one out answers.
+//! and the read for it starts once the one out answers. A file waiting behind a read out longer
+//! than [`STALLED`] says it has no preview until its own read answers.
 
 use crate::Explorer;
 use crate::panereader::{Key, Parts, Reader, Request, Taken};
@@ -15,11 +16,14 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::tr;
+use std::time::{Duration, Instant};
 
 /// The text box's face size at 100%, as Space's preview sets it.
 const MONO_PX: u32 = 13;
 /// How many times the pane's size a picture is read at, so a wider pane still draws it whole.
 const READ_ROOM: i32 = 2;
+/// How long a read is out before the file waiting behind it says it has no preview.
+pub(crate) const STALLED: Duration = Duration::from_secs(1);
 /// The least the view keeps beside the panes, and the preview pane's own least width.
 pub(crate) const VIEW_MIN_W: i32 = 200;
 pub(crate) const PANE_MIN_W: i32 = reprisekit::controls::explorerbar::MIN_W;
@@ -32,8 +36,8 @@ pub(crate) struct Pane {
     /// What a new reader starts from when the old one's thread is gone.
     parts: Parts,
     wake: repriseapp::Waker,
-    /// The file the read out reads.
-    read: Option<Key>,
+    /// The file the read out reads, and when it was asked for.
+    read: Option<(Key, Instant)>,
     mono: TextRenderer,
     metrics: Metrics,
     /// Reads started, for tests.
@@ -174,7 +178,7 @@ impl Explorer {
             pane.reader = Reader::spawn(pane.parts.clone(), pane.wake.clone());
             pane.reader.ask(request());
         }
-        pane.read = Some(key);
+        pane.read = Some((key, Instant::now()));
         #[cfg(test)]
         {
             pane.started += 1;
@@ -192,6 +196,26 @@ impl Explorer {
             },
             _ => none(),
         }
+    }
+
+    /// A file waiting blank behind a read out ([`STALLED`]) says it has no preview once that read
+    /// has been out that long at `now`. Whether the pane changed, and whether it still waits.
+    pub(crate) fn pane_stall(&mut self, now: Instant) -> (bool, bool) {
+        let Some(p) = self.pane.as_mut() else {
+            return (false, false);
+        };
+        let Some((read, asked)) = &p.read else {
+            return (false, false);
+        };
+        let behind = p.shown.as_ref().is_some_and(|k| k != read);
+        if !behind || !matches!(p.qv.body(), Body::Note(t) if t.is_empty()) {
+            return (false, false);
+        }
+        if now.saturating_duration_since(*asked) < STALLED {
+            return (false, true);
+        }
+        p.qv.set_body(Body::Note(tr!("preview-pane-none")));
+        (true, false)
     }
 
     /// The pane's read answered: it shows the file when that is still the one wanted, else the
@@ -215,8 +239,13 @@ impl Explorer {
             return Some(Reply::redraw());
         }
         if pane.shown.is_some() {
+            let noted = !matches!(pane.qv.body(), Body::Note(t) if t.is_empty());
             pane.shown = None;
             self.sync_pane(ctx);
+            // A file that already said it has no preview keeps saying so while its own read runs.
+            if let Some(p) = self.pane.as_mut().filter(|p| noted && p.shown.is_some()) {
+                p.qv.set_body(Body::Note(tr!("preview-pane-none")));
+            }
         }
         Some(Reply::none())
     }
