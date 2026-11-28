@@ -164,6 +164,9 @@ pub struct DesktopEntry {
     /// A folder's picture ([`reprisefs::meta::folder_picture`]) as the scan read it, which the
     /// icon wears once the thumbnail helper has made it.
     pub picture: Option<PathBuf>,
+    /// A zip that opens as a compressed folder, as the scan found it: true when files dropped onto
+    /// it go in ([`reprisefs::zipwrite::takes_writes`]), false for a read-only one.
+    pub zip: Option<bool>,
 }
 
 impl DesktopEntry {
@@ -233,6 +236,7 @@ pub fn place(name: &str) -> Option<DesktopEntry> {
         path,
         shortcut: false,
         kind: Kind::Place(place),
+        zip: None,
     };
     match place {
         Place::Documents => {
@@ -289,6 +293,7 @@ pub fn recycle_bin(files: PathBuf, empty: bool) -> DesktopEntry {
         is_dir: false,
         allow_launching: false,
         picture: None,
+        zip: None,
     }
 }
 
@@ -574,6 +579,7 @@ fn entry_with(
             is_dir: true,
             allow_launching: false,
             picture,
+            zip: None,
         };
     }
     if let Some(sc) = shortcut {
@@ -589,9 +595,12 @@ fn entry_with(
             is_dir: false,
             allow_launching: false,
             picture: None,
+            zip: None,
         };
     }
     let mime = globs.mime_of_name(&file_name);
+    let zip = (mime.as_deref() == Some("application/zip") && !symlink)
+        .then(|| meta.as_ref().is_some_and(reprisefs::zipwrite::takes_writes));
     let target = target.unwrap_or_else(|| Target::Open(path.clone()));
     let icon = file_icon(mime.as_deref(), &path, &target, &|_| false);
     DesktopEntry {
@@ -605,6 +614,7 @@ fn entry_with(
         shortcut: symlink,
         kind: Kind::File,
         is_dir: false,
+        zip,
     }
 }
 
@@ -703,6 +713,7 @@ mod tests {
             is_dir: false,
             allow_launching: false,
             picture: None,
+            zip: None,
         };
         assert_eq!(
             place_command(&docs(PathBuf::from("/home/u/Docs"))).as_deref(),
@@ -745,6 +756,7 @@ mod tests {
             is_dir: false,
             allow_launching: false,
             picture: None,
+            zip: None,
         }
     }
 
@@ -1209,6 +1221,33 @@ mod tests {
         assert_eq!(list[0].target, Target::Open(path.clone()));
         assert_eq!(list[0].name, "caf\u{fffd}.txt");
         assert_eq!(list[0].label, "caf\u{fffd}");
+    }
+
+    #[test]
+    fn scan_marks_a_zip_of_the_users_with_its_write_bit_as_taking_drops() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = fixture("zips");
+        let _cleanup = Cleanup(dir.clone());
+        for name in ["box.zip", "shut.zip", "a.txt"] {
+            std::fs::write(dir.join(name), reprisefs::zipwrite::EMPTY_ZIP).unwrap();
+        }
+        let shut = dir.join("shut.zip");
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o444)).unwrap();
+        std::os::unix::fs::symlink(dir.join("box.zip"), dir.join("link.zip")).unwrap();
+        let globs = apps::MimeDb::parse(["50:application/zip:*.zip\n50:text/plain:*.txt\n"]);
+        let mut list = scan(&dir, &globs, names::Extensions::Show, false);
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        let zips: Vec<(&str, Option<bool>)> =
+            list.iter().map(|e| (e.name.as_str(), e.zip)).collect();
+        assert_eq!(
+            zips,
+            [
+                ("a.txt", None),
+                ("box.zip", Some(true)),
+                ("link.zip", None),
+                ("shut.zip", Some(false)),
+            ]
+        );
     }
 
     fn chmod_exec(path: &Path) {

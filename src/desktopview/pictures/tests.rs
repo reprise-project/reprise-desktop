@@ -256,6 +256,7 @@ fn a_folder_icon_wears_its_picture_once_it_lands() {
         is_dir: true,
         allow_launching: false,
         picture: Some(picture.clone()),
+        zip: None,
     });
     // A round already running holds off another, so nothing but the landing below lands.
     view.pictures.round = Some((ICON_PX, Arc::new(AtomicBool::new(false))));

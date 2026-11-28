@@ -350,6 +350,8 @@ fn the_file_jobs_read_their_arguments_or_fall_back_to_a_folder_window() {
         &["--put", "paste", "/t", "--", "/a"],
         &["--delete"],
         &["--zip", "a.txt"],
+        &["--add-to-zip", "a.zip", "--", "/a"],
+        &["--add-to-zip", "/a.zip", "/a"],
     ] {
         assert_eq!(alone(bad), None, "{bad:?}");
     }
@@ -371,6 +373,13 @@ fn the_file_jobs_read_their_arguments_or_fall_back_to_a_folder_window() {
     assert_eq!(
         alone(&["--zip", "/d/a.txt"]),
         Some(Alone::Zip(vec![PathBuf::from("/d/a.txt")]))
+    );
+    assert_eq!(
+        alone(&["--add-to-zip", "/d/a.zip", "--", "/s/b.txt"]),
+        Some(Alone::AddToZip {
+            zip: PathBuf::from("/d/a.zip"),
+            sources: vec![PathBuf::from("/s/b.txt")],
+        })
     );
     let start = parse_args(["--put", "copy", "/t", "--", "/a"].map(std::ffi::OsString::from));
     assert_eq!(start.place, Place::Folder(PathBuf::from("/t")));

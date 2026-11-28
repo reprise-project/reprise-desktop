@@ -75,6 +75,7 @@ impl Answer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Spot {
     Place,
+    Zip,
     Trash,
     Quick,
 }
@@ -83,6 +84,7 @@ impl Spot {
     pub fn of(target: &DropTarget) -> Spot {
         match target {
             DropTarget::Desktop(_) | DropTarget::Folder(_) => Spot::Place,
+            DropTarget::Zip(_) => Spot::Zip,
             DropTarget::Trash => Spot::Trash,
             DropTarget::Quick(_) | DropTarget::Pin { .. } => Spot::Quick,
         }
@@ -102,7 +104,8 @@ fn allows(allowed: WlDndAction, action: DndAction) -> bool {
 /// with the drop menu (a shortcut drag with Create Shortcuts Here as default);
 /// with no modifier the natural op decides at the drop. A link becomes a link
 /// file, a copy. The Recycle Bin only moves (Ctrl or Alt refuses), Quick
-/// Launch only copies (Shift refuses); neither takes a link.
+/// Launch only copies (Shift refuses); neither takes a link. A zip takes a
+/// copy of files whatever is held, and no link.
 pub fn answer(
     links: bool,
     spot: Spot,
@@ -119,6 +122,7 @@ pub fn answer(
     let (plan, wanted): (Plan, &[DndAction]) = match (spot, links) {
         (Spot::Place, true) => (Plan::Link, &[COPY]),
         (_, true) => return None,
+        (Spot::Zip, false) => (Plan::Put(Some(DropOp::Copy)), &[COPY]),
         (Spot::Trash, false) => match forced {
             None | Some(DropOp::Move) => (Plan::Put(Some(DropOp::Move)), &[MOVE]),
             Some(_) => return None,
@@ -258,7 +262,8 @@ pub struct Drops {
     next: u64,
 }
 
-/// What cannot go on `target` is dropped: a folder on its own icon, and links anywhere but a desktop cell or folder icon.
+/// What cannot go on `target` is dropped: a folder on its own icon, a zip or a folder holding it on
+/// the zip's icon, and links anywhere but a desktop cell or folder icon.
 fn split(
     items: Vec<Dropped>,
     target: &DropTarget,
@@ -269,6 +274,7 @@ fn split(
         match item {
             Dropped::File(path) if matches!(target, DropTarget::Folder(d) if same_path(d, &path)) =>
                 {}
+            Dropped::File(path) if matches!(target, DropTarget::Zip(z) if holds(&path, z)) => {}
             Dropped::File(path) => files.push(DragSource::file(path)),
             Dropped::Url { url, title } if Spot::of(target) == Spot::Place => {
                 links.push((url, title))
@@ -311,6 +317,14 @@ fn sort(items: Vec<Dropped>, target: &DropTarget, dir: Option<&std::path::Path>)
         same,
         in_place,
         here,
+    }
+}
+
+/// Whether `zip` is `path` or sits inside it, through links alike.
+fn holds(path: &std::path::Path, zip: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(path), std::fs::canonicalize(zip)) {
+        (Ok(p), Ok(z)) => z.starts_with(p),
+        _ => zip.starts_with(path),
     }
 }
 
@@ -534,7 +548,10 @@ impl State {
         let dir = match &target {
             DropTarget::Folder(dir) => Some(dir.clone()),
             DropTarget::Desktop(_) => self.desktop.as_ref().map(|v| v.dir.clone()),
-            DropTarget::Quick(_) | DropTarget::Pin { .. } | DropTarget::Trash => None,
+            DropTarget::Quick(_)
+            | DropTarget::Pin { .. }
+            | DropTarget::Trash
+            | DropTarget::Zip(_) => None,
         };
         let wait = if staged {
             dropdata::STAGED_WAIT
@@ -777,6 +794,40 @@ mod tests {
         let shortcut = Some((ASK, Plan::Ask(Some(DropOp::Shortcut))));
         assert_eq!(left((false, false, true)), shortcut);
         assert_eq!(left((true, true, false)), shortcut);
+    }
+
+    #[test]
+    fn a_zip_takes_a_copy_of_files_whatever_is_held_and_no_link() {
+        for (left, mods) in [
+            (true, NO_MODS),
+            (true, (false, true, false)),
+            (false, NO_MODS),
+        ] {
+            assert_eq!(
+                plan(answer(false, Spot::Zip, left, mods, ALL)),
+                Some((COPY, Plan::Put(Some(DropOp::Copy)))),
+                "left {left}, {mods:?}"
+            );
+        }
+        assert_eq!(plan(answer(false, Spot::Zip, true, NO_MODS, W_MOVE)), None);
+        assert_eq!(plan(answer(true, Spot::Zip, true, NO_MODS, ALL)), None);
+        assert_eq!(Spot::of(&DropTarget::Zip("/d/a.zip".into())), Spot::Zip);
+    }
+
+    #[test]
+    fn a_zip_or_a_folder_holding_it_is_left_out_of_a_drop_on_the_zip() {
+        let t = crate::harness::scratch().join("drop-zip-itself");
+        let _ = std::fs::remove_dir_all(&t);
+        let (sub, other) = (t.join("sub"), t.join("b.txt"));
+        std::fs::create_dir_all(&sub).unwrap();
+        let zip = sub.join("a.zip");
+        std::fs::write(&zip, reprisefs::zipwrite::EMPTY_ZIP).unwrap();
+        std::fs::write(&other, "b").unwrap();
+        let items = [&zip, &sub, &other]
+            .map(|p| Dropped::File(p.clone()))
+            .to_vec();
+        let (files, _) = split(items, &DropTarget::Zip(zip));
+        assert_eq!(files, [DragSource::file(other)]);
     }
 
     #[test]

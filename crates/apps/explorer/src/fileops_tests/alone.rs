@@ -215,6 +215,37 @@ fn zip_of_several_lands_one_archive_named_after_their_folder_past_its_names() {
 }
 
 #[test]
+fn add_to_zip_puts_copies_of_the_sources_into_the_zip_but_never_the_zip_itself() {
+    use super::into_zip::{zip_beside, zip_holds};
+    let mut ctx = test_ctx();
+    let (_t, zip, _) = zip_beside(
+        &[("kept.txt", "kept")],
+        &[("a.txt", "a"), ("b.txt", "b")],
+        &mut ctx,
+    );
+    let (a, b) = (zip.with_file_name("a.txt"), zip.with_file_name("b.txt"));
+    let args = [
+        "--add-to-zip".as_ref(),
+        zip.as_os_str(),
+        "--".as_ref(),
+        a.as_os_str(),
+        zip.as_os_str(),
+        b.as_os_str(),
+    ];
+    let mut app = started(&args);
+    run_out(&mut app, &mut ctx);
+    assert_eq!(
+        zip_holds(&zip),
+        [
+            ("a.txt".into(), "a".into()),
+            ("b.txt".into(), "b".into()),
+            ("kept.txt".into(), "kept".into()),
+        ]
+    );
+    assert!(a.exists() && b.exists(), "the sources stay where they were");
+}
+
+#[test]
 fn zip_of_items_of_two_folders_makes_no_zip() {
     let t = tempfile::tempdir().expect("a temp dir");
     let (a, b) = (t.path().join("a"), t.path().join("b"));

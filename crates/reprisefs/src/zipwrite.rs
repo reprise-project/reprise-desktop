@@ -55,6 +55,14 @@ pub fn is_zip(path: &Path) -> bool {
     read.is_ok() && zip_head(&head)
 }
 
+/// Whether a rewrite may write the zip whose metadata is `meta`: a file of the user's with its
+/// write bit, as the rewrite's own open checks.
+pub fn takes_writes(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: geteuid has no preconditions.
+    meta.is_file() && meta.uid() == unsafe { libc::geteuid() } && meta.mode() & 0o200 != 0
+}
+
 fn zip_head(head: &[u8; 4]) -> bool {
     matches!(head, [b'P', b'K', 3, 4] | [b'P', b'K', 5, 6])
 }
