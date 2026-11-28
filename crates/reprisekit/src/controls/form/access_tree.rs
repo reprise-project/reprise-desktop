@@ -197,7 +197,7 @@ impl Form {
                     (id, Some(id))
                 }
                 Control::Combo(c) => {
-                    let lay = combo::layout(c, r, &self.rendered.controls.get());
+                    let lay = self.combo_layout(i, c, r);
                     let target = combo::access(c, &lay, text, px, tree, up, key);
                     (target, Some(Tree::id_of(up, key)))
                 }

@@ -18,7 +18,7 @@ impl Hosted for Form {
         let field = self.at(it);
         match &it.control {
             Control::Combo(c) => vec![Spot {
-                rect: combo::layout(c, field, &self.controls()).list,
+                rect: self.combo_layout(i, c, field).list,
                 anchor: Anchor::Below(field),
             }],
             Control::Color(b) => vec![Spot {
@@ -73,7 +73,7 @@ impl Hosted for Form {
         let text = text.dialog(self.font);
         match &it.control {
             Control::Combo(combo) => {
-                let lay = combo::layout(combo, self.at(it), &self.controls());
+                let lay = self.combo_layout(i, combo, self.at(it));
                 combo::draw_list(
                     c,
                     text,

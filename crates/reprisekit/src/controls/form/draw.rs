@@ -129,6 +129,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
     form.rendered.px.set(px);
     // A canvas at 1x drawn at scale `s` passes `s` times the px.
     form.fit_text(text, px, s);
+    form.measure_lists(c, text, px, s);
     form.lay_out_notes(text, s, px);
     form.rendered.ellipsized.borrow_mut().clear();
     let cm = form.controls();
@@ -609,11 +610,10 @@ pub fn draw_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, 
 
 fn draw_open_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, px: u32) {
     form.drawn_with(p);
-    let cm = form.controls();
     for (i, it) in form.items.iter().enumerate() {
         match &it.control {
             Control::Combo(combo) if combo.open.is_some() && !form.hosted => {
-                let lay = combo::layout(combo, form.at(it), &cm);
+                let lay = form.combo_layout(i, combo, form.at(it));
                 combo::draw_list(
                     c,
                     text,

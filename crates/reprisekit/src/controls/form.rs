@@ -283,6 +283,12 @@ struct Rendered {
     scale: Cell<i32>,
     /// The last draw's text px.
     px: Cell<u32>,
+    /// Per item, the width a combo's open list takes for its longest row at the last draw's
+    /// text ([`combo::rows_need`]), with a hash of what it was measured from; `None` for other
+    /// items.
+    list_need: RefCell<Vec<Option<(u64, i32)>>>,
+    /// The last draw's canvas in logical px, which an open list widens inside.
+    bounds: Cell<Rect>,
     /// Whether the last draw's look lights parts under the pointer
     /// ([`crate::look::Look::lights_pointer`]); any other lights only a
     /// held push button.

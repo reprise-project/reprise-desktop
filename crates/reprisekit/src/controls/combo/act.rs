@@ -1,7 +1,7 @@
 //! A plain combo a host fills with names and acts on: building and syncing it, the presses and
 //! keys on its field and open list, and its list laid out above the field.
 
-use super::{Combo, Hit, Layout, ListItem, widen_list};
+use super::{Combo, Hit, Layout, ListItem, rows_need, widen_to};
 use crate::classic::widgets::BarHit;
 use crate::controls::form::Key;
 use crate::raster::Rect;
@@ -150,12 +150,20 @@ pub fn list_above(combo: &Combo, lay: &mut Layout, inner: Rect, text: &TextRende
 }
 
 /// Widen `lay`'s open list to its longest row, as far as `bounds` is wide, moved left as far as
-/// it must to stay inside `bounds`.
+/// it must to stay inside `bounds`. It never gets narrower than its field.
 pub fn widen_within(combo: &Combo, lay: &mut Layout, bounds: Rect, text: &TextRenderer, px: u32) {
-    widen_list(combo, lay, text, px, lay.list.x + bounds.width);
+    widen_within_to(lay, rows_need(combo, lay.row_h, text, px, 1), bounds);
+}
+
+/// [`widen_within`] to rows `need` px wide ([`rows_need`]).
+pub fn widen_within_to(lay: &mut Layout, need: i32, bounds: Rect) {
+    let field_w = lay.list.width;
+    widen_to(lay, need, lay.list.x + bounds.width);
     let list = &mut lay.list;
-    list.width = list.width.min(bounds.width);
-    list.x = list.x.min(bounds.right() - list.width).max(bounds.x);
+    list.width = list.width.min(bounds.width).max(field_w);
+    if list.width > field_w {
+        list.x = list.x.min(bounds.right() - list.width).max(bounds.x);
+    }
     if let Some(sb) = &mut lay.scrollbar {
         sb.x = list.right() - 1 - sb.width;
     }
