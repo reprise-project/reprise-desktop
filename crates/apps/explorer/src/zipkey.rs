@@ -1,13 +1,15 @@
 //! The password box of an encrypted zip, raised when the window opens it as a folder and when
-//! Extract reaches it. A password that opens the zip on view is kept for the window
-//! ([`reprisefs::archive::Listings::keep`]); Extract's go to its job and no further.
+//! Extract reaches it, and with a confirm field for Add a Password.... A password that opens the
+//! zip on view is kept for the window ([`reprisefs::archive::Listings::keep`]); Extract's and Add
+//! a Password's go to their job and no further.
 
 use crate::Explorer;
 use crate::dialogs::Dialog;
+use crate::extracting::Batch;
 use crate::place::Place;
-use repriseapp::unlock::{Outcome, Unlock, Words};
+use repriseapp::unlock::{Confirm, Outcome, Unlock, Words};
 use repriseapp::{Ctx, Event, Reply};
-use reprisefs::archive::{Key, Opened, Unkeyed};
+use reprisefs::archive::{self, Key, Opened, Unkeyed};
 use reprisefs::extract::Ask;
 use reprisefs::progress::Asked;
 use reprisekit::tr;
@@ -23,6 +25,8 @@ pub(crate) enum Unlocks {
     Open(PathBuf),
     /// The encrypted zip an extraction waits on; dropping the question ends the job.
     Extract(Asked),
+    /// The zip Add a Password... encrypts.
+    AddKey(PathBuf),
 }
 
 impl Unlocks {
@@ -41,6 +45,21 @@ fn words(zip: &Path, extract: bool) -> Words {
         title: tr!("zipkey-title"),
         message,
         label: tr!("zipkey-label"),
+        confirm: None,
+    }
+}
+
+/// Add a Password...'s words for `zip`.
+fn add_words(zip: &Path) -> Words {
+    let name = zip.file_name().unwrap_or_default().to_string_lossy();
+    Words {
+        title: tr!("zipkey-add-title"),
+        message: tr!("zipkey-add", name = &*name),
+        label: tr!("zipkey-label"),
+        confirm: Some(Confirm {
+            label: tr!("zipkey-confirm-label"),
+            mismatch: tr!("zipkey-mismatch"),
+        }),
     }
 }
 
@@ -116,6 +135,31 @@ impl Explorer {
         self.raise(Dialog::Unlock(Box::new(u), Unlocks::Extract(asked)))
     }
 
+    /// Add a Password... on the one zip picked: one that has a password already says so, read
+    /// off the loop, else the box asks for the new one twice.
+    pub(crate) fn add_zip_password(&mut self, ctx: &mut Ctx) -> Reply {
+        let zip = {
+            let mut picked = self.picked().map(|(_, it)| it);
+            match (picked.next(), picked.next()) {
+                (Some(it), None) if self.takes_into_zip(it) => it.path.clone(),
+                _ => return Reply::none(),
+            }
+        };
+        let action = crate::acting::Action::reads(tr!("zipkey-add-title"));
+        let checked = zip.clone();
+        let work = move |_: &reprisefs::deadline::Gate| archive::zip_encrypted(&checked);
+        self.act(ctx, action, work, move |ex, locked, ctx| {
+            if locked {
+                let name = zip.file_name().unwrap_or_default().to_string_lossy();
+                let text = tr!("zipkey-has-one", name = &*name);
+                return ex.message_box(&tr!("zipkey-add-title"), text, ctx);
+            }
+            let id = zip.to_string_lossy().into_owned();
+            let u = Unlock::open_with(id, add_words(&zip), ICONS, ctx);
+            ex.raise(Dialog::Unlock(Box::new(u), Unlocks::AddKey(zip)))
+        })
+    }
+
     /// The zip password box's window. Opening checks the password on a job, the box staying
     /// up to try again when it is wrong; Extract's job checks its own.
     pub(crate) fn zip_key_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -151,6 +195,12 @@ impl Explorer {
                 Reply::redraw()
             }
             Some(Dialog::Unlock(_, Unlocks::Extract(_))) => self.answer_extract(Some(key)),
+            Some(Dialog::Unlock(_, Unlocks::AddKey(zip))) => {
+                let zip = zip.clone();
+                self.take_up();
+                self.queue_archive_job(Batch::AddPassword { zip, key }, ctx);
+                Reply::redraw_all()
+            }
             _ => Reply::none(),
         }
     }
@@ -166,6 +216,10 @@ impl Explorer {
                 self.archive_open_failed(&zip, reprisefs::archive::refusal(None), ctx)
             }
             Some(Dialog::Unlock(_, Unlocks::Extract(_))) => self.answer_extract(None),
+            Some(Dialog::Unlock(_, Unlocks::AddKey(_))) => {
+                self.take_up();
+                Reply::redraw_all()
+            }
             _ => Reply::none(),
         }
     }
@@ -241,17 +295,22 @@ mod tests {
                 Some(tr!("zipkey-another")),
                 Some(unkeyed(Unkeyed::TooLong)),
                 Some(unkeyed(Unkeyed::Breaks)),
+                Some(tr!("zipkey-mismatch")),
             ];
             let mut forms_seen = Vec::new();
-            for extract in [false, true] {
+            let boxes = [
+                ("open", words(zip, false)),
+                ("extract", words(zip, true)),
+                ("add", add_words(zip)),
+            ];
+            for (what, words) in boxes {
                 for (i, status) in statuses.iter().enumerate() {
-                    let words = words(zip, extract);
                     let lines = repriseapp::unlock::wrapped(&words.message, text, forms);
-                    let mut u = Unlock::new(String::new(), words, &lines, None);
+                    let mut u = Unlock::new(String::new(), words.clone(), &lines, None);
                     if let Some(why) = status {
                         u.fail(why);
                     }
-                    forms_seen.push((format!("extract={extract} status {i}"), u.form.clone()));
+                    forms_seen.push((format!("{what} status {i}"), u.form.clone()));
                 }
             }
             forms_seen

@@ -604,6 +604,8 @@ impl Explorer {
             compress: self.compress_label(),
             disk_image: self.selected_disk_image().is_some(),
             paste_into_zip: matches!(self.menu_paste, Some(PasteTo::Zip(_))),
+            add_password: self.sv.selection.set.len() == 1
+                && matches!(self.menu_paste, Some(PasteTo::Zip(_))),
             pinned,
             ..self.menu_state()
         };

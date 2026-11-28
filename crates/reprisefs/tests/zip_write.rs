@@ -718,3 +718,212 @@ fn a_rewrite_sweeps_stale_temp_files_of_any_zip_in_its_folder() {
         "a temp file written to within the deadline stays"
     );
 }
+
+fn key(typed: &str) -> archive::Key {
+    archive::Key::new(zeroize::Zeroizing::new(typed.into())).expect("a key")
+}
+
+/// An add of a password to `zip` on its job: the error box's text when it failed.
+fn add_password(zip: &Path, typed: &str) -> Result<(), String> {
+    let mut job = ArchiveJob::add_password(zip.into(), key(typed), || {});
+    match wait(&mut job).as_slice() {
+        [ArchiveEvent::Landed { .. }, ArchiveEvent::Finished] => Ok(()),
+        [ArchiveEvent::Failed { text, .. }, ArchiveEvent::Finished] => Err(text.clone()),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The compression method of each local header of `zip`, by its entry's name.
+fn methods(zip: &[u8]) -> Vec<(String, u16)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(i) = zip[at..].windows(4).position(|w| w == b"PK\x03\x04") {
+        let e = at + i;
+        let u16_at = |o: usize| u16::from_le_bytes([zip[e + o], zip[e + o + 1]]);
+        let name = &zip[e + 30..e + 30 + usize::from(u16_at(26))];
+        out.push((String::from_utf8_lossy(name).into_owned(), u16_at(8)));
+        at = e + 4;
+    }
+    out
+}
+
+/// The bytes of `inner` in the encrypted `zip`, opened with `typed`.
+fn read_locked(zip: &Path, inner: &str, typed: &str) -> Option<Vec<u8>> {
+    let out = Command::new("bsdtar")
+        .args(["-x", "-O", "--passphrase", typed, "-f"])
+        .arg(zip)
+        .arg(inner)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("bsdtar");
+    out.status.success().then_some(out.stdout)
+}
+
+#[test]
+fn a_password_encrypts_every_file_with_aes_and_keeps_the_entries() {
+    let dir = fresh(&[("a.txt", b"alpha"), ("sub/b.txt", b"beta"), ("e", b"")]);
+    let zip = zip_of(&dir, &["a.txt", "sub", "sub/b.txt", "e"]);
+    let before = sorted(listing(&zip));
+    add_password(&zip, "pw 1").expect("the password is added");
+    let bytes = std::fs::read(&zip).expect("read");
+    for (name, method) in methods(&bytes) {
+        // An empty file holds nothing to encrypt.
+        let want = match name.as_str() {
+            "sub/" => 0,
+            "e" => 8,
+            _ => 99,
+        };
+        assert_eq!(method, want, "{name} is stored with method {want}");
+    }
+    assert!(archive::zip_encrypted(&zip));
+    let m = Meter::default();
+    assert!(archive::try_key(&zip, &key("pw 1"), &m).expect("checked"));
+    assert!(!archive::try_key(&zip, &key("pw 2"), &m).expect("checked"));
+    assert_eq!(
+        read_locked(&zip, "sub/b.txt", "pw 1").as_deref(),
+        Some(&b"beta"[..])
+    );
+    let window = archive::Listings::default();
+    let opened = window.check_key(&zip, key("pw 1")).expect("checked");
+    window.keep(opened.expect("opened"));
+    let after = window.entries(&zip).expect("listed");
+    let after: Vec<_> = (after.iter())
+        .map(|e| (e.path.display().to_string(), e.kind, e.size))
+        .collect();
+    assert_eq!(sorted(after), before);
+    assert!(
+        temps(&zip).is_empty(),
+        "the temp file was renamed into place"
+    );
+}
+
+#[test]
+fn a_zip_with_a_password_or_no_files_gets_none_and_is_left_alone() {
+    let dir = fresh(&[("a.txt", b"a")]);
+    let zip = zip_of(&dir, &["a.txt"]);
+    add_password(&zip, "pw").expect("the password is added");
+    let locked = std::fs::read(&zip).expect("read");
+    let why = add_password(&zip, "pw").expect_err("one already");
+    assert_eq!(
+        why,
+        "Cannot add a password to a.zip: it already has a password."
+    );
+    assert_eq!(std::fs::read(&zip).expect("read"), locked);
+
+    let empty = dir.join("empty.zip");
+    std::fs::write(&empty, zipwrite::EMPTY_ZIP).expect("write");
+    let why = add_password(&empty, "pw").expect_err("nothing to protect");
+    assert_eq!(
+        why,
+        "Cannot add a password to empty.zip: it holds no files with anything in them for a password to protect."
+    );
+    assert_eq!(std::fs::read(&empty).expect("read"), zipwrite::EMPTY_ZIP);
+    assert!(temps(&zip).is_empty() && temps(&empty).is_empty());
+
+    let dir = fresh(&[("e1", b""), ("sub/e2", b"")]);
+    let hollow = zip_of(&dir, &["e1", "sub", "sub/e2"]);
+    let before = std::fs::read(&hollow).expect("read");
+    let why = add_password(&hollow, "pw").expect_err("only empty files");
+    assert_eq!(
+        why,
+        "Cannot add a password to a.zip: it holds no files with anything in them for a password to protect."
+    );
+    assert_eq!(std::fs::read(&hollow).expect("read"), before);
+}
+
+#[test]
+fn a_zip_with_another_link_to_it_gets_no_password_and_neither_name_changes() {
+    let dir = fresh(&[("a.txt", b"a")]);
+    let zip = zip_of(&dir, &["a.txt"]);
+    let other = dir.join("backup.zip");
+    std::fs::hard_link(&zip, &other).expect("link");
+    let before = std::fs::read(&zip).expect("read");
+    let why = add_password(&zip, "pw").expect_err("linked");
+    assert_eq!(
+        why,
+        "Cannot add a password to a.zip: it has other links to it, which would keep it without a password."
+    );
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+    assert_eq!(std::fs::read(&other).expect("read"), before);
+}
+
+#[test]
+fn a_zip_holding_a_link_gets_no_password_even_one_named_as_a_folder() {
+    for name in ["link", "x/"] {
+        let dir = fresh(&[("a.txt", b"a")]);
+        std::os::unix::fs::symlink("a.txt", dir.join("src/link")).expect("symlink");
+        let zip = zip_of(&dir, &["a.txt", "link"]);
+        if name == "x/" {
+            let bytes = std::fs::read(&zip).expect("read");
+            std::fs::write(&zip, rename_entry(bytes, b"link", b"lin/")).expect("write");
+        }
+        let before = std::fs::read(&zip).expect("read");
+        let why = add_password(&zip, "pw").expect_err("a link");
+        assert_eq!(
+            why,
+            "Cannot add a password to a.zip: it holds links or special files, which a password cannot protect.",
+            "{name}"
+        );
+        assert_eq!(std::fs::read(&zip).expect("read"), before);
+    }
+}
+
+/// `zip` with every name `from` replaced by `to`, of the same length.
+fn rename_entry(mut zip: Vec<u8>, from: &[u8], to: &[u8]) -> Vec<u8> {
+    assert_eq!(from.len(), to.len());
+    let mut at = 0;
+    while let Some(i) = zip[at..].windows(from.len()).position(|w| w == from) {
+        zip[at + i..at + i + to.len()].copy_from_slice(to);
+        at += i + to.len();
+    }
+    zip
+}
+
+/// The children of this process.
+fn children() -> Vec<String> {
+    let tasks = std::fs::read_dir("/proc/self/task").expect("tasks");
+    (tasks.flatten())
+        .filter_map(|t| std::fs::read_to_string(t.path().join("children")).ok())
+        .flat_map(|c| c.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+        .collect()
+}
+
+#[test]
+fn a_cancelled_password_leaves_the_zip_as_it_was_and_the_password_off_bsdtars_command_line() {
+    let (_dir, zip) = big_zip(96);
+    let before = std::fs::read(&zip).expect("read");
+    let typed = "s3cret-passw0rd";
+    let mut job = ArchiveJob::add_password(zip.clone(), key(typed), || {});
+    assert!(wait_for_temp(&zip), "the rewrite started");
+    let temp = temps(&zip).pop().expect("a temp file");
+    assert_eq!(
+        temp.parent(),
+        zip.parent(),
+        "the temp file is beside the zip"
+    );
+    let mut seen = 0;
+    for pid in children() {
+        let proc = Path::new("/proc").join(&pid);
+        let Ok(cmdline) = std::fs::read(proc.join("cmdline")) else {
+            continue;
+        };
+        if !cmdline.starts_with(b"bsdtar\0") {
+            continue;
+        }
+        seen += 1;
+        let environ = std::fs::read(proc.join("environ")).unwrap_or_default();
+        for (what, bytes) in [("command line", &cmdline), ("environment", &environ)] {
+            let holds = bytes.windows(typed.len()).any(|w| w == typed.as_bytes());
+            assert!(!holds, "the password is not on bsdtar's {what}");
+        }
+    }
+    assert!(seen > 0, "bsdtar runs");
+    job.meter().cancel();
+    let events = wait(&mut job);
+    assert!(
+        matches!(events.as_slice(), [ArchiveEvent::Finished]),
+        "{events:?}"
+    );
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+    assert!(temps(&zip).is_empty(), "Cancel removes the temp file");
+}

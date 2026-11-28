@@ -64,6 +64,8 @@ pub enum Command {
     ExtractAll,
     /// Extract in a compressed folder: the selected entries into the folder holding the archive.
     ExtractEntries,
+    /// Add a Password...: the one selected zip written again encrypted.
+    AddPassword,
     /// Into a new zip beside the selected items.
     Compress,
     MoveTo,
@@ -586,6 +588,7 @@ impl Explorer {
             Command::MoveTo => self.open_browse(crate::browse::Pick::Move, ctx),
             Command::CopyTo => self.open_browse(crate::browse::Pick::Copy, ctx),
             Command::ExtractAll => self.extract_all(ctx),
+            Command::AddPassword => self.add_zip_password(ctx),
             Command::ExtractEntries => self.extract_entries(ctx),
             Command::Drop(op) => self.drop_pending(op, ctx),
             Command::DropCancel => self.cancel_pending_drop(),

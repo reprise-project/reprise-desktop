@@ -579,6 +579,31 @@ fn compress_to_names_its_zip_above_send_to_on_files_and_folders() {
 }
 
 #[test]
+fn a_zip_that_takes_writes_has_add_a_password_under_its_extract_rows() {
+    let s = MenuState {
+        extract: Some("pack/".into()),
+        add_password: true,
+        ..MenuState::default()
+    };
+    let m = item_menu(&s, ItemKind::File, &[], &[]);
+    let at = (0..m.items().len())
+        .position(|i| label(m.items(), i) == "Add a Password...")
+        .expect("Add a Password...");
+    assert_eq!(label(m.items(), at - 1), "Extract to pack/");
+    assert_eq!(m.command(&[at]), Command::AddPassword);
+    let m = item_menu(
+        &MenuState {
+            add_password: false,
+            ..s
+        },
+        ItemKind::File,
+        &[],
+        &[],
+    );
+    assert!(!(0..m.items().len()).any(|i| label(m.items(), i) == "Add a Password..."));
+}
+
+#[test]
 fn a_disk_images_menu_mounts_by_default_and_still_opens() {
     let bold = |m: &Menu, i: usize| matches!(&m.items()[i], MenuItem::Entry { bold: true, .. });
     let s = MenuState {
