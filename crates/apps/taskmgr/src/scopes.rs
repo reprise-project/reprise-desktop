@@ -28,6 +28,15 @@ pub fn app_slice(cgroup: &str, root: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Whether a `/proc/<pid>/cgroup` text puts its process in a service unit: a user or system
+/// service, a D-Bus activated one or a portal.
+pub fn is_service(cgroup: &str) -> bool {
+    (cgroup.lines())
+        .find_map(|l| l.strip_prefix("0::"))
+        .and_then(|path| path.rsplit('/').find(|p| !p.is_empty()))
+        .is_some_and(|unit| unit.ends_with(".service"))
+}
+
 /// The app scopes under `slice` that still hold a process, sorted by unit.
 pub fn read(slice: &Path) -> Vec<Scope> {
     let Ok(dir) = std::fs::read_dir(slice) else {
@@ -77,6 +86,22 @@ mod tests {
         assert_eq!(app_of("app-reprise-firefox-.scope"), None);
         assert_eq!(app_of("app-gnome-firefox-12.scope"), None);
         assert_eq!(app_of("app-reprise-firefox-1a.service"), None);
+    }
+
+    #[test]
+    fn a_process_in_a_service_unit_is_a_services() {
+        let at = |path: &str| is_service(&format!("0::{path}\n"));
+        assert!(at(
+            "/user.slice/user-1000.slice/user@1000.service/app.slice/xdg-desktop-portal-gtk.service"
+        ));
+        assert!(at(
+            "/user.slice/user-1000.slice/user@1000.service/app.slice/dbus-:1.2-org.gnome.Calculator@0.service"
+        ));
+        assert!(!at("/user.slice/user-1000.slice/session-3.scope"));
+        assert!(!at(
+            "/user.slice/user-1000.slice/user@1000.service/app.slice/app-reprise-x-1.scope"
+        ));
+        assert!(!is_service(""), "no cgroup read");
     }
 
     #[test]
