@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use super::drives::{drive_tops, drive_trash_wants, read_drive_bin};
 use super::layout::landing_cell;
 use super::scan::{
-    TRASH_MASK, home_trash_wants, icon_files, listed, migrate_launcher_keys, read_icons, remap,
-    rereads_bins, watch_wants,
+    TRASH_MASK, home_trash_wants, icon_files, listed, migrate_launcher_keys, picture_wants,
+    read_icons, remap, rereads_bins, watch_wants,
 };
 use super::select::{band_crop, band_strip, source_of};
 use super::*;
@@ -208,6 +208,29 @@ fn the_system_icons_list_with_the_desktop_files_off() {
         watched(true),
         [dir.to_path_buf(), PathBuf::from("/home/u")],
         "the folder and its parent"
+    );
+}
+
+#[test]
+fn a_stamped_picture_is_watched_for_its_file_alone() {
+    let pictured = |name: &str, stamp: bool| DesktopEntry {
+        picture: Some(desktop::FolderPicture {
+            path: PathBuf::from("/d").join(name).join("cover.png"),
+            stamp: stamp.then_some((std::time::UNIX_EPOCH, 3)),
+        }),
+        ..file(name)
+    };
+    let entries = [
+        pictured("Trip", true),
+        pictured("Away", false),
+        file("a.txt"),
+    ];
+    let watched: Vec<(PathBuf, Vec<std::ffi::OsString>)> = (picture_wants(&entries).into_iter())
+        .map(|w| (w.dir, w.only))
+        .collect();
+    assert_eq!(
+        watched,
+        [(PathBuf::from("/d/Trip"), vec!["cover.png".into()])]
     );
 }
 
