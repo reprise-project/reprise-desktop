@@ -78,10 +78,20 @@ pub fn classic_dark(s: &Settings) -> &str {
     }
 }
 
+/// Whether `s`'s mode is "night" or "hours", whose state now only the compositor knows.
+fn scheduled(s: &Settings) -> bool {
+    s.mode == AppearanceMode::Night.as_str() || s.mode == AppearanceMode::Hours.as_str()
+}
+
+/// Whether `s`'s mode draws dark: Dark, or a schedule while the session is dark.
+pub fn mode_dark(s: &Settings) -> bool {
+    s.mode == AppearanceMode::Dark.as_str() || scheduled(s) && repriseapp::session_dark()
+}
+
 pub fn theme(s: &Settings) -> Theme {
     let i = interface(s);
     let g = glass(s);
-    let dark = s.mode == AppearanceMode::Dark.as_str();
+    let dark = mode_dark(s);
     let scheme = match (i, dark) {
         (Interface::Classic, true) => classic_dark(s),
         _ => &s.color_scheme,
@@ -338,6 +348,18 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         form.set_enabled(id, s.mode != AppearanceMode::Light.as_str());
     }
     // Set every time: `Theme`'s equality cannot see the glass settings (the look compares by name).
+    if let Some(Control::Sample { theme: t, .. }) = form.item_mut(SAMPLE).map(|i| &mut i.control) {
+        *t = theme(s);
+    }
+}
+
+/// Under a schedule, draw the sample in the session's look now, which can turn with no event;
+/// runs before each draw.
+pub fn follow_session(sheet: &mut PropSheet, s: &Settings) {
+    if !scheduled(s) {
+        return;
+    }
+    let form = &mut sheet.pages[Page::Appearance.index()];
     if let Some(Control::Sample { theme: t, .. }) = form.item_mut(SAMPLE).map(|i| &mut i.control) {
         *t = theme(s);
     }

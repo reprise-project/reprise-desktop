@@ -128,7 +128,10 @@ pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, 
 pub use event::{BTN_LEFT, BTN_RIGHT, Event, KeyInput, Mods, PointerInput};
 pub use fielddrop::{DropForm, FileDrop};
 pub use input::caps_lock;
-pub use look::{caption_fit, dialog_max_w, start_forms, start_text, start_text_size, start_theme};
+pub use look::{
+    caption_fit, dialog_max_w, session_dark, set_session_dark, start_forms, start_text,
+    start_text_size, start_theme,
+};
 #[doc(hidden)]
 pub use pastewait::{Held, PASTE_HOLD, PasteId, PasteWait};
 pub use reply::{Reply, spawn_handed, spawn_in};

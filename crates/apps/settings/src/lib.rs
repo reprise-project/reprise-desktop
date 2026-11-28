@@ -1200,6 +1200,7 @@ impl App for SettingsApp {
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.dialog_text = ctx.text.clone();
         self.follow_text(ctx);
+        appearancepage::follow_session(&mut self.sheet, &self.want);
         if win == repriseapp::MAIN {
             self.fit_window(ctx.size);
             self.take_pending_focus();
