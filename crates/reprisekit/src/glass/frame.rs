@@ -577,7 +577,12 @@ pub fn client_glass(s: &Settings, d: i32) -> PartImage {
 /// A maximized window's glass under its top: [`max_caption`]'s plain glass, one design pixel
 /// stretched, Normal then Inactive, painted at `d`.
 pub fn max_client_glass(s: &Settings, d: i32) -> PartImage {
-    frames(&maximized(s), (1, 1), d, |p, _, _| p.px(Ring::Glass, 0.0)).outset(client_outset())
+    let onyx = onyx_band(s);
+    frames(&maximized(s), (1, 1), d, |p, _, _| match onyx {
+        Some([glass, ..]) => glass,
+        None => p.px(Ring::Glass, 0.0),
+    })
+    .outset(client_outset())
 }
 
 /// How far in from each side the glass under a restored window's top turns from the side
@@ -1490,6 +1495,14 @@ mod tests {
                     )),
                     [glass, glass, light, dark],
                     "{state:?} at {d}: navy glass rows over the client's light and dark edges"
+                );
+            }
+            let client = max_client_glass(&s, d);
+            for state in [State::Normal, State::Inactive] {
+                assert_eq!(
+                    at(&client, state, 0, 0),
+                    glass,
+                    "{state:?} at {d}: the glass under a client's top is the band's navy"
                 );
             }
             let group = crate::glass::buttons::max_caption_group(&s, d);
