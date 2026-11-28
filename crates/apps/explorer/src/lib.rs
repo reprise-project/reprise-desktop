@@ -31,6 +31,7 @@ mod intozip;
 mod keys;
 mod live;
 mod menus;
+mod navrow;
 mod newshortcut;
 mod openwith;
 mod pane;
@@ -75,7 +76,7 @@ use reprisefs::listing::Item;
 use reprisefs::netshare::Address;
 use reprisefs::ops::DropOp;
 use reprisefs::program::{Confirm, ScriptOpen};
-use reprisekit::controls::addressbar::{self, AddressBar};
+use reprisekit::controls::addressbar::AddressBar;
 use reprisekit::controls::combo::{self, ListItem};
 use reprisekit::controls::explorerbar::ExplorerBar;
 use reprisekit::controls::hosted::Hosted;
@@ -114,6 +115,8 @@ pub enum Focus {
     Tree,
     /// The task pane, on [`TaskPane::focus`]'s stop.
     Tasks,
+    /// The shell layout's command bar, on its `focus` stop.
+    Commands,
     View,
 }
 
@@ -286,6 +289,16 @@ pub struct Explorer {
     pub cmdbar: reprisekit::controls::commandbar::Commandbar,
     pub(crate) cmdbar_acts: Vec<chrome::BarAct>,
     pub address: AddressBar,
+    /// The shell layout's address while it is not edited; the edit is `address`'s field.
+    pub crumbs: reprisekit::controls::breadcrumb::Breadcrumb,
+    /// The shell layout's Back, Forward and recent places.
+    pub nav: reprisekit::controls::navbuttons::NavButtons,
+    /// The shell layout's details pane, its facts set with the status bar's panels.
+    pub details: reprisekit::controls::detailspane::DetailsPane,
+    /// The look took the shell layout when the window last looked ([`Explorer::follow_look`]).
+    shell_on: bool,
+    /// The narrowest client the shell layout keeps its nav row whole in, at the last look.
+    shell_min_w: i32,
     /// The folder read the address bar's completion asked for.
     address_job: repriseapp::pathjob::PathJob,
     pub address_places: Vec<Place>,
@@ -681,6 +694,11 @@ impl Explorer {
             cmdbar: chrome::command_bar(),
             cmdbar_acts: Vec::new(),
             address: AddressBar::new(vec![ListItem::new("")], 0, None),
+            crumbs: Default::default(),
+            nav: Default::default(),
+            details: Default::default(),
+            shell_on: false,
+            shell_min_w: 0,
             address_job: Default::default(),
             address_places: Vec::new(),
             crumb_menu: None,
@@ -876,6 +894,7 @@ impl Explorer {
     /// ([`Explorer::sync_drives`]): the address drop and a start under a drive need them.
     fn first_show(&mut self, start: Place, ctx: &mut Ctx) {
         self.follow_forms(ctx);
+        self.follow_look(ctx);
         self.sync_drives(ctx);
         self.build_toolbar(ctx);
         self.build_address(ctx);
@@ -887,8 +906,10 @@ impl Explorer {
     /// The keyboard cannot be left in a tree that is gone.
     pub fn sync_bar(&mut self) {
         let gone = match self.focus {
+            Focus::Tree if self.shell_on => !self.settings.nav_pane,
             Focus::Tree => !self.settings.folders,
             Focus::Tasks => self.settings.folders,
+            Focus::Commands => !self.shell_on,
             _ => false,
         };
         if gone {
@@ -896,11 +917,73 @@ impl Explorer {
         }
     }
 
-    pub fn layout(&self, ctx: &Ctx) -> window::Layout {
-        let strip = match self.tabs.list.len() {
+    fn strip_h(&self, ctx: &Ctx) -> i32 {
+        match self.tabs.list.len() {
             0 | 1 => 0,
             _ => reprisekit::controls::tabstrip::doc_height(ctx.theme.text),
-        };
+        }
+    }
+
+    /// The shell layout's rects, under a look that takes it ([`window::is_shell`]).
+    pub fn shell_layout(&self, ctx: &Ctx) -> Option<window::ShellLayout> {
+        window::is_shell(&ctx.theme).then(|| {
+            let cm = ctx.theme.controls();
+            let active = self.bar.is_active();
+            let (strip, bar_w) = (self.strip_h(ctx), self.explorer_bar.width);
+            window::shell_layout(ctx.size, &self.settings, active, strip, bar_w, &cm)
+        })
+    }
+
+    /// The menu bar shows: always under the rebar layout, under the shell layout while Alt or
+    /// the Layout setting shows it.
+    pub fn bar_shown(&self, ctx: &Ctx) -> bool {
+        self.shell_layout(ctx).is_none_or(|sl| sl.menu.is_some())
+    }
+
+    /// A new look: one that swaps the layout closes every menu and list and takes the edit out
+    /// of the fields, so nothing from the old layout's rects stays up, and puts the keyboard in
+    /// the view.
+    pub(crate) fn follow_look(&mut self, ctx: &Ctx) {
+        let shell = window::is_shell(&ctx.theme);
+        self.shell_min_w = window::shell_min_width(&ctx.theme.controls());
+        self.bar.banded = !shell;
+        if shell == self.shell_on {
+            return;
+        }
+        self.shell_on = shell;
+        self.popup = None;
+        self.bar.close();
+        self.close_drop_menu();
+        self.address.complete.close();
+        self.address.combo.open = None;
+        self.crumbs.cancel_edit();
+        self.crumbs.menu_closed();
+        self.nav.menu_closed();
+        self.nav.pressed = None;
+        self.focus = Focus::View;
+    }
+
+    /// The nav row's held states follow the window's: the recent places drop is up while its menu
+    /// is, and the address is edited while it holds the keyboard.
+    pub(crate) fn sync_nav_row(&mut self) {
+        if self.popup.is_none() {
+            self.nav.menu_closed();
+            self.crumbs.menu_closed();
+        }
+        match (self.focus == Focus::Address, self.crumbs.editing()) {
+            (true, false) => self.crumbs.start_edit(),
+            (false, true) => {
+                self.crumbs.focus_lost();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn layout(&self, ctx: &Ctx) -> window::Layout {
+        if let Some(sl) = self.shell_layout(ctx) {
+            return window::Layout::of_shell(&sl, ctx.size, &ctx.theme.controls());
+        }
+        let strip = self.strip_h(ctx);
         window::layout(
             ctx.size,
             &self.settings,
@@ -931,14 +1014,20 @@ impl Explorer {
 
     pub fn bar_layout(&self, ctx: &Ctx) -> menubar::Layout {
         let menu = self.layout(ctx).menu;
-        self.bar
+        let mut lay = self
+            .bar
             .layout(
                 &ctx.text,
                 ctx.theme.fonts.size_px,
                 menu,
                 &ctx.theme.controls(),
             )
-            .reaching(ctx.menu_within())
+            .reaching(ctx.menu_within());
+        // The shell layout's bar strip fills its row, line and all.
+        if window::is_shell(&ctx.theme) {
+            lay.bar.height = menu.height;
+        }
+        lay
     }
 
     fn menu_state(&self) -> MenuState {
@@ -961,6 +1050,7 @@ impl Explorer {
                 self.settings.details_pane,
                 self.settings.nav_pane,
             ],
+            shell: self.shell_on,
             hidden: self.folders.show_hidden,
             toolbars: [self.settings.toolbars, self.settings.address_bar, false],
             read_only: self.place.read_only(),
@@ -2247,6 +2337,7 @@ impl Explorer {
 
 fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
     ex.follow_forms(ctx);
+    ex.follow_look(ctx);
     match ev {
         Event::Key(_) => ex.keyed = true,
         Event::Pointer(PointerInput::Press { .. }) => ex.keyed = false,
@@ -2477,6 +2568,7 @@ impl App for Lazy {
             return;
         };
         ex.follow_forms(ctx);
+        ex.follow_look(ctx);
         if is_dialog(win) {
             ex.draw_dialog(c, ctx);
             return;
@@ -2582,9 +2674,8 @@ impl repriseapp::Extended for Lazy {
         if !ex.address.complete.is_open() {
             ex.address.combo.open?;
         }
-        let r = ex.layout(ctx).address?;
         let (px, cm) = (ctx.theme.fonts.size_px, ctx.theme.controls());
-        let field = addressbar::layout(&ex.address, &ctx.text, px, r, &cm).field;
+        let field = ex.address_layout(ctx)?.field;
         if ex.address.complete.is_open() {
             return Some(Box::new(pathcomplete::Popped {
                 pc: &mut ex.address.complete,

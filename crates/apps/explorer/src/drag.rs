@@ -913,10 +913,15 @@ impl Explorer {
         Reply::redraw().and(acted)
     }
 
-    fn address_layout(&self, ctx: &Ctx) -> Option<addressbar::Layout> {
+    /// The Address field's layout: its band's, or under the shell layout the field alone over
+    /// the nav row's address.
+    pub(crate) fn address_layout(&self, ctx: &Ctx) -> Option<addressbar::Layout> {
+        let cm = ctx.theme.controls();
+        if let Some(sl) = self.shell_layout(ctx) {
+            return Some(addressbar::field_layout(&self.address, sl.address, &cm));
+        }
         let r = self.layout(ctx).address?;
         let px = ctx.theme.fonts.size_px;
-        let cm = ctx.theme.controls();
         Some(addressbar::layout(&self.address, &ctx.text, px, r, &cm))
     }
 

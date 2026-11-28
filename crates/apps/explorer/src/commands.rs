@@ -237,6 +237,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
         F5 => Command::Refresh,
         F2 => Command::Rename,
         keysym::F3 => Command::SearchFocus,
+        keysym::F4 if !alt && !ctrl => Command::AddressFocus,
         keysym::DELETE | keysym::KP_DELETE => Command::Delete { erase: shift },
         keysym::TAB | keysym::ISO_LEFT_TAB if ctrl && !alt => Command::NextTab {
             back: shift || sym == keysym::ISO_LEFT_TAB,
@@ -249,7 +250,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
             Some('v') => Command::Paste,
             Some('z') => Command::Undo,
             Some('a') => Command::SelectAll,
-            Some('f') => Command::SearchFocus,
+            Some('f') | Some('e') => Command::SearchFocus,
             Some('l') => Command::AddressFocus,
             Some('t') => Command::NewTab,
             Some('w') => Command::CloseTab,
@@ -472,6 +473,7 @@ impl Explorer {
                 };
                 *on = !*on;
                 self.settings_dirty = true;
+                self.sync_bar();
                 self.refresh_chrome(ctx);
                 Reply::redraw()
             }
@@ -713,7 +715,8 @@ mod tests {
         assert_eq!(k('X' as u32, true, true, false), Command::Cut);
         assert_eq!(k('C' as u32, true, true, false), Command::CopyAsPath);
         assert_eq!(k('[' as u32, true, false, false), Command::Nothing);
-        assert_eq!(k('e' as u32, true, false, false), Command::Nothing);
+        assert_eq!(k('e' as u32, true, false, false), Command::SearchFocus);
+        assert_eq!(k(keysym::F4, false, false, false), Command::AddressFocus);
         assert_eq!(k('f' as u32, true, false, false), Command::SearchFocus);
         assert_eq!(k(keysym::F3, false, false, false), Command::SearchFocus);
         assert_eq!(k('f' as u32, false, false, false), Command::Nothing);

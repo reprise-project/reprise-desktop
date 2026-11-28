@@ -23,6 +23,12 @@
 //!
 //! [`RebarMetrics`]: reprisekit::metrics::RebarMetrics
 //!
+//! Under a look with glass down the client's top ([`is_shell`]) the window takes the shell
+//! layout instead ([`shell_layout`]): one nav row over the glass (Back and Forward, the
+//! breadcrumb address, the search field), its 2 px closing line, then the menu bar while Alt
+//! or the Layout setting shows it, the command bar, the tabs, the navigation pane, the view and
+//! the details pane. Blue's and Classic's toolbar, address band and status bar keys play no part.
+//!
 //! The view is a reprisekit control that draws a sunken ring round itself,
 //! so it is laid out inflated by `FIELD_PAD`: its contents land in place
 //! and the ring falls under the chrome painted after it.
@@ -42,7 +48,8 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::tr;
 use reprisekit::{
-    controls::addressbar, controls::explorerbar, controls::menubar, controls::rebar,
+    controls::addressbar, controls::breadcrumb, controls::commandbar, controls::detailspane,
+    controls::explorerbar, controls::menubar, controls::navbuttons, controls::rebar,
     controls::searchfield, controls::shellview, controls::statusbar, controls::taskpane,
     controls::toolbar,
 };
@@ -74,6 +81,178 @@ pub struct Layout {
     /// The view's frame, inflated by [`FIELD_PAD`] (see the module doc).
     pub view: Rect,
     pub status: Option<Rect>,
+}
+
+/// The nav row's spacing at 100% text: from the client's left edge to the pill, from the
+/// recent places drop to the address, from the address to the search field, and from the
+/// search field to the right edge.
+const NAV_X: i32 = 2;
+const NAV_ADDRESS_GAP: i32 = 2;
+const NAV_SEARCH_GAP: i32 = 6;
+const NAV_RIGHT: i32 = 2;
+/// The rows the nav row keeps above and below its fields, together.
+const NAV_FIELD_ROOM: i32 = 12;
+/// The narrowest the address gets at 100% text: the place's icon, one crumb, the history drop
+/// and Refresh.
+pub const ADDRESS_MIN: i32 = 120;
+/// The menu bar's line under its strip.
+const MENU_LINE: i32 = 1;
+
+/// Every rect the shell layout paints, top to bottom.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellLayout {
+    /// Over the frame's glass; its closing line runs along under it.
+    pub nav: Rect,
+    pub back_fwd: Rect,
+    pub address: Rect,
+    pub search: Rect,
+    /// The menu bar's row while it shows.
+    pub menu: Option<Rect>,
+    pub command: Rect,
+    pub tabs: Option<Rect>,
+    pub nav_pane: Option<Rect>,
+    /// The view's frame, inflated by [`FIELD_PAD`] as [`Layout::view`] is.
+    pub view: Rect,
+    pub details: Option<Rect>,
+}
+
+/// Whether `theme` takes the shell layout: its frame's glass runs down under the client's top.
+pub fn is_shell(theme: &reprisekit::theme::Theme) -> bool {
+    reprisekit::look::client_glass(theme, true).is_some()
+}
+
+pub fn nav_height(cm: &ControlMetrics) -> i32 {
+    (breadcrumb::height(cm.text) + NAV_FIELD_ROOM).max(navbuttons::PILL_H + 5)
+}
+
+pub fn menu_row_height(cm: &ControlMetrics) -> i32 {
+    menubar::bar_h(cm) + MENU_LINE
+}
+
+/// The narrowest client the shell layout keeps its nav row whole in.
+pub fn shell_min_width(cm: &ControlMetrics) -> i32 {
+    let u = cm.text;
+    NAV_X
+        + navbuttons::WIDTH
+        + NAV_ADDRESS_GAP
+        + u.len(ADDRESS_MIN)
+        + NAV_SEARCH_GAP
+        + u.len(searchfield::NAV_WIDTH)
+        + NAV_RIGHT
+}
+
+/// The shell layout of a `size` client: the menu bar shows while `bar_active` (Alt, F10, an
+/// access key) or while `settings` keep it, the tab strip is `strip_h` tall, and the navigation
+/// pane `bar_width` wide at 100% text, its splitter on top.
+pub fn shell_layout(
+    size: (i32, i32),
+    settings: &Settings,
+    bar_active: bool,
+    strip_h: i32,
+    bar_width: i32,
+    cm: &ControlMetrics,
+) -> ShellLayout {
+    let client = Rect::new(0, 0, size.0.max(1), size.1.max(1));
+    let nav = Rect::new(client.x, client.y, client.width, nav_height(cm));
+    let field_h = breadcrumb::height(cm.text);
+    let buttons = navbuttons::layout(Rect::new(
+        client.x + NAV_X,
+        nav.y,
+        navbuttons::WIDTH,
+        nav.height,
+    ));
+    let back_fwd = buttons.frame();
+    let row = Rect::new(nav.x, nav.y, nav.width - NAV_RIGHT, nav.height);
+    let search = searchfield::nav_layout(row, field_h, cm.text);
+    let ax = back_fwd.right() + NAV_ADDRESS_GAP;
+    let address = Rect::new(
+        ax,
+        search.y,
+        (search.x - NAV_SEARCH_GAP - ax).max(0),
+        field_h,
+    );
+
+    let mut top = nav.bottom() + cm.rebar.closing;
+    let mut take = |h: i32| {
+        let r = Rect::new(client.x, top, client.width, h);
+        top = r.bottom();
+        r
+    };
+    let menu = (settings.menu_bar || bar_active).then(|| take(menu_row_height(cm)));
+    let command = take(commandbar::height(cm));
+    let tabs = (strip_h > 0).then(|| take(strip_h));
+    let details = settings.details_pane.then(|| {
+        let h = detailspane::height(cm.text).min((client.bottom() - top).max(0));
+        Rect::new(client.x, client.bottom() - h, client.width, h)
+    });
+    let bottom = details.map_or(client.bottom(), |d| d.y);
+    let height = (bottom - top).max(0);
+    let nav_pane = settings.nav_pane.then(|| {
+        let w = cm.text.len(bar_width) + explorerbar::SPLITTER_W;
+        Rect::new(client.x, top, w.min(client.width), height)
+    });
+    let view_x = nav_pane.map_or(client.x, |r| r.right());
+    // The view's ring falls under the splitter, the closing line and the details pane.
+    let view = Rect::new(
+        view_x - FIELD_PAD,
+        top - FIELD_PAD,
+        (client.right() - view_x + 2 * FIELD_PAD).max(0),
+        height + 2 * FIELD_PAD,
+    );
+    ShellLayout {
+        nav,
+        back_fwd,
+        address,
+        search,
+        menu,
+        command,
+        tabs,
+        nav_pane,
+        view,
+        details,
+    }
+}
+
+/// The navigation pane's body and splitter over `frame`, as [`ShellLayout::nav_pane`] gives it.
+pub fn nav_pane_layout(frame: Rect) -> explorerbar::Layout {
+    let eb = explorerbar::ExplorerBar {
+        title: String::new(),
+        width: frame.width - explorerbar::SPLITTER_W,
+        hot_close: false,
+        greyed: false,
+    };
+    explorerbar::nav_layout(&eb, frame)
+}
+
+impl Layout {
+    /// The rebar layout's rects for a shell layout, which the window's hits and its view read:
+    /// the nav row as the rebar, the menu bar's row where it shows (whether it does or not), the
+    /// navigation pane as the Folders bar and tree, no toolbar, address band or status bar.
+    pub fn of_shell(sl: &ShellLayout, size: (i32, i32), cm: &ControlMetrics) -> Layout {
+        let client = Rect::new(0, 0, size.0.max(1), size.1.max(1));
+        let etch_y = sl.nav.bottom();
+        let menu = sl.menu.unwrap_or(Rect::new(
+            client.x,
+            etch_y + cm.rebar.closing,
+            client.width,
+            menu_row_height(cm),
+        ));
+        let bar = sl.nav_pane.map(nav_pane_layout);
+        Layout {
+            client,
+            rebar: sl.nav,
+            menu,
+            toolbar: None,
+            address: None,
+            tabs: sl.tabs,
+            etch_y,
+            tree: bar.as_ref().map(|b| b.body),
+            bar,
+            tasks: None,
+            view: sl.view,
+            status: None,
+        }
+    }
 }
 
 /// The rebar's bands for `settings`: menu bar, then toolbar and address bar when shown.
@@ -195,7 +374,7 @@ pub fn layout(
 }
 
 /// The toolbar's Search field, at the band's right end past its buttons; `None` with the toolbar
-/// hidden or too narrow.
+/// hidden or too narrow, and under the shell layout, whose field is [`ShellLayout::search`].
 pub fn search_field(ex: &Explorer, ctx: &Ctx) -> Option<Rect> {
     let band = ex.layout(ctx).toolbar?;
     let cm = ctx.theme.controls();
@@ -225,6 +404,11 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         ex.sv.bars.lit(),
         px,
     );
+    if let Some(shell) = ex.shell_layout(ctx) {
+        draw_shell(ex, c, ctx, &lay, &shell);
+        draw_overlays(ex, c, ctx, &sl);
+        return;
+    }
 
     if let Some(bl) = &lay.bar {
         explorerbar::draw(
@@ -388,10 +572,69 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
             px,
         );
     }
+    draw_overlays(ex, c, ctx, &sl);
+}
+
+/// The shell layout's chrome over the view: the nav row clear over the frame's glass and its
+/// closing line, the menu bar while it shows, the tabs, and last the address's open list.
+fn draw_shell(ex: &Explorer, c: &mut Canvas, ctx: &Ctx, lay: &Layout, sl: &ShellLayout) {
+    let px = ctx.theme.fonts.size_px;
+    let paint = Paint {
+        s: 1,
+        ..ctx.theme.paint()
+    };
+    let cm = ctx.theme.controls();
+    c.clear_rect(sl.nav);
+    c.report_glass_top(sl.nav.bottom());
+    navbuttons::draw(c, &paint, &ex.nav, &nav_buttons(sl));
+    let focused = ex.focus == crate::Focus::Address;
+    let caret = reprisekit::textedit::Caret::new(focused && ex.keyboard, ctx.caret_on);
+    let edit = addressbar::field_layout(&ex.address, sl.address, &cm);
+    if focused {
+        addressbar::draw_field(c, &ctx.text, &paint, &ex.address, &edit, true, caret, px);
+    } else {
+        let bl = breadcrumb::layout(&ex.crumbs, sl.address, &ctx.text, px, &cm);
+        breadcrumb::draw(c, &ctx.text, &paint, &ex.crumbs, &bl, false, caret, px);
+    }
+    let searching = ex.focus == crate::Focus::Search;
+    let caret = reprisekit::textedit::Caret::new(searching && ex.keyboard, ctx.caret_on);
+    let sf = &ex.search_field;
+    searchfield::draw_nav(c, &ctx.text, &paint, sf, sl.search, searching, caret, px);
+    if let (Some(bl), Some(tree)) = (&lay.bar, lay.tree) {
+        explorerbar::draw(c, &ctx.text, &paint, &ex.explorer_bar, bl, px);
+        let tl = treeview::layout(&ex.tree, &ctx.text, px, tree, &cm);
+        treeview::draw(c, &ctx.text, &paint, &ex.tree, &tl, ex.tree.bars.lit(), px);
+    }
+    if let Some(r) = sl.details {
+        let dl = detailspane::layout(&ex.details, &ctx.text, px, r, &cm);
+        detailspane::draw(c, &ctx.text, &paint, &ex.details, &dl, px);
+    }
+    rebar::draw_closing_line(c, &paint, lay.client.x, lay.client.right(), lay.etch_y);
+    let cl = ex.cmdbar_layout(sl.command, ctx);
+    commandbar::draw(c, &ctx.text, &paint, &ex.cmdbar_shown(), &cl, px);
+    ex.draw_tabs(c, false, ctx);
+    if sl.menu.is_some() {
+        ex.bar.draw(c, &ctx.text, &ctx.theme, &ex.bar_layout(ctx));
+    }
+    addressbar::draw_list(c, &ctx.text, &paint, &ex.address, &edit, px);
+}
+
+/// Back, Forward and the recent places drop at the nav row's left end.
+pub fn nav_buttons(sl: &ShellLayout) -> navbuttons::Layout {
+    navbuttons::layout(Rect::new(
+        sl.back_fwd.x,
+        sl.nav.y,
+        sl.back_fwd.width,
+        sl.nav.height,
+    ))
+}
+
+/// What lies over every layout's chrome: an open menu, the rename box's balloon and the tip.
+fn draw_overlays(ex: &Explorer, c: &mut Canvas, ctx: &Ctx, sl: &shellview::Layout) {
     if let Some(p) = &ex.popup {
         p.draw(c, ctx);
     }
-    if let Some((title, body, at, stem)) = rename_balloon(ex, &sl, ctx) {
+    if let Some((title, body, at, stem)) = rename_balloon(ex, sl, ctx) {
         let b = tooltip::draw_balloon_tip_at(&ctx.theme, &ctx.text, &title, body, c.scale(), stem);
         c.blit_over(at.x, at.y, &b);
     }
@@ -423,6 +666,9 @@ fn rename_balloon<'a>(
 /// The window's access tree, the parts `draw` paints. Focus goes to an open
 /// popup, else the menus while they hold the keyboard, else `ex.focus`.
 pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
+    if let Some(sl) = ex.shell_layout(ctx) {
+        return access_shell(ex, tree, ctx, &sl);
+    }
     let px = ctx.theme.fonts.size_px;
     let lay = ex.layout(ctx);
     let menus = ex.bar.access(&ex.bar_layout(ctx), tree, ROOT);
@@ -476,9 +722,66 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
         crate::Focus::Search => search,
         crate::Focus::Tree => folders,
         crate::Focus::Tasks => tasks,
-        crate::Focus::View => Some(view),
+        crate::Focus::Commands | crate::Focus::View => Some(view),
     });
     tree.set_focus(focus.unwrap_or(view));
+}
+
+/// [`access`] for the shell layout: the nav row's buttons, the address (its crumbs, or the field
+/// while it is edited) and the search field, the menu bar while it shows, the tabs and the view.
+fn access_shell(ex: &Explorer, tree: &mut Tree, ctx: &Ctx, sl: &ShellLayout) {
+    let px = ctx.theme.fonts.size_px;
+    let cm = ctx.theme.controls();
+    let menus = sl
+        .menu
+        .and_then(|_| ex.bar.access(&ex.bar_layout(ctx), tree, ROOT));
+    navbuttons::access(&ex.nav, &nav_buttons(sl), tree, ROOT);
+    let address = match ex.focus == crate::Focus::Address {
+        true => {
+            let al = addressbar::field_layout(&ex.address, sl.address, &cm);
+            addressbar::access(&ex.address, &al, &ctx.text, px, tree, ROOT)
+        }
+        false => {
+            let bl = breadcrumb::layout(&ex.crumbs, sl.address, &ctx.text, px, &cm);
+            breadcrumb::access(&ex.crumbs, &bl, &ctx.text, px, tree, ROOT)
+        }
+    };
+    let sf = &ex.search_field;
+    let search = searchfield::access_nav(sf, sl.search, &ctx.text, px, tree, ROOT);
+    let cl = ex.cmdbar_layout(sl.command, ctx);
+    let commands = commandbar::access(&ex.cmdbar, &cl, tree, ROOT, "commandbar");
+    ex.access_tabs(tree, ctx);
+    let lay = Layout::of_shell(sl, ctx.size, &cm);
+    let mut folders = None;
+    if let (Some(bl), Some(r)) = (&lay.bar, lay.tree) {
+        let pane = explorerbar::access(&ex.explorer_bar, bl, tree, ROOT);
+        let tl = treeview::layout(&ex.tree, &ctx.text, px, r, &cm);
+        let name = "navigation";
+        folders = Some(treeview::access(
+            &ex.tree, &tl, &ctx.text, px, tree, pane, name,
+        ));
+    }
+    if let Some(r) = sl.details {
+        let dl = detailspane::layout(&ex.details, &ctx.text, px, r, &cm);
+        detailspane::access(&ex.details, &dl, tree, ROOT);
+    }
+    let vl = ex.view_layout(sl.view, ctx);
+    let view = shellview::access(&ex.sv, &vl, &ctx.text, px, tree, ROOT, "view");
+    if let Some((title, body, at, _)) = rename_balloon(ex, &vl, ctx) {
+        tooltip::access_balloon_tip("rename", at, &title, body, tree, ROOT);
+    }
+    let popup = ex
+        .popup
+        .as_ref()
+        .map(|p| p.chain.access(tree, ROOT, "popup"));
+    let focus = popup.or(menus).unwrap_or(match ex.focus {
+        crate::Focus::Address => address,
+        crate::Focus::Search => search,
+        crate::Focus::Commands => commands,
+        crate::Focus::Tree => folders.unwrap_or(view),
+        _ => view,
+    });
+    tree.set_focus(focus);
 }
 
 /// A reader's ScrollIntoView, or Focus on a row out of view: the view's entry or the Folders
