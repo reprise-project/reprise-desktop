@@ -390,28 +390,18 @@ impl Printing {
                 }
                 PointerInput::Release { .. } | PointerInput::Leave => {
                     let view = preview.release() | preview.leave();
-                    let bar = form_input(&mut preview.form, ev, ctx);
-                    Some(redraw(view || bar.is_some_and(|e| e != form::Event::None)))
+                    Some(buttons(preview, ev, ctx, view))
                 }
                 PointerInput::Motion { x, y } => {
                     let view = preview.motion(x, y, &lay);
-                    let bar = form_input(&mut preview.form, ev, ctx);
-                    Some(redraw(view || bar.is_some_and(|e| e != form::Event::None)))
+                    Some(buttons(preview, ev, ctx, view))
                 }
                 _ => None,
             },
             Event::Resized => Some(Action::Redraw),
             _ => None,
         };
-        let action = match action {
-            Some(a) => a,
-            None => match form_input(&mut preview.form, ev, ctx) {
-                Some(form::Event::Pressed(id)) => preview.pressed(id),
-                Some(form::Event::Cancel) => Action::Close,
-                Some(form::Event::None) | None => Action::None,
-                Some(_) => Action::Redraw,
-            },
-        };
+        let action = action.unwrap_or_else(|| buttons(preview, ev, ctx, false));
         match action {
             Action::Redraw => Step::reply(Reply::redraw()),
             Action::None => Step::reply(Reply::none()),
@@ -725,6 +715,15 @@ fn draw_pages(laid: &Laid, wanted: &Receiver<(u32, (u32, u32))>, out: impl Fn(u3
     }
 }
 
+/// `ev` given to the preview's buttons, redrawn also when the page's box `view` changed.
+fn buttons(preview: &mut Preview, ev: &Event, ctx: &Ctx, view: bool) -> Action {
+    match form_input(&mut preview.form, ev, ctx) {
+        Some(form::Event::Pressed(id)) => preview.pressed(id),
+        Some(form::Event::Cancel) => Action::Close,
+        e => redraw(view || e.is_some_and(|e| e != form::Event::None)),
+    }
+}
+
 fn redraw(changed: bool) -> Action {
     match changed {
         true => Action::Redraw,
@@ -778,4 +777,84 @@ pub fn login_name() -> String {
     reprisefs::sysinfo::account(uid)
         .map(|(login, _)| login)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Mods;
+    use reprisekit::controls::printpreview::Zoom;
+
+    fn ctx() -> Ctx {
+        Ctx {
+            theme: Theme::default(),
+            text: Rc::new(TextRenderer::load(&reprisekit::theme::FontConfig::default())),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (640, 480),
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 100,
+        }
+    }
+
+    fn preview(p: &Printing) -> &Preview {
+        match &p.open {
+            Some(Open::Preview { preview, .. }) => preview,
+            _ => panic!("Print Preview is open"),
+        }
+    }
+
+    fn click(p: &mut Printing, id: &str, ctx: &mut Ctx) {
+        let r = preview(p).form.item(id).expect("the button").rect;
+        let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
+        let (button, mods) = (crate::BTN_LEFT, Mods::default());
+        for ev in [
+            PointerInput::Press {
+                x,
+                y,
+                button,
+                time: 0,
+                mods,
+            },
+            PointerInput::Release { x, y, button, mods },
+        ] {
+            p.event(PREVIEW, &Event::Pointer(ev), ctx);
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_preview_button_does_what_the_button_says() {
+        let mut ctx = ctx();
+        let mut p = Printing::new("Test");
+        let font = TextFont {
+            family: String::new(),
+            bold: false,
+            italic: false,
+            pt: 10,
+        };
+        let doc = Doc::Text {
+            font,
+            lines: vec!["text".into()],
+        };
+        p.preview(doc, "t.txt", &ctx);
+        let until = Instant::now() + Duration::from_secs(30);
+        while preview(&p).pages == 0 {
+            assert!(Instant::now() < until, "the document is laid out");
+            p.wake();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        click(&mut p, printpreview::ZOOM_IN, &mut ctx);
+        assert_eq!(preview(&p).zoom, Zoom::Actual, "Zoom In zooms in");
+        click(&mut p, printpreview::CLOSE, &mut ctx);
+        assert!(p.children().is_empty(), "Close closes the preview");
+    }
 }
