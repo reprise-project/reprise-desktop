@@ -219,10 +219,7 @@ fn check(name: &str, p: &StartPanel) -> Vec<(String, u64)> {
                 }
             }
             if pct == 200 {
-                let h = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &px| {
-                    (h ^ u64::from(px)).wrapping_mul(0x0000_0100_0000_01b3)
-                });
-                hashes.push((format!("{name} {s}"), h));
+                hashes.push((format!("{name} {s}"), crate::pins::fnv(&c)));
             }
         }
     }

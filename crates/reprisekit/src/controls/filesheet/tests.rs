@@ -1214,15 +1214,7 @@ fn the_executable_box_shows_the_bit_and_greys_where_it_cannot_change() {
     assert_eq!(rect(&folder), Rect::new(94, 324, 13, 13), "under Hidden");
 }
 
-fn fnv_in(c: &Canvas, r: Rect) -> u64 {
-    (r.y..r.bottom())
-        .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
-        .fold(0xcbf2_9ce4_8422_2325_u64, |h, (x, y)| {
-            c.get(x, y).to_le_bytes().iter().fold(h, |h, &b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-        })
-}
+use crate::pins::fnv_in;
 
 #[test]
 fn the_executable_box_draws_in_each_look() {
@@ -1243,22 +1235,13 @@ fn the_executable_box_draws_in_each_look() {
             crate::controls::form::draw(&mut c, &t, &theme.paint(), &page, false, px());
             let r = page.item(EXECUTABLE).unwrap().rect;
             let area = Rect::new(r.x - 2, r.y - 2, 90, r.height + 4);
-            got.push((look, enabled, format!("{:016x}", fnv_in(&c, area))));
+            got.push((format!("{look:?} enabled={enabled}"), fnv_in(&c, area)));
         }
     }
     for pair in got.chunks(2) {
-        assert_ne!(pair[0].2, pair[1].2, "{:?}: greyed differs", pair[0].0);
+        assert_ne!(pair[0].1, pair[1].1, "{}: greyed differs", pair[0].0);
     }
-    let want = [
-        (Interface::Classic, true, "14484dec4f17638c"),
-        (Interface::Classic, false, "bce9ff417d9f497c"),
-        (Interface::Blue, true, "d0b4098443f797c2"),
-        (Interface::Blue, false, "612c64f3812bf888"),
-        (Interface::Glass, true, "c462e8ee9d2f134e"),
-        (Interface::Glass, false, "f908158d64544474"),
-    ]
-    .map(|(look, enabled, h)| (look, enabled, h.to_string()));
-    assert_eq!(got, want);
+    crate::pins::check("controls/filesheet_executable", &got);
 }
 
 #[test]

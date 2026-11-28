@@ -920,11 +920,7 @@ fn check_pins(name: &str, got: &[(String, u64)]) {
     reprisekit::pins::check_file(&path, got);
 }
 
-fn hash(c: &Canvas) -> u64 {
-    c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &p| {
-        (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-    })
-}
+use reprisekit::pins::fnv;
 
 #[test]
 fn the_window_is_pinned_in_each_interface_at_scale_one_and_two() {
@@ -948,7 +944,7 @@ fn the_window_is_pinned_in_each_interface_at_scale_one_and_two() {
             if std::env::var_os("REPRISE_PAINT_PREVIEW").is_some() {
                 reprisekit::raster::write_preview(&c, &format!("paint-{look:?}-{s}"));
             }
-            got.push((format!("{look:?} {s}"), hash(&c)));
+            got.push((format!("{look:?} {s}"), fnv(&c)));
         }
     }
     check_pins("window", &got);
@@ -1066,7 +1062,7 @@ fn typed_text_wraps_at_the_box_and_lands_with_the_same_breaks() {
             c.put_raw(x, y, p.doc.img.get(x, y).unwrap());
         }
     }
-    check_pins("textbox", &[("wrapped".into(), hash(&c))]);
+    check_pins("textbox", &[("wrapped".into(), fnv(&c))]);
 }
 
 #[test]
@@ -1145,7 +1141,7 @@ fn the_magnifiers_zoom_labels_keep_the_100_percent_font_at_every_text_size() {
             if std::env::var_os("REPRISE_PAINT_PREVIEW").is_some() {
                 reprisekit::raster::write_preview(&c, &format!("paint-zoom-{pct}-{s}"));
             }
-            let well = hash(&c.copy_rect(r));
+            let well = fnv(&c.copy_rect(r));
             assert_eq!(
                 *at_100.get_or_insert(well),
                 well,

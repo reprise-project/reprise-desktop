@@ -1871,18 +1871,7 @@ fn in_caption_mode_the_toolbar_leads_with_new_tab_and_the_grid_takes_the_strip()
     assert_eq!(t.order.len(), 2, "New Tab opens a window");
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for v in [c.width, c.height]
-        .into_iter()
-        .chain(c.pixels.iter().copied())
-    {
-        for b in v.to_le_bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    h
-}
+use reprisekit::pins::{fnv, fnv_in};
 
 #[test]
 fn the_caption_mode_toolbar_pins_in_every_interface() {
@@ -2244,21 +2233,6 @@ fn hovering_a_link_underlines_it_and_a_rest_shows_its_uri() {
     assert_eq!(underlined(&t), [false; 12]);
 }
 
-/// FNV-1a of device rows `rows` of `c`.
-fn fnv_rows(c: &Canvas, rows: std::ops::Range<i32>) -> u64 {
-    let w = c.device_size().0 as usize;
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for y in rows {
-        let y = y as usize;
-        for v in &c.pixels[y * w..(y + 1) * w] {
-            for b in v.to_le_bytes() {
-                h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-            }
-        }
-    }
-    h
-}
-
 #[test]
 fn a_linked_line_pins_plain_and_hovered_in_every_interface() {
     reprisekit::pins::fonts();
@@ -2275,17 +2249,16 @@ fn a_linked_line_pins_plain_and_hovered_in_every_interface() {
             let mut c = Canvas::with_scale(640, 400, s);
             t.draw(MAIN, &mut c, &ctx);
             let m = t.metrics(s);
-            let top = chrome::grid_rect(&ctx, false).y * s;
-            let rows = top..top + m.cell_h;
-            got.push((format!("{i:?} {s}"), fnv_rows(&c, rows.clone())));
             let g = chrome::grid_rect(&ctx, false);
+            let row = Rect::new(0, g.y, 640, (m.cell_h + s - 1) / s);
+            got.push((format!("{i:?} {s}"), fnv_in(&c, row)));
             let (x, y) = (
                 g.x + (5 * m.cell_w + m.cell_w / 2) / s,
                 g.y + m.cell_h / 2 / s,
             );
             pointer(&mut t, &mut ctx, PointerInput::Motion { x, y });
             t.draw(MAIN, &mut c, &ctx);
-            got.push((format!("{i:?} hover {s}"), fnv_rows(&c, rows)));
+            got.push((format!("{i:?} hover {s}"), fnv_in(&c, row)));
             pointer(&mut t, &mut ctx, PointerInput::Leave);
         }
     }

@@ -1173,9 +1173,7 @@ fn run_s_field_with_a_button_focused_is_pinned_in_every_interface_at_1_and_2() {
                     focus.is_none(),
                     "{at}: the selection shows only while the field has the focus"
                 );
-                let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
-                    (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
-                });
+                let hash = reprisekit::pins::fnv(&c);
                 got.push((at, hash));
             }
         }

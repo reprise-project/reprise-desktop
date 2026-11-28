@@ -1,72 +1,72 @@
-Classic 0.1 1 a33905c13c0f0ca5
-Classic 0.1 2 08923ff77eaa554d
-Classic 0.4 1 b72f254c465fa0dd
-Classic 0.4 2 4d28a4c0bd93f405
-Classic 0.8 1 30f8befe72aa959d
-Classic 0.8 2 b0e2c53fb49d0515
-Glass 0.1 1 10cfa5e0053d44b5
-Glass 0.1 2 bdbdf00682974065
-Glass 0.4 1 b5f8643b43565ec5
-Glass 0.4 2 f08a8409dd1fe25d
-Glass 0.8 1 531f228bcfb7cf3d
-Glass 0.8 2 175128470b9b8e7d
-Blue Blue 0.1 1 bee6e5430209ad05
-Blue Blue 0.1 2 926c88b22320d875
-Blue Blue 0.4 1 a5011843d2cc01ad
-Blue Blue 0.4 2 6db2b907b62b3b75
-Blue Blue 0.8 1 005333310efa21ad
-Blue Blue 0.8 2 89b493e048372cf5
-Blue Olive 0.1 1 b84b65dd753c13b5
-Blue Olive 0.1 2 67ec5b4f824d0065
-Blue Olive 0.4 1 64f154daff3939d5
-Blue Olive 0.4 2 2958bd96ae9eab9d
-Blue Olive 0.8 1 5b5d194637d0f955
-Blue Olive 0.8 2 1742eeb8f39ed55d
-Blue Silver 0.1 1 e235931190d0697d
-Blue Silver 0.1 2 bc4821fa28789c6d
-Blue Silver 0.4 1 17c59d7db77602fd
-Blue Silver 0.4 2 1b1396638945878d
-Blue Silver 0.8 1 a580f1f0d9cc53f5
-Blue Silver 0.8 2 5c157e0a7b885815
-Blue Slate 0.1 1 2e5309b7f22a242d
-Blue Slate 0.1 2 c81423051bccf855
-Blue Slate 0.4 1 a74d082d0ed74eed
-Blue Slate 0.4 2 c19a77cc255068f5
-Blue Slate 0.8 1 380766a3d022830d
-Blue Slate 0.8 2 4f97d8034cddf955
-Blue Sapphire 0.1 1 df8f5b2f32b1aff5
-Blue Sapphire 0.1 2 39c41017ac8f97a5
-Blue Sapphire 0.4 1 b705daaa6b96c10d
-Blue Sapphire 0.4 2 ce36450eac69947d
-Blue Sapphire 0.8 1 d181986f4cf41305
-Blue Sapphire 0.8 2 fff6790d5d2344bd
-Blue Obsidian 0.1 1 36e2cdee03910d55
-Blue Obsidian 0.1 2 555ce03eeac3a4b5
-Blue Obsidian 0.4 1 26b0117b15d8869d
-Blue Obsidian 0.4 2 4f3ea5c581ba4835
-Blue Obsidian 0.8 1 06603d30c1a674f5
-Blue Obsidian 0.8 2 c5779d06ae11fb5d
-Blue Ember 0.1 1 15d1407e1a387a45
-Blue Ember 0.1 2 57a6d1c266ffd555
-Blue Ember 0.4 1 ca96e25f97706525
-Blue Ember 0.4 2 49c4dca987f479a5
-Blue Ember 0.8 1 a7acd948ae5511c5
-Blue Ember 0.8 2 f4a22a8a45b72bc5
-Blue Cobalt 0.1 1 60c938b0dff4f8c5
-Blue Cobalt 0.1 2 b1ce114db238585d
-Blue Cobalt 0.4 1 d2f866cae1d2df4d
-Blue Cobalt 0.4 2 0ddb0b4fda0e816d
-Blue Cobalt 0.8 1 b83ad2123185aad5
-Blue Cobalt 0.8 2 4190e8a094c00df5
-Blue Carbon 0.1 1 a86437fbe642c40d
-Blue Carbon 0.1 2 226f30dfc549908d
-Blue Carbon 0.4 1 1f781f0cd8d4b2e5
-Blue Carbon 0.4 2 1cbe011ce575fcf5
-Blue Carbon 0.8 1 3e653961646c639d
-Blue Carbon 0.8 2 c4d316c33f406b65
-Blue Steel 0.1 1 e08678587932ab25
-Blue Steel 0.1 2 c0f8d2b70495bfa5
-Blue Steel 0.4 1 7eb31710d24e06f5
-Blue Steel 0.4 2 a006c2cd97a41295
-Blue Steel 0.8 1 22a9ff6097df9d15
-Blue Steel 0.8 2 5ad999f81f8b22b5
+Classic 0.1 1 f10d9a1884200784
+Classic 0.1 2 5c4ba23c36c7a1ac
+Classic 0.4 1 1604e48a7d90a97c
+Classic 0.4 2 4774bf6bfe67d594
+Classic 0.8 1 4adcac475035279c
+Classic 0.8 2 edadac84bc417484
+Glass 0.1 1 154b2d9c46dfbbf4
+Glass 0.1 2 b035d12b88321344
+Glass 0.4 1 131ee246e674f8e4
+Glass 0.4 2 ce6ac33af5fc000c
+Glass 0.8 1 fc0e710785d8274c
+Glass 0.8 2 5d1ff0274872726c
+Blue Blue 0.1 1 df7ea572d2ff71d4
+Blue Blue 0.1 2 5ce176b5f8a91364
+Blue Blue 0.4 1 42faf2aa8043645c
+Blue Blue 0.4 2 e67040dc63052a74
+Blue Blue 0.8 1 a4029b60f932bacc
+Blue Blue 0.8 2 82ebdcc0dd6cbc44
+Blue Olive 0.1 1 e1b05c30ade783c4
+Blue Olive 0.1 2 00615d1601876e04
+Blue Olive 0.4 1 0d919096cbbac3b4
+Blue Olive 0.4 2 26a9fc1d7d5760ec
+Blue Olive 0.8 1 f779749ef1da9cf4
+Blue Olive 0.8 2 f4acc9714049b37c
+Blue Silver 0.1 1 0c98134ae2c2e7dc
+Blue Silver 0.1 2 8523e6a3041721ec
+Blue Silver 0.4 1 338fc346c7ecd6dc
+Blue Silver 0.4 2 79ef65de7501b57c
+Blue Silver 0.8 1 abbff625b7eefe04
+Blue Silver 0.8 2 f2cdb3a13e45d3a4
+Blue Slate 0.1 1 17f12edc7bb6076c
+Blue Slate 0.1 2 496a970686564b44
+Blue Slate 0.4 1 b022f4050c9f462c
+Blue Slate 0.4 2 be90bac1b2d857a4
+Blue Slate 0.8 1 fc9de1107c79436c
+Blue Slate 0.8 2 3cebd1fb3c5af6b4
+Blue Sapphire 0.1 1 522a99c9b0c09f84
+Blue Sapphire 0.1 2 8c6bc3c3731362e4
+Blue Sapphire 0.4 1 91e85682c17cec8c
+Blue Sapphire 0.4 2 406ed4326af6caec
+Blue Sapphire 0.8 1 d4e8d7f62dc3ed94
+Blue Sapphire 0.8 2 82de31db2e71d54c
+Blue Obsidian 0.1 1 db9e3c6560487884
+Blue Obsidian 0.1 2 4cf4e98c2de4a864
+Blue Obsidian 0.4 1 9b50dd67dcce908c
+Blue Obsidian 0.4 2 fe0a17466360b074
+Blue Obsidian 0.8 1 32d99cd4319599e4
+Blue Obsidian 0.8 2 08eb15e4d7ccf41c
+Blue Ember 0.1 1 7620c4fea5f85ac4
+Blue Ember 0.1 2 bfe797d228c461b4
+Blue Ember 0.4 1 b1a1b50b8be16d44
+Blue Ember 0.4 2 ca06e2c4f426dd84
+Blue Ember 0.8 1 93293a2cf4c7ffe4
+Blue Ember 0.8 2 a62441526d1d2b64
+Blue Cobalt 0.1 1 eb6d8509a4c613c4
+Blue Cobalt 0.1 2 f29cb17185dccf9c
+Blue Cobalt 0.4 1 fd9912f38605b04c
+Blue Cobalt 0.4 2 7507febd32c2486c
+Blue Cobalt 0.8 1 f7b98113455bc654
+Blue Cobalt 0.8 2 688527e57122c354
+Blue Carbon 0.1 1 1c6cf052b8a3768c
+Blue Carbon 0.1 2 e7c393e15dcfce3c
+Blue Carbon 0.4 1 143c6a5d57ec3c34
+Blue Carbon 0.4 2 5db8f6f6faf96674
+Blue Carbon 0.8 1 7412c753c51c2c9c
+Blue Carbon 0.8 2 1fb099b2af2f9374
+Blue Steel 0.1 1 2b55bcba6a4b9194
+Blue Steel 0.1 2 e1c85ded810d38d4
+Blue Steel 0.4 1 2b41ed26e8dae834
+Blue Steel 0.4 2 44864d778ba89454
+Blue Steel 0.8 1 abcdf4a3ead7b084
+Blue Steel 0.8 2 ba6b9252575f71f4

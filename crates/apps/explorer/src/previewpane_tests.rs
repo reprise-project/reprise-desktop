@@ -247,7 +247,7 @@ fn the_pane_pins_light_and_dark_at_scale_1_and_2() {
             for s in [1, 2] {
                 let mut c = Canvas::with_scale(792, 573, s);
                 ctx.at_scale(s, |ctx| crate::window::draw(&ex, &mut c, ctx));
-                got.push((format!("{look} {state} @{s}"), crop_hash(&c, r)));
+                got.push((format!("{look} {state} @{s}"), fnv_in(&c, r)));
             }
         }
     }
@@ -255,20 +255,7 @@ fn the_pane_pins_light_and_dark_at_scale_1_and_2() {
     reprisekit::pins::check_file(&path, &got);
 }
 
-/// Device pixels of `r` (logical) on `c`.
-fn crop_hash(c: &Canvas, r: Rect) -> u64 {
-    let s = c.scale();
-    let dw = c.device_size().0 as i32;
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for y in r.y * s..r.bottom() * s {
-        for x in r.x * s..r.right() * s {
-            for b in c.pixels[(y * dw + x) as usize].to_le_bytes() {
-                h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-            }
-        }
-    }
-    h
-}
+use reprisekit::pins::fnv_in;
 
 #[test]
 fn a_blocked_listing_pool_does_not_block_the_pane() {

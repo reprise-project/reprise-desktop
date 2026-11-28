@@ -251,19 +251,7 @@ mod tests {
         ("frame_bottom", frame_bottom),
     ];
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let words = [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied());
-        for w in words {
-            for b in w.to_le_bytes() {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn frame_of(img: &PartImage, state: State) -> Canvas {
         let f = img.frame(state);

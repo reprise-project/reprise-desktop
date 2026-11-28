@@ -684,16 +684,7 @@ fn the_reply_row_takes_the_first_of_several_rows_and_the_size_stays() {
     assert_eq!(lay.send.map(|b| b.y), Some(row.buttons[0].y));
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    [c.width, c.height]
-        .iter()
-        .chain(c.pixels.iter())
-        .fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-            p.to_le_bytes().iter().fold(h, |h, &b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-        })
-}
+use crate::pins::fnv;
 
 /// Three long buttons on two rows: Classic and Blue at scale 1 and 2, and at 200% text.
 #[test]

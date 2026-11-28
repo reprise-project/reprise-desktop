@@ -805,14 +805,7 @@ mod tests {
     }
 
     fn fnv(img: &PartImage) -> u64 {
-        img.atlas
-            .pixels
-            .iter()
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                p.to_le_bytes().iter().fold(h, |h, &b| {
-                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                })
-            })
+        crate::pins::fnv(&img.atlas)
     }
 
     #[test]
@@ -1708,12 +1701,7 @@ mod tests {
                             draw("Documents", None, false).pixels != bare.pixels,
                             "{what}: a full caption draws them"
                         );
-                        let h = bare.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                            p.to_le_bytes().iter().fold(h, |h, &b| {
-                                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                            })
-                        });
-                        got.push((what, h));
+                        got.push((what, crate::pins::fnv(&bare)));
                     }
                 }
             }

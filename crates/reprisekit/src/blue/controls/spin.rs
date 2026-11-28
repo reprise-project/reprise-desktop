@@ -147,22 +147,7 @@ mod tests {
     }
 
     fn fnv(img: &PartImage, state: State) -> u64 {
-        let f = img.frame(state);
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut eat = |v: u32| {
-            for b in v.to_le_bytes() {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
-        };
-        eat(f.width as u32);
-        eat(f.height as u32);
-        for y in 0..f.height {
-            for x in 0..f.width {
-                eat(img.atlas.get(f.x + x, f.y + y));
-            }
-        }
-        h
+        crate::pins::fnv_in(&img.atlas, img.frame(state))
     }
 
     const PARTS: [Part; 2] = [Part::SpinUp, Part::SpinDown];

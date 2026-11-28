@@ -1,80 +1,80 @@
-Blue none @1 cbde81eea8c68757
-Blue none @2 d030cd33e8b16329
-Blue playing @1 3819caf9116befb0
-Blue playing @2 1e790e453ba0fc40
-Blue paused play focused next hot @1 bd6eae0a29e03284
-Blue paused play focused next hot @2 8ad2527bedc1fedd
-Blue title alone @1 e00df35e7cae5b9e
-Blue title alone @2 648cd07553f3eabc
-Olive none @1 8b7e1148bbd295c4
-Olive none @2 9e1b505ab5185656
-Olive playing @1 49294a2a1341eb13
-Olive playing @2 303ac0e308370550
-Olive paused play focused next hot @1 028c46deef3191fe
-Olive paused play focused next hot @2 0e6d54bd7c930e8f
-Olive title alone @1 80bcf63fdc16abb2
-Olive title alone @2 d9d5f9c02b714664
-Silver none @1 3d74303beea25b87
-Silver none @2 e951b7543b02c82f
-Silver playing @1 dcdde84514b1619a
-Silver playing @2 afbdc57c49417c7f
-Silver paused play focused next hot @1 acf87326fc574727
-Silver paused play focused next hot @2 ed10977e4bbb40d2
-Silver title alone @1 d89c2bf8be19526f
-Silver title alone @2 50b5cf95d7248a93
-Slate none @1 e23ad434e7cfb8a8
-Slate none @2 f2e933f6a5c102b7
-Slate playing @1 1d8f330fd0691e10
-Slate playing @2 be9a748fa3f5cca3
-Slate paused play focused next hot @1 31d67e54ae011021
-Slate paused play focused next hot @2 f7cbcd3e2d141233
-Slate title alone @1 8d5c1de4046a0e28
-Slate title alone @2 8075ae0d6865150b
-Sapphire none @1 8d712e8398743c27
-Sapphire none @2 b01a8798e57a8221
-Sapphire playing @1 973220d7078c8bcb
-Sapphire playing @2 d92170b714d83021
-Sapphire paused play focused next hot @1 9fc0407444d83f05
-Sapphire paused play focused next hot @2 15b4abcd780f4e0d
-Sapphire title alone @1 c2459b63137f88bf
-Sapphire title alone @2 4d63bce104a329e9
-Obsidian none @1 963629b02013b539
-Obsidian none @2 f42192399443a080
-Obsidian playing @1 48fa8f5dbb8e8e64
-Obsidian playing @2 91dbf80efb6ad85c
-Obsidian paused play focused next hot @1 95ba3c0e9e5b6726
-Obsidian paused play focused next hot @2 a906bc8177c86fd0
-Obsidian title alone @1 4fd2c3e6ced7a859
-Obsidian title alone @2 4f172356f0847eac
-Ember none @1 13563287e58f8184
-Ember none @2 e87d6142a17e08bb
-Ember playing @1 00058141f73780b3
-Ember playing @2 79278fdadc819a8f
-Ember paused play focused next hot @1 a0d0ad734b693656
-Ember paused play focused next hot @2 41ae16473dbbbe73
-Ember title alone @1 0dfed054f9d81f14
-Ember title alone @2 f7f1460cebca5fbb
-Cobalt none @1 e2fcb64c0a0eed9d
-Cobalt none @2 177210f3349ededc
-Cobalt playing @1 559c3d8893dea8e9
-Cobalt playing @2 ca5b983deb05f34c
-Cobalt paused play focused next hot @1 7b8ef54a9e7c694b
-Cobalt paused play focused next hot @2 ecea9a626f81ed24
-Cobalt title alone @1 8e943e6fd34b7e95
-Cobalt title alone @2 bf076a6775e0ae08
-Carbon none @1 96fe7122584efafd
-Carbon none @2 94e426dc9cffed84
-Carbon playing @1 c381d85c91be3237
-Carbon playing @2 2371c7e07056db58
-Carbon paused play focused next hot @1 f47073edb605ee85
-Carbon paused play focused next hot @2 ffaea7c6038d2b38
-Carbon title alone @1 9ccb44a471ea6e0d
-Carbon title alone @2 e283c765e24144dc
-Steel none @1 b6a4aaa6158ccc6d
-Steel none @2 8ab2209f91baa6ba
-Steel playing @1 899a3f29bb424df1
-Steel playing @2 d330d94c80efc8e2
-Steel paused play focused next hot @1 1589eff4d2fdca14
-Steel paused play focused next hot @2 70cb536209bf5183
-Steel title alone @1 70d8db200e41e325
-Steel title alone @2 09ed6136dd8bf056
+Blue none @1 a3116b5fc530b733
+Blue none @2 f3b7329c43819aca
+Blue playing @1 028113ea12ae4f4c
+Blue playing @2 07eabdb0ab0bd043
+Blue paused play focused next hot @1 134cc3a98176a6d8
+Blue paused play focused next hot @2 57326fe2ba0f8dc6
+Blue title alone @1 8bcd849f238a1e72
+Blue title alone @2 215006e655d1c5af
+Olive none @1 572c4607381c4698
+Olive none @2 e9e71837ef1a0d79
+Olive playing @1 8d344dd9494dab6f
+Olive playing @2 fc007be0395d04ef
+Olive paused play focused next hot @1 c66251fbf66118da
+Olive paused play focused next hot @2 e9a300468a701f64
+Olive title alone @1 b949bf660101d05e
+Olive title alone @2 414e4b6c2f74d8ab
+Silver none @1 16025ba4d976315b
+Silver none @2 29e30d2e801ea7e4
+Silver playing @1 ff83d99736b861b6
+Silver playing @2 e5c16576885c822c
+Silver paused play focused next hot @1 7fcd8e9866d3e5eb
+Silver paused play focused next hot @2 634ef2ca2ecdee99
+Silver title alone @1 9ab246804c855513
+Silver title alone @2 8b253c0ce91e5a20
+Slate none @1 c5a05204b13ae5ec
+Slate none @2 91de9d8af01fea64
+Slate playing @1 df4339345e6a1d4c
+Slate playing @2 16cbc17a329ff4b8
+Slate paused play focused next hot @1 be373b90713e5bb5
+Slate paused play focused next hot @2 67dde2506b5f4a60
+Slate title alone @1 f9d4b80ac676e0ac
+Slate title alone @2 a146a108b3db0e28
+Sapphire none @1 25026bb8529a371b
+Sapphire none @2 f0388bcbe648f082
+Sapphire playing @1 10674f4ad08016af
+Sapphire playing @2 75a494bf6b55f0ba
+Sapphire paused play focused next hot @1 e0dd0f3e27579659
+Sapphire paused play focused next hot @2 38fd087edb9b52de
+Sapphire title alone @1 03a626f1fb329073
+Sapphire title alone @2 7f2e971fab9d8f42
+Obsidian none @1 0c05b4ca684c25cd
+Obsidian none @2 e4de036ae7abc1a3
+Obsidian playing @1 cf197cb81e830d90
+Obsidian playing @2 3e6d66a1bd2452f7
+Obsidian paused play focused next hot @1 6a97740103dc1de2
+Obsidian paused play focused next hot @2 a21d49b554bd76cb
+Obsidian title alone @1 ae7f3345257e2b9d
+Obsidian title alone @2 88fc79eef75a6987
+Ember none @1 2c0ea0f7ed5a1c98
+Ember none @2 9638315743db3534
+Ember playing @1 57404f82ce395f3f
+Ember playing @2 8ead1b5962261668
+Ember paused play focused next hot @1 3009f03aa09663ba
+Ember paused play focused next hot @2 8ae119d44f7eeef4
+Ember title alone @1 c5a79c6600cb8df8
+Ember title alone @2 c8b0185b1e6b7694
+Cobalt none @1 e7b7b5993af85849
+Cobalt none @2 cff7facad1abdbeb
+Cobalt playing @1 e9d02d238b1ef2f5
+Cobalt playing @2 4eadde976af9bddb
+Cobalt paused play focused next hot @1 1ecd9e0cea833127
+Cobalt paused play focused next hot @2 232966cd98776ffb
+Cobalt title alone @1 2f57005f1e62df21
+Cobalt title alone @2 c6b6231f718c0587
+Carbon none @1 02ccad60d59ed0b9
+Carbon none @2 e68b110d6b8f2327
+Carbon playing @1 4e1cf5db09a10d63
+Carbon playing @2 91ba150970f7334b
+Carbon paused play focused next hot @1 edb9ef8d9b90f191
+Carbon paused play focused next hot @2 8311be5ffeaed703
+Carbon title alone @1 9bb12f9020f5cdd9
+Carbon title alone @2 f04b1ecaeb8775bf
+Steel none @1 ba47ee8e39b00d81
+Steel none @2 4cbbdb99745a5e75
+Steel playing @1 75a55286e531ab05
+Steel playing @2 a8c040bb2170cd35
+Steel paused play focused next hot @1 218657cdc1005aa8
+Steel paused play focused next hot @2 7d7272c74a036a70
+Steel title alone @1 56abc97dade95dd9
+Steel title alone @2 093d6cb63ed3f1d9

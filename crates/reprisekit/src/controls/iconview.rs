@@ -1179,14 +1179,7 @@ mod tests {
         crate::interface::Interface::Glass,
     ];
 
-    fn fnv(c: &Canvas) -> u64 {
-        c.pixels
-            .iter()
-            .flat_map(|p| p.to_le_bytes())
-            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     fn dark(p: u32) -> bool {
         let [b, g, r, _] = p.to_le_bytes();

@@ -685,14 +685,7 @@ mod tests {
     use crate::style::Part;
 
     fn fnv(img: &PartImage) -> u64 {
-        img.atlas
-            .pixels
-            .iter()
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                p.to_le_bytes().iter().fold(h, |h, &b| {
-                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                })
-            })
+        crate::pins::fnv(&img.atlas)
     }
 
     const CRISP: [Part; 31] = [

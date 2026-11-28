@@ -211,11 +211,7 @@ mod tests {
         c
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-            (h ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01b3)
-        })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn each_state_is_pinned_in_every_look_at_scale_1_and_2() {

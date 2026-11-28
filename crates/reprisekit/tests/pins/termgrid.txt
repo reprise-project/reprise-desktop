@@ -1,32 +1,32 @@
-plain 1 909caa75335460f2
-bold 1 da0e97a07e0390b2
-italic 1 e7a3c80ace2baf72
-underline 1 39c56d8e9b4e09b2
-link 1 c93bd430b2b3b732
-link_hover 1 39c56d8e9b4e09b2
-strike 1 e53079ac27f0fbf2
-inverse 1 c787e78983443c12
-dim 1 63067f0318cf6972
-selected 1 1013c58bd355a6fa
-match 1 1c4deecfb83d3c12
-match_current 1 62847640467ecb92
-cursor Block 1 881edef2c3ce4f72
-cursor Bar 1 fd532dcdadd2c132
-cursor Underline 1 9e3d7563e62f3ef2
-cursor HollowBlock 1 55822315529c0432
-plain 2 168176300f3c0c45
-bold 2 168176300f3c0c45
-italic 2 b40d34c656894445
-underline 2 3292b8e4b1e0d745
-link 2 82c46ac1cdf28dc5
-link_hover 2 3292b8e4b1e0d745
-strike 2 7891e21c8c9e80c5
-inverse 2 1dbab88d1eb9e0dd
-dim 2 d85e850eccc25405
-selected 2 07045a58e7bc92a5
-match 2 90424ebbb321f35d
-match_current 2 b897b79874532fad
-cursor Block 2 449e6b222b774945
-cursor Bar 2 056cc0eac1b8ebc5
-cursor Underline 2 dcdd613687c664c5
-cursor HollowBlock 2 1fee46d5d20d8b45
+plain 1 b10a16d88a9b53b3
+bold 1 8e66a6c83a4fad73
+italic 1 e0680b2374ed52b3
+underline 1 5be8fd2fdd6a1473
+link 1 761131a913ac3cf3
+link_hover 1 5be8fd2fdd6a1473
+strike 1 cb4f57f6c21c79b3
+inverse 1 46a882b01b75e753
+dim 1 caec07951a2a2933
+selected 1 6f202400fc19b55b
+match 1 5fa81d5ef11fbcd3
+match_current 1 15985598612ef133
+cursor Block 1 306251a63365dcb3
+cursor Bar 1 09794f4116c211f3
+cursor Underline 1 119c9ec2a5c0cb33
+cursor HollowBlock 1 17fba3dc2ce41273
+plain 2 d46eacf963da4b97
+bold 2 d46eacf963da4b97
+italic 2 0883bac709de1d97
+underline 2 81b45be4b49f8497
+link 2 216868b753688517
+link_hover 2 81b45be4b49f8497
+strike 2 d45d5cee4039e917
+inverse 2 9ce7b920c554766f
+dim 2 80612a610cc4b557
+selected 2 5f26371ca1fef637
+match 2 46e36106cd09aacf
+match_current 2 34c04c7b541abdbf
+cursor Block 2 7118790d63aca097
+cursor Bar 2 033ba1e1f332fc17
+cursor Underline 2 e4eaf35d7a789d17
+cursor HollowBlock 2 d379725508612117

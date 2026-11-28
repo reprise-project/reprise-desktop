@@ -10,15 +10,7 @@ const OUTPUT: Rect = Rect::new(0, 0, 1024, 768);
 /// A change's name, the screen before it, and what changes it.
 type Case = (&'static str, Logon, fn(&mut Logon));
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for p in &c.pixels {
-        for b in p.to_le_bytes() {
-            h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 fn users(n: usize) -> Vec<LogonUser> {
     (0..n)

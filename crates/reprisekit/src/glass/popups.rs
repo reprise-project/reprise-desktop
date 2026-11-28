@@ -418,19 +418,7 @@ mod tests {
         ]
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        [c.width, c.height]
-            .into_iter()
-            .chain(
-                (0..c.height as i32)
-                    .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
-                    .map(|(x, y)| c.get(x, y)),
-            )
-            .flat_map(u32::to_le_bytes)
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn the_tooltip_and_close_button_are_drawn_again_at_scale_2() {

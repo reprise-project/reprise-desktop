@@ -1,26 +1,26 @@
-tile @1 5aeae6559e0f3dd7
-tile @2 89e5d211e84bb8ea
-tile hot @1 5bdc45e88251dd1f
-tile hot @2 6402f2e0f9dceff2
-arrow hot @1 1b1971dd5f8bcc5b
-arrow hot @2 b5922ffad739d19c
-typed @1 f8815eac269a7b1a
-typed @2 cc318da1b00b8591
-tiles @1 a9c3d44e46bd94b7
-tiles @2 cac93803d14d1262
-message @1 9f3145e927f073cc
-message @2 54a89fbe5003e3e4
-busy @1 18a4e68a1c30a6fb
-busy @2 3b03b69debf2129f
-power hot @1 32275054caffac24
-power hot @2 0e7000dfaec71b25
-admin shut down @1 6a2d1b3f32583e99
-admin shut down @2 db8fb6107566304a
-admin restart filled @1 b8288842afec121a
-admin restart filled @2 87000276b9a9d7e5
-shutting down @1 fc654fd447390328
-shutting down @2 10f4d32e8122adff
-remote note @1 024c58e5241f0f89
-remote note @2 1e2dd391eb363a1c
-tile after ok @1 5aeae6559e0f3dd7
-tile after ok @2 89e5d211e84bb8ea
+tile @1 e37171c4cef727c3
+tile @2 9469c49d39f7b029
+tile hot @1 69d512f122fe85cb
+tile hot @2 14b7b9c1c9125419
+arrow hot @1 fbd9c77d1d0f97e7
+arrow hot @2 fe36ec8d46c6a5c7
+typed @1 e7e0b111c9d8d79e
+typed @2 5b413c8453bc04ae
+tiles @1 d5537e4b93126fab
+tiles @2 992b572a48783f4d
+message @1 43c3f2a103cc67f0
+message @2 98d575836a0df6d3
+busy @1 b1f8960981b99667
+busy @2 0a2cbb1b7c3e9260
+power hot @1 7fd9b650dce55010
+power hot @2 9c99285f3d953dfa
+admin shut down @1 a470b79212fb57fd
+admin shut down @2 955c3aa8672d3e19
+admin restart filled @1 32ed0659b42f97c6
+admin restart filled @2 6dedfcf09153f36e
+shutting down @1 b3b27bb91e5c5224
+shutting down @2 be3f8c7c40e74a70
+remote note @1 0c08cd20720b7375
+remote note @2 56f2a27d6d56b78f
+tile after ok @1 e37171c4cef727c3
+tile after ok @2 9469c49d39f7b029

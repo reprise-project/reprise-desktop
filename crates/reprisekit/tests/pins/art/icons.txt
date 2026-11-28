@@ -1,110 +1,110 @@
-devicon Headphones 447f6e1474b49fb4
-devicon Headset 2ff15adc96012839
-devicon Speaker 97517f39b9ef723d
-devicon Gamepad 70d5ac4ae0a03abc
-devicon Keyboard 653ec1fe768f8fdc
-devicon Mouse a8ec99f56a25bd51
-devicon Phone cfdae7818ad53375
-devicon Computer 83466371d222261c
-devicon Generic 89b805eea7b2e2e8
-power ac f390dabb9f7894f4
-power 0 false false false 31d2e3be56b00424
-power 50 false false false 453265469a16863c
-power 100 false false false e8b0889708a84934
-power 72 true false false 63c08a853b625a7b
-power 8 false true false 092767091be32fd4
-power 2 true true true 2a83227255ab26e1
-net Wired false 165b527cc1b11dca
-net32 Wired false 3f25ef2e92360294
-net Wired true b128f53751ccb012
-net32 Wired true eda9965c5f2fde14
-net limited Wired 420ce13ea07b6fc3
-net WiredUnplugged false a96879ee2369850d
-net32 WiredUnplugged false 534f161a61f09a24
-net WiredUnplugged true e658a4789d655e85
-net32 WiredUnplugged true 53a3ea27f1dc18a4
-net limited WiredUnplugged e24886c28e3ad940
-net Connecting false 141983d56a0ad478
-net32 Connecting false e58d3503bf0cc7fc
-net Connecting true 730d1b0a34d19450
-net32 Connecting true 71669bad43c832fc
-net limited Connecting 6df2642e2e000819
-net Wireless(0) false 9fa8121d0cf9d890
-net32 Wireless(0) false 4e185c654b245e4c
-net Wireless(0) true 1698e4e757470004
-net32 Wireless(0) true ee00648676068e8c
-net limited Wireless(0) b4d7f00c36b6b661
-net Wireless(2) false 44fb7246bddabf50
-net32 Wireless(2) false 2945e15ea15a5a8c
-net Wireless(2) true bcab4cb4adebae44
-net32 Wireless(2) true e5617df391a50f0c
-net limited Wireless(2) bce2326142ce2ac1
-net Wireless(4) false 8939f11b8f4da350
-net32 Wireless(4) false 3270e0a80226290c
-net Wireless(4) true 8812a542de994ac4
-net32 Wireless(4) true 7858bd08ddb86d4c
-net limited Wireless(4) c2c24b0ecf076f21
-net WirelessOff false daa2c1c23d371e77
-net32 WirelessOff false f3a7af6f8d6c551c
-net WirelessOff true fbee215a292617cb
-net32 WirelessOff true 92ddcd4bf7d2609c
-net limited WirelessOff a9fc64d2183ecac2
-views 24 c293f6ee9b9bf228
-views 16 3a44b8ae188df1cc
-views 16 at 2 aaeb8b017371cff7
-bt false 297de668798310cc
-bt32 false 1fab49c36fb5b0c4
-bt true f4687a860ab3986c
-bt32 true 3ae28e309975c704
-printbadge Default e67e147bf69b9b9c
-printbadge Paused ebaee3d24656aee4
-printbadge Error 4e266fe659472f04
-camera 16 97068e694ece088b
-location 16 ee80587874bae334
-sticky 16 0 1d822ddcdc832af4
-sticky 16 1 f3a204c968877874
-sticky 16 4 3634b4f052fabcb4
-sticky 16 8 15616669c1c828b4
-sticky 16 64 0822844b49135434
-sticky 16 77 00312b56a50fb4f4
-mousekeys 16 Left false 045e2adb36a68e3b
-mousekeys 16 Left true 0bb38363368e1ec9
-mousekeys 16 Middle false 81ff4c38434506c4
-mousekeys 16 Middle true ef341f8b368b0a64
-mousekeys 16 Right false 77f881320269dcab
-mousekeys 16 Right true bdf44b260e730919
-sun 16 false 7ca5e6f5a0a6a184
-sun 16 true 45b48983a154d1e4
-bell 16 0 false c74b955628ffd32e
-bell 16 3 false 8090aa8af78d52c3
-bell 16 12 false 36f13da734c10e3e
-bell 16 0 true 15f6dbee30927839
-bell 16 5 true 446b74f6fc81bc47
-camera 32 915f62ab74adfb8c
-location 32 c6885d70815f41c4
-sticky 32 0 0276e9e8515bf004
-sticky 32 1 76a54cbe86d40384
-sticky 32 4 1d7ad6444b8bb884
-sticky 32 8 671684b57b4fb284
-sticky 32 64 24046159f6d79d04
-sticky 32 77 72c3afd8c4967784
-mousekeys 32 Left false 36be303748fc6464
-mousekeys 32 Left true 135d54c7d4b8f7e4
-mousekeys 32 Middle false 71160f1d67b6ac84
-mousekeys 32 Middle true b410a9d9094f8504
-mousekeys 32 Right false 59c4bf47a9b280e4
-mousekeys 32 Right true c3207565fe2589e4
-sun 32 false 8cfc53a094d27784
-sun 32 true 026b8a71b6b5f704
-bell 32 0 false f4d9d0f9cc07bc4c
-bell 32 3 false 0daff465c78b490c
-bell 32 12 false 31a5087dc5875ffc
-bell 32 0 true 05fa0943a2927a44
-bell 32 5 true d3ed1aaecc74bfec
-display laptop 02de19cba27f653d
-display monitor 139ffe0a53fa168d
-display laptop at 2 42daaa692abf7ba7
-shortcut 1 7c7b041e2a2fc211
-set 1 2ccba532cd33a7ea
-shortcut 2 b3f3d6487aa2e244
-set 2 ab7015e5be836797
+devicon Headphones 36866c12e5479d14
+devicon Headset 984f6eb549d54959
+devicon Speaker 3a2b48acc34aca5d
+devicon Gamepad 4e376b11b22fdb1c
+devicon Keyboard 0a4c3c64a9c249bc
+devicon Mouse 8288b38de5315e71
+devicon Phone ac46c97e541d1b15
+devicon Computer f5018c18713b1bfc
+devicon Generic a5571206ac4edd08
+power ac 989e5c6c8a555db4
+power 0 false false false acff5bd4643bd0e4
+power 50 false false false 8bc99912bee417fc
+power 100 false false false cd165806e4aca2f4
+power 72 true false false 067b9f997fa9973b
+power 8 false true false 70d58cbe4b0f3794
+power 2 true true true 63ed8ff8a99e3521
+net Wired false c3ccb355d55d170a
+net32 Wired false 1a125d3ccd0f8374
+net Wired true a9a138aa7bb6da52
+net32 Wired true cda9d889efae12f4
+net limited Wired 304d9a664c23cc83
+net WiredUnplugged false a35fcad8564e034d
+net32 WiredUnplugged false 863695de164aa784
+net WiredUnplugged true 51615339dfa1a8c5
+net32 WiredUnplugged true 6ae1df9d3e656c84
+net limited WiredUnplugged 637278d8d0820900
+net Connecting false d8b547ceb6175a38
+net32 Connecting false 6c5084eb4d7f695c
+net Connecting true d07ee776f51e0210
+net32 Connecting true aa016dbbd51d15dc
+net limited Connecting 9ae9fc72d9d76e59
+net Wireless(0) false 44f201a09e5e6e50
+net32 Wireless(0) false e87c29552f99c32c
+net Wireless(0) true f44858404f8006c4
+net32 Wireless(0) true ee9da372bb1f7d6c
+net limited Wireless(0) 9875b061607409a1
+net Wireless(2) false 9152972729f4e410
+net32 Wireless(2) false ec759e5ae75679ec
+net Wireless(2) true d34ca0603a1fd204
+net32 Wireless(2) true 1ad883221ef5ccec
+net limited Wireless(2) ee6cfe6475a6a901
+net Wireless(4) false 11f90afa65255d10
+net32 Wireless(4) false cb2001d092f95e6c
+net Wireless(4) true ef8a4a1aeab61184
+net32 Wireless(4) true 13a73a9934fb94ac
+net limited Wireless(4) b514bc53fe14f561
+net WirelessOff false 95ef5116f0e55837
+net32 WirelessOff false ccc0b5eaa26ef3fc
+net WirelessOff true 1a32ca44491cbe8b
+net32 WirelessOff true e54656b81fade6fc
+net limited WirelessOff 6b48062a4cb6e902
+views 24 1419b276d6779ce8
+views 16 39aee8e4c46d3a8c
+views 16 at 2 83b9b3fc3cd48217
+bt false 6b75af1e8a567e8c
+bt32 false 4db66c90abaf32a4
+bt true 5ed79b017b5e0d2c
+bt32 true 30cfa8a10e13e864
+printbadge Default bf0da5fc8270217c
+printbadge Paused 3912227c85ebefc4
+printbadge Error 71860e39a3d6cae4
+camera 16 309d454788100e4b
+location 16 01056c082a990ff4
+sticky 16 0 bac715547c7054b4
+sticky 16 1 e7dcff88fe28f834
+sticky 16 4 cd9aec2d09ef0074
+sticky 16 8 ae11d9b709b32074
+sticky 16 64 1d122b7f266597f4
+sticky 16 77 297360195ee718b4
+mousekeys 16 Left false a635151bea4e4f7b
+mousekeys 16 Left true ea90a14277dfab09
+mousekeys 16 Middle false 742003a62cc0eb84
+mousekeys 16 Middle true d3f85cb0577e5e24
+mousekeys 16 Right false 9cbe26e59769efeb
+mousekeys 16 Right true 1c1c1a5e3eef5759
+sun 16 false dc68306fe60c7344
+sun 16 true d071e362ca9c86a4
+bell 16 0 false 88d11e426ac4cd6e
+bell 16 3 false 237c4da2bf94fd83
+bell 16 12 false 1bb960aba1064a7e
+bell 16 0 true 0cb5e69de509fe79
+bell 16 5 true 384e1641fb5d3087
+camera 32 19a45cb9951720ec
+location 32 c97e51d70806daa4
+sticky 32 0 f59c0ee53feb7de4
+sticky 32 1 b19414881f116564
+sticky 32 4 a6ec8ff8ed8d6264
+sticky 32 8 35ca4f44dbcfb064
+sticky 32 64 cd7bb88bd8442ae4
+sticky 32 77 72d2136ff1d3d964
+mousekeys 32 Left false c3a10c64105ab8c4
+mousekeys 32 Left true 136ac2d1541f21c4
+mousekeys 32 Middle false 51cdeff9081f0564
+mousekeys 32 Middle true ae1f33c8d51822e4
+mousekeys 32 Right false 1b7238c93fdabe44
+mousekeys 32 Right true 90ea406f61e289c4
+sun 32 false 3208dcf012e23364
+sun 32 true d658fec3a98842e4
+bell 32 0 false 0bdddd7532c82c2c
+bell 32 3 false de8f658ebe2b9c6c
+bell 32 12 false 275fe95ca399645c
+bell 32 0 true 4d5dfca5b65e15a4
+bell 32 5 true 491ec6611be77c4c
+display laptop 5a1ff2dfdbe0acfd
+display monitor 7c942d8d929a54cd
+display laptop at 2 2e4e803241594ac7
+shortcut 1 53a45c5412855811
+set 1 255d2f47d561128a
+shortcut 2 8e458d4c16aecf04
+set 2 7b798bbe03297dd7

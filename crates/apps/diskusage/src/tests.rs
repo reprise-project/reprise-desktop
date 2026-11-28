@@ -599,17 +599,7 @@ fn drawn() -> Vec<(reprisekit::interface::Interface, Canvas, Canvas)> {
         .collect()
 }
 
-fn hash(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for y in 0..c.height as i32 {
-        for x in 0..c.width as i32 {
-            for b in c.get(x, y).to_le_bytes() {
-                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-    }
-    h
-}
+use reprisekit::pins::fnv;
 
 /// With the test fonts only.
 #[test]
@@ -617,8 +607,8 @@ fn the_window_and_clean_up_sit_on_their_pixels_in_every_look() {
     reprisekit::pins::fonts();
     let (mut window, mut boxes) = (Vec::new(), Vec::new());
     for (i, c, b) in drawn() {
-        window.push((format!("{i:?}"), hash(&c)));
-        boxes.push((format!("{i:?}"), hash(&b)));
+        window.push((format!("{i:?}"), fnv(&c)));
+        boxes.push((format!("{i:?}"), fnv(&b)));
     }
     let dir = reprisekit::crate_dir!().join("tests/pins");
     reprisekit::pins::check_file(&dir.join("window.txt"), &window);
@@ -665,7 +655,7 @@ fn the_list_icons_grow_with_the_text() {
             3 * (px * px) as usize,
             "three {px} px icons at {pct}%"
         );
-        pins.push((format!("text {pct}"), hash(&c)));
+        pins.push((format!("text {pct}"), fnv(&c)));
     }
     let dir = reprisekit::crate_dir!().join("tests/pins");
     reprisekit::pins::check_file(&dir.join("icons.txt"), &pins);

@@ -1,16 +1,16 @@
-Classic Regular 10 1 1f1940f9883697d4
-Classic Regular 10 2 31217e9ce9359e89
-Classic Bold 24 1 bce5279bcfd37bb5
-Classic Bold 24 2 b0c882db0a528e6d
-Blue Regular 10 1 8b9afd38262ca265
-Blue Regular 10 2 853fec672b527fce
-Blue Bold 24 1 e47a7d67dc45ca28
-Blue Bold 24 2 49f5f9c0298e8a3c
-Glass Light Regular 10 1 4b9d117a4b68fd18
-Glass Light Regular 10 2 34ce3bee8561f6c2
-Glass Light Bold 24 1 11046cfc51e48bbf
-Glass Light Bold 24 2 2697986664048682
-Glass Dark Regular 10 1 9b7ac66ae5f5ef4e
-Glass Dark Regular 10 2 392afe209c6e84d5
-Glass Dark Bold 24 1 915d1d0ec3508a54
-Glass Dark Bold 24 2 5a318e66801d2be7
+Classic Regular 10 1 66d86d27ec015329
+Classic Regular 10 2 b91ecc94fb418704
+Classic Bold 24 1 fd20a5d1ebb1d288
+Classic Bold 24 2 780aad2a9a9eaeb0
+Blue Regular 10 1 78e67b03c49f1c44
+Blue Regular 10 2 23dcf657ec0ca287
+Blue Bold 24 1 5046dd08b3134929
+Blue Bold 24 2 3508abdc59e58459
+Glass Light Regular 10 1 6b4074678e100231
+Glass Light Regular 10 2 bfb8ae73a76556df
+Glass Light Bold 24 1 d1c3ad97b7677126
+Glass Light Bold 24 2 bf36c813f1edf5f7
+Glass Dark Regular 10 1 3e072fc8e76f6fa7
+Glass Dark Regular 10 2 a7f860c2447a18a4
+Glass Dark Bold 24 1 e2df3e26f8d57aad
+Glass Dark Bold 24 2 c2017a46925f6cc2

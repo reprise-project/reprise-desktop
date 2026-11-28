@@ -1691,18 +1691,7 @@ mod tests {
         );
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for w in [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-        {
-            for b in w.to_le_bytes() {
-                h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     /// The monitor icon at `s` device px per icon px.
     fn monitor(s: i32) -> Canvas {

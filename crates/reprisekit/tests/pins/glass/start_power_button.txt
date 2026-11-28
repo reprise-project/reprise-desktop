@@ -1,8 +1,8 @@
-shut_down 1 0ce69cedf047810a
-log_off 1 3367ac961f3fa194
-lock 1 b3753d26e4c404be
-restart 1 fdc3dfe77b071345
-shut_down 2 6c799f06e531b5ae
-log_off 2 6d94fa2f41ca0e11
-lock 2 bf0258011d1453c0
-restart 2 2dd8d7e9656501c5
+shut_down 1 52548fd9d997b8fb
+log_off 1 ced08ea6bac5b4e9
+lock 1 a194f652a1d6eebb
+restart 1 444527d36cb03a64
+shut_down 2 ac7d73e397dbe44b
+log_off 2 a9a2bcb0b23a73d8
+lock 2 fa82b1d3065ffdf9
+restart 2 a0b2afd8c8fc5d38

@@ -437,12 +437,7 @@ mod tests {
         (c, lay)
     }
 
-    /// Every device pixel's hash.
-    fn fnv(c: &Canvas) -> u64 {
-        c.to_argb_be().iter().fold(0xcbf29ce484222325, |h, &b| {
-            (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
-        })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn a_boosted_volume_slider_is_shaded_past_100_in_every_look_at_scale_1_and_2() {

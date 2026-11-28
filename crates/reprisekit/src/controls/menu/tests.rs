@@ -478,18 +478,7 @@ fn half_unrolled_menus_at_scale_1_and_2() {
     crate::pins::check("menu_unroll", &got);
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for v in [c.width, c.height]
-        .into_iter()
-        .chain(c.pixels.iter().copied())
-    {
-        for b in v.to_le_bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 #[test]
 fn shadow_fades_outward_and_spares_the_menu() {
@@ -991,9 +980,7 @@ fn the_start_band_grows_with_the_text_and_holds_the_banner() {
                     l.band,
                     l.height - l.inset.top - l.inset.bottom,
                 ));
-                let hash = band.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                    (h ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01b3)
-                });
+                let hash = crate::pins::fnv(&band);
                 hashes.push((format!("{pct}% {s}"), hash));
             }
         }
@@ -1091,9 +1078,7 @@ fn each_blue_schemes_start_band_pins_at_scale_1_and_2() {
                 l.band,
                 h - inset.top - inset.bottom,
             ));
-            let hash = band.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                (h ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01b3)
-            });
+            let hash = crate::pins::fnv(&band);
             got.push((format!("{v:?} {d}"), hash));
         }
     }

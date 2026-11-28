@@ -814,16 +814,7 @@ mod tests {
         assert_eq!(layout(&pb, BAR, &cm)[0].width, WIDTH);
     }
 
-    /// FNV-1a over the pixels.
-    fn hash(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for p in &c.pixels {
-            for b in p.to_le_bytes() {
-                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     /// A bar of nine tiles drawn under each interface at 1x and 2x, scrolled to its end with a
     /// pinned tile selected. Labels are left blank so the pins hold under any font.
@@ -865,7 +856,7 @@ mod tests {
                 ICON.argb(),
                 "{i:?}@{scale}: the first tile in view tops it"
             );
-            got.push((format!("{i:?} @{scale}"), hash(&c)));
+            got.push((format!("{i:?} @{scale}"), fnv(&c)));
         }
         crate::pins::check("controls/places_bar_scrolled", &got);
     }

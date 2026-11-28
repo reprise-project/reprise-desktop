@@ -405,15 +405,7 @@ mod tests {
     }
 
     fn fnv(img: &PartImage) -> u64 {
-        fnv_canvas(&img.atlas)
-    }
-
-    fn fnv_canvas(c: &Canvas) -> u64 {
-        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-            p.to_le_bytes().iter().fold(h, |h, &b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-        })
+        crate::pins::fnv(&img.atlas)
     }
 
     fn frame_pixels(img: &PartImage, st: State) -> Vec<u32> {
@@ -782,7 +774,7 @@ mod tests {
             .into_iter()
             .flat_map(|d| {
                 STATES.map(|st| {
-                    let h = fnv_canvas(&bloom(&mark(d), st, d, 100).canvas);
+                    let h = crate::pins::fnv(&bloom(&mark(d), st, d, 100).canvas);
                     (format!("{st:?} {d}"), h)
                 })
             })

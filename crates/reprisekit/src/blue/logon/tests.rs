@@ -8,15 +8,7 @@ use crate::style::TextSpec;
 
 const OUTPUT: Rect = Rect::new(0, 0, 1024, 768);
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for p in &c.pixels {
-        for b in p.to_le_bytes() {
-            h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 fn alpha(p: u32) -> u32 {
     p >> 24

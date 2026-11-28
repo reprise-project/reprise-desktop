@@ -395,15 +395,7 @@ mod tests {
         );
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-            .flat_map(u32::to_le_bytes)
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     fn lum(px: u32) -> u32 {
         ((px >> 16) & 0xFF) + ((px >> 8) & 0xFF) + (px & 0xFF)
@@ -441,7 +433,7 @@ mod tests {
                 let st = crate::glass::style(&s).at_scale(d);
                 for part in [Part::CheckBox, Part::Radio] {
                     let h = fnv(&st.part(part).unwrap().atlas);
-                    got.push(format!("{name} {d} {part:?} {h:016x}"));
+                    got.push((format!("{name} {d} {part:?}"), h));
                 }
             }
         }
@@ -458,17 +450,7 @@ mod tests {
                 );
             }
         }
-        let want = [
-            "sky 1 CheckBox 3b761026d19c0571",
-            "sky 1 Radio e22c2e33a45ede55",
-            "sky 2 CheckBox cbd291580c30c60e",
-            "sky 2 Radio eb6dac30b0b1348f",
-            "dark 1 CheckBox 300e69464d5c074c",
-            "dark 1 Radio 0762bb185f0a58e3",
-            "dark 2 CheckBox 0ffbb2f32e0351dc",
-            "dark 2 Radio 897ff765f900ce3b",
-        ];
-        assert_eq!(got, want);
+        crate::pins::check("glass/check_and_radio", &got);
     }
 
     #[test]

@@ -1,320 +1,320 @@
-Blue Normal 28 1 15bc40f48865cabb
-Blue Normal 28 2 0a9018e1824c0476
-Blue Normal 34 1 94f3c350bea8d2ea
-Blue Normal 34 2 b830f7ce308af188
-Blue Hot 28 1 e96a04215cc062e6
-Blue Hot 28 2 e519704ca8853408
-Blue Hot 34 1 bc695381456c8f50
-Blue Hot 34 2 b5eeb2159a779b1b
-Blue Pressed 28 1 58a85510526786db
-Blue Pressed 28 2 93dc1700deae320d
-Blue Pressed 34 1 3786e4191ac98aa2
-Blue Pressed 34 2 60c3bc4557b4c0c6
-Blue Inactive 28 1 b32bb85bdf3cae0b
-Blue Inactive 28 2 2dbe0e020e002cc3
-Blue Inactive 34 1 c8d168a1de4c29e8
-Blue Inactive 34 2 8e2079694462e244
-Olive Normal 28 1 dc67c541af40d81b
-Olive Normal 28 2 c9c3fc8f17fa2714
-Olive Normal 34 1 cb0ba3bf87d882d0
-Olive Normal 34 2 82db7ac46cc1a280
-Olive Hot 28 1 5739bbc1dad20c10
-Olive Hot 28 2 d1e827372ec7a580
-Olive Hot 34 1 a00c59b7fc2ef00b
-Olive Hot 34 2 57ec36682fcd3de4
-Olive Pressed 28 1 64e43f21a9a0b607
-Olive Pressed 28 2 b6109736ce57d270
-Olive Pressed 34 1 f6a86f2092052c18
-Olive Pressed 34 2 8c6c6fca2f924bf1
-Olive Inactive 28 1 abf4cd437bd9db1c
-Olive Inactive 28 2 d4c51cea92e99600
-Olive Inactive 34 1 757924574498e1d0
-Olive Inactive 34 2 91cbdf86eeecc6bf
-Silver Normal 28 1 032ca660dd2f6de2
-Silver Normal 28 2 a3276fdbff54b717
-Silver Normal 34 1 f43b3c9235ac6726
-Silver Normal 34 2 26277bbc9651146c
-Silver Hot 28 1 faf4b4b397261ac2
-Silver Hot 28 2 3519c03cab20e66f
-Silver Hot 34 1 c5117cd225b91caa
-Silver Hot 34 2 ac3c88616fe43ed0
-Silver Pressed 28 1 a4483a1de32d945a
-Silver Pressed 28 2 db3b5f20d04b68ce
-Silver Pressed 34 1 67902e7a33f3fd63
-Silver Pressed 34 2 ae1a99929828b7db
-Silver Inactive 28 1 64183ea43dc996c1
-Silver Inactive 28 2 b98abc1666ac77f8
-Silver Inactive 34 1 4a42b3e2e33ec29e
-Silver Inactive 34 2 d592aaa91a5544c9
-Slate Normal 28 1 ef7739514aec595f
-Slate Normal 28 2 4a6c8ba4a33c1bce
-Slate Normal 34 1 e629961e62b4e78d
-Slate Normal 34 2 06def3b45ee1f1e3
-Slate Hot 28 1 90bebfe224de0955
-Slate Hot 28 2 a9f41d20c93fae4c
-Slate Hot 34 1 28c25beb3132406a
-Slate Hot 34 2 60c271b975d21768
-Slate Pressed 28 1 6a40168b42753f76
-Slate Pressed 28 2 4d0a279669b936eb
-Slate Pressed 34 1 4e4a07c8481819f4
-Slate Pressed 34 2 70d81b4cc782d474
-Slate Inactive 28 1 a21a05dcf5dc4f75
-Slate Inactive 28 2 db4678b8bc7c4553
-Slate Inactive 34 1 f1d342ae70de76cc
-Slate Inactive 34 2 46fc465ec3847896
-Sapphire Normal 28 1 0e34c241f0145a93
-Sapphire Normal 28 2 b9d899b2f563ddd2
-Sapphire Normal 34 1 67eca23bc81e47ee
-Sapphire Normal 34 2 8f23b15e6b01a57a
-Sapphire Hot 28 1 7b7c616752f401f6
-Sapphire Hot 28 2 41ed4d28103a1997
-Sapphire Hot 34 1 3ca1f542f9da934c
-Sapphire Hot 34 2 cae3ea6e5ebd58d2
-Sapphire Pressed 28 1 caeba3361f4af19c
-Sapphire Pressed 28 2 e41bfd8207afb36c
-Sapphire Pressed 34 1 2b388776ef8c728e
-Sapphire Pressed 34 2 fdeeac46313d68d1
-Sapphire Inactive 28 1 95a7e715a87ea17a
-Sapphire Inactive 28 2 39b49609fabe6ac2
-Sapphire Inactive 34 1 58ca934c1abd1f52
-Sapphire Inactive 34 2 f7a252cbe82c74ff
-Obsidian Normal 28 1 fc5fe62c876c5246
-Obsidian Normal 28 2 09cfcb9cfe2ece86
-Obsidian Normal 34 1 1ea09ca94fac5f53
-Obsidian Normal 34 2 ef851522d1dac077
-Obsidian Hot 28 1 02a8a46aa81164c4
-Obsidian Hot 28 2 8d9117e389230cb5
-Obsidian Hot 34 1 a9b7040cdd774338
-Obsidian Hot 34 2 f3c6ed8f7748b41f
-Obsidian Pressed 28 1 07aa1cb50ca8cf65
-Obsidian Pressed 28 2 3a6b90f6d0d0480b
-Obsidian Pressed 34 1 d94a7da6d548a6bd
-Obsidian Pressed 34 2 65b45d174c0ced4d
-Obsidian Inactive 28 1 2b38fa6966e929ff
-Obsidian Inactive 28 2 274367ce264f4e07
-Obsidian Inactive 34 1 1f5761f3fca66d31
-Obsidian Inactive 34 2 a27a2fc53b8fbd8a
-Ember Normal 28 1 d6e66a0b79b9222c
-Ember Normal 28 2 443fe207de166354
-Ember Normal 34 1 b7746774e0cbcb98
-Ember Normal 34 2 de77028a29f1ada7
-Ember Hot 28 1 e2784207c595a52d
-Ember Hot 28 2 ed2ce8b8cb354700
-Ember Hot 34 1 023eb8db01cbfd4a
-Ember Hot 34 2 694fc16501683f18
-Ember Pressed 28 1 4ef3471ac7fb2f6b
-Ember Pressed 28 2 d73d43dffea99631
-Ember Pressed 34 1 cb02b49374fce318
-Ember Pressed 34 2 e100e9726d28b382
-Ember Inactive 28 1 1463b03a2e147db1
-Ember Inactive 28 2 d1c18b9c4b237659
-Ember Inactive 34 1 b6f1bd3c7a0c5d24
-Ember Inactive 34 2 8972b50b3670a429
-Cobalt Normal 28 1 f935c59a33ed1d17
-Cobalt Normal 28 2 0a54a64d30051bcc
-Cobalt Normal 34 1 5e3b10c8fbed7e92
-Cobalt Normal 34 2 e9df35763b3dfd04
-Cobalt Hot 28 1 ad6a3fb59b623446
-Cobalt Hot 28 2 f11f6098c154b0cc
-Cobalt Hot 34 1 6cff6a34a9850c67
-Cobalt Hot 34 2 e68d3b17a0dd2419
-Cobalt Pressed 28 1 2886f76d36dbc845
-Cobalt Pressed 28 2 f45043f2f67f3e48
-Cobalt Pressed 34 1 d001e30ad5f47f25
-Cobalt Pressed 34 2 87575c3bca58936b
-Cobalt Inactive 28 1 64043f7b5d2f0fd2
-Cobalt Inactive 28 2 21157e9c2c1344bb
-Cobalt Inactive 34 1 1b4f21f4ff04d4e4
-Cobalt Inactive 34 2 5b16c98fc38cff87
-Carbon Normal 28 1 270f29b573039fd6
-Carbon Normal 28 2 e75c5f8a02e3263b
-Carbon Normal 34 1 1fb311758bc1210c
-Carbon Normal 34 2 a8d67c3e8c73778b
-Carbon Hot 28 1 7836585a031fac03
-Carbon Hot 28 2 4e02a56785095882
-Carbon Hot 34 1 b4fc2aa31f58fdd9
-Carbon Hot 34 2 679fd6bee83c1c67
-Carbon Pressed 28 1 278ac53311a75d05
-Carbon Pressed 28 2 b8eba7a8011eeca0
-Carbon Pressed 34 1 d60065dcd056f430
-Carbon Pressed 34 2 c80280a0223ef02e
-Carbon Inactive 28 1 06d37f2ad7f8a4c6
-Carbon Inactive 28 2 f4c2ca4566d2c0bf
-Carbon Inactive 34 1 635b5ae78c09ae91
-Carbon Inactive 34 2 f03dbe7a07bb38e2
-Steel Normal 28 1 90b431183d15c811
-Steel Normal 28 2 c343614477bd4da1
-Steel Normal 34 1 8b5517dc4e016fbe
-Steel Normal 34 2 144abb008afab28a
-Steel Hot 28 1 d3c3c031cc100ab3
-Steel Hot 28 2 f2c2b0b6cdd1d7a7
-Steel Hot 34 1 53861ef9af71e8ee
-Steel Hot 34 2 b7d8119352dbff85
-Steel Pressed 28 1 2df10a1192291d7f
-Steel Pressed 28 2 49df5095341ec6aa
-Steel Pressed 34 1 85e609ff525caa01
-Steel Pressed 34 2 c149fb7fa37c980e
-Steel Inactive 28 1 de9a940fe6d6a9a9
-Steel Inactive 28 2 94349735e86a2ee2
-Steel Inactive 34 1 259100f1d963e691
-Steel Inactive 34 2 89f66199eece0f69
-Blue dark Normal 28 1 886fc07d2a21f783
-Blue dark Normal 28 2 c4f2f065644fcb46
-Blue dark Normal 34 1 0135ff6ac206f5f2
-Blue dark Normal 34 2 708ae626470d482f
-Blue dark Hot 28 1 5898d3ef7757886e
-Blue dark Hot 28 2 2d94ff2bc1a65a37
-Blue dark Hot 34 1 c3940209c1d1dc4c
-Blue dark Hot 34 2 a85f6815df05517e
-Blue dark Pressed 28 1 4a3c7bd1870ee484
-Blue dark Pressed 28 2 db211d4385fb388e
-Blue dark Pressed 34 1 0915e7600f6bf5d2
-Blue dark Pressed 34 2 230eb18b2fa91fe6
-Blue dark Inactive 28 1 303c25a4fdb736c7
-Blue dark Inactive 28 2 fd1c0eca15e73281
-Blue dark Inactive 34 1 7f7b0abd432bac31
-Blue dark Inactive 34 2 a09f7410d48115a0
-Olive dark Normal 28 1 a623f3be7f65ee58
-Olive dark Normal 28 2 202be13bd5fddad1
-Olive dark Normal 34 1 329e31971bb8bd47
-Olive dark Normal 34 2 9a381bb596a0d06b
-Olive dark Hot 28 1 747b96064b723ad5
-Olive dark Hot 28 2 1b2b9e4eadec3485
-Olive dark Hot 34 1 28057a7cfc9226fb
-Olive dark Hot 34 2 6ee16093e00d8109
-Olive dark Pressed 28 1 d61550ed0868ee04
-Olive dark Pressed 28 2 7b76ca3df143a953
-Olive dark Pressed 34 1 81480ad099300872
-Olive dark Pressed 34 2 507344bfd3284fd5
-Olive dark Inactive 28 1 3955d45e54c931f4
-Olive dark Inactive 28 2 980946c28e368710
-Olive dark Inactive 34 1 96eeef72878a5760
-Olive dark Inactive 34 2 018132808dc314f0
-Silver dark Normal 28 1 27ba2a85993f95f6
-Silver dark Normal 28 2 325211171a951526
-Silver dark Normal 34 1 014808621021adfb
-Silver dark Normal 34 2 06b29efb9472b18e
-Silver dark Hot 28 1 478fdb0e2fed7be4
-Silver dark Hot 28 2 2a2f67aea1d7c7fb
-Silver dark Hot 34 1 ddf1d91f7be5a1ee
-Silver dark Hot 34 2 ec52f2ae6fc5a121
-Silver dark Pressed 28 1 eb51f557ee523cf7
-Silver dark Pressed 28 2 5617a9575e2a75cf
-Silver dark Pressed 34 1 6cb437ca9ebe3897
-Silver dark Pressed 34 2 064ad229614e7769
-Silver dark Inactive 28 1 0e45299c447a368a
-Silver dark Inactive 28 2 17d9ddd864c7387a
-Silver dark Inactive 34 1 a769e2e9bce3b524
-Silver dark Inactive 34 2 23c9aa14c4b083a5
-Slate dark Normal 28 1 c4c312ddb80e0e54
-Slate dark Normal 28 2 e99c00879dba2917
-Slate dark Normal 34 1 e1032506349a45b3
-Slate dark Normal 34 2 c01d6d4631398938
-Slate dark Hot 28 1 dbd1bc1e6c06134b
-Slate dark Hot 28 2 df34845d6ef261cd
-Slate dark Hot 34 1 991a98ca755682cd
-Slate dark Hot 34 2 f1bbf6b8bf04ecea
-Slate dark Pressed 28 1 d7728e65efe32d9f
-Slate dark Pressed 28 2 5e5108a9fc6e820b
-Slate dark Pressed 34 1 f3957dc189d7dd1a
-Slate dark Pressed 34 2 d02e80e005b8f69b
-Slate dark Inactive 28 1 053c3489f88641be
-Slate dark Inactive 28 2 67a397044bf5be47
-Slate dark Inactive 34 1 2acbbe9fa226ddf1
-Slate dark Inactive 34 2 20f0cf471dd2d553
-Sapphire dark Normal 28 1 103ba42fa5efc0ca
-Sapphire dark Normal 28 2 89062261517181c3
-Sapphire dark Normal 34 1 acbb1b7410603565
-Sapphire dark Normal 34 2 7da4963968e978e5
-Sapphire dark Hot 28 1 95e89ef63232a0b2
-Sapphire dark Hot 28 2 d707634694acf566
-Sapphire dark Hot 34 1 955b29ca3271c597
-Sapphire dark Hot 34 2 cdffc40a13f3732f
-Sapphire dark Pressed 28 1 a720ddd3e9defe91
-Sapphire dark Pressed 28 2 be58d2430227e8ce
-Sapphire dark Pressed 34 1 fb84156a1dce3ec9
-Sapphire dark Pressed 34 2 391c9eb8045f0510
-Sapphire dark Inactive 28 1 a88ea55e54af1d19
-Sapphire dark Inactive 28 2 f5c53f30fdb83751
-Sapphire dark Inactive 34 1 29fdfbf400449c1b
-Sapphire dark Inactive 34 2 ea6bd00aa475e9d0
-Obsidian dark Normal 28 1 fc5fe62c876c5246
-Obsidian dark Normal 28 2 09cfcb9cfe2ece86
-Obsidian dark Normal 34 1 1ea09ca94fac5f53
-Obsidian dark Normal 34 2 ef851522d1dac077
-Obsidian dark Hot 28 1 02a8a46aa81164c4
-Obsidian dark Hot 28 2 8d9117e389230cb5
-Obsidian dark Hot 34 1 a9b7040cdd774338
-Obsidian dark Hot 34 2 f3c6ed8f7748b41f
-Obsidian dark Pressed 28 1 07aa1cb50ca8cf65
-Obsidian dark Pressed 28 2 3a6b90f6d0d0480b
-Obsidian dark Pressed 34 1 d94a7da6d548a6bd
-Obsidian dark Pressed 34 2 65b45d174c0ced4d
-Obsidian dark Inactive 28 1 2b38fa6966e929ff
-Obsidian dark Inactive 28 2 274367ce264f4e07
-Obsidian dark Inactive 34 1 1f5761f3fca66d31
-Obsidian dark Inactive 34 2 a27a2fc53b8fbd8a
-Ember dark Normal 28 1 d6e66a0b79b9222c
-Ember dark Normal 28 2 443fe207de166354
-Ember dark Normal 34 1 b7746774e0cbcb98
-Ember dark Normal 34 2 de77028a29f1ada7
-Ember dark Hot 28 1 e2784207c595a52d
-Ember dark Hot 28 2 ed2ce8b8cb354700
-Ember dark Hot 34 1 023eb8db01cbfd4a
-Ember dark Hot 34 2 694fc16501683f18
-Ember dark Pressed 28 1 4ef3471ac7fb2f6b
-Ember dark Pressed 28 2 d73d43dffea99631
-Ember dark Pressed 34 1 cb02b49374fce318
-Ember dark Pressed 34 2 e100e9726d28b382
-Ember dark Inactive 28 1 1463b03a2e147db1
-Ember dark Inactive 28 2 d1c18b9c4b237659
-Ember dark Inactive 34 1 b6f1bd3c7a0c5d24
-Ember dark Inactive 34 2 8972b50b3670a429
-Cobalt dark Normal 28 1 e15c409cb673a514
-Cobalt dark Normal 28 2 dd37c9a573ee3e73
-Cobalt dark Normal 34 1 9bd1e4bc93384f44
-Cobalt dark Normal 34 2 5f64be3157a9e95b
-Cobalt dark Hot 28 1 4565c1e5da621cd6
-Cobalt dark Hot 28 2 7f96089d43b0348d
-Cobalt dark Hot 34 1 6f132e6556a07a58
-Cobalt dark Hot 34 2 82b04e077485d738
-Cobalt dark Pressed 28 1 230d29f449adc79c
-Cobalt dark Pressed 28 2 5effd6d9d72662dc
-Cobalt dark Pressed 34 1 abb66cb4653fe821
-Cobalt dark Pressed 34 2 077efc6490e7d8da
-Cobalt dark Inactive 28 1 cbe6c8f98ba42f19
-Cobalt dark Inactive 28 2 0ce047dafa8ec42e
-Cobalt dark Inactive 34 1 af5757358daae11e
-Cobalt dark Inactive 34 2 6eb1e973e7105589
-Carbon dark Normal 28 1 270f29b573039fd6
-Carbon dark Normal 28 2 e75c5f8a02e3263b
-Carbon dark Normal 34 1 1fb311758bc1210c
-Carbon dark Normal 34 2 a8d67c3e8c73778b
-Carbon dark Hot 28 1 7836585a031fac03
-Carbon dark Hot 28 2 4e02a56785095882
-Carbon dark Hot 34 1 b4fc2aa31f58fdd9
-Carbon dark Hot 34 2 679fd6bee83c1c67
-Carbon dark Pressed 28 1 278ac53311a75d05
-Carbon dark Pressed 28 2 b8eba7a8011eeca0
-Carbon dark Pressed 34 1 d60065dcd056f430
-Carbon dark Pressed 34 2 c80280a0223ef02e
-Carbon dark Inactive 28 1 06d37f2ad7f8a4c6
-Carbon dark Inactive 28 2 f4c2ca4566d2c0bf
-Carbon dark Inactive 34 1 635b5ae78c09ae91
-Carbon dark Inactive 34 2 f03dbe7a07bb38e2
-Steel dark Normal 28 1 159c32c8d5a11b74
-Steel dark Normal 28 2 6a9e935ccb197e8b
-Steel dark Normal 34 1 36cf1ea7c0f74b87
-Steel dark Normal 34 2 216e41a158d73af2
-Steel dark Hot 28 1 8f12021faa083e77
-Steel dark Hot 28 2 4e15badf4602c5e4
-Steel dark Hot 34 1 d7dfe78d57576ce8
-Steel dark Hot 34 2 9e10837a466c0af6
-Steel dark Pressed 28 1 f89952f8ef2e7066
-Steel dark Pressed 28 2 08bcd15f52b8949f
-Steel dark Pressed 34 1 f0a87e539d09ede3
-Steel dark Pressed 34 2 35e75b1dfa0f071c
-Steel dark Inactive 28 1 e2bb25e32ada98eb
-Steel dark Inactive 28 2 f8122b3d8c4aff6c
-Steel dark Inactive 34 1 9abc6f8fcb74f47c
-Steel dark Inactive 34 2 70826c3ceb6ef4e3
+Blue Normal 28 1 873ece9b1cf9fd22
+Blue Normal 28 2 6e8c27dafd2c313b
+Blue Normal 34 1 e511b63f7fa857af
+Blue Normal 34 2 178c6517a704f509
+Blue Hot 28 1 8e95e373bf864a3b
+Blue Hot 28 2 1405b671a49b9d69
+Blue Hot 34 1 b66801faa39bbf19
+Blue Hot 34 2 6dc87ef2affda83a
+Blue Pressed 28 1 80c190cac07fc42a
+Blue Pressed 28 2 4e06630a8af59f8c
+Blue Pressed 34 1 871e511cae02c947
+Blue Pressed 34 2 dbf907f5cf9146f7
+Blue Inactive 28 1 ced091c8460b7226
+Blue Inactive 28 2 b8ca7e67017d446a
+Blue Inactive 34 1 4cd6fba820b8aafd
+Blue Inactive 34 2 f59aa68a418f8c91
+Olive Normal 28 1 4b8101f90c6fbc1a
+Olive Normal 28 2 36714c8e45092929
+Olive Normal 34 1 96d62b05e044b0f9
+Olive Normal 34 2 2a49212f1ea468c1
+Olive Hot 28 1 3b2e11d27ac167e5
+Olive Hot 28 2 92a9c3277d34389d
+Olive Hot 34 1 42fe69f899303ede
+Olive Hot 34 2 8dd6d7591ee755b1
+Olive Pressed 28 1 bebaa1c8cc5420ce
+Olive Pressed 28 2 4ac26f50f0e0589d
+Olive Pressed 34 1 55eee7b414826d79
+Olive Pressed 34 2 dc7785f19b5eacb4
+Olive Inactive 28 1 a8db51a599f8c2cd
+Olive Inactive 28 2 d79d68b2c2426f2d
+Olive Inactive 34 1 95624feb60c42ff1
+Olive Inactive 34 2 6ca0174aac54fb92
+Silver Normal 28 1 364081a8775ecd83
+Silver Normal 28 2 5d1a1a08b8b286aa
+Silver Normal 34 1 030cdfb23f91ce23
+Silver Normal 34 2 43cfe189a784c84d
+Silver Hot 28 1 7e50464d5ee868bf
+Silver Hot 28 2 368478027bf95cc6
+Silver Hot 34 1 7d9027ae88858077
+Silver Hot 34 2 81845446f46dafdd
+Silver Pressed 28 1 ea668ae983a159b7
+Silver Pressed 28 2 6f84242aaf1691af
+Silver Pressed 34 1 2585b75d714276d6
+Silver Pressed 34 2 bf2b2554f6c6e33e
+Silver Inactive 28 1 62cae059db66bcb0
+Silver Inactive 28 2 5fcf8a4f5f2351e9
+Silver Inactive 34 1 78bcd22b005194e7
+Silver Inactive 34 2 3f6996221448da8c
+Slate Normal 28 1 7604da4e2835afce
+Slate Normal 28 2 3fac6fa450619d53
+Slate Normal 34 1 29c443705f12455c
+Slate Normal 34 2 423cdebd0573761e
+Slate Hot 28 1 c3f9e180ec098cac
+Slate Hot 28 2 9d2eeb1cd94cba69
+Slate Hot 34 1 0ecb5872e8fbe103
+Slate Hot 34 2 4b2ecadd1eadb641
+Slate Pressed 28 1 bd5bda0d0cb7be7f
+Slate Pressed 28 2 1fd139d8678b4dda
+Slate Pressed 34 1 3673e23131b8ba8d
+Slate Pressed 34 2 81964a555dd69829
+Slate Inactive 28 1 f42313d469b14f68
+Slate Inactive 28 2 8d31f24975be85e2
+Slate Inactive 34 1 f0023ac2e4c41ce5
+Slate Inactive 34 2 d69d7ca83f2209fb
+Sapphire Normal 28 1 31bbd082e21a7fde
+Sapphire Normal 28 2 982a918b5709bbdb
+Sapphire Normal 34 1 1005b9288a82d9e7
+Sapphire Normal 34 2 72b7c816c51b33a3
+Sapphire Hot 28 1 cfea3e2e95c64e33
+Sapphire Hot 28 2 fbeddb3f68862666
+Sapphire Hot 34 1 e045e362fb9d504d
+Sapphire Hot 34 2 de8e9329a98d192f
+Sapphire Pressed 28 1 47a79979e054688d
+Sapphire Pressed 28 2 0974505dcbab17d5
+Sapphire Pressed 34 1 43886ec30ed7abab
+Sapphire Pressed 34 2 4171cfb421eff878
+Sapphire Inactive 28 1 24ca43fd5f3faaaf
+Sapphire Inactive 28 2 e585446b773250a7
+Sapphire Inactive 34 1 7dacdc6c452bf4cb
+Sapphire Inactive 34 2 0b0541971b4037e2
+Obsidian Normal 28 1 ec95637c4dd35c2f
+Obsidian Normal 28 2 f2eea144f8177e9b
+Obsidian Normal 34 1 ff36a78147bef942
+Obsidian Normal 34 2 a75124758dbed56e
+Obsidian Hot 28 1 71320f240ea53385
+Obsidian Hot 28 2 b5274301e67e5fa4
+Obsidian Hot 34 1 b6d396cc3dc299b5
+Obsidian Hot 34 2 039a39d091798a9e
+Obsidian Pressed 28 1 7225d5b1af3438fc
+Obsidian Pressed 28 2 6a1a6e421079e1da
+Obsidian Pressed 34 1 9182b428d72b4dc8
+Obsidian Pressed 34 2 9d0ef873ba67c7dc
+Obsidian Inactive 28 1 79a7b85d4ab5766e
+Obsidian Inactive 28 2 b739631bb3ca9016
+Obsidian Inactive 34 1 6cf08db6f3f54f24
+Obsidian Inactive 34 2 0bd26043ac345cd3
+Ember Normal 28 1 b9a0d416ec4ffadd
+Ember Normal 28 2 742eedaf3b29a76d
+Ember Normal 34 1 991067ba81ac8059
+Ember Normal 34 2 518659dd3345903a
+Ember Hot 28 1 e86f86c35ff287cc
+Ember Hot 28 2 026aa919599acbb9
+Ember Hot 34 1 d5bc16d5a001d867
+Ember Hot 34 2 2c13f266668ecf11
+Ember Pressed 28 1 509247bbaef89aba
+Ember Pressed 28 2 8a5bfd51168e4888
+Ember Pressed 34 1 cf5a1e546c85ce6d
+Ember Pressed 34 2 e1ace7c334f4f1f7
+Ember Inactive 28 1 0f953e24d6b42928
+Ember Inactive 28 2 695e87972df36820
+Ember Inactive 34 1 9dcc444d2105e7bd
+Ember Inactive 34 2 2c5c858af8e7a590
+Cobalt Normal 28 1 3c362eb1eef2bf3a
+Cobalt Normal 28 2 d62e890033d858f5
+Cobalt Normal 34 1 07e363bcbcf726ef
+Cobalt Normal 34 2 5e5678239885584d
+Cobalt Hot 28 1 ea01d97dcc15d37f
+Cobalt Hot 28 2 5f1979d6c8aaef5d
+Cobalt Hot 34 1 a4d45ed08a1a9f12
+Cobalt Hot 34 2 b19948acd8fc9d3c
+Cobalt Pressed 28 1 fc4c07212513c568
+Cobalt Pressed 28 2 dfbb6d733b97edf1
+Cobalt Pressed 34 1 a5c5441e26db2930
+Cobalt Pressed 34 2 612187e40882590e
+Cobalt Inactive 28 1 c5a5d93330d14187
+Cobalt Inactive 28 2 b6a11bc970eee6b6
+Cobalt Inactive 34 1 2fba7bd8abd8758d
+Cobalt Inactive 34 2 92251449fbcc3f9a
+Carbon Normal 28 1 a4de1deeba9801c7
+Carbon Normal 28 2 ba454300495f9812
+Carbon Normal 34 1 faed2dc2792a22b9
+Carbon Normal 34 2 b11b3f9fa830f2c6
+Carbon Hot 28 1 b6a53c6925d052aa
+Carbon Hot 28 2 6e4c0c5ee3fd0727
+Carbon Hot 34 1 03d1d3302a85d7c4
+Carbon Hot 34 2 54ce41fedc6a002e
+Carbon Pressed 28 1 dd3f7bf2a5609dfc
+Carbon Pressed 28 2 40f6b667421109ed
+Carbon Pressed 34 1 23e6862a8c253f15
+Carbon Pressed 34 2 24f8fc2a19ff297f
+Carbon Inactive 28 1 52face6206d30ad7
+Carbon Inactive 28 2 3903271f33f34876
+Carbon Inactive 34 1 c3a1b216a118cd14
+Carbon Inactive 34 2 7a8907eb8760748b
+Steel Normal 28 1 c32c7af783187c24
+Steel Normal 28 2 2cb0a880f4046168
+Steel Normal 34 1 844a428df6315c7b
+Steel Normal 34 2 9e123ca90654ba53
+Steel Hot 28 1 d784bc5175f92446
+Steel Hot 28 2 d88dfac05cb43196
+Steel Hot 34 1 cd2299c092c9ff2f
+Steel Hot 34 2 09092cb88ab3d1c4
+Steel Pressed 28 1 328ddf12b3cac71a
+Steel Pressed 28 2 0fd8e247d43c392f
+Steel Pressed 34 1 52842c0ff7d73e9c
+Steel Pressed 34 2 37545fa8bb7b30bf
+Steel Inactive 28 1 c697130da6f2beec
+Steel Inactive 28 2 f6f4292f1130f337
+Steel Inactive 34 1 8f4b31ebe493ffe4
+Steel Inactive 34 2 2887fd69743d1148
+Blue dark Normal 28 1 545b46230d42aac2
+Blue dark Normal 28 2 d7345f8c185c9adb
+Blue dark Normal 34 1 81fa60b4b74a663f
+Blue dark Normal 34 2 a2294ca755196a42
+Blue dark Hot 28 1 4a7d2df33fc04407
+Blue dark Hot 28 2 56c202ad285aebfa
+Blue dark Hot 34 1 2df80f43f0a41595
+Blue dark Hot 34 2 c1330779726243ab
+Blue dark Pressed 28 1 54e8740abf14ab71
+Blue dark Pressed 28 2 2662168d7a9aef83
+Blue dark Pressed 34 1 0df0cce6f50dfa67
+Blue dark Pressed 34 2 73b145b9049f61e7
+Blue dark Inactive 28 1 0f64a8d698bc57ba
+Blue dark Inactive 28 2 981091ace9f53830
+Blue dark Inactive 34 1 2190e0e88ffa6300
+Blue dark Inactive 34 2 dbfba384dddbb6d1
+Olive dark Normal 28 1 7fd3515176dd6631
+Olive dark Normal 28 2 15cae35260665ec0
+Olive dark Normal 34 1 9305e120145a3bee
+Olive dark Normal 34 2 28d0c7d1c6948b82
+Olive dark Hot 28 1 0d96614a1771e634
+Olive dark Hot 28 2 6240431cac3f6b00
+Olive dark Hot 34 1 31e8fba2e392c10a
+Olive dark Hot 34 2 f7cb597f8fd36250
+Olive dark Pressed 28 1 6c878c290a44e0e5
+Olive dark Pressed 28 2 4c593c15e77a9956
+Olive dark Pressed 34 1 1347af809fdab113
+Olive dark Pressed 34 2 05eda82ba8d80ce0
+Olive dark Inactive 28 1 fbf2657b6d6a4971
+Olive dark Inactive 28 2 9e1723a8c65c3d3d
+Olive dark Inactive 34 1 e1097f785d48034d
+Olive dark Inactive 34 2 1361c1da5e4e1ecd
+Silver dark Normal 28 1 1800df02390e90b7
+Silver dark Normal 28 2 1c27db426aa8bc5f
+Silver dark Normal 34 1 9fbee3dd0fa78602
+Silver dark Normal 34 2 1040f65cb871c28b
+Silver dark Hot 28 1 553ab679da0a4c61
+Silver dark Hot 28 2 fc12f65cba144a46
+Silver dark Hot 34 1 b3770d670dabf437
+Silver dark Hot 34 2 fd7c148c79a2d220
+Silver dark Pressed 28 1 6033c5cb5feef36a
+Silver dark Pressed 28 2 5d795d1deff79dce
+Silver dark Pressed 34 1 798fe5ad5ede06e6
+Silver dark Pressed 34 2 c32ec82494dda764
+Silver dark Inactive 28 1 bd6db03838b8254b
+Silver dark Inactive 28 2 4057211dbab6a6e3
+Silver dark Inactive 34 1 fc9ff36646b8d8c9
+Silver dark Inactive 34 2 2b0c9bd17ce73bb0
+Slate dark Normal 28 1 daa7775eb4a218e5
+Slate dark Normal 28 2 f9c652a46856aa4e
+Slate dark Normal 34 1 3d266e35ae84aab2
+Slate dark Normal 34 2 b84f36f893dcb081
+Slate dark Hot 28 1 4de10b76f81dc582
+Slate dark Hot 28 2 414f718da532912c
+Slate dark Hot 34 1 178eb5e15280db4c
+Slate dark Hot 34 2 ea765b20735cfc83
+Slate dark Pressed 28 1 77162949ce707e22
+Slate dark Pressed 28 2 a7e936f80ebf36a6
+Slate dark Pressed 34 1 05beea324dac28a7
+Slate dark Pressed 34 2 2f1f199f3ff1cdae
+Slate dark Inactive 28 1 41a016790aa99fbb
+Slate dark Inactive 28 2 a5717dd2420f8b36
+Slate dark Inactive 34 1 99d776dfa2aac3f4
+Slate dark Inactive 34 2 542dd9bd95f88b96
+Sapphire dark Normal 28 1 148b3ae656fde153
+Sapphire dark Normal 28 2 f1d0587267be05c2
+Sapphire dark Normal 34 1 2d8236b0d2c97abc
+Sapphire dark Normal 34 2 ba22bd7b5a165b84
+Sapphire dark Hot 28 1 7a656f9d2903074f
+Sapphire dark Hot 28 2 be543667164a82ab
+Sapphire dark Hot 34 1 379bb67f22497d4a
+Sapphire dark Hot 34 2 d68628a9f0a307c2
+Sapphire dark Pressed 28 1 92f720bf078ae2ec
+Sapphire dark Pressed 28 2 3bd0114b86ef1b9f
+Sapphire dark Pressed 34 1 2531c31daad64c04
+Sapphire dark Pressed 34 2 89ec537ca9fadb3d
+Sapphire dark Inactive 28 1 92ce5c84e9eeab34
+Sapphire dark Inactive 28 2 78dd198dbac362e0
+Sapphire dark Inactive 34 1 523df9083b726dbe
+Sapphire dark Inactive 34 2 ed4c95a436d95d7d
+Obsidian dark Normal 28 1 ec95637c4dd35c2f
+Obsidian dark Normal 28 2 f2eea144f8177e9b
+Obsidian dark Normal 34 1 ff36a78147bef942
+Obsidian dark Normal 34 2 a75124758dbed56e
+Obsidian dark Hot 28 1 71320f240ea53385
+Obsidian dark Hot 28 2 b5274301e67e5fa4
+Obsidian dark Hot 34 1 b6d396cc3dc299b5
+Obsidian dark Hot 34 2 039a39d091798a9e
+Obsidian dark Pressed 28 1 7225d5b1af3438fc
+Obsidian dark Pressed 28 2 6a1a6e421079e1da
+Obsidian dark Pressed 34 1 9182b428d72b4dc8
+Obsidian dark Pressed 34 2 9d0ef873ba67c7dc
+Obsidian dark Inactive 28 1 79a7b85d4ab5766e
+Obsidian dark Inactive 28 2 b739631bb3ca9016
+Obsidian dark Inactive 34 1 6cf08db6f3f54f24
+Obsidian dark Inactive 34 2 0bd26043ac345cd3
+Ember dark Normal 28 1 b9a0d416ec4ffadd
+Ember dark Normal 28 2 742eedaf3b29a76d
+Ember dark Normal 34 1 991067ba81ac8059
+Ember dark Normal 34 2 518659dd3345903a
+Ember dark Hot 28 1 e86f86c35ff287cc
+Ember dark Hot 28 2 026aa919599acbb9
+Ember dark Hot 34 1 d5bc16d5a001d867
+Ember dark Hot 34 2 2c13f266668ecf11
+Ember dark Pressed 28 1 509247bbaef89aba
+Ember dark Pressed 28 2 8a5bfd51168e4888
+Ember dark Pressed 34 1 cf5a1e546c85ce6d
+Ember dark Pressed 34 2 e1ace7c334f4f1f7
+Ember dark Inactive 28 1 0f953e24d6b42928
+Ember dark Inactive 28 2 695e87972df36820
+Ember dark Inactive 34 1 9dcc444d2105e7bd
+Ember dark Inactive 34 2 2c5c858af8e7a590
+Cobalt dark Normal 28 1 97345d21d8601005
+Cobalt dark Normal 28 2 4da62d4affc49402
+Cobalt dark Normal 34 1 58d1f52e4237e17d
+Cobalt dark Normal 34 2 8fd2a966e9462076
+Cobalt dark Hot 28 1 9c8d191481e58d83
+Cobalt dark Hot 28 2 9e68965e18f102bc
+Cobalt dark Hot 34 1 32f3fa8035d39165
+Cobalt dark Hot 34 2 dce00be2adaf9169
+Cobalt dark Pressed 28 1 745566eeaa5db229
+Cobalt dark Pressed 28 2 7437dbe06f05e8e1
+Cobalt dark Pressed 34 1 00d5a8f4ccc97700
+Cobalt dark Pressed 34 2 387fa7e7c0b38347
+Cobalt dark Inactive 28 1 872606a2ae5f996c
+Cobalt dark Inactive 28 2 79b37475fba84773
+Cobalt dark Inactive 34 1 5ebb49e8a8a32b2f
+Cobalt dark Inactive 34 2 9fe8b94de7a763f0
+Carbon dark Normal 28 1 a4de1deeba9801c7
+Carbon dark Normal 28 2 ba454300495f9812
+Carbon dark Normal 34 1 faed2dc2792a22b9
+Carbon dark Normal 34 2 b11b3f9fa830f2c6
+Carbon dark Hot 28 1 b6a53c6925d052aa
+Carbon dark Hot 28 2 6e4c0c5ee3fd0727
+Carbon dark Hot 34 1 03d1d3302a85d7c4
+Carbon dark Hot 34 2 54ce41fedc6a002e
+Carbon dark Pressed 28 1 dd3f7bf2a5609dfc
+Carbon dark Pressed 28 2 40f6b667421109ed
+Carbon dark Pressed 34 1 23e6862a8c253f15
+Carbon dark Pressed 34 2 24f8fc2a19ff297f
+Carbon dark Inactive 28 1 52face6206d30ad7
+Carbon dark Inactive 28 2 3903271f33f34876
+Carbon dark Inactive 34 1 c3a1b216a118cd14
+Carbon dark Inactive 34 2 7a8907eb8760748b
+Steel dark Normal 28 1 7b77070d842039fd
+Steel dark Normal 28 2 1779c2c6eadecb2e
+Steel dark Normal 34 1 3503e99128a7062e
+Steel dark Normal 34 2 acd23841edd0ec63
+Steel dark Hot 28 1 0e13de2ff49d48d2
+Steel dark Hot 28 2 0e27d9dd302ce525
+Steel dark Hot 34 1 ea1fab035bfbcecd
+Steel dark Hot 34 2 c2bda09a7d7f51b3
+Steel dark Pressed 28 1 067ff6dcc684585b
+Steel dark Pressed 28 2 db47630ab6da56ce
+Steel dark Pressed 34 1 8532da6fa76697e6
+Steel dark Pressed 34 2 af8eb981e81aa785
+Steel dark Inactive 28 1 09c90a01c03bfed2
+Steel dark Inactive 28 2 6bca241943b8ecf9
+Steel dark Inactive 34 1 f6d9970b1660c061
+Steel dark Inactive 34 2 63a6ea4563f1c12e

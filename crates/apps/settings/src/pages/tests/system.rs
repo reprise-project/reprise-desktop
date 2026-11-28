@@ -610,13 +610,7 @@ fn the_clear_row_pixels() {
         let mut c = Canvas::new(row.right() as u32 + 8, row.bottom() as u32 + 8);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(&mut c, &text, &theme.paint(), page, false, px);
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for y in row.y..row.bottom() {
-            for x in row.x..row.right() {
-                h = (h ^ u64::from(c.get(x, y))).wrapping_mul(0x100_0000_01b3);
-            }
-        }
-        h
+        reprisekit::pins::fnv_in(&c, row)
     };
     let idle = hash(&page);
     show_clearing(&mut page, Clearing::Running);
@@ -1690,13 +1684,7 @@ fn the_remote_desktop_page_pixels() {
     let mut c = Canvas::new(area.right() as u32, area.bottom() as u32);
     c.fill_rect(c.bounds(), theme.colors.button_face);
     form::draw(&mut c, &text, &theme.paint(), page, false, px);
-    let h = c
-        .copy_rect(area)
-        .pixels
-        .iter()
-        .fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
-            (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
-        });
+    let h = reprisekit::pins::fnv(&c.copy_rect(area));
     pin("remote_desktop_page", &[("client selected".into(), h)]);
 }
 

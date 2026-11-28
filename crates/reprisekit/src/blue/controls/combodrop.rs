@@ -167,16 +167,7 @@ mod tests {
     }
 
     fn fnv(img: &PartImage) -> u64 {
-        let a = &img.atlas;
-        let mut bytes = Vec::new();
-        bytes.extend(a.width.to_le_bytes());
-        bytes.extend(a.height.to_le_bytes());
-        for p in &a.pixels {
-            bytes.extend(p.to_le_bytes());
-        }
-        bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
-            (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-        })
+        crate::pins::fnv(&img.atlas)
     }
 
     #[test]

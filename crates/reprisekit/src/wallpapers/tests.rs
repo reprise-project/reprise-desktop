@@ -1,14 +1,6 @@
 use super::*;
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for v in &c.pixels {
-        for b in v.to_le_bytes() {
-            h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 fn b(s: &str) -> Builtin {
     Builtin::parse(s).unwrap()

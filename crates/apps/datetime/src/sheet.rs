@@ -814,11 +814,7 @@ mod tests {
         );
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-            (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-        })
-    }
+    use reprisekit::pins::fnv;
 
     #[test]
     fn a_zone_names_its_city_and_region() {

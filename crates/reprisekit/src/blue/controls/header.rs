@@ -214,14 +214,7 @@ mod tests {
     use super::*;
 
     fn fnv(img: &PartImage) -> u64 {
-        let c = &img.atlas;
-        [c.width, c.height]
-            .iter()
-            .flat_map(|n| n.to_le_bytes())
-            .chain(c.pixels.iter().flat_map(|p| p.to_le_bytes()))
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
+        crate::pins::fnv(&img.atlas)
     }
 
     fn part(v: Tone, d: i32, p: Part) -> PartImage {

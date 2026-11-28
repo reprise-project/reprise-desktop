@@ -1756,9 +1756,7 @@ mod tests {
             let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);
             propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, true, 11);
-            let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-                (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-            });
+            let hash = reprisekit::pins::fnv(&c);
             got.push((name.to_string(), hash));
         }
         reprisekit::pins::check_file(
@@ -1799,9 +1797,7 @@ mod tests {
             let mut c = Canvas::new(w as u32, h as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);
             propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, true, px);
-            let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-                (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-            });
+            let hash = reprisekit::pins::fnv(&c);
             got.push((name.to_string(), hash));
         }
         reprisekit::pins::check_file(

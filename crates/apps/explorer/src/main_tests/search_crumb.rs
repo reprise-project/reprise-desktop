@@ -158,7 +158,7 @@ fn the_search_crumb_pins_light_and_dark_at_scale_1_and_2() {
             for s in [1, 2] {
                 let mut c = Canvas::with_scale(792, 573, s);
                 ctx.at_scale(s, |ctx| window::draw(&ex, &mut c, ctx));
-                got.push((format!("{look} {state} @{s}"), crop_hash(&c, r)));
+                got.push((format!("{look} {state} @{s}"), fnv_in(&c, r)));
             }
         }
     }

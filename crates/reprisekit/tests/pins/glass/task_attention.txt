@@ -1,144 +1,180 @@
-Color { r: 112, g: 175, b: 252 } Frosted 42 buttons 1 b4c99828797fe021
-Color { r: 112, g: 175, b: 252 } Frosted 42 small buttons 1 f6a282fb8334b4dc
-Color { r: 112, g: 175, b: 252 } Frosted 42 label 1 3274882c20aa6758
-Color { r: 112, g: 175, b: 252 } Frosted 42 label edges 1 5b7b1f42e9c7c9da
-Color { r: 112, g: 175, b: 252 } Frosted 42 buttons 2 48eb11ac45900002
-Color { r: 112, g: 175, b: 252 } Frosted 42 small buttons 2 df9577394c60a0e0
-Color { r: 112, g: 175, b: 252 } Frosted 42 label 2 32f21b7c6ac27f60
-Color { r: 112, g: 175, b: 252 } Frosted 42 label edges 2 83a854568ea660e9
-Color { r: 112, g: 175, b: 252 } Frosted 75 buttons 1 a6584d98ce8cc499
-Color { r: 112, g: 175, b: 252 } Frosted 75 small buttons 1 b7a64c8c7fd47d3c
-Color { r: 112, g: 175, b: 252 } Frosted 75 label 1 3836b66aad96cade
-Color { r: 112, g: 175, b: 252 } Frosted 75 label edges 1 8c5c6063b64a2008
-Color { r: 112, g: 175, b: 252 } Frosted 75 buttons 2 13a0044971b3fd66
-Color { r: 112, g: 175, b: 252 } Frosted 75 small buttons 2 bcd2e73db61dda89
-Color { r: 112, g: 175, b: 252 } Frosted 75 label 2 268c9430c37efe45
-Color { r: 112, g: 175, b: 252 } Frosted 75 label edges 2 7927c0668afba3ca
-Color { r: 112, g: 175, b: 252 } Frosted 100 buttons 1 e5aba18dcfa5d003
-Color { r: 112, g: 175, b: 252 } Frosted 100 small buttons 1 746a419d2abc7ed5
-Color { r: 112, g: 175, b: 252 } Frosted 100 label 1 89ae6423403e8567
-Color { r: 112, g: 175, b: 252 } Frosted 100 label edges 1 609ecdeff29c155a
-Color { r: 112, g: 175, b: 252 } Frosted 100 buttons 2 05a3e1705216b31d
-Color { r: 112, g: 175, b: 252 } Frosted 100 small buttons 2 a138507dbb804bc7
-Color { r: 112, g: 175, b: 252 } Frosted 100 label 2 a6ef86663d735a25
-Color { r: 112, g: 175, b: 252 } Frosted 100 label edges 2 c99edbc788eb40e7
-Color { r: 112, g: 175, b: 252 } Smoked 42 buttons 1 4cce0a14e03c0a65
-Color { r: 112, g: 175, b: 252 } Smoked 42 small buttons 1 c411abff22bb7a68
-Color { r: 112, g: 175, b: 252 } Smoked 42 label 1 91744279d8e1ddfc
-Color { r: 112, g: 175, b: 252 } Smoked 42 label edges 1 97021dc232658f52
-Color { r: 112, g: 175, b: 252 } Smoked 42 buttons 2 f307cb5fc658c08d
-Color { r: 112, g: 175, b: 252 } Smoked 42 small buttons 2 111542e80a4b6505
-Color { r: 112, g: 175, b: 252 } Smoked 42 label 2 458cc98bc940da3b
-Color { r: 112, g: 175, b: 252 } Smoked 42 label edges 2 a8abeac173f6f004
-Color { r: 112, g: 175, b: 252 } Smoked 75 buttons 1 46eaad7ba4a87b35
-Color { r: 112, g: 175, b: 252 } Smoked 75 small buttons 1 010338405118da70
-Color { r: 112, g: 175, b: 252 } Smoked 75 label 1 8243a43f59fb83c6
-Color { r: 112, g: 175, b: 252 } Smoked 75 label edges 1 d343e3c566be2e02
-Color { r: 112, g: 175, b: 252 } Smoked 75 buttons 2 f1f5deb4dce4a1ef
-Color { r: 112, g: 175, b: 252 } Smoked 75 small buttons 2 044aa53d88bfcbcd
-Color { r: 112, g: 175, b: 252 } Smoked 75 label 2 92bf0c33a3b17bba
-Color { r: 112, g: 175, b: 252 } Smoked 75 label edges 2 723a3edc8fbd5b88
-Color { r: 112, g: 175, b: 252 } Smoked 100 buttons 1 cd022bdf31e026dc
-Color { r: 112, g: 175, b: 252 } Smoked 100 small buttons 1 0a0a89c529c5898c
-Color { r: 112, g: 175, b: 252 } Smoked 100 label 1 9544a8f1bf3cf449
-Color { r: 112, g: 175, b: 252 } Smoked 100 label edges 1 b44af60db90fc067
-Color { r: 112, g: 175, b: 252 } Smoked 100 buttons 2 dd9c23b0fc9e3cda
-Color { r: 112, g: 175, b: 252 } Smoked 100 small buttons 2 43af6006f7add7af
-Color { r: 112, g: 175, b: 252 } Smoked 100 label 2 d34e764e244beed3
-Color { r: 112, g: 175, b: 252 } Smoked 100 label edges 2 a7cb40a28544a368
-Color { r: 112, g: 175, b: 252 } Molten 42 buttons 1 438a7543b57c9e87
-Color { r: 112, g: 175, b: 252 } Molten 42 small buttons 1 6fa8c06483638f0e
-Color { r: 112, g: 175, b: 252 } Molten 42 label 1 98676434f7a2c153
-Color { r: 112, g: 175, b: 252 } Molten 42 label edges 1 e2415ca16d68c0a7
-Color { r: 112, g: 175, b: 252 } Molten 42 buttons 2 aa98feb56522181d
-Color { r: 112, g: 175, b: 252 } Molten 42 small buttons 2 336db19490095d54
-Color { r: 112, g: 175, b: 252 } Molten 42 label 2 4868ac78dca3b8ea
-Color { r: 112, g: 175, b: 252 } Molten 42 label edges 2 6989cd52d9762267
-Color { r: 112, g: 175, b: 252 } Molten 75 buttons 1 85afa5a7955f7fa3
-Color { r: 112, g: 175, b: 252 } Molten 75 small buttons 1 f9bb9dcd24c4e4a3
-Color { r: 112, g: 175, b: 252 } Molten 75 label 1 0f17e1159a107ee1
-Color { r: 112, g: 175, b: 252 } Molten 75 label edges 1 c1e78dfe13990d60
-Color { r: 112, g: 175, b: 252 } Molten 75 buttons 2 581dfd40c35f8e65
-Color { r: 112, g: 175, b: 252 } Molten 75 small buttons 2 15bbd5bb293231b4
-Color { r: 112, g: 175, b: 252 } Molten 75 label 2 d5e4e4f16785ec49
-Color { r: 112, g: 175, b: 252 } Molten 75 label edges 2 bd151794bb7323d2
-Color { r: 112, g: 175, b: 252 } Molten 100 buttons 1 0bce0e1c86b5a432
-Color { r: 112, g: 175, b: 252 } Molten 100 small buttons 1 ee5d139665c3603d
-Color { r: 112, g: 175, b: 252 } Molten 100 label 1 bdd549160afd5d8a
-Color { r: 112, g: 175, b: 252 } Molten 100 label edges 1 adba3394d2d9be31
-Color { r: 112, g: 175, b: 252 } Molten 100 buttons 2 aa5dfbc2c8ab1cfc
-Color { r: 112, g: 175, b: 252 } Molten 100 small buttons 2 7b5d889911194d3e
-Color { r: 112, g: 175, b: 252 } Molten 100 label 2 d8b19821b6ef765a
-Color { r: 112, g: 175, b: 252 } Molten 100 label edges 2 5b01292501eb5a8e
-Color { r: 201, g: 24, b: 15 } Frosted 42 buttons 1 c73ff5a0a569b115
-Color { r: 201, g: 24, b: 15 } Frosted 42 small buttons 1 35af71c67dd8d610
-Color { r: 201, g: 24, b: 15 } Frosted 42 label 1 6126a93d684806bc
-Color { r: 201, g: 24, b: 15 } Frosted 42 label edges 1 1f6048489f1faa4b
-Color { r: 201, g: 24, b: 15 } Frosted 42 buttons 2 670244ca4181d7b4
-Color { r: 201, g: 24, b: 15 } Frosted 42 small buttons 2 aee7a2ea0776522c
-Color { r: 201, g: 24, b: 15 } Frosted 42 label 2 597a473e5886e707
-Color { r: 201, g: 24, b: 15 } Frosted 42 label edges 2 c1f7dafceaa49c31
-Color { r: 201, g: 24, b: 15 } Frosted 75 buttons 1 ff21f28ff8bf2e15
-Color { r: 201, g: 24, b: 15 } Frosted 75 small buttons 1 67ca0c23e1cd2888
-Color { r: 201, g: 24, b: 15 } Frosted 75 label 1 9bd7243d24aaf26d
-Color { r: 201, g: 24, b: 15 } Frosted 75 label edges 1 d0d6fe326049af68
-Color { r: 201, g: 24, b: 15 } Frosted 75 buttons 2 7cb689f550b241dc
-Color { r: 201, g: 24, b: 15 } Frosted 75 small buttons 2 2cfed2e57ff7c181
-Color { r: 201, g: 24, b: 15 } Frosted 75 label 2 230e10d2fe03aa18
-Color { r: 201, g: 24, b: 15 } Frosted 75 label edges 2 525211fa0318d6db
-Color { r: 201, g: 24, b: 15 } Frosted 100 buttons 1 576d0e0d7058ff06
-Color { r: 201, g: 24, b: 15 } Frosted 100 small buttons 1 8c3168ff4106fc40
-Color { r: 201, g: 24, b: 15 } Frosted 100 label 1 0719baa2171bf8e7
-Color { r: 201, g: 24, b: 15 } Frosted 100 label edges 1 bc7ecf8db463a5d6
-Color { r: 201, g: 24, b: 15 } Frosted 100 buttons 2 8c807aa4c5c80bc8
-Color { r: 201, g: 24, b: 15 } Frosted 100 small buttons 2 b7579bdd7e6d8644
-Color { r: 201, g: 24, b: 15 } Frosted 100 label 2 3ee9b8aa71c6d4a5
-Color { r: 201, g: 24, b: 15 } Frosted 100 label edges 2 c00f19698be1dbd7
-Color { r: 201, g: 24, b: 15 } Smoked 42 buttons 1 cb8eaab8d7a27ae4
-Color { r: 201, g: 24, b: 15 } Smoked 42 small buttons 1 7be3ae2a2a223ee0
-Color { r: 201, g: 24, b: 15 } Smoked 42 label 1 44b339da11195dec
-Color { r: 201, g: 24, b: 15 } Smoked 42 label edges 1 1ed1580e684f188c
-Color { r: 201, g: 24, b: 15 } Smoked 42 buttons 2 113970abe48a49ca
-Color { r: 201, g: 24, b: 15 } Smoked 42 small buttons 2 40dff75d9e6f0864
-Color { r: 201, g: 24, b: 15 } Smoked 42 label 2 1b8735c50553983b
-Color { r: 201, g: 24, b: 15 } Smoked 42 label edges 2 f08604ad01c52c85
-Color { r: 201, g: 24, b: 15 } Smoked 75 buttons 1 39f65b9369e94086
-Color { r: 201, g: 24, b: 15 } Smoked 75 small buttons 1 0d8251ca2af8ff2d
-Color { r: 201, g: 24, b: 15 } Smoked 75 label 1 5fe501f63312a966
-Color { r: 201, g: 24, b: 15 } Smoked 75 label edges 1 216300ba6b2d2538
-Color { r: 201, g: 24, b: 15 } Smoked 75 buttons 2 678452bad227709f
-Color { r: 201, g: 24, b: 15 } Smoked 75 small buttons 2 5855d4f0253bd39d
-Color { r: 201, g: 24, b: 15 } Smoked 75 label 2 d0277935eb2de27a
-Color { r: 201, g: 24, b: 15 } Smoked 75 label edges 2 935e9c0656c9dfa0
-Color { r: 201, g: 24, b: 15 } Smoked 100 buttons 1 4d49cf1d21f00d73
-Color { r: 201, g: 24, b: 15 } Smoked 100 small buttons 1 14d9d84aa61e7974
-Color { r: 201, g: 24, b: 15 } Smoked 100 label 1 bb9cd59cd5025649
-Color { r: 201, g: 24, b: 15 } Smoked 100 label edges 1 e241fda6cb173b03
-Color { r: 201, g: 24, b: 15 } Smoked 100 buttons 2 2a7fa28305030fb0
-Color { r: 201, g: 24, b: 15 } Smoked 100 small buttons 2 98c087350cb3ca01
-Color { r: 201, g: 24, b: 15 } Smoked 100 label 2 7577ac43c06d18b3
-Color { r: 201, g: 24, b: 15 } Smoked 100 label edges 2 817c4591ebc991f3
-Color { r: 201, g: 24, b: 15 } Molten 42 buttons 1 67d90c0c178348e1
-Color { r: 201, g: 24, b: 15 } Molten 42 small buttons 1 8758be8b3453724b
-Color { r: 201, g: 24, b: 15 } Molten 42 label 1 b6ffe501493296ef
-Color { r: 201, g: 24, b: 15 } Molten 42 label edges 1 07aabd26225f3571
-Color { r: 201, g: 24, b: 15 } Molten 42 buttons 2 1ff707cc54942d8f
-Color { r: 201, g: 24, b: 15 } Molten 42 small buttons 2 dd7818a9cf9b14e1
-Color { r: 201, g: 24, b: 15 } Molten 42 label 2 b48c26d6de875614
-Color { r: 201, g: 24, b: 15 } Molten 42 label edges 2 6a36b11e4c475624
-Color { r: 201, g: 24, b: 15 } Molten 75 buttons 1 9a437c7807153cfb
-Color { r: 201, g: 24, b: 15 } Molten 75 small buttons 1 af1f3093dd74203d
-Color { r: 201, g: 24, b: 15 } Molten 75 label 1 4f50c533204e732b
-Color { r: 201, g: 24, b: 15 } Molten 75 label edges 1 231dba1066bccb05
-Color { r: 201, g: 24, b: 15 } Molten 75 buttons 2 6b92a1bea69371b0
-Color { r: 201, g: 24, b: 15 } Molten 75 small buttons 2 01c2d0d42e9f243b
-Color { r: 201, g: 24, b: 15 } Molten 75 label 2 c4eeb8dbc142227e
-Color { r: 201, g: 24, b: 15 } Molten 75 label edges 2 5bb985c3254c7588
-Color { r: 201, g: 24, b: 15 } Molten 100 buttons 1 41bfd5ecdb0647bd
-Color { r: 201, g: 24, b: 15 } Molten 100 small buttons 1 65401e0889e50c5c
-Color { r: 201, g: 24, b: 15 } Molten 100 label 1 158016dbffa55e53
-Color { r: 201, g: 24, b: 15 } Molten 100 label edges 1 0f47a6813e397de3
-Color { r: 201, g: 24, b: 15 } Molten 100 buttons 2 0635266f1ca1bb72
-Color { r: 201, g: 24, b: 15 } Molten 100 small buttons 2 acacea5df24ef17c
-Color { r: 201, g: 24, b: 15 } Molten 100 label 2 8d93fc632978f6e2
-Color { r: 201, g: 24, b: 15 } Molten 100 label edges 2 398c2a3fc748a0f5
+Color { r: 112, g: 175, b: 252 } Frosted 42 buttons 1 0 39fb3c7cc9b4d4b4
+Color { r: 112, g: 175, b: 252 } Frosted 42 small buttons 1 0 3e7d378099576f0b
+Color { r: 112, g: 175, b: 252 } Frosted 42 label 1 0 b084708c98b64163
+Color { r: 112, g: 175, b: 252 } Frosted 42 label edges 1 0 2dbece3e785341a9
+Color { r: 112, g: 175, b: 252 } Frosted 42 label edges 1 1 901b1f6b46f23d02
+Color { r: 112, g: 175, b: 252 } Frosted 42 buttons 2 0 2044a6d685e09c03
+Color { r: 112, g: 175, b: 252 } Frosted 42 small buttons 2 0 5ba2cdbf5cff8dc5
+Color { r: 112, g: 175, b: 252 } Frosted 42 label 2 0 8abe43352f7b630e
+Color { r: 112, g: 175, b: 252 } Frosted 42 label edges 2 0 e2e89fe1b0bd6b16
+Color { r: 112, g: 175, b: 252 } Frosted 42 label edges 2 1 d2440a3ed664a972
+Color { r: 112, g: 175, b: 252 } Frosted 75 buttons 1 0 1cd99ab66d67ba20
+Color { r: 112, g: 175, b: 252 } Frosted 75 small buttons 1 0 2b77c2e7757fc9ff
+Color { r: 112, g: 175, b: 252 } Frosted 75 label 1 0 c5c8f267b5ecdb7d
+Color { r: 112, g: 175, b: 252 } Frosted 75 label edges 1 0 eaf2254c3b769979
+Color { r: 112, g: 175, b: 252 } Frosted 75 label edges 1 1 146464256eee7e08
+Color { r: 112, g: 175, b: 252 } Frosted 75 buttons 2 0 5a29a4a51688dfd3
+Color { r: 112, g: 175, b: 252 } Frosted 75 small buttons 2 0 18bf8c36fcf67a68
+Color { r: 112, g: 175, b: 252 } Frosted 75 label 2 0 f278e01f1669bb5f
+Color { r: 112, g: 175, b: 252 } Frosted 75 label edges 2 0 ed4af4892e1ec034
+Color { r: 112, g: 175, b: 252 } Frosted 75 label edges 2 1 550a4af8542a959f
+Color { r: 112, g: 175, b: 252 } Frosted 100 buttons 1 0 3518490607f3ddf6
+Color { r: 112, g: 175, b: 252 } Frosted 100 small buttons 1 0 672ab42ee4b5e3ea
+Color { r: 112, g: 175, b: 252 } Frosted 100 label 1 0 12331172f3972aac
+Color { r: 112, g: 175, b: 252 } Frosted 100 label edges 1 0 3f961fac1f748a2e
+Color { r: 112, g: 175, b: 252 } Frosted 100 label edges 1 1 ab27b776665634b5
+Color { r: 112, g: 175, b: 252 } Frosted 100 buttons 2 0 4c0373d74de29e3c
+Color { r: 112, g: 175, b: 252 } Frosted 100 small buttons 2 0 7cf2fd9fa66e58ca
+Color { r: 112, g: 175, b: 252 } Frosted 100 label 2 0 128e51c1d7702b9b
+Color { r: 112, g: 175, b: 252 } Frosted 100 label edges 2 0 d48b5b0b9018190b
+Color { r: 112, g: 175, b: 252 } Frosted 100 label edges 2 1 d9f00cc84a326161
+Color { r: 112, g: 175, b: 252 } Smoked 42 buttons 1 0 83d1127ca02208f8
+Color { r: 112, g: 175, b: 252 } Smoked 42 small buttons 1 0 8bd88a99f6d27beb
+Color { r: 112, g: 175, b: 252 } Smoked 42 label 1 0 ac9d782bdf4598f7
+Color { r: 112, g: 175, b: 252 } Smoked 42 label edges 1 0 8e018e2996ebb787
+Color { r: 112, g: 175, b: 252 } Smoked 42 label edges 1 1 f43bd2adaca5bf7c
+Color { r: 112, g: 175, b: 252 } Smoked 42 buttons 2 0 eb1bbf32263cdad8
+Color { r: 112, g: 175, b: 252 } Smoked 42 small buttons 2 0 f75281337561a954
+Color { r: 112, g: 175, b: 252 } Smoked 42 label 2 0 d43ba6a7cc0030cd
+Color { r: 112, g: 175, b: 252 } Smoked 42 label edges 2 0 98369db67cf0a525
+Color { r: 112, g: 175, b: 252 } Smoked 42 label edges 2 1 82a5057672d25918
+Color { r: 112, g: 175, b: 252 } Smoked 75 buttons 1 0 34df840f73cac5e4
+Color { r: 112, g: 175, b: 252 } Smoked 75 small buttons 1 0 7180e8d63822808f
+Color { r: 112, g: 175, b: 252 } Smoked 75 label 1 0 7f9e6a0d2d15cd25
+Color { r: 112, g: 175, b: 252 } Smoked 75 label edges 1 0 be4657685f5ead55
+Color { r: 112, g: 175, b: 252 } Smoked 75 label edges 1 1 29e79909cd2c3086
+Color { r: 112, g: 175, b: 252 } Smoked 75 buttons 2 0 c9f98cd15b8bf982
+Color { r: 112, g: 175, b: 252 } Smoked 75 small buttons 2 0 90ce08521cb55580
+Color { r: 112, g: 175, b: 252 } Smoked 75 label 2 0 342b112eecc8d910
+Color { r: 112, g: 175, b: 252 } Smoked 75 label edges 2 0 2abb6f924370d26c
+Color { r: 112, g: 175, b: 252 } Smoked 75 label edges 2 1 d7c4656a32936491
+Color { r: 112, g: 175, b: 252 } Smoked 100 buttons 1 0 e2ea654aef3f9ff5
+Color { r: 112, g: 175, b: 252 } Smoked 100 small buttons 1 0 6e53ce794876fe97
+Color { r: 112, g: 175, b: 252 } Smoked 100 label 1 0 101a3f55ef60957e
+Color { r: 112, g: 175, b: 252 } Smoked 100 label edges 1 0 e8e4c417c45bcea1
+Color { r: 112, g: 175, b: 252 } Smoked 100 label edges 1 1 87bb22cf683bfdab
+Color { r: 112, g: 175, b: 252 } Smoked 100 buttons 2 0 8eb41eec68241f17
+Color { r: 112, g: 175, b: 252 } Smoked 100 small buttons 2 0 d35001cbe457cbb2
+Color { r: 112, g: 175, b: 252 } Smoked 100 label 2 0 fb1e0fbe93006cad
+Color { r: 112, g: 175, b: 252 } Smoked 100 label edges 2 0 b776f4413c6af0b1
+Color { r: 112, g: 175, b: 252 } Smoked 100 label edges 2 1 5d1f48090f066db4
+Color { r: 112, g: 175, b: 252 } Molten 42 buttons 1 0 14635b3e9b3cce76
+Color { r: 112, g: 175, b: 252 } Molten 42 small buttons 1 0 3bdb7807480490d1
+Color { r: 112, g: 175, b: 252 } Molten 42 label 1 0 4def5bc3d4e8d26c
+Color { r: 112, g: 175, b: 252 } Molten 42 label edges 1 0 de705ac9f67fbd3f
+Color { r: 112, g: 175, b: 252 } Molten 42 label edges 1 1 31aec85aee7314b1
+Color { r: 112, g: 175, b: 252 } Molten 42 buttons 2 0 38ef2a924da85338
+Color { r: 112, g: 175, b: 252 } Molten 42 small buttons 2 0 2f67a9ed40512835
+Color { r: 112, g: 175, b: 252 } Molten 42 label 2 0 2d2c2338ea5b5090
+Color { r: 112, g: 175, b: 252 } Molten 42 label edges 2 0 13ff4ef358f19218
+Color { r: 112, g: 175, b: 252 } Molten 42 label edges 2 1 b4aceedd7181e686
+Color { r: 112, g: 175, b: 252 } Molten 75 buttons 1 0 b02db292fd393772
+Color { r: 112, g: 175, b: 252 } Molten 75 small buttons 1 0 fa8fa27144a3a5a0
+Color { r: 112, g: 175, b: 252 } Molten 75 label 1 0 dacdc32ff37f1f52
+Color { r: 112, g: 175, b: 252 } Molten 75 label edges 1 0 34ded26d1928a825
+Color { r: 112, g: 175, b: 252 } Molten 75 label edges 1 1 96cb00ddd165ec80
+Color { r: 112, g: 175, b: 252 } Molten 75 buttons 2 0 1dbb00730ced7518
+Color { r: 112, g: 175, b: 252 } Molten 75 small buttons 2 0 680087d7b2b2a7c5
+Color { r: 112, g: 175, b: 252 } Molten 75 label 2 0 29fbf0eee544afa7
+Color { r: 112, g: 175, b: 252 } Molten 75 label edges 2 0 ff4a904a7a490588
+Color { r: 112, g: 175, b: 252 } Molten 75 label edges 2 1 fa4d1dffb6932d97
+Color { r: 112, g: 175, b: 252 } Molten 100 buttons 1 0 7f4aff96a2406f1b
+Color { r: 112, g: 175, b: 252 } Molten 100 small buttons 1 0 aea119ac13700f42
+Color { r: 112, g: 175, b: 252 } Molten 100 label 1 0 416cc430cf947691
+Color { r: 112, g: 175, b: 252 } Molten 100 label edges 1 0 c72dc3726ab238e6
+Color { r: 112, g: 175, b: 252 } Molten 100 label edges 1 1 a4dd1a71d56c3e4a
+Color { r: 112, g: 175, b: 252 } Molten 100 buttons 2 0 501a98f7ef711b91
+Color { r: 112, g: 175, b: 252 } Molten 100 small buttons 2 0 b857597689608bef
+Color { r: 112, g: 175, b: 252 } Molten 100 label 2 0 85b08b61b62047ac
+Color { r: 112, g: 175, b: 252 } Molten 100 label edges 2 0 797dc86d1a834104
+Color { r: 112, g: 175, b: 252 } Molten 100 label edges 2 1 c970fbc1a236fa0f
+Color { r: 201, g: 24, b: 15 } Frosted 42 buttons 1 0 3890afe716cabe08
+Color { r: 201, g: 24, b: 15 } Frosted 42 small buttons 1 0 935a17f032604c43
+Color { r: 201, g: 24, b: 15 } Frosted 42 label 1 0 bc36870a1c9e5353
+Color { r: 201, g: 24, b: 15 } Frosted 42 label edges 1 0 f8fd271507195dde
+Color { r: 201, g: 24, b: 15 } Frosted 42 label edges 1 1 e7dcbd96b9b894a4
+Color { r: 201, g: 24, b: 15 } Frosted 42 buttons 2 0 f41205db8bedeb71
+Color { r: 201, g: 24, b: 15 } Frosted 42 small buttons 2 0 d799086e74eb289d
+Color { r: 201, g: 24, b: 15 } Frosted 42 label 2 0 0528e243eabbb84d
+Color { r: 201, g: 24, b: 15 } Frosted 42 label edges 2 0 8caa3cea7bb6cdaa
+Color { r: 201, g: 24, b: 15 } Frosted 42 label edges 2 1 14d694edf2e78042
+Color { r: 201, g: 24, b: 15 } Frosted 75 buttons 1 0 f066f1eee5aef5b4
+Color { r: 201, g: 24, b: 15 } Frosted 75 small buttons 1 0 e25ddf262d44b4bf
+Color { r: 201, g: 24, b: 15 } Frosted 75 label 1 0 dd445732b7e3234a
+Color { r: 201, g: 24, b: 15 } Frosted 75 label edges 1 0 7440ea84c2a788d5
+Color { r: 201, g: 24, b: 15 } Frosted 75 label edges 1 1 2ac645746caa2368
+Color { r: 201, g: 24, b: 15 } Frosted 75 buttons 2 0 1dd95420b9737b3d
+Color { r: 201, g: 24, b: 15 } Frosted 75 small buttons 2 0 f97b47fb90fd7184
+Color { r: 201, g: 24, b: 15 } Frosted 75 label 2 0 a16566dce174322a
+Color { r: 201, g: 24, b: 15 } Frosted 75 label edges 2 0 702621d00a4d5f16
+Color { r: 201, g: 24, b: 15 } Frosted 75 label edges 2 1 4aba15e2d56fd068
+Color { r: 201, g: 24, b: 15 } Frosted 100 buttons 1 0 1a352e70d243b1d3
+Color { r: 201, g: 24, b: 15 } Frosted 100 small buttons 1 0 714118d8044b5e63
+Color { r: 201, g: 24, b: 15 } Frosted 100 label 1 0 cffa024a8acf2abc
+Color { r: 201, g: 24, b: 15 } Frosted 100 label edges 1 0 a8e42df182c3e67e
+Color { r: 201, g: 24, b: 15 } Frosted 100 label edges 1 1 a3dafc638673fa19
+Color { r: 201, g: 24, b: 15 } Frosted 100 buttons 2 0 ae34a5c5a3e33c15
+Color { r: 201, g: 24, b: 15 } Frosted 100 small buttons 2 0 d0120738a4cf47d1
+Color { r: 201, g: 24, b: 15 } Frosted 100 label 2 0 634b16d6a021d8db
+Color { r: 201, g: 24, b: 15 } Frosted 100 label edges 2 0 c84da617715d0c10
+Color { r: 201, g: 24, b: 15 } Frosted 100 label edges 2 1 cc9689f3b9891526
+Color { r: 201, g: 24, b: 15 } Smoked 42 buttons 1 0 db7882c523f8d1f1
+Color { r: 201, g: 24, b: 15 } Smoked 42 small buttons 1 0 4131734bd1af581b
+Color { r: 201, g: 24, b: 15 } Smoked 42 label 1 0 0c4069ee64d1cc8f
+Color { r: 201, g: 24, b: 15 } Smoked 42 label edges 1 0 a3b9efdf86a3d6e4
+Color { r: 201, g: 24, b: 15 } Smoked 42 label edges 1 1 77178241a69d3631
+Color { r: 201, g: 24, b: 15 } Smoked 42 buttons 2 0 ddee21ca96e7a153
+Color { r: 201, g: 24, b: 15 } Smoked 42 small buttons 2 0 741f45d83429a0d1
+Color { r: 201, g: 24, b: 15 } Smoked 42 label 2 0 3826bad1d915d02d
+Color { r: 201, g: 24, b: 15 } Smoked 42 label edges 2 0 df493de86505add1
+Color { r: 201, g: 24, b: 15 } Smoked 42 label edges 2 1 aad4fd230279d2c1
+Color { r: 201, g: 24, b: 15 } Smoked 75 buttons 1 0 b13b16407f8c3543
+Color { r: 201, g: 24, b: 15 } Smoked 75 small buttons 1 0 662048b9acc4b012
+Color { r: 201, g: 24, b: 15 } Smoked 75 label 1 0 fdcabf41cf8518a5
+Color { r: 201, g: 24, b: 15 } Smoked 75 label edges 1 0 fd190c2750bf2684
+Color { r: 201, g: 24, b: 15 } Smoked 75 label edges 1 1 a59e9008c60e4f05
+Color { r: 201, g: 24, b: 15 } Smoked 75 buttons 2 0 5ad56c4bbdd6b3ce
+Color { r: 201, g: 24, b: 15 } Smoked 75 small buttons 2 0 d17087c003aa47e8
+Color { r: 201, g: 24, b: 15 } Smoked 75 label 2 0 6fb650d95990c670
+Color { r: 201, g: 24, b: 15 } Smoked 75 label edges 2 0 c7ca29df680a28c8
+Color { r: 201, g: 24, b: 15 } Smoked 75 label edges 2 1 58f9172cff0accd9
+Color { r: 201, g: 24, b: 15 } Smoked 100 buttons 1 0 14b275c3f05e0dda
+Color { r: 201, g: 24, b: 15 } Smoked 100 small buttons 1 0 550c5778f1f566af
+Color { r: 201, g: 24, b: 15 } Smoked 100 label 1 0 de49b395207c11ce
+Color { r: 201, g: 24, b: 15 } Smoked 100 label edges 1 0 ebdbcc66658beb9d
+Color { r: 201, g: 24, b: 15 } Smoked 100 label edges 1 1 91f2cb86e73c3f5b
+Color { r: 201, g: 24, b: 15 } Smoked 100 buttons 2 0 492420df8b5c1049
+Color { r: 201, g: 24, b: 15 } Smoked 100 small buttons 2 0 beb1bd798d9719f8
+Color { r: 201, g: 24, b: 15 } Smoked 100 label 2 0 b0bc801c096d10cd
+Color { r: 201, g: 24, b: 15 } Smoked 100 label edges 2 0 c4ffb0ccea2631e6
+Color { r: 201, g: 24, b: 15 } Smoked 100 label edges 2 1 05d2ccf00d2771f4
+Color { r: 201, g: 24, b: 15 } Molten 42 buttons 1 0 5376b4fde417b2fc
+Color { r: 201, g: 24, b: 15 } Molten 42 small buttons 1 0 0db3d09ff8b7e8f8
+Color { r: 201, g: 24, b: 15 } Molten 42 label 1 0 187fe9d57a9542e4
+Color { r: 201, g: 24, b: 15 } Molten 42 label edges 1 0 5c7ef19f298f2318
+Color { r: 201, g: 24, b: 15 } Molten 42 label edges 1 1 a6de480fc0228dd0
+Color { r: 201, g: 24, b: 15 } Molten 42 buttons 2 0 797735254706db86
+Color { r: 201, g: 24, b: 15 } Molten 42 small buttons 2 0 0c80f93d7fa750fc
+Color { r: 201, g: 24, b: 15 } Molten 42 label 2 0 7a6156386eb9d552
+Color { r: 201, g: 24, b: 15 } Molten 42 label edges 2 0 b11b513af1373b0c
+Color { r: 201, g: 24, b: 15 } Molten 42 label edges 2 1 02698d476ff8ba8d
+Color { r: 201, g: 24, b: 15 } Molten 75 buttons 1 0 7bfd4dbf9ececc02
+Color { r: 201, g: 24, b: 15 } Molten 75 small buttons 1 0 fe325a92c506e172
+Color { r: 201, g: 24, b: 15 } Molten 75 label 1 0 6adc5abdbc0d2bcc
+Color { r: 201, g: 24, b: 15 } Molten 75 label edges 1 0 48622a6b501b0a5d
+Color { r: 201, g: 24, b: 15 } Molten 75 label edges 1 1 b4bad185f3725379
+Color { r: 201, g: 24, b: 15 } Molten 75 buttons 2 0 aef45e59d6665ccd
+Color { r: 201, g: 24, b: 15 } Molten 75 small buttons 2 0 5b55d9c9c78e5e32
+Color { r: 201, g: 24, b: 15 } Molten 75 label 2 0 e7db4149f8c45730
+Color { r: 201, g: 24, b: 15 } Molten 75 label edges 2 0 f4374f900e22ae43
+Color { r: 201, g: 24, b: 15 } Molten 75 label edges 2 1 99432224d81bca1a
+Color { r: 201, g: 24, b: 15 } Molten 100 buttons 1 0 cca5b385f41c5a70
+Color { r: 201, g: 24, b: 15 } Molten 100 small buttons 1 0 aaf7efe82aaa1e73
+Color { r: 201, g: 24, b: 15 } Molten 100 label 1 0 25c75138146bfe1c
+Color { r: 201, g: 24, b: 15 } Molten 100 label edges 1 0 b9245282ce989b0f
+Color { r: 201, g: 24, b: 15 } Molten 100 label edges 1 1 4016a7eb420def59
+Color { r: 201, g: 24, b: 15 } Molten 100 buttons 2 0 cf5f7b5ab54648a3
+Color { r: 201, g: 24, b: 15 } Molten 100 small buttons 2 0 4c7244b640b03f3d
+Color { r: 201, g: 24, b: 15 } Molten 100 label 2 0 9176d57096c6739c
+Color { r: 201, g: 24, b: 15 } Molten 100 label edges 2 0 a9cf6f8fcc28f525
+Color { r: 201, g: 24, b: 15 } Molten 100 label edges 2 1 aaa6da366e5b0799

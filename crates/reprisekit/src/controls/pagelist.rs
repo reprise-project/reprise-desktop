@@ -1264,18 +1264,7 @@ mod tests {
         assert_eq!(list.cursor, None, "greying the cursor's link lets go of it");
     }
 
-    /// FNV-1a over the pixels, for pins.
-    fn hash(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for y in 0..c.height as i32 {
-            for x in 0..c.width as i32 {
-                for b in c.get(x, y).to_le_bytes() {
-                    h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-                }
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     /// Rest: page 1 open, list unfocused, Printers greyed. Cursor: the list focused with its
     /// cursor on Bluetooth, cues out.
@@ -1298,7 +1287,7 @@ mod tests {
                     c.fill_rect(c.bounds(), cs.button_face);
                     let strip = strip(1, focused);
                     draw(&mut c, &text, &p, &list, &strip, &lay, false, px);
-                    got.push((format!("{i:?} {s} {state}"), hash(&c)));
+                    got.push((format!("{i:?} {s} {state}"), fnv(&c)));
                     if s != 1 {
                         continue;
                     }

@@ -394,7 +394,7 @@ fn list_and_details_icons_at_text_100_and_200_draw_their_pixels() {
                         None,
                         px * s as u32,
                     );
-                    got.push((format!("{look:?} {pct}% {mode:?} x{s}"), canvas_fnv(&c)));
+                    got.push((format!("{look:?} {pct}% {mode:?} x{s}"), fnv(&c)));
                 }
             }
         }
@@ -1200,7 +1200,7 @@ fn a_thumbnail_or_tile_rename_box_draws_its_pixels() {
             let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
             let p = classic_paint(&theme.colors, s);
             draw(&mut c, &text, &p, &sv, &lay, None, px * s as u32);
-            got.push((format!("{mode:?} @{s}"), canvas_fnv(&c)));
+            got.push((format!("{mode:?} @{s}"), fnv(&c)));
         }
     }
     crate::pins::check("shellview/rename_box", &got);
@@ -1544,19 +1544,7 @@ fn a_shortcut_to_a_folder_sorts_among_the_files() {
 
 const DRAG_HALF: i32 = iconview::DRAG_IMAGE_MAX / 2;
 
-fn canvas_fnv(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let words = [c.width, c.height]
-        .into_iter()
-        .chain(c.pixels.iter().copied());
-    for w in words {
-        for b in w.to_le_bytes() {
-            h ^= u64::from(b);
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 /// Each picked entry's icon, its colour redrawn at `s` times the size its mode draws.
 fn drag_icons(sv: &ShellView, picked: &[usize], s: i32) -> Vec<(usize, Canvas)> {
@@ -1724,8 +1712,8 @@ fn a_grid_drag_image_draws_its_pixels() {
             (one.width * 2, one.height * 2),
             "{mode:?}"
         );
-        got.push((format!("{mode:?} @1"), canvas_fnv(&one)));
-        got.push((format!("{mode:?} @2"), canvas_fnv(&two)));
+        got.push((format!("{mode:?} @1"), fnv(&one)));
+        got.push((format!("{mode:?} @2"), fnv(&two)));
     }
     crate::pins::check("shellview/grid_drag_image", &got);
 }
@@ -1772,8 +1760,8 @@ fn a_rows_drag_image_draws_its_pixels() {
             (one.width * 2, one.height * 2),
             "{mode:?}"
         );
-        got.push((format!("{mode:?} @1"), canvas_fnv(&one)));
-        got.push((format!("{mode:?} @2"), canvas_fnv(&two)));
+        got.push((format!("{mode:?} @1"), fnv(&one)));
+        got.push((format!("{mode:?} @2"), fnv(&two)));
     }
     crate::pins::check("shellview/rows_drag_image", &got);
 }
@@ -1873,7 +1861,7 @@ fn computer_drive_views_pin_in_each_interface() {
                     None,
                     px * s as u32,
                 );
-                got.push((format!("{look:?} {mode:?} {s}"), canvas_fnv(&c)));
+                got.push((format!("{look:?} {mode:?} {s}"), fnv(&c)));
             }
         }
     }
@@ -1906,8 +1894,8 @@ fn a_details_header_draws_a_held_title_in_each_interface() {
             sv.header.press(Some(1), false);
             let held = draw_at(&sv);
             assert!(held != rest, "{look:?} x{s}: the held title draws apart");
-            got.push((format!("{look:?} rest {s}"), canvas_fnv(&rest)));
-            got.push((format!("{look:?} held {s}"), canvas_fnv(&held)));
+            got.push((format!("{look:?} rest {s}"), fnv(&rest)));
+            got.push((format!("{look:?} held {s}"), fnv(&held)));
         }
     }
     crate::pins::check("shellview/details_held_header", &got);

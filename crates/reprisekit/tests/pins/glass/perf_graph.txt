@@ -1,16 +1,16 @@
-Light graph @1 3dc2dbd629db48fc
-Light meter 0 @1 f48327ec7488c3ad
-Light meter 0.37 @1 118b5ec429185359
-Light meter 1 @1 4d80a61ae329b847
-Light graph @2 0b13eb6e379d51cd
-Light meter 0 @2 2484f736f6f61829
-Light meter 0.37 @2 bf222cdac318569f
-Light meter 1 @2 20f9bdb4605b1421
-Dark graph @1 da24fd0dfd46469a
-Dark meter 0 @1 9c904dd06f9ac2d5
-Dark meter 0.37 @1 866c32597e3d41b7
-Dark meter 1 @1 c11b47589a500081
-Dark graph @2 0e96df73365e5591
-Dark meter 0 @2 0ecc1bb4193516c9
-Dark meter 0.37 @2 3523abd1147e3b63
-Dark meter 1 @2 75c9f332910703c1
+Light graph @1 e8d530e05a7ee3cb
+Light meter 0 @1 18bf59a8f36a85f2
+Light meter 0.37 @1 a5e7467729012386
+Light meter 1 @1 e7753e791310cece
+Light graph @2 93556e86b9a8edc7
+Light meter 0 @2 32c27eca5ac60a98
+Light meter 0.37 @2 27eb22df07e74f78
+Light meter 1 @2 5bbaa69bbbf3608c
+Dark graph @1 695f1491724ff98d
+Dark meter 0 @1 07aec1d2d04b00e2
+Dark meter 0.37 @1 a3333280d31838fe
+Dark meter 1 @1 2557b33807de7152
+Dark graph @2 ddc0969b1c1c9311
+Dark meter 0 @2 071929babcb78538
+Dark meter 0.37 @2 5d30a25adb138ba4
+Dark meter 1 @2 b14c190e834c8d2c

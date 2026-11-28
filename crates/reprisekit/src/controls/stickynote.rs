@@ -289,18 +289,7 @@ mod tests {
         c
     }
 
-    fn hash(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for v in [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-        {
-            for b in v.to_le_bytes() {
-                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn device(c: &Canvas, x: i32, y: i32) -> u32 {
         c.pixels[(y * c.width as i32 * c.scale() + x) as usize]
@@ -481,15 +470,15 @@ mod tests {
                 [
                     (
                         format!("yellow {s}"),
-                        hash(&drawn(Colour::Yellow, Strip::default(), s)),
+                        fnv(&drawn(Colour::Yellow, Strip::default(), s)),
                     ),
                     (
                         format!("blue, delete hot {s}"),
-                        hash(&drawn(Colour::Blue, hot, s)),
+                        fnv(&drawn(Colour::Blue, hot, s)),
                     ),
                     (
                         format!("yellow, text 200 {s}"),
-                        hash(&drawn_at(Colour::Yellow, Strip::default(), s, 200)),
+                        fnv(&drawn_at(Colour::Yellow, Strip::default(), s, 200)),
                     ),
                 ]
             })

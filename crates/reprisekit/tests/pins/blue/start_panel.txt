@@ -1,144 +1,144 @@
-Blue 1 hot=None pressed=None 7e6fad905bbcfbfd
-Blue 1 hot=Some(Program(0)) pressed=None 6b23435e5c050657
-Blue 1 hot=Some(Place(1)) pressed=None e9c97e932731d06d
-Blue 1 hot=Some(AllPrograms) pressed=None 4e2329fd41549673
-Blue 1 hot=Some(LogOff) pressed=None 3bdeb1f5e433b98a
-Blue 1 hot=Some(Shutdown) pressed=Some(Shutdown) 4ffe038d8464a422
-Blue 2 hot=None pressed=None a4b6037f59dfc894
-Blue 2 hot=Some(Program(0)) pressed=None 20628b6e855f8d02
-Blue 2 hot=Some(Place(1)) pressed=None ab03c87f3793406b
-Blue 2 hot=Some(AllPrograms) pressed=None f0af4158945e9fa6
-Blue 2 hot=Some(LogOff) pressed=None f9c3707fae567c07
-Blue 2 hot=Some(Shutdown) pressed=Some(Shutdown) 61177ba0bff33425
-Olive 1 hot=None pressed=None 402a40b122e2f9cc
-Olive 1 hot=Some(Program(0)) pressed=None 6b7780e6db7358ca
-Olive 1 hot=Some(Place(1)) pressed=None 5fb11f53b050fbfc
-Olive 1 hot=Some(AllPrograms) pressed=None 05119c0cd60cc0be
-Olive 1 hot=Some(LogOff) pressed=None 654cf75b5c50cf90
-Olive 1 hot=Some(Shutdown) pressed=Some(Shutdown) 5ed634731a253867
-Olive 2 hot=None pressed=None 684585fd65b387df
-Olive 2 hot=Some(Program(0)) pressed=None a536a8edd13b901d
-Olive 2 hot=Some(Place(1)) pressed=None ab415c4b4966f0cd
-Olive 2 hot=Some(AllPrograms) pressed=None 1f62589d174227b9
-Olive 2 hot=Some(LogOff) pressed=None 415d4636d1815d04
-Olive 2 hot=Some(Shutdown) pressed=Some(Shutdown) efd473a675c11375
-Blue dark 1 hot=None pressed=None a19d5dda4d3a4dc6
-Blue dark 1 hot=Some(Program(0)) pressed=None c50427d05cca503c
-Blue dark 1 hot=Some(Place(1)) pressed=None f704feff783680d2
-Blue dark 1 hot=Some(AllPrograms) pressed=None c64ab2eda101bf00
-Blue dark 1 hot=Some(LogOff) pressed=None 749d27e67ab294e5
-Blue dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) b459f0f04c293fc4
-Blue dark 2 hot=None pressed=None 68a0d2dcc79acf4e
-Blue dark 2 hot=Some(Program(0)) pressed=None ede4abc3c1f885a8
-Blue dark 2 hot=Some(Place(1)) pressed=None bd7f92eaf2879b80
-Blue dark 2 hot=Some(AllPrograms) pressed=None 1f00c1f6cf556704
-Blue dark 2 hot=Some(LogOff) pressed=None 8253d302de954751
-Blue dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) e6de9b822abd6d09
-Olive dark 1 hot=None pressed=None b481a4e012928fa8
-Olive dark 1 hot=Some(Program(0)) pressed=None 11e9c769d147c4e1
-Olive dark 1 hot=Some(Place(1)) pressed=None b5e4d93a4c2a02a8
-Olive dark 1 hot=Some(AllPrograms) pressed=None c1406e9df68bc995
-Olive dark 1 hot=Some(LogOff) pressed=None 4466235bc82af8f0
-Olive dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 265a0a74f442e6f1
-Olive dark 2 hot=None pressed=None 76a432899e1f36f5
-Olive dark 2 hot=Some(Program(0)) pressed=None 5b9637065f277fa8
-Olive dark 2 hot=Some(Place(1)) pressed=None 5a27ca4f602d67d1
-Olive dark 2 hot=Some(AllPrograms) pressed=None f87b7e6e613a7594
-Olive dark 2 hot=Some(LogOff) pressed=None 9ab4cfad4b497f10
-Olive dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 1b36cd9f7f8d6518
-Silver dark 1 hot=None pressed=None 5fe91d917d1f0874
-Silver dark 1 hot=Some(Program(0)) pressed=None 6c55927c8dd35dec
-Silver dark 1 hot=Some(Place(1)) pressed=None 5fd3e4c17a113968
-Silver dark 1 hot=Some(AllPrograms) pressed=None 810b4ce1d0fd2b90
-Silver dark 1 hot=Some(LogOff) pressed=None bca873860bea1fbc
-Silver dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 3adac9948040da37
-Silver dark 2 hot=None pressed=None a5fc66761afa3858
-Silver dark 2 hot=Some(Program(0)) pressed=None d35f210b52c80868
-Silver dark 2 hot=Some(Place(1)) pressed=None bfb84c1dafa7143a
-Silver dark 2 hot=Some(AllPrograms) pressed=None 1741871e90ab0e54
-Silver dark 2 hot=Some(LogOff) pressed=None 533dc0a3602c6b1b
-Silver dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 0dcdc8ebb9c1377d
-Slate dark 1 hot=None pressed=None d6745d8877c57ec5
-Slate dark 1 hot=Some(Program(0)) pressed=None 2ebcd77be4f38b16
-Slate dark 1 hot=Some(Place(1)) pressed=None 40ce8a36976e1335
-Slate dark 1 hot=Some(AllPrograms) pressed=None 263bdf9ed28a59ea
-Slate dark 1 hot=Some(LogOff) pressed=None 6d0b01d636fe0cc4
-Slate dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 5f21885a0c2d9376
-Slate dark 2 hot=None pressed=None 14aad9c0fca5dfb7
-Slate dark 2 hot=Some(Program(0)) pressed=None d3b1ddee18663938
-Slate dark 2 hot=Some(Place(1)) pressed=None a2b45e8c0db925d8
-Slate dark 2 hot=Some(AllPrograms) pressed=None b9a9a491e13b2008
-Slate dark 2 hot=Some(LogOff) pressed=None 5884a356fa2b36d0
-Slate dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) bf49b86ae3d3d50e
-Sapphire dark 1 hot=None pressed=None d30943412515c3bd
-Sapphire dark 1 hot=Some(Program(0)) pressed=None 59e8aecb168595c3
-Sapphire dark 1 hot=Some(Place(1)) pressed=None ee65053737be6595
-Sapphire dark 1 hot=Some(AllPrograms) pressed=None 85c0bdd10b19f56d
-Sapphire dark 1 hot=Some(LogOff) pressed=None 0eeac3ca3913f180
-Sapphire dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 1f4eb027b0e31ff3
-Sapphire dark 2 hot=None pressed=None 716f5ea33e9cf1e7
-Sapphire dark 2 hot=Some(Program(0)) pressed=None 055532d80a1eafc1
-Sapphire dark 2 hot=Some(Place(1)) pressed=None 6853a15cfaa893d7
-Sapphire dark 2 hot=Some(AllPrograms) pressed=None 673418fa0b8a3139
-Sapphire dark 2 hot=Some(LogOff) pressed=None b18778cfb341b874
-Sapphire dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 5e4e3be413b38bee
-Obsidian dark 1 hot=None pressed=None 23cb044ed2e583d6
-Obsidian dark 1 hot=Some(Program(0)) pressed=None db623365f4ae3c30
-Obsidian dark 1 hot=Some(Place(1)) pressed=None 594331c69a41f5da
-Obsidian dark 1 hot=Some(AllPrograms) pressed=None 98f5f0ffe22ff568
-Obsidian dark 1 hot=Some(LogOff) pressed=None 597c1bd898037967
-Obsidian dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 89747fa72107e479
-Obsidian dark 2 hot=None pressed=None 027dd2f6af72691b
-Obsidian dark 2 hot=Some(Program(0)) pressed=None 843565e669f3b131
-Obsidian dark 2 hot=Some(Place(1)) pressed=None d9f8af5b98aaa215
-Obsidian dark 2 hot=Some(AllPrograms) pressed=None 87c562053a48dc61
-Obsidian dark 2 hot=Some(LogOff) pressed=None 0cb094a6196dc386
-Obsidian dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 6a8db20e7a330bb3
-Ember dark 1 hot=None pressed=None 8c0333815fb33f1c
-Ember dark 1 hot=Some(Program(0)) pressed=None c56999ecd86ce940
-Ember dark 1 hot=Some(Place(1)) pressed=None 58bd4f1bfbc7d654
-Ember dark 1 hot=Some(AllPrograms) pressed=None a9d3f6514be253a0
-Ember dark 1 hot=Some(LogOff) pressed=None 9629489e6b6e3439
-Ember dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 06e1202d3aa85b44
-Ember dark 2 hot=None pressed=None e69ef0ba0bf02b20
-Ember dark 2 hot=Some(Program(0)) pressed=None 246a7e634211e998
-Ember dark 2 hot=Some(Place(1)) pressed=None 13496cbd50cb1e9f
-Ember dark 2 hot=Some(AllPrograms) pressed=None a99134d4d10dd6dc
-Ember dark 2 hot=Some(LogOff) pressed=None d072c4fa42e12333
-Ember dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 7758cce77e210328
-Cobalt dark 1 hot=None pressed=None 9ecb89ab4914ce46
-Cobalt dark 1 hot=Some(Program(0)) pressed=None bfdda37b31f1bbfc
-Cobalt dark 1 hot=Some(Place(1)) pressed=None d81e505b500277ae
-Cobalt dark 1 hot=Some(AllPrograms) pressed=None a5db7edb372b7d1a
-Cobalt dark 1 hot=Some(LogOff) pressed=None df10b2014a001b68
-Cobalt dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 300940ea0abc4370
-Cobalt dark 2 hot=None pressed=None d3868aabcdc7996c
-Cobalt dark 2 hot=Some(Program(0)) pressed=None 34eb0e8a6e23e27a
-Cobalt dark 2 hot=Some(Place(1)) pressed=None 176f6781d69911b2
-Cobalt dark 2 hot=Some(AllPrograms) pressed=None b0133fb8674f78c2
-Cobalt dark 2 hot=Some(LogOff) pressed=None 03c3d323ed5556c9
-Cobalt dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) f2d68c475bdf2b69
-Carbon dark 1 hot=None pressed=None fba7d6b57552fe54
-Carbon dark 1 hot=Some(Program(0)) pressed=None 8a63d84c2acd29c1
-Carbon dark 1 hot=Some(Place(1)) pressed=None c577a38504f14c28
-Carbon dark 1 hot=Some(AllPrograms) pressed=None ed840aeec094238d
-Carbon dark 1 hot=Some(LogOff) pressed=None 9cb263f5be7cf1a2
-Carbon dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 1a44567cddd770bc
-Carbon dark 2 hot=None pressed=None c6ee95127761288c
-Carbon dark 2 hot=Some(Program(0)) pressed=None 28c7471699096411
-Carbon dark 2 hot=Some(Place(1)) pressed=None 5dac5ec9f6a69088
-Carbon dark 2 hot=Some(AllPrograms) pressed=None 1df93b98c3c7f949
-Carbon dark 2 hot=Some(LogOff) pressed=None aa3387856ec54d59
-Carbon dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) b4c9e1ab08009eb6
-Steel dark 1 hot=None pressed=None ba6b96735a4bd225
-Steel dark 1 hot=Some(Program(0)) pressed=None 2e764321c3cc2a04
-Steel dark 1 hot=Some(Place(1)) pressed=None d30d4dc78ca23681
-Steel dark 1 hot=Some(AllPrograms) pressed=None 73473262b2843430
-Steel dark 1 hot=Some(LogOff) pressed=None 796b23985e44ff4b
-Steel dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 39558a83c74a5970
-Steel dark 2 hot=None pressed=None 4bee3fab515463e9
-Steel dark 2 hot=Some(Program(0)) pressed=None 77266bf627896ec4
-Steel dark 2 hot=Some(Place(1)) pressed=None f6d481da5248273a
-Steel dark 2 hot=Some(AllPrograms) pressed=None c7fde49d47833af0
-Steel dark 2 hot=Some(LogOff) pressed=None 00bb6a9ee9ac9080
-Steel dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 265de1c664ea09c1
+Blue 1 hot=None pressed=None 6ffedb749afe135c
+Blue 1 hot=Some(Program(0)) pressed=None 24c6b5939e50699a
+Blue 1 hot=Some(Place(1)) pressed=None 6bc4c7aca5f45a04
+Blue 1 hot=Some(AllPrograms) pressed=None 1fd043da869fa4ce
+Blue 1 hot=Some(LogOff) pressed=None 3eb529d95e96c9f7
+Blue 1 hot=Some(Shutdown) pressed=Some(Shutdown) 21f43a732fa2030f
+Blue 2 hot=None pressed=None f72441becfbff6e5
+Blue 2 hot=Some(Program(0)) pressed=None d1a4258745c209bf
+Blue 2 hot=Some(Place(1)) pressed=None 89ddf051e9db9d36
+Blue 2 hot=Some(AllPrograms) pressed=None f46b40bc5f3ca0f3
+Blue 2 hot=Some(LogOff) pressed=None 8bf63a0e19de3822
+Blue 2 hot=Some(Shutdown) pressed=Some(Shutdown) ee18da5362a7f290
+Olive 1 hot=None pressed=None afe084d255cbeff5
+Olive 1 hot=Some(Program(0)) pressed=None 20cb49504695406f
+Olive 1 hot=Some(Place(1)) pressed=None 106f2d697620e155
+Olive 1 hot=Some(AllPrograms) pressed=None 22f00368edbe5aaf
+Olive 1 hot=Some(LogOff) pressed=None 33190434eb6f3101
+Olive 1 hot=Some(Shutdown) pressed=Some(Shutdown) c90c634973e281fe
+Olive 2 hot=None pressed=None 32229a1fdedf7d4e
+Olive 2 hot=Some(Program(0)) pressed=None 6e5a3cdb9193f658
+Olive 2 hot=Some(Place(1)) pressed=None 90aa977e930be89c
+Olive 2 hot=Some(AllPrograms) pressed=None 7d5e3a7adc15e59c
+Olive 2 hot=Some(LogOff) pressed=None b040d27d5bb939b5
+Olive 2 hot=Some(Shutdown) pressed=Some(Shutdown) c49dc8caab948edc
+Blue dark 1 hot=None pressed=None a9948e5b1f85cdff
+Blue dark 1 hot=Some(Program(0)) pressed=None 0c02a7e50bb00891
+Blue dark 1 hot=Some(Place(1)) pressed=None abe1e372f77205eb
+Blue dark 1 hot=Some(AllPrograms) pressed=None 7894a81424bbb1a5
+Blue dark 1 hot=Some(LogOff) pressed=None 6deca439994dd8c0
+Blue dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 9351d1eecc4b7815
+Blue dark 2 hot=None pressed=None a7ed2cd14144477f
+Blue dark 2 hot=Some(Program(0)) pressed=None d7170c74a25460ad
+Blue dark 2 hot=Some(Place(1)) pressed=None f3ee906d169535a5
+Blue dark 2 hot=Some(AllPrograms) pressed=None f86079463b560141
+Blue dark 2 hot=Some(LogOff) pressed=None ef3d145537c41d10
+Blue dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 91bf1e51df9ff528
+Olive dark 1 hot=None pressed=None 979f5bd3c3129601
+Olive dark 1 hot=Some(Program(0)) pressed=None 8048711a46ed90b0
+Olive dark 1 hot=Some(Place(1)) pressed=None c9d78c53c5895849
+Olive dark 1 hot=Some(AllPrograms) pressed=None 7293d4adfff211e8
+Olive dark 1 hot=Some(LogOff) pressed=None 9a4a3ef2fad0fd55
+Olive dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) f84f88176ceab614
+Olive dark 2 hot=None pressed=None 6b63479a0b6cd2ec
+Olive dark 2 hot=Some(Program(0)) pressed=None f170a00a15984e21
+Olive dark 2 hot=Some(Place(1)) pressed=None 720df8fceb8bac24
+Olive dark 2 hot=Some(AllPrograms) pressed=None 5fc6940ee2b5d25d
+Olive dark 2 hot=Some(LogOff) pressed=None 0f66a4f069731af1
+Olive dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 5fb6387b54eff461
+Silver dark 1 hot=None pressed=None ae2e6d11c5383d11
+Silver dark 1 hot=Some(Program(0)) pressed=None e521b3d26ea7c525
+Silver dark 1 hot=Some(Place(1)) pressed=None 504d9e6faccab605
+Silver dark 1 hot=Some(AllPrograms) pressed=None d780fe1d3e67f9f9
+Silver dark 1 hot=Some(LogOff) pressed=None d3fd80882a136229
+Silver dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 9e1c894de8c31f36
+Silver dark 2 hot=None pressed=None 9996ab8e513fe365
+Silver dark 2 hot=Some(Program(0)) pressed=None f08df864637293a9
+Silver dark 2 hot=Some(Place(1)) pressed=None 07a353d3340d461f
+Silver dark 2 hot=Some(AllPrograms) pressed=None e5fc6d43f5c97ac5
+Silver dark 2 hot=Some(LogOff) pressed=None 741647ab2d5c4096
+Silver dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 1e7d2fa4884c5a4c
+Slate dark 1 hot=None pressed=None 76138236d739b830
+Slate dark 1 hot=Some(Program(0)) pressed=None fbd8fcda193f5f83
+Slate dark 1 hot=Some(Place(1)) pressed=None f9a4f09a583bd9a0
+Slate dark 1 hot=Some(AllPrograms) pressed=None 755b01c439725b8f
+Slate dark 1 hot=Some(LogOff) pressed=None a509a8dce4c6cbe9
+Slate dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) e1a7b1daaae22403
+Slate dark 2 hot=None pressed=None b0055997cdbfcb7a
+Slate dark 2 hot=Some(Program(0)) pressed=None 4533d594bf00d65d
+Slate dark 2 hot=Some(Place(1)) pressed=None 67409d5575aee6f9
+Slate dark 2 hot=Some(AllPrograms) pressed=None e9f2baeadf961605
+Slate dark 2 hot=Some(LogOff) pressed=None a9f7fef576709c9d
+Slate dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 3934bcae2054d96b
+Sapphire dark 1 hot=None pressed=None 8994039a75b3b81c
+Sapphire dark 1 hot=Some(Program(0)) pressed=None 53a3fcd0d76f720e
+Sapphire dark 1 hot=Some(Place(1)) pressed=None 5b543a377d63afdc
+Sapphire dark 1 hot=Some(AllPrograms) pressed=None d417fa4421db3938
+Sapphire dark 1 hot=Some(LogOff) pressed=None b4049eb6c5cef591
+Sapphire dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 288d767bd03196fe
+Sapphire dark 2 hot=None pressed=None c6838825df5147aa
+Sapphire dark 2 hot=Some(Program(0)) pressed=None 2ce5d9f73cb7f368
+Sapphire dark 2 hot=Some(Place(1)) pressed=None e8d71bcb849efcbe
+Sapphire dark 2 hot=Some(AllPrograms) pressed=None e7c27f7985b31418
+Sapphire dark 2 hot=Some(LogOff) pressed=None 1e3711e0e7bfd2a9
+Sapphire dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) aad0fa5c01a844e7
+Obsidian dark 1 hot=None pressed=None 920be97f6c9a733b
+Obsidian dark 1 hot=Some(Program(0)) pressed=None 4b14accf81f3df55
+Obsidian dark 1 hot=Some(Place(1)) pressed=None ddf7197974a752d7
+Obsidian dark 1 hot=Some(AllPrograms) pressed=None 192a7c80971850ad
+Obsidian dark 1 hot=Some(LogOff) pressed=None 33555ef1950e0632
+Obsidian dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 7fbc377165278dac
+Obsidian dark 2 hot=None pressed=None 0b3ca6aac4bd1b46
+Obsidian dark 2 hot=Some(Program(0)) pressed=None bf10ab0ff3cc9504
+Obsidian dark 2 hot=Some(Place(1)) pressed=None 38f021be30e260cc
+Obsidian dark 2 hot=Some(AllPrograms) pressed=None 2104f082b8326e5c
+Obsidian dark 2 hot=Some(LogOff) pressed=None 0a1f288f0ee30edf
+Obsidian dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) bedad613c2669276
+Ember dark 1 hot=None pressed=None 63503d827beee755
+Ember dark 1 hot=Some(Program(0)) pressed=None e715fa6e95536f35
+Ember dark 1 hot=Some(Place(1)) pressed=None 69ccee3cf9116585
+Ember dark 1 hot=Some(AllPrograms) pressed=None fa52dcc6d9cb0045
+Ember dark 1 hot=Some(LogOff) pressed=None 267241e024d29350
+Ember dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 79544d07f0028c9d
+Ember dark 2 hot=None pressed=None 0bc5c1fd24cdaf01
+Ember dark 2 hot=Some(Program(0)) pressed=None fedcd3cd4ab620bd
+Ember dark 2 hot=Some(Place(1)) pressed=None c590b970cd5bc8a6
+Ember dark 2 hot=Some(AllPrograms) pressed=None fc216e3a605fd4b9
+Ember dark 2 hot=Some(LogOff) pressed=None a442e9bbea2728be
+Ember dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) bb45162ed49a16bd
+Cobalt dark 1 hot=None pressed=None ec4239cd9bc18f87
+Cobalt dark 1 hot=Some(Program(0)) pressed=None e32c62c0909a864d
+Cobalt dark 1 hot=Some(Place(1)) pressed=None 34f9a27c7c62be8f
+Cobalt dark 1 hot=Some(AllPrograms) pressed=None 7754e57da36bf513
+Cobalt dark 1 hot=Some(LogOff) pressed=None cca21f27bba6c411
+Cobalt dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 1085b71bb87f4941
+Cobalt dark 2 hot=None pressed=None 5a579755279fbe11
+Cobalt dark 2 hot=Some(Program(0)) pressed=None aaabfa24c62e4407
+Cobalt dark 2 hot=Some(Place(1)) pressed=None a6a65434f7fdd59b
+Cobalt dark 2 hot=Some(AllPrograms) pressed=None a8fbe99cf912165f
+Cobalt dark 2 hot=Some(LogOff) pressed=None 13c5b3a85baac57c
+Cobalt dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 811d4684c4928070
+Carbon dark 1 hot=None pressed=None 7fafa86924d06009
+Carbon dark 1 hot=Some(Program(0)) pressed=None 05338e501dcd0408
+Carbon dark 1 hot=Some(Place(1)) pressed=None 0b7a813f7302a8c5
+Carbon dark 1 hot=Some(AllPrograms) pressed=None 20a66ec306ab1adc
+Carbon dark 1 hot=Some(LogOff) pressed=None 3f662d755764e6b7
+Carbon dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) d70448856058f001
+Carbon dark 2 hot=None pressed=None 2b57c0499697aee9
+Carbon dark 2 hot=Some(Program(0)) pressed=None a0f10fd0f48e2818
+Carbon dark 2 hot=Some(Place(1)) pressed=None 139cb9f8fbe49a2d
+Carbon dark 2 hot=Some(AllPrograms) pressed=None 16d73df6661e7868
+Carbon dark 2 hot=Some(LogOff) pressed=None 650b9cea1680f8bc
+Carbon dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 8cc693432e232faf
+Steel dark 1 hot=None pressed=None 8312926eb001fee0
+Steel dark 1 hot=Some(Program(0)) pressed=None 042a22f69978b545
+Steel dark 1 hot=Some(Place(1)) pressed=None caf34570613e65e4
+Steel dark 1 hot=Some(AllPrograms) pressed=None 6590c7535c078cc1
+Steel dark 1 hot=Some(LogOff) pressed=None bb8f16fafa37072e
+Steel dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 328a4138a9c97779
+Steel dark 2 hot=None pressed=None d8c8d4865b80a5a8
+Steel dark 2 hot=Some(Program(0)) pressed=None 1af0ae3824ea3101
+Steel dark 2 hot=Some(Place(1)) pressed=None a0a4f22aa955deef
+Steel dark 2 hot=Some(AllPrograms) pressed=None 910da401b6d49725
+Steel dark 2 hot=Some(LogOff) pressed=None e1f4bbd869d5f1c1
+Steel dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) 51810a6f9df2dc50

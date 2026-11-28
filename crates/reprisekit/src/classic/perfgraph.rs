@@ -70,11 +70,7 @@ pub fn meter(fraction: f64, _cs: &ColorScheme, w: i32, h: i32, label_h: i32, d: 
 mod tests {
     use super::*;
 
-    fn fnv(c: &Canvas) -> u64 {
-        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-            (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-        })
-    }
+    use crate::pins::fnv;
 
     fn wave() -> Vec<f32> {
         (0..60)

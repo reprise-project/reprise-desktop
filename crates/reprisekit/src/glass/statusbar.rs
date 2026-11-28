@@ -272,16 +272,7 @@ mod tests {
         assert_eq!((x1 - x0 + 1, y1 - y0 + 1), (16, 16), "8 design px of dots");
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let head = [c.width, c.height];
-        head.iter()
-            .chain(c.pixels.iter())
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                p.to_le_bytes().iter().fold(h, |h, &b| {
-                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                })
-            })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn size_grip_pins_at_scale_1_and_2() {

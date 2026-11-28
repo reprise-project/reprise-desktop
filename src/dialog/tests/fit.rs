@@ -550,9 +550,7 @@ fn boxes_with_a_bar_are_pinned_at_grown_text_and_scale_2() {
             ] {
                 for s in [1, 2] {
                     let c = drawn_at(&theme, &text, d.clone(), s);
-                    let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
-                        (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
-                    });
+                    let hash = reprisekit::pins::fnv(&c);
                     got.push((format!("{} {name} {pct}% @{s}", i.as_str()), hash));
                 }
             }

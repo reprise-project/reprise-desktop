@@ -1,8 +1,8 @@
-Light CaptionGroup 8979797aff891b8d
-Light MaxCaptionGroup 03c3ebd474346041
-Light CloseButton 51306dce63745c15
-Light HelpButton 9cba5fad5f307241
-Dark CaptionGroup 426d62abefca08f5
-Dark MaxCaptionGroup 7a48567f71739afe
-Dark CloseButton 6337a21e53040775
-Dark HelpButton 4273373a5e311896
+Light CaptionGroup d6072bd533fb52fa
+Light MaxCaptionGroup 42a28c6c77e81ce5
+Light CloseButton 6af7e9662661f230
+Light HelpButton 62d7e4e7317f37e3
+Dark CaptionGroup 9745511a9870d562
+Dark MaxCaptionGroup 4cb24336838ef19a
+Dark CloseButton 19a26d065905cab0
+Dark HelpButton d0064f21e23bc278

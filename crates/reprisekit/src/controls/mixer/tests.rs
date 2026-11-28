@@ -976,11 +976,7 @@ fn a_reader_finds_each_output_combo_in_its_column() {
     assert_eq!(focus, combos[0].0);
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-        (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-    })
-}
+use crate::pins::fnv;
 
 /// The routed lines with the second combo focused, then with the first's list open on its
 /// last row, in each look at 100% and 200% text.

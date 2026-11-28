@@ -1013,9 +1013,7 @@ mod tests {
                 for d in [1, 2] {
                     let mut canvas = Canvas::with_scale(ctx.size.0 as u32, ctx.size.1 as u32, d);
                     ctx.at_scale(d, |ctx| c.draw(&mut canvas, ctx));
-                    let hash = canvas.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
-                        (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
-                    });
+                    let hash = reprisekit::pins::fnv(&canvas);
                     got.push((format!("{} {pct}% @{d}", i.as_str()), hash));
                 }
             }

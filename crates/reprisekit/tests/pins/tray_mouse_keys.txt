@@ -1,8 +1,8 @@
-light s1 Left held=false a9d546f374340ce5
-light s1 Right held=true 5bc635d8de50bbe5
-light s2 Left held=false 4d2eb69960617d25
-light s2 Right held=true a25746d77226e625
-dark s1 Left held=false 585167052c451598
-dark s1 Right held=true a74dc798bc530f7c
-dark s2 Left held=false 7bf3ff1c44b26d25
-dark s2 Right held=true 3f0dd6d93fa24d75
+light s1 Left held=false 4bc03066129eefa4
+light s1 Right held=true 717253f35f4b0324
+light s2 Left held=false d1d28efc3190efe4
+light s2 Right held=true 586085d21744a3e4
+dark s1 Left held=false 76b773a9d98bf785
+dark s1 Right held=true 58ed1310df32d0cd
+dark s2 Left held=false 5e48bafd5c54e454
+dark s2 Right held=true 299d7e896db462f4

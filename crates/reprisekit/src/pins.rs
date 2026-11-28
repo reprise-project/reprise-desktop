@@ -294,18 +294,43 @@ macro_rules! skip {
 #[cfg(test)]
 pub(crate) use skip;
 
-/// The FNV-1a hash of `c`'s pixels, a pin's value for a drawn canvas.
-#[cfg(test)]
-pub(crate) fn fnv(c: &crate::raster::Canvas) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for y in 0..c.height as i32 {
-        for x in 0..c.width as i32 {
-            for b in c.get(x, y).to_le_bytes() {
-                h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
-            }
+/// A pin's value for a drawn canvas: the FNV-1a hash of its scale, device size and every device
+/// pixel.
+pub fn fnv(c: &crate::raster::Canvas) -> u64 {
+    let (w, h) = c.device_size();
+    fnv_words(
+        [c.scale() as u32, w, h]
+            .into_iter()
+            .chain(c.pixels.iter().copied()),
+    )
+}
+
+/// [`fnv`] of the device pixels under logical rect `r` of `c`, 0 for those outside it.
+pub fn fnv_in(c: &crate::raster::Canvas, r: crate::raster::Rect) -> u64 {
+    let s = c.scale();
+    let r = r.scaled(s);
+    let (dw, dh) = c.device_size();
+    let px = move |x: i32, y: i32| {
+        if (0..dw as i32).contains(&x) && (0..dh as i32).contains(&y) {
+            c.pixels[y as usize * dw as usize + x as usize]
+        } else {
+            0
         }
-    }
-    h
+    };
+    let words = (r.y..r.bottom()).flat_map(move |y| (r.x..r.right()).map(move |x| px(x, y)));
+    fnv_words(
+        [s as u32, r.width as u32, r.height as u32]
+            .into_iter()
+            .chain(words),
+    )
+}
+
+fn fnv_words(words: impl Iterator<Item = u32>) -> u64 {
+    words
+        .flat_map(u32::to_le_bytes)
+        .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        })
 }
 
 /// The calling crate's directory as a `PathBuf`, for its pin files and test fixtures: the one
@@ -407,5 +432,14 @@ mod tests {
     fn a_stray_glyph_before_the_pin_fails_it() {
         stray("Trebuchet MS (/usr/share/fonts/trebuc.ttf) for [\"Trebuchet MS\"]");
         check("never_written", &[]);
+    }
+
+    #[test]
+    fn scale_2_canvases_differing_in_one_odd_device_pixel_hash_apart() {
+        let a = crate::raster::Canvas::with_scale(4, 3, 2);
+        let mut b = a.clone();
+        let dw = a.device_size().0 as usize;
+        b.pixels[3 * dw + 5] = 0xff00_0000;
+        assert_ne!(fnv(&a), fnv(&b), "device pixel (5, 3) is in the hash");
     }
 }

@@ -429,21 +429,7 @@ fn a_look_switch_with_a_crumb_menu_open_closes_it_and_swaps_layout() {
     assert_eq!(ex.layout(&ctx).toolbar, None, "and back whole");
 }
 
-/// Device pixels of `r` (logical) on `c`.
-fn crop_hash(c: &Canvas, r: Rect) -> u64 {
-    let s = c.scale();
-    let (dw, _) = c.device_size();
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for y in r.y * s..r.bottom() * s {
-        for x in r.x * s..r.right() * s {
-            let v = c.pixels[(y * dw as i32 + x) as usize];
-            for b in v.to_le_bytes() {
-                h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-            }
-        }
-    }
-    h
-}
+use reprisekit::pins::fnv_in;
 
 #[test]
 fn the_nav_row_pins_light_and_dark_at_scale_1_and_2() {
@@ -475,7 +461,7 @@ fn the_nav_row_pins_light_and_dark_at_scale_1_and_2() {
                 let mut c = Canvas::with_scale(792, 573, s);
                 ctx.at_scale(s, |ctx| window::draw(&ex, &mut c, ctx));
                 for (part, r) in [("buttons", sl.back_fwd), ("search", sl.search)] {
-                    got.push((format!("{look} {state} {part} @{s}"), crop_hash(&c, r)));
+                    got.push((format!("{look} {state} {part} @{s}"), fnv_in(&c, r)));
                 }
             }
         }
@@ -627,7 +613,7 @@ fn the_navigation_divider_pins_light_and_dark_at_scale_1_and_2() {
             let mut c = Canvas::with_scale(792, 573, s);
             ctx.at_scale(s, |ctx| window::draw(&ex, &mut c, ctx));
             let look = if dark { "dark" } else { "light" };
-            got.push((format!("{look} divider @{s}"), crop_hash(&c, r)));
+            got.push((format!("{look} divider @{s}"), fnv_in(&c, r)));
         }
     }
     let path = reprisekit::crate_dir!().join("tests/pins/navpane_divider.txt");

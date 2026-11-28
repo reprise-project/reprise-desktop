@@ -136,16 +136,7 @@ mod tests {
     use crate::interfaces::theme_for;
     use crate::theme::Theme;
 
-    fn fnv(c: &Canvas) -> u64 {
-        [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, p| {
-                p.to_le_bytes().iter().fold(h, |h, &b| {
-                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                })
-            })
-    }
+    use crate::pins::fnv;
 
     const BLACK: Color = Color::rgb(0, 0, 0);
     const WHITE: Color = Color::rgb(0xFF, 0xFF, 0xFF);

@@ -1141,15 +1141,7 @@ mod tests {
     }
 
     fn fnv(img: &PartImage) -> u64 {
-        fnv_pixels(&img.atlas.pixels)
-    }
-
-    fn fnv_pixels(pixels: &[u32]) -> u64 {
-        pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-            p.to_le_bytes().iter().fold(h, |h, &b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-        })
+        crate::pins::fnv(&img.atlas)
     }
 
     #[test]
@@ -1846,11 +1838,8 @@ mod tests {
         ]
     }
 
-    fn frame_pixels(img: &PartImage, state: State, k: usize) -> Vec<u32> {
-        let f = img.frame_nth(state, k);
-        (f.y..f.bottom())
-            .flat_map(|y| (f.x..f.right()).map(move |x| img.atlas.get(x, y)))
-            .collect()
+    fn frame_pixels(img: &PartImage, state: State, k: usize) -> Canvas {
+        img.atlas.copy_rect(img.frame_nth(state, k))
     }
 
     #[test]
@@ -1859,14 +1848,15 @@ mod tests {
         for s in settings() {
             for n in [1, 2] {
                 for (name, img) in attention_parts(&s, n) {
-                    let at = |k| frame_pixels(&img, State::Attention, k);
-                    let px: Vec<u32> = if name == "label edges" {
-                        [at(0), at(1)].concat()
-                    } else {
-                        at(0)
-                    };
-                    let key = format!("{:?} {:?} {} {name} {n}", s.color, s.material, s.intensity);
-                    got.push((key, fnv_pixels(&px)));
+                    let frames = if name == "label edges" { 2 } else { 1 };
+                    for k in 0..frames {
+                        let key = format!(
+                            "{:?} {:?} {} {name} {n} {k}",
+                            s.color, s.material, s.intensity
+                        );
+                        let f = frame_pixels(&img, State::Attention, k);
+                        got.push((key, crate::pins::fnv(&f)));
+                    }
                 }
             }
         }

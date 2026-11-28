@@ -1142,12 +1142,8 @@ pub(crate) mod tests {
         reprisekit::pins::fonts();
         use reprisekit::controls::form;
         use reprisekit::interface::Interface;
+        use reprisekit::pins::fnv;
         use reprisekit::raster::Canvas;
-        fn fnv(c: &Canvas) -> u64 {
-            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
-                (h ^ *p as u64).wrapping_mul(0x100000001b3)
-            })
-        }
         let row = Rect::new(X, 297, 358, 21);
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {

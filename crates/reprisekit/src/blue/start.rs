@@ -158,19 +158,6 @@ mod tests {
     use crate::blue::Variant;
     use crate::raster::Rect;
 
-    fn fnv(w: i32, h: i32, px: &[u32]) -> u64 {
-        let mut x = 0xCBF2_9CE4_8422_2325_u64;
-        let mut eat = |v: u32| {
-            for b in v.to_le_bytes() {
-                x = (x ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3);
-            }
-        };
-        eat(w as u32);
-        eat(h as u32);
-        px.iter().for_each(|&p| eat(p));
-        x
-    }
-
     fn frame_of(img: &PartImage, state: State) -> (i32, i32, Vec<u32>) {
         let r: Rect = img.frame(state);
         let c = img.atlas.copy_rect(r);
@@ -305,8 +292,8 @@ mod tests {
             for d in [1, 2] {
                 let img = start_button(v.scheme(), d);
                 for st in STATES {
-                    let (w, h, px) = frame_of(&img, st);
-                    got.push((format!("{v:?} {d} {st:?}"), fnv(w, h, &px)));
+                    let frame = img.atlas.copy_rect(img.frame(st));
+                    got.push((format!("{v:?} {d} {st:?}"), crate::pins::fnv(&frame)));
                 }
             }
         }

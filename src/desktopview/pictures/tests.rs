@@ -65,9 +65,7 @@ fn a_desktop_cell_wears_its_folders_picture() {
         };
         let (worn, plain) = (cell(Some(&icon)), cell(None));
         assert_ne!(worn.pixels, plain.pixels, "the picture shows");
-        let hash = worn.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
-            (h ^ u64::from(*p)).wrapping_mul(0x0100_0000_01b3)
-        });
+        let hash = reprisekit::pins::fnv(&worn);
         got.push((format!("scale {scale}"), hash));
     }
     let pins = reprisekit::crate_dir!().join("tests/pins/desktop_picture.txt");

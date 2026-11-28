@@ -218,22 +218,14 @@ fn paint(g: CmdGlyph, p: &Pen) -> Px {
 mod tests {
     use super::*;
 
-    /// Every device pixel and the device size.
-    fn device_fnv(c: &Canvas) -> u64 {
-        let (w, h) = c.device_size();
-        ([w, h].into_iter().chain(c.pixels.iter().copied()))
-            .flat_map(u32::to_le_bytes)
-            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn each_glyph_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
         for g in ALL {
             for s in [1, 2] {
-                got.push((format!("{g:?} {s}"), device_fnv(&canvas(g, 16, s))));
+                got.push((format!("{g:?} {s}"), fnv(&canvas(g, 16, s))));
             }
         }
         crate::pins::check("art/cmdglyph", &got);

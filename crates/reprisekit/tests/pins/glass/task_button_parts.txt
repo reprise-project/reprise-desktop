@@ -1,16 +1,16 @@
-buttons c898a3f2e8392891
-small buttons 312bcd0e711f590e
-stacks 5b07675d5b32f0ae
-small stacks 4c9876e0805d3649
-pager tiles 3ffe07462707e545
-small pager tiles 8c569a247e260cc2
-label e3b2dffd554fb7b9
-label edges 8e545716b56b8219
-lit buttons 0477101818ee3909
-lit buttons' gain dce9d0e7d01c01bd
-lit small buttons bf2d2339c661a608
-lit small buttons' gain 1c1498f0bc8575dd
-lit label 0966bc1cac7f8af3
-lit label's gain 4cd2d323e581f16d
-lit stacks 29bbc6371328b3f2
-lit stacks' gain e7a7a46814025435
+buttons 09f12f9e4e893ad0
+small buttons b61853955f355a09
+stacks c52a27b50cc26feb
+small stacks dc1bbf6d0addc53e
+pager tiles 2447f87edf81b3a8
+small pager tiles fcc9c0af4c767bd1
+label e6918eecda78a03a
+label edges 84c5d4c6b190a382
+lit buttons 34ab40e8b95dc310
+lit buttons' gain e7aa11fc20f00938
+lit small buttons 05d75bdce7f9f88f
+lit small buttons' gain 4f399dad096143fa
+lit label 3c2ba25f8f1f4820
+lit label's gain c9c452741558c03e
+lit stacks 3191860bf4aaac97
+lit stacks' gain ae7a5bff2f2e27e4
