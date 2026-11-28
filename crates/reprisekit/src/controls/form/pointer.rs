@@ -188,7 +188,7 @@ impl Form {
             match &it.control {
                 Control::Combo(c) => {
                     let clipped = self.clip_of(it).is_some_and(|v| !v.contains(x, y));
-                    let lay = combo::layout(c, self.at(it), &self.rendered.controls.get());
+                    let lay = self.combo_layout(i, c, self.at(it));
                     match combo::hit(c, &lay, x, y) {
                         Some(combo::Hit::Field | combo::Hit::Drop) if clipped => {}
                         Some(h) => {
@@ -240,7 +240,7 @@ impl Form {
             }
             let part = match &it.control {
                 Control::Combo(c) => {
-                    let lay = combo::layout(c, self.at(it), &self.rendered.controls.get());
+                    let lay = self.combo_layout(i, c, self.at(it));
                     match combo::hit(c, &lay, x, y) {
                         Some(h) => Part::Combo(h),
                         None => continue,
@@ -799,6 +799,10 @@ impl Form {
         let rect = self.at(&self.items[i]);
         let id = self.items[i].id;
         let grow = self.units().small();
+        let combo_lay = match &self.items[i].control {
+            Control::Combo(c) => Some(self.combo_layout(i, c, rect)),
+            _ => None,
+        };
         match (&mut self.items[i].control, drag) {
             (Control::Edit { edit, .. }, Drag::Edit(_)) => {
                 // The host hit-tested the pointer already, so the index
@@ -839,8 +843,7 @@ impl Form {
                 }
             }
             (Control::Combo(c), Drag::Bar { thumb, .. }) => {
-                let lay = combo::layout(c, rect, &self.rendered.controls.get());
-                if c.drag_bar(&lay, &thumb, y) {
+                if combo_lay.is_some_and(|lay| c.drag_bar(&lay, &thumb, y)) {
                     return Event::Redraw;
                 }
             }

@@ -338,3 +338,69 @@ fn an_open_list_alone_lights_under_the_pointer() {
     f.tip_tick();
     assert_eq!(f.label_tip().as_deref(), Some(LONG), "with the list closed");
 }
+
+/// An open form combo's list is as wide as its longest row, at scale 1 and 2: drawn, hit and
+/// hosted alike, and moved left to stay inside the canvas when the field sits near its edge.
+#[test]
+fn an_open_form_combo_list_takes_its_longest_row_inside_the_canvas() {
+    use crate::controls::hosted::Hosted;
+    const LONG: &str = "Integrated Audio Controller Speaker and Headphones";
+    let theme = Theme::default();
+    let t = tr();
+    for s in [1, 2] {
+        for (x, want_right) in [(20, None), (300, Some(400))] {
+            let mut item = Item::combo("c", x, 10, 80, &["Speakers", LONG], 2);
+            if let Control::Combo(c) = &mut item.control {
+                c.elide = true;
+            }
+            let mut f = Form::new(vec![item]);
+            let p = classic_paint(&theme.colors, s);
+            let mut c = Canvas::new(400 * s as u32, 200 * s as u32);
+            draw(&mut c, &t, &p, &f, false, PX * s as u32);
+            f.click(at(&f, x + 10, 15));
+            draw(&mut c, &t, &p, &f, false, PX * s as u32);
+            let field = f.rect("c").unwrap();
+            let need = 1 + 2 + (t.measure(LONG, false, PX * s as u32) + s - 1) / s + 3;
+            let list = f.spots()[0].rect;
+            match want_right {
+                None => assert_eq!(
+                    (list.x, list.width),
+                    (field.x, need),
+                    "scale {s}: from the field, as wide as the longest row"
+                ),
+                Some(r) => assert_eq!(
+                    (list.right(), list.width),
+                    (r, need),
+                    "scale {s}: ends at the canvas's right edge"
+                ),
+            }
+            let edge = list.right() - 1;
+            assert_ne!(
+                c.get(edge * s, (list.y + 3) * s),
+                0,
+                "scale {s}: the list's right edge is drawn"
+            );
+            let row = (list.height - 2) / 2;
+            assert_eq!(
+                f.popup_hit(edge - 2, list.y + 1 + row + row / 2)
+                    .map(|h| h.part),
+                Some(Part::Combo(combo::Hit::Row(1))),
+                "scale {s}: the long row is hit at its far end"
+            );
+        }
+    }
+    let mut f = Form::new(vec![Item::combo("c", 20, 10, 80, &["a", LONG], 2)]);
+    let p = classic_paint(&theme.colors, 1);
+    let mut c = Canvas::new(400, 200);
+    draw(&mut c, &t, &p, &f, false, PX);
+    if let Some(Control::Combo(cb)) = f.item_mut("c").map(|i| &mut i.control) {
+        cb.items[1].text = "Speakers".into();
+        cb.toggle();
+    }
+    draw(&mut c, &t, &p, &f, false, PX);
+    assert_eq!(
+        f.spots()[0].rect.width,
+        f.rect("c").unwrap().width,
+        "a row that changed is measured again"
+    );
+}

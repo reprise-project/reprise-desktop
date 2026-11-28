@@ -252,6 +252,57 @@ impl Form {
         );
     }
 
+    /// Keeps the width each combo's open list takes at the text `text` sets at `px` on a paint at
+    /// scale `s`, and `c`'s logical rect, for [`Form::combo_layout`]. Run by `draw`, closed combos
+    /// too: a host asks for a hosted list's [`Spot`](crate::controls::hosted::Spot) as it opens,
+    /// before the next draw. A combo whose rows, text and scale are unchanged keeps its width.
+    pub(super) fn measure_lists(&self, c: &Canvas, text: &TextRenderer, px: u32, s: i32) {
+        let text = text.dialog(self.font);
+        let cm = self.controls();
+        let mut need = self.rendered.list_need.borrow_mut();
+        need.resize(self.items.len(), None);
+        for (it, kept) in self.items.iter().zip(need.iter_mut()) {
+            let Control::Combo(cb) = &it.control else {
+                *kept = None;
+                continue;
+            };
+            let row_h = cb.row_h(&cm);
+            let key = list_key(cb, row_h, px, s);
+            if kept.is_none_or(|(k, _)| k != key) {
+                *kept = Some((key, combo::rows_need(cb, row_h, text, px, s)));
+            }
+        }
+        let b = c.bounds();
+        let s = s.max(1);
+        self.rendered
+            .bounds
+            .set(Rect::new(0, 0, b.width / s, b.height / s));
+    }
+
+    /// Combo item `i`'s layout in `field`, its open list widened to its longest row as far as the
+    /// last draw's canvas allows. Draw, hit, access and a hosted list all lay the list out here.
+    pub(super) fn combo_layout(&self, i: usize, cb: &combo::Combo, field: Rect) -> combo::Layout {
+        let mut lay = combo::layout(cb, field, &self.controls());
+        let need = self
+            .rendered
+            .list_need
+            .borrow()
+            .get(i)
+            .copied()
+            .flatten()
+            .map_or(0, |(_, need)| need);
+        let mut bounds = self.rendered.bounds.get();
+        if bounds.is_empty() {
+            return lay;
+        }
+        // A popup's list stays where the compositor put it.
+        if cb.list_at.is_some() {
+            bounds.x = lay.list.x;
+        }
+        combo::widen_within_to(&mut lay, need, bounds);
+        lay
+    }
+
     /// The items whose text `text` at `px` does not fit once [`Form::fit_text`] and
     /// [`Form::lay_out_notes`] have laid them out at 1x, with how many px it runs over: a label
     /// or a combo's widest value wider than its rect, a check box's or radio's label running
@@ -499,4 +550,15 @@ pub(super) fn choice_label_room(
         .and_then(|r| r.cut(i, from))
         .map_or(i32::MAX, |x| x * s);
     cut.min(shown.right()) - from * s
+}
+
+/// What [`combo::rows_need`] measures `cb`'s rows from.
+fn list_key(cb: &combo::Combo, row_h: i32, px: u32, s: i32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    (row_h, px, s).hash(&mut h);
+    for it in &cb.items {
+        (&it.text, it.indent, it.icon.is_some()).hash(&mut h);
+    }
+    h.finish()
 }

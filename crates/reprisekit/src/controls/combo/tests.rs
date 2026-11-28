@@ -31,6 +31,13 @@ fn a_list_widened_within_bounds_takes_its_longest_row_and_moves_left_to_stay_ins
         (0, 150),
         "no wider than the bounds"
     );
+    let mut lay = layout(&c, field, &cm);
+    widen_within(&c, &mut lay, Rect::new(0, 0, 100, 600), &text, 11);
+    assert_eq!(
+        (lay.list.x, lay.list.width),
+        (300, 120),
+        "never narrower than its field, and under it"
+    );
 }
 
 #[test]

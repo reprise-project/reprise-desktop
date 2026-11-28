@@ -32,7 +32,7 @@ use accesskit::{Node, NodeId, Role};
 use std::cell::Cell;
 
 mod act;
-pub use act::{Act, list_above, widen_within};
+pub use act::{Act, list_above, widen_within, widen_within_to};
 
 /// One row of the drop list: label, optional 16 px icon and indent level (levels under the root). A list with no icon anywhere is plain and ignores indents. A greyed row draws in `gray_text` and is never highlighted or picked.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -598,9 +598,16 @@ pub fn layout_rows(combo: &Combo, field: Rect, cm: &ControlMetrics, row_h: i32) 
 /// Widens `lay`'s open list past its field to the width its widest row's text takes at `px`,
 /// to `right` at most; a row still wider ends in an ellipsis when drawn.
 pub fn widen_list(combo: &Combo, lay: &mut Layout, text: &TextRenderer, px: u32, right: i32) {
+    widen_to(lay, rows_need(combo, lay.row_h, text, px, 1), right);
+}
+
+/// The width in logical px the open list's rows, `row_h` tall, take for the widest row's text at
+/// `px`, scrollbar aside. A canvas drawn at scale `s` passes `s` times the 1x px.
+pub fn rows_need(combo: &Combo, row_h: i32, text: &TextRenderer, px: u32, s: i32) -> i32 {
+    let s = s.max(1);
     let shell = shell(&combo.items);
-    let slot = icon_slot(&combo.items, 1, lay.row_h);
-    let need = combo
+    let slot = icon_slot(&combo.items, 1, row_h);
+    combo
         .items
         .iter()
         .map(|it| {
@@ -608,11 +615,15 @@ pub fn widen_list(combo: &Combo, lay: &mut Layout, text: &TextRenderer, px: u32,
                 true => LIST_ICON_X + it.indent * INDENT_STEP + slot + ICON_GAP,
                 false => 2,
             };
-            1 + start + text.measure(&it.text, false, px) + 3
+            1 + start + (text.measure(&it.text, false, px) + s - 1) / s + 3
         })
         .max()
         .unwrap_or(0)
-        + lay.scrollbar.map_or(0, |sb| sb.width);
+}
+
+/// [`widen_list`] to rows `need` px wide ([`rows_need`]).
+fn widen_to(lay: &mut Layout, need: i32, right: i32) {
+    let need = need + lay.scrollbar.map_or(0, |sb| sb.width);
     let width = need.min(right - lay.list.x).max(lay.list.width);
     let grow = width - lay.list.width;
     lay.list.width = width;
