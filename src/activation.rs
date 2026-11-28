@@ -371,7 +371,7 @@ impl State {
                 (None, Some((word, p))) => {
                     program_line(&cmd, word, p.missing(path.as_deref()), &terminal)
                 }
-                (None, None) => RunLine::Command,
+                (None, None) => shell_line(&cmd, &terminal),
             };
             Box::new(move |state: &mut State| state.run_line_checked(&cmd, from, line))
         });
@@ -520,16 +520,24 @@ enum RunLine {
 }
 
 /// What Run line `cmd` with program `word` does, `missing` saying whether `word` is on `PATH`. A
-/// habit name typed alone starts its Reprise program even when `PATH` has one of that name (Wine
-/// puts a `notepad` there); typed with arguments it starts the installed program, which those
-/// arguments were written for, and the Reprise one only when none is installed.
+/// habit name starts its Reprise program, with any arguments, even when `PATH` has one of that
+/// name (Wine puts a `notepad` there).
 fn program_line(cmd: &str, word: String, missing: bool, terminal: &str) -> RunLine {
-    let alone = cmd.trim() == word;
     match crate::spawn::habit_line(cmd, &word, terminal) {
-        Some(line) if alone || missing => RunLine::Habit(line),
-        _ if missing => RunLine::Missing(word),
-        _ => RunLine::Command,
+        Some(line) => RunLine::Habit(line),
+        None if missing => RunLine::Missing(word),
+        None => RunLine::Command,
     }
+}
+
+/// What a Run line `sh` reads as more than a program and its arguments does: one that starts
+/// with a habit name and a space (`notepad "my notes.txt"`) starts the Reprise program.
+fn shell_line(cmd: &str, terminal: &str) -> RunLine {
+    let habit = cmd
+        .split_whitespace()
+        .next()
+        .and_then(|word| crate::spawn::habit_line(cmd, word, terminal));
+    habit.map_or(RunLine::Command, RunLine::Habit)
 }
 
 /// Whether `path`, which is not there, reaches into one of `archives` (each with its type) that
@@ -1316,7 +1324,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_habit_name_alone_beats_a_program_of_that_name_on_path() {
+    fn a_habit_name_beats_a_program_of_that_name_on_path() {
         let line = |cmd: &str, missing| {
             let word = cmd.split_whitespace().next().unwrap().to_string();
             program_line(cmd, word, missing, "foot")
@@ -1326,15 +1334,21 @@ pub(crate) mod tests {
         assert_eq!(line("notepad", true), habit("reprise-notepad"));
         assert_eq!(
             line("notepad /tmp/a.txt", false),
-            RunLine::Command,
-            "with arguments, the installed program"
-        );
-        assert_eq!(
-            line("notepad /tmp/a.txt", true),
             habit("reprise-notepad /tmp/a.txt")
         );
+        assert_eq!(line("CMD.exe -e top", true), habit("foot -e top"));
         assert_eq!(line("firefox", false), RunLine::Command);
         assert_eq!(line("fooberx", true), RunLine::Missing("fooberx".into()));
+    }
+
+    #[test]
+    fn a_habit_name_before_shell_syntax_runs_its_reprise_program() {
+        assert_eq!(
+            shell_line("notepad \"my notes.txt\"", "foot"),
+            RunLine::Habit("reprise-notepad \"my notes.txt\"".into())
+        );
+        assert_eq!(shell_line("notepad;true", "foot"), RunLine::Command);
+        assert_eq!(shell_line("echo \"notepad\"", "foot"), RunLine::Command);
     }
 
     #[test]
