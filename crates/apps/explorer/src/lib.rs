@@ -291,6 +291,8 @@ pub struct Explorer {
     pub address: AddressBar,
     /// The shell layout's address while it is not edited; the edit is `address`'s field.
     pub crumbs: reprisekit::controls::breadcrumb::Breadcrumb,
+    /// The place whose search the crumbs end in ([`Explorer::sync_search_crumb`]).
+    pub(crate) search_crumb: Option<Place>,
     /// The shell layout's Back, Forward and recent places.
     pub nav: reprisekit::controls::navbuttons::NavButtons,
     /// The shell layout's details pane, its facts set with the status bar's panels.
@@ -695,6 +697,7 @@ impl Explorer {
             cmdbar_acts: Vec::new(),
             address: AddressBar::new(vec![ListItem::new("")], 0, None),
             crumbs: Default::default(),
+            search_crumb: None,
             nav: Default::default(),
             details: Default::default(),
             shell_on: false,
@@ -1119,12 +1122,16 @@ impl Explorer {
     }
 
     /// Go somewhere new, recorded in the history. Going where we already are
-    /// is a refresh: Enter on unchanged address text re-lists the folder.
+    /// is a refresh: Enter on unchanged address text re-lists the folder. A search under way
+    /// or shown there ends instead, back to the folder's listing.
     pub fn go(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
         if place == self.place {
             // Going where the window already is drops another place still being read.
             if let Some(r) = self.reading.take_if(|r| r.key.0 != place) {
                 self.leave(r);
+            }
+            if let Some(left) = self.cancel_search(ctx) {
+                return left;
             }
             return self.refresh(ctx);
         }
@@ -2319,6 +2326,7 @@ impl Explorer {
     /// progress window held still on a box takes a tick once its job moved.
     pub(crate) fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let mut reply = route(self, win, ev, ctx);
+        reply.redraw |= self.sync_search_crumb();
         // The task pane draws its focus rectangle only while it holds the keyboard.
         if self.focus != Focus::Tasks {
             self.taskpane.focus = None;

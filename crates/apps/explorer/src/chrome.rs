@@ -476,6 +476,15 @@ pub(crate) fn crumbs_for(place: &Place, drives: &[Drive], shares: &[Share]) -> V
         .collect()
 }
 
+/// The segment the crumbs end in while a search under `place` runs or shows results, read as
+/// the search's caption; its chevron lists `place`'s subfolders.
+pub(crate) fn search_crumb(place: &Place, shares: &[Share]) -> Crumb {
+    Crumb {
+        label: tr!("search-caption", place = place.title_in(shares)),
+        target: crumb_target(place, shares),
+    }
+}
+
 fn crumb_label(p: &Place, drives: &[Drive], shares: &[Share]) -> String {
     match p {
         Place::Folder(at) => {

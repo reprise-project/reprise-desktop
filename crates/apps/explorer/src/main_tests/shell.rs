@@ -5,6 +5,9 @@ use reprisekit::classic::widgets::FIELD_PAD;
 use reprisekit::interface::Interface;
 use reprisekit::raster::Rect;
 
+#[path = "search_crumb.rs"]
+mod search_crumb;
+
 fn glass(dark: bool) -> Ctx {
     let mut ctx = test_ctx();
     let g = reprisekit::glass::Settings {
