@@ -2366,6 +2366,10 @@ impl Explorer {
         if self.focus != Focus::Tasks {
             self.taskpane.focus = None;
         }
+        // So does the command bar its keyboard command.
+        if self.focus != Focus::Commands {
+            reply.redraw |= self.cmdbar.focus.take().is_some();
+        }
         // The pointer or the keyboard came to or left the navigation pane, or its fade ticked.
         if win == MAIN {
             let (faded, fading) = self.nav_fade();
@@ -2482,7 +2486,7 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
                 redraw: lit
                     || closed
                     || tipped
-                    || matches!(ex.focus, Focus::Address | Focus::Search),
+                    || matches!(ex.focus, Focus::Address | Focus::Search | Focus::Commands),
                 ..Reply::none()
             }
         }
