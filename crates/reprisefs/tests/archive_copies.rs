@@ -1,53 +1,25 @@
-//! What the programs do with a file copied out of a compressed folder. Its own binary: it points
-//! `$XDG_CACHE_HOME` and `$XDG_DATA_HOME` at a scratch home before anything reads them.
+//! What the programs do with a file copied out of a compressed folder. Its own binary, in a test
+//! session of its own, so its cache and data folders start empty and go with the session.
 
 use reprisefs::{archive, archivecopy, recent};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-const HOME_PREFIX: &str = "reprisefs-archive-copies-";
+reprisebus::test_session!();
 
-static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-
-/// Removes the scratch home as the test binary exits; statics are never dropped.
-extern "C" fn remove_home() {
-    if let Some(home) = HOME.get() {
-        let _ = std::fs::remove_dir_all(home);
-    }
+/// A folder the test session points `var` at.
+fn session(var: &str) -> PathBuf {
+    std::env::var_os(var)
+        .expect("set by the test session")
+        .into()
 }
 
 fn home() -> PathBuf {
-    HOME.get_or_init(|| {
-        // Homes of runs that were killed before their exit handler ran.
-        for e in std::fs::read_dir(std::env::temp_dir())
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let name = e.file_name();
-            let pid = name.to_str().and_then(|n| n.strip_prefix(HOME_PREFIX));
-            if pid.is_some_and(|p| !Path::new("/proc").join(p).exists()) {
-                let _ = std::fs::remove_dir_all(e.path());
-            }
-        }
-        let home = std::env::temp_dir().join(format!("{HOME_PREFIX}{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
-        std::fs::create_dir_all(&home).expect("a scratch home");
-        // SAFETY: `remove_home` is a plain extern "C" fn with no arguments.
-        unsafe { libc::atexit(remove_home) };
-        // SAFETY: set once, before any test reads the environment; the others wait on the lock.
-        unsafe {
-            std::env::set_var("XDG_CACHE_HOME", home.join("cache"));
-            std::env::set_var("XDG_DATA_HOME", home.join("data"));
-        }
-        home
-    })
-    .clone()
+    session("HOME")
 }
 
 /// A read-only copy named `name` in a fresh scratch folder, as Explorer leaves one.
 fn copy(name: &str, bytes: &[u8]) -> PathBuf {
-    home();
     let copy = archive::scratch().expect("a scratch folder").join(name);
     std::fs::write(&copy, bytes).expect("write the copy");
     std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o400)).expect("chmod");
@@ -73,7 +45,7 @@ fn a_copy_out_of_a_compressed_folder_is_not_recorded() {
 
 #[test]
 fn a_background_from_a_compressed_folder_is_kept_in_the_data_dir() {
-    let kept_dir = home().join("data/reprise/backgrounds");
+    let kept_dir = session("XDG_DATA_HOME").join("reprise/backgrounds");
     let first = archivecopy::lasting_background(&copy("dunes.png", b"one")).expect("kept");
     assert_eq!(first, kept_dir.join("dunes.png"));
     let again = archivecopy::lasting_background(&copy("dunes.png", b"one")).expect("kept again");
@@ -84,7 +56,7 @@ fn a_background_from_a_compressed_folder_is_kept_in_the_data_dir() {
     assert_eq!(std::fs::read(&other).expect("read"), b"two");
     let own = plain("dunes.png", b"mine");
     assert_eq!(archivecopy::lasting_background(&own).expect("own"), own);
-    let around = home().join("cache/reprise/archives/../../docs/dunes.png");
+    let around = session("XDG_CACHE_HOME").join("reprise/archives/../../docs/dunes.png");
     assert_eq!(
         archivecopy::lasting_background(&around).expect("own"),
         around
@@ -93,7 +65,7 @@ fn a_background_from_a_compressed_folder_is_kept_in_the_data_dir() {
 
 #[test]
 fn a_kept_background_never_writes_through_a_link_in_its_place() {
-    let kept_dir = home().join("data/reprise/backgrounds");
+    let kept_dir = session("XDG_DATA_HOME").join("reprise/backgrounds");
     std::fs::create_dir_all(&kept_dir).expect("mkdir");
     let own = plain("sun.png", b"mine");
     std::os::unix::fs::symlink(&own, kept_dir.join("sun.png")).expect("symlink");
