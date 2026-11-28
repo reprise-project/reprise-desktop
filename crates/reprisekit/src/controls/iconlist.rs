@@ -253,6 +253,7 @@ pub fn draw(c: &mut Canvas, p: &Paint, list: &IconList, lay: &Layout, cue: bool,
             c.fill_rect(r.intersect(&clip), cs.hilight);
         }
         if let Some(Some(icon)) = list.icons.get(k) {
+            let icon = &*crate::icon::on_ground(icon, cs.window, cs.window_text, s);
             c.blit_over_clipped(r.x + lay.icon.0 * s, r.y + lay.icon.1 * s, icon, clip);
         }
         if picked && cue {

@@ -385,7 +385,17 @@ fn draw_strip(
             Some(_) => crate::look::GREYED_ICON_ON_GLASS,
             None => (1, 2),
         };
-        draw_icon(c, icon_box, icon, enabled, greyed, off);
+        let grounded = icon
+            .filter(|_| glass_ink.is_none())
+            .map(|i| crate::icon::on_ground(i, p.cs.button_face, p.cs.button_text, s));
+        draw_icon(
+            c,
+            icon_box,
+            grounded.as_deref().or(icon),
+            enabled,
+            greyed,
+            off,
+        );
 
         if tb.big
             && let Some(label) = label

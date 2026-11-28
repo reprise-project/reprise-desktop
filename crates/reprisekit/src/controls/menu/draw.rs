@@ -326,6 +326,7 @@ pub fn draw_menu_at(
                 let glyph_y = centred(r, 7 * k, s);
                 match icon {
                     Some(ic) => {
+                        let ic = &*crate::icon::on_ground(ic, cs.menu, cs.menu_text, s);
                         let iy = r.y + (r.height - ic.height as i32) / 2;
                         canvas.blit_canvas(r.x + layout.icon_x, iy, ic);
                     }
@@ -558,6 +559,7 @@ fn draw_gutter_menu(
         let square = Rect::new(r.x, r.y, r.height, r.height);
         match icon {
             Some(ic) => {
+                let ic = &*crate::icon::on_ground(ic, cs.menu, cs.menu_text, s);
                 let iy = r.y + (r.height - ic.height as i32) / 2;
                 canvas.blit_canvas(r.x + layout.icon_x, iy, ic);
             }

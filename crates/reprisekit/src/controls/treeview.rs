@@ -914,6 +914,7 @@ pub fn draw(
             }
         }
         if let Some(ic) = node.shown_icon() {
+            let ic = &*crate::icon::on_ground(ic, cs.window, cs.window_text, s);
             // An icon smaller than the column (not yet loaded at the text size) sits centred in it.
             let dx = ((lay.icon * s - ic.width as i32) / 2).max(0);
             bc.blit_over(ix + dx, y + (row_h - ic.height as i32) / 2, ic);

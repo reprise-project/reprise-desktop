@@ -1045,6 +1045,7 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
                     (tx, cx + cw - tx - 2 * s)
                 } else {
                     if let Some(ic) = lv.rows.icon_in(i, icon_w, s) {
+                        let ic = &*crate::icon::on_ground(ic, cs.window, cs.window_text, s);
                         let dx = match icon_w > ICON_PX {
                             true => (icon_w * s - ic.width as i32).max(0) / 2,
                             false => 0,

@@ -801,6 +801,7 @@ pub fn draw(
         // A smaller icon than the box (one fetched before the text grew) centres in it.
         let x = r.x + (r.width - icon.width as i32).max(0) / 2;
         let y = r.y + (r.height - icon.height as i32).max(0) / 2;
+        let icon = &*crate::icon::on_ground(icon, cs.window, cs.window_text, s);
         if focus && combo.enabled && !editable && !list_button {
             let tinted = crate::controls::iconview::tint_selected(icon, cs.hilight);
             c.blit_over(x, y, &tinted);
@@ -1025,6 +1026,7 @@ pub fn draw_list_rows(
         }
         let ix = r.x + (LIST_ICON_X + items[i].indent * INDENT_STEP) * s;
         if let Some(icon) = &items[i].icon {
+            let icon = &*crate::icon::on_ground(icon, cs.window, cs.window_text, s);
             let (mut dx, mut dy) = (0, (row_h - SHELL_ROW_H) / 2 * s);
             if slot > 16 {
                 dx = (slot * s - icon.width as i32).max(0) / 2;

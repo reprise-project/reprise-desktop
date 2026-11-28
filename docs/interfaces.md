@@ -8,6 +8,7 @@ Set `[appearance] interface` to `"classic"` (default), `"blue"` or `"glass"`, or
 
 - Classic wears `dark_color_scheme` while dark (a dark Classic scheme, default One Dark; a High Contrast user picks High Contrast Black there to keep high contrast), Blue its scheme's dark twin, Glass dark glass. `[colors]` overrides apply over the dark colours too.
 - A dark Classic `color_scheme` in light mode also reads as dark to programs and the portal.
+- Programs' pages, lists, editors and backdrops take the dark window colour; Paint's picture keeps its own colours. On a dark list, menu, toolbar or dialog an icon whose outline would vanish gets a thin light halo, and a single-grey symbolic icon too dark to read is drawn in the text colour.
 - Running programs, the taskbar and open windows switch live. The portal tells GTK, Qt and browsers (`org.freedesktop.appearance` color-scheme), the generated GTK and Qt themes are rewritten, and `[toolkits] gtk_theme = "auto"` picks Adwaita-dark.
 - `mode`, `dark_from` and `dark_to` used to live in `[glass]`. They still work there for Glass where `[appearance]` leaves them out, and the config notice names them until they move.
 

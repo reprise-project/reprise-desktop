@@ -62,6 +62,7 @@ pub(super) fn draw_list_row(
     .intersect(&clip_s);
     let boxed = item::draw_item(c, p, item_box, row.mark);
     if let Some(icon) = row.icon {
+        let icon = &*crate::icon::on_ground(icon, cs.window, cs.window_text, s);
         let (mut dx, mut dy) = (0, (cell_s.height / s - slot) / 2 * s);
         if slot > ICON_PX {
             dx += (slot * s - icon.width as i32).max(0) / 2;
