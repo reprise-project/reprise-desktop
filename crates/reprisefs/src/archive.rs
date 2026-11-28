@@ -169,15 +169,16 @@ fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failur
 /// [`MAX_ENTRIES`] entries, or whose names add up to more than [`MAX_NAME_BYTES`], is refused as
 /// soon as the listing passes them; cancelling `m` stops it.
 pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
-    list_within(archive, m, MAX_NAME_BYTES, &mut |_, _| {})
+    list_within(archive, m, MAX_NAME_BYTES, &mut |_, _| {}).map(|(e, _)| e)
 }
 
-/// [`list`], handing `note` each entry with its permission bits.
+/// [`list`], handing `note` each entry with its permission bits, and the count of every entry
+/// the archive holds, links and others `list` leaves out included.
 pub(crate) fn list_noting(
     archive: &Path,
     m: &Meter,
     note: &mut dyn FnMut(&Entry, u32),
-) -> Result<Vec<Entry>, String> {
+) -> Result<(Vec<Entry>, u64), String> {
     list_within(archive, m, MAX_NAME_BYTES, note)
 }
 
@@ -186,7 +187,7 @@ fn list_within(
     m: &Meter,
     most_names: usize,
     note: &mut dyn FnMut(&Entry, u32),
-) -> Result<Vec<Entry>, String> {
+) -> Result<(Vec<Entry>, u64), String> {
     if zip_encrypted(archive) {
         return Err(tr!("archive-locked"));
     }
@@ -228,7 +229,7 @@ fn list_within(
         return Err(tr!("archive-names-too-long", most = most));
     }
     match status? {
-        s if s.success() => Ok(entries),
+        s if s.success() => Ok((entries, seen)),
         s if ran_out(&s) => Err(tr!("archive-too-long")),
         _ if locked(&stderr) => Err(tr!("archive-locked")),
         _ => Err(extract::said(&stderr, &tr!("archive-unread"))),
@@ -1669,11 +1670,11 @@ mod tests {
         let archive = t.path().join("many.tar.gz");
         let m = Meter::default();
         assert_eq!(
-            list_within(&archive, &m, 5000, &mut |_, _| {}).map(|e| e.len()),
+            list_within(&archive, &m, 5000, &mut |_, _| {}).map(|(e, _)| e.len()),
             Ok(50)
         );
         assert_eq!(
-            list_within(&archive, &m, 4000, &mut |_, _| {}),
+            list_within(&archive, &m, 4000, &mut |_, _| {}).map(|(e, _)| e),
             Err("its names add up to more than 3.90 KB.".into())
         );
     }
