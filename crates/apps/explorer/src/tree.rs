@@ -27,7 +27,7 @@ impl Explorer {
     /// The navigation pane's Favorites (the Desktop, the Downloads folder, then each bookmarked
     /// folder not already there) and its groups (Home, Computer, Network, the Recycle Bin), named.
     /// A bookmark's folder is listed whether or not it is there: nothing here stats a mount.
-    fn nav_places(&self) -> (foldertree::Named, foldertree::Named) {
+    pub(crate) fn nav_places(&self) -> (foldertree::Named, foldertree::Named) {
         let named = |p: Place| (self.title_of(&p), p);
         let downloads =
             reprisefs::places::user_dir("DOWNLOAD", "Downloads").map(|d| Place::from_path(&d));

@@ -629,8 +629,9 @@ impl Explorer {
         m
     }
 
-    /// The « menu: the crumbs folded into it, nearest first, each going to its place and wearing
-    /// its icon.
+    /// The « menu: the crumbs folded into it, nearest first, then the navigation pane's places
+    /// (Home, Computer, Network, the Recycle Bin), the one the location lies under bold; each row
+    /// going to its place and wearing its icon.
     pub(crate) fn folded_crumbs_menu(
         &self,
         folded: usize,
@@ -652,7 +653,23 @@ impl Explorer {
                 px,
             );
         }
-        (!m.menu.items().is_empty()).then(|| m.popup(at, ctx))
+        if n == 0 {
+            return None;
+        }
+        m.menu.sep();
+        let root = places.first();
+        for (label, place) in self.nav_places().1 {
+            let names = self.place_icon_names(&place);
+            let item = MenuItem::entry(label).bold(root == Some(&place));
+            m.row(
+                item,
+                Command::GoTo(place),
+                (None, names),
+                &mut ctx.icons,
+                px,
+            );
+        }
+        Some(m.popup(at, ctx))
     }
 
     /// Opens the menu of crumb `i`'s subfolders at `at`. The listing thread reads them with their
