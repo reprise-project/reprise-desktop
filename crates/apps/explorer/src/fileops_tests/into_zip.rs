@@ -157,6 +157,21 @@ fn a_zips_item_menu_pastes_into_it() {
 }
 
 #[test]
+fn a_read_only_zip_takes_no_drop_and_its_menu_has_no_paste() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut ctx = test_ctx();
+    let (_t, zip, _) = zip_beside(&[("a.txt", "a")], &[], &mut ctx);
+    std::fs::set_permissions(&zip, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+    let dir = zip.parent().expect("a folder").to_path_buf();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir), &mut ctx);
+    let i = ex.index_of(&zip).expect("listed");
+    assert_eq!(ex.entry_dir(i), None, "the drop is refused");
+    ex.sv.selection.set_only(Some(i));
+    ex.entry_menu_at(i, (0, 0), &mut ctx, false);
+    assert!(ex.menu_paste.is_none());
+}
+
+#[test]
 fn a_file_onto_a_folder_of_its_name_in_the_zip_is_refused_as_a_copy_refuses_it() {
     let mut ctx = test_ctx();
     let (_t, zip, mut ex) = zip_beside(

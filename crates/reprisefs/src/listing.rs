@@ -41,6 +41,9 @@ pub struct Item {
     /// A file system is mounted here. It may never answer, so the listing gives its cached
     /// attributes and reads nothing inside it.
     pub mount_root: bool,
+    /// A regular file of this user's with its write bit, through a link
+    /// ([`crate::zipwrite::takes_writes`]): a zip that files go into.
+    pub takes_writes: bool,
     /// An item listed in the Recycle Bin: where it was deleted from and
     /// when, as its `.trashinfo` records them. Boxed so every other
     /// listing's items stay small.
@@ -450,6 +453,7 @@ fn item_with(
     let exec = meta
         .as_ref()
         .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+    let takes_writes = meta.as_ref().is_some_and(crate::zipwrite::takes_writes);
     let name = p
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -496,6 +500,7 @@ fn item_with(
         kind,
         drive: None,
         mount_root: mount.is_some(),
+        takes_writes,
         trashed: None,
         shortcut,
     }

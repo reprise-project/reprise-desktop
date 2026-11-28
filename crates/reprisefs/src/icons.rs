@@ -215,6 +215,7 @@ mod tests {
             kind: String::new(),
             drive,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };
@@ -260,6 +261,7 @@ mod tests {
             kind: String::new(),
             drive: None,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };
@@ -290,6 +292,7 @@ mod tests {
             kind: String::new(),
             drive: Some(DriveKind::Removable),
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };
@@ -315,6 +318,7 @@ mod tests {
             kind: String::new(),
             drive: None,
             mount_root: true,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };
@@ -343,6 +347,7 @@ mod tests {
             kind: "TXT File".into(),
             drive: None,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };

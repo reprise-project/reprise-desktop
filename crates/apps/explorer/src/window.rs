@@ -1089,6 +1089,7 @@ mod tests {
             kind: kind.to_string(),
             drive: None,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         }

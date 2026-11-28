@@ -696,6 +696,7 @@ fn row_item(place: &Place) -> Option<Item> {
         kind: tr!("place-row-item-system-folder"),
         drive: None,
         mount_root: false,
+        takes_writes: false,
         trashed: None,
         shortcut: None,
     })
@@ -796,6 +797,7 @@ fn archive_item(
         mime,
         drive: None,
         mount_root: false,
+        takes_writes: false,
         trashed: None,
         shortcut: None,
     }
@@ -816,6 +818,7 @@ fn drive_item(d: &Drive) -> Item {
         kind: d.kind().label().to_string(),
         drive: Some(d.kind()),
         mount_root: false,
+        takes_writes: false,
         trashed: None,
         shortcut: None,
     }
@@ -845,6 +848,7 @@ fn volume_item(volumes: &Snapshot, v: &Volume) -> Item {
         kind: kind.label().to_string(),
         drive: Some(kind),
         mount_root: false,
+        takes_writes: false,
         trashed: None,
         shortcut: None,
     }
@@ -877,6 +881,7 @@ fn remote_item(name: &str, path: PathBuf, kind: DriveKind) -> Item {
         kind: kind.label().to_string(),
         drive: Some(kind),
         mount_root: true,
+        takes_writes: false,
         trashed: None,
         shortcut: None,
     }
@@ -925,6 +930,7 @@ fn build_computer(
             kind: tr!("place-build-computer-file-folder"),
             drive: None,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         });
@@ -1270,6 +1276,7 @@ mod tests {
             kind: "File Folder".to_string(),
             drive: None,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };
@@ -1309,6 +1316,7 @@ mod tests {
             kind: String::new(),
             drive: None,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };
@@ -1481,6 +1489,7 @@ mod tests {
             kind: String::new(),
             drive,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         };
