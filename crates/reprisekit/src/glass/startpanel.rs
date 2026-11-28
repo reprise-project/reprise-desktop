@@ -2365,4 +2365,40 @@ mod tests {
         );
         crate::pins::check("glass/onyx_start_panel", &got);
     }
+
+    #[test]
+    fn onyx_menu_draws_the_onyx_menu_in_its_mode_whatever_the_glass_mode() {
+        use crate::glass::Mode::{Dark, Light};
+        let p = onyx_sample(Mode::Home, Some(Spot::Program(3)));
+        let l = layout(&p);
+        let text = TextRenderer::load(&font());
+        let drawn = |mode, onyx_menu| {
+            let glass = Settings {
+                mode,
+                onyx_menu,
+                ..onyx()
+            };
+            let dark = mode == Dark;
+            let theme =
+                interfaces::theme_with(Interface::Glass, crate::blue::Variant::Blue, dark, &glass);
+            let mut c = Canvas::new(l.canvas.width as u32, l.canvas.height as u32);
+            interfaces::draw_start_panel(&mut c, &theme, &glass, &text, &p, &l, None, true);
+            c.pixels
+        };
+        assert_eq!(
+            drawn(Dark, Some(Light)),
+            drawn(Light, None),
+            "light in dark mode"
+        );
+        assert_eq!(
+            drawn(Light, Some(Dark)),
+            drawn(Dark, None),
+            "dark in light mode"
+        );
+        assert_ne!(
+            drawn(Dark, None),
+            drawn(Light, None),
+            "left out, it follows the mode"
+        );
+    }
 }

@@ -525,6 +525,12 @@ impl Config {
             cfg.glass.opaque_when_maximized = g
                 .opaque_when_maximized
                 .unwrap_or(cfg.glass.style == reprisekit::glass::Style::Onyx);
+            if let Some(m) = g.onyx_menu {
+                cfg.glass.onyx_menu =
+                    Some(reprisekit::glass::Mode::parse(&m).ok_or_else(|| {
+                        format!("[glass] onyx_menu = {m:?} is not light or dark")
+                    })?);
+            }
             if let Some(n) = g.notification_style {
                 cfg.glass.notification =
                     reprisekit::glass::NotifyStyle::parse(&n).ok_or_else(|| {

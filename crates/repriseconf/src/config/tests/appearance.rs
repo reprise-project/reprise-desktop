@@ -461,6 +461,20 @@ fn glass_style_parses_its_names() {
 }
 
 #[test]
+fn onyx_menu_parses_light_and_dark_and_follows_the_mode_when_left_out() {
+    use reprisekit::glass::Mode;
+    assert_eq!(Config::parse("").unwrap().glass.onyx_menu, None);
+    let c = Config::parse("[glass]\nonyx_menu = \"light\"\n").unwrap();
+    assert_eq!(c.glass.onyx_menu, Some(Mode::Light));
+    let c = Config::parse("[glass]\nonyx_menu = \"dark\"\n").unwrap();
+    assert_eq!(c.glass.onyx_menu, Some(Mode::Dark));
+    assert_eq!(
+        Config::parse("[glass]\nonyx_menu = \"grey\"\n").unwrap_err(),
+        "[glass] onyx_menu = \"grey\" is not light or dark"
+    );
+}
+
+#[test]
 fn onyx_takes_the_small_bar_with_a_labelled_button_per_window() {
     let onyx =
         Config::parse("[appearance]\ninterface = \"glass\"\n[glass]\nstyle = \"onyx\"\n").unwrap();

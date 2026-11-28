@@ -69,7 +69,7 @@ Glass opens a two-column Start menu with pinned/frequent apps, All Programs and 
 
 The Shut down arrow lists Log off, Lock, Restart, Restart into (if logind provides boot entries), Sleep and Hibernate, with Switch user first under `reprise-login`. Remote sessions show Disconnect first and omit Sleep and Hibernate ([remote-desktop.md](remote-desktop.md#disconnecting)). Prepared offline updates appear at the top ([features.md](features.md#lock-power-and-session)).
 
-Onyx's Start menu is smoked glass that darkens towards its foot around the white program column. The search field sits under the column. The right column ends in a power button (`startmenu_power`), a lock button and an arrow whose menu ends with Shut down. Rest the pointer on a place for half a second and the user picture fades into the place's picture. Programs have no jump lists, pinned programs show a grey second line, and search results replace only the left column.
+Onyx's Start menu is smoked glass that darkens towards its foot around the white program column. The search field sits under the column. The right column ends in a power button (`startmenu_power`), a lock button and an arrow whose menu ends with Shut down. Rest the pointer on a place for half a second and the user picture fades into the place's picture. Programs have no jump lists, pinned programs show a grey second line, and search results replace only the left column. `[glass] onyx_menu = "light"` keeps the menu light in dark mode (`"dark"` keeps it dark in light mode); left out, it follows the mode.
 
 ### Glass only
 
