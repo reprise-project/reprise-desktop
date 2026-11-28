@@ -425,6 +425,7 @@ impl Host {
         self.sync_inhibitor();
         self.sync_on_top();
         self.sync_reopen();
+        self.sync_bare_captions();
         // An `Ask` drop cannot outlive the window answering it.
         if let Some(a) = &self.asked_drop
             && !self.slot_of_id(a.win)

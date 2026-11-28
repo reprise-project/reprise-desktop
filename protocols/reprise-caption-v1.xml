@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="reprise_caption_v1">
+  <copyright>
+    reprise private protocol: what a program's window shows on the caption Reprise draws for it.
+  </copyright>
+
+  <interface name="reprise_caption_v1" version="1">
+    <description summary="choose what a toplevel's caption shows">
+      One global. A program whose window names its place in its own client
+      area asks for the caption Reprise draws over it to leave out the window
+      icon and the title. The title still names the window everywhere else:
+      its taskbar button, the window switcher, the window menu and screen
+      readers. The caption buttons stay, and the window menu still opens on
+      Alt+Space and on a click at the caption's left end, where the icon was.
+    </description>
+
+    <enum name="style">
+      <entry name="full" value="0" summary="the window icon and the title"/>
+      <entry name="bare" value="1" summary="neither the window icon nor the title"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        What was asked for stands.
+      </description>
+    </request>
+
+    <request name="set">
+      <description summary="choose what toplevel's caption shows">
+        Asked before toplevel maps, it holds from the map on. A window in a
+        tab group shows its tabs' titles whatever it asked for. An unknown
+        style is full. Ignored when toplevel belongs to another client.
+      </description>
+      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
+      <arg name="style" type="uint" enum="style"/>
+    </request>
+  </interface>
+</protocol>

@@ -1653,6 +1653,74 @@ mod tests {
         );
     }
 
+    /// A bare caption (`tabbed`, no strip over it) keeps its pixels light and dark, focused or
+    /// not, restored and maximized, at scale 1 and 2, and draws neither the icon nor the title.
+    #[test]
+    fn a_bare_caption_keeps_its_pixels_and_draws_no_icon_or_title() {
+        let mut got = Vec::new();
+        for mode in [Mode::Light, Mode::Dark] {
+            let glass = Settings {
+                mode,
+                ..Settings::default()
+            };
+            let theme = crate::interfaces::theme_with(
+                crate::interface::Interface::Glass,
+                crate::blue::Variant::default(),
+                false,
+                &glass,
+            );
+            let style = theme.look.style().unwrap();
+            let text = TextRenderer::load(&style.caption_text.font());
+            let side = theme.icon_size();
+            let mut icon = Canvas::new(side as u32, side as u32);
+            icon.fill_rect(
+                Rect::new(0, 0, side, side),
+                crate::theme::Color::rgb(255, 0, 0),
+            );
+            for d in [1, 2] {
+                let at = theme.scaled(d);
+                for maximized in [false, true] {
+                    let g =
+                        FrameGeometry::layout(&theme.metrics, 300, 100, maximized, Chrome::WINDOW)
+                            .scaled(d);
+                    for active in [true, false] {
+                        let draw = |title: &str, icon: Option<&Canvas>, bare: bool| {
+                            let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                            let st = FrameState {
+                                title,
+                                active,
+                                maximized,
+                                pressed: None,
+                                glow: Glow::lit(None),
+                                icon,
+                                tabbed: bare,
+                            };
+                            crate::style::frame::draw_frame(&mut c, style, &at, &text, &g, &st);
+                            c
+                        };
+                        let what = format!("{mode:?} at {d} maximized={maximized} active={active}");
+                        let bare = draw("Documents", None, true);
+                        assert!(
+                            draw("Pictures", Some(&icon), true).pixels == bare.pixels,
+                            "{what}: no title or icon drawn"
+                        );
+                        assert!(
+                            draw("Documents", None, false).pixels != bare.pixels,
+                            "{what}: a full caption draws them"
+                        );
+                        let h = bare.pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
+                            p.to_le_bytes().iter().fold(h, |h, &b| {
+                                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+                            })
+                        });
+                        got.push((what, h));
+                    }
+                }
+            }
+        }
+        crate::pins::check("glass/bare_caption", &got);
+    }
+
     #[test]
     fn the_title_glow_keeps_to_the_bands_glass_rows_unchanged() {
         // The glow's rows restored: the band's glass rows, under the light line to over the client's edges.
