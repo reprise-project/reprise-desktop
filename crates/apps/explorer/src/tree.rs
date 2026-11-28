@@ -169,7 +169,7 @@ impl Explorer {
         }
     }
 
-    fn tree_world(&self) -> foldertree::World {
+    pub(crate) fn tree_world(&self) -> foldertree::World {
         foldertree::World {
             scale: self.drawn_scale.max(1),
             px: self.tree_places.px,

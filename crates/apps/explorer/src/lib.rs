@@ -285,6 +285,8 @@ pub struct Explorer {
     /// The folder read the address bar's completion asked for.
     address_job: repriseapp::pathjob::PathJob,
     pub address_places: Vec<Place>,
+    /// A breadcrumb chevron menu's subfolder read still out ([`Explorer::open_crumb_menu`]).
+    pub(crate) crumb_menu: Option<chrome::CrumbMenu>,
     /// The toolbar's Search field ([`search`]).
     pub search_field: SearchField,
     pub(crate) search: search::Search,
@@ -675,6 +677,7 @@ impl Explorer {
             address: AddressBar::new(vec![ListItem::new("")], 0, None),
             address_job: Default::default(),
             address_places: Vec::new(),
+            crumb_menu: None,
             search_field: SearchField::default(),
             search: search::Search::default(),
             search_job: None,

@@ -1,18 +1,23 @@
 //! The window's chrome: the toolbar and the address drop as built once, and the panels, tasks, latches
 //! and greyed menu rows that every navigation and selection change move.
 
+use crate::commands::{Command, Menu};
+use crate::foldertree;
 use crate::icons::chrome_icon_unread;
-use crate::place::Place;
+use crate::place::{Place, drive_mounts};
 use crate::window;
 use crate::{Explorer, FOLDERS_ITEM};
-use repriseapp::Ctx;
 use repriseapp::iconjobs::IconWaits;
 use repriseapp::listjob::Job;
+use repriseapp::{Ctx, Reply};
 use reprisefs::listing::Item;
-use reprisefs::places::{DriveKind, Gadget};
+use reprisefs::netshare::Share;
+use reprisefs::places::{Drive, DriveKind, Gadget};
 use reprisekit::art::viewsicon;
 use reprisekit::controls::addressbar::{self, AddressBar};
+use reprisekit::controls::breadcrumb::Crumb;
 use reprisekit::controls::combo::{self, ListItem};
+use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::statusbar;
 use reprisekit::controls::toolbar;
 use reprisekit::icontheme::IconCache;
@@ -298,6 +303,131 @@ impl Explorer {
         };
         self.link_status = Some((at.clone(), Ok(text)));
         self.refresh_chrome(ctx);
+        true
+    }
+}
+
+/// The places a breadcrumb walks down to `place`, given the mount points Computer lists, from the
+/// nearest named root: Home for a folder under it, the Desktop or Documents folder for one under
+/// them, else Computer and then the drive or share. A place with no path is its one shell place,
+/// a server under Network. Nothing is read from disk.
+pub(crate) fn crumb_places(place: &Place, mounts: &[PathBuf]) -> Vec<Place> {
+    let mut chain = place.chain_in(mounts);
+    if chain.len() > 1 && chain[0] == Place::Desktop {
+        chain.remove(0);
+    }
+    chain
+}
+
+/// [`crumb_places`] as the breadcrumb's segments: a drive by its name, a share by its own, any
+/// other place by its title; each one's target the text [`Place::read_address`] reads back as it.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the Glass address row calls it")
+)]
+pub(crate) fn crumbs_for(place: &Place, drives: &[Drive], shares: &[Share]) -> Vec<Crumb> {
+    let mounts = drive_mounts(drives, shares);
+    (crumb_places(place, &mounts).iter())
+        .map(|p| Crumb {
+            label: crumb_label(p, drives, shares),
+            target: crumb_target(p, shares),
+        })
+        .collect()
+}
+
+fn crumb_label(p: &Place, drives: &[Drive], shares: &[Share]) -> String {
+    match p {
+        Place::Folder(at) => {
+            (drives.iter().find(|d| d.mount == *at)).map_or_else(|| p.title_in(shares), Drive::name)
+        }
+        _ => p.title_in(shares),
+    }
+}
+
+fn crumb_target(p: &Place, shares: &[Share]) -> String {
+    match p {
+        Place::Computer => "computer:///".to_string(),
+        Place::RecycleBin => "trash:///".to_string(),
+        _ if *p == Place::network() => "network:///".to_string(),
+        Place::Home | Place::Desktop | Place::Documents => {
+            (p.path()).map_or_else(|| p.address_in(shares), |d| d.display().to_string())
+        }
+        _ => p.address_in(shares),
+    }
+}
+
+/// A breadcrumb chevron's menu whose subfolder read is still out ([`Explorer::open_crumb_menu`]).
+pub(crate) struct CrumbMenu {
+    /// The menu it opened with, which the answer replaces while it is still the one open.
+    shown: Menu,
+    at: (i32, i32),
+    /// The next crumb's place, its row bold.
+    current: Option<Place>,
+    job: Job<Vec<(String, Place)>>,
+}
+
+/// The chevron menu: a row per subfolder, `current` bold; one greyed row when there are none.
+fn crumb_menu(rows: &[(String, Place)], current: Option<&Place>) -> Menu {
+    let mut m = Menu::default();
+    for (name, place) in rows {
+        let item = MenuItem::entry(name.clone()).bold(current == Some(place));
+        m.row(item, Command::GoTo(place.clone()));
+    }
+    if rows.is_empty() {
+        let empty = MenuItem::entry(tr!("chrome-crumb-menu-empty")).enabled(false);
+        m.row(empty, Command::Nothing);
+    }
+    m
+}
+
+impl Explorer {
+    /// Opens the menu of crumb `i`'s subfolders at `at`. The listing thread reads them, as it
+    /// reads the view; the menu opens with them when the read answers within [`crate::LIST_WAIT`],
+    /// else empty, taking them when it answers ([`Explorer::land_crumb_menu`]).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the Glass address row calls it")
+    )]
+    pub(crate) fn open_crumb_menu(&mut self, i: usize, at: (i32, i32), ctx: &mut Ctx) -> Reply {
+        let places = crumb_places(&self.place, &self.drive_mounts);
+        let Some(place) = places.get(i).cloned() else {
+            return Reply::none();
+        };
+        let current = places.get(i + 1).cloned();
+        let world = self.tree_world();
+        let read = move || foldertree::subfolders(&place, &world.inputs());
+        self.crumb_menu = None;
+        let menu = match self.read_job(ctx, read) {
+            Ok(rows) => crumb_menu(&rows, current.as_ref()),
+            Err(job) => {
+                let shown = crumb_menu(&[], None);
+                self.crumb_menu = Some(CrumbMenu {
+                    shown: shown.clone(),
+                    at,
+                    current,
+                    job,
+                });
+                shown
+            }
+        };
+        self.popup = Some(window::Popup::new(at, menu, ctx, false));
+        Reply::redraw()
+    }
+
+    /// A chevron menu's late read answered: the menu takes its rows if it is still the one open.
+    /// True when it did.
+    pub(crate) fn land_crumb_menu(&mut self, ctx: &Ctx) -> bool {
+        let Some(rows) = self.crumb_menu.as_ref().and_then(|m| m.job.take()) else {
+            return false;
+        };
+        let Some(m) = self.crumb_menu.take() else {
+            return false;
+        };
+        if !self.popup.as_ref().is_some_and(|p| *p.menu() == m.shown) {
+            return false;
+        }
+        let menu = crumb_menu(&rows, m.current.as_ref());
+        self.popup = Some(window::Popup::new(m.at, menu, ctx, false));
         true
     }
 }

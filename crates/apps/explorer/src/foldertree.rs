@@ -515,7 +515,7 @@ pub fn place_of(tree: &TreeView, places: &[Place], path: &[usize]) -> Option<Pla
 /// A place's subfolders for the tree, through the same [`place::list`] the view reads, so the tree
 /// hides what the view hides, minus any child that is another drive's mount point (it belongs under
 /// Computer). No MIME globs: nothing here needs a file's kind.
-fn subfolders(place: &Place, inp: &Inputs) -> Vec<(String, Place)> {
+pub(crate) fn subfolders(place: &Place, inp: &Inputs) -> Vec<(String, Place)> {
     let listed = list(
         place,
         &reprisefs::apps::MimeDb::empty(),
