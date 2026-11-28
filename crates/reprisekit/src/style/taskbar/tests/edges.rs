@@ -340,8 +340,8 @@ fn on_a_top_bar_the_glass_pager_lights_the_current_desktop_at_its_top() {
         }
     }
     assert!(
-        lum(top.get(r1.x + 11, 0)) > lum(top.get(l.pager[0].x + 11, 0)) + 20,
-        "the current cell's top row is lit"
+        lum(top.get(r1.x + 11, 1)) > lum(top.get(l.pager[0].x + 11, 1)) + 20,
+        "the row under the current cell's top is lit"
     );
 }
 
