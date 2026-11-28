@@ -48,6 +48,8 @@ pub struct Entry {
     pub kind: Kind,
     pub size: u64,
     pub modified: Option<i64>,
+    /// Its permission bits as listed.
+    pub mode: u32,
 }
 
 /// An entry directly inside one of an archive's folders. A folder the archive holds only by the
@@ -169,25 +171,16 @@ fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failur
 /// [`MAX_ENTRIES`] entries, or whose names add up to more than [`MAX_NAME_BYTES`], is refused as
 /// soon as the listing passes them; cancelling `m` stops it.
 pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
-    list_within(archive, m, MAX_NAME_BYTES, &mut |_, _| {}).map(|(e, _)| e)
+    list_within(archive, m, MAX_NAME_BYTES).map(|(e, _)| e)
 }
 
-/// [`list`], handing `note` each entry with its permission bits, and the count of every entry
-/// the archive holds, links and others `list` leaves out included.
-pub(crate) fn list_noting(
-    archive: &Path,
-    m: &Meter,
-    note: &mut dyn FnMut(&Entry, u32),
-) -> Result<(Vec<Entry>, u64), String> {
-    list_within(archive, m, MAX_NAME_BYTES, note)
+/// [`list`], and the count of every entry the archive holds, links and others `list` leaves out
+/// included.
+pub(crate) fn list_counting(archive: &Path, m: &Meter) -> Result<(Vec<Entry>, u64), String> {
+    list_within(archive, m, MAX_NAME_BYTES)
 }
 
-fn list_within(
-    archive: &Path,
-    m: &Meter,
-    most_names: usize,
-    note: &mut dyn FnMut(&Entry, u32),
-) -> Result<(Vec<Entry>, u64), String> {
+fn list_within(archive: &Path, m: &Meter, most_names: usize) -> Result<(Vec<Entry>, u64), String> {
     if zip_encrypted(archive) {
         return Err(tr!("archive-locked"));
     }
@@ -209,7 +202,6 @@ fn list_within(
         let Some(e) = listed_entry(line, now) else {
             return true;
         };
-        note(&e, listed_mode(line));
         names += e.path.as_os_str().len();
         entries.push(e);
         names <= most_names
@@ -348,6 +340,7 @@ fn listed_entry(line: &[u8], now: i64) -> Option<Entry> {
         kind,
         size: if kind == Kind::File { size } else { 0 },
         modified: listed_time(month?, day?, third?, now),
+        mode: listed_mode(line),
     })
 }
 
@@ -931,8 +924,8 @@ pub fn copy_job(
     })
 }
 
-/// Copies the file `entry` of `archive` into the empty folder `into` under its own name, read-only:
-/// what the program opening it sees. Refused when it would fill more than
+/// Copies the file `entry` of `archive` into the empty folder `into` under its own name and
+/// date, read-only: what the program opening it sees. Refused when it would fill more than
 /// [`extract::FREE_SHARE_PERCENT`] of the free space, or when bsdtar writes other than the
 /// size the listing gave.
 pub fn copy_out(archive: &Path, entry: &Entry, into: &Path) -> Result<PathBuf, String> {
@@ -959,7 +952,7 @@ fn copy_out_within(
     write_entries(
         archive,
         &[(entry, to.clone())],
-        0o400,
+        |_| 0o400,
         &Meter::default(),
         |_| {},
     )?;
@@ -967,13 +960,14 @@ fn copy_out_within(
 }
 
 /// Writes the files `files` of `archive`, in archive order, to their new paths, never through a
-/// link, each given `mode` once its listed size is in and then passed to `landed` by index. None
-/// of them is left when bsdtar fails or writes other than their listed sizes in all, or `m` is
-/// cancelled; bsdtar is stopped while `m` is paused.
+/// link, each made with its `mode` under the umask and given its listed date once its listed size
+/// is in, then passed to `landed` by index. None of them is left when bsdtar fails or writes
+/// other than their listed sizes in all, or `m` is cancelled; bsdtar is stopped while `m` is
+/// paused.
 fn write_entries(
     archive: &Path,
     files: &[(&Entry, PathBuf)],
-    mode: u32,
+    mode: fn(&Entry) -> u32,
     m: &Meter,
     mut landed: impl FnMut(usize),
 ) -> Result<(), String> {
@@ -1054,7 +1048,7 @@ fn write_entries(
 /// The files [`write_entries`] fills from one stream, each taking its listed size in turn.
 struct Landing<'a> {
     files: &'a [(&'a Entry, PathBuf)],
-    mode: u32,
+    mode: fn(&Entry) -> u32,
     /// How many of `files` were made.
     made: usize,
     /// The last one made, while bytes are still `left` for it.
@@ -1063,17 +1057,16 @@ struct Landing<'a> {
 }
 
 impl Landing<'_> {
-    /// Gives the file made last its mode once it is full, and makes the next ones until one still
+    /// Gives the file made last its date once it is full, and makes the next ones until one still
     /// takes bytes or none is left.
     fn step(&mut self, landed: &mut impl FnMut(usize)) -> Result<(), String> {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::OpenOptionsExt;
         loop {
             if self.file.is_some() && self.left > 0 {
                 return Ok(());
             }
             if let Some(file) = self.file.take() {
-                (file.set_permissions(std::fs::Permissions::from_mode(self.mode)))
-                    .map_err(|e| e.to_string())?;
+                set_listed_time(&file, self.files[self.made - 1].0);
                 landed(self.made - 1);
             }
             let Some((entry, to)) = self.files.get(self.made) else {
@@ -1082,7 +1075,7 @@ impl Landing<'_> {
             let file = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .mode(0o600)
+                .mode((self.mode)(entry))
                 .custom_flags(libc::O_NOFOLLOW)
                 .open(to)
                 .map_err(|e| e.to_string())?;
@@ -1118,11 +1111,13 @@ impl Landing<'_> {
     }
 }
 
-/// A name [`copy_tree_out`] makes: a folder, or a file with its entry and that entry's index in
-/// the listing, and its own names in listing order (indices into [`TreePlan::nodes`]).
+/// A name [`copy_tree_out`] makes: a folder, with its own entry when the archive lists one, or a
+/// file with its entry and that entry's index in the listing, and its own names in listing order
+/// (indices into [`TreePlan::nodes`]).
 struct Node<'a> {
     name: &'a OsStr,
     file: Option<(usize, &'a Entry)>,
+    folder: Option<&'a Entry>,
     kids: Vec<usize>,
 }
 
@@ -1152,6 +1147,7 @@ fn tree_plan<'a>(
     let mut nodes = vec![Node {
         name: OsStr::new(""),
         file: None,
+        folder: None,
         kids: Vec::new(),
     }];
     let mut named: HashMap<(usize, &OsStr), usize> = HashMap::new();
@@ -1174,8 +1170,14 @@ fn tree_plan<'a>(
         let mut steps = rest.iter().peekable();
         while let Some(name) = steps.next() {
             let last = steps.peek().is_none();
+            let own = (last && e.kind == Kind::Folder).then_some(e);
             at = match named.get(&(at, name)) {
-                Some(_) if last => break,
+                Some(&n) if last => {
+                    if nodes[n].file.is_none() {
+                        nodes[n].folder = nodes[n].folder.or(own);
+                    }
+                    break;
+                }
                 Some(&n) if nodes[n].file.is_some() => break,
                 Some(&n) => n,
                 None => {
@@ -1184,6 +1186,7 @@ fn tree_plan<'a>(
                     nodes.push(Node {
                         name,
                         file,
+                        folder: own,
                         kids: Vec::new(),
                     });
                     let n = nodes.len() - 1;
@@ -1206,6 +1209,26 @@ fn tree_plan<'a>(
     Ok(TreePlan { nodes, bytes })
 }
 
+/// The mode a copy out of an archive is made with, which the umask then narrows as it does an
+/// extraction's: its entry's, and always the owner's to read, a folder also to fill and enter, so
+/// the copy goes on to where it is put.
+fn copied_mode(e: &Entry) -> u32 {
+    let own = match e.kind {
+        Kind::File => 0o400,
+        Kind::Folder => 0o700,
+    };
+    e.mode & 0o777 | own
+}
+
+/// Gives the open copy `file` the date `e` was listed with, best effort.
+fn set_listed_time(file: &std::fs::File, e: &Entry) {
+    let Some(t) = e.modified.and_then(|t| u64::try_from(t).ok()) else {
+        return;
+    };
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(t);
+    let _ = file.set_times(std::fs::FileTimes::new().set_modified(t));
+}
+
 /// Whether `a` and `b` are on one file system.
 fn same_device(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -1217,8 +1240,9 @@ fn same_device(a: &Path, b: &Path) -> bool {
 
 /// Copies the entries `picked` of `archive` (paths inside it, each a file or a folder with all
 /// that `entries` lists below it) into the empty private folder `into` under their own names,
-/// files 0644 and folders 0755, laid out as [`TreePlan`] says: the folders first, then the files
-/// in archive order, up to [`BATCH_FILES`] per [`write_entries`] and a name listed twice alone. Refused past
+/// with their listed dates and modes ([`copied_mode`]), laid out as [`TreePlan`] says: the
+/// folders first, then the files in archive order, up to [`BATCH_FILES`] per [`write_entries`]
+/// and a name listed twice alone, then the folders' dates. Refused past
 /// [`extract::FREE_SHARE_PERCENT`] of the free space, [`MAX_ENTRIES`] or a path longer than the
 /// system takes. When the copies then go on to the folder `dest`, they must fit there too: twice
 /// over when it shares `into`'s file system. Cancelling `m` stops it, part way through a file
@@ -1276,6 +1300,7 @@ fn copy_tree_within(
     m.set_phase(Phase::Copying);
     let mut done = Totals::default();
     let mut files = Vec::new();
+    let mut folders = Vec::new();
     let mut path = into.to_path_buf();
     // Each folder being filled, with the next of its names to make.
     let mut open = vec![(0, 0)];
@@ -1296,7 +1321,10 @@ fn copy_tree_within(
         if m.cancelled() {
             return Err(Failure::Cancelled.why());
         }
-        (std::fs::DirBuilder::new().mode(0o755).create(&path)).map_err(|e| e.to_string())?;
+        let own = nodes[kid].folder;
+        let mode = own.map_or(0o755, copied_mode);
+        (std::fs::DirBuilder::new().mode(mode).create(&path)).map_err(|e| e.to_string())?;
+        folders.extend(own.map(|e| (path.clone(), e)));
         m.set_current(path.strip_prefix(into).unwrap_or(&path).as_os_str());
         done.items += 1;
         m.settle(done);
@@ -1330,7 +1358,7 @@ fn copy_tree_within(
             .count()
             .max(1);
         let (batch, after) = rest.split_at(take);
-        write_entries(archive, batch, 0o644, m, |k| {
+        write_entries(archive, batch, copied_mode, m, |k| {
             let (e, path) = &batch[k];
             m.set_current(path.strip_prefix(into).unwrap_or(path).as_os_str());
             done.items += 1;
@@ -1341,6 +1369,12 @@ fn copy_tree_within(
     }
     if m.cancelled() {
         return Err(Failure::Cancelled.why());
+    }
+    // Each file landing moved its folder's date; a folder comes after the folders inside it.
+    for (path, e) in folders.iter().rev() {
+        if let Ok(dir) = std::fs::File::open(path) {
+            set_listed_time(&dir, e);
+        }
     }
     Ok((picked.iter())
         .filter_map(|p| Some(into.join(p.file_name()?)))
@@ -1367,6 +1401,7 @@ mod tests {
             kind,
             size,
             modified: None,
+            mode: 0o644,
         }
     }
 
@@ -1530,6 +1565,7 @@ mod tests {
             entries,
             [entry("big", Kind::File, 4 << 20)].map(|e| Entry {
                 modified: entries[0].modified,
+                mode: entries[0].mode,
                 ..e
             })
         );
@@ -1670,11 +1706,11 @@ mod tests {
         let archive = t.path().join("many.tar.gz");
         let m = Meter::default();
         assert_eq!(
-            list_within(&archive, &m, 5000, &mut |_, _| {}).map(|(e, _)| e.len()),
+            list_within(&archive, &m, 5000).map(|(e, _)| e.len()),
             Ok(50)
         );
         assert_eq!(
-            list_within(&archive, &m, 4000, &mut |_, _| {}).map(|(e, _)| e),
+            list_within(&archive, &m, 4000).map(|(e, _)| e),
             Err("its names add up to more than 3.90 KB.".into())
         );
     }
@@ -1977,6 +2013,101 @@ mod tests {
             (6, 7),
             "three folders and three files, seven bytes"
         );
+    }
+
+    /// Runs the umask test again in a process of its own under each umask, which is process-wide.
+    #[test]
+    fn a_copy_out_keeps_each_entrys_listed_date_and_its_mode_under_the_umask() {
+        const NAME: &str =
+            "archive::tests::a_copy_out_keeps_each_entrys_listed_date_and_its_mode_under_the_umask";
+        if let Ok(umask) = std::env::var("COPY_OUT_UMASK") {
+            let umask = u32::from_str_radix(&umask, 8).unwrap();
+            // SAFETY: umask has no preconditions; this process runs this test alone.
+            unsafe { libc::umask(umask) };
+            return copies_out_dated_under(umask);
+        }
+        for umask in ["022", "077"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--quiet"])
+                .env("COPY_OUT_UMASK", umask)
+                .status()
+                .unwrap();
+            assert!(status.success(), "passes under umask {umask}");
+        }
+    }
+
+    fn copies_out_dated_under(umask: u32) {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let t = tempfile::tempdir().unwrap();
+        let work = t.path().join("work");
+        std::fs::create_dir_all(work.join("d/inner")).unwrap();
+        let files = [
+            ("d/run.sh", 0o755),
+            ("d/inner/locked.txt", 0o444),
+            ("shared.txt", 0o666),
+        ];
+        let day_ago = now() - 24 * 60 * 60;
+        let at = |secs: i64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+        let date = |p: &str, secs: i64| {
+            let f = std::fs::File::open(work.join(p)).unwrap();
+            f.set_times(std::fs::FileTimes::new().set_modified(at(secs)))
+                .unwrap();
+        };
+        for (name, mode) in files {
+            std::fs::write(work.join(name), name).unwrap();
+            date(name, day_ago);
+            let mode = std::fs::Permissions::from_mode(mode);
+            std::fs::set_permissions(work.join(name), mode).unwrap();
+        }
+        date("d/inner", day_ago - 3600);
+        date("d", day_ago - 7200);
+        std::fs::set_permissions(work.join("d"), std::fs::Permissions::from_mode(0o750)).unwrap();
+        bsdtar(
+            &work,
+            &["-cf", "../dated.zip", "--format", "zip", "d", "shared.txt"],
+        );
+        let archive = t.path().join("dated.zip");
+        let entries = listed(&archive);
+        let into = t.path().join("into");
+        std::fs::create_dir(&into).unwrap();
+        let picked = ["d", "shared.txt"].map(PathBuf::from);
+        copy_tree_out(&archive, &entries, &picked, &into, None, &Meter::default()).expect("copied");
+        let listed_at = |p: &str| {
+            let e = entries.iter().find(|e| e.path == Path::new(p)).unwrap();
+            e.modified.unwrap()
+        };
+        for p in [
+            "d",
+            "d/inner",
+            "d/run.sh",
+            "d/inner/locked.txt",
+            "shared.txt",
+        ] {
+            let meta = std::fs::metadata(into.join(p)).unwrap();
+            assert_eq!(meta.mtime(), listed_at(p), "{p} keeps its listed date");
+        }
+        assert!(
+            (listed_at("d/run.sh") - day_ago).abs() < 60,
+            "a date within the year lists to the minute"
+        );
+        let mode = |p: &str| std::fs::metadata(into.join(p)).unwrap().mode() & 0o777;
+        let want: [(&str, u32); 4] = match umask {
+            0o022 => [
+                ("d/run.sh", 0o755),
+                ("d/inner/locked.txt", 0o444),
+                ("shared.txt", 0o644),
+                ("d", 0o750),
+            ],
+            _ => [
+                ("d/run.sh", 0o700),
+                ("d/inner/locked.txt", 0o400),
+                ("shared.txt", 0o600),
+                ("d", 0o700),
+            ],
+        };
+        for (p, want) in want {
+            assert_eq!(mode(p), want, "{p} under umask {umask:o}");
+        }
     }
 
     #[test]

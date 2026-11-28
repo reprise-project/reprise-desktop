@@ -386,12 +386,11 @@ fn rewrite_watched(
             .collect(),
         false => HashSet::new(),
     };
-    let mut modes: HashMap<PathBuf, u32> = HashMap::new();
-    let (old, count) = archive::list_noting(zip, m, &mut |e, mode| {
-        if e.kind == Kind::File && staged.contains(e.path.as_path()) {
-            modes.insert(e.path.clone(), mode);
-        }
-    })?;
+    let (old, count) = archive::list_counting(zip, m)?;
+    let modes: HashMap<&Path, u32> = (old.iter())
+        .filter(|e| e.kind == Kind::File && staged.contains(e.path.as_path()))
+        .map(|e| (e.path.as_path(), e.mode))
+        .collect();
     let walked = walk(adds, m, MAX_ENTRIES.saturating_sub(old.len() as u64))?;
     let kinds: HashMap<&Path, Kind> = walked.iter().map(|(p, k, _)| (p.as_path(), *k)).collect();
     let held = held_kinds(&old);
@@ -401,7 +400,7 @@ fn rewrite_watched(
     }
     for a in adds {
         for name in &a.names {
-            if let Some(&mode) = modes.get(name) {
+            if let Some(&mode) = modes.get(name.as_path()) {
                 // bsdtar reads the staged file, so it keeps owner read and write.
                 let mode = std::fs::Permissions::from_mode(mode & 0o777 | 0o600);
                 std::fs::set_permissions(a.dir.join(name), mode).map_err(io)?;
