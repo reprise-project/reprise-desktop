@@ -1,9 +1,11 @@
-//! A command bar: a pale band of text commands for what is selected, Views and a help mark at its
-//! right end. A command lights a box under the pointer and while held or its menu is open. The
-//! commands that do not fit fold, last first, into a » menu at the end of the left run; the right
-//! end always shows. The help mark is drawn and inert, from the style's art (none in Classic).
+//! A command bar: a pale band of text commands for what is selected, Views, the preview
+//! pane's toggle and a help mark at its right end. A command lights a box under the pointer and
+//! while held or its menu is open. The commands that do not fit fold, last first, into a » menu
+//! at the end of the left run; the right end always shows. The help mark is drawn and inert, from
+//! the style's art (none in Classic).
 
 use crate::access::{self, Tree, accesskit};
+use crate::art::cmdglyph::{self, CmdGlyph};
 use crate::art::viewsicon;
 use crate::controls::metrics::ControlMetrics;
 use crate::look::Paint;
@@ -38,6 +40,8 @@ const MORE_W: i32 = 25;
 /// The Views icon's box and the help mark's; both icons are 16 px.
 const VIEWS_W: i32 = 22;
 const HELP_W: i32 = 25;
+/// The preview pane toggle's box; its glyph is 16 px too.
+const PANE_W: i32 = 25;
 const ICON: i32 = 16;
 
 /// What pressing a command does beyond running it.
@@ -83,6 +87,8 @@ impl Item {
 pub enum RightItem {
     /// The icon cycles the view modes; its arrow opens their list.
     Views,
+    /// Shows or hides the preview pane; held down while it shows ([`Commandbar::pane_shown`]).
+    PreviewPane,
     Help,
 }
 
@@ -95,6 +101,7 @@ pub enum Hit {
     More,
     ViewsCycle,
     ViewsDrop,
+    PreviewPane,
     Help,
 }
 
@@ -108,6 +115,8 @@ pub struct Commandbar {
     pub pressed: Option<Hit>,
     /// The part the keyboard is on while the bar has the focus.
     pub focus: Option<Hit>,
+    /// The preview pane shows: its toggle is drawn checked.
+    pub pane_shown: bool,
 }
 
 /// Keys the bar takes while it has the focus.
@@ -139,6 +148,7 @@ pub struct Layout {
     pub more: Option<Rect>,
     /// The Views icon's box and its arrow's.
     pub views: Option<(Rect, Rect)>,
+    pub pane: Option<Rect>,
     pub help: Option<Rect>,
 }
 
@@ -163,7 +173,8 @@ impl Commandbar {
         }
     }
 
-    /// The parts the keyboard steps through, in order: the shown commands that are live, », Views.
+    /// The parts the keyboard steps through, in order: the shown commands that are live, », Views,
+    /// the preview pane's toggle.
     /// The help mark is left out: it does nothing.
     pub fn stops(&self, l: &Layout) -> Vec<Hit> {
         let mut out: Vec<Hit> = (self.left.iter().zip(&l.items).enumerate())
@@ -172,6 +183,7 @@ impl Commandbar {
             .collect();
         out.extend(l.more.map(|_| Hit::More));
         out.extend(l.views.map(|_| Hit::ViewsCycle));
+        out.extend(l.pane.map(|_| Hit::PreviewPane));
         out
     }
 
@@ -250,9 +262,13 @@ pub fn layout(
     let box_h = u.len(BOX_H).min(r.height);
     let y = r.y + u.len(BOX_TOP).min(r.height - box_h);
     let mut right = r.right() - u.len(TRAIL);
-    let (mut views, mut help) = (None, None);
+    let (mut views, mut pane, mut help) = (None, None, None);
     for item in bar.right.iter().rev() {
         match item {
+            RightItem::PreviewPane => {
+                right -= u.len(PANE_W);
+                pane = Some(Rect::new(right, y, u.len(PANE_W), box_h));
+            }
             RightItem::Help => {
                 right -= u.len(HELP_W);
                 help = Some(Rect::new(right, y, u.len(HELP_W), box_h));
@@ -298,6 +314,7 @@ pub fn layout(
         items,
         more,
         views,
+        pane,
         help,
     }
 }
@@ -330,6 +347,9 @@ pub fn hit(bar: &Commandbar, l: &Layout, x: i32, y: i32) -> Option<Hit> {
         if across(drop) {
             return Some(Hit::ViewsDrop);
         }
+    }
+    if l.pane.is_some_and(across) {
+        return Some(Hit::PreviewPane);
     }
     l.help.filter(|&r| across(r)).map(|_| Hit::Help)
 }
@@ -484,6 +504,22 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, bar: &Commandbar, l:
         );
         draw_mark(c, p, drop, (ARROW_W, ARROW_H), live, arrow);
     }
+    if let Some(pane) = l.pane {
+        let r = pane.scaled(s);
+        let state = match state_of(bar, Hit::PreviewPane, None) {
+            State::Normal | State::Hot if bar.pane_shown => State::Pressed,
+            state => state,
+        };
+        draw_box(c, p, r, state);
+        let cs = c.scale();
+        let glyph = cmdglyph::canvas(CmdGlyph::PreviewPane, ICON * s, cs);
+        let side = ICON * s;
+        c.blit_over(
+            r.x + (r.width - side) / 2,
+            r.y + (r.height - side) / 2,
+            &glyph,
+        );
+    }
     if let Some(help) = l.help {
         let r = help.scaled(s);
         let side = ICON * s;
@@ -538,6 +574,17 @@ pub fn access(
         push(tree, (3, 0), cycle, &tr!("toolbar-views"), true, false);
         let name = tr!("commandbar-more-options", command = tr!("toolbar-views"));
         push(tree, (3, 1), drop, &name, true, true);
+    }
+    if let Some(r) = l.pane {
+        let shown = accesskit::Toggled::from(bar.pane_shown);
+        let n = access::toggle(
+            Role::Button,
+            r,
+            &tr!("commandbar-preview-pane"),
+            shown,
+            true,
+        );
+        tree.push(id, (5, 0), n);
     }
     if let Some(help) = l.help {
         push(tree, (4, 0), help, &tr!("commandbar-help"), false, false);
@@ -846,7 +893,55 @@ mod tests {
             ("views hot", with(&|b| b.hot = Some(Hit::ViewsCycle))),
             ("views list", with(&|b| b.pressed = Some(Hit::ViewsDrop))),
             ("focus new folder", with(&|b| b.focus = Some(Hit::Item(2)))),
+            ("pane rest", with(&with_pane)),
+            (
+                "pane hot",
+                with(&|b| {
+                    with_pane(b);
+                    b.hot = Some(Hit::PreviewPane);
+                }),
+            ),
+            (
+                "pane held",
+                with(&|b| {
+                    with_pane(b);
+                    b.pressed = Some(Hit::PreviewPane);
+                }),
+            ),
+            (
+                "pane shown",
+                with(&|b| {
+                    with_pane(b);
+                    b.pane_shown = true;
+                }),
+            ),
         ]
+    }
+
+    fn with_pane(b: &mut Commandbar) {
+        b.right = vec![RightItem::Views, RightItem::PreviewPane, RightItem::Help];
+    }
+
+    #[test]
+    fn the_pane_toggle_sits_between_views_and_help_takes_the_keyboard_and_reads_as_a_toggle() {
+        let mut bar = sample();
+        with_pane(&mut bar);
+        let l = laid(&bar, 600, &ControlMetrics::CLASSIC);
+        let (views, pane, help) = (l.views.unwrap().1, l.pane.unwrap(), l.help.unwrap());
+        assert!(
+            views.right() < pane.x && pane.right() < help.x,
+            "{views:?} {pane:?} {help:?}"
+        );
+        let mid = pane.x + pane.width / 2;
+        assert_eq!(hit(&bar, &l, mid, 10), Some(Hit::PreviewPane));
+        assert_eq!(bar.stops(&l).last(), Some(&Hit::PreviewPane));
+        bar.focus = Some(Hit::PreviewPane);
+        assert_eq!(bar.key(Key::Activate, &l), Some(Hit::PreviewPane));
+        bar.pane_shown = true;
+        let mut t = Tree::window("", (600, 40));
+        access(&bar, &l, &mut t, access::ROOT, "bar");
+        let toggled = t.nodes().find_map(|(_, n)| n.toggled());
+        assert_eq!(toggled, Some(accesskit::Toggled::True));
     }
 
     #[test]

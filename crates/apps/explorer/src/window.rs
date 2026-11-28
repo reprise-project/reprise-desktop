@@ -113,6 +113,8 @@ pub struct ShellLayout {
     pub nav_pane: Option<Rect>,
     /// The view's frame, inflated by [`FIELD_PAD`] as [`Layout::view`] is.
     pub view: Rect,
+    /// The preview pane right of the view, its divider at its left edge.
+    pub preview: Option<Rect>,
     pub details: Option<Rect>,
 }
 
@@ -191,11 +193,20 @@ pub fn shell_layout(
         Rect::new(client.x, top, w.min(client.width), height)
     });
     let view_x = nav_pane.map_or(client.x, |r| r.right());
-    // The view's ring falls under the pane, the closing line and the details pane.
+    // A narrow window takes the preview pane's width first, down to none, so the view keeps
+    // its least width.
+    let room = client.right() - view_x - crate::previewpane::VIEW_MIN_W;
+    let preview = settings.preview_pane.then(|| {
+        let w = cm.text.len(settings.preview_width) + explorerbar::NAV_DIVIDER_W;
+        Rect::new(client.right() - w.min(room), top, w.min(room), height)
+    });
+    let preview = preview.filter(|r| r.width > explorerbar::NAV_DIVIDER_W);
+    let view_right = preview.map_or(client.right(), |r| r.x);
+    // The view's ring falls under the panes, the closing line and the details pane.
     let view = Rect::new(
         view_x - FIELD_PAD,
         top - FIELD_PAD,
-        (client.right() - view_x + 2 * FIELD_PAD).max(0),
+        (view_right - view_x + 2 * FIELD_PAD).max(0),
         height + 2 * FIELD_PAD,
     );
     ShellLayout {
@@ -208,6 +219,7 @@ pub fn shell_layout(
         tabs,
         nav_pane,
         view,
+        preview,
         details,
     }
 }
@@ -608,6 +620,9 @@ fn draw_shell(ex: &Explorer, c: &mut Canvas, ctx: &Ctx, lay: &Layout, sl: &Shell
         let dl = detailspane::layout(&ex.details, &ctx.text, px, r, &cm);
         detailspane::draw(c, &ctx.text, &paint, &ex.details, &dl, px);
     }
+    if let Some(r) = sl.preview {
+        ex.draw_pane(c, r, ctx);
+    }
     rebar::draw_closing_line(c, &paint, lay.client.x, lay.client.right(), lay.etch_y);
     let cl = ex.cmdbar_layout(sl.command, ctx);
     commandbar::draw(c, &ctx.text, &paint, &ex.cmdbar_shown(), &cl, px);
@@ -763,6 +778,9 @@ fn access_shell(ex: &Explorer, tree: &mut Tree, ctx: &Ctx, sl: &ShellLayout) {
     if let Some(r) = sl.details {
         let dl = detailspane::layout(&ex.details, &ctx.text, px, r, &cm);
         detailspane::access(&ex.details, &dl, tree, ROOT);
+    }
+    if let Some(r) = sl.preview {
+        ex.access_pane(tree, r);
     }
     let vl = ex.view_layout(sl.view, ctx);
     let view = shellview::access(&ex.sv, &vl, &ctx.text, px, tree, ROOT, "view");

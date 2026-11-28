@@ -382,7 +382,9 @@ fn the_nav_row_at_the_minimum_width_keeps_search_and_one_crumb() {
         let mut ctx = glass(false);
         ctx.theme = ctx.theme.with_text_size(pct);
         ctx.text = TextRenderer::load(&ctx.theme.fonts).into();
-        let (_dir, ex) = in_folder(&mut ctx);
+        let (_dir, mut ex) = in_folder(&mut ctx);
+        // The panes' own least width lies past the row's while the navigation pane shows.
+        ex.settings.nav_pane = false;
         let (w, _) = ex.min_size(MAIN).expect("the shell keeps a minimum");
         let u = ctx.theme.controls().text;
         ctx.size = (w, 400);
@@ -599,6 +601,16 @@ fn the_navigation_pane_width_round_trips_the_state_file() {
         old.nav_width,
         crate::settings::NAV_W,
         "an older file opens at 158"
+    );
+    let huge = Settings {
+        nav_width: i32::MAX,
+        preview_width: i32::MAX,
+        ..Settings::default()
+    }
+    .clamped();
+    assert_eq!(
+        (huge.nav_width, huge.preview_width),
+        (crate::settings::MAX_PANE_W, crate::settings::MAX_PANE_W)
     );
 }
 

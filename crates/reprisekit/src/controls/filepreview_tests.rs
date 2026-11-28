@@ -301,3 +301,102 @@ fn the_card_names_the_file_and_each_fact_to_a_reader() {
         ]
     );
 }
+
+/// The pane's note, picture and text on the window colour in Glass light and dark at 1 and 2.
+#[test]
+fn the_pane_is_pinned_per_body_mode_and_scale() {
+    crate::pins::fonts();
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut got = Vec::new();
+    for mode in crate::glass::Mode::ALL {
+        let g = crate::glass::Settings {
+            mode,
+            ..Default::default()
+        };
+        let mut theme =
+            crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
+        let m = metrics(&theme);
+        for s in [1, 2] {
+            theme.look = theme.look.at_scale(s);
+            let p = theme.paint();
+            let bodies = [
+                ("note", Body::Note("Select a file to preview.".into())),
+                ("blank", Body::Note(String::new())),
+                ("picture", Body::Picture(picture(s))),
+                ("text", Body::Text(MultiEdit::new("one\ntwo"))),
+            ];
+            for (body_name, body) in bodies {
+                let mut qv = FilePreview::new(facts(), Some(icon()));
+                qv.set_body(body);
+                let r = Rect::new(0, 0, 200, 240);
+                let mut c = Canvas::with_scale(200, 240, s);
+                draw_pane(&mut c, &p, &text, 11, &text, &m, &qv, r);
+                assert_eq!(
+                    c.get(1, 1),
+                    p.cs.window.argb(),
+                    "{mode:?} {body_name} @{s}: the window colour behind it"
+                );
+                got.push((format!("{mode:?} {body_name} @{s}"), fnv(&c)));
+            }
+        }
+    }
+    crate::pins::check("filepreview_pane", &got);
+}
+
+#[test]
+fn a_pane_note_reads_as_a_label_and_leaves_the_focus() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let m = metrics(&Theme::default());
+    let mut qv = FilePreview::new(facts(), None);
+    qv.set_body(Body::Note("No preview available.".into()));
+    let mut t = Tree::window("Explorer", (200, 200));
+    let r = Rect::new(0, 0, 200, 200);
+    assert_eq!(
+        access_pane(&mut t, crate::access::ROOT, &qv, &text, &m, r),
+        None
+    );
+    let labels: Vec<_> = t
+        .nodes()
+        .filter_map(|(_, n)| n.value().map(str::to_string))
+        .collect();
+    assert_eq!(labels, ["No preview available."]);
+    qv.set_body(Body::Text(MultiEdit::new("text")));
+    let mut t = Tree::window("Explorer", (200, 200));
+    assert!(access_pane(&mut t, crate::access::ROOT, &qv, &text, &m, r).is_some());
+}
+
+#[test]
+fn a_shrunk_picture_is_made_once_per_size_and_scale() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let m = metrics(&theme);
+    let p = theme.paint();
+    let mut qv = FilePreview::new(facts(), None);
+    qv.set_body(Body::Picture(picture(1)));
+    let small = Rect::new(0, 0, 80, 60);
+    let mut c = Canvas::new(80, 60);
+    draw_pane(&mut c, &p, &text, 11, &text, &m, &qv, small);
+    let key = |qv: &FilePreview| qv.fitted.borrow().as_ref().map(|(k, _)| *k);
+    let first = key(&qv).expect("shrunk once");
+    let ptr = qv.fitted.borrow().as_ref().map(|(_, c)| c.pixels.as_ptr());
+    draw_pane(&mut c, &p, &text, 11, &text, &m, &qv, small);
+    assert_eq!(
+        qv.fitted.borrow().as_ref().map(|(_, c)| c.pixels.as_ptr()),
+        ptr,
+        "reused"
+    );
+    let mut big = Canvas::new(100, 80);
+    draw_pane(
+        &mut big,
+        &p,
+        &text,
+        11,
+        &text,
+        &m,
+        &qv,
+        Rect::new(0, 0, 100, 80),
+    );
+    assert_ne!(key(&qv), Some(first), "made again for a new size");
+    qv.set_body(Body::Note(String::new()));
+    assert_eq!(key(&qv), None, "a new body drops it");
+}

@@ -297,6 +297,7 @@ impl Explorer {
             self.take_bin_tabs(ctx),
             self.take_config(ctx),
             self.take_preview(),
+            self.take_pane(ctx),
             self.take_sheet_picture(ctx),
             self.take_checksums(),
             self.take_reads(ctx),

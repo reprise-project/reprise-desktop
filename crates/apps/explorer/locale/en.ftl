@@ -471,6 +471,7 @@ commandbar-restore = Restore
 organize-layout = &Layout
 organize-menu-bar = &Menu bar
 organize-details-pane = &Details pane
+organize-preview-pane = Pre&view pane
 organize-navigation-pane = &Navigation pane
 organize-folder-and-search-options = F&older and search options
 organize-close = Clos&e
@@ -490,3 +491,8 @@ details-pane-original-location = Original location:
 details-pane-date-deleted = Date deleted:
 details-pane-dimensions = Dimensions:
 details-pane-dimensions-value = { NUMBER($w, useGrouping: "false") } x { NUMBER($h, useGrouping: "false") }
+
+## The preview pane right of the view
+preview-pane-name = Preview pane
+preview-pane-select = Select a file to preview.
+preview-pane-none = No preview available.

@@ -215,7 +215,7 @@ fn space_previews_the_one_selected_file_and_closes_it_again() {
     assert_eq!(child.title, "a.txt");
     assert!(!child.modal, "Explorer stays usable behind it");
     assert!(
-        matches!(ex.preview.as_ref().unwrap().qv.body, Body::Text(_)),
+        matches!(ex.preview.as_ref().unwrap().qv.body(), Body::Text(_)),
         "the read landed within the wait"
     );
 

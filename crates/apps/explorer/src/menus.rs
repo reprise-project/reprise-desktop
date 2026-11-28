@@ -40,7 +40,7 @@ pub struct MenuState {
     pub folders: bool,
     pub status_bar: bool,
     /// Organize > Layout's checks under Glass: menu bar, details pane, navigation pane.
-    pub layout: [bool; 3],
+    pub layout: [bool; 4],
     /// The window takes the shell layout: View offers Layout's panes in place of the toolbars,
     /// status bar and Explorer bar.
     pub shell: bool,
@@ -108,7 +108,7 @@ impl Default for MenuState {
             can_undo: None,
             folders: true,
             status_bar: true,
-            layout: [false, true, true],
+            layout: [false, true, false, true],
             shell: false,
             hidden: false,
             toolbars: [true, true, false],
@@ -304,7 +304,7 @@ pub fn no_glyphs(_: CmdGlyph) -> Option<Canvas> {
     None
 }
 
-/// Layout's three panes under Glass, View's and Organize's. A pane's row wears its glyph while
+/// Layout's panes under Glass, View's and Organize's. A pane's row wears its glyph while
 /// the pane is hidden and the check while it shows.
 fn layout_menu(state: &MenuState, glyph: Glyphs) -> Menu {
     let mut layout = Menu::default();
@@ -322,9 +322,15 @@ fn layout_menu(state: &MenuState, glyph: Glyphs) -> Menu {
             Some(CmdGlyph::DetailsPane),
         ),
         (
+            tr!("organize-preview-pane"),
+            LayoutPart::PreviewPane,
+            state.layout[2],
+            Some(CmdGlyph::PreviewPane),
+        ),
+        (
             tr!("organize-navigation-pane"),
             LayoutPart::NavPane,
-            state.layout[2],
+            state.layout[3],
             Some(CmdGlyph::NavPane),
         ),
     ] {
