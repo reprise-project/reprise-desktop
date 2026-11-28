@@ -438,3 +438,110 @@ fn ctrl_l_focuses_the_address_with_its_text_selected() {
         "the whole path"
     );
 }
+
+#[test]
+fn crumbs_for_a_place_without_a_path_show_one_root_crumb() {
+    use crate::chrome::crumbs_for;
+    for (place, target) in [
+        (Place::Computer, "computer:///"),
+        (Place::RecycleBin, "trash:///"),
+        (Place::network(), "network:///"),
+        (Place::Desktop, ""),
+    ] {
+        let crumbs = crumbs_for(&place, &[], &[]);
+        assert_eq!(crumbs.len(), 1, "{place:?}");
+        assert_eq!(crumbs[0].label, place.title(), "{place:?}");
+        if !target.is_empty() {
+            assert_eq!(crumbs[0].target, target, "{place:?}");
+            let (back, _) = Place::read_address(target, None, &[]).expect("reads back");
+            assert_eq!(back, place);
+        }
+    }
+    let server = Place::Network("smb://box".to_string());
+    let crumbs = crumbs_for(&server, &[], &[]);
+    let labels: Vec<&str> = crumbs.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(labels, [Place::network().title().as_str(), "box"]);
+}
+
+#[test]
+fn crumbs_for_a_home_subfolder_start_at_home() {
+    use crate::chrome::crumbs_for;
+    let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is set"));
+    let music = home.join("Music").join("Albums");
+    let crumbs = crumbs_for(&Place::Folder(music.clone()), &[], &[]);
+    let got: Vec<(&str, &str)> = (crumbs.iter())
+        .map(|c| (c.label.as_str(), c.target.as_str()))
+        .collect();
+    let home_label = Place::Home.title();
+    let (home_s, music_s) = (
+        home.display().to_string(),
+        home.join("Music").display().to_string(),
+    );
+    let albums_s = music.display().to_string();
+    assert_eq!(
+        got,
+        [
+            (home_label.as_str(), home_s.as_str()),
+            ("Music", music_s.as_str()),
+            ("Albums", albums_s.as_str()),
+        ]
+    );
+}
+
+#[test]
+fn crumbs_for_a_path_outside_home_start_at_computer_and_name_the_drive() {
+    use crate::chrome::crumb_places;
+    let places = crumb_places(
+        &Place::Folder(PathBuf::from("/usr/lib")),
+        &[PathBuf::from("/")],
+    );
+    assert_eq!(
+        places,
+        [
+            Place::Computer,
+            Place::Folder(PathBuf::from("/")),
+            Place::Folder(PathBuf::from("/usr")),
+            Place::Folder(PathBuf::from("/usr/lib")),
+        ]
+    );
+}
+
+#[test]
+fn a_chevron_menu_on_a_dead_mount_opens_empty_and_does_not_block() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    std::fs::create_dir(real.join("inner")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(real.clone());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    let last = crate::chrome::crumb_places(&here, &ex.drive_mounts).len() - 1;
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    let started = std::time::Instant::now();
+    ex.open_crumb_menu(last, (10, 30), &mut ctx);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "no wait on the read"
+    );
+    let rows = |ex: &Explorer| -> Vec<String> {
+        let p = ex.popup.as_ref().expect("the menu is open");
+        (p.menu().items().iter())
+            .filter_map(|it| match it {
+                reprisekit::controls::menu::MenuItem::Entry { label, enabled, .. } => {
+                    Some(format!("{label} {enabled}"))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        rows(&ex),
+        ["(Empty) false"],
+        "open, empty, while the read is out"
+    );
+
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| rows(ex) == ["inner true"]);
+}

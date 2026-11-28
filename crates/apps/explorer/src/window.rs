@@ -534,6 +534,10 @@ impl Popup {
         }
     }
 
+    pub fn menu(&self) -> &crate::commands::Menu {
+        &self.menu
+    }
+
     /// The menu's rows wear stand-ins for the icons `waits` waits on.
     pub fn waiting(self, waits: IconWaits) -> Popup {
         Popup { waits, ..self }

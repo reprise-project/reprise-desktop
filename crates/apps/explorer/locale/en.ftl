@@ -303,6 +303,7 @@ shares-unmount-share-disconnect = Disconnect
 chrome-build-toolbar-back = Back
 chrome-build-toolbar-folders = Folders
 chrome-address-rows-desktop = Desktop
+chrome-crumb-menu-empty = (Empty)
 chrome-refresh-chrome-computer = Computer
 
 ## removing

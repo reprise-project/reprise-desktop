@@ -232,7 +232,8 @@ impl Explorer {
             | self.take_space(std::time::Duration::ZERO)
             | self.take_folder_free(std::time::Duration::ZERO, ctx)
             | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons)
-            | self.land_address_completion(ctx);
+            | self.land_address_completion(ctx)
+            | self.land_crumb_menu(ctx);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {
             let folders = (self.picture_folders.get(&done.path).into_iter().flatten())
