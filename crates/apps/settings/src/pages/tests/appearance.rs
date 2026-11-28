@@ -605,7 +605,7 @@ fn the_sample_draws_the_pending_scheme() {
         color_scheme: "Brick".into(),
         ..Settings::default()
     });
-    let r = s.on_page(appearancepage::sample_rect(Area::MIN));
+    let r = s.on_page(appearancepage::SAMPLE_RECT);
     let brick = reprisekit::schemes::scheme("Brick").expect("Brick is a Classic scheme");
     assert_eq!(draw(&s).get(r.x + 3, r.y + 3), brick.background.argb());
     let g = with(&Settings {
