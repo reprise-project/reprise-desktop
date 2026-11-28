@@ -181,6 +181,7 @@ fn item(name: &str, is_dir: bool, size: u64, kind: &str, modified: Option<i64>) 
         kind: kind.to_string(),
         drive: None,
         mount_root: false,
+        takes_writes: false,
         trashed: None,
         shortcut: None,
     }

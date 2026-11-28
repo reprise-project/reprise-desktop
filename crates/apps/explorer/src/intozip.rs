@@ -27,11 +27,13 @@ pub(crate) struct ZipChecked {
 }
 
 impl Explorer {
-    /// Whether the listed `it` is a zip that files dropped or pasted onto go into: a zip that
-    /// opens as a compressed folder, in a folder that takes writes.
+    /// Whether the listed `it` is a zip that files dropped or pasted onto go into: a zip of the
+    /// user's that takes writes and opens as a compressed folder, in a folder that takes writes.
+    /// A drop onto any other zip is refused.
     pub(crate) fn takes_into_zip(&self, it: &Item) -> bool {
         !it.is_dir
             && !it.is_link
+            && it.takes_writes
             && it.mime.as_deref() == Some("application/zip")
             && !self.place.read_only()
             && archive::opens_as_folder("application/zip", &self.app_index)

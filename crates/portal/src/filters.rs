@@ -120,6 +120,7 @@ mod tests {
             kind: String::new(),
             drive: None,
             mount_root: false,
+            takes_writes: false,
             trashed: None,
             shortcut: None,
         }
