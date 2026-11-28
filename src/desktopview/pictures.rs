@@ -1,6 +1,6 @@
 //! Folder pictures on the desktop: a folder whose `.directory` names a picture
-//! ([`reprisefs::meta::folder_picture`]) wears it in place of its icon, fitted inside the icon
-//! square. The compositor never opens the picture: the thumbnail helper
+//! ([`reprisefs::meta::folder_picture`]) wears it in place of its icon, standing in a drawn
+//! folder ([`folderpic`]). The compositor never opens the picture: the thumbnail helper
 //! ([`reprisefs::thumbpipe`]) reads and decodes it as Explorer's Thumbnails view does, within that
 //! reader's deadline and stuck-read caps, on a job thread here that waits [`ANSWER_WITHIN`] for each
 //! answer. A folder shows its icon until its picture lands. A picture saved over in place, which
@@ -17,7 +17,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use reprisefs::{thumbnailers, thumbpipe};
-use reprisekit::raster::{Canvas, fit_size};
+use reprisekit::art::folderpic;
+use reprisekit::raster::Canvas;
 
 use crate::{
     compositor::State,
@@ -102,20 +103,13 @@ impl Pictures {
     }
 }
 
-/// `thumb`, a thumbnail of a picture, fitted inside the icon square at `scale` and never past the
-/// picture's own size, centred on a transparent `ICON_PX` square in device pixels.
+/// `thumb`, a thumbnail of a picture, standing in the drawn folder ([`folderpic`]) that fills the
+/// `ICON_PX` square at `scale`, in device pixels.
 pub(crate) fn icon_of(thumb: &thumbpipe::Thumb, scale: i32) -> Canvas {
-    let s = scale.max(1) as u32;
-    let (dw, dh) = thumb.dims.unwrap_or((thumb.width, thumb.height));
-    let (lw, lh) = fit_size(dw, dh, (ICON_PX as u32, ICON_PX as u32));
-    let (w, h) = (lw.max(1) * s, lh.max(1) * s);
+    let dims = thumb.dims.unwrap_or((thumb.width, thumb.height));
     let (sw, sh) = (thumb.width, thumb.height);
-    let fitted =
-        Canvas::resample_box_from(sw, sh, w, h, |x, y| thumb.pixels[(y * sw + x) as usize]);
-    let side = ICON_PX as u32 * s;
-    let mut c = Canvas::new(side, side);
-    c.blit_over(((side - w) / 2) as i32, ((side - h) / 2) as i32, &fitted);
-    c
+    let px = |x, y| thumb.pixels[(y * sw + x) as usize];
+    folderpic::draw(ICON_PX as u32, scale, dims, (sw, sh), px)
 }
 
 impl State {

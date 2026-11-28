@@ -2558,14 +2558,23 @@ fn a_folder_with_a_picture_wears_it_in_thumbnails_view_only() {
     });
     let e = entry(&dlg, "sub");
     let thumb = e.thumb.as_ref().unwrap();
-    assert_eq!((thumb.width, thumb.height), (50, 20), "at its own size");
+    let inner = shellview::THUMB_INNER;
+    assert_eq!(
+        (thumb.width, thumb.height),
+        (inner, inner),
+        "the folder fills the square"
+    );
     assert!(
         e.detail.iter().all(|l| !l.contains(" x ")),
         "no picture size"
     );
     let c = drawn(&dlg);
     let cover = found(&c, COVER).expect("the folder's picture is drawn");
-    assert_eq!((cover.width, cover.height), (50, 20));
+    assert_eq!(
+        (cover.width, cover.height),
+        (50, 20),
+        "the picture at its own size"
+    );
     let frame = shellview::THUMB_FRAME;
     let (cx, cy) = (cover.x + cover.width / 2, cover.y + cover.height / 2);
     let (x0, y0) = (cx - frame / 2, cy - frame / 2);

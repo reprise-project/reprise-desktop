@@ -239,8 +239,7 @@ impl Explorer {
                 .filter_map(|f| self.item_index.get(f));
             for &i in folders {
                 if let Some(e) = self.sv.entries.get_mut(i) {
-                    let thumb = done.thumb.clone();
-                    e.thumb = Some(shellview::frame_thumb(thumb, done.dims, done.scale));
+                    e.thumb = Some(shellview::folder_thumb(&done.thumb, done.dims, done.scale));
                     dirty = true;
                 }
             }

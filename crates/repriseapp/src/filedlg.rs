@@ -1115,7 +1115,7 @@ impl Host {
                 .filter_map(|id| dirs.get(id));
             for &i in wearing {
                 let e = &mut dlg.entries_mut()[i];
-                e.thumb = Some(shellview::frame_thumb(d.thumb.clone(), d.dims, d.scale));
+                e.thumb = Some(shellview::folder_thumb(&d.thumb, d.dims, d.scale));
                 shown = true;
             }
             let Some(&i) = self.pictures.ids.get(&d.path).and_then(|id| at.get(id)) else {

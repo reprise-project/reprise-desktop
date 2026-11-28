@@ -352,6 +352,14 @@ pub fn frame_thumb(thumb: Canvas, dims: (u32, u32), scale: i32) -> Canvas {
     device.at_scale(scale)
 }
 
+/// A folder's picture (`thumb` of a `dims` picture) as the folder's [`Entry::thumb`]: the
+/// picture standing in a drawn folder ([`crate::art::folderpic`]) filling [`THUMB_INNER`].
+pub fn folder_thumb(thumb: &Canvas, dims: (u32, u32), scale: i32) -> Canvas {
+    let (sw, sh) = thumb.device_size();
+    let px = |x, y| thumb.pixels[(y * sw + x) as usize];
+    crate::art::folderpic::draw(THUMB_INNER, scale, dims, (sw, sh), px).at_scale(scale)
+}
+
 /// A file's size in Explorer's Size column and under a tile's name: bytes
 /// rounded up to whole KB, grouped in threes (0 reads "0 KB", 1 and 1024
 /// "1 KB", 1025 "2 KB", 12,345,678 "12,057 KB"). The status bar, Details
