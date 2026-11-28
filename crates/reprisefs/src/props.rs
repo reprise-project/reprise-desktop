@@ -1346,7 +1346,7 @@ pub fn short_size(bytes: u64) -> String {
 /// The size text: "0 bytes" under a kilobyte, else three significant digits of KB / MB / GB, cut not rounded, then the byte count: "1.23 KB (1,260 bytes)".
 pub fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
-        return format!("{bytes} bytes");
+        return tr!("size-bytes", bytes = bytes as i64);
     }
     let units = ["KB", "MB", "GB", "TB"];
     let b = u128::from(bytes);
