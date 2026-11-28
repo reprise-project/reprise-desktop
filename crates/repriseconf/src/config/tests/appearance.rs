@@ -270,6 +270,50 @@ fn classic_in_dark_mode_wears_the_dark_scheme() {
 }
 
 #[test]
+fn a_dark_classic_caption_reads_over_its_bar_with_or_without_pinned_bars() {
+    let schemes = reprisekit::schemes::SCHEMES;
+    let rgb = |c: Color| format!("\"#{:02x}{:02x}{:02x}\"", c.r, c.g, c.b);
+    for (dark, _) in schemes.iter().filter(|(_, cs)| cs.is_dark()) {
+        for (light, cs) in schemes.iter().filter(|(_, cs)| !cs.is_dark()) {
+            let head = format!(
+                "[appearance]\nmode = \"dark\"\ncolor_scheme = {light:?}\ndark_color_scheme = {dark:?}\n"
+            );
+            let pins = format!(
+                "[colors]\nactive_title = {}\ngradient_active_title = {}\n\
+                 inactive_title = {}\ngradient_inactive_title = {}\n",
+                rgb(cs.active_title),
+                rgb(cs.gradient_active_title),
+                rgb(cs.inactive_title),
+                rgb(cs.gradient_inactive_title),
+            );
+            for text in [head.clone(), head + &pins] {
+                let c = Config::parse(&text).unwrap().theme.colors;
+                let contrast = c.title_text.contrast(c.active_title);
+                assert!(
+                    contrast >= 4.5,
+                    "{dark} over {light}: caption text at least 4.5:1, got {contrast:.1}\n{text}"
+                );
+            }
+        }
+    }
+    let c =
+        Config::parse("[appearance]\nmode = \"dark\"\n[colors]\ninactive_title = \"#808080\"\n")
+            .unwrap()
+            .theme
+            .colors;
+    let standard = reprisekit::theme::ColorScheme::default();
+    assert_eq!(
+        c.inactive_title_text, standard.inactive_title_text,
+        "a pinned bar keeps the ink of the scheme it was picked over"
+    );
+    let dark = reprisekit::schemes::scheme(super::super::CLASSIC_DARK_SCHEME).unwrap();
+    assert_eq!(
+        c.title_text, dark.title_text,
+        "an unpinned bar keeps the dark ink"
+    );
+}
+
+#[test]
 fn glass_interface_and_settings_parse() {
     let c = Config::parse(
         "[appearance]\ninterface = \"glass\"\n[glass]\ncolor = \"#102030\"\nintensity = 80\ntransparency = false\n",

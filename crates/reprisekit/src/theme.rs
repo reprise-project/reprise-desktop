@@ -175,6 +175,21 @@ named_fields!(ColorScheme, Color, {
     menu_bar = Color::rgb(212, 208, 200),
 });
 
+/// Each scheme surface and the ink drawn on it, by [`ColorScheme::set`] name.
+const INKS: &[(&[&str], &str)] = &[
+    (&["active_title", "gradient_active_title"], "title_text"),
+    (
+        &["inactive_title", "gradient_inactive_title"],
+        "inactive_title_text",
+    ),
+    (&["button_face"], "button_text"),
+    (&["window"], "window_text"),
+    (&["hilight"], "hilight_text"),
+    (&["menu"], "menu_text"),
+    (&["menu_band", "gradient_menu_band"], "menu_band_text"),
+    (&["info_bk"], "info_text"),
+];
+
 /// The environment variable a compositor hands its clients the effective
 /// colour scheme in: `field=#rrggbb` pairs separated by `;`, in
 /// [`ColorScheme::pairs`] order.
@@ -191,6 +206,30 @@ impl ColorScheme {
 
     pub fn is_dark(&self) -> bool {
         self.window.luminance() < 0.5
+    }
+
+    /// Lay `pins` (a [`ColorScheme::set`] name and a colour) over the scheme. An ink left
+    /// unpinned over a pinned surface takes `picked_over`'s, the scheme the pins were picked
+    /// over, so a dark scheme's ink never lands on a light scheme's surface. Err names the first
+    /// pin that is no colour of the scheme; the others are laid all the same.
+    pub fn pin(&mut self, picked_over: &ColorScheme, pins: &[(&str, Color)]) -> Result<(), String> {
+        let mut unknown = None;
+        for &(name, c) in pins {
+            if !self.set(name, c) {
+                unknown.get_or_insert(name);
+            }
+        }
+        let pinned = |n: &str| pins.iter().any(|&(p, _)| p == n);
+        let theirs = picked_over.pairs();
+        for &(surfaces, ink) in INKS {
+            if !pinned(ink)
+                && surfaces.iter().any(|s| pinned(s))
+                && let Some(&(_, c)) = theirs.iter().find(|&&(n, _)| n == ink)
+            {
+                self.set(ink, c);
+            }
+        }
+        unknown.map_or(Ok(()), |name| Err(name.to_string()))
     }
 
     /// A scheme from a [`COLORS_ENV`] value laid over Reprise Standard.

@@ -101,11 +101,22 @@ pub fn theme(s: &Settings) -> Theme {
     };
     let background = Color::parse(&s.background);
     let mut t = reprisekit::interfaces::sample_theme(i, scheme, dark, &g, background);
-    for (name, value) in &s.colors {
-        if let Some(c) = Color::parse(value) {
-            t.colors.set(name, c);
+    let picked_over = match dark {
+        true => {
+            let light = glass::Settings {
+                mode: glass::Mode::Light,
+                ..g
+            };
+            reprisekit::interfaces::sample_theme(i, &s.color_scheme, false, &light, background)
+                .colors
         }
-    }
+        false => t.colors.clone(),
+    };
+    let pins: Vec<(&str, Color)> = (s.colors.iter())
+        .filter_map(|(name, value)| Some((name.as_str(), Color::parse(value)?)))
+        .collect();
+    // A name that is no colour fails the compositor's read; the sample draws the others.
+    let _ = t.colors.pin(&picked_over, &pins);
     if i == Interface::Glass && s.taskbar_small_icons {
         reprisekit::interfaces::small_bar(&mut t, &g);
     }
