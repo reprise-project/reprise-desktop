@@ -322,6 +322,18 @@ impl State {
         }
     }
 
+    /// Forget the kept swipe before a key acts on the overview it shows: a desktop slide under it
+    /// comes down and the overview stays, fully shown, so the fingers moving on or lifting leave it be.
+    pub fn settle_kept_swipe_shown(&mut self) {
+        if self.pointers.swipe.take().is_none() {
+            return;
+        }
+        if self.switch_anim.drag.is_some() {
+            self.cancel_switch_anim();
+        }
+        self.set_overview_fade(1.0);
+    }
+
     fn drag_begin(&mut self, to: usize) -> bool {
         self.finish_window_anims();
         self.cancel_switch_anim();

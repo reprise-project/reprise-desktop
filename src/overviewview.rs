@@ -1246,4 +1246,94 @@ mod tests {
             "the snapped window closed, though its group has another member"
         );
     }
+
+    /// The overview's opacity, `None` while it is closed; panics on a fade still running.
+    fn shown(s: &State) -> Option<f32> {
+        let v = s.overview.view.as_ref()?;
+        assert!(v.fade.is_none(), "no fade runs on");
+        Some(s.scene.opacity(v.tree).unwrap_or(1.0))
+    }
+
+    #[test]
+    fn a_key_mid_overview_swipe_settles_the_swipe_and_acts_on_the_overview_shown() {
+        const KEY_ESC: u32 = 1;
+        const KEY_ENTER: u32 = 28;
+        const KEY_RIGHT: u32 = 106;
+        for opening in [true, false] {
+            for (name, key, stays_open) in [
+                ("Enter", KEY_ENTER, false),
+                ("Escape", KEY_ESC, false),
+                ("Right", KEY_RIGHT, true),
+            ] {
+                let what = format!(
+                    "{name} mid {} swipe",
+                    if opening { "opening" } else { "closing" }
+                );
+                let config = crate::config::Config {
+                    base: repriseconf::config::Config {
+                        workspaces: 4,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let mut h = crate::harness::Harness::with_config(config);
+                h.output("TEST-1", 1024, 768);
+                let mut c = h.connect();
+                let a = h.map_toplevel(&mut c, "test.app", 300, 200);
+                let b = h.map_toplevel(&mut c, "test.other", 300, 200);
+                h.dispatch();
+                if !opening {
+                    h.state.open_overview();
+                }
+                let step = if opening { (0.0, -60.0) } else { (0.0, 60.0) };
+                let mut picked = None;
+                let held = |h: &mut crate::harness::Harness| {
+                    let v = h.state.overview.view.as_ref().expect("the overview shows");
+                    let o = h.state.scene.opacity(v.tree).unwrap_or(1.0);
+                    assert!(
+                        o > 0.0 && o < 1.0,
+                        "{what}: the overview is part faded: {o}"
+                    );
+                    picked = Some(v.windows[v.model.selected]);
+                    h.key(key, true);
+                    h.key(key, false);
+                    assert!(
+                        h.state.pointers.swipe.is_none(),
+                        "{what}: the key settles the swipe"
+                    );
+                    assert_eq!(
+                        shown(&h.state),
+                        stays_open.then_some(1.0),
+                        "{what}: the overview is fully open or closed"
+                    );
+                };
+                h.swipe_around(3, &[step; 2], held, &[step; 2]);
+                assert_eq!(
+                    shown(&h.state),
+                    stays_open.then_some(1.0),
+                    "{what}: the fingers moving on and lifting leave the overview as the key did"
+                );
+                assert_eq!(
+                    h.state.desktops.current, 0,
+                    "{what}: the lift switches nothing"
+                );
+                match key {
+                    KEY_ENTER => assert_eq!(h.state.focused, picked, "{what}: brings up the pick"),
+                    KEY_ESC => assert_eq!(h.state.focused, Some(b.id), "{what}: b keeps the focus"),
+                    _ => {
+                        h.key(KEY_ENTER, true);
+                        h.key(KEY_ENTER, false);
+                        assert_eq!(h.state.focused, Some(a.id), "{what}: Right picked a");
+                        assert_eq!(shown(&h.state), None, "{what}: Enter closes the overview");
+                    }
+                }
+                h.swipe(3, &[(60.0, 0.0); 6]);
+                assert_eq!(
+                    h.state.desktops.current, 1,
+                    "{what}: the next swipe switches"
+                );
+                assert!(h.state.pointers.swipe.is_none(), "{what}: and is let go");
+            }
+        }
+    }
 }
