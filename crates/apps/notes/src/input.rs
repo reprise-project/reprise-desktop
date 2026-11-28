@@ -224,7 +224,7 @@ impl Notes {
                 _ => Reply::none(),
             };
         }
-        let lay = stickynote::layout(Notes::client(ctx));
+        let lay = stickynote::layout(Notes::client(ctx), ctx.theme.text);
         let Some(n) = self.note(win) else {
             return Reply::none();
         };
