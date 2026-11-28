@@ -457,7 +457,7 @@ impl DrivesApp {
             Err(e) => {
                 let u = self.unlock.as_mut().filter(|_| open)?;
                 log::info!("unlocking {volume}: {e}");
-                u.fail(unlock::failure(&e.message));
+                u.fail(&unlock::failure(&e.message));
                 None
             }
         }
@@ -767,7 +767,7 @@ impl App for DrivesApp {
             .iter()
             .map(|_| Child {
                 id: self.unlock_win(),
-                title: unlock::TITLE.into(),
+                title: unlock::title(),
                 size: self.unlock_size,
                 fixed: true,
                 modal: false,

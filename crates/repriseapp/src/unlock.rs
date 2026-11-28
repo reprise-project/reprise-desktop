@@ -1,5 +1,6 @@
 //! Unlock Drive: the passphrase box for a locked drive, raised when it is
-//! plugged in and when it is opened from Computer.
+//! plugged in and when it is opened from Computer. Explorer raises it with its own [`Words`]
+//! for an encrypted zip's password.
 
 use std::cell::Cell;
 
@@ -34,9 +35,35 @@ const BTN_Y: i32 = CLIENT.1 - 12 - BUTTON_H;
 const CANCEL_X: i32 = CLIENT.0 - 12 - BUTTON_W;
 const OK_X: i32 = CANCEL_X - 6 - BUTTON_W;
 
-pub const TITLE: &str = "Unlock Drive";
-pub const WRONG: &str = "The passphrase is not correct.";
+/// Unlock Drive's caption.
+pub fn title() -> String {
+    reprisekit::tr!("unlock-title")
+}
+
+/// What Unlock Drive says of a refused passphrase.
+pub fn wrong() -> String {
+    reprisekit::tr!("unlock-wrong")
+}
 const ICON_NAME: &str = "drive-removable-media";
+
+/// What a passphrase box says: its caption, its message and its field's label.
+#[derive(Clone, Debug)]
+pub struct Words {
+    pub title: String,
+    pub message: String,
+    pub label: String,
+}
+
+impl Words {
+    /// Unlock Drive's, for the drive `name`.
+    pub fn drive(name: &str) -> Words {
+        Words {
+            title: title(),
+            message: message(name),
+            label: reprisekit::tr!("unlock-label"),
+        }
+    }
+}
 
 pub enum Outcome {
     None,
@@ -47,51 +74,73 @@ pub enum Outcome {
 
 /// The dialog's model: the form and the container it unlocks. Dropping it wipes the field.
 pub struct Unlock {
+    /// What it unlocks: a drive's UDisks2 object, or an archive's path.
     pub volume: String,
-    /// The drive's name in the message, wrapped again at each text size.
-    name: String,
+    /// Its words; the message is wrapped again at each text size.
+    words: Words,
+    /// The theme icons it wears, the first the theme has.
+    icons: &'static [&'static str],
     pub form: Form,
     busy: bool,
-    /// The drive icon, while it decodes off the loop ([`Unlock::land_icon`]).
+    /// The icon, while it decodes off the loop ([`Unlock::land_icon`]).
     waits: IconWaits,
 }
 
 pub fn message(name: &str) -> String {
-    format!("'{name}' is encrypted. Type its passphrase to unlock it.")
+    reprisekit::tr!("unlock-message", name = name)
 }
 
-/// The message naming `name`, wrapped to its rect at `forms`' text size.
-fn wrapped(name: &str, text: &TextRenderer, forms: &Theme) -> Vec<String> {
+/// `message` wrapped to its rect at `forms`' text size.
+pub fn wrapped(message: &str, text: &TextRenderer, forms: &Theme) -> Vec<String> {
     let width = forms.text.len(MSG_W);
-    reprisekit::text::wrap(text, &message(name), width, forms.fonts.size_px)
+    reprisekit::text::wrap(text, message, width, forms.fonts.size_px)
 }
 
-/// The drive icon, grown with the text size as the box is; a blank stand-in noted in `waits`
-/// while it decodes.
-fn icon(ctx: &mut Ctx, waits: &mut IconWaits) -> Option<Canvas> {
+/// The first of `names` the theme has, grown with the text size as the box is; a blank
+/// stand-in noted in `waits` while it decodes.
+fn icon(ctx: &mut Ctx, names: &[&str], waits: &mut IconWaits) -> Option<Canvas> {
     let px = ctx.forms().text.len(ICON.width);
-    waits.first(&mut ctx.icons, &[ICON_NAME], px)
+    waits.first(&mut ctx.icons, names, px)
 }
 
 /// The status line for a failed unlock with UDisks2 `message`.
-pub fn failure(message: &str) -> &str {
+pub fn failure(message: &str) -> String {
     // Wrong-passphrase wording varies by cryptsetup version.
     let m = message.to_lowercase();
     let wrong = ["passphrase", "not permitted", "no key"]
         .iter()
         .any(|w| m.contains(w));
-    if wrong { WRONG } else { message }
+    match wrong {
+        true => self::wrong(),
+        false => message.to_string(),
+    }
 }
 
 impl Unlock {
     /// The box for container `volume`, named `name` in its message.
     pub fn open(volume: String, name: &str, ctx: &mut Ctx) -> Unlock {
-        let lines = wrapped(name, &ctx.text, &ctx.forms());
+        Unlock::open_with(volume, Words::drive(name), &[ICON_NAME], ctx)
+    }
+
+    /// The box for `volume` saying `words`, wearing the first of the theme icons `icons`.
+    pub fn open_with(
+        volume: String,
+        words: Words,
+        icons: &'static [&'static str],
+        ctx: &mut Ctx,
+    ) -> Unlock {
+        let lines = wrapped(&words.message, &ctx.text, &ctx.forms());
         let mut waits = IconWaits::default();
-        let icon = icon(ctx, &mut waits);
-        let mut u = Unlock::new(volume, name, &lines, icon);
+        let icon = icon(ctx, icons, &mut waits);
+        let mut u = Unlock::new(volume, words, &lines, icon);
+        u.icons = icons;
         u.waits = waits;
         u
+    }
+
+    /// Its caption.
+    pub fn title(&self) -> &str {
+        &self.words.title
     }
 
     /// The drive icon landed: the box wears it, or none where it decodes at no size. True when
@@ -106,7 +155,7 @@ impl Unlock {
 
     fn wear_icon(&mut self, ctx: &mut Ctx) {
         self.waits = IconWaits::default();
-        let worn = icon(ctx, &mut self.waits);
+        let worn = icon(ctx, self.icons, &mut self.waits);
         if let Some(it) = self.form.item_mut("icon")
             && let Control::Picture { canvas, .. } = &mut it.control
         {
@@ -114,7 +163,7 @@ impl Unlock {
         }
     }
 
-    pub fn new(volume: String, name: &str, lines: &[String], icon: Option<Canvas>) -> Unlock {
+    pub fn new(volume: String, words: Words, lines: &[String], icon: Option<Canvas>) -> Unlock {
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         let items = vec![
             Item::picture("icon", ICON, icon),
@@ -126,7 +175,7 @@ impl Unlock {
             Item::label(
                 "passphrase_l",
                 Rect::new(LABEL_X, FIELD_Y + LABEL_DY, 100, LINE_H),
-                "&Passphrase:",
+                &words.label,
             ),
             Item::new(
                 "passphrase",
@@ -146,14 +195,14 @@ impl Unlock {
             Item::button(
                 "ok",
                 Rect::new(OK_X, BTN_Y, BUTTON_W, BUTTON_H),
-                "OK",
+                &reprisekit::kit_tr!("ok"),
                 false,
                 true,
             ),
             Item::button(
                 "cancel",
                 Rect::new(CANCEL_X, BTN_Y, BUTTON_W, BUTTON_H),
-                "Cancel",
+                &reprisekit::kit_tr!("cancel"),
                 true,
                 false,
             ),
@@ -162,7 +211,8 @@ impl Unlock {
         form.focus_id("passphrase");
         Unlock {
             volume,
-            name: name.into(),
+            words,
+            icons: &[ICON_NAME],
             form,
             busy: false,
             waits: IconWaits::default(),
@@ -197,7 +247,7 @@ impl Unlock {
             Event::CloseRequest => Outcome::Cancel,
             // The window hears a text size change as a resize.
             Event::Resized => {
-                let lines = wrapped(&self.name, &ctx.text, &ctx.forms());
+                let lines = wrapped(&self.words.message, &ctx.text, &ctx.forms());
                 self.form.set_lines("message", &lines);
                 self.wear_icon(ctx);
                 Outcome::Redraw
@@ -303,9 +353,14 @@ mod tests {
     fn the_box_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, forms, text| {
             let name = "Kingston DataTraveler";
-            let mut d = Unlock::new("sdc".into(), name, &wrapped(name, text, forms), None);
+            let mut d = Unlock::new(
+                "sdc".into(),
+                Words::drive(name),
+                &wrapped(&message(name), text, forms),
+                None,
+            );
             let fresh = d.form.clone();
-            d.fail(WRONG);
+            d.fail(&wrong());
             vec![("unlock".into(), fresh), ("wrong".into(), d.form.clone())]
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
@@ -422,7 +477,12 @@ mod tests {
 
     #[test]
     fn ok_waits_for_a_passphrase_and_hands_it_over_once() {
-        let mut d = Unlock::new("sdc".into(), "VAULT", &[message("VAULT")], None);
+        let mut d = Unlock::new(
+            "sdc".into(),
+            Words::drive("VAULT"),
+            &[message("VAULT")],
+            None,
+        );
         assert!(matches!(d.event(form::Event::Default), Outcome::None));
         typed(&mut d, "hunter2");
         match d.event(form::Event::Default) {
@@ -439,10 +499,15 @@ mod tests {
 
     #[test]
     fn a_wrong_passphrase_says_so_and_takes_another() {
-        let mut d = Unlock::new("sdc".into(), "VAULT", &[message("VAULT")], None);
+        let mut d = Unlock::new(
+            "sdc".into(),
+            Words::drive("VAULT"),
+            &[message("VAULT")],
+            None,
+        );
         typed(&mut d, "nope");
         d.event(form::Event::Default);
-        d.fail(WRONG);
+        d.fail(&wrong());
         assert_eq!(d.status(), "The passphrase is not correct.");
         typed(&mut d, "right");
         assert!(matches!(d.event(form::Event::Default), Outcome::Submit(_)));
@@ -452,7 +517,7 @@ mod tests {
     fn a_refused_passphrase_reads_as_wrong_and_other_failures_as_given() {
         assert_eq!(
             failure("Error unlocking /dev/sdc: Failed to activate device: Operation not permitted"),
-            WRONG
+            "The passphrase is not correct."
         );
         assert_eq!(
             failure("Device /dev/sdc is busy"),

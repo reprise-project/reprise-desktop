@@ -67,6 +67,7 @@ archive-no-cache = there is no cache folder to copy it to.
 background-no-data-dir = there is no data folder to keep the picture in.
 background-no-name = the picture has no file name.
 archive-locked = it is password-protected.
+archive-wrong-key = the password given does not open it.
 archive-not-held = it no longer holds { $name }.
 archive-path-too-long = it holds a path too long to copy out.
 archive-line-too-long = bsdtar listed a name too long to read.

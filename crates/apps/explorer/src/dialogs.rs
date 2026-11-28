@@ -5,6 +5,7 @@
 use crate::icons::{IconSlot, land_picture};
 use crate::place;
 use crate::props_dialog::{ADV_CANCEL, ADV_OK, ATTR_CANCEL, ATTR_OK, ATTR_SIZE, AttrConfirm};
+use crate::zipkey::Unlocks;
 use crate::{BTN_LEFT, Explorer};
 use repriseapp::filedlg::Host;
 use repriseapp::unlock::{self, Unlock};
@@ -259,8 +260,9 @@ pub enum Dialog {
     },
     About(Form, IconSlot),
     Browse(crate::browse::Browse),
-    /// Unlock Drive, over a locked drive opened from Computer.
-    Unlock(Box<Unlock>),
+    /// Unlock Drive over a locked drive opened from Computer, or the password box of an
+    /// encrypted zip.
+    Unlock(Box<Unlock>, crate::zipkey::Unlocks),
     /// Rename with several items picked; the preview follows each change.
     BatchRename(Box<crate::rename::BatchRename>),
     /// New > Shortcut's wizard.
@@ -292,6 +294,7 @@ impl Dialog {
     fn held(&self) -> bool {
         match self {
             Dialog::Replace(_) | Dialog::Login(_) | Dialog::Paste(_) | Dialog::Reading(_) => true,
+            Dialog::Unlock(_, unlocks) => unlocks.holds_a_job(),
             Dialog::Confirm(c) => c.job.is_some(),
             Dialog::Question { about, .. } => matches!(about, crate::shares::Asking::Connection),
             _ => false,
@@ -359,7 +362,7 @@ impl Dialog {
                 crate::browse::Pick::Copy => tr!("dialogs-title-copy-items"),
                 crate::browse::Pick::Extract => tr!("dialogs-title-extract-all"),
             },
-            Dialog::Unlock(_) => unlock::TITLE.to_string(),
+            Dialog::Unlock(u, _) => u.title().to_string(),
             Dialog::BatchRename(_) => tr!("dialogs-title-rename"),
             Dialog::NewShortcut(_) => reprisekit::controls::newshortcut::title().to_string(),
             Dialog::AddFavorite(_) => favorites::add_title().to_string(),
@@ -400,7 +403,7 @@ impl Dialog {
             Dialog::Browse(b) => {
                 crate::foldertree::land_icons(&mut b.bf.tree, &mut b.places, icons)
             }
-            Dialog::Unlock(u) => u.land_icon(ctx),
+            Dialog::Unlock(u, _) => u.land_icon(ctx),
             Dialog::Connect(b) => b.land_icon(ctx),
             Dialog::Login(b) => b.land_icon(ctx),
             Dialog::Message { .. }
@@ -911,7 +914,7 @@ impl Explorer {
             | Dialog::ChangeIcon { .. }
             | Dialog::About(..)
             | Dialog::Browse(_)
-            | Dialog::Unlock(_)
+            | Dialog::Unlock(..)
             | Dialog::BatchRename(_)
             | Dialog::NewShortcut(_)
             | Dialog::AddFavorite(_)
@@ -1008,7 +1011,7 @@ impl Explorer {
                     Dialog::About(..) => u.size(aboutbox::CLIENT),
                     Dialog::Browse(_) => browsefolder::client(&self.forms.controls()),
                     Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
-                    Dialog::Unlock(_) => u.size(unlock::CLIENT),
+                    Dialog::Unlock(..) => u.size(unlock::CLIENT),
                     Dialog::BatchRename(_) => u.size(reprisekit::controls::batchrename::CLIENT),
                     Dialog::NewShortcut(_) => u.size(reprisekit::controls::newshortcut::CLIENT),
                     Dialog::AddFavorite(_) => u.size(reprisekit::controls::namebox::CLIENT),
@@ -1069,7 +1072,7 @@ impl Explorer {
 
     pub fn draw_dialog(&self, c: &mut Canvas, ctx: &Ctx) {
         c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
-        if let Some(Dialog::Unlock(u)) = self.dialogs.up() {
+        if let Some(Dialog::Unlock(u, _)) = self.dialogs.up() {
             u.draw(c, ctx);
             return;
         }
@@ -1164,7 +1167,7 @@ impl Explorer {
     }
 
     pub fn access_dialog(&self, tree: &mut reprisekit::access::Tree, ctx: &Ctx) {
-        if let Some(Dialog::Unlock(u)) = self.dialogs.up() {
+        if let Some(Dialog::Unlock(u, _)) = self.dialogs.up() {
             u.access(tree, ctx);
             return;
         }
@@ -1237,8 +1240,11 @@ impl Explorer {
         if matches!(self.dialogs.up(), Some(Dialog::ChooseProgram(_))) {
             return self.chooser_event(ev, ctx);
         }
-        if matches!(self.dialogs.up(), Some(Dialog::Unlock(_))) {
+        if matches!(self.dialogs.up(), Some(Dialog::Unlock(_, Unlocks::Drive))) {
             return self.unlock_event(ev, ctx);
+        }
+        if matches!(self.dialogs.up(), Some(Dialog::Unlock(..))) {
+            return self.zip_key_event(ev, ctx);
         }
         // The boxes that keep a form (attribute confirm, Advanced Attributes, Change Icon) take their events in place; the text boxes rebuild theirs per event.
         let kept = match self.dialogs.up_mut() {
@@ -1437,7 +1443,7 @@ impl Explorer {
             // The chooser and Unlock Drive answer in `chooser_event` and
             // `unlock_event`; `dialog_event` never reaches here for them.
             Dialog::ChooseProgram(_)
-            | Dialog::Unlock(_)
+            | Dialog::Unlock(..)
             | Dialog::BatchRename(_)
             | Dialog::NewShortcut(_)
             | Dialog::AddFavorite(_)
@@ -1539,7 +1545,7 @@ impl Explorer {
             | Dialog::ChooseProgram(_)
             | Dialog::Advanced { .. }
             | Dialog::ChangeIcon { .. }
-            | Dialog::Unlock(_)
+            | Dialog::Unlock(..)
             | Dialog::BatchRename(_)
             | Dialog::NewShortcut(_)
             | Dialog::AddFavorite(_)

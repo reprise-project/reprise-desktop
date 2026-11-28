@@ -432,6 +432,15 @@ browse-prompt-selected-items = the { $count } selected items
 ## Compressed folders
 archive-open-failed-title = Compressed (zipped) Folders
 archive-open-failed = Cannot open { $name }: { $why }
+zipkey-title = Password Needed
+zipkey-open = '{ $name }' is password-protected. Type its password to open it.
+zipkey-extract = '{ $name }' is password-protected. Type its password to extract it.
+zipkey-label = &Password:
+zipkey-wrong = The password is not correct.
+zipkey-another = Some files in it need another password.
+zipkey-breaks = A password cannot hold a line break.
+# most is the longest password bsdtar reads, in bytes.
+zipkey-too-long = A password can be at most { NUMBER($most, useGrouping: "false") } bytes long.
 archive-copy-failed-title = Compressed (zipped) Folders
 archive-copy-failed = Cannot open { $name } from the compressed folder: { $why }
 archive-runs = { $name } is a program, and programs do not run from inside a compressed folder. Extract the folder first, then run it from there.

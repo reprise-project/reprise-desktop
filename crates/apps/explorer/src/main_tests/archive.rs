@@ -432,3 +432,154 @@ fn closing_explorer_hands_the_copies_on_its_clipboard_to_the_day_old_sweep() {
         .mode();
     assert_eq!(mode & 0o7777, 0o1700, "marked handed over");
 }
+
+/// `locked.zip` in a fresh folder, holding `a.txt` encrypted with the password `pw`.
+fn locked() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let d = dir.path();
+    std::fs::write(d.join("a.txt"), "secret").expect("write");
+    let made = std::process::Command::new("bsdtar")
+        .current_dir(d)
+        .args(["--options", "zip:encryption=zipcrypt", "--passphrase", "pw"])
+        .args(["-a", "-cf", "locked.zip", "a.txt"])
+        .status()
+        .expect("bsdtar runs");
+    assert!(made.success());
+    std::fs::remove_file(d.join("a.txt")).expect("rm");
+    let zip = d.join("locked.zip");
+    (dir, zip)
+}
+
+/// Types `typed` into the password box up and presses Enter.
+fn give_password(ex: &mut Explorer, typed: &str, ctx: &mut Ctx) {
+    for ch in typed.chars() {
+        let utf8 = ch.to_string();
+        let edit = reprisekit::textedit::key_for(ch as u32, false, false, Some(&utf8));
+        let key = repriseapp::KeyInput {
+            sym: ch as u32,
+            utf8: Some(utf8),
+            mods: repriseapp::Mods::default(),
+            edit,
+        };
+        ex.dialog_event(Event::Key(key), ctx);
+    }
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), ctx);
+}
+
+/// The status line of the password box up, and what it opens.
+fn password_box(ex: &Explorer) -> Option<(String, &crate::zipkey::Unlocks)> {
+    let Some(Dialog::Unlock(u, unlocks)) = ex.dialog() else {
+        return None;
+    };
+    let status = match u.form.item("status").map(|i| &i.control) {
+        Some(reprisekit::controls::form::Control::Label { text, .. }) => text.clone(),
+        _ => String::new(),
+    };
+    Some((status, unlocks))
+}
+
+#[test]
+fn an_encrypted_zip_asks_its_password_until_one_opens_it_then_not_again_in_the_window() {
+    use crate::zipkey::Unlocks;
+    let (dir, zip) = locked();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.event(crate::MAIN, Event::Focus(true), &mut ctx);
+    ex.go(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    assert!(names(&ex).is_empty());
+    assert!(
+        matches!(password_box(&ex), Some((s, Unlocks::Open(z))) if s.is_empty() && *z == zip),
+        "the password box is up"
+    );
+    give_password(&mut ex, "nope", &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        password_box(ex).is_some_and(|(s, _)| s == "The password is not correct.")
+    });
+    give_password(&mut ex, "pw", &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| names(ex) == ["a.txt"]);
+    assert!(ex.dialog().is_none(), "the box went");
+
+    ex.app_index = opener_index();
+    ex.select_paths(&[zip.join("a.txt")]);
+    let reply = ex.open_selected(&mut ctx);
+    let copy = (reply.spawn.iter().flatten())
+        .map(PathBuf::from)
+        .find(|p| p.file_name() == Some("a.txt".as_ref()))
+        .expect("the opener gets the copy");
+    assert_eq!(std::fs::read_to_string(&copy).expect("copied"), "secret");
+
+    ex.run(Command::Up, &mut ctx);
+    ex.go(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    assert_eq!(names(&ex), ["a.txt"]);
+    assert!(ex.dialog().is_none(), "the window asks once");
+}
+
+#[test]
+fn the_password_box_waits_for_the_window_to_first_hold_the_keyboard() {
+    let (dir, zip) = locked();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.go(Place::Archive(zip, PathBuf::new()), &mut ctx);
+    assert!(
+        ex.dialog().is_none(),
+        "no box while another window has the keyboard"
+    );
+    ex.event(crate::MAIN, Event::Focus(true), &mut ctx);
+    assert!(
+        password_box(&ex).is_some(),
+        "the box comes up with the keyboard"
+    );
+}
+
+#[test]
+fn a_cancel_during_the_check_lets_its_answer_go() {
+    let (dir, zip) = locked();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.event(crate::MAIN, Event::Focus(true), &mut ctx);
+    ex.go(Place::Archive(zip.clone(), PathBuf::new()), &mut ctx);
+    give_password(&mut ex, "pw", &mut ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| ex.jobs_pending == 0);
+    assert!(names(&ex).is_empty(), "the zip stays unlisted");
+    assert!(ex.archives.wants_key(&zip), "the window keeps no password");
+}
+
+#[test]
+fn a_cancelled_password_box_says_the_zip_is_password_protected() {
+    let (dir, zip) = locked();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.event(crate::MAIN, Event::Focus(true), &mut ctx);
+    ex.go(Place::Archive(zip, PathBuf::new()), &mut ctx);
+    assert!(password_box(&ex).is_some());
+    ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
+    assert!(
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. })
+            if text == "Cannot open locked.zip: it is password-protected."),
+        "the box says the zip is password-protected"
+    );
+}
+
+#[test]
+fn extract_all_of_an_encrypted_zip_asks_its_password_until_one_opens_it() {
+    use crate::zipkey::Unlocks;
+    let (dir, zip) = locked();
+    let to = dir.path().join("to");
+    std::fs::create_dir(&to).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.extract_into(vec![zip], to.clone(), &ctx);
+    let asked = |ex: &Explorer, status: &str| matches!(password_box(ex), Some((s, Unlocks::Extract(_))) if s == status);
+    wake_until(&mut ex, &mut ctx, |ex| asked(ex, ""));
+    give_password(&mut ex, "nope", &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        asked(ex, "The password is not correct.")
+    });
+    give_password(&mut ex, "pw", &mut ctx);
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    assert_eq!(
+        std::fs::read_to_string(to.join("locked/a.txt")).expect("extracted"),
+        "secret"
+    );
+}

@@ -97,3 +97,10 @@ browse-programs-title = Browse
 browse-programs-open = Open
 browse-programs-programs = Programs
 browse-programs-all-files = All Files
+
+## Unlock Drive: the passphrase box of a locked drive
+unlock-title = Unlock Drive
+# name is the drive's name.
+unlock-message = '{ $name }' is encrypted. Type its passphrase to unlock it.
+unlock-label = &Passphrase:
+unlock-wrong = The passphrase is not correct.

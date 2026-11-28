@@ -11,7 +11,7 @@ use crate::place::Place;
 use repriseapp::{Ctx, Reply};
 use reprisefs::archive::{self, Scratch};
 use reprisefs::compress::{self, Compress};
-use reprisefs::extract::{self, Archive, ArchiveEvent, ArchiveJob};
+use reprisefs::extract::{self, Archive, ArchiveEvent, ArchiveJob, Ask};
 use reprisefs::listing::Item;
 use reprisefs::ops::DropOp;
 use reprisekit::controls::copyprogress::Kind;
@@ -32,6 +32,10 @@ pub(crate) struct Extracting {
     /// come out into.
     then: Option<Then>,
     pub scratch: Option<Scratch>,
+    /// Extract's archives, in the job's order: what an [`ArchiveEvent::Locked`] names.
+    sources: Vec<PathBuf>,
+    /// The archive the window's own password was handed for, unasked.
+    silent: Option<usize>,
 }
 
 /// The copies a compressed folder's Copy put on the clipboard. Replacing them lets go of them;
@@ -51,6 +55,8 @@ impl Drop for ClipCopies {
 /// paths in it.
 pub(crate) struct Picks {
     pub archive: PathBuf,
+    /// The password the window opened an encrypted zip with.
+    pub key: Option<archive::Key>,
     pub entries: Arc<Vec<reprisefs::archive::Entry>>,
     pub picked: Vec<PathBuf>,
 }
@@ -192,6 +198,7 @@ impl Explorer {
             .collect();
         (!picked.is_empty()).then(|| Picks {
             entries: self.archives.kept(archive).unwrap_or_default(),
+            key: self.archives.key(archive),
             archive: archive.clone(),
             picked,
         })
@@ -313,6 +320,10 @@ impl Explorer {
             Batch::CopyOut { then, scratch, .. } => (Some(then.clone()), Some(scratch.clone())),
             _ => (None, None),
         };
+        let sources = match &batch {
+            Batch::Extract(b) => b.iter().map(|a| a.src.clone()).collect(),
+            _ => Vec::new(),
+        };
         let (job, kind, from, to) = match batch {
             Batch::Extract(batch) => {
                 let first = batch.first();
@@ -338,10 +349,12 @@ impl Explorer {
                 };
                 let Picks {
                     archive,
+                    key,
                     entries,
                     picked,
                 } = picks;
-                let job = archive::copy_job(archive, entries, picked, (scratch, dest), None, wake);
+                let into = (scratch, dest);
+                let job = archive::copy_job((archive, key), entries, picked, into, None, wake);
                 (job, Kind::Extract, from, to)
             }
             Batch::AddToZip { zip, adds } => {
@@ -373,6 +386,8 @@ impl Explorer {
             show,
             then,
             scratch,
+            sources,
+            silent: None,
         });
     }
 
@@ -384,13 +399,35 @@ impl Explorer {
         let zipping = ex.progress.kind == Kind::Compress;
         let copying = ex.then.is_some();
         let mut ask = None;
+        let mut locked = None;
         let mut finished = false;
         for ev in ex.job.poll() {
             match ev {
                 ArchiveEvent::Landed { into, .. } => ex.landed.push(into),
                 ArchiveEvent::Failed { text, .. } => ask = Some(text),
+                ArchiveEvent::Locked { index, ask } => locked = Some((index, ask)),
                 ArchiveEvent::Finished => finished = true,
             }
+        }
+        if let Some((index, ask)) = locked.filter(|_| !finished)
+            && let Some(zip) = ex.sources.get(index).cloned()
+        {
+            let asked = reprisefs::progress::Asked::new(ex.job.meter().clone());
+            // The window's own password for it goes first, once; the job checks it, and a box
+            // after it asks as if it were the first.
+            let silent = std::mem::take(&mut ex.silent) == Some(index);
+            if ask == Ask::First
+                && let Some(key) = self.archives.key(&zip)
+            {
+                ex.silent = Some(index);
+                ex.job.unlock(Some(key), asked);
+                return None;
+            }
+            let ask = match (silent, ask) {
+                (true, Ask::Wrong) => Ask::First,
+                (_, ask) => ask,
+            };
+            return Some(self.ask_extract_key(&zip, ask, asked, ctx));
         }
         // A job that ended does not wait for an answer: its end tells the failure.
         if let Some(text) = ask.take_if(|_| !zipping && !copying && !finished) {

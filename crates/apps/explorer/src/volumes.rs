@@ -8,6 +8,7 @@
 use crate::Explorer;
 use crate::dialogs::Dialog;
 use crate::place::{self, Place};
+use crate::zipkey::Unlocks;
 use repriseapp::unlock::{self, Outcome, Unlock};
 use repriseapp::{Ctx, Event, Reply};
 use reprisefs::listing::Item;
@@ -177,7 +178,8 @@ impl Explorer {
         };
         let name = v.name(self.volumes.disk_of(&v));
         if v.locked() {
-            return self.raise(Dialog::Unlock(Box::new(Unlock::open(v.path, &name, ctx))));
+            let u = Unlock::open(v.path, &name, ctx);
+            return self.raise(Dialog::Unlock(Box::new(u), Unlocks::Drive));
         }
         self.spawn_job(ctx, move || {
             let mounted = udisks.mount(&v.path);
@@ -197,7 +199,7 @@ impl Explorer {
     /// its cleartext volume and goes into it; a refused passphrase keeps the
     /// box up to try again.
     pub(crate) fn unlock_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
-        let Some(Dialog::Unlock(u)) = self.dialogs.up_mut() else {
+        let Some(Dialog::Unlock(u, _)) = self.dialogs.up_mut() else {
             return Reply::none();
         };
         let clip = repriseapp::keys::form_clipboard(u.form.focused_edit(), &ev);
@@ -236,12 +238,12 @@ impl Explorer {
         opened: Result<Result<std::path::PathBuf, Error>, Error>,
         ctx: &mut Ctx,
     ) -> Reply {
-        let open = matches!(self.dialogs.up(), Some(Dialog::Unlock(u)) if u.volume == volume);
+        let open = matches!(self.dialogs.up(), Some(Dialog::Unlock(u, Unlocks::Drive)) if u.volume == volume);
         match opened {
             Err(e) if e.kind != ErrorKind::Cancelled => {
                 log::info!("unlocking {volume}: {e}");
-                if let Some(Dialog::Unlock(u)) = self.dialogs.up_mut().filter(|_| open) {
-                    u.fail(unlock::failure(&e.message));
+                if let Some(Dialog::Unlock(u, _)) = self.dialogs.up_mut().filter(|_| open) {
+                    u.fail(&unlock::failure(&e.message));
                 }
                 Reply::redraw_all()
             }
