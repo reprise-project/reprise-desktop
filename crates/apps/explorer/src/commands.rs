@@ -62,6 +62,8 @@ pub enum Command {
     },
     /// Extract All...: the selected archives, or the compressed folder shown, into a folder picked.
     ExtractAll,
+    /// Extract in a compressed folder: the selected entries into the folder holding the archive.
+    ExtractEntries,
     /// Into a new zip beside the selected items.
     Compress,
     MoveTo,
@@ -558,6 +560,7 @@ impl Explorer {
             Command::MoveTo => self.open_browse(crate::browse::Pick::Move, ctx),
             Command::CopyTo => self.open_browse(crate::browse::Pick::Copy, ctx),
             Command::ExtractAll => self.extract_all(ctx),
+            Command::ExtractEntries => self.extract_entries(ctx),
             Command::Drop(op) => self.drop_pending(op, ctx),
             Command::DropCancel => self.cancel_pending_drop(),
             Command::OpenWith(i) => self.open_with(i, ctx),

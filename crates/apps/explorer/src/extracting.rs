@@ -1,6 +1,7 @@
-//! Extract Here, Extract to and Extract All... on an archive's menu, Compress to on any items, and
-//! Copy or Copy To Folder... in a compressed folder: an [`ArchiveJob`] with its progress dialog.
-//! An archive that fails asks Skip, Retry or Cancel; a zip or a copy that fails shows an error box.
+//! Extract Here, Extract to and Extract All... on an archive's menu, Compress to on any items,
+//! Copy, Copy To Folder... or Extract in a compressed folder, and writes into a zip: an
+//! [`ArchiveJob`] with its progress dialog. An archive that fails asks Skip, Retry or Cancel; a
+//! zip or a copy that fails shows an error box.
 //! A copy comes out into a private scratch folder, then goes onto the clipboard or through the
 //! put a paste makes, so it lands as any copied file does.
 
@@ -153,6 +154,28 @@ impl Explorer {
             })
             .collect();
         self.queue_archive_job(Batch::Extract(batch), ctx);
+    }
+
+    /// Where Extract puts the entries picked in the compressed folder shown: the folder holding
+    /// the archive, or for one opened out of another, the folder holding that one, when it takes
+    /// writes.
+    pub(crate) fn extract_folder(&self) -> Option<PathBuf> {
+        let Place::Archive(archive, _) = &self.place else {
+            return None;
+        };
+        reprisefs::archivecopy::dialog_folder(archive).filter(|d| reprisefs::ops::can_write(d))
+    }
+
+    /// Extract in a compressed folder: the selected entries come out as Copy To Folder... puts
+    /// them, into [`Explorer::extract_folder`].
+    pub(crate) fn extract_entries(&mut self, ctx: &mut Ctx) -> Reply {
+        let (Some(dir), Some(picks)) = (
+            self.extract_folder(),
+            self.archive_picks(&self.selection_paths()),
+        ) else {
+            return Reply::none();
+        };
+        self.copy_out(picks, Then::Into(dir), ctx)
     }
 
     /// The entries at `items` of the archive on view: what a Copy, Copy To Folder... or drag in

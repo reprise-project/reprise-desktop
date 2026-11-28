@@ -940,6 +940,7 @@ impl Explorer {
             can_forward: self.history.can_forward(),
             extract: None,
             archive: matches!(self.place, Place::Archive(..)),
+            extract_entries: self.extract_folder().is_some(),
             local_paths: self.selected_local().is_some(),
             compress: None,
             disk_image: false,
