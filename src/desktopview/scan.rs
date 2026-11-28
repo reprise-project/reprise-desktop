@@ -151,6 +151,21 @@ pub(super) fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> V
     want
 }
 
+/// A watch on the folder of each picture in `entries` the scan stamped, for that file alone, so a
+/// picture saved over in place reads the desktop again and the new stamp asks for it again.
+pub(super) fn picture_wants(entries: &[DesktopEntry]) -> Vec<Want> {
+    (entries.iter().filter_map(|e| e.picture.as_ref()))
+        .filter(|p| p.stamp.is_some())
+        .filter_map(|p| {
+            Some(Want {
+                dir: p.path.parent()?.to_path_buf(),
+                mask: WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO | WatchMask::CREATE,
+                only: vec![p.path.file_name()?.to_os_string()],
+            })
+        })
+        .collect()
+}
+
 /// The Templates folder's watches, so New's rows follow its files: the folder, and its parent for
 /// the folder being made.
 pub(super) fn templates_wants(dir: &Path) -> Vec<Want> {
@@ -314,6 +329,7 @@ impl State {
             {
                 entries.iter_mut().for_each(|e| e.zip = None);
             }
+            let pictures = picture_wants(&entries);
             let art = icon_files(&entries, px);
             let send_dirs = sendto::Dirs::read(&dir);
             let templates = (templates_dir.as_deref())
@@ -324,18 +340,24 @@ impl State {
                     view.send_dirs = send_dirs;
                     view.templates = templates;
                 }
-                state.desktop_watched(want, added);
+                state.desktop_watched(want, pictures, added);
                 state.desktop_scanned(entries, art, px)
             })
         });
     }
 
     /// Takes the desktop's own watches a rescan added, with `want` the folders it wanted, then
-    /// adds the drives' bin folders the last drive bin read found, each on a file job of its own:
-    /// a drive that stopped answering since holds only its own. An event a watch reported before
+    /// adds the folders of the `pictures` it found ([`picture_wants`]) and the drives' bin folders
+    /// the last drive bin read found, each on a file job of its own: a drive that stopped
+    /// answering since holds only its own. An event a watch reported before
     /// it was taken rescans, and a bin folder newly watched reads the bins again
     /// ([`rereads_bins`]).
-    fn desktop_watched(&mut self, mut want: Vec<Want>, added: Option<dirwatch::Added>) {
+    fn desktop_watched(
+        &mut self,
+        mut want: Vec<Want>,
+        pictures: Vec<Want>,
+        added: Option<dirwatch::Added>,
+    ) {
         let State {
             desktop: Some(view),
             config,
@@ -345,6 +367,7 @@ impl State {
             return;
         };
         let tried = want.len();
+        want.extend(pictures);
         if config.system_icons.iter().any(|n| n == "recycle-bin") {
             want.extend(view.bins.wants.iter().cloned());
         }

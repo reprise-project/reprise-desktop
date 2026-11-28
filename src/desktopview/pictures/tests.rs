@@ -65,25 +65,51 @@ fn a_desktop_cell_wears_its_folders_picture() {
     reprisekit::pins::check_file(&pins, &got);
 }
 
+fn picture(path: &str, stamp: Option<u64>) -> FolderPicture {
+    let at = |n| (std::time::UNIX_EPOCH + Duration::from_secs(n), n);
+    FolderPicture {
+        path: PathBuf::from(path),
+        stamp: stamp.map(at),
+    }
+}
+
 #[test]
 fn a_picture_is_asked_for_again_at_a_new_size_or_after_it_gave_none() {
-    let (a, b) = (PathBuf::from("/p/a.png"), PathBuf::from("/p/b.png"));
+    let (a, b) = (picture("/p/a.png", None), picture("/p/b.png", None));
     let mut p = Pictures::default();
     let t0 = Instant::now();
     assert_eq!(p.wanted([&a, &b, &a], 32, t0), [a.clone(), b.clone()]);
     p.land(a.clone(), 32, Some(Canvas::new(32, 32)), t0);
     p.land(b.clone(), 32, None, t0);
     assert!(p.wanted([&a, &b], 32, t0).is_empty());
-    assert!(p.shown(&a, 32).is_some() && p.shown(&b, 32).is_none());
-    assert!(p.shown(&a, 64).is_none(), "another size");
+    assert!(p.shown(&a.path, 32).is_some() && p.shown(&b.path, 32).is_none());
+    assert!(p.shown(&a.path, 64).is_none(), "another size");
     assert_eq!(p.wanted([&a, &b], 32, t0 + RETRY_AFTER), vec![b.clone()]);
     assert_eq!(p.wanted([&a, &b], 64, t0), [a.clone(), b.clone()]);
 
     assert!(p.wanted([&b], 32, t0).is_empty());
     assert!(
-        p.shown(&a, 32).is_none(),
+        p.shown(&a.path, 32).is_none(),
         "forgotten once no folder names it"
     );
+}
+
+#[test]
+fn a_picture_saved_over_is_asked_for_again_and_shows_the_old_one_meanwhile() {
+    let (old, new) = (picture("/p/a.png", Some(1)), picture("/p/a.png", Some(2)));
+    let mut p = Pictures::default();
+    let t0 = Instant::now();
+    p.land(old.clone(), 32, Some(Canvas::new(32, 32)), t0);
+    assert!(p.wanted([&old], 32, t0).is_empty());
+    assert_eq!(
+        p.wanted([&new], 32, t0),
+        std::slice::from_ref(&new),
+        "a new stamp"
+    );
+    let (serial, _) = p.shown(&new.path, 32).expect("the old picture meanwhile");
+    p.land(new.clone(), 32, Some(Canvas::new(32, 32)), t0);
+    assert!(p.wanted([&new], 32, t0).is_empty());
+    assert_ne!(p.shown(&new.path, 32).map(|(s, _)| s), Some(serial));
 }
 
 /// A helper that answers the first four requests with a 2x1 thumbnail of a 4x2 picture, from a
@@ -228,7 +254,7 @@ fn the_answer_limit_covers_the_helpers_slowest_answer() {
 
 #[test]
 fn pictures_that_gave_none_are_asked_after_the_untried() {
-    let (a, c) = (PathBuf::from("/p/a.png"), PathBuf::from("/p/c.png"));
+    let (a, c) = (picture("/p/a.png", None), picture("/p/c.png", None));
     let mut p = Pictures::default();
     let t0 = Instant::now();
     p.land(a.clone(), 32, None, t0);
@@ -243,7 +269,7 @@ fn a_folder_icon_wears_its_picture_once_it_lands() {
     h.output("TEST-1", 1024, 768);
     let dir = std::env::temp_dir().join(format!("reprise-desk-picture-{}", std::process::id()));
     crate::desktopview::create(&mut h.state, dir.clone(), Default::default(), None);
-    let picture = PathBuf::from("/p/trip.png");
+    let picture = picture("/p/trip.png", None);
     let view = h.state.desktop.as_mut().unwrap();
     view.entries.push(crate::desktop::DesktopEntry {
         name: "Trip".into(),

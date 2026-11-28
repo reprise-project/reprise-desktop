@@ -161,12 +161,31 @@ pub struct DesktopEntry {
     pub is_dir: bool,
     /// An untrusted application `.desktop` file, as the scan read it: the menu's Allow Launching.
     pub allow_launching: bool,
-    /// A folder's picture ([`reprisefs::meta::folder_picture`]) as the scan read it, which the
-    /// icon wears once the thumbnail helper has made it.
-    pub picture: Option<PathBuf>,
+    /// A folder's picture as the scan read it, which the icon wears once the thumbnail helper has
+    /// made it.
+    pub picture: Option<FolderPicture>,
     /// A zip that opens as a compressed folder, as the scan found it: true when files dropped onto
     /// it go in ([`reprisefs::zipwrite::takes_writes`]), false for a read-only one.
     pub zip: Option<bool>,
+}
+
+/// A folder's picture ([`reprisefs::meta::folder_picture`]) and, for one inside the folder, its
+/// modification time and size. One elsewhere may sit on a mount that never answers: no stamp.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderPicture {
+    pub path: PathBuf,
+    pub stamp: Option<(std::time::SystemTime, u64)>,
+}
+
+impl FolderPicture {
+    /// `path`, the picture of `folder`, stamped by lstat when it is inside `folder`.
+    fn read(folder: &Path, path: PathBuf) -> FolderPicture {
+        let stamp = (path.starts_with(folder))
+            .then(|| std::fs::symlink_metadata(&path).ok())
+            .flatten()
+            .and_then(|m| Some((m.modified().ok()?, m.len())));
+        FolderPicture { path, stamp }
+    }
 }
 
 impl DesktopEntry {
@@ -499,7 +518,7 @@ struct Followed {
     meta: Option<std::fs::Metadata>,
     /// A folder's own icon and picture ([`reprisefs::meta::folder_look`]).
     folder_icon: Option<String>,
-    picture: Option<PathBuf>,
+    picture: Option<FolderPicture>,
     shortcut: Option<apps::Shortcut>,
     target: Option<Target>,
     allow_launching: bool,
@@ -520,7 +539,7 @@ impl Followed {
             let (folder_icon, picture) = reprisefs::meta::folder_look(path);
             return Followed {
                 folder_icon,
-                picture,
+                picture: picture.map(|p| FolderPicture::read(path, p)),
                 meta: Some(meta),
                 ..Followed::default()
             };
@@ -1512,7 +1531,10 @@ mod tests {
         reprisefs::meta::set_folder_look(&trip, look).unwrap();
         let list = scan(&dir, &apps::MimeDb::empty(), names::Extensions::Hide, false);
         let worn: Vec<(&str, &str, Option<&Path>)> = (list.iter())
-            .map(|e| (e.name.as_str(), e.icon.as_str(), e.picture.as_deref()))
+            .map(|e| {
+                let picture = e.picture.as_ref().map(|p| p.path.as_path());
+                (e.name.as_str(), e.icon.as_str(), picture)
+            })
             .collect();
         let through_link = dir.join("Trip link/cover.png");
         assert_eq!(
@@ -1523,6 +1545,34 @@ mod tests {
             ],
             "a picture inside the folder is named through the link"
         );
+    }
+
+    #[test]
+    fn a_picture_inside_its_folder_is_stamped_and_one_elsewhere_is_not_looked_at() {
+        let dir = fixture("picture-stamp");
+        let _cleanup = Cleanup(dir.clone());
+        let (trip, away) = (dir.join("Trip"), dir.join("Away"));
+        std::fs::create_dir(&trip).unwrap();
+        std::fs::create_dir(&away).unwrap();
+        let (cover, elsewhere) = (trip.join("cover.png"), dir.join("elsewhere.png"));
+        std::fs::write(&cover, "one").unwrap();
+        std::fs::write(&elsewhere, "one").unwrap();
+        for (folder, picture) in [(&trip, &cover), (&away, &elsewhere)] {
+            let look = reprisefs::meta::FolderLook {
+                picture: Some(Some(picture)),
+                ..Default::default()
+            };
+            reprisefs::meta::set_folder_look(folder, look).unwrap();
+        }
+        let stamps = || {
+            let list = scan(&dir, &apps::MimeDb::empty(), names::Extensions::Hide, false);
+            (list.into_iter())
+                .filter_map(|e| Some((e.name, e.picture?.stamp.map(|(_, len)| len))))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(stamps(), [("Away".into(), None), ("Trip".into(), Some(3))]);
+        std::fs::write(&cover, "three").unwrap();
+        assert_eq!(stamps()[1], ("Trip".into(), Some(5)), "saved over");
     }
 
     /// An executable FIFO named `*.desktop` would block `open(2)` forever,

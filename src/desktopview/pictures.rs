@@ -3,9 +3,11 @@
 //! square. The compositor never opens the picture: the thumbnail helper
 //! ([`reprisefs::thumbpipe`]) reads and decodes it as Explorer's Thumbnails view does, within that
 //! reader's deadline and stuck-read caps, on a job thread here that waits [`ANSWER_WITHIN`] for each
-//! answer. A folder shows its icon until its picture lands.
+//! answer. A folder shows its icon until its picture lands. A picture saved over in place, which
+//! the scan sees by its stamp and its watch ([`super::scan::picture_wants`]), is asked for again
+//! and the old one shows until the new one lands.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{self, BufReader, Read};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -17,7 +19,10 @@ use std::time::{Duration, Instant};
 use reprisefs::{thumbnailers, thumbpipe};
 use reprisekit::raster::{Canvas, fit_size};
 
-use crate::{compositor::State, desktop::ICON_PX};
+use crate::{
+    compositor::State,
+    desktop::{FolderPicture, ICON_PX},
+};
 
 /// How long the helper may take over one picture before it is killed: its open and read (3 s
 /// each), a slot wait, jail probe and jailed run ([`thumbnailers::DEADLINE`] each), a decode.
@@ -29,6 +34,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// What a picture looked like at an icon size, `None` once the helper gave none.
 struct Worn {
+    stamp: Option<(std::time::SystemTime, u64)>,
     px: i32,
     canvas: Option<Arc<Canvas>>,
     at: Instant,
@@ -53,42 +59,46 @@ impl Pictures {
     }
 
     /// The pictures `named` (the listed folders') that still want asking for at `px`: none yet
-    /// at that size, then those that gave none over [`RETRY_AFTER`] ago, oldest first. Forgets the
-    /// ones no folder names.
+    /// at that size or changed since (a new stamp), then those that gave none over [`RETRY_AFTER`]
+    /// ago, oldest first. Forgets the ones no folder names; a changed one shows meanwhile.
     fn wanted<'a>(
         &mut self,
-        named: impl IntoIterator<Item = &'a PathBuf>,
+        named: impl IntoIterator<Item = &'a FolderPicture>,
         px: i32,
         now: Instant,
-    ) -> Vec<PathBuf> {
-        let named: HashSet<&PathBuf> = named.into_iter().collect();
-        self.worn.retain(|p, _| named.contains(p));
-        let mut want: Vec<PathBuf> = (named.into_iter())
+    ) -> Vec<FolderPicture> {
+        let named: HashMap<&PathBuf, &FolderPicture> =
+            named.into_iter().map(|p| (&p.path, p)).collect();
+        self.worn.retain(|p, _| named.contains_key(p));
+        let mut want: Vec<FolderPicture> = (named.into_values())
             .filter(|p| {
-                self.worn.get(*p).is_none_or(|w| {
-                    w.px != px || (w.canvas.is_none() && now.duration_since(w.at) >= RETRY_AFTER)
+                self.worn.get(&p.path).is_none_or(|w| {
+                    w.px != px
+                        || w.stamp != p.stamp
+                        || (w.canvas.is_none() && now.duration_since(w.at) >= RETRY_AFTER)
                 })
             })
             .cloned()
             .collect();
-        let gave_none = |p: &PathBuf| {
-            (self.worn.get(p))
-                .filter(|w| w.px == px && w.canvas.is_none())
+        let gave_none = |p: &FolderPicture| {
+            (self.worn.get(&p.path))
+                .filter(|w| w.px == px && w.stamp == p.stamp && w.canvas.is_none())
                 .map(|w| w.at)
         };
-        want.sort_by_cached_key(|p| (gave_none(p), p.clone()));
+        want.sort_by_cached_key(|p| (gave_none(p), p.path.clone()));
         want
     }
 
-    fn land(&mut self, path: PathBuf, px: i32, canvas: Option<Canvas>, now: Instant) {
+    fn land(&mut self, picture: FolderPicture, px: i32, canvas: Option<Canvas>, now: Instant) {
         self.serial += 1;
         let worn = Worn {
+            stamp: picture.stamp,
             px,
             canvas: canvas.map(Arc::new),
             at: now,
             serial: self.serial,
         };
-        self.worn.insert(path, worn);
+        self.worn.insert(picture.path, worn);
     }
 }
 
@@ -134,16 +144,21 @@ impl State {
         let scale = px / ICON_PX;
         // The job opens no file itself, so it never waits behind file jobs stuck on a mount.
         let started = self.spawn_job(move || {
+            let paths: Vec<PathBuf> = want.iter().map(|p| p.path.clone()).collect();
+            let mut want = want.into_iter();
             fetch(
                 helper_command,
-                &want,
+                &paths,
                 px as u32,
                 &stop,
                 ANSWER_WITHIN,
                 |path, thumb| {
+                    let Some(picture) = want.find(|p| p.path == path) else {
+                        return;
+                    };
                     let canvas = thumb.map(|t| icon_of(&t, scale));
                     let _ = to_loop.send(Box::new(move |state: &mut State| {
-                        state.desktop_picture_landed(path, px, canvas)
+                        state.desktop_picture_landed(picture, px, canvas)
                     }));
                 },
             );
@@ -159,12 +174,12 @@ impl State {
         }
     }
 
-    fn desktop_picture_landed(&mut self, path: PathBuf, px: i32, canvas: Option<Canvas>) {
+    fn desktop_picture_landed(&mut self, picture: FolderPicture, px: i32, canvas: Option<Canvas>) {
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
         let shows = canvas.is_some();
-        view.pictures.land(path, px, canvas, Instant::now());
+        view.pictures.land(picture, px, canvas, Instant::now());
         if shows {
             self.relayout_desktop();
         }

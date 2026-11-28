@@ -169,7 +169,7 @@ impl State {
                 });
             let selected = view.selection.is(i) || view.drop_hilite == Some(i);
             let ring = view.focus_ring && view.selection.focus == Some(i);
-            let picture = (e.picture.as_ref()).and_then(|p| view.pictures.shown(p, px));
+            let picture = (e.picture.as_ref()).and_then(|p| view.pictures.shown(&p.path, px));
             unworn |= e.picture.is_some() && picture.is_none();
             let key = CellKey {
                 label: Cow::Borrowed(&e.label),
