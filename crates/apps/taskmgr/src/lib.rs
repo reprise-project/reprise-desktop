@@ -129,8 +129,9 @@ impl Page {
 /// no windows, a program (one app scope).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppRow {
+    /// Its program's app scope; empty for a window whose client runs in none.
     pub unit: String,
-    pub app: AppId,
+    pub app: Option<AppId>,
     /// The program's name, from its desktop entry.
     pub name: String,
     pub icon: Option<String>,
@@ -203,6 +204,7 @@ impl Ask {
 /// Whether `t` is still running in the snapshot with these `scopes` and process `starts`.
 fn alive(starts: &HashMap<i32, u64>, scopes: &[Scope], t: &Target) -> bool {
     match t {
+        Target::Window(unit, _) if unit.is_empty() => true,
         Target::Scope(unit) | Target::Window(unit, _) => scopes.iter().any(|s| &s.unit == unit),
         Target::Process(pid, start) => starts.get(pid) == Some(start),
     }
@@ -772,7 +774,8 @@ impl TaskMgr {
     }
 
     /// The Applications rows: each program's windows with a task button, in the order they
-    /// opened, or each program while the compositor lists no windows.
+    /// opened, then the windows whose client runs in no app scope, or each program while the
+    /// compositor lists no windows.
     fn refresh_apps(&mut self, ctx: &mut Ctx) {
         let row_key = |r: &AppRow| (r.unit.clone(), r.window.as_ref().map(|w| w.id));
         let keep = (self.apps.selected())
@@ -782,18 +785,28 @@ impl TaskMgr {
         let (scopes, sandboxed) = (&self.snap.scopes, &self.snap.sandboxed);
         let hung = |app_id: &str, pid: u32| self.hung.iter().any(|(a, p)| a == app_id && *p == pid);
         self.app_rows = match self.snap.windows.as_deref() {
-            Some(windows) => (scopes.iter())
-                .flat_map(|sc| {
-                    (windows.iter())
-                        .filter(|w| w.button)
+            Some(windows) => {
+                let buttons = || windows.iter().filter(|w| w.button);
+                let scoped = (scopes.iter()).flat_map(|sc| {
+                    buttons()
                         .filter(|w| is_program_window(sc, scopes, &entries, w, sandboxed))
                         .map(|w| AppRow {
                             hung: hung(&w.app_id, w.pid),
                             window: Some(w.clone()),
                             ..app_row(sc, &entries)
                         })
-                })
-                .collect(),
+                });
+                let lone = buttons()
+                    .filter(|w| {
+                        !(scopes.iter())
+                            .any(|sc| is_program_window(sc, scopes, &entries, w, sandboxed))
+                    })
+                    .map(|w| AppRow {
+                        hung: hung(&w.app_id, w.pid),
+                        ..lone_row(w, &entries)
+                    });
+                scoped.chain(lone).collect()
+            }
             None => (scopes.iter())
                 .map(|sc| AppRow {
                     hung: (self.hung.iter())
@@ -867,15 +880,20 @@ impl TaskMgr {
         }
     }
 
-    /// End Task: a window of a program showing others is asked to close alone; the last one
-    /// ends its program as [`worker::end_task`] does; one not answering offers End Now at once.
+    /// End Task: a window of a program showing others, or of a client in no app scope, is asked
+    /// to close alone; the last one ends its program as [`worker::end_task`] does; one not
+    /// answering offers End Now at once.
     fn end_task(&mut self) -> Reply {
         let Some(row) = self.selected_app().cloned() else {
             return Reply::none();
         };
         let task = row.task().to_string();
+        let lone = match &row.window {
+            Some(w) if row.unit.is_empty() => Some(Target::Window(String::new(), w.id)),
+            _ => None,
+        };
         if row.hung {
-            let target = Target::Scope(row.unit);
+            let target = lone.unwrap_or(Target::Scope(row.unit));
             self.ending.retain(|e| e.target != target);
             if !(self.asks.iter()).any(|(_, a)| matches!(a, Ask::EndNow(t) if *t == target)) {
                 self.asks
@@ -886,7 +904,7 @@ impl TaskMgr {
         if let Some(w) = &row.window {
             let others = (self.app_rows.iter())
                 .any(|r| r.unit == row.unit && r.window.as_ref().is_some_and(|o| o.id != w.id));
-            if others {
+            if others || lone.is_some() {
                 (self.close_window)(w.clone());
                 self.wait_for(Target::Window(row.unit, w.id), task);
                 return Reply::redraw();
@@ -945,14 +963,15 @@ impl TaskMgr {
                 (row.window.as_ref())
                     .and_then(|w| toplevel::the_one(ws, w))
                     .or_else(|| {
-                        ws.iter()
-                            .position(|t| window_of(&row.app, &entries, &t.app_id))
+                        let app = row.app.as_ref()?;
+                        ws.iter().position(|t| window_of(app, &entries, &t.app_id))
                     })
             };
+            let task = row.task();
             match toplevel::on_window(pick, toplevel::Do::Activate) {
                 Ok(true) => {}
-                Ok(false) => log::info!("Switch To: no window of {}", row.app),
-                Err(e) => log::warn!("Switch To {}: {e}", row.app),
+                Ok(false) => log::info!("Switch To: no window of {task}"),
+                Err(e) => log::warn!("Switch To {task}: {e}"),
             }
         });
         Reply::none()
@@ -1018,6 +1037,7 @@ impl TaskMgr {
                 Ok(()) => self.wait_for(Target::Process(pid, start), name),
                 Err(e) => log::warn!("end process {pid}: {e}"),
             },
+            Ask::EndNow(Target::Window(unit, id)) if unit.is_empty() => self.kill_client(id),
             Ask::EndNow(Target::Scope(unit) | Target::Window(unit, _)) => {
                 worker::kill_scope(unit, SIGKILL)
             }
@@ -1029,6 +1049,23 @@ impl TaskMgr {
                 }
             }
             Ask::StopService(job) => self.run_service_job(job, ctx),
+        }
+    }
+
+    /// End Now on a window whose client runs in no app scope: kills that client, when it is
+    /// one of the user's processes.
+    fn kill_client(&self, id: u64) {
+        let pid = (self.snap.windows.iter().flatten())
+            .find(|w| w.id == id)
+            .and_then(|w| i32::try_from(w.pid).ok())
+            .filter(|&pid| pid != 0);
+        let Some(pid) =
+            pid.filter(|&pid| (self.snap.procs.iter()).any(|p| p.pid == pid && p.uid == self.uid))
+        else {
+            return;
+        };
+        if let Err(e) = worker::kill_pid(pid, SIGKILL) {
+            log::warn!("end window {id} now: {e}");
         }
     }
 
@@ -1469,10 +1506,25 @@ fn app_row(sc: &scopes::Scope, entries: &[AppEntry]) -> AppRow {
     let e = reprisefs::apps::entry_for_app_id(entries, &sc.app, |_| true);
     AppRow {
         unit: sc.unit.clone(),
-        app: sc.app.clone(),
+        app: Some(sc.app.clone()),
         name: e.map_or_else(|| sc.app.to_string(), |e| e.name.clone()),
         icon: e.and_then(|e| e.icon.clone()),
         window: None,
+        hung: false,
+    }
+}
+
+/// The row of window `w`, whose client runs in no app scope: named and drawn from the entry its
+/// app id names, if any.
+fn lone_row(w: &AppWindow, entries: &[AppEntry]) -> AppRow {
+    let app = AppId::new(&w.app_id);
+    let e = (app.as_ref()).and_then(|a| reprisefs::apps::entry_for_app_id(entries, a, |_| true));
+    AppRow {
+        unit: String::new(),
+        app,
+        name: e.map_or_else(|| w.app_id.clone(), |e| e.name.clone()),
+        icon: e.and_then(|e| e.icon.clone()),
+        window: Some(w.clone()),
         hung: false,
     }
 }
