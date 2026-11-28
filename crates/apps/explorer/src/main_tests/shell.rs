@@ -515,3 +515,109 @@ fn a_crumb_click_goes_to_its_folder() {
     press_at(&mut ex, x, y, &mut ctx);
     assert_eq!(ex.place, Place::Folder(a));
 }
+
+fn drag(ex: &mut Explorer, from: i32, to: i32, y: i32, ctx: &mut Ctx) {
+    let press = PointerInput::Press {
+        x: from,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: Default::default(),
+    };
+    ex.pointer(press, ctx);
+    ex.pointer(PointerInput::Motion { x: to, y }, ctx);
+    let release = PointerInput::Release {
+        x: to,
+        y,
+        button: BTN_LEFT,
+        mods: Default::default(),
+    };
+    ex.pointer(release, ctx);
+}
+
+#[test]
+fn the_navigation_pane_opens_158_wide_with_a_1_px_divider_grown_with_the_text() {
+    let mut ctx = glass(false);
+    let (_dir, ex) = in_folder(&mut ctx);
+    let pane = shell(&ex, &ctx).nav_pane.expect("the pane shows");
+    assert_eq!(pane.width, 159, "158 and the divider");
+    let bar = ex.layout(&ctx).bar.expect("the pane's frame");
+    assert_eq!(bar.splitter, Rect::new(158, pane.y, 1, pane.height));
+    let cm = ctx.theme.clone().with_text_size(200).controls();
+    let big = window::shell_layout((1600, 900), &ex.settings, false, 0, &cm);
+    assert_eq!(
+        big.nav_pane.map(|r| r.width),
+        Some(317),
+        "316 at 200% and the divider"
+    );
+}
+
+#[test]
+fn the_divider_drags_from_either_side_clamps_and_keeps_glasss_own_width() {
+    let mut ctx = glass(false);
+    let (_dir, mut ex) = in_folder(&mut ctx);
+    let y = shell(&ex, &ctx).nav_pane.expect("the pane").y + 40;
+    let folders = ex.settings.bar_width;
+    drag(&mut ex, 160, 262, y, &mut ctx);
+    assert_eq!(ex.settings.nav_width, 260, "taken 2 px right of the line");
+    let before = ex.settings.nav_width;
+    drag(&mut ex, 259, 300, y, &mut ctx);
+    assert_eq!(
+        ex.settings.nav_width, before,
+        "the pane's own scrollbar left of the line keeps it"
+    );
+    assert_eq!(shell(&ex, &ctx).nav_pane.map(|r| r.width), Some(261));
+    assert_eq!(ex.settings.bar_width, folders, "Blue's Folders width stays");
+    drag(&mut ex, 262, 20, y, &mut ctx);
+    assert_eq!(
+        ex.settings.nav_width,
+        reprisekit::controls::explorerbar::MIN_W
+    );
+    drag(&mut ex, 100, 5000, y, &mut ctx);
+    assert_eq!(
+        ex.settings.nav_width,
+        792 - 1 - 200,
+        "the view keeps 200 px"
+    );
+    let shape = |ex: &Explorer, x| ex.shape_at(x, y, &ctx);
+    let line = 792 - 1 - 200;
+    assert_eq!(shape(&ex, line + 4), reprisekit::pointer::Shape::ColResize);
+    assert_ne!(shape(&ex, line + 5), reprisekit::pointer::Shape::ColResize);
+}
+
+#[test]
+fn the_navigation_pane_width_round_trips_the_state_file() {
+    let s = Settings {
+        nav_width: 240,
+        ..Settings::default()
+    };
+    let text = toml::to_string(&s).expect("serialise");
+    let back: Settings = toml::from_str(&text).expect("parse");
+    assert_eq!((back.nav_width, back.bar_width), (240, 200));
+    let old: Settings = toml::from_str("bar_width = 260\n").expect("parse");
+    assert_eq!(
+        old.nav_width,
+        crate::settings::NAV_W,
+        "an older file opens at 158"
+    );
+}
+
+#[test]
+fn the_navigation_divider_pins_light_and_dark_at_scale_1_and_2() {
+    reprisekit::pins::fonts();
+    let mut got = Vec::new();
+    for dark in [false, true] {
+        let mut ctx = glass(dark);
+        let (_dir, ex) = in_folder(&mut ctx);
+        let pane = shell(&ex, &ctx).nav_pane.expect("the pane");
+        let r = Rect::new(pane.right() - 4, pane.y + 8, 8, 24);
+        for s in [1, 2] {
+            let mut c = Canvas::with_scale(792, 573, s);
+            ctx.at_scale(s, |ctx| window::draw(&ex, &mut c, ctx));
+            let look = if dark { "dark" } else { "light" };
+            got.push((format!("{look} divider @{s}"), crop_hash(&c, r)));
+        }
+    }
+    let path = reprisekit::crate_dir!().join("tests/pins/navpane_divider.txt");
+    reprisekit::pins::check_file(&path, &got);
+}

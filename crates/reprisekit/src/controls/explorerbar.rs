@@ -22,8 +22,9 @@
 //! a 20x17 close box against the strip's top.
 //!
 //! The navigation pane ([`nav_layout`]) is the same bar without a strip or close box: its body
-//! runs the bar's whole height on the window colour, and a look with its own panes
-//! ([`PaneLook`](crate::style::PaneLook)) draws a line down the middle of the splitter.
+//! runs the bar's whole height on the window colour, and its splitter is a 1 px divider in a look
+//! with its own panes' ([`PaneLook`](crate::style::PaneLook)) line colour. A press takes the
+//! divider and [`NAV_GRAB`] px of the view right of it, clear of the pane's scrollbar.
 
 use crate::access::accesskit::{NodeId, Role};
 use crate::access::{self, Tree};
@@ -35,6 +36,9 @@ use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 
 pub const SPLITTER_W: i32 = 4;
+/// The navigation pane's divider, and how far right of it a press takes it.
+pub const NAV_DIVIDER_W: i32 = 1;
+pub const NAV_GRAB: i32 = 4;
 
 pub const MIN_W: i32 = 100;
 
@@ -141,16 +145,16 @@ pub fn layout(eb: &ExplorerBar, r: Rect, cm: &ControlMetrics) -> Layout {
     }
 }
 
-/// The navigation pane in `r` (pane and splitter): [`layout`]'s width and splitter, the body
-/// the bar's whole height, no strip or close box.
+/// The navigation pane in `r` (pane and divider): [`layout`]'s width, the body the bar's whole
+/// height, the [`NAV_DIVIDER_W`] divider as its splitter, no strip or close box.
 pub fn nav_layout(eb: &ExplorerBar, r: Rect) -> Layout {
-    let width = eb.width.max(MIN_W).min((r.width - SPLITTER_W).max(0));
+    let width = eb.width.max(MIN_W).min((r.width - NAV_DIVIDER_W).max(0));
     Layout {
         frame: r,
         header: Rect::new(r.x, r.y, width, 0),
         close: Rect::new(r.x + width, r.y, 0, 0),
         body: Rect::new(r.x, r.y, width, r.height),
-        splitter: Rect::new(r.x + width, r.y, SPLITTER_W, r.height),
+        splitter: Rect::new(r.x + width, r.y, NAV_DIVIDER_W, r.height),
         title_x: 0,
         title_dy: 0,
         close_k: 1,
@@ -162,6 +166,9 @@ pub fn nav_layout(eb: &ExplorerBar, r: Rect) -> Layout {
 /// only the X and the splitter do anything there. Nothing outside the
 /// frame hits, even where a squeezed bar's X unit pokes past it.
 pub fn hit(lay: &Layout, x: i32, y: i32) -> Hit {
+    if lay.nav && grip(lay).contains(x, y) {
+        return Hit::Splitter;
+    }
     if !lay.frame.contains(x, y) {
         Hit::Nothing
     } else if lay.close.contains(x, y) {
@@ -176,8 +183,13 @@ pub fn hit(lay: &Layout, x: i32, y: i32) -> Hit {
 }
 
 /// Where a press takes the splitter: the splitter and the bar's ring columns
-/// left of it, so the grip runs from the body's edge to the view.
+/// left of it, so the grip runs from the body's edge to the view; the navigation pane's divider
+/// and [`NAV_GRAB`] px right of it.
 pub fn grip(lay: &Layout) -> Rect {
+    if lay.nav {
+        let s = lay.splitter;
+        return Rect::new(s.x, s.y, s.width + NAV_GRAB, s.height);
+    }
     let x = lay.body.right().min(lay.splitter.x);
     Rect::new(
         x,
@@ -249,20 +261,16 @@ pub fn draw(
     });
 }
 
-/// The navigation pane's body on the window colour and its splitter: the face colour, or the
-/// window colour with the look's line down its middle.
+/// The navigation pane's body on the window colour and its divider in the look's line colour,
+/// else the face colour.
 fn draw_nav(c: &mut Canvas, p: &Paint, lay: &Layout) {
     let Paint { cs, s, .. } = *p;
     c.fill_rect(lay.body.scaled(s), cs.window);
-    let split = lay.splitter.scaled(s);
-    match p.look.style().and_then(|st| st.panes) {
-        Some(panes) => {
-            c.fill_rect(split, cs.window);
-            let line = Rect::new(split.x + (SPLITTER_W / 2 - 1) * s, split.y, s, split.height);
-            c.fill_rect(line, panes.nav_edge);
-        }
-        None => c.fill_rect(split, cs.button_face),
-    }
+    let line = match p.look.style().and_then(|st| st.panes) {
+        Some(panes) => panes.nav_edge,
+        None => cs.button_face,
+    };
+    c.fill_rect(lay.splitter.scaled(s), line);
 }
 
 #[cfg(test)]
@@ -575,9 +583,21 @@ mod tests {
             Rect::new(0, 83, 200, 300),
             "the body the bar's whole height"
         );
-        assert_eq!(lay.splitter, Rect::new(SPLITTER_X, 83, 4, 300));
+        assert_eq!(lay.splitter, Rect::new(SPLITTER_X, 83, 1, 300));
         assert_eq!(hit(&lay, 10, 84), Hit::Body);
-        assert_eq!(hit(&lay, 201, 200), Hit::Splitter);
+        assert_eq!(
+            hit(&lay, SPLITTER_X - 1, 200),
+            Hit::Body,
+            "the pane's scrollbar keeps it"
+        );
+        for x in SPLITTER_X..=SPLITTER_X + NAV_GRAB {
+            assert_eq!(hit(&lay, x, 200), Hit::Splitter, "x {x}");
+        }
+        assert_eq!(
+            hit(&lay, SPLITTER_X + NAV_GRAB + 1, 200),
+            Hit::Nothing,
+            "the view's from there"
+        );
         let mut t = Tree::window("Explorer", (400, 400));
         let pane = access(&bar(), &lay, &mut t, access::ROOT);
         assert_eq!(
@@ -587,8 +607,8 @@ mod tests {
         );
     }
 
-    /// Under Glass the splitter is the window colour with the look's line down its middle;
-    /// without a pane look it stays the face colour.
+    /// Under Glass the divider is the look's 1 px line between the window colour on both sides;
+    /// without a pane look it is the face colour.
     #[test]
     fn the_nav_splitter_wears_the_looks_line() {
         use crate::interface::Interface;
@@ -609,9 +629,9 @@ mod tests {
                 .and_then(|st| st.panes)
                 .map(|p| p.nav_edge);
             let (x, y) = (lay.splitter.x, 200);
-            assert_eq!(c.get(x, y), theme.colors.window.argb(), "{mode:?}");
-            assert_eq!(Some(c.get(x + 1, y)), edge.map(|e| e.argb()), "{mode:?}");
-            assert_eq!(c.get(x + 2, y), theme.colors.window.argb(), "{mode:?}");
+            assert_eq!(c.get(x - 1, y), theme.colors.window.argb(), "{mode:?}");
+            assert_eq!(Some(c.get(x, y)), edge.map(|e| e.argb()), "{mode:?}");
+            assert_eq!(c.get(x + 1, y), 0, "{mode:?}: nothing past the divider");
             assert_eq!(
                 c.get(10, 90),
                 theme.colors.window.argb(),
@@ -629,10 +649,7 @@ mod tests {
             &lay,
             12,
         );
-        assert_eq!(
-            c.get(lay.splitter.x + 1, 200),
-            theme.colors.button_face.argb()
-        );
+        assert_eq!(c.get(lay.splitter.x, 200), theme.colors.button_face.argb());
     }
 
     /// Writes target/explorerbar-blue-{blue,olive,silver}-preview.png.

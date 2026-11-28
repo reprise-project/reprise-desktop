@@ -6,6 +6,9 @@ use reprisekit::theme::TextUnits;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// The width Glass's navigation pane opens at, its divider left out.
+pub const NAV_W: i32 = 158;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -24,6 +27,8 @@ pub struct Settings {
     pub details_pane: bool,
     /// The Folders bar's width in 100% px, grown by the text size when drawn.
     pub bar_width: i32,
+    /// Glass's navigation pane width in 100% px, its divider left out.
+    pub nav_width: i32,
     /// The main window's client size in 100% px, grown by the text size at open.
     pub window: (i32, i32),
     /// Details view column widths in 100% px, grown by the text size when
@@ -47,6 +52,7 @@ impl Default for Settings {
             nav_pane: true,
             details_pane: true,
             bar_width: 200,
+            nav_width: NAV_W,
             // The folder window opens at an outer 800x600; the client
             // area that leaves under its frame, caption and menu bar is
             // 792x573, and `initial_size` wants the client size.
@@ -75,6 +81,7 @@ impl Settings {
 
     fn clamped(mut self) -> Settings {
         self.bar_width = self.bar_width.max(explorerbar::MIN_W);
+        self.nav_width = self.nav_width.max(explorerbar::MIN_W);
         self.window = (
             self.window.0.max(repriseapp::MIN_SIZE.0),
             self.window.1.max(repriseapp::MIN_SIZE.1),
