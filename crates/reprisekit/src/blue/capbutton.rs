@@ -277,6 +277,16 @@ mod tests {
         }
     }
 
+    fn each_tone(mut f: impl FnMut(crate::blue::Tone, Glyph, i32, &PartImage)) {
+        for v in crate::blue::Tone::ALL {
+            for g in GLYPHS {
+                for d in [1, 2] {
+                    f(v, g, d, &caption_button(v.scheme(), g, d));
+                }
+            }
+        }
+    }
+
     #[test]
     fn every_frame_is_21_design_px_at_its_own_size() {
         each(|v, g, d, img| {
@@ -449,7 +459,7 @@ mod tests {
     #[test]
     fn grown_caption_buttons_pin_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in crate::blue::Tone::ALL {
             for g in GLYPHS {
                 for side in GROWN {
                     for d in [1, 2] {
@@ -465,7 +475,7 @@ mod tests {
     #[test]
     fn caption_buttons_pin_at_scale_1_and_2() {
         let mut got = Vec::new();
-        each(|v, g, d, img| got.push((format!("{v:?} {g:?} {d}"), fnv(img))));
+        each_tone(|v, g, d, img| got.push((format!("{v:?} {g:?} {d}"), fnv(img))));
         crate::pins::check("blue/caption_buttons", &got);
     }
 }

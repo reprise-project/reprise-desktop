@@ -40,7 +40,7 @@ const SIZING: Insets = Insets::new(6, 4, 7, 5);
 const CONTENT: Insets = Insets::new(4, 1, 4, 0);
 
 /// The lit line along the bottom edge in navy, olive green and silver: white
-/// at this alpha, fainter on a dark twin's charcoal.
+/// at this alpha, fainter on a dark twin's ground.
 const LIT_EDGE: u8 = 0xA4;
 const DARK_LIT_EDGE: u8 = 0x20;
 

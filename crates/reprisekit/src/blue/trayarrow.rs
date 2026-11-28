@@ -476,9 +476,9 @@ mod tests {
             "open_pressed",
         ];
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in Tone::ALL {
             for d in [1, 2] {
-                let hashes = frames(&art(&recipe(v.into()), d)).map(fnv);
+                let hashes = frames(&art(&recipe(v), d)).map(fnv);
                 for (name, h) in FRAMES.into_iter().zip(hashes) {
                     got.push((format!("{v:?} {name} {d}"), h));
                 }

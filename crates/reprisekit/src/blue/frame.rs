@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn frame_parts_pin_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in crate::blue::Tone::ALL {
             for d in [1, 2] {
                 for (name, paint) in PARTS {
                     got.push((

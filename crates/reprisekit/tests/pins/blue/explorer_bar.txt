@@ -38,10 +38,10 @@ Steel 1 ExplorerBarHeader 617f82ad84e7a157
 Steel 1 ExplorerBarClose 4531eeed769fe977
 Steel 2 ExplorerBarHeader 7c771c8232a7c4ee
 Steel 2 ExplorerBarClose 3737b1abb86d38de
-Blue dark 1 ExplorerBarHeader 00da115341290787
-Blue dark 1 ExplorerBarClose d1800548a5184820
-Blue dark 2 ExplorerBarHeader 7b655902aeaf135e
-Blue dark 2 ExplorerBarClose c32fcbf668f9dcec
+Blue dark 1 ExplorerBarHeader 0d814a718c65c133
+Blue dark 1 ExplorerBarClose 0948c1c365652fda
+Blue dark 2 ExplorerBarHeader 3f33a2945285925e
+Blue dark 2 ExplorerBarClose 961586307e649f09
 Olive dark 1 ExplorerBarHeader 0e2d35c43409cf2f
 Olive dark 1 ExplorerBarClose 4531eeed769fe977
 Olive dark 2 ExplorerBarHeader 494650a629567b8e
