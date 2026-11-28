@@ -113,7 +113,7 @@ Input methods (`fcitx5` and `ibus start --type wayland`), drag-and-drop text/pat
 
 ## Accessibility
 
-Reprise's shell, menus, dialogs, lock/login screens and bundled apps expose AT-SPI (tested with Orca). Press `Super+Alt+S` anywhere, including lock and login screens, to toggle Orca.
+Reprise's shell, menus, dialogs, lock/login screens and bundled apps expose AT-SPI (tested with Orca). Press `Super+Alt+S` anywhere, including lock and login screens, to toggle Orca. A reader that activates a taskbar item or Start in the middle of a touchpad swipe drops the swipe, which then switches nothing at the lift, and acts.
 
 Other tools: magnifier from 1x to 8x (`Super+=` and `Super+-`), colour blindness/grayscale/inverted filters (`Super+Ctrl+C`), text scaling from 125% to 200%, `[effects] reduce_motion`, StickyKeys (press `Shift` five times), SlowKeys (hold right `Shift` for 8 s), BounceKeys (`[accessibility] bounce_keys`), pointer locator (tap `Ctrl`, `[accessibility] locate_pointer`), visual bell (`[accessibility] visual_bell`), MouseKeys (`Left Alt+Left Shift+Num Lock`) and `Alt`-triggered access-key underlines.
 

@@ -12,8 +12,8 @@ A Linux desktop for people who miss grey buttons and would like the computer to 
 Reprise is a Wayland desktop with three interfaces, in the style of Windows 95, XP and 7. Switch between them without logging out.
 
 - Reprise Classic: grey bevels, navy title bars and 32 colour schemes, including dark ones.
-- Reprise Blue: glossy caption buttons, a rounded Start button, a gradient taskbar and ten schemes.
-- Reprise Glass: Aero-style blurred translucent frames, a Start orb, window shadows, a 3D switcher and a dark mode.
+- Reprise Blue: glossy caption buttons, a rounded Start button, a gradient taskbar, ten schemes and a dark twin of the Blue scheme.
+- Reprise Glass: Aero-style blurred translucent frames, a Start orb, window shadows, a 3D switcher and dark glass.
 
 It also includes a searchable launcher, snap layouts, clipboard history, screen sharing, a remote desktop server and fractional scaling. I miss the desktop, not the afternoon spent getting a sound card to work.
 

@@ -99,7 +99,7 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 #                            # every interface, the portal (GTK, Qt, browsers) and the generated toolkit themes follow it
 # dark_from = "19:00"        # local times for mode = "hours", which must differ; a dark_to
 # dark_to = "07:00"          # before dark_from is the next morning
-# dark_color_scheme = "One Dark"  # Classic: the scheme worn while dark; Blue wears its scheme's dark twin, Glass dark glass
+# dark_color_scheme = "One Dark"  # Classic: the scheme worn while dark; Blue's own scheme wears its dark twin (the other Blue schemes stay light), Glass wears dark glass
 
 # [wallpaper]                # the picture under the desktop icons, drawn over [colors] background
 # image = "/usr/share/backgrounds/picture.jpg"   # bmp, jpg, png, dib, jxl or avif; "" or a file that does not decode shows the colour alone
