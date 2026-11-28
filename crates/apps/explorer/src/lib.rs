@@ -280,6 +280,10 @@ pub struct Explorer {
     /// A mount holding the place arrived after the tree followed it there: the tree follows the
     /// place again once Computer's node is read, unless a walk to the place got there first.
     pub(crate) refollow: bool,
+    /// A place the Folders tree stopped short of, as a folder on its way was read before the next
+    /// one was made, and that folder while its read again is out. The tree follows the place
+    /// when that read lands, and not again while the window stays there.
+    pub(crate) chasing: Option<(Place, Option<Place>)>,
     /// A connection to a server under way ([`shares`]).
     pub(crate) connection: Option<shares::Connection>,
     /// The address last typed into Connect to Server, offered again.
@@ -692,6 +696,7 @@ impl Explorer {
             portable: Vec::new(),
             portable_changes: None,
             refollow: false,
+            chasing: None,
             connection: None,
             last_server: String::new(),
             udisks,
@@ -1353,8 +1358,11 @@ impl Explorer {
     }
 
     /// Re-list the current place, keeping the selection by path and leaving the
-    /// history alone: F5, View > Refresh, and Enter on the address already shown.
+    /// history alone: F5, View > Refresh, and Enter on the address already shown. The Folders
+    /// tree reads the place's node again.
     pub fn refresh(&mut self, ctx: &mut Ctx) -> Reply {
+        let here = self.place.in_tree();
+        self.refill_tree_node(&here, ctx);
         if let Some(reply) = self.search_again(ctx) {
             return reply;
         }

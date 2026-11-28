@@ -360,18 +360,19 @@ impl Explorer {
         dirty |= !holders.is_empty();
         let shown = self.place.path();
         let watched = self.watch.as_mut().is_some_and(|w| w.take_changed());
-        if watched {
-            // A folder made or removed here gives or takes its Folders node's +.
-            let here = self.place.clone();
-            self.refill_tree_node(&here, ctx);
-        }
         let relisted = broken
             || shown
                 .as_ref()
                 .is_some_and(|p| due.contains(p) || holders.contains(p));
+        // A folder made or removed here gives or takes its Folders node's +; the refresh reads
+        // the node again itself.
         if (watched || relisted) && !self.search.hold_change() {
             let r = self.refresh(ctx);
             return put.unwrap_or_default().and(r);
+        }
+        if watched {
+            let here = self.place.clone();
+            self.refill_tree_node(&here, ctx);
         }
         if let Some(r) = self.rerun_stale(ctx) {
             return put.unwrap_or_default().and(r);
