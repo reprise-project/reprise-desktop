@@ -12,6 +12,7 @@ tab-performance = Performance
 tab-services = Services
 column-task = Task
 column-status = Status
+task-untitled = Untitled window
 status-running = Running
 status-not-responding = Not Responding
 

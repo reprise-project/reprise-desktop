@@ -366,7 +366,7 @@ fn end_process_asks_nothing_for_a_process_gone_since_the_sample() {
 fn an_ended_program_is_no_longer_waited_on() {
     let mut ctx = ctx();
     let mut t = loaded(&mut ctx);
-    let unit = t.app_rows[0].unit.clone();
+    let unit = t.app_rows[0].unit.clone().unwrap();
     t.wait_for(Target::Scope(unit), "Ark".into());
     t.ending[0].since -= END_WAIT;
     let mut s = snapshot();
@@ -384,7 +384,7 @@ fn a_question_about_a_process_that_exits_is_withdrawn_and_the_next_comes_up() {
     open(&mut t, &mut ctx, Page::Processes);
     click_row(&mut t, &mut ctx, 2);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    let unit = t.app_rows[0].unit.clone();
+    let unit = t.app_rows[0].unit.clone().unwrap();
     t.wait_for(Target::Scope(unit.clone()), "Ark".into());
     t.ending[0].since -= END_WAIT;
     t.take(snapshot(), &mut ctx);
@@ -730,71 +730,155 @@ fn applications_lists_only_programs_showing_a_window() {
         },
         &mut ctx,
     );
-    let rows: Vec<(&str, Option<u64>)> = (t.app_rows.iter())
-        .map(|r| (r.unit.as_str(), r.window.as_ref().map(|w| w.id)))
+    let rows: Vec<(Option<&str>, Option<u64>)> = (t.app_rows.iter())
+        .map(|r| (r.unit.as_deref(), r.window.as_ref().map(|w| w.id)))
         .collect();
     assert_eq!(
         rows,
-        [("", Some(8888))],
+        [(None, Some(8888))],
         "a host window outside every scope is a row of its own, not Notepad's scope"
     );
+}
+
+/// A pid past the kernel's largest, so no process on the machine running the tests has it.
+const LONE_PID: u32 = 4_194_400;
+
+/// The user's process `LONE_PID` started at `start`, beside the scoped ones, showing `windows`.
+fn lone_snapshot(start: u64, windows: Vec<AppWindow>) -> Snapshot {
+    let mut s = snapshot();
+    s.procs.push(ProcRow {
+        start,
+        ..proc(LONE_PID as i32, "calc", UID, 0.0, 1_024)
+    });
+    s.windows = Some(windows);
+    s
+}
+
+fn calculator() -> AppWindow {
+    titled(7, "reprise.calc", LONE_PID, "Calculator")
 }
 
 #[test]
 fn applications_lists_a_window_whose_client_runs_in_no_app_scope() {
     let mut ctx = ctx();
     let mut t = mgr();
+    let about = AppWindow {
+        button: false,
+        ..titled(8, "reprise.calc", LONE_PID, "About")
+    };
+    let nameless = AppWindow {
+        app_id: String::new(),
+        ..titled(9, "", LONE_PID, "")
+    };
+    let unknown = AppWindow {
+        app_id: String::new(),
+        ..titled(10, "", 0, "")
+    };
     t.take(
-        Snapshot {
-            windows: Some(vec![
+        lone_snapshot(
+            1,
+            vec![
                 titled(1, "org.kde.ark", 41, ""),
-                titled(7, "reprise.calc", 7000, "Calculator"),
-                AppWindow {
-                    button: false,
-                    ..titled(8, "reprise.calc", 7000, "About")
-                },
-            ]),
-            ..snapshot()
-        },
+                calculator(),
+                about,
+                nameless,
+                unknown,
+            ],
+        ),
         &mut ctx,
     );
     t.event(MAIN, Event::Resized, &mut ctx);
     assert_eq!(
         tasks(&t),
-        ["Ark", "Calculator"],
-        "a program started outside Reprise shows its window by title; a box has no row"
+        ["Ark", "Calculator", "calc", "Untitled window"],
+        "by title, else by its process's name, else as untitled; a box has no row"
     );
 }
 
+thread_local! {
+    static OPENED: std::cell::RefCell<Vec<(i32, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record_open(pid: i32, start: u64) -> std::io::Result<OwnedFd> {
+    OPENED.with_borrow_mut(|o| o.push((pid, start)));
+    Err(std::io::Error::from_raw_os_error(libc::ESRCH))
+}
+
+/// End Task on `calculator`, then End Now offered once the wait is up, with the client sampled as
+/// started at `first` and then at `then`.
+fn end_now_on_calculator(t: &mut TaskMgr, ctx: &mut Ctx, first: u64, then: u64) -> Option<Ask> {
+    t.close_window = record_close;
+    t.open_process = record_open;
+    t.take(lone_snapshot(first, vec![calculator()]), ctx);
+    t.event(MAIN, Event::Resized, ctx);
+    click_row(t, ctx, 0);
+    t.event(MAIN, key(keysym::DELETE), ctx);
+    assert_eq!(CLOSED.take(), [7], "its window is asked to close");
+    if let Some(e) = t.ending.first_mut() {
+        e.since -= END_WAIT;
+    }
+    t.take(lone_snapshot(then, vec![calculator()]), ctx);
+    t.asks.up().map(|(_, a)| a.clone())
+}
+
 #[test]
-fn end_task_on_a_window_in_no_app_scope_closes_it_and_offers_end_now_after_the_wait() {
-    let lone = || titled(7, "reprise.calc", 7000, "Calculator");
-    let showing = |windows: Vec<AppWindow>| Snapshot {
-        windows: Some(windows),
-        ..snapshot()
-    };
+fn end_now_on_a_window_in_no_app_scope_signals_the_client_first_seen_through_a_pidfd() {
     let mut ctx = ctx();
     let mut t = mgr();
-    t.end_task = record_end;
-    t.close_window = record_close;
-    t.take(showing(vec![lone()]), &mut ctx);
-    t.event(MAIN, Event::Resized, &mut ctx);
-    click_row(&mut t, &mut ctx, 0);
-    t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    assert_eq!(CLOSED.take(), [7], "its window is asked to close");
-    assert!(ENDED.take().is_empty(), "no scope is signalled");
-    assert!(matches!(&t.ending[..], [e] if e.target == Target::Window(String::new(), 7)));
-    t.ending[0].since -= END_WAIT;
-    t.take(showing(vec![lone()]), &mut ctx);
-    assert!(
-        matches!(t.asks.up(), Some((_, Ask::EndNow(Target::Window(u, 7)))) if u.is_empty()),
-        "a window still up after the wait is offered End Now"
+    let ask = end_now_on_calculator(&mut t, &mut ctx, 900, 900).expect("End Now after the wait");
+    t.asks.close();
+    t.answered(ask, Some(0), &ctx);
+    assert_eq!(
+        OPENED.take(),
+        [(LONE_PID as i32, 900)],
+        "a pidfd for the pid and start time sampled with the window up"
     );
-    t.take(showing(Vec::new()), &mut ctx);
+    t.take(lone_snapshot(900, Vec::new()), &mut ctx);
     assert!(
         t.asks.is_empty() && t.ending.is_empty(),
         "done once it closed"
     );
+}
+
+#[test]
+fn a_window_whose_client_pid_names_another_process_since_is_not_offered_end_now() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.take(lone_snapshot(900, vec![calculator()]), &mut ctx);
+    t.take(lone_snapshot(901, vec![calculator()]), &mut ctx);
+    assert!(
+        end_now_on_calculator(&mut t, &mut ctx, 901, 901).is_none(),
+        "the pid was first seen as a process started at 900"
+    );
+}
+
+#[test]
+fn a_window_in_no_app_scope_is_offered_end_now_only_for_the_users_own_process_outside_services() {
+    let ask = |pid: u32, uid: u32, service: bool| {
+        let mut ctx = ctx();
+        let mut t = mgr();
+        t.in_service = if service { |_| true } else { |_| false };
+        let mut s = lone_snapshot(900, vec![titled(7, "reprise.calc", pid, "Calculator")]);
+        s.procs.last_mut().unwrap().uid = uid;
+        t.close_window = record_close;
+        t.take(s.clone(), &mut ctx);
+        t.event(MAIN, Event::Resized, &mut ctx);
+        click_row(&mut t, &mut ctx, 0);
+        t.event(MAIN, key(keysym::DELETE), &mut ctx);
+        CLOSED.take();
+        if let Some(e) = t.ending.first_mut() {
+            e.since -= END_WAIT;
+        }
+        t.take(s, &mut ctx);
+        t.asks.up().is_some()
+    };
+    assert!(ask(LONE_PID, UID, false));
+    assert!(
+        !ask(0, UID, false),
+        "no pid: Reprise itself or an unknown client"
+    );
+    assert!(!ask(LONE_PID, 0, false), "another user's process");
+    assert!(!ask(LONE_PID, UID, true), "a portal or other service");
 }
 
 fn titled(id: u64, app_id: &str, pid: u32, title: &str) -> AppWindow {
@@ -875,7 +959,7 @@ fn end_task_on_one_of_a_programs_windows_closes_only_that_one() {
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
     assert_eq!(CLOSED.take(), [1], "a.txt's window is asked to close");
     assert!(ENDED.take().is_empty(), "Notepad is not ended");
-    let unit = t.app_rows[1].unit.clone();
+    let unit = t.app_rows[1].unit.clone().unwrap();
     assert!(matches!(&t.ending[..], [e] if e.target == Target::Window(unit.clone(), 1)));
     let mut s = notepads();
     s.windows.as_mut().unwrap().remove(0);
@@ -941,7 +1025,7 @@ fn end_task_on_a_program_that_answers_closes_its_windows_and_waits_for_it() {
     t.end_task = record_end;
     click_row(&mut t, &mut ctx, 0);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    let unit = t.app_rows[0].unit.clone();
+    let unit = t.app_rows[0].unit.clone().unwrap();
     let pids = (t.snap.scopes.iter().find(|s| s.unit == unit))
         .unwrap()
         .pids
@@ -975,7 +1059,11 @@ fn end_task_on_a_program_listed_for_a_sandboxed_window_closes_it_and_spares_the_
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
     assert_eq!(
         ENDED.take(),
-        [(t.app_rows[0].unit.clone(), vec![41, 42, 9999], true)],
+        [(
+            t.app_rows[0].unit.clone().unwrap(),
+            vec![41, 42, 9999],
+            true
+        )],
         "the sandboxed window is asked to close, and the scope is never signalled"
     );
 }
@@ -1023,7 +1111,7 @@ fn end_task_on_a_program_not_responding_offers_end_now_at_once() {
     t.set_hung(vec![("org.kde.ark".into(), 41)], &mut ctx);
     click_row(&mut t, &mut ctx, 0);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    let unit = t.app_rows[0].unit.clone();
+    let unit = t.app_rows[0].unit.clone().unwrap();
     assert!(matches!(t.asks.up(), Some((_, Ask::EndNow(Target::Scope(u)))) if *u == unit));
     assert!(
         t.ending.is_empty(),

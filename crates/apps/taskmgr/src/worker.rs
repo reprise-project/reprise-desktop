@@ -155,6 +155,13 @@ pub fn open_process(pid: i32, start: u64) -> std::io::Result<OwnedFd> {
     }
 }
 
+/// Whether process `pid` runs in a service unit ([`crate::scopes::is_service`]); false once it
+/// has ended.
+pub fn in_service(pid: i32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
+        .is_ok_and(|cg| crate::scopes::is_service(&cg))
+}
+
 /// The program file process `pid` runs, while it is there to show: None for another user's
 /// process, one whose file was replaced or deleted, or a sandbox's own file.
 pub fn exe_of(pid: i32) -> Option<std::path::PathBuf> {
