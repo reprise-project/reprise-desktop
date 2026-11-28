@@ -761,6 +761,8 @@ fn stages(
         );
     }
     if let Some(last) = argvs.last_mut() {
+        // On stdout bsdtar pads the zip with NULs to a whole block; on a path it does not.
+        last[3] = os("/proc/self/fd/1");
         last.insert(2, os("-v"));
     }
     Ok(argvs)
