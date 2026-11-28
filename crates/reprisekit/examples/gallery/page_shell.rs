@@ -730,6 +730,18 @@ pub fn page_desk(
         );
     }
 
+    {
+        use reprisekit::icontheme::{IconCache, IconTheme};
+        let mut icons = IconCache::new(IconTheme::load("none", &[]));
+        icons.set_scale(c.scale());
+        c.fill_rect(Rect::new(700, 5070, 64, 44), cs.window);
+        for (x, px) in [(704, 16), (724, 32)] {
+            if let Some(icon) = icons.get("text-plain", px) {
+                c.blit_over(x, 5074, &icon);
+            }
+        }
+    }
+
     // Stacked: side by side would clip the second page.
     {
         let exterior = wizard::Wizard::new(

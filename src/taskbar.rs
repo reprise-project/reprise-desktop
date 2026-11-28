@@ -806,7 +806,7 @@ pub fn jump_sections(
 pub fn jump_icon<'a>(app: Option<&'a reprisefs::apps::AppEntry>, row: &JumpRow) -> Option<&'a str> {
     let own = app.and_then(|a| a.icon.as_deref());
     match row {
-        JumpRow::Recent(p) => Some(reprisefs::icons::icon_for_file(p)),
+        JumpRow::Recent(p) => Some(reprisefs::icons::drawn_icon_for_file(p)),
         JumpRow::Task(k) => app
             .and_then(|a| jump_tasks(a).get(*k)?.icon.as_deref())
             .or(own),

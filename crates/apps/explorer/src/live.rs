@@ -1448,7 +1448,7 @@ pub(crate) mod tests {
         }
         std::fs::write(places.join("folder-music.svg"), "<svg").expect("write");
         std::fs::create_dir_all(folder.join("music")).expect("mkdir");
-        std::fs::write(folder.join("notes.txt"), "x").expect("write");
+        std::fs::write(folder.join("notes.log"), "x").expect("write");
         reprisefs::meta::set_folder_icon(&folder.join("music"), Some("folder-music"))
             .expect("own icon");
         let mut ctx = test_ctx();
@@ -1471,7 +1471,7 @@ pub(crate) mod tests {
             let icon = ex.tree.node(&path)?.icon.as_ref()?;
             Some(icon.get(8, 8))
         };
-        for name in ["music", "notes.txt"] {
+        for name in ["music", "notes.log"] {
             let w = worn(&ex, name);
             assert!(!w.is_empty() && w.iter().all(|&p| p == 0), "{name}: {w:x?}");
         }
@@ -1498,7 +1498,7 @@ pub(crate) mod tests {
             landed(&ex),
             "music wears the plain folder in the list and the tree"
         );
-        let w = worn(&ex, "notes.txt");
+        let w = worn(&ex, "notes.log");
         assert!(!w.is_empty() && w.iter().all(|&p| p == TEXT), "{w:x?}");
     }
 

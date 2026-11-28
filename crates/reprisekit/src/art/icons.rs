@@ -206,6 +206,12 @@ icons! {
     SET = "set.png";
     /// An open folder holding a dog-eared page, 32x32.
     FOLDER_PAGE = "folder-page.png";
+    /// A text document: a dog-eared page of ragged lines, 16x16.
+    TEXT_16 = "text-plain-16.png";
+    /// The text document at 32x32.
+    TEXT_32 = "text-plain-32.png";
+    /// The text document at 48x48.
+    TEXT_48 = "text-plain-48.png";
 }
 
 #[cfg(test)]
@@ -307,6 +313,9 @@ mod tests {
             out.push((format!("shortcut {s}"), iconview::shortcut_overlay(s)));
             out.push((format!("set {s}"), SET.canvas_at(s)));
             out.push((format!("folder page {s}"), FOLDER_PAGE.canvas_at(s)));
+            out.push((format!("text 16 at {s}"), TEXT_16.canvas_at(s)));
+            out.push((format!("text 32 at {s}"), TEXT_32.canvas_at(s)));
+            out.push((format!("text 48 at {s}"), TEXT_48.canvas_at(s)));
         }
         out
     }
