@@ -5,7 +5,7 @@ use crate::commands::{Command, Menu};
 use crate::foldertree;
 use crate::icons::chrome_icon_unread;
 use crate::place::{Place, drive_mounts};
-use crate::window;
+use crate::window::{self, Popup};
 use crate::{Explorer, FOLDERS_ITEM};
 use repriseapp::iconjobs::IconWaits;
 use repriseapp::listjob::Job;
@@ -17,11 +17,12 @@ use reprisekit::art::viewsicon;
 use reprisekit::controls::addressbar::{self, AddressBar};
 use reprisekit::controls::breadcrumb::Crumb;
 use reprisekit::controls::combo::{self, ListItem};
+use reprisekit::controls::commandbar::{self, Commandbar, Drop, RightItem};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::statusbar;
 use reprisekit::controls::toolbar;
 use reprisekit::icontheme::IconCache;
-use reprisekit::raster::Canvas;
+use reprisekit::raster::{Canvas, Rect};
 use reprisekit::theme::TextUnits;
 use reprisekit::tr;
 use std::path::PathBuf;
@@ -264,6 +265,145 @@ impl Explorer {
         }
         self.toolbar.latched = self.settings.folders.then_some(FOLDERS_ITEM);
         self.build_taskpane(ctx);
+        let (items, acts) = commands_for(&self.bar_facts()).into_iter().unzip();
+        self.cmdbar.set_left(items);
+        self.cmdbar_acts = acts;
+    }
+
+    /// What the command bar offers commands for: the place and the selection.
+    pub(crate) fn bar_facts(&self) -> BarFacts {
+        let place = match &self.place {
+            Place::Computer => BarPlace::Computer,
+            Place::RecycleBin => BarPlace::RecycleBin(self.items.len()),
+            Place::Network(_) => BarPlace::Network,
+            Place::Archive(..) => BarPlace::Archive,
+            _ => BarPlace::Folder,
+        };
+        let chosen: Vec<usize> = (self.sv.selection.set.iter())
+            .copied()
+            .filter(|&i| i < self.items.len())
+            .collect();
+        let picked = match chosen[..] {
+            [] => Picked::Nothing,
+            [i] if self.place == Place::Computer => Picked::Drive {
+                eject: (self.ejectable(i) || self.share_selected(i))
+                    .then(|| self.share_selected(i)),
+            },
+            [i] if self.items[i].is_folder() => Picked::Folder,
+            [_] => Picked::File {
+                image: self.selected_disk_image().is_some(),
+                archive: self.extract_label().is_some(),
+            },
+            _ => Picked::Several {
+                archives: self.extract_label().is_some(),
+            },
+        };
+        BarFacts {
+            place,
+            picked,
+            can_connect: self.shares.gio,
+        }
+    }
+
+    /// A press on the command bar's `part`, or Enter or Down on it (`by_keyboard`), the bar lying
+    /// over `bar`: a command runs, a drop or Organize opens its menu under it, » opens the folded
+    /// commands, Views cycles or lists the modes. The help mark does nothing.
+    pub fn command_bar_press(
+        &mut self,
+        part: commandbar::Hit,
+        bar: Rect,
+        by_keyboard: bool,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        use commandbar::Hit;
+        let l = self.cmdbar_layout(bar, ctx);
+        let (menu, waits) = match part {
+            Hit::Item(i) => match self.cmdbar_acts.get(i).cloned() {
+                Some(BarAct { menu: Some(m), .. })
+                    if self
+                        .cmdbar
+                        .left
+                        .get(i)
+                        .is_some_and(|it| it.drop == Drop::Menu) =>
+                {
+                    self.bar_menu(m, ctx)
+                }
+                Some(act) => return self.run(act.run, ctx),
+                None => return Reply::none(),
+            },
+            Hit::ItemDrop(i) => match self.cmdbar_acts.get(i).and_then(|a| a.menu) {
+                Some(m) => self.bar_menu(m, ctx),
+                None => return Reply::none(),
+            },
+            Hit::More => {
+                let mut m = Menu::default();
+                for i in self.cmdbar.folded(&l) {
+                    let (Some(item), Some(act)) =
+                        (self.cmdbar.left.get(i), self.cmdbar_acts.get(i))
+                    else {
+                        continue;
+                    };
+                    let row = reprisekit::controls::menu::MenuItem::entry(item.label.as_str())
+                        .enabled(item.enabled);
+                    match (item.drop, act.menu) {
+                        (Drop::Menu, Some(sub)) => m.sub(row, self.bar_menu(sub, ctx).0),
+                        _ => m.row(row, act.run.clone()),
+                    }
+                }
+                (m, IconWaits::default())
+            }
+            Hit::ViewsCycle => {
+                return self.run(Command::Mode(crate::commands::next_mode(self.sv.mode)), ctx);
+            }
+            Hit::ViewsDrop => (crate::menus::views_menu(self.sv.mode), IconWaits::default()),
+            Hit::Help => return Reply::none(),
+        };
+        if menu.items().is_empty() {
+            return Reply::none();
+        }
+        let Some(under) = part_rect(&l, part) else {
+            return Reply::none();
+        };
+        let at = (under.x, under.bottom());
+        let popup = Popup::new(at, menu, ctx, by_keyboard).waiting(waits);
+        self.popup = Some(popup.for_bar(part));
+        Reply::redraw()
+    }
+
+    /// `which` menu, and the row icons it waits on.
+    fn bar_menu(&mut self, which: BarMenu, ctx: &mut Ctx) -> (Menu, IconWaits) {
+        let mut waits = IconWaits::default();
+        let menu = match which {
+            BarMenu::Organize => crate::menus::organize_menu(&self.menu_state()),
+            BarMenu::New => crate::menus::new_items_menu(&self.menu_state()),
+            BarMenu::OpenWith => match self.sv.selection.single() {
+                Some(i) => crate::menus::open_with_items(&self.build_open_with(i, &mut waits, ctx)),
+                None => Menu::default(),
+            },
+        };
+        (menu, waits)
+    }
+
+    /// The command bar laid out over `rect`, as it is drawn.
+    pub fn cmdbar_layout(&self, rect: Rect, ctx: &Ctx) -> commandbar::Layout {
+        let t = &ctx.theme;
+        commandbar::layout(
+            &self.cmdbar,
+            rect,
+            &ctx.text,
+            t.fonts.size_px,
+            &t.controls(),
+        )
+    }
+
+    /// The bar as drawn: the part whose menu is open held.
+    pub fn cmdbar_shown(&self) -> Commandbar {
+        Commandbar {
+            pressed: (self.popup.as_ref())
+                .and_then(|p| p.from_bar)
+                .or(self.cmdbar.pressed),
+            ..self.cmdbar.clone()
+        }
     }
 
     /// "In Folder: <dir>" for a search hit, which the status bar and infotip lead with: results
@@ -430,4 +570,167 @@ impl Explorer {
         self.popup = Some(window::Popup::new(m.at, menu, ctx, false));
         true
     }
+}
+
+/// Where `part` lies in `l`.
+fn part_rect(l: &commandbar::Layout, part: commandbar::Hit) -> Option<Rect> {
+    use commandbar::Hit;
+    match part {
+        Hit::Item(i) => l.items.get(i).map(|s| s.main),
+        Hit::ItemDrop(i) => l.items.get(i).and_then(|s| s.drop),
+        Hit::More => l.more,
+        Hit::ViewsCycle => l.views.map(|v| v.0),
+        Hit::ViewsDrop => l.views.map(|v| v.1),
+        Hit::Help => l.help,
+    }
+}
+
+/// The command bar with no commands yet: Views and the help mark at its right end.
+pub(crate) fn command_bar() -> Commandbar {
+    Commandbar {
+        right: vec![RightItem::Views, RightItem::Help],
+        ..Commandbar::default()
+    }
+}
+
+/// Where the window is, as the command bar sees it; the Recycle Bin with how many items it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BarPlace {
+    Folder,
+    Computer,
+    RecycleBin(usize),
+    Network,
+    Archive,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Picked {
+    Nothing,
+    Folder,
+    File {
+        image: bool,
+        archive: bool,
+    },
+    Several {
+        archives: bool,
+    },
+    /// One of Computer's rows; `eject` when it can be ejected, true for a network share.
+    Drive {
+        eject: Option<bool>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BarFacts {
+    pub place: BarPlace,
+    pub picked: Picked,
+    pub can_connect: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BarMenu {
+    Organize,
+    New,
+    OpenWith,
+}
+
+/// A command bar command: what its label runs, and the menu its drop (or a [`Drop::Menu`] command
+/// itself) opens.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BarAct {
+    pub run: Command,
+    pub menu: Option<BarMenu>,
+}
+
+type Row = (String, Command, Drop, Option<BarMenu>);
+
+fn plain(label: String, run: Command) -> Row {
+    (label, run, Drop::None, None)
+}
+
+/// The command bar's commands for `f`, Organize first, each with what it does. A writable folder
+/// ends on New folder, whose drop holds the File menu's New rows.
+pub(crate) fn commands_for(f: &BarFacts) -> Vec<(commandbar::Item, BarAct)> {
+    let mut rows: Vec<Row> = vec![(
+        tr!("commandbar-organize"),
+        Command::Nothing,
+        Drop::Menu,
+        Some(BarMenu::Organize),
+    )];
+    let connect = || {
+        plain(
+            tr!("commandbar-connect-to-server"),
+            Command::ConnectToServer,
+        )
+    };
+    let extract = || plain(tr!("commandbar-extract-all"), Command::ExtractAll);
+    match (f.place, f.picked) {
+        (BarPlace::RecycleBin(0), Picked::Nothing) => {}
+        (BarPlace::RecycleBin(_), Picked::Nothing) => rows.push(plain(
+            tr!("commandbar-empty-recycle-bin"),
+            Command::EmptyRecycleBin,
+        )),
+        (BarPlace::RecycleBin(_), _) => {
+            rows.push(plain(tr!("commandbar-restore"), Command::Restore));
+        }
+        (BarPlace::Archive, _) => rows.push(extract()),
+        (BarPlace::Computer, picked) => {
+            if let Picked::Drive { eject } = picked {
+                rows.push(plain(tr!("commandbar-properties"), Command::Properties));
+                match eject {
+                    Some(true) => rows.push(plain(tr!("commandbar-disconnect"), Command::Eject)),
+                    Some(false) => rows.push(plain(tr!("commandbar-eject"), Command::Eject)),
+                    None => {}
+                }
+            }
+            rows.push(plain(
+                tr!("commandbar-system-properties"),
+                Command::SystemInformation,
+            ));
+            if f.can_connect {
+                rows.push(connect());
+            }
+            rows.push(plain(tr!("commandbar-open-settings"), Command::Settings));
+        }
+        (BarPlace::Network, _) => {
+            if f.can_connect {
+                rows.push(connect());
+            }
+        }
+        (BarPlace::Folder, picked) => {
+            match picked {
+                Picked::File { image, archive } => {
+                    rows.push((
+                        tr!("commandbar-open"),
+                        Command::Open,
+                        Drop::Split,
+                        Some(BarMenu::OpenWith),
+                    ));
+                    if image {
+                        rows.push(plain(tr!("commandbar-mount"), Command::MountImage));
+                    }
+                    if archive {
+                        rows.push(extract());
+                    }
+                }
+                Picked::Folder => rows.push(plain(tr!("commandbar-open"), Command::Open)),
+                Picked::Several { archives: true } => rows.push(extract()),
+                Picked::Several { .. } | Picked::Nothing | Picked::Drive { .. } => {}
+            }
+            rows.push((
+                tr!("commandbar-new-folder"),
+                Command::NewFolder,
+                Drop::Split,
+                Some(BarMenu::New),
+            ));
+        }
+    }
+    (rows.into_iter().enumerate())
+        .map(|(i, (label, run, drop, menu))| {
+            (
+                commandbar::Item::new(label, i as u32).drop(drop),
+                BarAct { run, menu },
+            )
+        })
+        .collect()
 }

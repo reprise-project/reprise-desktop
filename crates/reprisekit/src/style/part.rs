@@ -72,6 +72,12 @@ pub enum Part {
     TabPane,
     /// A document tab over the frame's glass: Normal, Hot and Checked (open).
     GlassTab,
+    /// A command bar's band behind its commands.
+    CommandBar,
+    /// A command bar command's box: Normal (none), Hot and Pressed.
+    CommandButton,
+    /// A command bar's round help mark.
+    CommandHelp,
     ProgressBar,
     ProgressChunk,
     TrackbarTrack,

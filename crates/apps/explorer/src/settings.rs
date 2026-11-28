@@ -17,6 +17,11 @@ pub struct Settings {
     pub status_bar: bool,
     pub toolbars: bool,
     pub address_bar: bool,
+    /// Glass's layout: the menu bar kept shown, the navigation pane and the details pane. Blue's
+    /// and Classic's keys above never carry into these.
+    pub menu_bar: bool,
+    pub nav_pane: bool,
+    pub details_pane: bool,
     /// The Folders bar's width in 100% px, grown by the text size when drawn.
     pub bar_width: i32,
     /// The main window's client size in 100% px, grown by the text size at open.
@@ -38,6 +43,9 @@ impl Default for Settings {
             status_bar: true,
             toolbars: true,
             address_bar: true,
+            menu_bar: false,
+            nav_pane: true,
+            details_pane: true,
             bar_width: 200,
             // The folder window opens at an outer 800x600; the client
             // area that leaves under its frame, caption and menu bar is
@@ -151,6 +159,10 @@ mod tests {
         assert_eq!(s.mode, "tiles");
         assert_eq!(s.sort, (0, true));
         assert!(s.folders && s.status_bar && s.toolbars && s.address_bar);
+        assert!(
+            !s.menu_bar && s.nav_pane && s.details_pane,
+            "Glass hides only the menu bar"
+        );
         assert_eq!(s.window, (792, 573));
     }
 

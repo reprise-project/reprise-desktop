@@ -281,6 +281,9 @@ pub struct Explorer {
     specials: Vec<(PathBuf, &'static str)>,
     pub bar: Bar,
     pub toolbar: ToolBar,
+    /// Glass's command bar, and what each of its commands does ([`chrome::commands_for`]).
+    pub cmdbar: reprisekit::controls::commandbar::Commandbar,
+    pub(crate) cmdbar_acts: Vec<chrome::BarAct>,
     pub address: AddressBar,
     /// The folder read the address bar's completion asked for.
     address_job: repriseapp::pathjob::PathJob,
@@ -674,6 +677,8 @@ impl Explorer {
                 latched: None,
                 big: true,
             },
+            cmdbar: chrome::command_bar(),
+            cmdbar_acts: Vec::new(),
             address: AddressBar::new(vec![ListItem::new("")], 0, None),
             address_job: Default::default(),
             address_places: Vec::new(),
@@ -950,6 +955,11 @@ impl Explorer {
             can_undo: self.undo,
             folders: self.settings.folders,
             status_bar: self.settings.status_bar,
+            layout: [
+                self.settings.menu_bar,
+                self.settings.details_pane,
+                self.settings.nav_pane,
+            ],
             hidden: self.folders.show_hidden,
             toolbars: [self.settings.toolbars, self.settings.address_bar, false],
             read_only: self.place.read_only(),

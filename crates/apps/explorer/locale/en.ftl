@@ -452,3 +452,24 @@ props-picture-browse = Browse
 props-picture-open = Open
 props-picture-all-pictures = All Pictures ({ $globs })
 props-picture-all-files = All Files (*.*)
+
+## The command bar under Glass, and its Organize menu
+commandbar-organize = Organize
+commandbar-open = Open
+commandbar-mount = Mount
+commandbar-extract-all = Extract all files
+commandbar-new-folder = New folder
+commandbar-properties = Properties
+commandbar-eject = Eject
+commandbar-disconnect = Disconnect
+commandbar-system-properties = System properties
+commandbar-connect-to-server = Connect to server
+commandbar-open-settings = Open Settings
+commandbar-empty-recycle-bin = Empty the Recycle Bin
+commandbar-restore = Restore
+organize-layout = &Layout
+organize-menu-bar = &Menu bar
+organize-details-pane = &Details pane
+organize-navigation-pane = &Navigation pane
+organize-folder-and-search-options = F&older and search options
+organize-close = Clos&e

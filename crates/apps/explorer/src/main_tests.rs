@@ -11,6 +11,8 @@ mod actions;
 mod address;
 #[path = "main_tests/archive.rs"]
 mod archive;
+#[path = "main_tests/commandbar.rs"]
+mod commandbar;
 #[path = "main_tests/computer.rs"]
 mod computer;
 #[path = "main_tests/desktop.rs"]

@@ -7,6 +7,7 @@ mod bar;
 mod bars;
 mod buttons;
 pub(crate) mod clock;
+pub mod commandbar;
 mod controls;
 mod copygraph;
 mod crumbs;
@@ -492,6 +493,16 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
     )
     .with_text_color(Part::Tooltip, State::Normal, tooltip_ink(s.mode))
     .with_text_color(
+        Part::CommandButton,
+        State::Normal,
+        command_ink(s.mode, commandbar::INK),
+    )
+    .with_text_color(
+        Part::CommandButton,
+        State::Disabled,
+        command_ink(s.mode, commandbar::GREYED_INK),
+    )
+    .with_text_color(
         Part::CalendarBand,
         State::Normal,
         colors(s.mode).window_text,
@@ -652,7 +663,7 @@ fn max_title(s: &Settings) -> Option<([Color; 2], Option<TitleGlow>)> {
 type Group = (&'static [Part], fn(i32) -> Vec<(Part, PartImage)>);
 
 /// Glass's control parts, each group painted the first time one of its parts is drawn.
-const GROUPS: [Group; 11] = [
+const GROUPS: [Group; 12] = [
     (&[Part::CheckBox, Part::Radio], |d| {
         controls::parts(d).into()
     }),
@@ -727,6 +738,10 @@ const GROUPS: [Group; 11] = [
     (&[Part::BalloonClose], |d| balloon::parts(d).into()),
     (&[Part::GlassTab], |d| doctab::parts(d).into()),
     (
+        &[Part::CommandBar, Part::CommandButton, Part::CommandHelp],
+        |d| commandbar::parts(d).into(),
+    ),
+    (
         &[Part::CalendarToday, Part::CalendarPrev, Part::CalendarNext],
         |d| flyouts::parts(d).into(),
     ),
@@ -761,6 +776,14 @@ fn caption_tabs(ink: [Color; 2]) -> crate::style::CaptionTabLook {
         close_hot: (white, if light { 0x50 } else { 0xA0 }),
         close_held: (black, 0x30),
         other_ink: (ink[0], ink[1]),
+    }
+}
+
+/// A command bar's ink in `mode`: dark mode turns it light as it turns the bar's art dark.
+fn command_ink(mode: Mode, light: Color) -> Color {
+    match mode {
+        Mode::Light => light,
+        Mode::Dark => dark::remap_color(light),
     }
 }
 

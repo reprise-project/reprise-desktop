@@ -513,6 +513,8 @@ pub struct Popup {
     chain: menu::PopupMenu,
     /// The row icons it wears stand-ins for ([`Popup::land_icons`]).
     waits: IconWaits,
+    /// The command bar part that opened it, drawn held while it is open.
+    pub(crate) from_bar: Option<reprisekit::controls::commandbar::Hit>,
     /// Requested origin.
     #[cfg(test)]
     at: (i32, i32),
@@ -529,6 +531,7 @@ impl Popup {
             tree,
             chain,
             waits: IconWaits::default(),
+            from_bar: None,
             #[cfg(test)]
             at,
         }
@@ -541,6 +544,13 @@ impl Popup {
     /// The menu's rows wear stand-ins for the icons `waits` waits on.
     pub fn waiting(self, waits: IconWaits) -> Popup {
         Popup { waits, ..self }
+    }
+
+    pub fn for_bar(self, part: reprisekit::controls::commandbar::Hit) -> Popup {
+        Popup {
+            from_bar: Some(part),
+            ..self
+        }
     }
 
     /// Theme icons landed: the rows that waited wear theirs at `px`, `names` giving each row's icon
