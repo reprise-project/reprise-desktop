@@ -107,13 +107,32 @@ impl SettingsApp {
         self.wallpaper_icons = Some((none, ctx.icons.get("image-x-generic", px)));
         self.folder_icon = ctx.icons.get("folder", px);
         self.fill_wallpapers();
-        let (scale, glass) = (ctx.icons.scale(), appearancepage::glass(&self.want));
+        self.draw_thumbs(ctx);
+    }
+
+    /// The built-ins' thumbnails at the list's icon size, in the glass colour and mode `want`
+    /// draws in now; [`Self::thumbs_follow_mode`] draws them again when that mode turns.
+    pub(crate) fn draw_thumbs(&mut self, ctx: &Ctx) {
+        let (px, scale) = (crate::menuhost::list_icon_px(ctx), ctx.icons.scale());
+        let glass = appearancepage::glass(&self.want);
+        self.thumbs_mode = Some(glass.mode);
         self.thumbing = Some(self.spawn(move || {
             backgroundpage::builtins()
                 .into_iter()
                 .map(|b| Some(backgroundpage::thumb(b, &glass, px, scale)))
                 .collect()
         }));
+    }
+
+    /// Draw the thumbnails again once `want`'s mode draws otherwise than they were drawn, as a
+    /// schedule does with no event; runs before each draw.
+    pub(crate) fn thumbs_follow_mode(&mut self, ctx: &Ctx) {
+        if self
+            .thumbs_mode
+            .is_some_and(|m| m != appearancepage::glass(&self.want).mode)
+        {
+            self.draw_thumbs(ctx);
+        }
     }
 
     pub(crate) fn fill_wallpapers(&mut self) {

@@ -514,9 +514,10 @@ mod tests {
     }
 
     /// From the smallest to a large size, content holders grow (group boxes that
-    /// end at the column's right edge, fields, lists, the tree, previews); combos and trackbars grow no more than
-    /// their most; check boxes, radios, buttons, up-downs, colour buttons, time
-    /// fields and the Appearance sample keep their size. The page's list or preview takes the extra height.
+    /// end at the column's right edge, fields, lists, the tree, other previews); combos and trackbars
+    /// grow no more than their most; check boxes, radios, buttons, up-downs, colour buttons, time
+    /// fields and the Appearance sample keep their size. Each listed page's list or preview takes
+    /// the extra height; the Appearance page leaves it empty under its rows.
     #[test]
     fn content_grows_with_the_window_and_fixed_controls_keep_their_size() {
         use reprisekit::controls::form::Control;

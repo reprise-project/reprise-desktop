@@ -543,6 +543,8 @@ struct SettingsApp {
     folder_icon: Option<Canvas>,
     thumbs: Vec<Option<Canvas>>,
     thumbing: Option<Receiver<Vec<Option<Canvas>>>>,
+    /// The glass mode `thumbs` were drawn in, None before the first.
+    thumbs_mode: Option<reprisekit::glass::Mode>,
     /// The Advanced page's Clear, under way.
     clearing: Option<Receiver<reprisefs::thumbnails::Cleared>>,
     requests: Option<instance::Requests>,
@@ -906,6 +908,7 @@ impl SettingsApp {
             folder_icon: None,
             thumbs: Vec::new(),
             thumbing: None,
+            thumbs_mode: None,
             clearing: None,
             requests: None,
             waker: None,
@@ -1201,6 +1204,7 @@ impl App for SettingsApp {
         self.dialog_text = ctx.text.clone();
         self.follow_text(ctx);
         appearancepage::follow_session(&mut self.sheet, &self.want);
+        self.thumbs_follow_mode(ctx);
         if win == repriseapp::MAIN {
             self.fit_window(ctx.size);
             self.take_pending_focus();
