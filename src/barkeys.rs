@@ -200,8 +200,10 @@ impl State {
     /// Start menu as the Start key does; on the button of the window the bar
     /// took the keyboard from it hands the keyboard back to that window. A
     /// menu it opens takes the arrows with its access keys shown, and Escape
-    /// there comes back to the bar.
+    /// there comes back to the bar. A kept touchpad swipe springs back first, as on a
+    /// reader's click.
     fn bar_item_act(&mut self, tree: TreeId, at: TaskbarHit, button: u32) {
+        self.drop_kept_swipe();
         crate::autohideview::land(self, tree);
         let Some(b) = self.bar(tree) else { return };
         let back = self.bar_shared.keys.map_or(Back::Nobody, |k| k.back);
