@@ -438,7 +438,7 @@ fn a_focused_glass_look_in_rings_right_of_its_icon() {
 }
 
 /// Under Blue every row sits a pixel higher than Classic's; the columns
-/// stay put and the places bar's tiles are 71 px.
+/// stay put and the places bar's tiles are 67 px.
 #[test]
 fn blues_rows_sit_a_pixel_higher() {
     let text = text();
@@ -463,7 +463,7 @@ fn blues_rows_sit_a_pixel_higher() {
     assert_eq!(b.places, Rect::new(MARGIN, 36, placesbar::WIDTH, PLACES_H));
     assert_eq!(
         b.places_rects[1],
-        Rect::new(MARGIN, 36 + 71, placesbar::WIDTH, 71)
+        Rect::new(MARGIN, 36 + 67, placesbar::WIDTH, 67)
     );
     assert_eq!(b.shell.frame, up(c.shell.frame));
     assert_eq!(b.filename, up(c.filename));
