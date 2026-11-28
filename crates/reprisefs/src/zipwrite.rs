@@ -1,7 +1,8 @@
 //! Writing into a zip browsed as a compressed folder: a file saved back into it, files dropped
 //! or pasted onto it. The zip is rewritten whole by a chain of bsdtar children: the first reads
-//! the zip, opened once and never through a link, less the entries being replaced; each next one
-//! adds one folder's files by name; the last writes a zip into a temp file beside the old one.
+//! the zip, opened once and never through a link, less the entries being replaced (and is left
+//! out when none stays); each next one adds one folder's files by name; the last writes a zip
+//! into a temp file beside the old one.
 //! The temp file is listed and must hold exactly the old entries kept plus the files added, and
 //! is renamed over the zip only while the zip is still the file that was read. A failure, Cancel
 //! or the deadline removes the temp file. A crash leaves it hidden beside the zip
@@ -378,7 +379,7 @@ fn rewrite_watched(
         false => HashSet::new(),
     };
     let mut modes: HashMap<PathBuf, u32> = HashMap::new();
-    let old = archive::list_noting(zip, m, &mut |e, mode| {
+    let (old, count) = archive::list_noting(zip, m, &mut |e, mode| {
         if e.kind == Kind::File && staged.contains(e.path.as_path()) {
             modes.insert(e.path.clone(), mode);
         }
@@ -446,7 +447,12 @@ fn rewrite_watched(
         .map(|(p, _, _)| p.as_path())
         .filter(|p| explicit.contains(p))
         .collect();
-    let argvs = stages(&work, &excluded, adds)?;
+    // libarchive 3.8.10 reads an empty tar stream from a pipe as truncated, so a zip none of whose
+    // entries stay is not read at all.
+    let keeps_old = adds.is_empty()
+        || count > old.len() as u64
+        || (old.iter()).any(|e| !kinds.contains_key(e.path.as_path()));
+    let argvs = stages(&work, keeps_old.then_some(excluded.as_slice()), adds)?;
     let total = Totals {
         bytes,
         items: expected.len() as u64,
@@ -684,34 +690,38 @@ fn write_list(work: &Scratch, name: &str, bytes: &[u8]) -> Result<PathBuf, Strin
 }
 
 /// The chain's argument lists: the zip read as a pax stream (its own stdin) less the entries at
-/// `excluded`, one stage per folder of `adds` adding its names, and a last stage writing the zip.
+/// `excluded`, unless that is `None`, one stage per folder of `adds` adding its names, and a
+/// last stage writing the zip.
 /// The patterns go in a file bsdtar reads by line, but one holding a line break goes on the
 /// command line. The names go by `-T` as NUL-ended lines, where neither `@` nor `-C` mean more.
 fn stages(
     work: &Scratch,
-    excluded: &[&Path],
+    excluded: Option<&[&Path]>,
     adds: &[Adding],
 ) -> Result<Vec<Vec<OsString>>, String> {
     let os = |s: &str| OsString::from(s);
-    let mut first: Vec<OsString> = ["bsdtar", "-c", "-f", "-", "--format", "pax"]
-        .map(os)
-        .into();
-    let mut lines = Vec::new();
-    for path in excluded {
-        let p = pattern(path);
-        if p.contains(&b'\n') || p.contains(&b'\r') {
-            first.extend([os("--exclude"), OsString::from_vec(p)]);
-        } else {
-            lines.extend_from_slice(&p);
-            lines.push(b'\n');
+    let mut argvs = Vec::new();
+    if let Some(excluded) = excluded {
+        let mut first: Vec<OsString> = ["bsdtar", "-c", "-f", "-", "--format", "pax"]
+            .map(os)
+            .into();
+        let mut lines = Vec::new();
+        for path in excluded {
+            let p = pattern(path);
+            if p.contains(&b'\n') || p.contains(&b'\r') {
+                first.extend([os("--exclude"), OsString::from_vec(p)]);
+            } else {
+                lines.extend_from_slice(&p);
+                lines.push(b'\n');
+            }
         }
+        if !lines.is_empty() {
+            first.extend([os("-X"), write_list(work, "exclude", &lines)?.into()]);
+        }
+        // The zip's stdin opened again by path, so bsdtar reads its central directory.
+        first.push(os("@/proc/self/fd/0"));
+        argvs.push(first);
     }
-    if !lines.is_empty() {
-        first.extend([os("-X"), write_list(work, "exclude", &lines)?.into()]);
-    }
-    // The zip's stdin opened again by path, so bsdtar reads its central directory.
-    first.push(os("@/proc/self/fd/0"));
-    let mut argvs = vec![first];
     for (i, a) in adds.iter().enumerate() {
         let mut names = Vec::new();
         for n in &a.names {
@@ -723,8 +733,16 @@ fn stages(
         let mut argv: Vec<OsString> = ["bsdtar", "-c", "-f", "-", "--format", format]
             .map(os)
             .into();
-        argv.extend([os("-C"), a.dir.clone().into(), os("--null"), os("-T")]);
-        argv.extend([list.into(), os("@-")]);
+        argv.extend([
+            os("-C"),
+            a.dir.clone().into(),
+            os("--null"),
+            os("-T"),
+            list.into(),
+        ]);
+        if !argvs.is_empty() {
+            argv.push(os("@-"));
+        }
         argvs.push(argv);
     }
     if adds.is_empty() {
@@ -863,6 +881,32 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_zip_none_of_whose_entries_stay_is_read_by_no_stage() {
+        let work = || Scratch::new().expect("a scratch folder");
+        let adds = [Adding {
+            dir: "/d".into(),
+            names: vec!["a.txt".into()],
+        }];
+        let reads = |argvs: &[Vec<OsString>]| -> Vec<bool> {
+            (argvs.iter())
+                .map(|a| a.iter().any(|w| w.as_bytes().starts_with(b"@")))
+                .collect()
+        };
+        let argvs = stages(&work(), None, &adds).expect("stages");
+        assert_eq!(
+            reads(&argvs),
+            [false],
+            "the one stage adds and reads no archive"
+        );
+        let argvs = stages(&work(), Some(&[]), &adds).expect("stages");
+        assert_eq!(
+            reads(&argvs),
+            [true, true],
+            "a kept zip is read and passed on"
+        );
+    }
 
     fn events(mut job: ArchiveJob) -> Vec<ArchiveEvent> {
         let until = Instant::now() + Duration::from_secs(10);
