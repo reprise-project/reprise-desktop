@@ -464,6 +464,12 @@ pub struct Explorer {
     generation: u64,
     /// The compressed folders' listings, kept while their archives stay unchanged.
     pub(crate) archives: reprisefs::archive::Listings,
+    /// The compressed folder shown is a zip that takes files, as its listing read
+    /// ([`place::Listed::zip_writes`]).
+    pub(crate) zip_writes: bool,
+    /// Where the compressed folder shown extracts to, as its listing read it
+    /// ([`place::Listed::extract_to`]).
+    pub(crate) extract_to: Option<PathBuf>,
     /// The drags out of compressed folders whose copies are coming out or not yet taken.
     pub(crate) drag_copies: Vec<drag::DragCopy>,
     /// The most bytes a drag out of a compressed folder copies out ([`drag::DRAG_MOST`]).
@@ -782,6 +788,8 @@ impl Explorer {
             ),
             generation: 0,
             archives: Default::default(),
+            zip_writes: false,
+            extract_to: None,
             drag_copies: Vec::new(),
             drag_most: drag::DRAG_MOST,
             put_holds: Vec::new(),
@@ -945,6 +953,7 @@ impl Explorer {
             compress: None,
             disk_image: false,
             paste_into_zip: false,
+            into_zip: self.zip_view().is_some(),
             relabel: (self.sv.selection.single()).is_some_and(|i| self.relabel_target(i).is_some()),
             pinned: None,
             eject: single.is_some_and(|i| self.ejectable(i) || self.share_selected(i)),
@@ -1378,6 +1387,8 @@ impl Explorer {
                     items,
                     groups,
                     error,
+                    zip_writes,
+                    extract_to,
                     ..
                 },
             icons: read_icons,
@@ -1514,6 +1525,8 @@ impl Explorer {
         self.sv.top = 0;
         self.sv.left = 0;
         self.items = items;
+        self.zip_writes = zip_writes;
+        self.extract_to = extract_to;
         self.link_status = None;
         // A bin item's sheet goes once its item is no longer listed as it was.
         let stale_sheet =
@@ -2399,7 +2412,9 @@ impl App for Lazy {
                         target,
                         sources,
                     }) => ex.put_paths(*op, sources, target, ctx),
-                    Some(Alone::AddToZip { zip, sources }) => ex.put_in_zip(sources, zip, ctx),
+                    Some(Alone::AddToZip { zip, sources }) => {
+                        ex.put_in_zip(sources, (zip, Path::new("")), ctx)
+                    }
                     Some(Alone::Delete { paths, erase }) => {
                         ex.confirm_delete_paths(paths.clone(), *erase, ctx)
                     }

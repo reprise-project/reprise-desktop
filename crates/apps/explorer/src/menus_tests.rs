@@ -1241,3 +1241,33 @@ fn no_two_rows_of_a_menu_share_an_access_key() {
         found.join("\n")
     );
 }
+
+#[test]
+fn a_compressed_folder_of_a_zip_that_takes_files_pastes_and_makes_new_items() {
+    let s = MenuState {
+        archive: true,
+        read_only: true,
+        into_zip: true,
+        can_paste: true,
+        ..MenuState::default()
+    };
+    let back = background_menu(&s);
+    assert!(enabled_by_label(back.items(), "Paste"));
+    assert!(!enabled_by_label(back.items(), "Paste Shortcut"));
+    assert!(enabled_by_label(back.items(), "New"));
+    assert!(enabled_by_label(&bar_rows(&s, 1), "Paste"));
+    for (row, live) in [
+        ("Folder", true),
+        ("Shortcut...", false),
+        ("Text Document", true),
+        ("Compressed (zipped) Folder", true),
+    ] {
+        assert_eq!(enabled_by_label(new_menu(&s).items(), row), live, "{row}");
+    }
+    let shut = MenuState {
+        into_zip: false,
+        ..s
+    };
+    assert!(!enabled_by_label(background_menu(&shut).items(), "Paste"));
+    assert!(!enabled_by_label(background_menu(&shut).items(), "New"));
+}

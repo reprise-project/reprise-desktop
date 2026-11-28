@@ -92,6 +92,8 @@ fn add(dir: &Path, names: &[&str]) -> Vec<Adding> {
     vec![Adding {
         dir: dir.to_path_buf(),
         names: names.iter().map(PathBuf::from).collect(),
+        under: PathBuf::new(),
+        fresh: false,
     }]
 }
 
@@ -198,6 +200,149 @@ fn an_added_folder_merges_into_the_zips_folder_of_that_name() {
         ])
     );
     assert_eq!(read_entry(&zip, "docs/a.txt"), b"new a!");
+}
+
+#[test]
+fn files_added_into_a_folder_of_the_zip_land_below_it_and_merge() {
+    let dir = fresh(&[("docs/deep/a.txt", b"old a"), ("top.txt", b"t")]);
+    let zip = zip_of(&dir, &["docs/deep/a.txt", "top.txt"]);
+    let drop = fresh(&[("a.txt", b"new a!"), ("more/c.txt", b"c")]);
+    let adds = [Adding {
+        dir: drop.join("src"),
+        names: vec!["a.txt".into(), "more".into()],
+        under: "docs/deep".into(),
+        fresh: false,
+    }];
+    rewrite(&zip, &adds).expect("added");
+    assert_eq!(
+        sorted(listing(&zip)),
+        sorted(vec![
+            ("docs/deep/a.txt".into(), Kind::File, 6),
+            ("docs/deep/more".into(), Kind::Folder, 0),
+            ("docs/deep/more/c.txt".into(), Kind::File, 1),
+            ("top.txt".into(), Kind::File, 1),
+        ])
+    );
+    assert_eq!(read_entry(&zip, "docs/deep/a.txt"), b"new a!");
+    assert!(drop.join("src/a.txt").is_file(), "the source stays");
+}
+
+#[test]
+fn files_added_below_a_file_of_the_zip_or_under_a_path_that_leaves_are_refused() {
+    let dir = fresh(&[("notes", b"n")]);
+    let zip = zip_of(&dir, &["notes"]);
+    let before = std::fs::read(&zip).expect("read");
+    let drop = fresh(&[("a.txt", b"a")]);
+    for under in ["notes", "notes/deeper", "../out", "/abs"] {
+        let adds = [Adding {
+            dir: drop.join("src"),
+            names: vec!["a.txt".into()],
+            under: under.into(),
+            fresh: false,
+        }];
+        assert!(rewrite(&zip, &adds).is_err(), "{under} is refused");
+    }
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+    assert!(temps(&zip).is_empty());
+}
+
+#[test]
+fn files_added_through_a_link_the_zip_holds_are_refused() {
+    let dir = fresh(&[("real/a.txt", b"a")]);
+    std::os::unix::fs::symlink("real", dir.join("src/lnk")).expect("a link");
+    let zip = zip_of(&dir, &["real/a.txt", "lnk"]);
+    let before = std::fs::read(&zip).expect("read");
+    let drop = fresh(&[("b.txt", b"b")]);
+    for under in ["lnk", "lnk/deeper"] {
+        let adds = [Adding {
+            dir: drop.join("src"),
+            names: vec!["b.txt".into()],
+            under: under.into(),
+            fresh: false,
+        }];
+        let why = rewrite(&zip, &adds).expect_err(under);
+        assert_eq!(
+            why, "There is already a file with the same name in this location.",
+            "{under}"
+        );
+    }
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+}
+
+#[test]
+fn a_fresh_name_the_zip_already_holds_is_refused_not_replaced() {
+    let dir = fresh(&[("docs/New Folder/kept.txt", b"kept")]);
+    let zip = zip_of(&dir, &["docs/New Folder/kept.txt"]);
+    let before = std::fs::read(&zip).expect("read");
+    let drop = fresh(&[("New Folder/x", b"x")]);
+    let adds = [Adding {
+        dir: drop.join("src"),
+        names: vec!["New Folder".into()],
+        under: "docs".into(),
+        fresh: true,
+    }];
+    assert!(rewrite(&zip, &adds).is_err());
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+}
+
+#[test]
+fn a_new_item_is_named_past_a_link_of_its_name_the_zip_holds() {
+    let dir = fresh(&[("docs/a.txt", b"a")]);
+    std::os::unix::fs::symlink("a.txt", dir.join("src/docs/New Folder")).expect("a link");
+    let zip = zip_of(&dir, &["docs/a.txt", "docs/New Folder"]);
+    let mut job =
+        ArchiveJob::make_in_zip(zip.clone(), "docs".into(), zipwrite::Made::Folder, || {});
+    wait(&mut job);
+    let names: Vec<String> = listing(&zip).into_iter().map(|(p, _, _)| p).collect();
+    assert!(
+        names.contains(&"docs/New Folder (2)".to_string()),
+        "{names:?}"
+    );
+    let listed = Command::new("bsdtar")
+        .arg("-tvf")
+        .arg(&zip)
+        .output()
+        .expect("bsdtar");
+    let text = String::from_utf8_lossy(&listed.stdout);
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with('l') && l.contains("docs/New Folder -> a.txt")),
+        "the link stays: {text}"
+    );
+}
+
+#[test]
+fn two_news_in_a_row_make_two_items_each_named_past_the_last() {
+    let dir = fresh(&[("docs/a.txt", b"a")]);
+    let zip = zip_of(&dir, &["docs/a.txt"]);
+    for _ in 0..2 {
+        let mut job =
+            ArchiveJob::make_in_zip(zip.clone(), "docs".into(), zipwrite::Made::Folder, || {});
+        let events = wait(&mut job);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [ArchiveEvent::Landed { .. }, ArchiveEvent::Finished]
+            ),
+            "{events:?}"
+        );
+    }
+    let mut job = ArchiveJob::make_in_zip(
+        zip.clone(),
+        "docs".into(),
+        zipwrite::Made::TextDocument,
+        || {},
+    );
+    wait(&mut job);
+    assert_eq!(
+        sorted(listing(&zip)),
+        sorted(vec![
+            ("docs/New Folder".into(), Kind::Folder, 0),
+            ("docs/New Folder (2)".into(), Kind::Folder, 0),
+            ("docs/New Text Document.txt".into(), Kind::File, 0),
+            ("docs/a.txt".into(), Kind::File, 1),
+        ])
+    );
 }
 
 #[test]

@@ -688,7 +688,7 @@ impl Explorer {
         let dir = over.and_then(|t| self.target_dir(&t));
         let accept = dir.as_deref().map(|dir| {
             let files = paths.as_deref().unwrap_or(&[]);
-            if self.is_zip_target(dir) {
+            if self.zip_into(dir).is_some() {
                 // A zip takes copies only.
                 return accept_for(offered, Some(&[]), false);
             }
@@ -1029,13 +1029,13 @@ impl Explorer {
             // Computer is a directory with a mount path, and a drop there
             // would write into the mount. The tree branch checks the same
             // through `writable_dir`.
-            let here = writable_dir(&self.place)?;
+            let here = self.drop_dir()?;
             let sl = self.view_layout(lay.view, ctx);
             let shellview::Hit::Entry(i) = shellview::hit(&self.sv, &sl, x, y) else {
-                return (!covers(paths, &here)).then_some(Target::Background);
+                return self.takes_drop(paths, &here).then_some(Target::Background);
             };
             let dir = self.entry_dir(i)?;
-            return (!covers(paths, &dir)).then_some(Target::ViewEntry(i));
+            return self.takes_drop(paths, &dir).then_some(Target::ViewEntry(i));
         }
         let (Some(bl), Some(frame)) = (&lay.bar, lay.tree) else {
             return None;
@@ -1077,8 +1077,26 @@ impl Explorer {
                 .and_then(|r| self.place_of(&r.path))
                 .as_ref()
                 .and_then(writable_dir),
-            Target::Background => writable_dir(&self.place),
+            Target::Background => self.drop_dir(),
         }
+    }
+
+    /// The folder a drop on the view's background lands in: the place's when it takes writes, or
+    /// the compressed folder shown of a zip that takes files ([`Explorer::zip_view`]).
+    pub(crate) fn drop_dir(&self) -> Option<PathBuf> {
+        let zip = self
+            .zip_view()
+            .map(|(zip, inner)| crate::place::in_archive(zip, inner));
+        writable_dir(&self.place).or(zip)
+    }
+
+    /// Whether `paths` may drop into `dir`: not into one of them or what they hold, and none of a
+    /// zip's own entries back into it.
+    pub(crate) fn takes_drop(&self, paths: &[PathBuf], dir: &Path) -> bool {
+        let own = self
+            .zip_into(dir)
+            .is_some_and(|(zip, _)| paths.iter().any(|p| p.starts_with(&zip)));
+        !covers(paths, dir) && !own
     }
 }
 

@@ -383,6 +383,12 @@ pub struct Listed {
     pub drives: Vec<Drive>,
     /// Why the place could not be read, for an error box: a compressed folder bsdtar cannot read.
     pub error: Option<String>,
+    /// The place is a compressed folder of a zip that files dropped, pasted or made in it go
+    /// into: a zip of the user's that takes writes ([`reprisefs::zipwrite::takes_writes`]).
+    pub zip_writes: bool,
+    /// Where a compressed folder's Extract copies entries to: the folder holding the archive, or
+    /// for one opened out of another the folder holding that one, when it takes writes.
+    pub extract_to: Option<PathBuf>,
 }
 
 /// Mount points of the drives and network shares Computer lists. A subvolume on the root's
@@ -474,6 +480,8 @@ fn empty_listed() -> Listed {
         groups: Vec::new(),
         drives: Vec::new(),
         error: None,
+        zip_writes: false,
+        extract_to: None,
     }
 }
 
@@ -618,6 +626,8 @@ pub fn list(
                 groups: Vec::new(),
                 drives: Vec::new(),
                 error: None,
+                zip_writes: false,
+                extract_to: None,
             }
         }
         Place::RecycleBin => {
@@ -631,6 +641,8 @@ pub fn list(
                 groups: Vec::new(),
                 drives: Vec::new(),
                 error: None,
+                zip_writes: false,
+                extract_to: None,
             }
         }
         Place::Desktop => desktop_listing(place.path().as_deref(), globs, show_hidden),
@@ -643,6 +655,8 @@ pub fn list(
                 groups: Vec::new(),
                 drives: Vec::new(),
                 error: None,
+                zip_writes: false,
+                extract_to: None,
             }
         }
     }
@@ -671,6 +685,8 @@ pub(crate) fn desktop_listing(
         groups: Vec::new(),
         drives: Vec::new(),
         error: None,
+        zip_writes: false,
+        extract_to: None,
     }
 }
 
@@ -715,6 +731,11 @@ pub fn archive_listing(
                 .map(|c| archive_item(&in_archive(file, inner), c, globs))
                 .filter(|i| show_hidden || !i.hidden)
                 .collect(),
+            zip_writes: std::fs::symlink_metadata(file)
+                .is_ok_and(|m| reprisefs::zipwrite::takes_writes(&m))
+                && reprisefs::zipwrite::is_zip(file),
+            extract_to: reprisefs::archivecopy::dialog_folder(file)
+                .filter(|d| reprisefs::ops::can_write(d)),
             ..empty_listed()
         },
         Err(why) => Listed {
@@ -979,6 +1000,8 @@ fn build_computer(
         groups,
         drives,
         error: None,
+        zip_writes: false,
+        extract_to: None,
     }
 }
 
@@ -1291,6 +1314,8 @@ mod tests {
             groups: Vec::new(),
             drives: Vec::new(),
             error: None,
+            zip_writes: false,
+            extract_to: None,
         };
         assert_eq!(
             tree_subfolders(&listed, &mounts),

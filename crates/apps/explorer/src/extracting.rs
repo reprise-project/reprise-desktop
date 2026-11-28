@@ -77,6 +77,12 @@ pub(crate) enum Batch {
         zip: PathBuf,
         adds: Vec<reprisefs::zipwrite::Adding>,
     },
+    /// New in the folder `under` of a zip.
+    MakeInZip {
+        zip: PathBuf,
+        under: PathBuf,
+        made: reprisefs::zipwrite::Made,
+    },
 }
 
 /// What Extract to names after an archive, `name/`.
@@ -156,14 +162,11 @@ impl Explorer {
         self.queue_archive_job(Batch::Extract(batch), ctx);
     }
 
-    /// Where Extract puts the entries picked in the compressed folder shown: the folder holding
-    /// the archive, or for one opened out of another, the folder holding that one, when it takes
-    /// writes.
+    /// Where Extract puts the entries picked in the compressed folder shown, as its listing read
+    /// it ([`Explorer::extract_to`]).
     pub(crate) fn extract_folder(&self) -> Option<PathBuf> {
-        let Place::Archive(archive, _) = &self.place else {
-            return None;
-        };
-        reprisefs::archivecopy::dialog_folder(archive).filter(|d| reprisefs::ops::can_write(d))
+        let archive = matches!(self.place, Place::Archive(..));
+        self.extract_to.clone().filter(|_| archive)
     }
 
     /// Extract in a compressed folder: the selected entries come out as Copy To Folder... puts
@@ -346,6 +349,15 @@ impl Explorer {
                 let to = name(Some(&zip));
                 (
                     ArchiveJob::add_to_zip(zip, adds, wake),
+                    Kind::Compress,
+                    from,
+                    to,
+                )
+            }
+            Batch::MakeInZip { zip, under, made } => {
+                let (from, to) = (name(zip.parent()), name(Some(&zip)));
+                (
+                    ArchiveJob::make_in_zip(zip, under, made, wake),
                     Kind::Compress,
                     from,
                     to,

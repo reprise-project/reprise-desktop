@@ -1,17 +1,19 @@
-//! Files dropped or pasted onto a zip go into it. Each name the zip's top already holds asks the
-//! replace prompt, a folder over a folder as a merge; then a job rewrites the zip with them
-//! ([`reprisefs::zipwrite`]), its progress and Cancel in the compress dialog.
+//! Files dropped or pasted onto a zip, or into a compressed folder of one, go into it, as do New's
+//! folder, text document and compressed folder made there. Each name the zip's folder already
+//! holds asks the replace prompt, a folder over a folder as a merge; then a job rewrites the zip
+//! with them ([`reprisefs::zipwrite`]), its progress and Cancel in the compress dialog.
 
 use crate::Explorer;
 use crate::acting::Action;
 use crate::extracting::Batch;
-use crate::fileops::{PendingPut, file_label};
+use crate::fileops::{New, PendingPut, file_label};
+use crate::place::Place;
 use repriseapp::{Ctx, Reply};
 use reprisefs::archive::{self, Entry, Kind};
 use reprisefs::listing::Item;
 use reprisefs::ops::{DropOp, PutError};
 use reprisefs::replace::{Asker, Clash, Found, Seen};
-use reprisefs::zipwrite::Adding;
+use reprisefs::zipwrite::{Adding, Made};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,19 +41,43 @@ impl Explorer {
             && archive::opens_as_folder("application/zip", &self.app_index)
     }
 
-    /// Whether `path` is a listed zip [`Explorer::takes_into_zip`].
-    pub(crate) fn is_zip_target(&self, path: &Path) -> bool {
-        (self.items.iter()).any(|it| it.path == path && self.takes_into_zip(it))
+    /// The zip and its folder shown, when the place is a compressed folder of a zip that takes
+    /// files ([`Explorer::zip_writes`]).
+    pub(crate) fn zip_view(&self) -> Option<(&Path, &Path)> {
+        match &self.place {
+            Place::Archive(zip, inner) if self.zip_writes => Some((zip, inner)),
+            _ => None,
+        }
     }
 
-    /// Puts copies of `paths` into the zip `zip`: its listing and the names it holds are read off
-    /// the loop, then the replace prompt asks about each, and the rest go in on a job. Of items
-    /// sharing a name only the first goes in; a file onto a folder the zip holds, or a folder
-    /// onto a file, refuses the drop with the box a copy gives.
-    pub(crate) fn put_in_zip(&mut self, paths: &[PathBuf], zip: &Path, ctx: &mut Ctx) -> Reply {
+    /// The zip and the folder of it that files put into `dir` go into: a listed zip
+    /// [`Explorer::takes_into_zip`] at its top, or the compressed folder shown or a folder of it
+    /// ([`Explorer::zip_view`]). None for a folder on disk.
+    pub(crate) fn zip_into(&self, dir: &Path) -> Option<(PathBuf, PathBuf)> {
+        if matches!(self.place, Place::Archive(..)) {
+            let (zip, _) = self.zip_view()?;
+            let inner = dir.strip_prefix(zip).ok()?;
+            return Some((zip.to_path_buf(), inner.to_path_buf()));
+        }
+        (self.items.iter())
+            .any(|it| it.path == dir && self.takes_into_zip(it))
+            .then(|| (dir.to_path_buf(), PathBuf::new()))
+    }
+
+    /// Puts copies of `paths` into the folder `inner` of the zip `zip`: its listing and the names
+    /// that folder holds are read off the loop, then the replace prompt asks about each, and the
+    /// rest go in on a job. Of items sharing a name only the first goes in, and the zip's own
+    /// entries and a folder holding the zip are left out; a file onto a folder the zip holds, or
+    /// a folder onto a file, refuses the drop with the box a copy gives.
+    pub(crate) fn put_in_zip(
+        &mut self,
+        paths: &[PathBuf],
+        (zip, inner): (&Path, &Path),
+        ctx: &mut Ctx,
+    ) -> Reply {
         let mut names = std::collections::HashSet::new();
         let paths: Vec<PathBuf> = (paths.iter())
-            .filter(|p| !zip.starts_with(p))
+            .filter(|p| !zip.starts_with(p) && !p.starts_with(zip))
             .filter(|p| p.file_name().is_some_and(|n| names.insert(n.to_owned())))
             .cloned()
             .collect();
@@ -59,12 +85,14 @@ impl Explorer {
             return Reply::none();
         }
         let archives = self.archives.clone();
-        let at = zip.to_path_buf();
+        let (at, under) = (zip.to_path_buf(), inner.to_path_buf());
         let read = {
             let paths = paths.clone();
-            move |_: &reprisefs::deadline::Gate| zip_clashes(&archives.entries(&at)?, &paths)
+            move |_: &reprisefs::deadline::Gate| {
+                zip_clashes(&archives.entries(&at)?, &under, &paths)
+            }
         };
-        let zip = zip.to_path_buf();
+        let (zip, inner) = (zip.to_path_buf(), inner.to_path_buf());
         let title = reprisefs::compress::failure_title();
         self.act(
             ctx,
@@ -82,10 +110,35 @@ impl Explorer {
                     let (title, text) = DropOp::Copy.failure(&file_label(p), &PutError::Occupied);
                     return ex.message_box(&title, text, ctx);
                 }
-                let pending = PendingPut::into_zip(&paths, &zip, checked.folders, checked.entries);
+                let into = IntoZip {
+                    entries: checked.entries,
+                    inner,
+                };
+                let pending = PendingPut::into_zip(&paths, &zip, checked.folders, into);
                 ex.ask_replace(pending, Asker::new(checked.clashes), ctx)
             },
         )
+    }
+
+    /// New in the compressed folder shown ([`Explorer::zip_view`]): an empty folder, text
+    /// document or zip goes into that folder of the zip on a job, named past what it holds when
+    /// the job runs ([`reprisefs::zipwrite::ArchiveJob::make_in_zip`]).
+    pub(crate) fn new_in_zip(&mut self, kind: New, ctx: &mut Ctx) -> Reply {
+        let Some((zip, inner)) = self.zip_view() else {
+            return Reply::none();
+        };
+        let made = match kind {
+            New::Folder => Made::Folder,
+            New::TextDocument => Made::TextDocument,
+            New::CompressedFolder => Made::Zip,
+        };
+        let batch = Batch::MakeInZip {
+            zip: zip.to_path_buf(),
+            under: inner.to_path_buf(),
+            made,
+        };
+        self.queue_archive_job(batch, ctx);
+        Reply::none()
     }
 
     /// Starts the job adding what is left of `pending` after its prompts into its zip.
@@ -97,8 +150,14 @@ impl Explorer {
             };
             by_dir.entry(dir.into()).or_default().push(name.into());
         }
+        let under = (pending.zip.as_ref()).map_or_else(PathBuf::new, |z| z.inner.clone());
         let adds = (by_dir.into_iter())
-            .map(|(dir, names)| Adding { dir, names })
+            .map(|(dir, names)| Adding {
+                dir,
+                names,
+                under: under.clone(),
+                fresh: false,
+            })
             .collect();
         self.queue_archive_job(
             Batch::AddToZip {
@@ -110,15 +169,24 @@ impl Explorer {
     }
 }
 
-/// The clash each of `paths`, of distinct names, meets at the top of the zip listed as
+/// The zip a put goes into ([`PendingPut::zip`]): its listing and the folder of it the items go
+/// into.
+#[derive(Clone)]
+pub(crate) struct IntoZip {
+    pub entries: Arc<Vec<Entry>>,
+    pub inner: PathBuf,
+}
+
+/// The clash each of `paths`, of distinct names, meets in the folder `inner` of the zip listed as
 /// `entries`, and whether each is a folder: a folder over one of the zip's folders merges, a file
 /// over one of its files is replaced, and one over the other kind refuses the drop. Links are not
 /// followed.
 pub(crate) fn zip_clashes(
     entries: &Arc<Vec<Entry>>,
+    inner: &Path,
     paths: &[PathBuf],
 ) -> Result<ZipChecked, String> {
-    let top = archive::children(entries, Path::new(""));
+    let top = archive::children(entries, inner);
     let folders: Vec<bool> = (paths.iter())
         .map(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()))
         .collect();
@@ -151,13 +219,8 @@ pub(crate) fn zip_clashes(
 }
 
 impl PendingPut {
-    /// Copies of `paths` going into the zip `zip`, listed as `entries`.
-    fn into_zip(
-        paths: &[PathBuf],
-        zip: &Path,
-        folders: Vec<bool>,
-        entries: Arc<Vec<Entry>>,
-    ) -> PendingPut {
+    /// Copies of `paths` going into the zip `zip` as `into` says.
+    fn into_zip(paths: &[PathBuf], zip: &Path, folders: Vec<bool>, into: IntoZip) -> PendingPut {
         let items = (paths.iter())
             .map(|src| reprisefs::jobs::PutItem {
                 display_name: file_label(src),
@@ -168,18 +231,14 @@ impl PendingPut {
                 replace: None,
             })
             .collect();
-        PendingPut::new(items, folders, zip.to_path_buf(), Some(entries))
+        PendingPut::new(items, folders, zip.to_path_buf(), Some(into))
     }
 }
 
-/// The size and date the replace prompt shows for the name `name` at the top of the zip listed
-/// as `entries`, as [`reprisefs::replace::facts`] words a file's.
-pub(crate) fn held_facts(
-    entries: &[Entry],
-    name: &std::ffi::OsStr,
-    is_12h: bool,
-) -> (String, String) {
-    let top = archive::children(entries, Path::new(""));
+/// The size and date the replace prompt shows for the name `name` in the folder of the zip `into`
+/// names, as [`reprisefs::replace::facts`] words a file's.
+pub(crate) fn held_facts(into: &IntoZip, name: &std::ffi::OsStr, is_12h: bool) -> (String, String) {
+    let top = archive::children(&into.entries, &into.inner);
     match top.iter().find(|c| c.name == name) {
         Some(c) => (
             reprisefs::replace::size_text(c.size),

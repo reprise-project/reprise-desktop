@@ -63,6 +63,8 @@ pub struct MenuState {
     pub disk_image: bool,
     /// The item is a zip that pasted files go into: its menu has Paste.
     pub paste_into_zip: bool,
+    /// The compressed folder shown is a zip that takes files: Paste and New put them into it.
+    pub into_zip: bool,
     /// The selection is one drive whose label Rename sets.
     pub relabel: bool,
     /// A lone folder under the item menu: whether it is pinned (Unpin from Places) or not (Pin
@@ -113,6 +115,7 @@ impl Default for MenuState {
             compress: None,
             disk_image: false,
             paste_into_zip: false,
+            into_zip: false,
             relabel: false,
             pinned: None,
             eject: false,
@@ -229,24 +232,28 @@ fn bin_sort_columns() -> Vec<String> {
     ]
 }
 
-fn new_menu(writable: bool, templates: &[reprisefs::templates::Template]) -> Menu {
+/// New: a folder, a text document and a compressed folder go into a zip shown too (`into_zip`);
+/// a shortcut and the templates only into a folder that takes writes.
+fn new_menu(state: &MenuState) -> Menu {
+    let writable = !state.read_only;
+    let makes = writable || state.into_zip;
     let mut m = Menu::default();
-    m.row(row(tr!("menu-new-folder"), writable), Command::NewFolder);
+    m.row(row(tr!("menu-new-folder"), makes), Command::NewFolder);
     m.row(
         row(tr!("menu-new-shortcut"), writable),
         Command::NewShortcut,
     );
     m.sep();
     m.row(
-        row(tr!("menu-new-text-document"), writable),
+        row(tr!("menu-new-text-document"), makes),
         Command::NewTextDocument,
     );
-    for t in templates {
+    for t in &state.templates {
         let label = escape_mnemonic(&t.label);
         m.row(row(&label, writable), Command::NewFrom(t.path.clone()));
     }
     m.row(
-        row(tr!("menu-new-compressed-folder"), writable),
+        row(tr!("menu-new-compressed-folder"), makes),
         Command::NewCompressedFolder,
     );
     m
@@ -436,8 +443,8 @@ fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
             Command::EmptyRecycleBin,
         ),
         None => file.sub(
-            row(tr!("menu-bar-new"), !state.read_only),
-            new_menu(!state.read_only, &state.templates),
+            row(tr!("menu-bar-new"), !state.read_only || state.into_zip),
+            new_menu(state),
         ),
     }
     file.sep();
@@ -491,7 +498,8 @@ fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
         keyed(tr!("menu-bar-copy"), copyable, "Ctrl+C"),
         Command::Copy,
     );
-    let pasteable = (state.can_paste || state.can_paste_image) && !state.read_only;
+    let pasteable = (state.can_paste || state.can_paste_image) && !state.read_only
+        || state.can_paste && state.into_zip;
     edit.row(
         keyed(tr!("menu-bar-paste"), pasteable, "Ctrl+V"),
         Command::Paste,
@@ -849,7 +857,8 @@ fn bin_item_menu() -> Menu {
 
 pub fn background_menu(state: &MenuState) -> Menu {
     let writable = !state.read_only;
-    let pasteable = (state.can_paste || state.can_paste_image) && writable;
+    let pasteable =
+        (state.can_paste || state.can_paste_image) && writable || state.can_paste && state.into_zip;
     let mut m = Menu::default();
     m.sub(
         row(tr!("menu-background-view"), true),
@@ -881,8 +890,8 @@ pub fn background_menu(state: &MenuState) -> Menu {
     m.row(undo_row(state), Command::Undo);
     m.sep();
     m.sub(
-        row(tr!("menu-background-new"), writable),
-        new_menu(writable, &state.templates),
+        row(tr!("menu-background-new"), writable || state.into_zip),
+        new_menu(state),
     );
     m.sep();
     // The background's Properties is the place's own sheet; the places with
