@@ -925,7 +925,7 @@ fn widgets_and_water_live_on_background() {
         ]
     );
     for k in ["widgets", "water"] {
-        assert!(Page::Background.keywords().contains(&k), "{k}");
+        assert!(Page::Background.keywords().contains(&k.to_string()), "{k}");
     }
 }
 
