@@ -16,6 +16,7 @@ pub fn access_row(item: &MenuItem, r: Rect, open: bool) -> Option<Node> {
         label,
         enabled,
         checked,
+        toggle,
         radio,
         submenu,
         shortcut,
@@ -24,10 +25,12 @@ pub fn access_row(item: &MenuItem, r: Rect, open: bool) -> Option<Node> {
     else {
         return None;
     };
-    let role = match (radio, checked) {
-        (true, _) => Role::MenuItemRadio,
-        (false, true) => Role::MenuItemCheckBox,
-        (false, false) => Role::MenuItem,
+    let role = if *radio {
+        Role::MenuItemRadio
+    } else if *checked || *toggle {
+        Role::MenuItemCheckBox
+    } else {
+        Role::MenuItem
     };
     let mut n = access::node(role, r);
     n.set_label(label.as_str());

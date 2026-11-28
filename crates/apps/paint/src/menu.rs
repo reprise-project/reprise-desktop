@@ -242,9 +242,7 @@ impl Paint {
             (title::VIEW, row::STATUS_BAR, self.status_bar),
         ];
         for (t, r, on) in ticks {
-            if let MenuItem::Entry { checked, .. } = &mut self.bar.menus[t][r] {
-                *checked = on;
-            }
+            self.bar.menus[t][r].set_checked(on);
         }
     }
 

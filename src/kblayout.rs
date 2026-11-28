@@ -151,8 +151,8 @@ impl State {
         self.set_layout((layouts.current + 1) % n);
     }
 
-    /// The indicator's menu: every layout by its description, the active one checked, opening from the
-    /// cell at `cell` (layout coordinates) on `output`, on the screen side of the bar.
+    /// The indicator's menu: every layout by its description, the active one bulleted, opening from
+    /// the cell at `cell` (layout coordinates) on `output`, on the screen side of the bar.
     pub fn open_layout_menu(&mut self, output: &Output, cell: Rect) {
         let layouts = &self.key_input.layouts;
         if !layouts.switchable() || self.layout_box(Some(output)).width <= 0 {
@@ -162,7 +162,11 @@ impl State {
             .labels
             .iter()
             .enumerate()
-            .map(|(i, d)| MenuItem::entry(&d.description).checked(i as u32 == layouts.current))
+            .map(|(i, d)| {
+                MenuItem::entry(&d.description)
+                    .radio(true)
+                    .checked(i as u32 == layouts.current)
+            })
             .collect();
         let usable = self.usable_area(Some(output));
         let layout = MenuStyle::context_for(&self.config.theme, &items)

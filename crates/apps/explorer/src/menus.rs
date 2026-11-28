@@ -157,24 +157,11 @@ fn keyed(label: impl AsRef<str>, enabled: bool, shortcut: &str) -> MenuItem {
 }
 
 fn check(label: impl AsRef<str>, enabled: bool, on: bool) -> MenuItem {
-    checked(row(label, enabled), on)
-}
-
-fn checked(item: MenuItem, on: bool) -> MenuItem {
-    with(item, |e| {
-        if let MenuItem::Entry { checked, .. } = e {
-            *checked = on;
-        }
-    })
+    row(label, enabled).checked(on)
 }
 
 fn bullet(label: impl AsRef<str>, on: bool) -> MenuItem {
-    with(row(label, true), |e| {
-        if let MenuItem::Entry { checked, radio, .. } = e {
-            *checked = on;
-            *radio = true;
-        }
-    })
+    row(label, true).radio(true).checked(on)
 }
 
 fn bold(label: impl AsRef<str>, enabled: bool) -> MenuItem {
@@ -612,10 +599,7 @@ pub(crate) fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
         arrange_menu(state),
     );
     view.row(
-        checked(
-            keyed(tr!("menu-bar-hidden-items"), true, "Ctrl+H"),
-            state.hidden,
-        ),
+        keyed(tr!("menu-bar-hidden-items"), true, "Ctrl+H").checked(state.hidden),
         Command::ToggleHidden,
     );
     view.sep();

@@ -47,14 +47,15 @@ pub fn menu_items(nodes: &[MenuNode]) -> (Vec<MenuItem>, Vec<Option<i32>>) {
             items.push(MenuItem::Separator);
             ids.push(None);
         } else {
-            items.push(
-                MenuItem::entry(strip_mnemonic(&n.label))
-                    .enabled(n.enabled)
-                    .checked(n.checked.unwrap_or(false))
-                    .radio(n.radio)
-                    .submenu(n.has_children)
-                    .bold(n.default),
-            );
+            let mut row = MenuItem::entry(strip_mnemonic(&n.label))
+                .enabled(n.enabled)
+                .radio(n.radio)
+                .submenu(n.has_children)
+                .bold(n.default);
+            if let Some(on) = n.checked {
+                row.set_checked(on);
+            }
+            items.push(row);
             ids.push(Some(n.id));
         }
     }

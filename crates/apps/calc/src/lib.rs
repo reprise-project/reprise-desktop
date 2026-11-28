@@ -82,11 +82,7 @@ impl Calculator {
     }
 
     fn sync_menus(&mut self) {
-        let set = |item: &mut MenuItem, on: bool| {
-            if let MenuItem::Entry { checked, .. } = item {
-                *checked = on;
-            }
-        };
+        let set = |item: &mut MenuItem, on: bool| item.set_checked(on);
         let view = &mut self.bar.menus[title::VIEW];
         set(&mut view[row::STANDARD], self.calc.mode == Mode::Standard);
         set(

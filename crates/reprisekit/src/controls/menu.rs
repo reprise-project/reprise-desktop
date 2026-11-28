@@ -32,6 +32,9 @@ pub enum MenuItem {
         /// Drawn in `gray_text` and never hovered when false (tray menus).
         enabled: bool,
         checked: bool,
+        /// A check row, published as a check item with its state while unchecked too; set by
+        /// [`MenuItem::checked`].
+        toggle: bool,
         radio: bool,
         submenu: bool,
         mnemonic: Option<usize>,
@@ -57,6 +60,7 @@ impl MenuItem {
             icon: None,
             enabled: true,
             checked: false,
+            toggle: false,
             radio: false,
             submenu: false,
             mnemonic: None,
@@ -87,11 +91,18 @@ impl MenuItem {
         }
         self
     }
+    /// Makes the row a check row, ticked when `on`.
     pub fn checked(mut self, on: bool) -> MenuItem {
-        if let MenuItem::Entry { checked, .. } = &mut self {
-            *checked = on;
-        }
+        self.set_checked(on);
         self
+    }
+    pub fn set_checked(&mut self, on: bool) {
+        if let MenuItem::Entry {
+            checked, toggle, ..
+        } = self
+        {
+            (*checked, *toggle) = (on, true);
+        }
     }
     pub fn radio(mut self, on: bool) -> MenuItem {
         if let MenuItem::Entry { radio, .. } = &mut self {
