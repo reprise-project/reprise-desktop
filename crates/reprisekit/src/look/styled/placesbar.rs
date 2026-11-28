@@ -76,14 +76,14 @@ mod tests {
         );
     }
 
-    /// A 71 px Blue tile over the bar's panel at scale `d` in `v`: plain, lit, selected,
+    /// A 67 px Blue tile over the bar's panel at scale `d` in `v`: plain, lit, selected,
     /// selected and lit, held.
     fn blue_tiles(v: Variant, d: i32) -> Vec<Canvas> {
         use crate::look::widgets::placesbar::draw_tile;
         use crate::style::State;
         let theme = blue_theme(v).scaled(d);
         let p = theme.paint();
-        let r = Rect::new(0, 0, 87, 71).scaled(d);
+        let r = Rect::new(0, 0, 87, 67).scaled(d);
         [
             None,
             Some(State::Hot),
