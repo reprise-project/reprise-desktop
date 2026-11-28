@@ -1051,13 +1051,14 @@ impl Scratch {
     /// crashes are swept on a thread.
     pub fn new() -> std::io::Result<Scratch> {
         let base = scratch_base().ok_or_else(|| std::io::Error::other(tr!("archive-no-cache")))?;
-        Self::new_in(&base, SCRATCH_KEEP_SECS)
+        let swept = base.clone();
+        std::thread::spawn(move || sweep_scratch(&swept, SCRATCH_KEEP_SECS));
+        Self::new_in(&base)
     }
 
-    fn new_in(base: &Path, keep_secs: u64) -> std::io::Result<Scratch> {
+    /// [`Scratch::new`] without its sweep, so a test's own sweep is the only one in `base`.
+    fn new_in(base: &Path) -> std::io::Result<Scratch> {
         make_base(base)?;
-        let swept = base.to_path_buf();
-        std::thread::spawn(move || sweep_scratch(&swept, keep_secs));
         let path = make_temp(base, &format!("{HELD_PREFIX}XXXXXX"))?;
         let dir = open_dir(&path).ok_or_else(std::io::Error::last_os_error)?;
         if !flock(&dir, libc::LOCK_SH) {
@@ -2815,7 +2816,7 @@ pub(crate) mod tests {
         let archive = pack(t.path());
         let entries = Arc::new(listed(&archive));
         let picked = ["top.txt", "docs"].map(PathBuf::from).to_vec();
-        let scratch = Scratch::new_in(&base, 3600).unwrap();
+        let scratch = Scratch::new_in(&base).unwrap();
         let dir = scratch.path().to_path_buf();
         let (wake, woke) = waker();
         let job = copy_job(
@@ -2841,7 +2842,7 @@ pub(crate) mod tests {
         assert_eq!((mode(&dir), mode(&base)), (0o700, 0o700));
         assert_eq!(std::fs::read_to_string(docs.join("a.txt")).unwrap(), "a");
 
-        let failed = Scratch::new_in(&base, 3600).unwrap();
+        let failed = Scratch::new_in(&base).unwrap();
         let (wake, woke) = waker();
         let gone = vec![PathBuf::from("gone")];
         let job = copy_job((archive, None), entries, gone, (failed, None), None, wake);
@@ -2900,7 +2901,7 @@ pub(crate) mod tests {
         let t = tempfile::tempdir().unwrap();
         let archive = big_pack(t.path(), 64 << 20);
         let entries = Arc::new(listed(&archive));
-        let scratch = Scratch::new_in(&t.path().join("archives"), 3600).unwrap();
+        let scratch = Scratch::new_in(&t.path().join("archives")).unwrap();
         let dir = scratch.path().to_path_buf();
         let picked = vec![PathBuf::from("big")];
         let (wake, woke) = waker();
@@ -2933,7 +2934,7 @@ pub(crate) mod tests {
     fn a_scratch_folder_stays_while_any_holder_holds_it_and_goes_with_the_last() {
         let t = tempfile::tempdir().unwrap();
         let base = t.path().join("archives");
-        let owner = Scratch::new_in(&base, 3600).unwrap();
+        let owner = Scratch::new_in(&base).unwrap();
         let dir = owner.path().to_path_buf();
         assert!(dir.file_name().unwrap().as_bytes().starts_with(b"copy-"));
         std::fs::create_dir(dir.join("docs")).unwrap();
@@ -2961,7 +2962,7 @@ pub(crate) mod tests {
     fn a_handed_over_scratch_folder_outlives_its_holders_and_goes_with_the_day_old_sweep() {
         let t = tempfile::tempdir().unwrap();
         let base = t.path().join("archives");
-        let owner = Scratch::new_in(&base, 3600).unwrap();
+        let owner = Scratch::new_in(&base).unwrap();
         let dir = owner.path().to_path_buf();
         std::fs::write(dir.join("a.txt"), "a").unwrap();
         let reader = Scratch::hold_in(&base, &dir.join("a.txt")).expect("held");
@@ -3003,7 +3004,7 @@ pub(crate) mod tests {
             "a file opened in a program is no held copy"
         );
         assert!(Scratch::hold_in(&base, t.path()).is_none());
-        let held = Scratch::new_in(&base, 3600).unwrap();
+        let held = Scratch::new_in(&base).unwrap();
         let dir = held.path().to_path_buf();
         let crashed = make_temp(&base, "copy-XXXXXX").unwrap();
         let fresh = make_temp(&base, "copy-XXXXXX").unwrap();
