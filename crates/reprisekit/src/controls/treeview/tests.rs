@@ -1379,7 +1379,7 @@ fn icons_grow_with_the_text_and_labels_clear_them() {
                         let tx = (b.x + tv.label_x(row.depth, icon)) * s;
                         let gap = match style {
                             Style::Classic => LABEL_GAP,
-                            Style::Explorer | Style::Picker => EXPLORER_LABEL_GAP,
+                            Style::Explorer | Style::Picker | Style::Nav => EXPLORER_LABEL_GAP,
                             Style::Plain => PLAIN_LABEL_GAP,
                         };
                         assert_eq!(tx - (ix + icon * s), gap * s, "{at} row {k}: the gap");

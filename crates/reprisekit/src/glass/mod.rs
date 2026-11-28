@@ -30,6 +30,7 @@ pub mod overview;
 pub mod page;
 pub mod paint;
 mod panel;
+mod panes;
 mod perfgraph;
 mod popups;
 pub mod preview;
@@ -647,6 +648,7 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
         .with_balloon(balloon::look(s.mode, fields::drop_list(s.mode).shadow))
         .with_notify(notify::look(s.mode))
         .with_flyout(flyouts::look(s.mode))
+        .with_panes(panes::look(s.mode))
         .with_painted(Part::DesktopItem, move || items::desktop_part(scale))
         .with_max_title_from(max_title(s))
 }

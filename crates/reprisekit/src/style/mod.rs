@@ -14,8 +14,8 @@ mod text;
 
 pub use looks::{
     BalloonLook, CaptionTabLook, DropList, DropShadow, FlyoutLook, GlassSpec, GroupLabel, MenuLook,
-    NotifyInks, NotifyLook, PageInks, PanelSpec, SQUIRCLE_ROUND, SelectionBox, SheetShape,
-    SheetSpec, TrackMarks, Well,
+    NotifyInks, NotifyLook, PageInks, PaneLook, PanelSpec, SQUIRCLE_ROUND, SelectionBox,
+    SheetShape, SheetSpec, TrackMarks, Well,
 };
 pub use part::{CHECK_STATES, Check, Layout, Part, PartImage, State};
 pub use spot::{
@@ -87,6 +87,9 @@ pub struct Style {
     pub desktop_label_edge: Option<u8>,
     pub flyout: Option<FlyoutLook>,
     pub caption_tabs: Option<CaptionTabLook>,
+    /// The shell window's navigation and details panes and the view's group headings; None
+    /// draws them in the scheme's colours.
+    pub panes: Option<PaneLook>,
     pub(crate) tray_arrow: Option<Arc<trayarrow::TrayArrowArt>>,
     pub(crate) start_bloom: Option<Arc<startbloom::StartBloom>>,
     pub(crate) clock_face: Option<ClockPainter>,
@@ -230,6 +233,7 @@ impl Style {
             selection_box: None,
             desktop_label_edge: None,
             caption_tabs: None,
+            panes: None,
             tray_arrow: None,
             start_bloom: None,
             clock_face: None,
@@ -598,6 +602,11 @@ impl Style {
 
     pub fn with_caption_tabs(mut self, t: CaptionTabLook) -> Style {
         self.caption_tabs = Some(t);
+        self
+    }
+
+    pub fn with_panes(mut self, p: PaneLook) -> Style {
+        self.panes = Some(p);
         self
     }
 

@@ -22,6 +22,7 @@ pub mod combo;
 pub mod commandbar;
 pub mod copyprogress;
 pub mod deskwidget;
+pub mod detailspane;
 pub mod displaypanel;
 pub mod dlgtemplate;
 pub mod doctabs;

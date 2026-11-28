@@ -267,6 +267,24 @@ pub struct NotifyLook {
     pub colour: fn(&Canvas) -> Option<Color>,
 }
 
+/// A look's own faces for a shell window's panes. Painters fill `r`, device px at `d` per
+/// design px.
+#[derive(Clone, Copy, Debug)]
+pub struct PaneLook {
+    /// The navigation pane's line down the middle of its splitter, on the window colour.
+    pub nav_edge: Color,
+    /// The details pane's backdrop.
+    pub details: fn(&mut Canvas, Rect, i32),
+    /// The details pane's field names and their values.
+    pub details_label: Color,
+    pub details_value: Color,
+    /// A group heading's title.
+    pub heading: Color,
+    /// A group heading's rule, from past the title to the heading's right end, one design px
+    /// tall in the middle of `r`.
+    pub heading_rule: fn(&mut Canvas, Rect, i32),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlyoutLook {
     pub shadow: Insets,
