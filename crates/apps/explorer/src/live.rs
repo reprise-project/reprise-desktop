@@ -1305,6 +1305,24 @@ pub(crate) mod tests {
         assert_eq!(widths(&ex), [Some(16), Some(32), Some(48)]);
     }
 
+    /// A new text size fetches the breadcrumb's place icon again at the size the field grew to.
+    #[test]
+    fn a_text_size_switch_grows_the_crumbs_place_icon() {
+        let root = tempfile::tempdir().expect("a temp dir");
+        let mut ctx = test_ctx();
+        ctx.icons = chrome_theme(root.path());
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.follow_scale(1, &mut ctx);
+        let worn = |ex: &Explorer| ex.crumbs.icon().map(|c| c.width);
+        assert_eq!(worn(&ex), Some(16));
+        ctx.theme = ctx.theme.with_text_size(200);
+        ex.follow_scale(1, &mut ctx);
+        let grown = reprisekit::controls::addressbar::field_icon_px(ctx.theme.text);
+        assert!(grown > 16, "the field grows its icon");
+        assert_eq!(worn(&ex), Some(grown as u32));
+    }
+
     /// A theme carrying every name the window's chrome asks for, each a flat square at 16, 24,
     /// 32 and 48 px.
     fn chrome_theme(root: &Path) -> reprisekit::icontheme::IconCache {

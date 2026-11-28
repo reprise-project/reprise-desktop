@@ -529,17 +529,28 @@ pub fn draw(
         return;
     }
     draw_frame(c, p, lay.frame, face);
-    let glass = p.look.style().filter(|_| has(p, StylePart::SearchGlass));
+    let look = p.small_look(c);
+    let grown = p.small(&look);
+    let glass = grown
+        .look
+        .style()
+        .filter(|_| has(p, StylePart::SearchGlass));
     match (b.searching, glass) {
         (true, Some(st)) => {
-            let m = searchfield::MAGNIFIER;
+            let m = small * searchfield::MAGNIFIER;
             let r = Rect::new(
                 lay.icon.x + (lay.icon.width - m) / 2,
                 lay.icon.y + (lay.icon.height - m) / 2,
                 m,
                 m,
             );
-            st.draw(c, r.scaled(s), StylePart::SearchGlass, State::Normal, s);
+            st.draw(
+                c,
+                r.scaled(s),
+                StylePart::SearchGlass,
+                State::Normal,
+                grown.s,
+            );
         }
         _ => {
             if let Some(icon) = b.icon() {

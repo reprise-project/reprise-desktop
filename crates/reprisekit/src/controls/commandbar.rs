@@ -410,8 +410,8 @@ fn ink(p: &Paint, enabled: bool) -> Color {
     })
 }
 
-/// `mark` (`w` x `h` design px, a coverage function of device px at `d`) inked `ink`, centred
-/// in `r` (device px), `dx` design px right of centre.
+/// `mark` (`w` x `h` design px, a coverage function of device px at `d`) inked `ink`, grown by
+/// the text's whole multiple and centred in `r` (device px).
 fn draw_mark(
     c: &mut Canvas,
     p: &Paint,
@@ -421,15 +421,13 @@ fn draw_mark(
     mark: impl Fn(f64, f64, f64) -> f64,
 ) {
     let cs = c.scale();
-    let d = p.s * cs;
+    let g = p.s * p.text.small();
+    let d = g * cs;
     let k = f64::from(d);
     let art = shape::draw(w, h, d, |x, y| {
         shape::scale(premul(ink, 0xFF), mark(x, y, k))
     });
-    let (x, y) = (
-        r.x + (r.width - w * p.s) / 2,
-        r.y + (r.height - h * p.s) / 2,
-    );
+    let (x, y) = (r.x + (r.width - w * g) / 2, r.y + (r.height - h * g) / 2);
     c.blit_over(x, y, &art.at_scale(cs));
 }
 
@@ -449,6 +447,8 @@ fn chevrons(x: f64, y: f64, k: f64) -> f64 {
 /// Draws the bar into `l.bar` (scaled by `p.s`) with labels at `px`.
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, bar: &Commandbar, l: &Layout, px: u32) {
     let s = p.s;
+    // The marks and icons grow by the text's whole multiple, as small controls do.
+    let icon = ICON * s * p.text.small();
     let band = l.bar.scaled(s);
     match p.look.style() {
         Some(st) if st.part(Part::CommandBar).is_some() => {
@@ -509,12 +509,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, bar: &Commandbar, l:
             state_of(bar, Hit::ViewsDrop, Some(Hit::ViewsCycle)),
         );
         let cs = c.scale();
-        let icon = viewsicon::draw16_at(s * cs).at_scale(cs);
-        let side = ICON * s;
+        let art = viewsicon::draw16_at(s * p.text.small() * cs).at_scale(cs);
         c.blit_over(
-            cycle.x + (cycle.width - side) / 2,
-            cycle.y + (cycle.height - side) / 2,
-            &icon,
+            cycle.x + (cycle.width - icon) / 2,
+            cycle.y + (cycle.height - icon) / 2,
+            &art,
         );
         draw_mark(c, p, drop, (ARROW_W, ARROW_H), live, arrow);
     }
@@ -530,25 +529,25 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, bar: &Commandbar, l:
             .look
             .style()
             .and_then(|st| st.text_color(Part::CommandBar, State::Normal));
-        let glyph = cmdglyph::canvas_inked(CmdGlyph::PreviewPane, ICON * s, cs, ink);
-        let side = ICON * s;
+        let glyph = cmdglyph::canvas_inked(CmdGlyph::PreviewPane, icon, cs, ink);
         c.blit_over(
-            r.x + (r.width - side) / 2,
-            r.y + (r.height - side) / 2,
+            r.x + (r.width - icon) / 2,
+            r.y + (r.height - icon) / 2,
             &glyph,
         );
     }
     if let Some(help) = l.help {
         let r = help.scaled(s);
-        let side = ICON * s;
         let at = Rect::new(
-            r.x + (r.width - side) / 2,
-            r.y + (r.height - side) / 2,
-            side,
-            side,
+            r.x + (r.width - icon) / 2,
+            r.y + (r.height - icon) / 2,
+            icon,
+            icon,
         );
-        if let Some(st) = p.look.style() {
-            st.draw(c, at, Part::CommandHelp, State::Normal, s);
+        let look = p.small_look(c);
+        let grown = p.small(&look);
+        if let Some(st) = grown.look.style() {
+            st.draw(c, at, Part::CommandHelp, State::Normal, grown.s);
         }
     }
 }

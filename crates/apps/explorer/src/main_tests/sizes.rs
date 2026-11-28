@@ -414,3 +414,67 @@ fn a_press_beside_the_splitter_grabs_it_where_it_lies() {
         }
     }
 }
+
+/// Glass, light or dark, at `pct` text.
+fn glass_at(dark: bool, pct: u32) -> Ctx {
+    let mut ctx = test_ctx();
+    let g = reprisekit::glass::Settings {
+        mode: match dark {
+            true => reprisekit::glass::Mode::Dark,
+            false => reprisekit::glass::Mode::Light,
+        },
+        ..Default::default()
+    };
+    let theme = reprisekit::interfaces::theme_with(
+        reprisekit::interface::Interface::Glass,
+        Default::default(),
+        false,
+        &g,
+    );
+    ctx.text = TextRenderer::load(&theme.fonts).into();
+    ctx.theme = theme.with_text_size(pct);
+    ctx.size = (1100, 600);
+    ctx
+}
+
+/// At 200% the nav row's Back, Forward and drop, the search field's magnifier and clear button,
+/// and the command bar's icons and drop arrows are twice their size, as the text is.
+#[test]
+fn at_200_percent_the_glass_nav_row_and_command_bar_grow_with_the_text() {
+    use reprisekit::controls::searchfield;
+    reprisekit::pins::fonts();
+    let mut got = Vec::new();
+    for dark in [false, true] {
+        let mut ctx = glass_at(dark, 200);
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let docs = dir.path().join("Documents");
+        std::fs::create_dir(&docs).expect("mkdir");
+        let mut ex = test_explorer(Place::Folder(docs), &mut ctx);
+        ex.run(
+            Command::ToggleLayout(crate::commands::LayoutPart::PreviewPane),
+            &mut ctx,
+        );
+        let sl = ex.shell_layout(&ctx).expect("Glass takes the shell layout");
+        assert_eq!((sl.buttons.back.width, sl.buttons.recent.width), (50, 30));
+        assert_eq!(sl.back_fwd.width, 2 * (57 + 15));
+        let clear = searchfield::clear_rect(sl.search, ctx.theme.text);
+        assert_eq!(clear.width, 42);
+        let look = if dark { "dark" } else { "light" };
+        for s in [1, 2] {
+            let mut c = Canvas::with_scale(1100, 600, s);
+            ctx.at_scale(s, |ctx| window::draw(&ex, &mut c, ctx));
+            for (part, r) in [
+                ("buttons", sl.back_fwd),
+                ("search", sl.search),
+                ("command bar", sl.command),
+            ] {
+                got.push((
+                    format!("{look} {part} @{s}"),
+                    reprisekit::pins::fnv_in(&c, r),
+                ));
+            }
+        }
+    }
+    let path = reprisekit::crate_dir!().join("tests/pins/text_200.txt");
+    reprisekit::pins::check_file(&path, &got);
+}

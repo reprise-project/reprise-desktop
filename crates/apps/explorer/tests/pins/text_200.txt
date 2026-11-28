@@ -1,0 +1,12 @@
+light buttons @1 46d282fdb96b4acf
+light search @1 15e424ac0fe833ea
+light command bar @1 b933f41f7a6ab30d
+light buttons @2 43cb7a79ca46b271
+light search @2 99633282ae9e7928
+light command bar @2 c1acac7631975e1b
+dark buttons @1 46d282fdb96b4acf
+dark search @1 33c1d589c28767eb
+dark command bar @1 59531ef9708ccfc1
+dark buttons @2 43cb7a79ca46b271
+dark search @2 6bdb9d62cd30bdfd
+dark command bar @2 878b59473ef5e881

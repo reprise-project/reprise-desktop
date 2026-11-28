@@ -362,7 +362,7 @@ fn the_clear_button_empties_search_and_restores_the_folder() {
         Some(reprisefs::search::collect(find, q, cancel))
     };
     let sl = shell(&ex, &ctx);
-    let clear = reprisekit::controls::searchfield::clear_rect(sl.search);
+    let clear = reprisekit::controls::searchfield::clear_rect(sl.search, ctx.theme.text);
     let (cx, cy) = (clear.x + clear.width / 2, clear.y + clear.height / 2);
     press_at(&mut ex, sl.search.x + 20, cy, &mut ctx);
     assert_eq!(

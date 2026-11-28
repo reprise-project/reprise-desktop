@@ -174,6 +174,7 @@ impl Explorer {
             &self.place,
             ctx.theme.text,
         );
+        self.crumbs.edit.combo.icon = self.address.combo.icon.clone();
         self.address.go_icon = self.go_icon(ctx);
         let px = crate::fileops::menu_icon_px(&ctx.theme);
         self.favorite_icons = [&["folder"][..], &["folder-remote", "network-server"]]

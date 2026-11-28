@@ -104,6 +104,8 @@ pub struct ShellLayout {
     /// Over the frame's glass; its closing line runs along under it.
     pub nav: Rect,
     pub back_fwd: Rect,
+    /// Back, Forward and the recent places drop at the nav row's left end.
+    pub buttons: navbuttons::Layout,
     pub address: Rect,
     pub search: Rect,
     /// The menu bar's row while it shows.
@@ -124,7 +126,7 @@ pub fn is_shell(theme: &reprisekit::theme::Theme) -> bool {
 }
 
 pub fn nav_height(cm: &ControlMetrics) -> i32 {
-    (breadcrumb::height(cm.text) + NAV_FIELD_ROOM).max(navbuttons::PILL_H + 5)
+    (breadcrumb::height(cm.text) + NAV_FIELD_ROOM).max(navbuttons::height(cm.text) + 5)
 }
 
 pub fn menu_row_height(cm: &ControlMetrics) -> i32 {
@@ -135,7 +137,7 @@ pub fn menu_row_height(cm: &ControlMetrics) -> i32 {
 pub fn shell_min_width(cm: &ControlMetrics) -> i32 {
     let u = cm.text;
     NAV_X
-        + navbuttons::WIDTH
+        + navbuttons::width(u)
         + NAV_ADDRESS_GAP
         + u.len(ADDRESS_MIN)
         + NAV_SEARCH_GAP
@@ -156,12 +158,15 @@ pub fn shell_layout(
     let client = Rect::new(0, 0, size.0.max(1), size.1.max(1));
     let nav = Rect::new(client.x, client.y, client.width, nav_height(cm));
     let field_h = breadcrumb::height(cm.text);
-    let buttons = navbuttons::layout(Rect::new(
-        client.x + NAV_X,
-        nav.y,
-        navbuttons::WIDTH,
-        nav.height,
-    ));
+    let buttons = navbuttons::layout(
+        Rect::new(
+            client.x + NAV_X,
+            nav.y,
+            navbuttons::width(cm.text),
+            nav.height,
+        ),
+        cm.text,
+    );
     let back_fwd = buttons.frame();
     let row = Rect::new(nav.x, nav.y, nav.width - NAV_RIGHT, nav.height);
     let search = searchfield::nav_layout(row, field_h, cm.text);
@@ -212,6 +217,7 @@ pub fn shell_layout(
     ShellLayout {
         nav,
         back_fwd,
+        buttons,
         address,
         search,
         menu,
@@ -597,7 +603,7 @@ fn draw_shell(ex: &Explorer, c: &mut Canvas, ctx: &Ctx, lay: &Layout, sl: &Shell
     let cm = ctx.theme.controls();
     c.clear_rect(sl.nav);
     c.report_glass_top(sl.nav.bottom());
-    navbuttons::draw(c, &paint, &ex.nav, &nav_buttons(sl));
+    navbuttons::draw(c, &paint, &ex.nav, &sl.buttons);
     let focused = ex.focus == crate::Focus::Address;
     let caret = reprisekit::textedit::Caret::new(focused && ex.keyboard, ctx.caret_on);
     let edit = addressbar::field_layout(&ex.address, sl.address, &cm);
@@ -631,16 +637,6 @@ fn draw_shell(ex: &Explorer, c: &mut Canvas, ctx: &Ctx, lay: &Layout, sl: &Shell
         ex.bar.draw(c, &ctx.text, &ctx.theme, &ex.bar_layout(ctx));
     }
     addressbar::draw_list(c, &ctx.text, &paint, &ex.address, &edit, px);
-}
-
-/// Back, Forward and the recent places drop at the nav row's left end.
-pub fn nav_buttons(sl: &ShellLayout) -> navbuttons::Layout {
-    navbuttons::layout(Rect::new(
-        sl.back_fwd.x,
-        sl.nav.y,
-        sl.back_fwd.width,
-        sl.nav.height,
-    ))
 }
 
 /// What lies over every layout's chrome: an open menu, the rename box's balloon and the tip.
@@ -749,7 +745,7 @@ fn access_shell(ex: &Explorer, tree: &mut Tree, ctx: &Ctx, sl: &ShellLayout) {
     let menus = sl
         .menu
         .and_then(|_| ex.bar.access(&ex.bar_layout(ctx), tree, ROOT));
-    navbuttons::access(&ex.nav, &nav_buttons(sl), tree, ROOT);
+    navbuttons::access(&ex.nav, &sl.buttons, tree, ROOT);
     let address = match ex.focus == crate::Focus::Address {
         true => {
             let al = addressbar::field_layout(&ex.address, sl.address, &cm);
@@ -761,7 +757,7 @@ fn access_shell(ex: &Explorer, tree: &mut Tree, ctx: &Ctx, sl: &ShellLayout) {
         }
     };
     let sf = &ex.search_field;
-    let search = searchfield::access_nav(sf, sl.search, &ctx.text, px, tree, ROOT);
+    let search = searchfield::access_nav(sf, sl.search, ctx.theme.text, &ctx.text, px, tree, ROOT);
     let cl = ex.cmdbar_layout(sl.command, ctx);
     let commands = commandbar::access(&ex.cmdbar, &cl, tree, ROOT, "commandbar");
     ex.access_tabs(tree, ctx);

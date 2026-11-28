@@ -831,7 +831,7 @@ pub fn render_navrow(style: reprisekit::glass::Style, n: i32) -> Canvas {
         for (i, (nb, sf, focused)) in rows.iter().enumerate() {
             let y = row_h * (m * rows.len() + i) as i32;
             let row = Rect::new(4, y, 512, row_h);
-            navbuttons::draw(&mut c, &p, nb, &navbuttons::layout(row));
+            navbuttons::draw(&mut c, &p, nb, &navbuttons::layout(row, theme.text));
             let u = theme.controls().text;
             let field = searchfield::nav_layout(row, u.len(22), u);
             let caret = reprisekit::textedit::Caret::new(*focused, true);
