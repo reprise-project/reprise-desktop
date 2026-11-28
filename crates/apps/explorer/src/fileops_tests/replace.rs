@@ -161,7 +161,7 @@ fn a_replace_prompt_whose_files_answer_late_comes_up_on_a_later_wake() {
             replacebox::Subject::File { existing, incoming } => {
                 assert_eq!(
                     (existing.size.as_str(), incoming.size.as_str()),
-                    ("3 bytes", "1 bytes")
+                    ("3 bytes", "1 byte")
                 );
             }
             replacebox::Subject::Folder => panic!("a file clash shows both files"),
