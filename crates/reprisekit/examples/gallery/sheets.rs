@@ -370,3 +370,64 @@ pub fn render_tray_customize() -> Canvas {
     c.blit_canvas(10, glass_y, &pages[2]);
     c
 }
+
+/// The folder Properties Customize tab in each look, a look a row, at `scale`: with no picture
+/// chosen, then with one (Choose Picture... and Restore Default on).
+pub fn render_customize_page(scale: i32) -> Canvas {
+    use reprisekit::controls::filesheet::{
+        self, CHOOSE_PICTURE, CUSTOM_PREVIEW, FOLDER_SHEET_H, PREVIEW_PX, RESTORE_PICTURE, SHEET_W,
+    };
+    use reprisekit::theme::Color;
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let (cw, ch) = ((SHEET_W + 10) * scale, (FOLDER_SHEET_H + 10) * scale);
+    let mut c = Canvas::new(
+        (2 * cw + 10 * scale) as u32,
+        (looks.len() as i32 * ch) as u32,
+    );
+    for (row, &look) in looks.iter().enumerate() {
+        let theme = cued(interfaces::theme_for(look)).scaled(scale);
+        let text = TextRenderer::load(&theme.fonts);
+        c.fill_rect(
+            Rect::new(0, row as i32 * ch, c.width as i32, ch),
+            theme.colors.background,
+        );
+        for (col, picture) in [false, true].into_iter().enumerate() {
+            let mut sheet = filesheet::sheet(
+                form::Form::new(Vec::new()),
+                FOLDER_SHEET_H,
+                &[filesheet::Tab::Customize],
+                |_| unreachable!(),
+            );
+            sheet.open_tab(1);
+            if picture {
+                let mut photo = Canvas::new((PREVIEW_PX * scale) as u32, (72 * scale) as u32);
+                photo.fill_rect(photo.bounds(), Color::rgb(40, 120, 200));
+                photo.fill_rect(
+                    Rect::new(0, 40 * scale, PREVIEW_PX * scale, 32 * scale),
+                    Color::rgb(230, 200, 90),
+                );
+                let page = &mut sheet.pages[1];
+                page.set_enabled(CHOOSE_PICTURE, true);
+                page.set_enabled(RESTORE_PICTURE, true);
+                page.set_picture(CUSTOM_PREVIEW, photo);
+            }
+            let (w, h) = sheet.size;
+            let mut sheet_c = Canvas::new((w * scale) as u32, (h * scale) as u32);
+            sheet_c.fill_rect(sheet_c.bounds(), theme.colors.button_face);
+            propsheet::draw(
+                &mut sheet_c,
+                &text,
+                &theme.paint(),
+                &sheet,
+                true,
+                theme.fonts.size_px,
+            );
+            c.blit_canvas(
+                col as i32 * (cw + 10 * scale) + 5 * scale,
+                row as i32 * ch + 5 * scale,
+                &sheet_c,
+            );
+        }
+    }
+    c
+}
