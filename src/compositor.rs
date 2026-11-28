@@ -623,7 +623,11 @@ impl State {
                 &config.theme.colors,
                 config.interface,
                 config.blue_variant,
-                (config.look_mode(), config.glass.material),
+                (
+                    config.look_mode(),
+                    config.glass.material,
+                    config.glass.style,
+                ),
                 &config.icons.theme,
                 config.cursor.effective(),
             )
