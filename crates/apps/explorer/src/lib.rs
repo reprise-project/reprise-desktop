@@ -2652,13 +2652,9 @@ impl repriseapp::Extended for Lazy {
     }
 
     /// The shell layout's nav row names the place, so its caption shows neither the icon nor
-    /// the title; asked before the first event too, as the window is made.
-    fn bare_caption(&self, win: WinId) -> bool {
-        win == MAIN
-            && match &self.inner {
-                Some(ex) => ex.shell_on,
-                None => window::is_shell(&repriseapp::start_forms()),
-            }
+    /// the title.
+    fn bare_caption(&self, win: WinId, theme: &reprisekit::theme::Theme) -> bool {
+        win == MAIN && window::is_shell(theme)
     }
 
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {

@@ -623,7 +623,7 @@ impl Host {
     /// it differs from the last ask.
     pub(crate) fn sync_bare_captions(&mut self) {
         for i in 0..self.slots.len() {
-            let want = self.app.bare_caption(self.slots[i].id);
+            let want = self.app.bare_caption(self.slots[i].id, &self.ctx.theme);
             let s = &self.slots[i];
             if want != s.bare
                 && let Some(w) = s.window.toplevel()
@@ -636,7 +636,7 @@ impl Host {
 
     /// A new toplevel's bare caption, asked before its first commit when the program wants one.
     fn ask_bare_caption(&self, window: &Window, id: WinId) -> bool {
-        let bare = self.app.bare_caption(id);
+        let bare = self.app.bare_caption(id, &self.ctx.theme);
         if bare {
             send_bare(self.caption_manager.as_ref(), window, true);
         }

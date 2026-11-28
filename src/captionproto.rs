@@ -138,6 +138,26 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_captions_icon_place_moves_the_window_like_the_rest() {
+        use reprisekit::frame::FrameHit;
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let caption: RepriseCaptionV1 = c.bind("reprise_caption_v1", 1);
+        let t = h.map_toplevel(&mut c, "ed", 300, 200);
+        let hit = |h: &Harness| {
+            let win = h.state.win(t.id).expect("the window");
+            let r = win.geom.caption;
+            let (x, y) = (win.x + r.x + 4, win.y + r.y + r.height / 2);
+            win.hit_at(f64::from(x), f64::from(y), &h.state.config.theme.metrics)
+        };
+        assert_eq!(hit(&h), FrameHit::Icon, "framed, it is the icon");
+        caption.set(&c.side.shells[t.shell].toplevel, Style::Bare);
+        h.roundtrip(&mut c);
+        assert_eq!(hit(&h), FrameHit::Title, "bare, it is caption");
+    }
+
+    #[test]
     fn a_sandboxed_client_is_not_offered_the_global() {
         let mut h = Harness::new();
         let offered = |c: &crate::harness::TestClient| c.offered("reprise_caption_v1");

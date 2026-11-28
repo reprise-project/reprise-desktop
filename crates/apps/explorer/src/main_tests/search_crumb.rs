@@ -110,6 +110,32 @@ fn alt_up_and_a_subfolder_leave_the_search() {
 }
 
 #[test]
+fn escape_in_the_search_box_leaves_the_search() {
+    let (_dir, mut ex, mut ctx) = searching_docs();
+    ex.focus = Focus::Search;
+    let esc = || Event::Key(key(keysym::ESCAPE, None, false));
+    ex.event(MAIN, esc(), &mut ctx);
+    assert_eq!(ex.search_field.text(), "", "the first empties the box");
+    ex.event(MAIN, esc(), &mut ctx);
+    assert!(ex.search.asked().is_none(), "the second leaves the search");
+    assert_eq!(ex.items.len(), 2);
+    assert!(!ex.crumbs.searching);
+    assert_eq!(labels(&ex).last(), Some(&"Documents"));
+}
+
+#[test]
+fn enter_on_the_unchanged_address_leaves_the_search() {
+    let (dir, mut ex, mut ctx) = searching_docs();
+    ex.event(MAIN, Event::Key(key('d' as u32, Some("d"), true)), &mut ctx);
+    assert_eq!(ex.focus, Focus::Address);
+    ex.event(MAIN, Event::Key(key(keysym::RETURN, None, false)), &mut ctx);
+    assert_eq!(ex.place, Place::Folder(dir.path().join("Documents")));
+    assert!(ex.search.asked().is_none(), "the folder listed again");
+    assert_eq!(ex.items.len(), 2);
+    assert!(!ex.crumbs.searching);
+}
+
+#[test]
 fn the_search_crumb_pins_light_and_dark_at_scale_1_and_2() {
     reprisekit::pins::fonts();
     let mut got = Vec::new();

@@ -61,7 +61,7 @@ Glass uses `[glass]` instead of colour schemes (see `config.example.toml`). Conf
 
 ![Reprise Glass in dark mode, Ruby and Molten, with the calendar open](screenshots/glass-dark.png)
 
-Window titles use Segoe UI, falling back to Noto Sans then DejaVu Sans. Explorer's folder windows show no icon or title on the caption: the address names the folder. The taskbar, Alt+Tab and the window menu still show the title, and the window menu still opens with Alt+Space or a click at the caption's left end.
+Window titles use Segoe UI, falling back to Noto Sans then DejaVu Sans. Explorer's folder windows show no icon or title on the caption: the address names the folder. The taskbar and Alt+Tab still show the title, and the window menu opens with Alt+Space or a right click on the caption.
 
 ### The Start menu
 

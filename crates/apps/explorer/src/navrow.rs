@@ -41,7 +41,7 @@ impl Explorer {
         };
         self.crumbs.searching = want.is_some();
         self.search_crumb = want;
-        (self.crumbs.hot, self.crumbs.pressed) = (None, None);
+        (self.crumbs.hot, self.crumbs.pressed, self.crumbs.open_menu) = (None, None, None);
         true
     }
 
