@@ -77,6 +77,7 @@ desk-menu-next-desktop-background = Next desktop &background
 desk-menu-folder = &Folder
 desk-menu-shortcut = &Shortcut...
 desk-menu-text-document = &Text Document
+desk-menu-compressed-folder = Compressed (&zipped) Folder
 desk-menu-name = &Name
 desk-menu-auto-arrange = &Auto Arrange
 desk-menu-copy-here = &Copy Here
@@ -114,6 +115,7 @@ desk-paste = Paste
 desk-paste-picture-failed = Cannot save the pasted picture: { $error }
 desk-new-folder = New Folder
 desk-new-text-document = New Text Document
+desk-new-compressed-folder = New Compressed (zipped) Folder
 desk-create-failed = Cannot create { $what }: { $error }
 
 ## Desktop system icons

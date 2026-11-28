@@ -168,6 +168,8 @@ pub enum DesktopCommand {
     NewFolder,
     NewShortcut,
     NewTextDocument,
+    /// New > Compressed (zipped) Folder: an empty zip.
+    NewCompressedFolder,
     /// New > a template: a copy of this file from the Templates folder.
     NewFrom(PathBuf),
     Settings,
