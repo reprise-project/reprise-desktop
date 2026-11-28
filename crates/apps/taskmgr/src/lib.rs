@@ -19,7 +19,6 @@ mod servicelog;
 mod services;
 mod state;
 mod svcpage;
-mod toplevel;
 mod worker;
 
 use std::collections::{HashMap, HashSet};
@@ -40,7 +39,7 @@ use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId,
 };
 use reprisebus::services::Verb;
-use reprisebus::tray::{AppWindow, Hung};
+use reprisebus::tray::{AppWindow, Hung, WindowAct};
 use reprisefs::apps::{AppEntry, AppId};
 use reprisekit::access::Tree;
 use reprisekit::controls::form::{self, Form};
@@ -318,8 +317,8 @@ pub struct TaskMgr {
     /// End Task on a program that answers ([`worker::end_task`]): its scope, the pids whose
     /// windows to close, and whether to spare the scope.
     end_task: fn(String, Vec<i32>, bool),
-    /// End Task on one window of a program that shows others ([`worker::close_window`]).
-    close_window: fn(AppWindow),
+    /// Switch To, Minimize, Maximize, and End Task on one window ([`worker::on_window`]).
+    on_window: fn(AppWindow, WindowAct),
     /// New Task...: the Run box ([`worker::new_task`]).
     new_task: fn(),
     /// A pidfd for a process End Process or End Now asks about ([`worker::open_process`]).
@@ -369,7 +368,7 @@ impl TaskMgr {
             hung: Vec::new(),
             hung_rx: None,
             end_task: worker::end_task,
-            close_window: worker::close_window,
+            on_window: worker::on_window,
             new_task: worker::new_task,
             open_process: worker::open_process,
             in_service: worker::in_service,
@@ -601,9 +600,9 @@ impl TaskMgr {
                 self.popup = None;
                 match act {
                     Some(Act::EndProcess) => self.ask_end_process(ctx),
-                    Some(Act::SwitchTo) => self.on_app_window(toplevel::Do::Activate),
-                    Some(Act::Minimize) => self.on_app_window(toplevel::Do::Minimize),
-                    Some(Act::Maximize) => self.on_app_window(toplevel::Do::Maximize),
+                    Some(Act::SwitchTo) => self.on_app_window(WindowAct::Activate),
+                    Some(Act::Minimize) => self.on_app_window(WindowAct::Minimize),
+                    Some(Act::Maximize) => self.on_app_window(WindowAct::Maximize),
                     Some(Act::EndTask) => Reply {
                         redraw: true,
                         ..self.end_task()
@@ -1013,7 +1012,7 @@ impl TaskMgr {
                 r.unit.as_ref() == Some(&unit) && r.window.as_ref().is_some_and(|o| o.id != w.id)
             });
             if others {
-                (self.close_window)(w.clone());
+                (self.on_window)(w.clone(), WindowAct::Close);
                 self.wait_for(Target::Window(unit, w.id), task);
                 return Reply::redraw();
             }
@@ -1062,12 +1061,12 @@ impl TaskMgr {
                 Reply::redraw_all()
             }
             Some(target) => {
-                (self.close_window)(w);
+                (self.on_window)(w, WindowAct::Close);
                 self.wait_for(target, task);
                 Reply::redraw()
             }
             None => {
-                (self.close_window)(w);
+                (self.on_window)(w, WindowAct::Close);
                 Reply::redraw()
             }
         }
@@ -1104,31 +1103,15 @@ impl TaskMgr {
     }
 
     fn switch_to(&mut self) -> Reply {
-        self.on_app_window(toplevel::Do::Activate)
+        self.on_app_window(WindowAct::Activate)
     }
 
-    /// Does `what` to the selected Applications row's window, else to a window of its program.
-    fn on_app_window(&mut self, what: toplevel::Do) -> Reply {
-        let Some(row) = self.selected_app().cloned() else {
-            return Reply::none();
-        };
-        let entries = self.entries.clone();
-        std::thread::spawn(move || {
-            let pick = |ws: &[toplevel::Toplevel]| {
-                (row.window.as_ref())
-                    .and_then(|w| toplevel::the_one(ws, w))
-                    .or_else(|| {
-                        let app = row.app.as_ref()?;
-                        ws.iter().position(|t| window_of(app, &entries, &t.app_id))
-                    })
-            };
-            let task = row.task();
-            match toplevel::on_window(pick, what) {
-                Ok(true) => {}
-                Ok(false) => log::info!("{what:?}: no window of {task}"),
-                Err(e) => log::warn!("{what:?} {task}: {e}"),
-            }
-        });
+    /// Does `act` to the selected Applications row's window. A row has none without the
+    /// compositor's window list, and then the act does nothing.
+    fn on_app_window(&mut self, act: WindowAct) -> Reply {
+        if let Some(w) = self.selected_app().and_then(|r| r.window.clone()) {
+            (self.on_window)(w, act);
+        }
         Reply::none()
     }
 

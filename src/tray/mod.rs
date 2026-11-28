@@ -155,9 +155,11 @@ pub enum TrayEvent {
         close: bool,
         reply: async_channel::Sender<u32>,
     },
-    /// `org.reprise.Tray.CloseWindow`, answered on `reply`.
-    CloseWindow {
+    /// `org.reprise.Tray.CloseWindow`, `ActivateWindow`, `MinimizeWindow` or `MaximizeWindow`,
+    /// answered on `reply`.
+    OnWindow {
         id: u64,
+        act: reprisebus::tray::WindowAct,
         reply: async_channel::Sender<bool>,
     },
     /// `org.reprise.Tray.TaskWindows`, answered on `reply`.
@@ -874,8 +876,8 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             let _ = reply.try_send(u32::try_from(n).unwrap_or(u32::MAX));
             false
         }
-        TrayEvent::CloseWindow { id, reply } => {
-            let _ = reply.try_send(state.end_task_window(id));
+        TrayEvent::OnWindow { id, act, reply } => {
+            let _ = reply.try_send(state.task_window(id, act));
             false
         }
         TrayEvent::WindowsByApp(reply) => {

@@ -163,13 +163,36 @@ pub fn close_windows(pids: &[i32]) -> zbus::Result<u32> {
     windows_call("CloseWindows", pids)
 }
 
-/// Ask the window the compositor lists as `id` ([`AppWindow::id`]) to close, as its X button
-/// does: End Task on one window. False when no such window is mapped. Blocks for at most
-/// [`crate::METHOD_TIMEOUT`].
-pub fn close_window(id: u64) -> zbus::Result<bool> {
+/// What Task Manager does to one window it lists, by [`AppWindow::id`]: two windows may share an
+/// app id and a title.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowAct {
+    /// Switch To: focus and raise it, restoring it when minimized.
+    Activate,
+    Minimize,
+    Maximize,
+    /// End Task on one window: ask it to close, as its X button does.
+    Close,
+}
+
+impl WindowAct {
+    /// Its `org.reprise.Tray` method, which takes the window's id.
+    pub fn method(self) -> &'static str {
+        match self {
+            WindowAct::Activate => "ActivateWindow",
+            WindowAct::Minimize => "MinimizeWindow",
+            WindowAct::Maximize => "MaximizeWindow",
+            WindowAct::Close => "CloseWindow",
+        }
+    }
+}
+
+/// Do `act` to the window the compositor lists as `id` ([`AppWindow::id`]). False when no such
+/// window is mapped. Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn window_act(id: u64, act: WindowAct) -> zbus::Result<bool> {
     let conn = crate::session()?;
     let reply =
-        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "CloseWindow", &(id,)))?;
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), act.method(), &(id,)))?;
     reply.body().deserialize()
 }
 

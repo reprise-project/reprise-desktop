@@ -907,16 +907,29 @@ impl State {
         shown.len()
     }
 
-    /// Task Manager's End Task on one window: the mapped window [`State::windows_by_app`] lists
-    /// as `id`, asked to close as its X button does. False when there is none.
-    pub fn end_task_window(&mut self, id: u64) -> bool {
+    /// Task Manager's Switch To, Minimize, Maximize or End Task on one window: `act` on the mapped
+    /// window [`State::windows_by_app`] lists as `id`; a minimized one is restored to maximize it.
+    /// False when there is none.
+    pub fn task_window(&mut self, id: u64, act: reprisebus::tray::WindowAct) -> bool {
+        use reprisebus::tray::WindowAct;
         let shown = (self.windows.iter())
             .find(|w| w.id.raw() == id && w.mapped && !w.override_redirect)
             .map(|w| w.id);
-        if let Some(w) = shown {
-            self.close(w);
+        let Some(w) = shown else {
+            return false;
+        };
+        match act {
+            WindowAct::Activate => self.activate_listed(w),
+            WindowAct::Minimize => self.set_minimized(w, true),
+            WindowAct::Maximize => {
+                if self.win(w).is_some_and(|x| x.minimized) {
+                    self.activate_listed(w);
+                }
+                self.set_maximized(w, true);
+            }
+            WindowAct::Close => self.close(w),
         }
-        shown.is_some()
+        true
     }
 
     /// SIGKILL `pid` unless it forwards X11 windows ([`signalled`]), then disconnect its windows'
@@ -991,6 +1004,7 @@ fn signalled(pid: i32, inner: Option<i32>, claims: impl IntoIterator<Item = Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisebus::tray::WindowAct;
 
     fn at(t0: Instant, ms: u64) -> Instant {
         t0 + Duration::from_millis(ms)
@@ -1486,12 +1500,47 @@ mod tests {
             .find(|w| w.pid == OTHER as u32)
             .expect("the twin is listed")
             .id;
-        assert!(h.state.end_task_window(id));
+        assert!(h.state.task_window(id, WindowAct::Close));
         h.roundtrip(&mut first);
         h.roundtrip(&mut twin);
         assert_eq!(twin.side.closes, [0], "the window named is asked to close");
         assert!(first.side.closes.is_empty(), "its twin keeps its window");
-        assert!(!h.state.end_task_window(u64::MAX), "no such window");
+        assert!(
+            !h.state.task_window(u64::MAX, WindowAct::Close),
+            "no such window"
+        );
+    }
+
+    #[test]
+    fn switch_to_minimize_and_maximize_act_on_the_window_named_beside_a_same_titled_one() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect();
+        let a = h.map_titled(&mut c, "app", "Documents", (200, 100));
+        let b = h.map_titled(&mut c, "app", "Documents", (200, 100));
+        let (ida, idb) = (a.id.raw(), b.id.raw());
+        let state = |h: &crate::harness::Harness, w: WindowId| {
+            let x = h.state.win(w).expect("mapped");
+            (x.minimized, x.maximized)
+        };
+        assert!(h.state.task_window(idb, WindowAct::Minimize));
+        assert_eq!(state(&h, b.id), (true, false), "b is minimized");
+        assert_eq!(state(&h, a.id), (false, false), "a stays");
+        assert!(h.state.task_window(ida, WindowAct::Maximize));
+        assert_eq!(state(&h, a.id), (false, true), "a is maximized");
+        assert_eq!(state(&h, b.id), (true, false), "b stays minimized");
+        assert!(h.state.task_window(idb, WindowAct::Activate));
+        assert_eq!(state(&h, b.id), (false, false), "b is restored");
+        assert_eq!(h.state.focused, Some(b.id), "b has the focus");
+        assert!(h.state.task_window(ida, WindowAct::Activate));
+        assert_eq!(h.state.focused, Some(a.id), "a has the focus");
+        assert!(h.state.task_window(idb, WindowAct::Minimize));
+        assert!(h.state.task_window(idb, WindowAct::Maximize));
+        assert_eq!(
+            state(&h, b.id),
+            (false, true),
+            "a minimized b comes back maximized"
+        );
     }
 
     #[test]

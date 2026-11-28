@@ -20,8 +20,6 @@ repriseconf = { path = "../../repriseconf" }
 serde = { workspace = true, features = ["derive"] }
 libc.workspace = true
 log.workspace = true
-wayland-client.workspace = true
-wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 [dev-dependencies]
 tempfile.workspace = true

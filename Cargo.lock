@@ -5326,8 +5326,6 @@ dependencies = [
  "reprisekit",
  "serde",
  "tempfile",
- "wayland-client",
- "wayland-protocols-wlr",
 ]
 
 [[package]]

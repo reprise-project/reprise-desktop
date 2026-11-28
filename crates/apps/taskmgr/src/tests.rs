@@ -807,13 +807,17 @@ fn record_open(pid: i32, start: u64) -> std::io::Result<OwnedFd> {
 /// End Task on `calculator`, then End Now offered once the wait is up, with the client sampled as
 /// started at `first` and then at `then`.
 fn end_now_on_calculator(t: &mut TaskMgr, ctx: &mut Ctx, first: u64, then: u64) -> Option<Ask> {
-    t.close_window = record_close;
+    t.on_window = record_act;
     t.open_process = record_open;
     t.take(lone_snapshot(first, vec![calculator()]), ctx);
     t.event(MAIN, Event::Resized, ctx);
     click_row(t, ctx, 0);
     t.event(MAIN, key(keysym::DELETE), ctx);
-    assert_eq!(CLOSED.take(), [7], "its window is asked to close");
+    assert_eq!(
+        ACTED.take(),
+        [(7, WindowAct::Close)],
+        "its window is asked to close"
+    );
     if let Some(e) = t.ending.first_mut() {
         e.since -= END_WAIT;
     }
@@ -873,12 +877,12 @@ fn a_window_in_no_app_scope_is_offered_end_now_only_for_the_users_own_process_ou
         t.in_service = if service { |_| true } else { |_| false };
         let mut s = lone_snapshot(900, vec![titled(7, "reprise.calc", pid, "Calculator")]);
         s.procs.last_mut().unwrap().uid = uid;
-        t.close_window = record_close;
+        t.on_window = record_act;
         t.take(s.clone(), &mut ctx);
         t.event(MAIN, Event::Resized, &mut ctx);
         click_row(&mut t, &mut ctx, 0);
         t.event(MAIN, key(keysym::DELETE), &mut ctx);
-        CLOSED.take();
+        ACTED.take();
         if let Some(e) = t.ending.first_mut() {
             e.since -= END_WAIT;
         }
@@ -953,11 +957,46 @@ fn applications_lists_each_window_with_a_task_button_by_its_title() {
 }
 
 thread_local! {
-    static CLOSED: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+    static ACTED: std::cell::RefCell<Vec<(u64, WindowAct)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn record_close(w: AppWindow) {
-    CLOSED.with_borrow_mut(|c| c.push(w.id));
+fn record_act(w: AppWindow, act: WindowAct) {
+    ACTED.with_borrow_mut(|c| c.push((w.id, act)));
+}
+
+#[test]
+fn switch_to_minimize_and_maximize_act_on_the_picked_row_of_two_same_titled_windows() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.on_window = record_act;
+    t.take(
+        Snapshot {
+            windows: Some(vec![
+                titled(5, "reprise.explorer", 50, "Documents"),
+                titled(6, "reprise.explorer", 51, "Documents"),
+            ]),
+            ..snapshot()
+        },
+        &mut ctx,
+    );
+    t.event(MAIN, Event::Resized, &mut ctx);
+    let row_of = |t: &TaskMgr, id: u64| {
+        (t.app_rows.iter())
+            .position(|r| r.window.as_ref().is_some_and(|w| w.id == id))
+            .expect("a row per window")
+    };
+    for (id, act) in [
+        (6, WindowAct::Minimize),
+        (5, WindowAct::Maximize),
+        (6, WindowAct::Activate),
+        (5, WindowAct::Activate),
+    ] {
+        let i = row_of(&t, id);
+        click_row(&mut t, &mut ctx, i);
+        t.on_app_window(act);
+        assert_eq!(ACTED.take(), [(id, act)], "{act:?} goes to window {id}");
+    }
 }
 
 #[test]
@@ -965,12 +1004,16 @@ fn end_task_on_one_of_a_programs_windows_closes_only_that_one() {
     let mut ctx = ctx();
     let mut t = mgr();
     t.end_task = record_end;
-    t.close_window = record_close;
+    t.on_window = record_act;
     t.take(notepads(), &mut ctx);
     t.event(MAIN, Event::Resized, &mut ctx);
     click_row(&mut t, &mut ctx, 1);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    assert_eq!(CLOSED.take(), [1], "a.txt's window is asked to close");
+    assert_eq!(
+        ACTED.take(),
+        [(1, WindowAct::Close)],
+        "a.txt's window is asked to close"
+    );
     assert!(ENDED.take().is_empty(), "Notepad is not ended");
     let unit = t.app_rows[1].unit.clone().unwrap();
     assert!(matches!(&t.ending[..], [e] if e.target == Target::Window(unit.clone(), 1)));
@@ -981,7 +1024,10 @@ fn end_task_on_one_of_a_programs_windows_closes_only_that_one() {
     assert_eq!(tasks(&t), ["Ark", "b.txt - Notepad"]);
     click_row(&mut t, &mut ctx, 1);
     t.event(MAIN, key(keysym::DELETE), &mut ctx);
-    assert!(CLOSED.take().is_empty());
+    assert!(
+        !(ACTED.take().iter()).any(|(_, act)| *act == WindowAct::Close),
+        "no one window is closed"
+    );
     assert_eq!(
         ENDED.take(),
         [(unit, vec![40], false)],

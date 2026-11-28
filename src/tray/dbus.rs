@@ -7,6 +7,7 @@ use crate::icontheme::{IconCache, IconTheme};
 use crate::mutex::lock;
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
 use reprisebus::peer::{HostOnly, Identities};
+use reprisebus::tray::WindowAct;
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -115,6 +116,25 @@ impl Shell {
         let ev = TrayEvent::WindowsOf { pids, close, reply };
         emit(&self.events, self.eventfd, ev);
         Ok(answer.recv().await.unwrap_or(0))
+    }
+
+    /// `CloseWindow`, `ActivateWindow`, `MinimizeWindow` and `MaximizeWindow`: `act` on the window
+    /// `TaskWindows` lists as `id`.
+    async fn on_window(
+        &self,
+        conn: &Connection,
+        hdr: &Header<'_>,
+        id: u64,
+        act: WindowAct,
+    ) -> zbus::fdo::Result<bool> {
+        self.host_only.check(conn, hdr).await?;
+        let (reply, answer) = async_channel::bounded(1);
+        emit(
+            &self.events,
+            self.eventfd,
+            TrayEvent::OnWindow { id, act, reply },
+        );
+        Ok(answer.recv().await.unwrap_or(false))
     }
 }
 
@@ -253,14 +273,37 @@ impl Shell {
         #[zbus(header)] hdr: Header<'_>,
         id: u64,
     ) -> zbus::fdo::Result<bool> {
-        self.host_only.check(conn, &hdr).await?;
-        let (reply, answer) = async_channel::bounded(1);
-        emit(
-            &self.events,
-            self.eventfd,
-            TrayEvent::CloseWindow { id, reply },
-        );
-        Ok(answer.recv().await.unwrap_or(false))
+        self.on_window(conn, &hdr, id, WindowAct::Close).await
+    }
+
+    /// That window focused and raised, restored when minimized; false when none is mapped.
+    async fn activate_window(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        id: u64,
+    ) -> zbus::fdo::Result<bool> {
+        self.on_window(conn, &hdr, id, WindowAct::Activate).await
+    }
+
+    /// That window minimized; false when none is mapped.
+    async fn minimize_window(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        id: u64,
+    ) -> zbus::fdo::Result<bool> {
+        self.on_window(conn, &hdr, id, WindowAct::Minimize).await
+    }
+
+    /// That window maximized; false when none is mapped.
+    async fn maximize_window(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        id: u64,
+    ) -> zbus::fdo::Result<bool> {
+        self.on_window(conn, &hdr, id, WindowAct::Maximize).await
     }
 
     async fn count_windows(
