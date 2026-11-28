@@ -1206,6 +1206,30 @@ fn a_thumbnail_or_tile_rename_box_draws_its_pixels() {
     crate::pins::check("shellview/rename_box", &got);
 }
 
+#[test]
+fn an_icons_rename_box_of_three_lines_or_more_stays_over_the_icon_under_it() {
+    crate::pins::fonts();
+    let (c, lay, theme) = {
+        let mut sv = view(4);
+        sv.mode = Mode::Icons;
+        sv.edit = Some((0, TextEdit::new("New Compressed (zipped) Folder", true)));
+        let (c, lay, theme) = render(&sv, Rect::new(0, 0, 170, 240));
+        let (text, px) = rend();
+        let b = rename_rect(&sv, &lay, 0, &text, px).unwrap();
+        assert!(
+            b.bottom() > lay.cells[2].y,
+            "the box runs into the row under it"
+        );
+        (c, b, theme)
+    };
+    let x = lay.x + lay.width / 2;
+    assert_eq!(
+        c.get(x, lay.bottom() - 1),
+        theme.colors.window_text.argb(),
+        "the border under its last line"
+    );
+}
+
 /// Renaming in Details is the transient `ListView`'s own box, placed by `listview::ListView::edit_rect`.
 #[test]
 fn renaming_in_details_delegates_to_listview() {
