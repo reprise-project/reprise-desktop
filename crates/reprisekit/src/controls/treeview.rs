@@ -994,6 +994,7 @@ pub fn draw(
                 selected: selected || drop,
                 hot: tv.over.row == Some(i) || drop,
                 dim: tv.inactive && !drop,
+                nav: tv.style == Style::Nav,
                 ..Mark::default()
             },
         );

@@ -14,7 +14,7 @@ Dark hot 1 964c78a2844bad2f
 Dark hot 2 946505e1bf25eb07
 Dark selected 1 a054ee6bdc5b3266
 Dark selected 2 fc4b04305aa51506
-Dark selected, focus elsewhere 1 f38e3ef9e98be2e7
-Dark selected, focus elsewhere 2 4b4d073c4db25e2d
+Dark selected, focus elsewhere 1 0ebd1538693fd33f
+Dark selected, focus elsewhere 2 7b7174be71e57424
 Dark expanders shown 1 add476faa819ca52
 Dark expanders shown 2 8d7e879d304d4586

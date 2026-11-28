@@ -1027,6 +1027,7 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
                 lead: sel.focus == Some(i),
                 dim: lv.inactive,
                 ring,
+                nav: false,
             },
         );
         for (ci, col) in lv.columns.as_ref().iter().enumerate() {

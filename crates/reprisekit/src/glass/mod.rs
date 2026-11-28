@@ -635,6 +635,7 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
         style
             .with_painted(Part::PlacesTile, move || items::dark_places(scale))
             .with_painted(Part::ListItem, move || items::dark_items(scale))
+            .with_painted(Part::NavItem, move || items::dark_nav_items(scale))
     } else {
         style
     };

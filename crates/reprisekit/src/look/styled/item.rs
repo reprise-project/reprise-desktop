@@ -10,6 +10,8 @@ pub struct Mark {
     pub lead: bool,
     pub dim: bool,
     pub ring: bool,
+    /// A navigation pane row ([`Part::NavItem`]).
+    pub nav: bool,
 }
 
 impl Mark {
@@ -51,8 +53,12 @@ pub fn draw_item(st: &Style, c: &mut Canvas, r: Rect, m: Mark, s: i32) -> bool {
     if !boxes_items(st) {
         return false;
     }
+    let part = match m.nav && st.part(Part::NavItem).is_some() {
+        true => Part::NavItem,
+        false => Part::ListItem,
+    };
     for &state in m.states() {
-        st.draw(c, r, Part::ListItem, state, s);
+        st.draw(c, r, part, state, s);
     }
     true
 }
