@@ -2,10 +2,11 @@
 //! freedesktop thumbnail cache: pictures by the built-in decoders, a JPEG XL or AVIF by
 //! [`serve_decode`] and other types by an installed thumbnailer, both in
 //! [`reprisefs::thumbnailers`]' jail. Explorer and
-//! the file dialog host share it; Explorer's [`serve_stdio`] decodes for the compositor's Browse
-//! dialog in a process of its own. Navigation bumps a generation counter and the worker drops
+//! the file dialog host share it; Explorer's [`serve_stdio`] decodes the desktop's folder pictures
+//! in a process of its own. Navigation bumps a generation counter and the worker drops
 //! requests older than the newest it has seen. A file that does not answer within [`WITHIN`] keeps
-//! its icon, and the worker moves on.
+//! its icon, and the worker moves on; past [`MAX_STUCK_PER_MOUNT`] such reads still blocked on one
+//! mount, files there keep their icons untried until one returns, while other mounts read on.
 
 use crate::Waker;
 use crate::decode::Decoders;
@@ -19,7 +20,6 @@ use std::collections::{HashSet, VecDeque};
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -29,9 +29,14 @@ use std::time::Duration;
 /// the folder back only briefly.
 const WITHIN: Duration = Duration::from_secs(3);
 
-/// Calls given up on and still blocked, past which pictures keep their icons without a try until
-/// one returns: each holds a thread.
-const MAX_STUCK: usize = 4;
+/// Calls still blocked on one mount past which files there keep their icons until one returns.
+const MAX_STUCK_PER_MOUNT: usize = 4;
+
+/// The same over every mount in the process: each call holds a thread, so four dead mounts' worth.
+const MAX_STUCK: usize = 16;
+
+/// The calls running in this process, which every [`Deadlines`] counts against.
+static STUCK: std::sync::LazyLock<Arc<Stuck>> = std::sync::LazyLock::new(Arc::default);
 
 /// The reads of [`picture_in`], which may name a file on a mount that never answers.
 static NAMED_READS: std::sync::LazyLock<Deadlines> =
@@ -341,7 +346,7 @@ pub fn picture_in(
 ) -> Option<Canvas> {
     let budget = crate::decode::Budget::THUMBNAIL;
     let p = path.to_path_buf();
-    let bytes = (NAMED_READS.run(move || {
+    let bytes = (NAMED_READS.run(path, move || {
         reprisefs::ops::open_regular(&p)
             .and_then(|f| crate::decode::read_capped_from(f, budget.file))
     }))
@@ -425,7 +430,7 @@ fn thumbnail(
 ) -> Option<Made> {
     let p = path.to_path_buf();
     let (file, meta) = fs
-        .run(move || {
+        .run(path, move || {
             let f = reprisefs::ops::open_regular(&p)?;
             let meta = f.metadata()?;
             Ok((f, meta))
@@ -465,7 +470,9 @@ fn thumbnail(
     let mut helper = None;
     let decoded = if picture {
         let budget = crate::decode::Budget::THUMBNAIL;
-        match fs.run(move || crate::decode::read_capped_from(file, budget.file)) {
+        match fs.run(path, move || {
+            crate::decode::read_capped_from(file, budget.file)
+        }) {
             Err(e) if e.kind() == io::ErrorKind::TimedOut => {
                 log::debug!("thumbnail {}: {e}", path.display());
                 return None;
@@ -576,46 +583,110 @@ fn made_from(png: &[u8], edge: u32) -> Option<Made> {
 /// mount holds the worker that long at most.
 struct Deadlines {
     within: Duration,
-    /// Calls started and not yet returned.
-    running: Arc<AtomicUsize>,
+    stuck: Arc<Stuck>,
+    /// The mount point a path lies on, read without touching the path.
+    mount_of: fn(&std::path::Path) -> PathBuf,
 }
 
 impl Deadlines {
     fn new(within: Duration) -> Deadlines {
         Deadlines {
             within,
-            running: Arc::default(),
+            stuck: STUCK.clone(),
+            mount_of,
         }
     }
 
-    /// What `call` returns, or `TimedOut` when it takes longer than `within` or [`MAX_STUCK`]
-    /// earlier calls are still blocked.
+    /// What `call` on `path` returns, or `TimedOut` when it takes longer than `within`, or at once
+    /// while [`MAX_STUCK_PER_MOUNT`] earlier calls on `path`'s mount, or [`MAX_STUCK`] in all, are
+    /// still blocked.
     fn run<T: Send + 'static>(
         &self,
+        path: &std::path::Path,
         call: impl FnOnce() -> io::Result<T> + Send + 'static,
     ) -> io::Result<T> {
-        if self.running.load(Ordering::Acquire) >= MAX_STUCK {
+        let mount = (self.mount_of)(path);
+        let Some(slot) = Stuck::take(&self.stuck, &mount) else {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                format!("{MAX_STUCK} file reads have not returned"),
+                format!("file reads on {} have not returned", mount.display()),
             ));
-        }
+        };
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        let running = self.running.clone();
-        running.fetch_add(1, Ordering::AcqRel);
-        let spawned = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("thumbs-read".into())
             .spawn(move || {
                 let out = call();
-                running.fetch_sub(1, Ordering::AcqRel);
+                drop(slot);
                 let _ = tx.send(out);
-            });
-        if let Err(e) = spawned {
-            self.running.fetch_sub(1, Ordering::AcqRel);
-            return Err(e);
-        }
+            })?;
         rx.recv_timeout(self.within)
             .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
+    }
+}
+
+/// How long a read of the mount table serves [`mount_of`]: a folder's thumbnails ask it twice each.
+const MOUNTS_FRESH: Duration = Duration::from_secs(2);
+
+fn mount_of(path: &std::path::Path) -> PathBuf {
+    type Table = Option<(std::time::Instant, Vec<PathBuf>)>;
+    static TABLE: std::sync::Mutex<Table> = std::sync::Mutex::new(None);
+    let mut table = TABLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if table
+        .as_ref()
+        .is_none_or(|(at, _)| at.elapsed() >= MOUNTS_FRESH)
+    {
+        let mounts = std::fs::read("/proc/self/mounts").unwrap_or_default();
+        let points = reprisefs::places::mount_table(&mounts).into_iter();
+        *table = Some((std::time::Instant::now(), points.map(|(m, _)| m).collect()));
+    }
+    let points = table
+        .as_ref()
+        .map(|(_, p)| p.as_slice())
+        .unwrap_or_default();
+    reprisefs::places::mount_point_of(points, path)
+}
+
+/// The calls started and not yet returned, by mount point.
+#[derive(Default)]
+struct Stuck(std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>);
+
+impl Stuck {
+    /// A place for one more call on `mount`, unless its mount or the process is full.
+    fn take(stuck: &Arc<Stuck>, mount: &std::path::Path) -> Option<Slot> {
+        let mut by = stuck
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let on = by.get(mount).copied().unwrap_or(0);
+        if on >= MAX_STUCK_PER_MOUNT || by.values().sum::<usize>() >= MAX_STUCK {
+            return None;
+        }
+        by.insert(mount.to_path_buf(), on + 1);
+        Some(Slot {
+            stuck: stuck.clone(),
+            mount: mount.to_path_buf(),
+        })
+    }
+}
+
+/// One call's place in [`Stuck`], given back when its call returns (or never starts).
+struct Slot {
+    stuck: Arc<Stuck>,
+    mount: PathBuf,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut by = (self.stuck.0.lock()).unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(n) = by.get_mut(&self.mount) {
+            *n -= 1;
+            if *n == 0 {
+                by.remove(&self.mount);
+            }
+        }
     }
 }
 
@@ -646,6 +717,7 @@ fn take_queued(rx: &Receiver<Request>, queue: &mut VecDeque<Request>, newest: &m
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     fn stub() -> (Sender<Done>, Thumbs) {
         let (done_tx, rx) = channel::<Done>();
@@ -663,8 +735,17 @@ mod tests {
         )
     }
 
+    /// [`Deadlines`] counting only its own calls, with each folder a mount.
+    fn fs_within(within: Duration) -> Deadlines {
+        Deadlines {
+            within,
+            stuck: Arc::default(),
+            mount_of: |p| p.parent().unwrap_or(p).to_path_buf(),
+        }
+    }
+
     fn fs() -> Deadlines {
-        Deadlines::new(WITHIN)
+        fs_within(WITHIN)
     }
 
     fn done(path: &str, generation: u64) -> Done {
@@ -1069,63 +1150,89 @@ mod tests {
     }
 
     /// A read that blocks on a named pipe until a writer opens it, as a read on a dead mount
-    /// blocks, is given up after its deadline; past [`MAX_STUCK`] of them every read is refused
-    /// at once, until the blocked reads return.
+    /// blocks, is given up after its deadline. Past [`MAX_STUCK_PER_MOUNT`] of them on one mount,
+    /// reads there are refused at once while other mounts still read; past [`MAX_STUCK`] in all,
+    /// every read is, until the blocked reads return.
     #[test]
-    fn a_read_that_hangs_is_given_up_and_bounded() {
+    fn a_read_that_hangs_is_given_up_and_bounded_per_mount() {
         use std::time::Instant;
         const SHORT: Duration = Duration::from_millis(50);
         let dir = tempfile::tempdir().unwrap();
-        let (hang, pic) = (dir.path().join("hang.png"), dir.path().join("dunes.png"));
-        std::fs::write(&pic, b"a picture").unwrap();
-        assert!(
-            std::process::Command::new("mkfifo")
-                .arg(&hang)
-                .status()
-                .unwrap()
-                .success()
-        );
-        let fs = Deadlines::new(SHORT);
-        let read = |p: &std::path::Path| {
-            let p = p.to_path_buf();
-            fs.run(move || std::fs::read(p))
-        };
-        assert_eq!(read(&pic).unwrap(), b"a picture");
-        for _ in 0..MAX_STUCK {
-            let asked = Instant::now();
-            assert_eq!(read(&hang).unwrap_err().kind(), io::ErrorKind::TimedOut);
+        let mounts: Vec<PathBuf> = (0..4)
+            .map(|i| dir.path().join(format!("dead{i}")))
+            .collect();
+        let live = dir.path().join("live/dunes.png");
+        std::fs::create_dir(live.parent().unwrap()).unwrap();
+        std::fs::write(&live, b"a picture").unwrap();
+        for m in &mounts {
+            std::fs::create_dir(m).unwrap();
+            let fifo = m.join("hang.png");
             assert!(
-                asked.elapsed() < SHORT * 20,
-                "gave up after {:?}",
-                asked.elapsed()
+                std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap()
+                    .success()
             );
+            std::fs::write(m.join("there.png"), b"a picture").unwrap();
         }
-        let asked = Instant::now();
-        assert_eq!(
-            read(&pic).unwrap_err().kind(),
-            io::ErrorKind::TimedOut,
-            "refused while reads hang"
-        );
-        assert!(asked.elapsed() < SHORT, "refused at once");
+        let fs = fs_within(SHORT);
+        let read = |p: &std::path::Path| {
+            let q = p.to_path_buf();
+            fs.run(p, move || std::fs::read(q))
+        };
+        let refused_at_once = |p: &std::path::Path, why: &str| {
+            let asked = Instant::now();
+            assert_eq!(
+                read(p).unwrap_err().kind(),
+                io::ErrorKind::TimedOut,
+                "{why}"
+            );
+            assert!(asked.elapsed() < SHORT, "{why}: refused at once");
+        };
+        let hang_all_of = |m: &PathBuf| {
+            for _ in 0..MAX_STUCK_PER_MOUNT {
+                let asked = Instant::now();
+                let hung = read(&m.join("hang.png")).unwrap_err();
+                assert_eq!(hung.kind(), io::ErrorKind::TimedOut);
+                assert!(
+                    asked.elapsed() < SHORT * 20,
+                    "gave up after {:?}",
+                    asked.elapsed()
+                );
+            }
+        };
+        hang_all_of(&mounts[0]);
+        refused_at_once(&mounts[0].join("there.png"), "the dead mount");
+        assert_eq!(read(&live).unwrap(), b"a picture", "another mount reads");
+        assert_eq!(MAX_STUCK, MAX_STUCK_PER_MOUNT * mounts.len());
+        for m in &mounts[1..] {
+            hang_all_of(m);
+        }
+        refused_at_once(&live, "every mount once the process is full");
 
         let end = Instant::now() + Duration::from_secs(5);
-        while fs.running.load(Ordering::Acquire) > 0 {
+        while !fs.stuck.0.lock().unwrap().is_empty() {
             assert!(Instant::now() < end, "the blocked reads return");
-            // A read-write open of a pipe never blocks, and wakes the readers waiting on it.
-            let _ = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&hang);
+            for m in &mounts {
+                // A read-write open of a pipe never blocks, and wakes the readers waiting on it.
+                let _ = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(m.join("hang.png"));
+            }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(read(&pic).unwrap(), b"a picture", "reads run again");
+        assert_eq!(read(&live).unwrap(), b"a picture", "reads run again");
+        assert_eq!(read(&mounts[0].join("there.png")).unwrap(), b"a picture");
     }
 
     #[test]
     fn a_picture_given_up_on_keeps_its_icon_and_is_tried_again() {
         let (_dir, src, decoders, count, mut cache) = counted(b"FAKE picture");
         let fs = fs();
-        fs.running.store(MAX_STUCK, Ordering::Release);
+        let mount = src.parent().unwrap().to_path_buf();
+        (fs.stuck.0.lock().unwrap()).insert(mount.clone(), MAX_STUCK_PER_MOUNT);
         assert!(
             thumbnail(
                 &mut Make::new(&decoders, false),
@@ -1137,7 +1244,7 @@ mod tests {
             .is_none()
         );
         assert_eq!(count.load(Ordering::SeqCst), 0, "nothing decoded");
-        fs.running.store(0, Ordering::Release);
+        fs.stuck.0.lock().unwrap().remove(&mount);
         assert!(
             thumbnail(
                 &mut Make::new(&decoders, false),
