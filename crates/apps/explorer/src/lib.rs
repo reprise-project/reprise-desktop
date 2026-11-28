@@ -932,8 +932,8 @@ impl Explorer {
         window::is_shell(&ctx.theme).then(|| {
             let cm = ctx.theme.controls();
             let active = self.bar.is_active();
-            let (strip, bar_w) = (self.strip_h(ctx), self.explorer_bar.width);
-            window::shell_layout(ctx.size, &self.settings, active, strip, bar_w, &cm)
+            let strip = self.strip_h(ctx);
+            window::shell_layout(ctx.size, &self.settings, active, strip, &cm)
         })
     }
 

@@ -57,7 +57,9 @@ impl Explorer {
         self.sv.bars.release_bar();
         self.sv.header.release();
         if self.dragging.take().is_some() {
-            self.settings.bar_width = self.explorer_bar.width;
+            if !self.shell_on {
+                self.settings.bar_width = self.explorer_bar.width;
+            }
             self.settings_dirty = true;
         }
         // The Recycle Bin's columns are not the ones the settings
@@ -631,7 +633,7 @@ impl Explorer {
 
     /// The pointer's shape at (`x`, `y`), from the control under it as `press` finds it; a held
     /// splitter or column edge keeps its arrow through the drag.
-    fn shape_at(&self, x: i32, y: i32, ctx: &Ctx) -> Shape {
+    pub(crate) fn shape_at(&self, x: i32, y: i32, ctx: &Ctx) -> Shape {
         if self.dragging.is_some() || self.resizing.is_some() {
             return Shape::ColResize;
         }
@@ -856,12 +858,20 @@ impl Explorer {
             // The view keeps at least 200 px, the width the task pane
             // would have taken.
             let u = ctx.theme.controls().text;
-            let widest = u.within(ctx.size.0 - explorerbar::SPLITTER_W - 200);
+            let split = match self.shell_on {
+                true => explorerbar::NAV_DIVIDER_W,
+                false => explorerbar::SPLITTER_W,
+            };
+            let widest = u.within(ctx.size.0 - split - 200);
             let width = u
                 .within(x - grab)
                 .clamp(explorerbar::MIN_W, widest.max(explorerbar::MIN_W));
-            if width != self.explorer_bar.width {
-                self.explorer_bar.width = width;
+            let held = match self.shell_on {
+                true => &mut self.settings.nav_width,
+                false => &mut self.explorer_bar.width,
+            };
+            if width != *held {
+                *held = width;
                 return Reply::redraw();
             }
             return Reply::none();

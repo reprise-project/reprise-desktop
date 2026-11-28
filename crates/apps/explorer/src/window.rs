@@ -143,13 +143,12 @@ pub fn shell_min_width(cm: &ControlMetrics) -> i32 {
 
 /// The shell layout of a `size` client: the menu bar shows while `bar_active` (Alt, F10, an
 /// access key) or while `settings` keep it, the tab strip is `strip_h` tall, and the navigation
-/// pane `bar_width` wide at 100% text, its splitter on top.
+/// pane `settings.nav_width` wide at 100% text, its divider after it.
 pub fn shell_layout(
     size: (i32, i32),
     settings: &Settings,
     bar_active: bool,
     strip_h: i32,
-    bar_width: i32,
     cm: &ControlMetrics,
 ) -> ShellLayout {
     let client = Rect::new(0, 0, size.0.max(1), size.1.max(1));
@@ -188,11 +187,11 @@ pub fn shell_layout(
     let bottom = details.map_or(client.bottom(), |d| d.y);
     let height = (bottom - top).max(0);
     let nav_pane = settings.nav_pane.then(|| {
-        let w = cm.text.len(bar_width) + explorerbar::SPLITTER_W;
+        let w = cm.text.len(settings.nav_width) + explorerbar::NAV_DIVIDER_W;
         Rect::new(client.x, top, w.min(client.width), height)
     });
     let view_x = nav_pane.map_or(client.x, |r| r.right());
-    // The view's ring falls under the splitter, the closing line and the details pane.
+    // The view's ring falls under the pane, the closing line and the details pane.
     let view = Rect::new(
         view_x - FIELD_PAD,
         top - FIELD_PAD,
@@ -213,11 +212,11 @@ pub fn shell_layout(
     }
 }
 
-/// The navigation pane's body and splitter over `frame`, as [`ShellLayout::nav_pane`] gives it.
+/// The navigation pane's body and divider over `frame`, as [`ShellLayout::nav_pane`] gives it.
 pub fn nav_pane_layout(frame: Rect) -> explorerbar::Layout {
     let eb = explorerbar::ExplorerBar {
         title: String::new(),
-        width: frame.width - explorerbar::SPLITTER_W,
+        width: frame.width - explorerbar::NAV_DIVIDER_W,
         hot_close: false,
         greyed: false,
     };
