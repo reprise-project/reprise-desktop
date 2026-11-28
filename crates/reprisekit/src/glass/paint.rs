@@ -952,7 +952,7 @@ mod tests {
             (Part::ShowDesktop, (vec![n, h], 15, 60)),
             (Part::SlotEdge, (vec![h, p], 2, 60)),
             (Part::SlotLight, (vec![h, p], 44, 14)),
-            (Part::PagerLight, (vec![h], 23, 7)),
+            (Part::PagerLight, (vec![h], 23, 3)),
             (Part::SlotBand, (vec![p], 1, 30)),
             (Part::PagerTile, (vec![h, c, ch], 44, 90)),
         ];

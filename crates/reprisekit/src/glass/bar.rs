@@ -83,6 +83,7 @@ const EDGE_LIGHT: (f64, f64) = (89.0, 232.0);
 const LIGHT_INK: f64 = 200.0;
 const LIGHT_REACH: (f64, f64) = (17.0, 7.5);
 const LIGHT_ROWS: i32 = 7;
+const PAGER_LIGHT_ROWS: i32 = 2;
 
 pub const STRIP_WIDTH: i32 = 15;
 
@@ -254,20 +255,11 @@ pub fn slot_edge(s: &Settings, h: i32, d: i32) -> PartImage {
 
 /// The light along a lit or held slot's foot, `w` px wide and [`LIGHT_ROWS`] tall: whole at the middle of the bottom row, fading over an ellipse [`LIGHT_REACH`] across and up. Turned over on a top bar.
 pub fn slot_light(w: i32, d: i32) -> PartImage {
-    foot_light(w, LIGHT_REACH.0, &[State::Hot, State::Pressed], d)
-}
-
-/// The current pager cell's foot light: [`slot_light`] narrowed to the cell, its reach across ending at the cell's two outer columns, so the cell's sides cut none of it.
-pub fn pager_light(d: i32) -> PartImage {
-    let w = crate::taskbar::QUICK_W;
-    foot_light(w, f64::from(w - 1) / 2.0, &[State::Hot], d)
-}
-
-fn foot_light(w: i32, rx: f64, states: &[State], d: i32) -> PartImage {
     let h = LIGHT_ROWS;
+    let states = [State::Hot, State::Pressed];
     let frames = states.len() as i32;
     let mut c = Canvas::new((w * d) as u32, (frames * h * d) as u32);
-    let ry = LIGHT_REACH.1;
+    let (rx, ry) = LIGHT_REACH;
     for y in 0..h * d {
         for x in 0..w * d {
             // Down the light, within its rows: it ends at its top row
@@ -281,7 +273,23 @@ fn foot_light(w: i32, rx: f64, states: &[State], d: i32) -> PartImage {
             }
         }
     }
-    PartImage::new(c, states, Layout::Vertical).at_scale(d)
+    PartImage::new(c, &states, Layout::Vertical).at_scale(d)
+}
+
+/// The current pager cell's light: a line [`PAGER_LIGHT_ROWS`] tall over a clear row at its foot,
+/// whole at the middle and clear at the outer columns; a glow peaking on the foot reads as cut off.
+pub fn pager_light(d: i32) -> PartImage {
+    let w = crate::taskbar::QUICK_W;
+    let rx = f64::from(w - 1) / 2.0;
+    let mut c = Canvas::new((w * d) as u32, ((PAGER_LIGHT_ROWS + 1) * d) as u32);
+    for x in 0..w * d {
+        let dx = (centre(x, d) + 0.5 - (f64::from(w / 2) + 0.5)) / rx;
+        let px = pack(ink(1.0 - dx.abs(), LIGHT_INK));
+        for y in 0..PAGER_LIGHT_ROWS * d {
+            c.put_raw(x, y, px);
+        }
+    }
+    PartImage::new(c, &[State::Hot], Layout::Vertical).at_scale(d)
 }
 
 /// The Show desktop strip's dark edge: the plain glass under these shades
@@ -642,7 +650,11 @@ mod tests {
                 "{h} px strip"
             );
         }
-        assert_eq!(size(&pager_light(1)), (23, LIGHT_ROWS, 1), "pager light");
+        assert_eq!(
+            size(&pager_light(1)),
+            (23, PAGER_LIGHT_ROWS + 1, 1),
+            "pager light"
+        );
         // The two top lines stay fixed when the bar is drawn at another
         // height; the glass under them stretches.
         assert_eq!(taskbar(&s, 40, 1).sizing, Insets::new(LEFT, 2, 0, 0));
@@ -696,11 +708,12 @@ mod tests {
     }
 
     #[test]
-    fn the_pager_light_peaks_at_the_cells_middle_and_is_clear_at_its_outer_columns() {
+    fn the_pager_light_is_a_line_over_a_clear_foot_peaking_at_the_middle() {
         for d in [1, 2] {
             let light = pager_light(d);
-            let (w, foot) = (23 * d, LIGHT_ROWS * d - 1);
-            let alpha = |x| light.atlas.get(x, foot) >> 24;
+            let (w, rows) = (23 * d, (PAGER_LIGHT_ROWS + 1) * d);
+            let line = PAGER_LIGHT_ROWS * d;
+            let alpha = |x| light.atlas.get(x, 0) >> 24;
             let mid = 11 * d + d / 2;
             assert_eq!(
                 alpha(mid),
@@ -708,21 +721,25 @@ mod tests {
                 "scale {d}: brightest at the middle"
             );
             assert!(alpha(mid) > 230, "scale {d}: near whole at the middle");
-            for y in 0..LIGHT_ROWS * d {
-                for x in [0, w - 1] {
-                    assert_eq!(
-                        light.atlas.get(x, y),
-                        0,
-                        "scale {d}: column {x} row {y} is clear"
-                    );
-                }
-            }
             for x in 0..w {
                 assert_eq!(
                     alpha(x),
                     alpha(w - 1 - x),
                     "scale {d}: symmetric at column {x}"
                 );
+                for y in 0..line {
+                    assert_eq!(
+                        light.atlas.get(x, y),
+                        light.atlas.get(x, 0),
+                        "scale {d}: column {x} is one ink down the line"
+                    );
+                }
+                for y in line..rows {
+                    assert_eq!(light.atlas.get(x, y), 0, "scale {d}: foot row {y} is clear");
+                }
+            }
+            for x in [0, w - 1] {
+                assert_eq!(alpha(x), 0, "scale {d}: outer column {x} is clear");
             }
         }
     }

@@ -8,19 +8,26 @@ fn peak_lum(c: &Canvas, xs: std::ops::Range<i32>, ys: std::ops::Range<i32>) -> i
 }
 
 #[test]
-fn a_glass_pager_lights_the_current_desktop_at_its_foot() {
+fn a_glass_pager_lights_the_current_desktop_with_a_line_over_its_foot() {
     use crate::taskbar::PagerMark;
     for small in [false, true] {
         let (c, cells, bar) = glass_pager(PagerMark::Light, None, small);
         let (r0, r1) = (cells[0], cells[1]);
         assert_eq!(r1.width, 23, "a pager cell is 23 px");
-        let foot = r1.bottom() - 1;
+        let (line, foot) = (r1.bottom() - 2, r1.bottom() - 1);
         assert!(
-            lum(c.get(r1.x + 11, foot)) > lum(c.get(r0.x + 11, foot)) + 20,
-            "small {small}: the current cell's foot is lit"
+            lum(c.get(r1.x + 11, line)) > lum(c.get(r0.x + 11, line)) + 20,
+            "small {small}: the row over the current cell's foot is lit"
         );
+        for x in r1.x..r1.right() {
+            assert_eq!(
+                c.get(x, foot),
+                bar.get(x, foot),
+                "small {small}: the foot row stays bar at column {x}"
+            );
+        }
         let peak = (r1.x..r1.right())
-            .max_by_key(|&x| lum(c.get(x, foot)))
+            .max_by_key(|&x| lum(c.get(x, line)))
             .unwrap();
         assert_eq!(
             peak,
