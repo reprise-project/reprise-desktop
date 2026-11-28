@@ -520,19 +520,29 @@ fn an_archives_menu_extracts_all_here_or_into_its_folder() {
 }
 
 #[test]
-fn a_compressed_folders_entries_open_copy_or_extract_the_archive_and_nothing_else() {
-    let s = MenuState {
-        archive: true,
-        read_only: true,
-        ..MenuState::default()
-    };
-    for kind in [ItemKind::File, ItemKind::Folder] {
-        let m = item_menu(&s, kind, &[], &[]);
-        let rows: Vec<&str> = (0..m.items().len()).map(|i| label(m.items(), i)).collect();
-        assert_eq!(rows, ["Open", "", "Copy", "", "Extract All..."], "{kind:?}");
-        assert_eq!(m.command(&[0]), Command::Open);
-        assert_eq!(m.command(&[2]), Command::Copy);
-        assert_eq!(m.command(&[4]), Command::ExtractAll);
+fn a_compressed_folders_entries_open_copy_or_extract_and_nothing_else() {
+    for extracts in [true, false] {
+        let s = MenuState {
+            archive: true,
+            extract_entries: extracts,
+            read_only: true,
+            ..MenuState::default()
+        };
+        for kind in [ItemKind::File, ItemKind::Folder] {
+            let m = item_menu(&s, kind, &[], &[]);
+            let rows: Vec<&str> = (0..m.items().len()).map(|i| label(m.items(), i)).collect();
+            let want = ["Open", "", "Copy", "", "Extract", "Extract All..."];
+            assert_eq!(rows, want, "{kind:?}");
+            assert_eq!(m.command(&[0]), Command::Open);
+            assert_eq!(m.command(&[2]), Command::Copy);
+            assert_eq!(m.command(&[4]), Command::ExtractEntries);
+            assert_eq!(
+                enabled(m.items(), 4),
+                extracts,
+                "Extract is live with a folder to go to"
+            );
+            assert_eq!(m.command(&[5]), Command::ExtractAll);
+        }
     }
 }
 

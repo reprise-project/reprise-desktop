@@ -380,6 +380,38 @@ fn copy_to_folder_out_of_a_compressed_folder_lets_go_of_its_copies_once_put() {
 }
 
 #[test]
+fn extract_in_a_compressed_folder_puts_the_selection_beside_the_zip_with_its_dates() {
+    use std::os::unix::fs::MetadataExt;
+    let (dir, zip) = pack();
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Archive(zip.clone(), PathBuf::from("docs")), &mut ctx);
+    assert_eq!(ex.extract_folder().as_deref(), Some(dir.path()));
+    ex.select_paths(&[zip.join("docs/a.txt")]);
+    ex.run(Command::ExtractEntries, &mut ctx);
+    finish_copies(&mut ex, &mut ctx);
+    let out = dir.path().join("a.txt");
+    wake_until(&mut ex, &mut ctx, |ex| out.exists() && ex.puts_idle());
+    assert_eq!(std::fs::read_to_string(&out).expect("put"), "inside");
+    use std::os::unix::fs::PermissionsExt;
+    let shut = std::fs::Permissions::from_mode(0o555);
+    std::fs::set_permissions(dir.path(), shut).expect("chmod");
+    // Root writes past the mode.
+    if !reprisefs::ops::can_write(dir.path()) {
+        let shut = test_explorer(Place::Archive(zip.clone(), PathBuf::from("docs")), &mut ctx);
+        assert_eq!(shut.extract_folder(), None, "a folder that takes no writes");
+    }
+    let open = std::fs::Permissions::from_mode(0o755);
+    std::fs::set_permissions(dir.path(), open).expect("chmod");
+    let listed = ex.archives.kept(&zip).expect("listed");
+    let entry = listed.iter().find(|e| e.path == Path::new("docs/a.txt"));
+    assert_eq!(
+        std::fs::metadata(&out).expect("put").mtime(),
+        entry.and_then(|e| e.modified).expect("a date"),
+        "the file keeps the entry's date"
+    );
+}
+
+#[test]
 fn closing_explorer_hands_the_copies_on_its_clipboard_to_the_day_old_sweep() {
     use std::os::unix::fs::PermissionsExt;
     let (_dir, zip) = pack();

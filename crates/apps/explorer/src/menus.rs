@@ -49,8 +49,12 @@ pub struct MenuState {
     pub can_forward: bool,
     /// The selection is archives: the item menu's Extract to row names this folder.
     pub extract: Option<String>,
-    /// The place is a compressed folder: the item menu holds only Open, Copy and Extract All.
+    /// The place is a compressed folder: the item menu holds only Open, Copy, Extract and
+    /// Extract All.
     pub archive: bool,
+    /// The compressed folder's own folder is known and takes writes: its item menu's Extract puts
+    /// the selection there.
+    pub extract_entries: bool,
     /// Every selected item has a local path, for Copy as Path.
     pub local_paths: bool,
     /// The zip the item menu's Compress to row makes; `None` hides the row.
@@ -104,6 +108,7 @@ impl Default for MenuState {
             can_forward: false,
             extract: None,
             archive: false,
+            extract_entries: false,
             local_paths: false,
             compress: None,
             disk_image: false,
@@ -657,7 +662,7 @@ pub fn item_menu(
         return bin_item_menu();
     }
     if state.archive {
-        return archive_item_menu();
+        return archive_item_menu(state.extract_entries);
     }
     let writable = !state.read_only;
     let mut m = Menu::default();
@@ -801,20 +806,25 @@ pub fn shell_row_menu(place: &Place) -> Menu {
     m
 }
 
-/// The right-click menu of an item in the Recycle Bin: Restore, Cut and Copy as Path (greyed),
-/// Delete for good, then Properties as the default row.
-/// An entry of a compressed folder opens (a file as a read-only copy) or copies out, or the
-/// whole archive extracts.
-fn archive_item_menu() -> Menu {
+/// An entry of a compressed folder opens (a file as a read-only copy) or copies out, the
+/// selection extracts beside the archive (greyed unless `extracts`), or the whole archive
+/// extracts.
+fn archive_item_menu(extracts: bool) -> Menu {
     let mut m = Menu::default();
     m.row(bold(tr!("menu-item-open"), true), Command::Open);
     m.sep();
     m.row(row(tr!("menu-item-copy"), true), Command::Copy);
     m.sep();
+    m.row(
+        row(tr!("menu-item-extract"), extracts),
+        Command::ExtractEntries,
+    );
     m.row(row(tr!("menu-item-extract-all"), true), Command::ExtractAll);
     m
 }
 
+/// The right-click menu of an item in the Recycle Bin: Restore, Cut and Copy as Path (greyed),
+/// Delete for good, then Properties as the default row.
 fn bin_item_menu() -> Menu {
     let mut m = Menu::default();
     m.row(row(tr!("menu-bin-item-restore"), true), Command::Restore);
