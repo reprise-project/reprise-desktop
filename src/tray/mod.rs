@@ -155,6 +155,11 @@ pub enum TrayEvent {
         close: bool,
         reply: async_channel::Sender<u32>,
     },
+    /// `org.reprise.Tray.CloseWindow`, answered on `reply`.
+    CloseWindow {
+        id: u64,
+        reply: async_channel::Sender<bool>,
+    },
     /// `org.reprise.Tray.TaskWindows`, answered on `reply`.
     WindowsByApp(async_channel::Sender<Vec<reprisebus::tray::AppWindow>>),
     /// `org.reprise.Tray.ActivationFor` from Explorer's FileManager1 or a single-instance program's
@@ -867,6 +872,10 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         TrayEvent::WindowsOf { pids, close, reply } => {
             let n = state.end_task_windows(&pids, close);
             let _ = reply.try_send(u32::try_from(n).unwrap_or(u32::MAX));
+            false
+        }
+        TrayEvent::CloseWindow { id, reply } => {
+            let _ = reply.try_send(state.end_task_window(id));
             false
         }
         TrayEvent::WindowsByApp(reply) => {

@@ -246,6 +246,23 @@ impl Shell {
         self.windows_of(conn, &hdr, pids, true).await
     }
 
+    /// The window `TaskWindows` lists as `id` asked to close; false when none is mapped.
+    async fn close_window(
+        &self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(header)] hdr: Header<'_>,
+        id: u64,
+    ) -> zbus::fdo::Result<bool> {
+        self.host_only.check(conn, &hdr).await?;
+        let (reply, answer) = async_channel::bounded(1);
+        emit(
+            &self.events,
+            self.eventfd,
+            TrayEvent::CloseWindow { id, reply },
+        );
+        Ok(answer.recv().await.unwrap_or(false))
+    }
+
     async fn count_windows(
         &self,
         #[zbus(connection)] conn: &Connection,
