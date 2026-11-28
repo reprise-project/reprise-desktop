@@ -125,6 +125,17 @@ impl Harness {
         steps: &[(f64, f64)],
         held: impl FnOnce(&mut Harness),
     ) {
+        self.swipe_around(fingers, steps, held, &[]);
+    }
+
+    /// [`Harness::swipe_with`] moving on through `after` once `held` has run.
+    pub fn swipe_around(
+        &mut self,
+        fingers: u32,
+        before: &[(f64, f64)],
+        held: impl FnOnce(&mut Harness),
+        after: &[(f64, f64)],
+    ) {
         let at = |i: usize, dx, dy| Swipe {
             ms: 1000 + 10 * i as u32,
             fingers,
@@ -134,13 +145,19 @@ impl Harness {
         let begin = at(0, 0.0, 0.0);
         self.state
             .process_input::<Touchpad>(InputEvent::GestureSwipeBegin { event: begin });
-        for (i, &(dx, dy)) in steps.iter().enumerate() {
-            let event = at(i + 1, dx, dy);
-            self.state
-                .process_input::<Touchpad>(InputEvent::GestureSwipeUpdate { event });
-        }
+        let mut i = 0;
+        let mut step = |h: &mut Harness, steps: &[(f64, f64)]| {
+            for &(dx, dy) in steps {
+                i += 1;
+                let event = at(i, dx, dy);
+                h.state
+                    .process_input::<Touchpad>(InputEvent::GestureSwipeUpdate { event });
+            }
+        };
+        step(self, before);
         held(self);
-        let end = at(steps.len() + 1, 0.0, 0.0);
+        step(self, after);
+        let end = at(before.len() + after.len() + 1, 0.0, 0.0);
         self.state
             .process_input::<Touchpad>(InputEvent::GestureSwipeEnd { event: end });
         self.dispatch();

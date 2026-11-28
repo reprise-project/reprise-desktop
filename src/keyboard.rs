@@ -287,6 +287,9 @@ impl State {
             KeyRoute::DragCancel if self.x11_drag_running() => true,
             _ => false,
         };
+        if pressed && !forward && self.overview.view.is_some() {
+            self.settle_kept_swipe_shown();
+        }
         if pressed {
             let owner = if forward { Owner::Client } else { Owner::Taken };
             self.key_input.held.press(keycode, owner);
