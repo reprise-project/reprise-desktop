@@ -443,6 +443,27 @@ pub fn mount_table(mounts: &[u8]) -> Vec<(PathBuf, String)> {
         .collect()
 }
 
+/// The mount point of `points` ([`mount_table`]'s) that `path` lies under, by its name alone: `..`
+/// is folded away and no link is followed, so nothing waits on a mount. `/` when none is.
+pub fn mount_point_of(points: &[PathBuf], path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut named = PathBuf::from("/");
+    for c in path.components() {
+        match c {
+            Component::Normal(n) => named.push(n),
+            Component::ParentDir => {
+                named.pop();
+            }
+            Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
+        }
+    }
+    (points.iter())
+        .filter(|m| named.starts_with(m))
+        .max_by_key(|m| m.components().count())
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
 /// Each mount point in `mounts` with its device, in table order, unescaped.
 pub fn mount_devices(mounts: &[u8]) -> Vec<(PathBuf, String)> {
     mount_lines(mounts)
@@ -934,6 +955,30 @@ mod tests {
         assert_eq!(d.kind().icon(), "media-optical");
         d.label = Some("MYDVD".into());
         assert_eq!(d.name(), "MYDVD (/run/media/u/DVD)");
+    }
+
+    #[test]
+    fn a_path_lies_on_the_deepest_mount_point_its_name_is_under() {
+        let mounts = b"\
+/dev/sda1 / ext4 rw 0 0
+u@h:/ /home/u/My\\040Box fuse.sshfs rw 0 0
+/dev/sdb1 /home/u/My\\040Box/usb vfat rw 0 0
+/dev/sdc1 /home/u/Mybox vfat rw 0 0
+";
+        let points: Vec<PathBuf> = mount_table(mounts).into_iter().map(|(m, _)| m).collect();
+        let on = |p: &str| mount_point_of(&points, Path::new(p));
+        assert_eq!(on("/home/u/My Box/a.png"), Path::new("/home/u/My Box"));
+        assert_eq!(
+            on("/home/u/My Box/usb/b/a.png"),
+            Path::new("/home/u/My Box/usb")
+        );
+        assert_eq!(
+            on("/home/u/My Boxes/a.png"),
+            Path::new("/"),
+            "whole names only"
+        );
+        assert_eq!(on("/home/u/My Box/../a.png"), Path::new("/"), "`..` folded");
+        assert_eq!(mount_point_of(&[], Path::new("/a")), Path::new("/"));
     }
 
     #[test]
