@@ -50,8 +50,8 @@ pub fn draw_field(
 }
 
 /// Render `d` at `theme.scale`; `layout` is the logical layout, `icon` the
-/// dialog's 32 px (times scale) icon, `caption_icon` the same icon at the
-/// theme's icon size for a styled caption.
+/// dialog's 32 px (times scale) icon unless `d.art` takes its place,
+/// `caption_icon` the same icon at the theme's icon size for a styled caption.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     theme: &Theme,
@@ -116,7 +116,12 @@ pub fn draw(
         let lay = t.layout(text, px, (client.x, client.y));
         t.draw(&mut c, text, &paint, &lay, cues, px);
     }
-    if let (Some(r), Some(ic)) = (layout.icon, icon) {
+    if let (Some(r), Some(art)) = (layout.icon, d.art) {
+        let r = r.scaled(s);
+        let (w, h) = art.size();
+        let (w, h) = (w as i32 * s, h as i32 * s);
+        art.paint(&mut c, r.x + (r.width - w) / 2, r.y + (r.height - h) / 2, s);
+    } else if let (Some(r), Some(ic)) = (layout.icon, icon) {
         let r = r.scaled(s);
         c.blit_over(
             r.x + (r.width - ic.width as i32) / 2,

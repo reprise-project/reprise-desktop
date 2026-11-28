@@ -117,6 +117,18 @@ impl Icon {
     }
 }
 
+impl PartialEq for Icon {
+    fn eq(&self, other: &Icon) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl std::fmt::Debug for Icon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)
+    }
+}
+
 macro_rules! icons {
     ($($(#[$doc:meta])* $id:ident = $file:literal;)*) => {
         $($(#[$doc])* pub static $id: Icon = Icon::new($file, include_bytes!(concat!("icons/", $file)));)*
@@ -192,6 +204,8 @@ icons! {
     DELETE_BADGE = "delete-badge.png";
     /// A set of files: two pages, the front one dog-eared, 32x32.
     SET = "set.png";
+    /// An open folder holding a dog-eared page, 32x32.
+    FOLDER_PAGE = "folder-page.png";
 }
 
 #[cfg(test)]
@@ -292,6 +306,7 @@ mod tests {
         for s in [1, 2] {
             out.push((format!("shortcut {s}"), iconview::shortcut_overlay(s)));
             out.push((format!("set {s}"), SET.canvas_at(s)));
+            out.push((format!("folder page {s}"), FOLDER_PAGE.canvas_at(s)));
         }
         out
     }

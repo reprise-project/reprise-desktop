@@ -243,6 +243,7 @@ fn confirm_hide_fits_its_text() {
     let mut d = Dialog::confirm_hide(Place::Computer, "Computer");
     assert_eq!(d.title, "Confirm Delete");
     assert_eq!(d.icon.as_deref(), Some("folder-documents"));
+    assert_eq!(d.art, Some(&reprisekit::art::icons::FOLDER_PAGE));
     assert_eq!(
         d.text,
         "Are you sure you want to delete the Computer icon from your desktop?\n\n\
