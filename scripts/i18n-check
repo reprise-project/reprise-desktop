@@ -12,6 +12,8 @@ import sys
 
 TREE = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parent.parent)
 SKIP = {"target", "tmp", ".git", "node_modules", "fixtures"}
+# A crate's domain is its strings!; reprisekit, which defines the macro, names its own in
+# Strings::new. Another crate's Strings::new reads a second domain and declares none.
 DOMAIN = re.compile(r'\bstrings!\(\s*"([\w-]+)"\s*\)|\bStrings::new\(\s*"([\w-]+)"')
 TR = re.compile(r'(?<![\w:])(?:\$?crate::|reprisekit::)?(kit_)?tr!\(\s*"([^"]*)"')
 MESSAGE = re.compile(r"^([A-Za-z][\w-]*)\s*=", re.M)
@@ -58,15 +60,20 @@ def main():
     used = {}
     for crate in crates:
         name = None
+        fallback = None
         ids = []
         for rs in sources(crate, crates):
             lines = rs.read_text().splitlines()
             text = "\n".join("" if l.lstrip().startswith("//") else l for l in lines)
             for m in DOMAIN.finditer(text):
-                name = m.group(1) or m.group(2)
+                if m.group(1):
+                    name = m.group(1)
+                else:
+                    fallback = fallback or m.group(2)
             for m in TR.finditer(text):
                 n = text.count("\n", 0, m.start()) + 1
                 ids.append(("reprisekit" if m.group(1) else None, m.group(2), f"{rs.relative_to(TREE)}:{n}"))
+        name = name or fallback
         if name:
             domains[name] = crate
         for domain, ident, at in ids:

@@ -4,8 +4,13 @@
 mod terms;
 
 use crate::search::{all_words, word_starts};
+use reprisekit::i18n::Value;
 use reprisekit::tr;
 use std::path::Path;
+use std::sync::OnceLock;
+
+/// Formats a settings message with its variables, for [`Page::terms_with`].
+pub type Lookup<'a> = &'a dyn Fn(&str, &[(&str, Value<'static>)]) -> String;
 
 /// The login manager's program; the Login Manager page applies only where it is installed.
 pub const LOGIN_MANAGER: &str = "/usr/bin/reprise-login";
@@ -572,15 +577,33 @@ impl Page {
     }
 
     /// Each labelled control on the page as (control id, label as shown), for search and --focus.
-    pub fn terms(self) -> &'static [(&'static str, &'static str)] {
-        terms::of(self)
+    /// Formatted once per process, as its catalog loads once.
+    pub fn terms(self) -> &'static [(&'static str, String)] {
+        static TERMS: OnceLock<Vec<Vec<(&'static str, String)>>> = OnceLock::new();
+        let all = TERMS.get_or_init(|| {
+            Page::all()
+                .map(|p| p.terms_with(&|id, args| terms::SETTINGS.tr_args(id, args)))
+                .collect()
+        });
+        &all[self.index()]
+    }
+
+    /// [`Page::terms`] with each label formatted by `tr` from its settings message, so Settings'
+    /// tests can read the labels from the catalog they draw the pages with.
+    pub fn terms_with(self, tr: Lookup) -> Vec<(&'static str, String)> {
+        terms::of(self, tr)
     }
 
     /// Matches when every word of `query` starts a word of the label, a keyword or a
     /// control label; a control's hit names the first control holding a word the page lacks.
     pub fn find(self, query: &str) -> Option<Hit> {
+        self.find_among(query, self.terms())
+    }
+
+    /// [`Page::find`] with the control labels `terms`.
+    fn find_among(self, query: &str, terms: &[(&'static str, String)]) -> Option<Hit> {
         match find_by_name(query, &self.label(), self.keywords()) {
-            Some(Hit::Keyword(_)) => return Some(Hit::Keyword(self.sole_control(query))),
+            Some(Hit::Keyword(_)) => return Some(Hit::Keyword(self.sole_control(query, terms))),
             Some(hit) => return Some(hit),
             None => {}
         }
@@ -592,7 +615,7 @@ impl Page {
         let all: Vec<&str> = page
             .iter()
             .copied()
-            .chain(self.terms().iter().map(|&(_, l)| l))
+            .chain(terms.iter().map(|(_, l)| l.as_str()))
             .collect();
         if !all_words(query, &all) {
             return None;
@@ -601,9 +624,9 @@ impl Page {
             .split_whitespace()
             .filter(|w| !page.iter().any(|h| word_starts(w, h)))
             .collect();
-        self.terms()
+        terms
             .iter()
-            .find(|&&(_, l)| rest.iter().any(|w| word_starts(w, l)))
+            .find(|(_, l)| rest.iter().any(|w| word_starts(w, l)))
             .map(|&(id, _)| Hit::Control(id))
     }
 
@@ -615,23 +638,22 @@ impl Page {
 
     /// Control `id`'s label as shown, without a trailing ":" or "...".
     pub fn control_label(self, id: &str) -> Option<&'static str> {
-        let &(_, label) = self.terms().iter().find(|&&(i, _)| i == id)?;
+        let (_, label) = self.terms().iter().find(|(i, _)| *i == id)?;
         Some(label.trim_end_matches("...").trim_end_matches(':'))
     }
 
-    /// The one control whose label holds every word of `query` the page label lacks; `None`
-    /// when no control or several do ("mouse speed" names three speeds).
-    fn sole_control(self, query: &str) -> Option<&'static str> {
+    /// The one control in `terms` whose label holds every word of `query` the page label lacks;
+    /// `None` when no control or several do ("mouse speed" names three speeds).
+    fn sole_control(self, query: &str, terms: &[(&'static str, String)]) -> Option<&'static str> {
         let label = self.label();
         let rest: Vec<&str> = query
             .split_whitespace()
             .filter(|w| !word_starts(w, &label))
             .collect();
         let rest = rest.join(" ");
-        let mut ids = self
-            .terms()
+        let mut ids = terms
             .iter()
-            .filter(|&&(_, l)| all_words(&rest, &[l]))
+            .filter(|(_, l)| all_words(&rest, &[l.as_str()]))
             .map(|&(id, _)| id);
         let id = ids.next()?;
         ids.all(|other| other == id).then_some(id)
@@ -918,6 +940,30 @@ mod tests {
             Some("wifi")
         );
         assert_eq!(network.keyword_for("network", "Network Connections"), None);
+    }
+
+    #[test]
+    fn a_control_is_found_by_its_translated_label_and_not_by_its_english_one() {
+        use reprisekit::i18n::Catalog;
+        let english = Catalog::english(terms::SETTINGS_EN);
+        let ftl: String = terms::of(Page::NightLight, &|id, args| english.tr_args(id, args))
+            .iter()
+            .zip(terms::ids(Page::NightLight))
+            .map(|((_, label), (_, id))| format!("{id} = {}\n", label.replace('e', "é")))
+            .collect();
+        let catalog = Catalog::from_texts(&[
+            ("en-XA".parse().unwrap(), ftl.as_str()),
+            ("en".parse().unwrap(), terms::SETTINGS_EN),
+        ]);
+        let pseudo = terms::of(Page::NightLight, &|id, args| catalog.tr_args(id, args));
+        let sun = Some(Hit::Control("nl_sun"));
+        assert_eq!(Page::NightLight.find_among("sunsét", &pseudo), sun);
+        assert_eq!(Page::NightLight.find_among("sunset", &pseudo), None);
+        assert_eq!(
+            Page::NightLight.find("sunset"),
+            sun,
+            "English draws English"
+        );
     }
 
     #[test]
