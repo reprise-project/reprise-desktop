@@ -20,9 +20,10 @@ const END_B: f64 = 4.2;
 const CORNER_MIN: f64 = 0.6;
 const CORNER_RUN: f64 = 3.0;
 
+/// Six 67 px tiles fill the file dialog's 403 px bar without scrolling.
 pub(super) fn metrics() -> PlacesMetrics {
     PlacesMetrics {
-        tile: 71,
+        tile: 67,
         icon_top: 5,
         ..PlacesMetrics::CLASSIC
     }

@@ -57,12 +57,12 @@ pub struct PlacesBar {
 }
 
 /// The tiles' metrics fitted to `r` ([`PlacesMetrics::fit`]), the scrollbar down its right side
-/// inside the border when the last tile's icon would end past it, and the first tile in view:
-/// [`PlacesBar::top`] held to the tiles there are now, 0 without a scrollbar.
+/// inside the border when the tiles, labels and all, would end past it, and the first tile in
+/// view: [`PlacesBar::top`] held to the tiles there are now, 0 without a scrollbar.
 fn fitted(pb: &PlacesBar, r: Rect, cm: &ControlMetrics) -> (PlacesMetrics, Option<Rect>, usize) {
     let pm = cm.places.fit(pb.places.len(), r.height);
     let n = pb.places.len() as i32;
-    let over = n > 0 && (n - 1) * pm.tile + pm.icon_top + pm.icon > r.height;
+    let over = n * pm.tile > r.height;
     let bar = over.then(|| {
         Rect::new(
             r.right() - BORDER - cm.scroll,
@@ -422,10 +422,10 @@ mod tests {
         assert_eq!(hit(&rects, 4, r.bottom() + 5), None);
     }
 
-    /// Under Blue a tile is 71 px and its icon sits 5 px down, so the
-    /// second tile's icon starts 76 px below the bar's top.
+    /// Under Blue a tile is 67 px and its icon sits 5 px down, so the
+    /// second tile's icon starts 72 px below the bar's top.
     #[test]
-    fn blues_tiles_are_71_px_with_the_icon_5_px_down() {
+    fn blues_tiles_are_67_px_with_the_icon_5_px_down() {
         use crate::theme::Color;
         const ICON: Color = Color::rgb(1, 2, 3);
         let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
@@ -438,14 +438,52 @@ mod tests {
         }
         let r = Rect::new(0, 0, WIDTH, 338);
         let rects = layout(&pb, r, &theme.look.controls_at_100());
-        assert_eq!(rects[1], Rect::new(0, 71, WIDTH, 71));
+        assert_eq!(rects[1], Rect::new(0, 67, WIDTH, 67));
         let mut c = Canvas::new(WIDTH as u32, 338);
         draw(&mut c, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
         let x = WIDTH / 2;
         for (y, want) in [(4, false), (5, true), (36, true), (37, false)] {
             for tile in [0, 1, 4] {
-                let y = tile * 71 + y;
+                let y = tile * 67 + y;
                 assert_eq!(c.get(x, y) == ICON.argb(), want, "tile {tile} row {y}");
+            }
+        }
+        let px = theme.fonts.size_px;
+        let max_w = WIDTH - 2 * BORDER - 4;
+        assert!(
+            (pb.places.iter()).any(|p| wrap_label(&text, &p.label, max_w, px).len() == 2),
+            "a label wraps onto two lines"
+        );
+        let cm = theme.look.controls_at_100();
+        assert!(
+            overflow(&pb, &text, r, &cm, px) <= 0,
+            "two-line labels fit a 67 px tile"
+        );
+    }
+
+    /// A Blue bar with room for the last tile's icon but not its label scrolls, so the label
+    /// never hangs below the bar.
+    #[test]
+    fn a_bar_short_of_the_last_label_scrolls_and_draws_nothing_below_it() {
+        let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
+        let cm = theme.look.controls_at_100();
+        let text = TextRenderer::load(&theme.fonts);
+        let mut pb = sample();
+        let icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
+        for p in &mut pb.places {
+            p.icon = Some(icon.clone());
+        }
+        let pm = cm.places;
+        let r = Rect::new(0, 0, WIDTH, 4 * pm.tile + pm.icon_top + pm.icon + 4);
+        assert!(
+            bar_parts(&pb, r, &cm).is_some(),
+            "the fifth label needs a scrollbar"
+        );
+        let mut c = Canvas::new(WIDTH as u32, (r.height + 20) as u32);
+        draw(&mut c, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
+        for y in r.bottom()..r.bottom() + 20 {
+            for x in 0..WIDTH {
+                assert_eq!(c.get(x, y), 0, "nothing at ({x}, {y}), under the bar");
             }
         }
     }
@@ -763,15 +801,14 @@ mod tests {
         assert_eq!(pb.top, 0, "nothing to scroll once they fit");
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
         let blue = blue.look.controls_at_100();
-        assert!(6 * blue.places.tile > 403);
         assert!(
             bar_parts(&pb, BAR, &blue).is_none(),
-            "Blue's sixth icon shows whole, so only its label runs past the bar"
+            "Blue's six built-in tiles fit the bar whole"
         );
         let short = Rect::new(0, 0, WIDTH, 5 * 65);
         assert!(
             bar_parts(&pb, short, &cm).is_some(),
-            "built-in tiles whose last icon runs past the bar scroll too"
+            "built-in tiles taller than the bar scroll too"
         );
         assert!(bar_parts(&pb, BAR, &cm).is_none());
         assert_eq!(layout(&pb, BAR, &cm)[0].width, WIDTH);
