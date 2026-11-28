@@ -121,6 +121,7 @@ impl State {
             owned: false,
             on_top: false,
             reopen: None,
+            bare_caption: false,
             consent: false,
             over_dialog: None,
             frame_scale: 1,

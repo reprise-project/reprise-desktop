@@ -10,7 +10,7 @@ These files share Reprise's GPL-3.0-or-later license:
 - Small icon PNGs in `crates/reprisekit/src/art/icons/` (loaded via `art::icons`) for tray status, Bluetooth devices, printer badges and Explorer overlays.
 - Reprise logo, app icons (`data/icons/hicolor/`), masks (`crates/reprisekit/src/art/logo/`) and lockups (`docs/logo/`), built by `scripts/logo/build.py`. Lockups embed Adwaita Sans outlines under the SIL Open Font License.
 - Screenshots in `docs/screenshots/`.
-- Wayland protocol specs: `protocols/reprise-input-v1.xml`, `protocols/reprise-tabs-v1.xml`, `protocols/reprise-on-top-v1.xml`, `protocols/reprise-reopen-v1.xml` and `protocols/reprise-output-trial-v1.xml`.
+- Wayland protocol specs: `protocols/reprise-input-v1.xml`, `protocols/reprise-tabs-v1.xml`, `protocols/reprise-on-top-v1.xml`, `protocols/reprise-reopen-v1.xml`, `protocols/reprise-caption-v1.xml` and `protocols/reprise-output-trial-v1.xml`.
 
 ## Fonts
 

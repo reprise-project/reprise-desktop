@@ -228,6 +228,7 @@ impl Host {
             tip: None,
             tip_waits: false,
             reopen: None,
+            bare: false,
             icon: self.app.window_icon(id),
         }
     }
@@ -255,6 +256,7 @@ impl Host {
         if reopen.is_some() {
             send_reopen(self.reopen_manager.as_ref(), &window, reopen.as_deref());
         }
+        let bare = self.ask_bare_caption(&window, MAIN);
         window.commit();
         let mut slot = self.new_slot(
             MAIN,
@@ -265,6 +267,7 @@ impl Host {
             caption,
         );
         slot.reopen = reopen;
+        slot.bare = bare;
         self.slots.insert(0, slot);
     }
 
@@ -483,6 +486,7 @@ impl Host {
             if reopen.is_some() {
                 send_reopen(self.reopen_manager.as_ref(), &window, reopen.as_deref());
             }
+            let bare = self.ask_bare_caption(&window, c.id);
             window.commit();
             let mut slot = self.new_slot(
                 c.id,
@@ -496,6 +500,7 @@ impl Host {
             slot.dialog = dialog;
             slot.parent = parent_id;
             slot.reopen = reopen;
+            slot.bare = bare;
             self.slots.push(slot);
         }
         let mut resized = Vec::new();
@@ -612,6 +617,30 @@ impl Host {
                 self.slots[i].reopen = want;
             }
         }
+    }
+
+    /// Asks for each toplevel's [`Extended::bare_caption`](crate::Extended::bare_caption) where
+    /// it differs from the last ask.
+    pub(crate) fn sync_bare_captions(&mut self) {
+        for i in 0..self.slots.len() {
+            let want = self.app.bare_caption(self.slots[i].id);
+            let s = &self.slots[i];
+            if want != s.bare
+                && let Some(w) = s.window.toplevel()
+            {
+                send_bare(self.caption_manager.as_ref(), w, want);
+                self.slots[i].bare = want;
+            }
+        }
+    }
+
+    /// A new toplevel's bare caption, asked before its first commit when the program wants one.
+    fn ask_bare_caption(&self, window: &Window, id: WinId) -> bool {
+        let bare = self.app.bare_caption(id);
+        if bare {
+            send_bare(self.caption_manager.as_ref(), window, true);
+        }
+        bare
     }
 
     pub(crate) fn sync_inhibitor(&mut self) {
@@ -928,6 +957,20 @@ fn send_reopen(
     if let Some(m) = manager {
         let arg = arg.filter(|a| a.len() <= wire::TEXT_MAX);
         m.set(window.xdg_toplevel(), arg.map(String::from));
+    }
+}
+
+fn send_bare(
+    manager: Option<&crate::caption::reprise_caption_v1::RepriseCaptionV1>,
+    window: &Window,
+    bare: bool,
+) {
+    use crate::caption::reprise_caption_v1::Style;
+    if let Some(m) = manager {
+        m.set(
+            window.xdg_toplevel(),
+            if bare { Style::Bare } else { Style::Full },
+        );
     }
 }
 

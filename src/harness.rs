@@ -2131,6 +2131,20 @@ pub mod reopen_client {
 
 wc::delegate_noop!(ClientSide: ignore reopen_client::reprise_reopen_v1::RepriseReopenV1);
 
+pub mod caption_client {
+    pub mod __interfaces {
+        use wayland_client::backend as wayland_backend;
+        use wayland_protocols::xdg::shell::client::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/reprise-caption-v1.xml");
+    }
+    use self::__interfaces::*;
+    use wayland_client;
+    use wayland_protocols::xdg::shell::client::*;
+    wayland_scanner::generate_client_code!("protocols/reprise-caption-v1.xml");
+}
+
+wc::delegate_noop!(ClientSide: ignore caption_client::reprise_caption_v1::RepriseCaptionV1);
+
 impl wc::Dispatch<input_client::reprise_sandboxed_v1::RepriseSandboxedV1, ()> for ClientSide {
     fn event(
         st: &mut Self,

@@ -1,0 +1,16 @@
+Light at 1 maximized=false active=true c9086779c67f5ebd
+Light at 1 maximized=false active=false 3c8f1a7666f450e3
+Light at 1 maximized=true active=true 6f2c8e1d7cc6534f
+Light at 1 maximized=true active=false 895434d62b33d952
+Light at 2 maximized=false active=true 0e3ea27633ac6f5d
+Light at 2 maximized=false active=false bd5696e21436f28d
+Light at 2 maximized=true active=true 58706f1981fbba6d
+Light at 2 maximized=true active=false 66a6386a8e82293d
+Dark at 1 maximized=false active=true c9086779c67f5ebd
+Dark at 1 maximized=false active=false 3c8f1a7666f450e3
+Dark at 1 maximized=true active=true 6f2c8e1d7cc6534f
+Dark at 1 maximized=true active=false 895434d62b33d952
+Dark at 2 maximized=false active=true 0e3ea27633ac6f5d
+Dark at 2 maximized=false active=false bd5696e21436f28d
+Dark at 2 maximized=true active=true 58706f1981fbba6d
+Dark at 2 maximized=true active=false 66a6386a8e82293d

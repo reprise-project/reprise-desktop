@@ -45,6 +45,7 @@ pub const PRIVILEGED_GLOBALS: &[&str] = &[
     "wp_security_context_manager_v1",
     "reprise_on_top_v1",
     "reprise_reopen_v1",
+    "reprise_caption_v1",
 ];
 
 pub fn is_privileged(name: &str) -> bool {

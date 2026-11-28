@@ -72,6 +72,8 @@ mod dialogs;
 mod fit_test;
 #[path = "gallery/glass.rs"]
 mod glass;
+#[path = "gallery/glass_caption.rs"]
+mod glass_caption;
 #[path = "gallery/glass_controls.rs"]
 mod glass_controls;
 #[path = "gallery/glass_panes.rs"]
@@ -203,6 +205,10 @@ fn write_scale(n: i32) {
     write_preview(
         || render_glass_navrow(n.max(1)),
         &format!("reprisekit-gallery-glass-navrow@{}.png", n.max(1)),
+    );
+    write_preview(
+        || glass_caption::render_glass_bare_captions(n.max(1)),
+        &format!("reprisekit-gallery-glass-bare-captions@{}.png", n.max(1)),
     );
     write_preview(
         || render_calendar_events(n.max(1)),
@@ -729,6 +735,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         write_preview(
             || render_glass_navrow(1),
             "reprisekit-gallery-glass-navrow.png",
+        );
+        write_preview(
+            || glass_caption::render_glass_bare_captions(1),
+            "reprisekit-gallery-glass-bare-captions.png",
         );
         write_preview(render_show_desktop, "reprisekit-gallery-show-desktop.png");
         write_preview(render_taskbar_top, "reprisekit-gallery-taskbar-top.png");

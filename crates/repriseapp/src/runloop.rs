@@ -1,5 +1,6 @@
 //! Connecting to the compositor and running the event loop.
 
+use crate::caption::reprise_caption_v1;
 use crate::deliver::blink_target;
 use crate::look::{Look, publish_theme, sized, text_for};
 use crate::reopen::reprise_reopen_v1;
@@ -207,6 +208,9 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
     let reopen_manager = globals
         .bind::<reprise_reopen_v1::RepriseReopenV1, _, _>(&qh, 1..=1, NoEvents)
         .ok();
+    let caption_manager = globals
+        .bind::<reprise_caption_v1::RepriseCaptionV1, _, _>(&qh, 1..=1, NoEvents)
+        .ok();
     // The main window itself is `sync_main`'s, so a program that starts
     // hidden never gets a surface for it.
     let ((w, h), _) = opening_size(&*app);
@@ -271,6 +275,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         tab_groups,
         on_top_manager,
         reopen_manager,
+        caption_manager,
         on_top: false,
         outputs: None,
         inhibit_manager,
@@ -536,6 +541,7 @@ no_events!(
     zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
     reprise_tabs_v1::RepriseTabsV1,
     reprise_reopen_v1::RepriseReopenV1,
+    reprise_caption_v1::RepriseCaptionV1,
     wp_viewporter::WpViewporter,
     wp_viewport::WpViewport,
     wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,

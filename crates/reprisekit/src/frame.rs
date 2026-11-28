@@ -263,6 +263,8 @@ pub struct FrameState<'a> {
     pub pressed: Option<CaptionButton>,
     pub glow: Glow,
     pub icon: Option<&'a Canvas>,
+    /// No window icon or title on the caption: a tab strip draws over it, or the window asked
+    /// for a bare caption.
     pub tabbed: bool,
 }
 

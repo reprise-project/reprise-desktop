@@ -18,6 +18,7 @@ mod bell;
 mod bellflash;
 mod calendarview;
 mod camdev;
+mod captionproto;
 mod capture;
 mod captureborder;
 mod caret;

@@ -55,6 +55,12 @@ pub trait Extended {
     fn reopen(&self, _win: WinId) -> Option<String> {
         None
     }
+    /// Whether toplevel `win`'s caption leaves out the window icon and the title, for a window
+    /// that names its place in its own client area; the title still names it on the taskbar and
+    /// in the switcher. Read when its window is made and after every event.
+    fn bare_caption(&self, _win: WinId) -> bool {
+        false
+    }
     /// The smallest client size resizable window `win` can be dragged
     /// to, read when its window is made; `None` keeps a child's wanted
     /// size, or `MIN_SIZE` for the main window, as the floor.

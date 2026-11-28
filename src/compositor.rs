@@ -669,6 +669,7 @@ impl State {
         let tabs_global = crate::tabsproto::advertise(&dh, config.window_tabs, None);
         crate::ontopproto::advertise(&dh);
         crate::reopenproto::advertise(&dh);
+        crate::captionproto::advertise(&dh);
         crate::outputtrial::advertise(&dh);
         crate::toplevelsdrag::advertise(&dh);
         let clip = crate::clipboard::Clip::new(&dh);

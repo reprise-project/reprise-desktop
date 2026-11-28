@@ -287,7 +287,7 @@ impl State {
             pressed: win.pressed,
             glow: reprisekit::frame::Glow(std::array::from_fn(|i| win.glow[i].level(now))),
             icon: icon.as_deref(),
-            tabbed: strip.is_some(),
+            tabbed: strip.is_some() || win.bare_caption,
         };
         let tabs = strip.as_ref().map(|st| CaptionTabs {
             tabs: (st.tabs.iter())

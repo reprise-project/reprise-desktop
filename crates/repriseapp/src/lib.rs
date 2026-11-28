@@ -10,6 +10,7 @@ pub mod about;
 mod access;
 mod app;
 pub mod asks;
+mod caption;
 mod clipboard;
 pub mod colordlg;
 mod ctx;
@@ -215,6 +216,8 @@ struct Slot {
     tip_waits: bool,
     /// The [`Extended::reopen`] argument last sent for it.
     reopen: Option<String>,
+    /// The [`Extended::bare_caption`] last asked for it.
+    bare: bool,
     /// The [`Extended::window_icon`] last sent for it.
     icon: Option<&'static str>,
 }
@@ -371,6 +374,7 @@ struct Host {
     tab_groups: Option<reprise_tabs_v1::RepriseTabsV1>,
     on_top_manager: Option<ontop::reprise_on_top_v1::RepriseOnTopV1>,
     reopen_manager: Option<reopen::reprise_reopen_v1::RepriseReopenV1>,
+    caption_manager: Option<caption::reprise_caption_v1::RepriseCaptionV1>,
     /// Whether the compositor keeps the main window on top, as last asked or heard.
     on_top: bool,
     outputs: Option<outputmgmt::Outputs>,
