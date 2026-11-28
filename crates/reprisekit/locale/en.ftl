@@ -903,6 +903,12 @@ toolbar-up = Up
 toolbar-folders = Folders
 toolbar-views = Views
 toolbar-create-new-folder = Create New Folder
+
+## A command bar: the » button holding the commands that do not fit, a split command's arrow, the help mark
+commandbar-more = More commands
+# command is the name of the command or button the arrow belongs to.
+commandbar-more-options = { $command } options
+commandbar-help = Help
 mixer-mute-all = Mute all
 mixer-mute = Mute
 mixer-select = Select

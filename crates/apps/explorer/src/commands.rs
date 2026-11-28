@@ -86,6 +86,9 @@ pub enum Command {
     Sort(usize),
     ToggleFolders,
     ToggleStatusBar,
+    /// Organize > Layout under Glass: the menu bar kept shown, the details pane, the navigation
+    /// pane.
+    ToggleLayout(LayoutPart),
     /// View > Hidden Items and Ctrl+H.
     ToggleHidden,
     FolderOptions,
@@ -125,6 +128,13 @@ pub enum Command {
     /// The selected folder in a tab behind the open one.
     OpenInNewTab,
     Nothing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutPart {
+    MenuBar,
+    DetailsPane,
+    NavPane,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -449,6 +459,18 @@ impl Explorer {
             }
             Command::ToggleStatusBar => {
                 self.settings.status_bar = !self.settings.status_bar;
+                self.settings_dirty = true;
+                self.refresh_chrome(ctx);
+                Reply::redraw()
+            }
+            Command::ToggleLayout(part) => {
+                let s = &mut self.settings;
+                let on = match part {
+                    LayoutPart::MenuBar => &mut s.menu_bar,
+                    LayoutPart::DetailsPane => &mut s.details_pane,
+                    LayoutPart::NavPane => &mut s.nav_pane,
+                };
+                *on = !*on;
                 self.settings_dirty = true;
                 self.refresh_chrome(ctx);
                 Reply::redraw()

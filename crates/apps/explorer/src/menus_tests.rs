@@ -1214,6 +1214,11 @@ fn no_two_rows_of_a_menu_share_an_access_key() {
             &format!("{n} background"),
             &mut found,
         );
+        shared_keys(
+            &organize_menu(s).tree(),
+            &format!("{n} organize"),
+            &mut found,
+        );
         let kinds = [
             ItemKind::Folder,
             ItemKind::File,

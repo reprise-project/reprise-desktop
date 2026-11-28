@@ -6,7 +6,7 @@
 //! so they cannot drift. A row's address is an index path: `[9]` for a row of
 //! the menu, `[9, 2]` for the third row of its submenu.
 
-use crate::commands::{Command, Menu};
+use crate::commands::{Command, LayoutPart, Menu};
 use crate::favorites::RowIcon;
 use crate::place::Place;
 use reprisefs::ops::DropOp;
@@ -38,6 +38,8 @@ pub struct MenuState {
     pub can_undo: Option<&'static str>,
     pub folders: bool,
     pub status_bar: bool,
+    /// Organize > Layout's checks under Glass: menu bar, details pane, navigation pane.
+    pub layout: [bool; 3],
     /// View > Hidden Items: dot names and those a folder's `.hidden` lists are shown.
     pub hidden: bool,
     pub toolbars: [bool; 3],
@@ -102,6 +104,7 @@ impl Default for MenuState {
             can_undo: None,
             folders: true,
             status_bar: true,
+            layout: [false, true, true],
             hidden: false,
             toolbars: [true, true, false],
             read_only: false,
@@ -632,6 +635,91 @@ pub fn command_for(title: usize, path: &[usize], state: &MenuState) -> Command {
         Some((_, menu)) => menu.command(path),
         None => Command::Nothing,
     }
+}
+
+/// The command bar's Organize: the Edit and File rows a selection takes, Layout's three panes and
+/// the folder options, greyed for `state` as the menu bar's are.
+pub fn organize_menu(state: &MenuState) -> Menu {
+    let sel = state.selection > 0;
+    let files = state.selection > state.shell_rows;
+    let writable = files && !state.read_only;
+    let copyable = files && state.bin.is_none();
+    let pasteable = (state.can_paste || state.can_paste_image) && !state.read_only;
+    let mut m = Menu::default();
+    m.row(keyed(tr!("menu-bar-cut"), writable, "Ctrl+X"), Command::Cut);
+    m.row(
+        keyed(tr!("menu-bar-copy"), copyable, "Ctrl+C"),
+        Command::Copy,
+    );
+    m.row(
+        keyed(tr!("menu-bar-paste"), pasteable, "Ctrl+V"),
+        Command::Paste,
+    );
+    m.row(undo_row(state), Command::Undo);
+    m.sep();
+    m.row(
+        keyed(tr!("menu-bar-select-all"), true, "Ctrl+A"),
+        Command::SelectAll,
+    );
+    m.sep();
+    let mut layout = Menu::default();
+    for (label, part, on) in [
+        (
+            tr!("organize-menu-bar"),
+            LayoutPart::MenuBar,
+            state.layout[0],
+        ),
+        (
+            tr!("organize-details-pane"),
+            LayoutPart::DetailsPane,
+            state.layout[1],
+        ),
+        (
+            tr!("organize-navigation-pane"),
+            LayoutPart::NavPane,
+            state.layout[2],
+        ),
+    ] {
+        layout.row(check(label, true, on), Command::ToggleLayout(part));
+    }
+    m.sub(row(tr!("organize-layout"), true), layout);
+    m.row(
+        row(tr!("organize-folder-and-search-options"), true),
+        Command::FolderOptions,
+    );
+    m.sep();
+    let (delete, erase) = match state.bin {
+        Some(_) => (sel, true),
+        None => (writable, false),
+    };
+    m.row(
+        row(tr!("menu-bar-delete"), delete),
+        Command::Delete { erase },
+    );
+    m.row(
+        row(tr!("menu-bar-rename"), writable || state.relabel),
+        Command::Rename,
+    );
+    m.row(
+        row(
+            tr!("menu-bar-properties"),
+            !state.sheetless && (sel || !state.read_only || state.bin.is_some()),
+        ),
+        Command::Properties,
+    );
+    m.sep();
+    m.row(row(tr!("organize-close"), true), Command::Close);
+    m
+}
+
+/// The command bar's New folder drop: the File menu's New rows.
+pub fn new_items_menu(state: &MenuState) -> Menu {
+    new_menu(state)
+}
+
+/// The command bar's Open drop: the item menu's Open With rows.
+pub fn open_with_items(open_with: &[(String, Option<Canvas>)]) -> Menu {
+    open_with_menu(open_with)
 }
 
 pub fn views_menu(mode: Mode) -> Menu {

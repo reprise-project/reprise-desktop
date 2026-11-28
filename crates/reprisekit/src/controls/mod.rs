@@ -19,6 +19,7 @@ pub mod colordlg;
 pub mod colorpick;
 mod columns;
 pub mod combo;
+pub mod commandbar;
 pub mod copyprogress;
 pub mod deskwidget;
 pub mod displaypanel;
