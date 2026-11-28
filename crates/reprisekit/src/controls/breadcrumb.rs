@@ -456,8 +456,12 @@ pub fn hit(b: &Breadcrumb, lay: &Layout, x: i32, y: i32) -> Hit {
     if x < lay.overflow.x {
         return Hit::Icon;
     }
+    // With nothing folded the lead arrow only leads into the crumbs: it is the field's blank.
     if lay.overflow.contains(x, y) {
-        return Hit::Overflow;
+        return match lay.folded {
+            0 => Hit::Empty,
+            _ => Hit::Overflow,
+        };
     }
     for seg in &lay.segments {
         // The chevron wins the column it shares with its button.
@@ -529,17 +533,28 @@ pub fn draw(
         return;
     }
     draw_frame(c, p, lay.frame, face);
-    let glass = p.look.style().filter(|_| has(p, StylePart::SearchGlass));
+    let look = p.small_look(c);
+    let grown = p.small(&look);
+    let glass = grown
+        .look
+        .style()
+        .filter(|_| has(p, StylePart::SearchGlass));
     match (b.searching, glass) {
         (true, Some(st)) => {
-            let m = searchfield::MAGNIFIER;
+            let m = small * searchfield::MAGNIFIER;
             let r = Rect::new(
                 lay.icon.x + (lay.icon.width - m) / 2,
                 lay.icon.y + (lay.icon.height - m) / 2,
                 m,
                 m,
             );
-            st.draw(c, r.scaled(s), StylePart::SearchGlass, State::Normal, s);
+            st.draw(
+                c,
+                r.scaled(s),
+                StylePart::SearchGlass,
+                State::Normal,
+                grown.s,
+            );
         }
         _ => {
             if let Some(icon) = b.icon() {
@@ -695,12 +710,14 @@ pub fn access(
         pathcomplete::access(&b.edit.complete, &lay.edit.complete, tree, combo);
         focus
     } else {
-        button(
-            tree,
-            ("overflow", 0),
-            lay.overflow,
-            &tr!("breadcrumb-overflow"),
-        );
+        if lay.folded > 0 {
+            button(
+                tree,
+                ("overflow", 0),
+                lay.overflow,
+                &tr!("breadcrumb-overflow"),
+            );
+        }
         for seg in &lay.segments {
             let name = &b.crumbs[seg.crumb].label;
             button(tree, ("segment", seg.crumb), seg.button, name);

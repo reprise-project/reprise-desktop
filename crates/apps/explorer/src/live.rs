@@ -111,7 +111,8 @@ impl Explorer {
     /// decodes them, and thumbnails made at another one are asked for again. A new icon theme
     /// fetches the chrome again and re-lists. A new text size rebuilds the task pane and fetches
     /// the toolbar's and the Folders tree's icons at their size. A switch to or from a look whose
-    /// frame runs under the client builds the Folders tree or the navigation pane in its place.
+    /// frame runs under the client builds the Folders tree or the navigation pane in its place,
+    /// and a switch of layout or text size draws the details and preview panes afresh.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
         let nav = reprisekit::look::client_glass(&ctx.theme, true).is_some();
         if (self.tree.style == treeview::Style::Nav) != nav {
@@ -151,6 +152,19 @@ impl Explorer {
         {
             self.build_taskpane(ctx);
         }
+        self.follow_look(ctx);
+        let panes = (self.shell_on, ctx.theme.text);
+        if self
+            .panes_drawn
+            .replace(panes)
+            .is_some_and(|was| was != panes)
+        {
+            if let Some(p) = self.pane.as_mut() {
+                p.follow_text(ctx);
+            }
+            self.sync_details(ctx);
+            self.sync_pane(ctx);
+        }
     }
 
     /// The view drawn in mode `m`, its icons and thumbnails asked for at that mode's sizes.
@@ -160,6 +174,15 @@ impl Explorer {
         // Thumbnails and Tiles are the modes that show one, so switching into either is when
         // the decode is asked for.
         self.request_thumbs(ctx.icons.scale());
+    }
+
+    /// Icon files decoded for the entries landed: the details pane wears the selection's anew.
+    fn land_list_icons(&mut self, ctx: &mut Ctx) -> bool {
+        let landed = self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
+        if landed {
+            self.sync_details(ctx);
+        }
+        landed
     }
 
     /// The entries wear their theme icons at every size the view now draws.
@@ -242,7 +265,7 @@ impl Explorer {
             | self.take_link_status(ctx)
             | self.take_space(std::time::Duration::ZERO)
             | self.take_folder_free(std::time::Duration::ZERO, ctx)
-            | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons)
+            | self.land_list_icons(ctx)
             | self.land_address_completion(ctx)
             | self.land_crumb_menu(ctx);
         let mut arrived: Vec<PathBuf> = Vec::new();
@@ -337,18 +360,19 @@ impl Explorer {
         dirty |= !holders.is_empty();
         let shown = self.place.path();
         let watched = self.watch.as_mut().is_some_and(|w| w.take_changed());
-        if watched {
-            // A folder made or removed here gives or takes its Folders node's +.
-            let here = self.place.clone();
-            self.refill_tree_node(&here, ctx);
-        }
         let relisted = broken
             || shown
                 .as_ref()
                 .is_some_and(|p| due.contains(p) || holders.contains(p));
+        // A folder made or removed here gives or takes its Folders node's +; the refresh reads
+        // the node again itself.
         if (watched || relisted) && !self.search.hold_change() {
             let r = self.refresh(ctx);
             return put.unwrap_or_default().and(r);
+        }
+        if watched {
+            let here = self.place.clone();
+            self.refill_tree_node(&here, ctx);
         }
         if let Some(r) = self.rerun_stale(ctx) {
             return put.unwrap_or_default().and(r);
@@ -1303,6 +1327,24 @@ pub(crate) mod tests {
             assert_eq!(drawn.map(|c| c.width), Some(px), "{mode:?}");
         }
         assert_eq!(widths(&ex), [Some(16), Some(32), Some(48)]);
+    }
+
+    /// A new text size fetches the breadcrumb's place icon again at the size the field grew to.
+    #[test]
+    fn a_text_size_switch_grows_the_crumbs_place_icon() {
+        let root = tempfile::tempdir().expect("a temp dir");
+        let mut ctx = test_ctx();
+        ctx.icons = chrome_theme(root.path());
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.follow_scale(1, &mut ctx);
+        let worn = |ex: &Explorer| ex.crumbs.icon().map(|c| c.width);
+        assert_eq!(worn(&ex), Some(16));
+        ctx.theme = ctx.theme.with_text_size(200);
+        ex.follow_scale(1, &mut ctx);
+        let grown = reprisekit::controls::addressbar::field_icon_px(ctx.theme.text);
+        assert!(grown > 16, "the field grows its icon");
+        assert_eq!(worn(&ex), Some(grown as u32));
     }
 
     /// A theme carrying every name the window's chrome asks for, each a flat square at 16, 24,

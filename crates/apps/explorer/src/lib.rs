@@ -280,6 +280,10 @@ pub struct Explorer {
     /// A mount holding the place arrived after the tree followed it there: the tree follows the
     /// place again once Computer's node is read, unless a walk to the place got there first.
     pub(crate) refollow: bool,
+    /// A place the Folders tree stopped short of, as a folder on its way was read before the next
+    /// one was made, and that folder while its read again is out. The tree follows the place
+    /// when that read lands, and not again while the window stays there.
+    pub(crate) chasing: Option<(Place, Option<Place>)>,
     /// A connection to a server under way ([`shares`]).
     pub(crate) connection: Option<shares::Connection>,
     /// The address last typed into Connect to Server, offered again.
@@ -447,6 +451,9 @@ pub struct Explorer {
     pane_drag: Option<i32>,
     /// Glass's preview pane while it shows ([`Explorer::sync_pane`]).
     pub(crate) pane: Option<previewpane::Pane>,
+    /// The layout and text size the details and preview panes were last drawn for; a switch of
+    /// either draws them afresh.
+    panes_drawn: Option<(bool, reprisekit::theme::TextUnits)>,
     /// A marquee drag in the view; its rectangle lives in `sv.marquee`.
     marquee_from: Option<shellview::MarqueeDrag>,
     /// A Details column divider drag: the column, the press position and the column's 100% width then.
@@ -689,6 +696,7 @@ impl Explorer {
             portable: Vec::new(),
             portable_changes: None,
             refollow: false,
+            chasing: None,
             connection: None,
             last_server: String::new(),
             udisks,
@@ -802,6 +810,7 @@ impl Explorer {
             dragging: None,
             pane_drag: None,
             pane: None,
+            panes_drawn: None,
             marquee_from: None,
             resizing: None,
             thumb: ThumbDrag::default(),
@@ -1349,8 +1358,11 @@ impl Explorer {
     }
 
     /// Re-list the current place, keeping the selection by path and leaving the
-    /// history alone: F5, View > Refresh, and Enter on the address already shown.
+    /// history alone: F5, View > Refresh, and Enter on the address already shown. The Folders
+    /// tree reads the place's node again.
     pub fn refresh(&mut self, ctx: &mut Ctx) -> Reply {
+        let here = self.place.in_tree();
+        self.refill_tree_node(&here, ctx);
         if let Some(reply) = self.search_again(ctx) {
             return reply;
         }
@@ -2372,10 +2384,12 @@ impl Explorer {
             reply.redraw |= self.cmdbar.focus.take().is_some();
         }
         // The pointer or the keyboard came to or left the navigation pane, or its fade ticked.
+        // A file waits in the preview pane behind a read out, or that read stalled.
         if win == MAIN {
             let (faded, fading) = self.nav_fade();
-            reply.redraw |= faded;
-            reply.tick |= fading;
+            let (stalled, waiting) = self.pane_stall(std::time::Instant::now());
+            reply.redraw |= faded || stalled;
+            reply.tick |= fading || waiting;
         }
         let mut reply = self.raise_waiting(reply, ctx);
         reply.tick_wins.extend(self.held_progress_moved());

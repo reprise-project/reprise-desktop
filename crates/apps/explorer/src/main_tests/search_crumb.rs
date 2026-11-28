@@ -165,3 +165,29 @@ fn the_search_crumb_pins_light_and_dark_at_scale_1_and_2() {
     let path = reprisekit::crate_dir!().join("tests/pins/search_crumb.txt");
     reprisekit::pins::check_file(&path, &got);
 }
+
+#[test]
+fn the_search_crumbs_chevron_lists_the_searched_folders_subfolders() {
+    let (dir, mut ex, mut ctx) = searching_docs();
+    std::fs::create_dir(dir.path().join("Documents/Old")).expect("mkdir");
+    std::fs::create_dir(dir.path().join("Beside")).expect("mkdir");
+    let sl = shell(&ex, &ctx);
+    let (px, cm) = (ctx.theme.fonts.size_px, ctx.theme.controls());
+    let bl = breadcrumb::layout(&ex.crumbs, sl.address, &ctx.text, px, &cm);
+    let chevron = bl.segments[0].chevron;
+    let (x, y) = (
+        chevron.x + chevron.width / 2,
+        chevron.y + chevron.height / 2,
+    );
+    click(&mut ex, x, y, &mut ctx);
+    let popup = ex.popup.as_ref().expect("the chevron's menu opens");
+    let rows: Vec<(String, bool)> = (popup.tree().items().iter())
+        .filter_map(|it| match it {
+            reprisekit::controls::menu::MenuItem::Entry { label, bold, .. } => {
+                Some((label.clone(), *bold))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rows, [("Old".to_string(), false)]);
+}

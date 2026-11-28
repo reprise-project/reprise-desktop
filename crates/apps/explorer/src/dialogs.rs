@@ -651,7 +651,11 @@ impl Explorer {
         self.error_icon.as_ref().and_then(IconSlot::icon)
     }
 
+    /// The box naming `typed`; the Address keeps the text selected, so typing again replaces it.
     pub fn not_found(&mut self, typed: &str, ctx: &mut Ctx) -> Reply {
+        if let Some(edit) = self.address.combo.edit.as_mut() {
+            edit.select_all();
+        }
         let text = place::not_found_text(typed);
         self.message_box(&tr!("dialogs-not-found-explorer"), text, ctx)
     }

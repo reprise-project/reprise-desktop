@@ -269,3 +269,159 @@ fn a_blocked_listing_pool_does_not_block_the_pane() {
     assert_eq!(text(&ex).as_deref(), Some("first line\nsecond line\n"));
     ex.held = None;
 }
+
+/// A pane whose reads block until the returned lock's write guard drops.
+fn gated(ctx: &Ctx) -> (Pane, Arc<std::sync::RwLock<()>>) {
+    let gate = Arc::new(std::sync::RwLock::new(()));
+    let installed = crate::panereader::Parts::installed();
+    let real = installed.fetch.clone();
+    let held = gate.clone();
+    let parts = crate::panereader::Parts {
+        fetch: Arc::new(move |p, cap, opened| {
+            drop(held.read());
+            real(p, cap, opened)
+        }),
+        ..installed
+    };
+    (Pane::with_parts(ctx, parts), gate)
+}
+
+#[test]
+fn a_file_picked_behind_a_stalled_read_says_it_has_no_preview_until_its_own_lands() {
+    let mut ctx = glass(false);
+    let (_dir, mut ex) = shown(&mut ctx);
+    let (pane, gate) = gated(&ctx);
+    let closed = gate.write().expect("lock");
+    ex.pane = Some(pane);
+    pick(&mut ex, &["notes.txt"], &mut ctx);
+    pick(&mut ex, &["other.txt"], &mut ctx);
+    let now = std::time::Instant::now();
+    assert_eq!(ex.pane_stall(now), (false, true), "waits blank, ticking");
+    assert_eq!(note(&ex).as_deref(), Some(""));
+    assert_eq!(ex.pane_stall(now + STALLED), (true, false));
+    assert_eq!(note(&ex).as_deref(), Some("No preview available."));
+    pick(&mut ex, &["blob.bin"], &mut ctx);
+    pick(&mut ex, &["other.txt"], &mut ctx);
+    assert_eq!(
+        ex.pane_stall(now + STALLED),
+        (true, false),
+        "at once while it stalls"
+    );
+    assert_eq!(ex.pane.as_ref().map(|p| p.started), Some(1), "one read out");
+    drop(closed);
+    wake_until(&mut ex, &mut ctx, |ex| text(ex).is_some());
+    assert_eq!(
+        text(&ex).as_deref(),
+        Some("other file\n"),
+        "its own read lands"
+    );
+}
+
+#[test]
+fn the_file_read_out_waits_blank_without_a_stall_note() {
+    let mut ctx = glass(false);
+    let (_dir, mut ex) = shown(&mut ctx);
+    let (pane, gate) = gated(&ctx);
+    let closed = gate.write().expect("lock");
+    ex.pane = Some(pane);
+    pick(&mut ex, &["notes.txt"], &mut ctx);
+    let later = std::time::Instant::now() + STALLED;
+    assert_eq!(ex.pane_stall(later), (false, false));
+    assert_eq!(note(&ex).as_deref(), Some(""));
+    drop(closed);
+    wake_until(&mut ex, &mut ctx, |ex| text(ex).is_some());
+}
+
+#[test]
+fn a_text_size_switch_draws_the_preview_and_details_panes_afresh() {
+    let mut ctx = glass(false);
+    let (_dir, mut ex) = shown(&mut ctx);
+    ex.follow_scale(1, &mut ctx);
+    pick(&mut ex, &["notes.txt"], &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| text(ex).is_some());
+    let mono = |ex: &Explorer| ex.pane.as_ref().map(|p| p.mono_px());
+    assert_eq!(mono(&ex), Some(13));
+    ctx.theme = ctx.theme.with_text_size(200);
+    ex.follow_scale(1, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| text(ex).is_some());
+    assert_eq!(mono(&ex), Some(26), "the text box set at the new size");
+    assert_eq!(ex.details.facts.title, "notes.txt");
+}
+
+#[test]
+fn a_switch_into_glass_shows_the_selection_in_the_preview_pane() {
+    let mut ctx = glass(false);
+    let (_dir, mut ex) = shown(&mut ctx);
+    let glass_theme = ctx.theme.clone();
+    ctx.theme = reprisekit::interfaces::theme_for(Interface::Classic);
+    ex.follow_scale(1, &mut ctx);
+    pick(&mut ex, &["notes.txt"], &mut ctx);
+    assert!(ex.pane.is_none(), "Classic has no preview pane");
+    ctx.theme = glass_theme;
+    ex.follow_scale(1, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| text(ex).is_some());
+    assert_eq!(ex.details.facts.title, "notes.txt");
+}
+
+/// A pane whose reads each wait for one send on the returned channel.
+fn stepped(ctx: &Ctx) -> (Pane, std::sync::mpsc::Sender<()>) {
+    let (step, steps) = std::sync::mpsc::channel::<()>();
+    let steps = std::sync::Mutex::new(steps);
+    let installed = crate::panereader::Parts::installed();
+    let real = installed.fetch.clone();
+    let parts = crate::panereader::Parts {
+        fetch: Arc::new(move |p, cap, opened| {
+            let _ = steps.lock().expect("steps").recv();
+            real(p, cap, opened)
+        }),
+        ..installed
+    };
+    (Pane::with_parts(ctx, parts), step)
+}
+
+#[test]
+fn the_stall_note_stays_while_the_waiting_files_own_read_runs() {
+    let mut ctx = glass(false);
+    let (_dir, mut ex) = shown(&mut ctx);
+    let (pane, step) = stepped(&ctx);
+    ex.pane = Some(pane);
+    pick(&mut ex, &["notes.txt"], &mut ctx);
+    pick(&mut ex, &["other.txt"], &mut ctx);
+    let later = std::time::Instant::now() + STALLED;
+    assert_eq!(ex.pane_stall(later), (true, false));
+    step.send(()).expect("step");
+    wake_until(&mut ex, &mut ctx, |ex| {
+        ex.pane.as_ref().is_some_and(|p| p.started == 2)
+    });
+    assert_eq!(note(&ex).as_deref(), Some("No preview available."));
+    step.send(()).expect("step");
+    wake_until(&mut ex, &mut ctx, |ex| text(ex).is_some());
+    assert_eq!(text(&ex).as_deref(), Some("other file\n"));
+}
+
+#[test]
+fn a_look_or_text_size_switch_keeps_the_one_read_out() {
+    let mut ctx = glass(false);
+    let (_dir, mut ex) = shown(&mut ctx);
+    ex.follow_scale(1, &mut ctx);
+    let (pane, gate) = gated(&ctx);
+    let fetch = pane.parts.fetch.clone();
+    let closed = gate.write().expect("lock");
+    ex.pane = Some(pane);
+    pick(&mut ex, &["notes.txt"], &mut ctx);
+    let glass_theme = ctx.theme.clone();
+    ctx.theme = ctx.theme.with_text_size(200);
+    ex.follow_scale(1, &mut ctx);
+    ctx.theme = reprisekit::interfaces::theme_for(Interface::Classic);
+    ex.follow_scale(1, &mut ctx);
+    ctx.theme = glass_theme.with_text_size(200);
+    ex.follow_scale(1, &mut ctx);
+    let p = ex.pane.as_ref().expect("the pane");
+    assert!(Arc::ptr_eq(&p.parts.fetch, &fetch), "the same reader");
+    assert_eq!((p.started, p.reading()), (1, true), "one read out");
+    assert_eq!(p.mono_px(), 26);
+    drop(closed);
+    wake_until(&mut ex, &mut ctx, |ex| text(ex).is_some());
+    assert_eq!(text(&ex).as_deref(), Some("first line\nsecond line\n"));
+    assert_eq!(ex.pane.as_ref().map(|p| p.started), Some(1));
+}

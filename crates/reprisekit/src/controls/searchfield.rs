@@ -30,7 +30,8 @@ pub const GAP: i32 = 8;
 pub const NAV_WIDTH: i32 = 109;
 /// From the nav field's left edge to its text and cue.
 pub const NAV_TEXT_X: i32 = 8;
-/// The clear button inside the nav field's right edge, the whole height inside its frame.
+/// The clear button inside the nav field's right edge, the whole height inside its frame, and
+/// the magnifier there; both grow by the text's whole multiple ([`TextUnits::small`]).
 pub const CLEAR_W: i32 = 21;
 pub const MAGNIFIER: i32 = 12;
 
@@ -151,40 +152,45 @@ pub fn nav_layout(row: Rect, h: i32, u: TextUnits) -> Rect {
     Rect::new(row.right() - w, row.y + (row.height - h) / 2, w, h)
 }
 
-/// The nav field's clear button, which is also where its magnifier sits.
-pub fn clear_rect(field: Rect) -> Rect {
-    Rect::new(
-        field.right() - 1 - CLEAR_W,
-        field.y + 1,
-        CLEAR_W,
-        field.height - 2,
-    )
+/// The nav field's clear button at text `u`, which is also where its magnifier sits.
+pub fn clear_rect(field: Rect, u: TextUnits) -> Rect {
+    let w = u.small() * CLEAR_W;
+    Rect::new(field.right() - 1 - w, field.y + 1, w, field.height - 2)
 }
 
 /// The nav field's text: from its cue's place to its button.
-fn nav_text(field: Rect) -> Rect {
-    let b = clear_rect(field);
+fn nav_text(field: Rect, u: TextUnits) -> Rect {
+    let b = clear_rect(field, u);
+    let x = u.len(NAV_TEXT_X);
     Rect::new(
-        field.x + NAV_TEXT_X,
+        field.x + x,
         field.y + 2,
-        b.x - field.x - NAV_TEXT_X,
+        b.x - field.x - x,
         field.height - 4,
     )
 }
 
 /// The clear button only while the field holds text; the rest of it is the field.
-pub fn nav_hit(sf: &SearchField, field: Rect, x: i32, y: i32) -> Option<Hit> {
+pub fn nav_hit(sf: &SearchField, field: Rect, u: TextUnits, x: i32, y: i32) -> Option<Hit> {
     if !field.contains(x, y) {
         return None;
     }
-    let clear = !sf.text().is_empty() && clear_rect(field).contains(x, y);
+    let clear = !sf.text().is_empty() && clear_rect(field, u).contains(x, y);
     Some(if clear { Hit::Clear } else { Hit::Field })
 }
 
 impl SearchField {
-    /// [`SearchField::click`] for the nav field.
-    pub fn nav_click(&mut self, field: Rect, x: i32, text: &TextRenderer, px: u32, s: i32) {
-        let inner = nav_text(field).scaled(s);
+    /// [`SearchField::click`] for the nav field at text `u`.
+    pub fn nav_click(
+        &mut self,
+        field: Rect,
+        u: TextUnits,
+        x: i32,
+        text: &TextRenderer,
+        px: u32,
+        s: i32,
+    ) {
+        let inner = nav_text(field, u).scaled(s);
         let first = edit_first_visible(text, &self.edit, inner.width, px, 0);
         let i = first + index_at(text, &self.edit.text[first..], x * s - inner.x, px);
         self.edit.place(i, false);
@@ -208,6 +214,9 @@ pub fn draw_nav(
     let r = field.scaled(s);
     let parts = [Part::SearchField, Part::SearchGlass, Part::SearchClear];
     let st = p.look.style().filter(|st| st.has_parts(&parts));
+    let look = p.small_look(c);
+    let grown = p.small(&look);
+    let marks = grown.look.style().filter(|st| st.has_parts(&parts));
     match st {
         Some(st) => {
             let state = match (focused, sf.hot.is_some()) {
@@ -222,7 +231,7 @@ pub fn draw_nav(
             c.fill_rect(inner, p.cs.window);
         }
     }
-    let inner = nav_text(field).scaled(s);
+    let inner = nav_text(field, p.text).scaled(s);
     if sf.text().is_empty() && !focused {
         let (it, cue) = (text.italic(), sf.cue_label());
         let shown = it.ellipsize(&cue, inner.width, false, px);
@@ -233,16 +242,12 @@ pub fn draw_nav(
         let first = edit_first_visible(text, &edit, inner.width, px, 0);
         draw_edit_text(c, text, &edit, inner, px, p, caret, first);
     }
-    let b = clear_rect(field);
-    match st {
+    let b = clear_rect(field, p.text);
+    let m = p.text.small() * MAGNIFIER;
+    match marks {
         Some(st) if sf.text().is_empty() => {
-            let m = Rect::new(
-                b.x + (b.width - MAGNIFIER) / 2,
-                b.y + (b.height - MAGNIFIER) / 2,
-                MAGNIFIER,
-                MAGNIFIER,
-            );
-            st.draw(c, m.scaled(s), Part::SearchGlass, State::Normal, s);
+            let at = Rect::new(b.x + (b.width - m) / 2, b.y + (b.height - m) / 2, m, m);
+            st.draw(c, at.scaled(s), Part::SearchGlass, State::Normal, grown.s);
         }
         Some(st) => {
             let state = match (sf.clearing, sf.hot) {
@@ -250,7 +255,7 @@ pub fn draw_nav(
                 (_, Some(Hit::Clear)) => State::Hot,
                 _ => State::Normal,
             };
-            st.draw(c, b.scaled(s), Part::SearchClear, state, s);
+            st.draw(c, b.scaled(s), Part::SearchClear, state, grown.s);
         }
         None => {}
     }
@@ -294,6 +299,7 @@ pub fn access(
 pub fn access_nav(
     sf: &SearchField,
     field: Rect,
+    u: TextUnits,
     text: &TextRenderer,
     px: u32,
     tree: &mut Tree,
@@ -301,7 +307,7 @@ pub fn access_nav(
 ) -> NodeId {
     let id = access(sf, field, text, px, tree, parent, "search");
     if !sf.text().is_empty() {
-        let b = crate::access::button(clear_rect(field), &tr!("searchfield-clear"), true, false);
+        let b = crate::access::button(clear_rect(field, u), &tr!("searchfield-clear"), true, false);
         tree.push(parent, "search clear", b);
     }
     id

@@ -458,9 +458,9 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
     };
     let owned = *s;
     // Dark Glass remaps only the control art; the glass keeps its colour,
-    // and so does the progress bar's green fill.
+    // and so do the progress bar's green fill and the help mark's white ? on its blue disc.
     let ink = move |(part, img): (Part, PartImage)| {
-        let remap = is_dark && part != Part::ProgressChunk;
+        let remap = is_dark && !matches!(part, Part::ProgressChunk | Part::CommandHelp);
         (part, if remap { dark::remap_part(img) } else { img })
     };
     let style = crate::style::Style::new(
@@ -635,6 +635,7 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
         style
             .with_painted(Part::PlacesTile, move || items::dark_places(scale))
             .with_painted(Part::ListItem, move || items::dark_items(scale))
+            .with_painted(Part::NavItem, move || items::dark_nav_items(scale))
     } else {
         style
     };
@@ -1373,6 +1374,7 @@ mod tests {
             Part::StartButton,
             Part::CaptionGroup,
             Part::ProgressChunk,
+            Part::CommandHelp,
         ] {
             assert_eq!(
                 dimmed.part(part).unwrap().atlas.pixels,

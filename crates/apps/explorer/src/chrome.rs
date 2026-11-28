@@ -174,6 +174,7 @@ impl Explorer {
             &self.place,
             ctx.theme.text,
         );
+        self.crumbs.edit.combo.icon = self.address.combo.icon.clone();
         self.address.go_icon = self.go_icon(ctx);
         let px = crate::fileops::menu_icon_px(&ctx.theme);
         self.favorite_icons = [&["folder"][..], &["folder-remote", "network-server"]]
@@ -265,10 +266,7 @@ impl Explorer {
             }
         }
         (self.nav.can_back, self.nav.can_forward) = (back, fwd);
-        if self.shell_on {
-            let facts = self.facts_for(&mut ctx.icons);
-            self.details.set(facts);
-        }
+        self.sync_details(ctx);
         self.cmdbar.pane_shown = self.settings.preview_pane;
         self.sync_pane(ctx);
         self.toolbar.latched = self.settings.folders.then_some(FOLDERS_ITEM);
@@ -674,16 +672,21 @@ impl Explorer {
         Some(m.popup(at, ctx))
     }
 
-    /// Opens the menu of crumb `i`'s subfolders at `at`. The listing thread reads them with their
-    /// own icons, as it reads the view; the menu opens with them when the read answers within
-    /// [`crate::LIST_WAIT`], else empty, taking them when it answers
-    /// ([`Explorer::land_crumb_menu`]).
+    /// Opens the menu of crumb `i`'s subfolders at `at`; a search's one crumb lists the searched
+    /// folder's. The listing thread reads them with their own icons, as it reads the view; the
+    /// menu opens with them when the read answers within [`crate::LIST_WAIT`], else empty, taking
+    /// them when it answers ([`Explorer::land_crumb_menu`]).
     pub(crate) fn open_crumb_menu(&mut self, i: usize, at: (i32, i32), ctx: &mut Ctx) -> Reply {
-        let places = crumb_places(&self.place, &self.drive_mounts);
-        let Some(place) = places.get(i).cloned() else {
-            return Reply::none();
+        let (place, current) = match &self.search_crumb {
+            Some(searched) => (searched.clone(), None),
+            None => {
+                let places = crumb_places(&self.place, &self.drive_mounts);
+                let Some(place) = places.get(i).cloned() else {
+                    return Reply::none();
+                };
+                (place, places.get(i + 1).cloned())
+            }
         };
-        let current = places.get(i + 1).cloned();
         let world = foldertree::World {
             px: crate::fileops::menu_icon_px(&ctx.theme),
             scale: ctx.icons.scale(),

@@ -2,15 +2,18 @@
 //!
 //! Back and Forward fire when the button comes up over the one it went down on; the drop opens
 //! on the press. A look without the round buttons' art draws raised arrow buttons in their place.
+//! The control grows by the text's whole multiple ([`TextUnits::small`]), drawn afresh at it.
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::Arrow;
 use crate::look::Paint;
 use crate::look::widgets::draw_arrow_button;
 use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State};
+use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
-/// The pill's size; Back's and Forward's round buttons sit inside it, [`ORB_PITCH`] apart.
+/// The pill's size at 100% text; Back's and Forward's round buttons sit inside it,
+/// [`ORB_PITCH`] apart.
 pub const PILL_W: i32 = 57;
 pub const PILL_H: i32 = 29;
 pub const ORB: i32 = 25;
@@ -19,8 +22,16 @@ pub const ORB_PITCH: i32 = 28;
 pub const ORB_INSET: i32 = 2;
 pub const RECENT_W: i32 = 15;
 pub const RECENT_H: i32 = 21;
-/// The whole control's width, pill and drop.
-pub const WIDTH: i32 = PILL_W + RECENT_W;
+
+/// The whole control's width at text `u`, pill and drop.
+pub fn width(u: TextUnits) -> i32 {
+    u.small() * (PILL_W + RECENT_W)
+}
+
+/// The pill's height at text `u`.
+pub fn height(u: TextUnits) -> i32 {
+    u.small() * PILL_H
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
@@ -129,23 +140,29 @@ impl Layout {
     }
 }
 
-/// The control at the left end of `row`, centred down it.
-pub fn layout(row: Rect) -> Layout {
+/// The control at the left end of `row`, centred down it, at text `u`.
+pub fn layout(row: Rect, u: TextUnits) -> Layout {
+    let k = u.small();
     let mid = row.y + row.height / 2;
-    let pill = Rect::new(row.x, mid - PILL_H / 2, PILL_W, PILL_H);
+    let pill = Rect::new(row.x, mid - k * (PILL_H / 2), k * PILL_W, k * PILL_H);
     let orb = |i: i32| {
         Rect::new(
-            pill.x + ORB_INSET + i * ORB_PITCH,
-            pill.y + ORB_INSET,
-            ORB,
-            ORB,
+            pill.x + k * (ORB_INSET + i * ORB_PITCH),
+            pill.y + k * ORB_INSET,
+            k * ORB,
+            k * ORB,
         )
     };
     Layout {
         pill,
         back: orb(0),
         forward: orb(1),
-        recent: Rect::new(pill.right(), mid - RECENT_H / 2, RECENT_W, RECENT_H),
+        recent: Rect::new(
+            pill.right(),
+            mid - k * (RECENT_H / 2),
+            k * RECENT_W,
+            k * RECENT_H,
+        ),
     }
 }
 
@@ -166,21 +183,24 @@ pub fn hit(lay: &Layout, x: i32, y: i32) -> Option<Hit> {
 
 pub fn draw(c: &mut Canvas, p: &Paint, nb: &NavButtons, lay: &Layout) {
     let s = p.s;
+    let look = p.small_look(c);
+    let grown = p.small(&look);
     let parts = [
         Part::NavPill,
         Part::NavBack,
         Part::NavForward,
         Part::NavRecent,
     ];
-    match p.look.style().filter(|st| st.has_parts(&parts)) {
+    match grown.look.style().filter(|st| st.has_parts(&parts)) {
         Some(st) => {
-            st.draw(c, lay.pill.scaled(s), Part::NavPill, State::Normal, s);
+            let d = grown.s;
+            st.draw(c, lay.pill.scaled(s), Part::NavPill, State::Normal, d);
             for (h, part, r) in [
                 (Hit::Back, Part::NavBack, lay.back),
                 (Hit::Forward, Part::NavForward, lay.forward),
                 (Hit::Recent, Part::NavRecent, lay.recent),
             ] {
-                st.draw(c, r.scaled(s), part, nb.state(h), s);
+                st.draw(c, r.scaled(s), part, nb.state(h), d);
             }
         }
         None => {
@@ -235,17 +255,33 @@ mod tests {
 
     #[test]
     fn back_and_forward_sit_in_the_pill_with_the_drop_after_it() {
-        let lay = layout(ROW);
+        let lay = layout(ROW, TextUnits::ONE);
         assert_eq!(lay.pill, Rect::new(2, 3, 57, 29));
         assert_eq!(lay.back, Rect::new(4, 5, 25, 25));
         assert_eq!(lay.forward, Rect::new(32, 5, 25, 25));
         assert_eq!(lay.recent, Rect::new(59, 7, 15, 21));
-        assert_eq!(lay.frame().width, WIDTH);
+        assert_eq!(lay.frame().width, width(TextUnits::ONE));
+    }
+
+    #[test]
+    fn at_200_percent_text_the_pill_orbs_and_drop_are_twice_as_large() {
+        let u = TextUnits::new(200, 100);
+        let lay = layout(Rect::new(2, 0, 400, 68), u);
+        assert_eq!(lay.pill, Rect::new(2, 6, 114, 58));
+        assert_eq!(lay.back, Rect::new(6, 10, 50, 50));
+        assert_eq!(lay.forward, Rect::new(62, 10, 50, 50));
+        assert_eq!(lay.recent, Rect::new(116, 14, 30, 42));
+        assert_eq!(lay.frame().width, width(u));
+        assert_eq!(height(u), 58);
+        assert_eq!(
+            layout(ROW, TextUnits::new(150, 100)),
+            layout(ROW, TextUnits::ONE)
+        );
     }
 
     #[test]
     fn the_round_buttons_answer_inside_their_circles() {
-        let lay = layout(ROW);
+        let lay = layout(ROW, TextUnits::ONE);
         assert_eq!(hit(&lay, 16, 17), Some(Hit::Back));
         assert_eq!(hit(&lay, 44, 17), Some(Hit::Forward));
         assert_eq!(hit(&lay, 66, 17), Some(Hit::Recent));
@@ -289,7 +325,7 @@ mod tests {
 
     #[test]
     fn access_names_back_forward_and_recent_pages() {
-        let lay = layout(ROW);
+        let lay = layout(ROW, TextUnits::ONE);
         let mut t = Tree::window("Explorer", (400, 40));
         let bar = access(&nav(true, false), &lay, &mut t, access::ROOT);
         assert_eq!(t.get(bar).map(|n| n.role()), Some(Role::Toolbar));
@@ -304,6 +340,10 @@ mod tests {
     const GLASS: crate::theme::Color = crate::theme::Color::rgb(0x23, 0x60, 0x9C);
 
     fn render(interface: Interface, dark: bool, nb: &NavButtons, d: i32) -> Canvas {
+        render_at(interface, dark, nb, d, 100)
+    }
+
+    fn render_at(interface: Interface, dark: bool, nb: &NavButtons, d: i32, pct: u32) -> Canvas {
         let g = crate::glass::Settings {
             mode: match dark {
                 true => crate::glass::Mode::Dark,
@@ -312,10 +352,13 @@ mod tests {
             ..crate::glass::Settings::default()
         };
         let theme = crate::interfaces::theme_with(interface, Default::default(), false, &g);
-        let theme = theme.scaled(d);
-        let mut c = Canvas::new((80 * d) as u32, (34 * d) as u32);
+        let theme = theme.with_text_size(pct).scaled(d);
+        let k = theme.text.small();
+        let (w, h) = (80 * k, 34 * k);
+        let mut c = Canvas::new((w * d) as u32, (h * d) as u32);
         c.fill_rect(c.bounds(), GLASS);
-        draw(&mut c, &theme.paint(), nb, &layout(Rect::new(2, 0, 78, 34)));
+        let lay = layout(Rect::new(2, 0, w - 2, h), theme.text);
+        draw(&mut c, &theme.paint(), nb, &lay);
         c
     }
 
@@ -348,6 +391,10 @@ mod tests {
             "classic rest @1".to_string(),
             fnv(&render(Interface::Classic, false, &nav(true, false), 1)),
         ));
+        for d in [1, 2] {
+            let c = render_at(Interface::Glass, false, &nav(true, false), d, 200);
+            got.push((format!("glass rest 200% @{d}"), fnv(&c)));
+        }
         crate::pins::check("navbuttons", &got);
     }
 }

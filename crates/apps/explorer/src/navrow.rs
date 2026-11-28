@@ -4,7 +4,7 @@
 //! the Address field's own events.
 
 use crate::commands::{Command, Menu};
-use crate::window::{self, Popup};
+use crate::window::Popup;
 use crate::{Explorer, Focus};
 use repriseapp::{Ctx, Reply};
 use reprisekit::controls::addressbar;
@@ -59,7 +59,7 @@ impl Explorer {
             return None;
         }
         let px = ctx.theme.fonts.size_px;
-        let nb = window::nav_buttons(&sl);
+        let nb = sl.buttons;
         if let Some(h) = navbuttons::hit(&nb, x, y) {
             self.nav.can_back = self.can_back();
             self.nav.can_forward = self.history.can_forward();
@@ -68,12 +68,13 @@ impl Explorer {
                 _ => Reply::redraw(),
             });
         }
-        if let Some(h) = searchfield::nav_hit(&self.search_field, sl.search, x, y) {
+        if let Some(h) = searchfield::nav_hit(&self.search_field, sl.search, ctx.theme.text, x, y) {
             if h == searchfield::Hit::Clear {
                 self.search_field.press_clear();
             } else {
                 self.focus = Focus::Search;
-                self.search_field.nav_click(sl.search, x, &ctx.text, px, 1);
+                self.search_field
+                    .nav_click(sl.search, ctx.theme.text, x, &ctx.text, px, 1);
             }
             return Some(Reply::redraw());
         }
@@ -101,7 +102,7 @@ impl Explorer {
     pub(crate) fn nav_row_release(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Option<Reply> {
         let sl = self.shell_layout(ctx)?;
         if self.nav.pressed.is_some() {
-            let h = navbuttons::hit(&window::nav_buttons(&sl), x, y);
+            let h = navbuttons::hit(&sl.buttons, x, y);
             return Some(match self.nav.release(h) {
                 navbuttons::Event::Back => self.run(Command::Back, ctx),
                 navbuttons::Event::Forward => self.run(Command::Forward, ctx),
@@ -109,7 +110,7 @@ impl Explorer {
             });
         }
         if self.search_field.clearing {
-            let h = searchfield::nav_hit(&self.search_field, sl.search, x, y);
+            let h = searchfield::nav_hit(&self.search_field, sl.search, ctx.theme.text, x, y);
             if !self.search_field.release(h) {
                 return Some(Reply::redraw());
             }
@@ -141,12 +142,12 @@ impl Explorer {
             return false;
         };
         let px = ctx.theme.fonts.size_px;
-        let nb = navbuttons::hit(&window::nav_buttons(&sl), x, y);
+        let nb = navbuttons::hit(&sl.buttons, x, y);
         let mut lit = self.nav.hover(nb);
         let l = self.cmdbar_layout(sl.command, ctx);
         let hot = commandbar::hit(&self.cmdbar, &l, x, y);
         lit |= std::mem::replace(&mut self.cmdbar.hot, hot) != hot;
-        let sf = searchfield::nav_hit(&self.search_field, sl.search, x, y);
+        let sf = searchfield::nav_hit(&self.search_field, sl.search, ctx.theme.text, x, y);
         lit |= self.search_field.hover(sf);
         if sl.address.contains(x, y) && self.focus != Focus::Address {
             let bl = breadcrumb::layout(
@@ -174,7 +175,7 @@ impl Explorer {
     /// The pointer's shape over the nav row; `None` off it.
     pub(crate) fn nav_row_shape(&self, x: i32, y: i32, ctx: &Ctx) -> Option<Shape> {
         let sl = self.shell_layout(ctx).filter(|sl| sl.nav.contains(x, y))?;
-        if searchfield::nav_hit(&self.search_field, sl.search, x, y)
+        if searchfield::nav_hit(&self.search_field, sl.search, ctx.theme.text, x, y)
             == Some(searchfield::Hit::Field)
         {
             return Some(Shape::Text);

@@ -135,6 +135,32 @@ fn narrow_crumbs_fold_leading_segments_into_the_overflow_menu() {
 }
 
 #[test]
+fn with_nothing_folded_the_lead_arrow_is_the_fields_blank() {
+    let mut b = home_music();
+    let l = lay(&b, FIELD);
+    assert_eq!(l.folded, 0);
+    let (x, y) = mid(l.overflow);
+    assert_eq!(hit(&b, &l, x, y), Hit::Empty);
+    b.hover(hit(&b, &l, x, y));
+    assert_eq!(b.hot, None, "nothing lights");
+    let ev = b.press(hit(&b, &l, x, y), x, &l, &stub(), PX, 1);
+    assert_eq!(
+        ev,
+        Event::Redraw,
+        "a press starts the edit, as on the blank"
+    );
+    assert!(b.editing());
+    assert_eq!(b.open_menu, None, "no menu, nothing held");
+    let mut t = Tree::window("Explorer", (420, 30));
+    b.cancel_edit();
+    access(&b, &l, &stub(), PX, &mut t, access::ROOT);
+    assert!(
+        t.find(Role::Button, "Earlier Locations").is_none(),
+        "no button for it"
+    );
+}
+
+#[test]
 fn a_segment_click_goes_to_its_target() {
     let mut b = home_music();
     let l = lay(&b, FIELD);
@@ -276,7 +302,6 @@ fn access_names_each_segment_and_its_chevron() {
         .filter_map(|(_, n)| n.label().map(str::to_string))
         .collect();
     for want in [
-        "Earlier Locations",
         "Home",
         "Folders in Home",
         "Music",
@@ -288,6 +313,19 @@ fn access_names_each_segment_and_its_chevron() {
     ] {
         assert!(names.iter().any(|n| n == want), "{want} in {names:?}");
     }
+    let folded = lay(
+        &b,
+        Rect {
+            width: 241,
+            ..FIELD
+        },
+    );
+    let mut tree = Tree::window("Explorer", (420, 30));
+    access(&b, &folded, &stub(), PX, &mut tree, access::ROOT);
+    assert!(
+        tree.find(Role::Button, "Earlier Locations").is_some(),
+        "with Home folded"
+    );
 }
 
 /// The states the pins draw: the name, then how to bring the breadcrumb there.

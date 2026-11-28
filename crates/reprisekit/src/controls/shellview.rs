@@ -259,6 +259,7 @@ impl ShellView {
             lead: self.selection.focus == Some(i),
             dim: self.inactive,
             ring: self.focus_ring && self.selection.focus == Some(i) && !drop,
+            nav: false,
         }
     }
 

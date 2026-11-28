@@ -12,6 +12,14 @@ use reprisekit::raster::Canvas;
 use reprisekit::tr;
 
 impl Explorer {
+    /// The details pane shows the selection's facts, under the shell layout.
+    pub(crate) fn sync_details(&mut self, ctx: &mut repriseapp::Ctx) {
+        if self.shell_on {
+            let facts = self.facts_for(&mut ctx.icons);
+            self.details.set(facts);
+        }
+    }
+
     /// The details pane's facts for the selection, or the folder with none.
     pub fn facts_for(&self, icons: &mut IconCache) -> Facts {
         let chosen: Vec<usize> = (self.sv.selection.set.iter().copied())
@@ -308,5 +316,97 @@ mod tests {
         ex.follow_scale(1, &mut ctx);
         assert_eq!(ex.tree.style, Style::Nav);
         assert_eq!(ex.tree.selected, Some(vec![2]), "Computer picked again");
+    }
+
+    /// The window on `i16` in a temp folder under Glass, its navigation pane standing on it and
+    /// no folder watch, so only what the window does itself reads the tree again.
+    fn on_i16(ctx: &mut repriseapp::Ctx) -> (tempfile::TempDir, PathBuf, crate::Explorer) {
+        let dir = (tempfile::Builder::new().prefix("nav"))
+            .tempdir()
+            .expect("a temp dir");
+        let i16 = dir.path().join("i16");
+        std::fs::create_dir(&i16).expect("mkdir");
+        let mut ex = test_explorer(Place::Folder(i16.clone()), ctx);
+        ex.watch = None;
+        ex.build_tree(ctx);
+        ex.show(Place::Folder(i16.clone()), ctx);
+        let here = Place::Folder(i16.clone());
+        crate::tests::wake_until(&mut ex, ctx, |ex| {
+            ex.tree_path_of(&here).is_some() && ex.tree.selected == ex.tree_path_of(&here)
+        });
+        (dir, i16, ex)
+    }
+
+    #[test]
+    fn f5_reads_the_nav_panes_node_again() {
+        let mut ctx = glass_ctx();
+        let (_dir, i16, mut ex) = on_i16(&mut ctx);
+        let made = Place::Folder(i16.join("made"));
+        std::fs::create_dir(i16.join("made")).expect("a folder made outside");
+        assert_eq!(ex.tree_path_of(&made), None);
+        ex.refresh(&mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.tree_path_of(&made).is_some());
+    }
+
+    #[test]
+    fn the_nav_pane_follows_into_a_folder_made_after_its_parent_was_read() {
+        let mut ctx = glass_ctx();
+        let (_dir, i16, mut ex) = on_i16(&mut ctx);
+        let deep = i16.join("deep/er");
+        std::fs::create_dir_all(&deep).expect("folders made outside");
+        let there = Place::Folder(deep);
+        ex.go(there.clone(), &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            ex.tree_path_of(&there).is_some() && ex.tree.selected == ex.tree_path_of(&there)
+        });
+        assert_eq!(ex.chasing, Some((there, None)), "chased once");
+    }
+
+    /// Wakes `ex` until its listing and its Folders node reads are in.
+    fn settle(ex: &mut crate::Explorer, ctx: &mut repriseapp::Ctx) {
+        crate::tests::wake_until(ex, ctx, |ex| ex.reading.is_none() && ex.filling.is_empty());
+    }
+
+    #[test]
+    fn a_hidden_folder_is_not_chased_and_a_refresh_there_leaves_its_parent_unread() {
+        let mut ctx = glass_ctx();
+        let (_dir, i16, mut ex) = on_i16(&mut ctx);
+        std::fs::create_dir(i16.join(".cache")).expect("mkdir");
+        std::fs::create_dir(i16.join("late")).expect("mkdir");
+        ex.go(Place::Folder(i16.join(".cache")), &mut ctx);
+        settle(&mut ex, &mut ctx);
+        assert_eq!(ex.chasing, None);
+        ex.refresh(&mut ctx);
+        settle(&mut ex, &mut ctx);
+        let late = Place::Folder(i16.join("late"));
+        assert_eq!(ex.tree_path_of(&late), None, "i16's node not read again");
+    }
+
+    #[test]
+    fn opening_another_node_after_a_chase_keeps_the_tree_where_it_is() {
+        let mut ctx = glass_ctx();
+        let (_dir, i16, mut ex) = on_i16(&mut ctx);
+        std::fs::create_dir_all(i16.join("other/sub")).expect("mkdir");
+        std::fs::create_dir(i16.join("secret")).expect("mkdir");
+        std::fs::write(i16.join(".hidden"), "secret\n").expect("write");
+        let secret = Place::Folder(i16.join("secret"));
+        ex.go(secret.clone(), &mut ctx);
+        settle(&mut ex, &mut ctx);
+        assert_eq!(ex.chasing, Some((secret, None)), "chased once");
+        let other = ex.tree_path_of(&Place::Folder(i16.join("other")));
+        let other = other.expect("i16 read again by the chase");
+        ex.tree.selected = Some(other.clone());
+        ex.tree.node_mut(&other).expect("the node").expanded = true;
+        ex.fill_node(other.clone(), &mut ctx);
+        settle(&mut ex, &mut ctx);
+        assert!(
+            ex.tree_path_of(&Place::Folder(i16.join("other/sub")))
+                .is_some()
+        );
+        assert_eq!(
+            ex.tree.selected,
+            Some(other),
+            "the tree stays on the opened node"
+        );
     }
 }

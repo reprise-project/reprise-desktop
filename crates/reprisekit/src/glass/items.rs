@@ -54,6 +54,9 @@ pub(super) const DARK_SELECTED_HOT: LightBox =
     opaque(0x5E9DE8, (0x3A6494, 0x325887), (0x345D8C, 0x2B507C));
 /// A lit list row: lighter than [`DARK_HOT`], as the list under it is lighter than the places bar.
 const DARK_ROW_HOT: LightBox = opaque(0x56708F, (0x4A5058, 0x434951), (0x434850, 0x3D424A));
+/// The navigation pane's selection without the focus: a grey box lighter than [`DARK_ROW_HOT`],
+/// so the row the pane stands on reads above the one under the pointer.
+const DARK_SELECTED_DIM: LightBox = opaque(0x7C8188, (0x60656C, 0x585D64), (0x5A5F66, 0x51565D));
 const FOCUS: LightBox = LightBox {
     outline: ink(0x7A9BCD, 255),
     line: Some((ink(0xFFFFFF, 128), ink(0xFFFFFF, 128))),
@@ -191,8 +194,17 @@ fn remapped(b: &LightBox, d: i32) -> Canvas {
 /// Dark Glass's list items: [`dark_lit`]'s boxes with [`DARK_ROW_HOT`]; the dimmed selection
 /// and the focus ring keep their remapped boxes.
 pub fn dark_items(d: i32) -> PartImage {
+    dark_rows(remapped(&SELECTED_DIM, d), d)
+}
+
+/// Dark Glass's navigation pane rows: [`dark_items`] with [`DARK_SELECTED_DIM`].
+pub fn dark_nav_items(d: i32) -> PartImage {
+    dark_rows(panel::light_box(&DARK_SELECTED_DIM, BOX_W, BOX_H, d), d)
+}
+
+fn dark_rows(dim: Canvas, d: i32) -> PartImage {
     let mut items = dark_lit(&DARK_ROW_HOT, d);
-    items.push((remapped(&SELECTED_DIM, d), State::Inactive));
+    items.push((dim, State::Inactive));
     items.push((remapped(&FOCUS, d), State::Focused));
     stack(items, d)
 }
@@ -796,7 +808,11 @@ mod tests {
     /// A 120x20 row's box in each list state at scale `d` over the theme's window colour: the
     /// bare row first.
     fn rows_in(theme: &Theme, d: i32) -> Vec<Canvas> {
-        use crate::style::{Part, State};
+        part_rows(theme, crate::style::Part::ListItem, d)
+    }
+
+    fn part_rows(theme: &Theme, part: crate::style::Part, d: i32) -> Vec<Canvas> {
+        use crate::style::State;
         let st = theme.look.style().expect("a styled look");
         let r = Rect::new(0, 0, 120, 20).scaled(d);
         [
@@ -812,7 +828,7 @@ mod tests {
             let mut c = Canvas::new(r.width as u32, r.height as u32);
             c.fill_rect(r, theme.colors.window);
             if let Some(state) = state {
-                st.draw(&mut c, r, Part::ListItem, state, d);
+                st.draw(&mut c, r, part, state, d);
             }
             c
         })
@@ -857,6 +873,28 @@ mod tests {
                 img.atlas.pixels[from..].to_vec()
             };
             assert_eq!(rows(&dark), rows(&light), "dimmed and focus boxes at {d}");
+        }
+    }
+
+    /// The dark navigation pane's selection without the focus (its place) is lighter than a lit
+    /// row and stays grey; its other rows are the list's.
+    #[test]
+    fn a_dark_nav_selection_without_the_focus_reads_above_a_lit_row() {
+        let lum = |p: u32| [16, 8, 0].map(|sh| (p >> sh) & 0xFF).iter().sum::<u32>();
+        for d in [1, 2] {
+            let rows = part_rows(&dark_glass(), crate::style::Part::NavItem, d);
+            let list = rows_in(&dark_glass(), d);
+            for i in [0, 1, 2, 3, 5] {
+                assert_eq!(rows[i].pixels, list[i].pixels, "row {i} at {d}");
+            }
+            let fill = |i: usize| rows[i].get(60 * d, 10 * d);
+            let (lit, dim) = (fill(1), fill(4));
+            assert!(
+                lum(dim) > lum(lit) + 30,
+                "dimmed {dim:08X} over lit {lit:08X} at {d}"
+            );
+            let (r, b) = ((dim >> 16) & 0xFF, dim & 0xFF);
+            assert!(b.abs_diff(r) <= 0x0C, "dimmed {dim:08X} is grey at {d}");
         }
     }
 

@@ -12,9 +12,9 @@ CommandBar Normal Dark 1 2322641a33f65fba
 CommandButton Normal Dark 1 a2371dd1f2f128bb
 CommandButton Hot Dark 1 e75d5aa2ecc4284a
 CommandButton Pressed Dark 1 a69139a1c177f906
-CommandHelp Normal Dark 1 b58fe4f473249c65
+CommandHelp Normal Dark 1 1e5966ff2ddc5b39
 CommandBar Normal Dark 2 43e5f283b3d8d924
 CommandButton Normal Dark 2 db5893d6594807da
 CommandButton Hot Dark 2 de22028d16dab252
 CommandButton Pressed Dark 2 b5820de5f6a8401a
-CommandHelp Normal Dark 2 d3b246da6b8cd1c9
+CommandHelp Normal Dark 2 87289a1643589e21

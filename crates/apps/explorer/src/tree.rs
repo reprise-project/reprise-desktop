@@ -73,7 +73,10 @@ impl Explorer {
         ctx: &mut Ctx,
     ) {
         match self.read_job(ctx, read) {
-            Ok(kids) => self.fill_read(&place, kids, ctx),
+            Ok(kids) => {
+                self.fill_read(&place, kids, ctx);
+                self.chase_landed(&place, ctx);
+            }
             Err(job) => self.filling.push((place, job, false)),
         }
     }
@@ -255,6 +258,22 @@ impl Explorer {
         }
     }
 
+    /// The node a chase read again ([`Explorer::chasing`]) is filled: the tree follows the place
+    /// it chases, once.
+    fn chase_landed(&mut self, place: &Place, ctx: &mut Ctx) {
+        let Some((target, short)) = self.chasing.as_mut() else {
+            return;
+        };
+        if short.as_ref() != Some(place) {
+            return;
+        }
+        *short = None;
+        let target = target.clone();
+        if target == self.place.in_tree() {
+            self.tree_follow(&target, ctx);
+        }
+    }
+
     /// Fills the nodes whose late reads ([`Explorer::fill_node`]) answered: true when one did.
     pub(crate) fn take_fills(&mut self, ctx: &mut Ctx) -> bool {
         let mut done = Vec::new();
@@ -268,8 +287,9 @@ impl Explorer {
         let filled = !done.is_empty();
         for (place, kids, again) in done {
             self.fill_read(&place, kids, ctx);
-            if again {
-                self.refill_tree_node(&place, ctx);
+            match again {
+                true => self.refill_tree_node(&place, ctx),
+                false => self.chase_landed(&place, ctx),
             }
         }
         filled
@@ -391,6 +411,37 @@ impl Explorer {
         if *place == self.place.in_tree() && self.mount_listed() {
             self.refollow = false;
         }
+        self.chase(place, ctx);
+    }
+
+    /// The walk to `place` stopped short at a folder read before the next one on the way was
+    /// made: that folder is read again, and the tree follows once it lands ([`Explorer::chasing`]).
+    /// A place the tree never holds is not chased: one whose next folder is hidden with Hidden
+    /// Items off, one that is no folder (a server), or one off every node the tree holds.
+    fn chase(&mut self, place: &Place, ctx: &mut Ctx) {
+        if self.chasing.as_ref().is_some_and(|(t, _)| t == place) {
+            return;
+        }
+        self.chasing = None;
+        if self.tree_path_of(place).is_some() {
+            return;
+        }
+        let chain = place.chain_in(&self.drive_mounts);
+        let Some(k) = chain.iter().rposition(|p| self.tree_path_of(p).is_some()) else {
+            return;
+        };
+        let Some(Place::Folder(next)) = chain.get(k + 1) else {
+            return;
+        };
+        let dotted = (next.file_name()).is_some_and(|n| n.as_encoded_bytes().starts_with(b"."));
+        if dotted && !self.folders.show_hidden {
+            return;
+        }
+        let Some(short) = (self.tree_path_of(&chain[k])).and_then(|p| self.place_of(&p)) else {
+            return;
+        };
+        self.chasing = Some((place.clone(), Some(short.clone())));
+        self.refill_tree_node(&short, ctx);
     }
 
     /// Whether the Folders tree holds the mount the place is on.

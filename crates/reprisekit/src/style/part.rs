@@ -186,6 +186,9 @@ pub enum Part {
     CalendarPrev,
     CalendarNext,
     ListItem,
+    /// The navigation pane's rows, where a look boxes them apart from other lists; else
+    /// [`Part::ListItem`]'s boxes.
+    NavItem,
     DesktopItem,
     TreeExpander,
 }
