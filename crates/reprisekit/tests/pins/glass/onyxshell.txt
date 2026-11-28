@@ -44,24 +44,24 @@ Light CrumbField Hot @1 edb9c6669537ec57
 Light CrumbField Hot @2 827270a569777976
 Light CrumbField Focused @1 71eb9d2fa855b3e9
 Light CrumbField Focused @2 86bb65748864d7ea
-Light CrumbButton Hot @1 17f0221e593a9767
-Light CrumbButton Hot @2 0f7298f1a4c9f8d6
-Light CrumbButton Pressed @1 494a95187a76d040
-Light CrumbButton Pressed @2 b02ac619436bb82a
+Light CrumbButton Hot @1 78c0ce16369fa31b
+Light CrumbButton Hot @2 862a28f5fa847d56
+Light CrumbButton Pressed @1 88897b4552bb6177
+Light CrumbButton Pressed @2 4c78da8e9c14e6da
 Light CrumbButton Checked @1 4c3f85bb50cec0c3
 Light CrumbButton Checked @2 2e0ad69b0a6086f2
 Light CommandBar Normal @1 2e572d01cfcfce99
 Light CommandBar Normal @2 2e83a60e40ce4cc8
-Light CommandButton Hot @1 84cd4657dbe4f2ab
-Light CommandButton Hot @2 ac6f6508218479ce
-Light CommandButton Pressed @1 41d102e42f13b5d2
-Light CommandButton Pressed @2 b04504fbc01a387a
-Light CommandButton Focused @1 63ef6525248f6293
-Light CommandButton Focused @2 c38b09b920306982
+Light CommandButton Hot @1 62facec5556a884b
+Light CommandButton Hot @2 2f551cdadce0817a
+Light CommandButton Pressed @1 cfa9c061680245cd
+Light CommandButton Pressed @2 1ce0682c11797901
+Light CommandButton Focused @1 a0f2103aafe61e77
+Light CommandButton Focused @2 567210cc982daf3a
 Light CommandHelp Normal @1 1e5966ff2ddc5b39
 Light CommandHelp Normal @2 87289a1643589e21
-Light details pane and rule @1 5ff0c5372ccae7bd
-Light details pane and rule @2 d59b0d02cd779881
+Light details pane and rule @1 b1631274e18153c8
+Light details pane and rule @2 0bf74272e29262f1
 Dark NavPill Normal @1 99b2b907d66659b0
 Dark NavPill Normal @2 7af46c78a634a50c
 Dark NavBack Normal @1 09f5da24b2b176d9
@@ -108,21 +108,21 @@ Dark CrumbField Hot @1 23932eb47173aaea
 Dark CrumbField Hot @2 a40e340bcfef4376
 Dark CrumbField Focused @1 8752b20c0c4cd851
 Dark CrumbField Focused @2 5edfcb7feacf7586
-Dark CrumbButton Hot @1 4fa94513fecbd774
-Dark CrumbButton Hot @2 acb521045f86f5e6
-Dark CrumbButton Pressed @1 c27d4ed68bdc7a50
-Dark CrumbButton Pressed @2 c83512597bbe6faa
+Dark CrumbButton Hot @1 0406d4f5944f3d33
+Dark CrumbButton Hot @2 54448d8c24dc03c2
+Dark CrumbButton Pressed @1 a3e404ec7dba0bdf
+Dark CrumbButton Pressed @2 7d274e338ed9b87a
 Dark CrumbButton Checked @1 0769e089b1280595
 Dark CrumbButton Checked @2 26be8f87d70a03ba
 Dark CommandBar Normal @1 75c733198a2bbfa0
 Dark CommandBar Normal @2 ed90cb2e0e3f854c
-Dark CommandButton Hot @1 55d7ccaa2c21c52d
-Dark CommandButton Hot @2 92fb7fdade9b9c8e
-Dark CommandButton Pressed @1 41d102e42f13b5d2
-Dark CommandButton Pressed @2 b04504fbc01a387a
-Dark CommandButton Focused @1 63ef6525248f6293
-Dark CommandButton Focused @2 c38b09b920306982
+Dark CommandButton Hot @1 38b3caaea11b9d0b
+Dark CommandButton Hot @2 1e76f6cb09862c52
+Dark CommandButton Pressed @1 cfa9c061680245cd
+Dark CommandButton Pressed @2 1ce0682c11797901
+Dark CommandButton Focused @1 a0f2103aafe61e77
+Dark CommandButton Focused @2 567210cc982daf3a
 Dark CommandHelp Normal @1 1e5966ff2ddc5b39
 Dark CommandHelp Normal @2 87289a1643589e21
-Dark details pane and rule @1 ed011c41a0f28422
-Dark details pane and rule @2 97c1fbaa02779a11
+Dark details pane and rule @1 08fadc5794be5572
+Dark details pane and rule @2 974108a6ec1a87ca

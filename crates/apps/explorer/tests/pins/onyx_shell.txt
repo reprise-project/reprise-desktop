@@ -1,16 +1,16 @@
 light buttons @1 249df434054221fe
 light search @1 b11b505bf98f93ce
 light command bar @1 f31b6e1ae187db78
-light details end @1 350cfdd3976c324e
+light details end @1 0a1682d8a3981491
 light buttons @2 0d47c8beee11ee38
 light search @2 df272ab929ae5030
 light command bar @2 c7e5e393b48173ff
-light details end @2 b5c4e8c29beb864e
+light details end @2 14a1291f777714ca
 dark buttons @1 249df434054221fe
 dark search @1 e04997df000cff79
 dark command bar @1 cb36ad530b4608e9
-dark details end @1 3ef3a0e71e0c43fa
+dark details end @1 4c64a53944efbc95
 dark buttons @2 0d47c8beee11ee38
 dark search @2 700c1b2f5b1fe687
 dark command bar @2 611ca6db3f85de1c
-dark details end @2 01c451bfaa08948f
+dark details end @2 ae681f1996059287

@@ -273,6 +273,8 @@ pub struct NotifyLook {
 pub struct PaneLook {
     /// The navigation pane's line down the middle of its splitter, on the window colour.
     pub nav_edge: Color,
+    /// The preview pane's divider line, on the window colour.
+    pub preview_edge: Color,
     /// The details pane's backdrop.
     pub details: fn(&mut Canvas, Rect, i32),
     /// The details pane's field names and their values.
