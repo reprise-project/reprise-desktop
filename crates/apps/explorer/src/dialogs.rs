@@ -81,6 +81,10 @@ pub(crate) fn failed_buttons() -> [String; 3] {
     ]
 }
 
+/// How long after a drop a box it raises asks to come up with the keyboard: the compositor
+/// trusts a drop target's activation for as long.
+pub(crate) const DROP_RAISE: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// The icon of the error boxes, and of the questions before running or mounting a file.
 pub(crate) const ERROR_ICON: &[&str] = &["dialog-error", "dialog-warning"];
 
@@ -473,10 +477,13 @@ impl Explorer {
             return Reply::none();
         }
         // Mapping without an activation, a box no window of ours covers maps behind the focused
-        // window: the raise focuses it while this program holds the keyboard, else flags its task button.
-        let alone = self.dialog().is_some() && self.box_stands_alone();
+        // window: the raise focuses it while this program holds the keyboard, else flags its task
+        // button. A box a drop raised asks too: the keyboard is on the drag's source.
+        let shows = self.dialog().is_some();
+        let alone = shows && self.box_stands_alone();
+        let dropped = shows && (self.dropped_at.take()).is_some_and(|t| t.elapsed() < DROP_RAISE);
         Reply {
-            raise: alone.then(|| self.dialog_win()),
+            raise: (alone || dropped).then(|| self.dialog_win()),
             ..Reply::redraw_all()
         }
     }

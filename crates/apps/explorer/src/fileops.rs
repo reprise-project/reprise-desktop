@@ -545,7 +545,12 @@ impl Explorer {
             asker.answer(Answer::No);
         }
         let waits = !self.dialogs.is_empty() && !self.answered && !self.connecting_up();
-        match asker.step() {
+        let step = asker.step();
+        if matches!(step, Step::Cancelled | Step::Done(_)) {
+            // The drop's put asks nothing more: a later box is not the drop's.
+            self.dropped_at = None;
+        }
+        match step {
             Step::Cancelled => Reply::none(),
             Step::Ask { .. } if waits => self.raise(Dialog::Paste(Box::new((pending, asker)))),
             Step::Ask {
