@@ -1,6 +1,6 @@
 //! The desktop's file jobs run in Explorer, each in a `reprise-explorer` process of its own that
 //! asks, shows the progress dialog and says why it stopped: a drop's or paste's put (`--put`), a
-//! delete (`--delete`), Empty Recycle Bin (`--empty-bin`), Send To's zip (`--zip`), New >
+//! drop onto a zip (`--add-to-zip`), a delete (`--delete`), Empty Recycle Bin (`--empty-bin`), Send To's zip (`--zip`), New >
 //! Shortcut's wizard (`--new-shortcut`) and an Undo that is more than a desktop New or rename
 //! (`--undo`). Each records its own undo entry.
 //!
@@ -37,6 +37,7 @@ pub enum What {
     Delete,
     Empty,
     Zip,
+    AddToZip,
     Undo,
     NewShortcut,
 }
@@ -47,7 +48,7 @@ impl What {
         match self {
             What::Put(op) => op.failure_title(),
             What::Delete | What::Empty => tr!("dlg-job-delete-failed"),
-            What::Zip => reprisefs::compress::failure_title(),
+            What::Zip | What::AddToZip => reprisefs::compress::failure_title(),
             What::Undo => tr!("dlg-job-undo"),
             What::NewShortcut => tr!("dlg-job-new-shortcut"),
         }
@@ -176,6 +177,16 @@ impl State {
             .chain(paths.into_iter().map(OsString::from))
             .collect();
         self.file_job(What::Zip, args, Vec::new(), Vec::new());
+    }
+
+    /// Copies of `sources` dropped onto the zip `zip`, in Explorer.
+    pub(crate) fn add_to_zip(&mut self, zip: &Path, sources: Vec<PathBuf>) {
+        if sources.is_empty() {
+            return;
+        }
+        let mut args: Vec<OsString> = vec!["--add-to-zip".into(), zip.into(), "--".into()];
+        args.extend(sources.into_iter().map(OsString::from));
+        self.file_job(What::AddToZip, args, Vec::new(), Vec::new());
     }
 
     /// Undo of `entry` in Explorer, which shows its progress and can cancel it; nothing once

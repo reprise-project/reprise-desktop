@@ -918,6 +918,7 @@ mod tests {
             is_dir: false,
             allow_launching: true,
             picture: None,
+            zip: None,
         }];
         assert!(!offered(&h), "a copy on the desktop greys the row");
     }

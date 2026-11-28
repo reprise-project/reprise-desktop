@@ -2,7 +2,7 @@ use super::*;
 
 /// A folder holding `a.zip` (made by bsdtar from `in_zip`, name and contents) and the files
 /// `outside` beside it, with Explorer showing it.
-fn zip_beside(
+pub(super) fn zip_beside(
     in_zip: &[(&str, &str)],
     outside: &[(&str, &str)],
     ctx: &mut repriseapp::Ctx,
@@ -34,7 +34,7 @@ fn zip_beside(
 }
 
 /// The zip's entries and their contents, by name.
-fn zip_holds(zip: &Path) -> Vec<(String, String)> {
+pub(super) fn zip_holds(zip: &Path) -> Vec<(String, String)> {
     let entries = reprisefs::archive::list(zip, &Default::default()).expect("the zip lists");
     let mut held: Vec<(String, String)> = (entries.iter())
         .map(|e| {

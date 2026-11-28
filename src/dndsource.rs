@@ -117,13 +117,19 @@ pub fn mimes(offers: &[Offer], portal: bool) -> Vec<String> {
 }
 
 /// Reprise's answer to its own drag of `grabbed` (and what rides with it) over `target`, held with
-/// `button` and the given modifiers; None refuses the drop there.
+/// `button` and the given modifiers; None refuses the drop there. A zip takes a copy whatever is held.
 pub fn answer(
     grabbed: &DragSource,
     target: &DropTarget,
     button: u32,
     (ctrl, shift, alt): (bool, bool, bool),
 ) -> Option<Answer> {
+    if let DropTarget::Zip(_) = target {
+        return Some(Answer {
+            action: COPY,
+            plan: Plan::Put(Some(DropOp::Copy)),
+        });
+    }
     if button == BTN_RIGHT {
         return Some(Answer {
             action: ASK,
@@ -306,6 +312,16 @@ mod tests {
 
     fn put(a: Option<Answer>) -> Option<(DndAction, Plan)> {
         a.map(|a| (a.action, a.plan))
+    }
+
+    #[test]
+    fn a_zip_takes_a_copy_with_either_button_and_any_modifier() {
+        let zip = DropTarget::Zip(PathBuf::from("/d/a.zip"));
+        for (button, mods) in [(BTN_LEFT, NO_MODS), (BTN_LEFT, SHIFT), (BTN_RIGHT, ALT)] {
+            let a = answer(&icon("/d/a"), &zip, button, mods);
+            assert_eq!(put(a), Some((COPY, Plan::Put(Some(DropOp::Copy)))));
+            assert_eq!(a.unwrap().cursor()[0], "dnd-copy");
+        }
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Drag-and-drop of desktop icons and Start menu programs: a see-through copy of the dragged icons rides
 //! under the pointer and the release drops them on a folder icon, a desktop cell, the Recycle Bin or Quick
 //! Launch. The left button does the natural move, copy or shortcut (or what the held modifiers pick); the
-//! right button asks with Copy Here / Move Here / Create Shortcuts Here.
+//! right button asks with Copy Here / Move Here / Create Shortcuts Here. A zip icon takes copies of files
+//! only, with either button.
 //!
 //! Past the drag threshold the drag becomes the seat's (`dndsource`) so it can drop into another program;
 //! drops on the desktop's own targets still end in [`State::perform_all`] or the drop menu. A system icon's
@@ -125,6 +126,9 @@ pub enum DropTarget {
         gap: usize,
     },
     Folder(PathBuf),
+    /// A zip icon on the desktop that takes copies of files dropped onto it (Explorer's
+    /// `--add-to-zip`).
+    Zip(PathBuf),
     /// A desktop cell, as a 100% cell (`desktop::to_saved`): a drop's file work answers later,
     /// maybe after the text size has grown the grid (`State::desktop_drop_at`).
     Desktop((i32, i32)),
@@ -194,6 +198,7 @@ pub struct Drags {
 /// into a folder; a menu program is a copy of its .desktop file; anything else is a shortcut.
 pub fn left_drop_op(grabbed: &DragSource, target: &DropTarget) -> DropOp {
     match (grabbed, target) {
+        (_, DropTarget::Zip(_)) => DropOp::Copy,
         (
             DragSource::Icon { .. },
             DropTarget::Desktop(_) | DropTarget::Folder(_) | DropTarget::Trash,
@@ -720,7 +725,8 @@ impl State {
         let Some(target) = self.drop_target_at(&d.sources, pos) else {
             return;
         };
-        if d.button == BTN_RIGHT {
+        // A zip takes copies only, so a right drop onto one asks nothing.
+        if d.button == BTN_RIGHT && !matches!(target, DropTarget::Zip(_)) {
             self.cancel_waiting_drop();
             self.drags.pending_drop = Some((d.sources, target));
             self.open_drop_menu(at, DropOp::Move, Allowed::ALL);
@@ -730,13 +736,13 @@ impl State {
         self.perform_all(&d.sources, &target, op);
     }
 
-    /// Draw the folder icon or Recycle Bin a drag is over as selected; None or another target clears it.
+    /// Draw the folder icon, zip icon or Recycle Bin a drag is over as selected; None or another target clears it.
     pub fn drop_hilite(&mut self, target: Option<&DropTarget>) {
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
         let index = match target {
-            Some(DropTarget::Folder(dir)) => view
+            Some(DropTarget::Folder(dir) | DropTarget::Zip(dir)) => view
                 .entries
                 .iter()
                 .position(|e| matches!(&e.target, Target::Open(p) if p == dir)),
@@ -753,9 +759,10 @@ impl State {
     }
 
     /// What sits under layout point `pos` for a drop of `sources`: the Quick Launch band, the task row
-    /// for launchers and programs while it holds the pins (see [`pins_on_row`]), a folder icon (not a
-    /// dragged one), or a desktop cell (see [`takes_cell`]); None otherwise. Another program's drag
-    /// passes no sources.
+    /// for launchers and programs while it holds the pins (see [`pins_on_row`]), a folder icon or a
+    /// zip icon (not a dragged one), or a desktop cell (see [`takes_cell`]); None otherwise, a
+    /// read-only zip and a zip under a drag of anything but files among them. Another program's
+    /// drag passes no sources.
     pub fn drop_target_at(
         &self,
         sources: &[DragSource],
@@ -803,6 +810,13 @@ impl State {
                         && entry.is_dir
                     {
                         return Some(DropTarget::Folder(p.clone()));
+                    }
+                    if let (Some(writes), Target::Open(p)) = (entry.zip, &entry.target) {
+                        let files = (sources.iter()).all(|s| {
+                            matches!(s, DragSource::Icon { .. } | DragSource::File { .. })
+                        });
+                        let holds_zip = sources.iter().any(|s| p.starts_with(s.path()));
+                        return (writes && files && !holds_zip).then(|| DropTarget::Zip(p.clone()));
                     }
                 }
                 if !takes_cell(self.config.desktop_icons, sources) {
@@ -884,6 +898,14 @@ impl State {
             DropTarget::Folder(dir) => {
                 let puts = sources.iter().map(|s| (s.clone(), None, None)).collect();
                 self.put_into(dir.clone(), op, puts, Vec::new(), here);
+            }
+            DropTarget::Zip(zip) => {
+                let files = (sources.iter())
+                    .filter(|s| matches!(s, DragSource::Icon { .. } | DragSource::File { .. }))
+                    .map(|s| s.path().to_path_buf())
+                    .filter(|p| !zip.starts_with(p))
+                    .collect();
+                self.add_to_zip(zip, files);
             }
             DropTarget::Desktop(saved) => {
                 let area = self.desktop_area();
@@ -1099,7 +1121,12 @@ impl State {
                     .collect();
                 (view.dir.clone(), cells)
             }
-            DropTarget::Quick(_) | DropTarget::Pin { .. } | DropTarget::Trash => return,
+            DropTarget::Quick(_)
+            | DropTarget::Pin { .. }
+            | DropTarget::Trash
+            | DropTarget::Zip(_) => {
+                return;
+            }
         };
         let history = self.desktop_history();
         let action = Action::changes(DropOp::Shortcut.failure_title(), State::rescan_desktop);
@@ -1450,6 +1477,7 @@ mod tests {
             is_dir: false,
             allow_launching: false,
             picture: None,
+            zip: None,
         };
         let entries = [
             entry("notes.txt", desktop::Kind::RecycleBin),
@@ -1588,6 +1616,7 @@ mod tests {
             is_dir,
             allow_launching: allow,
             picture: None,
+            zip: None,
         }
     }
 

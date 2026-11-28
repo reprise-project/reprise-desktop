@@ -178,6 +178,7 @@ mod tests {
             is_dir: false,
             allow_launching: false,
             picture: None,
+            zip: None,
         }
     }
 

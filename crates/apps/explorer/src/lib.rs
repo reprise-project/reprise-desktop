@@ -2393,6 +2393,7 @@ impl App for Lazy {
                         target,
                         sources,
                     }) => ex.put_paths(*op, sources, target, ctx),
+                    Some(Alone::AddToZip { zip, sources }) => ex.put_in_zip(sources, zip, ctx),
                     Some(Alone::Delete { paths, erase }) => {
                         ex.confirm_delete_paths(paths.clone(), *erase, ctx)
                     }
@@ -2670,6 +2671,8 @@ enum Alone {
         target: PathBuf,
         sources: Vec<PathBuf>,
     },
+    /// `--add-to-zip ZIP -- SOURCES...`: copies of the SOURCES dropped onto the zip ZIP.
+    AddToZip { zip: PathBuf, sources: Vec<PathBuf> },
     /// `--delete [--erase] PATHS...`: Delete on the PATHS, Shift+Delete with `--erase`.
     Delete { paths: Vec<PathBuf>, erase: bool },
     /// `--empty-bin`: Empty Recycle Bin.
@@ -2696,6 +2699,18 @@ fn put_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<Alone>
     Some(Alone::Put {
         op,
         target,
+        sources: absolute_paths(args)?,
+    })
+}
+
+/// `--add-to-zip`'s arguments: the absolute ZIP, `--` and the absolute SOURCES.
+fn add_to_zip_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<Alone> {
+    let zip = PathBuf::from(args.next()?);
+    if !zip.is_absolute() || args.next()? != "--" {
+        return None;
+    }
+    Some(Alone::AddToZip {
+        zip,
         sources: absolute_paths(args)?,
     })
 }
@@ -2774,6 +2789,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             .map(Alone::NewShortcut),
         Some("--bin-properties") => Some(Alone::BinProperties),
         Some("--put") => put_args(args.by_ref()),
+        Some("--add-to-zip") => add_to_zip_args(args.by_ref()),
         Some("--delete") => {
             let mut rest = args.by_ref().peekable();
             let erase = rest.next_if(|a| a == "--erase").is_some();
@@ -2794,6 +2810,7 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
             Alone::BinProperties | Alone::EmptyBin => Place::RecycleBin,
             Alone::Undo(_) => Place::Home,
             Alone::Put { target, .. } => Place::from_path(target),
+            Alone::AddToZip { zip, .. } => zip.parent().map_or(Place::Home, Place::from_path),
             Alone::Delete { paths, .. } | Alone::Zip(paths) => {
                 paths[0].parent().map_or(Place::Home, Place::from_path)
             }

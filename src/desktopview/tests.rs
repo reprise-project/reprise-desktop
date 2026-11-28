@@ -133,6 +133,7 @@ fn file(name: &str) -> DesktopEntry {
         is_dir: false,
         allow_launching: false,
         picture: None,
+        zip: None,
     }
 }
 
@@ -435,6 +436,7 @@ fn remap_follows_the_file_and_drops_a_gone_entry() {
         is_dir: false,
         allow_launching: false,
         picture: None,
+        zip: None,
     };
     let bin = DesktopEntry {
         kind: desktop::Kind::RecycleBin,
@@ -464,6 +466,7 @@ fn a_late_answer_never_takes_a_cell_an_icon_landed_in_meanwhile() {
         is_dir: true,
         allow_launching: false,
         picture: None,
+        zip: None,
     };
     let area = Rect::new(0, 0, 800, 600);
     let square = desktop::Cell::square(desktop::CELL);
@@ -595,6 +598,7 @@ fn a_launchers_name_key_moves_to_its_file_name_once() {
         is_dir: false,
         allow_launching: false,
         picture: None,
+        zip: None,
     };
     let plain = |name: &str| DesktopEntry {
         name: name.into(),
@@ -607,6 +611,7 @@ fn a_launchers_name_key_moves_to_its_file_name_once() {
         is_dir: false,
         allow_launching: false,
         picture: None,
+        zip: None,
     };
     let entries = [
         launcher("firefox.desktop", "Firefox"),
@@ -2148,6 +2153,71 @@ fn a_drop_of_files_runs_in_explorer_and_an_icon_put_on_a_cell_lands_there() {
         pinned(&h, "report.txt"),
         Some((3, 2)),
         "the copy takes the drop cell"
+    );
+}
+
+#[test]
+fn files_dropped_on_a_zip_icon_go_into_it_in_explorer_and_a_read_only_zip_takes_none() {
+    use crate::dragview::{DragSource, DropOp, DropTarget};
+    crate::spawn::record();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    create(&mut h.state, "/d".into(), Default::default(), None);
+    let zip = |name: &str, writes: bool| DesktopEntry {
+        zip: Some(writes),
+        ..file(name)
+    };
+    h.state.desktop.as_mut().unwrap().entries = vec![
+        zip("box.zip", true),
+        zip("shut.zip", false),
+        file("a.txt"),
+        file("b.txt"),
+    ];
+    h.state.relayout_desktop();
+    let on = |h: &crate::harness::Harness, i: usize| {
+        let c = h.state.desktop.as_ref().unwrap().cells[i];
+        smithay::utils::Point::from((f64::from(c.x + c.width / 2), f64::from(c.y + c.height / 2)))
+    };
+    let dragged = |name: &str| {
+        let path = PathBuf::from("/d").join(name);
+        DragSource::Icon {
+            id: desktop::IconId::File(path.clone()),
+            path,
+            name: name.into(),
+        }
+    };
+    let files = [dragged("a.txt"), dragged("b.txt")];
+    let boxed = DropTarget::Zip("/d/box.zip".into());
+    assert_eq!(
+        h.state.drop_target_at(&files, on(&h, 0)),
+        Some(boxed.clone())
+    );
+    assert_eq!(
+        h.state.drop_target_at(&[], on(&h, 0)),
+        Some(boxed.clone()),
+        "another program's drag"
+    );
+    assert_eq!(h.state.drop_target_at(&files, on(&h, 1)), None, "no drop");
+    let with_zip = [dragged("a.txt"), dragged("box.zip")];
+    assert!(
+        !matches!(
+            h.state.drop_target_at(&with_zip, on(&h, 0)),
+            Some(DropTarget::Zip(_))
+        ),
+        "the zip never takes itself"
+    );
+
+    h.state.drop_hilite(Some(&boxed));
+    assert_eq!(h.state.desktop.as_ref().unwrap().drop_hilite, Some(0));
+    h.state.drop_hilite(None);
+
+    h.state.perform_all(&with_zip, &boxed, DropOp::Move);
+    h.state
+        .perform_all(&[dragged("box.zip")], &boxed, DropOp::Copy);
+    assert_eq!(
+        job_args(&h),
+        [vec!["--add-to-zip", "/d/box.zip", "--", "/d/a.txt"]],
+        "copies of the files but the zip, and no job for the zip alone"
     );
 }
 

@@ -288,6 +288,7 @@ impl State {
             w.hold();
             w.adder()
         });
+        let apps = self.app_index.clone();
         self.spawn_fs_job(move || {
             let templates_dir = show_files.then(reprisefs::templates::dir).flatten();
             // Watch before reading, so a change between the two is not missed.
@@ -299,7 +300,7 @@ impl State {
                     .flat_map(templates_wants),
             );
             let added = adder.map(|a| a.run(&want));
-            let entries = read_icons(
+            let mut entries = read_icons(
                 &dir,
                 &mime,
                 &names,
@@ -308,6 +309,11 @@ impl State {
                 (shown, show_hidden),
                 drive_bins_full,
             );
+            if entries.iter().any(|e| e.zip.is_some())
+                && !reprisefs::archive::opens_as_folder("application/zip", &apps)
+            {
+                entries.iter_mut().for_each(|e| e.zip = None);
+            }
             let art = icon_files(&entries, px);
             let send_dirs = sendto::Dirs::read(&dir);
             let templates = (templates_dir.as_deref())
