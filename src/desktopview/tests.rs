@@ -821,11 +821,16 @@ fn desktop_menu_lists_its_commands_with_separators() {
         MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "About Reprise"
     ));
     let (items, commands) = new_menu(&[]);
-    assert_eq!(items.len(), NEW_MENU_ICONS.len());
+    assert_eq!(items.len(), NEW_MENU_ICONS.len() + 1);
     assert_eq!(commands[0], Some(DesktopCommand::NewFolder));
     assert_eq!(commands[1], Some(DesktopCommand::NewShortcut));
     assert!(matches!(items[2], MenuItem::Separator));
     assert_eq!(commands[3], Some(DesktopCommand::NewTextDocument));
+    assert_eq!(commands[4], Some(DesktopCommand::NewCompressedFolder));
+    assert!(matches!(
+        &items[4],
+        MenuItem::Entry { label, mnemonic: Some(12), .. } if label == "Compressed (zipped) Folder"
+    ));
     let (items, commands) = arrange_menu(true);
     assert_eq!(
         commands,
@@ -1543,7 +1548,7 @@ fn a_file_whose_icon_name_never_decodes_wears_the_next_name() {
 }
 
 #[test]
-fn a_new_folder_or_text_document_the_desktop_refuses_says_why_in_an_error_box() {
+fn a_new_item_the_desktop_refuses_says_why_in_an_error_box() {
     use std::os::unix::fs::PermissionsExt;
     let mut h = crate::harness::Harness::new();
     h.output("TEST-1", 1024, 768);
@@ -1554,6 +1559,10 @@ fn a_new_folder_or_text_document_the_desktop_refuses_says_why_in_an_error_box() 
     for (cmd, title) in [
         (DesktopCommand::NewFolder, "New Folder"),
         (DesktopCommand::NewTextDocument, "New Text Document"),
+        (
+            DesktopCommand::NewCompressedFolder,
+            "New Compressed (zipped) Folder",
+        ),
     ] {
         h.state.desktop_command(cmd, None);
         let shown = &h.state.dialogs.views.last().expect("an error box").dialog;
@@ -1567,6 +1576,23 @@ fn a_new_folder_or_text_document_the_desktop_refuses_says_why_in_an_error_box() 
     }
     std::fs::set_permissions(&desk, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(std::fs::read_dir(&desk).unwrap().count(), 0);
+}
+
+#[test]
+fn new_compressed_folder_makes_an_empty_zip_past_a_taken_name_and_begins_its_rename() {
+    let taken = "New Compressed (zipped) Folder.zip";
+    let (mut h, desk) = desktop_in("desktop-new-zip", &[taken]);
+    h.state
+        .desktop_command(DesktopCommand::NewCompressedFolder, None);
+    let made = desk.join("New Compressed (zipped) Folder (2).zip");
+    assert_eq!(
+        std::fs::read(&made).unwrap(),
+        reprisefs::zipwrite::EMPTY_ZIP
+    );
+    let view = h.state.desktop.as_ref().unwrap();
+    let (i, _) = view.rename.as_ref().expect("the new zip's rename begins");
+    assert_eq!(view.entries[*i].path, made);
+    assert_eq!(view.selection.set, BTreeSet::from([*i]));
 }
 
 #[test]
@@ -2015,7 +2041,7 @@ fn the_new_items_scan_leaves_a_rename_the_user_is_typing() {
 }
 
 #[test]
-fn new_lists_the_templates_under_text_document_and_one_makes_a_copy_in_rename() {
+fn new_lists_the_templates_under_text_document_above_the_zip_and_one_makes_a_copy_in_rename() {
     let mut h = crate::harness::Harness::new();
     h.output("TEST-1", 1024, 768);
     let root = crate::harness::scratch().join("desktop-templates");
@@ -2041,7 +2067,8 @@ fn new_lists_the_templates_under_text_document_and_one_makes_a_copy_in_rename() 
             "Shortcut...",
             "Text Document",
             "Notes & Plans",
-            "Report"
+            "Report",
+            "Compressed (zipped) Folder"
         ]
     );
     let report = folder.join("Report.odt");

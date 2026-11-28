@@ -127,7 +127,8 @@ pub fn desktop_menu(
     split(rows)
 }
 
-/// New's rows: Folder and Shortcut..., then Text Document with the `templates` under it.
+/// New's rows: Folder and Shortcut..., then Text Document with the `templates` under it, then
+/// Compressed (zipped) Folder.
 pub fn new_menu(
     templates: &[reprisefs::templates::Template],
 ) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
@@ -145,6 +146,10 @@ pub fn new_menu(
         let label = escape_mnemonic(&t.label);
         rows.push((entry(&label), Some(NewFrom(t.path.clone()))));
     }
+    rows.push((
+        entry(&tr!("desk-menu-compressed-folder")),
+        Some(NewCompressedFolder),
+    ));
     split(rows)
 }
 

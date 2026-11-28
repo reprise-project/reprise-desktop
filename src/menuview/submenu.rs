@@ -399,6 +399,13 @@ impl State {
                     let has = |n: &str| self.icons.has_unread(n);
                     Some(reprisefs::icons::pick_icon(mime.as_deref(), &t.path, &has))
                 }));
+                let has = |n: &str| self.icons.has_unread(n);
+                let zip = std::path::Path::new("New Compressed (zipped) Folder.zip");
+                names.push(Some(reprisefs::icons::pick_icon(
+                    Some("application/zip"),
+                    zip,
+                    &has,
+                )));
                 for (row, (item, name)) in items.iter_mut().zip(names).enumerate() {
                     if let (MenuItem::Entry { icon, .. }, Some(name)) = (item, name) {
                         *icon = self.menu_icon(row, &name, px, &mut waits);

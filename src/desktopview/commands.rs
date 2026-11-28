@@ -466,10 +466,16 @@ impl State {
         });
     }
 
-    /// Create an empty text file at the first free "New Text Document.txt", "New Text
-    /// Document (2).txt", ..., claimed with `O_EXCL`. Does nothing while the
-    /// desktop's files are off.
-    fn new_text_document(&mut self, at: Option<(i32, i32)>) {
+    /// New > `what`: a file holding `body` at the first free `name`, `name (2)`, ..., claimed
+    /// with `O_EXCL`, in the cell under `at` as New Folder places its folder. A file whose write
+    /// fails is removed. Does nothing while the desktop's files are off.
+    fn new_file(
+        &mut self,
+        what: String,
+        name: &'static str,
+        body: &'static [u8],
+        at: Option<(i32, i32)>,
+    ) {
         if !self.config.desktop_icons {
             return;
         }
@@ -478,12 +484,20 @@ impl State {
         };
         let dir = view.dir.clone();
         let history = self.desktop_history();
-        let action = Action::changes("New Text Document", State::rescan_desktop);
+        let action = Action::changes(&what, State::rescan_desktop);
         self.spawn_fs_action(action, move |gate| {
             if !gate.change(&dir) {
                 return Box::new(|_| {});
             }
-            let made = ops::create_new_numbered(&dir, "New Text Document.txt").map(|(_, p)| p);
+            let made = ops::create_new_numbered(&dir, name).and_then(|(mut f, p)| {
+                match std::io::Write::write_all(&mut f, body) {
+                    Ok(()) => Ok(p),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&p);
+                        Err(e)
+                    }
+                }
+            });
             if let Ok(path) = &made {
                 record_new(&history, path);
             }
@@ -492,7 +506,7 @@ impl State {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     state.created(&name, at)
                 }
-                Err(e) => state.create_failed(&tr!("desk-new-text-document"), e),
+                Err(e) => state.create_failed(&what, e),
             })
         });
     }
@@ -598,7 +612,18 @@ impl State {
             Dc::NextBackground => self.next_slide(),
             Dc::NewFolder => self.new_folder(self.desktop_menu_at),
             Dc::NewShortcut => self.new_shortcut(self.desktop_menu_at),
-            Dc::NewTextDocument => self.new_text_document(self.desktop_menu_at),
+            Dc::NewTextDocument => self.new_file(
+                tr!("desk-new-text-document"),
+                "New Text Document.txt",
+                b"",
+                self.desktop_menu_at,
+            ),
+            Dc::NewCompressedFolder => self.new_file(
+                tr!("desk-new-compressed-folder"),
+                "New Compressed (zipped) Folder.zip",
+                &reprisefs::zipwrite::EMPTY_ZIP,
+                self.desktop_menu_at,
+            ),
             Dc::NewFrom(template) => self.new_from_template(template, self.desktop_menu_at),
             Dc::Open => {
                 if let Some(i) = target {
