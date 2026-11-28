@@ -10,9 +10,9 @@ use reprisekit::schemes;
 use reprisekit::theme::Theme;
 use std::path::Path;
 
-/// Whether `s`'s look is dark: dark mode, or a dark Classic scheme.
+/// Whether `s`'s look is dark: its mode ([`appearancepage::mode_dark`]), or a dark Classic scheme.
 pub(crate) fn dark(s: &Settings) -> bool {
-    s.mode == "dark"
+    appearancepage::mode_dark(s)
         || appearancepage::interface(s) == Interface::Classic
             && schemes::scheme(&s.color_scheme).is_some_and(|c| c.is_dark())
 }
@@ -33,7 +33,7 @@ pub fn read(text: &str) -> Picks {
 }
 
 /// `text`'s settings, and them with each pick that differs laid over, a new interface as the
-/// Interface combo moves it; a "night" or "hours" mode stays unless Dark is picked.
+/// Interface combo moves it; a "night" or "hours" mode stays as [`set_dark`] says.
 fn with(text: &str, picks: &Picks) -> (Settings, Settings) {
     let base = model::load(text);
     let mut s = base.clone();
@@ -47,8 +47,8 @@ fn with(text: &str, picks: &Picks) -> (Settings, Settings) {
     (base, s)
 }
 
-/// Make `s`'s look dark or light: the mode, and light also drops a dark Classic scheme. Dark
-/// replaces a "night" or "hours" schedule; Light keeps one.
+/// Make `s`'s look dark or light: the mode, and light also drops a dark Classic scheme. A
+/// "night" or "hours" schedule stays while the session already looks as asked.
 pub(crate) fn set_dark(s: &mut Settings, dark: bool) {
     if self::dark(s) == dark {
         return;
@@ -125,6 +125,33 @@ mod tests {
     fn written(text: &str, p: Picks) -> String {
         let (base, want) = with(text, &p);
         model::save(text, &want, &base).unwrap()
+    }
+
+    /// Under a schedule the Dark box and the sample say what the session is now, and a pick that
+    /// differs from it replaces the schedule.
+    #[test]
+    fn a_schedule_reads_as_the_session_is_now() {
+        let text = "[appearance]\ninterface = \"blue\"\nmode = \"hours\"\n";
+        repriseapp::set_session_dark(true);
+        assert!(read(text).dark, "Dark is ticked while the session is dark");
+        assert!(
+            sample(text, &read(text)).colors.is_dark(),
+            "and the sample is dark"
+        );
+        assert!(
+            written(text, picks(Interface::Blue, true, 100)).contains("mode = \"hours\""),
+            "a tick that matches keeps the schedule"
+        );
+        assert!(
+            !written(text, picks(Interface::Blue, false, 100)).contains("mode ="),
+            "an untick drops the schedule for Light, the default mode"
+        );
+        repriseapp::set_session_dark(false);
+        assert!(!read(text).dark, "Dark is clear while the session is light");
+        assert!(
+            !sample(text, &read(text)).colors.is_dark(),
+            "and the sample is light"
+        );
     }
 
     #[test]

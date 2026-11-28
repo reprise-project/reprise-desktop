@@ -56,6 +56,32 @@ pub(crate) fn publish_theme(theme: &Theme) {
     CAPTION_FIT.with_borrow_mut(|(t, _)| *t = Some(theme.clone()));
 }
 
+thread_local! {
+    static SESSION_DARK: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Whether the session's look is dark now: the mode in force, which the compositor resolves from
+/// a "night" or "hours" schedule, followed live. Read the first time from
+/// [`reprisekit::interface::MODE_ENV`].
+pub fn session_dark() -> bool {
+    SESSION_DARK.get().unwrap_or_else(|| {
+        let dark = std::env::var(reprisekit::interface::MODE_ENV)
+            .ok()
+            .is_some_and(|m| mode_dark(&m));
+        SESSION_DARK.set(Some(dark));
+        dark
+    })
+}
+
+/// Set what [`session_dark`] says: the host on each mode change, a program's tests for a session.
+pub fn set_session_dark(dark: bool) {
+    SESSION_DARK.set(Some(dark));
+}
+
+fn mode_dark(mode: &str) -> bool {
+    reprisekit::glass::Mode::parse(mode) == Some(reprisekit::glass::Mode::Dark)
+}
+
 /// The theme a program builds from the compositor's environment: the
 /// interface named by [`reprisekit::interface::ENV`], light or dark per
 /// [`reprisekit::interface::MODE_ENV`] (Blue variant from [`reprisekit::blue::ENV`], Glass
@@ -308,6 +334,9 @@ impl Host {
         let text_size = self.look.text_size;
         if !self.look.set(key, value) {
             return;
+        }
+        if key == reprisebus::appearance::MODE {
+            set_session_dark(self.look.mode.as_deref().is_some_and(mode_dark));
         }
         let theme = self.look.theme();
         self.ctx.text = text_for(&theme.fonts);

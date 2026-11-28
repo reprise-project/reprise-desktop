@@ -56,6 +56,8 @@ struct WelcomeApp {
     dialog: Option<(Rc<TextRenderer>, Theme)>,
     /// The client size last asked for the main window.
     asked: (i32, i32),
+    /// [`repriseapp::session_dark`] as the picks were last read: a schedule turning changes them.
+    session_dark: bool,
 }
 
 fn read(path: &std::path::Path) -> String {
@@ -73,12 +75,23 @@ impl WelcomeApp {
             error: ErrorBox::default(),
             dialog: None,
             asked: welcome::CLIENT,
+            session_dark: repriseapp::session_dark(),
         }
     }
 
-    /// The pages, laid out again first when the text size moved.
+    /// The pages, laid out again first when the text size moved or a schedule turned the session.
     fn welcome(&mut self, ctx: &Ctx) -> &mut Welcome {
         let forms = ctx.forms();
+        let dark = repriseapp::session_dark();
+        if dark != self.session_dark {
+            self.session_dark = dark;
+            self.picks.dark = settings::read(&read(&self.config)).dark;
+            if let Some(w) = &mut self.welcome {
+                w.picks.dark = self.picks.dark;
+                w.set_sample(settings::sample(&read(&self.config), &w.picks));
+                w.go(w.page, &ctx.text, &forms);
+            }
+        }
         let w = self.welcome.get_or_insert_with(|| {
             let sample = settings::sample(&read(&self.config), &self.picks);
             let links = self.entries.iter().map(|(l, _)| l.clone()).collect();
@@ -320,6 +333,32 @@ mod tests {
         assert!(text.starts_with("# mine\nterminal = \"foot\"\n"), "{text}");
         assert!(text.contains("interface = \"glass\""), "{text}");
         assert_eq!(app.picks.interface, Interface::Glass);
+    }
+
+    /// A schedule turns with no event Welcome hears, so the pages follow the session at the next
+    /// draw.
+    #[test]
+    fn a_schedule_turning_dark_ticks_dark_and_darkens_the_sample() {
+        let config = scratch("schedule").join("config.toml");
+        std::fs::write(
+            &config,
+            "[appearance]\ninterface = \"blue\"\nmode = \"hours\"\n",
+        )
+        .unwrap();
+        repriseapp::set_session_dark(false);
+        let mut app = WelcomeApp::new(config, Vec::new());
+        let ctx = test_ctx(100);
+        let sample_dark = |w: &Welcome| match &w.wizard.form.item("sample").unwrap().control {
+            reprisekit::controls::form::Control::Sample { theme, .. } => theme.colors.is_dark(),
+            _ => panic!("a sample"),
+        };
+        assert!(!app.welcome(&ctx).picks.dark);
+        assert!(!sample_dark(app.welcome(&ctx)));
+        repriseapp::set_session_dark(true);
+        let w = app.welcome(&ctx);
+        assert!(w.picks.dark, "Dark ticks once the session is dark");
+        assert!(sample_dark(w), "and the sample turns dark");
+        assert!(app.picks.dark, "the file's picks read dark too");
     }
 
     #[test]

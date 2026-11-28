@@ -1726,3 +1726,33 @@ fn a_double_click_selects_a_number_fields_digits_and_a_list_rows_leaves_the_shee
     let reply = click_at(&mut a, &mut ctx, row, 3200);
     assert!(!reply.quit, "the sheet stays open");
 }
+
+/// A schedule's state now is the compositor's: under "night" or "hours" the Appearance sample
+/// wears the look the session is in, dark or light, and turns with it before the next draw.
+#[test]
+fn under_a_schedule_the_sample_wears_the_sessions_look_now() {
+    let mut a = app("scheduled-sample");
+    a.open_page(Page::Appearance, None);
+    let mut want = a.want.clone();
+    want.interface = "blue".into();
+    want.mode = "hours".into();
+    a.want = want.clone();
+    crate::pages::follow(&mut a.sheet, &want);
+    let sample_dark = |a: &SettingsApp| match &a.sheet.pages[Page::Appearance.index()]
+        .item(crate::appearancepage::SAMPLE)
+        .unwrap()
+        .control
+    {
+        form::Control::Sample { theme, .. } => theme.colors.is_dark(),
+        _ => panic!("a sample"),
+    };
+    let mut ctx = test_ctx();
+    ctx.size = a.initial_size();
+    let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+    repriseapp::set_session_dark(true);
+    a.draw(MAIN, &mut c, &ctx);
+    assert!(sample_dark(&a), "dark while the session is dark");
+    repriseapp::set_session_dark(false);
+    a.draw(MAIN, &mut c, &ctx);
+    assert!(!sample_dark(&a), "light again once the session is light");
+}
