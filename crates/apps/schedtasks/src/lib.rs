@@ -46,6 +46,8 @@ use systemd::{Bus, Cmd, Update};
 const CLIENT: (i32, i32) = (800, 400);
 const MARGIN: i32 = 8;
 const STATUS_Y: i32 = 40;
+/// Between two buttons, and between two rows of them once they wrap.
+const BUTTON_GAP: i32 = 6;
 /// Where the list starts, at 100% text.
 const LIST_Y: i32 = 60;
 
@@ -158,7 +160,21 @@ struct SchedTasks {
     is_12h: bool,
     /// The main window had its first configure ([`SchedTasks::widened`]).
     configured: bool,
+    /// How far the wrapped buttons push the status line and the list down, 100% px.
+    drop: i32,
 }
+
+/// The buttons in their row's order.
+const BUTTON_IDS: [&str; 8] = [
+    RUN,
+    STOP,
+    TOGGLE,
+    PROPERTIES,
+    VIEW_OUTPUT,
+    NEW,
+    EDIT,
+    DELETE,
+];
 
 fn buttons() -> Vec<Item> {
     let mut x = MARGIN;
@@ -180,7 +196,7 @@ fn buttons() -> Vec<Item> {
             false,
             false,
         ));
-        x += w + 6;
+        x += w + BUTTON_GAP;
     }
     items.push(Item::label(
         STATUS,
@@ -220,6 +236,7 @@ impl SchedTasks {
             warn_icon: None,
             is_12h: reprisefs::locale::is_12h(),
             configured: false,
+            drop: 0,
         }
     }
 
@@ -335,8 +352,30 @@ impl SchedTasks {
         (ctx.size.0 < fit).then_some((fit, ctx.size.1))
     }
 
+    /// Wraps the buttons onto as many rows as the main window's width needs, and moves the
+    /// status line and the list down under the last row.
+    fn flow(&mut self, ctx: &Ctx) {
+        let right = ctx.forms().text.within(ctx.size.0) - MARGIN;
+        let (mut x, mut y) = (MARGIN, MARGIN);
+        for id in BUTTON_IDS {
+            let Some(it) = self.form.item_mut(id) else {
+                continue;
+            };
+            let w = it.rect.width;
+            if x > MARGIN && x + w > right {
+                (x, y) = (MARGIN, y + BUTTON_H + BUTTON_GAP);
+            }
+            it.rect = Rect::new(x, y, w, BUTTON_H);
+            x += w + BUTTON_GAP;
+        }
+        self.drop = y - MARGIN;
+        if let Some(it) = self.form.item_mut(STATUS) {
+            it.rect.y = STATUS_Y + self.drop;
+        }
+    }
+
     fn list_rect(&self, ctx: &Ctx) -> Rect {
-        let y = ctx.forms().text.len(LIST_Y);
+        let y = ctx.forms().text.len(LIST_Y + self.drop);
         let (w, h) = ctx.size;
         Rect::new(MARGIN, y, (w - 2 * MARGIN).max(0), (h - y - MARGIN).max(0))
     }
@@ -923,7 +962,10 @@ impl App for SchedTasks {
             BROWSE => self.browse_event(ev, ctx),
             w if self.asking.owns(w) => self.question_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
-            _ => self.main_event(ev, ctx),
+            _ => {
+                self.flow(ctx);
+                self.main_event(ev, ctx)
+            }
         }
     }
 
@@ -936,7 +978,10 @@ impl App for SchedTasks {
             BROWSE => self.draw_browse(c, ctx),
             w if self.asking.owns(w) => self.asking.draw(c, &forms, &ctx.text),
             w if self.note.owns(w) => self.note.draw(c, &forms, &ctx.text),
-            _ => self.draw_main(c, ctx),
+            _ => {
+                self.flow(ctx);
+                self.draw_main(c, ctx);
+            }
         }
     }
 }
@@ -1014,6 +1059,7 @@ impl repriseapp::Extended for SchedTasks {
             w if self.asking.owns(w) => self.asking.access(tree, &ctx.text, &forms),
             w if self.note.owns(w) => self.note.access(tree, &ctx.text, &forms),
             _ => {
+                self.flow(ctx);
                 let focus = self
                     .form
                     .access(tree, ACCESS_ROOT, &ctx.text, forms.fonts.size_px);
