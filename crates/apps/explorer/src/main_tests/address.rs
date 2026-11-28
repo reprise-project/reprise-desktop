@@ -440,6 +440,31 @@ fn ctrl_l_focuses_the_address_with_its_text_selected() {
     );
 }
 
+/// After "Cannot find" the typed text stays selected, so typing again replaces it.
+#[test]
+fn a_typed_folder_that_is_not_there_leaves_its_text_selected() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = browse_fixture(&mut ctx);
+    ex.run(Command::AddressFocus, &mut ctx);
+    let typed = dir.path().join("nowhere").display().to_string();
+    ex.address
+        .key(reprisekit::textedit::EditKey::Insert(typed.clone()));
+    let edit = ex.address.combo.edit.as_ref().expect("the field's edit");
+    assert_eq!(
+        edit.selection(),
+        typed.len()..typed.len(),
+        "typed, nothing selected"
+    );
+    ex.run(Command::Navigate(typed.clone()), &mut ctx);
+    assert!(
+        matches!(ex.dialog(), Some(crate::dialogs::Dialog::Message { text, .. }) if text.starts_with("Cannot find")),
+        "the Cannot find box"
+    );
+    assert_eq!(ex.address.text(), typed);
+    let edit = ex.address.combo.edit.as_ref().expect("the field's edit");
+    assert_eq!(edit.selection(), 0..typed.len(), "the whole typed text");
+}
+
 #[test]
 fn crumbs_for_a_place_without_a_path_show_one_root_crumb() {
     use crate::chrome::crumbs_for;
