@@ -7,6 +7,7 @@ pub mod addressbar;
 pub mod arrange;
 pub mod batchrename;
 pub mod binsheet;
+pub mod breadcrumb;
 pub mod browsefolder;
 pub mod calculator;
 pub mod calendar;
