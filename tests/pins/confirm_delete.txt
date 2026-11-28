@@ -1,23 +1,23 @@
-classic computer @1 20ec3cecc669bbd5
-classic computer @2 5e8dd842c1c949b0
-classic documents @1 8c288ffbeb45fbe0
-classic documents @2 b4214e52742cda9a
+classic computer @1 0a35af6f8450c3f6
+classic computer @2 39d2fe6f6a8c94b0
+classic documents @1 9d4bd2f7ceaf44b3
+classic documents @2 b4679b90629f41da
 classic icons @1 b8e1cd261f6362b0
 classic icons @2 a88653857d34d093
 classic icons and files @1 e23ade71c34be929
 classic icons and files @2 8be1e84a34a90fd6
-blue computer @1 6f5f68e6284cd8ee
-blue computer @2 a6888771566999bb
-blue documents @1 1ea9a16f8ed3c764
-blue documents @2 08864df7d8dfe977
+blue computer @1 03f3a0c2c722f5ff
+blue computer @2 fef159ba0b458a53
+blue documents @1 6239aa9000609cd9
+blue documents @2 82b96263f1759b87
 blue icons @1 3207bd25c76334ff
 blue icons @2 c0153e6c8c6a205a
 blue icons and files @1 7e8757cfdf3d22b2
 blue icons and files @2 eaad4ebdf3e2bdbc
-glass computer @1 6f281e845eeccf76
-glass computer @2 b96cf3eaee2ac61c
-glass documents @1 06f2aa95cd6eee07
-glass documents @2 2dc5a6d1a903b118
+glass computer @1 ad5039e21e02bf17
+glass computer @2 d54196a726c5469c
+glass documents @1 addd45b84b70c18e
+glass documents @2 aa5a1c2a53d7ef18
 glass icons @1 64d453d1ca64b778
 glass icons @2 958a548f64eb085a
 glass icons and files @1 b552a91978335ee2

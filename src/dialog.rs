@@ -232,6 +232,9 @@ pub struct Dialog {
     pub placement: Placement,
     /// Icon theme name, drawn at 32 px left of the text or at a form's "icon" picture.
     pub icon: Option<String>,
+    /// Reprise's own picture, drawn in the 32 px slot in place of `icon`, which still names the
+    /// caption's and the switcher's icon.
+    pub art: Option<&'static reprisekit::art::icons::Icon>,
     pub text: String,
     pub field: Option<Field>,
     pub buttons: Vec<DialogButton>,
@@ -268,6 +271,7 @@ impl Dialog {
             style,
             placement,
             icon: None,
+            art: None,
             text: String::new(),
             field: None,
             buttons: Vec::new(),

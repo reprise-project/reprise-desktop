@@ -171,9 +171,8 @@ impl Dialog {
             _ => tr!("dlg-hide-restore"),
         };
         Dialog {
-            // Folder with a document under the `draw_delete_badge` badge; `folder-documents` is the
-            // nearest themed icon.
             icon: Some("folder-documents".into()),
+            art: Some(&reprisekit::art::icons::FOLDER_PAGE),
             text: tr!("dlg-hide-text", label = label, restore = restore),
             buttons: vec![
                 button(
