@@ -150,7 +150,7 @@ impl Notepad {
         self.format = format;
         self.view = View::default();
         self.stamp = path.as_deref().and_then(Stamp::of);
-        self.zip_entry = path.as_deref().and_then(reprisefs::archivecopy::updatable);
+        self.zip_entry = path.as_deref().and_then(crate::zip_entry);
         self.path = path;
         self.open = None;
         self.sync_menus();

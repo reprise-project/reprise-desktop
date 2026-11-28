@@ -3319,12 +3319,10 @@ fn saving_a_copy_out_of_a_zip_asks_to_update_it_and_no_opens_save_as() {
         return;
     };
     let mut np = Notepad::new(Some(path.clone()));
-    np.zip_entry = Some((tmp.path().join("Docs.zip"), "2026/notes.txt".into()));
+    np.zip_entry = Some((tmp.path().join("Docs.zip"), "2026/notes.txt".into(), false));
     np.edit = MultiEdit::new("new");
     np.edit.mark_unsaved();
-    np.confirm_then(PendingAction::Quit);
-    let reply = np.answer_box(Some(0));
-    assert!(!reply.quit);
+    assert!(!np.save());
     let (b, ask) = np.asks.up().expect("a box");
     assert!(matches!(ask, Ask::Update));
     assert_eq!(
@@ -3336,23 +3334,21 @@ fn saving_a_copy_out_of_a_zip_asks_to_update_it_and_no_opens_save_as() {
     np.answer_box(Some(1));
     let dlg = np.saveas.as_ref().expect("No opens Save As");
     assert_eq!(dlg.file_name(), "notes.txt");
-    assert!(np.pending.is_waiting(), "the quit waits on Save As");
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
 }
 
 #[test]
-fn yes_on_the_update_box_says_why_a_zip_cannot_be_written_and_drops_the_quit() {
+fn yes_to_updating_a_zip_says_why_it_cannot_be_written_and_drops_the_quit() {
     let Some((tmp, path)) = read_only_notes() else {
         return;
     };
     let zip = tmp.path().join("Docs.zip");
     std::fs::write(&zip, "not a zip").expect("write");
     let mut np = Notepad::new(Some(path.clone()));
-    np.zip_entry = Some((zip.clone(), "notes.txt".into()));
+    np.zip_entry = Some((zip.clone(), "notes.txt".into(), false));
     np.edit = MultiEdit::new("new");
     np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
-    np.answer_box(Some(0));
     np.answer_box(Some(0));
     assert!(np.zip_save.running(), "the save runs on a job");
     let reply = finish_zip_save(&mut np);
@@ -3369,19 +3365,19 @@ fn yes_on_the_update_box_says_why_a_zip_cannot_be_written_and_drops_the_quit() {
 }
 
 #[test]
-fn cancel_on_the_update_box_drops_the_quit_and_writes_nothing() {
+fn cancel_on_saving_a_copy_out_of_a_zip_drops_the_quit_and_writes_nothing() {
     let Some((tmp, path)) = read_only_notes() else {
         return;
     };
     let mut np = Notepad::new(Some(path.clone()));
-    np.zip_entry = Some((tmp.path().join("Docs.zip"), "notes.txt".into()));
+    np.zip_entry = Some((tmp.path().join("Docs.zip"), "notes.txt".into(), false));
     np.edit = MultiEdit::new("new");
     np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
-    np.answer_box(Some(0));
     let reply = np.answer_box(Some(2));
     assert!(!reply.quit && np.asks.up().is_none() && np.saveas.is_none());
     assert!(!np.pending.is_waiting());
+    assert!(!np.zip_save.running());
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "old");
 }
 
@@ -3397,28 +3393,51 @@ fn finish_zip_save(np: &mut Notepad) -> Reply {
     }
 }
 
-#[test]
-fn yes_on_the_update_box_saves_into_the_zip_on_a_job_and_then_quits() {
-    let Some((tmp, path)) = read_only_notes() else {
-        return;
-    };
-    let zip = tmp.path().join("Docs.zip");
+/// A zip holding `notes.txt`, the file beside it.
+fn zip_of(dir: &std::path::Path) -> PathBuf {
+    let zip = dir.join("Docs.zip");
     let made = std::process::Command::new("bsdtar")
         .args(["-c", "--format", "zip", "-f"])
         .arg(&zip)
         .arg("-C")
-        .arg(tmp.path())
+        .arg(dir)
         .arg("notes.txt")
         .status()
         .expect("bsdtar");
     assert!(made.success());
+    zip
+}
+
+/// What the file `notes.txt` of `zip` holds.
+fn held(zip: &std::path::Path) -> Vec<u8> {
+    let argv = reprisefs::archive::open_argv(zip, std::path::Path::new("notes.txt"));
+    let out = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .output()
+        .expect("bsdtar");
+    out.stdout
+}
+
+#[test]
+fn closing_a_changed_copy_out_of_a_zip_asks_once_and_yes_saves_into_the_zip_then_quits() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let zip = zip_of(tmp.path());
     let mut np = Notepad::new(Some(path.clone()));
-    np.zip_entry = Some((zip.clone(), "notes.txt".into()));
+    np.zip_entry = Some((zip.clone(), "notes.txt".into(), false));
     np.edit = MultiEdit::new("new");
     np.edit.mark_unsaved();
     np.confirm_then(PendingAction::Quit);
-    np.answer_box(Some(0));
+    let (b, ask) = np.asks.up().expect("a box");
+    assert!(matches!(ask, Ask::SaveChanges));
+    assert_eq!(
+        b.fields.text,
+        "The text in the notes.txt file has changed.\n\
+         Do you want to update the compressed folder Docs.zip with the changes?"
+    );
     let reply = np.answer_box(Some(0));
+    assert!(np.asks.up().is_none(), "no second box");
     assert!(!reply.quit, "the quit waits on the save");
     assert!(np.zip_save.running() && np.edit.modified());
     let mut ctx = test_ctx();
@@ -3434,10 +3453,37 @@ fn yes_on_the_update_box_saves_into_the_zip_on_a_job_and_then_quits() {
     let reply = finish_zip_save(&mut np);
     assert!(reply.quit, "the quit runs once the zip holds the save");
     assert!(!np.edit.modified());
-    let argv = reprisefs::archive::open_argv(&zip, std::path::Path::new("notes.txt"));
-    let out = std::process::Command::new(&argv[0])
-        .args(&argv[1..])
-        .output()
-        .expect("bsdtar");
-    assert_eq!(out.stdout, b"new");
+    assert_eq!(held(&zip), b"new");
+}
+
+#[test]
+fn after_one_yes_to_updating_the_zip_later_saves_update_it_without_asking() {
+    let Some((tmp, path)) = read_only_notes() else {
+        return;
+    };
+    let zip = zip_of(tmp.path());
+    let mut np = Notepad::new(Some(path.clone()));
+    np.zip_entry = Some((zip.clone(), "notes.txt".into(), false));
+    np.edit = MultiEdit::new("one");
+    np.edit.mark_unsaved();
+    assert!(!np.save());
+    assert!(matches!(np.asks.up(), Some((_, Ask::Update))));
+    np.answer_box(Some(0));
+    finish_zip_save(&mut np);
+    assert_eq!(held(&zip), b"one");
+    np.edit = MultiEdit::new("two");
+    np.edit.mark_unsaved();
+    np.save();
+    assert!(np.asks.up().is_none(), "the second save asks nothing");
+    assert!(np.zip_save.running(), "it updates the zip");
+    finish_zip_save(&mut np);
+    assert_eq!(held(&zip), b"two");
+    np.show_document("other", Format::default(), Some(path));
+    np.zip_entry = Some((zip, "notes.txt".into(), false));
+    np.edit.mark_unsaved();
+    np.save();
+    assert!(
+        matches!(np.asks.up(), Some((_, Ask::Update))),
+        "another document asks again"
+    );
 }

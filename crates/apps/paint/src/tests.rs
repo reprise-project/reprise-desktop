@@ -1268,11 +1268,11 @@ fn saving_a_copy_out_of_a_zip_asks_to_update_it_and_no_opens_save_as() {
     };
     let bytes = std::fs::read(&pic).unwrap();
     let mut p = Paint::new(Some(pic.clone()));
-    p.zip_entry = Some((dir.path().join("Photos.zip"), "dunes.bmp".into()));
+    p.zip_entry = Some((dir.path().join("Photos.zip"), "dunes.bmp".into(), false));
     p.doc.dirty = true;
-    p.answered(Prompt::SaveChanges(Then::Quit), Some(0));
+    p.save();
     let (what, _) = prompt_up(&p).expect("the update box");
-    assert_eq!(what, Prompt::Update(Some(Then::Quit)));
+    assert_eq!(what, Prompt::Update(None));
     assert_eq!(
         prompt_text(&p).as_deref(),
         Some(
@@ -1284,8 +1284,96 @@ fn saving_a_copy_out_of_a_zip_asks_to_update_it_and_no_opens_save_as() {
     p.answered(what, Some(1));
     let dlg = p.saveas.as_ref().expect("No opens Save As");
     assert_eq!(dlg.file_name(), "dunes.bmp");
-    assert_eq!(p.after_save, Some(Then::Quit));
     assert_eq!(std::fs::read(&pic).unwrap(), bytes);
+}
+
+/// A zip holding `dunes.bmp`, the read-only picture beside it.
+fn zip_of(dir: &Path) -> PathBuf {
+    let zip = dir.join("Photos.zip");
+    let made = std::process::Command::new("bsdtar")
+        .args(["-c", "--format", "zip", "-f"])
+        .arg(&zip)
+        .arg("-C")
+        .arg(dir)
+        .arg("dunes.bmp")
+        .status()
+        .expect("bsdtar");
+    assert!(made.success());
+    zip
+}
+
+/// Waits for the save into a zip to end, as its wakes do.
+fn finish_zip_save(p: &mut Paint) -> Reply {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if let Woke::Ended(ended) = p.zip_save.wake() {
+            return p.zip_saved(ended);
+        }
+        assert!(std::time::Instant::now() < until, "the save ends");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn closing_a_changed_copy_out_of_a_zip_asks_once_and_yes_updates_the_zip_then_quits() {
+    let Some((dir, pic)) = read_only_picture() else {
+        return;
+    };
+    let zip = zip_of(dir.path());
+    let mut p = Paint::new(Some(pic));
+    p.zip_entry = Some((zip, "dunes.bmp".into(), false));
+    p.doc.dirty = true;
+    p.confirm(Then::Quit);
+    let (what, _) = prompt_up(&p).expect("the save box");
+    assert_eq!(what, Prompt::SaveChanges(Then::Quit));
+    assert_eq!(
+        prompt_text(&p).as_deref(),
+        Some("Save changes to dunes.bmp in the compressed folder Photos.zip?")
+    );
+    p.prompt.close();
+    p.answered(what, Some(0));
+    assert!(prompt_up(&p).is_none(), "no second box");
+    assert!(p.zip_save.running(), "the save runs on a job");
+    let reply = finish_zip_save(&mut p);
+    assert!(reply.quit, "the quit runs once the zip holds the save");
+    assert!(!p.doc.dirty);
+}
+
+#[test]
+fn closing_a_changed_gif_out_of_a_zip_asks_the_plain_question_as_yes_opens_save_as() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = Paint::new(None);
+    p.path = Some(dir.path().join("anim.gif"));
+    p.zip_entry = Some((dir.path().join("Photos.zip"), "anim.gif".into(), false));
+    p.doc.dirty = true;
+    p.confirm(Then::Quit);
+    assert_eq!(
+        prompt_text(&p).as_deref(),
+        Some("Save changes to anim.gif?")
+    );
+}
+
+#[test]
+fn after_one_yes_to_updating_the_zip_later_saves_update_it_without_asking() {
+    let Some((dir, pic)) = read_only_picture() else {
+        return;
+    };
+    let zip = zip_of(dir.path());
+    let mut p = Paint::new(Some(pic));
+    p.zip_entry = Some((zip, "dunes.bmp".into(), false));
+    p.doc.dirty = true;
+    p.save();
+    let (what, _) = prompt_up(&p).expect("the update box");
+    p.prompt.close();
+    p.answered(what, Some(0));
+    finish_zip_save(&mut p);
+    assert!(!p.doc.dirty);
+    p.doc.dirty = true;
+    p.save();
+    assert!(prompt_up(&p).is_none(), "the second save asks nothing");
+    assert!(p.zip_save.running(), "it updates the zip");
+    finish_zip_save(&mut p);
+    assert!(!p.doc.dirty);
 }
 
 #[test]
@@ -1296,7 +1384,7 @@ fn yes_on_the_update_box_says_why_a_zip_cannot_be_written() {
     let zip = dir.path().join("Photos.zip");
     std::fs::write(&zip, "not a zip").unwrap();
     let mut p = Paint::new(Some(pic));
-    p.zip_entry = Some((zip.clone(), "dunes.bmp".into()));
+    p.zip_entry = Some((zip.clone(), "dunes.bmp".into(), false));
     p.doc.dirty = true;
     p.save();
     let (what, _) = prompt_up(&p).expect("the update box");

@@ -51,7 +51,7 @@ impl Notepad {
             return Reply::redraw_all();
         }
         let ok = self.save_anyway();
-        if self.save_asks() {
+        if self.save_waits() {
             return Reply::redraw_all();
         }
         match self.pending.saved(ok) {
@@ -82,8 +82,12 @@ impl Notepad {
         }
         if self.zip_entry.is_some() {
             self.format = format;
-            let b = self.update_box(&p);
-            self.ask(b, Ask::Update);
+            if self.zip_entry.as_ref().is_some_and(|z| z.2) {
+                self.update_zip();
+            } else {
+                let b = self.update_box(&p);
+                self.ask(b, Ask::Update);
+            }
             return false;
         }
         match self.write_to(&p, format) {
@@ -102,15 +106,16 @@ impl Notepad {
         }
     }
 
-    /// Whether a save is waiting on a box: the file changed on disk, takes no writes, or its
-    /// encoding cannot hold the text.
-    fn save_asks(&self) -> bool {
-        (self.asks.iter()).any(|(_, ask)| {
-            matches!(
-                ask,
-                Ask::Changed | Ask::ReadOnly | Ask::Update | Ask::Unheld(None)
-            )
-        })
+    /// Whether a save is waiting on a box (the file changed on disk, takes no writes, or its
+    /// encoding cannot hold the text) or on its write into a zip.
+    fn save_waits(&self) -> bool {
+        self.zip_save.running()
+            || (self.asks.iter()).any(|(_, ask)| {
+                matches!(
+                    ask,
+                    Ask::Changed | Ask::ReadOnly | Ask::Update | Ask::Unheld(None)
+                )
+            })
     }
 
     fn update_box(&self, path: &Path) -> MsgBox {
@@ -122,7 +127,7 @@ impl Notepad {
         let zip = self
             .zip_entry
             .as_ref()
-            .map_or_else(String::new, |(z, _)| name(z));
+            .map_or_else(String::new, |(z, _, _)| name(z));
         MsgBox::new(
             tr!("name"),
             msgbox::Fields {
@@ -148,7 +153,7 @@ impl Notepad {
     pub(crate) fn update_answered(&mut self, answer: Option<usize>) -> Reply {
         match answer {
             Some(0) if self.zip_save.running() => return Reply::redraw_all(),
-            Some(0) => {}
+            Some(0) => self.agree_to_zip(),
             Some(1) => return self.read_only_answered(Some(0)),
             _ => {
                 self.pending.cancelled();
@@ -161,10 +166,17 @@ impl Notepad {
         Reply::redraw_all()
     }
 
+    /// Notes a Yes to updating the zip the document came out of, so its saves stop asking.
+    fn agree_to_zip(&mut self) {
+        if let Some(z) = &mut self.zip_entry {
+            z.2 = true;
+        }
+    }
+
     /// Starts the job writing the document into the zip it came out of, and then over its copy.
     /// Its windows take no input until it ends ([`Notepad::zip_saved`]); refused while one runs.
     pub(crate) fn update_zip(&mut self) -> bool {
-        let (Some(p), Some((zip, inner))) = (self.path.clone(), self.zip_entry.clone()) else {
+        let (Some(p), Some((zip, inner, _))) = (self.path.clone(), self.zip_entry.clone()) else {
             return false;
         };
         if self.zip_save.running() {
@@ -279,7 +291,7 @@ impl Notepad {
             (Some(path), Some(0)) => self.saveas_write_in(path, utf8),
             (None, Some(0)) => {
                 let ok = self.save_in(utf8);
-                if self.save_asks() {
+                if self.save_waits() {
                     return Reply::redraw_all();
                 }
                 match self.pending.saved(ok) {
@@ -443,17 +455,21 @@ impl Notepad {
         }
     }
 
+    /// Save changes; for a copy out of a zip its Yes also updates the zip, so the save asks
+    /// nothing more.
     fn savechanges_box(&self) -> MsgBox {
-        let name = self
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
+        let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+        let doc = (self.path.as_deref())
+            .and_then(name)
             .unwrap_or_else(|| tr!("untitled"));
+        let text = match self.zip_entry.as_ref().and_then(|(zip, _, _)| name(zip)) {
+            Some(zip) => tr!("save-changes-archive", name = doc, archive = zip),
+            None => tr!("save-changes", name = doc),
+        };
         MsgBox::new(
             tr!("name"),
             msgbox::Fields {
-                text: tr!("save-changes", name = name),
+                text,
                 icon: self.warn_icon.clone(),
                 buttons: vec![
                     reprisekit::kit_tr!("yes"),
@@ -523,8 +539,9 @@ impl Notepad {
             self.saveas_dialog();
             return Reply::redraw_all();
         }
+        self.agree_to_zip();
         let ok = self.save();
-        if self.save_asks() {
+        if self.save_waits() {
             return Reply::redraw_all();
         }
         match self.pending.saved(ok) {
