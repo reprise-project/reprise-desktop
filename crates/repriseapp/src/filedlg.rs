@@ -243,6 +243,9 @@ struct Listing {
     aliases: Vec<(String, OsString)>,
     /// The paths of files with thumbnails ([`Item::thumbnailable`]); file `i`'s entry has id `i + 1`.
     pictures: Vec<PathBuf>,
+    /// Each folder with a picture of its own ([`reprisefs::meta::folder_picture`]): its entry's id
+    /// and the picture, which Thumbnails view draws on it.
+    worn: Vec<(u64, PathBuf)>,
     icons: ListingIcons,
 }
 
@@ -322,8 +325,8 @@ fn picks(
 
 /// Folder `id`'s `read` as the dialog lists it. Entries wear Explorer's icons at every size (a
 /// cold SVG a blank stand-in until it lands), with `exec_icon` a file with an execute bit the
-/// program icon, and its Tiles lines; a picture's thumbnail arrives later ([`take_thumbs`]). Every
-/// subfolder gets its own handle in `folders`.
+/// program icon, and its Tiles lines; a picture's thumbnail and a folder's own picture arrive
+/// later ([`take_thumbs`]). Every subfolder gets its own handle in `folders`.
 fn listing(
     folders: &mut FolderTable,
     id: FolderId,
@@ -352,16 +355,20 @@ fn listing(
     let mut shared = ListingIcons::default().with_sizes(sizes).unread();
     let mut aliases: Vec<(String, OsString)> = Vec::new();
     let mut pictures = Vec::new();
+    let mut worn = Vec::new();
     let entries = rows
         .into_iter()
         .zip(names)
-        .map(|(r, name)| {
+        .zip(read_icons.pictures)
+        .map(|((r, name), picture)| {
             let it = r.item;
             if let Some(raw) = reprisefs::dialogops::alias(&path, &it.path) {
                 aliases.push((it.name.clone(), raw));
             }
             let id = if it.is_dir {
-                folders.id(&it.path)
+                let id = folders.id(&it.path);
+                worn.extend(picture.map(|p| (id, p)));
+                id
             } else if it.thumbnailable() {
                 pictures.push(it.path.clone());
                 pictures.len() as u64
@@ -398,6 +405,7 @@ fn listing(
         },
         aliases,
         pictures,
+        worn,
         icons: shared,
     }
 }
@@ -665,6 +673,10 @@ struct Pictures {
     /// Picture `i`'s path; its entry's id is `i + 1`.
     paths: Vec<PathBuf>,
     ids: HashMap<PathBuf, u64>,
+    /// The folders wearing each picture ([`Listing::worn`]), by their entries' ids.
+    worn: HashMap<PathBuf, Vec<u64>>,
+    /// The folders' pictures are queued, which only Thumbnails view draws.
+    worn_asked: bool,
     /// Bumped by every listing, so thumbnails for an earlier one are dropped.
     generation: u64,
     /// This listing's pictures are queued for decoding.
@@ -941,18 +953,24 @@ impl Host {
         }
     }
 
-    /// Queues this listing's pictures once Views shows Thumbnails or Tiles.
+    /// Queues this listing's pictures once Views shows Thumbnails or Tiles, and the folders'
+    /// pictures once it shows Thumbnails.
     fn ask_thumbs(&mut self, dlg: &FileDlg) {
         let Some(worker) = &mut self.thumbs else {
             return;
         };
         let p = &mut self.pictures;
-        if p.asked || !matches!(dlg.view(), Mode::Thumbnails | Mode::Tiles) {
-            return;
+        if !p.asked && matches!(dlg.view(), Mode::Thumbnails | Mode::Tiles) {
+            p.asked = true;
+            for path in &p.paths {
+                worker.request(path.clone(), p.generation, p.scale);
+            }
         }
-        p.asked = true;
-        for path in &p.paths {
-            worker.request(path.clone(), p.generation, p.scale);
+        if !p.worn_asked && dlg.view() == Mode::Thumbnails {
+            p.worn_asked = true;
+            for path in p.worn.keys() {
+                worker.request(path.clone(), p.generation, p.scale);
+            }
         }
     }
 
@@ -988,7 +1006,7 @@ impl Host {
         let p = &mut self.pictures;
         if p.scale != scale {
             p.scale = scale;
-            p.asked = false;
+            (p.asked, p.worn_asked) = (false, false);
             self.ask_thumbs(dlg);
         }
     }
@@ -1084,15 +1102,22 @@ impl Host {
         if done.is_empty() {
             return icons;
         }
-        let at: HashMap<u64, usize> = dlg
-            .entries()
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| !e.is_dir && e.id != 0)
-            .map(|(i, e)| (e.id, i))
-            .collect();
+        let (mut at, mut dirs) = (HashMap::new(), HashMap::new());
+        for (i, e) in dlg.entries().iter().enumerate().filter(|(_, e)| e.id != 0) {
+            match e.is_dir {
+                true => dirs.insert(e.id, i),
+                false => at.insert(e.id, i),
+            };
+        }
         let mut shown = icons;
         for d in done {
+            let wearing = (self.pictures.worn.get(&d.path).into_iter().flatten())
+                .filter_map(|id| dirs.get(id));
+            for &i in wearing {
+                let e = &mut dlg.entries_mut()[i];
+                e.thumb = Some(shellview::frame_thumb(d.thumb.clone(), d.dims, d.scale));
+                shown = true;
+            }
             let Some(&i) = self.pictures.ids.get(&d.path).and_then(|id| at.get(id)) else {
                 continue;
             };
@@ -1671,13 +1696,17 @@ impl Host {
         self.restyling = None;
         let p = &mut self.pictures;
         p.generation += 1;
-        p.asked = false;
+        (p.asked, p.worn_asked) = (false, false);
         p.scale = icons.scale();
         p.ids = (1..)
             .zip(&l.pictures)
             .map(|(id, path)| (path.clone(), id))
             .collect();
         p.paths = l.pictures;
+        p.worn.clear();
+        for (id, picture) in l.worn {
+            p.worn.entry(picture).or_default().push(id);
+        }
         if let Some(t) = &mut self.thumbs {
             t.cancel_all();
         }

@@ -12,6 +12,7 @@ mod commands;
 mod drives;
 mod layout;
 mod menus;
+mod pictures;
 mod scan;
 mod select;
 #[cfg(test)]
@@ -136,6 +137,8 @@ pub struct DesktopView {
     made: Option<String>,
     /// New's template rows: the Templates folder's files as the last scan read them.
     pub(crate) templates: Vec<reprisefs::templates::Template>,
+    /// The folders' pictures the icons wear.
+    pictures: pictures::Pictures,
 }
 
 /// A rubber-band selection in progress: the press point, the selection as it
@@ -322,6 +325,7 @@ pub(crate) fn create(
         undoing: false,
         made: None,
         templates: Vec::new(),
+        pictures: pictures::Pictures::default(),
     });
 }
 

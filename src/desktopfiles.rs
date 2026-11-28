@@ -177,6 +177,7 @@ mod tests {
             kind: desktop::Kind::File,
             is_dir: false,
             allow_launching: false,
+            picture: None,
         }
     }
 

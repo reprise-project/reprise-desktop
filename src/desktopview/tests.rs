@@ -132,6 +132,7 @@ fn file(name: &str) -> DesktopEntry {
         kind: desktop::Kind::File,
         is_dir: false,
         allow_launching: false,
+        picture: None,
     }
 }
 
@@ -396,6 +397,7 @@ fn cell_key_owned_copy_matches_its_borrowed_key_until_the_caret_blinks() {
     let key = |on| CellKey {
         label: Cow::Borrowed(&label),
         icon: Cow::Borrowed("text-x-generic"),
+        picture: None,
         shortcut: false,
         cell: Rect::default(),
         selected: true,
@@ -432,6 +434,7 @@ fn remap_follows_the_file_and_drops_a_gone_entry() {
         kind: desktop::Kind::File,
         is_dir: false,
         allow_launching: false,
+        picture: None,
     };
     let bin = DesktopEntry {
         kind: desktop::Kind::RecycleBin,
@@ -460,6 +463,7 @@ fn a_late_answer_never_takes_a_cell_an_icon_landed_in_meanwhile() {
         kind: desktop::Kind::File,
         is_dir: true,
         allow_launching: false,
+        picture: None,
     };
     let area = Rect::new(0, 0, 800, 600);
     let square = desktop::Cell::square(desktop::CELL);
@@ -590,6 +594,7 @@ fn a_launchers_name_key_moves_to_its_file_name_once() {
         kind: desktop::Kind::File,
         is_dir: false,
         allow_launching: false,
+        picture: None,
     };
     let plain = |name: &str| DesktopEntry {
         name: name.into(),
@@ -601,6 +606,7 @@ fn a_launchers_name_key_moves_to_its_file_name_once() {
         kind: desktop::Kind::File,
         is_dir: false,
         allow_launching: false,
+        picture: None,
     };
     let entries = [
         launcher("firefox.desktop", "Firefox"),

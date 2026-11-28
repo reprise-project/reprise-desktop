@@ -917,6 +917,7 @@ mod tests {
             kind: crate::desktop::Kind::File,
             is_dir: false,
             allow_launching: true,
+            picture: None,
         }];
         assert!(!offered(&h), "a copy on the desktop greys the row");
     }

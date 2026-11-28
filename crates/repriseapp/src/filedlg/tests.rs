@@ -2528,3 +2528,52 @@ fn accept_in_folder_mode_picks_a_folder_and_closes_on_a_file() {
     );
     std::fs::remove_dir_all(&t).ok();
 }
+
+#[test]
+fn a_folder_with_a_picture_wears_it_in_thumbnails_view_only() {
+    const COVER: u32 = 0xff40_c0e0;
+    let t = pictures_folder();
+    let sub = t.path().join("list/sub");
+    png(&sub.join("cover.png"), 50, 20, COVER);
+    let look = reprisefs::meta::FolderLook {
+        picture: Some(Some(&sub.join("cover.png"))),
+        ..Default::default()
+    };
+    reprisefs::meta::set_folder_look(&sub, look).unwrap();
+    let mut icons = flat_icons(t.path());
+    let mut h = host_in(&t.path().join("list"));
+    thumbs_without_cache(&mut h);
+    let mut dlg = open_dlg(&mut h);
+    h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+    view(&mut h, &mut dlg, Mode::Tiles);
+    settle_thumbs(&mut h, &mut dlg, &mut icons);
+    assert!(entry(&dlg, "pic.png").thumb.is_some());
+    assert!(!h.pictures.worn_asked, "Tiles draws a folder's icon");
+    assert!(entry(&dlg, "sub").thumb.is_none());
+
+    view(&mut h, &mut dlg, Mode::Thumbnails);
+    assert!(h.pictures.worn_asked);
+    until(&mut h, &mut dlg, &mut icons, |d| {
+        entry(d, "sub").thumb.is_some()
+    });
+    let e = entry(&dlg, "sub");
+    let thumb = e.thumb.as_ref().unwrap();
+    assert_eq!((thumb.width, thumb.height), (50, 20), "at its own size");
+    assert!(
+        e.detail.iter().all(|l| !l.contains(" x ")),
+        "no picture size"
+    );
+    let c = drawn(&dlg);
+    let cover = found(&c, COVER).expect("the folder's picture is drawn");
+    assert_eq!((cover.width, cover.height), (50, 20));
+    let frame = shellview::THUMB_FRAME;
+    let (cx, cy) = (cover.x + cover.width / 2, cover.y + cover.height / 2);
+    let (x0, y0) = (cx - frame / 2, cy - frame / 2);
+    let hash = (y0..y0 + frame)
+        .flat_map(|y| (x0..x0 + frame).map(move |x| (x, y)))
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, (x, y)| {
+            (h ^ u64::from(c.get(x, y))).wrapping_mul(0x0100_0000_01b3)
+        });
+    let file = reprisekit::crate_dir!().join("tests/pins/folder_picture_cell.txt");
+    reprisekit::pins::check_file(&file, &[("scale 1".into(), hash)]);
+}

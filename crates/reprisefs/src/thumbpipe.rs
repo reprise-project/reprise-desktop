@@ -22,7 +22,14 @@ pub struct Thumb {
     pub dims: Option<(u32, u32)>,
 }
 
+/// Refuses a path holding a NUL with `InvalidInput`, writing nothing: the NUL ends a request.
 pub fn write_request(w: &mut impl Write, path: &Path, edge: u32) -> io::Result<()> {
+    if path.as_os_str().as_bytes().contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a path holding a NUL",
+        ));
+    }
     w.write_all(&edge.to_le_bytes())?;
     w.write_all(path.as_os_str().as_bytes())?;
     w.write_all(&[0])?;
@@ -98,6 +105,15 @@ pub fn read_reply(r: &mut impl Read, max_edge: u32) -> io::Result<Option<Thumb>>
 mod tests {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn a_path_holding_a_nul_is_refused_and_nothing_written() {
+        let mut pipe = Vec::new();
+        let nul = Path::new(std::ffi::OsStr::from_bytes(b"/pics/a\0b.png"));
+        let refused = write_request(&mut pipe, nul, 128).unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidInput);
+        assert!(pipe.is_empty());
+    }
 
     #[test]
     fn requests_come_back_in_order_until_the_pipe_closes() {
