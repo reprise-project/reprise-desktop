@@ -155,7 +155,7 @@ fn text_size_views(theme: &Theme, text: &TextRenderer) -> Canvas {
             },
             toolbar::Item::DropButton {
                 id: toolbar::VIEWS,
-                icon: Some(viewsicon::draw24()),
+                icon: Some(viewsicon::draw24_grown(toolbar::big_icon(u), 1)),
                 label: None,
                 enabled: true,
             },
