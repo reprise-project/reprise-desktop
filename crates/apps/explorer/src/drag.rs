@@ -366,13 +366,15 @@ impl Explorer {
         let wake = ctx.wake.clone();
         let crate::extracting::Picks {
             archive,
+            key,
             entries,
             picked,
         } = picks;
         let to = (scratch.clone(), None);
         let most = Some(self.drag_most);
         let wake = move || wake.wake();
-        let job = reprisefs::archive::copy_job(archive.clone(), entries, picked, to, most, wake);
+        let from = (archive.clone(), key);
+        let job = reprisefs::archive::copy_job(from, entries, picked, to, most, wake);
         self.drag_copies.push(DragCopy {
             job,
             staged: staged.clone(),
@@ -395,6 +397,7 @@ impl Explorer {
                 match ev {
                     ArchiveEvent::Landed { .. } => d.landed = true,
                     ArchiveEvent::Failed { text, .. } => d.failed = Some(text),
+                    ArchiveEvent::Locked { .. } => {}
                     ArchiveEvent::Finished => {
                         let out = d.landed && d.failed.is_none() && !d.job.meter().cancelled();
                         d.out = Some(out);

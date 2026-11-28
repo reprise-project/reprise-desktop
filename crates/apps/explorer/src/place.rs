@@ -381,14 +381,23 @@ pub struct Listed {
     pub groups: Vec<(String, usize)>,
     /// The drives behind Computer's rows, for Details, the status bar and the tree.
     pub drives: Vec<Drive>,
-    /// Why the place could not be read, for an error box: a compressed folder bsdtar cannot read.
-    pub error: Option<String>,
+    /// Why the place could not be read: a compressed folder bsdtar cannot read.
+    pub error: Option<Unread>,
     /// The place is a compressed folder of a zip that files dropped, pasted or made in it go
     /// into: a zip of the user's that takes writes ([`reprisefs::zipwrite::takes_writes`]).
     pub zip_writes: bool,
     /// Where a compressed folder's Extract copies entries to: the folder holding the archive, or
     /// for one opened out of another the folder holding that one, when it takes writes.
     pub extract_to: Option<PathBuf>,
+}
+
+/// Why a compressed folder could not be read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unread {
+    /// An encrypted zip the window holds no password for, which a password box asks.
+    Locked,
+    /// What an error box says.
+    Why(String),
 }
 
 /// Mount points of the drives and network shares Computer lists. A subvolume on the root's
@@ -739,7 +748,10 @@ pub fn archive_listing(
             ..empty_listed()
         },
         Err(why) => Listed {
-            error: Some(why),
+            error: Some(match archives.wants_key(file) {
+                true => Unread::Locked,
+                false => Unread::Why(why),
+            }),
             ..empty_listed()
         },
     }

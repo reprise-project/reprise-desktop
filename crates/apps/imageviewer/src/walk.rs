@@ -148,7 +148,7 @@ pub fn copy_out(zip: &Path, entry: &Entry, most: u64) -> Result<Copied, String> 
         return Err(crate::load::too_large());
     }
     let held = Scratch::new().map_err(|e| e.to_string())?;
-    let path = archive::copy_out(zip, entry, held.path())?;
+    let path = archive::copy_out((zip, None), entry, held.path())?;
     if let Err(e) = reprisefs::archivecopy::set_origin(&path, zip, &entry.path) {
         log::debug!(
             "imageviewer: {} keeps no note of {}: {e}",

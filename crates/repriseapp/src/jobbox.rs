@@ -168,6 +168,7 @@ impl JobBox {
             match ev {
                 ArchiveEvent::Landed { .. } => r.landed = true,
                 ArchiveEvent::Failed { text, .. } => r.failed = Some(text),
+                ArchiveEvent::Locked { .. } => {}
                 ArchiveEvent::Finished => finished = true,
             }
         }

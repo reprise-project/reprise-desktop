@@ -105,6 +105,7 @@ fn run(c: &Compress, m: &Meter, path: Option<&OsStr>, send: &dyn Fn(ArchiveEvent
                 | Failure::Climbs(why)
                 | Failure::Refused(why)
                 | Failure::Kept(why) => why,
+                l @ (Failure::Locked | Failure::WrongKey) => l.why(),
                 Failure::Cancelled => tr!("compress-cancelled"),
             };
             Some(ArchiveEvent::Failed {

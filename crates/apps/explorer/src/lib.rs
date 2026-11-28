@@ -50,6 +50,7 @@ mod tabs;
 mod tree;
 mod volumes;
 mod window;
+mod zipkey;
 
 #[cfg(test)]
 use dialogs::DIALOG;
@@ -406,6 +407,10 @@ pub struct Explorer {
     alt_arm: AltArm,
     /// The main window holds the keyboard, so a focused field's caret shows and blinks.
     keyboard: bool,
+    /// The main window has held the keyboard once ([`Explorer::keyboard_entered`]).
+    entered: bool,
+    /// The zip whose password box waits for the window's first hold of the keyboard.
+    key_wait: Option<PathBuf>,
     /// The last input was a key, not a pointer press: a dialog opened now shows keyboard cues from the start.
     keyed: bool,
     /// The held splitter's grab: the press's x less the bar's right edge.
@@ -749,6 +754,8 @@ impl Explorer {
             divider_clicks: DoubleClick::default(),
             alt_arm: AltArm::default(),
             keyboard: false,
+            entered: false,
+            key_wait: None,
             keyed: false,
             dragging: None,
             marquee_from: None,
@@ -1568,10 +1575,11 @@ impl Explorer {
         self.hide_tip();
         self.request_thumbs(ctx.icons.scale());
         let failed = match (&place, error) {
-            (Place::Archive(file, _), Some(why)) => {
-                let name = file.file_name().unwrap_or_default().to_string_lossy();
-                let text = tr!("archive-open-failed", name = &*name, why = why);
-                self.message_box(&tr!("archive-open-failed-title"), text, ctx)
+            (Place::Archive(file, _), Some(place::Unread::Locked)) => {
+                self.ask_zip_key(file.clone(), ctx)
+            }
+            (Place::Archive(file, _), Some(place::Unread::Why(why))) => {
+                self.archive_open_failed(file, why, ctx)
             }
             _ => Reply::none(),
         };
@@ -1868,13 +1876,16 @@ impl Explorer {
                 mode: 0o644,
             };
             let (file, open) = (file.to_path_buf(), self.opening(false, open, how));
+            let key = self.archives.key(&file);
             let globs = self.globs.clone();
             let copy = move || {
                 let dir = match reprisefs::archive::scratch() {
                     Ok(dir) => dir,
                     Err(e) => return Opened::NotCopied(e.to_string()),
                 };
-                let copy = match reprisefs::archive::copy_out(&file, &entry, &dir) {
+                let copied = reprisefs::archive::copy_out((&file, key.as_ref()), &entry, &dir);
+                drop(key);
+                let copy = match copied {
                     Ok(copy) => copy,
                     Err(why) => {
                         let _ = std::fs::remove_dir(&dir);
@@ -2323,7 +2334,7 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         }
         Event::Focus(true) => {
             ex.keyboard = true;
-            Reply::redraw()
+            ex.keyboard_entered(ctx).and(Reply::redraw())
         }
         // A maximized window's size is the screen's: a hand size still pending is saved.
         Event::Resized if ctx.maximized => Reply::redraw(),

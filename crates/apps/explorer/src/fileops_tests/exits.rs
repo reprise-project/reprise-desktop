@@ -39,7 +39,7 @@ fn row(d: &Dialog) -> Option<usize> {
         Dialog::ChangeIcon { .. } => 6,
         Dialog::About(..) => 7,
         Dialog::Browse(_) => 8,
-        Dialog::Unlock(_) => 9,
+        Dialog::Unlock(..) => 9,
         Dialog::BatchRename(_) => 10,
         Dialog::Connect(_) => 11,
         Dialog::Login(_) => 12,
@@ -129,7 +129,7 @@ fn raise(i: usize) -> Option<Raised> {
         }
         9 => {
             let u = repriseapp::unlock::Unlock::open("/dev/sdz1".into(), "Stick", &mut ctx);
-            ex.raise(Dialog::Unlock(Box::new(u)));
+            ex.raise(Dialog::Unlock(Box::new(u), crate::zipkey::Unlocks::Drive));
         }
         10 => {
             ex.run(Command::SelectAll, &mut ctx);

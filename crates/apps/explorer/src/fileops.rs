@@ -1018,6 +1018,8 @@ impl Explorer {
     /// The sheets and the preview go with the window.
     pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
+        // A password check is a job the close would wait for.
+        self.archives.cancel();
         self.closing = self
             .dialogs
             .iter()

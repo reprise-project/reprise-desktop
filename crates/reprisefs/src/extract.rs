@@ -1,8 +1,9 @@
 //! Extracting archives with `bsdtar` (zip, 7z, tar), never with `-P`, each into a fresh folder;
 //! docs/security.md "Extracting archives" has the rules.
 
+use crate::archive::Key;
 use crate::names;
-use crate::progress::{Decision, Meter, Phase, Totals};
+use crate::progress::{Asked, Decision, Meter, Phase, Totals};
 use reprisekit::tr;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -10,8 +11,8 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// The types offered Extract Here and Extract to. A lone compressed file (`.gz`, `.xz`, `.zst`)
@@ -175,7 +176,24 @@ pub enum ArchiveEvent {
         index: usize,
         text: String,
     },
+    /// Archive `index` is an encrypted zip and the job waits for a password
+    /// ([`ArchiveJob::unlock`]), `ask` saying why. Only Extract asks.
+    Locked {
+        index: usize,
+        ask: Ask,
+    },
     Finished,
+}
+
+/// Why an extraction asks for a password ([`ArchiveEvent::Locked`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ask {
+    /// It has none for the zip yet.
+    First,
+    /// The last one given does not open the zip.
+    Wrong,
+    /// The ones given open some files of the zip but not all of them, or one came out garbled.
+    Another,
 }
 
 /// An extraction or a compression on its thread.
@@ -183,7 +201,12 @@ pub struct ArchiveJob {
     events: Receiver<ArchiveEvent>,
     meter: Arc<Meter>,
     finished: bool,
+    /// The password [`ArchiveJob::unlock`] hands over, until the job's thread takes it.
+    given: Given,
 }
+
+/// A password on its way from the host to the job's thread.
+type Given = Arc<Mutex<Option<Key>>>;
 
 /// Why an archive did not come out.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,6 +214,10 @@ pub(crate) enum Failure {
     Climbs(String),
     /// Why Reprise will not extract it.
     Refused(String),
+    /// An encrypted zip, read with no password.
+    Locked,
+    /// An encrypted zip the passwords given do not open whole.
+    WrongKey,
     Tool(String),
     /// Extract Here stopped part way and could not move everything back.
     Kept(String),
@@ -206,6 +233,8 @@ impl Failure {
         match self {
             Failure::Climbs(entry) => tr!("extract-climbs", entry = entry.as_str()),
             Failure::Tool(why) | Failure::Refused(why) | Failure::Kept(why) => why.clone(),
+            Failure::Locked => tr!("archive-locked"),
+            Failure::WrongKey => tr!("archive-wrong-key"),
             Failure::Cancelled => tr!("extract-cancelled"),
         }
     }
@@ -226,9 +255,13 @@ impl ArchiveJob {
     ) -> ArchiveJob {
         let meter = Arc::new(Meter::default());
         meter.ask_on_failure();
-        ArchiveJob::on_thread("reprisefs-extract", meter, wake, move |m, send| {
-            run(&items, limits, m, send)
-        })
+        let given = Given::default();
+        let to_take = given.clone();
+        let mut job = ArchiveJob::on_thread("reprisefs-extract", meter, wake, move |m, send| {
+            run(&items, &to_take, limits, m, send)
+        });
+        job.given = given;
+        job
     }
 
     /// Runs `body` on a thread named `name`, counting into `meter`; each event it sends wakes
@@ -261,7 +294,15 @@ impl ArchiveJob {
             events,
             meter,
             finished: false,
+            given: Given::default(),
         }
+    }
+
+    /// Answers the [`ArchiveEvent::Locked`] that `asked` holds: `key` is the password typed, or
+    /// None for a box cancelled, which refuses the archive as password-protected.
+    pub fn unlock(&self, key: Option<Key>, asked: Asked) {
+        *self.given.lock().unwrap_or_else(PoisonError::into_inner) = key;
+        asked.answer(Decision::Retry);
     }
 
     pub fn meter(&self) -> &Arc<Meter> {
@@ -322,15 +363,17 @@ impl Drop for ArchiveJob {
 
 fn run(
     items: &[Archive],
+    given: &Given,
     limits: fn(&Path) -> Limits,
     m: &Meter,
     send: &dyn Fn(ArchiveEvent) -> bool,
 ) {
     let name = |a: &Archive| a.src.file_name().unwrap_or_default().to_owned();
     let mut lists: Vec<Result<Listed, Failure>> = Vec::new();
-    for a in items {
+    let mut keys: Vec<Vec<Key>> = vec![Vec::new(); items.len()];
+    for (index, a) in items.iter().enumerate() {
         m.set_current(&name(a));
-        let listed = list(&a.src, m);
+        let listed = list_unlocked((index, &a.src), &mut keys[index], given, m, send);
         if listed == Err(Failure::Cancelled) {
             send(ArchiveEvent::Finished);
             return;
@@ -354,7 +397,7 @@ fn run(
         m.set_at(index);
         m.set_current(&name(a));
         if std::mem::take(&mut again) && lists[index].is_err() {
-            lists[index] = list(&a.src, m);
+            lists[index] = list_unlocked((index, &a.src), &mut keys[index], given, m, send);
             if let Ok(l) = lists[index] {
                 m.add_totals(Totals {
                     bytes: 0,
@@ -363,7 +406,18 @@ fn run(
             }
         }
         let r = match &lists[index] {
-            Ok(l) => extract(a, m, done, *l, limits),
+            Ok(l) => loop {
+                match extract((a, &keys[index]), m, done, *l, limits) {
+                    Err(Failure::WrongKey) if keys[index].len() < MOST_KEYS => {
+                        match ask_key(index, Ask::Another, given, m, send) {
+                            Ok(typed) => keys[index].push(typed),
+                            Err(Failure::Locked) => break Err(Failure::WrongKey),
+                            Err(e) => break Err(e),
+                        }
+                    }
+                    r => break r,
+                }
+            },
             Err(e) => Err(e.clone()),
         };
         let ev = match r {
@@ -403,9 +457,56 @@ fn run(
     send(ArchiveEvent::Finished);
 }
 
-fn list(archive: &Path, m: &Meter) -> Result<Listed, Failure> {
-    if crate::archive::zip_encrypted(archive) {
-        return Err(Failure::Refused(tr!("archive-locked")));
+/// [`list`], asking the host for an encrypted zip's password ([`ArchiveEvent::Locked`]) until
+/// one opens it, which `keys` keeps, or the host gives none.
+fn list_unlocked(
+    (index, archive): (usize, &Path),
+    keys: &mut Vec<Key>,
+    given: &Given,
+    m: &Meter,
+    send: &dyn Fn(ArchiveEvent) -> bool,
+) -> Result<Listed, Failure> {
+    let mut ask = Ask::First;
+    loop {
+        match list(archive, !keys.is_empty(), m) {
+            Err(Failure::Locked) => {}
+            listed => return listed,
+        }
+        let typed = ask_key(index, ask, given, m, send)?;
+        match crate::archive::try_key(archive, &typed, m) {
+            Ok(true) => keys.push(typed),
+            Ok(false) => ask = Ask::Wrong,
+            Err(_) if m.cancelled() => return Err(Failure::Cancelled),
+            Err(why) => return Err(Failure::Tool(why)),
+        }
+    }
+}
+
+/// Asks the host for a password for archive `index`, `ask` saying why, and waits for it:
+/// [`Failure::Locked`] when the box was cancelled, [`Failure::Cancelled`] when the job ends.
+fn ask_key(
+    index: usize,
+    ask: Ask,
+    given: &Given,
+    m: &Meter,
+    send: &dyn Fn(ArchiveEvent) -> bool,
+) -> Result<Key, Failure> {
+    m.ask();
+    if !send(ArchiveEvent::Locked { index, ask }) {
+        return Err(Failure::Cancelled);
+    }
+    let decided = m.decision();
+    let typed = given.lock().unwrap_or_else(PoisonError::into_inner).take();
+    if decided != Decision::Retry {
+        return Err(Failure::Cancelled);
+    }
+    typed.ok_or(Failure::Locked)
+}
+
+/// The listing of `archive`; an encrypted zip is [`Failure::Locked`] unless it is `keyed`.
+fn list(archive: &Path, keyed: bool, m: &Meter) -> Result<Listed, Failure> {
+    if !keyed && crate::archive::zip_encrypted(archive) {
+        return Err(Failure::Locked);
     }
     let budget = crate::archive::cpu_secs(crate::archive::archive_bytes(archive));
     match listing(&list_argv(archive), budget, m) {
@@ -520,7 +621,7 @@ fn is_same_dir(a: &Path, b: &Path) -> bool {
 /// Extracts `a`, the batch having counted `before` items, into a fresh folder that Extract to keeps
 /// and Extract Here merges into place. docs/security.md "Extracting archives" has the rules.
 fn extract(
-    a: &Archive,
+    (a, keys): (&Archive, &[Key]),
     m: &Meter,
     before: u64,
     listed: Listed,
@@ -541,7 +642,7 @@ fn extract(
     };
     let argv = extract_argv(&a.src, &into);
     let budget = crate::archive::archive_bytes(&a.src).saturating_add(listed.bytes);
-    let mut child = spawn_with(&argv, false, |cmd| {
+    let mut child = spawn_keyed(&argv, false, keys, |cmd| {
         crate::archive::limit(cmd, crate::archive::cpu_secs(budget), Some(listed.bytes));
     })
     .map_err(undo)?;
@@ -596,6 +697,7 @@ fn extract(
     let mut first = None;
     let mut others = 0;
     let mut locked = false;
+    let mut garbled = false;
     let read = lines_ticking(
         &mut child,
         err,
@@ -628,6 +730,7 @@ fn extract(
                     if failed && stat.is_none() {
                         // Only a failed entry's line: a name that landed says nothing.
                         locked |= crate::archive::locked(entry);
+                        garbled |= crate::archive::garbled(entry);
                         match first {
                             None => first = Some(entry.to_vec()),
                             Some(_) => others += 1,
@@ -636,6 +739,7 @@ fn extract(
                 }
                 None if !String::from_utf8_lossy(line).contains(DELAYED) => {
                     locked |= crate::archive::locked(line);
+                    garbled |= crate::archive::garbled(line);
                     first.get_or_insert_with(|| line.to_vec());
                 }
                 None => {}
@@ -658,6 +762,9 @@ fn extract(
         return Err(undo(Failure::Refused(tr!("extract-too-long"))));
     }
     let ok = status.success();
+    if !ok && !keys.is_empty() && (locked || garbled) {
+        return Err(undo(Failure::WrongKey));
+    }
     if !ok && locked {
         return Err(undo(Failure::Refused(tr!("archive-locked"))));
     }
@@ -1053,6 +1160,70 @@ pub(crate) fn spawn_with(
     spawn_io(argv, (stdin, stdout), env)
 }
 
+/// The most passwords one archive's extraction collects ([`spawn_keyed`] writes them all).
+pub(crate) const MOST_KEYS: usize = 8;
+
+/// [`spawn_with`], with `keys` for bsdtar to read, one per line, each time it asks for a
+/// passphrase: written whole, before the child starts, into a pipe that is its stdin. The pipe
+/// reads without blocking and the child holds a write end of it, so an ask past the last key
+/// finds it empty instead of at its end, which bsdtar would read as an empty key and ask again
+/// forever: bsdtar stops with "Couldn't read passphrase". The pipe goes with the child.
+pub(crate) fn spawn_keyed(
+    argv: &[OsString],
+    stdout: bool,
+    keys: &[Key],
+    env: impl FnOnce(&mut Command),
+) -> Result<Child, Failure> {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
+    if keys.is_empty() {
+        return spawn_with(argv, stdout, env);
+    }
+    let tool = |e: std::io::Error| Failure::Tool(e.to_string());
+    let (read, mut write) = std::io::pipe().map_err(tool)?;
+    // [`MOST_KEYS`] lines take up to 8 KiB. A pipe gets 64 KiB, or one page once the user's pipes
+    // pass `pipe-user-pages-soft`: it asks for room, and the writes never block, failing
+    // instead when the room is not given.
+    // SAFETY: fcntl on a descriptor this function owns.
+    unsafe { libc::fcntl(write.as_raw_fd(), libc::F_SETPIPE_SZ, 16 << 10) };
+    // SAFETY: fcntl on a descriptor this function owns.
+    if unsafe { libc::fcntl(write.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } == -1 {
+        return Err(tool(std::io::Error::last_os_error()));
+    }
+    for key in keys.iter().take(MOST_KEYS) {
+        write.write_all(&key.line()).map_err(tool)?;
+    }
+    let read = std::os::fd::OwnedFd::from(read);
+    // SAFETY: fcntl on a descriptor this function owns.
+    if unsafe { libc::fcntl(read.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } == -1 {
+        return Err(tool(std::io::Error::last_os_error()));
+    }
+    // Above 2, so the child's stdio set-up cannot land on it.
+    // SAFETY: fcntl duplicates a descriptor this function owns into a new one it then owns.
+    let held = unsafe { libc::fcntl(write.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+    if held == -1 {
+        return Err(tool(std::io::Error::last_os_error()));
+    }
+    // SAFETY: `held` is the new descriptor fcntl just returned.
+    let held = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(held) };
+    drop(write);
+    let stdout = match stdout {
+        true => Stdio::piped(),
+        false => Stdio::null(),
+    };
+    let fd = held.as_raw_fd();
+    spawn_io(argv, (Stdio::from(read), stdout), |cmd| {
+        env(cmd);
+        // SAFETY: fcntl is async-signal-safe, and `held` stays open until the spawn returns.
+        unsafe {
+            cmd.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
+                -1 => Err(std::io::Error::last_os_error()),
+                _ => Ok(()),
+            });
+        }
+    })
+}
+
 /// [`spawn_with`] reading and writing the `(stdin, stdout)` given, stderr piped.
 pub(crate) fn spawn_io(
     argv: &[OsString],
@@ -1197,7 +1368,7 @@ pub(crate) fn finish(child: Child, read: &std::io::Result<bool>) -> Result<bool,
 }
 
 /// [`finish`], with how the child ended.
-fn finish_status(
+pub(crate) fn finish_status(
     mut child: Child,
     read: &std::io::Result<bool>,
 ) -> Result<std::process::ExitStatus, Failure> {
@@ -1337,22 +1508,144 @@ mod tests {
     }
 
     fn run_job(items: Vec<Archive>, pick: Decision) -> Vec<ArchiveEvent> {
+        run_keyed(items, pick, &[])
+    }
+
+    /// [`run_job`], answering each [`ArchiveEvent::Locked`] with the next of `keys`, None for
+    /// a box cancelled.
+    fn run_keyed(items: Vec<Archive>, pick: Decision, keys: &[Option<&str>]) -> Vec<ArchiveEvent> {
         let (wtx, woke) = mpsc::channel();
         let mut job = ArchiveJob::extract(items, move || {
             let _ = wtx.send(());
         });
+        let mut keys = keys.iter();
         let mut all = Vec::new();
         while !job.is_finished() {
             woke.recv_timeout(std::time::Duration::from_secs(30))
                 .expect("a wake");
             for ev in job.poll() {
-                if matches!(ev, ArchiveEvent::Failed { .. }) {
-                    job.meter().decide(pick);
+                match ev {
+                    ArchiveEvent::Failed { .. } => job.meter().decide(pick),
+                    ArchiveEvent::Locked { .. } => {
+                        let typed = keys.next().expect("a password for each ask");
+                        let key = typed.map(|k| Key::new(zeroize::Zeroizing::new(k.into())).ok());
+                        let asked = Asked::new(job.meter().clone());
+                        job.unlock(key.map(|k| k.expect("a key")), asked);
+                    }
+                    _ => {}
                 }
                 all.push(ev);
             }
         }
         all
+    }
+
+    #[test]
+    fn extract_asks_for_an_encrypted_zips_password_until_one_opens_it() {
+        for how in ["zipcrypt", "aes256"] {
+            let t = tempfile::tempdir().unwrap();
+            let d = t.path();
+            std::fs::write(d.join("a.txt"), "secret").unwrap();
+            let options = format!("zip:encryption={how}");
+            let args = [
+                "--options",
+                &options,
+                "--passphrase",
+                "pw",
+                "-a",
+                "-cf",
+                "locked.zip",
+            ];
+            bsdtar(d, &[&args[..], &["a.txt"]].concat());
+            std::fs::create_dir(d.join("out")).unwrap();
+            let got = run_keyed(
+                vec![Archive {
+                    src: d.join("locked.zip"),
+                    here: false,
+                    to: Some(d.join("out")),
+                }],
+                Decision::Abort,
+                &[Some("nope"), Some("pw")],
+            );
+            assert!(
+                matches!(
+                    &got[..],
+                    [
+                        ArchiveEvent::Locked {
+                            index: 0,
+                            ask: Ask::First
+                        },
+                        ArchiveEvent::Locked {
+                            index: 0,
+                            ask: Ask::Wrong
+                        },
+                        ArchiveEvent::Landed { index: 0, .. },
+                        ArchiveEvent::Finished,
+                    ]
+                ),
+                "{how}: {got:?}"
+            );
+            let out = std::fs::read_to_string(d.join("out/locked/a.txt")).unwrap();
+            assert_eq!(out, "secret", "{how}");
+        }
+    }
+
+    #[test]
+    fn extract_asks_for_another_password_when_the_first_opens_only_some_files() {
+        let t = tempfile::tempdir().unwrap();
+        let zip = crate::archive::tests::two_password_zip(t.path());
+        std::fs::create_dir(t.path().join("out")).unwrap();
+        let got = run_keyed(
+            vec![Archive {
+                src: zip,
+                here: false,
+                to: Some(t.path().join("out")),
+            }],
+            Decision::Abort,
+            &[Some("pw1"), Some("pw2")],
+        );
+        assert!(
+            matches!(
+                &got[..],
+                [
+                    ArchiveEvent::Locked {
+                        index: 0,
+                        ask: Ask::First
+                    },
+                    ArchiveEvent::Locked {
+                        index: 0,
+                        ask: Ask::Another
+                    },
+                    ArchiveEvent::Landed { index: 0, .. },
+                    ArchiveEvent::Finished,
+                ]
+            ),
+            "{got:?}"
+        );
+        let read = |n: &str| std::fs::read_to_string(t.path().join("out/two").join(n)).unwrap();
+        assert_eq!(
+            (read("a.txt"), read("b.txt")),
+            ("first".into(), "second".into())
+        );
+    }
+
+    #[test]
+    fn a_key_reaches_the_child_on_stdin_and_a_second_read_finds_it_empty() {
+        let key = Key::new(zeroize::Zeroizing::new("pw".into())).unwrap();
+        let argv = ["sh", "-c", "head -n 1; cat; echo \"cat $?\""].map(OsString::from);
+        let mut child = spawn_keyed(&argv, true, std::slice::from_ref(&key), |_| {}).unwrap();
+        let mut out = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut out)
+            .unwrap();
+        child.wait().unwrap();
+        assert_eq!(
+            out, "pw\ncat 1\n",
+            "the line, then a read that fails, not an end"
+        );
     }
 
     #[test]
@@ -1440,7 +1733,7 @@ mod tests {
                 ..Listed::default()
             };
             assert_eq!(
-                extract(&a, &Meter::default(), 0, lying, room),
+                extract((&a, &[]), &Meter::default(), 0, lying, room),
                 Err(Failure::Refused(
                     "it holds more than its listing says.".into()
                 )),
@@ -1500,7 +1793,10 @@ mod tests {
         };
         let m = Meter::default();
         assert_eq!(
-            extract(&a, &m, 0, lying, |_| Limits::from_free(u64::MAX, None)),
+            extract((&a, &[]), &m, 0, lying, |_| Limits::from_free(
+                u64::MAX,
+                None
+            )),
             Err(Failure::Refused(
                 "it holds more than its listing says.".into()
             ))
@@ -1576,7 +1872,7 @@ mod tests {
     }
 
     #[test]
-    fn an_encrypted_zip_is_refused_as_password_protected_without_a_prompt() {
+    fn a_cancelled_password_or_a_self_extracting_zip_is_refused_as_password_protected() {
         let t = tempfile::tempdir().unwrap();
         let d = t.path();
         std::fs::write(d.join("a.txt"), "secret").unwrap();
@@ -1597,16 +1893,27 @@ mod tests {
         std::fs::write(d.join("sfx.zip"), [b"MZ-stub-".as_slice(), &zip].concat()).unwrap();
         std::fs::create_dir(d.join("out")).unwrap();
         for name in ["locked.zip", "sfx.zip"] {
-            let got = run_job(
+            let got = run_keyed(
                 vec![Archive {
                     src: d.join(name),
                     here: false,
                     to: Some(d.join("out")),
                 }],
                 Decision::Abort,
+                &[None],
             );
+            let failed = match &got[..] {
+                [
+                    ArchiveEvent::Locked {
+                        index: 0,
+                        ask: Ask::First,
+                    },
+                    rest @ ..,
+                ] if name == "locked.zip" => rest,
+                rest => rest,
+            };
             assert!(
-                matches!(&got[..], [ArchiveEvent::Failed { index: 0, text }, ArchiveEvent::Finished]
+                matches!(failed, [ArchiveEvent::Failed { index: 0, text }, ArchiveEvent::Finished]
                     if text.ends_with("it is password-protected.")),
                 "{name}: {got:?}"
             );
@@ -1682,7 +1989,7 @@ mod tests {
             move || {
                 let _ = wtx.send(());
             },
-            move |m, send| run(&items, Limits::of, m, send),
+            move |m, send| run(&items, &Given::default(), Limits::of, m, send),
         );
         drop(job);
         assert!(
@@ -2027,7 +2334,7 @@ mod tests {
             &src,
             &["-cf", tar.to_str().unwrap(), "e", "dir name", "l -> x"],
         );
-        let got = list(&tar, &Meter::default()).unwrap();
+        let got = list(&tar, false, &Meter::default()).unwrap();
         assert_eq!(
             got,
             Listed {
@@ -2039,17 +2346,17 @@ mod tests {
         );
         std::fs::write(src.join(".rc"), "").unwrap();
         bsdtar(&src, &["-cf", tar.to_str().unwrap(), "e", ".rc"]);
-        assert!(list(&tar, &Meter::default()).unwrap().hidden);
+        assert!(list(&tar, false, &Meter::default()).unwrap().hidden);
         std::fs::create_dir_all(src.join("bin")).unwrap();
         std::fs::write(src.join("bin/sudo"), "").unwrap();
         std::fs::create_dir_all(src.join("pkg/bin")).unwrap();
         bsdtar(&src, &["-cf", tar.to_str().unwrap(), "e", "pkg"]);
         assert!(
-            !list(&tar, &Meter::default()).unwrap().bin,
+            !list(&tar, false, &Meter::default()).unwrap().bin,
             "a bin below the top"
         );
         bsdtar(&src, &["-cf", tar.to_str().unwrap(), "e", "bin"]);
-        assert!(list(&tar, &Meter::default()).unwrap().bin);
+        assert!(list(&tar, false, &Meter::default()).unwrap().bin);
     }
 
     #[test]
