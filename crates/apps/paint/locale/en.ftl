@@ -140,6 +140,8 @@ quality-high = High (90)
 quality-good = Good (75)
 quality-small = Small (50)
 save-changes = Save changes to { $name }?
+# Save changes for a picture out of a compressed folder: Yes writes the changes into it.
+save-changes-archive = Save changes to { $name } in the compressed folder { $archive }?
 recovered = A picture was recovered. Open it?
 overwrite = { $path } already exists.
     Do you want to replace it?

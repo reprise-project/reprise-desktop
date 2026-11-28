@@ -89,8 +89,9 @@ struct Notepad {
     bar: Bar,
     path: Option<std::path::PathBuf>,
     /// The zip and the path inside it the document was copied out of, which a save of the
-    /// copy offers to write into.
-    zip_entry: Option<(PathBuf, PathBuf)>,
+    /// copy offers to write into, and whether a Yes to updating the zip was given for this
+    /// document, after which its saves update the zip without asking.
+    zip_entry: Option<(PathBuf, PathBuf, bool)>,
     /// The save into `zip_entry`'s zip while it runs, with its progress box.
     zip_save: JobBox,
     waker: Option<Waker>,
@@ -187,7 +188,7 @@ impl Notepad {
             settings_path: None,
             bar,
             stamp: path.as_deref().and_then(Stamp::of),
-            zip_entry: path.as_deref().and_then(reprisefs::archivecopy::updatable),
+            zip_entry: path.as_deref().and_then(zip_entry),
             zip_save: JobBox::default(),
             waker: None,
             path,
@@ -672,6 +673,12 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         None => notepad.offer_recovered(),
     }
     repriseapp::run(Box::new(notepad)).unwrap_or_else(|e| e.exit());
+}
+
+/// The zip and path inside it a save of the archive copy `path` writes into
+/// ([`reprisefs::archivecopy::updatable`]), not yet agreed to.
+fn zip_entry(path: &Path) -> Option<(PathBuf, PathBuf, bool)> {
+    reprisefs::archivecopy::updatable(path).map(|(zip, inner)| (zip, inner, false))
 }
 
 #[cfg(test)]

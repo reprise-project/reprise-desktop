@@ -125,14 +125,22 @@ impl Paint {
             return self.run(then);
         }
         self.open = None;
-        let name = self
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
+        let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+        let doc = (self.path.as_deref())
+            .and_then(name)
             .unwrap_or_else(|| tr!("untitled"));
+        // For a copy out of a zip that Paint saves (a GIF, WebP or TIFF goes through Save As),
+        // the Yes also updates the zip, so the save asks nothing more.
+        let into_zip = self
+            .zip_entry
+            .as_ref()
+            .filter(|_| self.writable().is_some());
+        let text = match into_zip.and_then(|(zip, _, _)| name(zip)) {
+            Some(zip) => tr!("save-changes-archive", name = doc, archive = zip),
+            None => tr!("save-changes", name = doc),
+        };
         self.ask(
-            tr!("save-changes", name = name),
+            text,
             vec![
                 reprisekit::kit_tr!("yes"),
                 reprisekit::kit_tr!("no"),
@@ -170,6 +178,7 @@ impl Paint {
     pub(crate) fn answered(&mut self, what: Prompt, answer: Option<usize>) -> Reply {
         match (what, answer) {
             (Prompt::SaveChanges(then), Some(0)) => {
+                self.agree_to_zip();
                 let Some((path, kind)) = self.writable() else {
                     self.after_save = Some(then);
                     self.saveas_dialog();
@@ -198,8 +207,8 @@ impl Paint {
             }
             (Prompt::Update(_), Some(0)) if self.zip_save.running() => Reply::redraw_all(),
             (Prompt::Update(then), Some(0)) => {
-                let started = self.update_zip();
-                self.zip_then = then.filter(|_| started);
+                self.agree_to_zip();
+                self.update_then(then);
                 Reply::redraw_all()
             }
             (Prompt::Recovered(file), answer) => self.recovered_answered(file, answer),
@@ -224,13 +233,20 @@ impl Paint {
     }
 
     /// Whether `path` takes no writes, in which case a box says so and its OK opens Save As,
-    /// with `then` waiting on that. A copy out of a zip always asks to update the zip instead.
+    /// with `then` waiting on that. A copy out of a zip asks to update the zip instead, or once
+    /// agreed to updates it.
     fn refuses(&mut self, path: &Path, then: Option<Then>) -> bool {
         if self.zip_entry.is_none() && !reprisefs::ops::is_read_only(path) {
             return false;
         }
+        if self.zip_entry.as_ref().is_some_and(|z| z.2) {
+            if !self.zip_save.running() {
+                self.update_then(then);
+            }
+            return true;
+        }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if let Some((zip, _)) = &self.zip_entry {
+        if let Some((zip, _, _)) = &self.zip_entry {
             let archive = zip.file_name().unwrap_or_default().to_string_lossy();
             let text = tr!(
                 "update-archive",
@@ -283,11 +299,24 @@ impl Paint {
         Kind::of(&path).map(|kind| (path, kind))
     }
 
+    /// Notes a Yes to updating the zip the picture came out of, so its saves stop asking.
+    fn agree_to_zip(&mut self) {
+        if let Some(z) = &mut self.zip_entry {
+            z.2 = true;
+        }
+    }
+
+    /// [`Paint::update_zip`], with `then` running once it lands.
+    fn update_then(&mut self, then: Option<Then>) {
+        let started = self.update_zip();
+        self.zip_then = then.filter(|_| started);
+    }
+
     /// Starts the job writing the picture into the zip it came out of, and then over its copy.
     /// Its windows take no input until it ends ([`Paint::zip_saved`]); refused while one runs. A
     /// picture that does not encode raises a box.
     fn update_zip(&mut self) -> bool {
-        let (Some((path, kind)), Some((zip, inner))) = (self.writable(), self.zip_entry.clone())
+        let (Some((path, kind)), Some((zip, inner, _))) = (self.writable(), self.zip_entry.clone())
         else {
             return false;
         };
@@ -515,7 +544,7 @@ impl Paint {
             Ok(img) => {
                 self.recent.record(&path);
                 self.doc = Doc::new(img);
-                self.zip_entry = reprisefs::archivecopy::updatable(&path);
+                self.zip_entry = crate::zip_entry(&path);
                 self.path = Some(path);
                 self.open = None;
                 self.zoom = 1;

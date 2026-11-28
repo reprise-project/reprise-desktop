@@ -94,6 +94,10 @@ read-only =
 update-archive =
     { $name } came out of the compressed folder { $archive }.
     Do you want to update { $archive } with your changes?
+# Save changes for a file out of a compressed folder: Yes writes the changes into it.
+save-changes-archive =
+    The text in the { $name } file has changed.
+    Do you want to update the compressed folder { $archive } with the changes?
 overwrite =
     { $path } already exists.
     Do you want to replace it?
