@@ -275,7 +275,7 @@ fn page_arg(mut args: impl Iterator<Item = String>) -> Option<(Entry, Option<Str
 /// `entry`, or the page whose search terms hold control `id` when `entry` is a program or a
 /// page whose terms don't (a control that moved pages keeps its `--focus` callers).
 fn holding(entry: Entry, id: &str) -> Entry {
-    let holds = |p: &Page| p.terms().iter().any(|&(i, _)| i == id);
+    let holds = |p: &Page| p.terms().iter().any(|(i, _)| *i == id);
     if let Entry::Page(p) = entry
         && holds(&p)
     {

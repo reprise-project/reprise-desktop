@@ -779,11 +779,7 @@ mod tests {
         };
         let mut report = String::new();
         for (p, built) in &built {
-            let listed: Vec<(&str, String)> = p
-                .terms()
-                .iter()
-                .map(|(id, l)| (*id, l.to_string()))
-                .collect();
+            let listed = p.terms_with(&|id, args| crate::i18n::STRINGS.tr_args(id, args));
             let missing: Vec<_> = built
                 .iter()
                 .filter(|t| !listed.iter().any(|l| same(*p, t, l)))
@@ -819,7 +815,7 @@ mod tests {
                 let hay: Vec<&str> = [label.as_str()]
                     .into_iter()
                     .chain(p.keywords().iter().copied())
-                    .chain(p.terms().iter().map(|&(_, l)| l))
+                    .chain(p.terms().iter().map(|(_, l)| l.as_str()))
                     .collect();
                 !UNSEARCHED_TITLES.contains(&t.as_str()) && !all_words(t, &hay)
             })
