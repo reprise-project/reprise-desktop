@@ -319,6 +319,24 @@ menu menuitem:disabled:backdrop, .menu menuitem:disabled:backdrop, .context-menu
   text-shadow: 1px 1px @reprise_hilight;
 }
 menu menuitem accelerator, .menu menuitem accelerator { color: inherit; }
+menu menuitem check, .menu menuitem check, .context-menu menuitem check,
+menu menuitem check:hover, .menu menuitem check:hover, .context-menu menuitem check:hover,
+menu menuitem check:disabled, .menu menuitem check:disabled, .context-menu menuitem check:disabled {
+  min-width: %check_px%;
+  min-height: %check_px%;
+  border: none;
+  background: none;
+  box-shadow: none;
+  -gtk-icon-source: none;
+  -gtk-icon-shadow: none;
+}
+menu menuitem check:checked, .menu menuitem check:checked, .context-menu menuitem check:checked {
+  background-image: %menu_check%;
+}
+menu menuitem:hover check:checked, .menu menuitem:hover check:checked,
+.context-menu menuitem:hover check:checked { background-image: %menu_check_lit%; }
+menu menuitem check:checked:disabled, .menu menuitem check:checked:disabled,
+.context-menu menuitem check:checked:disabled { background-image: %menu_check_greyed%; }
 menu separator, .menu separator, .context-menu separator {
   min-height: 2px;
   margin: 3px 0;

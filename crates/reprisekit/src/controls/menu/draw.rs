@@ -9,12 +9,10 @@ use crate::text::{Align, TextRenderer};
 use crate::theme::Theme;
 use std::borrow::Cow;
 
-const CHECK_GLYPH: [&str; 7] = [
-    "......X", ".....XX", "X...XXX", "XX.XXX.", "XXXXX..", ".XXX...", "..X....",
-];
-
+/// The 7x7 check with its top-left at `x`, `y`.
 fn draw_check(canvas: &mut Canvas, x: i32, y: i32, s: i32, color: crate::theme::Color) {
-    canvas.paint_map(x, y, s, &CHECK_GLYPH, |ch| (ch == 'X').then_some(color));
+    let check_box = Rect::new(x - 3 * s, y - 3 * s, 13 * s, 13 * s);
+    crate::classic::widgets::draw_check(canvas, check_box, s, color);
 }
 
 /// Design px between a heading's title and its rule.
@@ -333,15 +331,17 @@ pub fn draw_menu_at(
                         let iy = r.y + (r.height - ic.height as i32) / 2;
                         canvas.blit_canvas(r.x + layout.icon_x, iy, ic);
                     }
-                    None if *checked && *radio => draw_bullet(
-                        canvas,
-                        r.x + BULLET_X * g,
-                        centred(r, BULLET_D * k, s),
-                        g,
-                        fg,
-                    ),
                     None if *checked => {
-                        draw_check(canvas, r.x + CHECK_X * g, glyph_y + CHECK_DY * g, g, fg)
+                        let (x, y, mark): (_, _, fn(&mut Canvas, i32, i32, i32, _)) = if *radio {
+                            (r.x + BULLET_X * g, centred(r, BULLET_D * k, s), draw_bullet)
+                        } else {
+                            (r.x + CHECK_X * g, glyph_y + CHECK_DY * g, draw_check)
+                        };
+                        // Etched as the label is.
+                        if etched {
+                            mark(canvas, x + s, y + s, g, cs.button_hilight);
+                        }
+                        mark(canvas, x, y, g, fg);
                     }
                     None => {
                         if let Some(g) = glyph {
