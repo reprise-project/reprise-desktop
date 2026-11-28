@@ -189,6 +189,9 @@ pub(crate) enum Opened {
     Runs,
 }
 
+/// How long a settings change waits to be written, gathering the changes made meanwhile.
+pub(crate) const SETTINGS_SAVE_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// How long a listing is waited for before the window goes on. Tests wait as long as it takes.
 pub(crate) const LIST_WAIT: std::time::Duration = if cfg!(test) {
     std::time::Duration::from_secs(60)
@@ -331,9 +334,11 @@ pub struct Explorer {
     special_icons: Vec<(&'static str, Option<Canvas>)>,
     pub status: StatusBar,
     pub settings: Settings,
-    /// `settings` changed since the last write. A resize delivers a burst of
-    /// events; the file is written on the next blink, on losing focus or on closing.
+    /// `settings` changed since the last write. A resize or a divider drag delivers a burst of
+    /// changes; the file is written at `settings_due`, on losing focus or on closing.
     settings_dirty: bool,
+    /// When the changes in `settings` are written ([`Explorer::save_settings_due`]).
+    settings_due: Option<std::time::Instant>,
     /// The main window's client size at its last unmaximized resize when the user sized it, kept
     /// in 100% px at the next save. `None` while it is at its opening size, held or not: the saved
     /// size stands.
@@ -734,6 +739,7 @@ impl Explorer {
             },
             settings,
             settings_dirty: false,
+            settings_due: None,
             window_px: None,
             popup: None,
             focus: Focus::View,
@@ -1111,7 +1117,27 @@ impl Explorer {
         self.edit_favorites(move |b| if pin { b.pin(&dir) } else { b.unpin(&dir) });
     }
 
+    /// Writes changed settings [`SETTINGS_SAVE_AFTER`] after the first change since the last
+    /// write, so a killed process keeps them and a divider drag writes about once a second. The
+    /// first change asks for a wake at that time.
+    pub(crate) fn save_settings_due(&mut self, now: std::time::Instant, ctx: &Ctx) {
+        match self.settings_due {
+            _ if !self.settings_dirty => self.settings_due = None,
+            Some(due) if now >= due => self.flush_settings(),
+            Some(_) => {}
+            None => {
+                self.settings_due = Some(now + SETTINGS_SAVE_AFTER);
+                let wake = ctx.wake.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(SETTINGS_SAVE_AFTER);
+                    wake.wake();
+                });
+            }
+        }
+    }
+
     pub(crate) fn flush_settings(&mut self) {
+        self.settings_due = None;
         if std::mem::take(&mut self.settings_dirty) {
             if let Some(px) = self.window_px {
                 self.settings.keep_window(px, self.forms.text);
@@ -2348,6 +2374,7 @@ impl Explorer {
         }
         let mut reply = self.raise_waiting(reply, ctx);
         reply.tick_wins.extend(self.held_progress_moved());
+        self.save_settings_due(std::time::Instant::now(), ctx);
         reply
     }
 }
@@ -2428,7 +2455,6 @@ fn route(ex: &mut Explorer, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         Event::Wake => ex.wake(ctx),
         Event::Handoff(handoff) => ex.launch(handoff, ctx),
         Event::Blink => {
-            ex.flush_settings();
             // The Address and Search fields' carets are the only things in the window that blink.
             Reply {
                 redraw: ex.keyboard && matches!(ex.focus, Focus::Address | Focus::Search),

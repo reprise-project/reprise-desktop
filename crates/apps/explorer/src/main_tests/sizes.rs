@@ -92,6 +92,34 @@ fn settings_changes_defer_the_write() {
     }
 }
 
+#[test]
+fn a_settings_change_is_written_a_moment_later_once_for_a_burst() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let now = std::time::Instant::now();
+    ex.save_settings_due(now, &ctx);
+    assert_eq!(ex.settings_due, None, "nothing changed, nothing waits");
+    let _ = ex.run(
+        Command::Mode(reprisekit::controls::shellview::Mode::Details),
+        &mut ctx,
+    );
+    ex.save_settings_due(now, &ctx);
+    let due = ex.settings_due.expect("the change waits to be written");
+    assert!(ex.settings_dirty, "not written at once");
+    let _ = ex.run(Command::ToggleStatusBar, &mut ctx);
+    ex.save_settings_due(now + crate::SETTINGS_SAVE_AFTER / 2, &ctx);
+    assert_eq!(
+        ex.settings_due,
+        Some(due),
+        "a change meanwhile joins that write"
+    );
+    assert!(ex.settings_dirty);
+    ex.save_settings_due(due, &ctx);
+    assert!(!ex.settings_dirty, "written once the wait is up");
+    assert_eq!(ex.settings_due, None);
+}
+
 /// The host tells a text size change as a resize at the old size, then regrows a window still at
 /// its opening size to the size `initial_size` gives; a window the user sized keeps its size.
 #[test]
