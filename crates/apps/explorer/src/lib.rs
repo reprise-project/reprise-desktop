@@ -15,6 +15,7 @@ mod checksums;
 mod chrome;
 mod commands;
 mod copydlg;
+mod details;
 mod dialogs;
 mod drag;
 mod extracting;
@@ -2227,10 +2228,16 @@ impl Explorer {
     /// An event on window `win`. After every event a paste whose turn came asks its clash, and a
     /// progress window held still on a box takes a tick once its job moved.
     pub(crate) fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
-        let reply = route(self, win, ev, ctx);
+        let mut reply = route(self, win, ev, ctx);
         // The task pane draws its focus rectangle only while it holds the keyboard.
         if self.focus != Focus::Tasks {
             self.taskpane.focus = None;
+        }
+        // The pointer or the keyboard came to or left the navigation pane, or its fade ticked.
+        if win == MAIN {
+            let (faded, fading) = self.nav_fade();
+            reply.redraw |= faded;
+            reply.tick |= fading;
         }
         let mut reply = self.raise_waiting(reply, ctx);
         reply.tick_wins.extend(self.held_progress_moved());

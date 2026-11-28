@@ -687,6 +687,20 @@ impl Explorer {
         reply
     }
 
+    /// The navigation pane's expanders fade in while the pointer is over the pane or the pane
+    /// has the keyboard, and out after: whether they changed (a redraw) and whether they still
+    /// fade (a tick).
+    pub(crate) fn nav_fade(&mut self) -> (bool, bool) {
+        if self.tree.style != treeview::Style::Nav {
+            return (false, false);
+        }
+        let shown = self.tree.over.inside || self.focus == Focus::Tree;
+        let was = self.tree.expanders.level();
+        let now = std::time::Instant::now();
+        let fading = self.tree.show_expanders(shown, now).is_some();
+        (self.tree.expanders.level() != was, fading)
+    }
+
     /// The Folders pane's row under the pointer turns hot while nothing is held and
     /// no menu is open. True when that changed what draws.
     fn tree_hover(&mut self, free: bool, x: i32, y: i32, ctx: &Ctx) -> bool {

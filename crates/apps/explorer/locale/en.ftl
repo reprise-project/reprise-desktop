@@ -353,6 +353,7 @@ checksums-take-checksums-cannot-read-the-file-e = Cannot read the file: { $e }
 
 ## folder-tree
 folder-tree-build-desktop = Desktop
+folder-tree-favorites = Favorites
 
 ## favorites
 favorites-take-favorites-failed-favorites = Favorites
@@ -473,3 +474,19 @@ organize-details-pane = &Details pane
 organize-navigation-pane = &Navigation pane
 organize-folder-and-search-options = F&older and search options
 organize-close = Clos&e
+
+## The details pane along the window's foot
+details-pane-items =
+    { $count ->
+        [one] { NUMBER($count, useGrouping: "false") } item
+       *[other] { NUMBER($count, useGrouping: "false") } items
+    }
+details-pane-selected = { NUMBER($count, useGrouping: "false") } items selected
+details-pane-date-modified = Date modified:
+details-pane-size = Size:
+details-pane-space-free = Space free:
+details-pane-total-size = Total size:
+details-pane-original-location = Original location:
+details-pane-date-deleted = Date deleted:
+details-pane-dimensions = Dimensions:
+details-pane-dimensions-value = { NUMBER($w, useGrouping: "false") } x { NUMBER($h, useGrouping: "false") }
