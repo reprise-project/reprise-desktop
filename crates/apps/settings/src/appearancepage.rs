@@ -17,9 +17,8 @@ use repriseconf::config::{AppearanceMode, CLASSIC_DARK_SCHEME};
 use reprisekit::tr;
 
 pub const SAMPLE: &str = "sample";
-pub fn sample_rect(a: Area) -> Rect {
-    Rect::new(X + 4, 44, a.w - 8, 188 + a.dh)
-}
+/// The sample's rect at every window size; the rows under it stay put.
+pub const SAMPLE_RECT: Rect = Rect::new(X + 4, 44, Area::MIN.w - 8, 188);
 /// The scheme combo's id under each interface: each lists its own names, and the id says whose.
 pub const CLASSIC_SCHEME: &str = "classic_scheme";
 pub const BLUE_SCHEME: &str = "blue_scheme";
@@ -194,12 +193,11 @@ pub fn page(s: &Settings, a: Area) -> Form {
     let half_w = (lw - 16) / 2;
     let frame_x = X + half_w + 16;
     let tw = rw.min(TRACK_MAX);
-    let y = |y: i32| y + a.dh;
     let scheme_w = if glass { half_w } else { lw };
     let mut items = vec![
         Item::new(
             SAMPLE,
-            sample_rect(a),
+            SAMPLE_RECT,
             Control::Sample {
                 themes: false,
                 theme: theme(s),
@@ -209,21 +207,21 @@ pub fn page(s: &Settings, a: Area) -> Form {
         Item::label_at(
             "interface_label",
             X,
-            y(242),
+            242,
             lw,
             &tr!("appearancepage-interface"),
         ),
-        choice("interface", X, y(258), lw, INTERFACES),
+        choice("interface", X, 258, lw, INTERFACES),
         Item::label_at(
             "scheme_label",
             X,
-            y(288),
+            288,
             scheme_w,
             &tr!("appearancepage-color-scheme"),
         ),
-        Item::combo(scheme_id(i), X, y(304), scheme_w, &refs, refs.len().min(8)),
-        Item::label_at("mode_label", rx, y(242), rw, &tr!("appearancepage-mode")),
-        choice("mode", rx, y(258), rw, MODES),
+        Item::combo(scheme_id(i), X, 304, scheme_w, &refs, refs.len().min(8)),
+        Item::label_at("mode_label", rx, 242, rw, &tr!("appearancepage-mode")),
+        choice("mode", rx, 258, rw, MODES),
     ];
     let dark_hours = |hours_y: i32| {
         [
@@ -247,7 +245,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
         ]
     };
     if i != Interface::Glass {
-        items.extend(dark_hours(y(288)));
+        items.extend(dark_hours(288));
     }
     if i == Interface::Classic {
         let dark: Vec<&str> = classic_rows()
@@ -257,11 +255,11 @@ pub fn page(s: &Settings, a: Area) -> Form {
             Item::label_at(
                 DARK_SCHEME_LABEL,
                 X,
-                y(334),
+                334,
                 lw,
                 &tr!("appearancepage-dark-color-scheme"),
             ),
-            Item::combo(DARK_SCHEME, X, y(350), lw, &dark, dark.len().min(8)),
+            Item::combo(DARK_SCHEME, X, 350, lw, &dark, dark.len().min(8)),
         ]);
     }
     if glass {
@@ -269,72 +267,72 @@ pub fn page(s: &Settings, a: Area) -> Form {
             Item::label_at(
                 "style_label",
                 frame_x,
-                y(288),
+                288,
                 half_w,
                 &tr!("appearancepage-style"),
             ),
-            choice("glass_style", frame_x, y(304), half_w, GLASS_STYLES),
+            choice("glass_style", frame_x, 304, half_w, GLASS_STYLES),
             Item::label_at(
                 "material_label",
                 X,
-                y(334),
+                334,
                 half_w,
                 &tr!("appearancepage-material"),
             ),
-            choice("glass_material", X, y(350), half_w, GLASS_MATERIALS),
+            choice("glass_material", X, 350, half_w, GLASS_MATERIALS),
             Item::label_at(
                 "frame_label",
                 frame_x,
-                y(334),
+                334,
                 half_w,
                 &tr!("appearancepage-frame"),
             ),
-            choice("glass_frame", frame_x, y(350), half_w, GLASS_FRAMES),
+            choice("glass_frame", frame_x, 350, half_w, GLASS_FRAMES),
             Item::check(
                 "glass_transparency",
                 X,
-                y(384),
+                384,
                 &tr!("appearancepage-enable-transparency"),
             ),
             Item::check(
                 "glass_fast_drag",
                 X,
-                y(406),
+                406,
                 &tr!("appearancepage-faster-glass-while-dragging"),
             ),
             Item::check(
                 "glass_blur_frames",
                 X,
-                y(428),
+                428,
                 &tr!("appearancepage-show-frames-behind-glass"),
             ),
             Item::check(
                 "glass_streaks",
                 rx,
-                y(384),
+                384,
                 &tr!("appearancepage-show-reflections"),
             ),
             Item::label_at(
                 "intensity_label",
                 rx,
-                y(288),
+                288,
                 rw,
                 &tr!("appearancepage-color-intensity"),
             ),
             Item::new(
                 "glass_intensity",
-                Rect::new(rx, y(304), tw, trackbar::HEIGHT),
+                Rect::new(rx, 304, tw, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new(42, INTENSITY_POSITIONS).paged(10, 5)),
             ),
-            Item::label_at("blur_label", rx, y(334), rw, &tr!("appearancepage-blur")),
+            Item::label_at("blur_label", rx, 334, rw, &tr!("appearancepage-blur")),
             Item::new(
                 "glass_blur",
-                Rect::new(rx, y(350), tw, trackbar::HEIGHT),
+                Rect::new(rx, 350, tw, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new(1, BLUR_POSITIONS).paged(1, 1)),
             ),
         ]);
         // Under the intensity and blur that fill the column below Mode.
-        items.extend(dark_hours(y(406)));
+        items.extend(dark_hours(406));
     }
     Form::new(items)
 }
@@ -477,6 +475,21 @@ mod tests {
         };
         assert_eq!(room(100), (188, 10));
         assert_eq!(room(200), (376, 20));
+    }
+
+    #[test]
+    fn a_maximized_window_keeps_the_sample_and_the_rows_under_it_in_place() {
+        let at = |a: Area| {
+            let f = page(&Settings::default(), a);
+            let y = |id: &str| f.item(id).expect("on the page").rect.y;
+            (
+                f.item(SAMPLE).unwrap().rect,
+                y("interface_label"),
+                y("mode"),
+            )
+        };
+        let large = Area { w: 1500, dh: 600 };
+        assert_eq!(at(large), at(Area::MIN));
     }
 
     #[test]

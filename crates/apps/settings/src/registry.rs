@@ -515,8 +515,8 @@ mod tests {
 
     /// From the smallest to a large size, content holders grow (group boxes that
     /// end at the column's right edge, fields, lists, the tree, previews); combos and trackbars grow no more than
-    /// their most; check boxes, radios, buttons, up-downs, colour buttons and time
-    /// fields keep their size. The page's list or preview takes the extra height.
+    /// their most; check boxes, radios, buttons, up-downs, colour buttons, time
+    /// fields and the Appearance sample keep their size. The page's list or preview takes the extra height.
     #[test]
     fn content_grows_with_the_window_and_fixed_controls_keep_their_size() {
         use reprisekit::controls::form::Control;
@@ -537,7 +537,6 @@ mod tests {
                     Control::Edit { .. }
                     | Control::ListBox { .. }
                     | Control::Tree(_)
-                    | Control::Sample { .. }
                     | Control::Arrange(_)
                     | Control::Lines(_) => assert!(n.width > r.width, "{at}"),
                     Control::Combo(_) => assert!(
@@ -549,6 +548,7 @@ mod tests {
                         "{at}"
                     ),
                     Control::Check { .. }
+                    | Control::Sample { .. }
                     | Control::Radio { .. }
                     | Control::Button { .. }
                     | Control::UpDown(_)
@@ -569,7 +569,6 @@ mod tests {
             (h(&before), h(&every_page(large)))
         };
         for (p, id) in [
-            (Page::Appearance, crate::appearancepage::SAMPLE),
             (Page::Background, crate::backgroundpage::WALLPAPER),
             (Page::Display, crate::displaypage::ARRANGE),
             (Page::StartMenu, crate::menupage::TREE),
