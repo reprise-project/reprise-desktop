@@ -116,15 +116,13 @@ pub fn new_task() {
     });
 }
 
-/// End Task on one window off the event loop: it is asked to close as its X button does.
+/// End Task on one window off the event loop: it is asked to close as its X button does, by
+/// the compositor's id for it, since two windows may share an app id and a title.
 pub fn close_window(w: reprisebus::tray::AppWindow) {
-    std::thread::spawn(move || {
-        let pick = |ws: &[crate::toplevel::Toplevel]| crate::toplevel::the_one(ws, &w);
-        match crate::toplevel::on_window(pick, crate::toplevel::Do::Close) {
-            Ok(true) => {}
-            Ok(false) => log::info!("End Task: {:?} of {} is gone", w.title, w.app_id),
-            Err(e) => log::warn!("End Task {}: {e}", w.app_id),
-        }
+    std::thread::spawn(move || match reprisebus::tray::close_window(w.id) {
+        Ok(true) => {}
+        Ok(false) => log::info!("End Task: {:?} of {} is gone", w.title, w.app_id),
+        Err(e) => log::warn!("End Task {}: {e}", w.app_id),
     });
 }
 

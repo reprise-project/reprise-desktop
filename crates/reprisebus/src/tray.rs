@@ -163,6 +163,16 @@ pub fn close_windows(pids: &[i32]) -> zbus::Result<u32> {
     windows_call("CloseWindows", pids)
 }
 
+/// Ask the window the compositor lists as `id` ([`AppWindow::id`]) to close, as its X button
+/// does: End Task on one window. False when no such window is mapped. Blocks for at most
+/// [`crate::METHOD_TIMEOUT`].
+pub fn close_window(id: u64) -> zbus::Result<bool> {
+    let conn = crate::session()?;
+    let reply =
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "CloseWindow", &(id,)))?;
+    reply.body().deserialize()
+}
+
 /// Every mapped window: Task Manager lists a program while it shows one, and a row for each
 /// window with a task button. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn windows_by_app() -> zbus::Result<Vec<AppWindow>> {

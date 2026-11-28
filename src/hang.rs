@@ -907,6 +907,18 @@ impl State {
         shown.len()
     }
 
+    /// Task Manager's End Task on one window: the mapped window [`State::windows_by_app`] lists
+    /// as `id`, asked to close as its X button does. False when there is none.
+    pub fn end_task_window(&mut self, id: u64) -> bool {
+        let shown = (self.windows.iter())
+            .find(|w| w.id.raw() == id && w.mapped && !w.override_redirect)
+            .map(|w| w.id);
+        if let Some(w) = shown {
+            self.close(w);
+        }
+        shown.is_some()
+    }
+
     /// SIGKILL `pid` unless it forwards X11 windows ([`signalled`]), then disconnect its windows'
     /// clients, which a thread stuck on a dead mount keeps open. Never the compositor or Xwayland.
     pub fn end_process(&mut self, pid: i32) {
@@ -1457,6 +1469,29 @@ mod tests {
             other.side.closes.is_empty(),
             "another process with the same app id keeps its window"
         );
+    }
+
+    #[test]
+    fn end_task_on_one_window_closes_it_by_id_beside_a_twin_of_another_process() {
+        const PID: i32 = i32::MAX - 815;
+        const OTHER: i32 = i32::MAX - 816;
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut first = h.connect_as(PID);
+        let mut twin = h.connect_as(OTHER);
+        h.map_toplevel(&mut first, "app", 200, 100);
+        h.map_toplevel(&mut twin, "app", 200, 100);
+        let listed = h.state.windows_by_app();
+        let id = (listed.iter())
+            .find(|w| w.pid == OTHER as u32)
+            .expect("the twin is listed")
+            .id;
+        assert!(h.state.end_task_window(id));
+        h.roundtrip(&mut first);
+        h.roundtrip(&mut twin);
+        assert_eq!(twin.side.closes, [0], "the window named is asked to close");
+        assert!(first.side.closes.is_empty(), "its twin keeps its window");
+        assert!(!h.state.end_task_window(u64::MAX), "no such window");
     }
 
     #[test]
