@@ -763,3 +763,74 @@ pub fn render_trackbars(pct: u32) -> Canvas {
     }
     c
 }
+
+/// Explorer's Views button over a task pane's fold chevrons, open and folded, in each look, a look
+/// a row, at `pct` text and at scale 1 and 2.
+pub fn render_views_chevrons(pct: u32) -> Canvas {
+    use reprisekit::controls::taskpane::{self, Row, Section, TaskPane};
+    let looks = [Interface::Classic, Interface::Blue, Interface::Glass];
+    let cell_h = 280;
+    let pane_w = Theme::default().with_text_size(pct).text.len(180);
+    let mut c = Canvas::new(
+        (3 * pane_w + 30) as u32,
+        (looks.len() as i32 * cell_h * 2) as u32,
+    );
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    for (row, &look) in looks.iter().enumerate() {
+        let base = cued(interfaces::theme_for(look)).with_text_size(pct);
+        let text = TextRenderer::load(&base.fonts);
+        let (px, u) = (base.fonts.size_px, base.text);
+        let cm = base.controls();
+        for (j, s) in [1, 2].into_iter().enumerate() {
+            let theme = base.scaled(s);
+            let text = text.for_output(s);
+            let (w, h) = (u.len(180), cell_h - 20);
+            let mut cell = Canvas::new((w * s) as u32, (h * s) as u32);
+            cell.fill_rect(cell.bounds(), base.colors.button_face);
+            let tb = toolbar::ToolBar {
+                items: vec![toolbar::Item::DropButton {
+                    id: toolbar::VIEWS,
+                    icon: Some(viewsicon::draw24_grown(toolbar::big_icon(u), s)),
+                    label: None,
+                    enabled: true,
+                }],
+                hot: None,
+                pressed: None,
+                latched: None,
+                big: true,
+            };
+            let strip = Rect::new(0, 0, w, toolbar::height(true, &cm));
+            let rects = toolbar::layout(&tb, text, px, strip, &cm);
+            toolbar::draw(
+                &mut cell,
+                text,
+                &theme.paint(),
+                &tb,
+                strip,
+                &rects,
+                px * s as u32,
+            );
+            let mut folded = Section::links("Other Places", vec![Row::new("Desktop", None)]);
+            folded.open = false;
+            let tp = TaskPane {
+                sections: vec![
+                    Section::links(
+                        "File and Folder Tasks",
+                        vec![Row::new("Make a new folder", None)],
+                    ),
+                    folded,
+                ],
+                ..Default::default()
+            };
+            let r = Rect::new(0, strip.bottom() + 6, w, h - strip.bottom() - 6);
+            let lay = taskpane::layout(&tp, text, px, r, &cm);
+            taskpane::draw(&mut cell, text, &theme.paint(), &tp, &lay, px * s as u32);
+            c.blit_canvas(
+                10 + j as i32 * (pane_w + 10),
+                row as i32 * cell_h * 2 + 10,
+                &cell,
+            );
+        }
+    }
+    c
+}

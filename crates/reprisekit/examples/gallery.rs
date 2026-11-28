@@ -111,8 +111,8 @@ use popups::{
     render_popups_text_size, render_preview_media, write_volume_popups,
 };
 use sheets::{
-    render_list_sheet_links, render_list_sheet_search, render_list_sheets, render_long_list_sheets,
-    render_tray_customize,
+    render_customize_page, render_list_sheet_links, render_list_sheet_search, render_list_sheets,
+    render_long_list_sheets, render_tray_customize,
 };
 use start::{
     render_blue_start_menus, render_blue_start_panel, render_start_panel, render_start_panel_dark,
@@ -125,6 +125,7 @@ use taskbar::{
 use text_size::{
     render_list_icons, render_menu_columns, render_menu_icons, render_menu_scroll,
     render_taskpane_icons, render_text_size, render_trackbars, render_tree_icons,
+    render_views_chevrons,
 };
 use views::{
     render_backgrounds, render_drives, render_file_preview, render_grid_drag, render_image_view,
@@ -341,6 +342,10 @@ fn write_scale(n: i32) {
         || render_balloon_pictures(n.max(1)),
         &format!("reprisekit-gallery-balloon-pictures@{}.png", n.max(1)),
     );
+    write_preview(
+        || render_customize_page(n.max(1)),
+        &format!("reprisekit-gallery-customize-page@{}.png", n.max(1)),
+    );
     for mode in [
         reprisekit::glass::Mode::Light,
         reprisekit::glass::Mode::Dark,
@@ -434,6 +439,10 @@ fn write_text_size(pct: u32) {
         write_preview(
             || render_trackbars(pct),
             &format!("reprisekit-gallery-trackbars-{pct}.png"),
+        );
+        write_preview(
+            || render_views_chevrons(pct),
+            &format!("reprisekit-gallery-views-chevrons-{pct}.png"),
         );
     }
 }
@@ -716,6 +725,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         write_preview(
             || render_balloon_pictures(1),
             "reprisekit-gallery-balloon-pictures.png",
+        );
+        write_preview(
+            || render_customize_page(1),
+            "reprisekit-gallery-customize-page.png",
         );
         write_preview(
             render_tray_customize,
