@@ -223,7 +223,11 @@ pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
 
 /// [`list`]. An encrypted zip is refused unless a `key` is given; its names are not encrypted,
 /// so listing does not check the key ([`try_key`] does).
-fn list_keyed(archive: &Path, key: Option<&Key>, m: &Meter) -> Result<Vec<Entry>, String> {
+pub(crate) fn list_keyed(
+    archive: &Path,
+    key: Option<&Key>,
+    m: &Meter,
+) -> Result<Vec<Entry>, String> {
     if key.is_none() && zip_encrypted(archive) {
         return Err(tr!("archive-locked"));
     }
@@ -344,7 +348,7 @@ const MAX_ZIP_DIRECTORY: u64 = 64 << 20;
 
 /// Whether `file` is a zip with an encrypted entry, by bit 0 of an entry's flags in its central
 /// directory. A file that does not start as a zip, or whose end records do not read, is not.
-pub(crate) fn zip_encrypted(file: &Path) -> bool {
+pub fn zip_encrypted(file: &Path) -> bool {
     zip_locked(file, 0).is_some_and(|(any, _)| any)
 }
 
@@ -359,12 +363,85 @@ const KEY_CHECK_BYTES: u64 = 64 << 20;
 /// smallest encrypted files that bsdtar reads back as they are held (ASCII, or flagged and valid
 /// UTF-8), smallest first. Stops at the first encrypted entry when `most` is 0.
 fn zip_locked(file: &Path, most: usize) -> Option<(bool, Vec<Vec<u8>>)> {
+    let dir = zip_directory(file)?;
+    let mut at = 0usize;
+    let mut any = false;
+    let mut smallest: Vec<(u64, Vec<u8>)> = Vec::new();
+    while dir.get(at..at + 4) == Some(b"PK\x01\x02") {
+        let name_len = le(&dir, at + 28, 2)? as usize;
+        let flags = le(&dir, at + 8, 2)?;
+        if flags & 1 != 0 {
+            any = true;
+            if most == 0 {
+                break;
+            }
+            let name = dir.get(at + 46..at + 46 + name_len)?;
+            let utf8 = flags & 0x800 != 0 && std::str::from_utf8(name).is_ok();
+            if !name.ends_with(b"/") && (name.is_ascii() || utf8) {
+                smallest.push((le(&dir, at + 24, 4)?, name.to_vec()));
+                smallest.sort();
+                smallest.truncate(most);
+            }
+        }
+        let names = name_len as u64 + le(&dir, at + 30, 2)? + le(&dir, at + 32, 2)?;
+        at = at.checked_add(46 + names as usize)?;
+    }
+    Some((any, smallest.into_iter().map(|(_, n)| n).collect()))
+}
+
+/// Whether the zip `file` holds an entry with bytes and every such entry is encrypted with AES
+/// (method 99), by its central directory; libarchive encrypts no entry without bytes.
+pub(crate) fn zip_sealed(file: &Path) -> bool {
+    let sealed = || {
+        let dir = zip_directory(file)?;
+        let (mut at, mut files) = (0usize, 0usize);
+        while dir.get(at..at + 4) == Some(b"PK\x01\x02") {
+            let name_len = le(&dir, at + 28, 2)? as usize;
+            if le(&dir, at + 24, 4)? != 0 {
+                if le(&dir, at + 8, 2)? & 1 == 0 || le(&dir, at + 10, 2)? != 99 {
+                    return Some(false);
+                }
+                files += 1;
+            }
+            let names = name_len as u64 + le(&dir, at + 30, 2)? + le(&dir, at + 32, 2)?;
+            at = at.checked_add(46 + names as usize)?;
+        }
+        Some(files > 0)
+    };
+    sealed().unwrap_or(false)
+}
+
+/// Whether the zip `file` holds a symbolic link by the unix mode in its central directory,
+/// whatever its name: one named as a folder (`x/`) lists as one. A zip whose central directory
+/// does not read holds none.
+pub(crate) fn zip_holds_links(file: &Path) -> bool {
+    let links = || {
+        let dir = zip_directory(file)?;
+        let mut at = 0usize;
+        while dir.get(at..at + 4) == Some(b"PK\x01\x02") {
+            let unix = le(&dir, at + 5, 1)? == 3;
+            if unix && (le(&dir, at + 38, 4)? >> 16) & 0o170000 == 0o120000 {
+                return Some(true);
+            }
+            let names = le(&dir, at + 28, 2)? + le(&dir, at + 30, 2)? + le(&dir, at + 32, 2)?;
+            at = at.checked_add(46 + names as usize)?;
+        }
+        Some(false)
+    };
+    links().unwrap_or(false)
+}
+
+/// The little-endian number of `n` bytes at `at` of `b`.
+fn le(b: &[u8], at: usize, n: usize) -> Option<u64> {
+    let bytes = b.get(at..at.checked_add(n)?)?;
+    Some(bytes.iter().rev().fold(0u64, |v, &x| v << 8 | u64::from(x)))
+}
+
+/// The central directory of the zip `file`, unless it does not start as a zip, its end records
+/// do not read, or the directory passes [`MAX_ZIP_DIRECTORY`].
+fn zip_directory(file: &Path) -> Option<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
     const EOCD: usize = 22;
-    let le = |b: &[u8], at: usize, n: usize| {
-        let bytes = b.get(at..at.checked_add(n)?)?;
-        Some(bytes.iter().rev().fold(0u64, |v, &x| v << 8 | u64::from(x)))
-    };
     use std::os::unix::fs::OpenOptionsExt;
     // Nonblocking, so a FIFO under an archive's name cannot hold the thread at the open.
     let mut f = (std::fs::OpenOptions::new().read(true))
@@ -408,29 +485,7 @@ fn zip_locked(file: &Path, most: usize) -> Option<(bool, Vec<Vec<u8>>)> {
     let mut dir = vec![0; size as usize];
     f.seek(SeekFrom::Start(offset)).ok()?;
     f.read_exact(&mut dir).ok()?;
-    let mut at = 0usize;
-    let mut any = false;
-    let mut smallest: Vec<(u64, Vec<u8>)> = Vec::new();
-    while dir.get(at..at + 4) == Some(b"PK\x01\x02") {
-        let name_len = le(&dir, at + 28, 2)? as usize;
-        let flags = le(&dir, at + 8, 2)?;
-        if flags & 1 != 0 {
-            any = true;
-            if most == 0 {
-                break;
-            }
-            let name = dir.get(at + 46..at + 46 + name_len)?;
-            let utf8 = flags & 0x800 != 0 && std::str::from_utf8(name).is_ok();
-            if !name.ends_with(b"/") && (name.is_ascii() || utf8) {
-                smallest.push((le(&dir, at + 24, 4)?, name.to_vec()));
-                smallest.sort();
-                smallest.truncate(most);
-            }
-        }
-        let names = name_len as u64 + le(&dir, at + 30, 2)? + le(&dir, at + 32, 2)?;
-        at = at.checked_add(46 + names as usize)?;
-    }
-    Some((any, smallest.into_iter().map(|(_, n)| n).collect()))
+    Some(dir)
 }
 
 /// Whether `key` opens the encrypted zip `archive`: whether bsdtar reads one of its
@@ -2440,6 +2495,37 @@ pub(crate) mod tests {
         assert!(
             !zip_encrypted(&t.path().join("fifo.zip")),
             "a FIFO is not read"
+        );
+    }
+
+    #[test]
+    fn a_zip_is_sealed_only_when_every_entry_with_bytes_is_aes() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::write(d.join("a.txt"), "secret").unwrap();
+        std::fs::write(d.join("e.txt"), "").unwrap();
+        let made = |zip: &str, how: Option<&str>| {
+            let options = how.map(|h| format!("zip:encryption={h}"));
+            let mut args = vec!["--format", "zip"];
+            if let Some(o) = &options {
+                args.extend(["--options", o, "--passphrase", "pw"]);
+            }
+            bsdtar(d, &[&args[..], &["-cf", zip, "a.txt", "e.txt"]].concat());
+            d.join(zip)
+        };
+        assert!(
+            zip_sealed(&made("aes.zip", Some("aes256"))),
+            "AES, the empty file plain"
+        );
+        assert!(
+            !zip_sealed(&made("crypt.zip", Some("zipcrypt"))),
+            "the traditional encryption"
+        );
+        assert!(!zip_sealed(&made("plain.zip", None)));
+        std::fs::write(d.join("a.txt"), "").unwrap();
+        assert!(
+            !zip_sealed(&made("empty.zip", Some("aes256"))),
+            "nothing with bytes to seal"
         );
     }
 

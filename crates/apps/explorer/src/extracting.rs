@@ -89,6 +89,11 @@ pub(crate) enum Batch {
         under: PathBuf,
         made: reprisefs::zipwrite::Made,
     },
+    /// Add a Password... on a zip.
+    AddPassword {
+        zip: PathBuf,
+        key: reprisefs::archive::Key,
+    },
 }
 
 /// What Extract to names after an archive, `name/`.
@@ -366,6 +371,11 @@ impl Explorer {
                     from,
                     to,
                 )
+            }
+            Batch::AddPassword { zip, key } => {
+                let (from, to) = (name(zip.parent()), name(Some(&zip)));
+                let job = ArchiveJob::add_password(zip, key, wake);
+                (job, Kind::Compress, from, to)
             }
             Batch::MakeInZip { zip, under, made } => {
                 let (from, to) = (name(zip.parent()), name(Some(&zip)));

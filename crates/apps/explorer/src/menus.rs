@@ -69,6 +69,8 @@ pub struct MenuState {
     pub disk_image: bool,
     /// The item is a zip that pasted files go into: its menu has Paste.
     pub paste_into_zip: bool,
+    /// The selection is one zip that takes writes: its menu has Add a Password...
+    pub add_password: bool,
     /// The compressed folder shown is a zip that takes files: Paste and New put them into it.
     pub into_zip: bool,
     /// The selection is one drive whose label Rename sets.
@@ -123,6 +125,7 @@ impl Default for MenuState {
             compress: None,
             disk_image: false,
             paste_into_zip: false,
+            add_password: false,
             into_zip: false,
             relabel: false,
             pinned: None,
@@ -877,6 +880,12 @@ pub fn item_menu(
                     true,
                 ),
                 Command::Extract { here: false },
+            );
+        }
+        if state.add_password && kind == ItemKind::File {
+            m.row(
+                row(tr!("menu-item-add-password"), true),
+                Command::AddPassword,
             );
         }
     }

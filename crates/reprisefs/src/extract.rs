@@ -1174,11 +1174,25 @@ pub(crate) fn spawn_keyed(
     keys: &[Key],
     env: impl FnOnce(&mut Command),
 ) -> Result<Child, Failure> {
-    use std::io::Write;
-    use std::os::unix::process::CommandExt;
     if keys.is_empty() {
         return spawn_with(argv, stdout, env);
     }
+    let stdout = match stdout {
+        true => Stdio::piped(),
+        false => Stdio::null(),
+    };
+    spawn_keyed_io(argv, stdout, keys, env)
+}
+
+/// [`spawn_keyed`] writing to `stdout`, with at least one key.
+pub(crate) fn spawn_keyed_io(
+    argv: &[OsString],
+    stdout: Stdio,
+    keys: &[Key],
+    env: impl FnOnce(&mut Command),
+) -> Result<Child, Failure> {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
     let tool = |e: std::io::Error| Failure::Tool(e.to_string());
     let (read, mut write) = std::io::pipe().map_err(tool)?;
     // [`MOST_KEYS`] lines take up to 8 KiB. A pipe gets 64 KiB, or one page once the user's pipes
@@ -1207,10 +1221,6 @@ pub(crate) fn spawn_keyed(
     // SAFETY: `held` is the new descriptor fcntl just returned.
     let held = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(held) };
     drop(write);
-    let stdout = match stdout {
-        true => Stdio::piped(),
-        false => Stdio::null(),
-    };
     let fd = held.as_raw_fd();
     spawn_io(argv, (Stdio::from(read), stdout), |cmd| {
         env(cmd);

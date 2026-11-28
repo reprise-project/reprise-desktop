@@ -1082,6 +1082,7 @@ impl Explorer {
             compress: None,
             disk_image: false,
             paste_into_zip: false,
+            add_password: false,
             into_zip: self.zip_view().is_some(),
             relabel: (self.sv.selection.single()).is_some_and(|i| self.relabel_target(i).is_some()),
             pinned: None,

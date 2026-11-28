@@ -1,8 +1,11 @@
 //! Writing into a zip browsed as a compressed folder: a file saved back into it, files dropped
-//! or pasted onto it. The zip is rewritten whole by a chain of bsdtar children: the first reads
+//! or pasted onto it, a password added to it. The zip is rewritten whole by a chain of bsdtar children: the first reads
 //! the zip, opened once and never through a link, less the entries being replaced (and is left
 //! out when none stays); each next one adds one folder's files by name; the last writes a zip
-//! into a temp file beside the old one.
+//! into a temp file beside the old one. Adding a password is one child instead, reading the zip
+//! and writing every file again encrypted with AES-256, the password on its stdin
+//! ([`extract::spawn_keyed_io`]); the temp file must then also hold only encrypted files and open
+//! with that password.
 //! The temp file is listed and must hold exactly the old entries kept plus the files added, and
 //! is renamed over the zip only while the zip is still the file that was read. A failure, Cancel
 //! or the deadline removes the temp file. A crash leaves it hidden beside the zip
@@ -10,7 +13,7 @@
 //! temp file locked, and the next rewrite of that zip removes one no rewrite holds that was not
 //! written to for that rewrite's deadline. docs/security.md "Writing into zips" has the rules.
 
-use crate::archive::{self, Entry, Kind, Scratch};
+use crate::archive::{self, Entry, Key, Kind, Scratch};
 use crate::extract::{self, ArchiveEvent, ArchiveJob, Failure, MAX_ENTRIES, STDERR_TAIL};
 use crate::progress::{Meter, Phase, Totals};
 use reprisekit::tr;
@@ -108,6 +111,20 @@ impl Unwritten {
     }
 }
 
+/// What a rewrite writes besides the entries it keeps.
+#[derive(Clone, Copy)]
+enum Writes<'a> {
+    /// The files picked, each with its own mode, or with `keep_modes` the mode of the zip's file
+    /// it replaces.
+    Adds { keep_modes: bool },
+    /// Nothing added: every file written again encrypted with the key.
+    Key(&'a Key),
+}
+
+/// The `--options` bsdtar writes an encrypted zip with: AES-256, which every crypto library
+/// libarchive builds with offers.
+const ENCRYPTION: &str = "zip:encryption=aes256";
+
 /// What one [`rewrite`] may take: `most` bytes of zip and of files, and `deadline` of running
 /// time (a pause stops its clock), else twice the CPU time its bsdtar children may take.
 #[derive(Clone, Copy, Debug, Default)]
@@ -162,9 +179,31 @@ impl ArchiveJob {
         })
     }
 
+    /// Rewrites the zip `zip` with every file encrypted with `key` on a thread, as the module
+    /// says: refused for a zip already encrypted or holding no files. Its events are
+    /// [`ArchiveJob::add_to_zip`]'s; a cancelled job leaves the zip as it was.
+    pub fn add_password(zip: PathBuf, key: Key, wake: impl Fn() + Send + 'static) -> Self {
+        ArchiveJob::rewriting_as(
+            "reprisefs-zip-password",
+            (zip, key_failure),
+            wake,
+            move |zip, m| add_password(zip, &key, m),
+        )
+    }
+
     fn rewriting(
         name: &str,
         zip: PathBuf,
+        wake: impl Fn() + Send + 'static,
+        body: impl FnOnce(&Path, &Arc<Meter>) -> Result<(), Unwritten> + Send + 'static,
+    ) -> Self {
+        ArchiveJob::rewriting_as(name, (zip, failure), wake, body)
+    }
+
+    /// [`ArchiveJob::rewriting`], `fail` wording its error box.
+    fn rewriting_as(
+        name: &str,
+        (zip, fail): (PathBuf, fn(&Path, &str) -> String),
         wake: impl Fn() + Send + 'static,
         body: impl FnOnce(&Path, &Arc<Meter>) -> Result<(), Unwritten> + Send + 'static,
     ) -> Self {
@@ -179,7 +218,7 @@ impl ArchiveJob {
                 Err(Unwritten::Cancelled) => None,
                 Err(e) => Some(ArchiveEvent::Failed {
                     index: 0,
-                    text: failure(&zip, &e.why()),
+                    text: fail(&zip, &e.why()),
                 }),
             };
             if let Some(ev) = ev
@@ -224,7 +263,7 @@ fn make(zip: &Path, under: &Path, made: Made, m: &Arc<Meter>) -> Result<(), Unwr
             fresh: true,
         }])
     };
-    rewrite_keeping(zip, &mut pick, m, Bound::default(), false)
+    rewrite_keeping(zip, &mut pick, m, Bound::default(), PLAIN)
 }
 
 /// [`ArchiveJob::update_entry`]'s rewrite: `bytes` staged in a private folder as `inner`, given
@@ -268,7 +307,14 @@ fn update(zip: &Path, inner: &Path, bytes: &[u8], m: &Arc<Meter>) -> Result<(), 
         most: Some(UPDATE_MOST),
         deadline: None,
     };
-    rewrite_keeping(zip, &mut |_, _| Ok(vec![adding.clone()]), m, bound, true)
+    let writes = Writes::Adds { keep_modes: true };
+    rewrite_keeping(zip, &mut |_, _| Ok(vec![adding.clone()]), m, bound, writes)
+}
+
+/// [`ArchiveJob::add_password`]'s rewrite.
+pub fn add_password(zip: &Path, key: &Key, m: &Arc<Meter>) -> Result<(), Unwritten> {
+    let mut pick = |_: &[Entry], _: &HashSet<PathBuf>| Ok(Vec::new());
+    rewrite_keeping(zip, &mut pick, m, Bound::default(), Writes::Key(key))
 }
 
 /// The error box's text for a write into `zip` that failed for `why`.
@@ -276,6 +322,15 @@ pub fn failure(zip: &Path, why: &str) -> String {
     let name = zip.file_name().unwrap_or_default().to_string_lossy();
     tr!("archive-update-failed", name = &*name, why = why)
 }
+
+/// The error box's text for a password that was not added to `zip`, for `why`.
+fn key_failure(zip: &Path, why: &str) -> String {
+    let name = zip.file_name().unwrap_or_default().to_string_lossy();
+    tr!("archive-key-failed", name = &*name, why = why)
+}
+
+/// A rewrite adding files with their own modes.
+const PLAIN: Writes<'static> = Writes::Adds { keep_modes: false };
 
 fn too_large(bytes: u64, most: u64) -> String {
     let (size, most) = (
@@ -374,21 +429,20 @@ fn listed(e: &Entry) -> Listed {
 /// `bound`, or what the zip's folder has room for. Cancelling `m` stops it. A rewrite that
 /// renamed its zip into place has landed, however late.
 pub fn rewrite(zip: &Path, adds: &[Adding], m: &Arc<Meter>, bound: Bound) -> Result<(), Unwritten> {
-    rewrite_keeping(zip, &mut |_, _| Ok(adds.to_vec()), m, bound, false)
+    rewrite_keeping(zip, &mut |_, _| Ok(adds.to_vec()), m, bound, PLAIN)
 }
 
 /// What a rewrite adds, picked from the zip's listing as the rewrite read it and the paths of the
 /// entries that listing leaves out (links, devices).
 type Pick<'a> = &'a mut dyn FnMut(&[Entry], &HashSet<PathBuf>) -> Result<Vec<Adding>, String>;
 
-/// [`rewrite`] of what `pick` adds; with `keep_modes` each added file takes the mode of the zip's
-/// file it replaces.
+/// [`rewrite`] of what `pick` adds, as `writes` says.
 fn rewrite_keeping(
     zip: &Path,
     pick: Pick,
     m: &Arc<Meter>,
     bound: Bound,
-    keep_modes: bool,
+    writes: Writes,
 ) -> Result<(), Unwritten> {
     let forced = std::env::var(DEADLINE_ENV)
         .ok()
@@ -400,7 +454,7 @@ fn rewrite_keeping(
     let cpu = archive::cpu_secs(archive::archive_bytes(zip));
     let first = bound.deadline.unwrap_or(Duration::from_secs(2 * cpu));
     let watch = Watch::start(m.clone(), first);
-    let wrote = rewrite_watched(zip, pick, (m, &watch), bound, keep_modes, first);
+    let wrote = rewrite_watched(zip, pick, (m, &watch), bound, writes, first);
     match wrote {
         Ok(()) => Ok(()),
         Err(_) if watch.passed() => Err(Unwritten::TooLong),
@@ -432,9 +486,13 @@ fn rewrite_watched(
     pick: Pick,
     (m, watch): (&Meter, &Watch),
     Bound { most, deadline }: Bound,
-    keep_modes: bool,
+    writes: Writes,
     stale: Duration,
 ) -> Result<(), String> {
+    let (keep_modes, key) = match writes {
+        Writes::Adds { keep_modes } => (keep_modes, None),
+        Writes::Key(key) => (false, Some(key)),
+    };
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let io = |e: std::io::Error| e.to_string();
     let (file, before) = open_zip(zip)?;
@@ -444,7 +502,14 @@ fn rewrite_watched(
         return Err(too_large(before.len(), most));
     }
     if archive::zip_encrypted(zip) {
-        return Err(tr!("archive-locked"));
+        return Err(match key {
+            Some(_) => tr!("archive-key-has-one"),
+            None => tr!("archive-locked"),
+        });
+    }
+    // Another name of the zip would keep the old file, with no password.
+    if key.is_some() && before.nlink() > 1 {
+        return Err(tr!("archive-key-linked"));
     }
     let mut left_out: HashSet<PathBuf> = HashSet::new();
     let (old, count) = archive::list_counting(zip, m, &mut |p| {
@@ -452,6 +517,13 @@ fn rewrite_watched(
     })?;
     let adds = pick(&old, &left_out)?;
     let adds = adds.as_slice();
+    // libarchive writes a link's target, and an empty file, without encryption.
+    if key.is_some() && (count > old.len() as u64 || archive::zip_holds_links(zip)) {
+        return Err(tr!("archive-key-links"));
+    }
+    if key.is_some() && !old.iter().any(|e| e.kind == Kind::File && e.size > 0) {
+        return Err(tr!("archive-key-no-files"));
+    }
     let staged: HashSet<PathBuf> = match keep_modes {
         true => (adds.iter())
             .flat_map(|a| a.names.iter().map(|n| a.under.join(n)))
@@ -525,7 +597,10 @@ fn rewrite_watched(
     sweep_temps(dir, zip, stale);
     let (out, tmp) = temp_beside(zip, &before).map_err(io)?;
     let tmp = Temp(tmp);
-    let budget = archive::cpu_secs(before.len().saturating_add(bytes));
+    let mut budget = archive::cpu_secs(before.len().saturating_add(bytes));
+    if key.is_some() {
+        budget = budget.saturating_add(key_secs(count));
+    }
     if deadline.is_none() {
         watch.reset(Duration::from_secs(2 * budget));
     }
@@ -539,18 +614,28 @@ fn rewrite_watched(
     let keeps_old = adds.is_empty()
         || count > old.len() as u64
         || (old.iter()).any(|e| !kinds.contains_key(e.path.as_path()));
-    let argvs = stages(&work, keeps_old.then_some(excluded.as_slice()), adds)?;
+    let argvs = match key {
+        Some(_) => vec![keyed_stage(std::os::fd::AsRawFd::as_raw_fd(&file))],
+        None => stages(&work, keeps_old.then_some(excluded.as_slice()), adds)?,
+    };
     let total = Totals {
         bytes,
         items: expected.len() as u64,
     };
     let sink = out.try_clone().map_err(io)?;
-    run(&argvs, (file, sink), (budget, out_most), total, m)?;
+    run(&argvs, (file, sink), key, (budget, out_most), total, m)?;
     out.sync_all().map_err(io)?;
-    let mut got: Vec<Listed> = archive::list(&tmp.0, m)?.iter().map(listed).collect();
+    let mut got: Vec<Listed> = (archive::list_keyed(&tmp.0, key, m)?.iter())
+        .map(listed)
+        .collect();
     got.sort();
     expected.sort();
     if got != expected {
+        return Err(tr!("archive-update-mismatch"));
+    }
+    if let Some(key) = key
+        && !(archive::zip_sealed(&tmp.0) && archive::try_key(&tmp.0, key, m)?)
+    {
         return Err(tr!("archive-update-mismatch"));
     }
     let now = std::fs::symlink_metadata(zip).map_err(io)?;
@@ -695,6 +780,18 @@ fn open_zip(zip: &Path) -> Result<(std::fs::File, std::fs::Metadata), String> {
         return Err(tr!("archive-update-not-zip"));
     }
     Ok((file, meta))
+}
+
+/// Leaves the descriptor `fd` open across `cmd`'s exec.
+fn keep_open(cmd: &mut std::process::Command, fd: std::os::fd::RawFd) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: fcntl is async-signal-safe, and the caller holds `fd` open until the spawn returns.
+    unsafe {
+        cmd.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
+            -1 => Err(std::io::Error::last_os_error()),
+            _ => Ok(()),
+        });
+    }
 }
 
 /// The temp file a rewrite writes, removed unless it was renamed over the zip.
@@ -864,19 +961,43 @@ fn stages(
     Ok(argvs)
 }
 
+/// Entries per second of CPU time [`ArchiveJob::add_password`] allows for on top of the bytes:
+/// zip AES derives a key per entry.
+const KEYED_ENTRIES_PER_SEC: u64 = 100;
+
+/// The seconds [`ArchiveJob::add_password`]'s child may spend deriving the keys of `entries`.
+fn key_secs(entries: u64) -> u64 {
+    entries.div_ceil(KEYED_ENTRIES_PER_SEC)
+}
+
+/// [`ArchiveJob::add_password`]'s one child: the zip read from its descriptor `zip`, which it
+/// keeps open, every file written again encrypted.
+fn keyed_stage(zip: std::os::fd::RawFd) -> Vec<OsString> {
+    let os = |s: &str| OsString::from(s);
+    let mut argv: Vec<OsString> = ["bsdtar", "-c", "-v", "-f", "/proc/self/fd/1", "--format"]
+        .map(os)
+        .into();
+    argv.extend([os("zip"), os("--options"), os(ENCRYPTION)]);
+    argv.push(format!("@/proc/self/fd/{zip}").into());
+    argv
+}
+
 /// Runs the chain `argvs`, the first reading `zip`, the last writing `out` and stopped past
 /// `out_most` bytes, each under `cpu` seconds, counting the entries the last writes against
 /// `total`. Cancelling `m` kills them all; pausing it stops the last, and the rest wait on their
-/// pipes.
+/// pipes. With `key` the chain is [`keyed_stage`], reading the key on its stdin and the zip from
+/// the descriptor it names.
 fn run(
     argvs: &[Vec<OsString>],
     (zip, out): (std::fs::File, std::fs::File),
+    key: Option<&Key>,
     (cpu, out_most): (u64, u64),
     total: Totals,
     m: &Meter,
 ) -> Result<(), String> {
     let mut kids: Vec<Child> = Vec::new();
     let mut drains = Vec::new();
+    let zip_fd = std::os::fd::AsRawFd::as_raw_fd(&zip);
     let mut input = Stdio::from(zip);
     let mut out = Some(out);
     let mut last_err = None;
@@ -893,10 +1014,17 @@ fn run(
             false => Stdio::piped(),
         };
         let fsize = last.then_some(out_most);
-        let spawned = extract::spawn_io(argv, (input, output), |cmd| {
+        let env = |cmd: &mut std::process::Command| {
             cmd.env_remove("LANGUAGE").env("LC_ALL", "C.UTF-8");
             archive::limit(cmd, cpu, fsize);
-        });
+        };
+        let spawned = match key {
+            Some(key) => extract::spawn_keyed_io(argv, output, std::slice::from_ref(key), |cmd| {
+                env(cmd);
+                keep_open(cmd, zip_fd);
+            }),
+            None => extract::spawn_io(argv, (input, output), env),
+        };
         let mut child = match spawned {
             Ok(c) => c,
             Err(f) => {
@@ -1044,6 +1172,13 @@ mod tests {
             events(cancelled).as_slice(),
             [ArchiveEvent::Finished]
         ));
+    }
+
+    #[test]
+    fn a_password_adds_a_second_of_cpu_time_per_hundred_entries() {
+        assert_eq!(key_secs(0), 0);
+        assert_eq!(key_secs(1), 1);
+        assert_eq!(key_secs(100_000), 1000);
     }
 
     #[test]
