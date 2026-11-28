@@ -1,6 +1,6 @@
-//! Switch To and End Task on one window: raises or closes a window through
-//! wlr-foreign-toplevel-management, on a short-lived Wayland connection of its own (the
-//! compositor's taskbar path for docks).
+//! Switch To, Minimize, Maximize and End Task on one window: raises, minimizes, maximizes or
+//! closes a window through wlr-foreign-toplevel-management, on a short-lived Wayland connection
+//! of its own (the compositor's taskbar path for docks).
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_registry, wl_seat};
@@ -20,6 +20,8 @@ pub struct Toplevel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Do {
     Activate,
+    Minimize,
+    Maximize,
     Close,
 }
 
@@ -52,6 +54,8 @@ pub fn on_window(pick: impl Fn(&[Toplevel]) -> Option<usize>, what: Do) -> Resul
     if let Some(h) = hit.and_then(|i| state.handles.get(i)) {
         match what {
             Do::Activate => h.0.activate(&seat),
+            Do::Minimize => h.0.set_minimized(),
+            Do::Maximize => h.0.set_maximized(),
             Do::Close => h.0.close(),
         }
     }

@@ -2336,3 +2336,78 @@ fn show_only_failed_lists_the_failed_services() {
     t.event(MAIN, alt('a'), &mut ctx);
     assert_eq!(shown_names(&t), ["pipewire", "sshd", "sync"]);
 }
+
+fn app_live_rows(t: &TaskMgr) -> Vec<Option<Act>> {
+    (t.app_menu().expect("a menu").into_iter())
+        .filter(|(i, _)| !matches!(i, MenuItem::Separator))
+        .map(|(_, a)| a)
+        .collect()
+}
+
+#[test]
+fn an_application_menu_offers_what_its_row_supports() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.take(
+        Snapshot {
+            windows: Some(vec![window("org.kde.ark", 42)]),
+            ..snapshot()
+        },
+        &mut ctx,
+    );
+    t.event(MAIN, Event::Resized, &mut ctx);
+    let at = row_point(&t, &ctx, 0);
+    right_click(&mut t, &mut ctx, at);
+    assert!(t.popup.is_some(), "a right-click opens the menu");
+    assert_eq!(
+        app_live_rows(&t),
+        [
+            Some(Act::SwitchTo),
+            Some(Act::Minimize),
+            Some(Act::Maximize),
+            Some(Act::EndTask),
+            Some(Act::GoToProcess)
+        ]
+    );
+    t.popup = None;
+    t.take(snapshot(), &mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    assert!(t.popup.is_some(), "the menu key opens it");
+    assert_eq!(
+        app_live_rows(&t),
+        [
+            Some(Act::SwitchTo),
+            None,
+            None,
+            Some(Act::EndTask),
+            Some(Act::GoToProcess)
+        ],
+        "a program showing no window has nothing to minimize or maximize"
+    );
+}
+
+#[test]
+fn go_to_process_selects_the_window_client_on_processes() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.take(
+        Snapshot {
+            windows: Some(vec![window("org.kde.ark", 42)]),
+            ..snapshot()
+        },
+        &mut ctx,
+    );
+    t.event(MAIN, Event::Resized, &mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    for k in [keysym::UP, keysym::RETURN] {
+        t.event(MAIN, key(k), &mut ctx);
+    }
+    assert_eq!(t.page(), Page::Processes);
+    assert_eq!(
+        t.selected_proc().map(|p| p.pid),
+        Some(42),
+        "the window's client, not the scope's first process"
+    );
+}
