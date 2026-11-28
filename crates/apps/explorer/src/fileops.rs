@@ -26,7 +26,6 @@ use reprisekit::raster::Canvas;
 use reprisekit::theme::Theme;
 use reprisekit::tr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 /// The icon size of the Open With and Send To menus' rows: the menu's icon column at the text size.
 pub(crate) fn menu_icon_px(theme: &Theme) -> i32 {
@@ -50,7 +49,8 @@ pub enum PasteTo {
     Folder(PathBuf),
     /// A launcher's Paste: its program opens the clipboard's files.
     App(Box<apps::AppEntry>),
-    /// A zip's Paste: the clipboard's files go into it.
+    /// A zip's Paste, or a Paste in a compressed folder of one: the clipboard's files go into the
+    /// zip or that folder of it ([`Explorer::zip_into`]).
     Zip(PathBuf),
 }
 
@@ -104,9 +104,9 @@ pub struct PendingPut {
     folders: Vec<bool>,
     pub(crate) dir: PathBuf,
     select_landed: bool,
-    /// The listing of the zip `dir` names, when the items go into a zip
-    /// ([`Explorer::put_in_zip`]).
-    pub(crate) zip: Option<Arc<Vec<reprisefs::archive::Entry>>>,
+    /// The listing of the zip `dir` names and the folder of it the items go into, when they go
+    /// into a zip ([`Explorer::put_in_zip`]).
+    pub(crate) zip: Option<crate::intozip::IntoZip>,
 }
 
 impl PendingPut {
@@ -114,7 +114,7 @@ impl PendingPut {
         items: Vec<PutItem>,
         folders: Vec<bool>,
         dir: PathBuf,
-        zip: Option<Arc<Vec<reprisefs::archive::Entry>>>,
+        zip: Option<crate::intozip::IntoZip>,
     ) -> PendingPut {
         PendingPut {
             items,
@@ -271,6 +271,13 @@ impl Explorer {
     }
 
     pub fn begin_paste(&mut self, shortcut: bool) -> Reply {
+        if let Some((zip, inner)) = self.zip_view().filter(|_| !shortcut) {
+            self.paste = Some(PasteTo::Zip(crate::place::in_archive(zip, inner)));
+            return Reply {
+                paste_files: true,
+                ..Default::default()
+            };
+        }
         if self.place.read_only() {
             return Reply::none();
         }
@@ -370,7 +377,12 @@ impl Explorer {
                 };
             }
             Some(PasteTo::Folder(dir)) => (dir, false),
-            Some(PasteTo::Zip(zip)) => return self.put_in_zip(&clip.paths, &zip, ctx),
+            Some(PasteTo::Zip(dir)) => {
+                return match self.zip_into(&dir) {
+                    Some((zip, inner)) => self.put_in_zip(&clip.paths, (&zip, &inner), ctx),
+                    None => Reply::none(),
+                };
+            }
             Some(PasteTo::Place { dir, shortcut }) => {
                 if self.place.read_only() || self.place.path() != Some(dir.clone()) {
                     log::info!("explorer: the paste's folder is gone, dropping it");
@@ -399,8 +411,8 @@ impl Explorer {
         select_landed: bool,
         ctx: &mut Ctx,
     ) -> Reply {
-        if self.is_zip_target(dir) {
-            return self.put_in_zip(paths, dir, ctx);
+        if let Some((zip, inner)) = self.zip_into(dir) {
+            return self.put_in_zip(paths, (&zip, &inner), ctx);
         }
         let puts: Vec<(PathBuf, DropOp)> = paths
             .iter()
@@ -584,10 +596,9 @@ impl Explorer {
                 let read = move || {
                     let is_12h = reprisefs::locale::is_12h();
                     let existing = |path: PathBuf| match &held {
-                        Some(entries) => {
+                        Some(into) => {
                             let name = path.file_name().unwrap_or_default().to_owned();
-                            let (size, modified) =
-                                crate::intozip::held_facts(entries, &name, is_12h);
+                            let (size, modified) = crate::intozip::held_facts(into, &name, is_12h);
                             ReadSide {
                                 path,
                                 size,
@@ -1385,6 +1396,9 @@ impl Explorer {
     }
 
     pub fn new_item(&mut self, kind: New, ctx: &mut Ctx) -> Reply {
+        if self.zip_view().is_some() {
+            return self.new_in_zip(kind, ctx);
+        }
         let Some(dir) = self.place.path() else {
             return Reply::none();
         };

@@ -67,13 +67,25 @@ fn zip_head(head: &[u8; 4]) -> bool {
     matches!(head, [b'P', b'K', 3, 4] | [b'P', b'K', 5, 6])
 }
 
-/// Files of the folder `dir` added at the zip's top under their paths below it (`names`, plain
-/// names only). A file replaces the zip's file of its path, a folder only the folder's own entry,
-/// so a folder merges. A file over a folder, a folder over a file, or two of one path, is refused.
+/// Files of the folder `dir` added into the zip's folder `under` (its top when empty) under
+/// their paths below `dir` (`names`, plain names only). A file replaces the zip's file of its
+/// path, a folder only the folder's own entry, so a folder merges; `fresh` names replace nothing
+/// and are refused on any entry the zip holds. A file over a folder, a folder over a file, two
+/// of one path, or a file, link or device of the zip on the way to `under`, is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Adding {
     pub dir: PathBuf,
     pub names: Vec<PathBuf>,
+    pub under: PathBuf,
+    pub fresh: bool,
+}
+
+/// What New makes in a folder of a zip ([`ArchiveJob::make_in_zip`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Made {
+    Folder,
+    TextDocument,
+    Zip,
 }
 
 /// Why a [`rewrite`] left the zip as it was.
@@ -111,6 +123,20 @@ impl ArchiveJob {
     pub fn add_to_zip(zip: PathBuf, adds: Vec<Adding>, wake: impl Fn() + Send + 'static) -> Self {
         ArchiveJob::rewriting("reprisefs-add-to-zip", zip, wake, move |zip, m| {
             rewrite(zip, &adds, m, Bound::default())
+        })
+    }
+
+    /// New in the folder `under` of the zip `zip` on a thread: `made`, empty and named past what
+    /// that folder holds when the job runs, is made in a private folder and added as a fresh
+    /// name ([`Adding::fresh`]). Its events are [`ArchiveJob::add_to_zip`]'s.
+    pub fn make_in_zip(
+        zip: PathBuf,
+        under: PathBuf,
+        made: Made,
+        wake: impl Fn() + Send + 'static,
+    ) -> Self {
+        ArchiveJob::rewriting("reprisefs-make-in-zip", zip, wake, move |zip, m| {
+            make(zip, &under, made, m)
         })
     }
 
@@ -166,6 +192,41 @@ impl ArchiveJob {
     }
 }
 
+/// [`ArchiveJob::make_in_zip`]'s rewrite: the name picked from the listing the rewrite reads,
+/// past the links and devices it leaves out too, the item made in a private folder removed when
+/// the rewrite ends.
+fn make(zip: &Path, under: &Path, made: Made, m: &Arc<Meter>) -> Result<(), Unwritten> {
+    let stage = Scratch::new().map_err(|e| Unwritten::Failed(e.to_string()))?;
+    let mut pick = |old: &[Entry], left_out: &HashSet<PathBuf>| {
+        let held = archive::children(old, under).into_iter().map(|c| c.name);
+        let linked = (left_out.iter())
+            .filter(|p| p.parent() == Some(under))
+            .filter_map(|p| p.file_name().map(OsStr::to_owned));
+        let existing: Vec<String> = (held.chain(linked))
+            .map(|n| n.to_string_lossy().into_owned())
+            .collect();
+        let name = match made {
+            Made::Folder => crate::names::new_folder_name(&existing),
+            Made::TextDocument => crate::names::new_text_document_name(&existing),
+            Made::Zip => crate::names::new_compressed_folder_name(&existing),
+        };
+        let path = stage.path().join(&name);
+        match made {
+            Made::Folder => std::fs::create_dir(&path),
+            Made::TextDocument => std::fs::write(&path, b""),
+            Made::Zip => std::fs::write(&path, EMPTY_ZIP),
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(vec![Adding {
+            dir: stage.path().to_path_buf(),
+            names: vec![name.into()],
+            under: under.to_path_buf(),
+            fresh: true,
+        }])
+    };
+    rewrite_keeping(zip, &mut pick, m, Bound::default(), false)
+}
+
 /// [`ArchiveJob::update_entry`]'s rewrite: `bytes` staged in a private folder as `inner`, given
 /// the mode of the entry it replaces.
 fn update(zip: &Path, inner: &Path, bytes: &[u8], m: &Arc<Meter>) -> Result<(), Unwritten> {
@@ -200,12 +261,14 @@ fn update(zip: &Path, inner: &Path, bytes: &[u8], m: &Arc<Meter>) -> Result<(), 
     let adding = Adding {
         dir: stage.path().to_path_buf(),
         names: vec![inner.to_path_buf()],
+        under: PathBuf::new(),
+        fresh: false,
     };
     let bound = Bound {
         most: Some(UPDATE_MOST),
         deadline: None,
     };
-    rewrite_keeping(zip, &[adding], m, bound, true)
+    rewrite_keeping(zip, &mut |_, _| Ok(vec![adding.clone()]), m, bound, true)
 }
 
 /// The error box's text for a write into `zip` that failed for `why`.
@@ -311,13 +374,18 @@ fn listed(e: &Entry) -> Listed {
 /// `bound`, or what the zip's folder has room for. Cancelling `m` stops it. A rewrite that
 /// renamed its zip into place has landed, however late.
 pub fn rewrite(zip: &Path, adds: &[Adding], m: &Arc<Meter>, bound: Bound) -> Result<(), Unwritten> {
-    rewrite_keeping(zip, adds, m, bound, false)
+    rewrite_keeping(zip, &mut |_, _| Ok(adds.to_vec()), m, bound, false)
 }
 
-/// [`rewrite`]; with `keep_modes` each added file takes the mode of the zip's file it replaces.
+/// What a rewrite adds, picked from the zip's listing as the rewrite read it and the paths of the
+/// entries that listing leaves out (links, devices).
+type Pick<'a> = &'a mut dyn FnMut(&[Entry], &HashSet<PathBuf>) -> Result<Vec<Adding>, String>;
+
+/// [`rewrite`] of what `pick` adds; with `keep_modes` each added file takes the mode of the zip's
+/// file it replaces.
 fn rewrite_keeping(
     zip: &Path,
-    adds: &[Adding],
+    pick: Pick,
     m: &Arc<Meter>,
     bound: Bound,
     keep_modes: bool,
@@ -332,7 +400,7 @@ fn rewrite_keeping(
     let cpu = archive::cpu_secs(archive::archive_bytes(zip));
     let first = bound.deadline.unwrap_or(Duration::from_secs(2 * cpu));
     let watch = Watch::start(m.clone(), first);
-    let wrote = rewrite_watched(zip, adds, (m, &watch), bound, keep_modes, first);
+    let wrote = rewrite_watched(zip, pick, (m, &watch), bound, keep_modes, first);
     match wrote {
         Ok(()) => Ok(()),
         Err(_) if watch.passed() => Err(Unwritten::TooLong),
@@ -361,7 +429,7 @@ fn held_kinds(old: &[Entry]) -> HashMap<&Path, Kind> {
 
 fn rewrite_watched(
     zip: &Path,
-    adds: &[Adding],
+    pick: Pick,
     (m, watch): (&Meter, &Watch),
     Bound { most, deadline }: Bound,
     keep_modes: bool,
@@ -378,15 +446,22 @@ fn rewrite_watched(
     if archive::zip_encrypted(zip) {
         return Err(tr!("archive-locked"));
     }
-    let staged: HashSet<&Path> = match keep_modes {
-        true => adds
-            .iter()
-            .flat_map(|a| &a.names)
-            .map(PathBuf::as_path)
+    let mut left_out: HashSet<PathBuf> = HashSet::new();
+    let (old, count) = archive::list_counting(zip, m, &mut |p| {
+        left_out.insert(p.to_path_buf());
+    })?;
+    let adds = pick(&old, &left_out)?;
+    let adds = adds.as_slice();
+    let staged: HashSet<PathBuf> = match keep_modes {
+        true => (adds.iter())
+            .flat_map(|a| a.names.iter().map(|n| a.under.join(n)))
             .collect(),
         false => HashSet::new(),
     };
-    let (old, count) = archive::list_counting(zip, m)?;
+    let unders: HashSet<&Path> = (adds.iter())
+        .flat_map(|a| a.under.ancestors())
+        .filter(|a| !a.as_os_str().is_empty())
+        .collect();
     let modes: HashMap<&Path, u32> = (old.iter())
         .filter(|e| e.kind == Kind::File && staged.contains(e.path.as_path()))
         .map(|e| (e.path.as_path(), e.mode))
@@ -395,12 +470,17 @@ fn rewrite_watched(
     let kinds: HashMap<&Path, Kind> = walked.iter().map(|(p, k, _)| (p.as_path(), *k)).collect();
     let held = held_kinds(&old);
     let clash = (walked.iter()).any(|(p, k, _)| held.get(p.as_path()).is_some_and(|h| h != k));
-    if clash || kinds.len() != walked.len() {
+    let through_file =
+        (unders.iter()).any(|a| held.get(a) == Some(&Kind::File) || left_out.contains(*a));
+    let taken = (adds.iter().filter(|a| a.fresh))
+        .flat_map(|a| a.names.iter().map(|n| a.under.join(n)))
+        .any(|p| held.contains_key(p.as_path()) || left_out.contains(&p));
+    if clash || through_file || taken || kinds.len() != walked.len() {
         return Err(crate::ops::PutError::Occupied.to_string());
     }
     for a in adds {
         for name in &a.names {
-            if let Some(&mode) = modes.get(name.as_path()) {
+            if let Some(&mode) = modes.get(a.under.join(name).as_path()) {
                 // bsdtar reads the staged file, so it keeps owner read and write.
                 let mode = std::fs::Permissions::from_mode(mode & 0o777 | 0o600);
                 std::fs::set_permissions(a.dir.join(name), mode).map_err(io)?;
@@ -636,11 +716,14 @@ fn walk(adds: &[Adding], m: &Meter, most: u64) -> Result<Vec<Listed>, String> {
     let mut out = Vec::new();
     let mut todo: Vec<(PathBuf, PathBuf)> = Vec::new();
     for a in adds {
+        if !a.under.as_os_str().is_empty() && !plain(&a.under) {
+            return Err(tr!("archive-unread"));
+        }
         for name in &a.names {
             if !plain(name) {
                 return Err(tr!("archive-unread"));
             }
-            todo.push((a.dir.join(name), name.clone()));
+            todo.push((a.dir.join(name), a.under.join(name)));
         }
     }
     while let Some((path, inner)) = todo.pop() {
@@ -681,6 +764,21 @@ fn pattern(path: &Path) -> Vec<u8> {
     p
 }
 
+/// The folder `work`/`stage-<i>` holding the folders of `a.under` with a link to `a.dir` at its
+/// end, which the stage adding `a` reads from.
+fn link_under(work: &Scratch, i: usize, a: &Adding) -> Result<PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let io = |e: std::io::Error| e.to_string();
+    let root = work.path().join(format!("stage-{i}"));
+    let link = root.join(&a.under);
+    let parent = link.parent().ok_or_else(|| tr!("archive-unread"))?;
+    (std::fs::DirBuilder::new().recursive(true).mode(0o700))
+        .create(parent)
+        .map_err(io)?;
+    std::os::unix::fs::symlink(&a.dir, &link).map_err(io)?;
+    Ok(root)
+}
+
 /// Writes `bytes` to the new file `name` in the private folder `work`.
 fn write_list(work: &Scratch, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -698,7 +796,8 @@ fn write_list(work: &Scratch, name: &str, bytes: &[u8]) -> Result<PathBuf, Strin
 
 /// The chain's argument lists: the zip read as a pax stream (its own stdin) less the entries at
 /// `excluded`, unless that is `None`, one stage per folder of `adds` adding its names, and a
-/// last stage writing the zip.
+/// last stage writing the zip. A stage adding into a folder of the zip reads its names through a
+/// link to its folder that it makes at that path in `work`, so they are stored below it.
 /// The patterns go in a file bsdtar reads by line, but one holding a line break goes on the
 /// command line. The names go by `-T` as NUL-ended lines, where neither `@` nor `-C` mean more.
 fn stages(
@@ -732,21 +831,19 @@ fn stages(
     for (i, a) in adds.iter().enumerate() {
         let mut names = Vec::new();
         for n in &a.names {
-            names.extend_from_slice(n.as_os_str().as_bytes());
+            names.extend_from_slice(a.under.join(n).as_os_str().as_bytes());
             names.push(0);
         }
+        let from = match a.under.as_os_str().is_empty() {
+            true => a.dir.clone(),
+            false => link_under(work, i, a)?,
+        };
         let list = write_list(work, &format!("names-{i}"), &names)?;
         let format = if i + 1 == adds.len() { "zip" } else { "pax" };
         let mut argv: Vec<OsString> = ["bsdtar", "-c", "-f", "-", "--format", format]
             .map(os)
             .into();
-        argv.extend([
-            os("-C"),
-            a.dir.clone().into(),
-            os("--null"),
-            os("-T"),
-            list.into(),
-        ]);
+        argv.extend([os("-C"), from.into(), os("--null"), os("-T"), list.into()]);
         if !argvs.is_empty() {
             argv.push(os("@-"));
         }
@@ -897,6 +994,8 @@ mod tests {
         let adds = [Adding {
             dir: "/d".into(),
             names: vec!["a.txt".into()],
+            under: PathBuf::new(),
+            fresh: false,
         }];
         let reads = |argvs: &[Vec<OsString>]| -> Vec<bool> {
             (argvs.iter())

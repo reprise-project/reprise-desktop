@@ -197,3 +197,106 @@ fn a_file_onto_a_folder_of_its_name_in_the_zip_is_refused_as_a_copy_refuses_it()
     assert!(ex.extracting.is_none(), "no job starts");
     assert_eq!(std::fs::read(&zip).expect("read"), before);
 }
+
+/// Explorer showing the folder `inner` of the zip `zip`.
+fn zip_view(zip: &Path, inner: &str, ctx: &mut repriseapp::Ctx) -> Explorer {
+    crate::tests::test_explorer(Place::Archive(zip.to_path_buf(), inner.into()), ctx)
+}
+
+#[test]
+fn a_paste_or_drop_in_a_compressed_folder_goes_into_that_folder_of_the_zip() {
+    let mut ctx = test_ctx();
+    let (_t, zip, _) = zip_beside(
+        &[("docs/old.txt", "old")],
+        &[("new.txt", "new"), ("more.txt", "more")],
+        &mut ctx,
+    );
+    let mut ex = zip_view(&zip, "docs", &mut ctx);
+    assert!(ex.zip_view().is_some(), "the zip takes files");
+    let state = ex.menu_state();
+    assert!(state.into_zip, "Paste and New are live");
+    let paste = ex.begin_paste(false);
+    assert!(paste.paste_files);
+    ex.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![zip.with_file_name("new.txt")],
+        },
+        &mut ctx,
+    );
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_some());
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    let docs = zip.join("docs");
+    ex.drop_into(
+        &[zip.with_file_name("more.txt")],
+        &docs,
+        DropOp::Move,
+        &mut ctx,
+    );
+    crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.extracting.is_some());
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    assert_eq!(
+        zip_holds(&zip),
+        [
+            ("docs/more.txt".into(), "more".into()),
+            ("docs/new.txt".into(), "new".into()),
+            ("docs/old.txt".into(), "old".into()),
+        ]
+    );
+    assert!(zip.with_file_name("more.txt").exists(), "a drop copies");
+    assert!(
+        !ex.takes_drop(&[docs.join("old.txt")], &docs),
+        "the zip's own entries do not drop back into it"
+    );
+}
+
+#[test]
+fn news_queued_in_a_compressed_folder_each_put_a_new_name_into_the_zip() {
+    let mut ctx = test_ctx();
+    let (_t, zip, _) = zip_beside(&[("docs/old.txt", "old")], &[], &mut ctx);
+    let mut ex = zip_view(&zip, "docs", &mut ctx);
+    ex.run(Command::NewFolder, &mut ctx);
+    ex.run(Command::NewFolder, &mut ctx);
+    ex.run(Command::NewTextDocument, &mut ctx);
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    let entries = reprisefs::archive::list(&zip, &Default::default()).expect("the zip lists");
+    let mut held: Vec<(String, reprisefs::archive::Kind)> = (entries.iter())
+        .map(|e| (e.path.display().to_string(), e.kind))
+        .collect();
+    held.sort();
+    use reprisefs::archive::Kind;
+    assert_eq!(
+        held,
+        [
+            ("docs/New Folder".into(), Kind::Folder),
+            ("docs/New Folder (2)".into(), Kind::Folder),
+            ("docs/New Text Document.txt".into(), Kind::File),
+            ("docs/old.txt".into(), Kind::File),
+        ]
+    );
+}
+
+#[test]
+fn a_compressed_folder_of_a_read_only_zip_or_a_tar_takes_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut ctx = test_ctx();
+    let (t, zip, _) = zip_beside(&[("a.txt", "a")], &[], &mut ctx);
+    std::fs::set_permissions(&zip, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+    let tar = t.path().join("dir/b.tar");
+    let made = std::process::Command::new("bsdtar")
+        .arg("-cf")
+        .arg(&tar)
+        .arg("-C")
+        .arg(t.path().join("src"))
+        .arg("a.txt")
+        .status()
+        .expect("bsdtar runs");
+    assert!(made.success());
+    for archive in [&zip, &tar] {
+        let mut ex = zip_view(archive, "", &mut ctx);
+        assert!(ex.zip_view().is_none(), "{archive:?} takes no files");
+        assert!(!ex.menu_state().into_zip);
+        assert!(!ex.begin_paste(false).paste_files);
+        assert!(ex.drop_dir().is_none(), "a drop is refused");
+    }
+}

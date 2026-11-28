@@ -171,16 +171,26 @@ fn spawn(argv: &[OsString], cpu_secs: u64) -> Result<std::process::Child, Failur
 /// [`MAX_ENTRIES`] entries, or whose names add up to more than [`MAX_NAME_BYTES`], is refused as
 /// soon as the listing passes them; cancelling `m` stops it.
 pub fn list(archive: &Path, m: &Meter) -> Result<Vec<Entry>, String> {
-    list_within(archive, m, MAX_NAME_BYTES).map(|(e, _)| e)
+    list_within(archive, m, MAX_NAME_BYTES, &mut |_| {}).map(|(e, _)| e)
 }
 
 /// [`list`], and the count of every entry the archive holds, links and others `list` leaves out
-/// included.
-pub(crate) fn list_counting(archive: &Path, m: &Meter) -> Result<(Vec<Entry>, u64), String> {
-    list_within(archive, m, MAX_NAME_BYTES)
+/// included, each of which with a path is handed to `left_out`; their names count towards the
+/// listing's most.
+pub(crate) fn list_counting(
+    archive: &Path,
+    m: &Meter,
+    left_out: &mut dyn FnMut(&Path),
+) -> Result<(Vec<Entry>, u64), String> {
+    list_within(archive, m, MAX_NAME_BYTES, left_out)
 }
 
-fn list_within(archive: &Path, m: &Meter, most_names: usize) -> Result<(Vec<Entry>, u64), String> {
+fn list_within(
+    archive: &Path,
+    m: &Meter,
+    most_names: usize,
+    left_out: &mut dyn FnMut(&Path),
+) -> Result<(Vec<Entry>, u64), String> {
     if zip_encrypted(archive) {
         return Err(tr!("archive-locked"));
     }
@@ -200,7 +210,11 @@ fn list_within(archive: &Path, m: &Meter, most_names: usize) -> Result<(Vec<Entr
             return false;
         }
         let Some(e) = listed_entry(line, now) else {
-            return true;
+            if let Some(path) = left_out_path(line) {
+                names += path.as_os_str().len();
+                left_out(&path);
+            }
+            return names <= most_names;
         };
         names += e.path.as_os_str().len();
         entries.push(e);
@@ -319,15 +333,22 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// The file or folder a `bsdtar -tv --numeric-owner` line lists: mode, links, uid, gid, size, a
-/// three-word date, then the name. Links, devices and names that leave the folder give `None`.
-fn listed_entry(line: &[u8], now: i64) -> Option<Entry> {
+/// The eight words a `bsdtar -tv --numeric-owner` line starts with (mode, links, uid, gid, size
+/// and a three-word date), then the rest: the name after a space.
+fn line_words(line: &[u8]) -> Option<([&[u8]; 8], &[u8])> {
     let mut rest = line;
     let mut words = [&line[..0]; 8];
     for w in &mut words {
         rest = &rest[rest.iter().position(|&b| b != b' ')?..];
         (*w, rest) = rest.split_at(rest.iter().position(|&b| b == b' ')?);
     }
+    Some((words, rest))
+}
+
+/// The file or folder a `bsdtar -tv --numeric-owner` line lists ([`line_words`]). Links, devices
+/// and names that leave the folder give `None`.
+fn listed_entry(line: &[u8], now: i64) -> Option<Entry> {
+    let (words, rest) = line_words(line)?;
     let kind = match words[0].first()? {
         b'-' => Kind::File,
         b'd' => Kind::Folder,
@@ -342,6 +363,24 @@ fn listed_entry(line: &[u8], now: i64) -> Option<Entry> {
         modified: listed_time(month?, day?, third?, now),
         mode: listed_mode(line),
     })
+}
+
+/// The path of an entry [`listed_entry`] leaves out: a symlink's without its last ` -> target`, a
+/// hard link's without its last ` link to target`, a device's as it is. None for a name that
+/// leaves the folder.
+fn left_out_path(line: &[u8]) -> Option<PathBuf> {
+    let (words, rest) = line_words(line)?;
+    let name = rest.strip_prefix(b" ")?;
+    let before = |sep: &[u8]| {
+        let at = name.windows(sep.len()).rposition(|w| w == sep);
+        at.map_or(name, |at| &name[..at])
+    };
+    let name = match words[0].first()? {
+        b'l' => before(b" -> "),
+        b'h' => before(b" link to "),
+        _ => name,
+    };
+    clean(&unescape(name))
 }
 
 /// The permission bits of a listing's line, read off its `-rwxr-xr-x` word.
@@ -1443,6 +1482,32 @@ mod tests {
     }
 
     #[test]
+    fn a_left_out_lines_path_is_its_name_without_the_link_target() {
+        let path = |l: &str| left_out_path(l.as_bytes());
+        for (line, want) in [
+            (
+                "lrwxrwxrwx  0 1000 1000 0 Jan  2  2020 a/l -> /etc",
+                Some("a/l"),
+            ),
+            (
+                "lrwxrwxrwx  0 1000 1000 0 Jan  2  2020 x -> y -> z",
+                Some("x -> y"),
+            ),
+            (
+                "hrw-r--r--  0 1000 1000 0 Jan  2  2020 ./h link to f",
+                Some("h"),
+            ),
+            (
+                "crw-r--r--  0 0    0  1,3 Jan  2  2020 dev/null",
+                Some("dev/null"),
+            ),
+            ("lrwxrwxrwx  0 1000 1000 0 Jan  2  2020 ../up -> x", None),
+        ] {
+            assert_eq!(path(line), want.map(PathBuf::from), "{line}");
+        }
+    }
+
+    #[test]
     fn a_listed_mode_reads_the_permission_bits() {
         let mode = |l: &str| listed_mode(l.as_bytes());
         assert_eq!(mode("-rwxr-xr-x  0 1000 1000 2 Jan  2  2020 run.sh"), 0o755);
@@ -1706,11 +1771,11 @@ mod tests {
         let archive = t.path().join("many.tar.gz");
         let m = Meter::default();
         assert_eq!(
-            list_within(&archive, &m, 5000).map(|(e, _)| e.len()),
+            list_within(&archive, &m, 5000, &mut |_| {}).map(|(e, _)| e.len()),
             Ok(50)
         );
         assert_eq!(
-            list_within(&archive, &m, 4000).map(|(e, _)| e),
+            list_within(&archive, &m, 4000, &mut |_| {}).map(|(e, _)| e),
             Err("its names add up to more than 3.90 KB.".into())
         );
     }
