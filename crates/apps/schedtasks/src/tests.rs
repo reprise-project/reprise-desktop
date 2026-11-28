@@ -691,6 +691,47 @@ fn render_schedtasks_preview() {
     }
 }
 
+/// In a window narrower than the row of buttons, at 100% and 200% text, the buttons wrap onto
+/// more rows inside it and the list starts under the last one.
+#[test]
+fn the_buttons_wrap_inside_a_narrow_window() {
+    reprisekit::pins::fonts();
+    let mut got = Vec::new();
+    for (pct, w) in [(100, 420), (200, 1000)] {
+        let theme = reprisekit::theme::Theme::default().with_text_size(pct);
+        let mut ctx = test_ctx(theme, (w, 500));
+        ctx.text_size = pct;
+        let mut win = window();
+        win.tell(Update::Tasks(Ok(vec![backup(), cleanup()])));
+        let mut c = Canvas::new(w as u32, 500);
+        repriseapp::App::draw(&mut win.app, MAIN, &mut c, &ctx);
+        let rects: Vec<Rect> = (BUTTON_IDS.iter())
+            .map(|id| win.app.form.rect(id).unwrap())
+            .collect();
+        for (id, r) in BUTTON_IDS.iter().zip(&rects) {
+            assert!(
+                r.right() <= w,
+                "{id} ends at {} in {w} px at {pct}%",
+                r.right()
+            );
+        }
+        assert!(rects[7].y > rects[0].y, "Delete wraps at {pct}%");
+        let under = rects.iter().map(Rect::bottom).max().unwrap();
+        let status = win.app.form.rect(STATUS).unwrap();
+        assert!(
+            status.y > under,
+            "the status line under the buttons at {pct}%"
+        );
+        assert!(
+            win.app.list_rect(&ctx).y > status.y,
+            "the list under it at {pct}%"
+        );
+        got.push((format!("text {pct}, {w} px"), hash(&c)));
+    }
+    let file = reprisekit::crate_dir!().join("tests/pins/wrapped.txt");
+    reprisekit::pins::check_file(&file, &got);
+}
+
 #[test]
 fn the_buttons_fit_their_labels() {
     let over = reprisekit::interfaces::form_overflows(|_, _, _| {
