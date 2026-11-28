@@ -203,6 +203,9 @@ impl Style {
 pub const MATERIAL_ENV: &str = "REPRISE_GLASS_MATERIAL";
 /// The environment variable a compositor hands its clients `[glass] style` in.
 pub const STYLE_ENV: &str = "REPRISE_GLASS_STYLE";
+/// The environment variable a compositor hands its clients `[glass] opaque_when_maximized` in,
+/// `true` or `false`.
+pub const OPAQUE_MAX_ENV: &str = "REPRISE_GLASS_OPAQUE_MAXIMIZED";
 
 /// `[glass]`: the colour, its intensity (0..100), translucency, `blur`, the
 /// reflection streaks, `fast_drag`, `blur_frames`, `blur_rate`, `orb_glow`,

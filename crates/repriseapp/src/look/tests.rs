@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn theme_from_env_with_no_interface_is_the_default_theme() {
     assert_eq!(
-        theme_from_env(None, None, None, (None, None), None),
+        theme_from_env(None, None, None, (None, None, None), None),
         Theme::default(),
         "no REPRISE_INTERFACE and no REPRISE_COLORS must give Theme::default()"
     );
@@ -11,7 +11,7 @@ fn theme_from_env_with_no_interface_is_the_default_theme() {
 
 #[test]
 fn theme_from_env_with_blue_takes_the_blue_style() {
-    let t = theme_from_env(Some("blue"), None, None, (None, None), None);
+    let t = theme_from_env(Some("blue"), None, None, (None, None, None), None);
     let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     assert_eq!(
         t.colors, blue.colors,
@@ -28,19 +28,31 @@ fn theme_from_env_picks_the_blue_variant() {
     use reprisekit::blue::Variant;
     use reprisekit::interfaces::blue_theme;
     for v in Variant::ALL {
-        let t = theme_from_env(Some("blue"), Some(v.as_str()), None, (None, None), None);
+        let t = theme_from_env(
+            Some("blue"),
+            Some(v.as_str()),
+            None,
+            (None, None, None),
+            None,
+        );
         assert_eq!(t.look, blue_theme(v).look, "{v:?}");
         assert_eq!(t.colors, blue_theme(v).colors, "{v:?}");
     }
     for unknown in [None, Some("green"), Some("Silver")] {
         assert_eq!(
-            theme_from_env(Some("blue"), unknown, None, (None, None), None).look,
+            theme_from_env(Some("blue"), unknown, None, (None, None, None), None).look,
             blue_theme(Variant::Blue).look,
             "{unknown:?} is navy"
         );
     }
     assert_eq!(
-        theme_from_env(Some("classic"), Some("olive"), None, (None, None), None),
+        theme_from_env(
+            Some("classic"),
+            Some("olive"),
+            None,
+            (None, None, None),
+            None
+        ),
         Theme::default(),
         "the variant means nothing outside Blue"
     );
@@ -48,20 +60,27 @@ fn theme_from_env_picks_the_blue_variant() {
 
 #[test]
 fn the_mode_picks_dark_glass_and_anything_else_is_light() {
-    let dark = theme_from_env(Some("glass"), None, Some("dark"), (None, None), None);
-    let light = theme_from_env(Some("glass"), None, None, (None, None), None);
+    let dark = theme_from_env(Some("glass"), None, Some("dark"), (None, None, None), None);
+    let light = theme_from_env(Some("glass"), None, None, (None, None, None), None);
     assert_ne!(dark.look, light.look, "dark Glass is another look");
     assert_eq!(dark.look.style().unwrap().name, "glass-dark");
     for odd in [Some("Dark"), Some(""), Some("dim")] {
         assert_eq!(
-            theme_from_env(Some("glass"), None, odd, (None, None), None).look,
+            theme_from_env(Some("glass"), None, odd, (None, None, None), None).look,
             light.look,
             "{odd:?} is light"
         );
     }
     assert_eq!(
-        theme_from_env(Some("classic"), None, Some("dark"), (None, None), None).look,
-        theme_from_env(Some("classic"), None, None, (None, None), None).look,
+        theme_from_env(
+            Some("classic"),
+            None,
+            Some("dark"),
+            (None, None, None),
+            None
+        )
+        .look,
+        theme_from_env(Some("classic"), None, None, (None, None, None), None).look,
         "Classic wears its dark in the colours the compositor hands it"
     );
 }
@@ -73,7 +92,7 @@ fn smoked_glass_inks_labels_on_its_glass_white_in_either_mode() {
             Some("glass"),
             None,
             Some(mode),
-            (Some("smoked"), None),
+            (Some("smoked"), None, None),
             None,
         );
         assert_eq!(
@@ -82,7 +101,7 @@ fn smoked_glass_inks_labels_on_its_glass_white_in_either_mode() {
             "{mode}"
         );
     }
-    let frosted = theme_from_env(Some("glass"), None, Some("light"), (None, None), None);
+    let frosted = theme_from_env(Some("glass"), None, Some("light"), (None, None, None), None);
     assert_eq!(
         reprisekit::look::ink_on_glass(&frosted),
         Some(reprisekit::theme::Color::rgb(0, 0, 0)),
@@ -105,7 +124,7 @@ fn a_glass_material_change_through_the_portal_relooks() {
 #[test]
 fn the_glass_style_picks_onyx_and_an_unknown_one_is_glass() {
     use reprisekit::glass::{Settings, Style};
-    let look = |style| theme_from_env(Some("glass"), None, None, (None, style), None).look;
+    let look = |style| theme_from_env(Some("glass"), None, None, (None, style, None), None).look;
     let onyx = reprisekit::interfaces::theme_with(
         reprisekit::interface::Interface::Glass,
         Default::default(),
@@ -263,7 +282,7 @@ fn theme_from_env_applies_colors_over_the_blue_style() {
         Some("blue"),
         None,
         None,
-        (None, None),
+        (None, None, None),
         Some("window_text=#010203"),
     );
     let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
@@ -276,4 +295,50 @@ fn theme_from_env_applies_colors_over_the_blue_style() {
         t.colors.button_face, blue.colors.button_face,
         "a colour not named in REPRISE_COLORS must stay Blue's own"
     );
+}
+
+#[test]
+fn a_maximized_onyx_program_inks_its_glass_labels_light_and_others_keep_their_ink() {
+    use reprisekit::look::ink_on_glass;
+    let theme = |style, opaque| {
+        theme_from_env(
+            Some("glass"),
+            None,
+            Some("light"),
+            (None, Some(style), Some(opaque)),
+            None,
+        )
+    };
+    let ink = |t: &Theme, maximized: bool| {
+        let mut t = t.clone();
+        t.maximized = maximized;
+        ink_on_glass(&t).expect("glass inks its labels")
+    };
+    let lum = |c: reprisekit::theme::Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    let onyx = theme("onyx", "true");
+    let band = ink(&onyx, true);
+    assert!(lum(band) > 3 * 0xC0, "light on the navy band: {band:?}");
+    assert_ne!(band, ink(&onyx, false), "restored keeps the glass's ink");
+    for other in [
+        theme("onyx", "false"),
+        theme("glass", "true"),
+        theme("glass", "false"),
+    ] {
+        assert_eq!(ink(&other, true), ink(&other, false), "no opaque navy band");
+    }
+}
+
+#[test]
+fn an_opaque_maximized_change_through_the_portal_relooks() {
+    let mut look = Look {
+        interface: Some("glass".into()),
+        glass_style: Some("onyx".into()),
+        ..Look::default()
+    };
+    let before = look.theme().look;
+    assert!(look.set(
+        reprisebus::appearance::GLASS_OPAQUE_MAXIMIZED,
+        "true".into()
+    ));
+    assert_ne!(look.theme().look, before);
 }

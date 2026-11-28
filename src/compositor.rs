@@ -627,6 +627,7 @@ impl State {
                     config.look_mode(),
                     config.glass.material,
                     config.glass.style,
+                    config.glass.opaque_when_maximized,
                 ),
                 &config.icons.theme,
                 config.cursor.effective(),

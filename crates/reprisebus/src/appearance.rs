@@ -34,18 +34,22 @@ pub const GLASS_MATERIAL: &str = "glass-material";
 /// `[glass] style`, `glass` or `onyx`, as `REPRISE_GLASS_STYLE`.
 pub const GLASS_STYLE: &str = "glass-style";
 
+/// `[glass] opaque_when_maximized`, `true` or `false`, as `REPRISE_GLASS_OPAQUE_MAXIMIZED`.
+pub const GLASS_OPAQUE_MAXIMIZED: &str = "glass-opaque-maximized";
+
 /// `[accessibility] text_size`, in percent ("150").
 pub const TEXT_SIZE: &str = "text-size";
 
 /// `[metrics] double_click_ms` in force, in ms ("500").
 pub const DOUBLE_CLICK_MS: &str = "double-click-ms";
 
-const KEYS: [&str; 12] = [
+const KEYS: [&str; 13] = [
     INTERFACE,
     BLUE_VARIANT,
     MODE,
     GLASS_MATERIAL,
     GLASS_STYLE,
+    GLASS_OPAQUE_MAXIMIZED,
     COLORS,
     ICON_THEME,
     SHELL_DLG,

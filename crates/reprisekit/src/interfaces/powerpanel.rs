@@ -48,6 +48,7 @@ pub fn draw_power_panel(
         active: true,
         text: lay.units,
         access_keys: cues.keys,
+        maximized: false,
     };
     let paint = cancel.map_or(blue, |p| Paint {
         s,

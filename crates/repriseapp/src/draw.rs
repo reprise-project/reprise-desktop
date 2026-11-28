@@ -151,6 +151,7 @@ impl Host {
             Shell::Layer(_) => self.focus == Some(id),
         };
         self.ctx.theme.access_keys = self.slots[i].cues.keys;
+        self.ctx.theme.maximized = self.slots[i].maximized;
         let preedit = self
             .text_input
             .as_ref()
@@ -204,6 +205,7 @@ impl Host {
         };
         self.ctx.theme.active = true;
         self.ctx.theme.access_keys = false;
+        self.ctx.theme.maximized = false;
         self.set_glass_top(i, (w, glass_top), qh);
         let damage = canvas.take_damage();
         canvas.set_blink_only(false);

@@ -598,6 +598,9 @@ pub struct Theme {
     /// window's [`crate::cues::Cues::keys`]. False unless a host sets it for one draw and
     /// puts it back after. Draw state, as `active` is.
     pub access_keys: bool,
+    /// Whether the window being drawn is maximized, so labels over its client glass take a
+    /// maximized frame's ink ([`crate::look::ink_on_glass`]). Draw state, as `active` is.
+    pub maximized: bool,
 }
 
 impl PartialEq for Theme {
@@ -622,6 +625,7 @@ impl Default for Theme {
             text: TextUnits::ONE,
             active: true,
             access_keys: false,
+            maximized: false,
         }
     }
 }
@@ -670,6 +674,7 @@ impl Theme {
             text: self.text,
             active: self.active,
             access_keys: self.access_keys,
+            maximized: self.maximized,
         }
     }
 
@@ -756,6 +761,7 @@ impl Theme {
             text: p.text,
             active: p.active,
             access_keys: p.access_keys,
+            maximized: p.maximized,
         }
     }
 

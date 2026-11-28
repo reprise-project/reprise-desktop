@@ -100,18 +100,33 @@ pub fn draw_client_glass(
 }
 
 /// The caption title's ink, by whether the window is active, for labels drawn over clear
-/// [`client_glass`]; None in a look without one.
+/// [`client_glass`]; a maximized window's title ink while [`Theme::maximized`] in a look whose
+/// maximized frame has its own. None in a look without client glass.
 pub fn ink_on_glass(theme: &Theme) -> Option<Color> {
     client_glass(theme, true)?;
-    let t = &theme.look.style()?.caption_text;
+    let st = theme.look.style()?;
+    if let Some(([focused, unfocused], _)) = st.max_title.filter(|_| theme.maximized) {
+        return Some(if theme.active { focused } else { unfocused });
+    }
+    let t = &st.caption_text;
     Some(if theme.active { t.color } else { t.inactive })
+}
+
+/// The glow laid under labels over clear [`client_glass`]: the look's label glow, or a maximized
+/// window's title glow while `p` is maximized in a look whose maximized frame has its own.
+fn label_glow(p: &Paint) -> Option<crate::style::TitleGlow> {
+    let st = p.look.style()?;
+    match st.max_title.filter(|_| p.maximized) {
+        Some((_, glow)) => glow,
+        None => st.label_glow,
+    }
 }
 
 /// `ink` greyed for a disabled label or arrow over clear [`client_glass`]: 3/5 of the way from
 /// the look's label glow, which reads over a bright backdrop where the dialog grey and its etch
 /// fade into the glow; `ink` itself in a look without a glow.
 pub fn greyed_on_glass(p: &Paint, ink: Color) -> Color {
-    let Some(glow) = p.look.style().and_then(|s| s.label_glow) else {
+    let Some(glow) = label_glow(p) else {
         return ink;
     };
     let mix = |i: u8, g: u8| ((3 * u32::from(i) + 2 * u32::from(g) + 2) / 5) as u8;
@@ -131,7 +146,7 @@ pub fn glow_on_glass(canvas: &mut Canvas, theme: &Theme, r: Rect) {
 
 /// [`glow_on_glass`] for a widget painting with `p`.
 pub fn glow_under(canvas: &mut Canvas, p: &Paint, r: Rect) {
-    let Some(glow) = p.look.style().and_then(|s| s.label_glow) else {
+    let Some(glow) = label_glow(p) else {
         return;
     };
     let ink = canvas.copy_rect(r);

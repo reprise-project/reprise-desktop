@@ -606,7 +606,12 @@ fn publish_look(state: &mut State) {
         c.theme.colors.to_env(),
         c.interface,
         c.blue_variant,
-        (c.look_mode(), c.glass.material, c.glass.style),
+        (
+            c.look_mode(),
+            c.glass.material,
+            c.glass.style,
+            c.glass.opaque_when_maximized,
+        ),
         &c.icons.theme,
         c.cursor.effective(),
     ) {

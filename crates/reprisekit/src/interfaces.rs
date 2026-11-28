@@ -229,6 +229,7 @@ fn styled(s: Arc<Style>) -> Theme {
         look: Look::Styled(s),
         active: true,
         access_keys: false,
+        maximized: false,
         text: crate::theme::TextUnits::ONE,
     }
 }
@@ -512,6 +513,7 @@ pub fn draw_start_panel_backed(
             active: true,
             text: p.text,
             access_keys: true,
+            maximized: false,
         };
         let o = l.canvas;
         let sb = Rect::new(bar.x - o.x, bar.y - o.y, bar.width, bar.height);

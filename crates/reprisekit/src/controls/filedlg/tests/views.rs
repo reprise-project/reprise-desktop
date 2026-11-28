@@ -556,6 +556,7 @@ fn hit_follows_the_scrollbar_thickness_of_the_last_draw() {
         back: crate::look::Backdrop::Face,
         active: true,
         access_keys: true,
+        maximized: false,
         text: crate::theme::TextUnits::ONE,
     };
     let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);

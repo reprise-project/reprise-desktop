@@ -133,6 +133,8 @@ pub struct SessionEnv {
     pub mode: reprisekit::glass::Mode,
     pub glass_material: reprisekit::glass::Material,
     pub glass_style: reprisekit::glass::Style,
+    /// `[glass] opaque_when_maximized`.
+    pub opaque_max: bool,
     pub icons: String,
     /// `XCURSOR_THEME` and `XCURSOR_SIZE`: the `[cursor]` theme and size, so clients draw the
     /// same pointer.
@@ -197,10 +199,11 @@ impl SessionEnv {
         colors: &reprisekit::theme::ColorScheme,
         interface: reprisekit::interface::Interface,
         blue_variant: reprisekit::blue::Variant,
-        (mode, glass_material, glass_style): (
+        (mode, glass_material, glass_style, opaque_max): (
             reprisekit::glass::Mode,
             reprisekit::glass::Material,
             reprisekit::glass::Style,
+            bool,
         ),
         icons: &str,
         cursor: (String, u32),
@@ -225,6 +228,7 @@ impl SessionEnv {
             mode,
             glass_material,
             glass_style,
+            opaque_max,
             icons: icons.into(),
             cursor,
             qt_platform_theme: crate::config::TOOLKIT_AUTO.into(),
@@ -279,10 +283,11 @@ impl SessionEnv {
         colors: String,
         interface: reprisekit::interface::Interface,
         blue_variant: reprisekit::blue::Variant,
-        (mode, glass_material, glass_style): (
+        (mode, glass_material, glass_style, opaque_max): (
             reprisekit::glass::Mode,
             reprisekit::glass::Material,
             reprisekit::glass::Style,
+            bool,
         ),
         icons: &str,
         cursor: (String, u32),
@@ -293,6 +298,7 @@ impl SessionEnv {
             && mode == self.mode
             && glass_material == self.glass_material
             && glass_style == self.glass_style
+            && opaque_max == self.opaque_max
             && icons == self.icons
             && cursor == self.cursor
         {
@@ -304,6 +310,7 @@ impl SessionEnv {
         self.mode = mode;
         self.glass_material = glass_material;
         self.glass_style = glass_style;
+        self.opaque_max = opaque_max;
         self.icons = icons.into();
         self.cursor = cursor;
         true
@@ -326,6 +333,10 @@ impl SessionEnv {
             (
                 reprisekit::glass::STYLE_ENV,
                 self.glass_style.as_str().into(),
+            ),
+            (
+                reprisekit::glass::OPAQUE_MAX_ENV,
+                self.opaque_max.to_string(),
             ),
             (reprisekit::icontheme::ENV, self.icons.clone()),
             ("XCURSOR_THEME", self.cursor.0.clone()),
@@ -1528,6 +1539,7 @@ mod tests {
             mode: Default::default(),
             glass_material: Default::default(),
             glass_style: Default::default(),
+            opaque_max: false,
             icons: "retro-icons".into(),
             cursor: ("default".into(), 24),
             qt_platform_theme: "auto".into(),
@@ -1765,6 +1777,7 @@ mod tests {
             reprisekit::interface::MODE_ENV,
             reprisekit::glass::MATERIAL_ENV,
             reprisekit::glass::STYLE_ENV,
+            reprisekit::glass::OPAQUE_MAX_ENV,
             reprisekit::icontheme::ENV,
             "XCURSOR_THEME",
             "XCURSOR_SIZE",
@@ -2126,6 +2139,7 @@ mod tests {
             reprisekit::glass::Mode::Light,
             Default::default(),
             Default::default(),
+            false,
         );
         let arrow = || ("default".to_string(), 24);
         assert!(
@@ -2191,18 +2205,20 @@ mod tests {
 
     #[test]
     fn the_mode_and_glass_material_and_style_are_exported_and_a_change_republishes() {
-        use reprisekit::glass::{MATERIAL_ENV, Material, Mode, STYLE_ENV, Style};
+        use reprisekit::glass::{MATERIAL_ENV, Material, Mode, OPAQUE_MAX_ENV, STYLE_ENV, Style};
         use reprisekit::interface::MODE_ENV;
         let mut e = env(None);
         assert!(e.pairs().contains(&(MODE_ENV, "light".into())));
         assert!(e.pairs().contains(&(MATERIAL_ENV, "frosted".into())));
         assert!(e.pairs().contains(&(STYLE_ENV, "glass".into())));
+        assert!(e.pairs().contains(&(OPAQUE_MAX_ENV, "false".into())));
         let (colors, cursor) = (e.colors.clone(), e.cursor.clone());
         let icons = e.icons.clone();
         for glass in [
-            (Mode::Dark, Material::Frosted, Style::Glass),
-            (Mode::Dark, Material::Smoked, Style::Glass),
-            (Mode::Dark, Material::Smoked, Style::Onyx),
+            (Mode::Dark, Material::Frosted, Style::Glass, false),
+            (Mode::Dark, Material::Smoked, Style::Glass, false),
+            (Mode::Dark, Material::Smoked, Style::Onyx, false),
+            (Mode::Dark, Material::Smoked, Style::Onyx, true),
         ] {
             assert!(
                 e.set_look(
@@ -2219,6 +2235,7 @@ mod tests {
         assert!(e.pairs().contains(&(MODE_ENV, "dark".into())));
         assert!(e.pairs().contains(&(MATERIAL_ENV, "smoked".into())));
         assert!(e.pairs().contains(&(STYLE_ENV, "onyx".into())));
+        assert!(e.pairs().contains(&(OPAQUE_MAX_ENV, "true".into())));
     }
 
     #[test]
