@@ -199,7 +199,7 @@ pub const MATERIAL_ENV: &str = "REPRISE_GLASS_MATERIAL";
 
 /// `[glass]`: the colour, its intensity (0..100), translucency, `blur`, the
 /// reflection streaks, `fast_drag`, `blur_frames`, `blur_rate`, `orb_glow`,
-/// `mode`, `material`, `frame`, `style` and `opaque_when_maximized`. Opaque
+/// `mode`, `material`, `frame`, `style`, `opaque_when_maximized` and `onyx_menu`. Opaque
 /// glass needs no backdrop. Defaults: Sky at 42, translucent, blur 2 with
 /// streaks, fast drag, frames behind glass shown, 30 re-blurs a second, full
 /// orb glow, light, Frosted, Rounded, Glass, glass when maximized.
@@ -234,6 +234,9 @@ pub struct Settings {
     /// A maximized window's frame is opaque ([`frame::maximized`]), and so is the taskbar of
     /// an output showing one, which its host draws with [`opaque_bar`].
     pub opaque_when_maximized: bool,
+    /// The mode Onyx's Start menu draws in; None follows `mode`. Read by the Start menu's
+    /// draw ([`crate::interfaces::draw_start_panel`]), so styles are shared across it.
+    pub onyx_menu: Option<Mode>,
 }
 
 pub const BLUR_MAX: u8 = 5;
@@ -287,6 +290,7 @@ impl Default for Settings {
             notification: NotifyStyle::default(),
             style: Style::Glass,
             opaque_when_maximized: false,
+            onyx_menu: None,
         }
     }
 }
@@ -329,6 +333,7 @@ fn cached(s: &Settings, small_bar: bool) -> Arc<crate::style::Style> {
         blur_rate: Settings::default().blur_rate,
         orb_glow: Settings::default().orb_glow,
         notification: NotifyStyle::default(),
+        onyx_menu: None,
         ..*s
     };
     styles.get_or_insert_with((key, small_bar), || {
