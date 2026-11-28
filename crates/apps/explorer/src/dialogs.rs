@@ -440,6 +440,7 @@ impl Explorer {
     pub(crate) fn follow_forms(&mut self, ctx: &Ctx) {
         self.dialog_text = ctx.text.clone();
         self.forms = ctx.forms();
+        self.dialog_px = ctx.base_px();
         self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
     }
 

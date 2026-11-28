@@ -65,8 +65,11 @@ pub const APPLY: &str = "apply";
 /// Restore Defaults at the button row's left end, on the pages a host gives it
 /// ([`PropSheet::set_restore`]); pressing it comes back as the page's `Pressed(RESTORE)`.
 pub const RESTORE: &str = "restore_defaults";
-/// Restore Defaults' width, wider than the row's other buttons for its label.
+/// Restore Defaults' least width, wider than the row's other buttons for its label; a label
+/// that needs more room widens it ([`PropSheet::fit_list`]).
 pub const RESTORE_W: i32 = 96;
+/// The room Restore Defaults keeps each side of its label, at 100%.
+const RESTORE_PAD: i32 = 4;
 
 const STRIP: (i32, i32) = (6, 8);
 const MARGIN: i32 = 6;
@@ -113,6 +116,8 @@ pub struct PropSheet {
     pub nav: Nav,
     /// The page list's width at 100%, in list mode ([`PropSheet::fit_list`]).
     list_w: i32,
+    /// Restore Defaults' width at 100% ([`PropSheet::fit_list`]).
+    restore_w: i32,
     /// The page's scroll in a client smaller than the sheet ([`PropSheet::fit`]), at 100%: each
     /// way's `short` is how much smaller than `size` the client is.
     scroll: ScrollView,
@@ -226,6 +231,7 @@ impl PropSheet {
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::Tabs,
             list_w: pagelist::WIDTH,
+            restore_w: RESTORE_W,
             scroll: ScrollView::default(),
             bar_room: 0,
             search: SearchField::default(),
@@ -265,6 +271,7 @@ impl PropSheet {
             font: pages.first().map(|p| p.font).unwrap_or_default(),
             nav: Nav::List(PageList::new(groups)),
             list_w: pagelist::WIDTH,
+            restore_w: RESTORE_W,
             scroll: ScrollView::default(),
             bar_room: 0,
             search: SearchField::default(),
@@ -414,7 +421,7 @@ impl PropSheet {
 
     fn restore_rect(&self) -> Rect {
         let (ok, ..) = buttons(self.shown());
-        Rect::new(self.restore_x(ok.x), ok.y, RESTORE_W, BUTTON_H)
+        Rect::new(self.restore_x(ok.x), ok.y, self.restore_w, BUTTON_H)
     }
 
     /// Restore Defaults' x with OK at `ok_x`: under the page's left edge, or as far left as
@@ -422,7 +429,7 @@ impl PropSheet {
     fn restore_x(&self, ok_x: i32) -> i32 {
         let gap = BUTTON_PITCH - BUTTON_W;
         (MARGIN + self.list_advance())
-            .min(ok_x - gap - RESTORE_W)
+            .min(ok_x - gap - self.restore_w)
             .max(MARGIN)
     }
 

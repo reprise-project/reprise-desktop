@@ -257,6 +257,15 @@ pub(crate) fn stray(face: &str) {
     });
 }
 
+/// Whether `px` is a pixel of antialiased text in `ink`: every channel within a quarter of the
+/// range of the ink's, so a stem's core counts and its blended edge does not.
+pub fn inks(px: u32, ink: crate::theme::Color) -> bool {
+    let want = ink.argb();
+    [16, 8, 0]
+        .into_iter()
+        .all(|sh| ((px >> sh) & 0xFF).abs_diff((want >> sh) & 0xFF) <= 0x40)
+}
+
 /// Reports a test that cannot run on this machine: panics under `REPRISE_TEST_STRICT`, else
 /// prints `reason`. `reprisebus::testbus::skipped` is the same for crates that link reprisebus.
 #[track_caller]

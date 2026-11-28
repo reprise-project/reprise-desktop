@@ -1,6 +1,6 @@
 set hours Classic b4fcf7204ea63d7b
 set hours Blue 323384d5b3200cfc
-set hours Glass 1781092ffc19ffa8
+set hours Glass 1a5dedf2b1a059ba
 greyed Classic 5f51dddb632fa990
 greyed Blue 3669d0d95b7e2026
-greyed Glass 35300c73a2610fac
+greyed Glass 2672d3fa15790a34

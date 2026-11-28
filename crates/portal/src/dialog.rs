@@ -469,6 +469,9 @@ impl App for Prompt {
                         ..forms.paint()
                     });
                     fit.fit(&mut self.form, ctx.size, &ctx.text, forms.fonts.size_px);
+                    if !fit.scrolls(&self.form) {
+                        self.form.follow_trees();
+                    }
                 }
                 Reply {
                     size: Some(forms.text.size(self.size)),
@@ -588,38 +591,15 @@ fn focus(form: &Form) -> Focus {
     (form.focus(), form.focus_part())
 }
 
-/// What of the form `build` makes for each interface's theme at each text size, in Tahoma and
-/// in DejaVu Sans, does not fit its text ([`Form::overflows`]), one line each.
+/// What of the form `build` makes for each interface's theme at each text size, in each face
+/// the interface is drawn for, does not fit its text ([`Form::overflows`]), one line each.
 #[cfg(test)]
 pub fn overflows(
     mut build: impl FnMut(&Theme, &reprisekit::text::TextRenderer) -> Form,
 ) -> Vec<String> {
-    use reprisekit::interface::Interface;
-    use reprisekit::text::TextRenderer;
-    let mut over = Vec::new();
-    for family in ["Tahoma", "DejaVu Sans"] {
-        let text = TextRenderer::load(&reprisekit::theme::FontConfig {
-            family: vec![family.into()],
-            ..Default::default()
-        });
-        if !text.has_face(family) {
-            continue;
-        }
-        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-            for pct in [100, 125, 150, 175, 200] {
-                let theme = reprisekit::interfaces::theme_for(i).with_form_text(pct);
-                let form = build(&theme, &text);
-                form.drawn_with(&theme.paint());
-                for (id, by) in form.overflows(&text, theme.fonts.size_px) {
-                    over.push(format!(
-                        "{family}, {}, {pct}%: {id} {by} px over",
-                        i.as_str()
-                    ));
-                }
-            }
-        }
-    }
-    over
+    reprisekit::interfaces::form_overflows(|_, theme, text| {
+        vec![("dialog".into(), build(theme, text))]
+    })
 }
 
 /// A program context at `text_size` for the dialogs' tests.

@@ -417,7 +417,10 @@ fn the_lock_fields_caret_stands_before_the_cue_it_starts_on() {
                 .find(|&cx| rows.clone().any(|y| b.get(cx, y) != 0xFFFF_FFFF))
                 .unwrap();
             if s == 1 {
-                assert_eq!(first_ink, x, "{mode:?}: the cue's P stands on the pen");
+                assert!(
+                    (x..=x + 1).contains(&first_ink),
+                    "{mode:?}: the cue's P stands on the pen, past its side bearing: {first_ink} at pen {x}"
+                );
             }
             let mut inverted = 0;
             for y in rows.clone() {

@@ -270,6 +270,13 @@ pub fn start_text() -> Rc<TextRenderer> {
     text_for(&start_theme().fonts)
 }
 
+/// [`Ctx::base_px`](crate::Ctx::base_px) as the program starts: the interface's text px at 100%,
+/// which a program's dialogs are laid out for.
+pub fn start_px() -> u32 {
+    let t = start_theme();
+    t.text.base_px(t.fonts.size_px)
+}
+
 /// [`Ctx::text_size`](crate::Ctx::text_size) as the program starts, for an [`App::initial_size`]
 /// asked before any event.
 pub fn start_text_size() -> u32 {

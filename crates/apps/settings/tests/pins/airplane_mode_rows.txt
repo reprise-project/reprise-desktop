@@ -1,9 +1,9 @@
 on Classic d4ab66947128ebfe
 on Blue 4f341a8af31bcccb
-on Glass 0bacf51ccd78cc46
+on Glass 349041cda5bd20ca
 no radio Classic d28c5f7b6e621d82
 no radio Blue e1aa3b114dbba873
-no radio Glass fa38d4ecfdf80291
+no radio Glass 8422d60f57989b7c
 hardware kill Classic 90c13f02cc8fd8b6
 hardware kill Blue ebb321a993ce7a0b
-hardware kill Glass fd2b81923554c4a7
+hardware kill Glass 8d455cbc58c10373

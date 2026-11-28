@@ -6,7 +6,7 @@ Blue Tiles 1 9d2195103bfbc2e1
 Blue Tiles 2 9a33059d74ec7fe5
 Blue Details 1 8c63539861e8eb01
 Blue Details 2 610162809f2a745c
-Glass Tiles 1 a62e827c7c5a6e02
-Glass Tiles 2 508b426f9a08ab22
-Glass Details 1 05cff72124e7be9a
-Glass Details 2 a1000125a49ce157
+Glass Tiles 1 f8fe4704ad7dc7ba
+Glass Tiles 2 8b8993f0d351e95a
+Glass Details 1 01ce85ed04d84c5d
+Glass Details 2 55edd009dd2bd5c4

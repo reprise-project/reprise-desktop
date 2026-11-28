@@ -222,7 +222,7 @@ impl Paint {
             saveas: None,
             host: Host::default(),
             dialog_text: repriseapp::start_text(),
-            dialog_px: Theme::default().fonts.size_px,
+            dialog_px: repriseapp::start_px(),
             forms: Theme::default(),
             app_icon: None,
             warn_icon: None,
@@ -252,6 +252,7 @@ impl Paint {
 
     fn follow(&mut self, ctx: &Ctx) {
         self.forms = ctx.forms();
+        self.dialog_px = ctx.base_px();
         self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
     }
 

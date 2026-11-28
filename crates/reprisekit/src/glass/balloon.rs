@@ -162,7 +162,12 @@ mod tests {
         let ink = |v: u32, ys: std::ops::Range<i32>| {
             let pts: Vec<(i32, i32)> = ys
                 .flat_map(|y| (29..270).map(move |x| (x, y)))
-                .filter(|&(x, y)| c.get(x, y) == rgb(v))
+                .filter(|&(x, y)| {
+                    crate::pins::inks(
+                        c.get(x, y),
+                        Color::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8),
+                    )
+                })
                 .collect();
             let x = pts.iter().map(|p| p.0).min();
             let y = pts.iter().map(|p| p.1).min();
@@ -171,8 +176,8 @@ mod tests {
         let (tx, ty) = ink(0x002A95, 0..30);
         let (bx, by) = ink(0x000000, 30..50);
         assert!(
-            tx.is_some_and(|x| (33..=34).contains(&x)),
-            "the title from 33 px in: {tx:?}"
+            tx.is_some_and(|x| (33..=35).contains(&x)),
+            "the title from 33 px in, its first glyph's ink past its side bearing: {tx:?}"
         );
         assert!(
             bx.is_some_and(|x| (33..=34).contains(&x)),
@@ -299,11 +304,14 @@ mod tests {
         assert_eq!(frame_row(&c, 19, 14..18), "###.", "the frame opens");
         assert_eq!(frame_row(&c, 19, 0..6), "     #", "the stepped corner");
         assert_ne!(c.get(w - 3, h / 2), 0, "the shadow");
-        let has = |v: u32| (0..h).any(|y| (13..w).any(|x| c.get(x, y) == rgb(v)));
+        let has = |v: u32| {
+            let ink = Color::rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
+            (0..h).any(|y| (13..w).any(|x| crate::pins::inks(c.get(x, y), ink)))
+        };
         assert!(has(0x002A95), "the title");
         let left = (19 + 30..19 + 48)
             .flat_map(|y| (2..w - 8).map(move |x| (x, y)))
-            .filter(|&(x, y)| c.get(x, y) == rgb(0))
+            .filter(|&(x, y)| crate::pins::inks(c.get(x, y), Color::rgb(0, 0, 0)))
             .map(|(x, _)| x)
             .min();
         assert!(

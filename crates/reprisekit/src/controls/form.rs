@@ -566,6 +566,22 @@ impl Form {
     pub fn units(&self) -> TextUnits {
         self.rendered.text.get()
     }
+
+    /// Scroll each tree to its picked row as it lays out at the last draw's text size: a tree
+    /// built before its look and text size were known may show fewer rows than it was built for.
+    pub fn follow_trees(&mut self) {
+        let (u, cm) = (self.units(), self.controls());
+        let rects: Vec<(usize, Rect)> = (self.items.iter().enumerate())
+            .filter(|(_, it)| matches!(it.control, Control::Tree(_)))
+            .map(|(k, it)| (k, u.rect(self.flowed(it))))
+            .collect();
+        for (k, r) in rects {
+            if let Control::Tree(tv) = &mut self.items[k].control {
+                let lay = treeview::layout_without_text(tv, r, &cm);
+                tv.follow(&lay);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

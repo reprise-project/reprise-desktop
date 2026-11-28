@@ -217,7 +217,7 @@ impl Notepad {
             rescued: None,
             recent: Recent::at(DESKTOP, None),
             dialog_text: repriseapp::start_text(),
-            dialog_px: Theme::default().fonts.size_px,
+            dialog_px: repriseapp::start_px(),
             forms: Theme::default(),
             open: None,
             saveas: None,
@@ -245,6 +245,7 @@ impl Notepad {
 
     fn follow(&mut self, ctx: &Ctx) {
         self.forms = ctx.forms();
+        self.dialog_px = ctx.base_px();
         self.forms.fonts.size_px = self.forms.text.px(self.dialog_px);
         self.metrics.follow_look(&ctx.theme.controls());
         let px = reprisekit::theme::text_px(fontdlg::px(self.settings.size), ctx.text_size);

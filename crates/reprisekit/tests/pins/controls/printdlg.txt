@@ -14,19 +14,19 @@ Blue not running 1 5ef388986c876cfb
 Blue not running 2 823dc89f2608653d
 Blue looking 1 d717175dbdc3a234
 Blue looking 2 5b0e02d871805aef
-Glass Light two printers 1 1cada598771390cb
-Glass Light two printers 2 8485fdccf2b4d9d1
-Glass Light one page 1 903f164ecd3ea369
-Glass Light one page 2 74fab5e7c4c0040d
-Glass Light not running 1 840209d036a732ce
-Glass Light not running 2 3d5c4555d25e659c
-Glass Light looking 1 970b8244524402c0
-Glass Light looking 2 c4ed9c2da9c2b786
-Glass Dark two printers 1 6f360fdae19d5ea8
-Glass Dark two printers 2 3b36fa4468414cab
-Glass Dark one page 1 4adbf9fd180b132c
-Glass Dark one page 2 4351b27562c73414
-Glass Dark not running 1 86b9a33da4483617
-Glass Dark not running 2 36eb73effc9eb141
-Glass Dark looking 1 40d87c2ec40aa724
-Glass Dark looking 2 2d0558d62369c909
+Glass Light two printers 1 9ed33687ef1777cf
+Glass Light two printers 2 fbf1f85e88d93243
+Glass Light one page 1 b9f5408ebcee4ad1
+Glass Light one page 2 77dbddc7e5a6b114
+Glass Light not running 1 c753a088469723f4
+Glass Light not running 2 55d443bb3f536e9e
+Glass Light looking 1 018977fdd9f3dcd2
+Glass Light looking 2 6fe810d99d4ced4f
+Glass Dark two printers 1 d63d98a22403fadd
+Glass Dark two printers 2 099ff0b6c643da4e
+Glass Dark one page 1 d556106f2010f963
+Glass Dark one page 2 5b41fd8a3f946730
+Glass Dark not running 1 3dff199bd622310a
+Glass Dark not running 2 ed7979f351b3256c
+Glass Dark looking 1 f2cf5e1b08c3a3e7
+Glass Dark looking 2 1ab8b17180817f50

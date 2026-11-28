@@ -582,6 +582,8 @@ pub struct TextRenderer {
     pass: Pass,
     /// The inked, without-colour and colour-only variants, made on first use.
     variants: [OnceCell<Box<TextRenderer>>; 3],
+    /// The UI face draws at `n / d` of the px asked for ([`FontConfig::face_scale`]).
+    face_scale: Option<[u32; 2]>,
 }
 
 fn coverage(bm: &freetype::Bitmap) -> Vec<u8> {
@@ -635,6 +637,7 @@ impl TextRenderer {
             italic: false,
             full_hinting: false,
             shell_dlg: None,
+            face_scale: Vec::new(),
         };
         let mono = TextRenderer::load(&cfg(false));
         if mono.has_face("Lucida Console") {
@@ -672,6 +675,11 @@ impl TextRenderer {
         }
         let mut r = TextRenderer::with_faces(regular, bold, cfg.antialias);
         r.config = Some(cfg.clone());
+        r.face_scale = (r.regular.as_ref()).and_then(|f| {
+            (cfg.face_scale.iter())
+                .find(|(family, _)| *family == f.family)
+                .map(|&(_, k)| k)
+        });
         match cfg
             .shell_dlg
             .as_deref()
@@ -709,6 +717,7 @@ impl TextRenderer {
             ink_emoji: false,
             pass: Pass::All,
             variants: Default::default(),
+            face_scale: None,
         }
     }
 
@@ -762,6 +771,7 @@ impl TextRenderer {
         t.own_glyphs = self.own_glyphs;
         t.ink_emoji = self.ink_emoji;
         t.pass = self.pass;
+        t.face_scale = self.face_scale;
         set(&mut t);
         t
     }
@@ -941,6 +951,14 @@ impl TextRenderer {
         })
     }
 
+    /// The px the faces load at for text asked for at `size_px`.
+    fn face_px(&self, size_px: u32) -> u32 {
+        match self.face_scale {
+            Some([n, d]) if d > 0 => ((size_px * n + d / 2) / d).max(1),
+            _ => size_px,
+        }
+    }
+
     fn rasterize(
         &self,
         face: &Face,
@@ -951,7 +969,7 @@ impl TextRenderer {
     ) -> Option<Glyph> {
         let (load_px, k) = match strike {
             Some(p) => (p, size_px / p),
-            None => (size_px, 1),
+            None => (self.face_px(size_px), 1),
         };
         face.set_pixel_sizes(0, load_px).ok()?;
         let target = if smooth {
@@ -1206,7 +1224,7 @@ impl TextRenderer {
             Some((regular, b)) => Some(if bold { b } else { regular }),
             None => self.face(bold),
         }?;
-        face.set_pixel_sizes(0, size_px).ok()?;
+        face.set_pixel_sizes(0, self.face_px(size_px)).ok()?;
         let m = face.size_metrics()?;
         let m = (
             (m.ascender >> 6) as i32,

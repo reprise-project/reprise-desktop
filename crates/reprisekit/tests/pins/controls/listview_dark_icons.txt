@@ -6,7 +6,7 @@ Blue dark scale 1 95b849a16cd2c239
 Blue dark scale 2 c537a388ab8c90bc
 Blue light scale 1 4ae51b8c3363589c
 Blue light scale 2 f6d15abb780e7490
-Glass dark scale 1 f093fc57859583a8
-Glass dark scale 2 fdc9e5cb1208733b
-Glass light scale 1 759b6c4ebae4e626
-Glass light scale 2 bb2d2db3d25c438a
+Glass dark scale 1 463a0ed8b89c8a1e
+Glass dark scale 2 28e0f48345a17b5f
+Glass light scale 1 702e6cac1af198cb
+Glass light scale 2 3cd6bdb6f7f85d89

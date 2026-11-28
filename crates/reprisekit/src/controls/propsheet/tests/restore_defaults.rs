@@ -60,6 +60,7 @@ fn restore_defaults_draws_in_every_look() {
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let theme = crate::interfaces::theme_for(i);
         let mut s = list_sheet();
+        s.fit_list(&TextRenderer::load(&theme.fonts), theme.fonts.size_px);
         let plain = drawn(&s, &theme);
         s.set_restore(0, true);
         let c = drawn(&s, &theme);

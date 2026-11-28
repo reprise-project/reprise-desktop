@@ -1551,8 +1551,10 @@ mod tests {
             .collect::<Vec<_>>();
         let mut wrong = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let fonts = reprisekit::interfaces::theme_for(i).fonts;
             for pct in [100, 125, 150, 175, 200] {
                 let mut ctx = crate::dialog::test_ctx(pct);
+                ctx.text = reprisekit::text::TextRenderer::load(&fonts).into();
                 for &client in &clients {
                     for purpose in [Purpose::Share, Purpose::Screenshot] {
                         for rs in [&rows()[..], &long[..]] {

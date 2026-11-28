@@ -686,7 +686,14 @@ mod tests {
             s.sheet.tabs.open = tab;
             let mut c = Canvas::new(w as u32, h as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);
-            propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, false, 11);
+            propsheet::draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &s.sheet,
+                false,
+                theme.fonts.size_px,
+            );
             out.blit_canvas(tab as i32 * w, 0, &c);
         }
         reprisekit::raster::write_preview(&out, "datetime-preview.png");
@@ -729,19 +736,26 @@ mod tests {
             let (w, h) = CLIENT;
             let mut c = Canvas::new(w as u32, h as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);
-            propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, false, 11);
+            propsheet::draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &s.sheet,
+                false,
+                theme.fonts.size_px,
+            );
             let page = &s.sheet.pages[TAB_DATE];
             let (ntp, line) = (page.rect("ntp").unwrap(), page.rect("regional").unwrap());
             assert!(line.y > ntp.bottom(), "{name}: under the check box");
-            let lay = s.sheet.layout(&text, 11);
+            let lay = s.sheet.layout(&text, theme.fonts.size_px);
             assert!(
                 line.bottom() <= lay.page.bottom() - 2,
                 "{name}: inside the page's bevel"
             );
-            let ink = theme.colors.button_text.argb();
+            let ink = theme.colors.button_text;
             let inked = (line.x..line.right())
                 .flat_map(|x| (line.y..line.bottom()).map(move |y| (x, y)))
-                .filter(|&(x, y)| c.get(x, y) == ink)
+                .filter(|&(x, y)| reprisekit::pins::inks(c.get(x, y), ink))
                 .count();
             assert!(inked > 20, "{name}: the line is drawn");
             got.push((name.to_string(), fnv(&c)));
@@ -767,7 +781,14 @@ mod tests {
             let (w, h) = CLIENT;
             let mut c = Canvas::new(w as u32, h as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);
-            propsheet::draw(&mut c, &text, &theme.paint(), &s.sheet, false, 11);
+            propsheet::draw(
+                &mut c,
+                &text,
+                &theme.paint(),
+                &s.sheet,
+                false,
+                theme.fonts.size_px,
+            );
             let page = &s.sheet.pages[TAB_ZONE];
             let panel = page.rect("panel").expect("the panel");
             let cs = &theme.colors;
@@ -779,7 +800,7 @@ mod tests {
             let city = page.rect("city").expect("the city");
             let inked = (city.x..city.right())
                 .flat_map(|x| (city.y..city.bottom()).map(move |y| (x, y)))
-                .filter(|&(x, y)| c.get(x, y) == cs.window_text.argb())
+                .filter(|&(x, y)| reprisekit::pins::inks(c.get(x, y), cs.window_text))
                 .count();
             assert!(
                 inked > 20,

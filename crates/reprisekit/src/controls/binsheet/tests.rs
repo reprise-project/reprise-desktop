@@ -77,10 +77,11 @@ fn every_page_fits_its_text_in_every_look_and_size() {
 }
 
 /// "Do not move files"'s second line starts a pixel right of the first in
-/// Classic and under it in Blue and Glass, 16 px past the box. Its "D" tops
-/// out 3 px below the box's top in Classic and 2 px in Blue and Glass, and
-/// the second line's "R" 13 px below the "D". The group's top line runs to
-/// x 29 and on from x 186 in every look.
+/// Classic and under it in Blue and Glass, 16 px past the box (Glass's R may
+/// ink a column later). Its "D" tops out 3 px below the box's top in Classic
+/// and 2 px in Blue and Glass, and the second line's "R" 13 px below the "D".
+/// The group's top line runs to x 29 and on past its label: from x 186 in
+/// Classic and Blue, x 195 in Glass's wider face.
 #[test]
 fn the_do_not_move_second_line_follows_the_label_in_every_look() {
     crate::pins::fonts();
@@ -93,7 +94,14 @@ fn the_do_not_move_second_line_follows_the_label_in_every_look() {
         let text = TextRenderer::load(&theme.fonts);
         let mut c = Canvas::new(340, 260);
         c.fill_rect(c.bounds(), theme.colors.button_face);
-        crate::controls::form::draw(&mut c, &text, &theme.paint(), &page, false, 11);
+        crate::controls::form::draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &page,
+            false,
+            theme.fonts.size_px,
+        );
         let first = ink(&c, Rect::new(44, 93, 30, 13)).expect("the first line");
         let second = ink(&c, Rect::new(44, 106, 30, 13)).expect("the second line");
         let step = match i {
@@ -102,7 +110,10 @@ fn the_do_not_move_second_line_follows_the_label_in_every_look() {
         };
         assert_eq!(second, first + step, "{i:?}: the second line {step} px in");
         if i != Interface::Classic {
-            assert_eq!(second, 30 + 16, "{i:?}: the second line 16 px past the box");
+            assert!(
+                (30 + 16..=30 + 17).contains(&second),
+                "{i:?}: the second line 16 px past the box, its R's ink past its side bearing: {second}"
+            );
         }
         let top = |x: i32, y: std::ops::Range<i32>| {
             y.into_iter()
@@ -116,8 +127,12 @@ fn the_do_not_move_second_line_follows_the_label_in_every_look() {
         assert_eq!(top(second, 104..120), Some(r_top), "{i:?}: the R's top row");
         let line = c.get(250, 70);
         assert_eq!(c.get(29, 70), line, "{i:?}: the line up to x 29");
-        assert_eq!(c.get(186, 70), line, "{i:?}: the line on from x 186");
-        assert_ne!(c.get(185, 70), line, "{i:?}: the break up to x 185");
+        let resume = match i {
+            Interface::Glass => 195,
+            _ => 186,
+        };
+        let found = (100..250).find(|&x| (x..250).all(|x| c.get(x, 70) == line));
+        assert_eq!(found, Some(resume), "{i:?}: the line on from x {resume}");
     }
 }
 
@@ -133,7 +148,14 @@ fn the_trackbar_and_its_percentage_follow_the_setting() {
         let mut c = Canvas::new(340, 260);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         let page = s.page_global();
-        crate::controls::form::draw(&mut c, &text, &theme.paint(), &page, false, 11);
+        crate::controls::form::draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            &page,
+            false,
+            theme.fonts.size_px,
+        );
         c
     };
     let page = sheet().page_global();

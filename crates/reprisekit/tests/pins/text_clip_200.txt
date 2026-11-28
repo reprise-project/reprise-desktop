@@ -243,25 +243,28 @@ blue-variants.png "Steel: task pane" x1
 blue-variants.png "Steel: toolbar" x1
 blue-variants.png "Steel: tooltip" x1
 blue-variants.png "Type" x30
+desk-widgets@1.png "Memory 42%" x1
 glass-dark.png "(None)" x6
-glass-dark.png "0 KB" x2
-glass-dark.png "1 KB" x5
+glass-dark.png "0..." x2
+glass-dark.png "1 KB" x3
+glass-dark.png "1..." x2
 glass-dark.png "10" x2
-glass-dark.png "14/09/20..." x15
-glass-dark.png "2 KB" x2
-glass-dark.png "28 KB" x3
-glass-dark.png "3 KB" x2
-glass-dark.png "4 KB" x2
-glass-dark.png "412..." x3
-glass-dark.png "5 KB" x2
-glass-dark.png "6 KB" x2
+glass-dark.png "14/09/2..." x15
+glass-dark.png "2..." x2
+glass-dark.png "28..." x3
+glass-dark.png "3..." x2
+glass-dark.png "4..." x2
+glass-dark.png "41..." x3
+glass-dark.png "5..." x2
+glass-dark.png "6..." x2
 glass-dark.png "Application" x3
 glass-dark.png "Default" x1
 glass-dark.png "Desktop" x1
 glass-dark.png "Disabled" x1
-glass-dark.png "Documents" x1
-glass-dark.png "Edit" x3
+glass-dark.png "Docume..." x1
+glass-dark.png "Edit" x5
 glass-dark.png "File Folder" x6
+glass-dark.png "File" x2
 glass-dark.png "First" x1
 glass-dark.png "Focused" x1
 glass-dark.png "Group box" x1
@@ -275,44 +278,54 @@ glass-dark.png "Item 4" x2
 glass-dark.png "Item 5" x2
 glass-dark.png "Item 6" x2
 glass-dark.png "Letters" x1
+glass-dark.png "Message Text" x1
 glass-dark.png "Music" x1
 glass-dark.png "My Music" x3
 glass-dark.png "My Pictures" x3
 glass-dark.png "Name" x5
+glass-dark.png "Normal" x1
 glass-dark.png "On the page" x1
 glass-dark.png "OpenDocu..." x3
 glass-dark.png "Other..." x1
 glass-dark.png "Pictures" x1
 glass-dark.png "Pressed" x1
 glass-dark.png "Second" x1
+glass-dark.png "Show icon and notific..." x1
 glass-dark.png "Size" x5
 glass-dark.png "Text Docu..." x3
 glass-dark.png "Third" x1
 glass-dark.png "Type" x3
+glass-dark.png "View" x2
 glass-dark.png "notepad" x4
 glass-dark.png "notes.txt" x3
 glass-dark.png "report.odt" x3
 glass-dark.png "setup.exe" x3
+glass-popups.png "Built-in display" x1
+glass-popups.png "Night light" x1
+glass-popups.png "Not adjustable" x1
+glass-popups.png "Settings..." x1
 glass.png "(None)" x6
-glass.png "0 KB" x2
-glass.png "1 KB" x5
+glass.png "0..." x2
+glass.png "1 KB" x3
+glass.png "1..." x2
 glass.png "10" x2
-glass.png "14/09/20..." x15
-glass.png "2 KB" x2
-glass.png "28 KB" x3
-glass.png "3 KB" x2
+glass.png "14/09/2..." x15
+glass.png "2..." x2
+glass.png "28..." x3
+glass.png "3..." x2
 glass.png "3:45 PM" x1
-glass.png "4 KB" x2
-glass.png "412..." x3
-glass.png "5 KB" x2
-glass.png "6 KB" x2
+glass.png "4..." x2
+glass.png "41..." x3
+glass.png "5..." x2
+glass.png "6..." x2
 glass.png "Application" x3
 glass.png "Default" x1
 glass.png "Desktop" x1
 glass.png "Disabled" x1
-glass.png "Documents" x1
-glass.png "Edit" x3
+glass.png "Docume..." x1
+glass.png "Edit" x5
 glass.png "File Folder" x6
+glass.png "File" x2
 glass.png "First" x1
 glass.png "Focused" x1
 glass.png "Group box" x1
@@ -326,20 +339,24 @@ glass.png "Item 4" x2
 glass.png "Item 5" x2
 glass.png "Item 6" x2
 glass.png "Letters" x1
+glass.png "Message Text" x1
 glass.png "Music" x1
 glass.png "My Music" x3
 glass.png "My Pictures" x3
 glass.png "Name" x5
+glass.png "Normal" x1
 glass.png "On the page" x1
 glass.png "OpenDocu..." x3
 glass.png "Other..." x1
 glass.png "Pictures" x1
 glass.png "Pressed" x1
 glass.png "Second" x1
+glass.png "Show icon and notific..." x1
 glass.png "Size" x5
 glass.png "Text Docu..." x3
 glass.png "Third" x1
 glass.png "Type" x3
+glass.png "View" x2
 glass.png "notepad" x4
 glass.png "notes.txt" x3
 glass.png "report.odt" x3

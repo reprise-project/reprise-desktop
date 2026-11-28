@@ -168,6 +168,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, w: &Wizard, cues: bo
                 .enumerate()
             {
                 let lr = Rect::new(tr.x, tr.y + i as i32 * line_h, tr.width, line_h);
+                let lr = text.ink_box(lr, line, true, title_px, 1);
                 text.draw(c, lr, line, true, cs.window_text, Align::Left, title_px);
             }
         }

@@ -282,15 +282,15 @@ fn template_dialogs() -> Vec<Dialog> {
 fn every_dialog_fits_its_text_under_every_interface() {
     use reprisekit::interface::Interface;
     let mut over = Vec::new();
-    for family in ["Tahoma", "DejaVu Sans"] {
-        let text = TextRenderer::load(&FontConfig {
-            family: vec![family.into()],
-            ..FontConfig::default()
-        });
-        if !text.has_face(family) {
-            continue;
-        }
-        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for family in reprisekit::interfaces::faces(i) {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.clone()],
+                ..reprisekit::interfaces::theme_for(i).fonts
+            });
+            if !text.has_face(&family) {
+                continue;
+            }
             for pct in [100, 125, 150, 175, 200] {
                 let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
                 let px = theme.fonts.size_px;
@@ -350,16 +350,15 @@ fn every_dialog_fits_its_text_under_every_interface() {
 fn every_dialog_draws_its_text_uncut_at_scale_1_and_2() {
     use reprisekit::interface::Interface;
     let mut cut = Vec::new();
-    for family in ["Tahoma", "DejaVu Sans"] {
-        let text = TextRenderer::load(&FontConfig {
-            family: vec![family.into()],
-            ..FontConfig::default()
-        });
-        if !text.has_face(family) {
-            reprisekit::pins::skipped(&format!("no {family} installed"));
-            continue;
-        }
-        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for family in reprisekit::interfaces::faces(i) {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.clone()],
+                ..reprisekit::interfaces::theme_for(i).fonts
+            });
+            if !text.has_face(&family) {
+                continue;
+            }
             for pct in [100, 150] {
                 let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
                 let mut ds = form_dialogs(&theme, &text);
@@ -504,9 +503,12 @@ fn drawn_at(theme: &Theme, text: &TextRenderer, mut d: Dialog, s: i32) -> Canvas
 #[test]
 fn a_bar_hanging_past_the_descent_keeps_its_ink() {
     use reprisekit::interface::Interface;
-    let text = tahoma();
     let mut cut = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let text = match i {
+            Interface::Glass => TextRenderer::load(&reprisekit::interfaces::theme_for(i).fonts),
+            _ => tahoma(),
+        };
         for pct in [100, 125, 150, 175, 200] {
             let theme = reprisekit::interfaces::theme_for(i).with_text_size(pct);
             for d in bar_dialogs() {

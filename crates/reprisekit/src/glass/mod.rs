@@ -65,7 +65,7 @@ use crate::style::{
     CaptionTitle, GlassSpec, PanelSpec, Part, PartImage, State, TextSpec, TitleGlow, TrackMarks,
 };
 use crate::taskbar::{ClockBox, LabelledButton, OrbRise, StartMenuDock, TaskbarShape};
-use crate::theme::{CaptionGroup, Color, ColorScheme, GroupPlace, Metrics};
+use crate::theme::{CaptionGroup, Color, ColorScheme, FontConfig, GroupPlace, Metrics};
 
 /// `[glass] mode`: the controls, dialogs, menus and text under the glass in their
 /// light or dark faces. The glass itself keeps its colour either way, but opaque glass lies over a dark colour in Dark.
@@ -478,6 +478,7 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
         ],
     })
     .with_caption_title(title)
+    .with_text_px(text_font().size_px)
     .with_label_glow(label_glow(s.material, s.mode))
     .with_panel_halo(paint::LABEL_HALO_DARK)
     .with_chrome_colors(colors(Mode::Light))
@@ -938,7 +939,7 @@ fn controls() -> ControlMetrics {
         combo_row: 15,
         flyout_border: 8,
         places: PlacesMetrics {
-            tile: 59,
+            tile: 61,
             icon_top: 2,
             label_gap: 1,
             line_lead: 0,
@@ -1060,11 +1061,31 @@ pub fn bar_ink(s: &Settings) -> Color {
     }
 }
 
-/// The window title: the caption face at 12 px (9 pt), no shadow, in `ink`
+/// The faces Glass's layouts are drawn for, in order of preference; DejaVu Sans stands in where
+/// none is installed.
+pub const FACES: [&str; 3] = ["Segoe UI", "Selawik", "Noto Sans"];
+
+/// Glass's text in programs and dialogs: the first of [`FACES`] installed, at 12 px (9 pt),
+/// antialiased. Noto Sans and DejaVu Sans run wider than Segoe UI and Selawik and draw at 11 px
+/// for each 12, which keeps Segoe UI's widths and x-height.
+pub fn text_font() -> FontConfig {
+    FontConfig {
+        face_scale: ["Noto Sans", "DejaVu Sans"]
+            .map(|f| (f.to_string(), [11, 12]))
+            .to_vec(),
+        ..caption_text([Color::rgb(0, 0, 0); 2]).font()
+    }
+}
+
+/// The window title: Glass's face at 12 px (9 pt), no shadow, in `ink`
 /// focused and not ([`caption_ink`]).
 fn caption_text([color, inactive]: [Color; 2]) -> TextSpec {
     TextSpec {
-        family: vec!["Segoe UI".into(), "Noto Sans".into(), "DejaVu Sans".into()],
+        family: FACES
+            .iter()
+            .chain(&["DejaVu Sans"])
+            .map(|f| f.to_string())
+            .collect(),
         size_px: 12,
         family_sizes: Vec::new(),
         bold: false,
