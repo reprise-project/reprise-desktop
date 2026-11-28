@@ -1102,6 +1102,34 @@ fn a_left_aligned_line_keeps_a_first_glyph_that_hooks_left_of_its_pen() {
     assert_eq!(cut, Vec::new(), "(scale, line, ink columns cut)");
 }
 
+#[test]
+fn draw_over_inks_where_draw_does_at_scale_1_and_2() {
+    crate::pins::fonts();
+    let r = TextRenderer::load(&FontConfig::default());
+    let (black, white) = (Color::rgb(0, 0, 0), Color::rgb(0xFF, 0xFF, 0xFF));
+    let rect = Rect::new(10, 4, 100, 16);
+    let ink_box = |c: &Canvas, inked: &dyn Fn(u32) -> bool| {
+        let w = c.device_size().0 as usize;
+        let at: Vec<_> = (c.pixels.iter().enumerate())
+            .filter(|&(_, &p)| inked(p))
+            .map(|(i, _)| (i % w, i / w))
+            .collect();
+        let xs = at.iter().map(|p| p.0);
+        let ys = at.iter().map(|p| p.1);
+        (xs.clone().min(), ys.clone().min(), xs.max(), ys.max())
+    };
+    for s in [1, 2] {
+        let mut over = Canvas::with_scale(120, 24, s);
+        r.draw_over(&mut over, rect, "Jobs", false, black, Align::Left, 11);
+        let mut opaque = Canvas::with_scale(120, 24, s);
+        opaque.fill_rect(opaque.bounds(), white);
+        r.draw(&mut opaque, rect, "Jobs", false, black, Align::Left, 11);
+        let drawn = ink_box(&opaque, &|p| p != white.argb());
+        assert!(drawn.0.is_some(), "scale {s}: draw inks");
+        assert_eq!(ink_box(&over, &|p| p >> 24 != 0), drawn, "scale {s}");
+    }
+}
+
 /// Every printable ASCII char at either end of a run, Tahoma and DejaVu Sans, mono and
 /// antialiased, 11 to 17 px, regular and bold.
 fn each_end_glyph(mut f: impl FnMut(&TextRenderer, String, bool, u32, &str)) {

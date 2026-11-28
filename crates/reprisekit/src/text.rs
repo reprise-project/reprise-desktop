@@ -1987,8 +1987,9 @@ impl TextRenderer {
         if clip.width <= 0 || clip.height <= 0 {
             return;
         }
+        let s = canvas.scale();
         let local = Rect::new(0, 0, clip.width, clip.height);
-        let ink = Canvas::new(clip.width as u32, clip.height as u32);
+        let ink = Canvas::with_scale(clip.width as u32, clip.height as u32, s);
         let mut colour = false;
         let coverage = ink.ink_coverage(|c, white| {
             let (x, y) = (pen - clip.x, baseline - clip.y);
@@ -1997,10 +1998,10 @@ impl TextRenderer {
         });
         let all = canvas.bounds();
         canvas.blit_mask_over(
-            clip.x,
-            clip.y,
-            clip.width as usize,
-            clip.height as usize,
+            clip.x * s,
+            clip.y * s,
+            (clip.width * s) as usize,
+            (clip.height * s) as usize,
             &coverage,
             color,
             all,
