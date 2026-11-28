@@ -303,6 +303,27 @@ fn files_go_into_an_empty_zip() {
     assert_eq!(listing(&zip), vec![("one.txt".into(), Kind::File, 1)]);
 }
 
+/// Where the zip's end-of-central-directory record, with its comment, ends.
+fn eocd_end(zip: &Path) -> usize {
+    let bytes = std::fs::read(zip).expect("read");
+    let at = (bytes.windows(4).rposition(|w| w == b"PK\x05\x06")).expect("an end record");
+    let comment = u16::from_le_bytes([bytes[at + 20], bytes[at + 21]]);
+    at + 22 + usize::from(comment)
+}
+
+#[test]
+fn a_rewritten_zip_ends_at_its_end_of_central_directory() {
+    let dir = fresh(&[("a.txt", b"a"), ("b.txt", b"b")]);
+    let zip = dir.join("New.zip");
+    std::fs::write(&zip, zipwrite::EMPTY_ZIP).expect("write");
+    rewrite(&zip, &add(&dir.join("src"), &["a.txt", "b.txt"])).expect("added");
+    let len = std::fs::metadata(&zip).expect("stat").len();
+    assert_eq!(len as usize, eocd_end(&zip), "an add leaves no padding");
+    update(&zip, "a.txt", b"saved").expect("updated");
+    let len = std::fs::metadata(&zip).expect("stat").len();
+    assert_eq!(len as usize, eocd_end(&zip), "a save leaves no padding");
+}
+
 #[test]
 fn a_link_a_tar_and_too_much_are_refused_and_left_alone() {
     let dir = fresh(&[("a.txt", b"a")]);
