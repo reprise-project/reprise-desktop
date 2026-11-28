@@ -412,12 +412,14 @@ impl Explorer {
         )
     }
 
-    /// The bar as drawn: the part whose menu is open held.
+    /// The bar as drawn: the part whose menu is open held, the keyboard's part only while the
+    /// window holds the keyboard.
     pub fn cmdbar_shown(&self) -> Commandbar {
         Commandbar {
             pressed: (self.popup.as_ref())
                 .and_then(|p| p.from_bar)
                 .or(self.cmdbar.pressed),
+            focus: self.cmdbar.focus.filter(|_| self.keyboard),
             ..self.cmdbar.clone()
         }
     }

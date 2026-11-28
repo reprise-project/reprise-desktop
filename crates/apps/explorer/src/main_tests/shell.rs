@@ -655,3 +655,75 @@ fn the_navigation_divider_pins_light_and_dark_at_scale_1_and_2() {
     let path = reprisekit::crate_dir!().join("tests/pins/navpane_divider.txt");
     reprisekit::pins::check_file(&path, &got);
 }
+
+#[test]
+fn the_command_bar_draws_the_keyboards_command_only_while_it_holds_the_keyboard() {
+    reprisekit::pins::fonts();
+    let tab = || Event::Key(key(keysym::TAB, None, false));
+    for style in reprisekit::glass::Style::ALL {
+        let mut ctx = glass_in(style, false);
+        let (_dir, mut ex) = in_folder(&mut ctx);
+        ex.event(MAIN, Event::Focus(true), &mut ctx);
+        let bar = |ex: &Explorer, ctx: &Ctx| {
+            let mut c = Canvas::with_scale(792, 573, 1);
+            window::draw(ex, &mut c, ctx);
+            fnv_in(&c, shell(ex, ctx).command)
+        };
+        let plain = bar(&ex, &ctx);
+        let into_bar = |ex: &mut Explorer, ctx: &mut Ctx| {
+            ex.run(Command::AddressFocus, ctx);
+            ex.event(MAIN, tab(), ctx);
+            ex.event(MAIN, tab(), ctx);
+            assert_eq!(ex.focus, Focus::Commands, "{style:?}");
+        };
+        into_bar(&mut ex, &mut ctx);
+        assert_ne!(
+            bar(&ex, &ctx),
+            plain,
+            "{style:?}: the keyboard's command shows"
+        );
+
+        ex.event(MAIN, tab(), &mut ctx);
+        assert_eq!(bar(&ex, &ctx), plain, "{style:?}: plain after Tab away");
+
+        into_bar(&mut ex, &mut ctx);
+        let view = shell(&ex, &ctx).view;
+        let (x, y) = (view.x + view.width / 2, view.bottom() - 10);
+        for input in [
+            PointerInput::Press {
+                x,
+                y,
+                button: BTN_LEFT,
+                time: 0,
+                mods: Default::default(),
+            },
+            PointerInput::Release {
+                x,
+                y,
+                button: BTN_LEFT,
+                mods: Default::default(),
+            },
+        ] {
+            ex.event(MAIN, Event::Pointer(input), &mut ctx);
+        }
+        assert_eq!(ex.focus, Focus::View, "{style:?}");
+        assert_eq!(ex.cmdbar.focus, None, "{style:?}");
+        assert_eq!(
+            bar(&ex, &ctx),
+            plain,
+            "{style:?}: plain after a click in the list"
+        );
+
+        into_bar(&mut ex, &mut ctx);
+        let reply = ex.event(MAIN, Event::Focus(false), &mut ctx);
+        assert!(
+            reply.redraw,
+            "{style:?}: the bar redraws as the window lets go"
+        );
+        assert_eq!(
+            bar(&ex, &ctx),
+            plain,
+            "{style:?}: plain in an inactive window"
+        );
+    }
+}
