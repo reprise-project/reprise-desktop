@@ -440,7 +440,7 @@ impl Explorer {
         if part == toolbar::Part::Drop {
             let at = (rect.x, rect.bottom());
             let menu = match id {
-                toolbar::VIEWS => menus::views_menu(self.sv.mode),
+                toolbar::VIEWS => menus::views_menu(self.sv.mode, &menus::no_glyphs),
                 toolbar::BACK => {
                     let mut m = Menu::default();
                     for (title, cmd) in self.back_rows() {

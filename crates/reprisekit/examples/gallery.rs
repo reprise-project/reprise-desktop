@@ -255,6 +255,10 @@ fn write_scale(n: i32) {
         &format!("reprisekit-gallery-command-bar@{}.png", n.max(1)),
     );
     write_preview(
+        || gallery_commandbar::render_menus(n.max(1)),
+        &format!("reprisekit-gallery-command-menus@{}.png", n.max(1)),
+    );
+    write_preview(
         || gallery_rename::render(n.max(1)),
         &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
     );
@@ -637,6 +641,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
     write_preview(
         || gallery_commandbar::render(1),
         "reprisekit-gallery-command-bar@1.png",
+    );
+    write_preview(
+        || gallery_commandbar::render_menus(1),
+        "reprisekit-gallery-command-menus@1.png",
     );
     write_preview(
         || gallery_rename::render(1),

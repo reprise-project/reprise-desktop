@@ -172,7 +172,7 @@ fn the_current_mode_is_the_bulleted_row() {
 
 #[test]
 fn the_views_drop_bullets_the_same_row() {
-    let m = views_menu(Mode::List);
+    let m = views_menu(Mode::List, &no_glyphs);
     assert_eq!(m.items().len(), 5);
     assert_eq!(m.command(&[3]), Command::Mode(Mode::List));
     let MenuItem::Entry { checked, .. } = &m.items()[3] else {
@@ -1215,7 +1215,7 @@ fn no_two_rows_of_a_menu_share_an_access_key() {
             &mut found,
         );
         shared_keys(
-            &organize_menu(s).tree(),
+            &organize_menu(s, &no_glyphs).tree(),
             &format!("{n} organize"),
             &mut found,
         );
@@ -1237,7 +1237,11 @@ fn no_two_rows_of_a_menu_share_an_access_key() {
             shared_keys(&m.tree(), &format!("tree {bin} {pinned:?}"), &mut found);
         }
     }
-    shared_keys(&views_menu(Mode::Icons).tree(), "views", &mut found);
+    shared_keys(
+        &views_menu(Mode::Icons, &no_glyphs).tree(),
+        "views",
+        &mut found,
+    );
     let drop = drop_menu(DropOp::Move, repriseapp::Actions::ALL);
     shared_keys(&drop.tree(), "drop", &mut found);
     assert!(
@@ -1275,4 +1279,64 @@ fn a_compressed_folder_of_a_zip_that_takes_files_pastes_and_makes_new_items() {
     };
     assert!(!enabled_by_label(background_menu(&shut).items(), "Paste"));
     assert!(!enabled_by_label(background_menu(&shut).items(), "New"));
+}
+
+/// The rows `m` gives an icon, by label, submenu rows included.
+fn worn(m: &Menu) -> Vec<String> {
+    let tree = m.tree();
+    let mut out = Vec::new();
+    for (i, item) in m.items().iter().enumerate() {
+        if let MenuItem::Entry {
+            label,
+            icon: Some(_),
+            ..
+        } = item
+        {
+            out.push(label.replace('&', ""));
+        }
+        if let Some(sub) = tree.child(i) {
+            for item in sub.items() {
+                if let MenuItem::Entry {
+                    label,
+                    icon: Some(_),
+                    ..
+                } = item
+                {
+                    out.push(format!("> {}", label.replace('&', "")));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn some_glyph(_: CmdGlyph) -> Option<Canvas> {
+    Some(Canvas::new(16, 16))
+}
+
+#[test]
+fn organize_puts_glyphs_on_the_clipboard_rows_layout_delete_and_the_hidden_panes() {
+    let state = MenuState {
+        layout: [false, false, true],
+        ..MenuState::default()
+    };
+    assert_eq!(
+        worn(&organize_menu(&state, &some_glyph)),
+        ["Cut", "Copy", "Paste", "Layout", "> Details pane", "Delete"],
+        "the shown navigation pane keeps its check in place of a glyph"
+    );
+    assert_eq!(
+        worn(&organize_menu(&state, &no_glyphs)),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn every_views_row_wears_its_glyph_and_the_current_one_stays_checked() {
+    let m = views_menu(Mode::Details, &some_glyph);
+    assert_eq!(worn(&m).len(), 5);
+    let MenuItem::Entry { checked, .. } = &m.items()[4] else {
+        panic!("not an entry");
+    };
+    assert!(checked, "Details is the current mode");
 }

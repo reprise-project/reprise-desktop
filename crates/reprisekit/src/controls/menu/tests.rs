@@ -2785,3 +2785,73 @@ fn a_menu_fitted_for_scale_2_draws_every_label_whole_there() {
         }
     });
 }
+
+/// Glass rows wearing glyphs in the gutter, lit, greyed, and checked (the glyph in the check's
+/// box), with a plain checked row, in light and dark at scale 1 and 2.
+#[test]
+fn glass_icon_rows_pin_in_light_and_dark_at_scale_1_and_2() {
+    use crate::art::cmdglyph::{self, CmdGlyph};
+    crate::pins::fonts();
+    let mut got = Vec::new();
+    for mode in crate::glass::Mode::ALL {
+        let g = crate::glass::Settings {
+            mode,
+            ..Default::default()
+        };
+        let base = crate::interfaces::theme_with(
+            crate::interface::Interface::Glass,
+            Default::default(),
+            false,
+            &g,
+        );
+        let text = TextRenderer::load(&base.fonts);
+        for s in [1, 2] {
+            let theme = base.scaled(s);
+            let glyph = |c| Some(cmdglyph::canvas(c, 16, s).at_scale(1));
+            let items = vec![
+                MenuItem::entry("Cut").icon(glyph(CmdGlyph::Cut)),
+                MenuItem::entry("Paste")
+                    .icon(glyph(CmdGlyph::Paste))
+                    .enabled(false),
+                MenuItem::entry("Details")
+                    .icon(glyph(CmdGlyph::Details))
+                    .checked(true)
+                    .radio(true),
+                MenuItem::entry("Navigation pane").checked(true),
+                MenuItem::entry("Delete").icon(glyph(CmdGlyph::Delete)),
+            ];
+            let style = MenuStyle {
+                width: 180,
+                ..MenuStyle::context(&base, ContextBitmaps::Icons)
+            };
+            let l = MenuLayout::compute_styled(&style, &items, usize::MAX).scaled(s);
+            for lit in [None, Some(0), Some(2)] {
+                let mut c = Canvas::new(l.width as u32, l.height as u32);
+                draw_menu(&mut c, &theme, &text, &l, &items, lit, "", false);
+                got.push((format!("{mode:?} {s} lit {lit:?}"), crate::pins::fnv(&c)));
+                if lit.is_none() {
+                    let (cut, details) = (l.rows[0], l.rows[2]);
+                    let at = |r: Rect| (r.x + l.icon_x + 8 * s, r.y + r.height / 2);
+                    let mut gc = Canvas::new(l.width as u32, l.height as u32);
+                    let bare = vec![MenuItem::entry("Cut"); items.len()];
+                    draw_menu(&mut gc, &theme, &text, &l, &bare, None, "", false);
+                    let differs = |r: Rect| {
+                        let (x, y) = at(r);
+                        (x - 6 * s..x + 6 * s).any(|x| c.get(x, y) != gc.get(x, y))
+                    };
+                    assert!(
+                        differs(cut),
+                        "{mode:?} {s}: the glyph is drawn in the gutter"
+                    );
+                    let corner = (details.x + details.height - 2 * s, details.bottom() - 2 * s);
+                    assert_ne!(
+                        c.get(corner.0, corner.1),
+                        gc.get(corner.0, corner.1),
+                        "{mode:?} {s}: a checked row's glyph sits in the check's box"
+                    );
+                }
+            }
+        }
+    }
+    crate::pins::check("menu/glass_icon_rows", &got);
+}

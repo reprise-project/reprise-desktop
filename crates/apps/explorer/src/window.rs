@@ -816,6 +816,8 @@ pub struct Popup {
     chain: menu::PopupMenu,
     /// The row icons it wears stand-ins for ([`Popup::land_icons`]).
     waits: IconWaits,
+    /// Icon names of rows that carry their own, by command, tried in this order.
+    named: Vec<(Command, Vec<String>)>,
     /// The command bar part that opened it, drawn held while it is open.
     pub(crate) from_bar: Option<reprisekit::controls::commandbar::Hit>,
     /// Requested origin.
@@ -834,6 +836,7 @@ impl Popup {
             tree,
             chain,
             waits: IconWaits::default(),
+            named: Vec::new(),
             from_bar: None,
             #[cfg(test)]
             at,
@@ -847,6 +850,15 @@ impl Popup {
     /// The menu's rows wear stand-ins for the icons `waits` waits on.
     pub fn waiting(self, waits: IconWaits) -> Popup {
         Popup { waits, ..self }
+    }
+
+    /// [`Popup::waiting`], each command in `named` wearing the first of its names that lands.
+    pub fn named(self, waits: IconWaits, named: Vec<(Command, Vec<String>)>) -> Popup {
+        Popup {
+            waits,
+            named,
+            ..self
+        }
     }
 
     pub fn for_bar(self, part: reprisekit::controls::commandbar::Hit) -> Popup {
@@ -869,7 +881,12 @@ impl Popup {
             return false;
         }
         let mut waits = IconWaits::default();
+        let named = &self.named;
         (self.menu).wear_icons(&mut |cmd| {
+            if let Some((_, own)) = named.iter().find(|(c, _)| c == cmd) {
+                let own: Vec<&str> = own.iter().map(String::as_str).collect();
+                return Some(waits.first(icons, &own, px));
+            }
             let names = names(cmd);
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             let names = icons.rank(&names);
@@ -879,6 +896,14 @@ impl Popup {
         self.tree = self.menu.tree();
         self.chain.wear_icons(&self.tree);
         true
+    }
+
+    /// The icon names the row running `cmd` waits on, when it carries its own.
+    #[cfg(test)]
+    pub fn named_icons(&self, cmd: &Command) -> Option<&[String]> {
+        (self.named.iter())
+            .find(|(c, _)| c == cmd)
+            .map(|(_, n)| &n[..])
     }
 
     #[cfg(test)]

@@ -11,6 +11,7 @@ use crate::favorites::RowIcon;
 use crate::place::Place;
 use reprisefs::ops::DropOp;
 use reprisefs::program::{Program, ScriptOpen};
+use reprisekit::art::cmdglyph::CmdGlyph;
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::menubar::Bar;
 use reprisekit::controls::shellview::Mode;
@@ -295,27 +296,43 @@ fn toolbars_menu(state: &MenuState) -> Menu {
     m
 }
 
-/// Layout's three panes under Glass, View's and Organize's.
-fn layout_menu(state: &MenuState) -> Menu {
+/// The glyph a row wears for a command no theme icon stands for, at the menu's icon size; none
+/// where the menu draws without them.
+pub type Glyphs<'a> = &'a dyn Fn(CmdGlyph) -> Option<Canvas>;
+
+pub fn no_glyphs(_: CmdGlyph) -> Option<Canvas> {
+    None
+}
+
+/// Layout's three panes under Glass, View's and Organize's. A pane's row wears its glyph while
+/// the pane is hidden and the check while it shows.
+fn layout_menu(state: &MenuState, glyph: Glyphs) -> Menu {
     let mut layout = Menu::default();
-    for (label, part, on) in [
+    for (label, part, on, g) in [
         (
             tr!("organize-menu-bar"),
             LayoutPart::MenuBar,
             state.layout[0],
+            None,
         ),
         (
             tr!("organize-details-pane"),
             LayoutPart::DetailsPane,
             state.layout[1],
+            Some(CmdGlyph::DetailsPane),
         ),
         (
             tr!("organize-navigation-pane"),
             LayoutPart::NavPane,
             state.layout[2],
+            Some(CmdGlyph::NavPane),
         ),
     ] {
-        layout.row(check(label, true, on), Command::ToggleLayout(part));
+        let icon = g.filter(|_| !on).and_then(glyph);
+        layout.row(
+            with_icon(check(label, true, on), icon),
+            Command::ToggleLayout(part),
+        );
     }
     layout
 }
@@ -564,7 +581,10 @@ pub(crate) fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
 
     let mut view = Menu::default();
     if state.shell {
-        view.sub(row(tr!("organize-layout"), true), layout_menu(state));
+        view.sub(
+            row(tr!("organize-layout"), true),
+            layout_menu(state, &no_glyphs),
+        );
     } else {
         view.sub(row(tr!("menu-bar-toolbars"), true), toolbars_menu(state));
         view.row(
@@ -671,21 +691,35 @@ pub fn command_for(title: usize, path: &[usize], state: &MenuState) -> Command {
 }
 
 /// The command bar's Organize: the Edit and File rows a selection takes, Layout's three panes and
-/// the folder options, greyed for `state` as the menu bar's are.
-pub fn organize_menu(state: &MenuState) -> Menu {
+/// the folder options, greyed for `state` as the menu bar's are. Cut, Copy, Paste, Layout and
+/// Delete wear their glyphs.
+pub fn organize_menu(state: &MenuState, glyph: Glyphs) -> Menu {
     let sel = state.selection > 0;
     let files = state.selection > state.shell_rows;
     let writable = files && !state.read_only;
     let copyable = files && state.bin.is_none();
     let pasteable = (state.can_paste || state.can_paste_image) && !state.read_only;
+    let worn = |item: MenuItem, g: CmdGlyph| with_icon(item, glyph(g));
     let mut m = Menu::default();
-    m.row(keyed(tr!("menu-bar-cut"), writable, "Ctrl+X"), Command::Cut);
     m.row(
-        keyed(tr!("menu-bar-copy"), copyable, "Ctrl+C"),
+        worn(
+            keyed(tr!("menu-bar-cut"), writable, "Ctrl+X"),
+            CmdGlyph::Cut,
+        ),
+        Command::Cut,
+    );
+    m.row(
+        worn(
+            keyed(tr!("menu-bar-copy"), copyable, "Ctrl+C"),
+            CmdGlyph::Copy,
+        ),
         Command::Copy,
     );
     m.row(
-        keyed(tr!("menu-bar-paste"), pasteable, "Ctrl+V"),
+        worn(
+            keyed(tr!("menu-bar-paste"), pasteable, "Ctrl+V"),
+            CmdGlyph::Paste,
+        ),
         Command::Paste,
     );
     m.row(undo_row(state), Command::Undo);
@@ -695,7 +729,10 @@ pub fn organize_menu(state: &MenuState) -> Menu {
         Command::SelectAll,
     );
     m.sep();
-    m.sub(row(tr!("organize-layout"), true), layout_menu(state));
+    m.sub(
+        worn(row(tr!("organize-layout"), true), CmdGlyph::Layout),
+        layout_menu(state, glyph),
+    );
     m.row(
         row(tr!("organize-folder-and-search-options"), true),
         Command::FolderOptions,
@@ -706,7 +743,7 @@ pub fn organize_menu(state: &MenuState) -> Menu {
         None => (writable, false),
     };
     m.row(
-        row(tr!("menu-bar-delete"), delete),
+        worn(row(tr!("menu-bar-delete"), delete), CmdGlyph::Delete),
         Command::Delete { erase },
     );
     m.row(
@@ -735,8 +772,25 @@ pub fn open_with_items(open_with: &[(String, Option<Canvas>)]) -> Menu {
     open_with_menu(open_with)
 }
 
-pub fn views_menu(mode: Mode) -> Menu {
-    modes_menu(mode)
+/// The Views drop: the modes as one radio group, each row wearing its mode's glyph, the current
+/// one's in the check's box.
+pub fn views_menu(mode: Mode, glyph: Glyphs) -> Menu {
+    let mut m = modes_menu(mode);
+    m.wear_icons(&mut |cmd| match cmd {
+        Command::Mode(want) => Some(glyph(mode_glyph(*want))),
+        _ => None,
+    });
+    m
+}
+
+fn mode_glyph(mode: Mode) -> CmdGlyph {
+    match mode {
+        Mode::Thumbnails => CmdGlyph::Thumbnails,
+        Mode::Tiles => CmdGlyph::Tiles,
+        Mode::Icons => CmdGlyph::Icons,
+        Mode::List => CmdGlyph::List,
+        Mode::Details => CmdGlyph::Details,
+    }
 }
 
 /// What an entry in the view is, for its right-click menu.
