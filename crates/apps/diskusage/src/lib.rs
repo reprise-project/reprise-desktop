@@ -29,13 +29,14 @@ use reprisekit::controls::dlgtemplate::{self, FOLDER_TEXT_H, Template};
 use reprisekit::controls::filedlg::{self, DlgMode, FileDlg};
 use reprisekit::controls::form::{self, Form, Item};
 use reprisekit::controls::hosted::Hosted;
-use reprisekit::controls::listview::{Column, Rows};
+use reprisekit::controls::listview::{self, Column, Rows};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::msgbox::Fields;
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
+use reprisekit::theme::TextUnits;
 use reprisekit::tr;
 use std::borrow::Cow;
 use std::ffi::OsString;
@@ -83,6 +84,8 @@ struct Lines {
     folder: Option<Canvas>,
     file: Option<Canvas>,
     drive: Option<Canvas>,
+    /// The edge the icons were fetched at; 0 before the first fetch.
+    icon_px: i32,
 }
 
 impl Rows for Lines {
@@ -95,6 +98,9 @@ impl Rows for Lines {
             Kind::Mount => self.drive.as_ref(),
             _ => self.file.as_ref(),
         }
+    }
+    fn icon_slot(&self, u: TextUnits) -> i32 {
+        listview::icon_px(u)
     }
     fn cell(&self, row: usize, col: usize) -> Cow<'_, str> {
         Cow::Owned(self.lines.get(row).map(|l| l.cell(col)).unwrap_or_default())
@@ -817,10 +823,14 @@ impl DiskUsage {
 
     fn load_icons(&mut self, ctx: &mut Ctx) {
         let rows = &mut self.list.view.rows;
-        if rows.folder.is_none() {
-            rows.folder = ctx.icons.get("folder", 16);
-            rows.file = ctx.icons.get("text-x-generic", 16);
-            rows.drive = ctx.icons.get("drive-harddisk", 16);
+        let px = listview::icon_px(ctx.theme.text);
+        if rows.icon_px != px {
+            rows.icon_px = px;
+            rows.folder = ctx.icons.get("folder", px);
+            rows.file = ctx.icons.get("text-x-generic", px);
+            rows.drive = ctx.icons.get("drive-harddisk", px);
+        }
+        if self.trash_icon.is_none() {
             self.trash_icon = ctx.icons.get("user-trash-full", 32);
             self.warning_icon = ctx.icons.get("dialog-warning", 32);
             self.info_icon = ctx.icons.get("dialog-information", 32);
