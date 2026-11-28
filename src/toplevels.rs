@@ -441,19 +441,22 @@ impl State {
                 self.set_fullscreen(w, false);
             }
             R::SetFullscreen { .. } | R::UnsetFullscreen => {}
-            // A hidden tab reads as minimized; bringing it back shows it in
-            // its group's frame.
-            R::Activate { .. } | R::UnsetMinimized => {
-                if self.win(w).is_some_and(|x| x.minimized && !x.tab_hidden) {
-                    self.set_minimized(w, false);
-                } else {
-                    self.focus_window(w);
-                }
-                self.redraw_taskbars();
-            }
+            R::Activate { .. } | R::UnsetMinimized => self.activate_listed(w),
             R::Close => self.close(w),
             _ => {}
         }
+    }
+
+    /// A taskbar client's or Task Manager's activate on window `w`: a minimized one is restored,
+    /// any other focused. A hidden tab reads as minimized; bringing it back shows it in its group's
+    /// frame.
+    pub(crate) fn activate_listed(&mut self, w: WindowId) {
+        if self.win(w).is_some_and(|x| x.minimized && !x.tab_hidden) {
+            self.set_minimized(w, false);
+        } else {
+            self.focus_window(w);
+        }
+        self.redraw_taskbars();
     }
 }
 

@@ -6,6 +6,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 
 use crate::sample::{Sampler, Snapshot};
+use reprisebus::tray::WindowAct;
 
 pub enum Cmd {
     /// Sample every this long, or (None) not at all.
@@ -116,13 +117,13 @@ pub fn new_task() {
     });
 }
 
-/// End Task on one window off the event loop: it is asked to close as its X button does, by
-/// the compositor's id for it, since two windows may share an app id and a title.
-pub fn close_window(w: reprisebus::tray::AppWindow) {
-    std::thread::spawn(move || match reprisebus::tray::close_window(w.id) {
+/// Switch To, Minimize, Maximize or End Task on one window off the event loop, by the
+/// compositor's id for it, since two windows may share an app id and a title.
+pub fn on_window(w: reprisebus::tray::AppWindow, act: WindowAct) {
+    std::thread::spawn(move || match reprisebus::tray::window_act(w.id, act) {
         Ok(true) => {}
-        Ok(false) => log::info!("End Task: {:?} of {} is gone", w.title, w.app_id),
-        Err(e) => log::warn!("End Task {}: {e}", w.app_id),
+        Ok(false) => log::info!("{act:?}: {:?} of {} is gone", w.title, w.app_id),
+        Err(e) => log::warn!("{act:?} {}: {e}", w.app_id),
     });
 }
 
