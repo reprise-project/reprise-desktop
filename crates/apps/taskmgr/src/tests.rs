@@ -853,6 +853,19 @@ fn a_window_whose_client_pid_names_another_process_since_is_not_offered_end_now(
 }
 
 #[test]
+fn a_window_whose_client_was_gone_when_first_seen_is_never_offered_end_now() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    let mut gone = lone_snapshot(900, vec![calculator()]);
+    gone.procs.pop();
+    t.take(gone, &mut ctx);
+    assert!(
+        end_now_on_calculator(&mut t, &mut ctx, 900, 900).is_none(),
+        "a process given the dead client's pid since is not the window's"
+    );
+}
+
+#[test]
 fn a_window_in_no_app_scope_is_offered_end_now_only_for_the_users_own_process_outside_services() {
     let ask = |pid: u32, uid: u32, service: bool| {
         let mut ctx = ctx();

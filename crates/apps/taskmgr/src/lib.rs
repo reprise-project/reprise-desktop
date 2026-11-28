@@ -320,8 +320,9 @@ pub struct TaskMgr {
     open_process: fn(i32, u64) -> std::io::Result<OwnedFd>,
     /// Whether a process runs as a service ([`worker::in_service`]).
     in_service: fn(i32) -> bool,
-    /// Each listed window's client pid and start time, as first sampled with the window up.
-    clients: HashMap<u64, (i32, u64)>,
+    /// Each listed window's client pid and start time, as first sampled with the window up;
+    /// None when no live process had that pid then.
+    clients: HashMap<u64, Option<(i32, u64)>>,
     /// The program file a process runs ([`worker::exe_of`]).
     exe_of: fn(i32) -> Option<PathBuf>,
     entries: Arc<Vec<AppEntry>>,
@@ -779,9 +780,8 @@ impl TaskMgr {
                 .retain(|id, _| windows.iter().any(|w| w.id == *id));
             for w in windows {
                 let pid = i32::try_from(w.pid).unwrap_or(0);
-                if let Some(&start) = self.starts.get(&pid).filter(|_| pid > 0) {
-                    self.clients.entry(w.id).or_insert((pid, start));
-                }
+                let start = self.starts.get(&pid).filter(|_| pid > 0);
+                (self.clients.entry(w.id)).or_insert(start.map(|&s| (pid, s)));
             }
         }
         self.snap = s;
@@ -993,7 +993,7 @@ impl TaskMgr {
     /// first sampled with the window up, when that is still the same process, one of the user's,
     /// and no service's ([`worker::in_service`]).
     fn client_of(&self, w: &AppWindow) -> Option<Target> {
-        let &(pid, start) = self.clients.get(&w.id)?;
+        let &(pid, start) = self.clients.get(&w.id)?.as_ref()?;
         let p = (self.snap.procs.iter()).find(|p| p.pid == pid && p.start == start)?;
         (i32::try_from(w.pid) == Ok(pid) && p.uid == self.uid && !(self.in_service)(pid)).then_some(
             Target::Client {

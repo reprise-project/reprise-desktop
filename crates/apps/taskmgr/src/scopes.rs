@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn a_process_in_a_service_unit_is_a_services() {
+    fn a_process_in_a_service_unit_is_a_service() {
         let at = |path: &str| is_service(&format!("0::{path}\n"));
         assert!(at(
             "/user.slice/user-1000.slice/user@1000.service/app.slice/xdg-desktop-portal-gtk.service"
