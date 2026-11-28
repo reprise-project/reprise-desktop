@@ -801,6 +801,7 @@ impl Explorer {
         if op == DropOp::Move && self.in_place(&paths, dir, ctx) {
             return reply;
         }
+        self.dropped_at = Some(std::time::Instant::now());
         let put = self.drop_into(&paths, dir, op, ctx);
         Reply {
             redraw: reply.redraw || put.redraw,

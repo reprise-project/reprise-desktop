@@ -394,6 +394,10 @@ fn a_drop_on_the_background_lands_in_the_folder_shown() {
     assert!(dir.path().join("far.txt").is_file());
     assert!(src.is_file());
     assert_eq!(selected(&ex), ["far.txt"]);
+    assert!(
+        ex.dropped_at.is_none(),
+        "a drop that asked nothing leaves no box to come up"
+    );
 }
 
 /// A drop goes through Paste's path: a taken name asks with the replace prompt first.
@@ -411,6 +415,38 @@ fn a_drop_onto_a_name_already_taken_asks_to_replace() {
     ));
     let kept = std::fs::read_to_string(dir.path().join("Box/a.txt")).expect("read");
     assert_eq!(kept, "older", "nothing written yet");
+}
+
+/// The replace prompt a drop raises asks for the keyboard, which is on the drag's source window.
+#[test]
+fn the_replace_prompt_of_a_drop_asks_to_come_up() {
+    let mut ctx = test_ctx();
+    let (dir, mut ex) = explorer(&mut ctx);
+    let other = tempfile::tempdir().expect("a temp dir");
+    let src = other.path().join("a.txt");
+    std::fs::write(&src, "newer").expect("write");
+
+    let bg = background(&ex, &ctx);
+    let dropped = ex.drag_drop(
+        bg,
+        Dropped::Files(vec![src]),
+        DragAction::Copy,
+        Actions::ALL,
+        &mut ctx,
+    );
+    let finished = ex.finish_puts(&mut ctx);
+    assert!(matches!(
+        ex.dialog(),
+        Some(crate::dialogs::Dialog::Replace(_))
+    ));
+    let win = ex.dialog_win();
+    assert!(
+        [dropped.raise, finished.raise].contains(&Some(win)),
+        "the prompt asks to come up"
+    );
+    assert!(ex.dropped_at.is_none(), "the drop's ask is spent");
+    let kept = std::fs::read_to_string(dir.path().join("a.txt")).expect("read");
+    assert_eq!(kept, "hello", "nothing written yet");
 }
 
 /// A folder cannot be dropped into its own tree: `reprisefs` refuses and Explorer says so, as Paste does.

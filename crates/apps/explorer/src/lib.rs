@@ -419,6 +419,9 @@ pub struct Explorer {
     pub drag: Option<drag::Drag>,
     pub incoming: Option<drag::Incoming>,
     pub pending_drop: Option<drag::PendingDrop>,
+    /// When a drop's put started, until it asks nothing more: a box it raises within
+    /// [`dialogs::DROP_RAISE`] asks for the keyboard, which the compositor grants a drop target.
+    pub(crate) dropped_at: Option<std::time::Instant>,
     /// What the drag's files are to each folder it rested on ([`drag::Facts`]).
     pub(crate) drop_facts: Vec<drag::FactsRead>,
     /// The status bar's text for a selected shortcut, read late or still being read.
@@ -749,6 +752,7 @@ impl Explorer {
             drag: None,
             incoming: None,
             pending_drop: None,
+            dropped_at: None,
             drop_facts: Vec::new(),
             link_status: None,
             put: None,
