@@ -12,6 +12,8 @@
 
 #[path = "gallery_checksums/mod.rs"]
 mod gallery_checksums;
+#[path = "gallery_crumbs/mod.rs"]
+mod gallery_crumbs;
 #[path = "gallery_doctabs/mod.rs"]
 mod gallery_doctabs;
 #[path = "gallery_fingerprints/mod.rs"]
@@ -221,6 +223,10 @@ fn write_scale(n: i32) {
     write_preview(
         || gallery_paint::render(n.max(1)),
         &format!("reprisekit-gallery-paint@{}.png", n.max(1)),
+    );
+    write_preview(
+        || gallery_crumbs::render(n.max(1)),
+        &format!("reprisekit-gallery-breadcrumb@{}.png", n.max(1)),
     );
     write_preview(
         || gallery_doctabs::render(n.max(1)),
@@ -594,6 +600,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         "reprisekit-gallery-stats-panel.png",
     );
     write_volume_popups(with_blue, 1);
+    write_preview(
+        || gallery_crumbs::render(1),
+        "reprisekit-gallery-breadcrumb@1.png",
+    );
     write_preview(
         || gallery_doctabs::render(1),
         "reprisekit-gallery-doc-tabs@1.png",

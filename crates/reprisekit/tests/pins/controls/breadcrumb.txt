@@ -1,0 +1,40 @@
+Light rest 1 80c6178da6a74b49
+Light rest 2 962b449c46a2abf7
+Light field hot 1 750f1d1af03b4e09
+Light field hot 2 61ca815e1d9485d8
+Light segment hot 1 3c9e66132b4daf79
+Light segment hot 2 f380090fb53fb33d
+Light segment pressed 1 c4386f6f8ae0cbfe
+Light segment pressed 2 1f70be439a934b8d
+Light chevron hot 1 09a391fde56ae284
+Light chevron hot 2 638f76718a06f143
+Light chevron open 1 9c787ff79111e8b0
+Light chevron open 2 dc7816d78a00dd22
+Light refresh hot 1 070189c52386f823
+Light refresh hot 2 d3e6c559a3b3eb9a
+Light history hot 1 7b41f0f5c3c56c33
+Light history hot 2 40d5b912879dce99
+Light editing 1 9a2b5f572178cf4f
+Light editing 2 bfb4feee974f9e99
+Light overflow 1 5bacf8f9d3ee6b46
+Light overflow 2 a6bd3754df8d16d9
+Dark rest 1 d375ea293fd6b929
+Dark rest 2 1d9151a934976b37
+Dark field hot 1 bb82b7752412b551
+Dark field hot 2 8c481df0d7f08974
+Dark segment hot 1 7bb9ff62a8b056b8
+Dark segment hot 2 9ec0087122d9e0b4
+Dark segment pressed 1 4c2b6082b3dcde97
+Dark segment pressed 2 1f29a4480cd63043
+Dark chevron hot 1 5d9b6ba57da1bc76
+Dark chevron hot 2 1cf0d55ee7fec77f
+Dark chevron open 1 0ff341e875b915f5
+Dark chevron open 2 ea69173dedbd3c1f
+Dark refresh hot 1 8208d1e419b8dc70
+Dark refresh hot 2 47081f59c0f79c50
+Dark history hot 1 c6d9067d94d7ca48
+Dark history hot 2 ac3e27faa9dab416
+Dark editing 1 e25daa35856baad0
+Dark editing 2 f0c319274bdf6ccf
+Dark overflow 1 a3d2ac922efa1a7b
+Dark overflow 2 46a4fdd4e9b48765
