@@ -101,7 +101,10 @@ fn notifications_gather_on_their_own_page() {
         ]
     );
     for k in ["balloons", "do not disturb", "dnd", "quiet hours", "popups"] {
-        assert!(Page::Notifications.keywords().contains(&k), "{k}");
+        assert!(
+            Page::Notifications.keywords().contains(&k.to_string()),
+            "{k}"
+        );
     }
     assert_eq!(Page::named("notifications"), Some(Page::Notifications));
 }
@@ -430,8 +433,8 @@ fn privacy_holds_app_permissions_history_and_the_sharing_border() {
         "remote control",
     ] {
         assert!(Page::Privacy.find(k).is_some(), "{k}");
-        assert!(Page::Privacy.keywords().contains(&k), "{k}");
-        assert!(!Page::Advanced.keywords().contains(&k), "{k}");
+        assert!(Page::Privacy.keywords().contains(&k.to_string()), "{k}");
+        assert!(!Page::Advanced.keywords().contains(&k.to_string()), "{k}");
     }
     let s = built();
     let p = Page::Privacy;

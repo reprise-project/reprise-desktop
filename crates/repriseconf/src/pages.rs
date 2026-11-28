@@ -254,325 +254,55 @@ impl Page {
         }
     }
 
-    /// The words a search finds the page by besides its label, lower case.
-    pub fn keywords(self) -> &'static [&'static str] {
+    /// The words a search finds the page by besides its label, lower case. Formatted once per
+    /// process, as its catalog loads once.
+    pub fn keywords(self) -> &'static [String] {
+        static KEYWORDS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
+        let all = KEYWORDS.get_or_init(|| {
+            Page::all()
+                .map(|p| split_keywords(&p.keywords_text()))
+                .collect()
+        });
+        &all[self.index()]
+    }
+
+    fn keywords_text(self) -> String {
         match self {
-            Page::Appearance => &[
-                "theme",
-                "interface",
-                "classic",
-                "blue",
-                "glass",
-                "colors",
-                "colours",
-                "scheme",
-                "dark mode",
-                "transparency",
-                "blur",
-                "high contrast",
-            ],
-            Page::Background => &[
-                "wallpaper",
-                "picture",
-                "slideshow",
-                "extensions",
-                "widgets",
-                "water",
-                "desktop icons",
-            ],
-            Page::ScreenSaverLock => &[
-                "screensaver",
-                "starfield",
-                "mystify",
-                "photos",
-                "idle",
-                "away",
-            ],
-            Page::Display => &[
-                "monitor",
-                "screen",
-                "resolution",
-                "refresh rate",
-                "scale",
-                "scaling",
-                "dpi",
-                "vrr",
-                "variable refresh rate",
-                "adaptive sync",
-                "freesync",
-                "icc",
-                "colour profile",
-                "calibration",
-            ],
-            Page::NightLight => &[
-                "blue light",
-                "colour temperature",
-                "color temperature",
-                "schedule",
-            ],
-            Page::FontsAndIcons => &[
-                "antialias",
-                "smoothing",
-                "icon theme",
-                "gtk",
-                "qt",
-                "window frames",
-                "title bar",
-            ],
-            Page::Effects => &["animations", "shadows", "menus"],
-            Page::Taskbar => &[
-                "tray",
-                "notification area",
-                "panel",
-                "auto-hide",
-                "autohide",
-                "peek",
-                "previews",
-                "multiple monitors",
-            ],
-            Page::StartMenu => &[
-                "pinned",
-                "quick launch",
-                "banner",
-                "places",
-                "recent items",
-                "frequent programs",
-            ],
-            Page::Search => &[
-                "launcher",
-                "run",
-                "localsearch",
-                "contents",
-                "search providers",
-            ],
-            Page::Switcher => &[
-                "alt tab",
-                "alt+tab",
-                "task switcher",
-                "overview",
-                "hot corner",
-                "3d",
-                "flip",
-            ],
-            Page::VirtualDesktops => &["workspaces"],
-            Page::WindowBehavior => &[
-                "windows",
-                "tiling",
-                "snap",
-                "snapping",
-                "layouts",
-                "tabs",
-                "tab groups",
-                "window position",
-                "placement",
-            ],
-            Page::WindowRules => &[
-                "app id",
-                "always open here",
-                "window size",
-                "window position",
-                "always on top",
-                "every desktop",
-                "open on desktop",
-                "maximized",
-                "full screen",
-                "tab group",
-            ],
-            Page::Keyboard => &[
-                "shortcuts",
-                "hotkeys",
-                "keybindings",
-                "keyboard layout",
-                "repeat",
-                "language",
-                "on-screen display",
-            ],
-            Page::Mouse => &[
-                "pointer speed",
-                "natural scrolling",
-                "scrolling",
-                "scroll speed",
-                "wheel",
-                "double-click",
-                "acceleration",
-                "middle click",
-            ],
-            Page::Touchpad => &[
-                "trackpad",
-                "clickpad",
-                "pointer speed",
-                "natural scrolling",
-                "scrolling",
-                "scroll speed",
-                "tapping",
-                "clicking",
-                "acceleration",
-                "middle click",
-                "external mouse",
-                "gestures",
-                "swipe",
-                "three fingers",
-                "four fingers",
-            ],
-            Page::Tablet => &["pen", "drawing tablet", "pad", "express keys", "wacom"],
-            Page::Thunderbolt => &["usb4", "dock", "egpu", "authorize", "bolt"],
-            Page::Cursor => &["pointers", "cursor theme", "large cursor"],
-            Page::TextKeys => &[
-                "accessibility",
-                "sticky keys",
-                "slow keys",
-                "bounce keys",
-                "text size",
-                "large text",
-                "a11y",
-            ],
-            Page::PointerAlerts => &[
-                "accessibility",
-                "mouse keys",
-                "pointer location",
-                "find the pointer",
-                "visual bell",
-                "visual alerts",
-                "flash",
-                "attention",
-                "deaf",
-                "hearing",
-            ],
-            Page::MagnifierFilters => &[
-                "vision",
-                "color",
-                "colour",
-                "grayscale",
-                "invert",
-                "colour blindness",
-                "color blindness",
-                "zoom",
-                "orca",
-                "speech",
-                "blind",
-            ],
-            Page::Sound => &[
-                "sounds",
-                "sound theme",
-                "bell",
-                "beep",
-                "volume",
-                "boost",
-                "louder",
-                "audio",
-                "speakers",
-                "microphone",
-                "headphones",
-            ],
-            Page::ScreenCapture => &[
-                "screenshots",
-                "screenshot files",
-                "screenshot format",
-                "screen recording",
-                "screencast",
-                "audio",
-                "video",
-                "codec",
-                "hevc",
-                "h.265",
-                "av1",
-                "bitrate",
-                "frame rate",
-                "keyframe",
-                "opus",
-                "flac",
-                "aac",
-                "jpeg xl",
-                "jxl",
-                "jpg",
-                "png",
-                "record microphone",
-            ],
-            Page::Notifications => &[
-                "balloons",
-                "notification sounds",
-                "do not disturb",
-                "dnd",
-                "quiet hours",
-                "popups",
-            ],
-            Page::Startup => &["autostart", "login", "session", "startup programs"],
-            Page::DefaultPrograms => &[
-                "browser",
-                "mail",
-                "terminal",
-                "scripts",
-                "open with",
-                "file types",
-            ],
-            Page::Network => &[
-                "airplane mode",
-                "flight mode",
-                "radios",
-                "rfkill",
-                "proxy server",
-                "pac",
-                "wpad",
-                "no_proxy",
-            ],
-            Page::RemoteDesktop => &["rdp", "remmina", "desktop sharing", "thumbprint"],
-            Page::Privacy => &[
-                "location",
-                "app permissions",
-                "screenshots",
-                "capture",
-                "run in background",
-                "clipboard",
-                "flatpak",
-                "recent files",
-                "history",
-                "screen sharing",
-                "share",
-                "remote control",
-            ],
-            Page::RegionLanguage => &[
-                "locale",
-                "translation",
-                "formats",
-                "date format",
-                "time format",
-                "numbers",
-                "currency",
-                "measurement",
-                "units",
-                "metric",
-                "paper size",
-                "first day of the week",
-                "login screen",
-                "new users",
-            ],
-            Page::LoginManager => &[
-                "login screen",
-                "greeter",
-                "autologin",
-                "automatic login",
-                "display manager",
-            ],
-            Page::Advanced => &[
-                "task manager",
-                "thumbnails",
-                "cache",
-                "free space",
-                "low disk space",
-                "turn off computer",
-                "shutdown",
-                "storage",
-            ],
-            Page::Backup => &[
-                "export",
-                "import",
-                "back up",
-                "transfer",
-                "move settings",
-                "gnome",
-                "plasma",
-                "kde",
-            ],
+            Page::Appearance => tr!("page-appearance-keywords"),
+            Page::Background => tr!("page-background-keywords"),
+            Page::ScreenSaverLock => tr!("page-screen-saver-lock-keywords"),
+            Page::Display => tr!("page-display-keywords"),
+            Page::NightLight => tr!("page-night-light-keywords"),
+            Page::FontsAndIcons => tr!("page-fonts-and-icons-keywords"),
+            Page::Effects => tr!("page-effects-keywords"),
+            Page::Taskbar => tr!("page-taskbar-keywords"),
+            Page::StartMenu => tr!("page-start-menu-keywords"),
+            Page::Search => tr!("page-search-keywords"),
+            Page::Switcher => tr!("page-switcher-keywords"),
+            Page::VirtualDesktops => tr!("page-virtual-desktops-keywords"),
+            Page::WindowBehavior => tr!("page-window-behavior-keywords"),
+            Page::WindowRules => tr!("page-window-rules-keywords"),
+            Page::Keyboard => tr!("page-keyboard-keywords"),
+            Page::Mouse => tr!("page-mouse-keywords"),
+            Page::Touchpad => tr!("page-touchpad-keywords"),
+            Page::Tablet => tr!("page-tablet-keywords"),
+            Page::Thunderbolt => tr!("page-thunderbolt-keywords"),
+            Page::Cursor => tr!("page-cursor-keywords"),
+            Page::TextKeys => tr!("page-text-keys-keywords"),
+            Page::PointerAlerts => tr!("page-pointer-alerts-keywords"),
+            Page::MagnifierFilters => tr!("page-magnifier-filters-keywords"),
+            Page::Sound => tr!("page-sound-keywords"),
+            Page::ScreenCapture => tr!("page-screen-capture-keywords"),
+            Page::Notifications => tr!("page-notifications-keywords"),
+            Page::Startup => tr!("page-startup-keywords"),
+            Page::DefaultPrograms => tr!("page-default-programs-keywords"),
+            Page::Network => tr!("page-network-keywords"),
+            Page::RemoteDesktop => tr!("page-remote-desktop-keywords"),
+            Page::Privacy => tr!("page-privacy-keywords"),
+            Page::RegionLanguage => tr!("page-region-language-keywords"),
+            Page::LoginManager => tr!("page-login-manager-keywords"),
+            Page::Advanced => tr!("page-advanced-keywords"),
+            Page::Backup => tr!("page-backup-keywords"),
         }
     }
 
@@ -597,12 +327,18 @@ impl Page {
     /// Matches when every word of `query` starts a word of the label, a keyword or a
     /// control label; a control's hit names the first control holding a word the page lacks.
     pub fn find(self, query: &str) -> Option<Hit> {
-        self.find_among(query, self.terms())
+        self.find_among(query, self.keywords(), self.terms())
     }
 
-    /// [`Page::find`] with the control labels `terms`.
-    fn find_among(self, query: &str, terms: &[(&'static str, String)]) -> Option<Hit> {
-        match find_by_name(query, &self.label(), self.keywords()) {
+    /// [`Page::find`] with `keywords` and the control labels `terms`.
+    fn find_among(
+        self,
+        query: &str,
+        keywords: &[String],
+        terms: &[(&'static str, String)],
+    ) -> Option<Hit> {
+        let keywords: Vec<&str> = keywords.iter().map(String::as_str).collect();
+        match find_by_name(query, &self.label(), &keywords) {
             Some(Hit::Keyword(_)) => return Some(Hit::Keyword(self.sole_control(query, terms))),
             Some(hit) => return Some(hit),
             None => {}
@@ -610,7 +346,7 @@ impl Page {
         let label = self.label();
         let page: Vec<&str> = [label.as_str()]
             .into_iter()
-            .chain(self.keywords().iter().copied())
+            .chain(keywords.iter().copied())
             .collect();
         let all: Vec<&str> = page
             .iter()
@@ -633,7 +369,8 @@ impl Page {
     /// The keyword `query` found the page by: the first holding every word the label lacks, else
     /// the first holding one; None when the label holds them all.
     pub fn keyword_for(self, query: &str) -> Option<&'static str> {
-        keyword_for(query, &self.label(), self.keywords())
+        let keywords: Vec<&'static str> = self.keywords().iter().map(String::as_str).collect();
+        keyword_for(query, &self.label(), &keywords)
     }
 
     /// Control `id`'s label as shown, without a trailing ":" or "...".
@@ -706,7 +443,7 @@ impl Program {
     }
 }
 
-fn keyword_for(query: &str, name: &str, keywords: &[&'static str]) -> Option<&'static str> {
+fn keyword_for<'k>(query: &str, name: &str, keywords: &[&'k str]) -> Option<&'k str> {
     let rest: Vec<&str> = (query.split_whitespace())
         .filter(|w| !word_starts(w, name))
         .collect();
@@ -717,6 +454,15 @@ fn keyword_for(query: &str, name: &str, keywords: &[&'static str]) -> Option<&'s
     (keywords.iter().copied())
         .find(|k| all_words(&joined, &[k]))
         .or_else(|| (keywords.iter().copied()).find(|k| rest.iter().any(|w| word_starts(w, k))))
+}
+
+/// The keywords in a `page-*-keywords` message: comma separated, each trimmed.
+fn split_keywords(text: &str) -> Vec<String> {
+    (text.split(','))
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 fn find_by_name(query: &str, name: &str, keywords: &[&str]) -> Option<Hit> {
@@ -815,7 +561,7 @@ mod tests {
     #[test]
     fn keywords_are_lower_case_and_no_page_repeats_its_label() {
         let words = Page::all()
-            .flat_map(|p| p.keywords().iter().map(move |k| (p.label(), *k)))
+            .flat_map(|p| p.keywords().iter().map(move |k| (p.label(), k.as_str())))
             .chain(
                 PROGRAMS
                     .iter()
@@ -957,11 +703,27 @@ mod tests {
         ]);
         let pseudo = terms::of(Page::NightLight, &|id, args| catalog.tr_args(id, args));
         let sun = Some(Hit::Control("nl_sun"));
-        assert_eq!(Page::NightLight.find_among("sunsét", &pseudo), sun);
-        assert_eq!(Page::NightLight.find_among("sunset", &pseudo), None);
+        let keywords = Page::NightLight.keywords();
+        let find = |q| Page::NightLight.find_among(q, keywords, &pseudo);
+        assert_eq!(find("sunsét"), sun);
+        assert_eq!(find("sunset"), None);
         assert_eq!(
             Page::NightLight.find("sunset"),
             sun,
+            "English draws English"
+        );
+    }
+
+    #[test]
+    fn a_page_is_found_by_its_translated_keyword_and_not_by_its_english_one() {
+        let pseudo = split_keywords(&Page::NightLight.keywords_text().replace('e', "é"));
+        let terms = Page::NightLight.terms();
+        let find = |q| Page::NightLight.find_among(q, &pseudo, terms);
+        assert_eq!(find("schédulé"), Some(Hit::Keyword(None)));
+        assert_eq!(find("schedule"), None);
+        assert_eq!(
+            Page::NightLight.find("schedule"),
+            Some(Hit::Keyword(None)),
             "English draws English"
         );
     }

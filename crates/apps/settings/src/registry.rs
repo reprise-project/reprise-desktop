@@ -814,7 +814,7 @@ mod tests {
                 let label = p.label();
                 let hay: Vec<&str> = [label.as_str()]
                     .into_iter()
-                    .chain(p.keywords().iter().copied())
+                    .chain(p.keywords().iter().map(String::as_str))
                     .chain(p.terms().iter().map(|(_, l)| l.as_str()))
                     .collect();
                 !UNSEARCHED_TITLES.contains(&t.as_str()) && !all_words(t, &hay)

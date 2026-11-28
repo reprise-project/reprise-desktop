@@ -682,7 +682,7 @@ fn taskbar_holds_its_height_slide_pictures_and_glow() {
             assert!(k.contains(&want.to_string()), "{i}: {want}");
         }
     }
-    assert!(Page::Taskbar.keywords().contains(&"previews"));
+    assert!(Page::Taskbar.keywords().contains(&"previews".to_string()));
 }
 
 #[test]
