@@ -74,6 +74,8 @@ pub struct Style {
     /// left of [`CaptionTitle::text_x`]. Unset, it starts at `text_x`.
     pub centred_title: bool,
     pub page: Option<PageInks>,
+    /// The UI font px the look's one-line rows are drawn for at 100% text.
+    pub text_px: u32,
     pub pane_inks: crate::startpanel::search::PaneInks,
     pub drop_list: Option<DropList>,
     pub balloon: Option<BalloonLook>,
@@ -226,6 +228,7 @@ impl Style {
             buttons_over_caption: false,
             centred_title: false,
             page: None,
+            text_px: crate::theme::FontConfig::default().size_px,
             pane_inks: crate::startpanel::search::PaneInks::LIGHT,
             drop_list: None,
             menu: None,
@@ -501,6 +504,11 @@ impl Style {
 
     pub fn with_max_title_from(mut self, t: Option<([Color; 2], Option<TitleGlow>)>) -> Style {
         self.max_title = t;
+        self
+    }
+
+    pub fn with_text_px(mut self, px: u32) -> Style {
+        self.text_px = px;
         self
     }
 

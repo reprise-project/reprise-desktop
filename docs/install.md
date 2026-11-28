@@ -220,6 +220,7 @@ Missing packages disable only their feature.
 - **fcitx5 or ibus:** Input methods (with their Wayland frontend).
 - **libx11 Compose files:** Dead keys and the Compose key in the lock screen password field.
 - **at-spi2-core and Orca:** Screen reader support. Super+Alt+S and Settings start and stop Orca (including `/usr/bin/orca` as `reprise-greeter` on the login screen).
+- **Noto Sans:** Glass's text without Segoe UI or Selawik installed; without any of the three, Glass falls back to DejaVu Sans, which is wider and cuts some labels.
 - **CJK fonts:** Noto Sans CJK (or similar) for CJK text. Add WenQuanYi Bitmap Song for crisp Chinese with `antialias = false`.
 - **Colour emoji font:** Noto Color Emoji (or similar) for colour emoji in text and the emoji picker.
 - **shared-mime-info:** File types and icons.

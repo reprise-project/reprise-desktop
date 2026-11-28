@@ -211,6 +211,7 @@ fn load_font(s: &Settings) -> TextRenderer {
         italic: false,
         full_hinting: false,
         shell_dlg: None,
+        face_scale: Vec::new(),
     };
     // Lucida Console draws hinted monochrome; any other face blotches that way at 13 px, so it is
     // antialiased.

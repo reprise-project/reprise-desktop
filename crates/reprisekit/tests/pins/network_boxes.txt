@@ -14,19 +14,19 @@ Blue smb retry 1 f93d06861896573e
 Blue smb retry 2 0b0129d828d5c7ae
 Blue sftp no keyring 1 1254d58700d53033
 Blue sftp no keyring 2 0532fdbf46df9d88
-Glass Light connect 1 115613d1cb015418
-Glass Light connect 2 8bc0891111b9a46b
-Glass Light connecting 1 795f21a947e7f5a0
-Glass Light connecting 2 86f734d19f5d28ff
-Glass Light smb retry 1 834f2c227a610807
-Glass Light smb retry 2 30fdfd1a339b0913
-Glass Light sftp no keyring 1 241951029e5104ba
-Glass Light sftp no keyring 2 659733a305b22d43
-Glass Dark connect 1 8f39a8165b306e51
-Glass Dark connect 2 3d6bfe72f2e7d742
-Glass Dark connecting 1 3e51f871b0807ece
-Glass Dark connecting 2 175e60481cad8efe
-Glass Dark smb retry 1 3b2a844347d04ffb
-Glass Dark smb retry 2 2a0030db6fac59c9
-Glass Dark sftp no keyring 1 42ea1e2f620cf5d8
-Glass Dark sftp no keyring 2 0959a574bbff653e
+Glass Light connect 1 21199917e3ffc3f9
+Glass Light connect 2 0ab8e1cd8f7a2353
+Glass Light connecting 1 ed78ea29e3888735
+Glass Light connecting 2 fb63a349921dd8ea
+Glass Light smb retry 1 7d3aeefd215acc7a
+Glass Light smb retry 2 bdd1e11445150848
+Glass Light sftp no keyring 1 9077330b84601cc1
+Glass Light sftp no keyring 2 da1f79e46a274324
+Glass Dark connect 1 f6b4eb434878e4a8
+Glass Dark connect 2 1fba26b925e12423
+Glass Dark connecting 1 99865479f385ec43
+Glass Dark connecting 2 17e3df6635210544
+Glass Dark smb retry 1 aacaba79556a6be7
+Glass Dark smb retry 2 7457d759403e21d6
+Glass Dark sftp no keyring 1 9c38f65d9f8b02b2
+Glass Dark sftp no keyring 2 adaf0db276200994

@@ -394,6 +394,9 @@ pub struct FontConfig {
     /// [`crate::text::DialogFont::ShellDlg`] are set in. `None`, or a
     /// font that is not found, sets them in `family` like the rest.
     pub shell_dlg: Option<String>,
+    /// Families drawn at `[n, d]` of the px asked for, `n / d`: a stand-in face wider than the
+    /// one the layouts are drawn for keeps their widths.
+    pub face_scale: Vec<(String, [u32; 2])>,
 }
 
 impl Default for FontConfig {
@@ -405,6 +408,7 @@ impl Default for FontConfig {
             italic: false,
             full_hinting: false,
             shell_dlg: None,
+            face_scale: Vec::new(),
         }
     }
 }
@@ -424,6 +428,7 @@ impl FontConfig {
             italic: self.italic,
             full_hinting: self.full_hinting,
             shell_dlg: self.shell_dlg.clone(),
+            face_scale: self.face_scale.clone(),
         }
     }
 }
@@ -715,6 +720,12 @@ impl Theme {
         t
     }
 
+    /// The UI font px the look's one-line rows (menu rows and the like) are drawn for at 100%
+    /// text: a styled look's own, else the default font's.
+    pub fn row_text_px(&self) -> u32 {
+        (self.look.style()).map_or(FontConfig::default().size_px, |s| s.text_px)
+    }
+
     /// How far a line of the UI font outgrows its 100% line, logical px: what
     /// [`Theme::with_text_size`] grows the caption and the other one-line heights by.
     pub fn line_growth(&self) -> i32 {
@@ -929,7 +940,7 @@ mod tests {
             ([41, 38, 66], 1, 27, 26),
             "the joined strip keeps its shape"
         );
-        assert_eq!(strip(200), ([50, 46, 81], 1, 33, 32));
+        assert_eq!(strip(200), ([51, 48, 83], 1, 34, 33));
         let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
         let side = |pct| blue.with_text_size(pct).metrics.caption_button_height;
         assert_eq!((side(100), side(150), side(200)), (21, 28, 34));

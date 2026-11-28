@@ -22,7 +22,7 @@ New crates whose tests touch HOME, XDG folders, D-Bus or a display add `#[cfg(te
 
 ## Run pixel and UI checks
 
-Pixel tests pin Wine 9.0 Tahoma, Noto Color Emoji 2.051 and DejaVu. Run them through `scripts/pin-env`:
+Pixel tests pin Wine 9.0 Tahoma, Noto Sans 2.015, Noto Color Emoji 2.051 and DejaVu. Run them through `scripts/pin-env`:
 
     scripts/pin-env cargo nextest run --workspace
 

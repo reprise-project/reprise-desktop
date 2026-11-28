@@ -12,7 +12,7 @@ use crate::theme::TextUnits;
 
 use super::{
     BUTTON_IDS, Buttons, Layout, MARGIN, Nav, OK, PAGE_BOTTOM, PAGE_EDGE, PAGE_TOP, PropSheet,
-    RESTORE, SEARCH_GAP, SEARCH_H, STRIP, buttons, is_button, shift,
+    RESTORE, RESTORE_PAD, RESTORE_W, SEARCH_GAP, SEARCH_H, STRIP, buttons, is_button, shift,
 };
 
 impl PropSheet {
@@ -86,6 +86,22 @@ impl PropSheet {
         true
     }
 
+    fn fit_restore(&mut self, text: &TextRenderer, px: u32) {
+        let label = tr!("restore-defaults");
+        let need = text.dialog(self.font).measure(&label, false, px) + 2 * RESTORE_PAD;
+        let w = self.units().design(need).max(RESTORE_W);
+        if w == self.restore_w {
+            return;
+        }
+        self.restore_w = w;
+        let at = self.restore_rect();
+        for page in &mut self.pages {
+            if let Some(it) = page.items.iter_mut().find(|it| it.id == RESTORE) {
+                it.rect = at;
+            }
+        }
+    }
+
     /// How much wider than built [`PropSheet::fit_bar_room`] made the sheet, at 100%.
     pub fn bar_room(&self) -> i32 {
         self.bar_room
@@ -93,9 +109,11 @@ impl PropSheet {
 
     /// Widen the page list until every row's text, set by `text` at `px`, fits beside its
     /// scrollbar at scale 1 and 2, no narrower than [`pagelist::WIDTH`]; the sheet widens
-    /// with it and the pages move over. Run after [`PropSheet::drawn_with`], which gives the
-    /// look's scrollbar. True when the list's width changed.
+    /// with it and the pages move over. Restore Defaults widens to its label too. Run after
+    /// [`PropSheet::drawn_with`], which gives the look's scrollbar. True when the list's width
+    /// changed.
     pub fn fit_list(&mut self, text: &TextRenderer, px: u32) -> bool {
+        self.fit_restore(text, px);
         let Nav::List(list) = &self.nav else {
             return false;
         };

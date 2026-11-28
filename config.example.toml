@@ -48,10 +48,13 @@ system_icons = ["documents", "computer", "home", "recycle-bin"]   # the desktop'
 # menu_hover_ms = 400           # milliseconds a hovered row waits before its submenu opens or closes
 # menu_fade_ms = 150            # milliseconds a menu takes to open ([effects] menu_animation), 0 for at once
 
-[fonts]
-family = ["Tahoma", "DejaVu Sans"]
-size_px = 11
-antialias = false             # Reprise's own text; false: hinted monochrome; true: hinted grayscale
+[fonts]                       # a key set here overrides the interface's own font, so the
+                              # lines below are commented out: each equals Classic's and Blue's;
+                              # Glass sets ["Segoe UI", "Selawik", "Noto Sans", "DejaVu Sans"],
+                              # 12 px, antialias = true
+# family = ["Tahoma", "DejaVu Sans"]
+# size_px = 11
+# antialias = false           # Reprise's own text; false: hinted monochrome; true: hinted grayscale
 #                             # programs' text follows [toolkits] font_smoothing
 # shell_dlg = ""              # second dialog font, a family or a .ttf path, for End Program,
 #                             # Power Options, a folder's Properties and the other dialogs

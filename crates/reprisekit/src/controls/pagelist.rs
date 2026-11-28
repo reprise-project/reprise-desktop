@@ -1304,7 +1304,7 @@ mod tests {
                     }
                     let inks = |r: Rect, col: Color| {
                         (r.y..r.bottom())
-                            .any(|y| (r.x..r.right()).any(|x| c.get(x, y) == col.argb()))
+                            .any(|y| (r.x..r.right()).any(|x| crate::pins::inks(c.get(x, y), col)))
                     };
                     let (r2, r4, r6) = (lay.rows[2], lay.rows[4], lay.rows[6]);
                     if !focused {

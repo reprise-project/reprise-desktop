@@ -6,7 +6,7 @@ blue field @1 6ab3fb14c8c93a34
 blue field @2 9ba963d4f8088cfa
 blue ok @1 05e67ba801b89568
 blue ok @2 0cf2d5c34daa39d9
-glass field @1 b6295447265fdf2b
-glass field @2 b96ab60ca1233129
-glass ok @1 af863044d4e05666
-glass ok @2 d71fe27e08da95df
+glass field @1 a1bb15f1b6cc8d97
+glass field @2 baee1f2ad64690cf
+glass ok @1 1597d5fb7806a13b
+glass ok @2 c57a7ceafda23ec5

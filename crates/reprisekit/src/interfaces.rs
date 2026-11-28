@@ -65,11 +65,18 @@ pub fn theme_with(
     match i {
         Interface::Classic => Theme::default(),
         Interface::Blue => blue_theme_in(variant, dark),
-        Interface::Glass if dark => styled(glass::style(&glass::Settings {
+        Interface::Glass if dark => glass_theme(glass::style(&glass::Settings {
             mode: glass::Mode::Dark,
             ..*glass
         })),
-        Interface::Glass => styled(glass::style(glass)),
+        Interface::Glass => glass_theme(glass::style(glass)),
+    }
+}
+
+fn glass_theme(s: Arc<Style>) -> Theme {
+    Theme {
+        fonts: glass::text_font(),
+        ..styled(s)
     }
 }
 
@@ -105,9 +112,9 @@ pub fn sample_theme(
 }
 
 /// What runs over in the forms `build` makes for each interface, its theme at every text size
-/// and the text they are measured with, in Tahoma (where installed) and DejaVu Sans: one line
-/// per item ([`controls::form::Form::overflows`]), empty when all the text fits. For a
-/// program's audit test.
+/// and the text they are measured with, in each installed face of the interface's font
+/// ([`faces`]): one line per item ([`controls::form::Form::overflows`]), empty when all the
+/// text fits. For a program's audit test.
 pub fn form_overflows(
     mut build: impl FnMut(Interface, &Theme, &TextRenderer) -> Vec<(String, controls::form::Form)>,
 ) -> Vec<String> {
@@ -124,22 +131,23 @@ pub fn form_overflows(
 }
 
 /// What `check` finds running over, by surface name, part and px, for each interface, its
-/// theme at every text size and the text it is measured with, in Tahoma (where installed) and
-/// DejaVu Sans: one line per part, empty when all the text fits. For an audit test of a
-/// control that lays out its own text.
+/// theme at every text size and the text it is measured with, in each installed face of the
+/// interface's font ([`faces`]): one line per part, empty when all the text fits. For an audit
+/// test of a control that lays out its own text.
 pub fn overflows(
     mut check: impl FnMut(Interface, &Theme, &TextRenderer) -> Vec<(String, &'static str, i32)>,
 ) -> Vec<String> {
     let mut over = Vec::new();
-    for family in ["Tahoma", "DejaVu Sans"] {
-        let text = TextRenderer::load(&FontConfig {
-            family: vec![family.into()],
-            ..FontConfig::default()
-        });
-        if !text.has_face(family) {
-            continue;
-        }
-        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let fonts = theme_for(i).fonts;
+        for family in &faces(i) {
+            let text = TextRenderer::load(&FontConfig {
+                family: vec![family.clone()],
+                ..fonts.clone()
+            });
+            if !text.has_face(family) {
+                continue;
+            }
             for pct in [100, 125, 150, 175, 200] {
                 let theme = theme_for(i).with_form_text(pct);
                 for (name, id, by) in check(i, &theme, &text) {
@@ -152,6 +160,15 @@ pub fn overflows(
         }
     }
     over
+}
+
+/// The faces interface `i`'s layouts are drawn for, which its audits measure text in: Tahoma and
+/// DejaVu Sans, Glass's [`glass::FACES`] (DejaVu Sans, its last resort, cuts some labels).
+pub fn faces(i: Interface) -> Vec<String> {
+    match i {
+        Interface::Glass => glass::FACES.map(String::from).to_vec(),
+        _ => FontConfig::default().family,
+    }
 }
 
 /// Each line of the property sheets `build` makes for each interface that DejaVu Sans cuts or

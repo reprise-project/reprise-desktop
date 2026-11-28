@@ -115,7 +115,8 @@ impl MenuStyle {
 
     fn context_at_100(theme: &Theme, bitmaps: ContextBitmaps) -> MenuStyle {
         let m = &theme.metrics;
-        let grow = line_growth(theme.fonts.size_px / theme.scale.max(1) as u32);
+        let grow = line_growth(theme.fonts.size_px / theme.scale.max(1) as u32)
+            - line_growth(theme.row_text_px());
         if let Some(ml) = theme.look.style().and_then(|st| st.menu) {
             return MenuStyle {
                 width: m.menu_width,

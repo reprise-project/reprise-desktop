@@ -641,11 +641,17 @@ fn glass_ticks_its_box_and_greys_the_list() {
 }
 
 /// Ink rows and columns of `c` inside `r` that differ from `bg`.
+/// An antialiased edge pixel within a quarter of the range of `bg`.
+fn faint(px: u32, bg: u32) -> bool {
+    let [r, g, b] = [16, 8, 0].map(|sh| (bg >> sh) as u8);
+    crate::pins::inks(px, crate::theme::Color::rgb(r, g, b))
+}
+
 fn ink(c: &Canvas, r: Rect, bg: u32) -> Option<(i32, i32, i32, i32)> {
     let mut out: Option<(i32, i32, i32, i32)> = None;
     for y in r.y..r.bottom() {
         for x in r.x..r.right() {
-            if c.get(x, y) != bg {
+            if c.get(x, y) != bg && !faint(c.get(x, y), bg) {
                 out = Some(match out {
                     None => (x, y, x, y),
                     Some((a, b, cc, d)) => (a.min(x), b.min(y), cc.max(x), d.max(y)),
@@ -804,13 +810,13 @@ fn the_glass_page_pixels_sit_where_the_page_draws_them() {
     let inks = theme.look.style().and_then(|st| st.page).unwrap();
     let (cs, white) = (&theme.colors, theme.colors.window.argb());
     let at = |r: Rect, bg: u32| ink(&c, r, bg).map(|(x, y, ..)| (x, y));
-    assert_eq!(at(Rect::new(80, 10, 900, 30), white), Some((93, 23)));
+    assert_eq!(at(Rect::new(80, 10, 900, 30), white), Some((92, 22)));
     assert!(any(&c, Rect::new(80, 10, 900, 30), inks.heading.argb()));
-    assert_eq!(at(Rect::new(80, 45, 1000, 25), white), Some((92, 57)));
+    assert_eq!(at(Rect::new(80, 45, 1000, 25), white), Some((92, 56)));
     assert_eq!(c.get(92, 84), inks.list_frame.argb());
     assert_eq!(c.get(1091, 486), inks.list_frame.argb());
     assert_eq!(c.get(93, 85), white);
-    assert_eq!(at(Rect::new(100, 95, 100, 20), white), Some((127, 106)));
+    assert_eq!(at(Rect::new(100, 95, 100, 20), white), Some((127, 105)));
     assert_eq!(
         at(Rect::new(560, 95, 100, 20), white).map(|p| p.0),
         Some(586)
@@ -823,17 +829,17 @@ fn the_glass_page_pixels_sit_where_the_page_draws_them() {
         (0xFFFF_0000, 0xFFFF_0000)
     );
     assert_eq!(c.get(132, 137), white);
-    assert_eq!(at(Rect::new(150, 135, 300, 12), white), Some((159, 140)));
-    assert_eq!(at(Rect::new(150, 151, 300, 14), white), Some((159, 155)));
+    assert_eq!(at(Rect::new(150, 135, 300, 12), white), Some((159, 139)));
+    assert_eq!(at(Rect::new(150, 151, 300, 14), white), Some((159, 154)));
     assert!(any(&c, Rect::new(150, 151, 300, 14), inks.detail.argb()));
     for y in [140, 188, 236, 284] {
         assert_eq!(c.get(700, y), 0xFF6D_6D6D, "combo top at {y}");
         assert_eq!(c.get(700, y + 22), 0xFF6D_6D6D, "combo foot at {y}");
     }
-    assert_eq!(at(Rect::new(80, 497, 300, 20), white), Some((92, 502)));
+    assert_eq!(at(Rect::new(80, 497, 300, 20), white), Some((92, 501)));
     assert!(any(&c, Rect::new(80, 497, 300, 20), inks.link.argb()));
     assert_ne!(c.get(93, 529), white, "the box");
-    assert_eq!(at(Rect::new(105, 522, 300, 20), white), Some((111, 529)));
+    assert_eq!(at(Rect::new(105, 522, 300, 20), white), Some((111, 528)));
     assert_eq!(c.get(500, 558), white);
     assert_eq!(c.get(500, 559), inks.rule.argb());
     assert_eq!(
@@ -864,7 +870,7 @@ fn the_glass_box_greys_the_combos_and_the_link_but_not_the_rows() {
     let inks = theme.look.style().and_then(|st| st.page).unwrap();
     let white = theme.colors.window.argb();
     assert_eq!(c.get(700, 140), 0xFFAB_AFB3);
-    assert_eq!(c.get(700, 150), 0xFFF3_F4F4);
+    assert_eq!(c.get(700, 150), 0xFF6B_6B6B, "the greyed value's ink");
     assert!(any(&c, Rect::new(584, 140, 200, 23), 0xFF6B_6B6B));
     assert!(any(&c, l.restore, inks.detail.argb()), "the link greys");
     assert!(!any(&c, l.restore, inks.link.argb()));

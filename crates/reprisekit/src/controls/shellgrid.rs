@@ -1209,10 +1209,9 @@ mod tests {
                 let rows = h.y..h.bottom();
                 let c = &c;
                 let at = |x: i32| rows.clone().map(move |y| c.get(x, y) & 0xFF_FFFF);
-                let heading = panes.heading.argb() & 0xFF_FFFF;
                 let title = (h.x + HEADING_TEXT_X * s..h.x + (HEADING_TEXT_X + 60) * s)
                     .flat_map(at)
-                    .any(|v| v == heading);
+                    .any(|v| crate::pins::inks(v, panes.heading));
                 assert!(title, "{mode:?} at {s}: the title in the heading ink");
                 let window = t.colors.window.argb() & 0xFF_FFFF;
                 let ruled = |x: i32| at(x).filter(|&v| v != window).count();

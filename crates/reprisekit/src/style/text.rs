@@ -85,6 +85,7 @@ impl TextSpec {
             italic: self.italic,
             full_hinting: self.full_hinting,
             shell_dlg: None,
+            face_scale: Vec::new(),
         }
     }
 

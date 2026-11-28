@@ -42,6 +42,7 @@ pub fn render(theme: &Theme, with_blue: bool) -> Canvas {
         italic: false,
         full_hinting: false,
         shell_dlg: None,
+        face_scale: Vec::new(),
     });
     let cs = &theme.colors;
 

@@ -781,7 +781,7 @@ impl Explorer {
             main_size: ctx.size,
             error_icon: None,
             dialog_text: ctx.text.clone(),
-            dialog_px: Theme::default().fonts.size_px,
+            dialog_px: ctx.base_px(),
             forms: Theme::default(),
             clicks: DoubleClick::default(),
             rename_clicks: DoubleClick::default(),

@@ -14,7 +14,7 @@ These files share Reprise's GPL-3.0-or-later license:
 
 ## Fonts
 
-Reprise resolves `[fonts] family` through fontconfig in order (default `["Tahoma", "DejaVu Sans"]`). Bundled programs follow family and `antialias` changes live at 11 px, scaled by `[accessibility] text_size`.
+Reprise resolves `[fonts] family` through fontconfig in order. Classic and Blue default to `["Tahoma", "DejaVu Sans"]` at 11 px, hinted monochrome; Glass to `["Segoe UI", "Selawik", "Noto Sans", "DejaVu Sans"]` at 12 px, antialiased, with Noto Sans and DejaVu Sans, which run wider, drawn at 11 px. Bundled programs follow family and `antialias` changes live at their interface's size, scaled by `[accessibility] text_size`.
 
 | Font | Used for | Fallback | License |
 | --- | --- | --- | --- |
@@ -23,7 +23,9 @@ Reprise resolves `[fonts] family` through fontconfig in order (default `["Tahoma
 | `[fonts] shell_dlg` | Wide dialogs (e.g. Power Options, Volume Control) | `[fonts] family` | Proprietary |
 | Trebuchet MS | Blue window titles | DejaVu Sans | Proprietary |
 | Franklin Gothic Medium | Blue Start label and Log Off / Turn Off titles | Trebuchet MS, DejaVu Sans | Proprietary |
-| Segoe UI | Glass window titles | Noto Sans, DejaVu Sans | Proprietary |
+| Segoe UI | Glass text and window titles | Selawik, Noto Sans, DejaVu Sans | Proprietary |
+| Selawik | Glass text without Segoe UI | Noto Sans, DejaVu Sans | SIL Open Font License |
+| Noto Sans | Glass text without Segoe UI or Selawik | DejaVu Sans | SIL Open Font License (`noto-fonts`) |
 
 Reprise does not ship or link to proprietary fonts. If you hold a license, copy the `.ttf` files into `~/.local/share/fonts`.
 

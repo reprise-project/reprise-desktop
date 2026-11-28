@@ -28,18 +28,18 @@ Blue Gpu("card2") @2 3303267e8ea003b9
 Blue Sensors @1 6d93728ed4804868
 Blue Sensors @2 4e30d1705d4853c5
 Blue per core @1 b2d853d3ecd9a5df
-Glass Cpu @1 9ae166754940dd76
-Glass Cpu @2 749267a52516c593
-Glass Memory @1 ef1c4b5848c15be9
-Glass Memory @2 d3267987e4c5b052
-Glass Disk("nvme0n1") @1 7e82db8ee2d52732
-Glass Disk("nvme0n1") @2 f51d229e878a7914
-Glass Net("enp4s0") @1 7d5155ba63c072b8
-Glass Net("enp4s0") @2 0ef1b4ffac416631
-Glass Gpu("card1") @1 8c58ae4fb11606e7
-Glass Gpu("card1") @2 e0476940c341ac1a
-Glass Gpu("card2") @1 710a43f6e833d777
-Glass Gpu("card2") @2 8455c17e8a45be4e
-Glass Sensors @1 3d1d9c3149b35600
-Glass Sensors @2 f8ae52197c1630ae
-Glass per core @1 acd09564756cfd69
+Glass Cpu @1 5e4073ad17d9ac54
+Glass Cpu @2 647165c7fbc3bc60
+Glass Memory @1 81f02142727ea16f
+Glass Memory @2 22b8162962e73b1b
+Glass Disk("nvme0n1") @1 77449a3bcbea0983
+Glass Disk("nvme0n1") @2 951a0c8d1f9925af
+Glass Net("enp4s0") @1 7d2307737092ec52
+Glass Net("enp4s0") @2 885bc29c6b0a9b30
+Glass Gpu("card1") @1 8abc200fa10118e4
+Glass Gpu("card1") @2 d1a87f3bf4c430c2
+Glass Gpu("card2") @1 1e2d524aee27f075
+Glass Gpu("card2") @2 276843c0be9c4e35
+Glass Sensors @1 22fce710bb270518
+Glass Sensors @2 8f0035345d2a6eaf
+Glass per core @1 575112685d623603

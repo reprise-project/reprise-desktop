@@ -641,7 +641,7 @@ mod tests {
     #[test]
     fn a_grown_glass_caption_draws_its_strip_as_big_as_its_cells() {
         use crate::frame::{button_side, caption_button_sides};
-        for (pct, side) in [(150, 27), (200, 33)] {
+        for (pct, side) in [(150, 27), (200, 34)] {
             for n in [1, 2] {
                 let theme = theme_for(Interface::Glass).with_text_size(pct).scaled(n);
                 let style = theme.look.style().unwrap();

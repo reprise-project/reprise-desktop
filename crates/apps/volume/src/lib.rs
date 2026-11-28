@@ -179,7 +179,7 @@ impl Volume {
             about: false,
             app_icon: None,
             dialog_text: repriseapp::start_text(),
-            dialog_px: Theme::default().fonts.size_px,
+            dialog_px: repriseapp::start_px(),
             forms: Theme::default(),
             waker: None,
             refused,
@@ -788,6 +788,7 @@ impl App for Volume {
             self.mixer.speaker = ctx.icons.get(SPEAKER, 16);
         }
         self.forms = ctx.forms();
+        self.dialog_px = ctx.base_px();
         if matches!(ev, Event::Wake) {
             return self.wake(ctx);
         }

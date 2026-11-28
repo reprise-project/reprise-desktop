@@ -786,7 +786,7 @@ mod tests {
     fn inked(c: &Canvas, ink: Color) -> Vec<(i32, i32)> {
         (0..c.height as i32)
             .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
-            .filter(|&(x, y)| c.get(x, y) == ink.argb())
+            .filter(|&(x, y)| crate::pins::inks(c.get(x, y), ink))
             .collect()
     }
 

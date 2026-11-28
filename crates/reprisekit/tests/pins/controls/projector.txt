@@ -10,9 +10,9 @@ Blue 1 greyed bf89e1d35980b822
 Blue 2 lit 2c51c6d07e256931
 Blue 2 hot 7ec870cf2ee58c21
 Blue 2 greyed c34df9aaf0366fcf
-Glass 1 lit a8217e930ca99628
-Glass 1 hot eaefc11a50178d4e
-Glass 1 greyed c8997b65cc3b5576
-Glass 2 lit e105bf85749da188
-Glass 2 hot e2b834428fb411e1
-Glass 2 greyed e8384383c5c89c14
+Glass 1 lit f6ce134a80e089a6
+Glass 1 hot 1369b750142dbafe
+Glass 1 greyed 807a641002d46aa8
+Glass 2 lit aba51583a3535d89
+Glass 2 hot 78fa31f3be17aee8
+Glass 2 greyed 20cff271ac24731b

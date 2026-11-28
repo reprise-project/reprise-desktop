@@ -6,11 +6,11 @@ Blue replace with a clash 1 4072adf9e050fbb0
 Blue replace with a clash 2 f03132a02e90f797
 Blue number 1 40a2acb36fa276ba
 Blue number 2 b7b1675b16f50427
-Glass Light replace with a clash 1 1c044f1b1b2c01ca
-Glass Light replace with a clash 2 53de9a5d2c223d6c
-Glass Light number 1 57485528978bbf90
-Glass Light number 2 92c6afa41f0e7e52
-Glass Dark replace with a clash 1 bda5696ff903345c
-Glass Dark replace with a clash 2 02e39a1dd299ca8f
-Glass Dark number 1 a3d63d66ba216594
-Glass Dark number 2 ac405f991e1bf2b0
+Glass Light replace with a clash 1 05b4c4bdb76dda34
+Glass Light replace with a clash 2 6b0a213df5aa9e6b
+Glass Light number 1 a10aa6552cf68b97
+Glass Light number 2 fde9541cabd00cdc
+Glass Dark replace with a clash 1 9147265e2eacbab4
+Glass Dark replace with a clash 2 b9f83ccadd0ef57b
+Glass Dark number 1 4c6dd1875f62c610
+Glass Dark number 2 479e12625defcd8a

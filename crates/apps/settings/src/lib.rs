@@ -675,6 +675,7 @@ impl SettingsApp {
     fn follow_text(&mut self, ctx: &Ctx) {
         let forms = ctx.forms();
         self.units = forms.text;
+        self.dialog_px = ctx.base_px();
         self.text_size = ctx.text_size;
         self.sheet.drawn_with(&Paint {
             s: 1,
@@ -777,7 +778,7 @@ impl SettingsApp {
             &[],
         );
         let dialog_text = repriseapp::start_text();
-        let dialog_px = Theme::default().fonts.size_px;
+        let dialog_px = repriseapp::start_px();
         let mut app = SettingsApp {
             path,
             want: loaded.clone(),

@@ -14,11 +14,11 @@ blue icons @1 8328d59805a7121c
 blue icons @2 ed6f93d34099cdb2
 blue icons and files @1 b75f3cf837a6c98b
 blue icons and files @2 b03bed992fee0395
-glass computer @1 4b9f300707916809
-glass computer @2 6451ee26736363ed
-glass documents @1 7c79fbd7b25a2a39
-glass documents @2 035467f7fffeaf42
-glass icons @1 7e8968bac8544f2a
-glass icons @2 3a86ff1920704f2f
-glass icons and files @1 77729168fb542441
-glass icons and files @2 794cf7b8456ab854
+glass computer @1 4e7011084245b6a0
+glass computer @2 c3d887a00d532201
+glass documents @1 9be60fe793b634a2
+glass documents @2 60649851918c23d0
+glass icons @1 50ad3ddd061faa1c
+glass icons @2 5ee001516c44f6f6
+glass icons and files @1 3bb88d561dd7914e
+glass icons and files @2 3de759d9d14b7692

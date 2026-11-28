@@ -1,23 +1,41 @@
+backgrounds cut "Message Text" x1
 calendar-events ellipsized "Team offsite planning" x2  # an event title in the calendar's column
 calendar-events@2 ellipsized "Team offsite planning" x2  # an event title in the calendar's column
 caption-tabs ellipsized "user@host: ~" x1  # a window title on a caption tab
-doc-tabs@1 ellipsized "shell 0" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 1" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 10" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 11" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 2" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 3" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 4" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 5" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 6" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 7" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 8" x13  # thirteen tabs share the strip
-doc-tabs@1 ellipsized "shell 9" x13  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 0" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 1" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 10" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 11" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 2" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 3" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 4" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 5" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 6" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 7" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 8" x11  # thirteen tabs share the strip
+doc-tabs@1 ellipsized "shell 9" x11  # thirteen tabs share the strip
 file-dialog ellipsized "9/12/2026 10:13 AM" x5  # a date in a Details column the user can widen
 file-dialog-blue-dark ellipsized "9/12/2026 10:13 AM" x5
-glass-scale2 ellipsized "Pictures (3)" x4  # a task button's title
-import-sheet ellipsized "Touchpad natural scrolling" x6  # an imported setting's name in the sheet's list
-label-ellipsis ellipsized "HP LaserJet 4250 PostScript Printer Driver" x3  # the page shows an ellipsized label
+glass cut "Group box" x1
+glass cut "Message Text" x1
+glass cut "On the page" x1
+glass cut "Type" x3
+glass ellipsized "14/09/2026 21:40" x15
+glass-dark cut "Group box" x1
+glass-dark cut "Message Text" x1
+glass-dark cut "On the page" x1
+glass-dark cut "Type" x3
+glass-dark ellipsized "14/09/2026 21:40" x15
+glass-popups cut "Built-in display" x1
+glass-popups cut "Night light" x1
+glass-popups cut "Settings..." x1
+import-sheet ellipsized "Touchpad natural scrolling" x4  # an imported setting's name in the sheet's list
+label-ellipsis ellipsized "HP LaserJet 4250 PostScript Printer Driver" x2  # the page shows an ellipsized label
+list-sheet cut "Advanced..." x1
+list-sheet-links cut "Advanced..." x1
+list-sheet-scrolled cut "Advanced..." x1
+list-sheet-search cut "Advanced..." x1
+list-sheet-search cut "power" x1
 parts-blue-blue cut "Unchecked Disabled" x2  # the gallery's own caption
 parts-blue-blue cut "Unchecked Normal" x2  # the gallery's own caption
 parts-blue-blue cut "Unchecked Pressed" x2  # the gallery's own caption
@@ -104,12 +122,14 @@ reprisekit-gallery ellipsized "Documents" x2  # a name in a list or drop-down of
 reprisekit-gallery ellipsized "HDMI-A-1 (1920x1080)" x1  # a name in a list or drop-down of its own width
 reprisekit-gallery ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 reprisekit-gallery ellipsized "OpenDocument Text" x1  # a name in a list or drop-down of its own width
-stats-panel ellipsized "16.7 ms avg, 33.3 max" x3  # the debug overlay's figures
-taskbar-cells ellipsized "Untitled - Notepad" x9  # a task button's title
-taskbar-keys ellipsized "Untitled - Notepad" x24  # a task button's title
+stats-panel ellipsized "16.7 ms avg, 33.3 max" x2  # the debug overlay's figures
+taskbar-cells ellipsized "Untitled - Notepad" x30  # a task button's title
+taskbar-edges ellipsized "Command Prompt" x4
+taskbar-edges ellipsized "Untitled - Notepad" x4
+taskbar-keys ellipsized "Untitled - Notepad" x12  # a task button's title
+taskbar-top ellipsized "Command Prompt" x1
+taskbar-top ellipsized "Untitled - Notepad" x1
 volume-popup ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 volume-popup-blue ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 volume-popup-blue-x2 ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
-volume-popup-glass ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
-volume-popup-glass-x2 ellipsized "Headphones" x1  # a name in a list or drop-down of its own width
 volume-popup-x2 ellipsized "Headphones" x1  # a name in a list or drop-down of its own width

@@ -6,7 +6,7 @@ Blue plain 1 dd8d719fed94bc32
 Blue plain 2 558d3ba61b303d10
 Blue checked 1 aca0bbd55997bc0a
 Blue checked 2 c0942550d5982238
-Glass plain 1 360847e7dc006cf2
-Glass plain 2 a39dcbacc4f1ebe8
-Glass checked 1 52479d25099962dc
-Glass checked 2 8aa8739aa73e2759
+Glass plain 1 d08589f72307f4bd
+Glass plain 2 27cecb977aa909aa
+Glass checked 1 bc48c7cba7d3c7cb
+Glass checked 2 0e0b50e6050983e7

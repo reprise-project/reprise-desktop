@@ -1353,8 +1353,14 @@ mod tests {
         ] {
             pin(&c, x, y, rgb, what);
         }
-        let inked = |y: i32| (3..100).any(|x| c.get(x, y) & 0xFF_FFFF != 0xFFFFFF);
-        assert_eq!((41..56).find(|&y| inked(y)), Some(44), "Hide's cap top");
+        let inked = |y: i32| {
+            (3..100).any(|x| !crate::pins::inks(c.get(x, y), Color::rgb(0xFF, 0xFF, 0xFF)))
+        };
+        let cap = (41..56).find(|&y| inked(y));
+        assert!(
+            cap.is_some_and(|y| (44..=45).contains(&y)),
+            "Hide's cap top on row 44 or 45, by the face's cap height: {cap:?}"
+        );
         assert_eq!(combo::hit(&cb, &lay, 50, 40), Some(combo::Hit::Row(0)));
         assert_eq!(combo::hit(&cb, &lay, 50, 41), Some(combo::Hit::Row(1)));
         assert_eq!(combo::hit(&cb, &lay, 50, 70), Some(combo::Hit::Row(2)));

@@ -196,7 +196,7 @@ fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
     let all = [Interface::Classic, Interface::Blue, Interface::Glass];
     assert_eq!(
         all.map(|i| client_at_200(i).1),
-        [1000, 990, 976],
+        [1000, 990, 974],
         "Classic, Blue, Glass"
     );
     for i in all {
@@ -216,7 +216,12 @@ fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
         );
         ctx.size = (w, h);
         app.event(MAIN, Event::Resized, &mut ctx);
-        assert_eq!(app.min_size(MAIN), Some(u.size((544, 528))));
+        // Glass's 12 px text widens the page list by 2 px for its longest page name.
+        let smallest = match i {
+            Interface::Glass => (546, 528),
+            _ => (544, 528),
+        };
+        assert_eq!(app.min_size(MAIN), Some(u.size(smallest)));
         assert_eq!(
             app.sheet.size.1, 528,
             "the pages keep their smallest height"

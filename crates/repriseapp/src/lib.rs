@@ -130,7 +130,7 @@ pub use event::{BTN_LEFT, BTN_RIGHT, Event, KeyInput, Mods, PointerInput};
 pub use fielddrop::{DropForm, FileDrop};
 pub use input::caps_lock;
 pub use look::{
-    caption_fit, dialog_max_w, session_dark, set_session_dark, start_forms, start_text,
+    caption_fit, dialog_max_w, session_dark, set_session_dark, start_forms, start_px, start_text,
     start_text_size, start_theme,
 };
 #[doc(hidden)]

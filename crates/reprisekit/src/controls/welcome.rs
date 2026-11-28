@@ -249,7 +249,8 @@ impl Welcome {
             if !lines.is_empty() {
                 lines.push(String::new());
             }
-            lines.extend(wrap(text, p, forms.text.len(body.width), px));
+            // A px short of the body, so a last glyph's ink past its advance stays inside.
+            lines.extend(wrap(text, p, forms.text.len(body.width) - 1, px));
         }
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let mut items = vec![Item::lines_at(KEYS, body.x, body.y, body.width, &refs)];

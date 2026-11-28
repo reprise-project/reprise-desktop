@@ -1949,7 +1949,13 @@ fn blue_and_glass_draw_the_strip_buttons_in_their_own_art() {
                 assert!(inked_glyph >= 28, "{look:?}: {t:?}'s glyph is inked");
             }
         }
-        assert!(inked(&c, st.title, ink) > 0, "{look:?}: the title is drawn");
+        let title = st.title;
+        let text_ink = theme.colors.button_text;
+        assert!(
+            (title.y..title.bottom())
+                .any(|y| (title.x..title.right()).any(|x| crate::pins::inks(c.get(x, y), text_ink))),
+            "{look:?}: the title is drawn"
+        );
     }
 }
 
