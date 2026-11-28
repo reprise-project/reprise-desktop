@@ -661,6 +661,52 @@ fn the_list_icons_grow_with_the_text() {
     reprisekit::pins::check_file(&dir.join("icons.txt"), &pins);
 }
 
+#[test]
+fn a_file_wears_its_types_icon() {
+    use reprisekit::theme::Color;
+    let t = tempfile::tempdir().unwrap();
+    for name in ["photos.zip", "notes.txt", "song.mp3", "README"] {
+        fs::write(t.path().join(name), name).unwrap();
+    }
+    let mut d = counted(t.path());
+    d.list.view.rows.globs =
+        MimeDb::parse(["50:application/zip:*.zip\n50:text/plain:*.txt\n50:audio/mpeg:*.mp3\n"]);
+    d.list.view.rows.unnamed = true;
+    let mut ctx = test_ctx(reprisekit::theme::Theme::default());
+    let colours = [
+        ("text-x-generic", Color::rgb(1, 1, 1)),
+        ("package-x-generic", Color::rgb(2, 2, 2)),
+        ("audio-x-generic", Color::rgb(3, 3, 3)),
+    ];
+    let icons = (colours.iter())
+        .map(|&(n, ink)| {
+            let mut c = Canvas::new(16, 16);
+            c.fill_rect(c.bounds(), ink);
+            (n.to_string(), 16, Some(c))
+        })
+        .collect();
+    let cache_theme = ctx.icons.theme();
+    ctx.icons.put_icons(&cache_theme, icons);
+    d.load_icons(&mut ctx);
+    let rows = &d.list.view.rows;
+    let worn = |name: &str| {
+        let row = rows.lines.iter().position(|l| l.name == name).unwrap();
+        let ink = rows.icon(row).map(|c| c.get(0, 0));
+        colours
+            .iter()
+            .find(|c| Some(c.1.argb()) == ink)
+            .map(|c| c.0)
+    };
+    assert_eq!(worn("photos.zip"), Some("package-x-generic"));
+    assert_eq!(worn("song.mp3"), Some("audio-x-generic"));
+    assert_eq!(worn("notes.txt"), Some("text-x-generic"));
+    assert_eq!(
+        worn("README"),
+        Some("text-x-generic"),
+        "an unknown type is a document"
+    );
+}
+
 /// Writes `target/diskusage-{classic,blue,glass}.png` and `cleanup-*.png` for eyeballing; run
 /// with `--ignored`.
 #[test]

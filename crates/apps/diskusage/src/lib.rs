@@ -19,6 +19,7 @@ use repriseapp::oneshot::{ErrorBox, MsgBox};
 use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, MAIN, PointerInput, Poster, Reply, WinId,
 };
+use reprisefs::apps::MimeDb;
 use reprisefs::bincap::{self, BinLack, ConfirmKind};
 use reprisefs::cleanup::{Found, Part, Places};
 use reprisefs::props::short_size;
@@ -32,6 +33,7 @@ use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::listview::{self, Column, Rows};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::msgbox::Fields;
+use reprisekit::icontheme::IconCache;
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
@@ -39,6 +41,7 @@ use reprisekit::textedit::keysym;
 use reprisekit::theme::TextUnits;
 use reprisekit::tr;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
@@ -86,6 +89,44 @@ struct Lines {
     drive: Option<Canvas>,
     /// The edge the icons were fetched at; 0 before the first fetch.
     icon_px: i32,
+    globs: MimeDb,
+    /// Each line's type icon, parallel to `lines`; None for a folder, a mount or a link.
+    named: Vec<Option<String>>,
+    /// The type icon of a MIME type and extension, picked as Explorer picks it.
+    types: HashMap<(Option<String>, String), String>,
+    /// Each type icon at `icon_px`.
+    pictures: HashMap<String, Option<Canvas>>,
+    /// `named` is behind `lines`.
+    unnamed: bool,
+}
+
+impl Lines {
+    /// Names the type icon of each file `lines` holds, fetching the pictures not held yet.
+    fn name_types(&mut self, icons: &mut IconCache) {
+        if !std::mem::take(&mut self.unnamed) {
+            return;
+        }
+        let (globs, types, pictures) = (&self.globs, &mut self.types, &mut self.pictures);
+        let px = self.icon_px;
+        self.named = (self.lines.iter())
+            .map(|l| {
+                if l.kind != Kind::File {
+                    return None;
+                }
+                let path = Path::new(&l.name);
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
+                let key = (globs.mime_of_name(&l.name), ext.unwrap_or_default());
+                let name = types.entry(key).or_insert_with_key(|(mime, _)| {
+                    let has = |n: &str| icons.has_unread(n);
+                    reprisefs::icons::pick_icon(mime.as_deref(), path, &has)
+                });
+                if !pictures.contains_key(name) {
+                    pictures.insert(name.clone(), icons.get(name, px));
+                }
+                Some(name.clone())
+            })
+            .collect();
+    }
 }
 
 impl Rows for Lines {
@@ -93,10 +134,13 @@ impl Rows for Lines {
         self.lines.len()
     }
     fn icon(&self, row: usize) -> Option<&Canvas> {
-        match self.lines.get(row)?.kind {
+        let line = self.lines.get(row)?;
+        match line.kind {
             Kind::Dir => self.folder.as_ref(),
             Kind::Mount => self.drive.as_ref(),
-            _ => self.file.as_ref(),
+            _ => (self.named.get(row).and_then(Option::as_ref))
+                .and_then(|t| self.pictures.get(t)?.as_ref())
+                .or(self.file.as_ref()),
         }
     }
     fn icon_slot(&self, u: TextUnits) -> i32 {
@@ -187,8 +231,9 @@ impl DiskUsage {
                 ..Column::new(&t, w)
             })
             .collect();
-        let mut list = List::new(columns);
+        let mut list: List<Lines> = List::new(columns);
         list.view.frame = true;
+        list.view.rows.globs = reprisefs::apps::mime_globs();
         list.view.sort = Some(model::arrow(Sort::Size, false));
         let mut form = Form::new(buttons());
         form.set_focus(None);
@@ -309,6 +354,7 @@ impl DiskUsage {
         let t = scan.tree();
         let at = t.find(&self.at).unwrap_or(ROOT);
         self.list.view.rows.lines = model::lines(&t, at, self.sort.0, self.sort.1);
+        self.list.view.rows.unnamed = true;
         let status = model::status(&t, at, answered, waited);
         drop(t);
         let keep = picked.and_then(|p| {
@@ -829,7 +875,11 @@ impl DiskUsage {
             rows.folder = ctx.icons.get("folder", px);
             rows.file = ctx.icons.get("text-x-generic", px);
             rows.drive = ctx.icons.get("drive-harddisk", px);
+            rows.types.clear();
+            rows.pictures.clear();
+            rows.unnamed = true;
         }
+        rows.name_types(&mut ctx.icons);
         if self.trash_icon.is_none() {
             self.trash_icon = ctx.icons.get("user-trash-full", 32);
             self.warning_icon = ctx.icons.get("dialog-warning", 32);
@@ -922,7 +972,7 @@ impl App for DiskUsage {
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         self.load_icons(ctx);
-        match win {
+        let reply = match win {
             w if self.confirm.owns(w) => self.confirm_event(w, ev, ctx),
             w if self.note.owns(w) => self.note.event(w, &ev, &ctx.text, &ctx.forms()),
             w if self.cleaned_box.owns(w) => {
@@ -936,7 +986,9 @@ impl App for DiskUsage {
             w if self.clean_ask.owns(w) => self.clean_confirm_event(w, ev, ctx),
             CLEANUP => self.cleanup_event(ev, ctx),
             _ => self.main_event(ev, ctx),
-        }
+        };
+        self.list.view.rows.name_types(&mut ctx.icons);
+        reply
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
