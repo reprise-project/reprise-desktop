@@ -624,27 +624,37 @@ impl Config {
                     "[appearance] dark_color_scheme = {dark_name:?} is not a dark Classic scheme"
                 )
             })?;
+        let mut picked_over = match cfg.dark {
+            true => {
+                let glass = reprisekit::glass::Settings {
+                    mode: reprisekit::glass::Mode::Light,
+                    ..cfg.glass
+                };
+                reprisekit::interfaces::theme_with(cfg.interface, cfg.blue_variant, false, &glass)
+                    .colors
+            }
+            false => cfg.theme.colors.clone(),
+        };
         if cfg.interface == Interface::Classic {
-            let light = (cfg.color_scheme.as_deref())
-                .map(|name| {
-                    reprisekit::schemes::scheme(name).ok_or_else(|| {
-                        format!("[appearance] color_scheme = {name:?} is not a Classic scheme")
-                    })
-                })
-                .transpose()?;
-            if cfg.dark {
-                cfg.theme.colors = dark_colors;
-            } else if let Some(colors) = light {
-                cfg.theme.colors = colors;
+            if let Some(name) = cfg.color_scheme.as_deref() {
+                picked_over = reprisekit::schemes::scheme(name).ok_or_else(|| {
+                    format!("[appearance] color_scheme = {name:?} is not a Classic scheme")
+                })?;
             }
+            cfg.theme.colors = match cfg.dark {
+                true => dark_colors,
+                false => picked_over.clone(),
+            };
         }
-        for (name, value) in file.colors.unwrap_or_default() {
-            let c =
-                Color::parse(&value).ok_or_else(|| format!("bad color {value:?} for {name}"))?;
-            if !cfg.theme.colors.set(&name, c) {
-                return Err(format!("unknown color name {name:?}"));
-            }
+        let colors = file.colors.unwrap_or_default();
+        let mut pins = Vec::with_capacity(colors.len());
+        for (name, value) in &colors {
+            let c = Color::parse(value).ok_or_else(|| format!("bad color {value:?} for {name}"))?;
+            pins.push((name.as_str(), c));
         }
+        (cfg.theme.colors)
+            .pin(&picked_over, &pins)
+            .map_err(|name| format!("unknown color name {name:?}"))?;
         let metrics = file.metrics.unwrap_or_default();
         let own_bar = !metrics.contains_key("taskbar_height");
         for (name, value) in metrics {
