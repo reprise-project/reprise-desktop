@@ -85,13 +85,14 @@ fn mode_dark(mode: &str) -> bool {
 /// The theme a program builds from the compositor's environment: the
 /// interface named by [`reprisekit::interface::ENV`], light or dark per
 /// [`reprisekit::interface::MODE_ENV`] (Blue variant from [`reprisekit::blue::ENV`], Glass
-/// material from [`reprisekit::glass::MATERIAL_ENV`]), else [`Theme::default`]; then a
+/// material and style from [`reprisekit::glass::MATERIAL_ENV`] and
+/// [`reprisekit::glass::STYLE_ENV`]), else [`Theme::default`]; then a
 /// [`reprisekit::theme::COLORS_ENV`] scheme is laid over it.
 pub(crate) fn theme_from_env(
     interface: Option<&str>,
     variant: Option<&str>,
     mode: Option<&str>,
-    glass_material: Option<&str>,
+    (glass_material, glass_style): (Option<&str>, Option<&str>),
     colors: Option<&str>,
 ) -> Theme {
     let mode = mode
@@ -105,6 +106,9 @@ pub(crate) fn theme_from_env(
             mode,
             material: glass_material
                 .and_then(reprisekit::glass::Material::parse)
+                .unwrap_or_default(),
+            style: glass_style
+                .and_then(reprisekit::glass::Style::parse)
                 .unwrap_or_default(),
             ..reprisekit::glass::Settings::default()
         },
@@ -123,6 +127,7 @@ pub(crate) struct Look {
     blue_variant: Option<String>,
     mode: Option<String>,
     glass_material: Option<String>,
+    glass_style: Option<String>,
     colors: Option<String>,
     icon_theme: String,
     /// `[fonts] shell_dlg`, read from `config.toml` at the start and
@@ -150,6 +155,7 @@ impl Look {
             blue_variant: std::env::var(reprisekit::blue::ENV).ok(),
             mode: std::env::var(reprisekit::interface::MODE_ENV).ok(),
             glass_material: std::env::var(reprisekit::glass::MATERIAL_ENV).ok(),
+            glass_style: std::env::var(reprisekit::glass::STYLE_ENV).ok(),
             colors: std::env::var(reprisekit::theme::COLORS_ENV).ok(),
             icon_theme: std::env::var(reprisekit::icontheme::ENV)
                 .unwrap_or_else(|_| "hicolor".into()),
@@ -166,7 +172,7 @@ impl Look {
             self.interface.as_deref(),
             self.blue_variant.as_deref(),
             self.mode.as_deref(),
-            self.glass_material.as_deref(),
+            (self.glass_material.as_deref(), self.glass_style.as_deref()),
             self.colors.as_deref(),
         );
         theme.fonts.shell_dlg = self.shell_dlg.clone();
@@ -232,6 +238,7 @@ impl Look {
             a::BLUE_VARIANT => self.blue_variant.get_or_insert_default(),
             a::MODE => self.mode.get_or_insert_default(),
             a::GLASS_MATERIAL => self.glass_material.get_or_insert_default(),
+            a::GLASS_STYLE => self.glass_style.get_or_insert_default(),
             a::COLORS => self.colors.get_or_insert_default(),
             a::ICON_THEME => &mut self.icon_theme,
             _ => return false,

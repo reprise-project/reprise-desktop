@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn theme_from_env_with_no_interface_is_the_default_theme() {
     assert_eq!(
-        theme_from_env(None, None, None, None, None),
+        theme_from_env(None, None, None, (None, None), None),
         Theme::default(),
         "no REPRISE_INTERFACE and no REPRISE_COLORS must give Theme::default()"
     );
@@ -11,7 +11,7 @@ fn theme_from_env_with_no_interface_is_the_default_theme() {
 
 #[test]
 fn theme_from_env_with_blue_takes_the_blue_style() {
-    let t = theme_from_env(Some("blue"), None, None, None, None);
+    let t = theme_from_env(Some("blue"), None, None, (None, None), None);
     let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     assert_eq!(
         t.colors, blue.colors,
@@ -28,19 +28,19 @@ fn theme_from_env_picks_the_blue_variant() {
     use reprisekit::blue::Variant;
     use reprisekit::interfaces::blue_theme;
     for v in Variant::ALL {
-        let t = theme_from_env(Some("blue"), Some(v.as_str()), None, None, None);
+        let t = theme_from_env(Some("blue"), Some(v.as_str()), None, (None, None), None);
         assert_eq!(t.look, blue_theme(v).look, "{v:?}");
         assert_eq!(t.colors, blue_theme(v).colors, "{v:?}");
     }
     for unknown in [None, Some("green"), Some("Silver")] {
         assert_eq!(
-            theme_from_env(Some("blue"), unknown, None, None, None).look,
+            theme_from_env(Some("blue"), unknown, None, (None, None), None).look,
             blue_theme(Variant::Blue).look,
             "{unknown:?} is navy"
         );
     }
     assert_eq!(
-        theme_from_env(Some("classic"), Some("olive"), None, None, None),
+        theme_from_env(Some("classic"), Some("olive"), None, (None, None), None),
         Theme::default(),
         "the variant means nothing outside Blue"
     );
@@ -48,20 +48,20 @@ fn theme_from_env_picks_the_blue_variant() {
 
 #[test]
 fn the_mode_picks_dark_glass_and_anything_else_is_light() {
-    let dark = theme_from_env(Some("glass"), None, Some("dark"), None, None);
-    let light = theme_from_env(Some("glass"), None, None, None, None);
+    let dark = theme_from_env(Some("glass"), None, Some("dark"), (None, None), None);
+    let light = theme_from_env(Some("glass"), None, None, (None, None), None);
     assert_ne!(dark.look, light.look, "dark Glass is another look");
     assert_eq!(dark.look.style().unwrap().name, "glass-dark");
     for odd in [Some("Dark"), Some(""), Some("dim")] {
         assert_eq!(
-            theme_from_env(Some("glass"), None, odd, None, None).look,
+            theme_from_env(Some("glass"), None, odd, (None, None), None).look,
             light.look,
             "{odd:?} is light"
         );
     }
     assert_eq!(
-        theme_from_env(Some("classic"), None, Some("dark"), None, None).look,
-        theme_from_env(Some("classic"), None, None, None, None).look,
+        theme_from_env(Some("classic"), None, Some("dark"), (None, None), None).look,
+        theme_from_env(Some("classic"), None, None, (None, None), None).look,
         "Classic wears its dark in the colours the compositor hands it"
     );
 }
@@ -69,14 +69,20 @@ fn the_mode_picks_dark_glass_and_anything_else_is_light() {
 #[test]
 fn smoked_glass_inks_labels_on_its_glass_white_in_either_mode() {
     for mode in ["light", "dark"] {
-        let theme = theme_from_env(Some("glass"), None, Some(mode), Some("smoked"), None);
+        let theme = theme_from_env(
+            Some("glass"),
+            None,
+            Some(mode),
+            (Some("smoked"), None),
+            None,
+        );
         assert_eq!(
             reprisekit::look::ink_on_glass(&theme),
             Some(reprisekit::theme::Color::rgb(0xFF, 0xFF, 0xFF)),
             "{mode}"
         );
     }
-    let frosted = theme_from_env(Some("glass"), None, Some("light"), None, None);
+    let frosted = theme_from_env(Some("glass"), None, Some("light"), (None, None), None);
     assert_eq!(
         reprisekit::look::ink_on_glass(&frosted),
         Some(reprisekit::theme::Color::rgb(0, 0, 0)),
@@ -94,6 +100,42 @@ fn a_glass_material_change_through_the_portal_relooks() {
     let before = ink(&look);
     assert!(look.set(reprisebus::appearance::GLASS_MATERIAL, "smoked".into()));
     assert_ne!(ink(&look), before, "the ink on glass follows");
+}
+
+#[test]
+fn the_glass_style_picks_onyx_and_an_unknown_one_is_glass() {
+    use reprisekit::glass::{Settings, Style};
+    let look = |style| theme_from_env(Some("glass"), None, None, (None, style), None).look;
+    let onyx = reprisekit::interfaces::theme_with(
+        reprisekit::interface::Interface::Glass,
+        Default::default(),
+        false,
+        &Settings {
+            style: Style::Onyx,
+            ..Settings::default()
+        },
+    );
+    assert_eq!(look(Some("onyx")), onyx.look);
+    assert_ne!(look(Some("onyx")), look(None));
+    assert_eq!(
+        look(Some("obsidian")),
+        look(None),
+        "an unknown style is Glass"
+    );
+}
+
+#[test]
+fn a_glass_style_change_through_the_portal_relooks() {
+    let mut look = Look {
+        interface: Some("glass".into()),
+        ..Look::default()
+    };
+    let before = look.theme().look;
+    assert!(look.set(reprisebus::appearance::GLASS_STYLE, "onyx".into()));
+    assert_ne!(look.theme().look, before, "the look moves to Onyx");
+    assert!(!look.set(reprisebus::appearance::GLASS_STYLE, "onyx".into()));
+    assert!(look.set(reprisebus::appearance::GLASS_STYLE, "glass".into()));
+    assert_eq!(look.theme().look, before, "and back");
 }
 
 #[test]
@@ -217,7 +259,13 @@ fn a_new_colour_scheme_rebuilds_the_theme_over_the_same_interface() {
 
 #[test]
 fn theme_from_env_applies_colors_over_the_blue_style() {
-    let t = theme_from_env(Some("blue"), None, None, None, Some("window_text=#010203"));
+    let t = theme_from_env(
+        Some("blue"),
+        None,
+        None,
+        (None, None),
+        Some("window_text=#010203"),
+    );
     let blue = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue);
     assert_eq!(
         t.colors.window_text,

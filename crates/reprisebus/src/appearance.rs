@@ -31,17 +31,21 @@ pub const MODE: &str = "mode";
 /// `[glass] material`, `frosted`, `smoked` or `molten`, as `REPRISE_GLASS_MATERIAL`.
 pub const GLASS_MATERIAL: &str = "glass-material";
 
+/// `[glass] style`, `glass` or `onyx`, as `REPRISE_GLASS_STYLE`.
+pub const GLASS_STYLE: &str = "glass-style";
+
 /// `[accessibility] text_size`, in percent ("150").
 pub const TEXT_SIZE: &str = "text-size";
 
 /// `[metrics] double_click_ms` in force, in ms ("500").
 pub const DOUBLE_CLICK_MS: &str = "double-click-ms";
 
-const KEYS: [&str; 11] = [
+const KEYS: [&str; 12] = [
     INTERFACE,
     BLUE_VARIANT,
     MODE,
     GLASS_MATERIAL,
+    GLASS_STYLE,
     COLORS,
     ICON_THEME,
     SHELL_DLG,
