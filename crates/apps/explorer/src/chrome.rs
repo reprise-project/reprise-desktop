@@ -675,16 +675,21 @@ impl Explorer {
         Some(m.popup(at, ctx))
     }
 
-    /// Opens the menu of crumb `i`'s subfolders at `at`. The listing thread reads them with their
-    /// own icons, as it reads the view; the menu opens with them when the read answers within
-    /// [`crate::LIST_WAIT`], else empty, taking them when it answers
-    /// ([`Explorer::land_crumb_menu`]).
+    /// Opens the menu of crumb `i`'s subfolders at `at`; a search's one crumb lists the searched
+    /// folder's. The listing thread reads them with their own icons, as it reads the view; the
+    /// menu opens with them when the read answers within [`crate::LIST_WAIT`], else empty, taking
+    /// them when it answers ([`Explorer::land_crumb_menu`]).
     pub(crate) fn open_crumb_menu(&mut self, i: usize, at: (i32, i32), ctx: &mut Ctx) -> Reply {
-        let places = crumb_places(&self.place, &self.drive_mounts);
-        let Some(place) = places.get(i).cloned() else {
-            return Reply::none();
+        let (place, current) = match &self.search_crumb {
+            Some(searched) => (searched.clone(), None),
+            None => {
+                let places = crumb_places(&self.place, &self.drive_mounts);
+                let Some(place) = places.get(i).cloned() else {
+                    return Reply::none();
+                };
+                (place, places.get(i + 1).cloned())
+            }
         };
-        let current = places.get(i + 1).cloned();
         let world = foldertree::World {
             px: crate::fileops::menu_icon_px(&ctx.theme),
             scale: ctx.icons.scale(),

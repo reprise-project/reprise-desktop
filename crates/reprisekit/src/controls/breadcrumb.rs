@@ -456,8 +456,12 @@ pub fn hit(b: &Breadcrumb, lay: &Layout, x: i32, y: i32) -> Hit {
     if x < lay.overflow.x {
         return Hit::Icon;
     }
+    // With nothing folded the lead arrow only leads into the crumbs: it is the field's blank.
     if lay.overflow.contains(x, y) {
-        return Hit::Overflow;
+        return match lay.folded {
+            0 => Hit::Empty,
+            _ => Hit::Overflow,
+        };
     }
     for seg in &lay.segments {
         // The chevron wins the column it shares with its button.
@@ -706,12 +710,14 @@ pub fn access(
         pathcomplete::access(&b.edit.complete, &lay.edit.complete, tree, combo);
         focus
     } else {
-        button(
-            tree,
-            ("overflow", 0),
-            lay.overflow,
-            &tr!("breadcrumb-overflow"),
-        );
+        if lay.folded > 0 {
+            button(
+                tree,
+                ("overflow", 0),
+                lay.overflow,
+                &tr!("breadcrumb-overflow"),
+            );
+        }
         for seg in &lay.segments {
             let name = &b.crumbs[seg.crumb].label;
             button(tree, ("segment", seg.crumb), seg.button, name);
