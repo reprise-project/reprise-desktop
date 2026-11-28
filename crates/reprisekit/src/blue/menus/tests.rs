@@ -124,16 +124,15 @@ fn fnv(c: &Canvas) -> u64 {
 }
 
 #[test]
-fn the_start_menus_pin_per_state_in_two_schemes_and_the_navy_twin_at_scale_1_and_2() {
-    let got: Vec<_> = [
-        Variant::Blue.into(),
-        Variant::Olive.into(),
-        Tone::new(Variant::Blue, true),
-    ]
-    .into_iter()
-    .flat_map(|v| [1, 2].map(move |d| (v, d)))
-    .flat_map(|(v, d)| STATES.map(|lit| (format!("{v:?} {d} {lit:?}"), fnv(&scene(v, d, lit).0))))
-    .collect();
+fn the_start_menus_pin_per_state_in_two_schemes_and_every_twin_at_scale_1_and_2() {
+    let got: Vec<_> = [Variant::Blue.into(), Variant::Olive.into()]
+        .into_iter()
+        .chain(Variant::ALL.map(|v| Tone::new(v, true)))
+        .flat_map(|v| [1, 2].map(move |d| (v, d)))
+        .flat_map(|(v, d)| {
+            STATES.map(|lit| (format!("{v:?} {d} {lit:?}"), fnv(&scene(v, d, lit).0)))
+        })
+        .collect();
     crate::pins::check("blue/start_menus", &got);
 }
 

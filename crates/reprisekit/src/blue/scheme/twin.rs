@@ -1,21 +1,28 @@
 //! Dark twins: a Blue scheme at night, built from its light scheme by three colour rules in
-//! OKLab and a lightness range per part, then a few parts set by hand.
-//! - Chrome ([`night`]): captions, frames, caption buttons, the taskbar, Start, task buttons, the
+//! OKLab and a lightness range per part, then a few parts set by hand. Every scheme shares the
+//! rules; its [`Tuning`] sets how far its chrome goes down and which hue tints its ground.
+//! - Chrome ([`Dusk`]): captions, frames, caption buttons, the taskbar, Start, task buttons, the
 //!   tray and the Start menu's bands keep their gradients and hue at a lower lightness
-//!   ([`NIGHT`]) and chroma ([`NIGHT_CHROMA`]). An inactive window's chrome sinks further
-//!   ([`INACTIVE`]). Glyphs, title text and labels are kept.
+//!   ([`NIGHT`], scaled down for a pale chrome) and chroma ([`NIGHT_CHROMA`]). An inactive
+//!   window's chrome sinks further ([`INACTIVE`]). A chrome that is dark already is kept. Light
+//!   glyphs, titles and labels are kept; dark ones, drawn on a pale chrome, turn light.
 //! - Client inks ([`ink`]): lightness through [`INK`], so white goes a deep ground and black
 //!   light, and every ink carries the scheme's hue ([`TINT`]), so the ground is navy in navy and
-//!   olive in olive. Menus and tips stand above the window ([`MENU`], [`INFO_BK`]). Selection and
+//!   olive in olive. Menus and tips stand above the window ([`MENU`], [`INFO_BK`]), greyed text
+//!   stays inside [`GRAY_TEXT`]. A pale selection goes down under light text ([`selection`]);
 //!   desktop colours are kept.
 //! - Control faces ([`face`]): a light body (lightness from [`BODY_FROM`] up) lands on its
 //!   part's [`Range`] in order, so gloss keeps its direction, tinted like the inks; darker
-//!   outlines turn light through [`OUTLINE`] and marks through [`INK`]. Saturated colours (the
+//!   outlines turn light through [`OUTLINE`] (an edit border's pale grey too, [`border`]) and
+//!   marks through [`INK`], unless lighter than their face ([`glyph`]). Saturated colours (the
 //!   hover rim, the focus and default rings, check marks, the progress fill) keep their
 //!   lightness. A disabled face goes flat near the dialog under a dim rim ([`greyed`]), and a
 //!   held arrow button turns a lit blue ([`held`]).
-//! - Task panes ([`deep`]): every colour takes the light pane's hue at one low chroma, its
-//!   lightness through [`DEEP`], under light titles and links; fold discs stand lighter.
+//! - Task panes ([`deep`]): every colour takes the light pane's hue (a grey pane the scheme's
+//!   tint) at one low chroma, its lightness through [`DEEP`], under light titles and links; fold
+//!   discs stand lighter.
+//! - The system title colours, which the calendar band fills with, go down like chrome even
+//!   where a scheme's chrome is kept.
 //! - The Start menu's program column follows the window ink, its places column stands above it
 //!   ([`PLACES`]). The welcome screen's blues go deeper ([`relit`]).
 
@@ -25,13 +32,108 @@ use super::*;
 use crate::blue::trayarrow::ArrowInks;
 use crate::oklab::{color_of, curve, lab_of, smoothstep};
 
-/// `v`'s dark twin, built on first use; a variant without one yet keeps its light scheme.
+/// `v`'s dark twin, built on first use.
 pub(super) fn twin(v: Variant) -> &'static Scheme {
     static TWINS: [OnceLock<Scheme>; Variant::ALL.len()] =
         [const { OnceLock::new() }; Variant::ALL.len()];
+    TWINS[v as usize].get_or_init(|| darken(scheme(v), tuning(v)))
+}
+
+/// Where a scheme's twin leaves the shared rules, set by eye.
+#[derive(Clone, Copy)]
+struct Tuning {
+    chrome: Chrome,
+    /// The colour whose hue tints the inks and faces and the share of [`TINT`] it adds; `None`
+    /// takes the active caption's hue ([`Tint::of`]).
+    tint: Option<(Color, f32)>,
+}
+
+/// How a scheme's chrome goes at night.
+#[derive(Clone, Copy)]
+enum Chrome {
+    /// Through [`NIGHT`], its lightness scaled by the share: a pale light chrome goes further down,
+    /// so it lands near navy's.
+    Night(f32),
+    /// Kept: the light chrome is a night chrome already.
+    Kept,
+}
+
+/// Navy's and Slate's chrome land where the rules put them.
+const NAVY_TUNING: Tuning = Tuning {
+    chrome: Chrome::Night(1.0),
+    tint: None,
+};
+
+/// The sage caption, pale taskbar and Start menu go down to navy's depth; the ground keeps less
+/// green, so it reads as olive rather than army.
+const OLIVE_TUNING: Tuning = Tuning {
+    chrome: Chrome::Night(OLIVE_CHROME),
+    tint: Some((OLIVE_HUE, 0.8)),
+};
+const OLIVE_CHROME: f32 = 0.72;
+const OLIVE_HUE: Color = Color::rgb(0x68, 0x7B, 0x4F);
+
+/// Silver's caption is a near-grey lavender: its chrome goes down like olive's and the ground
+/// takes the lavender at a low share instead of going neutral.
+const SILVER_TUNING: Tuning = Tuning {
+    chrome: Chrome::Night(SILVER_CHROME),
+    tint: Some((SILVER_HUE, 0.55)),
+};
+const SILVER_CHROME: f32 = 0.72;
+const SILVER_HUE: Color = Color::rgb(0x8C, 0x88, 0xB0);
+
+/// Sapphire's caption gloss and taskbar are paler than navy's and go a step further down.
+const SAPPHIRE_TUNING: Tuning = Tuning {
+    chrome: Chrome::Night(0.8),
+    tint: None,
+};
+
+/// Cobalt's caption is deep, its taskbar pale: one share brings the taskbar down, the caption
+/// follows a little.
+const COBALT_TUNING: Tuning = Tuning {
+    chrome: Chrome::Night(0.85),
+    tint: None,
+};
+
+/// Steel's grey-blue chrome is paler than navy's and goes a step further down.
+const STEEL_TUNING: Tuning = Tuning {
+    chrome: Chrome::Night(0.82),
+    tint: None,
+};
+
+/// Obsidian's chrome is slate on near-black already; its ground keeps the caption's blue.
+const OBSIDIAN_TUNING: Tuning = Tuning {
+    chrome: Chrome::Kept,
+    tint: None,
+};
+
+/// Ember's chrome is charcoal already; its neutral ground takes the Start pill's orange at a
+/// low share, a warm charcoal.
+const EMBER_TUNING: Tuning = Tuning {
+    chrome: Chrome::Kept,
+    tint: Some((EMBER_HUE, 0.5)),
+};
+const EMBER_HUE: Color = Color::rgb(0xE3, 0x76, 0x33);
+
+/// Carbon's chrome is black already; its ground takes the amber caption at half the share, so
+/// it stays a warm charcoal rather than brown.
+const CARBON_TUNING: Tuning = Tuning {
+    chrome: Chrome::Kept,
+    tint: Some((CARBON_HUE, 0.5)),
+};
+const CARBON_HUE: Color = Color::rgb(0xA4, 0x63, 0x13);
+
+fn tuning(v: Variant) -> Tuning {
     match v {
-        Variant::Blue => TWINS[v as usize].get_or_init(|| darken(&NAVY)),
-        _ => scheme(v),
+        Variant::Blue | Variant::Slate => NAVY_TUNING,
+        Variant::Olive => OLIVE_TUNING,
+        Variant::Silver => SILVER_TUNING,
+        Variant::Sapphire => SAPPHIRE_TUNING,
+        Variant::Obsidian => OBSIDIAN_TUNING,
+        Variant::Ember => EMBER_TUNING,
+        Variant::Cobalt => COBALT_TUNING,
+        Variant::Carbon => CARBON_TUNING,
+        Variant::Steel => STEEL_TUNING,
     }
 }
 
@@ -67,6 +169,9 @@ const TINT: [(f32, f32); 4] = [(0.15, 0.034), (0.30, 0.032), (0.60, 0.012), (0.9
 
 /// The scheme's caption chroma from which [`TINT`] is whole; a greyer scheme is tinted less.
 const HUE_FULL: f32 = 0.06;
+
+/// Greyed text's lightness range in the twin: dimmer than text, clear of the ground.
+const GRAY_TEXT: (f32, f32) = (0.56, 0.66);
 
 /// The lightness of a menu, above the window and dialog it drops over.
 const MENU: f32 = 0.29;
@@ -123,7 +228,8 @@ const GREYED_CHROMA: f32 = 0.3;
 /// Task pane lightness, light to dark, linear between knots: the pane sits under the dialog,
 /// its groups' bodies and title bands stand above it.
 const DEEP: [(f32, f32); 4] = [(0.55, 0.23), (0.70, 0.26), (0.86, 0.30), (1.00, 0.34)];
-/// The OKLab chroma of every deep colour, in the hue of the light pane.
+/// The OKLab chroma of every deep colour, in the hue of the light pane, scaled by the tint's
+/// share for a grey pane.
 const DEEP_CHROMA: f32 = 0.045;
 /// A fold button's disc: its rim and its face, lighter than the title band.
 const DISC_RIM: f32 = 0.58;
@@ -138,7 +244,7 @@ const WELCOME_GLOW: (f32, f32) = (0.37, 0.6);
 const WELCOME_TILE_HOT: (f32, f32) = (0.44, 0.7);
 
 /// The scheme's tint: OKLab (a, b) per unit of [`TINT`], the hue of its active caption, shorter
-/// for a caption greyer than [`HUE_FULL`].
+/// for a caption greyer than [`HUE_FULL`], or a [`Tuning`]'s hue at its share.
 #[derive(Clone, Copy)]
 struct Tint([f32; 2]);
 
@@ -149,6 +255,16 @@ impl Tint {
         Tint([a / n, b / n])
     }
 
+    fn tuned(s: &Scheme, k: Tuning) -> Tint {
+        match k.tint {
+            None => Tint::of(s),
+            Some((c, share)) => {
+                let [a, b] = hue(c);
+                Tint([a * share, b * share])
+            }
+        }
+    }
+
     /// The (a, b) added to a colour at lightness `l`, scaled by `k`.
     fn at(self, l: f32, k: f32) -> [f32; 2] {
         let c = curve(&TINT, l) * k;
@@ -156,44 +272,158 @@ impl Tint {
     }
 }
 
-/// `c` at night: lightness through [`NIGHT`], chroma scaled by [`NIGHT_CHROMA`], and for an
-/// inactive window's chrome by [`INACTIVE`] as well.
-fn night(c: Color, inactive: bool) -> Color {
+/// `c` at night: lightness through [`NIGHT`] times `share`, chroma scaled by [`NIGHT_CHROMA`],
+/// and for an inactive window's chrome by [`INACTIVE`] as well.
+fn night(c: Color, inactive: bool, share: f32) -> Color {
     let [l, a, b] = lab_of(c);
     let (lk, ck) = if inactive { INACTIVE } else { (1.0, 1.0) };
     let k = NIGHT_CHROMA * ck;
-    color_of([curve(&NIGHT, l) * lk, a * k, b * k])
+    color_of([curve(&NIGHT, l) * share * lk, a * k, b * k])
 }
 
-fn night_grad(g: Grad, inactive: bool) -> Grad {
-    leak(g.iter().map(|&(t, c)| (t, night(c, inactive))).collect())
+/// A scheme's chrome at night: its [`Chrome`] rule, and its tint for a glyph that turns light.
+#[derive(Clone, Copy)]
+struct Dusk {
+    chrome: Chrome,
+    tint: Tint,
 }
 
-/// A chrome face at night; its glyph is kept.
-fn night_face(f: &Face, inactive: bool) -> Face {
-    Face {
-        rim: night(f.rim, inactive),
-        inner: night(f.inner, inactive),
-        halo: f.halo.map(|(c, a)| (night(c, inactive), a)),
-        down: night_grad(f.down, inactive),
-        across: night_grad(f.across, inactive),
-        mark: f.mark,
+impl Dusk {
+    fn color(self, c: Color, inactive: bool) -> Color {
+        match self.chrome {
+            Chrome::Night(share) => night(c, inactive, share),
+            Chrome::Kept => c,
+        }
+    }
+
+    fn grad(self, g: Grad, inactive: bool) -> Grad {
+        match self.chrome {
+            Chrome::Night(_) => leak(
+                g.iter()
+                    .map(|&(t, c)| (t, self.color(c, inactive)))
+                    .collect(),
+            ),
+            Chrome::Kept => g,
+        }
+    }
+
+    /// A chrome face at night. A glyph darker than its light face turns light, as the face goes
+    /// dark under it; others are kept.
+    fn face(self, f: &Face, inactive: bool) -> Face {
+        if let Chrome::Kept = self.chrome {
+            return *f;
+        }
+        let mark = f.mark.map(|m| {
+            if lab_of(m)[0] >= body(f) {
+                m
+            } else {
+                ink(m, self.tint)
+            }
+        });
+        Face {
+            rim: self.color(f.rim, inactive),
+            inner: self.color(f.inner, inactive),
+            halo: f.halo.map(|(c, a)| (self.color(c, inactive), a)),
+            down: self.grad(f.down, inactive),
+            across: self.grad(f.across, inactive),
+            mark,
+        }
+    }
+
+    /// A text ink over chrome: a dark one turns near white at [`CHROME_INK`], as the chrome
+    /// goes dark under it.
+    fn ink(self, c: Color) -> Color {
+        match self.chrome {
+            Chrome::Night(_) if lab_of(c)[0] < LIGHT_INK => {
+                relit(ink(c, self.tint), (CHROME_INK, 1.0))
+            }
+            _ => c,
+        }
+    }
+
+    /// A text shadow over chrome: a light one, under dark text that turns light, turns dark.
+    fn shadow(self, c: Color) -> Color {
+        match self.chrome {
+            Chrome::Night(_) if lab_of(c)[0] > LIGHT_INK => ink(c, self.tint),
+            _ => self.color(c, false),
+        }
+    }
+
+    fn lit(self, f: &LitFaces) -> LitFaces {
+        LitFaces {
+            normal: self.face(&f.normal, false),
+            hot: self.face(&f.hot, false),
+            pressed: self.face(&f.pressed, false),
+        }
+    }
+
+    /// The tray's arrow at night; its glyph is kept.
+    fn arrow(self, r: &ArrowRecipe) -> ArrowRecipe {
+        let n = |c| self.color(c, false);
+        let inks = |i: &ArrowInks| ArrowInks {
+            face: i.face.map(n),
+            gloss: n(i.gloss),
+            glow: n(i.glow),
+            ring: n(i.ring),
+            edge: n(i.edge),
+            ..*i
+        };
+        ArrowRecipe {
+            rim: r.rim.map(n),
+            states: r.states.each_ref().map(inks),
+            ..*r
+        }
+    }
+}
+
+/// `c` as greyed text, its lightness held inside [`GRAY_TEXT`].
+fn greyed_text(c: Color) -> Color {
+    let [l, a, b] = lab_of(c);
+    let k = l.clamp(GRAY_TEXT.0, GRAY_TEXT.1);
+    if k == l { c } else { color_of([k, a, b]) }
+}
+
+/// A selection lighter than [`PALE_SELECTION`] goes down to [`SELECTION`], under light text.
+const PALE_SELECTION: f32 = 0.6;
+const SELECTION: f32 = 0.48;
+
+/// A selection in the twin: a pale one goes down to [`SELECTION`], keeping its hue.
+fn selection(c: Color) -> Color {
+    if lab_of(c)[0] > PALE_SELECTION {
+        relit(c, (SELECTION, 1.0))
+    } else {
+        c
+    }
+}
+
+/// The lightness a dark chrome ink turns to.
+const CHROME_INK: f32 = 0.96;
+
+/// The lightness from which an ink reads as light text.
+const LIGHT_INK: f32 = 0.5;
+
+/// `c` as an ink on a dark face: a dark ink turns light, a light one is kept.
+fn lit(c: Color, t: Tint) -> Color {
+    if lab_of(c)[0] < LIGHT_INK {
+        ink(c, t)
+    } else {
+        c
     }
 }
 
 /// A part's chrome faces at night.
 trait Night {
-    fn night(&self) -> Self;
+    fn night(&self, d: Dusk) -> Self;
 }
 
 /// Builds without `..`, so a state added to a type fails to build until it is listed.
 macro_rules! night {
     ($($t:ident { $($f:ident),* $(; inactive $i:ident)? })*) => {$(
         impl Night for $t {
-            fn night(&self) -> Self {
+            fn night(&self, d: Dusk) -> Self {
                 $t {
-                    $($f: night_face(&self.$f, false),)*
-                    $($i: night_face(&self.$i, true),)?
+                    $($f: d.face(&self.$f, false),)*
+                    $($i: d.face(&self.$i, true),)?
                 }
             }
         }
@@ -205,32 +435,6 @@ night! {
     CaptionButtonFaces { normal, hot, pressed, disabled; inactive inactive }
     HelpButtonFaces { normal, hot, pressed; inactive inactive }
     TaskButtonFaces { normal, hot, checked, checked_hot, pressed }
-}
-
-fn night_lit(f: &LitFaces) -> LitFaces {
-    LitFaces {
-        normal: night_face(&f.normal, false),
-        hot: night_face(&f.hot, false),
-        pressed: night_face(&f.pressed, false),
-    }
-}
-
-/// The tray's arrow at night; its glyph is kept.
-fn night_arrow(r: &ArrowRecipe) -> ArrowRecipe {
-    let n = |c| night(c, false);
-    let inks = |i: &ArrowInks| ArrowInks {
-        face: i.face.map(n),
-        gloss: n(i.gloss),
-        glow: n(i.glow),
-        ring: n(i.ring),
-        edge: n(i.edge),
-        ..*i
-    };
-    ArrowRecipe {
-        rim: r.rim.map(n),
-        states: r.states.each_ref().map(inks),
-        ..*r
-    }
 }
 
 /// `c` as a dark client ink, tinted by `t`.
@@ -259,7 +463,8 @@ fn tinted_at(h: [f32; 2], (l, c): (f32, f32)) -> Color {
     color_of([l, h[0] * c, h[1] * c])
 }
 
-/// A task pane colour in the twin: lightness through [`DEEP`], in hue `h`.
+/// A task pane colour in the twin: lightness through [`DEEP`], in hue `h` (an OKLab (a, b) of
+/// length 1, or less for a grey pane).
 fn deep(c: Color, h: [f32; 2]) -> Color {
     tinted_at(h, (curve(&DEEP, lab_of(c)[0]), DEEP_CHROMA))
 }
@@ -334,9 +539,40 @@ fn map_face(f: &Face, c: impl Fn(Color) -> Color, mark: impl Fn(Color) -> Color)
     }
 }
 
+/// The lightness of `f`'s body, halfway down.
+fn body(f: &Face) -> f32 {
+    lab_of(f.down[f.down.len() / 2].1)[0]
+}
+
+/// `f`'s glyph `c` in the twin: one lighter than its light face stays light, others
+/// [`mark_color`].
+fn glyph(f: &Face, c: Color, t: Tint) -> Color {
+    if lab_of(c)[0] > body(f) {
+        c
+    } else {
+        mark_color(c, t)
+    }
+}
+
 /// `f` in the twin as part `p`.
 fn face(f: &Face, p: Part) -> Face {
-    map_face(f, |c| face_color(c, p), |c| mark_color(c, p.0))
+    map_face(f, |c| face_color(c, p), |c| glyph(f, c, p.0))
+}
+
+/// An edit or list border in the twin: every colour below [`BODY_FROM`] is an outline, a pale
+/// one too, so the border reads on the dark ground.
+fn border(f: &GreyedFaces, t: Tint) -> GreyedFaces {
+    let line = |c: Color| {
+        if lab_of(c)[0] < BODY_FROM {
+            toward(c, t, |l| curve(&OUTLINE, l))
+        } else {
+            face_color(c, Part(t, WELL))
+        }
+    };
+    GreyedFaces {
+        normal: map_face(&f.normal, line, |c| glyph(&f.normal, c, t)),
+        ..f.darken(Part(t, WELL))
+    }
 }
 
 /// `c` greyed at lightness `l`: [`GREYED_CHROMA`] of its chroma, tinted by `t`.
@@ -374,7 +610,7 @@ fn held(f: &Face, t: Tint) -> Face {
         let [ta, tb] = t.at(l, 1.0);
         color_of([l, a * FACE_CHROMA + ta, b * FACE_CHROMA + tb])
     };
-    map_face(f, body, |c| mark_color(c, t))
+    map_face(f, body, |c| glyph(f, c, t))
 }
 
 /// An arrow button in the twin: raised, [`held`] when pressed, its disabled glyph set.
@@ -458,23 +694,41 @@ impl<T: Darken> Darken for Option<T> {
     }
 }
 
-/// `s`'s dark twin: chrome at night, client inks and control faces dark and tinted.
-fn darken(s: &Scheme) -> Scheme {
+/// `s`'s dark twin: chrome at night, client inks and control faces dark and tinted, as `k` tunes.
+fn darken(s: &Scheme, k: Tuning) -> Scheme {
     let sys = &s.system;
     let i = &s.inks;
-    let t = Tint::of(s);
+    let t = Tint::tuned(s, k);
+    let d = Dusk {
+        chrome: k.chrome,
+        tint: t,
+    };
     let p = |r| Part(t, r);
     let ink = |c| ink(c, t);
-    let n = |c| night(c, false);
-    let h = hue(s.task_pane.normal.inner);
+    let n = |c| d.color(c, false);
+    let [_, a, b] = lab_of(s.task_pane.normal.inner);
+    let h = if a.hypot(b) < HUE_FULL {
+        t.0
+    } else {
+        hue(s.task_pane.normal.inner)
+    };
+    let title = Dusk {
+        chrome: match k.chrome {
+            Chrome::Kept => Chrome::Night(1.0),
+            c => c,
+        },
+        tint: t,
+    };
     let (c, x) = (&s.task_collapse, &s.task_expand);
     let m = &s.start_menu;
     Scheme {
         system: System {
-            active_title: n(sys.active_title),
-            gradient_active_title: n(sys.gradient_active_title),
-            inactive_title: night(sys.inactive_title, true),
-            gradient_inactive_title: night(sys.gradient_inactive_title, true),
+            active_title: title.color(sys.active_title, false),
+            gradient_active_title: title.color(sys.gradient_active_title, false),
+            inactive_title: title.color(sys.inactive_title, true),
+            gradient_inactive_title: title.color(sys.gradient_inactive_title, true),
+            title_text: title.ink(sys.title_text),
+            inactive_title_text: title.ink(sys.inactive_title_text),
             button_face: ink(sys.button_face),
             button_hilight: ink(sys.button_hilight),
             button_light: ink(sys.button_light),
@@ -483,21 +737,35 @@ fn darken(s: &Scheme) -> Scheme {
             button_text: ink(sys.button_text),
             window: ink(sys.window),
             window_text: ink(sys.window_text),
-            gray_text: ink(sys.gray_text),
+            gray_text: greyed_text(ink(sys.gray_text)),
             menu: relit(ink(sys.menu), (MENU, 1.0)),
             menu_text: ink(sys.menu_text),
             info_bk: relit(ink(sys.info_bk), (INFO_BK, 1.0)),
             info_text: ink(sys.info_text),
             menu_bar: ink(sys.menu_bar),
             hot_light: ink(sys.hot_light),
+            hilight: selection(sys.hilight),
+            hilight_text: lit(sys.hilight_text, t),
+            menu_hilight: selection(sys.menu_hilight),
             menu_band: n(sys.menu_band),
             gradient_menu_band: n(sys.gradient_menu_band),
             menu_band_top: n(sys.menu_band_top),
             ..*sys
         },
         inks: Inks {
-            title_shadow: n(i.title_shadow),
-            start_shadow: n(i.start_shadow),
+            title: d.ink(i.title),
+            title_inactive: d.ink(i.title_inactive),
+            title_shadow: d.shadow(i.title_shadow),
+            start_label: d.ink(i.start_label),
+            start_shadow: d.shadow(i.start_shadow),
+            bar_text: d.ink(i.bar_text),
+            task_normal: d.ink(i.task_normal),
+            task_hot: d.ink(i.task_hot),
+            task_checked: d.ink(i.task_checked),
+            task_checked_hot: d.ink(i.task_checked_hot),
+            task_pressed: d.ink(i.task_pressed),
+            calendar_letters: title.ink(i.calendar_letters),
+            toolbar_pressed: lit(i.toolbar_pressed, t),
             greyed_label: ink(i.greyed_label),
             group_label: ink(i.group_label),
             toolbar_disabled: ink(i.toolbar_disabled),
@@ -508,30 +776,29 @@ fn darken(s: &Scheme) -> Scheme {
             task_title_hot: tinted_at(h, TASK_INK_HOT),
             task_link: tinted_at(h, TASK_INK),
             task_link_hot: tinted_at(h, TASK_INK_HOT),
-            ..*i
         },
-        caption: s.caption.night(),
-        max_caption: s.max_caption.night(),
-        frame_left: s.frame_left.night(),
-        frame_right: s.frame_right.night(),
-        frame_bottom: s.frame_bottom.night(),
-        min_button: s.min_button.night(),
-        max_button: s.max_button.night(),
-        restore_button: s.restore_button.night(),
-        close_button: s.close_button.night(),
-        help_button: s.help_button.night(),
+        caption: s.caption.night(d),
+        max_caption: s.max_caption.night(d),
+        frame_left: s.frame_left.night(d),
+        frame_right: s.frame_right.night(d),
+        frame_bottom: s.frame_bottom.night(d),
+        min_button: s.min_button.night(d),
+        max_button: s.max_button.night(d),
+        restore_button: s.restore_button.night(d),
+        close_button: s.close_button.night(d),
+        help_button: s.help_button.night(d),
         taskbar: RestFaces {
-            normal: night_face(&s.taskbar.normal, false),
+            normal: d.face(&s.taskbar.normal, false),
         },
-        start_button: night_lit(&s.start_button),
-        task_button: s.task_button.night(),
+        start_button: d.lit(&s.start_button),
+        task_button: s.task_button.night(d),
         tray_area: RestFaces {
-            normal: night_face(&s.tray_area.normal, false),
+            normal: d.face(&s.tray_area.normal, false),
         },
-        tray_arrow: night_arrow(&s.tray_arrow),
+        tray_arrow: d.arrow(&s.tray_arrow),
         calendar_band: GreyedFaces {
-            normal: night_face(&s.calendar_band.normal, false),
-            disabled: night_face(&s.calendar_band.disabled, true),
+            normal: title.face(&s.calendar_band.normal, false),
+            disabled: title.face(&s.calendar_band.disabled, true),
         },
         push_button: s.push_button.darken(p(RAISED)),
         check_box: s.check_box.darken(p(WELL)),
@@ -547,8 +814,8 @@ fn darken(s: &Scheme) -> Scheme {
         scroll_grip_h: s.scroll_grip_h.darken(p(RAISED)),
         scroll_track_v: s.scroll_track_v.darken(p(TRACK)),
         scroll_track_h: s.scroll_track_h.darken(p(TRACK)),
-        edit_border: s.edit_border.darken(p(WELL)),
-        list_border: s.list_border.darken(p(WELL)),
+        edit_border: border(&s.edit_border, t),
+        list_border: s.list_border.as_ref().map(|f| border(f, t)),
         combo_drop: arrow(&s.combo_drop, t),
         tab_item: TabItemFaces {
             normal: tab(&s.tab_item.normal, p(PANE)),
@@ -596,15 +863,15 @@ fn darken(s: &Scheme) -> Scheme {
         },
         places_bar: s.places_bar.darken(p(SUNK)),
         start_menu: StartMenu {
-            band: night_grad(m.band, false),
+            band: d.grad(m.band, false),
             edge: n(m.edge),
             accent: n(m.accent),
-            band_shadow: n(m.band_shadow),
+            band_ink: d.ink(m.band_ink),
+            band_shadow: d.shadow(m.band_shadow),
             places: relit(ink(m.places), (PLACES, 1.0)),
             places_edge: ink(m.places_edge),
             places_ink: ink(m.places_ink),
             rule: ink(m.rule),
-            ..*m
         },
         welcome_band: relit(s.welcome_band, WELCOME_BAND),
         welcome_field: relit(s.welcome_field, WELCOME_FIELD),
@@ -627,10 +894,17 @@ mod tests {
     }
 
     #[test]
-    fn a_twin_is_built_once_and_a_variant_without_one_keeps_its_light_scheme() {
-        assert!(std::ptr::eq(navy(), twin(Variant::Blue)));
-        assert_eq!(twin(Variant::Olive), &OLIVE);
-        assert_ne!(navy().system, NAVY.system);
+    fn every_variant_has_its_own_twin_built_once() {
+        for v in Variant::ALL {
+            assert!(std::ptr::eq(twin(v), twin(v)), "{v:?}");
+            assert_eq!(twin(v).name, scheme(v).name);
+            assert_ne!(twin(v).system, scheme(v).system, "{v:?}");
+        }
+    }
+
+    /// Every variant's light scheme and twin.
+    fn all() -> impl Iterator<Item = (Variant, &'static Scheme, &'static Scheme)> {
+        Variant::ALL.into_iter().map(|v| (v, scheme(v), twin(v)))
     }
 
     /// The OKLab chroma of `c`.
@@ -641,41 +915,110 @@ mod tests {
 
     #[test]
     fn client_surfaces_go_deep_in_the_schemes_hue_and_their_text_light() {
-        let s = &navy().system;
-        let hue = angle(NAVY.system.active_title);
-        for (what, c) in [
-            ("window", s.window),
-            ("button_face", s.button_face),
-            ("menu", s.menu),
-            ("menu_bar", s.menu_bar),
-        ] {
-            assert!((0.18..0.3).contains(&l(c)), "{what} is deep, got {c:?}");
-            assert!(chroma(c) > 0.025, "{what} is tinted, got {c:?}");
-            assert!((angle(c) - hue).abs() < 0.3, "{what} is navy, got {c:?}");
+        for (v, light, dark) in all() {
+            let s = &dark.system;
+            let t = Tint::tuned(light, tuning(v)).0;
+            let hue = t[1].atan2(t[0]);
+            for (what, c) in [
+                ("window", s.window),
+                ("button_face", s.button_face),
+                ("menu", s.menu),
+                ("menu_bar", s.menu_bar),
+            ] {
+                assert!(
+                    (0.18..0.3).contains(&l(c)),
+                    "{v:?} {what} is deep, got {c:?}"
+                );
+                assert!(chroma(c) > 0.015, "{v:?} {what} is tinted, got {c:?}");
+                assert!(
+                    (angle(c) - hue).abs() < 0.3,
+                    "{v:?} {what} is in the scheme's hue, got {c:?}"
+                );
+            }
+            for (what, c) in [
+                ("window_text", s.window_text),
+                ("button_text", s.button_text),
+                ("menu_text", s.menu_text),
+                ("info_text", s.info_text),
+            ] {
+                assert!(l(c) > 0.85, "{v:?} {what} is light, got {c:?}");
+                assert!(chroma(c) < 0.02, "{v:?} {what} is near white, got {c:?}");
+            }
+            assert!(
+                l(s.window) < l(s.button_face),
+                "{v:?}: a list is darker than its dialog"
+            );
+            assert!(
+                l(s.menu) > l(s.button_face),
+                "{v:?}: a menu stands above the dialog"
+            );
+            let grey = l(s.gray_text);
+            assert!(
+                grey > l(s.button_face) + 0.25 && grey < l(s.button_text) - 0.2,
+                "{v:?}: greyed text sits between the ground and text, got {grey}"
+            );
+            assert!(
+                l(s.button_shadow) > l(s.button_face) + 0.2,
+                "{v:?}: a shadow line reads on the face"
+            );
         }
-        for (what, c) in [
-            ("window_text", s.window_text),
-            ("button_text", s.button_text),
-            ("menu_text", s.menu_text),
-            ("info_text", s.info_text),
-        ] {
-            assert!(l(c) > 0.85, "{what} is light, got {c:?}");
-            assert!(chroma(c) < 0.02, "{what} is near white, got {c:?}");
+    }
+
+    #[test]
+    fn a_pale_chrome_goes_down_near_navys_and_a_dark_one_is_kept() {
+        let mid = |f: &Face| l(f.down[f.down.len() / 2].1);
+        for (v, light, dark) in all() {
+            match tuning(v).chrome {
+                Chrome::Kept => {
+                    assert_eq!(dark.caption, light.caption, "{v:?}");
+                    assert_eq!(dark.taskbar, light.taskbar, "{v:?}");
+                    assert_eq!(dark.start_button, light.start_button, "{v:?}");
+                    assert_eq!(dark.inks.title, light.inks.title, "{v:?}");
+                }
+                Chrome::Night(_) => {
+                    for (what, a, b) in [
+                        ("caption", &light.caption.normal, &dark.caption.normal),
+                        ("taskbar", &light.taskbar.normal, &dark.taskbar.normal),
+                        (
+                            "task button",
+                            &light.task_button.normal,
+                            &dark.task_button.normal,
+                        ),
+                    ] {
+                        for (x, y) in pairs(a, b) {
+                            assert!(
+                                l(y) < l(x),
+                                "{v:?}: the {what}'s {x:?} goes deeper, got {y:?}"
+                            );
+                        }
+                    }
+                }
+            }
+            for (what, f) in [
+                ("caption", &dark.caption.normal),
+                ("taskbar", &dark.taskbar.normal),
+            ] {
+                assert!(
+                    mid(f) < 0.47,
+                    "{v:?}: the {what} is a night chrome, got {}",
+                    mid(f)
+                );
+            }
+            let i = &dark.inks;
+            let caption = dark.caption.normal.down[dark.caption.normal.down.len() / 2].1;
+            assert!(i.title.contrast(caption) >= 4.5, "{v:?}: the title reads");
+            let bar = dark.task_button.normal.down[dark.task_button.normal.down.len() / 2].1;
+            assert!(
+                i.task_normal.contrast(bar) >= 4.5,
+                "{v:?}: a task label reads"
+            );
+            let off = dark.caption.inactive.down[dark.caption.inactive.down.len() / 2].1;
+            assert!(
+                i.title_inactive.contrast(off) >= 3.0,
+                "{v:?}: an inactive title shows, got {:.2}",
+                i.title_inactive.contrast(off)
+            );
         }
-        assert!(
-            l(s.window) < l(s.button_face),
-            "a list is darker than its dialog"
-        );
-        assert!(
-            l(s.menu) > l(s.button_face),
-            "a menu stands above the dialog"
-        );
-        let grey = l(s.gray_text);
-        assert!(grey > l(s.button_face) + 0.25 && grey < l(s.button_text) - 0.2);
-        assert!(
-            l(s.button_shadow) > l(s.button_face) + 0.25,
-            "a shadow line reads on the face"
-        );
     }
 
     #[test]
@@ -744,7 +1087,12 @@ mod tests {
 
     #[test]
     fn a_disabled_face_is_flat_near_the_dialog_under_a_dim_rim() {
-        let d = navy();
+        for (_, _, d) in all() {
+            disabled_is_flat(d);
+        }
+    }
+
+    fn disabled_is_flat(d: &Scheme) {
         let face = l(d.system.button_face);
         let b = &d.push_button;
         for c in b
@@ -754,21 +1102,36 @@ mod tests {
             .map(|s| s.1)
             .filter(|&c| c != b.disabled.rim)
         {
-            assert!((l(c) - face).abs() < 0.05, "{c:?} is flat near the dialog");
+            assert!(
+                (l(c) - face).abs() < 0.05,
+                "{}: {c:?} is flat near the dialog",
+                d.name
+            );
         }
         let rim = l(b.disabled.rim);
-        assert!(rim > face + 0.08, "the disabled rim still shows");
-        assert!(rim < l(b.normal.rim) - 0.1, "the disabled rim is dim");
+        assert!(
+            rim > face + 0.08,
+            "{}: the disabled rim still shows",
+            d.name
+        );
+        let top = |f: &Face| f.down.iter().map(|s| l(s.1)).fold(0.0, f32::max);
+        assert!(
+            top(&b.disabled) < top(&b.normal) - 0.1,
+            "{}: the disabled rim is dimmer than the normal outline",
+            d.name
+        );
         let k = &d.check_box;
         let (on, off) = (
             k.normal_checked.mark.unwrap(),
             k.disabled_checked.mark.unwrap(),
         );
+        let well = k.disabled_checked.down[k.disabled_checked.down.len() / 2].1;
+        assert!(l(off) > l(well) + 0.12, "{}: a greyed tick shows", d.name);
         assert!(
-            l(off) > l(k.disabled_checked.inner) + 0.15,
-            "a greyed tick shows"
+            chroma(on) < 0.05 || chroma(off) < chroma(on),
+            "{}: a greyed tick loses its colour",
+            d.name
         );
-        assert!(chroma(off) < chroma(on), "a greyed tick loses its colour");
     }
 
     /// Each colour of `dark` against the one at the same stop of `light`.
@@ -837,26 +1200,47 @@ mod tests {
     }
 
     #[test]
-    fn outlines_read_on_charcoal_and_tracks_sit_under_their_thumbs() {
-        let d = navy();
-        let face = l(d.system.button_face);
-        for (what, rim) in [
-            ("push button", d.push_button.normal.rim),
-            ("check box", d.check_box.normal.rim),
-            ("radio", d.radio.normal.rim),
-            ("edit", d.edit_border.normal.rim),
-            ("group box", d.group_box.normal.rim),
-            ("tab page", d.tab_pane.normal.rim),
-        ] {
-            assert!(
-                l(rim) > face + 0.12,
-                "the {what} outline is lighter than the dialog"
-            );
+    fn outlines_read_on_the_ground_and_tracks_sit_under_their_thumbs() {
+        for (v, _, d) in all() {
+            let face = l(d.system.button_face);
+            for (what, rim) in [
+                ("push button", d.push_button.normal.rim),
+                ("check box", d.check_box.normal.rim),
+                ("radio", d.radio.normal.rim),
+                ("edit", d.edit_border.normal.rim),
+                ("group box", d.group_box.normal.rim),
+                ("tab page", d.tab_pane.normal.rim),
+            ] {
+                assert!(
+                    l(rim) > face + 0.12,
+                    "{v:?}: the {what} outline is lighter than the dialog, got {rim:?}"
+                );
+            }
+            let track = l(d.scroll_track_v.normal.across[1].1);
+            let thumb = l(d.scroll_thumb_v.normal.inner);
+            assert!(track < thumb, "{v:?}: track {track} under thumb {thumb}");
+            assert!(track < face, "{v:?}: the track is sunk into the dialog");
         }
-        let track = l(d.scroll_track_v.normal.across[1].1);
-        let thumb = l(d.scroll_thumb_v.normal.inner);
-        assert!(track < thumb, "track {track} under thumb {thumb}");
-        assert!(track < face, "the track is sunk into the dialog");
+    }
+
+    #[test]
+    fn a_glyph_reads_on_its_dark_face() {
+        for (v, _, d) in all() {
+            for (what, f) in [
+                ("scroll arrow", &d.scroll_arrow_up.normal),
+                ("combo arrow", &d.combo_drop.normal),
+                ("spin arrow", &d.spin_up.normal),
+                ("inactive close", &d.close_button.inactive),
+                ("inactive minimize", &d.min_button.inactive),
+            ] {
+                let mark = f.mark.expect("the face has a glyph");
+                let body = f.down[f.down.len() / 2].1;
+                assert!(
+                    mark.contrast(body) >= 3.0,
+                    "{v:?}: the {what} glyph {mark:?} reads on {body:?}"
+                );
+            }
+        }
     }
 
     /// The OKLab hue angle of `c`, in radians.
