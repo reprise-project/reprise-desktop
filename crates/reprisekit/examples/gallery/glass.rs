@@ -746,6 +746,95 @@ fn render_glass_toolbar_on_glass(theme: &Theme) -> Canvas {
     c
 }
 
+/// The nav row's Back and Forward pill, recent places drop and search field over the stripes in
+/// each state, light Glass above dark, drawn at scale `n`: 520x(2 x 5 x 36), rows taller with
+/// the text.
+pub fn render_glass_navrow(n: i32) -> Canvas {
+    use reprisekit::controls::navbuttons::{self, Hit, NavButtons};
+    use reprisekit::controls::searchfield::{self, SearchField};
+    use reprisekit::textedit::EditKey;
+    const ROW: i32 = 36;
+    let nav = |back: bool, forward: bool| NavButtons {
+        can_back: back,
+        can_forward: forward,
+        ..NavButtons::default()
+    };
+    let mut typed = SearchField::default();
+    typed.set_cue("Documents");
+    let mut cued = typed.clone();
+    cued.hot = Some(searchfield::Hit::Field);
+    typed.key(EditKey::Insert("report".into()));
+    typed.hot = Some(searchfield::Hit::Clear);
+    let mut held = typed.clone();
+    held.clearing = true;
+    let mut rest = SearchField::default();
+    rest.set_cue("Documents");
+    let rows: [(NavButtons, SearchField, bool); 5] = [
+        (nav(false, false), rest.clone(), false),
+        (
+            NavButtons {
+                hot: Some(Hit::Back),
+                ..nav(true, false)
+            },
+            cued,
+            false,
+        ),
+        (
+            NavButtons {
+                pressed: Some(Hit::Back),
+                ..nav(true, true)
+            },
+            rest.clone(),
+            true,
+        ),
+        (
+            NavButtons {
+                hot: Some(Hit::Recent),
+                ..nav(true, true)
+            },
+            typed,
+            false,
+        ),
+        (
+            NavButtons {
+                open: true,
+                ..nav(true, false)
+            },
+            held,
+            true,
+        ),
+    ];
+    let modes = [
+        reprisekit::glass::Mode::Light,
+        reprisekit::glass::Mode::Dark,
+    ];
+    let u = interfaces::theme_for(Interface::Glass).controls().text;
+    let row_h = ROW.max(u.len(22) + 14);
+    let h = row_h * (rows.len() * modes.len()) as i32;
+    let mut c = blurred_stripes(520 * n, h * n);
+    let text = TextRenderer::load(&FontConfig::default());
+    for (m, mode) in modes.into_iter().enumerate() {
+        let g = reprisekit::glass::Settings {
+            mode,
+            ..reprisekit::glass::Settings::default()
+        };
+        let theme =
+            interfaces::theme_with(Interface::Glass, Default::default(), false, &g).scaled(n);
+        let p = theme.paint();
+        let px = theme.fonts.size_px;
+        for (i, (nb, sf, focused)) in rows.iter().enumerate() {
+            let y = row_h * (m * rows.len() + i) as i32;
+            let row = Rect::new(4, y, 512, row_h);
+            navbuttons::draw(&mut c, &p, nb, &navbuttons::layout(row));
+            let u = theme.controls().text;
+            let field = searchfield::nav_layout(row, u.len(22), u);
+            let caret = reprisekit::textedit::Caret::new(*focused, true);
+            searchfield::draw_nav(&mut c, &text, &p, sf, field, *focused, caret, px);
+        }
+    }
+    c
+}
+
 /// An inactive window, then the sheet a peek draws in its place, over the stripes, 950x150.
 fn render_glass_peek_sheet(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
