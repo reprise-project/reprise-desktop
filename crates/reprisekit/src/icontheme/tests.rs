@@ -2916,3 +2916,100 @@ fn a_list_tries_every_name_in_the_configured_theme_before_a_fallback() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+/// A text file wears Reprise's lined page unless the configured theme has a text-plain (or the
+/// legacy gnome-mime-text-plain) of its own: one that is the generic document (through any
+/// chain of links, or a copy), or one only a fallback theme carries, does not count.
+#[test]
+fn text_plain_is_the_themes_own_else_reprises_lined_page() {
+    use crate::art::icons::{TEXT_16, TEXT_32};
+    use std::os::unix::fs::symlink;
+    let root = fixture("test", INDEX, &[]);
+    let dir = root.join("test/16x16/apps");
+    fs::create_dir_all(&dir).unwrap();
+    write_png(&dir.join("document.png"), 1, 1, &[0, 0, 255, 255]);
+    symlink("document.png", dir.join("text-x-generic.png")).unwrap();
+    let breeze = root.join("breeze/16x16/apps");
+    fs::create_dir_all(&breeze).unwrap();
+    fs::write(root.join("breeze/index.theme"), INDEX).unwrap();
+    write_png(&breeze.join("text-plain.png"), 1, 1, &[0, 255, 0, 255]);
+    let cache = |scale| {
+        let mut c = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        c.set_scale(scale);
+        c
+    };
+    let mut one = cache(1);
+    assert!(one.has("text-plain"));
+    assert_eq!(one.get("text-plain", 16), Some(TEXT_16.canvas()));
+    assert_eq!(one.get("text-plain", 32), Some(TEXT_32.canvas()));
+    let mut two = cache(2);
+    assert_eq!(
+        two.get("text-plain", 16),
+        Some(TEXT_32.canvas().at_scale(2)),
+        "16 px at scale 2 is the 32 px drawing"
+    );
+    assert_eq!(two.get("text-plain", 32), Some(TEXT_32.canvas_at(2)));
+
+    symlink("document.png", dir.join("text-link.png")).unwrap();
+    symlink("text-link.png", dir.join("text-plain.png")).unwrap();
+    assert_eq!(
+        cache(1).get("text-plain", 16),
+        Some(TEXT_16.canvas()),
+        "a chain of links to the generic document's file"
+    );
+    fs::remove_file(dir.join("text-plain.png")).unwrap();
+
+    fs::copy(
+        dir.join("document.png"),
+        dir.join("gnome-mime-text-plain.png"),
+    )
+    .unwrap();
+    assert_eq!(
+        cache(1).get("text-plain", 16),
+        Some(TEXT_16.canvas()),
+        "a copy of the generic document"
+    );
+    write_png(
+        &dir.join("gnome-mime-text-plain.png"),
+        1,
+        1,
+        &[255, 0, 0, 255],
+    );
+    let theirs = cache(1).get("text-plain", 16).unwrap();
+    assert_eq!(theirs.get(0, 0), 0xFFFF_0000, "the theme's legacy spelling");
+    fs::remove_file(dir.join("gnome-mime-text-plain.png")).unwrap();
+
+    write_png(&dir.join("text-plain.png"), 1, 1, &[255, 0, 0, 255]);
+    let theirs = cache(1).get("text-plain", 16).unwrap();
+    assert_eq!(theirs.get(0, 0), 0xFFFF_0000, "the theme's own text-plain");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// Between and beyond its drawings the page stays sharp: the drawing and whole multiple that
+/// fill the most of the slot, centred.
+#[test]
+fn the_lined_page_keeps_whole_pixels_at_every_size() {
+    use crate::art::icons::{Icon, TEXT_16, TEXT_32, TEXT_48};
+    let mut cache = IconCache::new(IconTheme::load("none", &[]));
+    let centred = |dpx: u32, icon: &'static Icon, cells: i32| {
+        let mut c = Canvas::new(dpx, dpx);
+        let at = (dpx as i32 - icon.size().0 as i32 * cells) / 2;
+        icon.paint(&mut c, at, at, cells);
+        Some(c)
+    };
+    assert_eq!(cache.get("text-plain", 48), Some(TEXT_48.canvas()));
+    assert_eq!(cache.get("text-plain", 24), centred(24, &TEXT_16, 1));
+    assert_eq!(cache.get("text-plain", 40), centred(40, &TEXT_32, 1));
+    assert_eq!(cache.get("text-plain", 64), centred(64, &TEXT_32, 2));
+    assert_eq!(
+        cache.get("text-plain", 72),
+        centred(72, &TEXT_32, 2),
+        "not the 48 alone"
+    );
+    assert_eq!(
+        cache.get("text-plain", 80),
+        centred(80, &TEXT_32, 2),
+        "not 16 at 5x"
+    );
+    assert_eq!(cache.get("text-plain", 96), centred(96, &TEXT_48, 2));
+}

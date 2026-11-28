@@ -92,7 +92,7 @@ fn the_delete_prompt_wears_a_stand_in_and_a_broken_entry_icon_gives_way() {
     );
     let (listed, art) = (listed.expect("a temp dir"), art.expect("a temp dir"));
     let dir = dir.expect("a temp dir");
-    std::fs::write(dir.path().join("notes.txt"), "x").expect("write");
+    std::fs::write(dir.path().join("notes.log"), "x").expect("write");
     let mut ctx = test_ctx();
     ctx.icons = svg_theme(listed.path(), &[("text-x-generic", OTHER)], &[]);
     let mut ex = explorer_in(dir.path(), &mut ctx);

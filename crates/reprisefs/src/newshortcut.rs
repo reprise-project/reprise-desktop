@@ -375,10 +375,11 @@ mod tests {
             path: "/home/u/a b.txt".into(),
             is_dir: false,
         };
+        let text = file.launcher("a", None).unwrap();
+        assert!(text.contains("Exec=xdg-open \"/home/u/a b.txt\"\n"));
         assert!(
-            file.launcher("a", None)
-                .unwrap()
-                .contains("Exec=xdg-open \"/home/u/a b.txt\"\n")
+            text.contains("Icon=text-x-generic\n"),
+            "a name every theme carries"
         );
         let cmd = Target::Command("date +%s".into());
         assert_eq!(cmd.default_name(), "date");

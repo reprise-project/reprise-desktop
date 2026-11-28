@@ -1,5 +1,6 @@
 use super::IconTheme;
 use super::decode::decode;
+use super::own::Own;
 use crate::raster::Canvas;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -360,7 +361,8 @@ impl IconCache {
     }
 
     /// Whether the theme chain has a file of `name` that decodes, at any size: a name whose
-    /// files are all broken gives way to the next name a caller tries.
+    /// files are all broken gives way to the next name a caller tries. A name Reprise draws
+    /// itself ([`Own`]) always counts.
     pub fn has(&self, name: &str) -> bool {
         self.has_with(name, false)
     }
@@ -377,6 +379,9 @@ impl IconCache {
     }
 
     fn has_with(&self, name: &str, defer: bool) -> bool {
+        if Own::of(name).is_some() {
+            return true;
+        }
         if let Some(&known) = self.known.borrow().get(name) {
             return known;
         }
@@ -548,11 +553,25 @@ fn load_with_extra(
         let bare = bare_name(name);
         // Theme lookup is in device pixels at scale 1: a 32 px request at 2x and a 32 px
         // icon at 1x want the same file. A file that fails to decode gives way to the next.
-        let found = theme.find_with_extra(bare, dpx, 1, extra, |p| take(&p, dpx, defer));
-        if found.is_none() {
-            log::debug!("no icon named \"{bare}\" decodes at {dpx} px");
+        match Own::of(bare) {
+            Some(own) => {
+                let mut not_generic = |p: PathBuf| match own.is_generic(&p) {
+                    true => None,
+                    false => take(&p, dpx, defer),
+                };
+                let mut names = std::iter::once(bare).chain(own.aliases.iter().copied());
+                let theirs =
+                    names.find_map(|n| theme.find_named(n, dpx, 1, extra, true, &mut not_generic));
+                theirs.or_else(|| Some(Found::Art(own.draw(dpx))))
+            }
+            None => {
+                let found = theme.find_with_extra(bare, dpx, 1, extra, |p| take(&p, dpx, defer));
+                if found.is_none() {
+                    log::debug!("no icon named \"{bare}\" decodes at {dpx} px");
+                }
+                found
+            }
         }
-        found
     };
     match found? {
         Found::Art(c) => Some(Found::Art(c.at_scale(scale))),

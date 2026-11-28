@@ -851,6 +851,8 @@ fn the_wheel_scrolls_the_view_under_the_pointer() {
 
 const FOLDER: u32 = 0xff20_40c0;
 const TEXT: u32 = 0xffc0_4020;
+/// The generic document, apart from TEXT: a theme's text-plain that is a copy of it does not count.
+const GENERIC: u32 = 0xff40_4040;
 const PICTURE: u32 = 0xff20_a040;
 const PIXELS: u32 = 0xffe0_c000;
 const PROGRAM: u32 = 0xff80_80ff;
@@ -862,7 +864,7 @@ fn png(path: &Path, w: u32, h: u32, argb: u32) {
         .unwrap();
 }
 
-/// An icon theme drawing "folder", "text-x-generic", "image-x-generic" and
+/// An icon theme drawing "folder", "text-x-generic", "text-plain", "image-x-generic" and
 /// "application-x-executable" in flat colours at
 /// 16, 32 and 48 px.
 fn flat_icons(t: &Path) -> IconCache {
@@ -875,7 +877,8 @@ fn flat_icons(t: &Path) -> IconCache {
         std::fs::create_dir_all(theme.join(d)).unwrap();
         for (name, argb) in [
             ("folder", FOLDER),
-            ("text-x-generic", TEXT),
+            ("text-x-generic", GENERIC),
+            ("text-plain", TEXT),
             ("image-x-generic", PICTURE),
             ("application-x-executable", PROGRAM),
             ("computer", FOLDER),
@@ -1041,7 +1044,8 @@ fn cold_svg_icons_land_on_the_dialog_and_a_broken_own_icon_gives_way() {
         t.path(),
         &[
             ("folder", FOLDER),
-            ("text-x-generic", TEXT),
+            ("text-x-generic", GENERIC),
+            ("text-plain", TEXT),
             ("image-x-generic", PICTURE),
             ("application-x-executable", PROGRAM),
             ("computer", FOLDER),

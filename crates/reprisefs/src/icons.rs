@@ -18,6 +18,22 @@ pub fn icon_for_file(path: &Path) -> &'static str {
     }
 }
 
+/// [`icon_for_file`] for an icon Reprise draws itself: a text file wears `text-plain`, which
+/// Reprise's icon cache always draws. A file other programs read (`Icon=`) keeps
+/// [`icon_for_file`]'s names, which every theme carries.
+pub fn drawn_icon_for_file(path: &Path) -> &'static str {
+    match icon_for_file(path) {
+        "text-x-generic"
+            if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("txt")) =>
+        {
+            "text-plain"
+        }
+        name => name,
+    }
+}
+
 /// Theme icon names for a MIME type, best first: the freedesktop name, the legacy `gnome-mime-`
 /// spelling older themes carry, then the media type's generic icon. `None` gives the generic
 /// document.
@@ -47,7 +63,7 @@ pub fn pick_icon(mime: Option<&str>, path: &Path, has: &dyn Fn(&str) -> bool) ->
     if let Some(name) = chain.iter().find(|n| has(n)) {
         return name.clone();
     }
-    let by_ext = icon_for_file(path);
+    let by_ext = drawn_icon_for_file(path);
     if has(by_ext) {
         return by_ext.to_string();
     }
@@ -165,6 +181,12 @@ mod tests {
         assert_eq!(icon_for_file(Path::new("/a/b.jxl")), "image-x-generic");
         assert_eq!(icon_for_file(Path::new("/a/b.avif")), "image-x-generic");
         assert_eq!(icon_for_file(Path::new("/a/b")), "text-x-generic");
+        assert_eq!(icon_for_file(Path::new("/a/b.TXT")), "text-x-generic");
+        assert_eq!(drawn_icon_for_file(Path::new("/a/b.TXT")), "text-plain");
+        assert_eq!(
+            drawn_icon_for_file(Path::new("/a/b.pdf")),
+            "application-pdf"
+        );
     }
 
     #[test]

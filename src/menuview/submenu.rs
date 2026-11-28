@@ -346,7 +346,7 @@ impl State {
             tips.push(None);
         }
         for file in &recent {
-            let icon = reprisefs::icons::icon_for_file(file);
+            let icon = reprisefs::icons::drawn_icon_for_file(file);
             let art = self.menu_icon(items.len(), icon, px, &mut icons);
             items.push(MenuItem::entry(name(file)).icon(art));
             paths.push(Some(file.clone()));
