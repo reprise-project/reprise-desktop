@@ -589,3 +589,56 @@ fn a_chevron_menu_row_wears_its_folders_own_icon() {
         "a plain folder wears the theme's folder"
     );
 }
+
+#[test]
+fn the_fold_menu_lists_the_folded_crumbs_then_the_navigation_panes_places() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(real.clone());
+    let ex = test_explorer(here.clone(), &mut ctx);
+    let chain = crate::chrome::crumb_places(&here, &ex.drive_mounts);
+    assert_eq!(
+        chain[0],
+        Place::Computer,
+        "a temp folder lies under Computer"
+    );
+    let p = ex.folded_crumbs_menu(2, (0, 0), &mut ctx).expect("a menu");
+    let items = p.menu().items();
+    let groups = [
+        Place::Home,
+        Place::Computer,
+        Place::network(),
+        Place::RecycleBin,
+    ];
+    assert_eq!(items.len(), 2 + 1 + groups.len());
+    assert_eq!(
+        p.command(&[0]),
+        Command::Navigate(ex.crumbs.crumbs[1].target.clone()),
+        "nearest first"
+    );
+    assert!(matches!(
+        items[2],
+        reprisekit::controls::menu::MenuItem::Separator
+    ));
+    for (i, place) in groups.iter().enumerate() {
+        assert_eq!(p.command(&[3 + i]), Command::GoTo(place.clone()));
+        let bold = matches!(
+            items[3 + i],
+            reprisekit::controls::menu::MenuItem::Entry { bold: true, .. }
+        );
+        assert_eq!(
+            bold,
+            *place == Place::Computer,
+            "{place:?}: bold where the location lies"
+        );
+    }
+    assert_eq!(
+        p.named_icons(&Command::GoTo(Place::Computer)),
+        Some(&["computer".to_string()][..])
+    );
+    assert!(
+        ex.folded_crumbs_menu(0, (0, 0), &mut ctx).is_none(),
+        "nothing folded, no menu"
+    );
+}
