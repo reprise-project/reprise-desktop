@@ -3,6 +3,7 @@
 pub mod bticon;
 pub mod clockface;
 pub mod devicon;
+pub mod folderpic;
 pub mod glyph;
 pub mod icons;
 pub mod lockkey;

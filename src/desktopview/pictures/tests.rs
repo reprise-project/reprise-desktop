@@ -11,10 +11,10 @@ fn thumb(width: u32, height: u32, dims: Option<(u32, u32)>) -> thumbpipe::Thumb 
     }
 }
 
-/// The rows and columns of `c` holding any ink, as (x, y, w, h).
-fn inked(c: &Canvas) -> (i32, i32, i32, i32) {
+/// The rows and columns of `c` showing the picture, as (x, y, w, h).
+fn shown(c: &Canvas) -> (i32, i32, i32, i32) {
     let (w, h) = (c.width as i32, c.height as i32);
-    let ink = |x: i32, y: i32| c.get(x, y) >> 24 != 0;
+    let ink = |x: i32, y: i32| c.get(x, y) == GREEN;
     let cols: Vec<i32> = (0..w).filter(|&x| (0..h).any(|y| ink(x, y))).collect();
     let rows: Vec<i32> = (0..h).filter(|&y| (0..w).any(|x| ink(x, y))).collect();
     let (x0, y0) = (cols[0], rows[0]);
@@ -27,18 +27,27 @@ fn inked(c: &Canvas) -> (i32, i32, i32, i32) {
 }
 
 #[test]
-fn a_picture_fits_the_icon_square_centred_and_never_grows() {
+fn a_picture_stands_in_the_folder_centred_and_never_grows() {
     let wide = icon_of(&thumb(128, 64, Some((800, 400))), 1);
     assert_eq!((wide.width, wide.height), (32, 32));
-    assert_eq!(inked(&wide), (0, 8, 32, 16));
-    assert_eq!(wide.get(16, 16), GREEN);
+    assert_eq!(
+        shown(&wide),
+        (5, 11, 22, 10),
+        "the opening's width, its foot under the lip"
+    );
+    assert_eq!(wide.get(16, 4) >> 24, 0, "clear above the folder's back");
+    assert_eq!(wide.get(4, 6) >> 24, 255, "the folder's tab");
 
     let small = icon_of(&thumb(10, 5, Some((10, 5))), 1);
-    assert_eq!(inked(&small), (11, 13, 10, 5), "at its own size");
+    assert_eq!(shown(&small), (11, 14, 10, 5), "at its own size");
 
     let tall = icon_of(&thumb(64, 128, None), 2);
     assert_eq!((tall.width, tall.height), (64, 64), "device pixels");
-    assert_eq!(inked(&tall), (16, 0, 32, 64));
+    assert_eq!(
+        shown(&tall),
+        (24, 16, 16, 26),
+        "the opening's height, its foot under the lip"
+    );
 }
 
 /// A folder's cell wearing its picture, at scale 1 and 2.

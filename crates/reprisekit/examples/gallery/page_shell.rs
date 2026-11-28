@@ -713,6 +713,23 @@ pub fn page_desk(
         }
     }
 
+    {
+        use reprisekit::art::folderpic::draw;
+        use reprisekit::controls::shellview::THUMB_INNER;
+        let mut pic = Canvas::new(48, 36);
+        pic.fill_rect(Rect::new(0, 0, 48, 24), cs.active_title);
+        pic.fill_rect(Rect::new(0, 24, 48, 12), cs.background);
+        let px = |x, y| pic.pixels[(y * 48 + x) as usize];
+        let d = c.scale();
+        c.fill_rect(Rect::new(540, 5070, 144, 104), cs.window);
+        c.blit_over(544, 5074, &draw(32, d, (48, 36), (48, 36), px).at_scale(d));
+        c.blit_over(
+            584,
+            5074,
+            &draw(THUMB_INNER, d, (48, 36), (48, 36), px).at_scale(d),
+        );
+    }
+
     // Stacked: side by side would clip the second page.
     {
         let exterior = wizard::Wizard::new(
