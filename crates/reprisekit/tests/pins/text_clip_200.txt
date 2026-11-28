@@ -1,14 +1,14 @@
-blue-dark-surfaces.png "Default" x2
-blue-dark-surfaces.png "Disabled" x2
-blue-dark-surfaces.png "First" x2
-blue-dark-surfaces.png "Focused" x2
-blue-dark-surfaces.png "Group box" x2
-blue-dark-surfaces.png "Help" x4
-blue-dark-surfaces.png "Inactive" x2
-blue-dark-surfaces.png "On the page" x2
-blue-dark-surfaces.png "Pressed" x2
-blue-dark-surfaces.png "Second" x2
-blue-dark-surfaces.png "Third" x2
+blue-dark-surfaces.png "Default" x20
+blue-dark-surfaces.png "Disabled" x20
+blue-dark-surfaces.png "First" x20
+blue-dark-surfaces.png "Focused" x20
+blue-dark-surfaces.png "Group box" x20
+blue-dark-surfaces.png "Help" x40
+blue-dark-surfaces.png "Inactive" x20
+blue-dark-surfaces.png "On the page" x20
+blue-dark-surfaces.png "Pressed" x20
+blue-dark-surfaces.png "Second" x20
+blue-dark-surfaces.png "Third" x20
 blue-variants-dark.png "Apply" x10
 blue-variants-dark.png "Blue dark: common controls" x1
 blue-variants-dark.png "Blue dark: explorer bar" x1

@@ -627,15 +627,12 @@ mod tests {
     }
 
     #[test]
-    fn every_state_draws_its_own_pixels_in_blue_olive_and_the_navy_twin_at_scale_1_and_2() {
-        let cases: Vec<_> = [
-            Variant::Blue.into(),
-            Variant::Olive.into(),
-            Tone::new(Variant::Blue, true),
-        ]
-        .into_iter()
-        .flat_map(|v| [1, 2].map(|d| (v, d)))
-        .collect();
+    fn every_state_draws_its_own_pixels_in_blue_olive_and_every_twin_at_scale_1_and_2() {
+        let cases: Vec<_> = [Variant::Blue.into(), Variant::Olive.into()]
+            .into_iter()
+            .chain(Variant::ALL.map(|v| Tone::new(v, true)))
+            .flat_map(|v| [1, 2].map(|d| (v, d)))
+            .collect();
         let got: Vec<Vec<u64>> = cases.iter().map(|&(v, d)| hashes(v, d)).collect();
         for h in &got {
             let mut seen = h.clone();
