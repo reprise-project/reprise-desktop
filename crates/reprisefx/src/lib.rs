@@ -71,7 +71,7 @@
 //! # Materials
 //!
 //! Frosted and Smoked differ only in the lift (none under Smoked) and the
-//! streaks' gain. Molten blurs lighter ([`blur::MOLTEN_SIGMA`]) and its shapes
+//! streaks, which only Frosted draws. Molten blurs lighter ([`blur::MOLTEN_SIGMA`]) and its shapes
 //! carry a [`Lens`]: the shader bends the backdrop lookup near the outer edge
 //! along the distance field's normal and lights a rim ([`lens`]). The
 //! element's geometry grows by the lens's reach too.
