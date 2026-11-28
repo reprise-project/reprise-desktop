@@ -73,7 +73,7 @@ pub fn render(s: i32) -> Canvas {
                 "Call the plumber about the sink before Friday"
             };
             let edit = MultiEdit::new(lines);
-            let lay = multiedit::layout(&text, &m, &edit, stickynote::layout(r).text, 1);
+            let lay = multiedit::layout(&text, &m, &edit, stickynote::layout(r, p.text).text, 1);
             multiedit::draw(
                 &mut d,
                 &text,

@@ -7,7 +7,7 @@ use crate::frame::{self, Edges, Grip};
 use crate::paint::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::shape::{self, Glyph};
-use crate::theme::{Color, ColorScheme};
+use crate::theme::{Color, ColorScheme, TextUnits};
 use accesskit::NodeId;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -96,9 +96,10 @@ const EDGE_SHADE: f64 = 0.25;
 /// The edge's width, design px.
 const EDGE: i32 = 1;
 
-pub const STRIP_H: i32 = 20;
+/// The strip's height and each button's width at 100% text; both grow with the text.
+const STRIP_H: i32 = 20;
 const BUTTON_W: i32 = 22;
-/// The + and x glyphs' box, design px.
+/// The + and x glyphs' box, design px at 100% text; it grows by [`TextUnits::small`].
 const GLYPH: i32 = 8;
 /// The room between the body's left and top edges and the text.
 const TEXT_PAD: i32 = 4;
@@ -153,14 +154,16 @@ pub struct Layout {
     pub text: Rect,
 }
 
-pub fn layout(r: Rect) -> Layout {
-    let strip = Rect::new(r.x, r.y, r.width, STRIP_H.min(r.height));
+/// The note in `r` with its strip and buttons grown by `u`.
+pub fn layout(r: Rect, u: TextUnits) -> Layout {
+    let strip = Rect::new(r.x, r.y, r.width, u.len(STRIP_H).min(r.height));
     let below = r.y + strip.height;
+    let button_w = u.len(BUTTON_W);
     Layout {
         body: r,
         strip,
-        new: Rect::new(r.x, r.y, BUTTON_W, strip.height),
-        delete: Rect::new(r.right() - BUTTON_W, r.y, BUTTON_W, strip.height),
+        new: Rect::new(r.x, r.y, button_w, strip.height),
+        delete: Rect::new(r.right() - button_w, r.y, button_w, strip.height),
         text: Rect::new(
             r.x + TEXT_PAD,
             below + TEXT_PAD,
@@ -217,7 +220,8 @@ fn shade(c: Color, k: f64) -> Color {
 /// The body in `r`, the strip with its buttons and the edge over both; the edit is the host's
 /// to draw over `lay.text`, which stays clear of the edge.
 pub fn draw(c: &mut Canvas, p: &Paint, r: Rect, colour: Colour, strip: Strip) {
-    let lay = layout(r);
+    let lay = layout(r, p.text);
+    let grow = p.text.small();
     c.fill_rect(r, colour.body());
     c.fill_rect(lay.strip, colour.strip());
     for (part, b, g) in [
@@ -233,11 +237,10 @@ pub fn draw(c: &mut Canvas, p: &Paint, r: Rect, colour: Colour, strip: Strip) {
             c.fill_rect(b, shade(colour.strip(), k));
         }
         let cs = c.scale();
-        let img = shape::glyph(g, GLYPH, p.s * cs, 1.0, shape::premul(INK, 255)).at_scale(cs);
-        let (x, y) = (
-            b.x + (b.width - GLYPH * p.s) / 2,
-            b.y + (b.height - GLYPH * p.s) / 2,
-        );
+        let img =
+            shape::glyph(g, GLYPH, p.s * grow * cs, 1.0, shape::premul(INK, 255)).at_scale(cs);
+        let side = GLYPH * p.s * grow;
+        let (x, y) = (b.x + (b.width - side) / 2, b.y + (b.height - side) / 2);
         c.blit_over(x, y, &img);
     }
     let e = colour.edge();
@@ -267,7 +270,11 @@ mod tests {
     use crate::theme::Theme;
 
     fn drawn(colour: Colour, strip: Strip, scale: i32) -> Canvas {
-        let theme = Theme::default();
+        drawn_at(colour, strip, scale, 100)
+    }
+
+    fn drawn_at(colour: Colour, strip: Strip, scale: i32, text_size: u32) -> Canvas {
+        let theme = Theme::default().with_text_size(text_size);
         let mut c = Canvas::with_scale(120, 60, scale);
         draw(
             &mut c,
@@ -301,7 +308,7 @@ mod tests {
 
     #[test]
     fn the_strip_holds_new_at_the_left_and_delete_at_the_right() {
-        let lay = layout(Rect::new(0, 0, 200, 150));
+        let lay = layout(Rect::new(0, 0, 200, 150), TextUnits::ONE);
         assert_eq!(hit(&lay, 8, 10), Some(Part::New));
         assert_eq!(hit(&lay, 190, 10), Some(Part::Delete));
         assert_eq!(hit(&lay, 100, 10), None, "the strip between them");
@@ -311,7 +318,7 @@ mod tests {
 
     #[test]
     fn the_strip_moves_the_note_and_the_band_along_its_edges_resizes_it() {
-        let lay = layout(Rect::new(0, 0, 200, 150));
+        let lay = layout(Rect::new(0, 0, 200, 150), TextUnits::ONE);
         let at = |x, y| grip(&lay, x, y);
         assert_eq!(
             at(100, 10),
@@ -343,6 +350,24 @@ mod tests {
             Some(Grip::Resize(Edges::TOP | Edges::LEFT)),
             "over New"
         );
+    }
+
+    #[test]
+    fn at_200_percent_the_strip_buttons_and_glyphs_are_twice_as_large() {
+        let u = Theme::default().with_text_size(200).text;
+        let lay = layout(Rect::new(0, 0, 200, 150), u);
+        assert_eq!(lay.strip, Rect::new(0, 0, 200, 40));
+        assert_eq!(lay.new, Rect::new(0, 0, 44, 40));
+        assert_eq!(lay.delete, Rect::new(156, 0, 44, 40));
+        assert_eq!(lay.text.y, 44, "the text starts under the taller strip");
+        let c = drawn_at(Colour::Yellow, Strip::default(), 1, 200);
+        let ink = INK.argb();
+        let rows: Vec<i32> = (0..40)
+            .filter(|&y| (0..44).any(|x| device(&c, x, y) == ink))
+            .collect();
+        assert_eq!(rows, (12..28).collect::<Vec<_>>(), "a 16 px plus, centred");
+        let stroke = (0..44).filter(|&x| device(&c, x, 12) == ink).count();
+        assert_eq!(stroke, 2, "its strokes are 2 px wide");
     }
 
     #[test]
@@ -461,6 +486,10 @@ mod tests {
                     (
                         format!("blue, delete hot {s}"),
                         hash(&drawn(Colour::Blue, hot, s)),
+                    ),
+                    (
+                        format!("yellow, text 200 {s}"),
+                        hash(&drawn_at(Colour::Yellow, Strip::default(), s, 200)),
                     ),
                 ]
             })
