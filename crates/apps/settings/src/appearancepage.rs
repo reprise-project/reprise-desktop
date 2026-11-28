@@ -51,16 +51,19 @@ pub fn interface(s: &Settings) -> Interface {
     Interface::parse(&s.interface).unwrap_or_default()
 }
 
-/// `s`'s `[glass]` as reprisekit's settings; a colour neither a swatch nor "#RRGGBB" is the
-/// default's. Blur, streaks and `blur_rate` show only in the desktop's backdrop, which the sample
-/// has none of, so it takes their defaults.
+/// `s`'s `[glass]` as reprisekit's settings, dark while `s`'s mode draws dark ([`mode_dark`]); a
+/// colour neither a swatch nor "#RRGGBB" is the default's. Blur, streaks and `blur_rate` show
+/// only in the desktop's backdrop, which the sample has none of, so it takes their defaults.
 pub fn glass(s: &Settings) -> glass::Settings {
     let d = glass::Settings::default();
     glass::Settings {
         color: glass::swatch(&s.glass_color)
             .or_else(|| Color::parse(&s.glass_color))
             .unwrap_or(d.color),
-        mode: glass::Mode::parse(&s.mode).unwrap_or_default(),
+        mode: match mode_dark(s) {
+            true => glass::Mode::Dark,
+            false => glass::Mode::Light,
+        },
         material: glass::Material::parse(&s.glass_material).unwrap_or_default(),
         frame: glass::Frame::parse(&s.glass_frame).unwrap_or_default(),
         style: glass::Style::parse(&s.glass_style).unwrap_or_default(),
@@ -424,6 +427,27 @@ mod tests {
             (f.family, f.size_px, f.antialias),
             (vec!["Verdana".to_string(), "DejaVu Sans".into()], 14, true)
         );
+    }
+
+    #[test]
+    fn a_dark_onyx_sample_on_the_small_bar_draws_its_controls_dark() {
+        let onyx = |mode: &str| Settings {
+            interface: "glass".into(),
+            glass_style: "onyx".into(),
+            taskbar_small_icons: true,
+            mode: mode.into(),
+            ..Settings::default()
+        };
+        let name = |s: &Settings| theme(s).look.style().map(|st| st.name);
+        assert_eq!(name(&onyx("dark")), Some("glass-dark"), "mode dark");
+        repriseapp::set_session_dark(true);
+        assert_eq!(
+            name(&onyx("hours")),
+            Some("glass-dark"),
+            "hours, inside them"
+        );
+        repriseapp::set_session_dark(false);
+        assert_eq!(name(&onyx("hours")), Some("glass"), "hours, outside them");
     }
 
     #[test]
