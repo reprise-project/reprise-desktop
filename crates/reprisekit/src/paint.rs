@@ -124,6 +124,8 @@ pub struct Paint<'a> {
     pub text: crate::theme::TextUnits,
     /// Whether labels underline their access keys ([`Theme::access_keys`]).
     pub access_keys: bool,
+    /// Whether the window painted into is maximized ([`Theme::maximized`]).
+    pub maximized: bool,
 }
 
 impl<'a> Paint<'a> {
@@ -342,6 +344,7 @@ pub(crate) fn classic_paint(cs: &ColorScheme, s: i32) -> Paint<'_> {
         active: true,
         text: crate::theme::TextUnits::ONE,
         access_keys: true,
+        maximized: false,
     }
 }
 
@@ -414,6 +417,7 @@ impl Theme {
             active: self.active,
             text: self.text,
             access_keys: self.access_keys,
+            maximized: self.maximized,
         }
     }
 

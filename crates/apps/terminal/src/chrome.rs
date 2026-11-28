@@ -40,8 +40,9 @@ pub struct Chrome {
     pub menu: Option<Popup<Pick>>,
     /// The chrome is drawn again next frame.
     pub dirty: bool,
-    /// The theme and active state the chrome was last drawn in.
-    pub drawn: Option<(Theme, bool)>,
+    /// The theme, active and maximized state the chrome was last drawn in (`Theme`'s
+    /// equality leaves both states out).
+    pub drawn: Option<(Theme, bool, bool)>,
     /// The size the toolbar's icons were fetched at ([`toolbar::big_icon`]); 0 before the first.
     pub icon_px: i32,
 }

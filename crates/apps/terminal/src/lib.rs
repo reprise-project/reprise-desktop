@@ -930,9 +930,9 @@ impl Terminal {
             .chrome
             .drawn
             .as_ref()
-            .is_some_and(|(t, a)| t == theme && *a == theme.active)
+            .is_some_and(|(t, a, m)| t == theme && *a == theme.active && *m == theme.maximized)
         {
-            self.w.chrome.drawn = Some((theme.clone(), theme.active));
+            self.w.chrome.drawn = Some((theme.clone(), theme.active, theme.maximized));
             self.w.full = true;
         }
         let full = std::mem::take(&mut self.w.full);

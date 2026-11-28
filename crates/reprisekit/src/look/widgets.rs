@@ -1510,6 +1510,7 @@ mod tests {
             back: crate::look::Backdrop::Face,
             active: true,
             access_keys: true,
+            maximized: false,
             text: crate::theme::TextUnits::ONE,
         };
         let r = Rect::new(2, 2, 16, 16);
@@ -1547,6 +1548,7 @@ mod tests {
                 back: crate::look::Backdrop::Face,
                 active: true,
                 access_keys: true,
+                maximized: false,
                 text: crate::theme::TextUnits::ONE,
             };
             let mut c = Canvas::new(r.width as u32, r.height as u32);

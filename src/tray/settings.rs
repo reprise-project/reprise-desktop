@@ -40,6 +40,7 @@ pub struct Appearance {
     pub mode: reprisekit::glass::Mode,
     pub glass_material: reprisekit::glass::Material,
     pub glass_style: reprisekit::glass::Style,
+    pub glass_opaque_max: bool,
     /// `[cursor] theme`, else `XCURSOR_THEME`, else "default".
     pub cursor_theme: String,
     /// `[cursor] size` in pixels, else `XCURSOR_SIZE`, else 24.
@@ -86,6 +87,7 @@ impl Appearance {
             mode: cfg.look_mode(),
             glass_material: cfg.glass.material,
             glass_style: cfg.glass.style,
+            glass_opaque_max: cfg.glass.opaque_when_maximized,
             cursor_theme,
             cursor_size: cursor_size as i32,
             font_name: font_name(&cfg.theme.fonts, cfg.accessibility.text_factor()),
@@ -189,6 +191,11 @@ impl Appearance {
                 look::NAMESPACE,
                 look::GLASS_STYLE,
                 zbus::Variant::from(self.glass_style.as_str()),
+            ),
+            (
+                look::NAMESPACE,
+                look::GLASS_OPAQUE_MAXIMIZED,
+                zbus::Variant::from(self.glass_opaque_max.to_string()),
             ),
             (
                 look::NAMESPACE,
@@ -494,7 +501,7 @@ mod tests {
         };
         assert_eq!(
             s.read_all(vec![look::NAMESPACE.into()])[look::NAMESPACE].len(),
-            12
+            13
         );
         let text = |key| String::try_from(s.lookup(look::NAMESPACE, key).unwrap()).unwrap();
         assert_eq!(text(look::INTERFACE), "blue");
@@ -507,6 +514,7 @@ mod tests {
         assert_eq!(text(look::MODE), "light", "Blue in light mode");
         assert_eq!(text(look::GLASS_MATERIAL), "frosted");
         assert_eq!(text(look::GLASS_STYLE), "glass");
+        assert_eq!(text(look::GLASS_OPAQUE_MAXIMIZED), "false");
         assert_eq!(text(look::TEXT_SIZE), "100");
         assert_eq!(text(look::DOUBLE_CLICK_MS), "500");
         assert!(s.lookup(look::NAMESPACE, "color-scheme").is_err());
