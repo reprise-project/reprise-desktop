@@ -125,6 +125,10 @@ impl Explorer {
                 Reply::none()
             }
             PointerInput::Release { x, y, .. } => {
+                if let Some(reply) = self.nav_row_release(x, y, ctx) {
+                    self.let_go();
+                    return reply;
+                }
                 if let Some(reply) = self.tab_strip_release(x, y, ctx) {
                     return reply;
                 }
@@ -158,6 +162,7 @@ impl Explorer {
                 self.close_drop_menu();
                 self.tab_strip_leave();
                 self.toolbar.hot = None;
+                self.nav_row_leave();
                 self.bar.leave();
                 self.explorer_bar.hot_close = false;
                 self.taskpane.hot = None;
@@ -227,7 +232,11 @@ impl Explorer {
         }
         let ml = self.bar_layout(ctx);
         let (m, px) = (ctx.theme.clone(), ctx.theme.fonts.size_px);
-        match self.bar.press(x, y, &ml, &ctx.text, &m, px) {
+        let bar = match self.bar_shown(ctx) {
+            true => self.bar.press(x, y, &ml, &ctx.text, &m, px),
+            false => Action::Ignored,
+        };
+        match bar {
             Action::Chosen { title, path, .. } => {
                 let cmd = menus::command_for(title, &path, &self.menu_state());
                 return self.run(cmd, ctx);
@@ -246,6 +255,10 @@ impl Explorer {
             && statusbar::hit_grip(&self.status, r, x, y)
         {
             return Reply::resize();
+        }
+
+        if let Some(reply) = self.nav_row_press(x, y, ctx) {
+            return reply;
         }
 
         if let Some(f) = crate::window::search_field(self, ctx)
@@ -626,6 +639,9 @@ impl Explorer {
             return Shape::Default;
         }
         let px = ctx.theme.fonts.size_px;
+        if let Some(shape) = self.nav_row_shape(x, y, ctx) {
+            return shape;
+        }
         if crate::window::search_field(self, ctx).is_some_and(|f| searchfield::hit(f, x, y)) {
             return Shape::Text;
         }
@@ -869,16 +885,15 @@ impl Explorer {
         }
         // The open list lights the row under the pointer, and nothing else lights under it.
         if self.address.combo.open.is_some() {
-            let lit = lay.address.is_some_and(|r| {
-                let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
+            let lit = self.address_layout(ctx).is_some_and(|al| {
                 let hit = addressbar::hit(&self.address, &al, x, y);
                 self.address.hover(hit)
             });
             return if lit { Reply::redraw() } else { Reply::none() };
         }
-        let mut dirty = false;
+        let mut dirty = self.nav_row_hover(x, y, ctx);
         let ml = self.bar_layout(ctx);
-        dirty |= self.bar.hover(x, y, &ml) && ctx.styled();
+        dirty |= self.bar_shown(ctx) && self.bar.hover(x, y, &ml) && ctx.styled();
         dirty |= self.hover_view(x, y, &lay, ctx);
         if let Some(r) = lay.toolbar {
             let rects = toolbar::layout(&self.toolbar, &ctx.text, px, r, &ctx.theme.controls());
@@ -921,12 +936,8 @@ impl Explorer {
             self.address.complete.close();
             return false;
         }
-        let hit = match self.layout(ctx).address {
-            Some(r) => {
-                let px = ctx.theme.fonts.size_px;
-                let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
-                addressbar::hit(&self.address, &al, x, y)
-            }
+        let hit = match self.address_layout(ctx) {
+            Some(al) => addressbar::hit(&self.address, &al, x, y),
             None => addressbar::Hit::Nothing,
         };
         self.address.press_outside(hit)

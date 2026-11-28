@@ -13,6 +13,7 @@ use crate::window::Popup;
 use crate::{Explorer, Focus};
 use repriseapp::{Ctx, KeyInput, Reply};
 use reprisekit::controls::addressbar;
+use reprisekit::controls::commandbar;
 use reprisekit::controls::form;
 use reprisekit::controls::iconview::IconMove;
 use reprisekit::controls::menu::{MenuAction, MenuKey};
@@ -176,6 +177,10 @@ impl Explorer {
                 return Reply::redraw();
             }
             self.focus = self.next_focus(back, ctx);
+            self.cmdbar.focus = None;
+            if self.focus == Focus::Commands {
+                return self.commands_key_to(commandbar::Key::First, ctx);
+            }
             if self.focus == Focus::Tasks {
                 self.taskpane.focus = None;
                 self.taskpane.step(back);
@@ -187,6 +192,7 @@ impl Explorer {
         match self.focus {
             Focus::Tree => self.tree_key(k, ctx),
             Focus::View => self.view_key(k, ctx),
+            Focus::Commands => self.commands_key(&k, ctx),
             Focus::Address | Focus::Search | Focus::Tasks => Reply::none(),
         }
     }
@@ -206,8 +212,9 @@ impl Explorer {
         }
     }
 
-    /// Tab's order: the address bar, the search field when the toolbar shows it, the left
-    /// column's pane (the Folders tree, or the task pane when it has a stop), then the view.
+    /// Tab's order: the address bar, the search field when the toolbar or the nav row shows it,
+    /// the left column's pane (the Folders tree, or the task pane when it has a stop), then the
+    /// view.
     fn next_focus(&self, back: bool, ctx: &Ctx) -> Focus {
         let lay = self.layout(ctx);
         let bar = match self.settings.folders {
@@ -216,14 +223,52 @@ impl Explorer {
                 (lay.tasks.is_some() && !self.taskpane.stops().is_empty()).then_some(Focus::Tasks)
             }
         };
-        let search = crate::window::search_field(self, ctx).map(|_| Focus::Search);
-        let order: Vec<Focus> = [Some(Focus::Address), search, bar, Some(Focus::View)]
+        let shell = self.shell_layout(ctx).is_some();
+        let pane = (shell && self.settings.nav_pane).then_some(Focus::Tree);
+        let bar = match shell {
+            true => Some(Focus::Commands),
+            false => bar,
+        };
+        let search =
+            (crate::window::search_field(self, ctx).is_some() || shell).then_some(Focus::Search);
+        let order: Vec<Focus> = [Some(Focus::Address), search, bar, pane, Some(Focus::View)]
             .into_iter()
             .flatten()
             .collect();
         let at = order.iter().position(|f| *f == self.focus).unwrap_or(0);
         let n = order.len();
         order[if back { (at + n - 1) % n } else { (at + 1) % n }]
+    }
+
+    /// The command bar's keys while it holds the keyboard: Left and Right walk its stops, Home and
+    /// End go to its ends, Enter and Space press the stop held, Down opens its drop.
+    fn commands_key(&mut self, k: &KeyInput, ctx: &mut Ctx) -> Reply {
+        let key = match k.sym {
+            keysym::LEFT | keysym::KP_LEFT => commandbar::Key::Prev,
+            keysym::RIGHT | keysym::KP_RIGHT => commandbar::Key::Next,
+            keysym::HOME | keysym::KP_HOME => commandbar::Key::First,
+            keysym::END | keysym::KP_END => commandbar::Key::Last,
+            keysym::RETURN | keysym::KP_ENTER | SPACE => commandbar::Key::Activate,
+            keysym::DOWN | keysym::KP_DOWN => commandbar::Key::Drop,
+            keysym::ESCAPE => {
+                self.focus = Focus::View;
+                self.cmdbar.focus = None;
+                return Reply::redraw();
+            }
+            _ => return Reply::none(),
+        };
+        self.commands_key_to(key, ctx)
+    }
+
+    fn commands_key_to(&mut self, key: commandbar::Key, ctx: &mut Ctx) -> Reply {
+        let Some(sl) = self.shell_layout(ctx) else {
+            return Reply::none();
+        };
+        let l = self.cmdbar_layout(sl.command, ctx);
+        match self.cmdbar.key(key, &l) {
+            Some(hit) => self.command_bar_press(hit, sl.command, true, ctx),
+            None => Reply::redraw(),
+        }
     }
 
     /// The task pane's keys while it holds the keyboard: Up and Down walk its stops, Enter and

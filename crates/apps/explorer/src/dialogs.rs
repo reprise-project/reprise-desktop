@@ -963,6 +963,9 @@ impl Explorer {
             (crate::props_picture::PICTURE_BROWSE, _) => {
                 self.picture_browse().map(|b| b.dlg.min_client())
             }
+            (repriseapp::MAIN, _) if self.shell_on => {
+                Some((self.shell_min_w, repriseapp::MIN_SIZE.1))
+            }
             _ => None,
         }
     }

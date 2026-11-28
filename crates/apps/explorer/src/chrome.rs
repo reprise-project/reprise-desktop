@@ -263,6 +263,11 @@ impl Explorer {
                 toolbar::Item::Separator => {}
             }
         }
+        (self.nav.can_back, self.nav.can_forward) = (back, fwd);
+        if self.shell_on {
+            let facts = self.facts_for(&mut ctx.icons);
+            self.details.set(facts);
+        }
         self.toolbar.latched = self.settings.folders.then_some(FOLDERS_ITEM);
         self.build_taskpane(ctx);
         let (items, acts) = commands_for(&self.bar_facts()).into_iter().unzip();
@@ -461,10 +466,6 @@ pub(crate) fn crumb_places(place: &Place, mounts: &[PathBuf]) -> Vec<Place> {
 
 /// [`crumb_places`] as the breadcrumb's segments: a drive by its name, a share by its own, any
 /// other place by its title; each one's target the text [`Place::read_address`] reads back as it.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the Glass address row calls it")
-)]
 pub(crate) fn crumbs_for(place: &Place, drives: &[Drive], shares: &[Share]) -> Vec<Crumb> {
     let mounts = drive_mounts(drives, shares);
     (crumb_places(place, &mounts).iter())
@@ -524,10 +525,6 @@ impl Explorer {
     /// Opens the menu of crumb `i`'s subfolders at `at`. The listing thread reads them, as it
     /// reads the view; the menu opens with them when the read answers within [`crate::LIST_WAIT`],
     /// else empty, taking them when it answers ([`Explorer::land_crumb_menu`]).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the Glass address row calls it")
-    )]
     pub(crate) fn open_crumb_menu(&mut self, i: usize, at: (i32, i32), ctx: &mut Ctx) -> Reply {
         let places = crumb_places(&self.place, &self.drive_mounts);
         let Some(place) = places.get(i).cloned() else {

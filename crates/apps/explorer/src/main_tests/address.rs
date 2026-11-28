@@ -1,4 +1,5 @@
 use super::*;
+use reprisekit::controls::addressbar;
 
 /// The address drop is built before the first listing lands and again when the mounts change; it
 /// names the window's place, never the drop's first row.

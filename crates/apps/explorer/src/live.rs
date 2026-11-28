@@ -50,6 +50,7 @@ impl Explorer {
     /// Entry point for keys: drops the infotip before acting on the key. The address completion
     /// closes once the key takes the focus off the field.
     pub fn key(&mut self, k: KeyInput, ctx: &mut Ctx) -> Reply {
+        self.follow_look(ctx);
         let tipped = self.hide_tip();
         let completing = self.address.complete.is_open();
         let field = self.text_field().map(FocusedEdit::Line);
@@ -61,15 +62,18 @@ impl Explorer {
         if self.focus != Focus::Address {
             self.address.complete.close();
         }
+        self.sync_nav_row();
         reply.redraw |= tipped || (completing && !self.address.complete.is_open());
         reply
     }
 
     pub fn pointer(&mut self, p: PointerInput, ctx: &mut Ctx) -> Reply {
+        self.follow_look(ctx);
         self.status.grip = !ctx.maximized;
         let tipped = !matches!(p, PointerInput::Motion { .. }) && self.hide_tip();
         let completing = self.address.complete.is_open();
         let mut reply = self.pointer_inner(p, ctx);
+        self.sync_nav_row();
         reply.redraw |= tipped || (completing && !self.address.complete.is_open());
         reply.tick |= self.tip_pending();
         reply

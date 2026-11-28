@@ -40,6 +40,9 @@ pub struct MenuState {
     pub status_bar: bool,
     /// Organize > Layout's checks under Glass: menu bar, details pane, navigation pane.
     pub layout: [bool; 3],
+    /// The window takes the shell layout: View offers Layout's panes in place of the toolbars,
+    /// status bar and Explorer bar.
+    pub shell: bool,
     /// View > Hidden Items: dot names and those a folder's `.hidden` lists are shown.
     pub hidden: bool,
     pub toolbars: [bool; 3],
@@ -105,6 +108,7 @@ impl Default for MenuState {
             folders: true,
             status_bar: true,
             layout: [false, true, true],
+            shell: false,
             hidden: false,
             toolbars: [true, true, false],
             read_only: false,
@@ -291,6 +295,31 @@ fn toolbars_menu(state: &MenuState) -> Menu {
     m
 }
 
+/// Layout's three panes under Glass, View's and Organize's.
+fn layout_menu(state: &MenuState) -> Menu {
+    let mut layout = Menu::default();
+    for (label, part, on) in [
+        (
+            tr!("organize-menu-bar"),
+            LayoutPart::MenuBar,
+            state.layout[0],
+        ),
+        (
+            tr!("organize-details-pane"),
+            LayoutPart::DetailsPane,
+            state.layout[1],
+        ),
+        (
+            tr!("organize-navigation-pane"),
+            LayoutPart::NavPane,
+            state.layout[2],
+        ),
+    ] {
+        layout.row(check(label, true, on), Command::ToggleLayout(part));
+    }
+    layout
+}
+
 /// View > Explorer Bar: Folders. Favorites, History and the Tip of the
 /// Day have no counterpart.
 fn explorer_bar_menu(state: &MenuState) -> Menu {
@@ -433,7 +462,7 @@ fn eject_row(m: &mut Menu, state: &MenuState) {
 
 /// The six menus of the bar with their commands, greyed and checked for
 /// `state`. [`menu_bar`] draws them and [`command_for`] resolves a row.
-fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
+pub(crate) fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
     let sel = state.selection > 0;
     let files = state.selection > state.shell_rows;
     let writable = files && !state.read_only;
@@ -534,15 +563,19 @@ fn bar_menus(state: &MenuState) -> Vec<(String, Menu)> {
     );
 
     let mut view = Menu::default();
-    view.sub(row(tr!("menu-bar-toolbars"), true), toolbars_menu(state));
-    view.row(
-        check(tr!("menu-bar-status-bar"), true, state.status_bar),
-        Command::ToggleStatusBar,
-    );
-    view.sub(
-        row(tr!("menu-bar-explorer-bar"), true),
-        explorer_bar_menu(state),
-    );
+    if state.shell {
+        view.sub(row(tr!("organize-layout"), true), layout_menu(state));
+    } else {
+        view.sub(row(tr!("menu-bar-toolbars"), true), toolbars_menu(state));
+        view.row(
+            check(tr!("menu-bar-status-bar"), true, state.status_bar),
+            Command::ToggleStatusBar,
+        );
+        view.sub(
+            row(tr!("menu-bar-explorer-bar"), true),
+            explorer_bar_menu(state),
+        );
+    }
     view.sep();
     for (label, mode) in modes() {
         view.row(bullet(label, state.mode == mode), Command::Mode(mode));
@@ -662,27 +695,7 @@ pub fn organize_menu(state: &MenuState) -> Menu {
         Command::SelectAll,
     );
     m.sep();
-    let mut layout = Menu::default();
-    for (label, part, on) in [
-        (
-            tr!("organize-menu-bar"),
-            LayoutPart::MenuBar,
-            state.layout[0],
-        ),
-        (
-            tr!("organize-details-pane"),
-            LayoutPart::DetailsPane,
-            state.layout[1],
-        ),
-        (
-            tr!("organize-navigation-pane"),
-            LayoutPart::NavPane,
-            state.layout[2],
-        ),
-    ] {
-        layout.row(check(label, true, on), Command::ToggleLayout(part));
-    }
-    m.sub(row(tr!("organize-layout"), true), layout);
+    m.sub(row(tr!("organize-layout"), true), layout_menu(state));
     m.row(
         row(tr!("organize-folder-and-search-options"), true),
         Command::FolderOptions,

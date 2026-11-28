@@ -108,6 +108,7 @@ impl Explorer {
 
     /// Puts the place's own text back in the Address field, ending the edit a paste may wait for.
     pub(crate) fn reset_address(&mut self, text: &str, icon: Option<reprisekit::raster::Canvas>) {
+        self.sync_nav_place(text, icon.clone());
         self.address.set_place(text, icon);
         self.address_resets += 1;
     }

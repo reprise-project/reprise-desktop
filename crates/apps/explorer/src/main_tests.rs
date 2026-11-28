@@ -31,6 +31,8 @@ mod picker_folders;
 mod pointer;
 #[path = "main_tests/renaming.rs"]
 mod renaming;
+#[path = "main_tests/shell.rs"]
+mod shell;
 #[path = "main_tests/sizes.rs"]
 mod sizes;
 #[path = "main_tests/startup.rs"]

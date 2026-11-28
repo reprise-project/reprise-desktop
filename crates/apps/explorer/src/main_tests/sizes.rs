@@ -280,7 +280,7 @@ fn boxes_and_the_sheet_grow_with_the_text_size() {
 }
 
 #[test]
-fn under_glass_the_closing_line_sits_above_the_list_header() {
+fn under_glass_the_closing_line_runs_under_the_nav_row_and_the_header_under_the_commands() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ctx = test_ctx();
     ctx.theme = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
@@ -289,23 +289,21 @@ fn under_glass_the_closing_line_sits_above_the_list_header() {
     let mut c = Canvas::new(792, 573);
     window::draw(&ex, &mut c, &ctx);
     let lay = ex.layout(&ctx);
+    let sl = ex.shell_layout(&ctx).expect("the shell layout");
+    assert_eq!(lay.etch_y, sl.nav.bottom(), "the line closes the nav row");
+    for y in [lay.etch_y, lay.etch_y + 1] {
+        assert_eq!(c.get(400, y) >> 24, 0xFF, "closing line row {y}");
+    }
     let header = ex.view_layout(lay.view, &ctx).body;
-    let x = header.x + 4;
-    let style = ctx.theme.look.style().expect("Glass has a style");
-    let rebar = style.part(reprisekit::style::Part::Rebar).expect("a rebar");
-    let line = rebar.atlas.get(0, rebar.atlas.height as i32 - 1);
     assert_eq!(
-        c.get(x, lay.etch_y),
-        line,
-        "closing line at y {}",
-        lay.etch_y
+        header.y,
+        sl.command.bottom() - 1,
+        "the header's top row lies under the command bar's last, as under a rebar's line"
     );
-    assert_eq!(header.y, lay.etch_y + 1, "the header starts under the line");
-    assert_ne!(c.get(x, header.y), line, "the header's top row");
 }
 
 #[test]
-fn under_glass_the_rebar_is_clear_over_the_frames_glass() {
+fn under_glass_the_nav_row_is_clear_over_the_frames_glass() {
     use reprisekit::interface::Interface;
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut ctx = test_ctx();
@@ -318,35 +316,24 @@ fn under_glass_the_rebar_is_clear_over_the_frames_glass() {
     ctx.theme = reprisekit::interfaces::theme_for(Interface::Glass);
     let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     let lay = ex.layout(&ctx);
-    assert_eq!(ex.glass_top(&ctx), 78, "menu, toolbar and address bands");
-    assert_eq!(lay.etch_y, 78, "the closing line sits under the glass");
+    let sl = ex.shell_layout(&ctx).expect("the shell layout");
+    assert_eq!(ex.glass_top(&ctx), 34, "the nav row");
+    assert_eq!(lay.etch_y, 34, "the closing line sits under the glass");
     let mut c = Canvas::new(792, 573);
     window::draw(&ex, &mut c, &ctx);
-    assert_eq!(c.take_glass_top(), 78, "the drawn rebar reports its rows");
-    let gap = lay.menu.bottom();
-    assert_eq!(c.get(400, gap) >> 24, 0, "the rows between bands are clear");
-    assert_eq!(c.get(500, 40) >> 24, 0, "the toolbar band past its buttons");
-    let search = window::search_field(&ex, &ctx).expect("the search field");
+    assert_eq!(c.take_glass_top(), 34, "the drawn row reports its rows");
+    let gap = sl.back_fwd.right();
     assert_eq!(
-        c.get(search.x + search.width / 2, search.y + search.height / 2) >> 24,
-        0xFF,
-        "the search field stays opaque"
+        c.get(gap, 17) >> 24,
+        0,
+        "the glass between the pill and the address"
     );
-    let field = lay.address.expect("the address bar");
-    assert_eq!(
-        c.get(field.x + field.width / 2, field.y + field.height / 2) >> 24,
-        0xFF,
-        "the address field stays opaque"
-    );
-    let x = field.x + field.width / 2;
-    let above = (0..field.y + field.height / 2)
-        .rev()
-        .find(|&y| c.get(x, y) >> 24 != 0xFF)
-        .expect("the field starts below the toolbar");
-    assert_eq!(
-        [c.get(x, above) >> 24, c.get(x, above - 1) >> 24],
-        [0, 0],
-        "no glow over the field's border"
+    assert_eq!(c.get(400, 1) >> 24, 0, "above the fields");
+    let search = sl.search;
+    let face = c.get(search.x + 4, search.y + search.height / 2) >> 24;
+    assert!(
+        (0x80..0xFF).contains(&face),
+        "the search field lets the glass through, alpha {face:02X}"
     );
     assert_eq!(c.get(400, lay.etch_y) >> 24, 0xFF, "the closing line");
 }
@@ -371,7 +358,7 @@ fn the_dialogs_take_the_renderer_a_font_change_loads() {
 fn a_press_beside_the_splitter_grabs_it_where_it_lies() {
     use reprisekit::interface::Interface;
     let dir = tempfile::tempdir().expect("a temp dir");
-    for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+    for look in [Interface::Classic, Interface::Blue] {
         for size in [100, 200] {
             let mut ctx = test_ctx();
             ctx.theme = reprisekit::interfaces::theme_for(look).with_text_size(size);
